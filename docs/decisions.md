@@ -89,14 +89,27 @@ league on one of Yahoo or ESPN. Sleeper (clean public API) is a cheap later add.
 
 ---
 
-## Open design questions (resolve before or during the relevant build phase)
+## Resolved design questions
 
-- **Q1: Yahoo or ESPN first?** Which is the friend's primary league? Drives which scraper is
-  built and hardened first.
-- **Q2: Notification channel.** Desktop notification only, or also email/text for the
-  away-from-computer case (a Sunday lineup that couldn't be set)?
-- **Q3: Default weekly cap value + estimation cold-start.** What sensible default cap ships, and
-  how does the per-run estimate behave before any run history exists (fixed seed estimate)?
+- **Q1 (RESOLVED 2026-08-31): ESPN first.** The developer has a live ESPN league used to
+  validate features. The ESPN scraper is built and hardened first; Yahoo is the Phase 5 second
+  platform.
+- **Q2 (RESOLVED 2026-08-31): Desktop notifications only for v1.** Email/text for the
+  away-from-computer case is deferred (not ruled out; revisit after the desktop path works).
+- **Q3 (RESOLVED 2026-08-31): No guessed cap default -- benchmark it empirically.** We instrument
+  our own real test runs to measure actual per-run-type token cost, and set the default
+  `weekly_cap_tokens` and the cold-start seed estimates from those measured numbers rather than a
+  guess. Until a benchmark exists, treat the cap as advisory (log/warn, do not hard-skip) so
+  early iteration is not throttled by an arbitrary ceiling.
+
+## Open design questions
+
 - **Q4: Credential/profile storage location + safety.** Where the persistent browser profile
   and the Claude credentials live on disk, and how the app communicates that these never leave
   the machine.
+
+## Working mode (2026-08-31)
+
+Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
+is driven directly in follow-up sessions against the specs. Flip to `/pave` + `exec: on` only
+once the spine stabilizes and parallel factory execution is worth the overhead.

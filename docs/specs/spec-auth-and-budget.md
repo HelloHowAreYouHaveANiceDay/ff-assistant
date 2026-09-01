@@ -60,10 +60,17 @@ primary cost control because plan quota is invisible.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `weekly_cap_tokens` | (Q3 -- pick a sane default) | Hard ceiling over the window |
+| `weekly_cap_tokens` | **benchmark-derived** (Q3) | Hard ceiling over the window |
 | `window_days` | 7 | Rolling window length |
 | `on_cap_action` | `pause_notify` | `pause_notify` or `ask_to_raise` |
 | `soft_warn_pct` | 80 | Notify (but continue) at this fraction of cap |
+
+**Cap default + cold-start (Q3 resolved 2026-08-31):** do NOT ship a guessed cap. Instrument our
+own real test runs, measure actual per-run-type token cost, and derive both the default
+`weekly_cap_tokens` and the cold-start `estimate(run_type)` seeds from those measured numbers.
+Until a benchmark exists, the cap is **advisory** -- log/warn on projected overshoot but do not
+hard-skip -- so early iteration is not throttled by an arbitrary ceiling. Enforcement becomes
+hard once the benchmark is set.
 
 ### Enforcement
 

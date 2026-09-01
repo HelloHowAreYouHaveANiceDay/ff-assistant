@@ -43,7 +43,8 @@ The desktop shell a non-technical user actually touches. Read `docs/decisions.md
 
 - Desktop notifications for: action taken, cap reached (skip), plan limit reached (fail+retry),
   re-login needed.
-- Whether to also add email/text for the away-from-computer case is open question Q2.
+- **Desktop-only for v1** (Q2 resolved 2026-08-31). Email/text for the away-from-computer case
+  is deferred, not ruled out -- revisit after the desktop path works.
 
 ## Packaging
 

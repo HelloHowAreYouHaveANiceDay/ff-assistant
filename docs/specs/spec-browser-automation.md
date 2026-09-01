@@ -47,8 +47,8 @@ Each action tool MUST:
   and the waiver process are platform-specific -- encode them per platform.
 - **ESPN:** No easy public data without cookie auth; the persistent-session approach is doing
   the heavy lifting here. DOM differs substantially from Yahoo.
-- Build and STABILIZE ONE platform end-to-end before adding the second (D2). Which one is
-  open question Q1 (see decisions).
+- Build and STABILIZE ONE platform end-to-end before adding the second (D2). **ESPN is first**
+  (Q1 resolved -- there is a live ESPN league to validate against); Yahoo is the Phase 5 add.
 
 ## Reliability requirements
 
