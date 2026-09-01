@@ -441,6 +441,7 @@ async function cmdBacktest(rest: string[]) {
   const botWeeklySd = valueOf(rest, "--bot-weekly-noise") != null ? Number(valueOf(rest, "--bot-weekly-noise")) : undefined;
   const full = rest.includes("--full"); // run the REAL lineup optimizer (inseason/lineup.ts) for our team
   const noLookahead = rest.includes("--no-lookahead"); // draft/lineup on LAST season, score by THIS season
+  const waivers = rest.includes("--waivers"); // our team works the waiver wire (trailing-avg, no lookahead)
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;
   const perYear: string[] = [];
@@ -448,10 +449,10 @@ async function cmdBacktest(rest: string[]) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
     const proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / 16).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   console.log(`  per season: ${perYear.join("  ")}`);

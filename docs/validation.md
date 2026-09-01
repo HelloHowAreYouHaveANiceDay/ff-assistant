@@ -70,6 +70,13 @@ Result (2015-2024, ~150 seasons/yr): **~36% championships, 5.7x random, 94% play
 27-43% every year (no overfit). Same-season projection (mild lookahead) is ~49%; draft-only with a
 synthetic lineup was 41%.
 
+**Waivers (`--waivers`) -- backtested and REJECTED as an auto-feature.** Adding automated waiver
+churn (swap our weakest for the best-producing free agent, trailing-avg or ROS-blend, no lookahead)
+DROPPED championships 36% -> ~24-27%, and more churn made it worse. In a deep 16-team league the
+free-agent pool is replacement-level, so churn trades real drafted talent for hot-hand noise. -> the
+waiver feature is a conservative HUMAN-GATED copilot (`src/inseason/waivers.ts`), not auto-execution.
+The backtest prevented shipping a title-losing feature.
+
 **Read it honestly:** the 36% is a FLOOR on projection quality -- last-year actuals miss rookies and
 undervalue players who were hurt last year, so a real preseason projection (ffanalytics/FantasyPros)
 would do better. It also omits waivers/trades, which would ADD edge. The bot field is a model, so

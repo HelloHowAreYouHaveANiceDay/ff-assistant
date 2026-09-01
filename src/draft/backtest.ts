@@ -51,7 +51,7 @@ function realWeekScore(roster: { name: string; pos: string; proj: number }[], we
   return total;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false): BacktestResult {
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false): BacktestResult {
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
   const us = ourSd == null ? marketSd : ourSd; // our projection error; < marketSd => a VALUE EDGE
@@ -83,9 +83,41 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
     ? realWeekScore(rosters[t], wk, weekly, lg, ourPerGame)
     : weekScore(rosters[t], wk, weekly, lg, selFor(t, wk));
 
+  // In-season WAIVERS (our team): each week, using ONLY prior-week production (no lookahead), swap our
+  // weakest player for the best-producing free agent whose trailing average clearly beats them. This
+  // is the roster-churn edge -- a manager who works the wire upgrades over a stand-pat field.
+  const posOf = new Map(projMarket.map((p) => [p.name, p.pos]));
+  const drafted = new Set(picks.map((p) => p.name));
+  const freeAgents = ourWaivers ? [...weekly.keys()].filter((n) => !drafted.has(n) && posOf.has(n)) : [];
+  const trailAvg = (name: string, uptoWk: number): { avg: number; g: number } => {
+    let s = 0, g = 0; for (let w = 1; w < uptoWk; w++) { const p = weekly.get(name)?.get(w); if (p != null) { s += p; g++; } }
+    return { avg: g ? s / g : 0, g };
+  };
+  // Rest-of-season per-game estimate (NO lookahead): shrink recent form toward preseason talent --
+  // early weeks trust the draft projection, later weeks trust actuals. Stops us dropping a
+  // slow-starting stud for a hot-hand free agent who regresses (naive trailing-avg churn LOSES).
+  const rosPerGame = (name: string, wk: number): number => {
+    const pre = (projMap.get(name) ?? 0) / 17;
+    const { avg, g } = trailAvg(name, wk);
+    if (g === 0) return pre;
+    const w = Math.min(1, (wk - 1) / 9); // weight on actuals ramps to 1 by ~week 10
+    return (1 - w) * pre + w * avg;
+  };
+  const runWaiver = (wk: number) => {
+    if (!ourWaivers || wk < 3) return;
+    const fa = freeAgents.map((n) => ({ n, ros: rosPerGame(n, wk), g: trailAvg(n, wk).g })).filter((x) => x.g >= 2).sort((a, b) => b.ros - a.ros)[0];
+    if (!fa) return;
+    const weakest = rosters[0].map((p) => ({ p, ros: rosPerGame(p.name, wk) })).sort((a, b) => a.ros - b.ros)[0];
+    if (weakest && fa.ros > weakest.ros + 3) { // only a CLEAR rest-of-season upgrade
+      rosters[0] = rosters[0].filter((p) => p !== weakest.p).concat([{ name: fa.n, pos: posOf.get(fa.n)!, proj: projMap.get(fa.n) ?? fa.ros * 17 }]);
+      freeAgents.splice(freeAgents.indexOf(fa.n), 1); freeAgents.push(weakest.p.name);
+    }
+  };
+
   const wins = new Array(lg.teams).fill(0);
   const totPts = new Array(lg.teams).fill(0);
   for (const wk of REG_WEEKS) {
+    runWaiver(wk); // process waivers before this week's games
     const order = [...Array(lg.teams).keys()];
     for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rngM() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
     const scores = rosters.map((_, t) => wkS(t, wk));

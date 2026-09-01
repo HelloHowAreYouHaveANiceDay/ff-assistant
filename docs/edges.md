@@ -57,12 +57,21 @@ software agent beats distracted humans:
 - **Live inflation tracking** -- recompute values as money/talent leave the board (docs/value-methods
   section 3). Medium; not yet wired into the live bidder.
 
+### 6. Waiver churn (automated) -- NEGATIVE in a deep league [backtested]
+Surprising, and the backtest earned its keep: automating waiver pickups by recent production LOSES
+titles here (full-system 36% -> ~24-27%). In a 16-team league the free-agent pool is mostly
+replacement-level, so churn drops real drafted talent for hot-hand noise that regresses; more
+churn = worse. Real waiver value is injury-replacement + genuine breakouts (rare, hard to ID early),
+so waivers are a CONSERVATIVE human-gated COPILOT (`src/inseason/waivers.ts` -- surface only clear
+rest-of-season upgrades, don't auto-drop), NOT an auto-edge. Shallower leagues (8-10 team) would
+differ -- more talent on the wire.
+
 ## Edges that DON'T exist / aren't worth chasing
 
-- A "perfect" aggression setting -- there isn't one (see #4).
+- A "perfect" aggression setting -- there isn't one (see #5).
 - Beating the market with the SAME projection everyone uses -- collapses to just the discipline edge.
-- Out of scope for a DRAFT agent: **in-season waivers/trades**, which are the biggest long-run
-  fantasy edge of all -- a future product surface, not a draft-day lever.
+- **Automated waiver churn in a deep league** -- negative-EV (see #6); keep it a recommendation copilot.
+- Out of scope for a draft agent: **trades**, a future copilot surface.
 
 ## Where to invest (in priority order)
 1. **Build ONE sharp, independent projection layer** -- it powers BOTH the draft (season -> values,

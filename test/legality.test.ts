@@ -121,6 +121,27 @@ test("lineup optimizer: flags an unfillable slot when a whole position is out", 
   assert.ok(r.flags.some((f) => /no available player to fill RB/.test(f)));
 });
 
+test("waiver copilot: recommends a clear same-position ROS upgrade, ignores small gains", async () => {
+  const { waiverTargets } = await import("../src/inseason/waivers.ts");
+  const roster = [{ name: "WR weak", pos: "WR", ros: 6 }, { name: "RB1", pos: "RB", ros: 18 }];
+  const fas = [
+    { name: "WR hot", pos: "WR", ros: 13, gp: 4 }, // +7 over WR weak -> recommend
+    { name: "WR meh", pos: "WR", ros: 7, gp: 4 },   // +1 -> ignore
+    { name: "WR smallsample", pos: "WR", ros: 20, gp: 1 }, // gp<3 -> ignore (noise)
+  ];
+  const recs = waiverTargets(roster, fas);
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].add, "WR hot");
+  assert.equal(recs[0].drop, "WR weak");
+  assert.ok(recs[0].faab > 0);
+});
+
+test("waiver copilot: nothing worth it -> empty (don't churn)", async () => {
+  const { waiverTargets } = await import("../src/inseason/waivers.ts");
+  const recs = waiverTargets([{ name: "WR1", pos: "WR", ros: 15 }], [{ name: "FA", pos: "WR", ros: 16, gp: 5 }]);
+  assert.equal(recs.length, 0); // +1 gain < minGain -> no churn (matches the backtest lesson)
+});
+
 test("SEAM: avoid list zeroes a player's max", () => {
   const onBlock = { name: "Bust", pos: "WR" as const, team: "NYJ", espnPreDraftVal: 20 };
   const s = makeV1Strategy({ values: { Bust: 20 }, avoids: new Set(["Bust"]) });
