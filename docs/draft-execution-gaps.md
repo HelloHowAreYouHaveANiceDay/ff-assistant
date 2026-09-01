@@ -93,6 +93,10 @@ Reading opponent budgets (`ul.picklist`) and the remaining-value pool to time no
 detect inflation -- a real edge, not required to draft a legal competitive team.
 
 ## Progress (closed / advanced 2026-09-01)
+- **G1 real-draft entry** -- SCRIPTED: `ff enter-draft` (Enter-Draft control + direct URL, detects
+  success) + `ff preflight` (session/login/league check, VERIFIED against the real league 462233,
+  logged in: true). Runbook: `docs/draft-day-runbook.md`. Success path verifies when the room opens.
+- **G2/G9 readiness** -- `ff preflight` covers session-live + logged-in + league-reachable.
 - **G3 nominate** -- ADVANCED: `readBoard()` + `nominate()` (clicks a board player's "Select") built;
   Engine anti-stall wired (idle -> nominate cheapest slot-filler). `readBoard` verified live; the
   nominate SUCCESS path needs a real nomination turn to confirm (bots auto-nominate in practice).
