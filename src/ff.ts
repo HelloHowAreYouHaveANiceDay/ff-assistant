@@ -37,6 +37,12 @@ async function main() {
       return cmdLaunchPractice(rest);
     case "read-block":
       return cmdReadBlock(rest);
+    case "bid":
+      return cmdBid(rest);
+    case "roster":
+      return cmdRoster(rest);
+    case "auto-bid":
+      return cmdAutoBid(rest);
     case "inspect-draft":
       return cmdInspect(rest);
     case "rank":
@@ -206,6 +212,77 @@ async function cmdReadBlock(rest: string[]) {
   const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
   const state = await readBlock(page);
   console.log(JSON.stringify(state, null, 2));
+  await detach(a);
+}
+
+// Place the quick bid (Offer $current+1) unless the current offer already exceeds --max.
+async function cmdBid(rest: string[]) {
+  const { readBlock, quickBid } = await import("./draft/espnAuction.js");
+  const maxArg = valueOf(rest, "--max");
+  const a = await attachFor(rest);
+  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
+  const before = await readBlock(page);
+  const cap = maxArg ? Number(maxArg) : Infinity;
+  if (!before.onBlock) {
+    console.log("no player on the block");
+  } else if ((before.currentOffer ?? 0) >= cap) {
+    console.log(`skip: offer ${before.currentOffer} >= max ${cap} for ${before.player}`);
+  } else {
+    const ok = await quickBid(page);
+    console.log(`${ok ? "BID" : "no-bid"} on ${before.player} (was $${before.currentOffer})`);
+  }
+  await detach(a);
+}
+
+// Read our drafted roster (the roster table) to verify wins.
+async function cmdRoster(rest: string[]) {
+  const a = await attachFor(rest);
+  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
+  const players = (await page.evaluate(`(() => {
+    const names = Array.from(document.querySelectorAll('table.Table .playerinfo__playername, table.Table a[href*="playerId"]'))
+      .map((e) => (e.textContent || '').trim()).filter(Boolean);
+    return Array.from(new Set(names));
+  })()`)) as string[];
+  console.log(`roster (${players.length}): ${players.join(", ") || "(none yet)"}`);
+  await detach(a);
+}
+
+// v1 auction bidder core: one connection, loop -- bid on whatever is on the block up to
+// (Pre-Draft Val + overpay), stop when our roster grows (a win) or rounds run out. Proves
+// the actor loop end-to-end. Strategy tuning (nomination, targets) comes later.
+async function cmdAutoBid(rest: string[]) {
+  const { readBlock, quickBid } = await import("./draft/espnAuction.js");
+  const rounds = Number(valueOf(rest, "--rounds") ?? 40);
+  const overpay = Number(valueOf(rest, "--overpay") ?? 2);
+  const a = await attachFor(rest);
+  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
+  const rosterCount = async () =>
+    (await page.evaluate(
+      `Array.from(new Set(Array.from(document.querySelectorAll('table.Table .playerinfo__playername')).map(e=>(e.textContent||'').trim()).filter(Boolean))).length`,
+    )) as number;
+  const startRoster = await rosterCount();
+  console.log(`starting roster size: ${startRoster}`);
+  for (let i = 0; i < rounds; i++) {
+    const s = await readBlock(page);
+    const now = await rosterCount();
+    if (now > startRoster) {
+      console.log(`WON a player -- roster grew ${startRoster} -> ${now}.`);
+      break;
+    }
+    if (s.onBlock && s.player) {
+      const max = (s.preDraftVal ?? s.currentOffer ?? 0) + overpay;
+      if ((s.currentOffer ?? 0) < max && (s.myMax ?? 0) >= (s.currentOffer ?? 0) + 1) {
+        const ok = await quickBid(page);
+        console.log(`r${i}: ${ok ? "BID" : "no-bid"} ${s.player} $${s.currentOffer}->+1 (val ${s.preDraftVal}, max ${max})`);
+      } else {
+        console.log(`r${i}: hold ${s.player} $${s.currentOffer} (val ${s.preDraftVal}, our cap ${max})`);
+      }
+    } else {
+      console.log(`r${i}: no player on block`);
+    }
+    await page.waitForTimeout(2000);
+  }
+  console.log(`final roster size: ${await rosterCount()}`);
   await detach(a);
 }
 

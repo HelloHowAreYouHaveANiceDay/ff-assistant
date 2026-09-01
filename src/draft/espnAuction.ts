@@ -62,9 +62,20 @@ export async function quickBid(page: Page): Promise<boolean> {
   return true;
 }
 
-// TODO (grounded, from data/auction-live.json):
+// STATUS (verified live 2026-08-31):
+//   readBlock()  -- WORKS (returns live player/offer/max/preDraftVal).
+//   quickBid()   -- WORKS as an ACTION (drove real offers up: Jeanty $70, Collins $59).
+//   Winning      -- NOT achieved. A ~2s poll + "bid to value" loses to bots that (a) overpay
+//                   past a disciplined cap and (b) snipe in the gaps before clock expiry.
+//   Nomination   -- NOT built or tested.
+//
+// TODO to actually WIN + nominate (grounded, from data/auction-live.json):
+// - WIN TIMING: bid in the FINAL SECOND of the per-player clock, not on a fixed poll -- read
+//   the countdown and place the last +1 (or jump-bid to our max) just before expiry.
+// - FIX WIN-DETECTION: table.Table is the QUEUE ("No players in queue"), NOT our roster. Find
+//   the real roster panel (the QB/RB/WR/TE... filled-slots view) and read won players from it.
 // - readBudgets(): ul.picklist rows -> per-team remaining $ (the "$200 / $null" list).
 // - readBoard(): div.fixedDataTableLayout_main (virtualized; scroll to read all) -> available
-//   players + their Pre-Draft Val, to decide WHAT to nominate and our max per player.
+//   players + Pre-Draft Val, to decide WHAT to nominate and our max per player.
 // - nominate(playerName): when it's our nomination turn, pick from the board + confirm.
 // - bidHistory(): ul.bid-history__list li.bid -> "$62 <team>" for pace/read.
