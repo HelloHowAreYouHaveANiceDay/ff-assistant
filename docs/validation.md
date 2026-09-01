@@ -1,8 +1,39 @@
 # Validation harness (how we know a change is better, not a regression)
 
-`ff sim` is an offline auction-draft simulator that scores our drafting objectively, so we can
-iterate on values/strategy and SEE whether each change helps or hurts -- no live drafts, fast,
-deterministic per seed.
+Two tools, both offline/fast/deterministic per seed:
+- **`ff backtest`** (the trustworthy one for CHAMPIONSHIPS): drafts on a past season's projections,
+  then plays a real head-to-head season + playoffs on that season's ACTUAL weekly results ->
+  reports our **championship rate**. Weekly variance, byes, and single-elim playoffs are real, so it
+  rewards the RIGHT thing.
+- **`ff sim`** (fast season-points proxy): one draft, score by starting-lineup season points. Handy
+  for quick iteration, but it over-rewards top-heavy rosters (no playoffs) -- prefer backtest for
+  strategy calls.
+
+## `ff backtest` -- optimize championship wins (2024)
+
+`npm run ff -- backtest --n 800 [--starter-reserve N --max-share F --premium N]`
+Draft with 2024 values (data/values-2024.csv, from data/points-2024.csv), simulate the 2024 season
+(weeks 1-14) + playoffs (top 6, weeks 15-17) on real weekly points (data/weekly.csv). Lineups are set
+each week by projection, scored by ACTUAL, and a bye/injured starter can't play -> DEPTH matters.
+
+**Projection UNCERTAINTY (the key knob, default sd 0.30):** everyone drafts on a NOISY projection of
+the season (a stud can be mis-projected), scored by the real weekly truth. Without it the draft has
+perfect foresight and trivially rewards concentration; with it, buying "studs" carries real bust risk.
+
+### What it found (decisive)
+Championship rate over 800 seasons (random = 6.3%):
+- **Over-balanced** (reserve 20, max-share 0.25): 38.5% -- too many mediocre starters.
+- **MAX stars-and-scrubs** (premium 30, max-share 0.85, $181 on 3): 37.3% -- WITH uncertainty this
+  collapses from 54% (perfect foresight) because a concentrated team craters when a projected stud
+  busts. High variance, not more titles.
+- **Moderate-aggressive WINS: reserve 5, max-share 0.6, premium 2 -> 50.6%** (98% playoffs, 11.3 reg
+  wins). Buy ~2-3 studs but keep real depth. This is the default.
+
+**Actionable edge:** your league drafts even MORE concentrated than optimal (61% of picks $1-5), so
+being *slightly less extreme than the room* -- moderate-aggressive -- is the championship-winning
+posture. The backtest, not intuition, settled the stars-and-scrubs vs balanced debate.
+
+## `ff sim` (season-points proxy)
 
 ## What it does
 

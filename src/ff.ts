@@ -53,6 +53,8 @@ async function main() {
       return cmdValues(rest);
     case "sim":
       return cmdSim(rest);
+    case "backtest":
+      return cmdBacktest(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -357,6 +359,31 @@ async function cmdSim(rest: string[]) {
   console.log(`SIM (${n} drafts) values=${valuesFile} reserve=${cfg.starterReserve} maxShare=${cfg.maxShare} premium=${cfg.premium}`);
   console.log(`  our starting pts: ${(sumPts / n).toFixed(0)}  |  field avg: ${(sumField / n).toFixed(0)}  |  edge: ${((sumPts / n) - (sumField / n)).toFixed(0)}`);
   console.log(`  avg finish: ${(sumRank / n).toFixed(2)} of ${16}  |  1st: ${((top1 / n) * 100).toFixed(0)}%  |  top-3: ${((top3 / n) * 100).toFixed(0)}%  |  $ on top3 players: ${(sumTop3Spend / n).toFixed(0)}`);
+}
+
+// Championship backtest: draft with a past season's values, play a real H2H season + playoffs on
+// that season's ACTUAL weekly results, report OUR championship / playoff rate. The trustworthy
+// objective for "optimize championship wins".
+async function cmdBacktest(rest: string[]) {
+  const { runBacktest } = await import("./draft/backtest.js");
+  const { readFileSync } = await import("node:fs");
+  const readCsv = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
+  const n = Number(valueOf(rest, "--n") ?? 500);
+  const points = readCsv(valueOf(rest, "--points") ?? "data/points-2024.csv").map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
+  const ourValues = new Map<string, number>();
+  for (const f of readCsv(valueOf(rest, "--values") ?? "data/values-2024.csv")) ourValues.set(f[0].trim(), Number(f[2]));
+  const weekly = new Map<string, Map<number, number>>();
+  for (const f of readCsv(valueOf(rest, "--weekly") ?? "data/weekly.csv")) { const name = f[0].trim(); (weekly.get(name) ?? weekly.set(name, new Map()).get(name)!).set(Number(f[2]), Number(f[3])); }
+  const cfg = {
+    values: Object.fromEntries(ourValues),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 5),
+    benchReserve: 1, premium: Number(valueOf(rest, "--premium") ?? 2),
+    aggr: Number(valueOf(rest, "--aggr") ?? 1.0), maxShare: Number(valueOf(rest, "--max-share") ?? 0.6),
+  };
+  let champ = 0, playoffs = 0, wins = 0;
+  for (let s = 0; s < n; s++) { const r = runBacktest(points, weekly, ourValues, cfg, s + 1); if (r.champ) champ++; if (r.madePlayoffs) playoffs++; wins += r.wins; }
+  console.log(`BACKTEST (${n} seasons, 2024) reserve=${cfg.starterReserve} maxShare=${cfg.maxShare} premium=${cfg.premium}`);
+  console.log(`  CHAMPIONSHIPS: ${((champ / n) * 100).toFixed(1)}%  (random = ${(100 / 16).toFixed(1)}%)  |  playoffs: ${((playoffs / n) * 100).toFixed(0)}%  |  avg reg wins: ${(wins / n).toFixed(1)}/14`);
 }
 
 async function cmdDumpValues(rest: string[]) {
