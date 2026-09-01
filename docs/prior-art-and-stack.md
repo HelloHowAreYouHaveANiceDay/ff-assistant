@@ -44,20 +44,24 @@ smarter model.
 
 - API is undocumented/reverse-engineered; v3 base `lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/`.
 - Private-league reads need `SWID` + `espn_s2` cookies that **cannot be fetched
-  programmatically** -- only from a logged-in browser. Our bro-style persistent session is
-  therefore both the auth source (harvest cookies -> hand to espn-api for fast reads) and the
-  action surface (drive the DOM for writes ESPN exposes no API for).
-- **Hybrid read strategy worth prototyping:** use the browser session's cookies with `espn-api`
-  for fast structured reads, and reserve DOM automation for writes + anything the API omits.
+  programmatically** -- only from a logged-in browser. This is a point IN FAVOR of the copresent
+  design (D0): the user's live session is already authenticated, so there is nothing to extract.
+- **Per the copresent design (D0), ALL reads and writes go through the browser DOM** in the
+  user's live session. The espn-api hybrid-read path (cookies -> espn-api for fast structured
+  reads) is explicitly NOT the primary path -- at most a LATER optional speed optimization if DOM
+  reads prove too slow somewhere. One data plane, validated by the mock-draft harness.
 
-## Draft day = the hard part (Phase-N risk, scope carefully)
+## Draft day = Phase 1 (real draft ~1 week out; see D8/D9)
 
-- ESPN has **no draft API and no programmatic pick override.** A live snake/auction draft must
-  be driven through the draft-room DOM under a strict per-pick clock (existing tools sync in
-  ~1-3s). This is the highest-risk autonomous capability.
-- Recommendation: treat draft automation as its OWN later phase with a **confirm/assist fallback**
-  (surface the VOR-ranked pick with seconds on the clock; auto-submit only once DOM reliability
-  is proven). Weekly lineup + waivers are far lower-stakes and should ship first.
+- ESPN has **no draft API and no programmatic pick override**, which is fine under the copresent
+  design (D0): the draft room is driven through its DOM in the user's live session, exactly like
+  any other action. No API was ever the plan.
+- **The per-pick clock is the binding constraint** -- read board + rank + click must fit inside
+  it (existing tools sync in ~1-3s, so it is feasible).
+- **Validation = mock drafts (D9).** ESPN and Yahoo both run mock-draft lobbies year-round; each
+  mock is a full end-to-end rehearsal of the pick loop against the real draft-room DOM. Rehearse
+  dozens of times before the real ESPN draft. Auto-pick is the goal; assist-with-countdown is the
+  evidence-based fallback if mocks show auto-submit is flaky.
 
 ## Data plan (no single free source is enough)
 

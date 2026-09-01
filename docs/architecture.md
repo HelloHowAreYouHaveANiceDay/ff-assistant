@@ -57,7 +57,17 @@ and run unattended (full-auto) on the user's own Claude subscription.
 | Actions ("plays") | bro-style persistent CDP browser (Yahoo / ESPN) | `spec-browser-automation.md` |
 | Scheduling | node-cron in the shell | `spec-agent.md` |
 
-## The three defining decisions
+## The core thesis: the copresent design (D0)
+
+The agent works **inside the user's own live, logged-in browser session**. It sees the league
+through the same DOM the user sees and acts through the same controls the user would click. One
+data plane -- the live browser -- for BOTH reading status AND taking actions; no separate API
+client, no credential extraction. It is bidirectional: the user can watch the agent, take the
+wheel, and hand it back. This solves auth for free, works uniformly across ESPN and Yahoo, and is
+what makes an unattended full-auto tool trustworthy. Draft day is the first proving ground
+(driving the draft-room DOM under the pick clock), validated by mock drafts.
+
+## The other defining decisions
 
 1. **Auth = the user's Claude subscription, not an API key.** The app bundles the `claude` CLI
    and rides its OAuth login, so the SDK draws against the user's Max/Pro plan. This removes the

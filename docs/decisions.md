@@ -4,6 +4,35 @@ Each decision is stated with its rationale and the constraint it accepts. Implem
 sessions should not silently reverse these; if a decision looks wrong, raise it as an open
 question in the wiki roadmap.
 
+## D0 -- The COPRESENT DESIGN (the core thesis; supersedes where it conflicts)
+
+**Decision:** The agent operates INSIDE the user's own live, logged-in browser session. It
+perceives the league through the same rendered DOM the user sees, and acts through the same
+controls the user would click. There is ONE data plane -- the live browser -- for BOTH reading
+status/information AND taking actions. No separate API client, no credential extraction, no
+server-side model of the league that can drift from what the user sees.
+
+**Why:**
+- **Auth is solved for free** -- the user is already logged in; nothing to extract or store.
+- **Uniform across platforms** -- it lives at the UI layer, so ESPN and Yahoo work the same way
+  without per-platform API reverse-engineering.
+- **Trust through copresence (bidirectional).** The user and the agent are present in the SAME
+  session: the user can watch the agent act in real time, take over the wheel at any moment, and
+  hand it back. This is what makes an unattended full-auto tool trustworthy rather than a black
+  box acting somewhere the user cannot see.
+- **Browser automation is a proven path** in this shop (the bro pattern); we rely on it as the
+  single mechanism.
+
+**Accepted constraint:** DOM automation is slower and more brittle than a structured API, and it
+is per-platform at the selector level. The mitigation is the mock-draft validation harness (see
+D8) and per-platform selector modules. For draft day the binding constraint is the per-pick
+clock -- reads + decision + click must complete inside it; validating that is the whole point of
+mock-draft rehearsal.
+
+**Supersedes:** the recon's hybrid-read suggestion (browser cookies + espn-api for fast reads).
+espn-api / a structured API is now at most a LATER optional speed optimization, never the
+primary path. All reads go through the browser.
+
 ## D1 -- Auth via the user's Claude subscription (OAuth), not an API key
 
 **Decision:** The app authenticates to Claude using the end user's Max/Pro subscription through
@@ -89,33 +118,65 @@ league on one of Yahoo or ESPN. Sleeper (clean public API) is a cheap later add.
 
 ---
 
-## D7 -- Language: TypeScript shell + agent, Python MCP sidecar for football data/math
+## D7 -- Engine is a CLI (the shop pattern); the agent reaches it via a CONSTRAINED tool surface
 
-**Decision (2026-08-31, from recon -- see `prior-art-and-stack.md`):** The Electron shell,
-Claude Agent SDK session, and browser control are **TypeScript**. The football-specific data +
-optimization layer (espn-api, nflreadpy, VOR/VONA, PuLP) is **Python**, wrapped in a single
-stdio-MCP sidecar spawned by the Electron main process. SQLite is exposed via an MCP server.
+**Decision (2026-08-31; corrects the recon's "MCP-first" framing):** The football data + logic
+layer is a **`ff` CLI** (Python -- espn-api-style reads via the copresent browser where needed,
+nflreadpy, VOR/VONA, PuLP), consistent with the established studio pattern (bro, bim-cli, assist).
+The CLI is the real engine: independently runnable, testable, and debuggable in a terminal.
 
-**Why:** The TS Agent SDK runs natively in Electron's Node runtime (the Python SDK would force
-subprocess bridging for the *agent itself*); but the mature fantasy-football libraries and math
-are Python with no TS equivalent. A Python MCP sidecar is the clean seam -- one process, not a
-scattered bridge. This matches the dominant 2025-2026 pattern (TS agent/UI + Python data, glued
-by MCP).
+How each caller reaches it:
+- **Developer + interactive Claude Code:** invoke the `ff` CLI via Bash, exactly like bro/bim-cli.
+- **The embedded UNATTENDED full-auto agent:** reaches a **fixed, thin tool surface** (custom
+  Agent SDK tools, or a thin MCP wrapping the CLI) -- NOT an open Bash tool.
 
-**Accepted constraint:** two runtimes to package (Node via Electron + a bundled Python). Keep it
-to ONE Python sidecar. Revisit only if a capable TS ESPN/stats library matures.
+**Why a constrained surface for the embedded agent specifically (not MCP for its own sake):**
+- **The log-before-act invariant (D3) is only enforceable through a controlled set of tools.** An
+  open Bash tool lets the agent act without logging; a fixed tool surface makes every action pass
+  through a wrapper that writes `action_log` first.
+- **Unattended + arbitrary shell is the wrong risk posture** for something driving a browser on
+  the user's machine with nobody watching. A tight allow-list (exactly `draft_pick`, `set_lineup`,
+  `submit_waiver`, `read_board`, `query`, ...) is the safety boundary.
 
-## D8 -- Draft automation is a late, separately-gated phase with an assist fallback
+The shell/agent/browser layer stays **TypeScript** (Agent SDK is Electron-native). SQLite is owned
+by the CLI (writes) with the agent reading via `ff` output -- likely no separate SQLite MCP needed.
 
-**Decision:** Weekly lineup + waivers (lower-stakes) ship first. Live-draft automation is its own
-later phase because ESPN exposes no draft API and no programmatic pick override -- it must be
-driven through the draft-room DOM under a per-pick clock. Until DOM reliability is proven, draft
-mode surfaces the VOR/VONA-ranked pick for the user with a countdown and auto-submits only as a
-proven step, not on day one.
+**Accepted constraint:** two runtimes to package (Node via Electron + a bundled Python CLI).
+Under the copresent design (D0) the browser is the primary I/O surface; the CLI is the supporting
+data/math engine. Revisit the split only if a capable TS fantasy-stats library matures.
 
-**Why:** It is the highest-risk autonomous capability and the easiest to get embarrassingly
-wrong live; everything else is recoverable. (Recon: existing tools all stop at recommendation
-for exactly this reason.)
+## D8 -- Draft day is Phase 1, validated via mock drafts (REVERSES the earlier "late-gate")
+
+**Decision (2026-08-31):** The live draft is the FIRST and most important capability -- the real
+ESPN draft is ~one week out. It is built and hardened NOW, and validated by running **mock drafts
+on ESPN and Yahoo** (both have mock-draft lobbies available year-round) as a repeatable rehearsal
+harness against the exact draft-room DOM the real draft will use.
+
+The agent reads the draft board (available players, my roster, whose pick, the clock) through the
+copresent browser session (D0), decides via VOR/VONA over pre-loaded projections + ADP, and makes
+the pick through the draft-room controls. Auto-pick is the goal; the copresent design gives the
+natural safety valve -- the user can override on the clock and the agent picks only if they don't.
+
+**Why the reversal:** the earlier decision deferred draft as "highest risk." The risk is real but
+the deadline makes it the priority, AND the mock-draft harness removes most of the risk: we can
+rehearse the full pick loop dozens of times before it counts. A capability you can rehearse on
+demand is not the same risk as one you meet cold on game day.
+
+**Accepted constraint:** the per-pick clock is the hard gate -- read+decide+click must fit inside
+it. Mock drafts exist precisely to measure and prove that latency. If auto-submit proves unstable
+in mocks, the fallback is assist-with-countdown (still a win), decided from mock evidence, not
+guessed.
+
+## D9 -- Mock-draft rehearsal is the validation harness
+
+**Decision:** Draft automation is validated by running real mock drafts (ESPN + Yahoo lobbies),
+not by unit tests alone. Each mock is an end-to-end rehearsal of the copresent pick loop:
+join room -> read board -> rank -> pick within the clock -> repeat. Success criteria measured
+from mocks: pick made within the clock every round, correct roster construction, no missed picks.
+
+**Why:** it is the only test that exercises the real DOM under the real clock. Per the machine's
+own testing discipline: the layer that would notice a break here is a live draft room, so we drive
+a live (mock) draft room.
 
 ## Resolved design questions
 
