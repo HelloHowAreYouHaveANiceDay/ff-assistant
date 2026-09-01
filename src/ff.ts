@@ -152,10 +152,18 @@ async function cmdLaunchPractice(rest: string[]) {
   for (const p of a.pages) {
     if (p !== page && /\/football\/draft/.test(p.url())) await p.close().catch(() => {});
   }
-  if (!/mockdraftlobby/.test(page.url())) {
-    await page.goto("https://fantasy.espn.com/football/mockdraftlobby", {
-      waitUntil: "domcontentloaded",
-    });
+  // Always land on a freshly-loaded lobby (a finished-draft tab won't have the button).
+  const openBtnSel = () => page.getByRole("button", { name: "Practice Draft", exact: true }).first();
+  await page.goto("https://fantasy.espn.com/football/mockdraftlobby", { waitUntil: "networkidle" }).catch(() => {});
+  let ready = await openBtnSel().waitFor({ state: "visible", timeout: 15000 }).then(() => true).catch(() => false);
+  if (!ready) {
+    await page.reload({ waitUntil: "networkidle" }).catch(() => {});
+    ready = await openBtnSel().waitFor({ state: "visible", timeout: 15000 }).then(() => true).catch(() => false);
+  }
+  if (!ready) {
+    console.error("lobby 'Practice Draft' button never rendered -- aborting launch.");
+    await detach(a);
+    return;
   }
   // Shim window.open to RECORD the URL only -- do NOT open the real popup (that would
   // create a second draft tab -> duplicate-connection kick). We navigate our one tab.
@@ -309,6 +317,10 @@ async function cmdAutoDraft(rest: string[]) {
   let lastPlayer = "";
   for (let i = 0; i < rounds; i++) {
     const r = await readRoster(page);
+    if (r.filled === 0 && r.open === 0) {
+      console.log(`no draft roster detected (not in a draft room?). Stopping.`);
+      break;
+    }
     if (r.open === 0) {
       console.log(`DONE: full roster (${r.filled} slots), spent $${r.spent}.`);
       break;
@@ -318,8 +330,17 @@ async function cmdAutoDraft(rest: string[]) {
       const rk = ranks.get(norm(b.player));
       const pos = b.pos ?? rk?.pos ?? null;
       const need = pos ? hasOpenSlotFor(r, pos) : r.benchOpen > 0; // unknown pos -> only for bench
-      const ourVal = Math.max(rk?.value ?? 0, b.preDraftVal ?? 0, floor);
-      const cap = Math.min(ourVal, b.myMax ?? 0);
+      // v1 "balanced fill" strategy: spread remaining budget across open slots so we win mid-tier
+      // players throughout (bidding only to consensus value loses everything to 16 rival bots).
+      const budgetLeft = 200 - r.spent;
+      const perSlot = Math.max(floor, Math.floor(budgetLeft / Math.max(1, r.open)));
+      // v1 fill: bots clear AT consensus value, so to actually WIN we bid just ABOVE it
+      // (value + premium). ESPN's myMax reserve keeps a legal roster completable, so once
+      // budget draws down it forces cheap fills automatically -> natural stars-and-scrubs
+      // that still fills every slot in budget. (Balanced value targeting is the next layer.)
+      const premium = Number(valueOf(rest, "--premium") ?? 2);
+      const val = b.preDraftVal ?? rk?.value ?? perSlot;
+      const cap = Math.min(b.myMax ?? 0, val + premium);
       const offer = b.currentOffer ?? 0;
       if (need && offer < cap) {
         const ok = await quickBid(page);
