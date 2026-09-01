@@ -315,12 +315,20 @@ async function cmdAutoDraft(rest: string[]) {
   const a = await attachFor(rest);
   const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
   let lastPlayer = "";
+  let emptyReads = 0;
   for (let i = 0; i < rounds; i++) {
     const r = await readRoster(page);
     if (r.filled === 0 && r.open === 0) {
-      console.log(`no draft roster detected (not in a draft room?). Stopping.`);
-      break;
+      // Roster panel not rendered yet (pre-draft countdown) OR not in a draft. Tolerate a
+      // startup window before giving up.
+      if (++emptyReads > 25) {
+        console.log(`no draft roster after ${emptyReads} reads -- not in a draft room. Stopping.`);
+        break;
+      }
+      await page.waitForTimeout(1400);
+      continue;
     }
+    emptyReads = 0;
     if (r.open === 0) {
       console.log(`DONE: full roster (${r.filled} slots), spent $${r.spent}.`);
       break;
@@ -339,8 +347,12 @@ async function cmdAutoDraft(rest: string[]) {
       // budget draws down it forces cheap fills automatically -> natural stars-and-scrubs
       // that still fills every slot in budget. (Balanced value targeting is the next layer.)
       const premium = Number(valueOf(rest, "--premium") ?? 2);
+      const paceK = Number(valueOf(rest, "--pace") ?? 3); // max multiple of per-slot share per player
       const val = b.preDraftVal ?? rk?.value ?? perSlot;
-      const cap = Math.min(b.myMax ?? 0, val + premium);
+      // Pace: never spend more than paceK x our per-slot share on one player, so budget lasts to
+      // fill all slots (prevents blowing $80 on one stud and starving the rest). ESPN myMax is
+      // the hard reserve; this is the softer even-fill governor.
+      const cap = Math.min(b.myMax ?? 0, val + premium, paceK * perSlot);
       const offer = b.currentOffer ?? 0;
       if (need && offer < cap) {
         const ok = await quickBid(page);

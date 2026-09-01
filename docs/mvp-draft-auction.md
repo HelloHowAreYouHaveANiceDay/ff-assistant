@@ -1,5 +1,19 @@
 # MVP: Draft-Day Auction Agent
 
+> **STATUS: MVP ACHIEVED (2026-09-01).** The agent drafts a complete, legal, in-budget roster
+> fully autonomously. Done-bar met: **3 consecutive practice auctions completed 12/12** legal
+> rosters, 0 unfilled slots, verified from the roster panel -- $168, $200 (fresh, pick-1-to-done),
+> $200 (fresh). Legality guard proven by fault injection + strategy seam proven (`npm test`, 9/9).
+> `ff launch-practice` (agent self-launches) + `ff auto-draft` (full-auto Engine) + `strategy.ts`
+> (pluggable Strategy) + `espnAuction.ts` (verified reader/actor).
+>
+> **What the MVP is NOT (the next investment): roster QUALITY.** The v1 fill strategy (bid
+> value+premium, paced per-slot, ESPN-reserve backstop) reliably COMPLETES a legal roster but
+> spends unevenly (variance in which studs it wins) -- balanced valuation/targeting/nomination is
+> the Strategy layer to build next, behind the same Engine seam. `nominate()` also still TODO
+> (bots + ESPN auto-nominate suffice to fill today).
+
+
 Scope: a copresent agent that drafts a **complete, legal, in-budget roster** in the user's
 16-team $200 salary-cap ESPN auction, fully autonomously, per a strategy set with the user
 beforehand. Weekly lineup/waivers/copilot are out of scope for this MVP.
