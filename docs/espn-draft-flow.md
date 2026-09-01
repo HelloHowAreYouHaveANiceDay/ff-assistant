@@ -82,6 +82,23 @@ From `data/draftroom.json` (fixed-data-table based app):
 - Header shows `PK n OF 192`, a pick clock (`--:--` between picks), and per-team `$budget`.
 - Selectors for readBoard/makePick still need pinning to specific cell classes (next step).
 
+## VERIFIED auction reader (live, 2026-08-31)
+
+`src/draft/espnAuction.ts` `readBlock(page)` returns live values, confirmed against a running
+practice auction (`ff read-block`):
+`{ player:"Jonathan Taylor", currentOffer:92, myMax:189, preDraftVal:94, quickBidLabel:"Offer $93" }`.
+
+Stable selectors (anchor on these, not jsx-<hash>):
+- On the block: `[data-testid="player-selected"]`; name `.playerinfo__playername`.
+- Offer + our max: `[class*="player-nominated-fo"]` text "Current offer: $X Manual offer (max $Y)".
+- ESPN suggested value: `span.player-default-bid` "Pre-Draft Val: $N" (use as v1 valuation).
+- Quick bid (current+$1): `button.bid-player__button` text "Offer $N" (disabled when not biddable).
+- Bid history: `ul.bid-history__list li.bid` ("$62 <team>"). Per-team budgets: `ul.picklist`.
+- Available board: `div.fixedDataTableLayout_main` (virtualized -- scroll to read all).
+
+`quickBid(page)` clicks the "Offer $N" button. Still to build: readBoard (what to nominate + max
+per player), readBudgets (per-team $ left), nominate(name), and the bid STRATEGY.
+
 ## Still needed
 
 - The **draft-room** DOM (the pick UI): available-players list, on-the-clock indicator, pick

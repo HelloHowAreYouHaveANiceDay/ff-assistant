@@ -35,6 +35,8 @@ async function main() {
       return cmdText(rest);
     case "launch-practice":
       return cmdLaunchPractice(rest);
+    case "read-block":
+      return cmdReadBlock(rest);
     case "inspect-draft":
       return cmdInspect(rest);
     case "rank":
@@ -167,7 +169,22 @@ async function cmdLaunchPractice(rest: string[]) {
       .catch(() => false);
   }
   if (!modalOpen) console.error("Configure-practice modal did not open after retries");
-  // Step 2: in the modal, start the draft (opens the draft app via window.open).
+  // Step 1b: pick a draft position -- "Start" silently no-ops until one is chosen. It's a
+  // native <select>; choose a concrete option (index 1 skips the placeholder).
+  const posSel = page.locator("select").filter({ hasNot: page.locator("option:only-child") }).first();
+  if ((await page.locator("select").count()) > 0) {
+    const sel = page.locator("select").last();
+    await sel.selectOption({ index: 1 }).catch(async () => {
+      // Fallback: pick the last option (a concrete position, not the placeholder).
+      const opts = await sel.locator("option").count();
+      if (opts > 1) await sel.selectOption({ index: opts - 1 }).catch(() => {});
+    });
+    console.log("Selected a draft position.");
+  } else {
+    console.error("No <select> for draft position found.");
+  }
+  void posSel;
+  // Step 2: start the draft (opens the draft app via window.open, captured by the shim).
   await startBtn.first().click({ timeout: 8000 }).catch((e) => console.error("start-click:", e.message));
   await page.waitForTimeout(1500);
   // window.open fires synchronously inside the handler; read what it targeted.
@@ -180,6 +197,15 @@ async function cmdLaunchPractice(rest: string[]) {
   } else {
     console.log(`No window.open captured. Current URL: ${page.url()} | title: ${await page.title()}`);
   }
+  await detach(a);
+}
+
+async function cmdReadBlock(rest: string[]) {
+  const { readBlock } = await import("./draft/espnAuction.js");
+  const a = await attachFor(rest);
+  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
+  const state = await readBlock(page);
+  console.log(JSON.stringify(state, null, 2));
   await detach(a);
 }
 
