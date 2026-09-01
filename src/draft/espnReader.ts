@@ -22,6 +22,7 @@ const COLLECT_DOM = `(() => {
     cls: (el.getAttribute("class") || "").slice(0, 120) || undefined,
     testid: el.getAttribute("data-testid") || undefined,
     role: el.getAttribute("role") || undefined,
+    href: el.getAttribute("href") || undefined,
     text: (el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 80) || undefined,
   });
   const all = Array.from(document.querySelectorAll("*"));

@@ -92,13 +92,27 @@ async function cmdClick(rest: string[]) {
     console.error('usage: ff click "<visible text>"');
     process.exit(2);
   }
+  const exact = rest.includes("--exact");
   const a = await attachFor(rest);
   const page = findPage(a, "espn.com") ?? a.pages[0];
-  const loc = page.getByText(text, { exact: false }).first();
+  // Prefer a real button/link (by accessible name) over any text node that merely
+  // CONTAINS the string (e.g. a heading) -- that was silently clicking the wrong element.
+  const byRole = page.getByRole("button", { name: text, exact }).or(
+    page.getByRole("link", { name: text, exact }),
+  );
+  const loc = (await byRole.count()) > 0 ? byRole.first() : page.getByText(text, { exact }).first();
   await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+  // A practice-draft launch may open a popup; capture it if so.
+  const popupP = page.waitForEvent("popup", { timeout: 4000 }).catch(() => null);
   await loc.click({ timeout: 8000 });
+  const popup = await popupP;
   await page.waitForLoadState("domcontentloaded").catch(() => {});
-  console.log(`Clicked "${text}". Now at: ${page.url()}`);
+  if (popup) {
+    await popup.waitForLoadState("domcontentloaded").catch(() => {});
+    console.log(`Clicked "${text}". Popup opened: ${popup.url()}`);
+  } else {
+    console.log(`Clicked "${text}". Now at: ${page.url()}`);
+  }
   await detach(a);
 }
 
