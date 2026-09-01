@@ -12,8 +12,7 @@
   },
   "scripts": {
     "ff": "tsx src/ff.ts",
-    "typecheck": "tsc --noEmit",
-    "chrome": "node scripts/launch-chrome.mjs"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "playwright-core": "^1.48.0"

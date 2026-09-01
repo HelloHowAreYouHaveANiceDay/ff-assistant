@@ -1,9 +1,10 @@
 // Copresent browser attach (D0): connect to the USER'S already-running, logged-in
-// Chrome/Edge over the DevTools Protocol -- mirrors the bro pattern
-// (chromium.connectOverCDP on a --remote-debugging-port). We never launch a fresh,
-// logged-out browser for real actions; we join the session the user is present in.
+// browser over the DevTools Protocol. The session is OWNED BY bro (D2) -- bro launched
+// it with a persistent profile and holds the login; ff just joins it via
+// chromium.connectOverCDP. We never launch or log in a browser ourselves.
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { sessionPort } from "./bro.js";
 
 export interface Attached {
   browser: Browser;
@@ -12,17 +13,20 @@ export interface Attached {
   pages: Page[];
 }
 
-const DEFAULT_PORT = 9222;
+/** Attach to the browser bro is holding for `site` (resolves the CDP port from bro). */
+export async function attachBro(site = "espn"): Promise<Attached> {
+  return attach(sessionPort(site));
+}
 
 /** Connect to a running browser exposing a CDP endpoint on 127.0.0.1:<port>. */
-export async function attach(port: number = DEFAULT_PORT): Promise<Attached> {
+export async function attach(port: number): Promise<Attached> {
   let browser: Browser;
   try {
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   } catch (err) {
     throw new Error(
       `Could not attach to a browser on CDP port ${port}. ` +
-        `Launch one first (npm run chrome), and make sure you are logged into ESPN in it. ` +
+        `Start a bro session first (npm run ff -- bro session start espn) and log in. ` +
         `Underlying error: ${(err as Error).message}`,
     );
   }

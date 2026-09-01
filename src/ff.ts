@@ -7,7 +7,8 @@
 //   npm run ff -- rank              print top players by VOR from the rankings CSV
 //   npm run ff -- mock              run the draft loop (needs real selectors first)
 
-import { attach, findPage, detach } from "./browser/attach.js";
+import { attach, attachBro, findPage, detach, type Attached } from "./browser/attach.js";
+import { passthrough as broPassthrough } from "./browser/bro.js";
 import { inspectDraftDom } from "./draft/espnReader.js";
 import { loadRankings } from "./data/rankings.js";
 import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank.js";
@@ -21,8 +22,11 @@ const DEFAULT_LEAGUE: LeagueSettings = {
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
+    case "bro":
+      // Passthrough to the bro CLI: `ff bro session start espn`, `ff bro sessions`, ...
+      return void process.exit(broPassthrough(rest));
     case "attach":
-      return cmdAttach();
+      return cmdAttach(rest);
     case "goto":
       return cmdGoto(rest);
     case "inspect-draft":
@@ -33,13 +37,27 @@ async function main() {
       return cmdMock(rest);
     default:
       console.log(
-        "commands: attach | goto <url> | inspect-draft [--port N] [--out FILE] | rank [--csv FILE] | mock [--csv FILE]",
+        "commands:\n" +
+          "  bro <args...>              passthrough to the bro CLI (e.g. bro session start espn)\n" +
+          "  attach [--site espn|--port N]   test the copresent connection to bro's session\n" +
+          "  goto <url> [--site]        navigate the copresent session\n" +
+          "  inspect-draft [--out FILE] dump the live ESPN draft-room DOM\n" +
+          "  rank [--csv FILE]          top players by VOR (offline)\n" +
+          "  mock [--csv FILE]          run the draft loop (needs real selectors)",
       );
   }
 }
 
-async function cmdAttach() {
-  const a = await attach(portFrom(process.argv));
+// Attach via bro's session by default; allow --port for a manually-launched browser.
+async function attachFor(rest: string[]): Promise<Attached> {
+  const port = valueOf(rest, "--port");
+  if (port) return attach(Number(port));
+  const site = valueOf(rest, "--site") ?? "espn";
+  return attachBro(site);
+}
+
+async function cmdAttach(rest: string[]) {
+  const a = await attachFor(rest);
   console.log("Attached. Open tabs:");
   for (const p of a.pages) console.log("  -", p.url());
   const espn = findPage(a, "espn.com");
@@ -55,7 +73,7 @@ async function cmdGoto(rest: string[]) {
     console.error("usage: ff goto <url>  (e.g. https://fantasy.espn.com/football/mockdraftlobby)");
     process.exit(2);
   }
-  const a = await attach(portFrom(process.argv));
+  const a = await attachFor(rest);
   // Prefer an existing ESPN tab so we stay in the user's logged-in context.
   const page = findPage(a, "espn.com") ?? a.pages[0];
   await page.goto(url, { waitUntil: "domcontentloaded" });
@@ -65,7 +83,7 @@ async function cmdGoto(rest: string[]) {
 
 async function cmdInspect(rest: string[]) {
   const out = valueOf(rest, "--out") ?? "data/draft-dom-snapshot.json";
-  const a = await attach(portFrom(process.argv));
+  const a = await attachFor(rest);
   const page = findPage(a, "espn.com");
   if (!page) {
     console.error("No espn.com tab open. Navigate into an ESPN mock draft first.");
@@ -91,7 +109,7 @@ function cmdRank(rest: string[]) {
 
 async function cmdMock(rest: string[]) {
   const csv = valueOf(rest, "--csv") ?? "data/rankings.sample.csv";
-  const a = await attach(portFrom(process.argv));
+  const a = await attachFor(rest);
   const page = findPage(a, "espn.com");
   if (!page) {
     console.error("No espn.com tab open. Join an ESPN mock draft first.");
@@ -109,10 +127,6 @@ async function cmdMock(rest: string[]) {
 function valueOf(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
   return i >= 0 ? args[i + 1] : undefined;
-}
-function portFrom(argv: string[]): number {
-  const v = valueOf(argv, "--port");
-  return v ? Number(v) : 9222;
 }
 
 main().catch((err) => {
