@@ -47,6 +47,10 @@ async function main() {
       return cmdAutoDraft(rest);
     case "board":
       return cmdBoard(rest);
+    case "enter-draft":
+      return cmdEnterDraft(rest);
+    case "preflight":
+      return cmdPreflight(rest);
     case "inspect-draft":
       return cmdInspect(rest);
     case "rank":
@@ -215,6 +219,91 @@ async function cmdLaunchPractice(rest: string[]) {
   } else {
     console.log(`No window.open captured. Current URL: ${page.url()} | title: ${await page.title()}`);
   }
+  await detach(a);
+}
+
+const REAL_LEAGUE = "462233"; // seacaptaindate.com (16-team $200 auction)
+const REAL_TEAM = "8";
+
+// Enter the REAL league draft room (G1). Same auction app as practice, so once we're in,
+// readBlock/readRoster/readBoard/quickBid/jumpBid all transfer. The real draft opens a few
+// minutes before start; run this then, then `ff auto-draft`. Tries, in order: an "Enter Draft"
+// control from the league (captured window.open), then the direct draft URL.
+async function cmdEnterDraft(rest: string[]) {
+  const { readRoster } = await import("./draft/espnAuction.js");
+  const league = valueOf(rest, "--league") ?? REAL_LEAGUE;
+  const team = valueOf(rest, "--team") ?? REAL_TEAM;
+  const a = await attachFor(rest);
+  // Reuse a non-draft tab (or make one); don't disturb an existing draft tab if already in.
+  const existingDraft = a.pages.find((p) => /\/football\/draft/.test(p.url()));
+  const inDraft = async (pg: typeof a.pages[number]) => {
+    const t = (await pg.title().catch(() => "")) || "";
+    if (!/Fantasy Football Draft/i.test(t)) return false;
+    const r = await readRoster(pg).catch(() => null);
+    return !!r && (r.filled + r.open) > 0;
+  };
+  if (existingDraft && (await inDraft(existingDraft))) {
+    console.log(`Already in a draft room: ${existingDraft.url()}`);
+    await detach(a);
+    return;
+  }
+  const page = a.pages.find((p) => !/\/football\/draft/.test(p.url())) ?? (await a.context.newPage());
+
+  // Strategy 1: from the league clubhouse, click an "Enter Draft"/"Draft Now" control (opens the
+  // draft app via window.open, like practice). Capture the URL and navigate our single tab.
+  await page.goto(`https://fantasy.espn.com/football/team?leagueId=${league}&teamId=${team}`, { waitUntil: "networkidle" }).catch(() => {});
+  await page.evaluate("window.__ffOpen=null; if(!window.__ffPatched){window.__ffPatched=1; window.open=function(u){try{window.__ffOpen=String(u||'');}catch(e){} return {closed:false,focus(){},blur(){},close(){},postMessage(){}};};}");
+  const enterBtn = page.getByRole("button", { name: /enter draft|draft now|join draft|go to draft|enter live draft/i })
+    .or(page.getByRole("link", { name: /enter draft|draft now|join draft|go to draft|enter live draft/i }));
+  if ((await enterBtn.count()) > 0) {
+    await enterBtn.first().click({ timeout: 6000 }).catch((e) => console.error("enter-click:", e.message));
+    await page.waitForTimeout(1500);
+    const opened = (await page.evaluate("window.__ffOpen")) as string | null;
+    if (opened) {
+      await page.goto(opened.startsWith("http") ? opened : new URL(opened, page.url()).href, { waitUntil: "domcontentloaded" }).catch(() => {});
+    }
+  } else {
+    console.log("No 'Enter Draft' control on the clubhouse (draft not open yet?). Trying direct URL.");
+  }
+
+  // Strategy 2: direct draft URL (works once the draft room is live).
+  if (!(await inDraft(page))) {
+    await page.goto(`https://fantasy.espn.com/football/draft?leagueId=${league}&seasonId=2026&teamId=${team}`, { waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.waitForTimeout(1500);
+  }
+
+  if (await inDraft(page)) {
+    const r = await readRoster(page);
+    console.log(`IN THE DRAFT ROOM: ${page.url()}`);
+    console.log(`roster slots: ${r.filled + r.open} (filled ${r.filled}); open by pos ${JSON.stringify(r.openByBase)} flex ${r.flexOpen} bench ${r.benchOpen}`);
+    console.log(`Ready. Run: npm run ff -- auto-draft --csv <values.csv>`);
+  } else {
+    console.log(`Draft room NOT reachable yet (league ${league}). It opens shortly before start -- retry then. Now at: ${page.url()}`);
+  }
+  await detach(a);
+}
+
+// Pre-draft readiness check (G2/G9): session live + logged in + league reachable + draft state.
+async function cmdPreflight(rest: string[]) {
+  const { readRoster } = await import("./draft/espnAuction.js");
+  const league = valueOf(rest, "--league") ?? REAL_LEAGUE;
+  const team = valueOf(rest, "--team") ?? REAL_TEAM;
+  let a: Attached;
+  try { a = await attachFor(rest); } catch (e) { console.log(`FAIL: cannot attach to bro session -- ${(e as Error).message}`); return; }
+  console.log(`OK: attached to browser (${a.pages.length} tabs)`);
+  const draftTab0 = a.pages.find((p) => /\/football\/draft/.test(p.url()));
+  if (draftTab0) {
+    const r0 = await readRoster(draftTab0).catch(() => null);
+    console.log(`NOTE: a draft room is already open: ${draftTab0.url()} -- roster reads ${r0 ? r0.filled + r0.open : "?"} slots`);
+  }
+  // Use a NON-draft tab (or a fresh one) so we never disturb an in-progress draft.
+  const page = a.pages.find((p) => !/\/football\/draft/.test(p.url())) ?? (await a.context.newPage());
+  await page.goto(`https://fantasy.espn.com/football/team?leagueId=${league}&teamId=${team}`, { waitUntil: "networkidle" }).catch(() => {});
+  await page.waitForTimeout(1200);
+  const title = (await page.title().catch(() => "")) || "";
+  const loggedIn = !/log ?in|sign ?in/i.test(title) && /espn/i.test(title.length ? title : page.url());
+  console.log(`${loggedIn ? "OK" : "CHECK"}: league page title = "${title}" (logged in: ${loggedIn})`);
+  console.log(`When the draft opens: npm run ff -- enter-draft  (then auto-draft)`);
   await detach(a);
 }
 
