@@ -301,7 +301,7 @@ async function cmdAutoBid(rest: string[]) {
 // up to min(our value / ESPN pre-draft val / floor, ESPN's legal max). ESPN's myMax already
 // reserves $1/open slot, so we can never strand a slot -> the done-bar is structurally safe.
 async function cmdAutoDraft(rest: string[]) {
-  const { readBlock, readRoster, hasOpenSlotFor, quickBid } = await import("./draft/espnAuction.js");
+  const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid } = await import("./draft/espnAuction.js");
   const { loadRankings } = await import("./data/rankings.js");
   const { makeV2Strategy } = await import("./draft/strategy.js");
   const rounds = Number(valueOf(rest, "--rounds") ?? 400);
@@ -377,7 +377,19 @@ async function cmdAutoDraft(rest: string[]) {
         const cap = Math.min(decision.maxBid, b.myMax ?? 0);
         const offer = b.currentOffer ?? 0;
         if (offer < cap) {
-          const ok = await quickBid(page);
+          // For a player we value (big gap to cap), JUMP-bid toward our cap -- the +1 button is
+          // too slow to win fast stud auctions. Step ~1/3 of the gap (min $5) so we win at a
+          // reasonable price if bots quit early, rather than always paying full cap. Cheap/close
+          // players use the +1 quick bid.
+          const gap = cap - offer;
+          let ok: boolean;
+          if (gap >= 6 && cap >= 12) {
+            const target = Math.min(cap, offer + Math.max(5, Math.ceil(gap * 0.34)));
+            ok = await jumpBid(page, target);
+            if (!ok) ok = await quickBid(page); // fallback if the manual field isn't ready
+          } else {
+            ok = await quickBid(page);
+          }
           if (b.player !== lastPlayer)
             console.log(`r${i}: bid ${b.player} (${pos}) $${offer} cap=${cap} [${decision.reason}] myMax=${b.myMax} [open ${r.open}]${ok ? "" : " (noclick)"}`);
           lastPlayer = b.player;

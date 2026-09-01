@@ -136,5 +136,20 @@ export async function quickBid(page: Page): Promise<boolean> {
   return true;
 }
 
+/** Jump-bid a specific dollar amount via the manual-offer input (leapfrogs the +1 button, which
+ *  is too slow to win fast-rising stud auctions). Returns false if the field/submit isn't usable. */
+export async function jumpBid(page: Page, amount: number): Promise<boolean> {
+  const custom = page.locator("form.bidding-form__custom");
+  if ((await custom.count()) === 0) return false;
+  const input = custom.locator("input").first();
+  if ((await input.count()) === 0) return false;
+  await input.fill(String(Math.floor(amount))).catch(() => {});
+  await page.waitForTimeout(120); // let the submit enable
+  const submit = custom.locator("button", { hasText: /Offer/i }).first();
+  if ((await submit.count()) === 0 || (await submit.isDisabled().catch(() => true))) return false;
+  await submit.click({ timeout: 3000 }).catch(() => {});
+  return true;
+}
+
 // TODO: nominate(playerName) when it's our nomination turn (pick from board + confirm);
 // readBoard() from .fixedDataTableLayout_main for nomination targets.
