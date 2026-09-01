@@ -178,6 +178,24 @@ export async function readBoard(page: Page): Promise<BoardPlayer[]> {
   })()`)) as BoardPlayer[];
 }
 
+/** Scroll the full available-players board and collect every player's ESPN $ value. The board is
+ *  virtualized (only ~18 rows in the DOM at once), so we scroll and accumulate until it stops
+ *  yielding new names. Gives a complete values table calibrated to THIS league's settings. */
+export async function dumpValues(page: Page, maxScrolls = 120): Promise<BoardPlayer[]> {
+  const byName = new Map<string, BoardPlayer>();
+  const board = page.locator(".fixedDataTableLayout_main").first();
+  const box = await board.boundingBox().catch(() => null);
+  let stagnant = 0;
+  for (let i = 0; i < maxScrolls && stagnant < 4; i++) {
+    const before = byName.size;
+    for (const p of await readBoard(page)) if (p.name && !byName.has(p.name)) byName.set(p.name, p);
+    stagnant = byName.size > before ? 0 : stagnant + 1;
+    if (box) { await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.wheel(0, 600); }
+    await page.waitForTimeout(250);
+  }
+  return [...byName.values()];
+}
+
 /** Nominate a player by clicking the "Select" button in their board row. Returns false if the
  *  player isn't visible on the board or Select isn't available (e.g. not our nomination turn). */
 export async function nominate(page: Page, playerName: string): Promise<boolean> {

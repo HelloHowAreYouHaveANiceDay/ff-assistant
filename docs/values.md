@@ -33,5 +33,24 @@ cannot target. Building the table is pre-draft prep, not code.
 
 ## Note
 
-`readBoard()` already reads ESPN's per-player value off the draft board live, so a future step can
-snapshot a full baseline value table from ESPN and hand-edit it for our opinions.
+`readBoard()` already reads ESPN's per-player value off the draft board live (`ff dump-values`
+snapshots it; note the board is virtualized so a full scroll-scrape only reliably gets the top
+players). The Strategy reads ESPN's value for whoever is on the block LIVE, so it never lacks a value.
+
+## Decision for THIS league (2026-09-01): no custom values table needed for v1
+
+The nflverse/dynastyprocess datasets were evaluated (github.com/dynastyprocess/data):
+`values.csv` / `values-players.csv` are **DYNASTY** values (age-weighted -- Smith-Njigba ranks
+above Bijan), **wrong for redraft**; nflverse has **no preseason projections** (only actuals +
+expected points + FantasyPros ECR ranks). A `db_playerids.csv` name<->ESPN crosswalk exists if we
+ever need one (`raw.githubusercontent.com/dynastyprocess/data/master/files/db_playerids.csv`).
+
+**Conclusion:** for seacaptaindate.com the edge is NOT a fancier value table -- it is DISCIPLINE.
+The room overpays studs ($80-106) vs ESPN book (docs/league-tendencies.md), so bidding ESPN's own
+live values with a **balanced, disciplined posture** captures value -- and that is a STRATEGY-PARAM
+change, not a data file. Defaults now encode it: `starterReserve 12`, `maxShare 0.35`, `premium 1`.
+
+**Optional future edge (v3):** a real REDRAFT value table from FantasyPros redraft ECR (via
+`nflreadpy.load_ff_rankings(type="draft")`) or a projections source -> VOR->$ (docs/value-methods.md),
+name-matched via the dynastyprocess crosswalk. Only worth it if we want to disagree with ESPN's
+book; the disciplined-on-ESPN-values approach already beats an overpaying room.

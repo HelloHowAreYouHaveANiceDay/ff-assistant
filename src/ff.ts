@@ -47,6 +47,8 @@ async function main() {
       return cmdAutoDraft(rest);
     case "board":
       return cmdBoard(rest);
+    case "dump-values":
+      return cmdDumpValues(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -307,6 +309,21 @@ async function cmdPreflight(rest: string[]) {
   await detach(a);
 }
 
+// Scrape ESPN's full board values (calibrated to our league) into a values CSV.
+async function cmdDumpValues(rest: string[]) {
+  const { dumpValues } = await import("./draft/espnAuction.js");
+  const out = valueOf(rest, "--out") ?? "data/values.espn.csv";
+  const a = await attachFor(rest);
+  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
+  const players = await dumpValues(page);
+  const { writeFileSync } = await import("node:fs");
+  const rows = ["player,pos,value"];
+  for (const p of players) if (p.pos && p.value != null) rows.push(`${p.name},${p.pos},${p.value}`);
+  writeFileSync(out, rows.join("\n") + "\n", "utf8");
+  console.log(`wrote ${rows.length - 1} player values -> ${out}`);
+  await detach(a);
+}
+
 async function cmdBoard(rest: string[]) {
   const { readBoard } = await import("./draft/espnAuction.js");
   const a = await attachFor(rest);
@@ -425,10 +442,14 @@ async function cmdAutoDraft(rest: string[]) {
   }
   const strat = makeV2Strategy({
     values: Object.keys(values).length ? values : undefined,
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 4),
+    // Defaults tuned for seacaptaindate.com (docs/league-tendencies.md): the room is aggressive
+    // stars-and-scrubs (studs go $80-106, 61% of picks $1-5), so run BALANCED/disciplined -- let
+    // them overpay for studs, win the under-contested $15-40 tier. Higher reserve + lower share.
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 12),
     benchReserve: Number(valueOf(rest, "--bench-reserve") ?? 1),
     premium: Number(valueOf(rest, "--premium") ?? 1),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
+    maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
   });
   const normPos = (p: string | null): string | null => {
     if (!p) return null;
