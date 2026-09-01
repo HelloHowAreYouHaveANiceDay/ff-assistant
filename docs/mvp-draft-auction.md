@@ -7,11 +7,16 @@
 > `ff launch-practice` (agent self-launches) + `ff auto-draft` (full-auto Engine) + `strategy.ts`
 > (pluggable Strategy) + `espnAuction.ts` (verified reader/actor).
 >
-> **What the MVP is NOT (the next investment): roster QUALITY.** The v1 fill strategy (bid
-> value+premium, paced per-slot, ESPN-reserve backstop) reliably COMPLETES a legal roster but
-> spends unevenly (variance in which studs it wins) -- balanced valuation/targeting/nomination is
-> the Strategy layer to build next, behind the same Engine seam. `nominate()` also still TODO
-> (bots + ESPN auto-nominate suffice to fill today).
+> **Phase 2.5 -- roster QUALITY (in progress).** The v2 Strategy (`makeV2Strategy`, wired through
+> the seam) replaces v1's flat pace cap with **budget-aware, value-based bidding**: bid up to OUR
+> value for a player, but only what we can afford while reserving real $ per other open STARTER
+> slot. Plus **jump-bidding** (`jumpBid`, manual-offer field) so we actually WIN the studs we value
+> -- the +1 button was too slow. VERIFIED LIVE: wins real starters (Jeremiyah Love ~$59, Josh Allen,
+> A.J. Brown). Tuning knobs (all in `V2Config`): `starterReserve` (balance vs concentration -- 10),
+> `maxShare` (0.45 cap per player), `premium`, `aggr`, plus a pluggable value table (OUR values via
+> CSV, else ESPN pre-draft val). Tests 15+ incl. fault-injection (never-strand, fill-floor) + seam.
+> **Open:** balance still leans stars-and-scrubs, being tuned via `starterReserve`; `nominate()`
+> still TODO (bots + ESPN auto-nominate fill today); OUR projection-based value table is a data add.
 
 
 Scope: a copresent agent that drafts a **complete, legal, in-budget roster** in the user's
