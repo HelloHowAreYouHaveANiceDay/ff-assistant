@@ -1,0 +1,26 @@
+{
+  "name": "ff-assistant",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Copresent fantasy football agent -- draft-day sprint harness (ESPN first).",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "ff": "./src/ff.ts"
+  },
+  "scripts": {
+    "ff": "tsx src/ff.ts",
+    "typecheck": "tsc --noEmit",
+    "chrome": "node scripts/launch-chrome.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
