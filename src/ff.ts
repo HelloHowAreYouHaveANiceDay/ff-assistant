@@ -391,12 +391,14 @@ async function cmdBacktest(rest: string[]) {
   }
   const marketSd = Number(valueOf(rest, "--market-noise") ?? 0.30);
   const ourSd = valueOf(rest, "--our-noise") != null ? Number(valueOf(rest, "--our-noise")) : undefined; // < marketSd => value edge
+  const ourWeeklySd = valueOf(rest, "--our-weekly-noise") != null ? Number(valueOf(rest, "--our-weekly-noise")) : undefined; // set => OUR in-season LINEUP skill
+  const botWeeklySd = valueOf(rest, "--bot-weekly-noise") != null ? Number(valueOf(rest, "--bot-weekly-noise")) : undefined; // set => bots also set weekly lineups
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;
   for (const yr of seasons) {
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(pts.get(yr)!, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, ourSd); if (r.champ) champ++; if (r.madePlayoffs) playoffs++; total++; }
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(pts.get(yr)!, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, ourSd, ourWeeklySd, botWeeklySd); if (r.champ) champ++; if (r.madePlayoffs) playoffs++; total++; }
   }
-  const edge = ourSd == null ? "none (=market)" : `ourSd ${ourSd} vs market ${marketSd}`;
+  const edge = `${ourSd == null ? "draft:none" : `draft:ourSd ${ourSd}`} lineup:us=${ourWeeklySd ?? "naive"}/bots=${botWeeklySd ?? "naive"} vs market ${marketSd}`;
   console.log(`BACKTEST ${seasons[0]}-${seasons[seasons.length - 1]} (${seasons.length}x${nPerSeason})  reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  value-edge: ${edge}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / 16).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
 }

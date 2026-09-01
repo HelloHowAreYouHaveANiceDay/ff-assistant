@@ -23,7 +23,19 @@ Tightening our projection error (sim sigma 0.30 -> 0.05) lifts titles ~39% -> ~4
 real. This is why investing in a better projection source (multi-source consensus via ffanalytics,
 a real model, injury/role updates to draft day) pays -- it is the top TUNABLE lever.
 
-### 4. Roster construction / aggression dial -- NONE across seasons
+### 4. IN-SEASON lineup management -- BIG absolute, MEDIUM marginal, driven by WEEKLY projections
+Setting your weekly lineup by that week's info (matchup/health) instead of a season average is the
+single biggest ABSOLUTE lever: naive season-lineups -> 41% titles, weekly-informed -> ~69%. BUT most
+managers already set weekly lineups, so the realistic MARGINAL edge is being BETTER than the room:
+- everyone naive: 41%  |  everyone equally weekly-skilled: ~45%
+- us better than the room (weekly proj sd 0.25 vs their 0.4): ~49.5%
+- us much better (sd 0.15): ~51%
+So ~+5-7 championship points for superior WEEKLY projections -- comparable to the draft value edge,
+and the SAME lever (sharper projections) applied weekly. This is why in-season and projection
+sharpening are one build: one projection layer -> season values (draft) AND weekly forecasts (lineup).
+The agent also never forgets to set a lineup or misses a bye -- a real edge over humans who do.
+
+### 5. Roster construction / aggression dial -- NONE across seasons
 Stars-and-scrubs vs balanced vs moderate all land ~27-28% over 11 seasons (the single-season gaps
 wash out). Real within one season, neutral in expectation. **Do not spend effort tuning this** --
 keep a sane moderate default and move on.
@@ -53,8 +65,10 @@ software agent beats distracted humans:
   fantasy edge of all -- a future product surface, not a draft-day lever.
 
 ## Where to invest (in priority order)
-1. **Keep our OWN values** (independent of ESPN/consensus) -- already the biggest realized edge.
-2. **Make those values more accurate** -- better projection source; the top tunable lever (#3).
-3. **Wire live inflation + smarter nomination** into the bidder -- medium edges we've scaffolded.
+1. **Build ONE sharp, independent projection layer** -- it powers BOTH the draft (season -> values,
+   ~+12-19 pts) AND in-season lineups (weekly, ~+5-7 marginal pts). Highest leverage, serves everything.
+2. **In-season lineup automation** on top of it -- never miss a lineup/bye, start the weekly-best.
+   (Absolute value is huge; marginal value scales with how much sharper our weekly projection is.)
+3. **Wire live inflation + smarter nomination** into the draft bidder -- medium edges we've scaffolded.
 4. **Do NOT keep tuning the aggression dial** -- proven neutral.
-5. Long term, the real frontier is **in-season management**, not the draft.
+5. Waiver/trade automation (also fed by the same ROS projection) -- the next in-season surface.

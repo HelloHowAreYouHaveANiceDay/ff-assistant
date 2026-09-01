@@ -16,11 +16,13 @@ const PLAYOFF_WEEKS = [15, 16, 17];
 
 export interface BacktestResult { champ: boolean; madePlayoffs: boolean; wins: number; regPoints: number; }
 
-/** Choose the lineup by season projection (intended starters), score by that week's ACTUAL points.
- *  Players with no entry that week (bye/inactive) are not startable -> depth matters. */
-function weekScore(roster: { name: string; pos: string; proj: number }[], week: number, weekly: Weekly, lg: SimLeague): number {
+/** Choose the lineup by a selection value (default = season projection = a NAIVE manager who ignores
+ *  weekly matchup/health), score by that week's ACTUAL. A skilled manager passes `sel` = a WEEKLY
+ *  projection (actual + forecast noise) -> starts the right players that week. Byes/inactives are
+ *  unstartable -> depth matters. */
+function weekScore(roster: { name: string; pos: string; proj: number }[], week: number, weekly: Weekly, lg: SimLeague, sel?: Map<string, number>): number {
   const startable = roster
-    .map((p) => ({ pos: p.pos, proj: p.proj, actual: weekly.get(p.name)?.get(week) }))
+    .map((p) => ({ pos: p.pos, proj: sel ? (sel.get(p.name) ?? p.proj) : p.proj, actual: weekly.get(p.name)?.get(week) }))
     .filter((p) => p.actual != null) as { pos: string; proj: number; actual: number }[];
   // pick starters by proj, but the "points" we total are ACTUAL -> reuse startingPoints by feeding
   // proj as the selection value, then map back. Simplest: group, sort by proj, sum actual of chosen.
@@ -37,7 +39,7 @@ function weekScore(roster: { name: string; pos: string; proj: number }[], week: 
   return total;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number): BacktestResult {
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number): BacktestResult {
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
   const us = ourSd == null ? marketSd : ourSd; // our projection error; < marketSd => a VALUE EDGE
@@ -53,24 +55,32 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   const rosters: { name: string; pos: string; proj: number }[][] = Array.from({ length: lg.teams }, () => []);
   for (const p of picks) rosters[p.team].push({ name: p.name, pos: p.pos, proj: projMap.get(p.name) ?? 0 });
 
+  // In-season LINEUP skill: our team (0) can set each week's lineup by a WEEKLY projection
+  // (actual + forecast noise, sd ourWeeklySd) instead of the season average -> starts the right
+  // players that week. Bots stay naive (season projection). Isolates the lineup-management edge.
+  const selFor = (t: number, wk: number): Map<string, number> | undefined => {
+    const sd = t === 0 ? ourWeeklySd : botWeeklySd;
+    if (sd == null) return undefined; // naive: start by season projection
+    const m = new Map<string, number>();
+    for (const p of rosters[t]) { const a = weekly.get(p.name)?.get(wk); if (a != null) m.set(p.name, Math.max(0, a * (1 + gauss(rngU) * sd))); }
+    return m;
+  };
+  const wkS = (t: number, wk: number) => weekScore(rosters[t], wk, weekly, lg, selFor(t, wk));
+
   const wins = new Array(lg.teams).fill(0);
   const totPts = new Array(lg.teams).fill(0);
-  // regular season: each week a random pairing of the 16 teams (seeded)
   for (const wk of REG_WEEKS) {
     const order = [...Array(lg.teams).keys()];
     for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rngM() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-    const scores = rosters.map((r) => weekScore(r, wk, weekly, lg));
+    const scores = rosters.map((_, t) => wkS(t, wk));
     for (let i = 0; i < lg.teams; i += 2) {
       const a = order[i], b = order[i + 1];
       totPts[a] += scores[a]; totPts[b] += scores[b];
       if (scores[a] >= scores[b]) wins[a]++; else wins[b]++;
     }
   }
-  // seed: top 6 by wins then points
   const seeds = [...Array(lg.teams).keys()].sort((x, y) => wins[y] - wins[x] || totPts[y] - totPts[x]).slice(0, 6);
   const madePlayoffs = seeds.includes(0);
-  // playoffs: 1,2 bye; wk15: 3v6,4v5; wk16 semis: 1 vs winner(4/5), 2 vs winner(3/6); wk17 final.
-  const wkS = (t: number, wk: number) => weekScore(rosters[t], wk, weekly, lg);
   const beat = (a: number, b: number, wk: number) => (wkS(a, wk) >= wkS(b, wk) ? a : b);
   const [s1, s2, s3, s4, s5, s6] = seeds;
   const w36 = beat(s3, s6, 15), w45 = beat(s4, s5, 15);
