@@ -94,3 +94,73 @@ export function affordableMax(state: DraftState): number {
   const cap = state.myBudget - slotsAfter;
   return Math.max(0, cap);
 }
+
+// --- v2 plug: budget-aware, value-based, balanced ----------------------------------------
+//
+// The quality lever over v1: bid up to our VALUE for a player, but never more than we can
+// afford while keeping a real BASELINE for every OTHER open slot (starters reserved higher
+// than bench). This wins studs early (we can afford up to their value while surplus is high)
+// AND keeps the roster balanced (the per-starter reserve stops us stranding other starters),
+// then tightens automatically as budget draws down.
+
+export interface V2Config {
+  values?: Record<string, number>; // OUR value overrides by name (else ESPN pre-draft val)
+  targets?: Record<string, number>; // per-player premium multiplier (e.g. 1.2)
+  avoids?: Set<string>;
+  starterReserve?: number; // $ to keep for each other open STARTER slot (default 4)
+  benchReserve?: number; // $ to keep for each other open BENCH slot (default 1)
+  premium?: number; // small bump to outbid at consensus (default 1)
+  aggr?: number; // global aggressiveness multiplier on value (default 1.0)
+}
+
+const isBench = (slotKey: string) => /^(BE|BENCH|IR)$/i.test(slotKey);
+
+/** Reserve we must keep for OTHER open slots if we win a slot of kind `fillingBench`. Pure. */
+export function reserveForOthers(state: DraftState, fillingBench: boolean, starterReserve: number, benchReserve: number): number {
+  let starters = 0, bench = 0;
+  for (const [k, n] of Object.entries(state.mySlots)) {
+    const c = Math.max(0, n);
+    if (isBench(k)) bench += c; else starters += c;
+  }
+  // Remove the one slot THIS player fills from the reserve pool.
+  if (fillingBench) bench = Math.max(0, bench - 1);
+  else starters = Math.max(0, starters - 1);
+  return starters * starterReserve + bench * benchReserve;
+}
+
+export function makeV2Strategy(cfg: V2Config = {}): Strategy {
+  const starterReserve = cfg.starterReserve ?? 4;
+  const benchReserve = cfg.benchReserve ?? 1;
+  const premium = cfg.premium ?? 1;
+  const aggr = cfg.aggr ?? 1.0;
+  const val = (p: PlayerRef) => cfg.values?.[p.name] ?? p.espnPreDraftVal ?? 1;
+
+  return {
+    value: (p) => val(p),
+    maxBid(state) {
+      const p = state.onBlock;
+      if (!p) return { maxBid: 0, reason: "no player on block" };
+      if (cfg.avoids?.has(p.name)) return { maxBid: 0, reason: "avoid" };
+      // Would this player go to a dedicated/FLEX (starter) slot, or only bench?
+      const base = p.pos;
+      const starterOpen = (state.mySlots[base] ?? 0) > 0 || (["RB", "WR", "TE"].includes(base) && (state.mySlots.FLEX ?? 0) > 0);
+      const fillingBench = !starterOpen;
+      // Soft reserve (balanced target: keep real $ for other starters) limits early concentration.
+      const softAffordable = state.myBudget - reserveForOthers(state, fillingBench, starterReserve, benchReserve);
+      // Hard reserve ($1/other slot) is the never-strand floor -- a legal roster stays completable.
+      const hardAffordable = state.myBudget - reserveForOthers(state, fillingBench, 1, 1);
+      const wantVal = Math.round(val(p) * aggr * (cfg.targets?.[p.name] ?? 1)) + premium;
+      let maxBid = Math.min(wantVal, softAffordable);
+      // Fill-floor: never let the soft reserve BLOCK a needed slot we can legally afford ($1).
+      if (maxBid < 1 && hardAffordable >= 1) maxBid = 1;
+      maxBid = Math.max(0, Math.min(maxBid, hardAffordable));
+      return { maxBid, reason: `val${val(p)} soft${softAffordable} -> ${maxBid}` };
+    },
+    nominate(state) {
+      const wanted = new Set(state.myRoster.map((r) => r.name));
+      const sorted = state.board.filter((p) => !wanted.has(p.name)).sort((a, b) => val(b) - val(a));
+      const drain = sorted.find((p) => val(p) <= 1) ?? sorted[sorted.length - 1] ?? state.board[0];
+      return { player: drain, openingBid: 1, reason: "drain-nominate" };
+    },
+  };
+}

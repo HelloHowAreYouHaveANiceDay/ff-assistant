@@ -2,7 +2,7 @@
 // (full legal in-budget roster) structurally safe. Run: npm test.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { affordableMax, makeV1Strategy, type DraftState } from "../src/draft/strategy.ts";
+import { affordableMax, makeV1Strategy, makeV2Strategy, reserveForOthers, type DraftState } from "../src/draft/strategy.ts";
 import { hasOpenSlotFor, type Roster } from "../src/draft/espnAuction.ts";
 
 const baseState = (over: Partial<DraftState> = {}): DraftState => ({
@@ -80,4 +80,36 @@ test("SEAM: avoid list zeroes a player's max", () => {
   const onBlock = { name: "Bust", pos: "WR" as const, team: "NYJ", espnPreDraftVal: 20 };
   const s = makeV1Strategy({ values: { Bust: 20 }, avoids: new Set(["Bust"]) });
   assert.equal(s.maxBid(baseState({ onBlock })).maxBid, 0);
+});
+
+// --- v2 budget-aware, balanced strategy (Phase 2.5 quality) ------------------------------
+
+test("reserveForOthers: starters reserved higher than bench; excludes the filled slot", () => {
+  const s = baseState({ mySlots: { QB: 1, RB: 1, WR: 1, BENCH: 2 } });
+  assert.equal(reserveForOthers(s, false, 4, 1), 2 * 4 + 2 * 1); // fill a starter -> 2 other starters
+  assert.equal(reserveForOthers(s, true, 4, 1), 3 * 4 + 1 * 1); // fill bench -> all 3 starters kept
+});
+
+test("v2 EARLY: can pay up to a stud's value (wins studs, unlike v1 flat cap)", () => {
+  const onBlock = { name: "Stud RB", pos: "RB" as const, team: "SF", espnPreDraftVal: 80 };
+  const s = makeV2Strategy({ starterReserve: 4, benchReserve: 1, premium: 1 });
+  // $200, 12 open; reserve 8 other starters*4 + 3 bench*1 = 35 -> afford 165 >> 81 -> maxBid 81.
+  assert.equal(s.maxBid(baseState({ onBlock })).maxBid, 81);
+});
+
+test("v2 FAULT: tight budget never strands -- keeps $1 for every other slot", () => {
+  const onBlock = { name: "X", pos: "RB" as const, team: "SF", espnPreDraftVal: 40 };
+  const s = makeV2Strategy({ starterReserve: 4 });
+  // $3, slots RB/WR/K all open -> may spend at most $1 here, keeping $1+$1 for WR+K.
+  const st = baseState({ myBudget: 3, mySlots: { RB: 1, WR: 1, K: 1 }, onBlock });
+  const bid = s.maxBid(st).maxBid;
+  assert.ok(bid >= 1 && bid <= 1, `expected fill-floor $1, got ${bid}`);
+});
+
+test("v2 fill-floor: soft reserve never BLOCKS a needed slot we can afford", () => {
+  const onBlock = { name: "Y", pos: "RB" as const, team: "SF", espnPreDraftVal: 40 };
+  const s = makeV2Strategy({ starterReserve: 4 });
+  // $5, 3 open starters -> soft reserve would zero it, but fill-floor keeps it biddable ($1).
+  const st = baseState({ myBudget: 5, mySlots: { RB: 1, WR: 1, K: 1 }, onBlock });
+  assert.ok(s.maxBid(st).maxBid >= 1);
 });

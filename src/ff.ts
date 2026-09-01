@@ -303,14 +303,37 @@ async function cmdAutoBid(rest: string[]) {
 async function cmdAutoDraft(rest: string[]) {
   const { readBlock, readRoster, hasOpenSlotFor, quickBid } = await import("./draft/espnAuction.js");
   const { loadRankings } = await import("./data/rankings.js");
+  const { makeV2Strategy } = await import("./draft/strategy.js");
   const rounds = Number(valueOf(rest, "--rounds") ?? 400);
-  const floor = Number(valueOf(rest, "--floor") ?? 2); // min we'll pay for a needed filler
-  const csv = valueOf(rest, "--csv") ?? "data/rankings.sample.csv";
+  const csv = valueOf(rest, "--csv");
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
-  const ranks = new Map<string, { pos: string; value: number }>();
-  try {
-    for (const p of loadRankings(csv)) ranks.set(norm(p.name), { pos: p.pos, value: Math.round(p.proj / 10) });
-  } catch { /* rankings optional */ }
+
+  // OUR value overrides (name -> $) + pos, from an optional CSV (columns include player, pos,
+  // value). Without a value column the Strategy falls back to ESPN's on-screen pre-draft value
+  // -> the value source is the pluggable knob; budget-aware balancing works either way.
+  const values: Record<string, number> = {};
+  const posByName = new Map<string, string>();
+  if (csv) {
+    try {
+      for (const p of loadRankings(csv)) {
+        posByName.set(norm(p.name), p.pos);
+        const v = (p as unknown as { value?: number }).value;
+        if (typeof v === "number" && !Number.isNaN(v)) values[p.name] = v;
+      }
+    } catch { /* optional */ }
+  }
+  const strat = makeV2Strategy({
+    values: Object.keys(values).length ? values : undefined,
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 4),
+    benchReserve: Number(valueOf(rest, "--bench-reserve") ?? 1),
+    premium: Number(valueOf(rest, "--premium") ?? 1),
+    aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
+  });
+  const normPos = (p: string | null): string | null => {
+    if (!p) return null;
+    const u = p.toUpperCase().replace("/", "");
+    return ["QB", "RB", "WR", "TE", "K", "DST"].includes(u) ? u : null;
+  };
 
   const a = await attachFor(rest);
   const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
@@ -335,32 +358,35 @@ async function cmdAutoDraft(rest: string[]) {
     }
     const b = await readBlock(page);
     if (b.onBlock && b.player && b.canBid) {
-      const rk = ranks.get(norm(b.player));
-      const pos = b.pos ?? rk?.pos ?? null;
-      const need = pos ? hasOpenSlotFor(r, pos) : r.benchOpen > 0; // unknown pos -> only for bench
-      // v1 "balanced fill" strategy: spread remaining budget across open slots so we win mid-tier
-      // players throughout (bidding only to consensus value loses everything to 16 rival bots).
-      const budgetLeft = 200 - r.spent;
-      const perSlot = Math.max(floor, Math.floor(budgetLeft / Math.max(1, r.open)));
-      // v1 fill: bots clear AT consensus value, so to actually WIN we bid just ABOVE it
-      // (value + premium). ESPN's myMax reserve keeps a legal roster completable, so once
-      // budget draws down it forces cheap fills automatically -> natural stars-and-scrubs
-      // that still fills every slot in budget. (Balanced value targeting is the next layer.)
-      const premium = Number(valueOf(rest, "--premium") ?? 2);
-      const paceK = Number(valueOf(rest, "--pace") ?? 3); // max multiple of per-slot share per player
-      const val = b.preDraftVal ?? rk?.value ?? perSlot;
-      // Pace: never spend more than paceK x our per-slot share on one player, so budget lasts to
-      // fill all slots (prevents blowing $80 on one stud and starving the rest). ESPN myMax is
-      // the hard reserve; this is the softer even-fill governor.
-      const cap = Math.min(b.myMax ?? 0, val + premium, paceK * perSlot);
-      const offer = b.currentOffer ?? 0;
-      if (need && offer < cap) {
-        const ok = await quickBid(page);
-        if (b.player !== lastPlayer)
-          console.log(`r${i}: bid ${b.player} (${pos}) $${offer}->+1 cap=${cap} myMax=${b.myMax} [open ${r.open}] ${ok ? "" : "(noclick)"}`);
-        lastPlayer = b.player;
+      const pos = normPos(b.pos) ?? normPos(posByName.get(norm(b.player)) ?? null);
+      const need = pos ? hasOpenSlotFor(r, pos) : r.benchOpen > 0; // unknown pos -> bench only
+      if (need && pos) {
+        // Delegate the ceiling to the Strategy (budget-aware value); Engine clamps to ESPN's
+        // hard legal max (myMax) and slot legality.
+        const decision = strat.maxBid({
+          myBudget: 200 - r.spent,
+          mySlots: { ...r.openByBase, FLEX: r.flexOpen, BENCH: r.benchOpen },
+          myRoster: [],
+          onBlock: { name: b.player, pos: pos as never, team: "", espnPreDraftVal: b.preDraftVal },
+          currentOffer: b.currentOffer,
+          secondsLeft: null,
+          iAmHighBidder: !b.canBid,
+          board: [],
+          teams: [],
+        });
+        const cap = Math.min(decision.maxBid, b.myMax ?? 0);
+        const offer = b.currentOffer ?? 0;
+        if (offer < cap) {
+          const ok = await quickBid(page);
+          if (b.player !== lastPlayer)
+            console.log(`r${i}: bid ${b.player} (${pos}) $${offer} cap=${cap} [${decision.reason}] myMax=${b.myMax} [open ${r.open}]${ok ? "" : " (noclick)"}`);
+          lastPlayer = b.player;
+        } else if (b.player !== lastPlayer) {
+          console.log(`r${i}: pass ${b.player} (${pos}) $${offer} cap=${cap} [${decision.reason}] [open ${r.open}]`);
+          lastPlayer = b.player;
+        }
       } else if (b.player !== lastPlayer) {
-        console.log(`r${i}: pass ${b.player} (${pos}) $${offer} cap=${cap} need=${need} [open ${r.open}]`);
+        console.log(`r${i}: skip ${b.player} (${pos ?? "?"}) -- no open slot [open ${r.open}]`);
         lastPlayer = b.player;
       }
     }
