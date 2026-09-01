@@ -59,12 +59,21 @@ their existing plan.
 patterns (same flow as the CLI). Reading plan-level quota is not a supported external interface
 and must not be depended on.
 
-## D2 -- Browser access via bro-style saved sessions, not platform APIs/tokens
+## D2 -- Browser access via bro as a session SUBDRIVER (not bro-style; the real bro)
 
-**Decision:** For both Yahoo and ESPN, the app launches a real Chrome/Edge with a persistent
-profile and a remote-debugging port (the `bro` pattern). The user logs in like a human once
-(handling 2FA); the session persists. Claude drives that already-authenticated browser over
-CDP for both reading walled data and taking actions.
+**Decision (refined 2026-08-31):** ff does NOT launch or log into a browser itself. **bro** (the
+studio browser runner) owns the persistent, logged-in session -- `bro session start espn` holds a
+real Chrome/Edge with a per-site persistent profile on a CDP port and records it in bro's shared
+`sessions.json`. **ff attaches Playwright to that session** by resolving the port from bro's
+registry (`bro sessions --json`), and exposes `ff bro <args>` as a passthrough -- exactly the
+`bim bro` pattern. The user logs in once (2FA included); ff drives the authenticated browser over
+CDP for both reads and actions. Same mechanism for Yahoo later (add a bro `yahoo` site).
+
+**Why the refinement:** the earlier "bro-style" wording invited us to reimplement bro's launch +
+CDP + session registry (we briefly did, in a `launch-chrome.mjs`). Reusing bro directly is the
+shop pattern, avoids duplicating its persistent-profile/port machinery, and keeps coupling in the
+correct direction (ff depends outward on bro). bro site configs are local per machine (bro
+gitignores `sites/*`), like every other bro site.
 
 **Why:** It is the most intuitive path for the user ("Connect Yahoo" -> a browser opens -> log
 in normally) and it sidesteps ESPN cookie extraction (`espn_s2`/`SWID`) and Yahoo OAuth app
