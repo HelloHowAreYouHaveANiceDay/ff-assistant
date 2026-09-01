@@ -50,9 +50,13 @@ stable read on how THIS room drafts. Raw data: `data/draft-recap-{2023,2024,2025
 
 ## Recommended posture
 
-Against an aggressive stars-and-scrubs room, **run BALANCED**: `--starter-reserve 12-14`,
-`--max-share 0.30`, values from a real table (docs/values.md). Let opponents overpay for the $100
-studs; win the $15-40 tier and the cheap-elite-QB window. Nominate elite RBs early (drain their
+> **Corrected by the SIM harness under projection risk (docs/validation.md):** fully balanced is
+> NOT optimal -- it finishes worst. The best posture is **MODERATE**: ~2 real studs (~$95 on the
+> top 3) plus solid mids. Defaults now = `--starter-reserve 8 --max-share 0.5`. The room's overpay
+> still helps us (we get value on the mids), but we do NOT punt the top entirely.
+
+Historical read (still true): let opponents overpay for the very top ($100 studs), win the $15-40
+tier and the cheap-elite-QB window, punt K/DST at $1. But DO buy ~2 studs at fair value. Nominate elite RBs early (drain their
 budgets, section 4 of value-methods) since they will overpay.
 
 ## Follow-ups (not done)

@@ -49,6 +49,10 @@ async function main() {
       return cmdBoard(rest);
     case "dump-values":
       return cmdDumpValues(rest);
+    case "values":
+      return cmdValues(rest);
+    case "sim":
+      return cmdSim(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -310,6 +314,51 @@ async function cmdPreflight(rest: string[]) {
 }
 
 // Scrape ESPN's full board values (calibrated to our league) into a values CSV.
+// Compute OUR auction values from a points table (VOR->$) and write a values CSV.
+async function cmdValues(rest: string[]) {
+  const { computeValues } = await import("./draft/values.js");
+  const { readFileSync, writeFileSync } = await import("node:fs");
+  const src = valueOf(rest, "--points") ?? "data/points.csv";
+  const out = valueOf(rest, "--out") ?? "data/values.csv";
+  const [, ...lines] = readFileSync(src, "utf8").trim().split(/\r?\n/);
+  const points = lines.map((l) => { const f = l.split(","); return { name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) }; }).filter((p) => p.name && p.points);
+  const vals = computeValues(points);
+  writeFileSync(out, "player,pos,value\n" + vals.map((v) => `${v.name},${v.pos},${v.value}`).join("\n") + "\n", "utf8");
+  console.log(`wrote ${vals.length} values -> ${out}`);
+  console.log("top 12:", vals.slice(0, 12).map((v) => `${v.name}($${v.value})`).join(" "));
+}
+
+// Validation harness: run N seeded auction sims with our values+strategy, report roster strength
+// vs the field. Change values/strategy and re-run -> higher points/rank = better, lower = regression.
+async function cmdSim(rest: string[]) {
+  const { runSim } = await import("./draft/sim.js");
+  const { readFileSync } = await import("node:fs");
+  const readCsv = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
+  const pointsFile = valueOf(rest, "--points") ?? "data/points.csv";
+  const valuesFile = valueOf(rest, "--values") ?? "data/values.csv";
+  const n = Number(valueOf(rest, "--n") ?? 100);
+  const points = readCsv(pointsFile).map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
+  const ourValues = new Map<string, number>();
+  for (const f of readCsv(valuesFile)) ourValues.set(f[0].trim(), Number(f[2]));
+  const cfg = {
+    values: Object.fromEntries(ourValues),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 12),
+    benchReserve: 1,
+    premium: Number(valueOf(rest, "--premium") ?? 1),
+    aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
+    maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
+  };
+  let sumPts = 0, sumRank = 0, sumField = 0, top1 = 0, top3 = 0, sumTop3Spend = 0;
+  for (let s = 0; s < n; s++) {
+    const r = runSim(points, ourValues, cfg, s + 1);
+    sumPts += r.ourPoints; sumRank += r.ourRank; sumField += r.fieldMean; sumTop3Spend += r.ourSpentTop3;
+    if (r.ourRank === 1) top1++; if (r.ourRank <= 3) top3++;
+  }
+  console.log(`SIM (${n} drafts) values=${valuesFile} reserve=${cfg.starterReserve} maxShare=${cfg.maxShare} premium=${cfg.premium}`);
+  console.log(`  our starting pts: ${(sumPts / n).toFixed(0)}  |  field avg: ${(sumField / n).toFixed(0)}  |  edge: ${((sumPts / n) - (sumField / n)).toFixed(0)}`);
+  console.log(`  avg finish: ${(sumRank / n).toFixed(2)} of ${16}  |  1st: ${((top1 / n) * 100).toFixed(0)}%  |  top-3: ${((top3 / n) * 100).toFixed(0)}%  |  $ on top3 players: ${(sumTop3Spend / n).toFixed(0)}`);
+}
+
 async function cmdDumpValues(rest: string[]) {
   const { dumpValues } = await import("./draft/espnAuction.js");
   const out = valueOf(rest, "--out") ?? "data/values.espn.csv";
@@ -423,7 +472,11 @@ async function cmdAutoDraft(rest: string[]) {
   const { loadRankings } = await import("./data/rankings.js");
   const { makeV2Strategy } = await import("./draft/strategy.js");
   const rounds = Number(valueOf(rest, "--rounds") ?? 400);
-  const csv = valueOf(rest, "--csv");
+  // Default to OUR values table (data/values.csv) if present; else the strategy falls back to
+  // ESPN's on-screen value per player. Pass --csv "" to force the ESPN fallback.
+  const { existsSync } = await import("node:fs");
+  let csv = valueOf(rest, "--csv");
+  if (csv === undefined) csv = existsSync("data/values.csv") ? "data/values.csv" : undefined;
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
 
   // OUR value overrides (name -> $) + pos, from an optional CSV (columns include player, pos,
@@ -442,14 +495,15 @@ async function cmdAutoDraft(rest: string[]) {
   }
   const strat = makeV2Strategy({
     values: Object.keys(values).length ? values : undefined,
-    // Defaults tuned for seacaptaindate.com (docs/league-tendencies.md): the room is aggressive
-    // stars-and-scrubs (studs go $80-106, 61% of picks $1-5), so run BALANCED/disciplined -- let
-    // them overpay for studs, win the under-contested $15-40 tier. Higher reserve + lower share.
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 12),
+    // Defaults tuned by the SIM harness under projection risk (docs/validation.md): a MODERATE
+    // build wins -- ~2 real studs (~$95 on the top 3) plus solid mids -- beating both extreme
+    // stars-and-scrubs (bust risk) and over-balance (reserve 20 -> worst finish). Values are OUR
+    // VOR->$ table (data/values.csv), independent of ESPN.
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 8),
     benchReserve: Number(valueOf(rest, "--bench-reserve") ?? 1),
     premium: Number(valueOf(rest, "--premium") ?? 1),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
-    maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
+    maxShare: Number(valueOf(rest, "--max-share") ?? 0.5),
   });
   const normPos = (p: string | null): string | null => {
     if (!p) return null;
