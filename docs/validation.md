@@ -25,27 +25,41 @@ Change one thing (a value table, a strategy param), run `ff sim --n 300` before 
 - pts down / finish up = **regression** -- revert.
 Use N>=300 so seed noise averages out; compare the same N.
 
-## What it found (and how it corrected us)
+## What it found (and how the guidance evolved)
 
-Tuned defaults come from the harness, not intuition:
-- **Over-balance loses:** starter-reserve 20, max-share 0.25 -> avg finish 1.99, only 36% firsts.
-- **Full stars-and-scrubs is risky:** premium 30 / max-share 0.7 ($169 on top 3) -> high points but
-  more busts (lower top-3 rate under projection risk).
-- **Moderate wins:** starter-reserve ~6-8, max-share ~0.5 (~2 studs, ~$95 on the top 3) -> best
-  finish (~1.76) with less variance. This is now the default. (My earlier "go fully balanced" read
-  from the tendencies alone was wrong -- the harness with risk showed moderate-aggressive is best.)
+The harness repeatedly corrected intuition -- which is the point:
+- **From tendencies alone I guessed "go fully balanced." Wrong.** Over-balance (reserve 20,
+  max-share 0.25) finishes WORST in every run.
+- On the **2024-actuals** proxy, MODERATE won (reserve ~8, ~$95 on top 3).
+- On the **forward-looking 2025 projections** (steep top, deep 16-team No-PPR), **CONCENTRATION
+  wins** -- more aggression -> better finish (reserve 2 / max-share 0.8 / $181-on-3 finished ~2.6
+  vs ~3.5 for moderate). This MATCHES the league's real behavior (61% of picks are $1-5).
+- **Default = aggressive-lean but not extreme** (reserve 5, max-share 0.6, premium 2; ~$120 on the
+  top 3). The optimum is INPUT-SENSITIVE, so re-run `ff sim` on the final projections before the
+  draft and pick the config -- don't hardcode faith in one run.
+
+## Known limitation to weigh (why we don't just go max-aggression)
+
+Scoring = sum of the starting lineup's realized points. This likely **over-rewards top-heavy
+rosters**: it counts a $1 replacement WR2 as "some points" without fully penalizing that a lineup
+of 3 studs + 6 waiver-level starters has a low weekly floor and loses head-to-head matchups the
+season-sum metric can't see. So treat "max stars-and-scrubs wins" as an upper bound; the default
+keeps real depth. A future harness upgrade: simulate weekly head-to-head wins, not season points.
 
 ## Honest limits (so we don't over-trust it)
 
 - The **bot model and the 35% projection noise are assumptions**; the ABSOLUTE numbers (e.g. "50%
   firsts") are inflated because the bots are simple. Trust the RELATIVE comparison between configs,
   not the absolute win rate.
-- Scoring truth = `data/points.csv`. It is currently **2024 ACTUALS as a projection proxy** -- swap
-  in real 2025 preseason projections (docs/value-methods.md) and rebuild values (`ff values`) for a
-  sharper table; the harness workflow is unchanged.
+- Scoring truth = `data/points.csv`, now **2025 forward-looking projections** (FantasyPros redraft
+  consensus ranks mapped onto a 2024 No-PPR points-by-rank curve -- `tools/build_projections.py`).
+  Independent of ESPN. A true multi-source projection (ffanalytics / a projections API) would sharpen
+  it further; the harness workflow is unchanged.
 - The sim does not model nomination gamesmanship, keepers, or in-season waivers.
 
 ## Files
-`src/draft/values.ts` (VOR->$), `src/draft/sim.ts` (simulator), `tools/build_points.py`
-(nflverse points), `data/points.csv`, `data/values.csv`. Rebuild: `uv run --with nflreadpy --with
-polars tools/build_points.py` then `npm run ff -- values`.
+`src/draft/values.ts` (VOR->$), `src/draft/sim.ts` (simulator), `tools/build_projections.py`
+(2025 FantasyPros ranks -> points), `tools/build_points.py` (2024 actuals variant), `data/points.csv`,
+`data/values.csv`. Rebuild before the draft:
+`uv run --with nflreadpy --with polars tools/build_projections.py` then `npm run ff -- values`,
+then re-run `npm run ff -- sim --n 400 ...` to pick the config.

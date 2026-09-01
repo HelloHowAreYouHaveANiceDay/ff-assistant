@@ -342,11 +342,11 @@ async function cmdSim(rest: string[]) {
   for (const f of readCsv(valuesFile)) ourValues.set(f[0].trim(), Number(f[2]));
   const cfg = {
     values: Object.fromEntries(ourValues),
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 12),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 5),
     benchReserve: 1,
-    premium: Number(valueOf(rest, "--premium") ?? 1),
+    premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
-    maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
+    maxShare: Number(valueOf(rest, "--max-share") ?? 0.6),
   };
   let sumPts = 0, sumRank = 0, sumField = 0, top1 = 0, top3 = 0, sumTop3Spend = 0;
   for (let s = 0; s < n; s++) {
@@ -495,15 +495,16 @@ async function cmdAutoDraft(rest: string[]) {
   }
   const strat = makeV2Strategy({
     values: Object.keys(values).length ? values : undefined,
-    // Defaults tuned by the SIM harness under projection risk (docs/validation.md): a MODERATE
-    // build wins -- ~2 real studs (~$95 on the top 3) plus solid mids -- beating both extreme
-    // stars-and-scrubs (bust risk) and over-balance (reserve 20 -> worst finish). Values are OUR
-    // VOR->$ table (data/values.csv), independent of ESPN.
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 8),
+    // Defaults from the SIM harness on the FORWARD-LOOKING 2025 projections (docs/validation.md).
+    // The projection top is steep + this is a deep 16-team No-PPR league, so CONCENTRATION wins
+    // (matches the league's real 61%-are-$1-5 behavior) -- lean aggressive: ~2-3 studs (~$120 on
+    // top 3), keep ~$80 for depth. NOT max stars-and-scrubs (the harness may over-reward that;
+    // re-run `ff sim` on final projections + apply judgment). Values = OUR VOR->$ (data/values.csv).
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 5),
     benchReserve: Number(valueOf(rest, "--bench-reserve") ?? 1),
-    premium: Number(valueOf(rest, "--premium") ?? 1),
+    premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
-    maxShare: Number(valueOf(rest, "--max-share") ?? 0.5),
+    maxShare: Number(valueOf(rest, "--max-share") ?? 0.6),
   });
   const normPos = (p: string | null): string | null => {
     if (!p) return null;
