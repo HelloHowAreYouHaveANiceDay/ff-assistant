@@ -10,9 +10,10 @@ someone who cannot -- and should not have to -- set up Claude Code themselves.
 
 ## What it does
 
-- **Assists and plays.** Claude reasons over live league data (roster, matchups, projections,
-  injuries) and, on a schedule, sets the starting lineup and submits waiver claims by driving
-  the user's own logged-in browser.
+- **Runs a full season and assists on demand.** Autonomously handles draft, weekly lineup,
+  waivers/FAAB, and roster moves by driving the user's own logged-in browser on a schedule; and
+  acts as a manual copilot in chat -- latest news, player analysis, what-if/trade analysis, and
+  league-history questions -- powered by the same agent + data.
 - **Runs on the user's Claude subscription.** One "Log in with Claude" button (OAuth, the same
   flow Claude Code CLI uses). No API key, no per-token bill.
 - **Keeps the user in control of cost.** A user-adjustable token budget cap governs how much
@@ -28,7 +29,10 @@ architecture and the component specs the implementation sessions build against.
 Start here:
 
 - [`docs/architecture.md`](docs/architecture.md) -- the whole system, one page
-- [`docs/decisions.md`](docs/decisions.md) -- the design decision log
+- [`docs/prior-art-and-stack.md`](docs/prior-art-and-stack.md) -- recon findings: the stack
+  decision (TS shell + Python MCP sidecar), reference repos to study, data plan, ESPN + draft
+  realities
+- [`docs/decisions.md`](docs/decisions.md) -- the design decision log (D1-D8)
 - [`docs/specs/`](docs/specs/) -- one spec per component
 
 Planning (roadmap, phased build, issue tracking) lives in the wiki:

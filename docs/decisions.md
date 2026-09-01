@@ -89,6 +89,34 @@ league on one of Yahoo or ESPN. Sleeper (clean public API) is a cheap later add.
 
 ---
 
+## D7 -- Language: TypeScript shell + agent, Python MCP sidecar for football data/math
+
+**Decision (2026-08-31, from recon -- see `prior-art-and-stack.md`):** The Electron shell,
+Claude Agent SDK session, and browser control are **TypeScript**. The football-specific data +
+optimization layer (espn-api, nflreadpy, VOR/VONA, PuLP) is **Python**, wrapped in a single
+stdio-MCP sidecar spawned by the Electron main process. SQLite is exposed via an MCP server.
+
+**Why:** The TS Agent SDK runs natively in Electron's Node runtime (the Python SDK would force
+subprocess bridging for the *agent itself*); but the mature fantasy-football libraries and math
+are Python with no TS equivalent. A Python MCP sidecar is the clean seam -- one process, not a
+scattered bridge. This matches the dominant 2025-2026 pattern (TS agent/UI + Python data, glued
+by MCP).
+
+**Accepted constraint:** two runtimes to package (Node via Electron + a bundled Python). Keep it
+to ONE Python sidecar. Revisit only if a capable TS ESPN/stats library matures.
+
+## D8 -- Draft automation is a late, separately-gated phase with an assist fallback
+
+**Decision:** Weekly lineup + waivers (lower-stakes) ship first. Live-draft automation is its own
+later phase because ESPN exposes no draft API and no programmatic pick override -- it must be
+driven through the draft-room DOM under a per-pick clock. Until DOM reliability is proven, draft
+mode surfaces the VOR/VONA-ranked pick for the user with a countdown and auto-submits only as a
+proven step, not on day one.
+
+**Why:** It is the highest-risk autonomous capability and the easiest to get embarrassingly
+wrong live; everything else is recoverable. (Recon: existing tools all stop at recommendation
+for exactly this reason.)
+
 ## Resolved design questions
 
 - **Q1 (RESOLVED 2026-08-31): ESPN first.** The developer has a live ESPN league used to
