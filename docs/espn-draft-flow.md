@@ -40,6 +40,14 @@ still needs to be located. Alternatively, use the real ESPN league's own draft.
   timer, my-roster panel, and the pick/confirm controls. Not yet captured -- blocked on getting
   into a started draft with us in it. Once captured, fill `readBoard`/`makePick`.
 
+## Auth anchor: the persistent bro `espn` session (reuse, don't re-auth)
+
+The `espn` bro site uses `browser: persistent` -- a per-site profile that keeps ESPN's
+(long-lived) login across restarts. Log in ONCE via `bro session start espn`; every ff run
+attaches to that same session. Do NOT build any per-run login/token flow -- the persistent
+session is the single auth anchor (confirmed reusable live 2026-08-31). If a run ever finds it
+logged out, the fix is a one-time human re-login in that window, nothing more.
+
 ## ff harness commands proven this session
 
 `ff bro session start espn` (bro owns login) | `ff attach` | `ff goto <url>` | `ff click "<text>"`
