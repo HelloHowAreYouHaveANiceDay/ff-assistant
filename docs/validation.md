@@ -20,18 +20,30 @@ each week by projection, scored by ACTUAL, and a bye/injured starter can't play 
 the season (a stud can be mis-projected), scored by the real weekly truth. Without it the draft has
 perfect foresight and trivially rewards concentration; with it, buying "studs" carries real bust risk.
 
-### What it found (decisive)
-Championship rate over 800 seasons (random = 6.3%):
-- **Over-balanced** (reserve 20, max-share 0.25): 38.5% -- too many mediocre starters.
-- **MAX stars-and-scrubs** (premium 30, max-share 0.85, $181 on 3): 37.3% -- WITH uncertainty this
-  collapses from 54% (perfect foresight) because a concentrated team craters when a projected stud
-  busts. High variance, not more titles.
-- **Moderate-aggressive WINS: reserve 5, max-share 0.6, premium 2 -> 50.6%** (98% playoffs, 11.3 reg
-  wins). Buy ~2-3 studs but keep real depth. This is the default.
+### Run it across MANY seasons (essential -- single seasons overfit)
 
-**Actionable edge:** your league drafts even MORE concentrated than optimal (61% of picks $1-5), so
-being *slightly less extreme than the room* -- moderate-aggressive -- is the championship-winning
-posture. The backtest, not intuition, settled the stars-and-scrubs vs balanced debate.
+`ff backtest --seasons 2014-2024 --n 150` loops every season in `data/history-{points,weekly}.csv`
+(built by `tools/build_history.py`) and aggregates. **Always use the multi-season number** -- a
+single season's championship estimate swings 25%<->50% for the SAME config just on seed/sample
+noise, so single-season "findings" are overfit (I made that mistake: a 2024-only run showed
+"reserve 5 = 50.6%, optimal", which did NOT replicate -- 2024 at high N is ~25%).
+
+### What 11 seasons (2014-2024) actually show
+Championship rate, ~1650 sims/config (random = 6.3%):
+- reserve 5 / max-share 0.6 (default): **27.3%**
+- over-balanced (reserve 20 / 0.25): 27.6%
+- max stars-and-scrubs (premium 30 / 0.85): 27.9%
+- moderate (reserve 10 / 0.45): 27.7%
+
+**The aggression dial is roughly NEUTRAL for championships across seasons (~27%, all within noise).**
+Its effect is real within any one season but washes out across seasons -- so do NOT over-tune it.
+
+**Where the edge actually is:** our team wins ~27% of titles = **4.4x the 6.3% random baseline**, and
+makes the playoffs ~92% of the time, REGARDLESS of config. That edge comes from drafting rational
+values against a field that OVERPAYS for studs (your league's real tendency) -- not from the
+stars-and-scrubs vs balanced choice. So: keep a sane MODERATE default (reserve 5-8, max-share
+0.5-0.6) for steadiness (balanced has the widest bad-year swings), invest in better VALUES + keeping
+our discipline vs the room, and don't chase a "perfect" aggression setting -- there isn't one.
 
 ## `ff sim` (season-points proxy)
 
