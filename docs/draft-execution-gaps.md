@@ -92,6 +92,17 @@ price efficiency (may overpay vs a perfect last-second bid). Fine for MVP; refin
 Reading opponent budgets (`ul.picklist`) and the remaining-value pool to time nominations and
 detect inflation -- a real edge, not required to draft a legal competitive team.
 
+## Progress (closed / advanced 2026-09-01)
+- **G3 nominate** -- ADVANCED: `readBoard()` + `nominate()` (clicks a board player's "Select") built;
+  Engine anti-stall wired (idle -> nominate cheapest slot-filler). `readBoard` verified live; the
+  nominate SUCCESS path needs a real nomination turn to confirm (bots auto-nominate in practice).
+- **G5 our values** -- ADVANCED: value-source hook + CSV loader (`player,pos,value`) + format doc
+  (`docs/values.md`) + sample done and seam-tested. Remaining = the DATA (a real value table),
+  which is pre-draft prep, not code.
+- **G13 board/pool read** -- DONE (visible window): `readBoard()` returns name/pos/$value live.
+- **G6 balance** -- TUNED: `starterReserve` 10 + `maxShare`; wins studs in budget, further balance
+  tuning is parameter work.
+
 ## Summary of what to close before draft day (in order)
 1. **G1** enter the REAL draft room (dry run).  2. **G3** nominate() (stall risk).
 3. **G5** OUR value table.  4. **G6** finish balance tuning.  5. **G2/G9** be running + logged in
