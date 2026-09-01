@@ -34,6 +34,54 @@ starts on a short timer you control). The lobby's top-level "Create" link we fir
 create-a-LEAGUE (`/football/welcome`), not create-a-mock -- the correct create-mock entry point
 still needs to be located. Alternatively, use the real ESPN league's own draft.
 
+## BREAKTHROUGH: the agent launches the draft room itself (no human click)
+
+The "Practice Draft" launch opens the draft app via `window.open`, which the popup blocker
+drops for programmatic clicks. Solution (implemented in `ff launch-practice`): **shim
+`window.open` to RECORD the target URL without opening a real popup, then navigate our single
+tab to it.** Proven live 2026-08-31 -- the agent went lobby -> configure modal -> Start ->
+captured `https://fantasy.espn.com/football/draft?leagueId=<practiceId>&...&teamId=8&memberId=...`
+-> navigated in -> "Fantasy Football Draft - ESPN". This is the draft-day launch path.
+
+Launch sequence (all in `launch-practice`):
+1. Lobby -> click the **"Practice Draft"** BUTTON (by role; the same text also appears as a
+   heading "League Specific Practice Draft" -- must match the button, exact name).
+2. A **"Configure Practice Draft" modal** opens (`configure-practice-draft-modal` lightbox):
+   shows team count + "Select Draft Position" + **"Start Practice Draft"** button.
+3. Click "Start Practice Draft" -> `window.open(draftUrl)` (captured by the shim) -> navigate.
+
+**Gotchas:**
+- **ONE draft connection only.** Opening two draft tabs (our navigate + a real popup) triggers
+  "You have been disconnected... from another location." The shim must NOT open the real popup.
+- **Never close the last page** -- closing all tabs quits Chrome and kills the bro session.
+  `launch-practice` picks/creates a non-draft working tab, then closes only OTHER draft tabs.
+- Reliability caveat (2026-08-31): on a freshly-restarted session the lobby SPA sometimes hasn't
+  rendered the "Practice Draft" button when we click (title empty). Needs a proper
+  "wait for app ready" before step 1 (retry loop added, still flaky on cold start).
+
+## MAJOR FINDING: the real league is a 16-team AUCTION (salary-cap) draft
+
+The practice draft inherits the real league's settings, which revealed: league `462233`
+("seacaptaindate.com") is a **16-team, $200 salary-cap AUCTION draft** ("PK 1 OF 192", per-team
+"$200 / AUTO" budgets) -- NOT a snake draft. This reshapes draft strategy:
+- Snake VONA logic in `rank.ts` is the WRONG model for draft day. We need **auction values**
+  (cross-positional $ values from projections) + live **nomination/bidding** logic (track
+  remaining budgets, max bids, positional runs).
+- The weekly-lineup/waiver VOR work is unaffected; only DRAFT strategy changes.
+- Open question for the user: build the auction bidder for the real league, and/or keep a snake
+  path for other leagues.
+
+## Draft-room DOM structure (captured live, auction practice room)
+
+From `data/draftroom.json` (fixed-data-table based app):
+- `div.fixedDataTableLayout_main ... rows=30` -- the AVAILABLE PLAYERS board (virtualized; only
+  visible rows are in the DOM -- must scroll/paginate to read all).
+- `ul.picklist rows=16` -- the teams / nomination order.
+- `table.Table rows=13` -- roster slots.
+- `ul.tabs__list rows=6` -- position filter tabs.
+- Header shows `PK n OF 192`, a pick clock (`--:--` between picks), and per-team `$budget`.
+- Selectors for readBoard/makePick still need pinning to specific cell classes (next step).
+
 ## Still needed
 
 - The **draft-room** DOM (the pick UI): available-players list, on-the-clock indicator, pick

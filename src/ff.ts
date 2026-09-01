@@ -33,6 +33,8 @@ async function main() {
       return cmdClick(rest);
     case "text":
       return cmdText(rest);
+    case "launch-practice":
+      return cmdLaunchPractice(rest);
     case "inspect-draft":
       return cmdInspect(rest);
     case "rank":
@@ -122,6 +124,62 @@ async function cmdText(rest: string[]) {
   const page = findPage(a, "espn.com") ?? a.pages[0];
   const txt = await page.evaluate("document.body.innerText");
   console.log(String(txt).replace(/\n{3,}/g, "\n\n").slice(0, 3000));
+  await detach(a);
+}
+
+// Launch the league-specific practice draft AS THE AGENT (no human click). The
+// "Practice Draft" button opens the draft app via window.open, which the popup blocker
+// drops for programmatic clicks -- so we shim window.open to capture the target URL and
+// navigate to it ourselves. This is the draft-day launch path.
+async function cmdLaunchPractice(rest: string[]) {
+  const a = await attachFor(rest);
+  // Use a non-draft page as our working tab; if none, make one. NEVER close the last
+  // page (that quits Chrome and ends the bro session).
+  let page = a.pages.find((p) => !/\/football\/draft/.test(p.url()));
+  if (!page) page = await a.context.newPage();
+  // Now close any OTHER draft tabs -- ESPN allows only ONE draft connection; a duplicate
+  // triggers "disconnected... from another location". Our working page is not a draft tab.
+  for (const p of a.pages) {
+    if (p !== page && /\/football\/draft/.test(p.url())) await p.close().catch(() => {});
+  }
+  if (!/mockdraftlobby/.test(page.url())) {
+    await page.goto("https://fantasy.espn.com/football/mockdraftlobby", {
+      waitUntil: "domcontentloaded",
+    });
+  }
+  // Shim window.open to RECORD the URL only -- do NOT open the real popup (that would
+  // create a second draft tab -> duplicate-connection kick). We navigate our one tab.
+  await page.evaluate(
+    "window.__ffOpen=null; if(!window.__ffPatched){window.__ffPatched=1; window.open=function(u){try{window.__ffOpen=String(u||'');}catch(e){} return {closed:false,focus:function(){},blur:function(){},close:function(){},postMessage:function(){}};};}",
+  );
+  // Step 1: open the "Configure Practice Draft" modal (retry -- the React app renders late).
+  const openBtn = page.getByRole("button", { name: "Practice Draft", exact: true });
+  const startBtn = page.getByRole("button", { name: "Start Practice Draft", exact: true });
+  await openBtn.first().waitFor({ state: "visible", timeout: 20000 }).catch(() => console.error("Practice Draft button never rendered"));
+  let modalOpen = false;
+  for (let i = 0; i < 3 && !modalOpen; i++) {
+    await openBtn.first().scrollIntoViewIfNeeded({ timeout: 4000 }).catch(() => {});
+    await openBtn.first().click({ timeout: 6000 }).catch((e) => console.error(`open-modal try ${i}:`, e.message));
+    modalOpen = await startBtn
+      .first()
+      .waitFor({ state: "visible", timeout: 6000 })
+      .then(() => true)
+      .catch(() => false);
+  }
+  if (!modalOpen) console.error("Configure-practice modal did not open after retries");
+  // Step 2: in the modal, start the draft (opens the draft app via window.open).
+  await startBtn.first().click({ timeout: 8000 }).catch((e) => console.error("start-click:", e.message));
+  await page.waitForTimeout(1500);
+  // window.open fires synchronously inside the handler; read what it targeted.
+  const opened = (await page.evaluate("window.__ffOpen")) as string | null;
+  if (opened) {
+    const url = opened.startsWith("http") ? opened : new URL(opened, page.url()).href;
+    console.log(`Practice draft opened window -> ${url}. Navigating there.`);
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    console.log(`Now at: ${page.url()} | title: ${await page.title()}`);
+  } else {
+    console.log(`No window.open captured. Current URL: ${page.url()} | title: ${await page.title()}`);
+  }
   await detach(a);
 }
 
