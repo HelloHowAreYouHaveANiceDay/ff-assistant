@@ -9,6 +9,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import http from "node:http";
 
 /** Locate the bro checkout. Override with BRO_DIR; defaults to the sibling repo. */
 export function broDir(): string {
@@ -56,6 +57,35 @@ export function sessionPort(site: string): number {
     );
   }
   return s.port;
+}
+
+/** GET the CDP tab list for a port; [] if nothing answers. Used to verify a port is really live
+ *  and hosts the site (bro's registry port can go stale -- confirmed the "session died" bug). */
+export function cdpTabUrls(port: number, timeoutMs = 800): Promise<string[]> {
+  return new Promise((res) => {
+    const req = http.get({ host: "127.0.0.1", port, path: "/json/list", timeout: timeoutMs }, (r) => {
+      let body = "";
+      r.on("data", (c) => (body += c));
+      r.on("end", () => { try { res((JSON.parse(body) as Array<{ url?: string }>).map((t) => t.url || "")); } catch { res([]); } });
+    });
+    req.on("error", () => res([]));
+    req.on("timeout", () => { req.destroy(); res([]); });
+  });
+}
+
+/** Robustly find the live CDP port whose tabs contain `domain` (e.g. "espn.com"): try the bro
+ *  registry port first, then scan a small range. Fixes stale-registry / wrong-port failures. */
+export async function resolveLivePort(site: string, domain: string, portRange = [9222, 9223, 9224, 9225, 9226, 9227, 9228, 9229]): Promise<number> {
+  const regPort = listSessions().find((r) => r.site === site)?.port;
+  const ordered = regPort ? [regPort, ...portRange.filter((p) => p !== regPort)] : portRange;
+  for (const p of ordered) {
+    const urls = await cdpTabUrls(p);
+    if (urls.some((u) => u.includes(domain))) return p;
+  }
+  throw new Error(
+    `No live browser with a ${domain} tab found on ports ${ordered.join(",")}. ` +
+      `Start/log in the session: cd ${broDir()} && npm run -s bro -- session start ${site}`,
+  );
 }
 
 /** Passthrough to the bro CLI with inherited stdio (for `ff bro ...`). */

@@ -4,7 +4,10 @@
 // chromium.connectOverCDP. We never launch or log in a browser ourselves.
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
-import { sessionPort } from "./bro.js";
+import { resolveLivePort } from "./bro.js";
+
+// Domain that identifies each bro site's live browser (for robust port resolution).
+const SITE_DOMAIN: Record<string, string> = { espn: "espn.com", yahoo: "yahoo.com" };
 
 export interface Attached {
   browser: Browser;
@@ -13,9 +16,12 @@ export interface Attached {
   pages: Page[];
 }
 
-/** Attach to the browser bro is holding for `site` (resolves the CDP port from bro). */
+/** Attach to the browser bro is holding for `site`. Resolves the CDP port robustly (bro's
+ *  registry port can be stale -- verify by finding the port whose tabs contain the site domain). */
 export async function attachBro(site = "espn"): Promise<Attached> {
-  return attach(sessionPort(site));
+  const domain = SITE_DOMAIN[site] ?? `${site}.com`;
+  const port = await resolveLivePort(site, domain);
+  return attach(port);
 }
 
 /** Connect to a running browser exposing a CDP endpoint on 127.0.0.1:<port>. */
