@@ -76,6 +76,21 @@ test("SEAM: swapping the value table changes maxBid with no engine change", () =
   assert.equal(tgt.maxBid(st).maxBid, 50);
 });
 
+test("projections: season/week/ros + matchup multiplier", async () => {
+  const { makeProjections } = await import("../src/projections.ts");
+  const proj = makeProjections({
+    seasonPoints: [{ name: "RB A", pos: "RB", season: 340 }],
+    defRatings: new Map([["MIA|RB", 1.25], ["SF|RB", 0.8]]),
+    gamesPerSeason: 17,
+  });
+  assert.equal(proj.season("RB A"), 340);
+  assert.equal(proj.week("RB A", "RB"), 20); // per-game 340/17, no opponent
+  assert.equal(proj.week("RB A", "RB", "MIA"), 25); // x1.25 soft matchup
+  assert.equal(proj.week("RB A", "RB", "SF"), 16); // x0.8 tough matchup
+  assert.equal(proj.ros("RB A", 10), 200); // 20/gm x 10
+  assert.equal(proj.season("Unknown"), 0);
+});
+
 test("SEAM: avoid list zeroes a player's max", () => {
   const onBlock = { name: "Bust", pos: "WR" as const, team: "NYJ", espnPreDraftVal: 20 };
   const s = makeV1Strategy({ values: { Bust: 20 }, avoids: new Set(["Bust"]) });

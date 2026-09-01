@@ -51,6 +51,8 @@ async function main() {
       return cmdDumpValues(rest);
     case "values":
       return cmdValues(rest);
+    case "project":
+      return cmdProject(rest);
     case "sim":
       return cmdSim(rest);
     case "backtest":
@@ -317,6 +319,22 @@ async function cmdPreflight(rest: string[]) {
 
 // Scrape ESPN's full board values (calibrated to our league) into a values CSV.
 // Compute OUR auction values from a points table (VOR->$) and write a values CSV.
+// Demo the shared projection layer: season / this-week-vs-opponent / rest-of-season for a player.
+async function cmdProject(rest: string[]) {
+  const { loadProjections } = await import("./projections.js");
+  const name = rest.find((r) => !r.startsWith("--"));
+  const opp = valueOf(rest, "--vs");
+  const proj = loadProjections(valueOf(rest, "--points") ?? "data/points.csv", valueOf(rest, "--def") ?? "data/def-ratings.csv");
+  if (!name) {
+    const top = proj.all().sort((a, b) => b.season - a.season).slice(0, 10);
+    console.log("top by season projection:"); for (const p of top) console.log(`  ${p.season.toFixed(0)}  ${p.pos}  ${p.name}`);
+    return;
+  }
+  const p = proj.all().find((x) => x.name.toLowerCase() === name.toLowerCase());
+  if (!p) { console.log(`no projection for "${name}"`); return; }
+  console.log(`${p.name} (${p.pos}): season ${proj.season(p.name).toFixed(0)} | this week${opp ? " vs " + opp : ""} ${proj.week(p.name, p.pos, opp).toFixed(1)} | ROS(10 gms) ${proj.ros(p.name, 10).toFixed(0)}`);
+}
+
 async function cmdValues(rest: string[]) {
   const { computeValues } = await import("./draft/values.js");
   const { readFileSync, writeFileSync } = await import("node:fs");
