@@ -389,18 +389,16 @@ async function cmdBacktest(rest: string[]) {
     const m = wk.get(yr) ?? wk.set(yr, new Map()).get(yr)!;
     const name = f[1].trim(); (m.get(name) ?? m.set(name, new Map()).get(name)!).set(Number(f[3]), Number(f[4]));
   }
+  const marketSd = Number(valueOf(rest, "--market-noise") ?? 0.30);
+  const ourSd = valueOf(rest, "--our-noise") != null ? Number(valueOf(rest, "--our-noise")) : undefined; // < marketSd => value edge
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;
-  const perSeason: string[] = [];
   for (const yr of seasons) {
-    let c = 0, p = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(pts.get(yr)!, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000); if (r.champ) c++; if (r.madePlayoffs) p++; }
-    champ += c; playoffs += p; total += nPerSeason;
-    perSeason.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(pts.get(yr)!, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, ourSd); if (r.champ) champ++; if (r.madePlayoffs) playoffs++; total++; }
   }
-  console.log(`BACKTEST ${seasons[0]}-${seasons[seasons.length - 1]} (${seasons.length} seasons x ${nPerSeason}) reserve=${cfg.starterReserve} maxShare=${cfg.maxShare} premium=${cfg.premium}`);
+  const edge = ourSd == null ? "none (=market)" : `ourSd ${ourSd} vs market ${marketSd}`;
+  console.log(`BACKTEST ${seasons[0]}-${seasons[seasons.length - 1]} (${seasons.length}x${nPerSeason})  reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  value-edge: ${edge}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / 16).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
-  console.log(`  per season: ${perSeason.join("  ")}`);
 }
 
 async function cmdDumpValues(rest: string[]) {

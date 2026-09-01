@@ -37,18 +37,19 @@ function weekScore(roster: { name: string; pos: string; proj: number }[], week: 
   return total;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, projNoiseSd = 0.30): BacktestResult {
-  const rng = mulberry32(seed * 104729 + 3);
-  // PROJECTION UNCERTAINTY: everyone drafts on a NOISY projection of the season (a stud can be
-  // mis-projected), but we SCORE by the real weekly actuals. This is what stops perfect-foresight
-  // from trivially rewarding concentration -- your projected stud might bust.
-  const proj: PointsRow[] = projNoiseSd > 0
-    ? seasonPoints.map((p) => ({ ...p, points: Math.max(0, p.points * (1 + gauss(rng) * projNoiseSd)) }))
-    : seasonPoints;
-  const projMap = new Map(proj.map((p) => [p.name, p.points]));
-  // our bid values come from the SAME noisy projection (edge is STRATEGY here, not private info)
-  const useValues = projNoiseSd > 0 ? new Map(computeValues(proj).map((v) => [v.name, v.value])) : ourValues;
-  const picks = draftField(proj, useValues, cfg, seed, lg);
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number): BacktestResult {
+  const rngM = mulberry32(seed * 104729 + 3);
+  const rngU = mulberry32(seed * 15485863 + 7);
+  const us = ourSd == null ? marketSd : ourSd; // our projection error; < marketSd => a VALUE EDGE
+  // The MARKET (bots) draft on a consensus projection = truth x (1 + noise, sd marketSd). WE draft
+  // on OUR projection = truth x (1 + noise, sd ourSd). If ours is tighter we spot mis-priced players
+  // and win value. Everyone SCORES by the real weekly truth; lineups are set by the market view (so
+  // this isolates the VALUE edge from any lineup-setting skill).
+  const projMarket: PointsRow[] = seasonPoints.map((p) => ({ ...p, points: Math.max(0, p.points * (1 + gauss(rngM) * marketSd)) }));
+  const projUs = new Map(seasonPoints.map((p) => [p.name, Math.max(0, p.points * (1 + gauss(rngU) * us))]));
+  const projMap = new Map(projMarket.map((p) => [p.name, p.points]));
+  const useValues = new Map(computeValues(seasonPoints.map((p) => ({ ...p, points: projUs.get(p.name) ?? 0 }))).map((v) => [v.name, v.value]));
+  const picks = draftField(projMarket, useValues, cfg, seed, lg);
   const rosters: { name: string; pos: string; proj: number }[][] = Array.from({ length: lg.teams }, () => []);
   for (const p of picks) rosters[p.team].push({ name: p.name, pos: p.pos, proj: projMap.get(p.name) ?? 0 });
 
@@ -57,7 +58,7 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, ourValues
   // regular season: each week a random pairing of the 16 teams (seeded)
   for (const wk of REG_WEEKS) {
     const order = [...Array(lg.teams).keys()];
-    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rngM() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
     const scores = rosters.map((r) => weekScore(r, wk, weekly, lg));
     for (let i = 0; i < lg.teams; i += 2) {
       const a = order[i], b = order[i + 1];

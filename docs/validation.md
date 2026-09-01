@@ -41,7 +41,19 @@ Its effect is real within any one season but washes out across seasons -- so do 
 **Where the edge actually is:** our team wins ~27% of titles = **4.4x the 6.3% random baseline**, and
 makes the playoffs ~92% of the time, REGARDLESS of config. That edge comes from drafting rational
 values against a field that OVERPAYS for studs (your league's real tendency) -- not from the
-stars-and-scrubs vs balanced choice. So: keep a sane MODERATE default (reserve 5-8, max-share
+stars-and-scrubs vs balanced choice.
+
+### VALUE edge, quantified (`--our-noise` vs `--market-noise`)
+
+`ff backtest --our-noise F --market-noise 0.30` gives the market (bots) a projection with error sd
+`market-noise` and US a projection with error sd `our-noise`. If ours is tighter (or just
+INDEPENDENT), we spot mis-priced players and win value; everyone still scores by the real weekly
+truth. Sweep (11 seasons, config fixed):
+- our projection = the shared consensus everyone uses -> ~27% (no value edge, discipline only).
+- our OWN projection, SAME accuracy (independent errors) -> ~39%. **+12 pts just for not sharing the
+  room's blind spots.**
+- tighter accuracy: 0.25 -> 41%, 0.20 -> 43%, 0.12 -> 44%, 0.05 -> 46%.
+So VALUES are the top tunable lever (config is not). Full breakdown: docs/edges.md. So: keep a sane MODERATE default (reserve 5-8, max-share
 0.5-0.6) for steadiness (balanced has the widest bad-year swings), invest in better VALUES + keeping
 our discipline vs the room, and don't chase a "perfect" aggression setting -- there isn't one.
 
