@@ -107,10 +107,12 @@ export interface V2Config {
   values?: Record<string, number>; // OUR value overrides by name (else ESPN pre-draft val)
   targets?: Record<string, number>; // per-player premium multiplier (e.g. 1.2)
   avoids?: Set<string>;
-  starterReserve?: number; // $ to keep for each other open STARTER slot (default 4)
+  starterReserve?: number; // $ to keep for each other open STARTER slot (default 10)
   benchReserve?: number; // $ to keep for each other open BENCH slot (default 1)
   premium?: number; // small bump to outbid at consensus (default 1)
   aggr?: number; // global aggressiveness multiplier on value (default 1.0)
+  maxShare?: number; // hard cap on ONE player as a fraction of STARTING budget (default 0.45)
+  startBudget?: number; // total budget (for maxShare); default 200
 }
 
 const isBench = (slotKey: string) => /^(BE|BENCH|IR)$/i.test(slotKey);
@@ -129,10 +131,12 @@ export function reserveForOthers(state: DraftState, fillingBench: boolean, start
 }
 
 export function makeV2Strategy(cfg: V2Config = {}): Strategy {
-  const starterReserve = cfg.starterReserve ?? 4;
+  const starterReserve = cfg.starterReserve ?? 10;
   const benchReserve = cfg.benchReserve ?? 1;
   const premium = cfg.premium ?? 1;
   const aggr = cfg.aggr ?? 1.0;
+  const maxShare = cfg.maxShare ?? 0.45;
+  const startBudget = cfg.startBudget ?? 200;
   const val = (p: PlayerRef) => cfg.values?.[p.name] ?? p.espnPreDraftVal ?? 1;
 
   return {
@@ -150,8 +154,11 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       // Hard reserve ($1/other slot) is the never-strand floor -- a legal roster stays completable.
       const hardAffordable = state.myBudget - reserveForOthers(state, fillingBench, 1, 1);
       const wantVal = Math.round(val(p) * aggr * (cfg.targets?.[p.name] ?? 1)) + premium;
-      let maxBid = Math.min(wantVal, softAffordable);
-      // Fill-floor: never let the soft reserve BLOCK a needed slot we can legally afford ($1).
+      // Concentration cap: never sink more than maxShare of the STARTING budget into one player
+      // (stops the stars-and-scrubs failure where 3 studs eat the budget and the tail can't fill).
+      const shareCap = Math.floor(startBudget * maxShare);
+      let maxBid = Math.min(wantVal, softAffordable, shareCap);
+      // Fill-floor: never let a reserve BLOCK a needed slot we can legally afford ($1).
       if (maxBid < 1 && hardAffordable >= 1) maxBid = 1;
       maxBid = Math.max(0, Math.min(maxBid, hardAffordable));
       return { maxBid, reason: `val${val(p)} soft${softAffordable} -> ${maxBid}` };
