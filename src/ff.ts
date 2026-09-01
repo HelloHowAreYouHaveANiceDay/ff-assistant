@@ -43,6 +43,8 @@ async function main() {
       return cmdRoster(rest);
     case "auto-bid":
       return cmdAutoBid(rest);
+    case "auto-draft":
+      return cmdAutoDraft(rest);
     case "inspect-draft":
       return cmdInspect(rest);
     case "rank":
@@ -234,16 +236,16 @@ async function cmdBid(rest: string[]) {
   await detach(a);
 }
 
-// Read our drafted roster (the roster table) to verify wins.
+// Read our real drafted roster (POS/Player/$/BYE panel) to verify wins + open slots.
 async function cmdRoster(rest: string[]) {
+  const { readRoster } = await import("./draft/espnAuction.js");
   const a = await attachFor(rest);
   const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
-  const players = (await page.evaluate(`(() => {
-    const names = Array.from(document.querySelectorAll('table.Table .playerinfo__playername, table.Table a[href*="playerId"]'))
-      .map((e) => (e.textContent || '').trim()).filter(Boolean);
-    return Array.from(new Set(names));
-  })()`)) as string[];
-  console.log(`roster (${players.length}): ${players.join(", ") || "(none yet)"}`);
+  const r = await readRoster(page);
+  const won = r.slots.filter((s) => s.player).map((s) => `${s.slot} ${s.player} $${s.price}`);
+  console.log(`filled ${r.filled}/${r.filled + r.open}  spent $${r.spent}  open ${r.open}`);
+  console.log(`open: dedicated=${JSON.stringify(r.openByBase)} flex=${r.flexOpen} bench=${r.benchOpen}`);
+  console.log(`won: ${won.join(" | ") || "(none)"}`);
   await detach(a);
 }
 
@@ -283,6 +285,56 @@ async function cmdAutoBid(rest: string[]) {
     await page.waitForTimeout(2000);
   }
   console.log(`final roster size: ${await rosterCount()}`);
+  await detach(a);
+}
+
+// Full-auto auction engine (MVP): fill a complete legal roster in budget. Bots nominate
+// (ESPN auto-nominates on our turn); we bid on any on-block player that fills an open slot,
+// up to min(our value / ESPN pre-draft val / floor, ESPN's legal max). ESPN's myMax already
+// reserves $1/open slot, so we can never strand a slot -> the done-bar is structurally safe.
+async function cmdAutoDraft(rest: string[]) {
+  const { readBlock, readRoster, hasOpenSlotFor, quickBid } = await import("./draft/espnAuction.js");
+  const { loadRankings } = await import("./data/rankings.js");
+  const rounds = Number(valueOf(rest, "--rounds") ?? 400);
+  const floor = Number(valueOf(rest, "--floor") ?? 2); // min we'll pay for a needed filler
+  const csv = valueOf(rest, "--csv") ?? "data/rankings.sample.csv";
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+  const ranks = new Map<string, { pos: string; value: number }>();
+  try {
+    for (const p of loadRankings(csv)) ranks.set(norm(p.name), { pos: p.pos, value: Math.round(p.proj / 10) });
+  } catch { /* rankings optional */ }
+
+  const a = await attachFor(rest);
+  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
+  let lastPlayer = "";
+  for (let i = 0; i < rounds; i++) {
+    const r = await readRoster(page);
+    if (r.open === 0) {
+      console.log(`DONE: full roster (${r.filled} slots), spent $${r.spent}.`);
+      break;
+    }
+    const b = await readBlock(page);
+    if (b.onBlock && b.player && b.canBid) {
+      const rk = ranks.get(norm(b.player));
+      const pos = b.pos ?? rk?.pos ?? null;
+      const need = pos ? hasOpenSlotFor(r, pos) : r.benchOpen > 0; // unknown pos -> only for bench
+      const ourVal = Math.max(rk?.value ?? 0, b.preDraftVal ?? 0, floor);
+      const cap = Math.min(ourVal, b.myMax ?? 0);
+      const offer = b.currentOffer ?? 0;
+      if (need && offer < cap) {
+        const ok = await quickBid(page);
+        if (b.player !== lastPlayer)
+          console.log(`r${i}: bid ${b.player} (${pos}) $${offer}->+1 cap=${cap} myMax=${b.myMax} [open ${r.open}] ${ok ? "" : "(noclick)"}`);
+        lastPlayer = b.player;
+      } else if (b.player !== lastPlayer) {
+        console.log(`r${i}: pass ${b.player} (${pos}) $${offer} cap=${cap} need=${need} [open ${r.open}]`);
+        lastPlayer = b.player;
+      }
+    }
+    await page.waitForTimeout(1400);
+  }
+  const fin = await readRoster(page);
+  console.log(`final: filled ${fin.filled}/${fin.filled + fin.open} spent $${fin.spent} open ${fin.open}`);
   await detach(a);
 }
 
