@@ -44,9 +44,15 @@ for player, pos, team, ecr, pr in rk.select(["player", "pos", "team", "ecr", "po
 rows.sort(key=lambda x: -x[2])
 
 os.makedirs("data", exist_ok=True)
+# nominal K/DST projections (streamed/~$1 in this league, but rosters + lineups still need them)
+for i, nm in enumerate(["Justin Tucker", "Brandon Aubrey", "Chris Boswell", "Cameron Dicker", "Jake Elliott", "Ka'imi Fairbairn"]):
+    rows.append((nm, "K", round(150 - i * 4, 1)))
+for i, nm in enumerate(["Broncos", "Eagles", "Vikings", "Texans", "Steelers", "Bills"]):
+    rows.append((nm, "DST", round(145 - i * 4, 1)))
+
 with open("data/points.csv", "w", encoding="ascii", errors="ignore") as f:
     f.write("player,pos,points\n")
     for name, pos, p in rows:
         f.write(f"{name},{pos},{p}\n")
-print(f"wrote data/points.csv (2025 projections) with {len(rows)} players")
+print(f"wrote data/points.csv (2025 projections) with {len(rows)} players (incl nominal K/DST)")
 print("top:", [(r[0], r[1], r[2]) for r in rows[:6]])

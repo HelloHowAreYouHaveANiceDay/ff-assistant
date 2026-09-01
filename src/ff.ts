@@ -53,6 +53,8 @@ async function main() {
       return cmdValues(rest);
     case "project":
       return cmdProject(rest);
+    case "lineup":
+      return cmdLineup(rest);
     case "sim":
       return cmdSim(rest);
     case "backtest":
@@ -320,6 +322,32 @@ async function cmdPreflight(rest: string[]) {
 // Scrape ESPN's full board values (calibrated to our league) into a values CSV.
 // Compute OUR auction values from a points table (VOR->$) and write a values CSV.
 // Demo the shared projection layer: season / this-week-vs-opponent / rest-of-season for a player.
+// In-season weekly lineup optimizer. Reads a roster (offline CSV now: player[,opp][,injury]; live
+// copresent read once the season starts), projects each via the shared layer, and recommends the
+// optimal legal AVAILABLE lineup. `--set` would submit it (live, at season start).
+async function cmdLineup(rest: string[]) {
+  const { loadProjections } = await import("./projections.js");
+  const { optimalLineup } = await import("./inseason/lineup.js");
+  const { isAvailable } = await import("./inseason/espnTeam.js");
+  const { SIM_LEAGUE } = await import("./draft/sim.js");
+  const { readFileSync } = await import("node:fs");
+  const proj = loadProjections(valueOf(rest, "--points") ?? "data/points.csv", valueOf(rest, "--def") ?? "data/def-ratings.csv");
+  const rosterFile = valueOf(rest, "--roster");
+  if (!rosterFile) { console.log("usage: ff lineup --roster <csv: player[,opp][,injury]>  (live copresent read lands at season start)"); return; }
+  const rows = readFileSync(rosterFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
+  const table = new Map(proj.all().map((p) => [p.name.toLowerCase(), p.pos]));
+  const players = rows.map((f) => {
+    const name = f[0].trim(), opp = (f[1] ?? "").trim() || undefined, injury = (f[2] ?? "").trim() || undefined;
+    const pos = table.get(name.toLowerCase()) ?? "";
+    return { name, pos, opponent: opp, starting: false, injuryStatus: injury, proj: proj.week(name, pos, opp), available: isAvailable({ name, pos, opponent: opp, starting: false, injuryStatus: injury }) };
+  }).filter((p) => p.pos);
+  const res = optimalLineup(players, SIM_LEAGUE.slots);
+  console.log(`RECOMMENDED LINEUP (proj ${res.totalProj}):`);
+  for (const s of res.starters) console.log(`  ${s.slot.padEnd(5)} ${s.name.padEnd(22)} ${s.proj}`);
+  console.log(`BENCH: ${res.bench.map((b) => `${b.name}(${b.proj}${b.available ? "" : " N/A"})`).join(", ")}`);
+  if (res.flags.length) console.log(`FLAGS: ${res.flags.join(" | ")}`);
+}
+
 async function cmdProject(rest: string[]) {
   const { loadProjections } = await import("./projections.js");
   const name = rest.find((r) => !r.startsWith("--"));

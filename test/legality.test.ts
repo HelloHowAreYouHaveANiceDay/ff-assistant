@@ -91,6 +91,36 @@ test("projections: season/week/ros + matchup multiplier", async () => {
   assert.equal(proj.season("Unknown"), 0);
 });
 
+test("lineup optimizer: starts best-by-proj, benches a bye, fills FLEX", async () => {
+  const { optimalLineup } = await import("../src/inseason/lineup.ts");
+  const slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DST", "BE", "BE"];
+  const r = optimalLineup([
+    { name: "QB1", pos: "QB", proj: 22, available: true },
+    { name: "RB1", pos: "RB", proj: 20, available: true },
+    { name: "RB2", pos: "RB", proj: 15, available: false }, // BYE -> must bench
+    { name: "RB3", pos: "RB", proj: 12, available: true },
+    { name: "RB4", pos: "RB", proj: 11, available: true }, // FLEX candidate
+    { name: "WR1", pos: "WR", proj: 18, available: true },
+    { name: "WR2", pos: "WR", proj: 14, available: true },
+    { name: "TE1", pos: "TE", proj: 9, available: true },
+    { name: "K1", pos: "K", proj: 8, available: true },
+    { name: "D1", pos: "DST", proj: 7, available: true },
+  ], slots);
+  const started = new Set(r.starters.map((s) => s.name));
+  assert.ok(!started.has("RB2"), "a bye player must not be started");
+  assert.ok(started.has("RB1") && started.has("RB3"), "best available RBs start");
+  const flex = r.starters.find((s) => s.slot === "FLEX");
+  assert.equal(flex?.name, "RB4", "FLEX = best remaining eligible (RB4 at 11)");
+  assert.ok(r.bench.some((b) => b.name === "RB2" && !b.available), "the bye RB is on the bench");
+  assert.equal(r.starters.length, 9);
+});
+
+test("lineup optimizer: flags an unfillable slot when a whole position is out", async () => {
+  const { optimalLineup } = await import("../src/inseason/lineup.ts");
+  const r = optimalLineup([{ name: "QB1", pos: "QB", proj: 20, available: true }], ["QB", "RB"]);
+  assert.ok(r.flags.some((f) => /no available player to fill RB/.test(f)));
+});
+
 test("SEAM: avoid list zeroes a player's max", () => {
   const onBlock = { name: "Bust", pos: "WR" as const, team: "NYJ", espnPreDraftVal: 20 };
   const s = makeV1Strategy({ values: { Bust: 20 }, avoids: new Set(["Bust"]) });
