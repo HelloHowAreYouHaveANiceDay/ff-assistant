@@ -45,6 +45,8 @@ async function main() {
       return cmdAutoBid(rest);
     case "auto-draft":
       return cmdAutoDraft(rest);
+    case "board":
+      return cmdBoard(rest);
     case "inspect-draft":
       return cmdInspect(rest);
     case "rank":
@@ -216,6 +218,16 @@ async function cmdLaunchPractice(rest: string[]) {
   await detach(a);
 }
 
+async function cmdBoard(rest: string[]) {
+  const { readBoard } = await import("./draft/espnAuction.js");
+  const a = await attachFor(rest);
+  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
+  const board = await readBoard(page);
+  console.log(`board (${board.length} visible):`);
+  for (const p of board.slice(0, 20)) console.log(`  $${p.value ?? "?"}  ${p.pos ?? "?"}  ${p.name}`);
+  await detach(a);
+}
+
 async function cmdReadBlock(rest: string[]) {
   const { readBlock } = await import("./draft/espnAuction.js");
   const a = await attachFor(rest);
@@ -301,7 +313,7 @@ async function cmdAutoBid(rest: string[]) {
 // up to min(our value / ESPN pre-draft val / floor, ESPN's legal max). ESPN's myMax already
 // reserves $1/open slot, so we can never strand a slot -> the done-bar is structurally safe.
 async function cmdAutoDraft(rest: string[]) {
-  const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid } = await import("./draft/espnAuction.js");
+  const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, nominate } = await import("./draft/espnAuction.js");
   const { loadRankings } = await import("./data/rankings.js");
   const { makeV2Strategy } = await import("./draft/strategy.js");
   const rounds = Number(valueOf(rest, "--rounds") ?? 400);
@@ -339,6 +351,7 @@ async function cmdAutoDraft(rest: string[]) {
   const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
   let lastPlayer = "";
   let emptyReads = 0;
+  let idlePolls = 0; // consecutive polls with no player on the block (-> likely our nomination turn)
   for (let i = 0; i < rounds; i++) {
     const r = await readRoster(page);
     if (r.filled === 0 && r.open === 0) {
@@ -401,6 +414,24 @@ async function cmdAutoDraft(rest: string[]) {
         console.log(`r${i}: skip ${b.player} (${pos ?? "?"}) -- no open slot [open ${r.open}]`);
         lastPlayer = b.player;
       }
+    }
+    // Anti-stall nomination (G3): if the draft sits idle (no player on the block) it is likely
+    // our nomination turn -- nominate the cheapest board player that fills an open slot so the
+    // draft never stalls waiting for us (and we pick up cheap fillers). Bots auto-nominate in
+    // practice rooms, so this rarely fires there; it is the real-draft safety net.
+    if (!b.onBlock) {
+      if (++idlePolls >= 4) {
+        const board = await readBoard(page);
+        const fits = board.filter((p) => { const q = normPos(p.pos); return q && hasOpenSlotFor(r, q); });
+        const pick = (fits.length ? fits : board).sort((x, y) => (x.value ?? 999) - (y.value ?? 999))[0];
+        if (pick) {
+          const ok = await nominate(page, pick.name);
+          console.log(`r${i}: NOMINATE ${pick.name} ($${pick.value}) ${ok ? "" : "(failed -- maybe not our turn)"}`);
+        }
+        idlePolls = 0;
+      }
+    } else {
+      idlePolls = 0;
     }
     await page.waitForTimeout(1400);
   }

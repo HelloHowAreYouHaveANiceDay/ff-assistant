@@ -151,5 +151,42 @@ export async function jumpBid(page: Page, amount: number): Promise<boolean> {
   return true;
 }
 
-// TODO: nominate(playerName) when it's our nomination turn (pick from board + confirm);
-// readBoard() from .fixedDataTableLayout_main for nomination targets.
+export interface BoardPlayer {
+  name: string;
+  pos: string | null;
+  value: number | null; // ESPN's $ value shown on the board
+}
+
+/** Read the visible available-players board (virtualized -- only on-screen rows are in the DOM). */
+export async function readBoard(page: Page): Promise<BoardPlayer[]> {
+  return (await page.evaluate(`(() => {
+    const board = document.querySelector('.fixedDataTableLayout_main');
+    if (!board) return [];
+    const rows = Array.from(board.querySelectorAll('.public_fixedDataTableRow_main'));
+    const out = [];
+    for (const r of rows) {
+      const nameEl = r.querySelector('.player-news[title]');
+      const name = nameEl ? nameEl.getAttribute('title') : null;
+      if (!name) continue;
+      const cells = Array.from(r.querySelectorAll('.public_fixedDataTableCell_cellContent')).map((c) => (c.textContent||'').trim());
+      const valTxt = cells.find((t) => /^\\$\\d+$/.test(t));
+      const posCell = cells.find((t) => t.indexOf(name) === 0) || '';
+      const pm = posCell.replace(name, '').match(/(QB|RB|WR|TE|K|DST)$/) || posCell.match(/D\\/?ST/);
+      out.push({ name, pos: pm ? pm[0].replace('/','') : null, value: valTxt ? Number(valTxt.slice(1)) : null });
+    }
+    return out;
+  })()`)) as BoardPlayer[];
+}
+
+/** Nominate a player by clicking the "Select" button in their board row. Returns false if the
+ *  player isn't visible on the board or Select isn't available (e.g. not our nomination turn). */
+export async function nominate(page: Page, playerName: string): Promise<boolean> {
+  const row = page.locator(".public_fixedDataTableRow_main", {
+    has: page.locator(`.player-news[title="${playerName.replace(/"/g, '\\"')}"]`),
+  }).first();
+  if ((await row.count()) === 0) return false;
+  const btn = row.locator("button", { hasText: /^Select$/i }).first();
+  if ((await btn.count()) === 0 || (await btn.isDisabled().catch(() => true))) return false;
+  await btn.click({ timeout: 4000 }).catch(() => {});
+  return true;
+}
