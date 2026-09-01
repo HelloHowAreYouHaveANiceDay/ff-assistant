@@ -40,7 +40,8 @@ export function listSessions(): BroSession[] {
     throw new Error(`bro sessions failed: ${res.stderr || res.stdout}`);
   }
   const json = lastJson(res.stdout);
-  const rows = (json?.sessions ?? []) as BroSession[];
+  // bro wraps payloads as { ok, result: {...} }; tolerate a flat shape too.
+  const rows = (json?.result?.sessions ?? json?.sessions ?? []) as BroSession[];
   return rows;
 }
 
@@ -67,22 +68,26 @@ export function passthrough(args: string[]): number {
   return res.status ?? 1;
 }
 
-/** Parse the last JSON object printed on stdout (npm -s can still add stray lines). */
+/** Parse bro's JSON from stdout. bro emits one pretty-printed object; npm -s may
+ *  prepend stray lines, so try the whole blob first, then the last {...} block. */
 function lastJson(out: string): any {
-  const lines = out.split(/\r?\n/).filter((l) => l.trim().startsWith("{"));
-  for (let i = lines.length - 1; i >= 0; i--) {
+  const trimmed = out.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    /* fall through */
+  }
+  // Grab from the first "{" to the last "}" (handles leading npm noise).
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
     try {
-      return JSON.parse(lines[i]);
+      return JSON.parse(trimmed.slice(start, end + 1));
     } catch {
-      /* keep scanning upward */
+      /* give up */
     }
   }
-  // Fallback: try the whole blob.
-  try {
-    return JSON.parse(out);
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 // Keep spawn imported for future streaming use (session start passthrough already

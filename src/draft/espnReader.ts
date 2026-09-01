@@ -11,52 +11,42 @@ import type { Page } from "playwright-core";
  * the draft board, the pick timer, the on-the-clock indicator, and the roster. This
  * is the first tool to run inside a live ESPN mock-draft room.
  */
-export async function inspectDraftDom(page: Page, outPath: string): Promise<string> {
-  const snapshot = await page.evaluate(() => {
-    const KEY = /available|player|pick|clock|round|roster|timer|on the clock|draft|queue/i;
-
-    const describe = (el: Element) => ({
-      tag: el.tagName.toLowerCase(),
-      id: (el as HTMLElement).id || undefined,
-      cls: (el.getAttribute("class") || "").slice(0, 120) || undefined,
-      testid: el.getAttribute("data-testid") || undefined,
-      role: el.getAttribute("role") || undefined,
-      text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80) || undefined,
-    });
-
-    // Elements whose text or class hints at draft concepts.
-    const all = Array.from(document.querySelectorAll("*"));
-    const candidates = all
-      .filter((el) => {
-        const hay = `${el.getAttribute("class") || ""} ${el.getAttribute("data-testid") || ""} ${
-          (el.textContent || "").slice(0, 60)
-        }`;
-        return KEY.test(hay);
-      })
-      .slice(0, 400)
-      .map(describe);
-
-    // Likely tabular/list containers (the board is usually a table or big list).
-    const containers = Array.from(
-      document.querySelectorAll("table, [role='grid'], [role='table'], ul, ol"),
-    )
-      .filter((el) => (el.querySelectorAll("tr,li,[role='row']").length ?? 0) >= 5)
-      .slice(0, 40)
-      .map((el) => ({
-        ...describe(el),
-        rowCount: el.querySelectorAll("tr,li,[role='row']").length,
-      }));
-
-    return {
-      url: location.href,
-      title: document.title,
-      timestamp_note: "captured live from the draft-room DOM",
-      candidateCount: candidates.length,
-      candidates,
-      containers,
-    };
+// The collection script is passed to page.evaluate AS A STRING on purpose: tsx/esbuild
+// injects a `__name` helper into compiled function expressions, which is undefined in
+// the page context and makes a function-form evaluate throw "__name is not defined".
+const COLLECT_DOM = `(() => {
+  const KEY = /available|player|pick|clock|round|roster|timer|on the clock|draft|queue/i;
+  const describe = (el) => ({
+    tag: el.tagName.toLowerCase(),
+    id: el.id || undefined,
+    cls: (el.getAttribute("class") || "").slice(0, 120) || undefined,
+    testid: el.getAttribute("data-testid") || undefined,
+    role: el.getAttribute("role") || undefined,
+    text: (el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 80) || undefined,
   });
+  const all = Array.from(document.querySelectorAll("*"));
+  const candidates = all.filter((el) => {
+    const hay = (el.getAttribute("class") || "") + " " + (el.getAttribute("data-testid") || "") + " " + (el.textContent || "").slice(0, 60);
+    return KEY.test(hay);
+  }).slice(0, 400).map(describe);
+  const containers = Array.from(document.querySelectorAll("table, [role='grid'], [role='table'], ul, ol"))
+    .filter((el) => el.querySelectorAll("tr,li,[role='row']").length >= 5)
+    .slice(0, 40)
+    .map((el) => Object.assign(describe(el), { rowCount: el.querySelectorAll("tr,li,[role='row']").length }));
+  const buttons = Array.from(document.querySelectorAll("button, a[role='button'], a.btn, [class*='btn'], a[href]"))
+    .slice(0, 200)
+    .map(describe)
+    .filter((b) => b.text);
+  const iframes = Array.from(document.querySelectorAll("iframe")).map((f) => ({
+    src: f.getAttribute("src") || undefined,
+    id: f.id || undefined,
+    cls: (f.getAttribute("class") || "").slice(0, 80) || undefined,
+  }));
+  return { url: location.href, title: document.title, candidateCount: candidates.length, candidates, containers, buttons, iframes };
+})()`;
 
+export async function inspectDraftDom(page: Page, outPath: string): Promise<string> {
+  const snapshot = await page.evaluate(COLLECT_DOM);
   writeFileSync(outPath, JSON.stringify(snapshot, null, 2), "utf8");
   return outPath;
 }

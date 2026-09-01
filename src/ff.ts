@@ -29,6 +29,10 @@ async function main() {
       return cmdAttach(rest);
     case "goto":
       return cmdGoto(rest);
+    case "click":
+      return cmdClick(rest);
+    case "text":
+      return cmdText(rest);
     case "inspect-draft":
       return cmdInspect(rest);
     case "rank":
@@ -78,6 +82,32 @@ async function cmdGoto(rest: string[]) {
   const page = findPage(a, "espn.com") ?? a.pages[0];
   await page.goto(url, { waitUntil: "domcontentloaded" });
   console.log(`Navigated to ${page.url()}`);
+  await detach(a);
+}
+
+// Click the first visible link/button whose text contains <text> (copresent action).
+async function cmdClick(rest: string[]) {
+  const text = rest.find((r) => !r.startsWith("--"));
+  if (!text) {
+    console.error('usage: ff click "<visible text>"');
+    process.exit(2);
+  }
+  const a = await attachFor(rest);
+  const page = findPage(a, "espn.com") ?? a.pages[0];
+  const loc = page.getByText(text, { exact: false }).first();
+  await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+  await loc.click({ timeout: 8000 });
+  await page.waitForLoadState("domcontentloaded").catch(() => {});
+  console.log(`Clicked "${text}". Now at: ${page.url()}`);
+  await detach(a);
+}
+
+// Dump the current page's visible text (copresent read).
+async function cmdText(rest: string[]) {
+  const a = await attachFor(rest);
+  const page = findPage(a, "espn.com") ?? a.pages[0];
+  const txt = await page.evaluate("document.body.innerText");
+  console.log(String(txt).replace(/\n{3,}/g, "\n\n").slice(0, 3000));
   await detach(a);
 }
 
