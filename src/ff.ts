@@ -437,16 +437,24 @@ async function cmdBacktest(rest: string[]) {
   }
   const marketSd = Number(valueOf(rest, "--market-noise") ?? 0.30);
   const ourSd = valueOf(rest, "--our-noise") != null ? Number(valueOf(rest, "--our-noise")) : undefined; // < marketSd => value edge
-  const ourWeeklySd = valueOf(rest, "--our-weekly-noise") != null ? Number(valueOf(rest, "--our-weekly-noise")) : undefined; // set => OUR in-season LINEUP skill
-  const botWeeklySd = valueOf(rest, "--bot-weekly-noise") != null ? Number(valueOf(rest, "--bot-weekly-noise")) : undefined; // set => bots also set weekly lineups
+  const ourWeeklySd = valueOf(rest, "--our-weekly-noise") != null ? Number(valueOf(rest, "--our-weekly-noise")) : undefined;
+  const botWeeklySd = valueOf(rest, "--bot-weekly-noise") != null ? Number(valueOf(rest, "--bot-weekly-noise")) : undefined;
+  const full = rest.includes("--full"); // run the REAL lineup optimizer (inseason/lineup.ts) for our team
+  const noLookahead = rest.includes("--no-lookahead"); // draft/lineup on LAST season, score by THIS season
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;
+  const perYear: string[] = [];
   for (const yr of seasons) {
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(pts.get(yr)!, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, ourSd, ourWeeklySd, botWeeklySd); if (r.champ) champ++; if (r.madePlayoffs) playoffs++; total++; }
+    const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
+    const proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
+    let c = 0;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
+    perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const edge = `${ourSd == null ? "draft:none" : `draft:ourSd ${ourSd}`} lineup:us=${ourWeeklySd ?? "naive"}/bots=${botWeeklySd ?? "naive"} vs market ${marketSd}`;
-  console.log(`BACKTEST ${seasons[0]}-${seasons[seasons.length - 1]} (${seasons.length}x${nPerSeason})  reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  value-edge: ${edge}`);
+  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  console.log(`BACKTEST ${mode}  reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / 16).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
+  console.log(`  per season: ${perYear.join("  ")}`);
 }
 
 async function cmdDumpValues(rest: string[]) {

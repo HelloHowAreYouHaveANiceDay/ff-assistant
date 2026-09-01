@@ -57,6 +57,24 @@ So VALUES are the top tunable lever (config is not). Full breakdown: docs/edges.
 0.5-0.6) for steadiness (balanced has the widest bad-year swings), invest in better VALUES + keeping
 our discipline vs the room, and don't chase a "perfect" aggression setting -- there isn't one.
 
+## FULL-SYSTEM backtest (`--full --no-lookahead`) -- the whole pipeline end-to-end
+
+`ff backtest --full --no-lookahead` runs the ACTUAL production modules together on real historical
+seasons: values.ts (VOR->$) -> strategy.ts (draftField) -> projections.ts -> inseason/lineup.ts
+(the real optimizer, availability-aware), scored by real weekly results + playoffs.
+- `--full` = our team sets each week's lineup with the REAL `optimalLineup`, not a synthetic noise.
+- `--no-lookahead` = our projection for season Y is season Y-1's actuals (a real, crude forecast
+  with ZERO future knowledge); scored by Y's weekly truth.
+
+Result (2015-2024, ~150 seasons/yr): **~36% championships, 5.7x random, 94% playoffs**, stable
+27-43% every year (no overfit). Same-season projection (mild lookahead) is ~49%; draft-only with a
+synthetic lineup was 41%.
+
+**Read it honestly:** the 36% is a FLOOR on projection quality -- last-year actuals miss rookies and
+undervalue players who were hurt last year, so a real preseason projection (ffanalytics/FantasyPros)
+would do better. It also omits waivers/trades, which would ADD edge. The bot field is a model, so
+trust the multiple-of-random (~5.7x) and the cross-season stability, not the absolute %.
+
 ## `ff sim` (season-points proxy)
 
 ## What it does

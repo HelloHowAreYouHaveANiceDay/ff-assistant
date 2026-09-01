@@ -6,6 +6,7 @@
 
 import { draftField, mulberry32, SIM_LEAGUE, type SimLeague } from "./sim.js";
 import { computeValues, type PointsRow } from "./values.js";
+import { optimalLineup } from "../inseason/lineup.js";
 import type { V2Config } from "./strategy.js";
 
 function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
@@ -39,7 +40,18 @@ function weekScore(roster: { name: string; pos: string; proj: number }[], week: 
   return total;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number): BacktestResult {
+/** FULL-SYSTEM week score for our team: run the REAL lineup optimizer (inseason/lineup.ts) using OUR
+ *  per-game projection, on the players who actually PLAYED that week (availability), score by ACTUAL.
+ *  This exercises the production lineup code end-to-end (not a synthetic noise proxy). */
+function realWeekScore(roster: { name: string; pos: string; proj: number }[], week: number, weekly: Weekly, lg: SimLeague, perGame: Map<string, number>): number {
+  const players = roster.map((p) => ({ name: p.name, pos: p.pos, proj: perGame.get(p.name) ?? p.proj / 17, available: weekly.get(p.name)?.get(week) != null }));
+  const res = optimalLineup(players, lg.slots);
+  let total = 0;
+  for (const s of res.starters) { const a = weekly.get(s.name)?.get(week); if (a != null) total += a; }
+  return total;
+}
+
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false): BacktestResult {
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
   const us = ourSd == null ? marketSd : ourSd; // our projection error; < marketSd => a VALUE EDGE
@@ -58,6 +70,7 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   // In-season LINEUP skill: our team (0) can set each week's lineup by a WEEKLY projection
   // (actual + forecast noise, sd ourWeeklySd) instead of the season average -> starts the right
   // players that week. Bots stay naive (season projection). Isolates the lineup-management edge.
+  const ourPerGame = new Map([...projUs.entries()].map(([n, v]) => [n, v / 17])); // our weekly talent estimate
   const selFor = (t: number, wk: number): Map<string, number> | undefined => {
     const sd = t === 0 ? ourWeeklySd : botWeeklySd;
     if (sd == null) return undefined; // naive: start by season projection
@@ -65,7 +78,10 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
     for (const p of rosters[t]) { const a = weekly.get(p.name)?.get(wk); if (a != null) m.set(p.name, Math.max(0, a * (1 + gauss(rngU) * sd))); }
     return m;
   };
-  const wkS = (t: number, wk: number) => weekScore(rosters[t], wk, weekly, lg, selFor(t, wk));
+  // FULL-SYSTEM: our team (0) uses the REAL lineup optimizer on OUR projection; others use the sel model.
+  const wkS = (t: number, wk: number) => (realLineup && t === 0)
+    ? realWeekScore(rosters[t], wk, weekly, lg, ourPerGame)
+    : weekScore(rosters[t], wk, weekly, lg, selFor(t, wk));
 
   const wins = new Array(lg.teams).fill(0);
   const totPts = new Array(lg.teams).fill(0);
