@@ -57,10 +57,10 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
   const picks: Pick[] = [];
 
   const openIdxFor = (t: { slots: (string | null)[] }, pos: string): number => {
-    let i = t.slots.findIndex((s, k) => t.slots[k] === null && lg.slots[k] === pos);
+    let i = t.slots.findIndex((s, k) => s === null && lg.slots[k] === pos);
     if (i >= 0) return i;
-    if (FLEX_OK.has(pos)) { i = t.slots.findIndex((s, k) => t.slots[k] === null && lg.slots[k] === "FLEX"); if (i >= 0) return i; }
-    return t.slots.findIndex((s, k) => t.slots[k] === null && lg.slots[k] === "BE");
+    if (FLEX_OK.has(pos)) { i = t.slots.findIndex((s, k) => s === null && lg.slots[k] === "FLEX"); if (i >= 0) return i; }
+    return t.slots.findIndex((s, k) => s === null && lg.slots[k] === "BE");
   };
   const openCount = (t: { slots: (string | null)[] }) => t.slots.filter((s) => s === null).length;
   const affordable = (t: { budget: number; slots: (string | null)[] }) => t.budget - Math.max(0, openCount(t) - 1);

@@ -46,19 +46,6 @@ export function listSessions(): BroSession[] {
   return rows;
 }
 
-/** Resolve the live CDP port for a site's bro session, or throw with guidance. */
-export function sessionPort(site: string): number {
-  const s = listSessions().find((r) => r.site === site && r.alive);
-  if (!s) {
-    throw new Error(
-      `No live bro session for "${site}". Start one:\n` +
-        `  cd ${broDir()} && npm run -s bro -- session start ${site}\n` +
-        `then log into ${site} in the window that opens and leave it running.`,
-    );
-  }
-  return s.port;
-}
-
 /** GET the CDP tab list for a port; [] if nothing answers. Used to verify a port is really live
  *  and hosts the site (bro's registry port can go stale -- confirmed the "session died" bug). */
 export function cdpTabUrls(port: number, timeoutMs = 800): Promise<string[]> {

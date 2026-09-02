@@ -13,7 +13,6 @@ function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v =
 
 export type Weekly = Map<string, Map<number, number>>; // name -> week -> actual points
 const REG_WEEKS = Array.from({ length: 14 }, (_, i) => i + 1); // fantasy weeks 1-14
-const PLAYOFF_WEEKS = [15, 16, 17];
 
 export interface BacktestResult { champ: boolean; madePlayoffs: boolean; wins: number; regPoints: number; }
 

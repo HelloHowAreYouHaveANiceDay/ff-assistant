@@ -5,14 +5,12 @@
 //   npm run ff -- attach            test the copresent CDP connection, list tabs
 //   npm run ff -- inspect-draft     dump the live ESPN draft-room DOM to a file
 //   npm run ff -- rank              print top players by VOR from the rankings CSV
-//   npm run ff -- mock              run the draft loop (needs real selectors first)
 
 import { attach, attachBro, findPage, detach, type Attached } from "./browser/attach.js";
 import { passthrough as broPassthrough } from "./browser/bro.js";
 import { inspectDraftDom } from "./draft/espnReader.js";
 import { loadRankings } from "./data/rankings.js";
 import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank.js";
-import { runDraft } from "./draft/loop.js";
 
 const DEFAULT_LEAGUE: LeagueSettings = {
   teams: 10,
@@ -71,8 +69,6 @@ async function main() {
       return cmdInspect(rest);
     case "rank":
       return cmdRank(rest);
-    case "mock":
-      return cmdMock(rest);
     default:
       console.log(
         "commands:\n" +
@@ -80,8 +76,7 @@ async function main() {
           "  attach [--site espn|--port N]   test the copresent connection to bro's session\n" +
           "  goto <url> [--site]        navigate the copresent session\n" +
           "  inspect-draft [--out FILE] dump the live ESPN draft-room DOM\n" +
-          "  rank [--csv FILE]          top players by VOR (offline)\n" +
-          "  mock [--csv FILE]          run the draft loop (needs real selectors)",
+          "  rank [--csv FILE]          top players by VOR (offline)",
       );
   }
 }
@@ -886,23 +881,6 @@ function cmdRank(rest: string[]) {
   for (const p of valued.slice(0, 15)) {
     console.log(`  ${p.vor.toFixed(1).padStart(6)}  ${p.pos.padEnd(3)} ${p.name} (${p.team})`);
   }
-}
-
-async function cmdMock(rest: string[]) {
-  const csv = valueOf(rest, "--csv") ?? "data/rankings.sample.csv";
-  const a = await attachFor(rest);
-  const page = findPage(a, "espn.com");
-  if (!page) {
-    console.error("No espn.com tab open. Join an ESPN mock draft first.");
-    await detach(a);
-    process.exit(2);
-  }
-  await runDraft(page, {
-    rankingsPath: csv,
-    league: DEFAULT_LEAGUE,
-    overrideWindowSec: 8,
-    pollMs: 1500,
-  });
 }
 
 function valueOf(args: string[], flag: string): string | undefined {

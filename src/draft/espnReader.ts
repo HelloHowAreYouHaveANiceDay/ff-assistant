@@ -52,19 +52,3 @@ export async function inspectDraftDom(page: Page, outPath: string): Promise<stri
   return outPath;
 }
 
-// --- To be implemented from the inspection evidence -------------------------------
-
-export interface BoardState {
-  onTheClock: boolean;
-  secondsLeft: number | null;
-  availableNames: string[]; // names as ESPN renders them (map to rankings by name)
-  myRoster: string[];
-}
-
-export async function readBoard(_page: Page): Promise<BoardState> {
-  throw new Error("readBoard: selectors not yet known -- run `ff inspect-draft` first.");
-}
-
-export async function makePick(_page: Page, _playerName: string): Promise<void> {
-  throw new Error("makePick: selectors not yet known -- run `ff inspect-draft` first.");
-}

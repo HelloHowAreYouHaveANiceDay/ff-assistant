@@ -50,31 +50,9 @@ export function withVOR(pool: PlayerRank[], baselines: Record<Pos, number>): Val
   return pool.map((p) => ({ ...p, vor: p.proj - (baselines[p.pos] ?? 0) }));
 }
 
-/**
- * Rank the AVAILABLE players for the current pick. Score = VOR + VONA, where VONA
- * is the drop-off to the next available player at the same position (positional
- * scarcity). Roster need can further weight this later; kept simple for the sprint.
- */
-export function rankForPick(available: Valued[]): Array<Valued & { vona: number; score: number }> {
-  const byPos = groupByPos(available);
-  const nextBest: Record<string, number> = {};
-  for (const pos of Object.keys(byPos) as Pos[]) {
-    const sorted = byPos[pos].slice().sort((a, b) => b.vor - a.vor);
-    // VONA for the top player at a position = its VOR minus the 2nd best available.
-    nextBest[pos] = sorted[1]?.vor ?? 0;
-  }
-  return available
-    .map((p) => {
-      const vona = p.vor - (nextBest[p.pos] ?? 0);
-      // Only the current best-at-position gets full VONA credit; others ~0.
-      const scarcity = vona > 0 ? vona : 0;
-      return { ...p, vona: scarcity, score: p.vor + scarcity };
-    })
-    .sort((a, b) => b.score - a.score);
-}
-
 function groupByPos<T extends PlayerRank>(pool: T[]): Record<Pos, T[]> {
   const out = {} as Record<Pos, T[]>;
   for (const p of pool) (out[p.pos] ??= []).push(p);
   return out;
 }
+
