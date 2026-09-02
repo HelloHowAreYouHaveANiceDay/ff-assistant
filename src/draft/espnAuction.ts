@@ -89,7 +89,12 @@ export async function readBlock(page: Page): Promise<BlockState> {
 export async function readRoster(page: Page): Promise<Roster> {
   const rows = (await page.evaluate(`(() => {
     const tables = Array.from(document.querySelectorAll('table, .Table'));
-    const roster = tables.find((t) => /POS/i.test(t.textContent||'') && /BYE/i.test(t.textContent||'') && /(QB|RB|WR|TE)/.test(t.textContent||''));
+    const isRoster = (t) => /POS/i.test(t.textContent||'') && /BYE/i.test(t.textContent||'') && /(QB|RB|WR|TE)/.test(t.textContent||'');
+    const rosters = tables.filter(isRoster);
+    // Anchor on OUR persistent draft-room roster panel (wrapped in .players-table), not blindly on
+    // 'the first POS/BYE table' -- if a human opens ANOTHER team's roster a second such table renders
+    // and the first-match could be theirs (finding #8 / Step 9c). One-table case is unchanged.
+    const roster = rosters.find((t) => t.closest('.players-table')) || rosters[0];
     if (!roster) return [];
     const trs = Array.from(roster.querySelectorAll('tr, .Table__TR'));
     return trs.map((tr) => Array.from(tr.querySelectorAll('td, th, .Table__TD, .Table__TH')).map((c) => (c.textContent||'').replace(/\\s+/g,' ').trim()));

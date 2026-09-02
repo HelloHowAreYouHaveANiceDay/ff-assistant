@@ -77,11 +77,13 @@ Practice-launch flaked on cold lobby (fixed with networkidle + reload retry) -- 
 uses a different entry (G1), so this specific flake may not apply. **Action:** harden whatever the
 real-entry path turns out to be.
 
-### G11 [OPEN] Human oversight / override during the real draft
-Copresent design allows the human to grab the wheel, but there's no live dashboard of what the
-agent is doing/planning, and no explicit "pause agent" control beyond stopping the CLI. **Action:**
-at minimum, run it with the browser visible so the human sees every bid and can click to take over;
-consider a simple live status print (budget, slots left, current target).
+### G11 [PARTIAL] Human oversight / override during the real draft
+Copresent design lets the human grab the wheel. Now shipped (Step 9): a **`data/PAUSE` file** stops
+the agent bidding/nominating (reads only) without killing the CLI -- delete to resume. Taking a
+player is implicit: bid above the agent's cap and it stops contesting (it never overpays OUR value).
+Still open: a live dashboard of what the agent is doing/planning; explicit human-bid *detection*
+(9b -- stay out of a player the human is driving even below cap) and roster-anchoring under another
+team's open panel (9c, defensively anchored on `.players-table`, needs a human-present verification).
 
 ## LOW -- nice to have
 

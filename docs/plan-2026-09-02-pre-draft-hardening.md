@@ -346,10 +346,18 @@ remove -> bidding resumes (both visible in the log); human places one bid above 
 does not re-bid that player; `ff roster` returns OUR roster while another team's panel is open.
 Result: PARTIAL. (a) PAUSE: implemented -- `data/PAUSE` present -> engine reads but does not bid or
 nominate, logs `PAUSED`/`RESUMED` once per transition. Code + gating in cmdAutoDraft; live-verify on
-a fresh mock pending (blocked by the running mock -- one draft connection). (b) Human-bid respect +
-(c) roster anchoring: NOT implemented -- both require a human to act (place a bid above cap; open
-another team's roster) to build AND verify against, so they need you present; the current readRoster
-already reads OUR 12-slot panel correctly in every mock read this session. typecheck clean.
+a fresh mock pending (blocked by the running mock -- one draft connection). PAUSE later VERIFIED
+LIVE (see the Step 10 addendum): `PAUSED` then `RESUMED` with no bids between.
+(c) roster anchoring: DONE defensively -- readRoster now anchors on OUR persistent roster panel,
+`rosters.find(t => t.closest('.players-table')) || rosters[0]`, instead of blindly taking the first
+POS/BYE table (evidence: `ff inspect-draft` showed our roster table wrapped in
+`.ResponsiveTable.players-table`). One-table case is unchanged (verified live: reads our full 12/12
+roster). The two-table case (a human opens another team's panel) still needs a human-present check.
+Runbook "Watch + override" rewritten -- the old "yields when not the high bidder" was BACKWARDS: the
+agent simply never overpays OUR value, so you take a player by bidding above its cap; PAUSE + the
+ESPN-auto interaction documented. G11 -> [PARTIAL].
+(b) Human-bid respect (stay out of a player the human is driving even BELOW cap): still not
+implemented -- needs a human to place the bid to build + verify against. `npm test` 46/46.
 
 ### Step 10. Three consecutive practice auctions to the NEW done-bar
 Done-bar (replaces the MVP one): 12/12 legal, spent <= $200, exactly 2 K/DST, >= 2 players over

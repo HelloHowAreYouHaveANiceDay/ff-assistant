@@ -63,9 +63,16 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
 
 ## Watch + override
 
-- Keep the bro browser window VISIBLE. You see every bid; click in the room any time to take the
-  wheel (the agent yields when it is not the high bidder and resumes next pick).
-- Stop the agent: Ctrl-C the `auto-draft` process (the draft continues; you drive).
+- Keep the bro browser window VISIBLE. You see every bid.
+- **Take a player yourself:** just bid above the agent's cap on it. The agent never bids past OUR
+  value for a player, so once you push a player above its cap it stops contesting that player and
+  moves on. (It does not detect "you" specifically -- it simply won't overpay its own value; earlier
+  runbook text said it "yields when not the high bidder," which was backwards.)
+- **Pause it (Step 9):** create an empty `data/PAUSE` file -- the agent keeps READING the room but
+  places no bids or nominations and logs `PAUSED`; delete the file to resume (logs `RESUMED`).
+- **Hard stop:** Ctrl-C the `auto-draft` process. Re-run `auto-draft` to resume; ESPN autopick covers
+  gaps while it is down. (If your seat's ESPN auto-draft is ON, it will also fill during a PAUSE --
+  turn it OFF in the draft room if you want the PAUSE to hand the wheel fully to you.)
 
 ## If it disconnects / errors mid-draft
 
