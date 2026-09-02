@@ -1,8 +1,10 @@
 # AGENTS.md -- canonical instruction file for headless workers
 
-This repo is in its DESIGN + SPECIFICATION phase. There is no application code yet.
-Implementation is delegated to follow-up sessions / the dim-factory, driven by `ready` issues
-compiled from `wiki/projects/roadmap--ff-assistant.md`.
+This repo has a WORKING Phase-2 engine: the `ff` TypeScript CLI (draft agent + validation
+harness) -- see `README.md` for the current stack and layout. The PACKAGED APP (Electron +
+Claude Agent SDK + SQLite, `docs/architecture.md`) is still design-stage and delegated to
+follow-up sessions / the dim-factory, driven by `ready` issues compiled from
+`wiki/projects/roadmap--ff-assistant.md`. Know which layer you are working on before you start.
 
 ## Before writing any code
 

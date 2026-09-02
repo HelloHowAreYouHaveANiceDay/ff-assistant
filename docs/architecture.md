@@ -3,6 +3,12 @@
 One-page picture of ff-assistant. Component detail lives in `docs/specs/`; the rationale
 behind each choice lives in `docs/decisions.md`.
 
+> **Built vs planned (2026-09).** What follows is the LONG-TERM packaged-app target (Electron +
+> Claude Agent SDK + SQLite). It is NOT built yet. What IS built is the Phase-2 engine -- the `ff`
+> TypeScript CLI (draft agent + validation harness) that this app will eventually wrap. For the
+> current, working system and its stack, read `README.md`. This doc is the destination, not the
+> present state.
+
 ## The problem being solved
 
 A non-technical user wants the "Claude drives my fantasy team" experience but cannot set up

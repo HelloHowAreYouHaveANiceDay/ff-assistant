@@ -7,6 +7,8 @@ data/*.db
 data/*.sqlite
 data/draft-log-*.json
 data/cheatsheet.md
+data/*-dom.json
+data/draft-dom-snapshot.json
 .DS_Store
 diag.mjs
 inspect.mjs
