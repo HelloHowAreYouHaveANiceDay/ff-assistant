@@ -51,6 +51,8 @@ async function main() {
       return cmdValues(rest);
     case "values-check":
       return cmdValuesCheck(rest);
+    case "news":
+      return cmdNews(rest);
     case "cheatsheet":
       return cmdCheatsheet(rest);
     case "project":
@@ -458,6 +460,44 @@ async function cmdValuesCheck(rest: string[]) {
   console.log(`  absent (rookies / outside top-${topN}, expected): ${absent.length}`);
   if (rest.includes("--list-absent")) console.log("   " + absent.join(", "));
   if (fuzzy.length) process.exitCode = 1;
+}
+
+// Draft-day NEWS view: join data/news.csv (injuries + depth-chart role, from tools/build_news.py)
+// against OUR value table via nameKey, and surface the draftable players whose news the consensus
+// rank may not fully price -- an OUT stud to avoid, a $ we'd pay who is buried on the depth chart.
+// Read-only; it does not change values (that is a deliberate later step). Reuses the REAL nameKey.
+async function cmdNews(rest: string[]) {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const { nameKey } = await import("./draft/values.js");
+  const { classifyNews } = await import("./news.js");
+  const newsFile = valueOf(rest, "--news") ?? "data/news.csv";
+  const valuesFile = valueOf(rest, "--values") ?? "data/values.csv";
+  const minVal = Number(valueOf(rest, "--min") ?? 3); // skip the $1-2 replacement tail
+  if (!existsSync(newsFile)) {
+    console.log(`no ${newsFile} -- build it first:\n  uv run --with nflreadpy --with polars tools/build_news.py`);
+    return;
+  }
+  // OUR values keyed by nameKey (so ESPN/nflverse spelling drift resolves the same as the bidder).
+  const val = new Map<string, { value: number; pos: string; name: string }>();
+  for (const l of readFileSync(valuesFile, "utf8").trim().split(/\r?\n/).slice(1)) {
+    const f = l.split(","); const name = f[0]?.trim(); const v = Number(f[2]);
+    if (name && v > 0) val.set(nameKey(name), { value: v, pos: (f[1] || "").trim().toUpperCase(), name });
+  }
+  interface Flag { name: string; pos: string; value: number; status: string; injury: string; depth: string; kind: string; }
+  const flagged: Flag[] = [];
+  for (const l of readFileSync(newsFile, "utf8").trim().split(/\r?\n/).slice(1)) {
+    const [player, , , status, injury, depth] = l.split(",");
+    const ours = val.get(nameKey(player || ""));
+    if (!ours || ours.value < minVal) continue;
+    const kind = classifyNews(status || "", ours.pos, depth ? Number(depth) : null);
+    if (!kind) continue;
+    flagged.push({ name: ours.name, pos: ours.pos, value: ours.value, status, injury: injury || "", depth: depth || "", kind });
+  }
+  flagged.sort((a, b) => b.value - a.value);
+  console.log(`NEWS -- ${flagged.length} of your draftable players (>= $${minVal}) have news [${newsFile}]:\n`);
+  for (const x of flagged) console.log(`  $${String(x.value).padStart(3)}  ${x.name.padEnd(24)} ${x.pos.padEnd(3)} ${x.kind}${x.injury ? ` -- ${x.injury}` : ""}`);
+  const n = (p: (f: Flag) => boolean) => flagged.filter(p).length;
+  console.log(`\n  ${n((f) => f.status === "Out")} OUT, ${n((f) => f.status === "Questionable" || f.status === "Doubtful")} injury-risk, ${n((f) => !f.status)} buried on the depth chart. A read-only draft flag -- cross-check before you bid.`);
 }
 
 async function cmdValues(rest: string[]) {

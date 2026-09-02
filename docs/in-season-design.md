@@ -3,6 +3,25 @@
 The backtest proves in-season management is a top edge, and it is the SAME edge as the draft:
 sharper projections. So the design centers on ONE **projection layer** feeding both.
 
+## News / data-refresh layer (Phase 3A -- STARTED 2026-09-02)
+
+The "keep the data FRESH" half of Phase 3. First slice shipped -- a **draft-time news view**:
+- `tools/build_news.py` pulls nflverse **injury reports** (`load_injuries`, week-1 REG = the
+  draft-time proxy; statuses Out/Doubtful/Questionable + the injury) and **depth charts**
+  (`load_depth_charts`, `pos_rank` = starter/backup) for the latest season, and writes
+  `data/news.csv` (`player,pos,team,status,injury,depth`).
+- `ff news` joins that against OUR `data/values.csv` by `nameKey` and prints the DRAFTABLE players
+  whose news the consensus rank may not fully price -- an OUT stud to avoid, a $ we'd pay who is
+  buried on the depth chart. The classifier is pure + tested (`src/news.ts`, `classifyNews`): injury
+  always flags; depth-backup flags QB/TE/K at depth>=2 but RB/WR only when buried (depth>=3), since
+  an RB2/WR2 still starts in fantasy.
+- **Read-only today** -- it does NOT change values. Deliberate: the next steps are (a) fold an
+  availability discount into `values` (zero an OUT-for-season player, discount Questionable) behind a
+  flag, and (b) extend the feed to the WEEKLY horizon (each week's injury report + matchup) so the
+  in-season lineup optimizer benches OUT/bye players from live news, not a season average.
+
+The rest of this doc is the broader in-season plan the news layer feeds.
+
 ## The shared projection layer (the spine)
 
 One module produces OUR projections at three horizons, independent of ESPN/consensus (the edge is

@@ -13,6 +13,14 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
    npm run ff -- values                                               # -> data/values.csv (VOR -> $)
    ```
    Without `values.csv` the agent uses ESPN's on-screen values (legal, competitive, but no edge).
+2b. **Refresh the NEWS layer and read it** (injuries + depth-chart role, draft-time):
+   ```
+   uv run --with nflreadpy --with polars tools/build_news.py          # -> data/news.csv
+   npm run ff -- news                                                 # your draftable players with news
+   ```
+   Read-only: it flags OUT/injured/buried players among YOUR value table (e.g. a stud marked OUT to
+   avoid, a $ you'd pay who is 3rd on the depth chart). The bidder does NOT auto-apply this yet --
+   use it to set `--avoids` or just to bid with your eyes open.
 3. **Confirm the config on the trustworthy harness** (championship rate, not season points):
    `npm run ff -- backtest --full --no-lookahead --inflation --seasons 2015-2024 --n 400` -- default
    reserve 15 / max-share 0.35 / premium 2 (BALANCED; the reserve 12-20 plateau is ~24%, beats the old
