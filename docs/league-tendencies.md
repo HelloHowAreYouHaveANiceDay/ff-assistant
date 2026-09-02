@@ -50,10 +50,11 @@ stable read on how THIS room drafts. Raw data: `data/draft-recap-{2023,2024,2025
 
 ## Recommended posture
 
-> **Corrected by the SIM harness under projection risk (docs/validation.md):** fully balanced is
-> NOT optimal -- it finishes worst. The best posture is **MODERATE**: ~2 real studs (~$95 on the
-> top 3) plus solid mids. Defaults now = `--starter-reserve 8 --max-share 0.5`. The room's overpay
-> still helps us (we get value on the mids), but we do NOT punt the top entirely.
+> **Corrected by the CHAMPIONSHIP backtest (Step 5, docs/validation.md):** the SIM (season points)
+> liked concentration, but that proxy over-rewards top-heavy rosters. On the trustworthy full-system
+> no-lookahead backtest, **BALANCED wins**: defaults are now `--starter-reserve 20 --max-share 0.35`
+> (24.2% titles vs 15.7% for the old aggressive-lean 5/0.6). The room overpays for STUDS that bust
+> weekly, so a deep balanced roster banks that overpay -- do NOT chase the top studs.
 
 Historical read (still true): let opponents overpay for the very top ($100 studs), win the $15-40
 tier and the cheap-elite-QB window, punt K/DST at $1. But DO buy ~2 studs at fair value. Nominate elite RBs early (drain their

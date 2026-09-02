@@ -13,8 +13,10 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
    npm run ff -- values                                               # -> data/values.csv (VOR -> $)
    ```
    Without `values.csv` the agent uses ESPN's on-screen values (legal, competitive, but no edge).
-3. **Pick the config on the final projections** (input-sensitive; don't hardcode faith in one run):
-   `npm run ff -- sim --n 400` -- default reserve 5 / max-share 0.6 / premium 2 (aggressive-lean).
+3. **Confirm the config on the trustworthy harness** (championship rate, not season points):
+   `npm run ff -- backtest --full --no-lookahead --inflation --seasons 2015-2024 --n 400` -- default
+   reserve 20 / max-share 0.35 / premium 2 (BALANCED, chosen in Step 5; beats the old aggressive-lean
+   5/0.6 by ~8.5 championship pts). `ff sim` is a season-points proxy only -- don't pick the config from it.
 4. **Generate the cheat sheet:** `npm run ff -- cheatsheet` -> `data/cheatsheet.md`. Keep it open.
 
 ## What the cheat sheet gives you (the human copilot view)
@@ -51,8 +53,8 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
 ## Toggles (defaults are the backtested winners -- change only with reason)
 
 - `--no-inflation` -- disable live inflation repricing (default ON, +~2 pts).
-- `--starter-reserve N --max-share F --premium N` -- strategy dials (default 5 / 0.6 / 2; higher
-  reserve = more balanced/less concentration).
+- `--starter-reserve N --max-share F --premium N` -- strategy dials (default 20 / 0.35 / 2; higher
+  reserve = more balanced/less concentration). The balanced default is the backtested winner (Step 5).
 - REJECTED by backtest, off by default, don't enable to "win": `--scarcity`, `--pos-inflation`,
   `--drain-nom`, `--waivers` (all measured neutral-to-negative -- see docs/edges.md).
 

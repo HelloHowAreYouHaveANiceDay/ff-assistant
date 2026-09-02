@@ -207,7 +207,8 @@ test("reserveForOthers: starters reserved higher than bench; excludes the filled
 
 test("v2 EARLY: can pay up to a stud's value (wins studs, unlike v1 flat cap)", () => {
   const onBlock = { name: "Stud RB", pos: "RB" as const, team: "SF", espnPreDraftVal: 80 };
-  const s = makeV2Strategy({ starterReserve: 4, benchReserve: 1, premium: 1 });
+  // maxShare pinned high so this isolates the RESERVE mechanic, not the share cap (default is 0.35).
+  const s = makeV2Strategy({ starterReserve: 4, benchReserve: 1, premium: 1, maxShare: 0.6 });
   // $200, 12 open; reserve 8 other starters*4 + 3 bench*1 = 35 -> afford 165 >> 81 -> maxBid 81.
   assert.equal(s.maxBid(baseState({ onBlock })).maxBid, 81);
 });

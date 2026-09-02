@@ -115,11 +115,11 @@ export interface V2Config {
   nameKey?: (s: string) => string; // normalizer to key `values` by (default: identity)
   targets?: Record<string, number>; // per-player premium multiplier (e.g. 1.2)
   avoids?: Set<string>;
-  starterReserve?: number; // $ to keep for each other open STARTER slot (default 10)
+  starterReserve?: number; // $ to keep for each other open STARTER slot (default 20 -- balanced, Step 5)
   benchReserve?: number; // $ to keep for each other open BENCH slot (default 1)
   premium?: number; // small bump to outbid at consensus (default 1)
   aggr?: number; // global aggressiveness multiplier on value (default 1.0)
-  maxShare?: number; // hard cap on ONE player as a fraction of STARTING budget (default 0.45)
+  maxShare?: number; // hard cap on ONE player as a fraction of STARTING budget (default 0.35 -- Step 5)
   startBudget?: number; // total budget (for maxShare); default 200
   inflation?: boolean; // LIVE: reprice by remaining$ / remaining value (needs board + teams in state)
   scarcity?: boolean;  // LIVE: add a positional VONA premium as a position runs dry (needs board)
@@ -142,11 +142,11 @@ export function reserveForOthers(state: DraftState, fillingBench: boolean, start
 }
 
 export function makeV2Strategy(cfg: V2Config = {}): Strategy {
-  const starterReserve = cfg.starterReserve ?? 10;
+  const starterReserve = cfg.starterReserve ?? 20;
   const benchReserve = cfg.benchReserve ?? 1;
   const premium = cfg.premium ?? 1;
   const aggr = cfg.aggr ?? 1.0;
-  const maxShare = cfg.maxShare ?? 0.45;
+  const maxShare = cfg.maxShare ?? 0.35;
   const startBudget = cfg.startBudget ?? 200;
   const nk = cfg.nameKey ?? ((s: string) => s);
   // Resolve a player's value AND where it came from: our table (src=ours), ESPN's on-screen value

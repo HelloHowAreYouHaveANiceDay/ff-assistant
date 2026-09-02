@@ -143,7 +143,7 @@ Regenerated: `uv run --with nflreadpy --with polars tools/build_projections.py` 
 data/points-2024.csv --out data/values-2024.csv`.
 (a) PASS -- unit tests "v2 bench K/DST" (K value 13 on bench -> maxBid 0; K slot open -> >=1; DST
 bench -> 0). (b) PASS -- test "SIM COMPOSITION" (`npm test`): 20 seeds of draftFieldSeats @ live
-default (reserve 5/maxShare 0.6/premium 2) -> exactly 2 K/DST every seed. (c) PASS --
+default (then-live 5/0.6, later updated to 20/0.35 in Step 5) -> exactly 2 K/DST every seed. (c) PASS --
 `cut -d, -f1 data/values.csv | sort | uniq -d` empty; `awk -F, 'NR>1 && ($2=="K"||$2=="DST") &&
 $3>2' data/values.csv` empty; same for data/values-2024.csv. `npm test` 38/38, typecheck clean.
 FAULT INJECTION -- the plan got this partly wrong: removing the bench guard did NOT make (b) fail.
@@ -236,7 +236,35 @@ per-manager field on the 12-slot roster; the earlier neutrality was the uniform 
 Acceptance: the chosen default beats the previous default (5/0.6) by more than 2 SE in the
 full-system no-lookahead cell; all doc mentions of defaults agree (`grep -rn "starter-reserve\|starterReserve\|max-share\|maxShare" docs src | grep -i default`).
 Fault injection: none -- but the sweep table must be pasted here with the exact command.
-Result: _(fill in)_
+Result: DONE. Command per cell:
+`npm run ff -- backtest --full --no-lookahead --inflation --seasons 2015-2024 --n 150 --starter-reserve R --max-share S`
+(no-lookahead drops the first year, so 2016-2024 = 9 seasons evaluated). Championship %:
+
+| reserve \ max-share | 0.25 | 0.35 | 0.45 | 0.60 |
+|---|---|---|---|---|
+| 5  (old default) | 20.1 | 17.6 | 16.6 | 15.7 |
+| 10 | 22.2 | 22.6 | 20.7 | 19.2 |
+| 15 | 23.3 | 24.5 | 23.9 | 23.9 |
+| 20 (new default) | 24.1 | 24.1 | 24.1 | 24.1 |
+| 25 | 2.8 | 2.8 | 2.8 | 2.8 |
+
+Championship rises with per-starter reserve to a plateau at reserve 15-20 (~24%), then collapses at
+25 (8 starters x $25 = whole $200 -> $1 scraps). At reserve 20, max-share is non-binding (all equal).
+Disambiguated the top cells at n=400: R15/0.35=24.2%/81, R20/0.25=24.2%/82, R20/0.35=24.2%/82 (tie
+on championship; R20 wins the playoff tie-break). CHOSEN: **reserve 20 / max-share 0.35 / premium 2**.
+CROSS-CHECKS (n=400): without inflation the top cells fall to 20.3% (inflation stays ON, +~4 pts);
+draft-only lookahead `backtest --inflation --seasons 2015-2024 --n 400`: R20/0.35 = 25.4%/84 vs old
+5/0.6 = 19.7%/77.
+ACCEPTANCE: chosen (24.2%) beats old default 5/0.6 (15.7%, re-measured now) by +8.5 pts >> 2 SE
+(SE ~0.6 pts at n=400 aggregate ~3600 sims). Defaults set to 20/0.35 in cmdAutoDraft, cmdSim,
+cmdBacktest, and makeV2Strategy fallbacks; every doc default mention updated (runbook, validation.md,
+edges.md, league-tendencies.md, values.md, mvp-draft-auction.md, cheat-sheet text in ff.ts). The
+"aggression is neutral" paragraphs in validation.md + edges.md replaced with the table + the sentence
+"measured against the realistic per-manager field on the 12-slot roster; the earlier neutrality was
+the uniform bot." `grep -rn ... | grep -i default` all agree. `npm test` 43/43, typecheck clean.
+NOTE: numbers shifted up vs the plan's finding-table baseline (old default 12.8% -> 15.7%) because
+Steps 1-4 (12-slot roster, K/DST clamp, multi-season REG curve) changed the harness; the DIRECTION
+(balanced >> aggressive) is unchanged and stronger.
 
 ### Step 6. Small live guards (offline-testable)
 - `myMax` unreadable -> log `WARN myMax unreadable`, fall back to `affordableMax(state)` (unit-

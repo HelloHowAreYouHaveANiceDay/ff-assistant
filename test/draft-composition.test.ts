@@ -11,8 +11,8 @@ const points = readCsv("data/points.csv").map((f) => ({ name: f[0].trim(), pos: 
 const ourValues = new Map<string, number>();
 for (const f of readCsv("data/values.csv")) ourValues.set(f[0].trim(), Number(f[2]));
 
-// The live default bidding dials (cmdAutoDraft): reserve 5 / maxShare 0.6 / premium 2.
-const cfg = { values: Object.fromEntries(ourValues), starterReserve: 5, benchReserve: 1, premium: 2, maxShare: 0.6 };
+// The live default bidding dials (cmdAutoDraft): reserve 20 / maxShare 0.35 / premium 2 (Step 5).
+const cfg = { values: Object.fromEntries(ourValues), starterReserve: 20, benchReserve: 1, premium: 2, maxShare: 0.35 };
 
 test("SIM COMPOSITION: our team drafts EXACTLY 2 K/DST across 20 seeds (no bench K/DST)", () => {
   const counts: number[] = [];

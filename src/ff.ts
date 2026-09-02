@@ -393,7 +393,7 @@ async function cmdCheatsheet(rest: string[]) {
   const POS = ["RB", "WR", "TE", "QB", "K", "DST"];
   const fmtTier = (t: { name: string; value: number }[], i: number) => `  T${i + 1} ($${t[0].value}-${t[t.length - 1].value}): ` + t.map((p) => `${p.name} $${p.value}`).join(", ");
   let md = `# Draft-day cheat sheet\n\nGenerated from ${valuesFile}. Our $ values (VOR->auction $, ${budget} budget). The agent bids from these; this is your live copilot view.\n\n`;
-  md += `## Budget plan (default aggressive-lean)\nTarget **2-3 studs** (up to ~$${Math.round(budget * 0.6)} max on any one, ~$${Math.round(budget * 0.6)} on the top 3), keep ~$${Math.round(budget * 0.2)} for mid-tier value and >=$1/slot for depth. The room is stars-and-scrubs (61% of picks $1-5) -- stay disciplined, let bidding wars pass, buy the middle where they're broke.\n\n`;
+  md += `## Budget plan (default BALANCED -- reserve 20 / max-share 0.35)\nSpread the budget for a DEEP roster of solid starters, not 2-3 studs: cap any one player at ~$${Math.round(budget * 0.35)} (the max-share cap) and keep >=$1/slot so every slot fills. The room is stars-and-scrubs (61% of picks $1-5) and overpays for studs that bust weekly -- let those bidding wars pass and buy the middle where the room is broke. This balanced posture won the backtest (24.2% titles vs 15.7% aggressive-lean; docs/validation.md).\n\n`;
   md += `## Nomination drain plan\n${nomPlan}\n- QB/TE go **cheap once the payers are spent** -- wait them out.\n\n`;
   md += `## Top overall (by value)\n` + players.sort((a, b) => b.value - a.value).slice(0, 15).map((p, i) => `${i + 1}. ${p.name} (${p.pos}) **$${p.value}**`).join("\n") + "\n\n";
   md += `## Tiers by position\n`;
@@ -537,11 +537,11 @@ async function cmdSim(rest: string[]) {
   for (const f of readCsv(valuesFile)) ourValues.set(f[0].trim(), Number(f[2]));
   const cfg = {
     values: Object.fromEntries(ourValues),
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 5),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 20),
     benchReserve: 1,
     premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
-    maxShare: Number(valueOf(rest, "--max-share") ?? 0.6),
+    maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
   };
   let sumPts = 0, sumRank = 0, sumField = 0, top1 = 0, top3 = 0, sumTop3Spend = 0;
   for (let s = 0; s < n; s++) {
@@ -564,9 +564,9 @@ async function cmdBacktest(rest: string[]) {
   const nPerSeason = Number(valueOf(rest, "--n") ?? 300);
   const cfg = {
     values: {} as Record<string, number>,
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 5),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 20),
     benchReserve: 1, premium: Number(valueOf(rest, "--premium") ?? 2),
-    aggr: Number(valueOf(rest, "--aggr") ?? 1.0), maxShare: Number(valueOf(rest, "--max-share") ?? 0.6),
+    aggr: Number(valueOf(rest, "--aggr") ?? 1.0), maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
     inflation: rest.includes("--inflation"), scarcity: rest.includes("--scarcity"),
     posInflation: rest.includes("--pos-inflation"),
   };
@@ -766,16 +766,16 @@ async function cmdAutoDraft(rest: string[]) {
   const strat = makeV2Strategy({
     values: Object.keys(values).length ? values : undefined,
     nameKey,
-    // Defaults from the SIM harness on the FORWARD-LOOKING 2025 projections (docs/validation.md).
-    // The projection top is steep + this is a deep 16-team No-PPR league, so CONCENTRATION wins
-    // (matches the league's real 61%-are-$1-5 behavior) -- lean aggressive: ~2-3 studs (~$120 on
-    // top 3), keep ~$80 for depth. NOT max stars-and-scrubs (the harness may over-reward that;
-    // re-run `ff sim` on final projections + apply judgment). Values = OUR VOR->$ (data/values.csv).
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 5),
+    // Defaults = BALANCED (reserve 20 / max-share 0.35 / premium 2), chosen by the trustworthy
+    // full-system no-lookahead backtest on the real 12-slot roster (Step 5, docs/validation.md):
+    // championship 24.2% vs the old aggressive-lean 5/0.6 at 15.7% (n=400, 2015-2024, inflation ON).
+    // The overpaying room wastes money on studs that bust weekly; a deep balanced roster with real
+    // depth wins the H2H+playoff season. Values = OUR VOR->$ (data/values.csv).
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 20),
     benchReserve: Number(valueOf(rest, "--bench-reserve") ?? 1),
     premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
-    maxShare: Number(valueOf(rest, "--max-share") ?? 0.6),
+    maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
     // LIVE inflation repricing is ON by default -- backtested +~2 championship pts / +3 playoff pts
     // (docs/validation.md). Scarcity is OFF (backtested NEGATIVE). Toggle: --no-inflation, --scarcity.
     inflation: !rest.includes("--no-inflation"),

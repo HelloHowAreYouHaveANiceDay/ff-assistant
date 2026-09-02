@@ -28,25 +28,32 @@ single season's championship estimate swings 25%<->50% for the SAME config just 
 noise, so single-season "findings" are overfit (I made that mistake: a 2024-only run showed
 "reserve 5 = 50.6%, optimal", which did NOT replicate -- 2024 at high N is ~25%).
 
-> [!note] The absolute %s in the two sweeps below were measured against the OLD uniform bot (pre
-> src/draft/managers.ts). The DIRECTIONS still hold (aggression ~neutral; an independent/tighter
-> projection is the top lever), but the absolute championship levels are lower against the realistic
-> field -- re-run any sweep you want to quote to the decimal.
+### Aggression is NOT neutral -- balanced wins (Step 5 sweep, 2026-09-02)
 
-### What 11 seasons (2014-2024) actually show
-Championship rate, ~1650 sims/config (random = 6.3%):
-- reserve 5 / max-share 0.6 (default): **27.3%**
-- over-balanced (reserve 20 / 0.25): 27.6%
-- max stars-and-scrubs (premium 30 / 0.85): 27.9%
-- moderate (reserve 10 / 0.45): 27.7%
+The earlier "aggression is roughly neutral (~27%, all within noise)" claim was measured against the
+OLD uniform "everyone overpays for studs" bot on the wrong (16-slot) roster, and it does NOT hold.
+Re-measured against the REALISTIC per-manager field on the real **12-slot roster**, with the
+multi-season regular-season value curve and inflation ON, aggression matters a lot. Full-system
+no-lookahead championship rate, `backtest --full --no-lookahead --inflation --seasons 2015-2024`
+(n=150/cell; random = 6.3%):
 
-**The aggression dial is roughly NEUTRAL for championships across seasons (~27%, all within noise).**
-Its effect is real within any one season but washes out across seasons -- so do NOT over-tune it.
+| reserve \ max-share | 0.25 | 0.35 | 0.45 | 0.60 |
+|---|---|---|---|---|
+| **5** (old default) | 20.1 | 17.6 | 16.6 | **15.7** |
+| **10** | 22.2 | 22.6 | 20.7 | 19.2 |
+| **15** | 23.3 | 24.5 | 23.9 | 23.9 |
+| **20** (new default) | **24.1** | **24.1** | 24.1 | 24.1 |
+| **25** | 2.8 | 2.8 | 2.8 | 2.8 |
 
-**Where the edge actually is:** our team wins ~27% of titles = **4.4x the 6.3% random baseline**, and
-makes the playoffs ~92% of the time, REGARDLESS of config. That edge comes from drafting rational
-values against a field that OVERPAYS for studs (your league's real tendency) -- not from the
-stars-and-scrubs vs balanced choice.
+Championship rises with the per-starter RESERVE up to a plateau at reserve 15-20 (~24%), then
+COLLAPSES at 25 (8 other starters x $25 = the whole $200 budget -> we bid $1 on everyone). At
+reserve 20 the reserve binds and max-share is non-binding (all four columns equal). **New default =
+reserve 20 / max-share 0.35 / premium 2** (24.2% at n=400, playoff 82% -- ties the top championship
+and wins the playoff tie-break). It beats the old aggressive-lean 5/0.6 (15.7%) by ~8.5 pts, far
+more than 2 SE (~1.2 pts at n=400). Cross-checks agree: without inflation the top cells drop to
+20.3% (inflation stays ON, +~4 pts); draft-only lookahead has 20/0.35 at 25.4% vs 5/0.6 at 19.7%.
+The edge is still discipline + independent values vs an overpaying room -- but the room overpays for
+STUDS that bust weekly, so a DEEP balanced roster, not a stars-and-scrubs one, banks it.
 
 ### VALUE edge, quantified (`--our-noise` vs `--market-noise`)
 
@@ -58,9 +65,9 @@ truth. Sweep (11 seasons, config fixed):
 - our OWN projection, SAME accuracy (independent errors) -> ~39%. **+12 pts just for not sharing the
   room's blind spots.**
 - tighter accuracy: 0.25 -> 41%, 0.20 -> 43%, 0.12 -> 44%, 0.05 -> 46%.
-So VALUES are the top tunable lever (config is not). Full breakdown: docs/edges.md. So: keep a sane MODERATE default (reserve 5-8, max-share
-0.5-0.6) for steadiness (balanced has the widest bad-year swings), invest in better VALUES + keeping
-our discipline vs the room, and don't chase a "perfect" aggression setting -- there isn't one.
+So VALUES are the top tunable lever. Full breakdown: docs/edges.md. Config is NOT neutral though
+(see the Step 5 table above): keep the BALANCED default (reserve 20 / max-share 0.35) -- the deep
+roster banks the room's stud-overpay -- and invest most in better VALUES + discipline vs the room.
 
 ## FULL-SYSTEM backtest (`--full --no-lookahead`) -- the whole pipeline end-to-end
 
@@ -159,9 +166,10 @@ The harness repeatedly corrected intuition -- which is the point:
 - On the **forward-looking 2025 projections** (steep top, deep 16-team No-PPR), **CONCENTRATION
   wins** -- more aggression -> better finish (reserve 2 / max-share 0.8 / $181-on-3 finished ~2.6
   vs ~3.5 for moderate). This MATCHES the league's real behavior (61% of picks are $1-5).
-- **Default = aggressive-lean but not extreme** (reserve 5, max-share 0.6, premium 2; ~$120 on the
-  top 3). The optimum is INPUT-SENSITIVE, so re-run `ff sim` on the final projections before the
-  draft and pick the config -- don't hardcode faith in one run.
+- **`ff sim` prefers concentration, but that is the season-points proxy over-rewarding top-heavy
+  rosters (it has no playoffs) -- do NOT pick the config from it.** The real default is BALANCED
+  (reserve 20 / max-share 0.35, premium 2), chosen from the championship backtest (Step 5 table
+  above), which the sim's own "Known limitation" section below predicts.
 
 ## Known limitation to weigh (why we don't just go max-aggression)
 

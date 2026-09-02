@@ -35,10 +35,13 @@ and the SAME lever (sharper projections) applied weekly. This is why in-season a
 sharpening are one build: one projection layer -> season values (draft) AND weekly forecasts (lineup).
 The agent also never forgets to set a lineup or misses a bye -- a real edge over humans who do.
 
-### 5. Roster construction / aggression dial -- NONE across seasons
-Stars-and-scrubs vs balanced vs moderate all land ~27-28% over 11 seasons (the single-season gaps
-wash out). Real within one season, neutral in expectation. **Do not spend effort tuning this** --
-keep a sane moderate default and move on.
+### 5. Roster construction / aggression dial -- BALANCED WINS (corrected Step 5, 2026-09-02)
+The earlier "NONE across seasons (~27-28%)" was the OLD uniform bot on the wrong 16-slot roster and
+did not hold. On the realistic per-manager field + the real 12-slot roster + the multi-season value
+curve, championship rises with the per-starter reserve to a plateau at reserve 15-20 (~24%) and
+collapses at 25 (over-reserved). New default: **reserve 20 / max-share 0.35** (24.2%) vs the old
+aggressive-lean 5/0.6 (15.7%) -- a ~8.5-pt swing, measured against the realistic field on the
+12-slot roster; the earlier neutrality was the uniform bot. Full table: docs/validation.md.
 
 ## Edges that are REAL but the bot-sim can't see (agent vs HUMANS)
 
