@@ -5,20 +5,30 @@ sharper projections. So the design centers on ONE **projection layer** feeding b
 
 ## News / data-refresh layer (Phase 3A -- STARTED 2026-09-02)
 
-The "keep the data FRESH" half of Phase 3. First slice shipped -- a **draft-time news view**:
-- `tools/build_news.py` pulls nflverse **injury reports** (`load_injuries`, week-1 REG = the
-  draft-time proxy; statuses Out/Doubtful/Questionable + the injury) and **depth charts**
-  (`load_depth_charts`, `pos_rank` = starter/backup) for the latest season, and writes
-  `data/news.csv` (`player,pos,team,status,injury,depth`).
-- `ff news` joins that against OUR `data/values.csv` by `nameKey` and prints the DRAFTABLE players
-  whose news the consensus rank may not fully price -- an OUT stud to avoid, a $ we'd pay who is
-  buried on the depth chart. The classifier is pure + tested (`src/news.ts`, `classifyNews`): injury
-  always flags; depth-backup flags QB/TE/K at depth>=2 but RB/WR only when buried (depth>=3), since
-  an RB2/WR2 still starts in fantasy.
-- **Read-only today** -- it does NOT change values. Deliberate: the next steps are (a) fold an
-  availability discount into `values` (zero an OUT-for-season player, discount Questionable) behind a
-  flag, and (b) extend the feed to the WEEKLY horizon (each week's injury report + matchup) so the
-  in-season lineup optimizer benches OUT/bye players from live news, not a season average.
+The "keep the data FRESH" half of Phase 3, built as **two decoupled layers** so the aggregator is
+league-setting-NEUTRAL and the league lens sits on top:
+
+**Layer 1 -- general player-news aggregator (`tools/build_player_news.py` -> `data/player-news.csv`).**
+A source-agnostic per-player feed (`player,pos,team,category,severity,detail,source,asof`) with NO
+league/scoring/roster assumptions. Sources, pluggable:
+- nflverse **injuries** (`load_injuries`, week-1 REG = draft-time proxy) -> `category=injury`.
+- nflverse **depth charts** (`load_depth_charts`, `pos_rank`) -> `category=role`; `severity` is a
+  general fantasy-relevance hint (QB/TE/K backup at depth 2 = medium; RB/WR only concerning at 3+,
+  since an RB2/WR2 still starts).
+- **RSS headlines** (ESPN, Yahoo) tagged to the players they name -> `category=headline`.
+Add a source by appending rows; consumers don't change.
+
+**Layer 2 -- league tailoring (`ff news`).** Joins the feed to OUR `data/values.csv` by `nameKey`
+and renders the DRAFTABLE players whose news the rank may not price: AVOID (injury high) / WATCH
+(injury medium) / BURIED (concerning role) flags plus their live headlines, strongest first. The
+classifier is pure + tested (`src/news.ts`, `classifyNews(category, severity)`) -- it tailors on the
+league-neutral signal, so Layer 1 can add sources without touching it. `--no-headlines` for flags only.
+
+- **Read-only today** -- it does NOT change values. Next: (a) fold an availability discount into
+  `values` behind a flag (zero an OUT-for-season player, discount Questionable); (b) extend Layer 1
+  to the WEEKLY horizon (each week's report + matchup) so the in-season lineup optimizer benches
+  OUT/bye players from live news, not a season average; (c) sharpen headline->player tagging + drop
+  non-fantasy noise.
 
 The rest of this doc is the broader in-season plan the news layer feeds.
 

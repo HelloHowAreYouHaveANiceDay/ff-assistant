@@ -462,19 +462,20 @@ async function cmdValuesCheck(rest: string[]) {
   if (fuzzy.length) process.exitCode = 1;
 }
 
-// Draft-day NEWS view: join data/news.csv (injuries + depth-chart role, from tools/build_news.py)
-// against OUR value table via nameKey, and surface the draftable players whose news the consensus
-// rank may not fully price -- an OUT stud to avoid, a $ we'd pay who is buried on the depth chart.
-// Read-only; it does not change values (that is a deliberate later step). Reuses the REAL nameKey.
+// Draft-day NEWS view (Layer 2 tailoring): consume the GENERAL league-neutral feed
+// data/player-news.csv (tools/build_player_news.py -- injuries + depth-chart role + RSS headlines),
+// join it to OUR value table via nameKey, and surface the draftable players whose news the consensus
+// rank may not fully price. Read-only; it does NOT change values (a deliberate later step).
 async function cmdNews(rest: string[]) {
   const { readFileSync, existsSync } = await import("node:fs");
   const { nameKey } = await import("./draft/values.js");
   const { classifyNews } = await import("./news.js");
-  const newsFile = valueOf(rest, "--news") ?? "data/news.csv";
+  const newsFile = valueOf(rest, "--news") ?? "data/player-news.csv";
   const valuesFile = valueOf(rest, "--values") ?? "data/values.csv";
   const minVal = Number(valueOf(rest, "--min") ?? 3); // skip the $1-2 replacement tail
+  const showHeadlines = !rest.includes("--no-headlines");
   if (!existsSync(newsFile)) {
-    console.log(`no ${newsFile} -- build it first:\n  uv run --with nflreadpy --with polars tools/build_news.py`);
+    console.log(`no ${newsFile} -- build it first:\n  uv run --with nflreadpy --with polars --with feedparser tools/build_player_news.py`);
     return;
   }
   // OUR values keyed by nameKey (so ESPN/nflverse spelling drift resolves the same as the bidder).
@@ -483,21 +484,29 @@ async function cmdNews(rest: string[]) {
     const f = l.split(","); const name = f[0]?.trim(); const v = Number(f[2]);
     if (name && v > 0) val.set(nameKey(name), { value: v, pos: (f[1] || "").trim().toUpperCase(), name });
   }
-  interface Flag { name: string; pos: string; value: number; status: string; injury: string; depth: string; kind: string; }
-  const flagged: Flag[] = [];
+  // Group feed items by OUR player (only those in the value table >= minVal).
+  interface Item { category: string; severity: string; detail: string; source: string; asof: string; }
+  const byPlayer = new Map<string, { v: { value: number; pos: string; name: string }; items: Item[] }>();
   for (const l of readFileSync(newsFile, "utf8").trim().split(/\r?\n/).slice(1)) {
-    const [player, , , status, injury, depth] = l.split(",");
-    const ours = val.get(nameKey(player || ""));
-    if (!ours || ours.value < minVal) continue;
-    const kind = classifyNews(status || "", ours.pos, depth ? Number(depth) : null);
-    if (!kind) continue;
-    flagged.push({ name: ours.name, pos: ours.pos, value: ours.value, status, injury: injury || "", depth: depth || "", kind });
+    const [player, , , category, severity, detail, source, asof] = l.split(",");
+    const ours = val.get(nameKey(player || "")); if (!ours || ours.value < minVal) continue;
+    const g = byPlayer.get(ours.name) ?? { v: ours, items: [] };
+    g.items.push({ category, severity, detail, source, asof }); byPlayer.set(ours.name, g);
   }
-  flagged.sort((a, b) => b.value - a.value);
-  console.log(`NEWS -- ${flagged.length} of your draftable players (>= $${minVal}) have news [${newsFile}]:\n`);
-  for (const x of flagged) console.log(`  $${String(x.value).padStart(3)}  ${x.name.padEnd(24)} ${x.pos.padEnd(3)} ${x.kind}${x.injury ? ` -- ${x.injury}` : ""}`);
-  const n = (p: (f: Flag) => boolean) => flagged.filter(p).length;
-  console.log(`\n  ${n((f) => f.status === "Out")} OUT, ${n((f) => f.status === "Questionable" || f.status === "Doubtful")} injury-risk, ${n((f) => !f.status)} buried on the depth chart. A read-only draft flag -- cross-check before you bid.`);
+  const rank: Record<string, number> = { AVOID: 3, WATCH: 2, BURIED: 1, "": 0 };
+  const entries = [...byPlayer.values()].map((g) => {
+    let flag = "", flagItem: Item | undefined;
+    for (const it of g.items) { const f = classifyNews(it.category, it.severity); if ((rank[f] ?? 0) > (rank[flag] ?? 0)) { flag = f; flagItem = it; } }
+    return { v: g.v, flag, flagItem, headlines: g.items.filter((it) => it.category === "headline") };
+  }).filter((e) => e.flag || e.headlines.length);
+  entries.sort((a, b) => (rank[b.flag] - rank[a.flag]) || (b.v.value - a.v.value));
+  console.log(`NEWS -- ${entries.length} of your draftable players (>= $${minVal}) have news [${newsFile}]:\n`);
+  for (const e of entries) {
+    console.log(`  $${String(e.v.value).padStart(3)}  ${e.v.name.padEnd(24)} ${e.v.pos.padEnd(3)} ${e.flag}${e.flagItem ? "  " + e.flagItem.detail : ""}`);
+    if (showHeadlines) for (const h of e.headlines.slice(0, 3)) console.log(`         - ${h.detail} [${h.source} ${h.asof}]`);
+  }
+  const c = (f: string) => entries.filter((e) => e.flag === f).length;
+  console.log(`\n  ${c("AVOID")} AVOID, ${c("WATCH")} WATCH, ${c("BURIED")} buried, ${entries.filter((e) => e.headlines.length).length} with headlines. Read-only draft flag -- cross-check before you bid.`);
 }
 
 async function cmdValues(rest: string[]) {

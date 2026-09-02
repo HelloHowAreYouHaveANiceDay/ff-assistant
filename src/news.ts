@@ -1,20 +1,21 @@
-// Player NEWS layer: injury status + depth-chart role -> a draft/lineup signal, folded on top of
-// the (consensus-derived) value table. Data comes from tools/build_news.py (data/news.csv); this
-// module holds the PURE classification so it is unit-testable. The ff CLI joins it to OUR values by
-// nameKey and prints it (`ff news`); it does NOT change values today (a deliberate later step).
+// LAYER 2 (tailoring) helpers over the general league-neutral feed (data/player-news.csv, built by
+// tools/build_player_news.py). Layer 1 is source-agnostic and makes no league assumptions; this
+// layer turns a feed item's (category, severity) into an actionable draft flag for OUR league. Pure
+// + unit-tested. `ff news` joins the feed to our value table by nameKey and renders it.
 
-export interface NewsRow { player: string; pos: string; team: string; status: string; injury: string; depth: string; }
+export interface NewsItem {
+  player: string; pos: string; team: string;
+  category: string;  // injury | role | headline | ...
+  severity: string;  // high | medium | low (general fantasy-relevance hint from Layer 1)
+  detail: string; source: string; asof: string;
+}
 
-/** Classify one player's news into a draft flag, or "" if nothing is worth flagging.
- *  - An injury designation (Out/Doubtful/Questionable) ALWAYS flags.
- *  - Depth-chart backup is NOISY for RB/WR (an RB2/WR2 still starts in fantasy), so RB/WR flag only
- *    when clearly BURIED (depth >= 3); QB/TE/K flag at depth >= 2 (a true backup).
- *  Pure -- injecting a bad status/depth must change the result. */
-export function classifyNews(status: string, pos: string, depth: number | null): string {
-  if (status === "Out") return "AVOID (OUT)";
-  if (status === "Doubtful") return "RISK (Doubtful)";
-  if (status === "Questionable") return "WATCH (Questionable)";
-  const buriedThreshold = ["RB", "WR"].includes(pos) ? 3 : 2;
-  if (depth != null && Number.isFinite(depth) && depth >= buriedThreshold) return `BURIED (depth ${depth})`;
-  return "";
+/** An actionable draft flag for a feed item, or "" if it is informational only (headlines, and
+ *  low-severity role notes an RB2/WR2 gets). Tailors on (category, severity) -- the league-neutral
+ *  signal Layer 1 already computed -- NOT on raw injury text or depth, so Layer 1 can add sources
+ *  without this changing. Pure. */
+export function classifyNews(category: string, severity: string): string {
+  if (category === "injury") return severity === "high" ? "AVOID" : "WATCH";
+  if (category === "role" && (severity === "high" || severity === "medium")) return "BURIED";
+  return ""; // headline, or low-severity role -> informational, not a flag
 }

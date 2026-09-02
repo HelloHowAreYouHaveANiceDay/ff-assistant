@@ -13,14 +13,16 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
    npm run ff -- values                                               # -> data/values.csv (VOR -> $)
    ```
    Without `values.csv` the agent uses ESPN's on-screen values (legal, competitive, but no edge).
-2b. **Refresh the NEWS layer and read it** (injuries + depth-chart role, draft-time):
+2b. **Refresh the NEWS aggregator and read it** (general league-neutral feed, then tailored to you):
    ```
-   uv run --with nflreadpy --with polars tools/build_news.py          # -> data/news.csv
+   uv run --with nflreadpy --with polars --with feedparser tools/build_player_news.py  # -> data/player-news.csv
    npm run ff -- news                                                 # your draftable players with news
    ```
-   Read-only: it flags OUT/injured/buried players among YOUR value table (e.g. a stud marked OUT to
-   avoid, a $ you'd pay who is 3rd on the depth chart). The bidder does NOT auto-apply this yet --
-   use it to set `--avoids` or just to bid with your eyes open.
+   Layer 1 (`build_player_news.py`) aggregates a GENERAL per-player feed -- nflverse injuries +
+   depth-chart role + live RSS headlines (ESPN/Yahoo), no league assumptions. Layer 2 (`ff news`)
+   tailors it to YOUR value table: AVOID (OUT) / WATCH (Questionable) / BURIED (depth) flags plus the
+   live headlines for players you'd draft. Read-only -- the bidder does NOT auto-apply it yet; use it
+   to set `--avoids` or to bid with your eyes open. (`--no-headlines` for just the flags.)
 3. **Confirm the config on the trustworthy harness** (championship rate, not season points):
    `npm run ff -- backtest --full --no-lookahead --inflation --seasons 2015-2024 --n 400` -- default
    reserve 15 / max-share 0.35 / premium 2 (BALANCED; the reserve 12-20 plateau is ~24%, beats the old

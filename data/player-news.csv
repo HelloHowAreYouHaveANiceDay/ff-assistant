@@ -1,0 +1,834 @@
+player,pos,team,category,severity,detail,source,asof
+Darnell Mooney,WR,ATL,injury,medium,Questionable - Shoulder,nflverse-injury,2025 wk1
+Isaiah Likely,TE,BAL,injury,high,Out - Foot,nflverse-injury,2025 wk1
+Tyler Bass,K,BUF,injury,high,Out - Hip,nflverse-injury,2025 wk1
+Roschon Johnson,RB,CHI,injury,medium,Questionable - Foot,nflverse-injury,2025 wk1
+Nate Adkins,TE,DEN,injury,high,Out - Ankle,nflverse-injury,2025 wk1
+Sione Vaki,RB,DET,injury,high,Out - Hamstring,nflverse-injury,2025 wk1
+Dontayvion Wicks,WR,GB,injury,medium,Questionable - Calf,nflverse-injury,2025 wk1
+Jayden Reed,WR,GB,injury,medium,Questionable - Foot,nflverse-injury,2025 wk1
+Savion Williams,WR,GB,injury,medium,Questionable - Hamstring,nflverse-injury,2025 wk1
+Braxton Berrios,WR,HOU,injury,high,Out - Hamstring,nflverse-injury,2025 wk1
+Christian Kirk,WR,HOU,injury,high,Out - Hamstring,nflverse-injury,2025 wk1
+Tyler Goodson,RB,IND,injury,medium,Questionable - Elbow,nflverse-injury,2025 wk1
+Jalen Royals,WR,KC,injury,high,Out - Knee,nflverse-injury,2025 wk1
+Darren Waller,TE,MIA,injury,high,Out - Hip,nflverse-injury,2025 wk1
+Dee Eskridge,WR,MIA,injury,medium,Questionable - Concussion,nflverse-injury,2025 wk1
+Jaylen Wright,RB,MIA,injury,high,Out - Knee,nflverse-injury,2025 wk1
+Zavier Scott,RB,MIN,injury,high,Out - Ankle,nflverse-injury,2025 wk1
+Tanner McKee,QB,PHI,injury,high,Out - Thumb,nflverse-injury,2025 wk1
+Skylar Thompson,QB,PIT,injury,medium,Questionable - Hamstring,nflverse-injury,2025 wk1
+Dareke Young,WR,SEA,injury,high,Out - Hamstring,nflverse-injury,2025 wk1
+Jake Bobo,WR,SEA,injury,high,Out - Concussion,nflverse-injury,2025 wk1
+Christian McCaffrey,RB,SF,injury,medium,Questionable - Calf,nflverse-injury,2025 wk1
+Jordan Watkins,WR,SF,injury,high,Doubtful - Ankle,nflverse-injury,2025 wk1
+Jordan James,RB,SF,injury,high,Doubtful - Finger,nflverse-injury,2025 wk1
+Chris Godwin Jr.,WR,TB,injury,high,Out - Ankle,nflverse-injury,2025 wk1
+Kalel Mullings,RB,TEN,injury,medium,Questionable - Ankle,nflverse-injury,2025 wk1
+Zack Kuntz,TE,MIA,role,high,depth 5 at TE,nflverse-depth,2025
+Chris Brooks,RB,GB,role,low,depth 2 at RB,nflverse-depth,2025
+Courtney Jackson,WR,NYG,role,high,depth 12 at WR,nflverse-depth,2025
+Keaontay Ingram,RB,KC,role,medium,depth 3 at RB,nflverse-depth,2025
+Will Howard,QB,PIT,role,medium,depth 2 at QB,nflverse-depth,2025
+Michael Carter,RB,ARI,role,high,depth 4 at RB,nflverse-depth,2025
+Chris Blair,WR,ATL,role,high,depth 7 at WR,nflverse-depth,2025
+Neal Johnson,TE,NYJ,role,high,depth 5 at TE,nflverse-depth,2025
+Ronnie Rivers,RB,LA,role,medium,depth 3 at RB,nflverse-depth,2025
+Chandler Brayboy,WR,JAX,role,high,depth 7 at WR,nflverse-depth,2025
+Chris Moore,WR,WAS,role,high,depth 7 at WR,nflverse-depth,2025
+Kenny Pickett,QB,CAR,role,medium,depth 2 at QB,nflverse-depth,2025
+Mason Pline,TE,NO,role,high,depth 5 at TE,nflverse-depth,2025
+Desmond Ridder,QB,GB,role,medium,depth 2 at QB,nflverse-depth,2025
+Dominic Lovett,WR,DET,role,high,depth 4 at WR,nflverse-depth,2025
+Malik Cunningham,WR,DET,role,high,depth 6 at WR,nflverse-depth,2025
+Erick All Jr.,TE,CIN,role,medium,depth 2 at TE,nflverse-depth,2025
+Tez Johnson,WR,TB,role,high,depth 4 at WR,nflverse-depth,2025
+Will Shipley,RB,PHI,role,medium,depth 3 at RB,nflverse-depth,2025
+Jermar Jefferson,RB,ARI,role,high,depth 4 at RB,nflverse-depth,2025
+Joaquin Davis,WR,MIN,role,high,depth 7 at WR,nflverse-depth,2025
+Thomas Fidone II,TE,NYG,role,high,depth 4 at TE,nflverse-depth,2025
+Michael Pratt,QB,TB,role,high,depth 4 at QB,nflverse-depth,2025
+Isaiah Davis,RB,NYJ,role,medium,depth 3 at RB,nflverse-depth,2025
+River Cracraft,WR,WAS,role,high,depth 5 at WR,nflverse-depth,2025
+Travis Vokolek,TE,ARI,role,high,depth 4 at TE,nflverse-depth,2025
+Robert Woods,WR,PIT,role,medium,depth 3 at WR,nflverse-depth,2025
+Royce Freeman,RB,CHI,role,high,depth 6 at RB,nflverse-depth,2025
+Sean Clifford,QB,CIN,role,medium,depth 2 at QB,nflverse-depth,2025
+Ashton Dulin,WR,IND,role,medium,depth 3 at WR,nflverse-depth,2025
+Nikola Kalinic,TE,CHI,role,high,depth 4 at TE,nflverse-depth,2025
+Caden Prieskorn,TE,CLE,role,high,depth 5 at TE,nflverse-depth,2025
+Luther Burden III,WR,CHI,role,low,depth 2 at WR,nflverse-depth,2025
+Carter Bradley,QB,JAX,role,high,depth 3 at QB,nflverse-depth,2025
+Kendric Pryor,WR,CIN,role,high,depth 10 at WR,nflverse-depth,2025
+Jake Browning,QB,TB,role,medium,depth 2 at QB,nflverse-depth,2025
+Erik Ezukanma,WR,MIA,role,high,depth 6 at WR,nflverse-depth,2025
+Cam Akers,RB,SEA,role,high,depth 6 at RB,nflverse-depth,2025
+Nikko Remigio,WR,KC,role,high,depth 4 at WR,nflverse-depth,2025
+Tim Patrick,WR,JAX,role,high,depth 5 at WR,nflverse-depth,2025
+Patrick Herbert,TE,JAX,role,high,depth 4 at TE,nflverse-depth,2025
+Jaden Smith,WR,TB,role,high,depth 6 at WR,nflverse-depth,2025
+Jason Brownlee,WR,KC,role,high,depth 6 at WR,nflverse-depth,2025
+Darnell Washington,TE,PIT,role,medium,depth 2 at TE,nflverse-depth,2025
+Hollywood Brown,WR,KC,role,medium,depth 3 at WR,nflverse-depth,2025
+Isaac TeSlaa,WR,DET,role,medium,depth 3 at WR,nflverse-depth,2025
+Tre' Harris,WR,LAC,role,medium,depth 3 at WR,nflverse-depth,2025
+Samori Toure,WR,NO,role,high,depth 9 at WR,nflverse-depth,2025
+Mitchell Trubisky,QB,TEN,role,medium,depth 2 at QB,nflverse-depth,2025
+Kurtis Rourke,QB,SF,role,high,depth 3 at QB,nflverse-depth,2025
+CJ Dippre,TE,NE,role,high,depth 3 at TE,nflverse-depth,2025
+Jacardia Wright,RB,SEA,role,high,depth 7 at RB,nflverse-depth,2025
+Joshua Simon,TE,ATL,role,high,depth 4 at TE,nflverse-depth,2025
+Dare Ogunbowale,RB,HOU,role,high,depth 5 at RB,nflverse-depth,2025
+Tyrone Broden,WR,SEA,role,high,depth 7 at WR,nflverse-depth,2025
+Malachi Corley,WR,CLE,role,high,depth 4 at WR,nflverse-depth,2025
+Bryce Perkins,QB,CAR,role,high,depth 4 at QB,nflverse-depth,2025
+Bub Means,WR,NO,role,high,depth 4 at WR,nflverse-depth,2025
+Jaydon Blue,RB,DAL,role,medium,depth 3 at RB,nflverse-depth,2025
+Anthony Gould,WR,IND,role,high,depth 4 at WR,nflverse-depth,2025
+Sincere McCormick,RB,LV,role,high,depth 4 at RB,nflverse-depth,2025
+Moliki Matavao,TE,NO,role,high,depth 4 at TE,nflverse-depth,2025
+Ryan Miller,WR,NYG,role,high,depth 11 at WR,nflverse-depth,2025
+Christian Kirk,WR,HOU,role,medium,depth 3 at WR,nflverse-depth,2025
+Donovan Edwards,RB,MIA,role,high,depth 4 at RB,nflverse-depth,2025
+Jalen Nailor,WR,LV,role,low,depth 2 at WR,nflverse-depth,2025
+Elijah Cooks,WR,NO,role,high,depth 10 at WR,nflverse-depth,2025
+Israel Abanikanda,RB,DAL,role,high,depth 5 at RB,nflverse-depth,2025
+Bailey Zappe,QB,NYJ,role,high,depth 4 at QB,nflverse-depth,2025
+Jamal Agnew,WR,WAS,role,high,depth 5 at WR,nflverse-depth,2025
+Lew Nichols,RB,PIT,role,high,depth 4 at RB,nflverse-depth,2025
+Johnny Lumpkin,TE,GB,role,high,depth 6 at TE,nflverse-depth,2025
+KJ Hamler,WR,BUF,role,high,depth 8 at WR,nflverse-depth,2025
+Casey Washington,WR,ATL,role,high,depth 6 at WR,nflverse-depth,2025
+Michael Wiley,RB,TB,role,high,depth 6 at RB,nflverse-depth,2025
+Durham Smythe,TE,BAL,role,medium,depth 2 at TE,nflverse-depth,2025
+Thomas Yassmin,TE,LAC,role,high,depth 4 at TE,nflverse-depth,2025
+Van Jefferson,WR,WAS,role,high,depth 6 at WR,nflverse-depth,2025
+Davante Adams,WR,LA,role,low,depth 2 at WR,nflverse-depth,2025
+Seth Green,TE,NO,role,high,depth 8 at TE,nflverse-depth,2025
+Roman Wilson,WR,PIT,role,high,depth 4 at WR,nflverse-depth,2025
+Nick Mullens,QB,JAX,role,medium,depth 2 at QB,nflverse-depth,2025
+Charlie Woerner,TE,ATL,role,high,depth 3 at TE,nflverse-depth,2025
+Anthony Tyus III,RB,CAR,role,high,depth 5 at RB,nflverse-depth,2025
+Ryan Flournoy,WR,DAL,role,medium,depth 3 at WR,nflverse-depth,2025
+Brenden Bates,TE,CLE,role,high,depth 3 at TE,nflverse-depth,2025
+DeMario Douglas,WR,NE,role,high,depth 4 at WR,nflverse-depth,2025
+Jeff Wilson Jr.,RB,MIA,role,high,depth 5 at RB,nflverse-depth,2025
+Kyle McCord,QB,GB,role,high,depth 3 at QB,nflverse-depth,2025
+Josh Whyle,TE,GB,role,high,depth 3 at TE,nflverse-depth,2025
+Aaron Shampklin,RB,MIA,role,high,depth 5 at RB,nflverse-depth,2025
+Riley Leonard,QB,IND,role,high,depth 3 at QB,nflverse-depth,2025
+Kevin Foelsch,TE,PIT,role,high,depth 6 at TE,nflverse-depth,2025
+Jamari Thrash,WR,CLE,role,high,depth 5 at WR,nflverse-depth,2025
+Robbie Chosen,WR,WAS,role,high,depth 6 at WR,nflverse-depth,2025
+Andy Dalton,QB,CAR,role,high,depth 3 at QB,nflverse-depth,2025
+Ja'Quinden Jackson,RB,JAX,role,high,depth 5 at RB,nflverse-depth,2025
+DeeJay Dallas,RB,JAX,role,high,depth 4 at RB,nflverse-depth,2025
+Johnny Johnson III,WR,HOU,role,high,depth 13 at WR,nflverse-depth,2025
+Anthony Miller,WR,BAL,role,high,depth 7 at WR,nflverse-depth,2025
+Dontayvion Wicks,WR,GB,role,high,depth 4 at WR,nflverse-depth,2025
+Brandon Smith,WR,PIT,role,high,depth 8 at WR,nflverse-depth,2025
+Chase Cota,WR,CLE,role,high,depth 12 at WR,nflverse-depth,2025
+Teagan Quitoriano,TE,ATL,role,high,depth 4 at TE,nflverse-depth,2025
+Dont'e Thornton Jr.,WR,LV,role,high,depth 4 at WR,nflverse-depth,2025
+Josiah Deguara,TE,ARI,role,high,depth 5 at TE,nflverse-depth,2025
+Mark Redman,TE,LA,role,high,depth 5 at TE,nflverse-depth,2025
+Brittain Brown,RB,CHI,role,high,depth 4 at RB,nflverse-depth,2025
+Blake Corum,RB,LA,role,low,depth 2 at RB,nflverse-depth,2025
+Cole Kmet,TE,CHI,role,medium,depth 2 at TE,nflverse-depth,2025
+Noah Gray,TE,KC,role,medium,depth 2 at TE,nflverse-depth,2025
+Luke Farrell,TE,SF,role,high,depth 3 at TE,nflverse-depth,2025
+Elijah Dotson,RB,ATL,role,high,depth 5 at RB,nflverse-depth,2025
+Dontae Fleming,WR,MIN,role,high,depth 6 at WR,nflverse-depth,2025
+Tanner Hudson,TE,CIN,role,high,depth 4 at TE,nflverse-depth,2025
+Jackson Hawes,TE,BUF,role,high,depth 3 at TE,nflverse-depth,2025
+Jawhar Jordan,RB,HOU,role,medium,depth 3 at RB,nflverse-depth,2025
+Quentin Skinner,WR,NYJ,role,high,depth 6 at WR,nflverse-depth,2025
+Andrei Iosivas,WR,CIN,role,medium,depth 3 at WR,nflverse-depth,2025
+Travis Homer,RB,CHI,role,high,depth 4 at RB,nflverse-depth,2025
+Isaac Guerendo,RB,SF,role,medium,depth 3 at RB,nflverse-depth,2025
+Matthew Golden,WR,GB,role,medium,depth 3 at WR,nflverse-depth,2025
+Dillon Gabriel,QB,CLE,role,medium,depth 2 at QB,nflverse-depth,2025
+KhaDarel Hodge,WR,ATL,role,high,depth 4 at WR,nflverse-depth,2025
+Jamaal Pritchett,WR,NYJ,role,high,depth 7 at WR,nflverse-depth,2025
+DeAndre Hopkins,WR,BAL,role,medium,depth 3 at WR,nflverse-depth,2025
+Brayden Willis,TE,SF,role,high,depth 4 at TE,nflverse-depth,2025
+Chimere Dike,WR,TEN,role,high,depth 4 at WR,nflverse-depth,2025
+Samaje Perine,RB,CIN,role,low,depth 2 at RB,nflverse-depth,2025
+Trey Benson,RB,ARI,role,medium,depth 3 at RB,nflverse-depth,2025
+Stetson Bennett IV,QB,LA,role,medium,depth 2 at QB,nflverse-depth,2025
+Dorian Thompson-Robinson,QB,PHI,role,high,depth 3 at QB,nflverse-depth,2025
+Xavier Legette,WR,CAR,role,medium,depth 3 at WR,nflverse-depth,2025
+Cooper Kupp,WR,SEA,role,low,depth 2 at WR,nflverse-depth,2025
+Jameis Winston,QB,NYG,role,medium,depth 2 at QB,nflverse-depth,2025
+Montrell Washington,WR,NYG,role,high,depth 9 at WR,nflverse-depth,2025
+Russell Wilson,QB,NYG,role,high,depth 3 at QB,nflverse-depth,2025
+Darnell Mooney,WR,ATL,role,low,depth 2 at WR,nflverse-depth,2025
+Cody White,WR,SEA,role,high,depth 6 at WR,nflverse-depth,2025
+Treyton Welch,TE,NO,role,high,depth 5 at TE,nflverse-depth,2025
+Ronnie Bell,WR,NO,role,high,depth 8 at WR,nflverse-depth,2025
+Jordan Whittington,WR,LA,role,high,depth 4 at WR,nflverse-depth,2025
+Michael Gallup,WR,WAS,role,high,depth 7 at WR,nflverse-depth,2025
+Tanner Conner,TE,NYG,role,high,depth 5 at TE,nflverse-depth,2025
+Terrace Marshall Jr.,WR,MIA,role,high,depth 7 at WR,nflverse-depth,2025
+John Stephens Jr.,TE,DAL,role,high,depth 4 at TE,nflverse-depth,2025
+Collin Johnson,WR,LV,role,high,depth 6 at WR,nflverse-depth,2025
+Kevin Harris,RB,JAX,role,high,depth 5 at RB,nflverse-depth,2025
+Tank Bigsby,RB,PHI,role,low,depth 2 at RB,nflverse-depth,2025
+Mo Alie-Cox,TE,IND,role,medium,depth 2 at TE,nflverse-depth,2025
+JP Richardson,WR,CHI,role,high,depth 6 at WR,nflverse-depth,2025
+Tory Horton,WR,SEA,role,high,depth 4 at WR,nflverse-depth,2025
+Beaux Collins,WR,NYG,role,high,depth 4 at WR,nflverse-depth,2025
+John FitzPatrick,TE,GB,role,medium,depth 2 at TE,nflverse-depth,2025
+Jordan Watkins,WR,SF,role,high,depth 4 at WR,nflverse-depth,2025
+Max Brosmer,QB,MIN,role,high,depth 3 at QB,nflverse-depth,2025
+Pierre Strong Jr.,RB,GB,role,high,depth 4 at RB,nflverse-depth,2025
+Tommy DeVito,QB,NE,role,high,depth 3 at QB,nflverse-depth,2025
+Zay Jones,WR,ARI,role,high,depth 5 at WR,nflverse-depth,2025
+Harrison Bryant,TE,HOU,role,high,depth 4 at TE,nflverse-depth,2025
+Andre Baccellia,WR,ARI,role,high,depth 5 at WR,nflverse-depth,2025
+Quintin Morris,TE,JAX,role,medium,depth 2 at TE,nflverse-depth,2025
+Austin Reed,QB,CHI,role,high,depth 4 at QB,nflverse-depth,2025
+Junior Bergen,WR,SF,role,high,depth 8 at WR,nflverse-depth,2025
+Cade McDonald,WR,CLE,role,high,depth 8 at WR,nflverse-depth,2025
+Skylar Thompson,QB,PIT,role,high,depth 4 at QB,nflverse-depth,2025
+Jacob Cowing,WR,SF,role,high,depth 5 at WR,nflverse-depth,2025
+A.T. Perry,WR,PIT,role,high,depth 9 at WR,nflverse-depth,2025
+AJ Dillon,RB,PHI,role,high,depth 4 at RB,nflverse-depth,2025
+Demetric Felton,RB,WAS,role,high,depth 6 at RB,nflverse-depth,2025
+Xazavian Valladay,RB,MIN,role,high,depth 5 at RB,nflverse-depth,2025
+Charlie Kolar,TE,LAC,role,medium,depth 2 at TE,nflverse-depth,2025
+Jordan Mims,RB,TEN,role,medium,depth 3 at RB,nflverse-depth,2025
+Bam Knight,RB,ARI,role,high,depth 4 at RB,nflverse-depth,2025
+Lawrence Cager,TE,WAS,role,high,depth 5 at TE,nflverse-depth,2025
+Isaiah Bond,WR,CLE,role,medium,depth 3 at WR,nflverse-depth,2025
+Isaiah Neyor,WR,GB,role,high,depth 9 at WR,nflverse-depth,2025
+Irvin Charles,WR,NYJ,role,high,depth 5 at WR,nflverse-depth,2025
+Tylan Wallace,WR,BAL,role,high,depth 5 at WR,nflverse-depth,2025
+Tyrion Davis-Price,RB,GB,role,high,depth 7 at RB,nflverse-depth,2025
+Hunter Long,TE,JAX,role,high,depth 3 at TE,nflverse-depth,2025
+Mason Tipton,WR,NO,role,medium,depth 3 at WR,nflverse-depth,2025
+DeAndre Carter,WR,CLE,role,high,depth 4 at WR,nflverse-depth,2025
+Philip Rivers,QB,IND,role,high,depth 5 at QB,nflverse-depth,2025
+Trevor Siemian,QB,TEN,role,high,depth 3 at QB,nflverse-depth,2025
+John Bates,TE,WAS,role,medium,depth 2 at TE,nflverse-depth,2025
+Travis Hunter,WR,JAX,role,high,depth 4 at WR,nflverse-depth,2025
+Kazmeir Allen,RB,WAS,role,high,depth 5 at RB,nflverse-depth,2025
+Dylan Laube,RB,LV,role,low,depth 2 at RB,nflverse-depth,2025
+Ty Johnson,RB,BUF,role,low,depth 2 at RB,nflverse-depth,2025
+Tre Watson,TE,KC,role,high,depth 5 at TE,nflverse-depth,2025
+Xavier Smith,WR,LA,role,high,depth 5 at WR,nflverse-depth,2025
+Albert Okwuegbunam Jr.,TE,LV,role,high,depth 4 at TE,nflverse-depth,2025
+Ben Sims,TE,MIA,role,medium,depth 2 at TE,nflverse-depth,2025
+Xavier Johnson,WR,CIN,role,high,depth 7 at WR,nflverse-depth,2025
+Jake Tonges,TE,SF,role,medium,depth 2 at TE,nflverse-depth,2025
+Jaylen Wright,RB,MIA,role,low,depth 2 at RB,nflverse-depth,2025
+John Jiles,WR,NE,role,high,depth 8 at WR,nflverse-depth,2025
+Raheim Sanders,RB,CLE,role,medium,depth 3 at RB,nflverse-depth,2025
+Ainias Smith,WR,CAR,role,high,depth 9 at WR,nflverse-depth,2025
+Malik Turner,WR,SF,role,high,depth 6 at WR,nflverse-depth,2025
+Taysom Hill,TE,NO,role,high,depth 4 at TE,nflverse-depth,2025
+David Moore,WR,CAR,role,high,depth 7 at WR,nflverse-depth,2025
+Dalevon Campbell,WR,LAC,role,high,depth 6 at WR,nflverse-depth,2025
+Trishton Jackson,WR,ARI,role,high,depth 7 at WR,nflverse-depth,2025
+Blake Whiteheart,TE,CLE,role,medium,depth 2 at TE,nflverse-depth,2025
+Jordan Murray,TE,CHI,role,high,depth 7 at TE,nflverse-depth,2025
+Theo Johnson,TE,NYG,role,medium,depth 2 at TE,nflverse-depth,2025
+Jelani Woods,TE,NYJ,role,high,depth 3 at TE,nflverse-depth,2025
+Elijah Moore,WR,DEN,role,high,depth 6 at WR,nflverse-depth,2025
+Dylan Sampson,RB,CLE,role,low,depth 2 at RB,nflverse-depth,2025
+Jarrett Stidham,QB,DEN,role,medium,depth 2 at QB,nflverse-depth,2025
+Ricky Pearsall,WR,SF,role,low,depth 2 at WR,nflverse-depth,2025
+Jeremiah Webb,WR,NE,role,high,depth 7 at WR,nflverse-depth,2025
+Bryce Pierre,TE,CAR,role,high,depth 5 at TE,nflverse-depth,2025
+Josh Williams,RB,TB,role,high,depth 4 at RB,nflverse-depth,2025
+Dyami Brown,WR,WAS,role,medium,depth 3 at WR,nflverse-depth,2025
+Justin Watson,WR,HOU,role,high,depth 6 at WR,nflverse-depth,2025
+Bryce Oliver,WR,TEN,role,high,depth 6 at WR,nflverse-depth,2025
+Tyson Bagent,QB,CHI,role,medium,depth 2 at QB,nflverse-depth,2025
+Payne Durham,TE,TB,role,medium,depth 2 at TE,nflverse-depth,2025
+Gage Larvadain,WR,CLE,role,high,depth 6 at WR,nflverse-depth,2025
+Tutu Atwell,WR,MIA,role,high,depth 4 at WR,nflverse-depth,2025
+Elic Ayomanor,WR,TEN,role,medium,depth 3 at WR,nflverse-depth,2025
+Brycen Tremayne,WR,CAR,role,high,depth 6 at WR,nflverse-depth,2025
+Sean McKeon,TE,IND,role,high,depth 4 at TE,nflverse-depth,2025
+Luke Grimm,WR,LAC,role,high,depth 7 at WR,nflverse-depth,2025
+Malik Washington,WR,MIA,role,low,depth 2 at WR,nflverse-depth,2025
+Jacob Saylors,RB,DET,role,high,depth 4 at RB,nflverse-depth,2025
+K.J. Osborn,WR,WAS,role,high,depth 5 at WR,nflverse-depth,2025
+Julian Hicks,WR,GB,role,high,depth 9 at WR,nflverse-depth,2025
+Colson Yankoff,TE,WAS,role,high,depth 4 at TE,nflverse-depth,2025
+Layne Pryor,TE,HOU,role,high,depth 6 at TE,nflverse-depth,2025
+Brandin Cooks,WR,BUF,role,high,depth 6 at WR,nflverse-depth,2025
+Tank Dell,WR,HOU,role,medium,depth 3 at WR,nflverse-depth,2025
+Ke'Shawn Vaughn,RB,SF,role,high,depth 5 at RB,nflverse-depth,2025
+Jordan Moore,WR,CIN,role,high,depth 8 at WR,nflverse-depth,2025
+Kimani Vidal,RB,LAC,role,low,depth 2 at RB,nflverse-depth,2025
+Trey Lance,QB,LAC,role,medium,depth 2 at QB,nflverse-depth,2025
+Luke Musgrave,TE,GB,role,medium,depth 2 at TE,nflverse-depth,2025
+Jacob Harris,WR,TB,role,high,depth 10 at WR,nflverse-depth,2025
+Russell Gage Jr.,WR,SF,role,high,depth 6 at WR,nflverse-depth,2025
+John Wolford,QB,MIN,role,high,depth 4 at QB,nflverse-depth,2025
+Kye Robichaux,RB,DET,role,high,depth 6 at RB,nflverse-depth,2025
+Mike White,QB,CAR,role,high,depth 3 at QB,nflverse-depth,2025
+Juice Wells Jr.,WR,NYG,role,high,depth 9 at WR,nflverse-depth,2025
+Scotty Washington,TE,BAL,role,high,depth 5 at TE,nflverse-depth,2025
+Gardner Minshew,QB,ARI,role,medium,depth 2 at QB,nflverse-depth,2025
+Charlie Jones,WR,CIN,role,high,depth 5 at WR,nflverse-depth,2025
+Jalen Royals,WR,KC,role,high,depth 5 at WR,nflverse-depth,2025
+Sione Vaki,RB,DET,role,medium,depth 3 at RB,nflverse-depth,2025
+Drake Stoops,WR,LA,role,high,depth 10 at WR,nflverse-depth,2025
+Trevor Etienne,RB,CAR,role,medium,depth 3 at RB,nflverse-depth,2025
+Tyler Allgeier,RB,ARI,role,low,depth 2 at RB,nflverse-depth,2025
+Jackson Meeks,WR,DET,role,high,depth 5 at WR,nflverse-depth,2025
+Baylor Cupp,TE,BAL,role,high,depth 6 at TE,nflverse-depth,2025
+Jonathon Brooks,RB,CAR,role,low,depth 2 at RB,nflverse-depth,2025
+Johnny Mundt,TE,PHI,role,medium,depth 2 at TE,nflverse-depth,2025
+Jauan Jennings,WR,SF,role,medium,depth 3 at WR,nflverse-depth,2025
+Marcedes Lewis,TE,DEN,role,high,depth 4 at TE,nflverse-depth,2025
+Adam Thielen,WR,PIT,role,medium,depth 3 at WR,nflverse-depth,2025
+TreVeyon Henderson,RB,NE,role,low,depth 2 at RB,nflverse-depth,2025
+Devin Singletary,RB,NYG,role,medium,depth 3 at RB,nflverse-depth,2025
+Zach Horton,TE,DET,role,high,depth 4 at TE,nflverse-depth,2025
+Jack Westover,TE,NE,role,high,depth 3 at TE,nflverse-depth,2025
+Adrian Martinez,QB,SF,role,high,depth 4 at QB,nflverse-depth,2025
+Ty Chandler,RB,MIN,role,medium,depth 3 at RB,nflverse-depth,2025
+Andy Isabella,WR,SF,role,high,depth 12 at WR,nflverse-depth,2025
+Mike Boone,RB,MIA,role,high,depth 4 at RB,nflverse-depth,2025
+Dawson Knox,TE,BUF,role,medium,depth 2 at TE,nflverse-depth,2025
+Joe Mixon,RB,HOU,role,medium,depth 3 at RB,nflverse-depth,2025
+Drew Lock,QB,SEA,role,medium,depth 2 at QB,nflverse-depth,2025
+Jaret Patterson,RB,LAC,role,high,depth 4 at RB,nflverse-depth,2025
+Tyler Badie,RB,DEN,role,high,depth 4 at RB,nflverse-depth,2025
+Malik Knowles,WR,SF,role,high,depth 14 at WR,nflverse-depth,2025
+Trey Sermon,RB,PIT,role,high,depth 4 at RB,nflverse-depth,2025
+Dalen Cambre,WR,NYG,role,high,depth 9 at WR,nflverse-depth,2025
+Devin Duvernay,WR,CHI,role,high,depth 4 at WR,nflverse-depth,2025
+Jabari Small,RB,DET,role,high,depth 5 at RB,nflverse-depth,2025
+Simi Fehoko,WR,ARI,role,high,depth 6 at WR,nflverse-depth,2025
+Michael Wilson,WR,ARI,role,low,depth 2 at WR,nflverse-depth,2025
+Deven Thompkins,WR,ATL,role,high,depth 5 at WR,nflverse-depth,2025
+Kisean Johnson,WR,CLE,role,high,depth 11 at WR,nflverse-depth,2025
+Tim Jones,WR,JAX,role,high,depth 5 at WR,nflverse-depth,2025
+Matt Sokol,TE,BUF,role,high,depth 6 at TE,nflverse-depth,2025
+Jimmy Garoppolo,QB,LA,role,medium,depth 2 at QB,nflverse-depth,2025
+Michael Woods II,WR,CLE,role,high,depth 14 at WR,nflverse-depth,2025
+Tyler Goodson,RB,IND,role,low,depth 2 at RB,nflverse-depth,2025
+Ahmani Marshall,RB,CLE,role,high,depth 4 at RB,nflverse-depth,2025
+Tua Tagovailoa,QB,ATL,role,medium,depth 2 at QB,nflverse-depth,2025
+Robert Tonyan,TE,KC,role,high,depth 3 at TE,nflverse-depth,2025
+Maurice Alexander,WR,CHI,role,high,depth 5 at WR,nflverse-depth,2025
+Greg Dortch,WR,ARI,role,high,depth 4 at WR,nflverse-depth,2025
+Tim Boyle,QB,TEN,role,high,depth 3 at QB,nflverse-depth,2025
+Jalin Conyers,TE,MIA,role,high,depth 3 at TE,nflverse-depth,2025
+Rakim Jarrett,WR,TB,role,high,depth 8 at WR,nflverse-depth,2025
+Jalin Hyatt,WR,NYG,role,high,depth 6 at WR,nflverse-depth,2025
+Marquez Valdes-Scantling,WR,PIT,role,high,depth 4 at WR,nflverse-depth,2025
+Chase Edmonds,RB,WAS,role,high,depth 5 at RB,nflverse-depth,2025
+McCallan Castles,TE,GB,role,high,depth 6 at TE,nflverse-depth,2025
+Darrynton Evans,RB,BUF,role,high,depth 4 at RB,nflverse-depth,2025
+Tom Kennedy,WR,DET,role,high,depth 7 at WR,nflverse-depth,2025
+Quentin Johnston,WR,LAC,role,low,depth 2 at WR,nflverse-depth,2025
+Michael Bandy,WR,DEN,role,high,depth 6 at WR,nflverse-depth,2025
+Kaden Davis,WR,CLE,role,high,depth 7 at WR,nflverse-depth,2025
+Damien Martinez,RB,GB,role,high,depth 5 at RB,nflverse-depth,2025
+Luke McCaffrey,WR,WAS,role,low,depth 2 at WR,nflverse-depth,2025
+Ko Kieft,TE,TB,role,high,depth 4 at TE,nflverse-depth,2025
+Allen Lazard,WR,NYJ,role,high,depth 4 at WR,nflverse-depth,2025
+Cody Schrader,RB,DEN,role,high,depth 5 at RB,nflverse-depth,2025
+Tommy Mellott,WR,LV,role,high,depth 7 at WR,nflverse-depth,2025
+Stone Smartt,TE,NYJ,role,high,depth 3 at TE,nflverse-depth,2025
+Miles Sanders,RB,DAL,role,high,depth 4 at RB,nflverse-depth,2025
+Maximilian Mang,TE,IND,role,high,depth 7 at TE,nflverse-depth,2025
+Kenneth Gainwell,RB,TB,role,low,depth 2 at RB,nflverse-depth,2025
+Hendon Hooker,QB,NYJ,role,high,depth 4 at QB,nflverse-depth,2025
+Rico Dowdle,RB,PIT,role,low,depth 2 at RB,nflverse-depth,2025
+Lucky Jackson,WR,MIN,role,high,depth 5 at WR,nflverse-depth,2025
+Malik Davis,RB,DAL,role,low,depth 2 at RB,nflverse-depth,2025
+Clyde Edwards-Helaire,RB,KC,role,high,depth 5 at RB,nflverse-depth,2025
+Montorie Foster Jr.,WR,SEA,role,high,depth 8 at WR,nflverse-depth,2025
+Lucas Krull,TE,DEN,role,high,depth 4 at TE,nflverse-depth,2025
+Brett Rypien,QB,MIN,role,high,depth 5 at QB,nflverse-depth,2025
+David Njoku,TE,CLE,role,medium,depth 2 at TE,nflverse-depth,2025
+Kedon Slovis,QB,ARI,role,high,depth 3 at QB,nflverse-depth,2025
+Equanimeous St. Brown,WR,SF,role,high,depth 13 at WR,nflverse-depth,2025
+Khalil Shakir,WR,BUF,role,low,depth 2 at WR,nflverse-depth,2025
+Raheem Blackshear,RB,NYJ,role,high,depth 4 at RB,nflverse-depth,2025
+Bo Melton,WR,GB,role,high,depth 6 at WR,nflverse-depth,2025
+Tanner McLachlan,TE,LAC,role,high,depth 3 at TE,nflverse-depth,2025
+Princeton Fant,TE,DAL,role,high,depth 4 at TE,nflverse-depth,2025
+Jaheim Bell,TE,PHI,role,high,depth 5 at TE,nflverse-depth,2025
+Parker Washington,WR,JAX,role,medium,depth 3 at WR,nflverse-depth,2025
+Drew Ogletree,TE,IND,role,high,depth 3 at TE,nflverse-depth,2025
+Darius Cooper,WR,PHI,role,high,depth 4 at WR,nflverse-depth,2025
+Jase McClellan,RB,TB,role,high,depth 6 at RB,nflverse-depth,2025
+Garrett Greene,WR,TB,role,high,depth 8 at WR,nflverse-depth,2025
+Alex Bachman,WR,LV,role,high,depth 6 at WR,nflverse-depth,2025
+Nick Chubb,RB,HOU,role,medium,depth 3 at RB,nflverse-depth,2025
+Devin Leary,QB,BAL,role,high,depth 3 at QB,nflverse-depth,2025
+Brandon Aiyuk,WR,SF,role,high,depth 9 at WR,nflverse-depth,2025
+JJ Galbreath,TE,PIT,role,high,depth 3 at TE,nflverse-depth,2025
+Joshua Cephus,WR,JAX,role,high,depth 6 at WR,nflverse-depth,2025
+Tyrod Taylor,QB,NYJ,role,medium,depth 2 at QB,nflverse-depth,2025
+British Brooks,RB,HOU,role,high,depth 4 at RB,nflverse-depth,2025
+Noah Fant,TE,NO,role,medium,depth 2 at TE,nflverse-depth,2025
+Mitchell Evans,TE,CAR,role,high,depth 3 at TE,nflverse-depth,2025
+Skyy Moore,WR,GB,role,high,depth 7 at WR,nflverse-depth,2025
+Jahan Dotson,WR,ATL,role,low,depth 2 at WR,nflverse-depth,2025
+Jha'Quan Jackson,WR,TEN,role,high,depth 8 at WR,nflverse-depth,2025
+Tip Reiman,TE,ARI,role,medium,depth 2 at TE,nflverse-depth,2025
+Danny Gray,WR,PHI,role,high,depth 7 at WR,nflverse-depth,2025
+Deon Cain,WR,BUF,role,high,depth 10 at WR,nflverse-depth,2025
+Owen Wright,RB,TB,role,high,depth 5 at RB,nflverse-depth,2025
+Messiah Swinson,TE,GB,role,high,depth 5 at TE,nflverse-depth,2025
+Will Levis,QB,TEN,role,high,depth 3 at QB,nflverse-depth,2025
+Kaleb Johnson,RB,PIT,role,medium,depth 3 at RB,nflverse-depth,2025
+Nick Vannett,TE,LA,role,high,depth 5 at TE,nflverse-depth,2025
+Lan Larison,RB,NE,role,high,depth 5 at RB,nflverse-depth,2025
+Xavier Hutchinson,WR,HOU,role,high,depth 4 at WR,nflverse-depth,2025
+Dameon Pierce,RB,KC,role,high,depth 5 at RB,nflverse-depth,2025
+Craig Reynolds,RB,DET,role,high,depth 4 at RB,nflverse-depth,2025
+Thayer Thomas,WR,MIN,role,high,depth 6 at WR,nflverse-depth,2025
+Tanner McKee,QB,PHI,role,medium,depth 2 at QB,nflverse-depth,2025
+Elijah Arroyo,TE,SEA,role,medium,depth 2 at TE,nflverse-depth,2025
+Ricky White III,WR,SEA,role,high,depth 6 at WR,nflverse-depth,2025
+Demarcus Robinson,WR,SF,role,medium,depth 3 at WR,nflverse-depth,2025
+Jason Bean,QB,IND,role,high,depth 4 at QB,nflverse-depth,2025
+Kristian Wilkerson,WR,BUF,role,high,depth 9 at WR,nflverse-depth,2025
+Xavier Worthy,WR,KC,role,low,depth 2 at WR,nflverse-depth,2025
+KeAndre Lambert-Smith,WR,LAC,role,high,depth 4 at WR,nflverse-depth,2025
+Tanner Taula,TE,TB,role,high,depth 5 at TE,nflverse-depth,2025
+Jesse Matthews,WR,ATL,role,high,depth 11 at WR,nflverse-depth,2025
+Brenden Rice,WR,LV,role,high,depth 9 at WR,nflverse-depth,2025
+Jonathan Ward,RB,NYG,role,high,depth 6 at RB,nflverse-depth,2025
+Teddy Bridgewater,QB,DET,role,medium,depth 2 at QB,nflverse-depth,2025
+Joshua Palmer,WR,BUF,role,medium,depth 3 at WR,nflverse-depth,2025
+Sterling Shepard,WR,TB,role,high,depth 6 at WR,nflverse-depth,2025
+Josh Johnson,QB,WAS,role,high,depth 3 at QB,nflverse-depth,2025
+Braylon Sanders,WR,WAS,role,high,depth 12 at WR,nflverse-depth,2025
+Jayden Reed,WR,GB,role,low,depth 2 at WR,nflverse-depth,2025
+Patrick Taylor Jr.,RB,SF,role,high,depth 4 at RB,nflverse-depth,2025
+Tyrell Shavers,WR,BUF,role,high,depth 5 at WR,nflverse-depth,2025
+Tyler Huntley,QB,BAL,role,medium,depth 2 at QB,nflverse-depth,2025
+Ulysses Bentley IV,RB,IND,role,medium,depth 3 at RB,nflverse-depth,2025
+Jakobie Keeney-James,WR,GB,role,high,depth 8 at WR,nflverse-depth,2025
+Kyle Williams,WR,NE,role,high,depth 5 at WR,nflverse-depth,2025
+Michael Mayer,TE,LV,role,medium,depth 2 at TE,nflverse-depth,2025
+Jack Bech,WR,LV,role,medium,depth 3 at WR,nflverse-depth,2025
+George Holani,RB,SEA,role,medium,depth 3 at RB,nflverse-depth,2025
+Salvon Ahmed,RB,IND,role,medium,depth 3 at RB,nflverse-depth,2025
+Tru Edwards,WR,LA,role,high,depth 8 at WR,nflverse-depth,2025
+Ray Davis,RB,BUF,role,medium,depth 3 at RB,nflverse-depth,2025
+Myles Price,WR,MIN,role,high,depth 5 at WR,nflverse-depth,2025
+Kenny McIntosh,RB,SEA,role,high,depth 4 at RB,nflverse-depth,2025
+Avery Williams,WR,NYJ,role,high,depth 6 at WR,nflverse-depth,2025
+Ja'Corey Brooks,WR,WAS,role,high,depth 8 at WR,nflverse-depth,2025
+Jermaine Burton,WR,CIN,role,high,depth 6 at WR,nflverse-depth,2025
+Jared Wiley,TE,KC,role,high,depth 3 at TE,nflverse-depth,2025
+Olamide Zaccheaus,WR,ATL,role,medium,depth 3 at WR,nflverse-depth,2025
+Phil Mafah,RB,DAL,role,high,depth 4 at RB,nflverse-depth,2025
+Ian Thomas,TE,LV,role,high,depth 3 at TE,nflverse-depth,2025
+Seth Henigan,QB,IND,role,high,depth 4 at QB,nflverse-depth,2025
+Jayden Higgins,WR,HOU,role,low,depth 2 at WR,nflverse-depth,2025
+Michael Pittman Jr.,WR,PIT,role,low,depth 2 at WR,nflverse-depth,2025
+JaQuae Jackson,WR,LAC,role,high,depth 8 at WR,nflverse-depth,2025
+Montrell Johnson Jr.,RB,CAR,role,high,depth 4 at RB,nflverse-depth,2025
+Terique Owens,WR,SF,role,high,depth 11 at WR,nflverse-depth,2025
+Seth Williams,WR,LV,role,high,depth 13 at WR,nflverse-depth,2025
+Eric Saubert,TE,SEA,role,high,depth 3 at TE,nflverse-depth,2025
+DJ Turner,WR,LV,role,high,depth 7 at WR,nflverse-depth,2025
+MarShawn Lloyd,RB,GB,role,medium,depth 3 at RB,nflverse-depth,2025
+Tyjae Spears,RB,TEN,role,low,depth 2 at RB,nflverse-depth,2025
+JuJu Smith-Schuster,WR,KC,role,high,depth 4 at WR,nflverse-depth,2025
+Jalen Coker,WR,CAR,role,low,depth 2 at WR,nflverse-depth,2025
+Kendall Milton,RB,CIN,role,high,depth 5 at RB,nflverse-depth,2025
+Nyheim Hines,RB,NO,role,high,depth 4 at RB,nflverse-depth,2025
+Will Dissly,TE,LAC,role,high,depth 3 at TE,nflverse-depth,2025
+Josh Downs,WR,IND,role,low,depth 2 at WR,nflverse-depth,2025
+Austin Ekeler,RB,WAS,role,medium,depth 3 at RB,nflverse-depth,2025
+Jack Stoll,TE,CLE,role,medium,depth 2 at TE,nflverse-depth,2025
+Max Hurleman,WR,PIT,role,high,depth 7 at WR,nflverse-depth,2025
+Cole Burgess,WR,PIT,role,high,depth 5 at WR,nflverse-depth,2025
+Parris Campbell,WR,DAL,role,high,depth 6 at WR,nflverse-depth,2025
+Dresser Winn,QB,LA,role,high,depth 4 at QB,nflverse-depth,2025
+Josh Reynolds,WR,NYJ,role,low,depth 2 at WR,nflverse-depth,2025
+Keith Kirkwood,WR,BAL,role,high,depth 7 at WR,nflverse-depth,2025
+Kalel Mullings,RB,TEN,role,medium,depth 3 at RB,nflverse-depth,2025
+Tyler Conklin,TE,DET,role,high,depth 3 at TE,nflverse-depth,2025
+Tommy Tremble,TE,CAR,role,medium,depth 2 at TE,nflverse-depth,2025
+Kameron Johnson,WR,TB,role,high,depth 5 at WR,nflverse-depth,2025
+James Proche II,WR,TEN,role,high,depth 6 at WR,nflverse-depth,2025
+Will Mallory,TE,IND,role,medium,depth 2 at TE,nflverse-depth,2025
+Mecole Hardman Jr.,WR,BUF,role,high,depth 6 at WR,nflverse-depth,2025
+Austin Trammell,WR,JAX,role,high,depth 6 at WR,nflverse-depth,2025
+Marvin Mims Jr.,WR,DEN,role,high,depth 4 at WR,nflverse-depth,2025
+Giovanni Ricci,TE,DET,role,high,depth 3 at TE,nflverse-depth,2025
+Tahj Washington,WR,MIA,role,high,depth 6 at WR,nflverse-depth,2025
+Jimmy Horn Jr.,WR,CAR,role,high,depth 4 at WR,nflverse-depth,2025
+Miles Boykin,WR,CHI,role,high,depth 6 at WR,nflverse-depth,2025
+Ihmir Smith-Marsette,WR,ARI,role,high,depth 10 at WR,nflverse-depth,2025
+Gunner Olszewski,WR,NYG,role,high,depth 7 at WR,nflverse-depth,2025
+Deshaun Watson,QB,CLE,role,high,depth 3 at QB,nflverse-depth,2025
+Clayton Tune,QB,GB,role,high,depth 3 at QB,nflverse-depth,2025
+Cedric Tillman,WR,CLE,role,low,depth 2 at WR,nflverse-depth,2025
+Luke Schoonmaker,TE,DAL,role,high,depth 3 at TE,nflverse-depth,2025
+Keleki Latu,TE,BUF,role,high,depth 4 at TE,nflverse-depth,2025
+LaJohntay Wester,WR,BAL,role,high,depth 4 at WR,nflverse-depth,2025
+Khalil Herbert,RB,NYJ,role,high,depth 4 at RB,nflverse-depth,2025
+Kendre Miller,RB,NO,role,medium,depth 3 at RB,nflverse-depth,2025
+Hal Presley,WR,TEN,role,high,depth 8 at WR,nflverse-depth,2025
+Kene Nwangwu,RB,NYJ,role,high,depth 5 at RB,nflverse-depth,2025
+David Sills V,WR,ATL,role,high,depth 4 at WR,nflverse-depth,2025
+David Martin-Robinson,TE,TEN,role,high,depth 4 at TE,nflverse-depth,2025
+Jeff Driskel,QB,WAS,role,high,depth 4 at QB,nflverse-depth,2025
+Ian Wheeler,RB,CHI,role,high,depth 6 at RB,nflverse-depth,2025
+Cooper Rush,QB,BAL,role,high,depth 3 at QB,nflverse-depth,2025
+Eric Gray,RB,NYG,role,high,depth 4 at RB,nflverse-depth,2025
+Mason Kinsey,WR,TEN,role,high,depth 5 at WR,nflverse-depth,2025
+Jalen Reagor,WR,LAC,role,high,depth 7 at WR,nflverse-depth,2025
+Davis Mills,QB,HOU,role,medium,depth 2 at QB,nflverse-depth,2025
+Tucker Fisk,TE,LAC,role,high,depth 3 at TE,nflverse-depth,2025
+Gabe Davis,WR,BUF,role,high,depth 7 at WR,nflverse-depth,2025
+Brandon Allen,QB,TEN,role,high,depth 4 at QB,nflverse-depth,2025
+Jaylen Johnson,WR,LAC,role,high,depth 8 at WR,nflverse-depth,2025
+Scotty Miller,WR,PIT,role,high,depth 5 at WR,nflverse-depth,2025
+Joe Milton III,QB,DAL,role,medium,depth 2 at QB,nflverse-depth,2025
+Jared Wayne,WR,HOU,role,high,depth 8 at WR,nflverse-depth,2025
+Stephen Carlson,TE,CHI,role,high,depth 3 at TE,nflverse-depth,2025
+D'Ernest Johnson,RB,NE,role,medium,depth 3 at RB,nflverse-depth,2025
+Adam Trautman,TE,DEN,role,medium,depth 2 at TE,nflverse-depth,2025
+Dan Chisena,WR,CAR,role,high,depth 8 at WR,nflverse-depth,2025
+Trent Taylor,WR,SF,role,high,depth 8 at WR,nflverse-depth,2025
+Jakobi Meyers,WR,JAX,role,low,depth 2 at WR,nflverse-depth,2025
+JaMycal Hasty,RB,NE,role,high,depth 5 at RB,nflverse-depth,2025
+Malik Heath,WR,ATL,role,high,depth 8 at WR,nflverse-depth,2025
+Myles Gaskin,RB,SEA,role,high,depth 4 at RB,nflverse-depth,2025
+Xavier Weaver,WR,ARI,role,high,depth 4 at WR,nflverse-depth,2025
+Kylen Granson,TE,TEN,role,high,depth 3 at TE,nflverse-depth,2025
+Keenan Allen,WR,LAC,role,medium,depth 3 at WR,nflverse-depth,2025
+Jordan James,RB,SF,role,low,depth 2 at RB,nflverse-depth,2025
+LeQuint Allen Jr.,RB,JAX,role,medium,depth 3 at RB,nflverse-depth,2025
+Dominique Dafney,TE,CAR,role,high,depth 6 at TE,nflverse-depth,2025
+Joshua Dobbs,QB,NE,role,medium,depth 2 at QB,nflverse-depth,2025
+Quez Watkins,WR,PHI,role,high,depth 6 at WR,nflverse-depth,2025
+Savion Williams,WR,GB,role,high,depth 5 at WR,nflverse-depth,2025
+Amar Johnson,RB,LAC,role,high,depth 5 at RB,nflverse-depth,2025
+Jeremy McNichols,RB,WAS,role,high,depth 4 at RB,nflverse-depth,2025
+Drake Dabney,TE,GB,role,high,depth 4 at TE,nflverse-depth,2025
+Jimmy Holiday,WR,KC,role,high,depth 7 at WR,nflverse-depth,2025
+Ke'Shawn Williams,WR,CIN,role,high,depth 6 at WR,nflverse-depth,2025
+Deion Hankins,RB,CHI,role,high,depth 5 at RB,nflverse-depth,2025
+Tanner Mordecai,QB,SF,role,high,depth 5 at QB,nflverse-depth,2025
+Daniel Bellinger,TE,TEN,role,medium,depth 2 at TE,nflverse-depth,2025
+Jalen McMillan,WR,TB,role,medium,depth 3 at WR,nflverse-depth,2025
+Tarik Black,WR,MIA,role,high,depth 8 at WR,nflverse-depth,2025
+Isaiah Hodgins,WR,NYG,role,high,depth 5 at WR,nflverse-depth,2025
+Donovan Peoples-Jones,WR,NO,role,high,depth 9 at WR,nflverse-depth,2025
+Justin Fields,QB,NYJ,role,medium,depth 2 at QB,nflverse-depth,2025
+Jaleel McLaughlin,RB,DEN,role,medium,depth 3 at RB,nflverse-depth,2025
+John Metchie III,WR,CAR,role,high,depth 5 at WR,nflverse-depth,2025
+Rondale Moore,WR,MIN,role,high,depth 7 at WR,nflverse-depth,2025
+Cornell Powell,WR,HOU,role,high,depth 11 at WR,nflverse-depth,2025
+Emanuel Wilson,RB,SEA,role,low,depth 2 at RB,nflverse-depth,2025
+Tyler Mabry,TE,CAR,role,high,depth 7 at TE,nflverse-depth,2025
+Silas Bolden,WR,MIN,role,high,depth 12 at WR,nflverse-depth,2025
+Bryce Ford-Wheaton,WR,NYG,role,high,depth 7 at WR,nflverse-depth,2025
+Jake Bobo,WR,SEA,role,high,depth 5 at WR,nflverse-depth,2025
+E.J. Jenkins,TE,PHI,role,high,depth 4 at TE,nflverse-depth,2025
+Evan Hull,RB,NO,role,high,depth 6 at RB,nflverse-depth,2025
+Tee Higgins,WR,CIN,role,low,depth 2 at WR,nflverse-depth,2025
+Spencer Rattler,QB,NO,role,medium,depth 2 at QB,nflverse-depth,2025
+Trenton Irwin,WR,JAX,role,high,depth 5 at WR,nflverse-depth,2025
+Lawrance Toafili,RB,NYJ,role,high,depth 6 at RB,nflverse-depth,2025
+Rachaad White,RB,WAS,role,low,depth 2 at RB,nflverse-depth,2025
+Quintez Cephus,WR,HOU,role,high,depth 9 at WR,nflverse-depth,2025
+Javon Baker,WR,NE,role,high,depth 8 at WR,nflverse-depth,2025
+Ameer Abdullah,RB,IND,role,low,depth 2 at RB,nflverse-depth,2025
+Tai Felton,WR,MIN,role,medium,depth 3 at WR,nflverse-depth,2025
+Ben Skowronek,WR,PIT,role,medium,depth 3 at WR,nflverse-depth,2025
+Donald Parham Jr.,TE,PIT,role,high,depth 3 at TE,nflverse-depth,2025
+Lance McCutcheon,WR,PIT,role,high,depth 8 at WR,nflverse-depth,2025
+Austin Hooper,TE,ATL,role,medium,depth 2 at TE,nflverse-depth,2025
+Kirk Cousins,QB,ATL,role,medium,depth 2 at QB,nflverse-depth,2025
+Ja'seem Reed,WR,CAR,role,high,depth 10 at WR,nflverse-depth,2025
+Tre' McKitty,TE,HOU,role,high,depth 6 at TE,nflverse-depth,2025
+Wan'Dale Robinson,WR,TEN,role,low,depth 2 at WR,nflverse-depth,2025
+Najee Harris,RB,LAC,role,medium,depth 3 at RB,nflverse-depth,2025
+Kalif Raymond,WR,CHI,role,high,depth 4 at WR,nflverse-depth,2025
+Britain Covey,WR,PHI,role,high,depth 5 at WR,nflverse-depth,2025
+Keilan Robinson,RB,PHI,role,high,depth 5 at RB,nflverse-depth,2025
+Nate Sudfeld,QB,SF,role,high,depth 5 at QB,nflverse-depth,2025
+Treylon Burks,WR,WAS,role,high,depth 5 at WR,nflverse-depth,2025
+Graham Mertz,QB,HOU,role,high,depth 3 at QB,nflverse-depth,2025
+Pat Bryant,WR,DEN,role,medium,depth 3 at WR,nflverse-depth,2025
+Cole Turner,TE,MIA,role,high,depth 4 at TE,nflverse-depth,2025
+Tyquan Thornton,WR,KC,role,medium,depth 3 at WR,nflverse-depth,2025
+Corey Kiner,RB,ARI,role,high,depth 5 at RB,nflverse-depth,2025
+Hunter Dekkers,QB,NO,role,high,depth 4 at QB,nflverse-depth,2025
+Taylor Heinicke,QB,LAC,role,medium,depth 2 at QB,nflverse-depth,2025
+Tyrone Tracy Jr.,RB,NYG,role,low,depth 2 at RB,nflverse-depth,2025
+Velus Jones Jr.,RB,SEA,role,high,depth 5 at RB,nflverse-depth,2025
+Hayden Rucci,TE,SF,role,high,depth 5 at TE,nflverse-depth,2025
+Sal Cannella,TE,CLE,role,high,depth 4 at TE,nflverse-depth,2025
+Ben Yurosek,TE,MIN,role,high,depth 4 at TE,nflverse-depth,2025
+Laviska Shenault Jr.,WR,BUF,role,high,depth 7 at WR,nflverse-depth,2025
+Jordan Mason,RB,MIN,role,low,depth 2 at RB,nflverse-depth,2025
+Tyler Davis,TE,NE,role,high,depth 6 at TE,nflverse-depth,2025
+John Jackson,WR,CHI,role,high,depth 10 at WR,nflverse-depth,2025
+Sam Ehlinger,QB,DEN,role,high,depth 3 at QB,nflverse-depth,2025
+Case Keenum,QB,CHI,role,high,depth 3 at QB,nflverse-depth,2025
+Ben Sinnott,TE,WAS,role,high,depth 3 at TE,nflverse-depth,2025
+Jerome Ford,RB,CLE,role,medium,depth 3 at RB,nflverse-depth,2025
+Trent Sherfield Sr.,WR,ARI,role,high,depth 6 at WR,nflverse-depth,2025
+Jashaun Corbin,RB,ATL,role,high,depth 5 at RB,nflverse-depth,2025
+Theo Wease Jr.,WR,MIA,role,high,depth 5 at WR,nflverse-depth,2025
+Hassan Haskins,RB,LAC,role,high,depth 4 at RB,nflverse-depth,2025
+Sam Howell,QB,DAL,role,high,depth 3 at QB,nflverse-depth,2025
+Drew Sample,TE,CIN,role,high,depth 3 at TE,nflverse-depth,2025
+Luke Lachey,TE,HOU,role,high,depth 5 at TE,nflverse-depth,2025
+Brian Robinson Jr.,RB,SF,role,low,depth 2 at RB,nflverse-depth,2025
+Jalen Virgil,WR,BUF,role,high,depth 7 at WR,nflverse-depth,2025
+DJ Chark,WR,ATL,role,high,depth 8 at WR,nflverse-depth,2025
+Jaylin Noel,WR,HOU,role,high,depth 5 at WR,nflverse-depth,2025
+Jake Briningstool,TE,KC,role,high,depth 4 at TE,nflverse-depth,2025
+Kyle Allen,QB,BUF,role,medium,depth 2 at QB,nflverse-depth,2025
+RJ Harvey,RB,DEN,role,low,depth 2 at RB,nflverse-depth,2025
+Michael Strachan,WR,WAS,role,high,depth 10 at WR,nflverse-depth,2025
+George Pickens,WR,DAL,role,low,depth 2 at WR,nflverse-depth,2025
+Bryson Green,WR,ARI,role,high,depth 9 at WR,nflverse-depth,2025
+Emani Bailey,RB,CAR,role,high,depth 5 at RB,nflverse-depth,2025
+Jalen Cropper,WR,DAL,role,high,depth 6 at WR,nflverse-depth,2025
+Lil'Jordan Humphrey,WR,DEN,role,high,depth 5 at WR,nflverse-depth,2025
+Laquon Treadwell,WR,IND,role,high,depth 5 at WR,nflverse-depth,2025
+Shedrick Jackson,WR,LV,role,high,depth 6 at WR,nflverse-depth,2025
+Trey Palmer,WR,NO,role,high,depth 6 at WR,nflverse-depth,2025
+Phillip Dorsett II,WR,LV,role,high,depth 7 at WR,nflverse-depth,2025
+D.J. Montgomery,WR,IND,role,high,depth 6 at WR,nflverse-depth,2025
+Kyle Monangai,RB,CHI,role,low,depth 2 at RB,nflverse-depth,2025
+Devin Culp,TE,TB,role,high,depth 3 at TE,nflverse-depth,2025
+Will Grier,QB,DAL,role,high,depth 4 at QB,nflverse-depth,2025
+Kyrese Rowan,WR,DEN,role,high,depth 10 at WR,nflverse-depth,2025
+Elijah Mitchell,RB,NE,role,high,depth 4 at RB,nflverse-depth,2025
+Tyree Jackson,TE,WAS,role,high,depth 4 at TE,nflverse-depth,2025
+Tyler Johnson,WR,NYJ,role,high,depth 6 at WR,nflverse-depth,2025
+John Rhys Plumlee,WR,PIT,role,high,depth 6 at WR,nflverse-depth,2025
+Sam Hartman,QB,WAS,role,high,depth 3 at QB,nflverse-depth,2025
+James Mitchell,TE,CAR,role,high,depth 4 at TE,nflverse-depth,2025
+Irv Smith Jr.,TE,HOU,role,high,depth 6 at TE,nflverse-depth,2025
+Grant DuBose,WR,BUF,role,high,depth 11 at WR,nflverse-depth,2025
+Jeremy Ruckert,TE,NYJ,role,medium,depth 2 at TE,nflverse-depth,2025
+Diontae Johnson,WR,CLE,role,high,depth 4 at WR,nflverse-depth,2025
+David Bell,WR,CLE,role,high,depth 8 at WR,nflverse-depth,2025
+Terrell Jennings,RB,NE,role,medium,depth 3 at RB,nflverse-depth,2025
+Jarquez Hunter,RB,LA,role,medium,depth 3 at RB,nflverse-depth,2025
+Dante Pettis,WR,NO,role,high,depth 6 at WR,nflverse-depth,2025
+Emari Demercado,RB,KC,role,low,depth 2 at RB,nflverse-depth,2025
+Chris Collier,RB,LV,role,medium,depth 3 at RB,nflverse-depth,2025
+Tejhaun Palmer,WR,ARI,role,high,depth 8 at WR,nflverse-depth,2025
+Calvin Austin III,WR,NYG,role,medium,depth 3 at WR,nflverse-depth,2025
+Mac Jones,QB,SF,role,medium,depth 2 at QB,nflverse-depth,2025
+DJ Uiagalelei,QB,LAC,role,medium,depth 2 at QB,nflverse-depth,2025
+Zach Davidson,TE,NYG,role,high,depth 4 at TE,nflverse-depth,2025
+Devontez Walker,WR,BAL,role,medium,depth 3 at WR,nflverse-depth,2025
+Gary Brightwell,RB,CIN,role,high,depth 4 at RB,nflverse-depth,2025
+Trayveon Williams,RB,CLE,role,high,depth 5 at RB,nflverse-depth,2025
+Justin Shorter,WR,LV,role,high,depth 8 at WR,nflverse-depth,2025
+AJ Henning,WR,MIA,role,high,depth 8 at WR,nflverse-depth,2025
+Pharaoh Brown,TE,ARI,role,high,depth 6 at TE,nflverse-depth,2025
+Jahdae Walker,WR,CHI,role,medium,depth 3 at WR,nflverse-depth,2025
+Juwann Winfree,WR,HOU,role,high,depth 9 at WR,nflverse-depth,2025
+Jonnu Smith,TE,PIT,role,medium,depth 2 at TE,nflverse-depth,2025
+Derius Davis,WR,LAC,role,high,depth 5 at WR,nflverse-depth,2025
+Jeshaun Jones,WR,MIN,role,high,depth 4 at WR,nflverse-depth,2025
+Amari Cooper,WR,LV,role,low,depth 2 at WR,nflverse-depth,2025
+Carter Runyon,TE,LV,role,high,depth 3 at TE,nflverse-depth,2025
+Cameron Latu,TE,PHI,role,high,depth 3 at TE,nflverse-depth,2025
+Will Sheppard,WR,GB,role,high,depth 10 at WR,nflverse-depth,2025
+Marquez Callaway,WR,LV,role,high,depth 9 at WR,nflverse-depth,2025
+Kayshon Boutte,WR,NE,role,low,depth 2 at WR,nflverse-depth,2025
+Tahj Brooks,RB,CIN,role,medium,depth 3 at RB,nflverse-depth,2025
+DJ Giddens,RB,IND,role,low,depth 2 at RB,nflverse-depth,2025
+Alvin Kamara,RB,NO,role,low,depth 2 at RB,nflverse-depth,2025
+Anthony Firkser,TE,DET,role,medium,depth 2 at TE,nflverse-depth,2025
+Braxton Berrios,WR,HOU,role,high,depth 8 at WR,nflverse-depth,2025
+Mitchell Tinsley,WR,CIN,role,high,depth 4 at WR,nflverse-depth,2025
+Quinn Ewers,QB,MIA,role,medium,depth 2 at QB,nflverse-depth,2025
+Tyler Scott,WR,LA,role,high,depth 9 at WR,nflverse-depth,2025
+Traeshon Holden,WR,DAL,role,high,depth 7 at WR,nflverse-depth,2025
+Carson Steele,RB,PHI,role,high,depth 4 at RB,nflverse-depth,2025
+Cam Grandy,TE,CIN,role,high,depth 5 at TE,nflverse-depth,2025
+Brock Wright,TE,DET,role,medium,depth 2 at TE,nflverse-depth,2025
+Darius Slayton,WR,NYG,role,low,depth 2 at WR,nflverse-depth,2025
+Brevyn Spann-Ford,TE,DAL,role,medium,depth 2 at TE,nflverse-depth,2025
+Josh Oliver,TE,MIN,role,medium,depth 2 at TE,nflverse-depth,2025
+Kyle Trask,QB,TB,role,high,depth 3 at QB,nflverse-depth,2025
+Bryson Nesbit,TE,MIN,role,high,depth 5 at TE,nflverse-depth,2025
+Shawn Bowman,TE,JAX,role,high,depth 6 at TE,nflverse-depth,2025
+J.J. Taylor,RB,HOU,role,high,depth 7 at RB,nflverse-depth,2025
+Thomas Odukoya,TE,TEN,role,high,depth 4 at TE,nflverse-depth,2025
+Michael Jacobson,TE,NO,role,high,depth 5 at TE,nflverse-depth,2025
+Joel Wilson,TE,TEN,role,high,depth 5 at TE,nflverse-depth,2025
+Elijah Higgins,TE,ARI,role,high,depth 3 at TE,nflverse-depth,2025
+Steven Sims,WR,ARI,role,high,depth 4 at WR,nflverse-depth,2025
+Chris Oladokun,QB,KC,role,medium,depth 2 at QB,nflverse-depth,2025
+Dez Fitzpatrick,WR,LAC,role,high,depth 13 at WR,nflverse-depth,2025
+Mac Dalena,WR,NYJ,role,high,depth 8 at WR,nflverse-depth,2025
+Jake Haener,QB,KC,role,high,depth 3 at QB,nflverse-depth,2025
+J.J. McCarthy,QB,MIN,role,medium,depth 2 at QB,nflverse-depth,2025
+Audric Estime,RB,NO,role,high,depth 5 at RB,nflverse-depth,2025
+Nick Muse,TE,PHI,role,high,depth 5 at TE,nflverse-depth,2025
+Keaton Mitchell,RB,LAC,role,medium,depth 3 at RB,nflverse-depth,2025
+Ollie Gordon II,RB,MIA,role,medium,depth 3 at RB,nflverse-depth,2025
+Isaiah Williams,WR,NYJ,role,medium,depth 3 at WR,nflverse-depth,2025
+Matt Landers,WR,TEN,role,high,depth 8 at WR,nflverse-depth,2025
+Jaylin Lane,WR,WAS,role,high,depth 4 at WR,nflverse-depth,2025
+Dennis Houston,WR,TB,role,high,depth 7 at WR,nflverse-depth,2025
+Blake Watson,RB,TEN,role,high,depth 4 at RB,nflverse-depth,2025
+Caleb Lohner,TE,DEN,role,high,depth 5 at TE,nflverse-depth,2025
+Woody Marks,RB,HOU,role,low,depth 2 at RB,nflverse-depth,2025
+Dee Eskridge,WR,MIA,role,high,depth 4 at WR,nflverse-depth,2025
+Da'Quan Felton,WR,NYG,role,high,depth 8 at WR,nflverse-depth,2025
+Justice Hill,RB,BAL,role,low,depth 2 at RB,nflverse-depth,2025
+Zach Pascal,WR,NYG,role,high,depth 8 at WR,nflverse-depth,2025
+Gavin Bartholomew,TE,MIN,role,high,depth 3 at TE,nflverse-depth,2025
+Brevin Jordan,TE,HOU,role,medium,depth 2 at TE,nflverse-depth,2025
+Josh Kelly,WR,HOU,role,high,depth 7 at WR,nflverse-depth,2025
+Roschon Johnson,RB,CHI,role,medium,depth 3 at RB,nflverse-depth,2025
+Efton Chism III,WR,NE,role,high,depth 6 at WR,nflverse-depth,2025
+Joe Flacco,QB,CIN,role,medium,depth 2 at QB,nflverse-depth,2025
+Brennan Presley,WR,LA,role,high,depth 7 at WR,nflverse-depth,2025
+Noah Brown,WR,WAS,role,high,depth 4 at WR,nflverse-depth,2025
+Luke Floriea,WR,CLE,role,high,depth 7 at WR,nflverse-depth,2025
+Rasheen Ali,RB,BAL,role,medium,depth 3 at RB,nflverse-depth,2025
+Brashard Smith,RB,KC,role,medium,depth 3 at RB,nflverse-depth,2025
+Ja'Lynn Polk,WR,NO,role,high,depth 7 at WR,nflverse-depth,2025
+Emory Jones,QB,ATL,role,high,depth 4 at QB,nflverse-depth,2025
+Julian Hill,TE,NE,role,medium,depth 2 at TE,nflverse-depth,2025
+Kevin Austin Jr.,WR,NO,role,high,depth 5 at WR,nflverse-depth,2025
+Alexander Mattison,RB,MIA,role,high,depth 4 at RB,nflverse-depth,2025
+Rushawn Baker,RB,NYG,role,high,depth 7 at RB,nflverse-depth,2025
+Nate Adkins,TE,DEN,role,high,depth 3 at TE,nflverse-depth,2025
+Cam Miller,QB,MIA,role,high,depth 3 at QB,nflverse-depth,2025
+Brandon Johnson,WR,PIT,role,high,depth 6 at WR,nflverse-depth,2025
+Adonai Mitchell,WR,NYJ,role,low,depth 2 at WR,nflverse-depth,2025
+Andrew Armstrong,WR,KC,role,high,depth 8 at WR,nflverse-depth,2025
+Tyler Higbee,TE,LA,role,medium,depth 2 at TE,nflverse-depth,2025
+Jalen Milroe,QB,SEA,role,high,depth 3 at QB,nflverse-depth,2025
+Deuce Vaughn,RB,DEN,role,high,depth 6 at RB,nflverse-depth,2025
+Jalen Tolbert,WR,MIA,role,medium,depth 3 at WR,nflverse-depth,2025
+Dalton Keene,TE,HOU,role,high,depth 7 at TE,nflverse-depth,2025
+Malik Taylor,WR,DET,role,high,depth 10 at WR,nflverse-depth,2025
+Jameson Williams,WR,DET,role,low,depth 2 at WR,nflverse-depth,2025
+Kendrick Bourne,WR,ARI,role,medium,depth 3 at WR,nflverse-depth,2025
+T.J. Luther,WR,CAR,role,high,depth 12 at WR,nflverse-depth,2025
+Jacoby Jones,WR,WAS,role,high,depth 7 at WR,nflverse-depth,2025
+Cedrick Wilson Jr.,WR,MIA,role,medium,depth 3 at WR,nflverse-depth,2025
+Xavier Restrepo,WR,TEN,role,high,depth 7 at WR,nflverse-depth,2025
+Konata Mumpfield,WR,LA,role,medium,depth 3 at WR,nflverse-depth,2025
+Isiah Pacheco,RB,DET,role,low,depth 2 at RB,nflverse-depth,2025
+Kawaan Baker,WR,GB,role,high,depth 10 at WR,nflverse-depth,2025
+Kenny Yeboah,TE,DET,role,high,depth 5 at TE,nflverse-depth,2025
+Frank Gore,RB,BUF,role,high,depth 4 at RB,nflverse-depth,2025
+Rashod Bateman,WR,BAL,role,low,depth 2 at WR,nflverse-depth,2025
+Raheem Mostert,RB,LV,role,low,depth 2 at RB,nflverse-depth,2025
+Rashid Shaheed,WR,SEA,role,medium,depth 3 at WR,nflverse-depth,2025
+Tay Martin,WR,WAS,role,high,depth 7 at WR,nflverse-depth,2025
+Foster Moreau,TE,HOU,role,high,depth 4 at TE,nflverse-depth,2025
+Nick Westbrook-Ikhine,WR,MIA,role,high,depth 8 at WR,nflverse-depth,2025
+Brady Cook,QB,NYJ,role,high,depth 3 at QB,nflverse-depth,2025
+Colton Dowell,WR,SF,role,high,depth 7 at WR,nflverse-depth,2025
+Marcus Mariota,QB,WAS,role,medium,depth 2 at QB,nflverse-depth,2025
+Cole Fotheringham,TE,NE,role,high,depth 7 at TE,nflverse-depth,2025
+Sean Tucker,RB,TB,role,medium,depth 3 at RB,nflverse-depth,2025
+Devaughn Vele,WR,NO,role,low,depth 2 at WR,nflverse-depth,2025
+Nick Kallerup,TE,SEA,role,high,depth 4 at TE,nflverse-depth,2025
+Devin Neal,RB,NO,role,high,depth 4 at RB,nflverse-depth,2025
+Rivaldo Fairweather,TE,ARI,role,high,depth 4 at TE,nflverse-depth,2025
+Dylan Drummond,WR,ATL,role,high,depth 4 at WR,nflverse-depth,2025
+Jonathan Mingo,WR,DAL,role,high,depth 5 at WR,nflverse-depth,2025
+Logan Woodside,QB,PIT,role,high,depth 5 at QB,nflverse-depth,2025
+Terrance Ferguson,TE,LA,role,high,depth 3 at TE,nflverse-depth,2025
+Mack Hollins,WR,NE,role,medium,depth 3 at WR,nflverse-depth,2025
+Antonio Gibson,RB,NE,role,medium,depth 3 at RB,nflverse-depth,2025
+Dayton Wade,WR,BAL,role,high,depth 5 at WR,nflverse-depth,2025
+Ramel Keyton,WR,TEN,role,high,depth 10 at WR,nflverse-depth,2025
+Xavier Gipson,WR,NYG,role,high,depth 10 at WR,nflverse-depth,2025
+D.J. Williams,RB,TB,role,high,depth 6 at RB,nflverse-depth,2025
+Coleman Owen,WR,IND,role,high,depth 6 at WR,nflverse-depth,2025
+Tyler Lockett,WR,LV,role,high,depth 5 at WR,nflverse-depth,2025
+Keon Coleman,WR,BUF,role,high,depth 4 at WR,nflverse-depth,2025
+Braelon Allen,RB,NYJ,role,low,depth 2 at RB,nflverse-depth,2025
+Nathan Carter,RB,ATL,role,low,depth 2 at RB,nflverse-depth,2025
+Qadir Ismail,TE,CHI,role,high,depth 5 at TE,nflverse-depth,2025
+Kyle Philips,WR,LV,role,high,depth 8 at WR,nflverse-depth,2025
+Hunter Renfrow,WR,CAR,role,high,depth 6 at WR,nflverse-depth,2025
+Deneric Prince,RB,NE,role,high,depth 6 at RB,nflverse-depth,2025
+Troy Franklin,WR,DEN,role,low,depth 2 at WR,nflverse-depth,2025
+Deon Jackson,RB,DET,role,high,depth 6 at RB,nflverse-depth,2025
+Deebo Samuel,WR,WAS,role,low,depth 2 at WR,nflverse-depth,2025
+Eli Pancol,WR,IND,role,high,depth 7 at WR,nflverse-depth,2025
+Jordan Addison,WR,MIN,role,low,depth 2 at WR,nflverse-depth,2025
+Feleipe Franks,TE,ATL,role,high,depth 5 at TE,nflverse-depth,2025
+Kareem Hunt,RB,KC,role,medium,depth 3 at RB,nflverse-depth,2025
+Stephen Gosnell,WR,BUF,role,high,depth 8 at WR,nflverse-depth,2025
+Easton Stick,QB,ATL,role,high,depth 3 at QB,nflverse-depth,2025
+Shane Buechele,QB,BUF,role,high,depth 3 at QB,nflverse-depth,2025
+Emeka Egbuka,WR,TB,role,low,depth 2 at WR,nflverse-depth,2025
+Nick Nash,WR,WAS,role,high,depth 9 at WR,nflverse-depth,2025
+Dareke Young,WR,LV,role,high,depth 5 at WR,nflverse-depth,2025
+Connor Bazelak,QB,TB,role,high,depth 3 at QB,nflverse-depth,2025
+Carson Wentz,QB,MIN,role,medium,depth 2 at QB,nflverse-depth,2025
+Zamir White,RB,LV,role,medium,depth 3 at RB,nflverse-depth,2025
+Carlos Washington Jr.,RB,ATL,role,medium,depth 3 at RB,nflverse-depth,2025
+Johnny Wilson,WR,PHI,role,medium,depth 3 at WR,nflverse-depth,2025
+Chris Rodriguez Jr.,RB,JAX,role,low,depth 2 at RB,nflverse-depth,2025
+Zach Wilson,QB,MIA,role,high,depth 3 at QB,nflverse-depth,2025
+Curtis Samuel,WR,BUF,role,high,depth 8 at WR,nflverse-depth,2025
+Anthony Richardson Sr.,QB,IND,role,medium,depth 2 at QB,nflverse-depth,2025
+DeVonta Smith,WR,PHI,role,low,depth 2 at WR,nflverse-depth,2025
+KaVontae Turpin,WR,DAL,role,high,depth 4 at WR,nflverse-depth,2025
+Davis Allen,TE,LA,role,high,depth 4 at TE,nflverse-depth,2025
+Cornelius Johnson,WR,BAL,role,high,depth 6 at WR,nflverse-depth,2025
+Marshall Lang,TE,NE,role,high,depth 4 at TE,nflverse-depth,2025
+Cade Stover,TE,HOU,role,high,depth 3 at TE,nflverse-depth,2025
+Ben DiNucci,QB,ATL,role,high,depth 4 at QB,nflverse-depth,2025
+Arian Smith,WR,NYJ,role,high,depth 4 at WR,nflverse-depth,2025
+Connor Heyward,TE,PIT,role,high,depth 4 at TE,nflverse-depth,2025
+Julius Chestnut,RB,TEN,role,high,depth 4 at RB,nflverse-depth,2025
+Dante Miller,RB,NYG,role,high,depth 5 at RB,nflverse-depth,2025
+Jalen Brooks,WR,ARI,role,high,depth 7 at WR,nflverse-depth,2025
+Thomas Gordon,TE,DET,role,high,depth 5 at TE,nflverse-depth,2025
+Zavier Scott,RB,MIN,role,medium,depth 3 at RB,nflverse-depth,2025
+Gee Scott Jr.,TE,NE,role,high,depth 4 at TE,nflverse-depth,2025
+Ray-Ray McCloud III,WR,NYG,role,medium,depth 3 at WR,nflverse-depth,2025
+Zaire Mitchell-Paden,TE,NO,role,high,depth 3 at TE,nflverse-depth,2025
+Kirk Cousins,QB,ATL,headline,low,Raiders name Cousins starting QB for Week 1,rss:espn,2026-09-02
+Jalen Hurts,QB,PHI,headline,low,Hurts agrees that he; Brown grew apart: 'Clearly',rss:espn,2026-09-02
+J.J. McCarthy,QB,MIN,headline,low,Vikings GM expects McCarthy on Week 1 roster,rss:espn,2026-09-02
+Jonathon Brooks,RB,CAR,headline,low,Panthers RB Brooks still out; coach optimistic,rss:espn,2026-09-02
+George Kittle,TE,SF,headline,low,Sources: 49ers Kittle; Bosa make trip to Australia,rss:espn,2026-09-02
+Travis Hunter,WR,JAX,headline,low,Graziano's bold-but-realistic predictions for all 32 NFL teams: Don't be surprised if ...,rss:espn,2026-09-02
+Xavier Worthy,WR,KC,headline,low,Graziano's bold-but-realistic predictions for all 32 NFL teams: Don't be surprised if ...,rss:espn,2026-09-02
+Jameson Williams,WR,DET,headline,low,Graziano's bold-but-realistic predictions for all 32 NFL teams: Don't be surprised if ...,rss:espn,2026-09-02
+C.J. Stroud,QB,HOU,headline,low,Which extension-eligible NFL players could be big factors next offseason?,rss:espn,2026-09-02
+Derrick Henry,RB,BAL,headline,low,'A striving factor:' How Ravens' Derrick Henry is driven to rank among NFL's best backs,rss:espn,2026-09-02
+Travis Kelce,TE,KC,headline,low,Travis Kelce purchased $5.35 million Ohio home months before Taylor Swift marriage,rss:espn,2026-09-02
+Travis Kelce,TE,KC,headline,low,Travis Kelce reveals his and Taylor Swift's dog to the world in photo shoot,rss:espn,2026-09-02
+Cam Ward,QB,TEN,headline,low,'He's not going to fail': Why the Titans coach put his job on the line for QB Cam Ward,rss:espn,2026-09-02
+Kaleb Johnson,RB,PIT,headline,low,Grading NFL offseason trades: Sizing up RB Kaleb Johnson to the Packers,rss:espn,2026-08-31
+Ja'Marr Chase,WR,CIN,headline,low,NFL news; live updates: Raiders name Kirk Cousins Week 1 starter; Ja'Marr Chase limited with knee issue; Tony Romo pleads 'no contest' in OWI case,rss:yahoo,2026-08-20
+Kirk Cousins,QB,ATL,headline,low,NFL news; live updates: Raiders name Kirk Cousins Week 1 starter; Ja'Marr Chase limited with knee issue; Tony Romo pleads 'no contest' in OWI case,rss:yahoo,2026-08-20
+Kirk Cousins,QB,ATL,headline,low,Kirk Cousins named Raiders starting QB for Week 1 matchup; delaying Fernando Mendoza's NFL debut,rss:yahoo,2026-09-02
+Kirk Cousins,QB,ATL,headline,low,Thoughts on Kirk Cousins being Raiders Week 1 starting quarterback,rss:yahoo,2026-09-02
+Kirk Cousins,QB,ATL,headline,low,'He's earned it': Why Raiders named Kirk Cousins starting QB,rss:yahoo,2026-09-02
+Ashton Jeanty,RB,LV,headline,low,Raiders optimistic Ashton Jeanty will be ready to play in Week 1,rss:yahoo,2026-09-02
+Kirk Cousins,QB,ATL,headline,low,Fernando Mendoza is first No. 1 QB since Baker Mayfield who won't start Week 1,rss:yahoo,2026-09-02
+Baker Mayfield,QB,TB,headline,low,Fernando Mendoza is first No. 1 QB since Baker Mayfield who won't start Week 1,rss:yahoo,2026-09-02
+J.J. McCarthy,QB,MIN,headline,low,Vikings GM Nolan Teasley: J.J. McCarthy is practicing; expect him on Week 1 roster,rss:yahoo,2026-09-02
+Kirk Cousins,QB,ATL,headline,low,Dolphins vs. Raiders: Kirk Cousins named starter for Las Vegas in Week 1,rss:yahoo,2026-09-02
+Ashton Jeanty,RB,LV,headline,low,Klint Kubiak is optimistic about Ashton Jeanty playing Week 1,rss:yahoo,2026-09-02
+Kirk Cousins,QB,ATL,headline,low,Las Vegas Raiders QB Kirk Cousins named the starter,rss:yahoo,2026-09-02
+George Kittle,TE,SF,headline,low,Will George Kittle play Week 1? Latest update as 49ers TE travels to Australia,rss:yahoo,2026-09-02
+Charlie Jones,WR,CIN,headline,low,Who was the hardest cut for the Bengals?,rss:yahoo,2026-09-02
+Mitchell Tinsley,WR,CIN,headline,low,Who was the hardest cut for the Bengals?,rss:yahoo,2026-09-02
+Kirk Cousins,QB,ATL,headline,low,Raiders officially name Kirk Cousins their starting quarterback,rss:yahoo,2026-09-02
+Kirk Cousins,QB,ATL,headline,low,Breaking news: Kirk Cousins is Week 1 starter,rss:yahoo,2026-09-02
