@@ -3,15 +3,17 @@
 # assumptions (that tailoring is Layer 2 -- `ff news`). Sources here:
 #   - nflverse INJURIES  (structured, player-keyed): report status + injury  -> category=injury
 #   - nflverse DEPTH CHARTS (structured): pos_rank                            -> category=role
-#   - RSS HEADLINES (ESPN, Yahoo): entries tagged to the players they mention -> category=headline
+#   - RSS HEADLINES (ESPN, Yahoo, CBS, PFT/NBC, RotoWire, Yardbarker)         -> category=headline
+#   - SLEEPER trending add/drop (cross-league "buzz")                         -> category=trending
 # Schema: player,pos,team,category,severity,detail,source,asof
 #   severity: high | medium | low   (a source-neutral importance hint; the tailoring layer decides
 #             what to DO with it per league)
-# Run: uv run --with nflreadpy --with polars --with feedparser tools/build_player_news.py [--week N]
+# Run: uv run --with nflreadpy --with polars --with feedparser --with requests tools/build_player_news.py [--week N]
 import os, sys, re, datetime
 import polars as pl
 import nflreadpy as nfl
 import feedparser
+import requests
 to_pl = lambda x: x.to_polars() if hasattr(x, "to_polars") else x
 
 SEASON = 2025  # latest nflverse season; bump when newer data lands
@@ -22,6 +24,10 @@ POS = ["QB", "RB", "WR", "TE", "K"]
 RSS = {
     "espn": "https://www.espn.com/espn/rss/nfl/news",
     "yahoo": "https://sports.yahoo.com/nfl/rss.xml",
+    "cbs": "https://www.cbssports.com/rss/headlines/nfl/",
+    "pft": "https://profootballtalk.nbcsports.com/feed/",
+    "rotowire": "https://www.rotowire.com/rss/news.php?sport=NFL",  # player-note style
+    "yardbarker": "https://www.yardbarker.com/rss/sport/2",
 }
 
 rows = []  # list of dicts with the schema keys
@@ -87,6 +93,31 @@ for feed, url in RSS.items():
         for player, pos, team in tag_players(title + " " + summary):
             rows.append(dict(player=player, pos=pos, team=team, category="headline", severity="low",
                              detail=title, source=f"rss:{feed}", asof=when or "recent"))
+
+# --- Source D: Sleeper cross-league trending adds/drops (what managers everywhere are moving) ---
+# Map Sleeper player_id -> name/pos/team via nflverse ff_playerids (the id crosswalk).
+try:
+    ids = to_pl(nfl.load_ff_playerids()).filter(pl.col("sleeper_id").is_not_null())
+    sleeper_map = {}
+    for sid, name, pos, team in ids.select(["sleeper_id", "name", "position", "team"]).rows():
+        if sid is not None:
+            sleeper_map[str(sid)] = (name, pos, team)
+    for kind in ("add", "drop"):
+        r = requests.get(f"https://api.sleeper.app/v1/players/nfl/trending/{kind}?limit=25", timeout=20)
+        for i, item in enumerate(r.json()):
+            meta = sleeper_map.get(str(item.get("player_id")))
+            if not meta:
+                continue
+            name, pos, team = meta
+            if pos not in POS:
+                continue
+            verb = "added" if kind == "add" else "dropped"
+            rows.append(dict(player=name, pos=pos, team=team or "", category="trending",
+                             severity="medium" if i < 10 else "low",
+                             detail=f"trending {verb} across leagues (Sleeper #{i + 1}, {item.get('count', 0)} moves)",
+                             source=f"sleeper:{kind}", asof="recent"))
+except Exception as e:
+    print(f"sleeper trending: ERR {str(e)[:70]}", file=sys.stderr)
 
 # --- write the unified league-neutral feed ---
 def clean(s):

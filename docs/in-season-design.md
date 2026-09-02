@@ -15,8 +15,12 @@ league/scoring/roster assumptions. Sources, pluggable:
 - nflverse **depth charts** (`load_depth_charts`, `pos_rank`) -> `category=role`; `severity` is a
   general fantasy-relevance hint (QB/TE/K backup at depth 2 = medium; RB/WR only concerning at 3+,
   since an RB2/WR2 still starts).
-- **RSS headlines** (ESPN, Yahoo) tagged to the players they name -> `category=headline`.
-Add a source by appending rows; consumers don't change.
+- **RSS headlines** (ESPN, Yahoo, CBS, PFT/NBC, RotoWire, Yardbarker) tagged to the players they name
+  by whole-name match -> `category=headline`.
+- **Sleeper trending** adds/drops (cross-league buzz, via the `load_ff_playerids` sleeper_id
+  crosswalk) -> `category=trending`.
+Add a source by appending rows; consumers don't change. Dead feeds (NFL.com, Bleacher Report,
+FantasyPros) were probed and dropped.
 
 **Layer 2 -- league tailoring (`ff news`).** Joins the feed to OUR `data/values.csv` by `nameKey`
 and renders the DRAFTABLE players whose news the rank may not price: AVOID (injury high) / WATCH

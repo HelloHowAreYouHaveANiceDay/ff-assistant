@@ -494,19 +494,22 @@ async function cmdNews(rest: string[]) {
     g.items.push({ category, severity, detail, source, asof }); byPlayer.set(ours.name, g);
   }
   const rank: Record<string, number> = { AVOID: 3, WATCH: 2, BURIED: 1, "": 0 };
+  const isInfo = (it: Item) => it.category === "headline" || it.category === "trending";
   const entries = [...byPlayer.values()].map((g) => {
     let flag = "", flagItem: Item | undefined;
     for (const it of g.items) { const f = classifyNews(it.category, it.severity); if ((rank[f] ?? 0) > (rank[flag] ?? 0)) { flag = f; flagItem = it; } }
-    return { v: g.v, flag, flagItem, headlines: g.items.filter((it) => it.category === "headline") };
-  }).filter((e) => e.flag || e.headlines.length);
+    // one info line per source, newest wins, headlines before trending
+    const info = g.items.filter(isInfo).sort((a, b) => (a.category === b.category ? 0 : a.category === "headline" ? -1 : 1));
+    return { v: g.v, flag, flagItem, info };
+  }).filter((e) => e.flag || e.info.length);
   entries.sort((a, b) => (rank[b.flag] - rank[a.flag]) || (b.v.value - a.v.value));
   console.log(`NEWS -- ${entries.length} of your draftable players (>= $${minVal}) have news [${newsFile}]:\n`);
   for (const e of entries) {
     console.log(`  $${String(e.v.value).padStart(3)}  ${e.v.name.padEnd(24)} ${e.v.pos.padEnd(3)} ${e.flag}${e.flagItem ? "  " + e.flagItem.detail : ""}`);
-    if (showHeadlines) for (const h of e.headlines.slice(0, 3)) console.log(`         - ${h.detail} [${h.source} ${h.asof}]`);
+    if (showHeadlines) for (const h of e.info.slice(0, 3)) console.log(`         - ${h.detail} [${h.source} ${h.asof}]`);
   }
   const c = (f: string) => entries.filter((e) => e.flag === f).length;
-  console.log(`\n  ${c("AVOID")} AVOID, ${c("WATCH")} WATCH, ${c("BURIED")} buried, ${entries.filter((e) => e.headlines.length).length} with headlines. Read-only draft flag -- cross-check before you bid.`);
+  console.log(`\n  ${c("AVOID")} AVOID, ${c("WATCH")} WATCH, ${c("BURIED")} buried, ${entries.filter((e) => e.info.length).length} with headlines/buzz. Read-only draft flag -- cross-check before you bid.`);
 }
 
 async function cmdValues(rest: string[]) {

@@ -15,11 +15,12 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
    Without `values.csv` the agent uses ESPN's on-screen values (legal, competitive, but no edge).
 2b. **Refresh the NEWS aggregator and read it** (general league-neutral feed, then tailored to you):
    ```
-   uv run --with nflreadpy --with polars --with feedparser tools/build_player_news.py  # -> data/player-news.csv
+   uv run --with nflreadpy --with polars --with feedparser --with requests tools/build_player_news.py  # -> data/player-news.csv
    npm run ff -- news                                                 # your draftable players with news
    ```
    Layer 1 (`build_player_news.py`) aggregates a GENERAL per-player feed -- nflverse injuries +
-   depth-chart role + live RSS headlines (ESPN/Yahoo), no league assumptions. Layer 2 (`ff news`)
+   depth-chart role + live RSS headlines (ESPN/Yahoo/CBS/PFT/RotoWire/Yardbarker) + Sleeper trending
+   adds/drops, no league assumptions. Layer 2 (`ff news`)
    tailors it to YOUR value table: AVOID (OUT) / WATCH (Questionable) / BURIED (depth) flags plus the
    live headlines for players you'd draft. Read-only -- the bidder does NOT auto-apply it yet; use it
    to set `--avoids` or to bid with your eyes open. (`--no-headlines` for just the flags.)
