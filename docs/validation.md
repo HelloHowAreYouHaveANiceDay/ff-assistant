@@ -95,6 +95,19 @@ position-payers LOWERS championships (18% -> 12%); greedy "nominate the best non
 (15.5%) the value-greedy default. Rational bots don't tilt, so the sim can't reward nomination
 gamesmanship (docs/edges.md) -- it's a human-only edge, kept as a documented live option, not defaulted.
 
+**Live repricing (`--inflation`, `--scarcity`) -- inflation WINS, scarcity loses.** Repricing our
+values by remaining$/remaining-book-value (`src/draft/inflation.ts`) adds **+~2 championship pts /
++3 playoff pts** (draft-only 17->19%, full no-lookahead 12->14%; stable at n=300). Unlike nomination,
+this is a mechanical market correction the rational bots don't neutralize -> it's real. **ON by
+default in the live bidder** (`--no-inflation` to disable). Live uses a start-normalized, bounded
+[0.8,1.4] estimate (the draft board is virtualized, so exact remaining book value isn't cheaply
+readable). SCARCITY/VONA premium tested NEGATIVE (-4.5 pts) -> OFF by default: the deep 16-team pool
+keeps the next-available player close, so a live premium mostly overpays.
+
+Confirmed in a live ESPN mock: inflation reads ~0.97 early and drifts to ~0.82 as the room spends
+down (money leaves faster than talent here), so the agent gets more patient and snipes value late --
+the validated mechanism, live.
+
 **Waivers (`--waivers`) -- backtested and REJECTED as an auto-feature.** Adding automated waiver
 churn (swap our weakest for the best-producing free agent, trailing-avg or ROS-blend, no lookahead)
 DROPPED championships 36% -> ~24-27%, and more churn made it worse. In a deep 16-team league the

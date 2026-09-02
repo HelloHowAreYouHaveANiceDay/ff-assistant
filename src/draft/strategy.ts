@@ -4,6 +4,11 @@
 // Engine never changes when you swap one in.
 
 import type { Pos } from "../data/rankings.js";
+import { computeInflation, scarcityPremium } from "./inflation.js";
+
+// Rough share of league STARTING demand by position (QB1 RB2 WR2 TE1 FLEX1 K1 DST1, FLEX -> RB/WR/TE).
+// Used only to estimate live positional need for the scarcity premium.
+const POS_DEMAND: Record<string, number> = { QB: 0.11, RB: 0.30, WR: 0.30, TE: 0.12, K: 0.07, DST: 0.07 };
 
 export interface PlayerRef {
   name: string;
@@ -21,8 +26,9 @@ export interface DraftState {
   currentOffer: number | null; // current high bid
   secondsLeft: number | null; // per-player clock (drives clock-aware bidding)
   iAmHighBidder: boolean;
+  liveInflation?: number; // LIVE: a precomputed inflation multiplier (start-normalized); overrides the board calc
   board: PlayerRef[]; // available players (for nomination + planning)
-  teams: Array<{ name: string; budgetLeft: number }>; // opponent budgets (optional for v1)
+  teams: Array<{ name: string; budgetLeft: number; openSlots?: number }>; // ALL teams' budgets + open slots (for live inflation)
 }
 
 /** What the Strategy tells the Engine. The Engine still clamps to legality. */
@@ -113,6 +119,8 @@ export interface V2Config {
   aggr?: number; // global aggressiveness multiplier on value (default 1.0)
   maxShare?: number; // hard cap on ONE player as a fraction of STARTING budget (default 0.45)
   startBudget?: number; // total budget (for maxShare); default 200
+  inflation?: boolean; // LIVE: reprice by remaining$ / remaining value (needs board + teams in state)
+  scarcity?: boolean;  // LIVE: add a positional VONA premium as a position runs dry (needs board)
 }
 
 const isBench = (slotKey: string) => /^(BE|BENCH|IR)$/i.test(slotKey);
@@ -153,7 +161,21 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       const softAffordable = state.myBudget - reserveForOthers(state, fillingBench, starterReserve, benchReserve);
       // Hard reserve ($1/other slot) is the never-strand floor -- a legal roster stays completable.
       const hardAffordable = state.myBudget - reserveForOthers(state, fillingBench, 1, 1);
-      const wantVal = Math.round(val(p) * aggr * (cfg.targets?.[p.name] ?? 1)) + premium;
+      // LIVE repricing: correct the static value table for how the auction is actually flowing.
+      let liveVal = val(p) * aggr * (cfg.targets?.[p.name] ?? 1);
+      if ((cfg.inflation || cfg.scarcity) && state.board.length && state.teams.length) {
+        const remaining = state.board.map((b) => ({ name: b.name, pos: b.pos, value: val(b) }));
+        const remainingDollars = state.teams.reduce((s, t) => s + Math.max(0, t.budgetLeft), 0);
+        const remainingSlots = state.teams.reduce((s, t) => s + Math.max(0, t.openSlots ?? 0), 0);
+        // LIVE passes a start-normalized, bounded multiplier (state.liveInflation) because the live
+        // board is virtualized; the backtest passes an exact board and computes it here.
+        if (cfg.inflation) liveVal *= state.liveInflation ?? (remainingSlots > 0 ? computeInflation(remaining, remainingDollars, remainingSlots) : 1);
+        if (cfg.scarcity) {
+          const needAtPos = Math.max(1, Math.round(remainingSlots * (POS_DEMAND[p.pos] ?? 0.1)));
+          liveVal += scarcityPremium({ name: p.name, pos: p.pos, value: val(p) }, remaining, needAtPos);
+        }
+      }
+      const wantVal = Math.round(liveVal) + premium;
       // Concentration cap: never sink more than maxShare of the STARTING budget into one player
       // (stops the stars-and-scrubs failure where 3 studs eat the budget and the tail can't fill).
       const shareCap = Math.floor(startBudget * maxShare);

@@ -110,7 +110,13 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
       if (aff < 1) continue;
       let max: number;
       if (t.us) {
-        const state: DraftState = { myBudget: t.budget, mySlots: slotsOpenByKey(t), myRoster: [], onBlock: { name, pos: pos as never, team: "", espnPreDraftVal: ourValues.get(name) ?? null }, currentOffer: null, secondsLeft: null, iAmHighBidder: false, board: [], teams: [] };
+        // Populate the live board + all-team budgets ONLY when repricing is on (per-bid O(available)).
+        let board: DraftState["board"] = [], allTeams: DraftState["teams"] = [];
+        if (cfg.inflation || cfg.scarcity) {
+          board = [...available].map((nm) => ({ name: nm, pos: (posMap.get(nm) ?? "") as never, team: "", espnPreDraftVal: ourValues.get(nm) ?? trueVal.get(nm) ?? null }));
+          allTeams = teams.map((tt, k) => ({ name: String(k), budgetLeft: tt.budget, openSlots: openCount(tt) }));
+        }
+        const state: DraftState = { myBudget: t.budget, mySlots: slotsOpenByKey(t), myRoster: [], onBlock: { name, pos: pos as never, team: "", espnPreDraftVal: ourValues.get(name) ?? null }, currentOffer: null, secondsLeft: null, iAmHighBidder: false, board, teams: allTeams };
         max = Math.min(ourStrat.maxBid(state).maxBid, aff);
       } else {
         const base = trueVal.get(name) ?? 1;

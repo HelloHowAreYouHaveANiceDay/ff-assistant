@@ -472,6 +472,7 @@ async function cmdBacktest(rest: string[]) {
     starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 5),
     benchReserve: 1, premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0), maxShare: Number(valueOf(rest, "--max-share") ?? 0.6),
+    inflation: rest.includes("--inflation"), scarcity: rest.includes("--scarcity"),
   };
   // Load all seasons from the combined history files, filter to --seasons range (default all).
   const range = (valueOf(rest, "--seasons") ?? "2014-2024").split("-").map(Number);
@@ -506,7 +507,7 @@ async function cmdBacktest(rest: string[]) {
     for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / 16).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   console.log(`  per season: ${perYear.join("  ")}`);
@@ -621,7 +622,7 @@ async function cmdAutoBid(rest: string[]) {
 // up to min(our value / ESPN pre-draft val / floor, ESPN's legal max). ESPN's myMax already
 // reserves $1/open slot, so we can never strand a slot -> the done-bar is structurally safe.
 async function cmdAutoDraft(rest: string[]) {
-  const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, nominate } = await import("./draft/espnAuction.js");
+  const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, readLeague, nominate } = await import("./draft/espnAuction.js");
   const { loadRankings } = await import("./data/rankings.js");
   const { makeV2Strategy } = await import("./draft/strategy.js");
   const rounds = Number(valueOf(rest, "--rounds") ?? 400);
@@ -658,6 +659,10 @@ async function cmdAutoDraft(rest: string[]) {
     premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
     maxShare: Number(valueOf(rest, "--max-share") ?? 0.6),
+    // LIVE inflation repricing is ON by default -- backtested +~2 championship pts / +3 playoff pts
+    // (docs/validation.md). Scarcity is OFF (backtested NEGATIVE). Toggle: --no-inflation, --scarcity.
+    inflation: !rest.includes("--no-inflation"),
+    scarcity: rest.includes("--scarcity"),
   });
   const normPos = (p: string | null): string | null => {
     if (!p) return null;
@@ -670,7 +675,15 @@ async function cmdAutoDraft(rest: string[]) {
   let lastPlayer = "";
   let emptyReads = 0;
   let idlePolls = 0; // consecutive polls with no player on the block (-> likely our nomination turn)
+  // LIVE inflation inputs: the board (remaining player values) + league money change slowly, so read
+  // them every few ticks and cache -- a full board scrape every poll would be too slow.
+  let liveBoard: { name: string; pos: string | null; value: number | null }[] = [];
+  let league = { remainingDollars: 0, teams: 16 };
+  const { computeInflation } = await import("./draft/inflation.js");
+  let inflBaseline = 0; // raw inflation estimate captured at draft start (to normalize out the
+  let liveInflation = 1; // virtualized-board bias); liveInflation = clamp(raw/baseline, 0.8, 1.4).
   for (let i = 0; i < rounds; i++) {
+    if (i % 6 === 0) { liveBoard = await readBoard(page).catch(() => liveBoard); league = await readLeague(page).catch(() => league); }
     const r = await readRoster(page);
     if (r.filled === 0 && r.open === 0) {
       // Roster panel not rendered yet (pre-draft countdown) OR not in a draft. Tolerate a
@@ -694,6 +707,17 @@ async function cmdAutoDraft(rest: string[]) {
       if (need && pos) {
         // Delegate the ceiling to the Strategy (budget-aware value); Engine clamps to ESPN's
         // hard legal max (myMax) and slot legality.
+        // LIVE inflation: pass the remaining board (values) + a single aggregate "team" carrying the
+        // league's total remaining $ and open slots (r.open x teams -- all teams fill ~evenly). The
+        // strategy reprices by remaining$/remaining-value when cfg.inflation is on.
+        const boardRefs = liveBoard.filter((p) => p.pos).map((p) => ({ name: p.name, pos: p.pos as never, team: "", espnPreDraftVal: p.value }));
+        const leagueSlots = r.open * Math.max(1, league.teams);
+        // Start-normalized inflation: the raw ratio is biased by the virtualized board, so divide by
+        // the first-tick ratio (bias ~constant) and bound it. remaining$ falling faster than board
+        // value -> >1 (reprice up); slower -> <1.
+        const rawInfl = computeInflation(boardRefs.map((b) => ({ name: b.name, pos: String(b.pos), value: b.espnPreDraftVal ?? 1 })), league.remainingDollars || (200 - r.spent) * league.teams, leagueSlots);
+        if (inflBaseline === 0 && rawInfl > 0) inflBaseline = rawInfl;
+        liveInflation = inflBaseline > 0 ? Math.max(0.8, Math.min(1.4, rawInfl / inflBaseline)) : 1;
         const decision = strat.maxBid({
           myBudget: 200 - r.spent,
           mySlots: { ...r.openByBase, FLEX: r.flexOpen, BENCH: r.benchOpen },
@@ -702,8 +726,9 @@ async function cmdAutoDraft(rest: string[]) {
           currentOffer: b.currentOffer,
           secondsLeft: null,
           iAmHighBidder: !b.canBid,
-          board: [],
-          teams: [],
+          liveInflation,
+          board: boardRefs,
+          teams: [{ name: "LEAGUE", budgetLeft: league.remainingDollars || (200 - r.spent), openSlots: leagueSlots }],
         });
         const cap = Math.min(decision.maxBid, b.myMax ?? 0);
         const offer = b.currentOffer ?? 0;
@@ -722,7 +747,7 @@ async function cmdAutoDraft(rest: string[]) {
             ok = await quickBid(page);
           }
           if (b.player !== lastPlayer)
-            console.log(`r${i}: bid ${b.player} (${pos}) $${offer} cap=${cap} [${decision.reason}] myMax=${b.myMax} [open ${r.open}]${ok ? "" : " (noclick)"}`);
+            console.log(`r${i}: bid ${b.player} (${pos}) $${offer} cap=${cap} infl=${liveInflation.toFixed(2)} [${decision.reason}] myMax=${b.myMax} [$${league.remainingDollars} left, open ${r.open}]${ok ? "" : " (noclick)"}`);
           lastPlayer = b.player;
         } else if (b.player !== lastPlayer) {
           console.log(`r${i}: pass ${b.player} (${pos}) $${offer} cap=${cap} [${decision.reason}] [open ${r.open}]`);

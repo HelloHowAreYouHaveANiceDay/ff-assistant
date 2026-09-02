@@ -51,6 +51,11 @@ software agent beats distracted humans:
   to still fill a legal roster; humans miscount and either strand money or can't fill a slot.
 - **No tilt / no reaching** -- doesn't panic-buy in a position run or chase a player above value
   after losing one. Sticks to the plan.
+- **Live scarcity / VONA premium** -- pay up as a position runs dry. BUILT but BACKTESTED NEGATIVE
+  (-4.5 pts, 18->13%) and OFF by default. In a deep 16-team league the "next available" at any
+  position is close, so the premium mostly makes us overpay; the value table already prices scarcity
+  statically. (`--scarcity` to experiment.)
+
 - **Nomination gamesmanship** -- nominate players you don't want at a known payer's craved position
   to drain them (`src/draft/nomination.ts`, cheat sheet in docs/league-managers.md). **Built AND
   measured: in the backtest it is NEUTRAL-to-NEGATIVE** (drain-nom 18%->12%; greedy-non-target 15.5%;
@@ -58,8 +63,12 @@ software agent beats distracted humans:
   belongs in "can't see it" (below). It's a real edge only vs distracted HUMANS; kept as a documented
   live option, never defaulted. The disciplined lesson, twin to auto-waivers: don't ship a
   sim-negative feature as if validated.
-- **Live inflation tracking** -- recompute values as money/talent leave the board (docs/value-methods
-  section 3). Medium; not yet wired into the live bidder.
+- **Live inflation tracking** -- recompute values as money/talent leave the board. BUILT + BACKTESTED
+  + WIRED LIVE (src/draft/inflation.ts): reprice by remaining$ / remaining book value. Backtest:
+  **+~2 championship pts / +3 playoff pts** (17->19% draft-only, 12->14% full no-lookahead) -- a
+  mechanical market correction the rational bots DON'T neutralize, unlike gamesmanship. ON by default
+  in the live bidder (`--no-inflation` to disable). Live uses a start-normalized, bounded [0.8,1.4]
+  estimate because the draft board is virtualized (can't cheaply read full remaining book value).
 
 ### 6. Waiver churn (automated) -- NEGATIVE in a deep league [backtested]
 Surprising, and the backtest earned its keep: automating waiver pickups by recent production LOSES

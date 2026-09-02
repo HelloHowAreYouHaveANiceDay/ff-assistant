@@ -178,6 +178,18 @@ export async function readBoard(page: Page): Promise<BoardPlayer[]> {
   })()`)) as BoardPlayer[];
 }
 
+export interface LeagueState { remainingDollars: number; teams: number; }
+/** Read the league-wide money still on the table: every team's remaining budget from the auction
+ *  draft-room team strip (each team shows a `.cash` = $N). Used for LIVE inflation repricing. */
+export async function readLeague(page: Page): Promise<LeagueState> {
+  return (await page.evaluate(`(() => {
+    const cash = Array.from(document.querySelectorAll('.cash'))
+      .map((c) => { const m = (c.textContent||'').match(/\\$(\\d+)/); return m ? Number(m[1]) : null; })
+      .filter((v) => v != null);
+    return { remainingDollars: cash.reduce((s, v) => s + v, 0), teams: cash.length };
+  })()`)) as LeagueState;
+}
+
 /** Scroll the full available-players board and collect every player's ESPN $ value. The board is
  *  virtualized (only ~18 rows in the DOM at once), so we scroll and accumulate until it stops
  *  yielding new names. Gives a complete values table calibrated to THIS league's settings. */
