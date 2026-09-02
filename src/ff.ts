@@ -734,13 +734,15 @@ function positionalStats(picks: { pos: string | null; price: number; name: strin
 // up to min(our value / ESPN pre-draft val / floor, ESPN's legal max). ESPN's myMax already
 // reserves $1/open slot, so we can never strand a slot -> the done-bar is structurally safe.
 async function cmdAutoDraft(rest: string[]) {
-  const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, readLeague, nominate } = await import("./draft/espnAuction.js");
+  const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, readLeague, nominate, readTurn } = await import("./draft/espnAuction.js");
   const { loadRankings } = await import("./data/rankings.js");
-  const { makeV2Strategy, legalCap } = await import("./draft/strategy.js");
+  const { makeV2Strategy, legalCap, jumpTarget } = await import("./draft/strategy.js");
   const { SIM_LEAGUE } = await import("./draft/sim.js");
   // A full 16-team auction runs ~25-30 min; at ~1.4s/tick + read overhead that's ~1000+ ticks, so the
   // cap must comfortably outlast the whole draft (it exits early on a full roster or a stall).
   const rounds = Number(valueOf(rest, "--rounds") ?? 1600);
+  const jump = Number(valueOf(rest, "--jump") ?? 5);   // fixed jump-bid step (Step 8); 0 = +1 bids only
+  const tick = Number(valueOf(rest, "--tick") ?? 1400); // poll cadence (ms); lower for a fast bid timer
   // Default to OUR values table (data/values.csv) if present; else the strategy falls back to
   // ESPN's on-screen value per player. Pass --csv "" to force the ESPN fallback.
   const { existsSync } = await import("node:fs");
@@ -811,6 +813,7 @@ async function cmdAutoDraft(rest: string[]) {
   const stallStop = Math.round(stallMin * refreshesPerMin);
   const stallWarn = Math.round(3 * refreshesPerMin);
   let loggedSlots = false; // one-time live-vs-sim slot-count check
+  let wasPaused = false; // copresent PAUSE-file state (Step 9)
   const logPath = `data/draft-log-${Date.now()}.json`;
   for (let i = 0; i < rounds; i++) {
     const r = await readRoster(page);
@@ -859,8 +862,12 @@ async function cmdAutoDraft(rest: string[]) {
       }
       else { stallRefreshes = 0; lastPicksLen = picks.length; }
     }
+    // Copresent PAUSE (Step 9): while data/PAUSE exists, READ state but never bid or nominate --
+    // the human has the wheel. Log once per transition; delete the file to resume.
+    const paused = existsSync("data/PAUSE");
+    if (paused !== wasPaused) { console.log(`r${i}: ${paused ? "PAUSED -- data/PAUSE present; reading only, not bidding/nominating (delete to resume)" : "RESUMED -- data/PAUSE removed"}`); wasPaused = paused; }
     const b = await readBlock(page);
-    if (b.onBlock && b.player && b.canBid) {
+    if (!paused && b.onBlock && b.player && b.canBid) {
       const pos = normPos(b.pos) ?? normPos(posByName.get(nameKey(b.player)) ?? null);
       const need = pos ? hasOpenSlotFor(r, pos) : r.benchOpen > 0; // unknown pos -> bench only
       if (need && pos) {
@@ -886,15 +893,13 @@ async function cmdAutoDraft(rest: string[]) {
         const cap = legalCap(decision.maxBid, b.myMax, state);
         const offer = b.currentOffer ?? 0;
         if (offer < cap) {
-          // For a player we value (big gap to cap), JUMP-bid toward our cap -- the +1 button is
-          // too slow to win fast stud auctions. Step ~1/3 of the gap (min $5) so we win at a
-          // reasonable price if bots quit early, rather than always paying full cap. Cheap/close
-          // players use the +1 quick bid.
+          // When outbid but still under cap, JUMP-bid a FIXED $jump above the current offer (never
+          // past cap) -- the +1 button is too slow for fast stud auctions, and a flat step wins
+          // without leaping far past the runner-up (Step 8). --jump 0 -> +1 quick bids only.
           const gap = cap - offer;
           let ok: boolean;
-          if (gap >= 6 && cap >= 12) {
-            const target = Math.min(cap, offer + Math.max(5, Math.ceil(gap * 0.34)));
-            ok = await jumpBid(page, target);
+          if (jump > 0 && gap >= jump && cap >= 12) {
+            ok = await jumpBid(page, jumpTarget(offer, cap, jump));
             if (!ok) ok = await quickBid(page); // fallback if the manual field isn't ready
           } else {
             ok = await quickBid(page);
@@ -911,25 +916,31 @@ async function cmdAutoDraft(rest: string[]) {
         lastPlayer = b.player;
       }
     }
-    // Anti-stall nomination (G3): if the draft sits idle (no player on the block) it is likely
-    // our nomination turn -- nominate the cheapest board player that fills an open slot so the
-    // draft never stalls waiting for us (and we pick up cheap fillers). Bots auto-nominate in
-    // practice rooms, so this rarely fires there; it is the real-draft safety net.
-    if (!b.onBlock) {
-      if (++idlePolls >= 4) {
+    // Nomination (G3, Step 7): only when it is actually OUR turn. readTurn() gates on the real
+    // signal (an enabled board Select with an empty block); the fallback fires only after a long
+    // idle AND at least one pick made (never during the pre-draft countdown). We pick THROUGH the
+    // Strategy seam (strat.nominate) so the choice is the strategy's, not an ad-hoc board scan.
+    if (!paused && !b.onBlock) {
+      idlePolls++;
+      const turn = await readTurn(page).catch(() => ({ ourNomination: false, nominatingTeam: null }));
+      const fallbackTurn = idlePolls >= 14 && picks.length > 0; // ~14 ticks x 1.4s ~= 20s, post-countdown
+      if (turn.ourNomination || fallbackTurn) {
         const board = await readBoard(page);
-        const fits = board.filter((p) => { const q = normPos(p.pos); return q && hasOpenSlotFor(r, q); });
-        const pick = (fits.length ? fits : board).sort((x, y) => (x.value ?? 999) - (y.value ?? 999))[0];
-        if (pick) {
-          const ok = await nominate(page, pick.name);
-          console.log(`r${i}: NOMINATE ${pick.name} ($${pick.value}) ${ok ? "" : "(failed -- maybe not our turn)"}`);
-        }
+        const boardRefs = board.map((p) => ({ name: p.name, pos: (normPos(p.pos) ?? "RB") as never, team: "", espnPreDraftVal: p.value }));
+        const myNames = r.slots.filter((s) => s.player).map((s) => ({ name: s.player as string, pos: "RB" as never, team: "", espnPreDraftVal: null }));
+        const choice = strat.nominate({
+          myBudget: 200 - r.spent, mySlots: { ...r.openByBase, FLEX: r.flexOpen, BENCH: r.benchOpen },
+          myRoster: myNames, onBlock: null, currentOffer: null, secondsLeft: null,
+          iAmHighBidder: false, board: boardRefs, teams: [],
+        });
+        const ok = choice.player ? await nominate(page, choice.player.name) : false;
+        console.log(`r${i}: NOMINATE ${choice.player?.name ?? "?"} ${turn.ourNomination ? "(our turn)" : "(fallback)"} ${ok ? "" : "(failed -- not our turn / not visible)"}`);
         idlePolls = 0;
       }
     } else {
       idlePolls = 0;
     }
-    await page.waitForTimeout(1400);
+    await page.waitForTimeout(tick);
   }
   const fin = await readRoster(page);
   console.log(`final: filled ${fin.filled}/${fin.filled + fin.open} spent $${fin.spent} open ${fin.open}`);

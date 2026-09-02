@@ -303,7 +303,17 @@ Acceptance: one practice auction where the log shows `NOMINATE` fired ONLY on ou
 ~= our nomination turns, ~12 on a 12-slot roster), zero `(failed -- maybe not our turn)` lines,
 and no NOMINATE line before the first pick. Fault injection: force `ourNomination=true` on a
 foreign turn -> `nominate` returns false (Select disabled) and the log says so.
-Result: _(fill in)_
+Result: CODE DONE, live-verified partially. Added `readTurn(page)` to espnAuction.ts: `ourNomination
+= (no player on block) AND (>=1 ENABLED board "Select" button)` -- ESPN enables Select only on your
+nomination turn (captured via `ff inspect-draft` on a live mock: picklist rows carry no per-row
+turn marker, so the enabled-Select signal is the robust one; nominatingTeam is best-effort/null).
+cmdAutoDraft now gates nomination on `readTurn().ourNomination` (fallback: idle>=20s AND
+picks.length>0, never during countdown) and builds the pick through `strat.nominate(state)`.
+The OLD code's failure mode was reproduced live in this run (`NOMINATE DeVonta Smith (failed --
+maybe not our turn)` at r401, then success at r421) -- exactly what the gate removes. Full live
+verification of the clean-count acceptance is blocked: the ESPN mock auto-nominates for most seats,
+so our manual nomination turns are rare there; the count/0-failures check wants the real draft (our
+seat, auto off). typecheck clean.
 
 ### Step 8. Bid pacing: fixed jump + tick flag; read the league's bid timer
 Change: extract `jumpTarget(offer, cap, jump)` (pure) = `min(cap, offer + jump)`; default
@@ -314,7 +324,13 @@ Acceptance: unit test for `jumpTarget`; a practice auction still wins >= 2 playe
 the draft log shows our winning prices within $jump of the runner-up where the bid history is
 readable (`ul.bid-history__list`). Fault injection: `--jump 0` -> engine falls back to +1 quick
 bids only (log shows no jump lines).
-Result: _(fill in)_
+Result: CODE DONE. Extracted pure `jumpTarget(offer, cap, jump) = min(cap, offer + jump)` (dropped
+the 34%-of-gap term); cmdAutoDraft uses it with `--jump` (default 5) and `--tick` (default 1400ms).
+`--jump 0` short-circuits the jump path (`jump > 0 && ...`) -> +1 quick bids only. Unit test
+"jumpTarget" (15/50-clamp/at-cap/8) green. The ">= 2 players over $40" live acceptance was NOT met
+in the mock -- see Step 10; the balanced default + deflating live inflation kept our caps ~$13-20
+against ESPN mock bots that pay more, so we win at value but rarely over $40 there. `ff preflight`
+timer-print not yet added (needs the league-settings selector; deferred with Step 9's live items).
 
 ### Step 9. Copresent override that actually exists
 Change: (a) PAUSE: if `data/PAUSE` exists the engine reads but never bids/nominates and logs
@@ -328,13 +344,30 @@ yield description is backwards) and G11 in `docs/draft-execution-gaps.md`.
 Acceptance: practice auction: create `data/PAUSE` mid-draft -> no bids for >= 3 nominations,
 remove -> bidding resumes (both visible in the log); human places one bid above cap -> the agent
 does not re-bid that player; `ff roster` returns OUR roster while another team's panel is open.
-Result: _(fill in)_
+Result: PARTIAL. (a) PAUSE: implemented -- `data/PAUSE` present -> engine reads but does not bid or
+nominate, logs `PAUSED`/`RESUMED` once per transition. Code + gating in cmdAutoDraft; live-verify on
+a fresh mock pending (blocked by the running mock -- one draft connection). (b) Human-bid respect +
+(c) roster anchoring: NOT implemented -- both require a human to act (place a bid above cap; open
+another team's roster) to build AND verify against, so they need you present; the current readRoster
+already reads OUR 12-slot panel correctly in every mock read this session. typecheck clean.
 
 ### Step 10. Three consecutive practice auctions to the NEW done-bar
 Done-bar (replaces the MVP one): 12/12 legal, spent <= $200, exactly 2 K/DST, >= 2 players over
 $40, NOMINATE only on our turns with 0 failures, PAUSE test passed once, `WARN` lines = 0, and
 the per-draft log in `data/draft-log-*.json` reviewed. Then update the runbook and this file.
-Result: _(fill in)_
+Result: NOT MET in the mock, by design mismatch (surfaced to the user). One live mock auction (leagueId
+250551923, our seat "Bronchos", 12 slots -- a DIFFERENT shape than the real 2RB/2WR/1FLEX league, so
+the engine adapted and logged `roster slots live=12 sim=12`). Tier 1 mechanics VALIDATED LIVE: value
+lookup resolves (`src=ours` on every bid), live inflation drifts (0.97 -> 0.70), `myMax` read, won
+QB Josh Allen at our exact cap $56. BUT the balanced default is calibrated to the SIM's real-league
+bot field (61% of picks $1-5, value left late); ESPN's generic mock bots pay near-full value on
+everything, so after Allen our per-starter reserve capped bids at ~$20 and deflating inflation
+(0.70, UNBOUNDED on the live path -- the docs' [0.8,1.4] bound is not applied here) pushed effective
+caps to $13-20 while RBs we value $36-47 cleared at $25-40 -> we won almost nothing else. So ">= 2
+over $40" cannot be met in the mock. The mock tests ENGINE MECHANICS (which pass), not the strategy's
+win rate (only the calibrated field / real league can). Open items needing the user present: the
+strategy's live aggression decision, the human-bid-respect + roster-anchor code, and the clean
+NOMINATE-count verification.
 
 ## Tier 3 -- after the draft (honesty of the in-season claims + docs)
 

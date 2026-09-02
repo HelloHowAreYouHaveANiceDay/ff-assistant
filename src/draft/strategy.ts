@@ -109,6 +109,13 @@ export function legalCap(maxBid: number, myMax: number | null | undefined, state
   return Math.min(maxBid, myMax ?? affordableMax(state));
 }
 
+/** Where to jump-bid to when we are outbid but still under our cap: a FIXED step above the current
+ *  offer, never past our cap (Step 8). The old 34%-of-gap term overpaid relative to the sim's
+ *  clear-at-second+1; a flat $jump wins fast auctions without leaping far past the runner-up. Pure. */
+export function jumpTarget(offer: number, cap: number, jump: number): number {
+  return Math.min(cap, offer + jump);
+}
+
 // --- v2 plug: budget-aware, value-based, balanced ----------------------------------------
 //
 // The quality lever over v1: bid up to our VALUE for a player, but never more than we can

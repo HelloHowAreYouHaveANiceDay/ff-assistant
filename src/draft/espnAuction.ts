@@ -238,6 +238,27 @@ export async function dumpValues(page: Page, maxScrolls = 120): Promise<BoardPla
   return [...byName.values()];
 }
 
+export interface TurnState {
+  ourNomination: boolean; // is it OUR turn to nominate a player?
+  nominatingTeam: string | null; // best-effort current nominator (may be null)
+}
+
+/** Read whether it is OUR nomination turn. ESPN enables the board's "Select" (nominate) buttons
+ *  ONLY on your nomination turn, and only when no player is on the block -- so an enabled Select
+ *  with an empty block IS the turn signal (Step 7). nominatingTeam is best-effort from the picklist
+ *  (not load-bearing). Never true during the pre-draft countdown (no Select buttons render then). */
+export async function readTurn(page: Page): Promise<TurnState> {
+  return (await page.evaluate(`(() => {
+    const onBlock = !!document.querySelector('[data-testid="player-selected"] .playerinfo__playername');
+    const selects = Array.from(document.querySelectorAll('button')).filter((b) => /^select$/i.test((b.textContent||'').trim()));
+    const anyEnabled = selects.some((b) => !b.disabled);
+    let nominatingTeam = null;
+    const active = document.querySelector('ul.picklist .on-the-clock, ul.picklist .picklist--item--active, ul.picklist .picklist--current, ul.picklist .is-current');
+    if (active) nominatingTeam = (active.textContent||'').replace(/\\s+/g,' ').trim().slice(0, 40);
+    return { ourNomination: !onBlock && anyEnabled, nominatingTeam };
+  })()`)) as TurnState;
+}
+
 /** Nominate a player by clicking the "Select" button in their board row. Returns false if the
  *  player isn't visible on the board or Select isn't available (e.g. not our nomination turn). */
 export async function nominate(page: Page, playerName: string): Promise<boolean> {

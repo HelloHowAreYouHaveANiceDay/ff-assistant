@@ -2,7 +2,7 @@
 // (full legal in-budget roster) structurally safe. Run: npm test.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { affordableMax, legalCap, makeV1Strategy, makeV2Strategy, reserveForOthers, type DraftState } from "../src/draft/strategy.ts";
+import { affordableMax, jumpTarget, legalCap, makeV1Strategy, makeV2Strategy, reserveForOthers, type DraftState } from "../src/draft/strategy.ts";
 import { hasOpenSlotFor, type Roster } from "../src/draft/espnAuction.ts";
 import { SIM_LEAGUE } from "../src/draft/sim.ts";
 import { DEFAULT_VALUE_LEAGUE, nameKey } from "../src/draft/values.ts";
@@ -250,6 +250,13 @@ test("legalCap: unreadable myMax falls back to affordableMax, NOT 0 (finding #9)
   assert.equal(legalCap(80, undefined, s), 60);   // undefined too
   assert.equal(legalCap(80, 45, s), 45);          // readable, tighter myMax binds
   assert.equal(legalCap(30, null, s), 30);        // our own bid is the binder
+});
+
+test("jumpTarget: fixed step above the offer, clamped to cap (Step 8)", () => {
+  assert.equal(jumpTarget(10, 50, 5), 15);   // offer 10 + jump 5
+  assert.equal(jumpTarget(48, 50, 5), 50);   // would be 53 -> clamped to cap 50
+  assert.equal(jumpTarget(30, 30, 5), 30);   // already at cap -> stays
+  assert.equal(jumpTarget(10, 50, 8), 18);   // larger jump for a fast timer
 });
 
 test("v2 premium: no $premium on the $1 tail; full premium on a real value (Step 6)", () => {
