@@ -12,6 +12,7 @@ YEAR = 2024
 df = nfl.load_player_stats(seasons=[YEAR])          # weekly rows
 import polars as pl
 d = df.to_polars() if hasattr(df, "to_polars") else df
+if "season_type" in d.columns: d = d.filter(pl.col("season_type") == "REG")  # regular season only (finding #10)
 
 # aggregate weekly -> season totals for the fields we score
 def col(name, alt=0):

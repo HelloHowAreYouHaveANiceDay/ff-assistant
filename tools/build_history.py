@@ -14,6 +14,7 @@ years = list(range(start, end + 1))
 print("seasons:", years)
 
 d = to_pl(nfl.load_player_stats(seasons=years))
+if "season_type" in d.columns: d = d.filter(pl.col("season_type") == "REG")  # regular season only (finding #10)
 def c(n): return pl.col(n) if n in d.columns else pl.lit(0)
 wk = d.with_columns((
     c("passing_yards")/25 + c("passing_tds")*4 - c("passing_interceptions")*2 +

@@ -203,7 +203,24 @@ Acceptance: `awk -F, 'NR>1 && $4>18' data/history-weekly.csv | wc -l` prints 0; 
 edit: report the top-10 with ESPN's `data/values.espn.csv` beside them and let Step 5's
 `maxShare` sweep cap exposure. Record the before/after top-10 in this file.
 Fault injection: none needed -- the postseason count is the guard (it was 2099 before).
-Result: _(fill in)_
+Result: DONE. build_projections.py curve is now the MEAN of 2019-2024 REG points-by-rank per pos
+(was 2024 only); K/DST get a small descending nominal + the Step-2 $2 clamp (elaborate curves and
+the hardcoded named append dropped -- ECR gives 35 K / 32 DST full coverage). Added
+`season_type=="REG"` filter to build_history.py, build_points.py, build_weekly.py (build_points.py
+NOT run -- it clobbers points.csv; points.csv comes from build_projections). Rebuilt:
+`tools/build_history.py 2014 2024`, `tools/build_weekly.py`, `tools/build_projections.py`, then
+`npm run ff -- values`, the values-2024 variant, and `cheatsheet`.
+ACCEPTANCE: `awk -F, 'NR>1 && $4>18' data/history-weekly.csv | wc -l` -> 0 (was 2099; weekly weeks
+now 1-18). Top-3 values now inside the $80-110 band. dups + K/DST>2 empty; values-check 0 fuzzy.
+`npm test` 43/43, typecheck clean.
+BEFORE top-10 (2024-only curve): Gibbs 126, Bijan 109, McCaffrey 100, J.Allen 90, L.Jackson 78,
+J.Taylor 78, Cook 75, C.Brown 74, D.Maye 68, Achane 68.
+AFTER top-10 (2019-2024 REG mean): Gibbs 110, Bijan 90, J.Allen 86, McCaffrey 84, Ja'Marr Chase 74,
+J.Taylor 73, L.Jackson 70, Cook 67, D.Maye 65, Puka Nacua 62. (Gibbs 126->110 and Bijan 109->90
+pulled the top into band, as intended.)
+NOTE: with K/DST on a low nominal, most defenses now rank outside the values-check top-150 window
+(rescued fell 12->6), but all 32 DST / 35 K remain in values.csv at $2 and the LIVE lookup uses the
+full map, so coverage is unaffected; only the 150-row diagnostic view shows fewer.
 
 ### Step 5. Re-choose the bidding defaults with the trustworthy harness on the real roster
 Change: after Steps 1-4, sweep `starterReserve in {5,10,15,20,25}` x `maxShare in
