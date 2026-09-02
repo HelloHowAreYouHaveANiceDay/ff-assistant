@@ -67,8 +67,16 @@ software agent beats distracted humans:
   + WIRED LIVE (src/draft/inflation.ts): reprice by remaining$ / remaining book value. Backtest:
   **+~2 championship pts / +3 playoff pts** (17->19% draft-only, 12->14% full no-lookahead) -- a
   mechanical market correction the rational bots DON'T neutralize, unlike gamesmanship. ON by default
-  in the live bidder (`--no-inflation` to disable). Live uses a start-normalized, bounded [0.8,1.4]
-  estimate because the draft board is virtualized (can't cheaply read full remaining book value).
+  in the live bidder (`--no-inflation` to disable). Live now computes it EXACTLY from the scraped
+  drafted set (`espnAuction.readDraft` -> the pick-history feed) instead of the old virtualized-board
+  proxy: remaining$ (from every team's `.cash`) / value of the top undrafted players in our table.
+  Verified live: reads ~1.03 at the open, drifts to ~0.95 as the room spends down.
+
+- **PER-POSITION inflation -- captured, a candidate next edge (not yet wired/backtested).** The draft
+  log now records empirical inflation per position (actual $ paid / our book value). Live observation:
+  it DIVERGES hard -- early in one mock the room paid **WR 2.03x book while RB went 1.05x**. A single
+  global factor averages this away; fading the inflating position (let them overpay WR, buy RB value)
+  could beat global inflation. Next step: backtest a per-position inflation multiplier before wiring it.
 
 ### 6. Waiver churn (automated) -- NEGATIVE in a deep league [backtested]
 Surprising, and the backtest earned its keep: automating waiver pickups by recent production LOSES

@@ -5,4 +5,7 @@ dist/
 .env.*
 data/*.db
 data/*.sqlite
+data/draft-log-*.json
 .DS_Store
+diag.mjs
+inspect.mjs

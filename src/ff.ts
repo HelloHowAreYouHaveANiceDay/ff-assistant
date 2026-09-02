@@ -617,6 +617,22 @@ async function cmdAutoBid(rest: string[]) {
   await detach(a);
 }
 
+// Per-position draft stats: how much supply is gone and the EMPIRICAL inflation (actual $ paid vs our
+// book value) at each position -- RB can be inflating while WR deflates. Captured to the draft log.
+function positionalStats(picks: { pos: string | null; price: number; name: string }[], universe: { pos: string; value: number; key: string }[], nkey: (s: string) => string) {
+  const valByKey = new Map(universe.map((u) => [u.key, u.value]));
+  const suppliedByPos: Record<string, number> = {};
+  for (const u of universe) suppliedByPos[u.pos] = (suppliedByPos[u.pos] ?? 0) + 1;
+  const out: Record<string, { drafted: number; supplyLeft: number; spent: number; bookValue: number; inflation: number | null }> = {};
+  for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
+    const dr = picks.filter((p) => p.pos === pos);
+    const spent = dr.reduce((s, p) => s + p.price, 0);
+    const bookValue = dr.reduce((s, p) => s + (valByKey.get(nkey(p.name)) ?? 0), 0);
+    out[pos] = { drafted: dr.length, supplyLeft: Math.max(0, (suppliedByPos[pos] ?? 0) - dr.length), spent, bookValue: Math.round(bookValue), inflation: bookValue > 0 ? Math.round((spent / bookValue) * 100) / 100 : null };
+  }
+  return out;
+}
+
 // Full-auto auction engine (MVP): fill a complete legal roster in budget. Bots nominate
 // (ESPN auto-nominates on our turn); we bid on any on-block player that fills an open slot,
 // up to min(our value / ESPN pre-draft val / floor, ESPN's legal max). ESPN's myMax already
@@ -675,15 +691,19 @@ async function cmdAutoDraft(rest: string[]) {
   let lastPlayer = "";
   let emptyReads = 0;
   let idlePolls = 0; // consecutive polls with no player on the block (-> likely our nomination turn)
-  // LIVE inflation inputs: the board (remaining player values) + league money change slowly, so read
-  // them every few ticks and cache -- a full board scrape every poll would be too slow.
-  let liveBoard: { name: string; pos: string | null; value: number | null }[] = [];
-  let league = { remainingDollars: 0, teams: 16 };
   const { computeInflation } = await import("./draft/inflation.js");
-  let inflBaseline = 0; // raw inflation estimate captured at draft start (to normalize out the
-  let liveInflation = 1; // virtualized-board bias); liveInflation = clamp(raw/baseline, 0.8, 1.4).
+  const { readDraft } = await import("./draft/espnAuction.js");
+  const { writeFileSync } = await import("node:fs");
+  // Name key that survives ESPN-vs-our-CSV spelling drift (suffixes, punctuation).
+  const nkey = (s: string) => s.toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/[^a-z]/g, "");
+  // Our full player universe (name/pos/value) -> lets us compute EXACT remaining book value from the
+  // scraped drafted set (no virtualized-board guessing). Built once from the values CSV.
+  const universe = Object.entries(values).map(([name, value]) => ({ name, pos: posByName.get(norm(name)) ?? "RB", value, key: nkey(name) }));
+  let league = { remainingDollars: 0, teams: 16 };
+  let picks: import("./draft/espnAuction.js").DraftPick[] = [];
+  let liveInflation = 1;
+  const logPath = `data/draft-log-${Date.now()}.json`;
   for (let i = 0; i < rounds; i++) {
-    if (i % 6 === 0) { liveBoard = await readBoard(page).catch(() => liveBoard); league = await readLeague(page).catch(() => league); }
     const r = await readRoster(page);
     if (r.filled === 0 && r.open === 0) {
       // Roster panel not rendered yet (pre-draft countdown) OR not in a draft. Tolerate a
@@ -700,24 +720,28 @@ async function cmdAutoDraft(rest: string[]) {
       console.log(`DONE: full roster (${r.filled} slots), spent $${r.spent}.`);
       break;
     }
+    // Refresh league money + the full drafted set every few ticks -> EXACT live inflation (remaining$
+    // / value of the top undrafted players from our table) + a persisted draft log for review.
+    if (i % 4 === 0) {
+      league = await readLeague(page).catch(() => league);
+      picks = await readDraft(page).catch(() => picks);
+      if (universe.length > 20) {
+        const drafted = new Set(picks.map((p) => nkey(p.name)));
+        const undrafted = universe.filter((u) => !drafted.has(u.key));
+        const rosterSize = r.filled + r.open; // our slots = league roster size
+        const remainingSlots = Math.max(1, league.teams * rosterSize - picks.length);
+        liveInflation = computeInflation(undrafted, league.remainingDollars || (200 - r.spent) * league.teams, remainingSlots);
+        try { writeFileSync(logPath, JSON.stringify({ updated: new Date().toISOString(), remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length, liveInflation, positional: positionalStats(picks, universe, nkey), picks }, null, 0)); } catch { /* best-effort */ }
+      }
+    }
     const b = await readBlock(page);
     if (b.onBlock && b.player && b.canBid) {
       const pos = normPos(b.pos) ?? normPos(posByName.get(norm(b.player)) ?? null);
       const need = pos ? hasOpenSlotFor(r, pos) : r.benchOpen > 0; // unknown pos -> bench only
       if (need && pos) {
-        // Delegate the ceiling to the Strategy (budget-aware value); Engine clamps to ESPN's
-        // hard legal max (myMax) and slot legality.
-        // LIVE inflation: pass the remaining board (values) + a single aggregate "team" carrying the
-        // league's total remaining $ and open slots (r.open x teams -- all teams fill ~evenly). The
-        // strategy reprices by remaining$/remaining-value when cfg.inflation is on.
-        const boardRefs = liveBoard.filter((p) => p.pos).map((p) => ({ name: p.name, pos: p.pos as never, team: "", espnPreDraftVal: p.value }));
-        const leagueSlots = r.open * Math.max(1, league.teams);
-        // Start-normalized inflation: the raw ratio is biased by the virtualized board, so divide by
-        // the first-tick ratio (bias ~constant) and bound it. remaining$ falling faster than board
-        // value -> >1 (reprice up); slower -> <1.
-        const rawInfl = computeInflation(boardRefs.map((b) => ({ name: b.name, pos: String(b.pos), value: b.espnPreDraftVal ?? 1 })), league.remainingDollars || (200 - r.spent) * league.teams, leagueSlots);
-        if (inflBaseline === 0 && rawInfl > 0) inflBaseline = rawInfl;
-        liveInflation = inflBaseline > 0 ? Math.max(0.8, Math.min(1.4, rawInfl / inflBaseline)) : 1;
+        // Delegate the ceiling to the Strategy (budget-aware value); Engine clamps to ESPN's hard
+        // legal max (myMax) and slot legality. liveInflation is the EXACT remaining$/remaining-value
+        // factor computed above from the scraped drafted set (refreshed every few ticks).
         const decision = strat.maxBid({
           myBudget: 200 - r.spent,
           mySlots: { ...r.openByBase, FLEX: r.flexOpen, BENCH: r.benchOpen },
@@ -727,8 +751,8 @@ async function cmdAutoDraft(rest: string[]) {
           secondsLeft: null,
           iAmHighBidder: !b.canBid,
           liveInflation,
-          board: boardRefs,
-          teams: [{ name: "LEAGUE", budgetLeft: league.remainingDollars || (200 - r.spent), openSlots: leagueSlots }],
+          board: [{ name: b.player, pos: pos as never, team: "", espnPreDraftVal: b.preDraftVal }], // non-empty so the inflation branch runs
+          teams: [{ name: "LEAGUE", budgetLeft: league.remainingDollars || (200 - r.spent), openSlots: r.open }],
         });
         const cap = Math.min(decision.maxBid, b.myMax ?? 0);
         const offer = b.currentOffer ?? 0;

@@ -178,6 +178,36 @@ export async function readBoard(page: Page): Promise<BoardPlayer[]> {
   })()`)) as BoardPlayer[];
 }
 
+export interface DraftPick { pick: number; name: string; pos: string | null; nflTeam: string | null; fantasyTeam: string; price: number; proj: number | null; }
+/** Read the FULL draft log from the pick-history feed (one virtualized table per round). Gives every
+ *  pick's player, pos, fantasy team (owner) + price -> exact remaining book value (inflation), true
+ *  positional supply gone, and per-opponent roster construction. Robust to re-reads (idempotent). */
+export async function readDraft(page: Page): Promise<DraftPick[]> {
+  return (await page.evaluate(`(() => {
+    const out = [];
+    const POS = /(QB|RB|WR|TE|K|DST)$/;
+    for (const tbl of Array.from(document.querySelectorAll('.pick-history-table'))) {
+      for (const r of Array.from(tbl.querySelectorAll('.public_fixedDataTableRow_main'))) {
+        const cells = Array.from(r.querySelectorAll('.public_fixedDataTableCell_cellContent')).map((c) => (c.textContent||'').trim());
+        if (cells.length < 6) continue;
+        const pick = Number(cells[0]); if (!Number.isFinite(pick)) continue; // skip header
+        const nameEl = r.querySelector('[title]');
+        const name = nameEl ? nameEl.getAttribute('title') : null; if (!name) continue;
+        const combo = cells[1].replace(name, ''); // "ATLRB" -> nflTeam + pos
+        const pm = combo.match(POS) || combo.match(/D\\/?ST/);
+        const pos = pm ? pm[0].replace('/','') : null;
+        const nflTeam = pos ? combo.slice(0, combo.length - (pm[0].length)) : combo;
+        const priceM = (cells[5]||'').match(/\\$(\\d+)/);
+        out.push({ pick, name, pos, nflTeam: nflTeam || null, fantasyTeam: cells[2]||'', price: priceM ? Number(priceM[1]) : 0, proj: cells[4] ? Number(cells[4]) : null });
+      }
+    }
+    // dedupe by pick number (tables can double-render the viewing round)
+    const seen = new Set(); const uniq = [];
+    for (const p of out) { if (seen.has(p.pick)) continue; seen.add(p.pick); uniq.push(p); }
+    return uniq.sort((a,b)=>a.pick-b.pick);
+  })()`)) as DraftPick[];
+}
+
 export interface LeagueState { remainingDollars: number; teams: number; }
 /** Read the league-wide money still on the table: every team's remaining budget from the auction
  *  draft-room team strip (each team shows a `.cash` = $N). Used for LIVE inflation repricing. */
