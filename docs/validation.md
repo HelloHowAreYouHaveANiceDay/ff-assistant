@@ -104,9 +104,16 @@ default in the live bidder** (`--no-inflation` to disable). Live uses a start-no
 readable). SCARCITY/VONA premium tested NEGATIVE (-4.5 pts) -> OFF by default: the deep 16-team pool
 keeps the next-available player close, so a live premium mostly overpays.
 
-Confirmed in a live ESPN mock: inflation reads ~0.97 early and drifts to ~0.82 as the room spends
-down (money leaves faster than talent here), so the agent gets more patient and snipes value late --
-the validated mechanism, live.
+Confirmed in a live ESPN mock: inflation reads ~1.0 early and drifts down as the room spends down
+(money leaves faster than talent here), so the agent gets more patient and snipes value late -- the
+validated mechanism, live. (Live inflation is now computed EXACTLY from the scraped drafted set via
+`espnAuction.readDraft`, not the old virtualized-board proxy.)
+
+**Per-position inflation (`--pos-inflation`) -- backtested, REJECTED.** Fading the position the room is
+overpaying adds ~nothing over global inflation and slightly hurts combined (draft-only 19.1->18.8%,
+full-system no-lookahead 13.9->13.4%; ~neutral alone). Disciplined value-bidding + global inflation
+already fades overpaid positions, so explicit fading double-counts. OFF by default; the per-position
+empirical inflation is kept in the draft log as a human signal only (docs/edges.md).
 
 **Waivers (`--waivers`) -- backtested and REJECTED as an auto-feature.** Adding automated waiver
 churn (swap our weakest for the best-producing free agent, trailing-avg or ROS-blend, no lookahead)

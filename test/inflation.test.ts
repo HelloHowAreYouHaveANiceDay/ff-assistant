@@ -2,7 +2,7 @@
 // value-rich) -- a factor that can only ever say "1" would be dead code that reads like it works.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeInflation, scarcityPremium } from "../src/draft/inflation.ts";
+import { computeInflation, scarcityPremium, positionInflationFactors } from "../src/draft/inflation.ts";
 
 const board = [
   { name: "A", pos: "RB", value: 50 },
@@ -33,6 +33,21 @@ test("FAULT: a short board pads uncovered slots at $1 (no runaway from virtualiz
 test("inflation is neutral (1) with no slots or empty board", () => {
   assert.equal(computeInflation(board, 200, 0), 1);
   assert.equal(computeInflation([], 200, 10), 1);
+});
+
+test("FAULT: per-position factor fades an overpaid position, leans into a cheap one", () => {
+  // WR paid way over book (overpaid), RB paid under book (cheap). Enough samples to beat the prior.
+  const drafted = [
+    ...Array.from({ length: 8 }, () => ({ pos: "WR", price: 40, value: 20 })), // WR at 2x book
+    ...Array.from({ length: 8 }, () => ({ pos: "RB", price: 20, value: 40 })), // RB at 0.5x book
+  ];
+  const f = positionInflationFactors(drafted, { minSample: 4 });
+  assert.ok(f.WR < 0.95, `overpaid WR should get a fade factor <1, got ${f.WR}`);
+  assert.ok(f.RB > 1.05, `cheap RB should get a lean-in factor >1, got ${f.RB}`);
+});
+
+test("FAULT: too few picks -> no factors (don't trust a tiny sample)", () => {
+  assert.deepEqual(positionInflationFactors([{ pos: "WR", price: 40, value: 20 }]), {});
 });
 
 test("scarcity premium: thin position -> premium; deep -> ~0", () => {

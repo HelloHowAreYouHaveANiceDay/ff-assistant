@@ -473,6 +473,7 @@ async function cmdBacktest(rest: string[]) {
     benchReserve: 1, premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0), maxShare: Number(valueOf(rest, "--max-share") ?? 0.6),
     inflation: rest.includes("--inflation"), scarcity: rest.includes("--scarcity"),
+    posInflation: rest.includes("--pos-inflation"),
   };
   // Load all seasons from the combined history files, filter to --seasons range (default all).
   const range = (valueOf(rest, "--seasons") ?? "2014-2024").split("-").map(Number);
@@ -507,7 +508,7 @@ async function cmdBacktest(rest: string[]) {
     for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / 16).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   console.log(`  per season: ${perYear.join("  ")}`);

@@ -72,11 +72,16 @@ software agent beats distracted humans:
   proxy: remaining$ (from every team's `.cash`) / value of the top undrafted players in our table.
   Verified live: reads ~1.03 at the open, drifts to ~0.95 as the room spends down.
 
-- **PER-POSITION inflation -- captured, a candidate next edge (not yet wired/backtested).** The draft
-  log now records empirical inflation per position (actual $ paid / our book value). Live observation:
-  it DIVERGES hard -- early in one mock the room paid **WR 2.03x book while RB went 1.05x**. A single
-  global factor averages this away; fading the inflating position (let them overpay WR, buy RB value)
-  could beat global inflation. Next step: backtest a per-position inflation multiplier before wiring it.
+- **PER-POSITION inflation -- captured + BACKTESTED, REJECTED as a bidding input.** The draft log
+  records empirical inflation per position (actual $ / our book), and it DIVERGES hard live (one mock:
+  WR 2.03x book while RB went 1.05x). Fading the overpaid position seemed promising -- but backtested
+  it adds ~nothing over global inflation and slightly HURTS combined: draft-only 19.1% (global) ->
+  18.8% (global+pos); full-system no-lookahead 13.9% -> 13.4%; alone it's ~neutral (16.8->17.0). Why:
+  disciplined value-bidding + global inflation ALREADY fades overpaid positions automatically (we bid
+  our value, get outbid on the hot position, redirect to value) -- explicit fading double-counts. So
+  `--pos-inflation` stays OFF by default; the per-position capture is kept only as a HUMAN signal in
+  the draft log (shows where the room is overpaying), not an automated lever. Same discipline as
+  scarcity/waivers/nomination: measured, didn't help, not shipped.
 
 ### 6. Waiver churn (automated) -- NEGATIVE in a deep league [backtested]
 Surprising, and the backtest earned its keep: automating waiver pickups by recent production LOSES

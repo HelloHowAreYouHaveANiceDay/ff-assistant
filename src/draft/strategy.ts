@@ -27,6 +27,7 @@ export interface DraftState {
   secondsLeft: number | null; // per-player clock (drives clock-aware bidding)
   iAmHighBidder: boolean;
   liveInflation?: number; // LIVE: a precomputed inflation multiplier (start-normalized); overrides the board calc
+  posInflation?: Record<string, number>; // LIVE: per-position repricing factor (fade overpaid positions)
   board: PlayerRef[]; // available players (for nomination + planning)
   teams: Array<{ name: string; budgetLeft: number; openSlots?: number }>; // ALL teams' budgets + open slots (for live inflation)
 }
@@ -121,6 +122,7 @@ export interface V2Config {
   startBudget?: number; // total budget (for maxShare); default 200
   inflation?: boolean; // LIVE: reprice by remaining$ / remaining value (needs board + teams in state)
   scarcity?: boolean;  // LIVE: add a positional VONA premium as a position runs dry (needs board)
+  posInflation?: boolean; // LIVE: fade positions the room is overpaying (needs state.posInflation)
 }
 
 const isBench = (slotKey: string) => /^(BE|BENCH|IR)$/i.test(slotKey);
@@ -175,6 +177,8 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
           liveVal += scarcityPremium({ name: p.name, pos: p.pos, value: val(p) }, remaining, needAtPos);
         }
       }
+      // Per-position fade needs only state.posInflation (not the board), so it runs independently.
+      if (cfg.posInflation && state.posInflation) liveVal *= state.posInflation[p.pos] ?? 1;
       const wantVal = Math.round(liveVal) + premium;
       // Concentration cap: never sink more than maxShare of the STARTING budget into one player
       // (stops the stars-and-scrubs failure where 3 studs eat the budget and the tail can't fill).

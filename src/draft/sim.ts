@@ -6,6 +6,7 @@ import { makeV2Strategy, type DraftState, type V2Config } from "./strategy.js";
 import { computeValues, DEFAULT_VALUE_LEAGUE, type PointsRow } from "./values.js";
 import { loadManagers, makeBotBidder, assignSeats, type BotBidder, type ManagerProfile } from "./managers.js";
 import { planDrainNomination, payersFrom } from "./nomination.js";
+import { positionInflationFactors } from "./inflation.js";
 
 export interface SimLeague { teams: number; budget: number; slots: string[]; }
 export const SIM_LEAGUE: SimLeague = {
@@ -116,7 +117,9 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
           board = [...available].map((nm) => ({ name: nm, pos: (posMap.get(nm) ?? "") as never, team: "", espnPreDraftVal: ourValues.get(nm) ?? trueVal.get(nm) ?? null }));
           allTeams = teams.map((tt, k) => ({ name: String(k), budgetLeft: tt.budget, openSlots: openCount(tt) }));
         }
-        const state: DraftState = { myBudget: t.budget, mySlots: slotsOpenByKey(t), myRoster: [], onBlock: { name, pos: pos as never, team: "", espnPreDraftVal: ourValues.get(name) ?? null }, currentOffer: null, secondsLeft: null, iAmHighBidder: false, board, teams: allTeams };
+        // Per-position inflation: empirical $/book by position from picks so far (market book = trueVal).
+        const posInflation = cfg.posInflation ? positionInflationFactors(picks.map((pk) => ({ pos: pk.pos, price: pk.price, value: trueVal.get(pk.name) ?? 0 }))) : undefined;
+        const state: DraftState = { myBudget: t.budget, mySlots: slotsOpenByKey(t), myRoster: [], onBlock: { name, pos: pos as never, team: "", espnPreDraftVal: ourValues.get(name) ?? null }, currentOffer: null, secondsLeft: null, iAmHighBidder: false, board, teams: allTeams, posInflation };
         max = Math.min(ourStrat.maxBid(state).maxBid, aff);
       } else {
         const base = trueVal.get(name) ?? 1;

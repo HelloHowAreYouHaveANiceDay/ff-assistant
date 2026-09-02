@@ -29,6 +29,32 @@ export function computeInflation(remaining: RemainingPlayer[], remainingDollars:
   return Math.max(0.7, Math.min(2.0, inf));
 }
 
+/** Per-position repricing factors from the DRAFTED picks so far. Each position's EMPIRICAL inflation
+ *  = $ paid / book value at that position; a position the room is overpaying (factor of that pos > the
+ *  overall average) gets a multiplier < 1 so we FADE it (don't chase negative-surplus players), and a
+ *  position going cheap gets > 1 (lean in for value). Shrunk toward the overall average by a
+ *  min-sample prior (early per-position samples are tiny and noisy). Returns {} until there is data.
+ *  Factor per position, clamped, applied to OUR value at that position. */
+export function positionInflationFactors(drafted: { pos: string; price: number; value: number }[], opts: { minSample?: number; lo?: number; hi?: number } = {}): Record<string, number> {
+  const k = opts.minSample ?? 6;   // prior weight: below ~k picks a position leans on the overall avg
+  const lo = opts.lo ?? 0.6, hi = opts.hi ?? 1.4;
+  const withBook = drafted.filter((d) => d.value > 0);
+  if (withBook.length < 3) return {};
+  const totPrice = withBook.reduce((s, d) => s + d.price, 0);
+  const totBook = withBook.reduce((s, d) => s + d.value, 0);
+  const avg = totBook > 0 ? totPrice / totBook : 1; // overall empirical inflation (the neutral point)
+  const out: Record<string, number> = {};
+  for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
+    const dp = withBook.filter((d) => d.pos === pos);
+    const n = dp.length;
+    const sp = dp.reduce((s, d) => s + d.price, 0), sb = dp.reduce((s, d) => s + d.value, 0);
+    const emp = sb > 0 ? sp / sb : avg;
+    const shrunk = (emp * n + avg * k) / (n + k); // -> avg when n small
+    out[pos] = Math.max(lo, Math.min(hi, avg / shrunk)); // fade hot positions, lean into cheap ones
+  }
+  return out;
+}
+
 /** Live scarcity premium for one player: how far this player's value sits ABOVE the value of the
  *  Nth-next available player at the same position (N ~= league's remaining need at that pos, capped).
  *  Returns a $ premium to add (>=0). When the position is deep the next-available is close -> ~0. */
