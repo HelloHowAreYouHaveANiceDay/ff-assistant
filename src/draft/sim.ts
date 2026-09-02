@@ -9,9 +9,11 @@ import { planDrainNomination, payersFrom } from "./nomination.js";
 import { positionInflationFactors } from "./inflation.js";
 
 export interface SimLeague { teams: number; budget: number; slots: string[]; }
+// Real league (462233, seacaptaindate.com): 16 teams x 12 slots (2025 recap = 192 picks).
+// 9 starters (QB/RB/RB/WR/WR/TE/FLEX/K/DST) + 3 bench.
 export const SIM_LEAGUE: SimLeague = {
   teams: 16, budget: 200,
-  slots: ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DST", "BE", "BE", "BE", "BE", "BE", "BE", "BE"],
+  slots: ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DST", "BE", "BE", "BE"],
 };
 const FLEX_OK = new Set(["RB", "WR", "TE"]);
 

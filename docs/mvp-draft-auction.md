@@ -30,7 +30,7 @@ beforehand. Weekly lineup/waivers/copilot are out of scope for this MVP.
 - **Copresent override (D0).** The user can watch and take the wheel at any moment; the agent
   yields when the human acts and resumes after.
 - **Done bar:** in a practice auction, the agent finishes with a **complete, position-legal
-  16-man roster, never overspending, no unfilled slots**, verified from the real roster panel.
+  12-man (16 teams) roster, never overspending, no unfilled slots**, verified from the real roster panel.
 
 ## The load-bearing seam: Engine vs Strategy
 
@@ -105,7 +105,7 @@ To build for the MVP:
 
 ## Acceptance criteria (MVP done)
 
-- In >=3 consecutive practice auctions, the agent ends with a **full 16-man legal roster**,
+- In >=3 consecutive practice auctions, the agent ends with a **full 12-man (16 teams) legal roster**,
   `spent <= $200`, **0 unfilled slots**, verified by reading the roster panel (not the queue).
 - The legality guard provably fires: injected low budget -> never strands a slot; filled
   position -> no bid on it. (Fault injection, per the repo's testing floor.)

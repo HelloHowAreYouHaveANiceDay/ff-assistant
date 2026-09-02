@@ -32,8 +32,9 @@ capture) and a strategy for WHOM to nominate (drain opponents / feed our targets
 
 ## HIGH -- degrades results or risks a stall
 
-### G4 [PARTIAL] Real league settings (16-man roster, scoring, slot mix)
-Practice rooms were 12-man; the real league is 16-team $200 and may have a different roster shape.
+### G4 [PARTIAL] Real league settings (12-man (16 teams) roster, scoring, slot mix)
+The real league is 16-team $200 with a 12-slot roster (2025 recap = 192 picks); SIM_LEAGUE and
+DEFAULT_VALUE_LEAGUE now match (9 starters + 3 bench).
 `readRoster` reads whatever slots ESPN renders (adapts automatically), and legality keys off the
 live open slots -- so this SHOULD adapt. **Action:** confirm on the real draft room that
 `readRoster` returns the real slot set (esp. any OP/IDP/IR slots, and 2QB/superflex if present),

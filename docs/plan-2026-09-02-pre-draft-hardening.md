@@ -112,7 +112,15 @@ differ (do not stop; the live engine adapts). Replace "16-man" with "12-man (16 
 Acceptance: a test asserts `SIM_LEAGUE.slots.length === 12` and
 `DEFAULT_VALUE_LEAGUE.rosterSpots === SIM_LEAGUE.slots.length`; `grep -rn "16-man" docs src`
 returns nothing. Fault injection: temporarily set rosterSpots 16 -> the binding test fails.
-Result: _(fill in)_
+Result: DONE. `SIM_LEAGUE.slots` now 12 (QB/RB/RB/WR/WR/TE/FLEX/K/DST/BE/BE/BE);
+`DEFAULT_VALUE_LEAGUE.rosterSpots` 16->12 (kept a literal + bound by test to avoid a circular
+import). Added binding test "ROSTER SHAPE" in test/legality.test.ts. `npm test` 35/35, `npm run
+typecheck` clean. `grep -rn "16-man" docs src | grep -v plan-2026-09-02` -> NONE (validation.md
+had no "16-man" occurrence; the plan file quotes the term as its problem statement and is excluded).
+Fault injection: set rosterSpots=16 -> ROSTER SHAPE test FAILED (pass 34 / fail 1); restored ->
+35/35. cmdAutoDraft logs `roster slots live=<n> sim=12` once + a WARN if they differ (live-only,
+untestable offline; verified by code read). Docs updated: mvp-draft-auction.md (2 lines),
+draft-execution-gaps.md G4.
 
 ### Step 2. Stop the agent buying bench kickers/defenses; price K/DST like the room does
 Change (strategy, the live path): in `makeV2Strategy.maxBid`, if `fillingBench` and

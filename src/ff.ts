@@ -683,6 +683,7 @@ async function cmdAutoDraft(rest: string[]) {
   const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, readLeague, nominate } = await import("./draft/espnAuction.js");
   const { loadRankings } = await import("./data/rankings.js");
   const { makeV2Strategy } = await import("./draft/strategy.js");
+  const { SIM_LEAGUE } = await import("./draft/sim.js");
   // A full 16-team auction runs ~25-30 min; at ~1.4s/tick + read overhead that's ~1000+ ticks, so the
   // cap must comfortably outlast the whole draft (it exits early on a full roster or a stall).
   const rounds = Number(valueOf(rest, "--rounds") ?? 1600);
@@ -747,6 +748,7 @@ async function cmdAutoDraft(rest: string[]) {
   let picks: import("./draft/espnAuction.js").DraftPick[] = [];
   let liveInflation = 1;
   let lastPicksLen = -1, stallRefreshes = 0; // draft-over / stall detection
+  let loggedSlots = false; // one-time live-vs-sim slot-count check
   const logPath = `data/draft-log-${Date.now()}.json`;
   for (let i = 0; i < rounds; i++) {
     const r = await readRoster(page);
@@ -761,6 +763,13 @@ async function cmdAutoDraft(rest: string[]) {
       continue;
     }
     emptyReads = 0;
+    if (!loggedSlots) {
+      const liveSlots = r.filled + r.open;
+      console.log(`roster slots live=${liveSlots} sim=${SIM_LEAGUE.slots.length}`);
+      if (liveSlots !== SIM_LEAGUE.slots.length)
+        console.log(`WARN: live roster has ${liveSlots} slots but sim assumes ${SIM_LEAGUE.slots.length} -- engine adapts to live, but re-check SIM_LEAGUE before trusting backtests.`);
+      loggedSlots = true;
+    }
     if (r.open === 0) {
       console.log(`DONE: full roster (${r.filled} slots), spent $${r.spent}.`);
       break;

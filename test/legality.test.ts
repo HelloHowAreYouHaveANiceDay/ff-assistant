@@ -4,6 +4,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { affordableMax, makeV1Strategy, makeV2Strategy, reserveForOthers, type DraftState } from "../src/draft/strategy.ts";
 import { hasOpenSlotFor, type Roster } from "../src/draft/espnAuction.ts";
+import { SIM_LEAGUE } from "../src/draft/sim.ts";
+import { DEFAULT_VALUE_LEAGUE } from "../src/draft/values.ts";
+
+// Roster shape: the real league (462233) is 16 teams x 12 slots. sim.ts and values.ts must agree,
+// or the backtest drafts a bench depth that does not exist (finding #2). rosterSpots can't import
+// SIM_LEAGUE (that would be circular), so this test is the binding that keeps the literal honest.
+test("ROSTER SHAPE: SIM_LEAGUE is 12 slots and values.rosterSpots is bound to it", () => {
+  assert.equal(SIM_LEAGUE.slots.length, 12);
+  assert.equal(DEFAULT_VALUE_LEAGUE.rosterSpots, SIM_LEAGUE.slots.length);
+});
 
 const baseState = (over: Partial<DraftState> = {}): DraftState => ({
   myBudget: 200,

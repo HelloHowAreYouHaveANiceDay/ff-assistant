@@ -11,8 +11,10 @@ export interface ValueLeague {
   starters: Record<string, number>; // dedicated starters per team (QB/RB/WR/TE/K/DST), plus FLEX
 }
 
+// rosterSpots MUST equal SIM_LEAGUE.slots.length (12) -- the real league is 16 teams x 12 slots.
+// Kept as a literal (not imported from sim.ts, which imports THIS file) and bound by a test.
 export const DEFAULT_VALUE_LEAGUE: ValueLeague = {
-  teams: 16, budget: 200, rosterSpots: 16,
+  teams: 16, budget: 200, rosterSpots: 12,
   starters: { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, K: 1, DST: 1 },
 };
 
