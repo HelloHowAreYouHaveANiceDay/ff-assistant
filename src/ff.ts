@@ -781,7 +781,10 @@ async function cmdAutoDraft(rest: string[]) {
       // Draft-over / stall guard: if the LEAGUE hasn't drafted anyone new across many refreshes
       // (~90s) while we still have open slots, the draft has ended or wedged -> stop instead of
       // spinning to the round cap. (Refresh cadence is every 4 ticks; 16 refreshes ~= 90s.)
-      if (picks.length > 0 && picks.length === lastPicksLen) { if (++stallRefreshes >= 16) { console.log(`draft over/stalled: no new league picks in ~90s, roster ${r.filled}/${r.filled + r.open}. Stopping.`); break; } }
+      // Only stop after a LONG quiet (~5 min) -- real drafts pause 1-2 min between nominations while
+      // humans decide, so a short window stops us prematurely (a 90s window did, mid-draft). ~54
+      // refreshes x ~5.6s ~= 5 min: fires only when the draft is genuinely over/wedged.
+      if (picks.length > 0 && picks.length === lastPicksLen) { if (++stallRefreshes >= 54) { console.log(`draft over/stalled: no new league picks in ~5 min, roster ${r.filled}/${r.filled + r.open}. Stopping.`); break; } }
       else { stallRefreshes = 0; lastPicksLen = picks.length; }
     }
     const b = await readBlock(page);
