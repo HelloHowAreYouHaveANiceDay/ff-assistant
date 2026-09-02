@@ -111,7 +111,8 @@ export function affordableMax(state: DraftState): number {
 // then tightens automatically as budget draws down.
 
 export interface V2Config {
-  values?: Record<string, number>; // OUR value overrides by name (else ESPN pre-draft val)
+  values?: Record<string, number>; // OUR value overrides, keyed by nameKey(name) (else ESPN pre-draft val)
+  nameKey?: (s: string) => string; // normalizer to key `values` by (default: identity)
   targets?: Record<string, number>; // per-player premium multiplier (e.g. 1.2)
   avoids?: Set<string>;
   starterReserve?: number; // $ to keep for each other open STARTER slot (default 10)
@@ -147,7 +148,17 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
   const aggr = cfg.aggr ?? 1.0;
   const maxShare = cfg.maxShare ?? 0.45;
   const startBudget = cfg.startBudget ?? 200;
-  const val = (p: PlayerRef) => cfg.values?.[p.name] ?? p.espnPreDraftVal ?? 1;
+  const nk = cfg.nameKey ?? ((s: string) => s);
+  // Resolve a player's value AND where it came from: our table (src=ours), ESPN's on-screen value
+  // (src=espn), or the $1 floor (src=floor). The source is surfaced in the bid reason so a silent
+  // fallback (a name our table missed) is visible in the live log (finding #5).
+  const valSrc = (p: PlayerRef): { v: number; src: string } => {
+    const ours = cfg.values?.[nk(p.name)];
+    if (ours != null) return { v: ours, src: "ours" };
+    if (p.espnPreDraftVal != null) return { v: p.espnPreDraftVal, src: "espn" };
+    return { v: 1, src: "floor" };
+  };
+  const val = (p: PlayerRef) => valSrc(p).v;
 
   return {
     value: (p) => val(p),
@@ -190,7 +201,7 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       // Fill-floor: never let a reserve BLOCK a needed slot we can legally afford ($1).
       if (maxBid < 1 && hardAffordable >= 1) maxBid = 1;
       maxBid = Math.max(0, Math.min(maxBid, hardAffordable));
-      return { maxBid, reason: `val${val(p)} soft${softAffordable} -> ${maxBid}` };
+      return { maxBid, reason: `val${val(p)} src=${valSrc(p).src} soft${softAffordable} -> ${maxBid}` };
     },
     nominate(state) {
       const wanted = new Set(state.myRoster.map((r) => r.name));

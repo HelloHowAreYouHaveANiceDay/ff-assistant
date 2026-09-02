@@ -49,6 +49,8 @@ async function main() {
       return cmdDumpValues(rest);
     case "values":
       return cmdValues(rest);
+    case "values-check":
+      return cmdValuesCheck(rest);
     case "cheatsheet":
       return cmdCheatsheet(rest);
     case "project":
@@ -406,6 +408,58 @@ async function cmdCheatsheet(rest: string[]) {
   if (nomPlan) console.log("\nNomination drain plan:\n" + nomPlan);
 }
 
+// Offline join-quality check (finding #5): how many of a past season's DRAFTED players (from the
+// recap) does our value table resolve via nameKey? Reports exact-name matches, nameKey matches,
+// the players nameKey RESCUED (spelling drift the old exact lookup missed), true "fuzzy-only"
+// misses (an entry for the SAME entity exists in our table but nameKey failed to bridge it -> a
+// normalizer bug, target 0), and genuinely-absent players (rookies / outside top-N -- expected,
+// listed with --list-absent). Reuses the REAL nameKey so the check can't drift from production.
+async function cmdValuesCheck(rest: string[]) {
+  const { readFileSync } = await import("node:fs");
+  const { nameKey } = await import("./draft/values.js");
+  const valuesFile = valueOf(rest, "--values") ?? "data/values.csv";
+  const recapFile = valueOf(rest, "--recap") ?? "data/recaps.json";
+  const season = Number(valueOf(rest, "--season") ?? 2025);
+  const topN = Number(valueOf(rest, "--top") ?? 150);
+  const vals = readFileSync(valuesFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","))
+    .map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), value: Number(f[2]) }))
+    .filter((v) => v.name && v.value > 0).sort((a, b) => b.value - a.value).slice(0, topN);
+  const keySet = new Set(vals.map((v) => nameKey(v.name)));
+  const displaySet = new Set(vals.map((v) => v.name));
+  // surname / team nickname = the LAST word after removing suffix + d/st tokens (so "Tyrone Tracy
+  // Jr." -> "tracy", not "" from the "Jr." token; "Broncos D/ST" -> "broncos").
+  const lastTok = (s: string) => {
+    const toks = s.toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, " ").replace(/\bd\/?st\b/g, " ").replace(/[^a-z ]/g, " ").trim().split(/\s+/);
+    return toks[toks.length - 1] ?? "";
+  };
+  const firstInit = (s: string) => (s.trim()[0] ?? "").toLowerCase();
+  // Entity signatures present in our table, per position: DST keyed by nickname, players by
+  // first-initial + surname. Used to decide "same entity we have but nameKey missed".
+  const sigSet = new Set(vals.map((v) => v.pos === "DST" ? `DST|${lastTok(v.name)}` : `${v.pos}|${firstInit(v.name)}|${lastTok(v.name)}`));
+  const recaps = JSON.parse(readFileSync(recapFile, "utf8")) as { season: number; picks: { player: string; pos: string; price: number }[] }[];
+  const picks = recaps.filter((t) => t.season === season).flatMap((t) => t.picks);
+  const norm = (p: string) => p.toUpperCase().replace("/", "") === "DST" ? "DST" : p.toUpperCase();
+  let exact = 0, keyM = 0;
+  const rescued: string[] = [], absent: string[] = [], fuzzy: string[] = [];
+  for (const pk of picks) {
+    const pos = norm(pk.pos);
+    const isExact = displaySet.has(pk.player);
+    const isKey = keySet.has(nameKey(pk.player));
+    if (isExact) exact++;
+    if (isKey) { keyM++; if (!isExact) rescued.push(`${pk.player} (${pos})`); }
+    else {
+      const sig = pos === "DST" ? `DST|${lastTok(pk.player)}` : `${pos}|${firstInit(pk.player)}|${lastTok(pk.player)}`;
+      (sigSet.has(sig) ? fuzzy : absent).push(`${pk.player} (${pos})`);
+    }
+  }
+  console.log(`VALUES-CHECK ${valuesFile} top-${topN} vs ${season} recap (${picks.length} drafted)`);
+  console.log(`  exact-name matches: ${exact}  |  nameKey matches: ${keyM}  |  rescued by nameKey: ${rescued.length}${rescued.length ? " (" + rescued.join(", ") + ")" : ""}`);
+  console.log(`  FUZZY-ONLY misses (our table has the entity, nameKey failed): ${fuzzy.length}${fuzzy.length ? " -- " + fuzzy.join(", ") : ""}`);
+  console.log(`  absent (rookies / outside top-${topN}, expected): ${absent.length}`);
+  if (rest.includes("--list-absent")) console.log("   " + absent.join(", "));
+  if (fuzzy.length) process.exitCode = 1;
+}
+
 async function cmdValues(rest: string[]) {
   const { computeValues } = await import("./draft/values.js");
   const { readFileSync, writeFileSync } = await import("node:fs");
@@ -690,26 +744,28 @@ async function cmdAutoDraft(rest: string[]) {
   // Default to OUR values table (data/values.csv) if present; else the strategy falls back to
   // ESPN's on-screen value per player. Pass --csv "" to force the ESPN fallback.
   const { existsSync } = await import("node:fs");
+  const { nameKey } = await import("./draft/values.js");
   let csv = valueOf(rest, "--csv");
   if (csv === undefined) csv = existsSync("data/values.csv") ? "data/values.csv" : undefined;
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
 
-  // OUR value overrides (name -> $) + pos, from an optional CSV (columns include player, pos,
-  // value). Without a value column the Strategy falls back to ESPN's on-screen pre-draft value
-  // -> the value source is the pluggable knob; budget-aware balancing works either way.
+  // OUR value overrides (nameKey -> $) + pos, from an optional CSV (columns include player, pos,
+  // value). Both sides of the join are keyed by nameKey so ESPN spelling drift (suffixes, "D/ST")
+  // does not silently miss (finding #5). Without a value column the Strategy falls back to ESPN's
+  // on-screen pre-draft value -> the value source is the pluggable knob.
   const values: Record<string, number> = {};
   const posByName = new Map<string, string>();
   if (csv) {
     try {
       for (const p of loadRankings(csv)) {
-        posByName.set(norm(p.name), p.pos);
+        posByName.set(nameKey(p.name), p.pos);
         const v = (p as unknown as { value?: number }).value;
-        if (typeof v === "number" && !Number.isNaN(v)) values[p.name] = v;
+        if (typeof v === "number" && !Number.isNaN(v)) values[nameKey(p.name)] = v;
       }
     } catch { /* optional */ }
   }
   const strat = makeV2Strategy({
     values: Object.keys(values).length ? values : undefined,
+    nameKey,
     // Defaults from the SIM harness on the FORWARD-LOOKING 2025 projections (docs/validation.md).
     // The projection top is steep + this is a deep 16-team No-PPR league, so CONCENTRATION wins
     // (matches the league's real 61%-are-$1-5 behavior) -- lean aggressive: ~2-3 studs (~$120 on
@@ -739,11 +795,10 @@ async function cmdAutoDraft(rest: string[]) {
   const { computeInflation } = await import("./draft/inflation.js");
   const { readDraft } = await import("./draft/espnAuction.js");
   const { writeFileSync } = await import("node:fs");
-  // Name key that survives ESPN-vs-our-CSV spelling drift (suffixes, punctuation).
-  const nkey = (s: string) => s.toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/[^a-z]/g, "");
-  // Our full player universe (name/pos/value) -> lets us compute EXACT remaining book value from the
-  // scraped drafted set (no virtualized-board guessing). Built once from the values CSV.
-  const universe = Object.entries(values).map(([name, value]) => ({ name, pos: posByName.get(norm(name)) ?? "RB", value, key: nkey(name) }));
+  // Our full player universe (key/pos/value) -> lets us compute EXACT remaining book value from the
+  // scraped drafted set (no virtualized-board guessing). Built once from the values CSV; already
+  // keyed by nameKey, so `key` is the entry's own key.
+  const universe = Object.entries(values).map(([key, value]) => ({ name: key, pos: posByName.get(key) ?? "RB", value, key }));
   let league = { remainingDollars: 0, teams: 16 };
   let picks: import("./draft/espnAuction.js").DraftPick[] = [];
   let liveInflation = 1;
@@ -780,12 +835,12 @@ async function cmdAutoDraft(rest: string[]) {
       league = await readLeague(page).catch(() => league);
       picks = await readDraft(page).catch(() => picks);
       if (universe.length > 20) {
-        const drafted = new Set(picks.map((p) => nkey(p.name)));
+        const drafted = new Set(picks.map((p) => nameKey(p.name)));
         const undrafted = universe.filter((u) => !drafted.has(u.key));
         const rosterSize = r.filled + r.open; // our slots = league roster size
         const remainingSlots = Math.max(1, league.teams * rosterSize - picks.length);
         liveInflation = computeInflation(undrafted, league.remainingDollars || (200 - r.spent) * league.teams, remainingSlots);
-        try { writeFileSync(logPath, JSON.stringify({ updated: new Date().toISOString(), remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length, liveInflation, positional: positionalStats(picks, universe, nkey), picks }, null, 0)); } catch { /* best-effort */ }
+        try { writeFileSync(logPath, JSON.stringify({ updated: new Date().toISOString(), remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length, liveInflation, positional: positionalStats(picks, universe, nameKey), picks }, null, 0)); } catch { /* best-effort */ }
       }
       // Draft-over / stall guard: if the LEAGUE hasn't drafted anyone new across many refreshes
       // (~90s) while we still have open slots, the draft has ended or wedged -> stop instead of
@@ -798,7 +853,7 @@ async function cmdAutoDraft(rest: string[]) {
     }
     const b = await readBlock(page);
     if (b.onBlock && b.player && b.canBid) {
-      const pos = normPos(b.pos) ?? normPos(posByName.get(norm(b.player)) ?? null);
+      const pos = normPos(b.pos) ?? normPos(posByName.get(nameKey(b.player)) ?? null);
       const need = pos ? hasOpenSlotFor(r, pos) : r.benchOpen > 0; // unknown pos -> bench only
       if (need && pos) {
         // Delegate the ceiling to the Strategy (budget-aware value); Engine clamps to ESPN's hard

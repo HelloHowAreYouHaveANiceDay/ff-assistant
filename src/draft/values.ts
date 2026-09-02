@@ -4,6 +4,18 @@
 export interface PointsRow { name: string; pos: string; points: number; }
 export interface ValueRow { name: string; pos: string; value: number; }
 
+/** Canonical name key that survives ESPN-vs-our-CSV spelling drift (finding #5): lowercases, drops
+ *  generational suffix tokens (Jr/Sr/II..V), drops a trailing d/st|dst token (so "Broncos D/ST"
+ *  keys the same as "Broncos"), and strips everything but letters. Used to key our value table AND
+ *  to look a player up, so both sides of the join normalize identically. */
+export function nameKey(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, " ")
+    .replace(/\bd\/?st\b/g, " ")
+    .replace(/[^a-z]/g, "");
+}
+
 export interface ValueLeague {
   teams: number;
   budget: number;

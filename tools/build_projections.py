@@ -40,7 +40,10 @@ def proj(pos, r):
 rows = []
 for player, pos, team, ecr, pr in rk.select(["player", "pos", "team", "ecr", "pos_rank"]).rows():
     p = round(proj(pos, int(pr)), 1)
-    if p > 0: rows.append((player, pos, p))
+    # ESPN names a defense by its team NICKNAME ("Broncos D/ST"), so store D/ST as the last token
+    # ("Denver Broncos" -> "Broncos"); nameKey then bridges both sides (finding #5). K stays a name.
+    nm = player.split()[-1] if pos == "DST" else player
+    if p > 0: rows.append((nm, pos, p))
 rows.sort(key=lambda x: -x[2])
 
 os.makedirs("data", exist_ok=True)

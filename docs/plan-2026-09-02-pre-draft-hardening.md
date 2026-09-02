@@ -171,7 +171,25 @@ maxBid uses 40 and reason contains `src=ours`; values `{"Broncos": 2}` + on-bloc
 script under `tools/` or a `ff values-check --recap data/recaps.json` command; absent rookies are
 expected and listed, not counted as failures).
 Fault injection: pass the identity normalizer -> the Mahomes test fails.
-Result: _(fill in)_
+Result: DONE, with one data-form fix the plan implied. Added `nameKey(s)` to values.ts (lowercase;
+drop jr|sr|ii|iii|iv|v; drop a d/st|dst token; strip non-letters). Added `nameKey?` to V2Config
+(default identity); `makeV2Strategy` now resolves value + source via `valSrc` and looks up
+`cfg.values[nameKey(name)]`; `reason` carries `src=ours|espn|floor`. cmdAutoDraft keys values,
+posByName and universe by nameKey and passes nameKey to the strategy (both `norm` and `nkey`
+removed). Added `ff values-check` (reuses the REAL nameKey -- no reimplementation) to join a recap
+season against our top-N value keys.
+(a) PASS -- unit tests: "Patrick Mahomes II" -> src=ours + value 40 drives bid; identity normalizer
+FAULT -> src=espn (the load-bearing proof, kept permanent); "Broncos D/ST" -> our $2; absent ->
+src=espn. `npm test` 43/43, typecheck clean.
+Offline check: `npm run ff -- values-check` -> 192 drafted (2025), exact 105, nameKey 117, rescued
+12 (11 D/ST + Patrick Mahomes), FUZZY-ONLY misses 0, absent 75 (rookies/outside top-150, expected).
+exit 0.
+PLAN CORRECTION: the plan's D/ST example ("Broncos vs Broncos D/ST") only worked for the 6 hardcoded
+nicknames -- ECR stores D/ST as FULL CITY names ("Kansas City Chiefs"), which nameKey ("d/st" drop)
+cannot bridge to "Chiefs D/ST". Minimal fix: build_projections.py now emits D/ST as the team
+nickname (last token), so all 32 bridge. Regenerated points.csv + values.csv. This also revealed my
+first values-check surname heuristic was buggy (took "Jr." as the surname), which I fixed
+(strip suffix/dst before the last token) -- without it, it falsely flagged 2 absent rookies.
 
 ### Step 4. Rebuild the projection curve from several seasons, regular season only
 Change (`tools/build_projections.py`): points-by-rank curve = MEAN over seasons 2019-2024 of the

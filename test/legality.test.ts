@@ -5,7 +5,46 @@ import assert from "node:assert/strict";
 import { affordableMax, makeV1Strategy, makeV2Strategy, reserveForOthers, type DraftState } from "../src/draft/strategy.ts";
 import { hasOpenSlotFor, type Roster } from "../src/draft/espnAuction.ts";
 import { SIM_LEAGUE } from "../src/draft/sim.ts";
-import { DEFAULT_VALUE_LEAGUE } from "../src/draft/values.ts";
+import { DEFAULT_VALUE_LEAGUE, nameKey } from "../src/draft/values.ts";
+
+const identity = (s: string) => s;
+
+test("nameKey: normalizes suffixes and a d/st token to a shared key", () => {
+  assert.equal(nameKey("Patrick Mahomes II"), nameKey("Patrick Mahomes"));
+  assert.equal(nameKey("Broncos D/ST"), nameKey("Broncos"));
+  assert.equal(nameKey("Travis Etienne Jr."), "travisetienne");
+});
+
+test("v2 nameKey lookup: ESPN 'Patrick Mahomes II' resolves our 'Patrick Mahomes' value (src=ours)", () => {
+  const onBlock = { name: "Patrick Mahomes II", pos: "QB" as const, team: "KC", espnPreDraftVal: 5 };
+  const s = makeV2Strategy({ values: { [nameKey("Patrick Mahomes")]: 40 }, nameKey, starterReserve: 5, premium: 2 });
+  const d = s.maxBid(baseState({ onBlock }));
+  assert.match(d.reason ?? "", /src=ours/);
+  assert.ok(d.maxBid >= 40, `our value 40 must drive the bid, not the espn 5; got ${d.maxBid}`);
+});
+
+test("v2 nameKey lookup FAULT: identity normalizer misses the suffix -> falls to espn value", () => {
+  const onBlock = { name: "Patrick Mahomes II", pos: "QB" as const, team: "KC", espnPreDraftVal: 5 };
+  const s = makeV2Strategy({ values: { [nameKey("Patrick Mahomes")]: 40 }, nameKey: identity, starterReserve: 5, premium: 2 });
+  const d = s.maxBid(baseState({ onBlock }));
+  assert.match(d.reason ?? "", /src=espn/); // proves the normalizer is load-bearing
+  assert.ok(d.maxBid < 40);
+});
+
+test("v2 nameKey lookup: ESPN 'Broncos D/ST' resolves our 'Broncos' $2 (not espn 8)", () => {
+  const onBlock = { name: "Broncos D/ST", pos: "DST" as const, team: "DEN", espnPreDraftVal: 8 };
+  const s = makeV2Strategy({ values: { [nameKey("Broncos")]: 2 }, nameKey, starterReserve: 5, premium: 2 });
+  const st = baseState({ onBlock, mySlots: { DST: 1, BENCH: 3 } });
+  const d = s.maxBid(st);
+  assert.match(d.reason ?? "", /src=ours/);
+  assert.ok(d.maxBid <= 4, `our $2 value must bind (wantVal ~4), got ${d.maxBid}`);
+});
+
+test("v2 nameKey lookup: an absent name falls back to ESPN value (src=espn)", () => {
+  const onBlock = { name: "Unknown Rookie", pos: "RB" as const, team: "NYG", espnPreDraftVal: 15 };
+  const s = makeV2Strategy({ values: { [nameKey("Some Other Guy")]: 40 }, nameKey, starterReserve: 5, premium: 2 });
+  assert.match(s.maxBid(baseState({ onBlock })).reason ?? "", /src=espn/);
+});
 
 // Roster shape: the real league (462233) is 16 teams x 12 slots. sim.ts and values.ts must agree,
 // or the backtest drafts a bench depth that does not exist (finding #2). rosterSpots can't import

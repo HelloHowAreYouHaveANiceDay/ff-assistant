@@ -104,101 +104,101 @@ Cam Little,K,127
 Jason Myers,K,126
 Tucker Kraft,TE,125.7
 DK Metcalf,WR,125.2
-Houston Texans,DST,125
+Texans,DST,125
 Eddy Pineiro,K,125
 Brian Thomas Jr.,WR,124.4
-Denver Broncos,DST,124
+Broncos,DST,124
 Tyler Loop,K,124
 Michael Pittman Jr.,WR,123.9
 Fernando Mendoza,QB,123.9
-Seattle Seahawks,DST,123
+Seahawks,DST,123
 Evan McPherson,K,123
 Jonathon Brooks,RB,122.0
-Los Angeles Rams,DST,122
+Rams,DST,122
 Cairo Santos,K,122
 Sam LaPorta,TE,121.9
 Tua Tagovailoa,QB,121.1
-Philadelphia Eagles,DST,121
+Eagles,DST,121
 Jake Bates,K,121
 Courtland Sutton,WR,120.1
-Minnesota Vikings,DST,120
+Vikings,DST,120
 Andy Borregales,K,120
 Wan'Dale Robinson,WR,119.7
-Pittsburgh Steelers,DST,119
+Steelers,DST,119
 Chase McLaughlin,K,119
 Michael Penix Jr.,QB,118.5
-New England Patriots,DST,118
+Patriots,DST,118
 Harrison Mevis,K,118
 Josh Downs,WR,117.0
-Jacksonville Jaguars,DST,117
+Jaguars,DST,117
 Brandon McManus,K,117
-Los Angeles Chargers,DST,116
+Chargers,DST,116
 Daniel Carlson,K,116
-Baltimore Ravens,DST,115
+Ravens,DST,115
 Spencer Shrader,K,115
 Travis Kelce,TE,114.9
 Michael Wilson,WR,114.4
-Green Bay Packers,DST,114
+Packers,DST,114
 Chris Boswell,K,114
-Kansas City Chiefs,DST,113
+Chiefs,DST,113
 Harrison Butker,K,113
 RJ Harvey,RB,112.6
-Cleveland Browns,DST,112
+Browns,DST,112
 Ben Sauls,K,112
 Quentin Johnston,WR,111.5
-Detroit Lions,DST,111
+Lions,DST,111
 Joey Slye,K,111
 Chuba Hubbard,RB,110.2
-Washington Commanders,DST,110
+Commanders,DST,110
 Ryan Fitzgerald,K,110
 Kirk Cousins,QB,109.6
-Buffalo Bills,DST,109
+Bills,DST,109
 Jake Moody,K,109
 Kenny Gainwell,RB,108.7
-Tennessee Titans,DST,108
+Titans,DST,108
 Blake Grupe,K,108
-Dallas Cowboys,DST,107
+Cowboys,DST,107
 Will Reichard,K,107
 George Kittle,TE,106.8
-New York Giants,DST,106
+Giants,DST,106
 Nick Folk,K,106
-Las Vegas Raiders,DST,105
+Raiders,DST,105
 Trey Smack,K,105
 Deshaun Watson,QB,105.0
 Stefon Diggs,WR,104.6
 J.K. Dobbins,RB,104.0
-San Francisco 49ers,DST,104
+49ers,DST,104
 Wil Lutz,K,104
 Alec Pierce,WR,103.7
 Jayden Reed,WR,103.0
-New York Jets,DST,103
+Jets,DST,103
 Chad Ryland,K,103
 Jakobi Meyers,WR,102.5
 Jordan Addison,WR,102.2
-New Orleans Saints,DST,102
+Saints,DST,102
 Tyler Bass,K,102
-Chicago Bears,DST,101
+Bears,DST,101
 Zane Gonzalez,K,101
 Dalton Kincaid,TE,100.3
 Shedeur Sanders,QB,100.3
-Cincinnati Bengals,DST,100
+Bengals,DST,100
 Charlie Smyth,K,100
 Makai Lemon,WR,99.9
 Rachaad White,RB,99.4
 Blake Corum,RB,99.3
-Atlanta Falcons,DST,99
+Falcons,DST,99
 Jake Elliott,K,99
-Tampa Bay Buccaneers,DST,98
+Buccaneers,DST,98
 Drew Stevens,K,98
 Jacory Croskey-Merritt,RB,97.0
-Indianapolis Colts,DST,97
+Colts,DST,97
 Jason Sanders,K,97
 KC Concepcion,WR,96.8
 Carson Beck,QB,96.1
-Carolina Panthers,DST,96
+Panthers,DST,96
 Dominic Zvada,K,96
-Miami Dolphins,DST,95
-Arizona Cardinals,DST,94
+Dolphins,DST,95
+Cardinals,DST,94
 J.J. McCarthy,QB,93.8
 Mac Jones,QB,93.5
 Jordan Mason,RB,92.5
@@ -384,11 +384,11 @@ Brashard Smith,RB,22.4
 Malik Benson,WR,22.1
 Jonnu Smith,TE,22.1
 Justin Joly,TE,22.0
-Tai Felton,WR,21.7
+Barion Brown,WR,21.7
 Adam Randall,RB,21.5
 Emari Demercado,RB,21.2
 Bam Knight,RB,21.2
-Barion Brown,WR,21.2
+Tai Felton,WR,21.2
 Jalen Royals,WR,20.7
 John Bates,TE,20.7
 Tyler Lockett,WR,20.5
@@ -506,9 +506,3 @@ Antonio Gibson,RB,0.3
 Terrell Jennings,RB,0.2
 Dameon Pierce,RB,0.2
 Justin Tucker,K,150
-Broncos,DST,145
-Eagles,DST,141
-Vikings,DST,137
-Texans,DST,133
-Steelers,DST,129
-Bills,DST,125
