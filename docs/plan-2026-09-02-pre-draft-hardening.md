@@ -276,7 +276,17 @@ Steps 1-4 (12-slot roster, K/DST clamp, multi-season REG curve) changed the harn
 - Fix the stale "~90s" comment at `ff.ts:782`.
 Acceptance: unit test for the myMax fallback (null myMax -> cap = affordableMax, not 0); premium
 test ($1 value -> maxBid 1; $30 value -> 30 + premium).
-Result: _(fill in)_
+Result: DONE. (1) myMax: added pure `legalCap(maxBid, myMax, state)` = min(maxBid, myMax ??
+affordableMax(state)); cmdAutoDraft uses it + logs `WARN myMax unreadable` when null (was cap=0).
+(2) Stall guard: `--stall-min N` (default 10), WARN once at ~3 min quiet; refresh cadence ~5.6s so
+stop at ~N*10.7 refreshes. (3) Removed `--scarcity` from auto-draft (still in backtest); dropped it
+from the runbook toggles. (4) Premium only when `liveVal >= 5` (no $2 overpay on the $1 tail).
+(5) Fixed the stale "~90s"/"~5 min" comment.
+Unit tests (test/legality.test.ts): "legalCap" (null/undefined myMax -> affordableMax 60, readable
+myMax 45 binds, own bid 30 binds); "v2 premium" ($1 value -> maxBid 1; $30 value -> 32 = 30 +
+premium 2). `npm test` 45/45, typecheck clean.
+FAULT INJECTION: reverted legalCap to `?? 0` and premium to always-add -> both tests went red
+(pass 43 / fail 2); restored -> 45/45.
 
 ## Tier 2 -- needs a live practice room (bro session up), must land before the draft
 

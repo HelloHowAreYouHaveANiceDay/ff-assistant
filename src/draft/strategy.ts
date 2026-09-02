@@ -102,6 +102,13 @@ export function affordableMax(state: DraftState): number {
   return Math.max(0, cap);
 }
 
+/** The legal cap for a bid: ESPN's `myMax` if readable, else our own `affordableMax` (which is
+ *  unit-verified to equal ESPN's reserve). Never returns 0 just because `myMax` was unreadable --
+ *  that silently passed on everything (finding #9, Step 6). Pure. */
+export function legalCap(maxBid: number, myMax: number | null | undefined, state: DraftState): number {
+  return Math.min(maxBid, myMax ?? affordableMax(state));
+}
+
 // --- v2 plug: budget-aware, value-based, balanced ----------------------------------------
 //
 // The quality lever over v1: bid up to our VALUE for a player, but never more than we can
@@ -193,7 +200,9 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       }
       // Per-position fade needs only state.posInflation (not the board), so it runs independently.
       if (cfg.posInflation && state.posInflation) liveVal *= state.posInflation[p.pos] ?? 1;
-      const wantVal = Math.round(liveVal) + premium;
+      // Apply the outbid premium only to real values (>= $5); the $1 tail must not be overpaid by
+      // $premium (a $1 filler should stay $1, not become $3 -- finding, Step 6).
+      const wantVal = Math.round(liveVal) + (liveVal >= 5 ? premium : 0);
       // Concentration cap: never sink more than maxShare of the STARTING budget into one player
       // (stops the stars-and-scrubs failure where 3 studs eat the budget and the tail can't fill).
       const shareCap = Math.floor(startBudget * maxShare);

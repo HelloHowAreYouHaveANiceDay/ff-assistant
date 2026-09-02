@@ -736,7 +736,7 @@ function positionalStats(picks: { pos: string | null; price: number; name: strin
 async function cmdAutoDraft(rest: string[]) {
   const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, readLeague, nominate } = await import("./draft/espnAuction.js");
   const { loadRankings } = await import("./data/rankings.js");
-  const { makeV2Strategy } = await import("./draft/strategy.js");
+  const { makeV2Strategy, legalCap } = await import("./draft/strategy.js");
   const { SIM_LEAGUE } = await import("./draft/sim.js");
   // A full 16-team auction runs ~25-30 min; at ~1.4s/tick + read overhead that's ~1000+ ticks, so the
   // cap must comfortably outlast the whole draft (it exits early on a full roster or a stall).
@@ -777,9 +777,9 @@ async function cmdAutoDraft(rest: string[]) {
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
     maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
     // LIVE inflation repricing is ON by default -- backtested +~2 championship pts / +3 playoff pts
-    // (docs/validation.md). Scarcity is OFF (backtested NEGATIVE). Toggle: --no-inflation, --scarcity.
+    // (docs/validation.md). Toggle: --no-inflation. Scarcity is a REJECTED feature (backtested
+    // NEGATIVE, and its live wiring passed teams=[ours]) -- removed from auto-draft (Step 6).
     inflation: !rest.includes("--no-inflation"),
-    scarcity: rest.includes("--scarcity"),
   });
   const normPos = (p: string | null): string | null => {
     if (!p) return null;
@@ -803,6 +803,13 @@ async function cmdAutoDraft(rest: string[]) {
   let picks: import("./draft/espnAuction.js").DraftPick[] = [];
   let liveInflation = 1;
   let lastPicksLen = -1, stallRefreshes = 0; // draft-over / stall detection
+  // Stall guard: stop after ~--stall-min minutes of no new LEAGUE picks (real drafts pause 1-2 min
+  // between nominations, so a short window stops prematurely). Refresh cadence is every 4 ticks x
+  // ~1.4s ~= 5.6s, so N minutes ~= N*10.7 refreshes; WARN once at ~3 min (Step 6).
+  const stallMin = Number(valueOf(rest, "--stall-min") ?? 10);
+  const refreshesPerMin = 60 / 5.6;
+  const stallStop = Math.round(stallMin * refreshesPerMin);
+  const stallWarn = Math.round(3 * refreshesPerMin);
   let loggedSlots = false; // one-time live-vs-sim slot-count check
   const logPath = `data/draft-log-${Date.now()}.json`;
   for (let i = 0; i < rounds; i++) {
@@ -842,13 +849,14 @@ async function cmdAutoDraft(rest: string[]) {
         liveInflation = computeInflation(undrafted, league.remainingDollars || (200 - r.spent) * league.teams, remainingSlots);
         try { writeFileSync(logPath, JSON.stringify({ updated: new Date().toISOString(), remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length, liveInflation, positional: positionalStats(picks, universe, nameKey), picks }, null, 0)); } catch { /* best-effort */ }
       }
-      // Draft-over / stall guard: if the LEAGUE hasn't drafted anyone new across many refreshes
-      // (~90s) while we still have open slots, the draft has ended or wedged -> stop instead of
-      // spinning to the round cap. (Refresh cadence is every 4 ticks; 16 refreshes ~= 90s.)
-      // Only stop after a LONG quiet (~5 min) -- real drafts pause 1-2 min between nominations while
-      // humans decide, so a short window stops us prematurely (a 90s window did, mid-draft). ~54
-      // refreshes x ~5.6s ~= 5 min: fires only when the draft is genuinely over/wedged.
-      if (picks.length > 0 && picks.length === lastPicksLen) { if (++stallRefreshes >= 54) { console.log(`draft over/stalled: no new league picks in ~5 min, roster ${r.filled}/${r.filled + r.open}. Stopping.`); break; } }
+      // Draft-over / stall guard: if the LEAGUE hasn't drafted anyone new for ~--stall-min minutes
+      // while we still have open slots, the draft has ended or wedged -> stop instead of spinning to
+      // the round cap. WARN once at ~3 min so a live operator sees a long-but-not-yet-fatal quiet.
+      if (picks.length > 0 && picks.length === lastPicksLen) {
+        stallRefreshes++;
+        if (stallRefreshes === stallWarn) console.log(`r${i}: WARN no new league picks in ~3 min (roster ${r.filled}/${r.filled + r.open}); will stop at ~${stallMin} min quiet.`);
+        if (stallRefreshes >= stallStop) { console.log(`draft over/stalled: no new league picks in ~${stallMin} min, roster ${r.filled}/${r.filled + r.open}. Stopping.`); break; }
+      }
       else { stallRefreshes = 0; lastPicksLen = picks.length; }
     }
     const b = await readBlock(page);
@@ -859,7 +867,7 @@ async function cmdAutoDraft(rest: string[]) {
         // Delegate the ceiling to the Strategy (budget-aware value); Engine clamps to ESPN's hard
         // legal max (myMax) and slot legality. liveInflation is the EXACT remaining$/remaining-value
         // factor computed above from the scraped drafted set (refreshed every few ticks).
-        const decision = strat.maxBid({
+        const state = {
           myBudget: 200 - r.spent,
           mySlots: { ...r.openByBase, FLEX: r.flexOpen, BENCH: r.benchOpen },
           myRoster: [],
@@ -870,8 +878,12 @@ async function cmdAutoDraft(rest: string[]) {
           liveInflation,
           board: [{ name: b.player, pos: pos as never, team: "", espnPreDraftVal: b.preDraftVal }], // non-empty so the inflation branch runs
           teams: [{ name: "LEAGUE", budgetLeft: league.remainingDollars || (200 - r.spent), openSlots: r.open }],
-        });
-        const cap = Math.min(decision.maxBid, b.myMax ?? 0);
+        };
+        const decision = strat.maxBid(state);
+        // ESPN's myMax already reserves $ for a legal roster. If it is UNREADABLE, legalCap falls
+        // back to our own affordableMax rather than cap=0 (a silent pass on everything -- finding #9).
+        if (b.myMax == null) console.log(`r${i}: WARN myMax unreadable -- falling back to affordableMax`);
+        const cap = legalCap(decision.maxBid, b.myMax, state);
         const offer = b.currentOffer ?? 0;
         if (offer < cap) {
           // For a player we value (big gap to cap), JUMP-bid toward our cap -- the +1 button is

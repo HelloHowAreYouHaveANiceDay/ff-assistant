@@ -55,8 +55,10 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
 - `--no-inflation` -- disable live inflation repricing (default ON, +~2 pts).
 - `--starter-reserve N --max-share F --premium N` -- strategy dials (default 20 / 0.35 / 2; higher
   reserve = more balanced/less concentration). The balanced default is the backtested winner (Step 5).
-- REJECTED by backtest, off by default, don't enable to "win": `--scarcity`, `--pos-inflation`,
-  `--drain-nom`, `--waivers` (all measured neutral-to-negative -- see docs/edges.md).
+- `--stall-min N` -- stop after N min of no new league picks (default 10; WARN at ~3 min).
+- REJECTED by backtest, off by default, don't enable to "win": `--pos-inflation`, `--drain-nom`,
+  `--waivers` (all measured neutral-to-negative -- see docs/edges.md). `--scarcity` was removed from
+  `auto-draft` entirely (rejected + its live wiring was wrong); it survives only in `backtest`.
 
 ## Watch + override
 

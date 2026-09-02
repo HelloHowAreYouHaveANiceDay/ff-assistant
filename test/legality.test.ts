@@ -2,7 +2,7 @@
 // (full legal in-budget roster) structurally safe. Run: npm test.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { affordableMax, makeV1Strategy, makeV2Strategy, reserveForOthers, type DraftState } from "../src/draft/strategy.ts";
+import { affordableMax, legalCap, makeV1Strategy, makeV2Strategy, reserveForOthers, type DraftState } from "../src/draft/strategy.ts";
 import { hasOpenSlotFor, type Roster } from "../src/draft/espnAuction.ts";
 import { SIM_LEAGUE } from "../src/draft/sim.ts";
 import { DEFAULT_VALUE_LEAGUE, nameKey } from "../src/draft/values.ts";
@@ -240,6 +240,24 @@ test("v2 bench K/DST: refuses a DST onto the bench", () => {
   const s = makeV2Strategy({ values: { "Ravens D/ST": 10 }, starterReserve: 5, premium: 2 });
   const bench = baseState({ mySlots: { RB: 1, DST: 0, BENCH: 3 }, onBlock: dst });
   assert.equal(s.maxBid(bench).maxBid, 0);
+});
+
+test("legalCap: unreadable myMax falls back to affordableMax, NOT 0 (finding #9)", () => {
+  // 10 open slots, $69 left -> affordableMax 60. A high desired bid + null myMax must cap at 60,
+  // never 0 (which would silently pass on everything). And a readable myMax still wins when tighter.
+  const s = baseState({ myBudget: 69, mySlots: { RB: 3, WR: 3, BENCH: 4 } });
+  assert.equal(legalCap(80, null, s), 60);       // null myMax -> affordableMax(60)
+  assert.equal(legalCap(80, undefined, s), 60);   // undefined too
+  assert.equal(legalCap(80, 45, s), 45);          // readable, tighter myMax binds
+  assert.equal(legalCap(30, null, s), 30);        // our own bid is the binder
+});
+
+test("v2 premium: no $premium on the $1 tail; full premium on a real value (Step 6)", () => {
+  const cheap = { name: "Filler", pos: "RB" as const, team: "X", espnPreDraftVal: 1 };
+  const real = { name: "Starter", pos: "RB" as const, team: "Y", espnPreDraftVal: 30 };
+  const s = makeV2Strategy({ starterReserve: 4, premium: 2, maxShare: 0.6 });
+  assert.equal(s.maxBid(baseState({ onBlock: cheap })).maxBid, 1);   // $1 value -> stays $1
+  assert.equal(s.maxBid(baseState({ onBlock: real })).maxBid, 32);   // $30 value -> 30 + premium 2
 });
 
 test("v2 fill-floor: soft reserve never BLOCKS a needed slot we can afford", () => {
