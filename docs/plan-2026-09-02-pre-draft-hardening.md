@@ -135,7 +135,27 @@ OPEN + same player -> maxBid >= 1 (the positive case); (b) sim check: 20 seeds o
 (c) `data/values.csv` has no K/DST above $2 and no duplicate names
 (`cut -d, -f1 data/values.csv | sort | uniq -d` is empty).
 Fault injection: remove the bench guard -> (b) fails with >2 K/DST.
-Result: _(fill in)_
+Result: DONE, with a plan correction. Changes: strategy.ts bench-K/DST guard (`fillingBench` &&
+pos in {K,DST} -> maxBid 0, reason "bench K/DST"); values.ts `computeValues` gained `maxKDst=2`
+clamp; build_projections.py dedupes the hardcoded K/DST append (skip names already from ECR).
+Regenerated: `uv run --with nflreadpy --with polars tools/build_projections.py` (513 players, was
+518 w/ 5 dup kickers), `npm run ff -- values` -> data/values.csv, `npm run ff -- values --points
+data/points-2024.csv --out data/values-2024.csv`.
+(a) PASS -- unit tests "v2 bench K/DST" (K value 13 on bench -> maxBid 0; K slot open -> >=1; DST
+bench -> 0). (b) PASS -- test "SIM COMPOSITION" (`npm test`): 20 seeds of draftFieldSeats @ live
+default (reserve 5/maxShare 0.6/premium 2) -> exactly 2 K/DST every seed. (c) PASS --
+`cut -d, -f1 data/values.csv | sort | uniq -d` empty; `awk -F, 'NR>1 && ($2=="K"||$2=="DST") &&
+$3>2' data/values.csv` empty; same for data/values-2024.csv. `npm test` 38/38, typecheck clean.
+FAULT INJECTION -- the plan got this partly wrong: removing the bench guard did NOT make (b) fail.
+The two UNIT tests (a) correctly went red (pass 36/fail 2), but SIM COMPOSITION stayed green at
+exactly 2. I then compound-injected (guard removed AND K/DST values recomputed with maxKDst=999):
+still exactly 2 across 20 seeds. Reason: the sim's nomination is value-greedy and K/DST are the
+lowest-value players (trueVal via computeValues, itself clamped), so they are nominated only after
+every bench fills -- the sim structurally never floods us with cheap K/DST regardless of the guard.
+So the UNIT tests, not (b), are the valid fault-injection lever for the guard; (b) is a real
+composition regression guard but is insensitive to guard removal. The guard still matters on the
+LIVE path, where a bot/human/ESPN can nominate a K/DST early with our bench open -- exactly the case
+the unit tests cover.
 
 ### Step 3. Make the value lookup survive ESPN name spelling; log the value source
 Change: one normalizer `nameKey(s)` in `src/draft/values.ts` (or a new `names.ts`): lowercase,

@@ -39,14 +39,20 @@ export function baselines(points: PointsRow[], lg: ValueLeague): Record<string, 
 }
 
 /** Points table -> auction $ values. value = max(1, 1 + VOR x rate), rate spreads the
- *  discretionary money (total budget minus $1 per roster spot) across total positive VOR. */
-export function computeValues(points: PointsRow[], lg: ValueLeague = DEFAULT_VALUE_LEAGUE): ValueRow[] {
+ *  discretionary money (total budget minus $1 per roster spot) across total positive VOR.
+ *  K/DST are clamped to `maxKDst` ($2) -- this league streams them at $1-2 (finding #1), so a
+ *  nominal points curve must not be allowed to price them like real starters. */
+export function computeValues(points: PointsRow[], lg: ValueLeague = DEFAULT_VALUE_LEAGUE, maxKDst = 2): ValueRow[] {
   const base = baselines(points, lg);
   const withVor = points.map((p) => ({ ...p, vor: Math.max(0, p.points - (base[p.pos] ?? 0)) }));
   const totalVor = withVor.reduce((s, p) => s + p.vor, 0) || 1;
   const discretionary = lg.teams * lg.budget - lg.teams * lg.rosterSpots * 1;
   const rate = discretionary / totalVor;
   return withVor
-    .map((p) => ({ name: p.name, pos: p.pos, value: Math.max(1, Math.round(1 + p.vor * rate)) }))
+    .map((p) => {
+      const raw = Math.max(1, Math.round(1 + p.vor * rate));
+      const value = (p.pos === "K" || p.pos === "DST") ? Math.min(raw, maxKDst) : raw;
+      return { name: p.name, pos: p.pos, value };
+    })
     .sort((a, b) => b.value - a.value);
 }

@@ -182,6 +182,26 @@ test("v2 FAULT: tight budget never strands -- keeps $1 for every other slot", ()
   assert.ok(bid >= 1 && bid <= 1, `expected fill-floor $1, got ${bid}`);
 });
 
+test("v2 bench K/DST: refuses a K onto the bench, still bids one for the K STARTER slot", () => {
+  const kicker = { name: "Top Kicker", pos: "K" as const, team: "BAL", espnPreDraftVal: 13 };
+  const s = makeV2Strategy({ values: { "Top Kicker": 13 }, starterReserve: 5, premium: 2 });
+  // K slot FILLED (0 open) + bench open -> the only fit is bench -> maxBid 0, even at value 13.
+  const bench = baseState({ mySlots: { RB: 1, WR: 1, K: 0, BENCH: 3 }, onBlock: kicker });
+  const bBid = s.maxBid(bench);
+  assert.equal(bBid.maxBid, 0);
+  assert.match(bBid.reason ?? "", /bench K\/DST/);
+  // K slot OPEN (starter) -> we DO bid (positive case).
+  const starter = baseState({ mySlots: { RB: 1, WR: 1, K: 1, BENCH: 3 }, onBlock: kicker });
+  assert.ok(s.maxBid(starter).maxBid >= 1, "a K for the dedicated K slot is biddable");
+});
+
+test("v2 bench K/DST: refuses a DST onto the bench", () => {
+  const dst = { name: "Ravens D/ST", pos: "DST" as const, team: "BAL", espnPreDraftVal: 10 };
+  const s = makeV2Strategy({ values: { "Ravens D/ST": 10 }, starterReserve: 5, premium: 2 });
+  const bench = baseState({ mySlots: { RB: 1, DST: 0, BENCH: 3 }, onBlock: dst });
+  assert.equal(s.maxBid(bench).maxBid, 0);
+});
+
 test("v2 fill-floor: soft reserve never BLOCKS a needed slot we can afford", () => {
   const onBlock = { name: "Y", pos: "RB" as const, team: "SF", espnPreDraftVal: 40 };
   const s = makeV2Strategy({ starterReserve: 4 });

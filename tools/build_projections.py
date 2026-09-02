@@ -44,11 +44,18 @@ for player, pos, team, ecr, pr in rk.select(["player", "pos", "team", "ecr", "po
 rows.sort(key=lambda x: -x[2])
 
 os.makedirs("data", exist_ok=True)
-# nominal K/DST projections (streamed/~$1 in this league, but rosters + lineups still need them)
+# nominal K/DST projections (streamed/~$1 in this league, but rosters + lineups still need them).
+# Dedupe: skip any name already produced from the ECR ranks above -- appending it again created
+# duplicate rows (finding #1) that flowed straight into values.csv.
+existing = {nm for nm, _, _ in rows}
 for i, nm in enumerate(["Justin Tucker", "Brandon Aubrey", "Chris Boswell", "Cameron Dicker", "Jake Elliott", "Ka'imi Fairbairn"]):
+    if nm in existing: continue
     rows.append((nm, "K", round(150 - i * 4, 1)))
+    existing.add(nm)
 for i, nm in enumerate(["Broncos", "Eagles", "Vikings", "Texans", "Steelers", "Bills"]):
+    if nm in existing: continue
     rows.append((nm, "DST", round(145 - i * 4, 1)))
+    existing.add(nm)
 
 with open("data/points.csv", "w", encoding="ascii", errors="ignore") as f:
     f.write("player,pos,points\n")

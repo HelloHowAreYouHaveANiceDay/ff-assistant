@@ -159,6 +159,9 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       const base = p.pos;
       const starterOpen = (state.mySlots[base] ?? 0) > 0 || (["RB", "WR", "TE"].includes(base) && (state.mySlots.FLEX ?? 0) > 0);
       const fillingBench = !starterOpen;
+      // Never draft a K or DST onto the bench: they stream at ~$1 and a bench K/DST is dead roster.
+      // The room punts K/DST at $1 (docs/league-tendencies.md); enforce it here (finding #1).
+      if (fillingBench && (base === "K" || base === "DST")) return { maxBid: 0, reason: "bench K/DST" };
       // Soft reserve (balanced target: keep real $ for other starters) limits early concentration.
       const softAffordable = state.myBudget - reserveForOthers(state, fillingBench, starterReserve, benchReserve);
       // Hard reserve ($1/other slot) is the never-strand floor -- a legal roster stays completable.
