@@ -6,6 +6,7 @@ dist/
 data/*.db
 data/*.sqlite
 data/draft-log-*.json
+data/cheatsheet.md
 .DS_Store
 diag.mjs
 inspect.mjs

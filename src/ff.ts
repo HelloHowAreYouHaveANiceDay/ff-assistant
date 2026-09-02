@@ -51,6 +51,8 @@ async function main() {
       return cmdDumpValues(rest);
     case "values":
       return cmdValues(rest);
+    case "cheatsheet":
+      return cmdCheatsheet(rest);
     case "project":
       return cmdProject(rest);
     case "lineup":
@@ -363,6 +365,50 @@ async function cmdProject(rest: string[]) {
   const p = proj.all().find((x) => x.name.toLowerCase() === name.toLowerCase());
   if (!p) { console.log(`no projection for "${name}"`); return; }
   console.log(`${p.name} (${p.pos}): season ${proj.season(p.name).toFixed(0)} | this week${opp ? " vs " + opp : ""} ${proj.week(p.name, p.pos, opp).toFixed(1)} | ROS(10 gms) ${proj.ros(p.name, 10).toFixed(0)}`);
+}
+
+// Draft-day cheat sheet: a tiered value board + the per-manager nomination drain plan + budget
+// guidance, written to a markdown file to keep in front of you DURING the draft. Pure offline --
+// operationalizes our values (data/values.csv) + manager scouting (data/managers.json). The agent
+// bids from these same values; the sheet is the human-copilot view of the same plan.
+async function cmdCheatsheet(rest: string[]) {
+  const { readFileSync, writeFileSync } = await import("node:fs");
+  const valuesFile = valueOf(rest, "--values") ?? "data/values.csv";
+  const out = valueOf(rest, "--out") ?? "data/cheatsheet.md";
+  const budget = Number(valueOf(rest, "--budget") ?? 200);
+  const { tierize } = await import("./draft/cheatsheet.js");
+  const rows = readFileSync(valuesFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
+  const players = rows.map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), value: Number(f[2]) })).filter((p) => p.name && p.value > 0);
+  // How many players per position are actually rosterable/relevant (skip the $1 replacement tail).
+  const RELEVANT: Record<string, number> = { RB: 40, WR: 45, TE: 18, QB: 18, K: 12, DST: 12 };
+  const tiersFor = (pos: string) => tierize(players.filter((p) => p.pos === pos).sort((a, b) => b.value - a.value).slice(0, RELEVANT[pos] ?? 20));
+  // Manager nomination plan: owners who overweight a position (share/leagueShare high) are the ones to
+  // drain -- nominate that position early. (Human-only edge; sim showed it's not an auto-win, but it's
+  // a live read for you -- docs/league-managers.md.)
+  let nomPlan = "";
+  try {
+    const mgr = JSON.parse(readFileSync("data/managers.json", "utf8")) as { leagueShare: Record<string, number>; profiles: { owner: string; share: Record<string, number> }[] };
+    const payers = (pos: string) => mgr.profiles.filter((p) => (p.share[pos] ?? 0) / Math.max(mgr.leagueShare[pos] ?? 0.01, 0.01) > 1.25).map((p) => p.owner);
+    const lines = ["QB", "TE"].map((pos) => { const who = payers(pos); return who.length ? `- **Nominate a top ${pos} early** to drain: ${who.join(", ")}` : ""; }).filter(Boolean);
+    nomPlan = lines.join("\n");
+  } catch { nomPlan = "_(run analyze.mjs to build data/managers.json for the nomination plan)_"; }
+
+  const POS = ["RB", "WR", "TE", "QB", "K", "DST"];
+  const fmtTier = (t: { name: string; value: number }[], i: number) => `  T${i + 1} ($${t[0].value}-${t[t.length - 1].value}): ` + t.map((p) => `${p.name} $${p.value}`).join(", ");
+  let md = `# Draft-day cheat sheet\n\nGenerated from ${valuesFile}. Our $ values (VOR->auction $, ${budget} budget). The agent bids from these; this is your live copilot view.\n\n`;
+  md += `## Budget plan (default aggressive-lean)\nTarget **2-3 studs** (up to ~$${Math.round(budget * 0.6)} max on any one, ~$${Math.round(budget * 0.6)} on the top 3), keep ~$${Math.round(budget * 0.2)} for mid-tier value and >=$1/slot for depth. The room is stars-and-scrubs (61% of picks $1-5) -- stay disciplined, let bidding wars pass, buy the middle where they're broke.\n\n`;
+  md += `## Nomination drain plan\n${nomPlan}\n- QB/TE go **cheap once the payers are spent** -- wait them out.\n\n`;
+  md += `## Top overall (by value)\n` + players.sort((a, b) => b.value - a.value).slice(0, 15).map((p, i) => `${i + 1}. ${p.name} (${p.pos}) **$${p.value}**`).join("\n") + "\n\n";
+  md += `## Tiers by position\n`;
+  for (const pos of POS) {
+    const tiers = tiersFor(pos);
+    if (!tiers.length) continue;
+    md += `\n### ${pos}\n` + tiers.slice(0, 6).map((t, i) => fmtTier(t, i)).join("\n") + "\n";
+  }
+  writeFileSync(out, md, "utf8");
+  console.log(`wrote cheat sheet -> ${out}`);
+  for (const pos of ["RB", "WR", "TE", "QB"]) { const t = tiersFor(pos); console.log(`${pos}: ${t.length} tiers; T1 = ${t[0]?.map((p) => p.name).join(", ")}`); }
+  if (nomPlan) console.log("\nNomination drain plan:\n" + nomPlan);
 }
 
 async function cmdValues(rest: string[]) {
