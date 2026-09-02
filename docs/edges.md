@@ -51,9 +51,13 @@ software agent beats distracted humans:
   to still fill a legal roster; humans miscount and either strand money or can't fill a slot.
 - **No tilt / no reaching** -- doesn't panic-buy in a position run or chase a player above value
   after losing one. Sticks to the plan.
-- **Nomination gamesmanship** -- nominate players you don't want (esp. K/DST the room overpays) to
-  drain opponents; nominate targets when the room is cash-poor. (Built; a medium edge, not yet
-  quantified.)
+- **Nomination gamesmanship** -- nominate players you don't want at a known payer's craved position
+  to drain them (`src/draft/nomination.ts`, cheat sheet in docs/league-managers.md). **Built AND
+  measured: in the backtest it is NEUTRAL-to-NEGATIVE** (drain-nom 18%->12%; greedy-non-target 15.5%;
+  value-greedy default wins). Rational bots don't tilt, so the sim can't reward it -- exactly why this
+  belongs in "can't see it" (below). It's a real edge only vs distracted HUMANS; kept as a documented
+  live option, never defaulted. The disciplined lesson, twin to auto-waivers: don't ship a
+  sim-negative feature as if validated.
 - **Live inflation tracking** -- recompute values as money/talent leave the board (docs/value-methods
   section 3). Medium; not yet wired into the live bidder.
 

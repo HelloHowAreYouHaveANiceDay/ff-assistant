@@ -55,6 +55,8 @@ async function main() {
       return cmdProject(rest);
     case "lineup":
       return cmdLineup(rest);
+    case "calibrate":
+      return cmdCalibrate(rest);
     case "sim":
       return cmdSim(rest);
     case "backtest":
@@ -378,6 +380,56 @@ async function cmdValues(rest: string[]) {
 
 // Validation harness: run N seeded auction sims with our values+strategy, report roster strength
 // vs the field. Change values/strategy and re-run -> higher points/rank = better, lower = regression.
+// Calibration: run an all-bot field (the 16 real manager profiles) and check the SIMULATED
+// positional spend + concentration reproduce each owner's real history. This is the fault-injection
+// guard for the bot model -- if the RB-heavy manager doesn't come out RB-heavy in the sim, the model
+// is disconnected from the data. Prints per-position mean-abs-error and per-owner spot checks.
+async function cmdCalibrate(rest: string[]) {
+  const { draftFieldSeats, SIM_LEAGUE } = await import("./draft/sim.js");
+  const { loadManagers } = await import("./draft/managers.js");
+  const { readFileSync } = await import("node:fs");
+  const readCsv = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
+  const points = readCsv(valueOf(rest, "--points") ?? "data/points.csv").map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
+  const ourValues = new Map<string, number>();
+  for (const f of readCsv(valueOf(rest, "--values") ?? "data/values.csv")) ourValues.set(f[0].trim(), Number(f[2]));
+  const n = Number(valueOf(rest, "--n") ?? 300);
+  const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
+  const { profiles } = loadManagers();
+  // accumulate simulated positional $ + top-3 share per owner
+  const acc = new Map<string, { pos: Record<string, number>; tot: number; top3: number; max: number; teams: number }>();
+  for (const p of profiles) acc.set(p.owner, { pos: Object.fromEntries(POS.map((k) => [k, 0])), tot: 0, top3: 0, max: 0, teams: 0 });
+  for (let s = 0; s < n; s++) {
+    const { picks, seatProfiles } = draftFieldSeats(points, ourValues, {}, s + 1, SIM_LEAGUE, { includeUs: false });
+    for (let ti = 0; ti < seatProfiles.length; ti++) {
+      const prof = seatProfiles[ti]; if (!prof) continue;
+      const a = acc.get(prof.owner)!;
+      const mine = picks.filter((p) => p.team === ti);
+      const tot = mine.reduce((x, p) => x + p.price, 0) || 1;
+      for (const p of mine) if (p.pos in a.pos) a.pos[p.pos] += p.price;
+      a.tot += tot; a.teams++;
+      const sorted = mine.map((p) => p.price).sort((x, y) => y - x);
+      a.top3 += sorted.slice(0, 3).reduce((x, y) => x + y, 0) / tot;
+      a.max += sorted[0] ?? 0;
+    }
+  }
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  let mae: Record<string, number[]> = Object.fromEntries(POS.map((k) => [k, []])), concErr: number[] = [];
+  console.log(`CALIBRATION -- ${n} all-bot drafts, 16 real manager profiles. sim share vs REAL history:\n`);
+  for (const prof of profiles) {
+    const a = acc.get(prof.owner)!; if (!a.teams) continue;
+    const simShare = Object.fromEntries(POS.map((k) => [k, a.pos[k] / a.tot]));
+    const simTop3 = a.top3 / a.teams;
+    const simMax = a.max / a.teams;
+    for (const k of POS) mae[k].push(Math.abs(simShare[k] - (prof.share[k] ?? 0)));
+    concErr.push(Math.abs(simTop3 - prof.conc));
+    const line = POS.filter((k) => k !== "K" && k !== "DST").map((k) => `${k} ${pct(simShare[k])}/${pct(prof.share[k] ?? 0)}`).join("  ");
+    console.log(`  ${prof.owner.padEnd(20)} ${line}  | top3 ${pct(simTop3)}/${pct(prof.conc)}  | max$ ${simMax.toFixed(0)}/${prof.maxBuy.toFixed(0)}`);
+  }
+  const avg = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
+  console.log(`\n  MEAN ABS ERROR (sim vs real):  ` + POS.map((k) => `${k} ${pct(avg(mae[k]))}`).join("  ") + `  | top3 ${pct(avg(concErr))}`);
+  console.log(`  (each cell above is sim%/real%. Lower error = the field reproduces this league.)`);
+}
+
 async function cmdSim(rest: string[]) {
   const { runSim } = await import("./draft/sim.js");
   const { readFileSync } = await import("node:fs");
@@ -442,6 +494,8 @@ async function cmdBacktest(rest: string[]) {
   const full = rest.includes("--full"); // run the REAL lineup optimizer (inseason/lineup.ts) for our team
   const noLookahead = rest.includes("--no-lookahead"); // draft/lineup on LAST season, score by THIS season
   const waivers = rest.includes("--waivers"); // our team works the waiver wire (trailing-avg, no lookahead)
+  const drainNom = rest.includes("--drain-nom"); // our team drain-nominates the known position-payers
+  const greedyNom = rest.includes("--greedy-nom"); // our team nominates the best player we don't want
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;
   const perYear: string[] = [];
@@ -449,10 +503,10 @@ async function cmdBacktest(rest: string[]) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
     const proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / 16).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   console.log(`  per season: ${perYear.join("  ")}`);

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 const recaps = JSON.parse(readFileSync("data/recaps.json", "utf8"));
 const owners = JSON.parse(readFileSync("data/owners.json", "utf8"));
 
@@ -78,3 +78,35 @@ for (const r of rows) {
   for (const m of r.ms) console.log(`      ${m.season}: ${m.topStr}  [top3 ${pct(m.top3)}, ${m.cheap} cheap]`);
   console.log("");
 }
+
+// ---- emit machine-readable per-owner profiles for the sim bot model (data/managers.json) ----
+// Each owner's AVERAGE positional spend share + concentration. The bot model turns share (relative
+// to the league mean) into a per-position bid appetite, so a bot reproduces that owner's real
+// spending mix. Uses ALL owners with >=1 season (incl. 2025 newcomers) so the 16-seat field is real.
+const byOwnerAll = new Map();
+for (const t of recaps) { if (!t.owner) continue; if (!byOwnerAll.has(t.owner)) byOwnerAll.set(t.owner, []); byOwnerAll.get(t.owner).push(t); }
+const posShareOf = (teams) => {
+  const acc = Object.fromEntries(POS.map((p) => [p, 0]));
+  let tot = 0;
+  for (const t of teams) for (const p of t.picks) { if (p.pos in acc) acc[p.pos] += p.price; tot += p.price; }
+  return { share: Object.fromEntries(POS.map((p) => [p, tot ? acc[p] / tot : 0])), perYearTotal: tot / teams.length };
+};
+const leagueShare = posShareOf(recaps).share; // baseline: whole-league positional spend mix
+const profiles = [];
+for (const [owner, teams] of byOwnerAll) {
+  teams.sort((a, b) => a.season - b.season);
+  const ms = teams.map(metrics);
+  const { share } = posShareOf(teams);
+  profiles.push({
+    owner,
+    abbrev: (ownerBySeason[2025] || []).concat(ownerBySeason[2024] || []).find((t) => t.owner === owner)?.abbrev || owner.slice(0, 4),
+    seasons: teams.map((t) => t.season),
+    share,                                   // this owner's avg positional $ share
+    conc: mean(ms.map((m) => m.top3)),       // avg top-3 concentration (stars-and-scrubs degree)
+    maxBuy: mean(ms.map((m) => m.max)),      // avg biggest single buy $
+    cheap: mean(ms.map((m) => m.cheap)),     // avg $1-5 picks/yr
+  });
+}
+writeFileSync("data/managers.json", JSON.stringify({ leagueShare, profiles }, null, 0));
+console.log(`wrote data/managers.json (${profiles.length} owners, league share ` +
+  POS.map((p) => `${p} ${pct(leagueShare[p])}`).join(" ") + ")");

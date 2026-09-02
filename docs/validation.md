@@ -28,6 +28,11 @@ single season's championship estimate swings 25%<->50% for the SAME config just 
 noise, so single-season "findings" are overfit (I made that mistake: a 2024-only run showed
 "reserve 5 = 50.6%, optimal", which did NOT replicate -- 2024 at high N is ~25%).
 
+> [!note] The absolute %s in the two sweeps below were measured against the OLD uniform bot (pre
+> src/draft/managers.ts). The DIRECTIONS still hold (aggression ~neutral; an independent/tighter
+> projection is the top lever), but the absolute championship levels are lower against the realistic
+> field -- re-run any sweep you want to quote to the decimal.
+
 ### What 11 seasons (2014-2024) actually show
 Championship rate, ~1650 sims/config (random = 6.3%):
 - reserve 5 / max-share 0.6 (default): **27.3%**
@@ -66,9 +71,29 @@ seasons: values.ts (VOR->$) -> strategy.ts (draftField) -> projections.ts -> ins
 - `--no-lookahead` = our projection for season Y is season Y-1's actuals (a real, crude forecast
   with ZERO future knowledge); scored by Y's weekly truth.
 
-Result (2015-2024, ~150 seasons/yr): **~36% championships, 5.7x random, 94% playoffs**, stable
-27-43% every year (no overfit). Same-season projection (mild lookahead) is ~49%; draft-only with a
-synthetic lineup was 41%.
+Result (2015-2024) against the REALISTIC per-manager field (see below): **~13% championships,
+~2.1x random, 66% playoffs**, stable 6-23% by year. Draft-only is ~18% (2.9x). These REPLACED the
+earlier ~36%/~27% numbers, which were measured against a uniform "everyone overpays for studs" bot;
+that bot left random value everywhere and flattered us. The realistic heterogeneous field
+(QB-payers, RB-first, QB/TE-punters, calibrated to real spending) is a genuinely harder, more honest
+opponent -- trust these lower numbers, not the old ones.
+
+## REALISTIC opponent field (src/draft/managers.ts) -- the bot model
+
+The 15 bot seats are each a REAL manager from this league, modelled on 4 years of auction history
+(docs/league-managers.md, `data/managers.json`). Each bot reproduces its owner's positional appetite
+(a QB-payer chases QB; a punter won't), a per-position spend budget (share x $200 -> stops chasing a
+position once its allocation is spent), and a concentration-scaled stars-and-scrubs curve.
+
+**Calibrate it: `ff calibrate --n 300`** runs an all-bot field and prints simulated vs real positional
+share + concentration + biggest-buy per owner. Current fit: mean-abs-error QB 7% / RB 8% / TE 2% /
+concentration 8% (WR ~18%, the soft spot). This is the fault-injection guard -- the RB-heavy manager
+must come out RB-heavy, or the model is disconnected from the data.
+
+**Nomination (`--drain-nom`, `--greedy-nom`) -- backtested, NOT a win.** Drain-nominating the known
+position-payers LOWERS championships (18% -> 12%); greedy "nominate the best non-target" also trails
+(15.5%) the value-greedy default. Rational bots don't tilt, so the sim can't reward nomination
+gamesmanship (docs/edges.md) -- it's a human-only edge, kept as a documented live option, not defaulted.
 
 **Waivers (`--waivers`) -- backtested and REJECTED as an auto-feature.** Adding automated waiver
 churn (swap our weakest for the best-producing free agent, trailing-avg or ROS-blend, no lookahead)
