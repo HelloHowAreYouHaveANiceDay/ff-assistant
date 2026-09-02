@@ -1,5 +1,9 @@
 # ESPN mock-draft flow (observed live, 2026-08-31)
 
+> **Historical observation log.** The "still to build readBoard/makePick" notes below are
+> SUPERSEDED -- the live auction reads/writes are built in `src/draft/espnAuction.ts`. Kept as the
+> DOM-flow evidence record.
+
 Captured by driving the copresent session (bro `espn` session + ff). Feeds the selectors in
 `src/draft/espnReader.ts`. DOM snapshots are in `data/*.json` (gitignored).
 

@@ -1,7 +1,6 @@
-// ESPN draft-room reader (copresent, D0). Selectors are UNKNOWN until we inspect a
-// live mock-draft room -- that is what `inspectDraftDom` is for. Once we see the real
-// DOM, `readBoard` and `makePick` get concrete selectors and this file stops being a
-// stub. Do NOT guess selectors before inspecting; write them from evidence.
+// ESPN draft-room DOM snapshot tool (copresent, D0). `inspectDraftDom` dumps the live draft-room
+// DOM to a file so selectors can be written from evidence (never guessed). The live auction READS
+// (block/roster/board/readDraft/readLeague) and WRITES (bids) live in espnAuction.ts.
 
 import { writeFileSync } from "node:fs";
 import type { Page } from "playwright-core";

@@ -53,8 +53,9 @@ npm run ff -- goto https://fantasy.espn.com/football/mockdraftlobby   # agent na
 npm run ff -- inspect-draft                                           # dump the draft-room DOM
 ```
 
-`inspect-draft` writes `data/draft-dom-snapshot.json` -- the evidence we use to write real
-selectors in `src/draft/espnReader.ts` (`readBoard`, `makePick`). Do NOT guess selectors first.
+`inspect-draft` writes a draft-room DOM snapshot -- the evidence we use to write real selectors.
+The live auction reads/writes now live in `src/draft/espnAuction.ts` (`readBlock`, `readRoster`,
+`readBoard`, `readDraft`, `readLeague`, `quickBid`, `jumpBid`, `nominate`). Do NOT guess selectors.
 
 ## Ranking (offline, no browser)
 
@@ -63,17 +64,19 @@ npm run ff -- rank                 # top players by VOR from data/rankings.sampl
 ```
 Swap `data/rankings.csv` for a real free projections+ADP export; pass `--csv path`.
 
-## Running a mock (after selectors exist)
+## Running a mock (the auction path)
 
 ```
-npm run ff -- mock
+npm run ff -- launch-practice      # enter a practice auction (window.open capture)
+npm run ff -- auto-draft           # full-auto: fills a legal roster in budget, live inflation on
 ```
-Read board -> rank (VOR/VONA) -> surface pick -> override window -> auto-pick. Validated by
-completing several ESPN mock drafts with zero missed picks (D9).
+Bids our values with budget discipline; runs to a full roster (see docs/draft-day-runbook.md).
+Validated by completing full ESPN practice auctions end-to-end.
 
 ## Status
 
-- [x] Skeleton: bro-subdriver attach, `goto`, `inspect-draft` DOM dump, rankings loader, VOR/VONA, loop shell
-- [x] bro `espn` site added; `ff bro` passthrough; port resolved from bro's registry
-- [ ] Real ESPN selectors in `espnReader.ts` (blocked on a live mock-draft DOM snapshot)
-- [ ] End-to-end mock draft completes
+- [x] bro-subdriver attach, `goto`, `inspect-draft` DOM dump; `ff bro` passthrough; port from registry
+- [x] Live auction reads/writes pinned in `espnAuction.ts` (block/roster/board/readDraft/readLeague/bids)
+- [x] End-to-end practice auction completes (full legal roster in budget)
+- [ ] Real-league draft-room entry verified live (G1 -- see docs/draft-execution-gaps.md)
+- [ ] In-season team-page reader pinned (blocked until our 2026 roster exists)
