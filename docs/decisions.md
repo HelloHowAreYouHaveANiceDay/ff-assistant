@@ -187,6 +187,28 @@ from mocks: pick made within the clock every round, correct roster construction,
 own testing discipline: the layer that would notice a break here is a live draft room, so we drive
 a live (mock) draft room.
 
+## D10 -- The engine is TypeScript + DETERMINISTIC; no LLM in the bid loop (corrects D7)
+
+**Decision (2026-09-02):** D7 framed the `ff` engine as a **Python** CLI reached by an LLM agent
+through a constrained tool surface. What was actually built is the opposite on both counts, and D10
+records the as-built truth:
+
+- **The `ff` engine is TypeScript (ESM, run with `tsx`)** -- `src/ff.ts` dispatches every command;
+  the draft reader/actor (`src/draft/espnAuction.ts`), strategy (`strategy.ts`), values (`values.ts`),
+  and the sim/backtest harness are all TS, tested with `node --test`. **Python is only the offline
+  DATA builder** (`tools/*.py`: nflreadpy -> projections/values + historical backtest data). So the
+  runtime split is TS-engine + Python-data-scripts, not "a Python CLI."
+- **The draft bid loop is DETERMINISTIC** -- values are VOR->$ from a static table; `maxBid` is
+  budget + reserve + inflation arithmetic; nomination and pacing are rule-based. **No LLM runs in the
+  bidding loop.** That is why the trustworthy test is the championship backtest + mock rehearsals,
+  not a prompt eval. The Claude Agent SDK, Electron shell, and SQLite from D1/D5/D7 belong to the
+  **packaged-app phase and are NOT built**; the engine writes a plain `data/draft-log-*.json` for the
+  action-log role (D3) until that phase exists.
+
+**Why:** a reader who trusts D7 would look for a Python CLI and an LLM in the bid path and find
+neither, and would mis-scope any change. D0-D2/D8/D9 (copresent browser, bro session, mock harness)
+stand as written; D7's *runtime/agent* framing is what D10 supersedes.
+
 ## Resolved design questions
 
 - **Q1 (RESOLVED 2026-08-31): ESPN first.** The developer has a live ESPN league used to

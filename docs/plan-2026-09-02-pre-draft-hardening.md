@@ -419,6 +419,17 @@ field; new defaults; roster is 12-man); roadmap: "12-man (16 teams)", drop "Pyth
 done-bar #4 honestly (implemented in Step 9 or still open), fix "Decisions Needed"; log entry in
 `wiki/log.md` (`Read(limit=3)` then `Edit` on the header anchor). Register nothing new in indexes
 unless a page is created.
+Result (REPO HALF DONE 2026-09-02): Added **D10** to decisions.md (engine is TypeScript +
+deterministic, no LLM in the bid loop, Agent SDK/Electron/SQLite = unbuilt packaged-app phase;
+corrects D7's "Python CLI" framing). AGENTS.md fixed: D-range D0-D10, the "docs-only, nothing to
+test" line replaced with the real Build/Test/Run (npm test/typecheck/ff, uv data rebuild), and the
+D3 action-log rule scoped to the packaged app (engine writes `data/draft-log-*.json`). README D-range
+-> D0-D10 + D10 note. Retracted 36% figures reconciled to "direction only, old uniform-bot baseline"
+in validation.md + edges.md (league-managers.md:63 kept as retraction CONTEXT). Stale headline
+champ-rates (~18%/~13%) updated to the balanced default's ~25%/~24% in README, runbook,
+league-managers.md. Defaults table already single-sourced (Step 5 grep agrees). WIKI HALF was done
+earlier (project + roadmap + log). REMAINING: Step 11 (in-season out-of-sample validate_matchup +
+projection-layer backtest mode) -- deferred to post-draft per the plan.
 
 ## Verification commands (copy/paste)
 

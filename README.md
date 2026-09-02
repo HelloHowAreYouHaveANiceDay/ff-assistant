@@ -73,8 +73,10 @@ analyze.mjs          # per-manager scouting -> data/managers.json (bot model inp
 ## What the harness decided (see docs/edges.md, docs/validation.md)
 
 - **Shipped (validated):** independent + current values, budget discipline vs an overpaying
-  room, live inflation repricing (+~2 championship pts). ~18% titles draft-only / ~13%
-  full-system no-lookahead vs the realistic field (2-3x random).
+  room, live inflation repricing (+~4 championship pts, clamped [0.8,1.4]). With the balanced
+  default (reserve 15 / max-share 0.35), ~25% titles draft-only / ~24% full-system no-lookahead vs
+  the realistic field (~4x random) -- up from the old aggressive-lean 5/0.6 (~20% / ~16%). See
+  docs/validation.md.
 - **Rejected (measured neutral-to-negative, off by default):** automated waivers, per-position
   inflation, live scarcity/VONA premium, drain-nomination-as-auto (a human-only edge).
 
@@ -82,4 +84,6 @@ analyze.mjs          # per-manager scouting -> data/managers.json (bot model inp
 
 Roadmap, phases, and issue tracking are in the wiki:
 `wiki/projects/project--ff-assistant.md` + `roadmap--ff-assistant.md`. Design rationale is in
-`docs/decisions.md` (D1-D8); the draft-day operating procedure is `docs/draft-day-runbook.md`.
+`docs/decisions.md` (D0-D10; note **D10** -- the engine is TypeScript + deterministic, no LLM in
+the bid loop, and Electron/Agent-SDK/SQLite are the unbuilt packaged-app phase). The draft-day
+operating procedure is `docs/draft-day-runbook.md`.

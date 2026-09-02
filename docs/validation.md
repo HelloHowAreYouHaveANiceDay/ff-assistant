@@ -130,15 +130,19 @@ empirical inflation is kept in the draft log as a human signal only (docs/edges.
 
 **Waivers (`--waivers`) -- backtested and REJECTED as an auto-feature.** Adding automated waiver
 churn (swap our weakest for the best-producing free agent, trailing-avg or ROS-blend, no lookahead)
-DROPPED championships 36% -> ~24-27%, and more churn made it worse. In a deep 16-team league the
-free-agent pool is replacement-level, so churn trades real drafted talent for hot-hand noise. -> the
-waiver feature is a conservative HUMAN-GATED copilot (`src/inseason/waivers.ts`), not auto-execution.
-The backtest prevented shipping a title-losing feature.
+DROPPED championships materially (measured ~-9 to -12 pts off the same-config baseline), and more
+churn made it worse. In a deep 16-team league the free-agent pool is replacement-level, so churn
+trades real drafted talent for hot-hand noise. -> the waiver feature is a conservative HUMAN-GATED
+copilot (`src/inseason/waivers.ts`), not auto-execution. The backtest prevented shipping a
+title-losing feature. (The DIRECTION -- churn hurts -- is what's trustworthy; the old absolute
+"36% -> 24-27%" figures were against the retracted uniform bot and are not used.)
 
-**Read it honestly:** the 36% is a FLOOR on projection quality -- last-year actuals miss rookies and
-undervalue players who were hurt last year, so a real preseason projection (ffanalytics/FantasyPros)
-would do better. It also omits waivers/trades, which would ADD edge. The bot field is a model, so
-trust the multiple-of-random (~5.7x) and the cross-season stability, not the absolute %.
+**Read it honestly:** these absolute %s were measured against a BOT MODEL, so trust the DIRECTION
+and the multiple-of-random, not the decimal. Our own values are last-year actuals here -- they miss
+rookies and undervalue players hurt last year -- so a real preseason projection
+(ffanalytics/FantasyPros) would do better, and waivers/trades would ADD edge on top. (Any "36%"
+elsewhere in older text was the pre-managers.ts uniform-bot number and has been retracted -- the
+realistic-field figures are ~13% full-system no-lookahead / ~24% for the balanced draft config.)
 
 ## `ff sim` (season-points proxy)
 

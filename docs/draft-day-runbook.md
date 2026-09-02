@@ -90,7 +90,7 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
 ## What's validated vs not (trust the right things)
 
 - **Validated + shipped:** independent+current values, discipline vs an overpaying room, live
-  inflation. ~18% titles draft-only / ~13% full-system no-lookahead vs a realistic field (2-3x
-  random). docs/validation.md.
+  inflation (clamped [0.8,1.4]). With the balanced default (reserve 15 / max-share 0.35), ~25% titles
+  draft-only / ~24% full-system no-lookahead vs a realistic field (~4x random). docs/validation.md.
 - **Human-only (not auto):** nomination gamesmanship.
 - **Not yet live:** in-season lineup SUBMIT (recommend path works offline: `ff lineup --roster`).

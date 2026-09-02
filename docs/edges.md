@@ -88,7 +88,8 @@ software agent beats distracted humans:
 
 ### 6. Waiver churn (automated) -- NEGATIVE in a deep league [backtested]
 Surprising, and the backtest earned its keep: automating waiver pickups by recent production LOSES
-titles here (full-system 36% -> ~24-27%). In a 16-team league the free-agent pool is mostly
+titles here (a material drop off the same-config baseline; the old "36% -> 24-27%" absolutes were
+against the retracted uniform bot -- trust the direction). In a 16-team league the free-agent pool is mostly
 replacement-level, so churn drops real drafted talent for hot-hand noise that regresses; more
 churn = worse. Real waiver value is injury-replacement + genuine breakouts (rare, hard to ID early),
 so waivers are a CONSERVATIVE human-gated COPILOT (`src/inseason/waivers.ts` -- surface only clear
