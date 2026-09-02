@@ -12,21 +12,21 @@ const board = [
 ];
 
 test("inflation > 1 when money-rich vs the value left (reprice UP)", () => {
-  // book value of top 4 = 110; $220 chasing it -> ~2x, clamped to 2.0
+  // book value of top 4 = 110; $220 chasing it -> 2x, clamped to the 1.4 ceiling ([0.8,1.4] band).
   const inf = computeInflation(board, 220, 4);
   assert.ok(inf > 1.3, `expected inflation, got ${inf}`);
 });
 
 test("inflation < 1 when value-rich vs money (be patient)", () => {
-  const inf = computeInflation(board, 55, 4); // $55 for $110 of value -> 0.5, clamped to 0.7
-  assert.ok(inf < 1 && inf >= 0.7, `expected deflation floor, got ${inf}`);
+  const inf = computeInflation(board, 55, 4); // $55 for $110 of value -> 0.5, clamped to the 0.8 floor
+  assert.ok(inf < 1 && inf >= 0.8, `expected deflation floor 0.8, got ${inf}`);
 });
 
 test("FAULT: a short board pads uncovered slots at $1 (no runaway from virtualization)", () => {
-  // 4 players listed but 104 open slots league-wide, $400 left. Without padding book=110 -> 3.6x
-  // (clamped 2.0); WITH padding book=110+100=210 -> ~1.9. Padding must lower the factor.
-  const padded = computeInflation(board, 400, 104);
-  const unpadded = computeInflation(board, 400, 4);
+  // 4 players listed but 10 open slots league-wide, $150 left. Without padding book=110 -> 1.36; WITH
+  // padding book=110+6=116 -> 1.29. Both inside [0.8,1.4] so the padding reduction stays visible.
+  const padded = computeInflation(board, 150, 10);
+  const unpadded = computeInflation(board, 150, 4);
   assert.ok(padded < unpadded, `padding must reduce the factor: padded ${padded} vs ${unpadded}`);
 });
 

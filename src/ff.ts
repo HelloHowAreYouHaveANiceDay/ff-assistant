@@ -393,7 +393,7 @@ async function cmdCheatsheet(rest: string[]) {
   const POS = ["RB", "WR", "TE", "QB", "K", "DST"];
   const fmtTier = (t: { name: string; value: number }[], i: number) => `  T${i + 1} ($${t[0].value}-${t[t.length - 1].value}): ` + t.map((p) => `${p.name} $${p.value}`).join(", ");
   let md = `# Draft-day cheat sheet\n\nGenerated from ${valuesFile}. Our $ values (VOR->auction $, ${budget} budget). The agent bids from these; this is your live copilot view.\n\n`;
-  md += `## Budget plan (default BALANCED -- reserve 20 / max-share 0.35)\nSpread the budget for a DEEP roster of solid starters, not 2-3 studs: cap any one player at ~$${Math.round(budget * 0.35)} (the max-share cap) and keep >=$1/slot so every slot fills. The room is stars-and-scrubs (61% of picks $1-5) and overpays for studs that bust weekly -- let those bidding wars pass and buy the middle where the room is broke. This balanced posture won the backtest (24.2% titles vs 15.7% aggressive-lean; docs/validation.md).\n\n`;
+  md += `## Budget plan (default BALANCED -- reserve 15 / max-share 0.35)\nSpread the budget for a DEEP roster of solid starters, not 2-3 studs: cap any one player at ~$${Math.round(budget * 0.35)} (the max-share cap) and keep >=$1/slot so every slot fills. The room is stars-and-scrubs (61% of picks $1-5) and overpays for studs that bust weekly -- let those bidding wars pass and buy the middle where the room is broke. This balanced posture won the backtest (24.2% titles vs 15.7% aggressive-lean; docs/validation.md).\n\n`;
   md += `## Nomination drain plan\n${nomPlan}\n- QB/TE go **cheap once the payers are spent** -- wait them out.\n\n`;
   md += `## Top overall (by value)\n` + players.sort((a, b) => b.value - a.value).slice(0, 15).map((p, i) => `${i + 1}. ${p.name} (${p.pos}) **$${p.value}**`).join("\n") + "\n\n";
   md += `## Tiers by position\n`;
@@ -537,7 +537,7 @@ async function cmdSim(rest: string[]) {
   for (const f of readCsv(valuesFile)) ourValues.set(f[0].trim(), Number(f[2]));
   const cfg = {
     values: Object.fromEntries(ourValues),
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 20),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 15),
     benchReserve: 1,
     premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
@@ -564,7 +564,7 @@ async function cmdBacktest(rest: string[]) {
   const nPerSeason = Number(valueOf(rest, "--n") ?? 300);
   const cfg = {
     values: {} as Record<string, number>,
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 20),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 15),
     benchReserve: 1, premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0), maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
     inflation: rest.includes("--inflation"), scarcity: rest.includes("--scarcity"),
@@ -768,12 +768,13 @@ async function cmdAutoDraft(rest: string[]) {
   const strat = makeV2Strategy({
     values: Object.keys(values).length ? values : undefined,
     nameKey,
-    // Defaults = BALANCED (reserve 20 / max-share 0.35 / premium 2), chosen by the trustworthy
-    // full-system no-lookahead backtest on the real 12-slot roster (Step 5, docs/validation.md):
-    // championship 24.2% vs the old aggressive-lean 5/0.6 at 15.7% (n=400, 2015-2024, inflation ON).
-    // The overpaying room wastes money on studs that bust weekly; a deep balanced roster with real
-    // depth wins the H2H+playoff season. Values = OUR VOR->$ (data/values.csv).
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 20),
+    // Defaults = BALANCED (reserve 15 / max-share 0.35 / premium 2), from the trustworthy full-system
+    // no-lookahead backtest on the real 12-slot roster (Step 5): the reserve 12-20 plateau is ~24%
+    // vs the old aggressive-lean 5/0.6 at 15.7% (n=400, 2015-2024, inflation ON). Reserve was set to
+    // 15 (not 20) after a live mock showed reserve 20 STRANDS budget once the room pays > $20/starter
+    // (soft cap collapses to $20 after one buy); at 15 the max-share cap governs ($70) so we stay in
+    // the auction, and the sim is statistically tied (23.7 vs 24.0). Values = OUR VOR->$.
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 15),
     benchReserve: Number(valueOf(rest, "--bench-reserve") ?? 1),
     premium: Number(valueOf(rest, "--premium") ?? 2),
     aggr: Number(valueOf(rest, "--aggr") ?? 1.0),

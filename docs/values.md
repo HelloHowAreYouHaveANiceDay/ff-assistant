@@ -48,7 +48,7 @@ ever need one (`raw.githubusercontent.com/dynastyprocess/data/master/files/db_pl
 **Conclusion:** for seacaptaindate.com the edge is NOT a fancier value table -- it is DISCIPLINE.
 The room overpays studs ($80-106) vs ESPN book (docs/league-tendencies.md), so bidding ESPN's own
 live values with a **balanced, disciplined posture** captures value -- and that is a STRATEGY-PARAM
-change, not a data file. Defaults now encode it: `starterReserve 20`, `maxShare 0.35`, `premium 2`
+change, not a data file. Defaults now encode it: `starterReserve 15`, `maxShare 0.35`, `premium 2`
 (the balanced backtest winner -- Step 5, docs/validation.md).
 
 **Optional future edge (v3):** a real REDRAFT value table from FantasyPros redraft ECR (via

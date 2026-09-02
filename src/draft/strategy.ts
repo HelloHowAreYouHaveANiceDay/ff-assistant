@@ -129,7 +129,7 @@ export interface V2Config {
   nameKey?: (s: string) => string; // normalizer to key `values` by (default: identity)
   targets?: Record<string, number>; // per-player premium multiplier (e.g. 1.2)
   avoids?: Set<string>;
-  starterReserve?: number; // $ to keep for each other open STARTER slot (default 20 -- balanced, Step 5)
+  starterReserve?: number; // $ to keep for each other open STARTER slot (default 15 -- balanced, Step 5/Tier2)
   benchReserve?: number; // $ to keep for each other open BENCH slot (default 1)
   premium?: number; // small bump to outbid at consensus (default 1)
   aggr?: number; // global aggressiveness multiplier on value (default 1.0)
@@ -156,7 +156,7 @@ export function reserveForOthers(state: DraftState, fillingBench: boolean, start
 }
 
 export function makeV2Strategy(cfg: V2Config = {}): Strategy {
-  const starterReserve = cfg.starterReserve ?? 20;
+  const starterReserve = cfg.starterReserve ?? 15;
   const benchReserve = cfg.benchReserve ?? 1;
   const premium = cfg.premium ?? 1;
   const aggr = cfg.aggr ?? 1.0;

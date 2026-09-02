@@ -52,7 +52,7 @@ stable read on how THIS room drafts. Raw data: `data/draft-recap-{2023,2024,2025
 
 > **Corrected by the CHAMPIONSHIP backtest (Step 5, docs/validation.md):** the SIM (season points)
 > liked concentration, but that proxy over-rewards top-heavy rosters. On the trustworthy full-system
-> no-lookahead backtest, **BALANCED wins**: defaults are now `--starter-reserve 20 --max-share 0.35`
+> no-lookahead backtest, **BALANCED wins**: defaults are now `--starter-reserve 15 --max-share 0.35`
 > (24.2% titles vs 15.7% for the old aggressive-lean 5/0.6). The room overpays for STUDS that bust
 > weekly, so a deep balanced roster banks that overpay -- do NOT chase the top studs.
 

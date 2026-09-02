@@ -39,7 +39,7 @@ The agent also never forgets to set a lineup or misses a bye -- a real edge over
 The earlier "NONE across seasons (~27-28%)" was the OLD uniform bot on the wrong 16-slot roster and
 did not hold. On the realistic per-manager field + the real 12-slot roster + the multi-season value
 curve, championship rises with the per-starter reserve to a plateau at reserve 15-20 (~24%) and
-collapses at 25 (over-reserved). New default: **reserve 20 / max-share 0.35** (24.2%) vs the old
+collapses at 25 (over-reserved). New default: **reserve 15 / max-share 0.35** (~24%, the 12-20 plateau; 15 over 20 for live robustness) vs the old
 aggressive-lean 5/0.6 (15.7%) -- a ~8.5-pt swing, measured against the realistic field on the
 12-slot roster; the earlier neutrality was the uniform bot. Full table: docs/validation.md.
 

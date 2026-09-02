@@ -41,17 +41,23 @@ no-lookahead championship rate, `backtest --full --no-lookahead --inflation --se
 |---|---|---|---|---|
 | **5** (old default) | 20.1 | 17.6 | 16.6 | **15.7** |
 | **10** | 22.2 | 22.6 | 20.7 | 19.2 |
-| **15** | 23.3 | 24.5 | 23.9 | 23.9 |
-| **20** (new default) | **24.1** | **24.1** | 24.1 | 24.1 |
+| **15** (new default) | 23.3 | **24.5** | 23.9 | 23.9 |
+| **20** | 24.1 | 24.1 | 24.1 | 24.1 |
 | **25** | 2.8 | 2.8 | 2.8 | 2.8 |
 
-Championship rises with the per-starter RESERVE up to a plateau at reserve 15-20 (~24%), then
-COLLAPSES at 25 (8 other starters x $25 = the whole $200 budget -> we bid $1 on everyone). At
-reserve 20 the reserve binds and max-share is non-binding (all four columns equal). **New default =
-reserve 20 / max-share 0.35 / premium 2** (24.2% at n=400, playoff 82% -- ties the top championship
-and wins the playoff tie-break). It beats the old aggressive-lean 5/0.6 (15.7%) by ~8.5 pts, far
-more than 2 SE (~1.2 pts at n=400). Cross-checks agree: without inflation the top cells drop to
-20.3% (inflation stays ON, +~4 pts); draft-only lookahead has 20/0.35 at 25.4% vs 5/0.6 at 19.7%.
+Championship rises with the per-starter RESERVE up to a plateau at reserve 12-20 (~24%), then
+COLLAPSES at 25 (8 other starters x $25 = the whole $200 budget -> we bid $1 on everyone). **Default
+= reserve 15 / max-share 0.35 / premium 2** (~24% at n=400). The whole plateau 12-20 is statistically
+tied (SE ~0.6 pts), and it beats the old aggressive-lean 5/0.6 (15.7%) by ~8.5 pts, far more than 2
+SE. Cross-checks agree: without inflation the top cells drop to 20.3% (inflation stays ON, +~4 pts);
+draft-only lookahead has 15/0.35 at ~25% vs 5/0.6 at 19.7%.
+
+> **Reserve 15, not 20 -- a LIVE robustness call (Tier 2, 2026-09-02).** In the sim 20 edges 15 by a
+> statistical tie, but a live ESPN mock showed reserve 20 STRANDS budget: at 20 the reserve binds
+> (8 x $20 = $160 reserved), so after ONE buy the soft cap collapses to ~$20 and we get outbid on
+> every remaining starter, ending with 1 player + $1 scraps. At 15 the max-share cap governs instead
+> ($70), the soft cap stays healthy (~$58 after a buy), and we keep competing. Reserve 15 sits at the
+> low end of the sim plateau AND survives a room that pays > $20/starter -- the robust choice.
 The edge is still discipline + independent values vs an overpaying room -- but the room overpays for
 STUDS that bust weekly, so a DEEP balanced roster, not a stars-and-scrubs one, banks it.
 
@@ -66,7 +72,7 @@ truth. Sweep (11 seasons, config fixed):
   room's blind spots.**
 - tighter accuracy: 0.25 -> 41%, 0.20 -> 43%, 0.12 -> 44%, 0.05 -> 46%.
 So VALUES are the top tunable lever. Full breakdown: docs/edges.md. Config is NOT neutral though
-(see the Step 5 table above): keep the BALANCED default (reserve 20 / max-share 0.35) -- the deep
+(see the Step 5 table above): keep the BALANCED default (reserve 15 / max-share 0.35) -- the deep
 roster banks the room's stud-overpay -- and invest most in better VALUES + discipline vs the room.
 
 ## FULL-SYSTEM backtest (`--full --no-lookahead`) -- the whole pipeline end-to-end
@@ -168,7 +174,7 @@ The harness repeatedly corrected intuition -- which is the point:
   vs ~3.5 for moderate). This MATCHES the league's real behavior (61% of picks are $1-5).
 - **`ff sim` prefers concentration, but that is the season-points proxy over-rewarding top-heavy
   rosters (it has no playoffs) -- do NOT pick the config from it.** The real default is BALANCED
-  (reserve 20 / max-share 0.35, premium 2), chosen from the championship backtest (Step 5 table
+  (reserve 15 / max-share 0.35, premium 2), chosen from the championship backtest (Step 5 table
   above), which the sim's own "Known limitation" section below predicts.
 
 ## Known limitation to weigh (why we don't just go max-aggression)

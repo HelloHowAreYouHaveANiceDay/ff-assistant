@@ -12,7 +12,7 @@
 > value for a player, but only what we can afford while reserving real $ per other open STARTER
 > slot. Plus **jump-bidding** (`jumpBid`, manual-offer field) so we actually WIN the studs we value
 > -- the +1 button was too slow. VERIFIED LIVE: wins real starters (Jeremiyah Love ~$59, Josh Allen,
-> A.J. Brown). Tuning knobs (all in `V2Config`): `starterReserve` (balance vs concentration -- 20),
+> A.J. Brown). Tuning knobs (all in `V2Config`): `starterReserve` (balance vs concentration -- 15),
 > `maxShare` (0.35 cap per player), `premium`, `aggr`, plus a pluggable value table (OUR values via
 > CSV, else ESPN pre-draft val). Tests 15+ incl. fault-injection (never-strand, fill-floor) + seam.
 > **Open:** balance still leans stars-and-scrubs, being tuned via `starterReserve`; `nominate()`

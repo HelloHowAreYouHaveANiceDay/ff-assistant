@@ -369,6 +369,24 @@ win rate (only the calibrated field / real league can). Open items needing the u
 strategy's live aggression decision, the human-bid-respect + roster-anchor code, and the clean
 NOMINATE-count verification.
 
+TIER 2 DIAGNOSIS + FIXES (user approved "diagnose & fix both", 2026-09-02):
+- BUG: `computeInflation` clamped to [0.7, 2.0], NOT the documented [0.8, 1.4] -> live inflation hit
+  0.70 and crushed our caps to $13-20. FIXED to [0.8, 1.4] (inflation.ts). Verified live on a fresh
+  mock: caps rose from $13-20 to $31-70 (max-share governed). Backtest re-run confirms the default
+  cell barely moved (reserve 20/0.35: 24.2 -> 24.0%). Test "FAULT: short board pads..." updated
+  (both sides were clamping at the new 1.4 ceiling).
+- RESERVE: reserve 20 STRANDS budget live -- after one buy the reserve binds and the soft cap
+  collapses to ~$20, so we win 1 player + $1 scraps. Changed default 20 -> **15** (cmdAutoDraft,
+  cmdSim, cmdBacktest, makeV2Strategy, all docs): sim-tied (23.7 vs 24.0, plateau 12-20 within SE)
+  but at 15 the max-share cap governs ($70) and the soft cap stays ~$58 after a buy, so we keep
+  competing. Verified live: at reserve 15 caps stayed healthy.
+- Live-verified this session: readTurn-gated NOMINATE fired "(our turn)" with 0 "(failed)" lines;
+  PAUSE file -> `PAUSED` then `RESUMED` with no bids between (Step 9a).
+- REMAINING CAVEAT: even fixed, we win few players in the ESPN mock because its generic bots overpay
+  UNIFORMLY vs our (real-league-calibrated) VOR values (e.g. a $22 WR cleared at $24 > our cap). The
+  mock validates ENGINE MECHANICS + guards (all pass); it is NOT a valid test of the strategy's win
+  rate -- only the real seacaptaindate.com field is. Do NOT over-tune to the mock. `npm test` 46/46.
+
 ## Tier 3 -- after the draft (honesty of the in-season claims + docs)
 
 ### Step 11. In-season numbers: measure the projection layer, not an oracle

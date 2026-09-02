@@ -26,7 +26,10 @@ export function computeInflation(remaining: RemainingPlayer[], remainingDollars:
   if (draftable.length < remainingSlots) bookValue += (remainingSlots - draftable.length) * 1;
   if (bookValue <= 0) return 1;
   const inf = remainingDollars / bookValue;
-  return Math.max(0.7, Math.min(2.0, inf));
+  // Bounded to the documented [0.8, 1.4] band (was [0.7, 2.0], which let a value-rich board deflate
+  // our bids to 0.70 and, live, kept us from winning a competitive roster). A live draft repriced to
+  // 0.7 stranded ~$130 of budget (2026-09-02 mock); tightening the floor keeps us in the auction.
+  return Math.max(0.8, Math.min(1.4, inf));
 }
 
 /** Per-position repricing factors from the DRAFTED picks so far. Each position's EMPIRICAL inflation
