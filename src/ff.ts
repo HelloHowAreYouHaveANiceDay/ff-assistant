@@ -688,7 +688,9 @@ async function cmdAutoDraft(rest: string[]) {
   const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, readLeague, nominate } = await import("./draft/espnAuction.js");
   const { loadRankings } = await import("./data/rankings.js");
   const { makeV2Strategy } = await import("./draft/strategy.js");
-  const rounds = Number(valueOf(rest, "--rounds") ?? 400);
+  // A full 16-team auction runs ~25-30 min; at ~1.4s/tick + read overhead that's ~1000+ ticks, so the
+  // cap must comfortably outlast the whole draft (it exits early on a full roster or a stall).
+  const rounds = Number(valueOf(rest, "--rounds") ?? 1600);
   // Default to OUR values table (data/values.csv) if present; else the strategy falls back to
   // ESPN's on-screen value per player. Pass --csv "" to force the ESPN fallback.
   const { existsSync } = await import("node:fs");
@@ -749,6 +751,7 @@ async function cmdAutoDraft(rest: string[]) {
   let league = { remainingDollars: 0, teams: 16 };
   let picks: import("./draft/espnAuction.js").DraftPick[] = [];
   let liveInflation = 1;
+  let lastPicksLen = -1, stallRefreshes = 0; // draft-over / stall detection
   const logPath = `data/draft-log-${Date.now()}.json`;
   for (let i = 0; i < rounds; i++) {
     const r = await readRoster(page);
@@ -780,6 +783,11 @@ async function cmdAutoDraft(rest: string[]) {
         liveInflation = computeInflation(undrafted, league.remainingDollars || (200 - r.spent) * league.teams, remainingSlots);
         try { writeFileSync(logPath, JSON.stringify({ updated: new Date().toISOString(), remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length, liveInflation, positional: positionalStats(picks, universe, nkey), picks }, null, 0)); } catch { /* best-effort */ }
       }
+      // Draft-over / stall guard: if the LEAGUE hasn't drafted anyone new across many refreshes
+      // (~90s) while we still have open slots, the draft has ended or wedged -> stop instead of
+      // spinning to the round cap. (Refresh cadence is every 4 ticks; 16 refreshes ~= 90s.)
+      if (picks.length > 0 && picks.length === lastPicksLen) { if (++stallRefreshes >= 16) { console.log(`draft over/stalled: no new league picks in ~90s, roster ${r.filled}/${r.filled + r.open}. Stopping.`); break; } }
+      else { stallRefreshes = 0; lastPicksLen = picks.length; }
     }
     const b = await readBlock(page);
     if (b.onBlock && b.player && b.canBid) {
