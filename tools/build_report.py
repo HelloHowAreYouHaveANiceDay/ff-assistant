@@ -11,7 +11,8 @@ import polars as pl
 import nflreadpy as nfl
 to_pl = lambda x: x.to_polars() if hasattr(x, "to_polars") else x
 
-SEASON = 2025
+SEASON = 2026            # the season being drafted (today)
+LAST_YR = SEASON - 1     # last completed season, for last-year production
 ASOF = datetime.date(SEASON, 9, 1)  # age reference
 POS = ["QB", "RB", "WR", "TE", "K", "DST"]
 
@@ -31,16 +32,20 @@ def nkey(s):
 # --- our values + projected points (both from build_projections -> exact-name join) ---
 values = {r["player"]: r for r in read_csv("data/values.csv")}
 points = {r["player"]: float(r["points"]) for r in read_csv("data/points.csv") if r.get("points")}
-lastyr_pts = {nkey(r["player"]): float(r["points"]) for r in read_csv("data/points-2024.csv") if r.get("points")}
 
-# --- last-year games played (distinct 2024 REG weeks per player) from history-weekly.csv ---
-lastyr_gms = {}
-for r in read_csv("data/history-weekly.csv"):
-    if r.get("season") == "2024":
-        k = nkey(r.get("player", ""))
-        lastyr_gms[k] = lastyr_gms.get(k, set())
-        lastyr_gms[k].add(r.get("week"))
-lastyr_gms = {k: len(v) for k, v in lastyr_gms.items()}
+# --- last-year (LAST_YR) production + games from nflverse actuals: No-PPR points, REG games ---
+lastyr_pts, lastyr_gms = {}, {}
+ly = to_pl(nfl.load_player_stats(seasons=[LAST_YR])).filter(pl.col("season_type") == "REG")
+def lc(n):
+    return pl.col(n) if n in ly.columns else pl.lit(0)
+ly = ly.with_columns((lc("passing_yards") / 25 + lc("passing_tds") * 4 - lc("passing_interceptions") * 2
+                      + lc("rushing_yards") / 10 + lc("rushing_tds") * 6 + lc("receiving_yards") / 10
+                      + lc("receiving_tds") * 6 - (lc("rushing_fumbles_lost") + lc("receiving_fumbles_lost")) * 2).alias("fp"))
+agg = ly.group_by("player_display_name").agg([pl.col("fp").sum().alias("pts"), pl.col("week").n_unique().alias("gms")])
+for name, pts, gms in agg.rows():
+    k = nkey(name)
+    lastyr_pts[k] = round(pts, 1)
+    lastyr_gms[k] = gms
 
 # --- consensus + per-source signals from FantasyPros ranks (ECR + expert range + ESPN/Yahoo own%) ---
 rk = to_pl(nfl.load_ff_rankings())
@@ -62,7 +67,7 @@ for player, pos, team, e, epos, best, worst, rostered in sel.rows():
 espn_rank = {}
 try:
     import requests, json as _json
-    _url = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/2025/segments/0/leaguedefaults/3"
+    _url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{SEASON}/segments/0/leaguedefaults/3"
     _hdr = {"x-fantasy-filter": _json.dumps({"players": {"limit": 900, "sortDraftRanks": {"sortPriority": 1, "sortAsc": True, "value": "STANDARD"}}})}
     _r = requests.get(_url, params={"view": "kona_player_info"}, headers=_hdr, timeout=30)
     for p in _r.json().get("players", []):
@@ -189,12 +194,14 @@ for i, r in enumerate(rows):
         tier_top[p] = r["our_value"]
     r["tier"] = f"{p}-T{tier_no[p]}"
 
+# NOTE: no structured Injury column -- nflverse has no current-season injury feed yet, so current
+# injuries surface via the live-RSS "Latest News" column instead (a stale year-old feed would mislead).
 COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "tier", "team", "bye", "age", "exp", "ht", "wt", "forty",
         "our_value", "edge", "proj_pts", "last_pts", "last_gms",
-        "ecr", "best", "worst", "espn_rank", "rostered", "buzz", "injury", "depth", "news"]
+        "ecr", "best", "worst", "espn_rank", "rostered", "buzz", "depth", "news"]
 HEADER = ["Rank", "Player", "Pos", "PosRank", "ECR_Pos", "Tier", "Team", "Bye", "Age", "Exp", "Ht", "Wt", "40yd",
-          "OurValue$", "vsECR", "ProjPts", "LastYrPts", "LastYrGms",
-          "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "Rostered%", "SleeperBuzz", "Injury", "Depth", "Latest News"]
+          "OurValue$", "vsECR", "ProjPts", f"{LAST_YR}Pts", f"{LAST_YR}Gms",
+          "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "Rostered%", "SleeperBuzz", "Depth", "Latest News"]
 
 os.makedirs("data", exist_ok=True)
 def san(x, sep):

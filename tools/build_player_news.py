@@ -16,7 +16,7 @@ import feedparser
 import requests
 to_pl = lambda x: x.to_polars() if hasattr(x, "to_polars") else x
 
-SEASON = 2025  # latest nflverse season; bump when newer data lands
+SEASON = 2026  # the season being drafted (today). nflverse structured data may lag by a season.
 WEEK = 1       # injuries: week-1 REG = the season-opener / draft-time status (no preseason feed)
 if "--week" in sys.argv:
     WEEK = int(sys.argv[sys.argv.index("--week") + 1])
@@ -32,22 +32,36 @@ RSS = {
 
 rows = []  # list of dicts with the schema keys
 
-# --- Source A: injuries (latest report at the target week) ---
-inj = to_pl(nfl.load_injuries(seasons=[SEASON]))
-inj = inj.filter((pl.col("season_type") == "REG") & (pl.col("week") == WEEK))
-inj = inj.filter(pl.col("report_status").is_in(["Out", "Doubtful", "Questionable"]))
-for gsis, player, pos, team, status, injury in inj.select(
-    ["gsis_id", "full_name", "position", "team", "report_status", "report_primary_injury"]
-).rows():
-    if pos not in POS:
-        continue
-    sev = "high" if status in ("Out", "Doubtful") else "medium"
-    detail = f"{status} - {injury}" if injury else status
-    rows.append(dict(player=player, pos=pos, team=team or "", category="injury", severity=sev,
-                     detail=detail, source="nflverse-injury", asof=f"{SEASON} wk{WEEK}"))
+# --- Source A: injuries (latest report at the target week). nflverse injury data lags -- if this
+# season is not loaded yet, there is simply no structured injury feed; current injuries then come
+# only from the live RSS headlines below (that is honest, not a bug). ---
+inj_season = SEASON
+try:
+    inj = to_pl(nfl.load_injuries(seasons=[SEASON]))
+except Exception:
+    inj_season = SEASON - 1  # structured injuries lag; fall back to last season's, labelled as such
+    try:
+        inj = to_pl(nfl.load_injuries(seasons=[inj_season]))
+    except Exception:
+        inj = None
+if inj is not None:
+    inj = inj.filter((pl.col("season_type") == "REG") & (pl.col("week") == WEEK))
+    inj = inj.filter(pl.col("report_status").is_in(["Out", "Doubtful", "Questionable"]))
+    for gsis, player, pos, team, status, injury in inj.select(
+        ["gsis_id", "full_name", "position", "team", "report_status", "report_primary_injury"]
+    ).rows():
+        if pos not in POS:
+            continue
+        sev = "high" if status in ("Out", "Doubtful") else "medium"
+        detail = f"{status} - {injury}" if injury else status
+        rows.append(dict(player=player, pos=pos, team=team or "", category="injury", severity=sev,
+                         detail=detail, source="nflverse-injury", asof=f"{inj_season} wk{WEEK}"))
 
 # --- Source B: depth-chart role (most recent snapshot per player) ---
-dc = to_pl(nfl.load_depth_charts(seasons=[SEASON]))
+try:
+    dc = to_pl(nfl.load_depth_charts(seasons=[SEASON]))
+except Exception:
+    dc = to_pl(nfl.load_depth_charts(seasons=[SEASON - 1]))
 dc = dc.filter(pl.col("pos_abb").is_in(POS)).sort("dt").unique(subset=["gsis_id"], keep="last")
 # a name index of fantasy-relevant players (for RSS tagging) + emit role rows for backups.
 # severity is a GENERAL fantasy-relevance hint (not a specific league's roster): a QB/TE/K at depth 2
