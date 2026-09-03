@@ -31,9 +31,10 @@ function placeholder(icon,title,body){
   document.getElementById("view").innerHTML =
    `<div class="placeholder"><div class="big">${icon}</div><h2>${title}</h2><p>${body}</p></div>`;
 }
+const TITLES={board:"Draft Board",team:"My Team",news:"News",room:"Draft Room",settings:"Settings"};
 function setView(v){
   document.querySelectorAll(".nv").forEach(b=>b.classList.toggle("on",b.dataset.view===v));
-  document.getElementById("crumb").textContent = document.querySelector(`.nv[data-view="${v}"]`).textContent.trim();
+  document.getElementById("crumb").textContent = TITLES[v]||"Draft Board";
   (views[v]||views.board)();
 }
 document.querySelectorAll(".nv").forEach(b=>b.onclick=()=>setView(b.dataset.view));
