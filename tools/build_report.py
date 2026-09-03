@@ -63,8 +63,9 @@ for player, pos, team, e, epos, best, worst, rostered in sel.rows():
     ecr[nm] = {"team": team or "", "ecr": e, "ecr_pos": f"{pos}{epos}",
                "best": rnd(best), "worst": rnd(worst), "rostered": rnd(rostered)}
 
-# --- ESPN's own draft ranking (STANDARD scoring) via the ESPN fantasy API -> a second source rank ---
-espn_rank = {}
+# --- ESPN's own draft rank (STANDARD) + average draft position (ADP) via the ESPN fantasy API,
+# a genuine SECOND-source ranking to compare against FantasyPros ECR ---
+espn_rank, espn_adp = {}, {}
 try:
     import requests, json as _json
     _url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{SEASON}/segments/0/leaguedefaults/3"
@@ -73,9 +74,12 @@ try:
     for p in _r.json().get("players", []):
         pp = p.get("player", {})
         rr = (pp.get("draftRanksByRankType", {}).get("STANDARD", {}) or {}).get("rank")
-        nm = pp.get("fullName")
-        if nm and rr is not None:
-            espn_rank.setdefault(nkey(nm), rr)
+        adp = pp.get("ownership", {}).get("averageDraftPosition")
+        k = nkey(pp.get("fullName") or "")
+        if k and rr is not None:
+            espn_rank.setdefault(k, rr)
+        if k and adp is not None and adp > 0:
+            espn_adp.setdefault(k, round(adp, 1))
 except Exception as e:
     print(f"espn ranks: ERR {str(e)[:70]}")
 
@@ -173,7 +177,7 @@ for name, v in values.items():
         "last_gms": lastyr_gms.get(k, ""),
         "ecr": meta.get("ecr", ""), "ecr_pos": meta.get("ecr_pos", ""),
         "best": meta.get("best", ""), "worst": meta.get("worst", ""),
-        "espn_rank": espn_rank.get(k, ""), "rostered": meta.get("rostered", ""),
+        "espn_rank": espn_rank.get(k, ""), "espn_adp": espn_adp.get(k, ""), "rostered": meta.get("rostered", ""),
         "injury": nd.get("injury", ""), "depth": nd.get("depth", ""),
         "buzz": nd.get("buzz", ""), "news": nd.get("news", ""), "news_url": nd.get("url", ""),
     })
@@ -195,14 +199,27 @@ for i, r in enumerate(rows):
         tier_top[p] = r["our_value"]
     r["tier"] = f"{p}-T{tier_no[p]}"
 
+# ESPN positional rank: rank within each position by ESPN's overall rank (for the per-source compare).
+espn_by_pos = {}
+for r in rows:
+    if isinstance(r.get("espn_rank"), (int, float)):
+        espn_by_pos.setdefault(r["pos"], []).append(r)
+for p, rs in espn_by_pos.items():
+    rs.sort(key=lambda r: r["espn_rank"])
+    for i, r in enumerate(rs):
+        r["espn_pos"] = f"{p}{i + 1}"
+for r in rows:
+    r.setdefault("espn_pos", "")
+
 # NOTE: no structured Injury column -- nflverse has no current-season injury feed yet, so current
 # injuries surface via the live-RSS "Latest News" column instead (a stale year-old feed would mislead).
-COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "tier", "team", "bye", "age", "exp", "ht", "wt", "forty",
+# per-source ranks grouped for comparison: positional trio Us/ECR/ESPN, then overall ECR/ESPN(+ADP)
+COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "espn_pos", "tier", "team", "bye", "age", "exp", "ht", "wt", "forty",
         "our_value", "edge", "proj_pts", "last_pts", "last_gms",
-        "ecr", "best", "worst", "espn_rank", "rostered", "buzz", "depth", "news", "news_url"]
-HEADER = ["Rank", "Player", "Pos", "PosRank", "ECR_Pos", "Tier", "Team", "Bye", "Age", "Exp", "Ht", "Wt", "40yd",
+        "ecr", "best", "worst", "espn_rank", "espn_adp", "rostered", "buzz", "depth", "news", "news_url"]
+HEADER = ["Rank", "Player", "Pos", "Us_Pos", "ECR_Pos", "ESPN_Pos", "Tier", "Team", "Bye", "Age", "Exp", "Ht", "Wt", "40yd",
           "OurValue$", "vsECR", "ProjPts", f"{LAST_YR}Pts", f"{LAST_YR}Gms",
-          "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "Rostered%", "SleeperBuzz", "Depth", "Latest News", "NewsURL"]
+          "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "ESPN_ADP", "Rostered%", "SleeperBuzz", "Depth", "Latest News", "NewsURL"]
 
 os.makedirs("data", exist_ok=True)
 def san(x, sep):
