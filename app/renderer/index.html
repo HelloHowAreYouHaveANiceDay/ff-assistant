@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Fantasy Mission Control</title>
+<link rel="stylesheet" href="app.css">
+<script>window.onerror=(m,s,l,c)=>{window.__err=(m+" @"+l+":"+c)};</script>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <div class="brand"><span class="logo">&#127944;</span><div><div class="bt">Mission Control</div><div class="bs">Fantasy 2026</div></div></div>
+    <nav id="nav">
+      <button class="nv on" data-view="board"><span>&#128203;</span> Draft Board</button>
+      <button class="nv" data-view="team"><span>&#127944;</span> My Team</button>
+      <button class="nv" data-view="news"><span>&#128240;</span> News</button>
+      <button class="nv" data-view="room"><span>&#9889;</span> Draft Room</button>
+      <button class="nv" data-view="settings"><span>&#9881;</span> Settings</button>
+    </nav>
+    <div class="side-foot">
+      <div class="stat"><span>Players</span><b id="s-players">-</b></div>
+      <div class="stat"><span>Engine</span><b class="ok">ff CLI</b></div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="top">
+      <div id="crumb">Draft Board</div>
+      <div class="pillbar">
+        <span class="status"><i class="dot amber"></i> Draft: not connected</span>
+        <span class="status"><i class="dot green"></i> Values: 2026</span>
+      </div>
+    </header>
+    <section id="view"></section>
+  </main>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body></html>

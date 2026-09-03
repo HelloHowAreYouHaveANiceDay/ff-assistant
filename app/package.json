@@ -1,0 +1,12 @@
+{
+  "name": "fantasy-mission-control",
+  "version": "0.1.0",
+  "description": "Fantasy Mission Control -- the desktop cockpit for the ff-assistant engine",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^32.2.0"
+  }
+}
