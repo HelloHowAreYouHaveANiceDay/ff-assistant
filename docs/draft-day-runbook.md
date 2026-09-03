@@ -32,11 +32,13 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
 4. **Generate the cheat sheet:** `npm run ff -- cheatsheet` -> `data/cheatsheet.md`. Keep it open.
 4b. **Full draft board (Google-Sheets table):**
    ```
-   uv run --with nflreadpy --with polars tools/build_report.py       # -> data/player-report.csv + .tsv
+   uv run --with nflreadpy --with polars --with requests tools/build_report.py   # -> data/player-report.csv + .tsv
    ```
-   One exhaustive row per player joining OUR value + proj pts + team + bye + FantasyPros consensus
-   rank (ECR) + injury/depth/latest-news. Paste `data/player-report.tsv` into cell A1 of a Google
-   Sheet (tabs split the columns), or File > Import `data/player-report.csv`.
+   One exhaustive row per player (27 cols): OUR value/rank + proj pts + team/bye + bio (age, exp,
+   ht/wt, 40yd) + rankings from each source (ECR + best/worst, ESPN_Rank, Rostered%, Sleeper buzz) +
+   last-year pts/games + injury/depth/latest-news. Paste `data/player-report.tsv` into A1, or File >
+   Import `data/player-report.csv`. To push a LIVE Google Sheet, see `tools/build_report.py` header
+   and the bim-google recipe (create via token, chunked `sheets write --grid`, then `format`).
 
 ## What the cheat sheet gives you (the human copilot view)
 
