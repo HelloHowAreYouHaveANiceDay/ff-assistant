@@ -9,10 +9,12 @@
   <aside id="side">
     <div class="brand"><span class="logo">&#127944;</span><div><div class="bt">Mission Control</div><div class="bs lbl">Fantasy 2026</div></div></div>
     <nav id="nav">
-      <button class="nv on" data-view="board"><span>&#128203;</span> Draft Board</button>
+      <button class="nv on" data-view="board"><span>&#128101;</span> Players</button>
       <button class="nv" data-view="team"><span>&#127944;</span> My Team</button>
       <button class="nv" data-view="news"><span>&#128240;</span> News</button>
       <button class="nv" data-view="room"><span>&#9889;</span> Draft Room</button>
+      <button class="nv" data-view="copilot"><span>&#129302;</span> Copilot</button>
+      <button class="nv" data-view="live"><span>&#127760;</span> Live Draft</button>
       <button class="nv" data-view="settings"><span>&#9881;</span> Settings</button>
     </nav>
     <div class="side-foot">
@@ -31,6 +33,19 @@
       </div>
     </header>
     <section id="view"></section>
+    <!-- Persistent authenticated ESPN browsing surface: mounted once so it survives view switches
+         and is ALWAYS a CDP target the engine/agent can navigate (through the app's own session,
+         never bro). Shown under the Live Draft toolbar; hidden elsewhere. -->
+    <div id="webview-layer" class="off">
+      <div class="livebar">
+        <button class="pbtn" id="lv-back" title="Back">&#8592;</button>
+        <button class="pbtn" id="lv-reload" title="Reload">&#8635;</button>
+        <button class="pbtn" id="lv-home" title="Fantasy home">Home</button>
+        <span class="lv-url mono mut" id="lv-url"></span>
+        <span class="lv-status mut" id="lv-status"></span>
+      </div>
+      <webview id="espnview" partition="persist:espn" src="https://fantasy.espn.com/football/" allowpopups></webview>
+    </div>
   </main>
 </div>
 <script src="data.js"></script>

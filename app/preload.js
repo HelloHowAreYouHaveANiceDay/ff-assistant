@@ -13,6 +13,21 @@ contextBridge.exposeInMainWorld("mc", {
   agentStop: () => ipcRenderer.invoke("mc:agentStop"),
   pause: (on) => ipcRenderer.invoke("mc:pause", on),
   isPaused: () => ipcRenderer.invoke("mc:isPaused"),
+  // live board + news + config, read from the SQLite store by the ff engine (replaces data.js)
+  appData: () => ipcRenderer.invoke("mc:appData"),
+  // Copilot auth (subscription via the `claude` login): status check + best-effort login trigger
+  authStatus: () => ipcRenderer.invoke("mc:authStatus"),
+  authLogin: () => ipcRenderer.invoke("mc:authLogin"),
+  // Copilot: ask the real Agent SDK session; agentAsk resolves when the turn ends, onAgentEvent
+  // streams its turns ({t:"text"|"tool"|"done", ...}) as they arrive.
+  agentAsk: (message) => ipcRenderer.invoke("mc:agentAsk", message),
+  onAgentEvent: (cb) => ipcRenderer.on("mc:agentEvent", (_e, data) => cb(data)),
+  // the drafted team lives in SQLite (my_roster) now -- read/write via the helper (source of truth)
+  teamSet: (team) => ipcRenderer.invoke("mc:teamSet", team),
+  teamGet: () => ipcRenderer.invoke("mc:teamGet"),
+  // onboarding: synced-league status (config + league row + player count), and a one-shot league sync
+  leagueInfo: () => ipcRenderer.invoke("mc:leagueInfo"),
+  syncLeague: () => ipcRenderer.invoke("mc:syncLeague"),
   // rebuild the values/report + embedded data (renderer reloads on success)
   refreshData: () => ipcRenderer.invoke("mc:refreshData"),
   // push the board to a Google Sheet via bim-cli (id/url optional)

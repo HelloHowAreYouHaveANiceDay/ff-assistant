@@ -1,9 +1,10 @@
-// Fantasy Mission Control renderer. Data injected by data.js; engine bridge on window.mc (Electron).
-const DATA = window.PLAYERS || [];
-const NEWS = window.NEWS || [];
-const CFG = window.CONFIG || { budget: 200, slots: ["QB","RB","RB","WR","WR","TE","FLEX","K","DST","BE","BE","BE"], flex_ok: ["RB","WR","TE"] };
+// Fantasy Mission Control renderer. In Electron the data is read LIVE from the SQLite store via
+// window.mc.appData() (the ff engine reads the DB); data.js is the fallback for browser preview.
+let DATA = window.PLAYERS || [];
+let NEWS = window.NEWS || [];
+let CFG = window.CONFIG || { budget: 200, slots: ["QB","RB","RB","WR","WR","TE","FLEX","K","DST","BE","BE","BE"], flex_ok: ["RB","WR","TE"] };
 const YR = window.LAST_YR || "LastYr";
-const byName = new Map(DATA.map(p => [p.Player, p]));
+let byName = new Map(DATA.map(p => [p.Player, p]));
 document.getElementById("s-players").textContent = DATA.length;
 
 const num = v => (v === "" || v == null || isNaN(v)) ? null : +v;
@@ -12,7 +13,7 @@ window.openUrl = u => { if (window.mc) window.mc.openExternal(u); else window.op
 
 /* ---------- my team (persisted) ---------- */
 let TEAM = (() => { try { return JSON.parse(localStorage.getItem("mc_team") || "[]"); } catch { return []; } })();
-const saveTeam = () => localStorage.setItem("mc_team", JSON.stringify(TEAM));
+const saveTeam = () => { localStorage.setItem("mc_team", JSON.stringify(TEAM)); if (window.mc && window.mc.teamSet) window.mc.teamSet(TEAM); };
 const onTeam = n => TEAM.some(t => t.name === n);
 const spent = () => TEAM.reduce((s, t) => s + (+t.price || 0), 0);
 function draft(n) { const p = byName.get(n); if (!p || onTeam(n)) return; TEAM.push({ name: n, price: +p["OurValue$"] || 1 }); saveTeam(); syncTeam(); }
@@ -39,14 +40,19 @@ function rosterSlots() {
 }
 
 /* ---------- view switching ---------- */
-const TITLES = { board: "Draft Board", team: "My Team", news: "News", room: "Draft Room", settings: "Settings" };
+const TITLES = { board: "Players", team: "My Team", news: "News", room: "Draft Room", copilot: "Copilot", live: "Live Draft", settings: "Settings" };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 let cur = "board";
 function setView(v) {
   if (roomTimer) { clearInterval(roomTimer); roomTimer = null; }
   cur = v;
   document.querySelectorAll(".nv").forEach(b => b.classList.toggle("on", b.dataset.view === v));
-  document.getElementById("crumb").textContent = TITLES[v] || "Draft Board";
-  (views[v] || views.board)();
+  document.getElementById("crumb").textContent = TITLES[v] || "Players";
+  // Live Draft = the persistent webview layer (kept mounted so it stays a CDP target); other views
+  // render into #view. In browser preview (no window.mc) there's no webview, so fall through.
+  const showWebview = v === "live" && !!window.mc;
+  const wl = document.getElementById("webview-layer"); if (wl) wl.classList.toggle("off", !showWebview);
+  (views[v] || views.board)(); // #view still renders (covered by the webview layer when live)
 }
 document.querySelectorAll(".nv").forEach(b => b.onclick = () => setView(b.dataset.view));
 
@@ -54,15 +60,35 @@ document.querySelectorAll(".nv").forEach(b => b.onclick = () => setView(b.datase
 const COLS = [
  ["act","","act"],["Rank","#","num"],["Player","Player","player"],["Pos","Pos","pos"],
  ["Us_Pos","Us","t"],["ECR_Pos","ECR","t"],["ESPN_Pos","ESPN","t"],["Tier","Tier","t"],
- ["Team","Tm","t"],["Bye","Bye","num"],["Age","Age","num"],
- ["OurValue$","Val$","val"],["vsECR","vsECR","delta"],["ProjPts","Proj","num1"],
+ ["Team","Team","team"],["Bye","Bye","num"],["Age","Age","num"],
+ ["OurValue$","Val$","val"],["vsECR","vsECR","delta"],
+ ["ADP","ADP","num1"],["vsADP","vsADP","delta"],["Mkt30d","Mkt30d","delta"],
+ ["ProjPts","Proj","num1"],
  [YR+"Pts",YR+"Pts","num1"],[YR+"Gms",YR+"G","gms"],
- ["ECR","ECR","num1"],["ESPN_Rank","ESPN#","num"],["ESPN_ADP","ADP","num1"],["Rostered%","Own%","num"],
+ ["ECR","ECR","num1"],["ESPN_Rank","ESPN#","num"],["ESPN_ADP","eADP","num1"],["Rostered%","Own%","num"],
  ["flags","News / Flags","flags"]
 ];
 const LEFT = new Set(["player","pos","flags","t","act"]);
+// columns where higher = better -> first click sorts descending (best first); everything else ascending
+const DESC_FIRST = new Set(["OurValue$","vsECR","vsADP","Mkt30d","ProjPts",YR+"Pts",YR+"Gms","Rostered%"]);
 const POS = ["ALL","QB","RB","WR","TE","K","DST"];
 let bst = { q:"", pos:"ALL", sleep:false, avail:false, hideDrafted:false, sort:"Rank", dir:1 };
+
+// NFL primary team colors for the Team chips. Aliases fold old/relocated abbreviations onto the current one.
+const TEAM_COLORS = {
+  ARI:"#97233F", ATL:"#A71930", BAL:"#241773", BUF:"#00338D", CAR:"#0085CA", CHI:"#0B162A",
+  CIN:"#FB4F14", CLE:"#311D00", DAL:"#003594", DEN:"#FB4F14", DET:"#0076B6", GB:"#203731",
+  HOU:"#03202F", IND:"#002C5F", JAX:"#006778", KC:"#E31837", LAC:"#0080C6", LAR:"#003594",
+  LV:"#000000", MIA:"#008E97", MIN:"#4F2683", NE:"#002244", NO:"#101820", NYG:"#0B2265",
+  NYJ:"#125740", PHI:"#004C54", PIT:"#101820", SEA:"#002244", SF:"#AA0000", TB:"#D50A0A",
+  TEN:"#0C2340", WAS:"#5A1414",
+  // aliases -> canonical color
+  JAC:"#006778", LA:"#003594", STL:"#003594", OAK:"#000000", SD:"#0080C6", WSH:"#5A1414", ARZ:"#97233F",
+};
+function contrastText(hex) { const h = hex.replace("#",""); const r=parseInt(h.slice(0,2),16), g=parseInt(h.slice(2,4),16), b=parseInt(h.slice(4,6),16);
+  return (0.299*r + 0.587*g + 0.114*b) > 150 ? "#141414" : "#ffffff"; }
+function teamChip(t) { t = (t||"").toUpperCase(); if (!t) return ""; const c = TEAM_COLORS[t] || "#6b6b6b";
+  return `<span class="team-chip" style="background:${c};color:${contrastText(c)}">${esc(t)}</span>`; }
 
 function views_board() {
   const view = document.getElementById("view");
@@ -79,7 +105,7 @@ function views_board() {
   const posEl = document.getElementById("pos");
   POS.forEach(p => { const b = document.createElement("div"); b.className = "pill" + (p===bst.pos?" on":""); b.textContent = p;
     b.onclick = () => { bst.pos = p; [...posEl.children].forEach(c => c.classList.toggle("on", c.textContent===p)); drawBody(); }; posEl.appendChild(b); });
-  document.getElementById("q").oninput = e => { bst.q = e.target.value.toLowerCase(); drawBody(); };
+  let qt; document.getElementById("q").oninput = e => { const v = e.target.value.toLowerCase(); clearTimeout(qt); qt = setTimeout(() => { bst.q = v; drawBody(); }, 90); };
   document.getElementById("sleep").onchange = e => { bst.sleep = e.target.checked; drawBody(); };
   document.getElementById("avail").onchange = e => { bst.avail = e.target.checked; drawBody(); };
   document.getElementById("hd").onchange = e => { bst.hideDrafted = e.target.checked; drawBody(); };
@@ -92,15 +118,17 @@ function thead() {
     return `<th class="${isL?'l':''}" data-k="${k}">${esc(l)}<span class="ar">${ar}</span></th>`; }).join("");
   document.getElementById("thead").innerHTML = "<tr>" + tr + "</tr>";
   document.querySelectorAll("thead th").forEach(th => th.onclick = () => { const k = th.dataset.k; if (k==="flags"||k==="act") return;
-    if (bst.sort===k) bst.dir *= -1; else { bst.sort = k; bst.dir = 1; } thead(); drawBody(); });
+    // first click on a "higher = better" column sorts DESCENDING (best first); rank-like columns ascending
+    if (bst.sort===k) bst.dir *= -1; else { bst.sort = k; bst.dir = DESC_FIRST.has(k) ? -1 : 1; } thead(); drawBody(); });
 }
 function sortVal(r,k) { if (k==="flags"||k==="act") return 0; const n = num(r[k]); return n==null ? (typeof r[k]==="string"?r[k]:1e9) : n; }
 function cell(r,k,kind) {
   if (kind==="act") { const on = onTeam(r.Player); return `<td class="l"><button class="add ${on?'on':''}" data-add="${esc(r.Player)}" title="${on?'Drafted (click to remove)':'Draft to my team'}">${on?'&#10003;':'+'}</button></td>`; }
   if (kind==="player") return `<td class="l pl">${esc(r.Player)}</td>`;
   if (kind==="pos") return `<td class="l"><span class="pos ${r.Pos}">${esc(r.Pos)}</span></td>`;
+  if (kind==="team") return `<td class="l">${teamChip(r.Team)}</td>`;
   if (kind==="val") return `<td class="val">$${esc(r["OurValue$"])}</td>`;
-  if (kind==="delta") { const v = num(r.vsECR); return `<td class="${v>0?'pos-hi':(v<0?'neg-hi':'')}">${v==null?"":(v>0?"+"+v:v)}</td>`; }
+  if (kind==="delta") { const v = num(r[k]); return `<td class="${v>0?'pos-hi':(v<0?'neg-hi':'')}">${v==null?"":(v>0?"+"+v:v)}</td>`; }
   if (kind==="gms") { const v = num(r[YR+"Gms"]); return `<td class="${(v!=null&&v<10)?'neg-hi':''}">${v==null?"":v}</td>`; }
   if (kind==="num1") { const v = num(r[k]); return `<td>${v==null?"":(Math.round(v*10)/10)}</td>`; }
   if (kind==="num") return `<td>${r[k]===""?"":esc(r[k])}</td>`;
@@ -112,7 +140,7 @@ function cell(r,k,kind) {
     if (r.Depth && +r.Depth>=2) b += `<span class="badge b-dep">DEPTH ${esc(r.Depth)}</span>`;
     const news = r["Latest News"]||"", url = r.NewsURL||"";
     const nh = news ? (url ? `<a href="#" onclick="return openUrl('${esc(url)}')">${esc(news)}</a>` : esc(news)) : "";
-    return `<td class="l"><span>${b}</span> <span class="news mut">${nh}</span></td>`;
+    return `<td class="l flagcell"><span>${b}</span> <span class="news mut">${nh}</span></td>`;
   }
   return `<td class="l">${esc(r[k])}</td>`;
 }
@@ -125,7 +153,13 @@ function drawBody() {
     if (bst.hideDrafted && onTeam(r.Player)) return false;
     return true;
   });
-  rs.sort((a,b) => { const x = sortVal(a,bst.sort), y = sortVal(b,bst.sort); return (x<y?-1:x>y?1:0)*bst.dir; });
+  const isNum = !LEFT.has((COLS.find(c=>c[0]===bst.sort)||[])[2]);
+  rs.sort((a,b) => {
+    const x = sortVal(a,bst.sort), y = sortVal(b,bst.sort);
+    // for numeric columns, empty/missing values always sink to the bottom (never float to top when ascending)
+    if (isNum) { const xe = x===""||x==null, ye = y===""||y==null; if (xe && ye) return 0; if (xe) return 1; if (ye) return -1; }
+    return (x<y?-1:x>y?1:0)*bst.dir;
+  });
   const tb = document.getElementById("tbody"); if (!tb) return;
   tb.innerHTML = rs.map(r => `<tr${onTeam(r.Player)?' class="mine"':''}>` + COLS.map(([k,l,kind]) => cell(r,k,kind)).join("") + "</tr>").join("");
   const c = document.getElementById("count"); if (c) c.textContent = rs.length + " of " + DATA.length;
@@ -165,7 +199,7 @@ function views_team() {
           ${bestAvail(need).map(p=>`<div class="needrow"><span class="l"><span class="pos ${p.Pos}">${p.Pos}</span> ${esc(p.Player)}</span><button class="add" data-add="${esc(p.Player)}">+ $${p["OurValue$"]}</button></div>`).join("") || '<div class="mut">—</div>'}
         </div>
       </div>
-      ${TEAM.length? "" : '<div class="hint mut">Draft players from the Draft Board (the + button) to build your roster here.</div>'}
+      ${TEAM.length? "" : '<div class="hint mut">Add players from the Players tab (the + button) to build your roster here.</div>'}
     </div>`;
   const view = document.getElementById("view");
   view.querySelectorAll(".rm").forEach(b => b.onclick = () => undraft(b.dataset.rm));
@@ -294,40 +328,253 @@ async function drawRoom() {
   wireCtrl(el);
 }
 
-/* ---------- SETTINGS ---------- */
+/* ---------- SETTINGS / SETUP ---------- */
 function views_settings() {
   document.getElementById("view").innerHTML = `
     <div class="settings">
-      <div class="sec"><h2>League</h2><span class="lbl">config</span></div>
-      <div class="kv"><span>Season</span><b>${CFG.season||2026}</b></div>
-      <div class="kv"><span>Budget</span><b>$${CFG.budget}</b></div>
-      <div class="kv"><span>Roster</span><b>${CFG.slots.join(" · ")}</b></div>
-      <div class="kv"><span>Players loaded</span><b>${DATA.length}</b></div>
-      <div class="sec" style="margin-top:24px"><h2>Data</h2><span class="lbl">refresh · publish</span></div>
+      <div class="sec"><h2>Setup</h2><span class="lbl">connect your ESPN league</span></div>
+      <div id="setup-status" class="setupbanner mut">Checking your setup…</div>
+      <ol class="setupsteps">
+        <li><b>1 · Connect ESPN</b> <button class="pbtn sm" id="su-connect">Open ESPN login</button> <span class="mut">log into your ESPN account in the Live Draft tab</span></li>
+        <li><b>2 · Sync your league</b> <button class="pbtn sm" id="su-sync">Sync my league</button> <span class="mut">reads your teams, roster + scoring rules</span></li>
+        <li><b>3 · Build your board</b> <button class="pbtn sm" id="su-build">Build board</button> <span class="mut">~5s — values tailored to your league</span></li>
+      </ol>
+      <pre class="cmd" id="log">Ready.</pre>
+      <div class="sec" style="margin-top:24px"><h2>Detected league</h2><span class="lbl">from ESPN sync</span></div>
+      <div id="league-kv"><div class="mut">—</div></div>
+      <div class="sec" style="margin-top:24px"><h2>Data</h2><span class="lbl">refresh</span></div>
       <div class="btnrow">
         <button class="pbtn" id="refresh">Refresh values + news</button>
-        <button class="pbtn" id="push">Push to Google Sheet</button>
         <button class="pbtn" id="reteam">Clear my team</button>
       </div>
-      <pre class="cmd" id="log">Ready.</pre>
-      ${window.mc?"":'<p class="mut">Refresh/Push run the engine tools — available when running inside the app.</p>'}
+      ${window.mc?"":'<p class="mut">Setup + refresh run the engine — available when running inside the app.</p>'}
     </div>`;
   const log = document.getElementById("log");
-  document.getElementById("reteam").onclick = () => { if (confirm("Clear your drafted team?")) { TEAM = []; saveTeam(); syncTeam(); log.textContent = "Team cleared."; } };
-  document.getElementById("refresh").onclick = async () => {
-    if (!window.mc) return log.textContent = "Run inside the app to refresh.";
-    log.textContent = "Rebuilding values + report + app data (nflverse fetch, ~2 min)...";
+  const build = async () => {
+    if (!window.mc) return log.textContent = "Run inside the app to build.";
+    log.textContent = "Building your board (nflverse fetch + values, ~5s)...";
     const r = await window.mc.refreshData(); log.textContent = r.out || "done";
-    if (r.ok) { log.textContent += "\nReloading..."; setTimeout(() => location.reload(), 800); }
+    if (r.ok) { log.textContent += "\nReloading..."; setTimeout(() => location.reload(), 900); }
   };
-  document.getElementById("push").onclick = async () => {
-    if (!window.mc) return log.textContent = "Run inside the app to push.";
-    log.textContent = "Pushing to Google Sheet via bim-cli..."; const r = await window.mc.pushSheet(""); log.textContent = r.out || "done";
+  document.getElementById("su-connect").onclick = () => { setView("live"); };
+  document.getElementById("su-sync").onclick = async () => {
+    if (!window.mc) return log.textContent = "Run inside the app to sync.";
+    log.textContent = "Syncing your league from ESPN (make sure you're logged in)...";
+    const r = await window.mc.syncLeague(); log.textContent = r.out || "sync done";
+    loadLeagueStatus();
   };
+  document.getElementById("su-build").onclick = build;
+  document.getElementById("refresh").onclick = build;
+  document.getElementById("reteam").onclick = () => { if (confirm("Clear your drafted team?")) { TEAM = []; saveTeam(); syncTeam(); log.textContent = "Team cleared."; } };
+  loadLeagueStatus();
+}
+
+async function loadLeagueStatus() {
+  const banner = document.getElementById("setup-status"), kv = document.getElementById("league-kv");
+  if (!banner || !window.mc?.leagueInfo) { if (banner) banner.textContent = "Open inside the app to set up."; return; }
+  const info = await window.mc.leagueInfo().catch(() => null);
+  if (!info) { banner.textContent = "Could not read setup status."; return; }
+  const c = info.config || {}, lg = info.league;
+  let sr = {}; try { sr = JSON.parse(lg?.scoring_json || "{}"); } catch (_) {}
+  if (info.onboarded) {
+    banner.className = "setupbanner ok";
+    banner.innerHTML = `&#10003; <b>${esc(lg.name || "your league")}</b> synced — ${info.players} players on your board. You're ready to draft.`;
+  } else if (lg) {
+    banner.className = "setupbanner mut";
+    banner.innerHTML = `League <b>${esc(lg.name || "?")}</b> synced — now click <b>Build board</b> (step 3).`;
+  } else {
+    banner.className = "setupbanner mut";
+    banner.innerHTML = `Not set up yet — follow steps 1 → 3 to connect your league.`;
+  }
+  const rules = c.scoring_rules || {};
+  const row = (k, v) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`;
+  kv.innerHTML = lg
+    ? row("League", esc(lg.name || "?")) + row("Season", c.season) + row("Teams", c.teams) + row("Budget", "$" + c.budget)
+      + row("Scoring", `${c.scoring} (rec ${rules.rec ?? "?"}, passTD ${rules.passTD ?? "?"})`)
+      + row("Roster", (c.slots || []).join(" · ")) + row("My team", esc(lg.team_id ? "id " + lg.team_id : "?")) + row("Players loaded", info.players)
+    : `<div class="mut">Sync your league to see its settings here.</div>`;
 }
 
 function setStatus(dot, text) { const el = document.getElementById("draftstatus"); if (el) el.innerHTML = `<i class="dot ${dot}"></i> ${esc(text)}`; }
 
-const views = { board: views_board, team: views_team, news: views_news, room: views_room, settings: views_settings };
-syncTeam();
-setView("board");
+/* ---------- LIVE DRAFT (embedded ESPN) ---------- */
+// A real logged-in ESPN session inside the app -- a <webview> (separate WebContents, so ESPN's
+// X-Frame-Options don't apply) on a persistent partition, so the login is held across launches
+// (the role bro plays today). The ff engine will later attach to this page over CDP to drive it.
+// Live Draft renders the persistent #webview-layer (handled by setView). This fn only covers the
+// browser-preview case (no window.mc, so no webview).
+function views_live() {
+  const view = document.getElementById("view");
+  if (view) view.innerHTML = `<div class="pad mut">The embedded browser runs only in the desktop app.</div>`;
+}
+// Wire the ONE persistent webview's toolbar + status (called once at boot). The webview stays mounted
+// across view switches, so it's always a CDP target the engine/agent can navigate.
+function wireWebview() {
+  const wv = document.getElementById("espnview"); if (!wv) return;
+  const st = document.getElementById("lv-status"), urlEl = document.getElementById("lv-url");
+  const showUrl = () => { if (urlEl && wv.getURL) urlEl.textContent = wv.getURL(); };
+  wv.addEventListener("did-start-loading", () => { wv.dataset.status = "loading"; if (st) st.textContent = "loading…"; });
+  wv.addEventListener("dom-ready", () => { wv.dataset.status = "ready"; if (st) st.textContent = ""; showUrl(); });
+  wv.addEventListener("did-stop-loading", () => { if (st) st.textContent = ""; showUrl(); });
+  wv.addEventListener("did-navigate", showUrl);
+  wv.addEventListener("did-fail-load", (e) => { if (e.errorCode === -3) return; wv.dataset.status = "failed:" + e.errorCode; if (st) st.textContent = "load failed (" + e.errorCode + ")"; });
+  const rl = document.getElementById("lv-reload"); if (rl) rl.onclick = () => wv.reload();
+  const bk = document.getElementById("lv-back"); if (bk) bk.onclick = () => { if (wv.canGoBack && wv.canGoBack()) wv.goBack(); };
+  const hm = document.getElementById("lv-home"); if (hm) hm.onclick = () => wv.loadURL("https://fantasy.espn.com/football/");
+}
+
+/* ---------- COPILOT (agent chat + app-control tool belt) ---------- */
+// The tool belt: everything the agent can do to drive the app. This is the SAME surface the real
+// Agent SDK session (child process) will call as tools; the stub planner below exercises it end-to-
+// end. Deliberately NO real auto-draft tool here -- the agent must not start real bidding.
+function findPlayer(name) {
+  const q = (name || "").toLowerCase().trim();
+  return byName.get(name) || DATA.find(p => p.Player.toLowerCase() === q) || DATA.find(p => p.Player.toLowerCase().includes(q));
+}
+const AGENT_TOOLS = {
+  set_view:        { desc: "Navigate to a view (board|team|news|room|copilot|live|settings)", run: async ({ view }) => { setView(view); return `switched to ${view}`; } },
+  search_players:  { desc: "Search the board by player name", run: async ({ query }) => { setView("board"); bst.q = (query || "").toLowerCase(); drawBody(); const el = document.getElementById("q"); if (el) el.value = query || ""; return `${DATA.filter(p => p.Player.toLowerCase().includes(bst.q)).length} match "${query}"`; } },
+  filter_position: { desc: "Filter the board to a position", run: async ({ pos }) => { setView("board"); bst.pos = (pos || "ALL").toUpperCase(); drawBody(); return `board filtered to ${bst.pos}`; } },
+  read_board:      { desc: "Read the top available players (optionally by position)", run: async ({ pos, limit }) => { let rs = DATA.filter(p => !onTeam(p.Player)); if (pos && pos.toUpperCase() !== "ALL") rs = rs.filter(p => p.Pos === pos.toUpperCase()); rs = rs.sort((a, b) => num(b["OurValue$"]) - num(a["OurValue$"])).slice(0, limit || 8); return rs.map(p => `${p.Player} (${p.Pos} $${p["OurValue$"]})`).join(" | ") || "none available"; } },
+  draft_player:    { desc: "Draft a player to my team at a price", run: async ({ name, price }) => { const p = findPlayer(name); if (!p) return `no player matching "${name}"`; draft(p.Player); if (price != null) setPrice(p.Player, price); return `drafted ${p.Player}${price != null ? " for $" + price : ""}`; } },
+  read_my_team:    { desc: "Read my roster, budget, and open slots", run: async () => { const sp = spent(), rem = CFG.budget - sp, open = rosterSlots().filter(s => !s.p).length; return `${TEAM.length} drafted, $${sp} spent, $${rem} left, ${open} slots open`; } },
+  read_live_state: { desc: "Read the live draft state (on-block player + recommendation)", run: async () => { if (!window.mc) return "desktop app only"; const ls = await window.mc.liveState(); if (!ls || !ls.data) return "engine not running"; const d = ls.data; return d.onBlock ? `on block: ${(d.decision && d.decision.player) || "?"} -- ${(d.decision && d.decision.action) || "?"} up to $${(d.decision && d.decision.cap) ?? "?"}` : "no player on the block"; } },
+  start_practice:  { desc: "Open a practice draft room (safe -- never the real league)", run: async () => { if (!window.mc) return "desktop app only"; await window.mc.agentStart("practice"); return "launching a practice room"; } },
+};
+function fmtArgs(a) { return Object.entries(a || {}).map(([k, v]) => `${k}=${v}`).join(", "); }
+
+// Stub planner: maps a plain-English message to tool calls and streams the turn. The real Agent SDK
+// session replaces THIS function; the tool belt and the chat sink stay identical.
+async function stubAgentTurn(msg, sink) {
+  const m = msg.toLowerCase().trim();
+  const calls = []; let d;
+  if (d = m.match(/^(?:draft|add|buy|get)\s+(.+?)(?:\s+for\s+\$?(\d+))?$/)) calls.push(["draft_player", { name: d[1].trim(), price: d[2] ? +d[2] : null }]);
+  else if (d = m.match(/best (?:available )?(qb|rb|wr|te|k|dst)?/)) calls.push(["read_board", { pos: d[1] ? d[1].toUpperCase() : "ALL", limit: 8 }]);
+  else if (d = m.match(/^(?:search|find|look up)\s+(.+)/)) calls.push(["search_players", { query: d[1].trim() }]);
+  else if (/(my team|my roster|budget|how much.*left)/.test(m)) calls.push(["read_my_team", {}]);
+  else if (/(on the block|recommend|what should i bid|nomination|live state)/.test(m)) calls.push(["read_live_state", {}]);
+  else if (d = m.match(/(?:go to|open|show)\s+(board|players|team|news|room|copilot|live|settings|draft room|live draft)/)) { const v = { players: "board", "draft room": "room", "live draft": "live" }[d[1]] || d[1]; calls.push(["set_view", { view: v }]); }
+  else if (/practice/.test(m)) calls.push(["start_practice", {}]);
+  else if (d = m.match(/^(qb|rb|wr|te|k|dst)s?$/)) calls.push(["filter_position", { pos: d[1].toUpperCase() }]);
+
+  if (!calls.length) {
+    await sink.text('I can drive the draft for you. Try: "best available RB", "search Gibbs", "draft Bijan for $90", "show my team", "who’s on the block", "open live draft", or "start practice".');
+    return sink.done();
+  }
+  await sink.text("On it.");
+  for (const [name, args] of calls) { sink.tool(name, args); const res = await AGENT_TOOLS[name].run(args); await sink.result(res); }
+  sink.done();
+}
+
+let copilotLog = [{ role: "assistant", parts: [{ t: "text", s: "Hi — I’m your draft copilot. Ask me anything about the board: “best available RB”, “is Josh Jacobs a value?”, “who should I target at WR?”. I read the live value board to answer." }] }];
+function renderCopilot() {
+  const el = document.getElementById("cop-msgs"); if (!el) return;
+  el.innerHTML = copilotLog.map(m => {
+    if (m.role === "user") return `<div class="cmsg cuser"><div class="cbody">${esc(m.text)}</div></div>`;
+    const body = m.parts.map(p => p.t === "text"
+      ? `<div class="ctext">${esc(p.s)}</div>`
+      : `<div class="ctool"><span class="chip">&#9881;&#65039; ${esc(p.name)}(${esc(fmtArgs(p.args))})</span> <span class="cres mut">${p.res != null ? esc(p.res) : "…"}</span></div>`).join("");
+    const pend = m.pending ? `<div class="ctext mut">…thinking</div>` : "";
+    return `<div class="cmsg casst"><div class="cbody">${body}${pend}</div></div>`;
+  }).join("");
+  el.scrollTop = el.scrollHeight;
+}
+// While a real-agent turn streams, its events route to this message. Set up ONE persistent listener.
+let curAgent = null;
+if (window.mc && window.mc.onAgentEvent) window.mc.onAgentEvent((e) => {
+  if (!curAgent) return;
+  const a = curAgent.a; a.pending = false;
+  if (e.t === "text") a.parts.push({ t: "text", s: e.s });
+  else if (e.t === "tool") a.parts.push({ t: "tool", name: e.name, args: e.args, res: "called" });
+  renderCopilot(); // "done" is handled by the agentAsk promise resolving
+});
+
+async function sendCopilot(text) {
+  copilotLog.push({ role: "user", text });
+  const a = { role: "assistant", parts: [] }; copilotLog.push(a);
+  renderCopilot();
+  if (window.mc && window.mc.agentAsk) { // real Agent SDK session (desktop app)
+    a.pending = true; renderCopilot();
+    await new Promise((resolve) => {
+      curAgent = { a, resolve };
+      const fin = () => { a.pending = false; curAgent = null; renderCopilot(); resolve(); };
+      window.mc.agentAsk(text).then(fin).catch((err) => { a.parts.push({ t: "text", s: "error: " + String(err) }); fin(); });
+    });
+    return;
+  }
+  // stub fallback (browser preview -- no Electron bridge)
+  const sink = {
+    text: async (s) => { a.parts.push({ t: "text", s }); renderCopilot(); await sleep(120); },
+    tool: (name, args) => { a.parts.push({ t: "tool", name, args, res: null }); renderCopilot(); },
+    result: async (res) => { const p = [...a.parts].reverse().find(x => x.t === "tool" && x.res === null); if (p) p.res = res; renderCopilot(); await sleep(180); },
+    done: () => renderCopilot(),
+  };
+  try { await stubAgentTurn(text, sink); } catch (e) { a.parts.push({ t: "text", s: "error: " + String(e) }); renderCopilot(); }
+}
+let MC_AUTH = { authenticated: true }; // default true so browser preview shows the (stub) chat
+async function recheckAuth() {
+  if (window.mc && window.mc.authStatus) { try { MC_AUTH = await window.mc.authStatus(); } catch (e) { /* keep */ } }
+  if (cur === "copilot") views_copilot();
+}
+function renderConnect() {
+  const view = document.getElementById("view");
+  const sub = MC_AUTH.source === "expired" ? "Your Claude login has expired." : "The Copilot runs on your Claude subscription.";
+  view.innerHTML = `
+    <div class="connect"><div class="connect-card">
+      <div class="connect-h">Connect Claude</div>
+      <p class="mut">${sub} Log in with your Claude account (Max or Pro) to enable the draft copilot — it runs locally on your subscription, nothing is sent anywhere else.</p>
+      <div class="connect-actions">
+        <button class="pbtn primary" id="cn-login">Log in with Claude</button>
+        <button class="pbtn" id="cn-check">Check again</button>
+      </div>
+      <p class="connect-note mut">A terminal opens — complete the login there, then click “Check again”.</p>
+    </div></div>`;
+  document.getElementById("cn-login").onclick = () => { if (window.mc && window.mc.authLogin) window.mc.authLogin(); };
+  document.getElementById("cn-check").onclick = () => recheckAuth();
+}
+function views_copilot() {
+  if (window.mc && !MC_AUTH.authenticated) return renderConnect(); // gate the Copilot behind auth
+  const view = document.getElementById("view");
+  view.innerHTML = `
+    <div class="copilot">
+      <div class="cop-msgs" id="cop-msgs"></div>
+      <div class="cop-input">
+        <input id="cop-q" placeholder="Ask the copilot…  (e.g. best available RB)" autocomplete="off">
+        <button class="pbtn" id="cop-send">Send</button>
+      </div>
+    </div>`;
+  renderCopilot();
+  const q = document.getElementById("cop-q");
+  const send = () => { const t = q.value.trim(); if (!t) return; q.value = ""; sendCopilot(t); };
+  document.getElementById("cop-send").onclick = send;
+  q.onkeydown = e => { if (e.key === "Enter") send(); };
+  q.focus();
+}
+
+const views = { board: views_board, team: views_team, news: views_news, room: views_room, copilot: views_copilot, live: views_live, settings: views_settings };
+
+// Boot: in Electron, pull the live board + news from the SQLite store (via the ff engine) before
+// the first paint; otherwise render the embedded data.js fallback. Either way, paint the board.
+async function boot() {
+  if (window.mc && window.mc.appData) {
+    try {
+      const d = await window.mc.appData();
+      if (d && Array.isArray(d.players) && d.players.length) {
+        DATA = d.players; NEWS = Array.isArray(d.news) ? d.news : []; CFG = d.config || CFG;
+        byName = new Map(DATA.map(p => [p.Player, p]));
+        const sp = document.getElementById("s-players"); if (sp) sp.textContent = DATA.length;
+      }
+    } catch (e) { /* fall back to embedded data.js */ }
+  }
+  // team source of truth is the store (my_roster via the helper); localStorage is the browser fallback
+  if (window.mc && window.mc.teamGet) {
+    try { const t = await window.mc.teamGet(); if (Array.isArray(t)) TEAM = t; } catch (e) { /* keep localStorage */ }
+  }
+  if (window.mc && window.mc.authStatus) { try { MC_AUTH = await window.mc.authStatus(); } catch (e) { /* keep default */ } }
+  wireWebview(); // the persistent ESPN browsing surface (always mounted, always CDP-navigable)
+  syncTeam();
+  // Fresh install (no board yet) lands on Setup so the user onboards; otherwise the Players board.
+  const fresh = window.mc && (!DATA || DATA.length === 0);
+  setView(fresh ? "settings" : "board");
+}
+boot();

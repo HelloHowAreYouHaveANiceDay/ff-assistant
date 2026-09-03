@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import { affordableMax, jumpTarget, legalCap, makeV1Strategy, makeV2Strategy, reserveForOthers, type DraftState } from "../src/draft/strategy.ts";
 import { hasOpenSlotFor, type Roster } from "../src/draft/espnAuction.ts";
 import { SIM_LEAGUE } from "../src/draft/sim.ts";
-import { DEFAULT_VALUE_LEAGUE, nameKey } from "../src/draft/values.ts";
+import { DEFAULT_VALUE_LEAGUE, nameKey, resolveValueLeague } from "../src/draft/values.ts";
+import { DEFAULT_CONFIG } from "../src/db/db.ts";
 
 const identity = (s: string) => s;
 
@@ -52,6 +53,21 @@ test("v2 nameKey lookup: an absent name falls back to ESPN value (src=espn)", ()
 test("ROSTER SHAPE: SIM_LEAGUE is 12 slots and values.rosterSpots is bound to it", () => {
   assert.equal(SIM_LEAGUE.slots.length, 12);
   assert.equal(DEFAULT_VALUE_LEAGUE.rosterSpots, SIM_LEAGUE.slots.length);
+  // the three sources of the roster shape must agree (they silently diverged before -- finding #2)
+  assert.deepEqual(SIM_LEAGUE.slots, DEFAULT_CONFIG.slots);
+});
+
+// resolveValueLeague turns the configured slots into starters -- the wiring that makes config drive
+// the $ values. Fault check: 2 FLEX must produce starters.FLEX===2 (the real league), and changing
+// slots must change the value league.
+test("CONFIG->VALUES: resolveValueLeague derives starters from configured slots", () => {
+  const vl = resolveValueLeague(DEFAULT_CONFIG);
+  assert.equal(vl.starters.FLEX, 2);
+  assert.equal(vl.starters.RB, 1);
+  assert.equal(vl.rosterSpots, 12);
+  const oneFlex = resolveValueLeague({ ...DEFAULT_CONFIG, slots: ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "DST", "K", "BE", "BE", "BE"] });
+  assert.equal(oneFlex.starters.FLEX, 1);
+  assert.equal(oneFlex.starters.RB, 2);
 });
 
 const baseState = (over: Partial<DraftState> = {}): DraftState => ({

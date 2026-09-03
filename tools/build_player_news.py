@@ -158,3 +158,29 @@ by_cat = {}
 for r in uniq:
     by_cat[r["category"]] = by_cat.get(r["category"], 0) + 1
 print(f"wrote data/player-news.csv: {len(uniq)} items -> {by_cat}")
+
+# --- also write the news feed into the single SQLite store (data/ff.db). Full-refresh (the feed is
+# a snapshot). Guarded so a missing DB never breaks the CSV pipeline. player_id mirrors the TS
+# nameKey so it joins the player table; player_name/pos/team are stored for the feed directly.
+try:
+    import sqlite3, datetime, re as _re
+    def _nkey(s):
+        s = (s or "").lower()
+        s = _re.sub(r"\b(jr|sr|ii|iii|iv|v)\b", " ", s)
+        s = _re.sub(r"\bd/?st\b", " ", s)
+        return _re.sub(r"[^a-z]", "", s)
+    _con = sqlite3.connect("data/ff.db")
+    _now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    _con.execute("DELETE FROM news")
+    for r in uniq:
+        _con.execute(
+            "INSERT INTO news (player_id, player_name, pos, team, category, severity, detail, source, asof, url) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (_nkey(r.get("player", "")), r.get("player", ""), r.get("pos", ""), r.get("team", ""),
+             r.get("category", ""), r.get("severity", ""), r.get("detail", ""), r.get("source", ""),
+             r.get("asof", ""), (r.get("url", "") or "").replace("%2C", ",")))
+    _con.commit()
+    _con.close()
+    print(f"wrote news -> data/ff.db ({len(uniq)} items)")
+except Exception as e:
+    print(f"WARN: news SQLite write skipped ({e}); run `npm run ff -- migrate` to create data/ff.db")

@@ -11,5 +11,21 @@ data/*-dom.json
 data/draft-dom-snapshot.json
 .DS_Store
 diag.mjs
+diag*.png
 inspect.mjs
 data/live-state.json
+data/*.db-wal
+data/*.db-shm
+
+# bundled node runtime for the packaged build (placed locally, not committed)
+app/runtime/
+
+# per-league personal data (real owner identities + draft history) -- never ship; the sim falls back
+# to a generic field when absent (src/draft/managers.ts)
+data/managers.json
+data/owners.json
+data/recaps.json
+
+# electron-builder output + compiled engine bundle
+dist-app/
+app/engine/

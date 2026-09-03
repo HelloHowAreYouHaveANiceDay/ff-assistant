@@ -237,3 +237,50 @@ with open("data/player-report.tsv", "w", encoding="utf-8", newline="") as f:
 
 print(f"wrote data/player-report.csv + .tsv ({len(rows)} players, {len(HEADER)} columns)")
 print("top 5:", [(r["rank"], r["player"], r["pos_rank"], f'${r["our_value"]}', f'vsECR {r["edge"]}', f'age {r["age"]}') for r in rows[:5]])
+
+# --- also write into the single SQLite store (data/ff.db): our valuation, the ESPN ranking, and a
+# materialized board view the app reads. Same computed rows, no re-derivation; full-refresh per
+# season. Guarded: never break the CSV pipeline if the DB is absent (`npm run ff -- migrate`).
+try:
+    import sqlite3, datetime, json as _json
+    def _f(x):
+        try: return float(x)
+        except (TypeError, ValueError): return None
+    def _i(x):
+        v = _f(x); return int(v) if v is not None else None
+    _con = sqlite3.connect("data/ff.db")
+    _now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    _c = _con.cursor()
+    _c.execute("DELETE FROM player_value WHERE season = ?", (SEASON,))
+    _c.execute("DELETE FROM ranking WHERE source = 'espn' AND season = ?", (SEASON,))
+    _c.execute("DELETE FROM board WHERE season = ?", (SEASON,))
+    for r in rows:
+        pid = nkey(r["player"])
+        if not pid:
+            continue
+        # ensure the FK parent exists without clobbering richer ECR-sourced player rows
+        _c.execute("INSERT INTO player (player_id, name, position, updated_at) VALUES (?,?,?,?) "
+                   "ON CONFLICT(player_id) DO NOTHING", (pid, r["player"], r["pos"], _now))
+        _c.execute(
+            "INSERT INTO player_value (player_id, season, our_value, our_rank, pos_rank, tier, proj_pts, last_pts, last_gms, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(player_id) DO UPDATE SET season=excluded.season, our_value=excluded.our_value, our_rank=excluded.our_rank, "
+            "pos_rank=excluded.pos_rank, tier=excluded.tier, proj_pts=excluded.proj_pts, last_pts=excluded.last_pts, "
+            "last_gms=excluded.last_gms, updated_at=excluded.updated_at",
+            (pid, SEASON, _i(r["our_value"]), _i(r["rank"]), r["pos_rank"], r["tier"],
+             _f(r["proj_pts"]), _f(r["last_pts"]), _i(r["last_gms"]), _now))
+        _c.execute(
+            "INSERT INTO ranking (player_id, source, season, overall_rank, pos_rank, adp, rostered_pct, bye, fetched_at) "
+            "VALUES (?, 'espn', ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(player_id, source, season) DO UPDATE SET overall_rank=excluded.overall_rank, pos_rank=excluded.pos_rank, "
+            "adp=excluded.adp, rostered_pct=excluded.rostered_pct, bye=excluded.bye, fetched_at=excluded.fetched_at",
+            (pid, SEASON, _f(r["espn_rank"]), r["espn_pos"] or None, _f(r["espn_adp"]), _f(r["rostered"]), _i(r["bye"]), _now))
+        _board = {HEADER[i]: r[COLS[i]] for i in range(len(COLS))}
+        _c.execute("INSERT INTO board (player_id, season, row_json, updated_at) VALUES (?,?,?,?) "
+                   "ON CONFLICT(player_id, season) DO UPDATE SET row_json=excluded.row_json, updated_at=excluded.updated_at",
+                   (pid, SEASON, _json.dumps(_board, ensure_ascii=False), _now))
+    _con.commit()
+    _con.close()
+    print(f"wrote SQLite store -> data/ff.db (player_value + ranking:espn + board, {len(rows)} rows, season {SEASON})")
+except Exception as e:
+    print(f"WARN: SQLite store write skipped ({e}); run `npm run ff -- migrate` to create data/ff.db")

@@ -22,13 +22,29 @@ export interface ManagerProfile {
 }
 export interface ManagerData { leagueShare: Record<string, number>; profiles: ManagerProfile[]; }
 
+// Generic heterogeneous field for installs with NO league history file (any shipped build, or a
+// friend's fresh install). Four archetypes -- balanced / RB-first / WR-heavy / QB-lover -- that
+// assignSeats cycles across the seats, so the practice sim is realistic without anyone's real data.
+const GENERIC_MANAGERS: ManagerData = {
+  leagueShare: { QB: 0.11, RB: 0.33, WR: 0.33, TE: 0.10, K: 0.02, DST: 0.02 },
+  profiles: [
+    { owner: "Balanced", abbrev: "BAL", seasons: [], share: { QB: 0.11, RB: 0.33, WR: 0.33, TE: 0.10, K: 0.02, DST: 0.02 }, conc: 0.52, maxBuy: 52, cheap: 5 },
+    { owner: "RB-First", abbrev: "RBF", seasons: [], share: { QB: 0.06, RB: 0.44, WR: 0.30, TE: 0.08, K: 0.02, DST: 0.02 }, conc: 0.60, maxBuy: 62, cheap: 6 },
+    { owner: "WR-Heavy", abbrev: "WRH", seasons: [], share: { QB: 0.08, RB: 0.28, WR: 0.44, TE: 0.08, K: 0.02, DST: 0.02 }, conc: 0.56, maxBuy: 58, cheap: 5 },
+    { owner: "QB-Lover", abbrev: "QBL", seasons: [], share: { QB: 0.20, RB: 0.30, WR: 0.28, TE: 0.14, K: 0.02, DST: 0.02 }, conc: 0.48, maxBuy: 48, cheap: 4 },
+  ],
+};
+
 let _cache: ManagerData | null = null;
 export function loadManagers(): ManagerData {
   if (_cache) return _cache;
-  const here = dirname(fileURLToPath(import.meta.url));
-  // src/draft -> repo root/data/managers.json
-  const path = join(here, "..", "..", "data", "managers.json");
-  _cache = JSON.parse(readFileSync(path, "utf8")) as ManagerData;
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    // src/draft -> repo root/data/managers.json (present only on the author's machine, never shipped)
+    _cache = JSON.parse(readFileSync(join(here, "..", "..", "data", "managers.json"), "utf8")) as ManagerData;
+  } catch {
+    _cache = GENERIC_MANAGERS; // no history file: use the generic field so the sim still runs
+  }
   return _cache;
 }
 

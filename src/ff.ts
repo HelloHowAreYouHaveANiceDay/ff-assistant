@@ -11,6 +11,8 @@ import { passthrough as broPassthrough } from "./browser/bro.js";
 import { inspectDraftDom } from "./draft/espnReader.js";
 import { loadRankings } from "./data/rankings.js";
 import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank.js";
+import { ingestAll } from "./data/ingest.js";
+import { openDb } from "./db/db.js";
 
 const DEFAULT_LEAGUE: LeagueSettings = {
   teams: 10,
@@ -73,6 +75,33 @@ async function main() {
       return cmdInspect(rest);
     case "rank":
       return cmdRank(rest);
+    case "ingest":
+      return ingestAll(valueOf(rest, "--db"));
+    case "migrate": {
+      const db = openDb(valueOf(rest, "--db"));
+      db.close();
+      console.log("migrated");
+      return;
+    }
+    case "app-data":
+      return cmdAppData(rest);
+    case "serve":
+      return cmdServe(rest);
+    case "auth": {
+      const { authStatus } = await import("./agent/auth.js");
+      console.log(JSON.stringify(authStatus()));
+      return;
+    }
+    case "agent-ask":
+      return cmdAgentAsk(rest);
+    case "my-roster-set":
+      return cmdMyRosterSet(rest);
+    case "assemble":
+      return cmdAssemble(rest);
+    case "projections":
+      return cmdProjections(rest);
+    case "refresh":
+      return cmdRefresh(rest);
     default:
       console.log(
         "commands:\n" +
@@ -83,6 +112,144 @@ async function main() {
           "  rank [--csv FILE]          top players by VOR (offline)",
       );
   }
+}
+
+// The app's data payload, read LIVE from the SQLite store (the materialized `board` view + the
+// `news` feed). Prints ONE JSON line to stdout so the Electron main process can parse it. This is
+// what replaces the generated data.js -- the app reads the DB through the engine, no regeneration.
+async function cmdAppData(rest: string[]) {
+  const { openDb } = await import("./db/db.js");
+  const { appDataPayload } = await import("./data/appdata.js");
+  const db = openDb(valueOf(rest, "--db"));
+  const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
+  const payload = appDataPayload(db, season);
+  db.close();
+  process.stdout.write(JSON.stringify(payload) + "\n");
+}
+
+// The persistent helper: one long-lived process holding an open DB connection, speaking NDJSON
+// request/response on stdin/stdout ({id, method, params} -> {id, ok, result|error}). The Electron
+// app spawns ONE of these and pipes fast reads/writes to it -- no per-op process spawn, no native
+// SQLite in Electron. Methods are additive; agent-ask stays its own streamed spawn.
+async function cmdServe(rest: string[]) {
+  const readline = await import("node:readline");
+  const { openDb, getConfig, setMyRoster, getMyRoster, setConfig } = await import("./db/db.js");
+  const { appDataPayload } = await import("./data/appdata.js");
+  const { authStatus } = await import("./agent/auth.js");
+  const db = openDb(valueOf(rest, "--db"));
+  const send = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
+  const curSeason = () => getConfig(db).season;
+  const rl = readline.createInterface({ input: process.stdin });
+  send({ event: "ready", pid: process.pid });
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    let req: { id?: number; method?: string; params?: Record<string, unknown> };
+    try { req = JSON.parse(line); } catch { continue; }
+    const { id, method, params = {} } = req;
+    try {
+      let result: unknown;
+      switch (method) {
+        case "ping": result = "pong"; break;
+        case "app-data": result = appDataPayload(db, Number(params.season) || curSeason()); break;
+        case "my-roster-get": result = getMyRoster(db, String(params.draftId ?? "local")); break;
+        case "my-roster-set": setMyRoster(db, String(params.draftId ?? "local"), (params.roster as { name: string; price: number }[]) ?? []); result = { ok: true, n: ((params.roster as unknown[]) ?? []).length }; break;
+        case "live-state": {
+          const row = db.prepare("SELECT updated_at, state_json FROM draft_state WHERE draft_id = ?").get(String(params.draftId ?? "local")) as { updated_at: string; state_json: string } | undefined;
+          result = row ? { ageSec: Math.round((Date.now() - Date.parse(row.updated_at)) / 1000), data: JSON.parse(row.state_json) } : null;
+          break;
+        }
+        case "draft-picks": {
+          const picks = db.prepare("SELECT pick_no, player_id, team, price, ts FROM draft_pick WHERE draft_id = ? ORDER BY pick_no").all(String(params.draftId ?? "local"));
+          result = picks.length ? { picks } : null;
+          break;
+        }
+        case "config-get": result = getConfig(db); break;
+        case "config-set": setConfig(db, (params.config as Record<string, unknown>) ?? {}); result = getConfig(db); break;
+        case "league-info": {
+          const cfg = getConfig(db);
+          const lg = db.prepare("SELECT league_id, name, season, team_id, scoring_json FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; name: string; season: number; team_id: string; scoring_json: string } | undefined;
+          const nPlayers = (db.prepare("SELECT count(*) c FROM player_value WHERE season = ?").get(cfg.season) as { c: number }).c;
+          result = { config: cfg, league: lg ?? null, players: nPlayers, onboarded: nPlayers > 0 && !!lg };
+          break;
+        }
+        case "auth-status": result = authStatus(); break;
+        default: throw new Error(`unknown method: ${method}`);
+      }
+      send({ id, ok: true, result });
+    } catch (e) { send({ id, ok: false, error: String(e) }); }
+  }
+  db.close();
+}
+
+// The real draft copilot: a Claude Agent SDK session (subscription auth via the machine's `claude`
+// login) reasoning over the SQLite store through read-only tools. `--json` streams one event per
+// line for the Electron chat sink: {t:"text"|"tool"|"done", ...}. Human mode prints text inline.
+async function cmdAgentAsk(rest: string[]) {
+  const { agentAsk } = await import("./agent/agent.js");
+  const json = rest.includes("--json");
+  let question = rest.filter((a) => !a.startsWith("--")).join(" ").trim();
+  // no positional question + piped stdin -> read it there (how the Electron app passes the message,
+  // avoiding any shell-quoting of user text)
+  if (!question && !process.stdin.isTTY) {
+    question = await new Promise<string>((res) => { let s = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => res(s.trim())); });
+  }
+  if (!question) { console.log('usage: ff agent-ask "your question"  [--json] [--db F] [--season N]'); return; }
+  const emit = (e: Record<string, unknown>) => process.stdout.write(JSON.stringify(e) + "\n");
+  await agentAsk(question, {
+    dbPath: valueOf(rest, "--db"),
+    season: valueOf(rest, "--season") ? Number(valueOf(rest, "--season")) : undefined,
+    onEvent: (m) => {
+      const msg = m as { type: string; message?: { content: { type: string; text?: string; name?: string; input?: unknown }[] }; subtype?: string };
+      if (msg.type === "assistant" && msg.message) {
+        for (const c of msg.message.content) {
+          if (c.type === "text" && c.text) json ? emit({ t: "text", s: c.text }) : process.stdout.write(c.text);
+          else if (c.type === "tool_use" && (c.name || "").startsWith("mcp__ff-draft__")) { const name = (c.name || "").replace(/^mcp__ff-draft__/, ""); json ? emit({ t: "tool", name, args: c.input }) : process.stderr.write(`\n  [tool ${name}]\n`); }
+        }
+      } else if (msg.type === "result") {
+        json ? emit({ t: "done", subtype: msg.subtype }) : process.stdout.write("\n");
+      }
+    },
+  });
+}
+
+// Projection curve (TS port of build_projections) -> data/points.csv. Reads ECR from the store.
+async function cmdProjections(rest: string[]) {
+  const { project } = await import("./data/projections.js");
+  const n = await project(valueOf(rest, "--db"), valueOf(rest, "--out") ?? "data/points.csv");
+  console.log(`wrote points.csv (${n} players)`);
+}
+
+// The full data refresh, ALL TS (no Python): ingest reference+news -> project curve -> assemble value/board.
+async function cmdRefresh(rest: string[]) {
+  const db = valueOf(rest, "--db");
+  const { ingestAll } = await import("./data/ingest.js");
+  const { project } = await import("./data/projections.js");
+  const { assemble } = await import("./data/assemble.js");
+  await ingestAll(db);
+  console.log(`projections: ${await project(db)} players`);
+  console.log(`refresh complete: ${await assemble(db)} players (all TS, no Python)`);
+}
+
+// Assemble L1 player_value + L2 board (TS port of build_report). Reads reference data from the store
+// + points.csv, fetches ESPN/last-year, computes derived fields, writes the value/board tables.
+async function cmdAssemble(rest: string[]) {
+  const { assemble } = await import("./data/assemble.js");
+  const n = await assemble(valueOf(rest, "--db"), valueOf(rest, "--points") ?? "data/points.csv");
+  console.log(`assembled ${n} players -> player_value + board + ranking:espn`);
+}
+
+// Mirror the app's drafted team into SQLite (my_roster). Reads a JSON array [{name,price}] on stdin;
+// the Electron app pipes it here on every roster change so the agent (and durability) see the team.
+async function cmdMyRosterSet(rest: string[]) {
+  const { openDb, setMyRoster } = await import("./db/db.js");
+  const draftId = valueOf(rest, "--draft") ?? "local";
+  const raw = await new Promise<string>((res) => { let s = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => res(s.trim())); });
+  let roster: { name: string; price: number }[] = [];
+  try { const parsed = JSON.parse(raw || "[]"); if (Array.isArray(parsed)) roster = parsed.map((r) => ({ name: String(r.name), price: Number(r.price) || 0 })); } catch { /* empty */ }
+  const db = openDb(valueOf(rest, "--db"));
+  setMyRoster(db, draftId, roster);
+  db.close();
+  console.log(`my_roster[${draftId}] set: ${roster.length} players`);
 }
 
 // Attach via bro's session by default; allow --port for a manually-launched browser.
@@ -164,23 +331,25 @@ async function cmdText(rest: string[]) {
 // navigate to it ourselves. This is the draft-day launch path.
 async function cmdLaunchPractice(rest: string[]) {
   const a = await attachFor(rest);
-  // Use a non-draft page as our working tab; if none, make one. NEVER close the last
-  // page (that quits Chrome and ends the bro session).
-  let page = a.pages.find((p) => !/\/football\/draft/.test(p.url()));
-  if (!page) page = await a.context.newPage();
+  // The embedded ESPN webview is our ONE working page -- reuse it whatever it's showing (the old
+  // bro logic looked for a separate non-draft tab; here there's just the webview). Fall back to any
+  // non-draft page, then a new page.
+  let page = a.pages.find((p) => /espn\.com/.test(p.url()) && !/recaptcha|imrworldwide|registerdisney/.test(p.url()))
+    || a.pages.find((p) => !/\/football\/draft/.test(p.url()))
+    || await a.context.newPage();
   // Now close any OTHER draft tabs -- ESPN allows only ONE draft connection; a duplicate
   // triggers "disconnected... from another location". Our working page is not a draft tab.
   for (const p of a.pages) {
     if (p !== page && /\/football\/draft/.test(p.url())) await p.close().catch(() => {});
   }
-  // Always land on a freshly-loaded lobby (a finished-draft tab won't have the button).
-  const openBtnSel = () => page.getByRole("button", { name: "Practice Draft", exact: true }).first();
-  await page.goto("https://fantasy.espn.com/football/mockdraftlobby", { waitUntil: "networkidle" }).catch(() => {});
-  let ready = await openBtnSel().waitFor({ state: "visible", timeout: 15000 }).then(() => true).catch(() => false);
-  if (!ready) {
-    await page.reload({ waitUntil: "networkidle" }).catch(() => {});
-    ready = await openBtnSel().waitFor({ state: "visible", timeout: 15000 }).then(() => true).catch(() => false);
-  }
+  // Land on a fresh lobby. Use domcontentloaded, NOT networkidle -- ESPN's lobby never goes idle
+  // (constant ad/polling traffic), so networkidle hangs; then poll natively for the button by text
+  // (getByRole's accessible-name match was unreliable for this button).
+  await page.goto("https://fantasy.espn.com/football/mockdraftlobby", { waitUntil: "domcontentloaded" }).catch(() => {});
+  const ready = await page.waitForFunction(
+    () => Array.from(document.querySelectorAll("button")).some((b) => b.textContent.trim() === "Practice Draft"),
+    { timeout: 20000 },
+  ).then(() => true).catch(() => false);
   if (!ready) {
     console.error("lobby 'Practice Draft' button never rendered -- aborting launch.");
     await detach(a);
@@ -191,52 +360,33 @@ async function cmdLaunchPractice(rest: string[]) {
   await page.evaluate(
     "window.__ffOpen=null; if(!window.__ffPatched){window.__ffPatched=1; window.open=function(u){try{window.__ffOpen=String(u||'');}catch(e){} return {closed:false,focus:function(){},blur:function(){},close:function(){},postMessage:function(){}};};}",
   );
-  // Step 1: open the "Configure Practice Draft" modal (retry -- the React app renders late).
-  const openBtn = page.getByRole("button", { name: "Practice Draft", exact: true });
-  const startBtn = page.getByRole("button", { name: "Start Practice Draft", exact: true });
-  await openBtn.first().waitFor({ state: "visible", timeout: 20000 }).catch(() => console.error("Practice Draft button never rendered"));
-  let modalOpen = false;
-  for (let i = 0; i < 3 && !modalOpen; i++) {
-    await openBtn.first().scrollIntoViewIfNeeded({ timeout: 4000 }).catch(() => {});
-    await openBtn.first().click({ timeout: 6000 }).catch((e) => console.error(`open-modal try ${i}:`, e.message));
-    modalOpen = await startBtn
-      .first()
-      .waitFor({ state: "visible", timeout: 6000 })
-      .then(() => true)
-      .catch(() => false);
+  // Current ESPN UI (verified 2026-09): the flow is just "Practice Draft" -> "Start Practice Draft",
+  // with NO position <select> (the old select step aborted the launch). Native clicks are more robust
+  // than getByRole against ESPN's late-rendering React; the window.open shim above captures the draft
+  // URL so we navigate our ONE tab (the embedded webview) into it instead of popping a new window.
+  await page.evaluate(() => { const x = Array.from(document.querySelectorAll("button")).find((b) => b.textContent.trim() === "Practice Draft"); if (x) (x as HTMLButtonElement).click(); });
+  await page.waitForTimeout(3000);
+  let started = false;
+  for (let i = 0; i < 6 && !started; i++) {
+    started = await page.evaluate(() => { const x = Array.from(document.querySelectorAll("button")).find((b) => b.textContent.trim() === "Start Practice Draft"); if (x) { (x as HTMLButtonElement).click(); return true; } return false; });
+    if (!started) await page.waitForTimeout(1000);
   }
-  if (!modalOpen) console.error("Configure-practice modal did not open after retries");
-  // Step 1b: pick a draft position -- "Start" silently no-ops until one is chosen. It's a
-  // native <select>; choose a concrete option (index 1 skips the placeholder).
-  const posSel = page.locator("select").filter({ hasNot: page.locator("option:only-child") }).first();
-  if ((await page.locator("select").count()) > 0) {
-    const sel = page.locator("select").last();
-    await sel.selectOption({ index: 1 }).catch(async () => {
-      // Fallback: pick the last option (a concrete position, not the placeholder).
-      const opts = await sel.locator("option").count();
-      if (opts > 1) await sel.selectOption({ index: opts - 1 }).catch(() => {});
-    });
-    console.log("Selected a draft position.");
-  } else {
-    console.error("No <select> for draft position found.");
-  }
-  void posSel;
-  // Step 2: start the draft (opens the draft app via window.open, captured by the shim).
-  await startBtn.first().click({ timeout: 8000 }).catch((e) => console.error("start-click:", e.message));
-  await page.waitForTimeout(1500);
-  // window.open fires synchronously inside the handler; read what it targeted.
-  const opened = (await page.evaluate("window.__ffOpen")) as string | null;
+  if (!started) { console.error("could not start practice draft (Start button never rendered)"); await detach(a); return; }
+  await page.waitForTimeout(3500);
+  const opened = (await page.evaluate("window.__ffOpen")) as string | null; // the draft-room URL
   if (opened) {
     const url = opened.startsWith("http") ? opened : new URL(opened, page.url()).href;
-    console.log(`Practice draft opened window -> ${url}. Navigating there.`);
-    await page.goto(url, { waitUntil: "domcontentloaded" });
-    console.log(`Now at: ${page.url()} | title: ${await page.title()}`);
+    await page.goto(url, { waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.waitForTimeout(2000);
+    console.log(`practice draft started -> ${page.url()} | ${await page.title()}`);
   } else {
-    console.log(`No window.open captured. Current URL: ${page.url()} | title: ${await page.title()}`);
+    console.error(`no draft window captured; still at ${page.url()}`);
   }
   await detach(a);
 }
 
+// Last-resort fallbacks only. The real identity comes from the synced `league` table (below);
+// these are used only if nothing has been discovered/synced yet.
 const REAL_LEAGUE = "462233"; // seacaptaindate.com (16-team $200 auction)
 const REAL_TEAM = "8";
 
@@ -246,8 +396,14 @@ const REAL_TEAM = "8";
 // control from the league (captured window.open), then the direct draft URL.
 async function cmdEnterDraft(rest: string[]) {
   const { readRoster } = await import("./draft/espnAuction.js");
-  const league = valueOf(rest, "--league") ?? REAL_LEAGUE;
-  const team = valueOf(rest, "--team") ?? REAL_TEAM;
+  const { openDb, getConfig } = await import("./db/db.js");
+  const db = openDb(valueOf(rest, "--db"));
+  const season = getConfig(db).season;
+  const active = (db.prepare("SELECT league_id, team_id FROM league WHERE season=@s ORDER BY last_synced_at DESC LIMIT 1").get({ s: season })
+    ?? db.prepare("SELECT league_id, team_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get()) as { league_id: string; team_id: string } | undefined;
+  db.close();
+  const league = valueOf(rest, "--league") ?? active?.league_id ?? REAL_LEAGUE;
+  const team = valueOf(rest, "--team") ?? active?.team_id ?? REAL_TEAM;
   const a = await attachFor(rest);
   // Reuse a non-draft tab (or make one); don't disturb an existing draft tab if already in.
   const existingDraft = a.pages.find((p) => /\/football\/draft/.test(p.url()));
@@ -283,7 +439,7 @@ async function cmdEnterDraft(rest: string[]) {
 
   // Strategy 2: direct draft URL (works once the draft room is live).
   if (!(await inDraft(page))) {
-    await page.goto(`https://fantasy.espn.com/football/draft?leagueId=${league}&seasonId=2026&teamId=${team}`, { waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.goto(`https://fantasy.espn.com/football/draft?leagueId=${league}&seasonId=${season}&teamId=${team}`, { waitUntil: "domcontentloaded" }).catch(() => {});
     await page.waitForTimeout(1500);
   }
 
@@ -795,28 +951,51 @@ async function cmdAutoDraft(rest: string[]) {
   const rounds = Number(valueOf(rest, "--rounds") ?? 1600);
   const jump = Number(valueOf(rest, "--jump") ?? 5);   // fixed jump-bid step (Step 8); 0 = +1 bids only
   const tick = Number(valueOf(rest, "--tick") ?? 1400); // poll cadence (ms); lower for a fast bid timer
-  // Default to OUR values table (data/values.csv) if present; else the strategy falls back to
-  // ESPN's on-screen value per player. Pass --csv "" to force the ESPN fallback.
+  // Value source (the pluggable knob). Preference: the single SQLite store (player_value) ->
+  // data/values.csv -> ESPN's on-screen pre-draft value. Pass an explicit --csv (incl. --csv "")
+  // to bypass the DB and force the CSV/ESPN path.
   const { existsSync } = await import("node:fs");
   const { nameKey } = await import("./draft/values.js");
-  let csv = valueOf(rest, "--csv");
+  const csvArg = valueOf(rest, "--csv");
+  const csvExplicit = csvArg !== undefined;
+  let csv = csvArg;
   if (csv === undefined) csv = existsSync("data/values.csv") ? "data/values.csv" : undefined;
 
-  // OUR value overrides (nameKey -> $) + pos, from an optional CSV (columns include player, pos,
-  // value). Both sides of the join are keyed by nameKey so ESPN spelling drift (suffixes, "D/ST")
-  // does not silently miss (finding #5). Without a value column the Strategy falls back to ESPN's
-  // on-screen pre-draft value -> the value source is the pluggable knob.
+  // OUR value overrides (nameKey -> $) + pos. Both sides of the join are keyed by nameKey so ESPN
+  // spelling drift (suffixes, "D/ST") does not silently miss (finding #5). Crucially, when loading
+  // from the DB we re-derive the key with the TS nameKey FROM THE STORED NAME -- never trust the
+  // stored player_id (Python's nkey) to equal the TS nameKey, or a divergence misses at draft time.
   const values: Record<string, number> = {};
   const posByName = new Map<string, string>();
-  if (csv) {
+  let valueSource = "espn-fallback";
+  if (!csvExplicit) {
+    try {
+      const { openDb } = await import("./db/db.js");
+      const db = openDb(valueOf(rest, "--db"));
+      const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
+      const vrows = db
+        .prepare("SELECT p.name AS name, p.position AS pos, pv.our_value AS v FROM player_value pv JOIN player p USING(player_id) WHERE pv.season = ?")
+        .all(season) as { name: string; pos: string; v: number }[];
+      db.close();
+      for (const r of vrows) {
+        const k = nameKey(r.name);
+        posByName.set(k, r.pos);
+        if (typeof r.v === "number" && !Number.isNaN(r.v)) values[k] = r.v;
+      }
+      if (vrows.length) valueSource = `sqlite:player_value(${vrows.length}, season ${season})`;
+    } catch { /* fall through to CSV */ }
+  }
+  if (Object.keys(values).length === 0 && csv) {
     try {
       for (const p of loadRankings(csv)) {
         posByName.set(nameKey(p.name), p.pos);
         const v = (p as unknown as { value?: number }).value;
         if (typeof v === "number" && !Number.isNaN(v)) values[nameKey(p.name)] = v;
       }
+      valueSource = `csv:${csv}`;
     } catch { /* optional */ }
   }
+  console.log(`[auto-draft] value source: ${valueSource} (${Object.keys(values).length} priced)`);
   const strat = makeV2Strategy({
     values: Object.keys(values).length ? values : undefined,
     nameKey,
@@ -873,6 +1052,9 @@ async function cmdAutoDraft(rest: string[]) {
   const liveStatePath = "data/live-state.json";
   let lastDecision: { player: string; pos: string | null; offer: number; cap: number; reason: string; action: string } | null = null;
   const logPath = `data/draft-log-${Date.now()}.json`;
+  // also write the live snapshot into the store (draft_state) so the app reads it via the helper
+  const { openDb: openDbForDraft, writeDraftState } = await import("./db/db.js");
+  const draftDb = (() => { try { return openDbForDraft(); } catch { return null; } })();
   for (let i = 0; i < rounds; i++) {
     const r = await readRoster(page);
     if (r.filled === 0 && r.open === 0) {
@@ -1014,17 +1196,23 @@ async function cmdAutoDraft(rest: string[]) {
         : b.canBid ? { player: b.player, action: "watch" }
         : { player: b.player, action: "leading" }; // can't bid == we're high bidder / locked
       const roster = r.slots.filter((s) => s.player).map((s) => ({ slot: s.slot, player: s.player, price: s.price }));
-      writeFileSync(liveStatePath, JSON.stringify({
+      const liveState = {
         updated: new Date().toISOString(), round: i, paused, onBlock, decision: decisionOut,
         us: { budget: 200 - r.spent, spent: r.spent, filled: r.filled, open: r.open,
               openByBase: r.openByBase, flexOpen: r.flexOpen, benchOpen: r.benchOpen, roster },
         liveInflation,
         league: { remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length },
         recentPicks: picks.slice(-12).map((p) => ({ pick: p.pick, name: p.name, pos: p.pos, team: p.fantasyTeam, price: p.price })),
-      }, null, 0));
+      };
+      writeFileSync(liveStatePath, JSON.stringify(liveState, null, 0)); // fast-path file for the poll
+      if (draftDb) writeDraftState(draftDb, "local", Object.assign({    // + the store, read via the helper
+        onBlockPlayer: onBlock?.player ?? null, onBlockPos: onBlock ? normPos(b.pos) : null,
+        bid: onBlock?.currentOffer ?? null, ourBudget: 200 - r.spent, ourSpent: r.spent, ourFilled: r.filled,
+      }, liveState));
     } catch { /* best-effort */ }
     await page.waitForTimeout(tick);
   }
+  try { draftDb?.close(); } catch { /* ignore */ }
   const fin = await readRoster(page);
   console.log(`final: filled ${fin.filled}/${fin.filled + fin.open} spent $${fin.spent} open ${fin.open}`);
   await detach(a);

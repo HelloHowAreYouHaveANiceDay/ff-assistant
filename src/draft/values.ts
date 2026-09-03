@@ -25,12 +25,27 @@ export interface ValueLeague {
 
 // rosterSpots MUST equal SIM_LEAGUE.slots.length (12) -- the real league is 16 teams x 12 slots.
 // Kept as a literal (not imported from sim.ts, which imports THIS file) and bound by a test.
+// Fallback only -- the live values come from resolveValueLeague(config). Starters match the real
+// league's ESPN settings (1 RB, 1 WR, 2 FLEX), so even the fallback is honest.
 export const DEFAULT_VALUE_LEAGUE: ValueLeague = {
   teams: 16, budget: 200, rosterSpots: 12,
-  starters: { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, K: 1, DST: 1 },
+  starters: { QB: 1, RB: 1, WR: 1, TE: 1, FLEX: 2, K: 1, DST: 1 },
 };
 
 const FLEX_ELIGIBLE = ["RB", "WR", "TE"];
+
+/** Derive the VBD ValueLeague from the app config (the single source of format truth). Starters are
+ *  counted from the configured slots (bench/IR excluded; FLEX kept as its own bucket), so changing
+ *  the league's roster in config actually moves replacement levels and therefore the $ values. */
+export function resolveValueLeague(cfg: { teams: number; budget: number; slots: string[] }): ValueLeague {
+  const starters: Record<string, number> = {};
+  for (const s of cfg.slots) {
+    if (/^(BE|BENCH|IR|ER)$/i.test(s)) continue;
+    const key = s === "FLEX" || s === "OP" || s === "RB/WR" || s === "WR/TE" ? "FLEX" : s;
+    starters[key] = (starters[key] ?? 0) + 1;
+  }
+  return { teams: cfg.teams, budget: cfg.budget, rosterSpots: cfg.slots.length, starters };
+}
 
 /** Replacement baseline points per position = the points of the first NON-startable player at
  *  that position across the whole league (dedicated starters + this position's share of FLEX). */
