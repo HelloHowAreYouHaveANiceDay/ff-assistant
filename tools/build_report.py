@@ -5,7 +5,7 @@
 #   context: bye week (schedules), age + years experience (players), last-year points + games played
 #   news: injury status + depth-chart rank + Sleeper add/drop buzz + latest headline (data/player-news.csv)
 # Writes data/player-report.csv (File > Import) AND data/player-report.tsv (paste into A1).
-# Run: uv run --with nflreadpy --with polars tools/build_report.py
+# Run: uv run --with nflreadpy --with polars --with requests tools/build_report.py
 import os, re, csv, datetime
 import polars as pl
 import nflreadpy as nfl
@@ -42,14 +42,37 @@ for r in read_csv("data/history-weekly.csv"):
         lastyr_gms[k].add(r.get("week"))
 lastyr_gms = {k: len(v) for k, v in lastyr_gms.items()}
 
-# --- consensus: team + ECR overall + ECR positional rank ---
+# --- consensus + per-source signals from FantasyPros ranks (ECR + expert range + ESPN/Yahoo own%) ---
 rk = to_pl(nfl.load_ff_rankings())
 rk = rk.filter(pl.col("page_type") == "redraft-overall").filter(pl.col("pos").is_in(POS)).unique(subset=["player"])
 rk = rk.sort("ecr").with_columns((pl.col("ecr").rank("ordinal").over("pos").cast(pl.Int64)).alias("ecr_pos"))
+def col_or_null(name):
+    return pl.col(name) if name in rk.columns else pl.lit(None)
 ecr = {}
-for player, pos, team, e, epos in rk.select(["player", "pos", "team", "ecr", "ecr_pos"]).rows():
+sel = rk.select(["player", "pos", "team", "ecr", "ecr_pos",
+                 col_or_null("best").alias("best"), col_or_null("worst").alias("worst"),
+                 col_or_null("player_owned_avg").alias("rostered")])
+for player, pos, team, e, epos, best, worst, rostered in sel.rows():
     nm = player.split()[-1] if pos == "DST" else player  # match our DST-nickname convention
-    ecr[nm] = {"team": team or "", "ecr": e, "ecr_pos": f"{pos}{epos}"}
+    rnd = lambda x: round(x) if isinstance(x, (int, float)) else ""
+    ecr[nm] = {"team": team or "", "ecr": e, "ecr_pos": f"{pos}{epos}",
+               "best": rnd(best), "worst": rnd(worst), "rostered": rnd(rostered)}
+
+# --- ESPN's own draft ranking (STANDARD scoring) via the ESPN fantasy API -> a second source rank ---
+espn_rank = {}
+try:
+    import requests, json as _json
+    _url = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/2025/segments/0/leaguedefaults/3"
+    _hdr = {"x-fantasy-filter": _json.dumps({"players": {"limit": 900, "sortDraftRanks": {"sortPriority": 1, "sortAsc": True, "value": "STANDARD"}}})}
+    _r = requests.get(_url, params={"view": "kona_player_info"}, headers=_hdr, timeout=30)
+    for p in _r.json().get("players", []):
+        pp = p.get("player", {})
+        rr = (pp.get("draftRanksByRankType", {}).get("STANDARD", {}) or {}).get("rank")
+        nm = pp.get("fullName")
+        if nm and rr is not None:
+            espn_rank.setdefault(nkey(nm), rr)
+except Exception as e:
+    print(f"espn ranks: ERR {str(e)[:70]}")
 
 # --- bye week per team (the REG week the team does not play) ---
 sched = to_pl(nfl.load_schedules(seasons=[SEASON])).filter(pl.col("game_type") == "REG")
@@ -64,10 +87,24 @@ ALIASES = {"LAR": "LA", "LA": "LAR", "WSH": "WAS", "WAS": "WSH", "JAC": "JAX", "
 def bye_for(team):
     return bye.get(team, bye.get(ALIASES.get(team, ""), ""))
 
-# --- age + experience from the players table ---
+# --- bio: age + experience + height/weight from the players table ---
+def fmt_ht(h):
+    # players.height may be inches (e.g. 74) or a "6-2" string -> normalize to 6'2"
+    if h is None or h == "":
+        return ""
+    s = str(h)
+    m = re.match(r"^(\d)[-'](\d{1,2})", s)
+    if m:
+        return f'{m.group(1)}\'{m.group(2)}"'
+    try:
+        inches = int(float(s))
+        return f'{inches // 12}\'{inches % 12}"'
+    except ValueError:
+        return s
+
 players = to_pl(nfl.load_players())
-pcols = [c for c in ["display_name", "birth_date", "years_of_experience"] if c in players.columns]
-age_exp = {}
+pcols = [c for c in ["display_name", "birth_date", "years_of_experience", "height", "weight"] if c in players.columns]
+bio = {}
 for row in players.select(pcols).iter_rows(named=True):
     k = nkey(row.get("display_name", ""))
     bd = row.get("birth_date")
@@ -79,7 +116,20 @@ for row in players.select(pcols).iter_rows(named=True):
         except Exception:
             age = ""
     exp = row.get("years_of_experience")
-    age_exp[k] = {"age": age, "exp": ("R" if exp == 0 else (exp if exp is not None else ""))}
+    wt = row.get("weight")
+    bio[k] = {"age": age, "exp": ("R" if exp == 0 else (exp if exp is not None else "")),
+              "ht": fmt_ht(row.get("height")), "wt": int(wt) if isinstance(wt, (int, float)) else (wt or "")}
+
+# --- combine 40-yard dash (athleticism), keyed by nkey ---
+forty = {}
+try:
+    cb = to_pl(nfl.load_combine())
+    for name, f in cb.select(["player_name", "forty"]).rows():
+        k = nkey(name)
+        if f is not None and k not in forty:
+            forty[k] = f
+except Exception as e:
+    print(f"combine: ERR {str(e)[:60]}")
 
 # --- news: injury + depth + Sleeper buzz + latest headline, keyed by nkey ---
 news_by_key = {}
@@ -106,15 +156,18 @@ for name, v in values.items():
     k = nkey(name)
     meta = ecr.get(name, {})
     team = meta.get("team", "")
-    ae = age_exp.get(k, {})
+    b = bio.get(k, {})
     nd = news_by_key.get(k, {})
     rows.append({
         "player": name, "pos": pos, "team": team, "bye": bye_for(team),
-        "age": ae.get("age", ""), "exp": ae.get("exp", ""),
+        "age": b.get("age", ""), "exp": b.get("exp", ""), "ht": b.get("ht", ""), "wt": b.get("wt", ""),
+        "forty": forty.get(k, ""),
         "our_value": val, "proj_pts": round(points.get(name, 0), 1),
         "last_pts": round(lastyr_pts.get(k, 0), 1) if k in lastyr_pts else "",
         "last_gms": lastyr_gms.get(k, ""),
         "ecr": meta.get("ecr", ""), "ecr_pos": meta.get("ecr_pos", ""),
+        "best": meta.get("best", ""), "worst": meta.get("worst", ""),
+        "espn_rank": espn_rank.get(k, ""), "rostered": meta.get("rostered", ""),
         "injury": nd.get("injury", ""), "depth": nd.get("depth", ""),
         "buzz": nd.get("buzz", ""), "news": nd.get("news", ""),
     })
@@ -136,10 +189,12 @@ for i, r in enumerate(rows):
         tier_top[p] = r["our_value"]
     r["tier"] = f"{p}-T{tier_no[p]}"
 
-COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "tier", "team", "bye", "age", "exp",
-        "our_value", "edge", "proj_pts", "last_pts", "last_gms", "ecr", "injury", "depth", "buzz", "news"]
-HEADER = ["Rank", "Player", "Pos", "PosRank", "ECR_Pos", "Tier", "Team", "Bye", "Age", "Exp",
-          "OurValue$", "vsECR", "ProjPts", "LastYrPts", "LastYrGms", "ECR", "Injury", "Depth", "Buzz", "Latest News"]
+COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "tier", "team", "bye", "age", "exp", "ht", "wt", "forty",
+        "our_value", "edge", "proj_pts", "last_pts", "last_gms",
+        "ecr", "best", "worst", "espn_rank", "rostered", "buzz", "injury", "depth", "news"]
+HEADER = ["Rank", "Player", "Pos", "PosRank", "ECR_Pos", "Tier", "Team", "Bye", "Age", "Exp", "Ht", "Wt", "40yd",
+          "OurValue$", "vsECR", "ProjPts", "LastYrPts", "LastYrGms",
+          "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "Rostered%", "SleeperBuzz", "Injury", "Depth", "Latest News"]
 
 os.makedirs("data", exist_ok=True)
 def san(x, sep):
