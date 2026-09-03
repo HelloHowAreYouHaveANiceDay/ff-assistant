@@ -101,12 +101,13 @@ for feed, url in RSS.items():
     for e in d.entries[:60]:
         title = (e.get("title") or "").strip()
         summary = re.sub("<[^>]+>", " ", e.get("summary") or "")
+        link = (e.get("link") or "").replace(",", "%2C")  # comma-safe for the manual CSV writer
         when = ""
         if e.get("published_parsed"):
             when = datetime.date(*e.published_parsed[:3]).isoformat()
         for player, pos, team in tag_players(title + " " + summary):
             rows.append(dict(player=player, pos=pos, team=team, category="headline", severity="low",
-                             detail=title, source=f"rss:{feed}", asof=when or "recent"))
+                             detail=title, source=f"rss:{feed}", asof=when or "recent", url=link))
 
 # --- Source D: Sleeper cross-league trending adds/drops (what managers everywhere are moving) ---
 # Map Sleeper player_id -> name/pos/team via nflverse ff_playerids (the id crosswalk).
@@ -147,11 +148,11 @@ for r in rows:
     uniq.append(r)
 
 os.makedirs("data", exist_ok=True)
-cols = ["player", "pos", "team", "category", "severity", "detail", "source", "asof"]
+cols = ["player", "pos", "team", "category", "severity", "detail", "source", "asof", "url"]
 with open("data/player-news.csv", "w", encoding="ascii", errors="ignore") as f:
     f.write(",".join(cols) + "\n")
     for r in uniq:
-        f.write(",".join(clean(r[c]) for c in cols) + "\n")
+        f.write(",".join(clean(r.get(c, "")) for c in cols) + "\n")
 
 by_cat = {}
 for r in uniq:

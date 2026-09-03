@@ -140,7 +140,7 @@ except Exception as e:
 news_by_key = {}
 for r in read_csv("data/player-news.csv"):
     k = nkey(r.get("player", ""))
-    d = news_by_key.setdefault(k, {"injury": "", "depth": "", "buzz": "", "news": ""})
+    d = news_by_key.setdefault(k, {"injury": "", "depth": "", "buzz": "", "news": "", "url": ""})
     cat, detail, src = r.get("category", ""), r.get("detail", ""), r.get("source", "")
     if cat == "injury":
         d["injury"] = detail
@@ -152,6 +152,7 @@ for r in read_csv("data/player-news.csv"):
         d["buzz"] = "ADD" if "add" in src else "DROP"
     elif cat == "headline" and not d["news"]:
         d["news"] = f"{detail} ({src})"
+        d["url"] = (r.get("url", "") or "").replace("%2C", ",")
 
 # --- assemble, rank by our value ---
 rows = []
@@ -174,7 +175,7 @@ for name, v in values.items():
         "best": meta.get("best", ""), "worst": meta.get("worst", ""),
         "espn_rank": espn_rank.get(k, ""), "rostered": meta.get("rostered", ""),
         "injury": nd.get("injury", ""), "depth": nd.get("depth", ""),
-        "buzz": nd.get("buzz", ""), "news": nd.get("news", ""),
+        "buzz": nd.get("buzz", ""), "news": nd.get("news", ""), "news_url": nd.get("url", ""),
     })
 rows.sort(key=lambda r: -r["our_value"])
 
@@ -198,10 +199,10 @@ for i, r in enumerate(rows):
 # injuries surface via the live-RSS "Latest News" column instead (a stale year-old feed would mislead).
 COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "tier", "team", "bye", "age", "exp", "ht", "wt", "forty",
         "our_value", "edge", "proj_pts", "last_pts", "last_gms",
-        "ecr", "best", "worst", "espn_rank", "rostered", "buzz", "depth", "news"]
+        "ecr", "best", "worst", "espn_rank", "rostered", "buzz", "depth", "news", "news_url"]
 HEADER = ["Rank", "Player", "Pos", "PosRank", "ECR_Pos", "Tier", "Team", "Bye", "Age", "Exp", "Ht", "Wt", "40yd",
           "OurValue$", "vsECR", "ProjPts", f"{LAST_YR}Pts", f"{LAST_YR}Gms",
-          "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "Rostered%", "SleeperBuzz", "Depth", "Latest News"]
+          "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "Rostered%", "SleeperBuzz", "Depth", "Latest News", "NewsURL"]
 
 os.makedirs("data", exist_ok=True)
 def san(x, sep):
