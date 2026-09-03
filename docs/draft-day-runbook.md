@@ -34,11 +34,17 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
    ```
    uv run --with nflreadpy --with polars --with requests tools/build_report.py   # -> data/player-report.csv + .tsv
    ```
-   One exhaustive row per player (27 cols): OUR value/rank + proj pts + team/bye + bio (age, exp,
-   ht/wt, 40yd) + rankings from each source (ECR + best/worst, ESPN_Rank, Rostered%, Sleeper buzz) +
-   last-year pts/games + injury/depth/latest-news. Paste `data/player-report.tsv` into A1, or File >
-   Import `data/player-report.csv`. To push a LIVE Google Sheet, see `tools/build_report.py` header
-   and the bim-google recipe (create via token, chunked `sheets write --grid`, then `format`).
+   One exhaustive row per player (~28 cols): OUR value/rank + proj pts + team/bye + bio (age, exp,
+   ht/wt, 40yd) + per-source rankings to compare (Us/ECR/ESPN positional, ECR + best/worst,
+   ESPN_Rank, ESPN_ADP, Rostered%, Sleeper buzz) + last-year pts/games + depth + latest-news (linked).
+   Paste `data/player-report.tsv` into A1, or File > Import the `.csv`.
+   **Live Google Sheet in ONE command** (rebuilds news+report, then pushes data+formatting+news links):
+   ```
+   uv run python tools/push_sheet.py --spreadsheet <id-or-url>        # refresh an existing sheet
+   uv run python tools/push_sheet.py                                  # create a new sheet, prints URL
+   ```
+   Add `--no-rebuild` to push the current CSV without refetching. Uses bim-cli's google driver
+   (`bim google login` once if auth lapses).
 
 ## What the cheat sheet gives you (the human copilot view)
 
