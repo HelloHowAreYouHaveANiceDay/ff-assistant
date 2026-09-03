@@ -8,6 +8,7 @@ import { z } from "zod";
 import { openDb, getConfig, setConfig, appendUsage, getMyRoster, setMyRoster, logAction, completeAction, recentActions, type RosterEntry } from "../db/db.js";
 import { nameKey } from "../draft/values.js";
 import { DEFAULT_SCORING, ESPN_STAT_TO_RULE, type ScoringRules } from "../draft/scoring.js";
+import { LEVER_META, clampLever, applyLevers } from "../draft/levers.js";
 
 // ESPN fantasy id maps (defaultPositionId / lineupSlotId)
 const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
@@ -219,6 +220,39 @@ function boardServer(dbPath: string | undefined, season: number) {
           return { content: [{ type: "text", text: ok ? `set ${hit.name} to $${Math.round(args.price)}` : `failed to update ${hit.name}` }] };
         },
       ),
+      tool(
+        "read_levers",
+        "Read the tunable LEVERS that shape our values/tiers/bidding (tier break, K/DST cap, starter/bench reserve, max share, aggressiveness, outbid premium, sleeper cutoff) with their current values and valid ranges.",
+        {},
+        async () => {
+          const db = openDb(dbPath);
+          const lv = getConfig(db).levers as unknown as Record<string, number>;
+          db.close();
+          const lines = Object.entries(LEVER_META).map(([k, m]) => `${k} = ${lv[k]} (${m.label}; ${m.min}..${m.max}${m.board ? "; affects board -> needs refresh" : ""}) -- ${m.help}`);
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        },
+      ),
+      tool(
+        "set_lever",
+        "Change ONE tuning lever (e.g. tierBreak, maxKDst, starterReserve, maxShare, aggr, premium, sleeperThreshold). Value is clamped to the lever's valid range. Board-affecting levers (tierBreak, maxKDst) take effect after the next data refresh; bidding/UI levers apply immediately. Logged to the action log.",
+        { key: z.string().describe("lever name, e.g. tierBreak"), value: z.number().describe("new value (clamped to range)") },
+        async (args) => {
+          const db = openDb(dbPath);
+          const meta = (LEVER_META as Record<string, { min: number; max: number; board: boolean }>)[args.key];
+          if (!meta) { db.close(); return { content: [{ type: "text", text: `unknown lever "${args.key}". Valid: ${Object.keys(LEVER_META).join(", ")}` }] }; }
+          const clamped = clampLever(args.key, args.value);
+          if (clamped == null) { db.close(); return { content: [{ type: "text", text: `invalid value for ${args.key}` }] }; }
+          const id = logAction(db, { runType: "chat", action: "set_lever", detail: { key: args.key, value: clamped } });
+          const cur = getConfig(db).levers;
+          const next = applyLevers(cur, { [args.key]: clamped });
+          setConfig(db, { levers: next });
+          const ok = ((getConfig(db).levers as unknown as Record<string, number>)[args.key]) === clamped;
+          completeAction(db, id, ok ? "done" : "failed");
+          db.close();
+          const note = meta.board ? " (affects the board -- run a data refresh to apply)" : " (applies immediately)";
+          return { content: [{ type: "text", text: ok ? `set ${args.key} = ${clamped}${clamped !== Number(args.value) ? ` (clamped from ${args.value})` : ""}${note}` : `failed to set ${args.key}` }] };
+        },
+      ),
       // --- NAVIGATION: the agent freely browses ESPN through the app's OWN authenticated webview
       // (persistent, always a CDP target). No bro; everything goes through the logged-in app session.
       tool(
@@ -397,7 +431,8 @@ const SYSTEM = `You are a fantasy football draft copilot for a 16-team, half-PPR
 Use the tools to read the live value board -- never guess players or numbers.
 "our_value" is OUR auction $ valuation. Each row gives vsECR and vsESPN = the consensus rank minus OUR rank: a POSITIVE vsECR/vsESPN means we rank the player EARLIER than the room (a VALUE -- you can win them below their real worth); NEGATIVE means the room likes them more than we do (NOT a value). Judge "value" strictly by these signs -- a bigger positive number is a bigger value. Never call a player with negative vsECR/vsESPN a value.
 Answer concisely and specifically: name the players, their $ value, and vsECR/vsESPN, with a one-line reason. Prefer a short ranked list over prose.
-You can also ACT on my roster: draft_player / drop_player / set_price change my team (every change is recorded in the action log). Only act when I clearly ask you to; confirm what you changed. Use read_needs to see open roster slots + max legal bid before recommending or making a pick, and read_actions to review what you've done.
+You can also ACT on my roster: draft_player / drop_player / set_price change my team (every change is recorded in the action log).
+You can read and TUNE the strategy levers: read_levers shows every knob (tier break, K/DST cap, starter/bench reserve, max share, aggressiveness, outbid premium, sleeper cutoff) with its range; set_lever changes one (clamped, logged). Board levers (tierBreak, maxKDst) need a data refresh to show; bidding/UI levers apply immediately. When I ask to be more/less aggressive, value depth over studs, widen tiers, cap kickers, etc., translate that into the right lever(s) and set them. Only act when I clearly ask you to; confirm what you changed. Use read_needs to see open roster slots + max legal bid before recommending or making a pick, and read_actions to review what you've done.
 You can freely BROWSE my ESPN account through my logged-in session: navigate(url) + read_page() drive the app's embedded browser, and discover_leagues finds my real leagues/teams/seasons by reading page links (prefer this over guessing IDs).
 For my REAL league (not the local draft board): discover_leagues -> league_sync reads the actual league rules from my logged-in session (size, scoring incl. PPR/Half/Standard, roster slots, my team) and stores them; read_league shows my live roster, standings, and draft status. Run league_sync before relying on scoring-specific data. Writing to the league (setting lineups, waivers, trades) is NOT yet available -- only reads.`;
 
@@ -408,7 +443,7 @@ export async function agentAsk(question: string, opts: { dbPath?: string; season
     prompt: question,
     options: {
       mcpServers: { "ff-draft": server },
-      allowedTools: ["mcp__ff-draft__read_board", "mcp__ff-draft__player_detail", "mcp__ff-draft__read_my_team", "mcp__ff-draft__read_needs", "mcp__ff-draft__draft_player", "mcp__ff-draft__drop_player", "mcp__ff-draft__set_price", "mcp__ff-draft__read_actions", "mcp__ff-draft__navigate", "mcp__ff-draft__read_page", "mcp__ff-draft__discover_leagues", "mcp__ff-draft__league_sync", "mcp__ff-draft__read_league"],
+      allowedTools: ["mcp__ff-draft__read_board", "mcp__ff-draft__player_detail", "mcp__ff-draft__read_my_team", "mcp__ff-draft__read_needs", "mcp__ff-draft__draft_player", "mcp__ff-draft__drop_player", "mcp__ff-draft__set_price", "mcp__ff-draft__read_actions", "mcp__ff-draft__navigate", "mcp__ff-draft__read_page", "mcp__ff-draft__discover_leagues", "mcp__ff-draft__league_sync", "mcp__ff-draft__read_league", "mcp__ff-draft__read_levers", "mcp__ff-draft__set_lever"],
       systemPrompt: SYSTEM,
       maxTurns: 8,
       permissionMode: "bypassPermissions",

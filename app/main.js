@@ -263,6 +263,7 @@ ipcMain.handle("mc:isPaused", () => {
 });
 ipcMain.handle("mc:openExternal", (e, url) => { if (/^https?:/.test(url)) shell.openExternal(url); });
 ipcMain.handle("mc:leagueInfo", () => rpc("league-info").catch(() => null));
+ipcMain.handle("mc:setLevers", (e, patch) => rpc("levers-set", { patch: patch || {} }).catch(() => null));
 // Onboarding sync: discover the user's ESPN leagues + sync the active one (format, scoring model, my
 // team) into config. Runs the existing agent tools (discover_leagues -> league_sync) as one turn and
 // resolves when it finishes, so the Setup UI can then refresh status + build the board.

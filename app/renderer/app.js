@@ -148,7 +148,7 @@ function drawBody() {
   let rs = DATA.filter(r => {
     if (bst.q && !r.Player.toLowerCase().includes(bst.q)) return false;
     if (bst.pos!=="ALL" && r.Pos!==bst.pos) return false;
-    if (bst.sleep && !(num(r.vsECR)>5)) return false;
+    if (bst.sleep && !(num(r.vsECR) > (CFG.levers?.sleeperThreshold ?? 5))) return false;
     if (bst.avail && /Out/i.test(r.Injury||"")) return false;
     if (bst.hideDrafted && onTeam(r.Player)) return false;
     return true;
@@ -342,6 +342,9 @@ function views_settings() {
       <pre class="cmd" id="log">Ready.</pre>
       <div class="sec" style="margin-top:24px"><h2>Detected league</h2><span class="lbl">from ESPN sync</span></div>
       <div id="league-kv"><div class="mut">—</div></div>
+      <div class="sec" style="margin-top:24px"><h2>Levers</h2><span class="lbl">tuning — the assistant can set these too</span></div>
+      <div id="levers-box"><div class="mut">—</div></div>
+      <div class="btnrow"><button class="pbtn" id="save-levers">Save levers</button><button class="pbtn" id="reset-levers">Reset to defaults</button></div>
       <div class="sec" style="margin-top:24px"><h2>Data</h2><span class="lbl">refresh</span></div>
       <div class="btnrow">
         <button class="pbtn" id="refresh">Refresh values + news</button>
@@ -366,7 +369,46 @@ function views_settings() {
   document.getElementById("su-build").onclick = build;
   document.getElementById("refresh").onclick = build;
   document.getElementById("reteam").onclick = () => { if (confirm("Clear your drafted team?")) { TEAM = []; saveTeam(); syncTeam(); log.textContent = "Team cleared."; } };
+  renderLevers();
+  document.getElementById("save-levers").onclick = async () => {
+    if (!window.mc?.setLevers) return log.textContent = "Run inside the app to save levers.";
+    const patch = {}; let boardChanged = false;
+    for (const [k, , , , , board] of LEVERS_UI) {
+      const el = document.getElementById("lv-" + k); if (!el) continue;
+      const v = Number(el.value); patch[k] = v;
+      if (board && v !== (CFG.levers?.[k])) boardChanged = true;
+    }
+    const next = await window.mc.setLevers(patch);
+    if (next) CFG.levers = next;
+    log.textContent = "Levers saved." + (boardChanged ? " Board levers changed — rebuilding..." : " Bidding/UI levers apply now.");
+    if (boardChanged) return build();
+    renderLevers(); drawBody && drawBody();
+  };
+  document.getElementById("reset-levers").onclick = async () => {
+    const defaults = { tierBreak: 0.75, maxKDst: 2, starterReserve: 15, benchReserve: 1, maxShare: 0.35, aggr: 1.0, premium: 2, sleeperThreshold: 5 };
+    const next = await window.mc?.setLevers?.(defaults); if (next) CFG.levers = next;
+    renderLevers(); log.textContent = "Levers reset to defaults. Run Refresh to rebuild the board.";
+  };
   loadLeagueStatus();
+}
+
+// [key, label, min, max, step, affectsBoard, help]
+const LEVERS_UI = [
+  ["tierBreak", "Tier break", 0.5, 0.95, 0.01, true, "Lower = fewer, bigger tiers"],
+  ["maxKDst", "Max K/DST $", 1, 10, 1, true, "Cap on kicker/defense price"],
+  ["starterReserve", "Starter reserve $", 0, 60, 1, false, "Held back for unfilled starters"],
+  ["benchReserve", "Bench reserve $", 0, 10, 1, false, "Held back per bench slot"],
+  ["maxShare", "Max share", 0.1, 0.7, 0.01, false, "Max fraction of budget on one player"],
+  ["aggr", "Aggressiveness", 0.5, 2, 0.05, false, ">1 chases, <1 waits for value"],
+  ["premium", "Outbid premium $", 0, 10, 1, false, "Extra $ to win a targeted player"],
+  ["sleeperThreshold", "Sleeper cutoff (vsECR)", 1, 20, 1, false, "Min vsECR for the SLEEPERS filter"],
+];
+function renderLevers() {
+  const box = document.getElementById("levers-box"); if (!box) return;
+  const lv = CFG.levers || {};
+  box.innerHTML = LEVERS_UI.map(([k, label, min, max, step, board, help]) =>
+    `<div class="leverrow"><label for="lv-${k}"><b>${label}</b>${board ? ' <span class="tag">board</span>' : ""}<span class="mut"> ${help}</span></label>` +
+    `<input id="lv-${k}" type="number" min="${min}" max="${max}" step="${step}" value="${lv[k] ?? ""}"></div>`).join("");
 }
 
 async function loadLeagueStatus() {

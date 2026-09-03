@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nameKey } from "../draft/values.js";
 import { DEFAULT_SCORING, type ScoringRules } from "../draft/scoring.js";
+import { DEFAULT_LEVERS, type Levers } from "../draft/levers.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_DB_PATH = process.env.FF_DB ?? "data/ff.db";
@@ -59,11 +60,19 @@ export const DEFAULT_CONFIG = {
   scoring: "HALF", // STD | HALF | PPR -- selects the Boris/ADP/market consensus VARIANT
   // the actual per-stat scoring model that tailors OUR points/values (populated by league_sync)
   scoring_rules: DEFAULT_SCORING as ScoringRules,
+  // tunable knobs (tiers, K/DST cap, bidding, sleeper cutoff) -- visible + assistant-writable
+  levers: DEFAULT_LEVERS as Levers,
 };
 export type AppConfig = typeof DEFAULT_CONFIG;
 export function getConfig(db: DB): AppConfig {
   const raw = getSetting(db, "config");
-  if (raw) { try { return { ...DEFAULT_CONFIG, ...JSON.parse(raw) }; } catch { /* fall through */ } }
+  if (raw) {
+    try {
+      const s = JSON.parse(raw);
+      // deep-merge the nested knob objects so a partial stored value never drops keys
+      return { ...DEFAULT_CONFIG, ...s, levers: { ...DEFAULT_LEVERS, ...(s.levers ?? {}) }, scoring_rules: { ...DEFAULT_SCORING, ...(s.scoring_rules ?? {}) } };
+    } catch { /* fall through */ }
+  }
   return { ...DEFAULT_CONFIG };
 }
 export function setConfig(db: DB, cfg: Partial<AppConfig>): void {

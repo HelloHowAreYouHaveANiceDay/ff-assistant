@@ -14,8 +14,9 @@ export interface Levers {
   sleeperThreshold: number; // min vsECR for a player to count as a SLEEPER (board filter)
 }
 
+// Defaults reproduce the proven BALANCED auto-draft posture (reserve 15 / max-share 0.35 / premium 2).
 export const DEFAULT_LEVERS: Levers = {
-  tierBreak: 0.75, maxKDst: 2, starterReserve: 15, benchReserve: 1, maxShare: 0.35, aggr: 1.0, premium: 1, sleeperThreshold: 5,
+  tierBreak: 0.75, maxKDst: 2, starterReserve: 15, benchReserve: 1, maxShare: 0.35, aggr: 1.0, premium: 2, sleeperThreshold: 5,
 };
 
 export interface LeverMeta { label: string; min: number; max: number; step: number; board: boolean; help: string; }

@@ -136,6 +136,7 @@ async function cmdServe(rest: string[]) {
   const { openDb, getConfig, setMyRoster, getMyRoster, setConfig } = await import("./db/db.js");
   const { appDataPayload } = await import("./data/appdata.js");
   const { authStatus } = await import("./agent/auth.js");
+  const { applyLevers } = await import("./draft/levers.js");
   const db = openDb(valueOf(rest, "--db"));
   const send = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
   const curSeason = () => getConfig(db).season;
@@ -165,6 +166,10 @@ async function cmdServe(rest: string[]) {
         }
         case "config-get": result = getConfig(db); break;
         case "config-set": setConfig(db, (params.config as Record<string, unknown>) ?? {}); result = getConfig(db); break;
+        case "levers-set": { // clamp each knob to its valid range before storing
+          const next = applyLevers(getConfig(db).levers, (params.patch as Record<string, unknown>) ?? {});
+          setConfig(db, { levers: next }); result = next; break;
+        }
         case "league-info": {
           const cfg = getConfig(db);
           const lg = db.prepare("SELECT league_id, name, season, team_id, scoring_json FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; name: string; season: number; team_id: string; scoring_json: string } | undefined;
@@ -996,6 +1001,9 @@ async function cmdAutoDraft(rest: string[]) {
     } catch { /* optional */ }
   }
   console.log(`[auto-draft] value source: ${valueSource} (${Object.keys(values).length} priced)`);
+  const { openDb: openCfgDb, getConfig: getCfg } = await import("./db/db.js");
+  const _cfgDb = openCfgDb(valueOf(rest, "--db"));
+  const lv = getCfg(_cfgDb).levers; _cfgDb.close(); // bidding defaults come from the configured levers
   const strat = makeV2Strategy({
     values: Object.keys(values).length ? values : undefined,
     nameKey,
@@ -1005,11 +1013,11 @@ async function cmdAutoDraft(rest: string[]) {
     // 15 (not 20) after a live mock showed reserve 20 STRANDS budget once the room pays > $20/starter
     // (soft cap collapses to $20 after one buy); at 15 the max-share cap governs ($70) so we stay in
     // the auction, and the sim is statistically tied (23.7 vs 24.0). Values = OUR VOR->$.
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 15),
-    benchReserve: Number(valueOf(rest, "--bench-reserve") ?? 1),
-    premium: Number(valueOf(rest, "--premium") ?? 2),
-    aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
-    maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? lv.starterReserve),
+    benchReserve: Number(valueOf(rest, "--bench-reserve") ?? lv.benchReserve),
+    premium: Number(valueOf(rest, "--premium") ?? lv.premium),
+    aggr: Number(valueOf(rest, "--aggr") ?? lv.aggr),
+    maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
     // LIVE inflation repricing is ON by default -- backtested +~2 championship pts / +3 playoff pts
     // (docs/validation.md). Toggle: --no-inflation. Scarcity is a REJECTED feature (backtested
     // NEGATIVE, and its live wiring passed teams=[ours]) -- removed from auto-draft (Step 6).

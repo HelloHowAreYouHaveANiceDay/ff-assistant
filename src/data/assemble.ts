@@ -73,7 +73,7 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     const [name, pos, pts] = l.split(","); return { name: (name || "").trim(), pos: (pos || "").trim().toUpperCase(), points: Number(pts) };
   }).filter((p) => p.name && Number.isFinite(p.points));
   const projByName = new Map(points.map((p) => [p.name, p.points]));
-  const values = computeValues(points, resolveValueLeague(cfg));
+  const values = computeValues(points, resolveValueLeague(cfg), cfg.levers.maxKDst);
 
   // 2-4. external fetches (ported): last-year actuals + ESPN ranks
   const [ly, espn] = await Promise.all([lastYear(season, cfg.scoring_rules), espnRanks(season)]);
@@ -134,7 +134,7 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     r.edge = typeof r.ecr === "number" ? Math.round((r.ecr as number) - (r.rank as number)) : "";
     // vsADP: market's ADP minus our rank. POSITIVE = the room lets them fall past where we value them (a bargain).
     r.vs_adp = typeof r.adp === "number" ? Math.round((r.adp as number) - (r.rank as number)) : "";
-    if (!(p in tierTop) || (r.our_value as number) < tierTop[p] * 0.75) { tierNo[p] = (tierNo[p] ?? 0) + 1; tierTop[p] = r.our_value as number; }
+    if (!(p in tierTop) || (r.our_value as number) < tierTop[p] * cfg.levers.tierBreak) { tierNo[p] = (tierNo[p] ?? 0) + 1; tierTop[p] = r.our_value as number; }
     r.tier = `${p}-T${tierNo[p]}`;
   });
   // ESPN positional rank (within pos, by ESPN overall)
