@@ -12,3 +12,4 @@ data/draft-dom-snapshot.json
 .DS_Store
 diag.mjs
 inspect.mjs
+data/live-state.json

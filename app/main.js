@@ -69,6 +69,46 @@ function run(cmd, args) {
 }
 
 ipcMain.handle("mc:draftState", () => newestDraftLog());
+ipcMain.handle("mc:liveState", () => {
+  const f = path.join(REPO, "data", "live-state.json");
+  try {
+    const m = fs.statSync(f).mtimeMs;
+    return { ageSec: Math.round((Date.now() - m) / 1000), data: JSON.parse(fs.readFileSync(f, "utf8")) };
+  } catch (e) { return null; }
+});
+
+// --- agent control: start (auto-draft / practice), pause via the PAUSE file, stop (kill tree) ---
+let agent = null;
+ipcMain.handle("mc:agentStatus", () => ({ running: !!agent, pid: agent ? agent.pid : null }));
+ipcMain.handle("mc:agentStart", (e, mode) => {
+  if (mode === "practice") { // quick launcher, exits after opening the mock room
+    cp.spawn("npm", ["run", "ff", "--", "launch-practice"], { cwd: REPO, shell: true });
+    return { ok: true, mode };
+  }
+  if (agent) return { ok: false, out: "agent already running" };
+  agent = cp.spawn("npm", ["run", "ff", "--", "auto-draft", "--csv", "data/values.csv"], { cwd: REPO, shell: true });
+  agent.on("close", () => { agent = null; });
+  agent.on("error", () => { agent = null; });
+  return { ok: true, mode, pid: agent.pid };
+});
+ipcMain.handle("mc:agentStop", () => {
+  if (!agent) return { ok: false, out: "not running" };
+  const pid = agent.pid;
+  try { cp.execSync(`taskkill /F /T /PID ${pid}`); } catch (e) { /* may already be gone */ }
+  agent = null;
+  return { ok: true };
+});
+ipcMain.handle("mc:pause", (e, on) => {
+  const f = path.join(REPO, "data", "PAUSE");
+  try {
+    if (on) fs.writeFileSync(f, "paused");
+    else if (fs.existsSync(f)) fs.unlinkSync(f);
+    return { ok: true, paused: !!on };
+  } catch (err) { return { ok: false, out: String(err) }; }
+});
+ipcMain.handle("mc:isPaused", () => {
+  try { return fs.existsSync(path.join(REPO, "data", "PAUSE")); } catch (e) { return false; }
+});
 ipcMain.handle("mc:openExternal", (e, url) => { if (/^https?:/.test(url)) shell.openExternal(url); });
 ipcMain.handle("mc:refreshData", async () => {
   const r1 = await run("uv", ["run", "--with", "nflreadpy", "--with", "polars", "--with", "requests", "tools/build_report.py"]);

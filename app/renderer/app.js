@@ -204,45 +204,94 @@ function views_news() {
   }
 }
 
-/* ---------- DRAFT ROOM (live cockpit) ---------- */
+/* ---------- DRAFT ROOM (live cockpit / agent copilot) ---------- */
 let roomTimer = null;
+const valOf = n => { const p = byName.get(n); return p ? ` · our $${p["OurValue$"]}` : ""; };
 function views_room() {
-  document.getElementById("view").innerHTML = `<div id="room"></div>`;
+  document.getElementById("view").innerHTML = `<div id="room" class="roomwrap"></div>`;
   drawRoom();
-  if (window.mc) roomTimer = setInterval(drawRoom, 4000);
+  if (window.mc) roomTimer = setInterval(drawRoom, 2000);
+}
+function ctrlBar(live, paused, running) {
+  return `<div class="ctrlbar">
+    <span class="astatus"><i class="dot ${live?(paused?'amber':'green'):'red'}"></i> ${live?(paused?'AGENT PAUSED':'AGENT LIVE'):(running?'starting…':'agent idle')}</span>
+    <span class="ctrl-sp"></span>
+    <button class="pbtn" data-act="practice">Launch practice room</button>
+    <button class="pbtn" data-act="${running?'stop':'start'}">${running?'Stop agent':'Start agent'}</button>
+    <button class="pbtn" data-act="pause" ${live?'':'disabled'}>${paused?'Resume':'Pause (take the wheel)'}</button>
+  </div>`;
+}
+function wireCtrl(el) {
+  el.querySelectorAll(".ctrlbar [data-act]").forEach(b => b.onclick = async () => {
+    const a = b.dataset.act; b.disabled = true;
+    if (a === "practice") await window.mc.agentStart("practice");
+    else if (a === "start") await window.mc.agentStart("auto");
+    else if (a === "stop") await window.mc.agentStop();
+    else if (a === "pause") { const p = await window.mc.isPaused(); await window.mc.pause(!p); }
+    setTimeout(drawRoom, 400);
+  });
 }
 async function drawRoom() {
   const el = document.getElementById("room"); if (!el) return;
-  const st = window.mc ? await window.mc.draftState() : null;
-  const live = st && st.data && st.ageSec < 120;
-  setStatus(live ? "green" : "amber", live ? `Draft: LIVE (${st.data.picksMade||0} picks)` : "Draft: not connected");
-  if (!st || !st.data) {
+  if (!window.mc) {
+    setStatus("amber", "Draft: open in the app");
     el.innerHTML = `<div class="placeholder"><div class="big">&#9889;</div><h2>Draft Room</h2>
-      <p>No live draft detected. Start the engine, then this fills with live state, the board of best-available players, and live inflation.</p>
-      <pre class="cmd">cd H:/working/ff-assistant
-npm run ff -- launch-practice   # or enter-draft for the real league
-npm run ff -- auto-draft --csv data/values.csv</pre>
-      ${window.mc?"":'<p class="mut">(Live state reads the draft-log the engine writes — available when running inside the app.)</p>'}</div>`;
+      <p>The live cockpit runs inside the desktop app — it reads the agent's live decisions and can start/stop/pause it. Launch with <code>cd app &amp;&amp; npm start</code>.</p></div>`;
     return;
   }
-  const d = st.data;
-  const drafted = new Set((d.picks||[]).map(p => p.name));
-  const avail = DATA.filter(p => !drafted.has(p.Player)).sort((a,b)=>(+b["OurValue$"])-(+a["OurValue$"]));
-  const infl = d.liveInflation ? d.liveInflation.toFixed(2) : "—";
-  const recent = (d.picks||[]).slice(-12).reverse();
-  el.innerHTML = `
+  const ls = await window.mc.liveState();
+  const status = await window.mc.agentStatus();
+  const d = ls && ls.data;
+  const live = !!(d && ls.ageSec < 30);
+  const paused = !!(d && d.paused);
+  const log = await window.mc.draftState();
+  const drafted = new Set(((log && log.data && log.data.picks) || (d && d.recentPicks) || []).map(p => p.name));
+  const avail = DATA.filter(p => !drafted.has(p.Player)).sort((a,b) => (+b["OurValue$"]) - (+a["OurValue$"]));
+
+  if (!live) {
+    setStatus(status.running ? "amber" : "red", status.running ? "Draft: starting" : "Draft: not connected");
+    el.innerHTML = ctrlBar(false, false, status.running) + `<div class="placeholder"><div class="big">&#9889;</div><h2>No live draft yet</h2>
+      <p>Launch a practice room (or enter the real draft), then Start agent. This panel then shows the agent's live recommended bid, our roster and budget, and the board of best-available players.</p></div>`;
+    wireCtrl(el); return;
+  }
+  setStatus(paused ? "amber" : "green", paused ? "Draft: PAUSED" : `Draft: LIVE (${d.league.picksMade} picks)`);
+  const ob = d.onBlock, dec = d.decision || {};
+  const ACT = { bid:["BID","a-bid"], pass:["PASS","a-pass"], skip:["SKIP","a-mut"], watch:["WATCH","a-mut"], leading:["HIGH BIDDER","a-lead"], idle:["—","a-mut"], paused:["PAUSED","a-mut"] };
+  const [actLabel, actCls] = ACT[dec.action] || ["—","a-mut"];
+  const pick = ob ? `
+    <div class="pick">
+      <div class="pick-l">
+        <div class="lbl">On the block</div>
+        <div class="pick-name"><span class="pos ${ob.pos||''}">${esc(ob.pos||"")}</span> ${esc(ob.player)}</div>
+        <div class="mut">current bid <b>$${ob.currentOffer||0}</b> · ESPN max $${ob.myMax==null?"—":ob.myMax}${valOf(ob.player)}</div>
+      </div>
+      <div class="pick-r">
+        <div class="lbl">Agent recommends</div>
+        <div class="pick-bid">$${dec.cap==null?"—":dec.cap} <span class="act ${actCls}">${actLabel}</span></div>
+        <div class="mut">${esc(dec.reason||"")}</div>
+      </div>
+    </div>`
+    : `<div class="pick"><div class="pick-l"><div class="lbl">Between nominations</div><div class="pick-name mut">waiting for the next player…</div></div><div class="pick-r"><div class="lbl">Agent</div><div class="pick-bid mut">idle</div></div></div>`;
+  const us = d.us || {}, budget = us.budget||0, infl = d.liveInflation ? d.liveInflation.toFixed(2) : "—";
+  const roster = (us.roster||[]);
+  const openSummary = Object.entries(us.openByBase||{}).filter(([k,v])=>v>0).map(([k,v])=>`${k}×${v}`).concat((us.flexOpen?[`FLEX×${us.flexOpen}`]:[]),(us.benchOpen?[`BE×${us.benchOpen}`]:[])).join("  ");
+  const maxBid = budget - Math.max(0, (us.open||1) - 1);
+  el.innerHTML = ctrlBar(true, paused, status.running) + pick + `
     <div class="team-stats">
-      ${stat("Picks made", d.picksMade||(d.picks||[]).length)}${stat("League $ left", "$"+(d.remainingDollars||0))}
-      ${stat("Inflation", infl, +infl<0.9?"bad":(+infl>1.1?"":"" ))}${stat("Log age", st.ageSec+"s")}
+      ${stat("Our budget","$"+budget)}${stat("Spent","$"+(us.spent||0))}${stat("Max bid","$"+Math.max(0,maxBid))}
+      ${stat("Inflation",infl,+infl<0.9?"bad":"")}${stat("Filled",(us.filled||0)+"/"+((us.filled||0)+(us.open||0)))}${stat("League $",(d.league.remainingDollars? "$"+d.league.remainingDollars : "—"))}
     </div>
     <div class="team-body">
-      <div class="roster"><div class="sec"><h2>Best available</h2><span class="lbl">undrafted · by our value</span></div>
-        <table class="rtbl">${avail.slice(0,18).map(p=>`<tr><td class="l"><span class="pos ${p.Pos}">${p.Pos}</span> <b>${esc(p.Player)}</b></td><td class="val">$${p["OurValue$"]}</td><td class="mut">ECR ${p.ECR}</td></tr>`).join("")}</table>
+      <div class="roster"><div class="sec"><h2>Our roster</h2><span class="lbl">${openSummary?("open  "+openSummary):"full"}</span></div>
+        <table class="rtbl">${roster.length? roster.map(s=>`<tr><td class="slot">${esc(s.slot)}</td><td class="l pl">${esc(s.player)}</td><td class="val">$${s.price==null?"":s.price}</td></tr>`).join("") : '<tr><td class="mut">no players won yet</td></tr>'}</table>
+        <div class="sec" style="margin-top:20px"><h2>Recent picks</h2><span class="lbl">league feed</span></div>
+        ${(d.recentPicks||[]).slice().reverse().map(p=>`<div class="needrow"><span class="l">${esc(p.name)} <span class="mut">${esc(p.pos||"")}</span></span><b>$${p.price}</b></div>`).join("")||'<div class="mut">—</div>'}
       </div>
-      <div class="needs"><div class="sec"><h2>Recent picks</h2><span class="lbl">live feed</span></div>
-        ${recent.map(p=>`<div class="needrow"><span class="l">${esc(p.name)} <span class="mut">${esc(p.pos||"")}</span></span><b>$${p.price}</b></div>`).join("")||'<div class="mut">—</div>'}
+      <div class="needs"><div class="sec"><h2>Best available</h2><span class="lbl">undrafted · our value</span></div>
+        <table class="rtbl">${avail.slice(0,20).map(p=>`<tr><td class="l"><span class="pos ${p.Pos}">${p.Pos}</span> <b>${esc(p.Player)}</b></td><td class="val">$${p["OurValue$"]}</td><td class="mut">ECR ${p.ECR}</td></tr>`).join("")}</table>
       </div>
     </div>`;
+  wireCtrl(el);
 }
 
 /* ---------- SETTINGS ---------- */

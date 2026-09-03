@@ -5,6 +5,14 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("mc", {
   // live draft state: the newest data/draft-log-*.json the `ff auto-draft` engine writes (or null)
   draftState: () => ipcRenderer.invoke("mc:draftState"),
+  // the agent's per-tick decision (on-block, recommended max bid + reason, our roster/budget)
+  liveState: () => ipcRenderer.invoke("mc:liveState"),
+  // agent control
+  agentStatus: () => ipcRenderer.invoke("mc:agentStatus"),
+  agentStart: (mode) => ipcRenderer.invoke("mc:agentStart", mode),
+  agentStop: () => ipcRenderer.invoke("mc:agentStop"),
+  pause: (on) => ipcRenderer.invoke("mc:pause", on),
+  isPaused: () => ipcRenderer.invoke("mc:isPaused"),
   // rebuild the values/report + embedded data (renderer reloads on success)
   refreshData: () => ipcRenderer.invoke("mc:refreshData"),
   // push the board to a Google Sheet via bim-cli (id/url optional)

@@ -867,6 +867,11 @@ async function cmdAutoDraft(rest: string[]) {
   const stallWarn = Math.round(3 * refreshesPerMin);
   let loggedSlots = false; // one-time live-vs-sim slot-count check
   let wasPaused = false; // copresent PAUSE-file state (Step 9)
+  // Live-state file the desktop app (Mission Control) reads each tick to render the agent's
+  // current decision (on-block player, our recommended max bid + reason), our roster/budget, and
+  // live inflation. Stable filename so the app polls ONE file. Best-effort, overwritten each tick.
+  const liveStatePath = "data/live-state.json";
+  let lastDecision: { player: string; pos: string | null; offer: number; cap: number; reason: string; action: string } | null = null;
   const logPath = `data/draft-log-${Date.now()}.json`;
   for (let i = 0; i < rounds; i++) {
     const r = await readRoster(page);
@@ -945,6 +950,7 @@ async function cmdAutoDraft(rest: string[]) {
         if (b.myMax == null) console.log(`r${i}: WARN myMax unreadable -- falling back to affordableMax`);
         const cap = legalCap(decision.maxBid, b.myMax, state);
         const offer = b.currentOffer ?? 0;
+        lastDecision = { player: b.player, pos, offer, cap, reason: decision.reason ?? "", action: offer < cap ? "bid" : "pass" };
         if (offer < cap) {
           // When outbid but still under cap, JUMP-bid a FIXED $jump above the current offer (never
           // past cap) -- the +1 button is too slow for fast stud auctions, and a flat step wins
@@ -964,9 +970,12 @@ async function cmdAutoDraft(rest: string[]) {
           console.log(`r${i}: pass ${b.player} (${pos}) $${offer} cap=${cap} [${decision.reason}] [open ${r.open}]`);
           lastPlayer = b.player;
         }
-      } else if (b.player !== lastPlayer) {
-        console.log(`r${i}: skip ${b.player} (${pos ?? "?"}) -- no open slot [open ${r.open}]`);
-        lastPlayer = b.player;
+      } else {
+        lastDecision = { player: b.player, pos: pos ?? null, offer: b.currentOffer ?? 0, cap: 0, reason: "no open slot for pos", action: "skip" };
+        if (b.player !== lastPlayer) {
+          console.log(`r${i}: skip ${b.player} (${pos ?? "?"}) -- no open slot [open ${r.open}]`);
+          lastPlayer = b.player;
+        }
       }
     }
     // Nomination (G3, Step 7): only when it is actually OUR turn. readTurn() gates on the real
@@ -993,6 +1002,27 @@ async function cmdAutoDraft(rest: string[]) {
     } else {
       idlePolls = 0;
     }
+    // Emit the live-state file the desktop app renders as the copilot (agent's current decision +
+    // our roster/budget + inflation). Best-effort; overwritten each tick.
+    try {
+      const onBlock = b.onBlock && b.player
+        ? { player: b.player, pos: normPos(b.pos), currentOffer: b.currentOffer, myMax: b.myMax, canBid: b.canBid }
+        : null;
+      const decisionOut = paused ? { action: "paused" }
+        : !onBlock ? { action: "idle" }
+        : (lastDecision && lastDecision.player === b.player) ? lastDecision
+        : b.canBid ? { player: b.player, action: "watch" }
+        : { player: b.player, action: "leading" }; // can't bid == we're high bidder / locked
+      const roster = r.slots.filter((s) => s.player).map((s) => ({ slot: s.slot, player: s.player, price: s.price }));
+      writeFileSync(liveStatePath, JSON.stringify({
+        updated: new Date().toISOString(), round: i, paused, onBlock, decision: decisionOut,
+        us: { budget: 200 - r.spent, spent: r.spent, filled: r.filled, open: r.open,
+              openByBase: r.openByBase, flexOpen: r.flexOpen, benchOpen: r.benchOpen, roster },
+        liveInflation,
+        league: { remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length },
+        recentPicks: picks.slice(-12).map((p) => ({ pick: p.pick, name: p.name, pos: p.pos, team: p.fantasyTeam, price: p.price })),
+      }, null, 0));
+    } catch { /* best-effort */ }
     await page.waitForTimeout(tick);
   }
   const fin = await readRoster(page);
