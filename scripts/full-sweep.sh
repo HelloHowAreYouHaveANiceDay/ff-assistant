@@ -95,4 +95,13 @@ for res in 0 2 4 6 8; do
   done
 done
 
+echo "=== 9. aggr x reserve -- these are TWO mechanisms for the same caution, so the true optimum ==="
+echo "===    may be a ridge that no one-at-a-time sweep can see. Shading was tuned at reserve 15; ==="
+echo "===    if reserve drops, the best aggr may rise back toward 1.0. ==="
+for aggr in 0.7 0.8 0.9 1.0; do
+  for res in 2 6 12; do
+    run ridge "a$aggr-r$res" "$N" $aggr $B_BENCH $res 0.25 $B_PREM $B_MKT "$B_MULT" 1
+  done
+done
+
 echo "ALL DONE" | tee -a "$OUT"
