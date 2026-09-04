@@ -28,7 +28,13 @@ export interface Levers {
 // (n=400 x 9 seasons, SE ~0.6). A bench-only player never enters the lineup, so his standalone
 // value overstates him; 0 collapses to 19.6% because depth still matters for byes/injuries.
 export const DEFAULT_LEVERS: Levers = {
-  tierBreak: 0.75, maxKDst: 2, starterReserve: 15, benchReserve: 1, maxShare: 0.35, aggr: 1.0, premium: 2, sleeperThreshold: 5,
+  // aggr 0.7 measured 2026-09-04: 28.6% -> 33.7% championships (n=800 x 9 seasons, SE ~0.42, ~12 SE).
+  // This is the WINNER'S CURSE correction, not timidity: drafting is a common-value auction on noisy
+  // estimates, so the winner is disproportionately whoever OVERestimated, and shading ~30% offsets
+  // it. Verified to build a genuinely better team, not just a cheaper one -- +53.5 starting-lineup
+  // points and 82% -> 92% of the field outscored, at the SAME spend (scripts/roster-strength.mjs).
+  // Interior optimum: 0.4 collapses to 23.4%, 1.15 falls to 25.4%.
+  tierBreak: 0.75, maxKDst: 2, starterReserve: 15, benchReserve: 1, maxShare: 0.35, aggr: 0.7, premium: 2, sleeperThreshold: 5,
   benchDiscount: 0.25,
   // multQB 0.7 measured 2026-09-04: 27.6% -> 28.6% championships (n=800 x 9 seasons, SE ~0.42),
   // playoffs 88% -> 90%. We were spending ~$59/draft (30% of budget) on QB, essentially one elite

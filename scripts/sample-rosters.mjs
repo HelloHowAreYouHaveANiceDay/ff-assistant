@@ -8,9 +8,10 @@ const readCsv = (p) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).ma
 const points = readCsv("data/points.csv").map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
 const ourValues = new Map();
 for (const f of readCsv("data/values.csv")) ourValues.set(f[0].trim(), Number(f[2]));
-const cfg = { values: Object.fromEntries(ourValues), starterReserve: 15, benchReserve: 1, premium: 2, maxShare: 0.35, maxKDst: 2 };
+const over = JSON.parse(process.argv[2] || "{}"); // e.g. '{"aggr":0.7}'
+const cfg = { values: Object.fromEntries(ourValues), starterReserve: 15, benchReserve: 1, premium: 2, maxShare: 0.35, maxKDst: 2, benchDiscount: 0.25, ...over };
 
-for (const s of [1, 2, 3, 4, 5]) {
+for (const s of [1, 2]) {
   const { picks } = draftFieldSeats(points, ourValues, cfg, s, SIM_LEAGUE);
   const mine = picks.filter((p) => p.team === 0).sort((a, b) => b.price - a.price);
   const byPos = {};

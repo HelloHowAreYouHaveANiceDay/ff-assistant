@@ -2,7 +2,8 @@
 // that produced it. Compares average SPEND per position (not counts -- counts can rise while spend
 // falls, which is exactly what a discount does) between two posMult settings.
 //
-//   node scripts/spend-by-pos.mjs '{"QB":1}' '{"QB":0.6}'
+//   node scripts/spend-by-pos.mjs '{"posMult":{"QB":1}}' '{"aggr":0.7}'
+// Args are full V2Config OVERRIDES (merged over the shipped config), so any lever can be compared.
 import { readFileSync } from "node:fs";
 import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
 
@@ -14,8 +15,8 @@ for (const f of readCsv("data/values.csv")) ourValues.set(f[0].trim(), Number(f[
 const base = { values: Object.fromEntries(ourValues), starterReserve: 15, benchReserve: 1, premium: 2, maxShare: 0.35, maxKDst: 2, benchDiscount: 0.25 };
 
 const N = 60;
-const measure = (posMult) => {
-  const cfg = { ...base, posMult };
+const measure = (over) => {
+  const cfg = { ...base, ...over };
   const spend = {}, count = {};
   let total = 0;
   for (let s = 1; s <= N; s++) {
@@ -27,7 +28,7 @@ const measure = (posMult) => {
   }
   const out = {};
   for (const k of Object.keys(spend)) out[k] = { $: (spend[k] / N).toFixed(1), n: (count[k] / N).toFixed(2) };
-  return { out, total: (total / N).toFixed(1) };
+  return { out, total: (total / N).toFixed(1), slots: (Object.values(count).reduce((a, b) => a + b, 0) / N).toFixed(2) };
 };
 
 const a = measure(A), b = measure(B);
