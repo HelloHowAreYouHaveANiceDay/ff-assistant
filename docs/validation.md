@@ -18,6 +18,42 @@ Two tools, both offline/fast/deterministic per seed:
   for quick iteration, but it over-rewards top-heavy rosters (no playoffs) -- prefer backtest for
   strategy calls.
 
+## Live mock drafts (2026-09-04): 10 complete ESPN practice auctions
+
+Run end-to-end through the desktop app's embedded webview (`scripts/mock-suite.mjs 10`, records in
+`data/mock-runs.jsonl`, analysis `scripts/analyze-mocks.mjs`). Expectations were written down BEFORE
+the runs (`scripts/expectations.mjs`) and split into two classes, because only one transfers to a
+practice room full of ESPN AUTO teams.
+
+**Mechanics invariants -- all held, 10/10 drafts:** roster completes 12/12; exactly 2 K/DST every
+draft, never benched; no K/DST above $2; TE count 1-3 (expected 1-4); every bid resolved from our
+table (`src=ours` 442/442 on the current build); zero stalls or disconnects. Mean 41 min per draft.
+
+**Spend was NOT what I predicted, and the prediction was the pessimistic one.** Expecting the bots
+to overpay, I predicted live spend well BELOW the offline band; live median came in at **$171**
+against an offline median of **$170** (range $167-175 on the fixed build; the lone $140 was draft 1
+on the pre-benchDiscount build). Treat "auto-bots overpay, so we will spend less" as unsupported at
+this roster size -- the room does spend its whole budget, and we get our share of what is left.
+
+**Still do not tune strategy on mock outcomes.** The opponent model is wrong (generic AUTO teams,
+not this league's 16 managers), so the backtest remains the arbiter for anything about VALUE. The
+mocks are the arbiter for MECHANICS, which is what they caught:
+
+- three concurrent `auto-draft` processes sharing one seat (killing a launching shell does not kill
+  the node tree on Windows) -> single-instance PID lock;
+- `Steelers D/ST` arriving with `pos=K`, so a position-gated DST alias missed it -> alias now keys
+  off the NAME;
+- every nomination firing twice. **Investigated and NOT a defect:** the repeat targets the same
+  player and exactly one nomination results (mock 3: A.J. Brown r283/r291 -> bid r304). A cooldown
+  reduces the redundant clicks; do not "fix" it further without evidence a duplicate ever nominates
+  a DIFFERENT player.
+
+**Three of the bugs were in the MEASUREMENT, not the engine** -- each made results look fine:
+`(rec.dupeNominations||[]).length` reporting 0 for a field the suite never wrote; `"H. Fannin Jr."`
+taking "Jr." as the surname so suffixed players fell out of the TE count (mean 2.10 -> 2.50 once
+fixed); and logs paired to records POSITIONALLY while two suites both wrote `mock-01.log`. Check the
+instrument before believing the reading.
+
 ## benchDiscount (2026-09-04): a bench-only player is not worth his standalone value
 
 Found by reading actual sim rosters rather than aggregates: with a filled QB slot the agent would
