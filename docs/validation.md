@@ -28,6 +28,38 @@ single season's championship estimate swings 25%<->50% for the SAME config just 
 noise, so single-season "findings" are overfit (I made that mistake: a 2024-only run showed
 "reserve 5 = 50.6%, optimal", which did NOT replicate -- 2024 at high N is ~25%).
 
+### Injury-proneness is NOT an effective draft lever (2026-09-03)
+
+Tested a proposed lever that discounts OUR values by prior-season availability (`avail = games /
+the busiest player's games`), modelling "pay less for injury-prone players". Wired as
+`backtest --injury-lever F` (F=0 is the baseline; only our team applies it, the field still bids on
+market). Full-system no-lookahead, n=250/season, 2015-2024:
+
+| injury-lever | 0 | 0.3 | 0.5 | 0.8 |
+|---|---|---|---|---|
+| championships | 11.3% | 11.2% | 11.0% | 11.3% |
+
+Flat (<=0.3pp = noise). The lever IS connected -- per-season rates move between settings (2018:
+8/9/8/10; 2023: 12/14/13/14), proving the discount changes picks -- so this is a real null, not a
+dead no-op. **Why it doesn't help:** (1) prior-season POINTS already embed games missed (fewer games
+-> fewer points -> lower value), so an extra availability discount double-counts without new signal;
+(2) prior-year availability is a weak predictor of next-year availability (injuries don't persist);
+(3) the full-system backtest already prices in-season availability (a missed week scores 0 through
+the real lineup optimizer). The flag is kept (defaults off) for re-testing if a stronger
+injury-history signal is added. **Caveat -- what this does NOT test:** a FRESH injury (ruled out this
+week, not yet in ECR). The backtest's projection IS prior-year actuals, so it has no
+"news-ahead-of-the-ranking" case -- which is exactly the real-world value of the board's live injury
+flags + Hide-OUT filter, a human/agent overlay, not a value term.
+
+### Rookies are NOT cleanly testable as a lever (structural, 2026-09-03)
+
+A rookie bonus/penalty can't be A/B'd in the trustworthy no-lookahead backtest: it drafts on the
+PRIOR season's actuals (`projYr = yr-1`), and a rookie has no prior season, so rookies are absent
+from the draft pool entirely -- there is nothing for a rookie lever to act on. Testing one would need
+a rookie projection source in the historical data (draft-capital / prospect model), which we don't
+have. In production, rookies are valued purely by their ECR rank (consensus already prices upside)
+and shown with an "R" exp badge for the human/agent to judge -- not weighted by the engine.
+
 ### Aggression is NOT neutral -- balanced wins (Step 5 sweep, 2026-09-02)
 
 The earlier "aggression is roughly neutral (~27%, all within noise)" claim was measured against the

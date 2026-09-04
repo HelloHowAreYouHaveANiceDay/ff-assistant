@@ -992,17 +992,22 @@ async function cmdBacktest(rest: string[]) {
   const waivers = rest.includes("--waivers"); // our team works the waiver wire (trailing-avg, no lookahead)
   const drainNom = rest.includes("--drain-nom"); // our team drain-nominates the known position-payers
   const greedyNom = rest.includes("--greedy-nom"); // our team nominates the best player we don't want
+  const injuryLever = valueOf(rest, "--injury-lever") != null ? Number(valueOf(rest, "--injury-lever")) : 0; // discount OUR values by prior-yr availability
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;
   const perYear: string[] = [];
   for (const yr of seasons) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
     const proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
+    // availability signal for the injury lever: prior-season games played / the busiest player's games
+    const avail = new Map<string, number>();
+    const priorWk = wk.get(projYr);
+    if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   console.log(`  per season: ${perYear.join("  ")}`);
