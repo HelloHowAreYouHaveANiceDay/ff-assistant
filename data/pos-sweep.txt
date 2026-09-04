@@ -1,0 +1,4 @@
+QB x0.7   CHAMPIONSHIPS: 35.2%  (random 6.3%)  |  playoffs: 93%
+QB x0.85  CHAMPIONSHIPS: 35.0%  (random 6.3%)  |  playoffs: 93%
+QB x1     CHAMPIONSHIPS: 34.6%  (random 6.3%)  |  playoffs: 93%
+QB x1.15  

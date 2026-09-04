@@ -1034,6 +1034,9 @@ async function cmdBacktest(rest: string[]) {
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;
   const perYear: string[] = [];
+  const dumpPath = valueOf(rest, "--dump-trials");
+  const dumpRows: string[] = [];
+  const { writeFileSync: writeDump } = await import("node:fs");
   for (const yr of seasons) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
     const proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
@@ -1042,12 +1045,24 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+      // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
+      // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
+      // two configs meet the same market noise and the same bot seats. That makes every trial a
+      // matched PAIR, and paired tests on those pairs are far more powerful -- and far more honest
+      // -- than comparing two aggregate percentages. Also: the unit of GENERALISATION is the season,
+      // not the trial, so downstream analysis needs the season label on every row.
+      if (dumpPath) dumpRows.push([yr, s + 1 + yr * 1000, r.champ ? 1 : 0, r.madePlayoffs ? 1 : 0, r.wins, r.regPoints].join("\t"));
+    }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
   const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
+  if (dumpPath) {
+    writeDump(dumpPath, ["season", "seed", "champ", "playoffs", "wins", "regPoints"].join("\t") + "\n" + dumpRows.join("\n") + "\n", "utf8");
+    console.log(`  wrote ${dumpRows.length} trial rows -> ${dumpPath}`);
+  }
   console.log(`  per season: ${perYear.join("  ")}`);
 }
 

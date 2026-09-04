@@ -5,8 +5,8 @@
 > points-weighted), which moved the whole bid table; see "Weighted FLEX baselines" below. Numbers
 > measured before that date are EVEN-SPLIT-curve numbers and are retired as current guidance, the
 > same way the old uniform-bot 36% figures were. **Current headline (weighted curve, full-system
-> no-lookahead + inflation, realistic field, 2015-2024, n=400): 28.0% championships, 88% playoffs**
-> (24.4% before the benchDiscount lever below).
+> no-lookahead + inflation, realistic field, **1999-2024 (25 scored seasons)**, n=150): **34.9%
+> championships, 94% playoffs**, and 34.1% on the 1999-2013 holdout that no tuning ever saw.
 > When you record a new number here, name its curve.
 
 Two tools, both offline/fast/deterministic per seed:
@@ -53,6 +53,79 @@ mocks are the arbiter for MECHANICS, which is what they caught:
 taking "Jr." as the surname so suffixed players fell out of the TE count (mean 2.10 -> 2.50 once
 fixed); and logs paired to records POSITIONALLY while two suites both wrote `mock-01.log`. Check the
 instrument before believing the reading.
+
+## The lever campaign + a proper holdout (2026-09-04)
+
+91 pinned backtest configurations (`scripts/full-sweep.sh` -> `data/full-sweep.tsv`), then a
+confirmation pass, then -- the part that changed the conclusions -- history extended from 9 scored
+seasons to 25 (`ff build-history --seasons 1999-2024`, 26 seasons / 137,643 player-weeks). **Seasons
+1999-2013 were never used in any tuning, so they are a genuine holdout.**
+
+| config | tuning 2015-24 | HOLDOUT 1999-2013 |
+|---|---|---|
+| no shading (aggr 1.0) | 28.0% | 24.5% |
+| old default r15/s0.35 | 33.7% | 33.1% |
+| **shipped r4/s0.25** | 37.0% | **34.1%** |
+
+**Shading replicates and grows on unseen data** (+8.6pp holdout vs +6.6pp tuning) -- a real effect.
+**The reserve/share gain SHRANK from +3.4pp to +1.0pp** -- same sign, one third the size. That is
+selection bias: the cell was chosen as the best of 91, so part of its margin was the winner's curse
+operating on our own search. It still ships (positive out of sample), but **the honest effect size
+is +1.0pp, and without the holdout the docs would have claimed +2.8**.
+
+### What the campaign actually established
+
+- **`aggr` 0.7 -- the winner's-curse correction, and the biggest single lever.** Drafting is a
+  common-value auction on noisy estimates, so the winner is disproportionately whoever OVERestimated;
+  shading ~30% offsets it. Interior optimum (0.4 -> 23.4%, 1.15 -> 25.4%). **Robust to the one
+  assumption it depends on**: swept against `marketSd` 0.20/0.30/0.45, the optimum stays at 0.6-0.7
+  in all three and aggr 1.0 is the worst cell in all three. That matters because `marketSd = 0.30` is
+  a pure assumption -- `ff calibrate` validates the bots' positional SPEND, never their projection
+  noise.
+- **`maxShare` binds; `starterReserve` is nearly inert.** At fixed share, reserve 0..8 differ by
+  <1pp; share moves championships ~6pp. The earlier "reserve 15 is optimal" was share moving
+  underneath an irrelevant dial. Share peaks at 0.25, bracketed both sides.
+- **No aggr x reserve ridge.** aggr 0.7 wins at every reserve; lower reserve wins at every aggr.
+- **Inflation ON is worth +4.8pp** at aggr 0.7 (the +2pt claim was measured at aggr 1.0).
+- **`premium` 2 is already near-optimal** (0 -> 34.1, 1 -> 35.1, 2 -> 34.6, 4 -> 31.6, 6 -> 28.2).
+  A predicted failure that did not happen -- recorded because the prediction was wrong.
+
+### Every positional multiplier is 1.0, and that is a finding
+
+`multQB/RB/WR/TE` exist (unit-tested, persisted, sweepable) but all ship at 1.0. Three separate
+positional "gains" evaporated when re-measured against a corrected baseline:
+
+| candidate | at the baseline it was found on | re-measured |
+|---|---|---|
+| multQB 0.7 | +1.3pp (aggr 1.0) | **0.0pp** at n=800 under aggr 0.7 |
+| multRB 0.8 | +1.0pp (aggr 1.0) | **-1.9pp** -- sign reversed |
+| multWR 0.85 | +1.2pp (r15/s0.35) | **-0.5pp** at r4/s0.25 |
+
+All three were the GLOBAL shading effect wearing a positional costume. **The rule this earns: before
+shipping a narrow lever, check whether a broad one already explains it** -- and always re-measure a
+candidate against the baseline you actually intend to ship, not the one it was discovered on.
+
+### Statistics: the unit of analysis is the SEASON
+
+n=800 x 9 seasons is not 7,200 independent draws; it is 800 noise re-draws over the same 9 seasons.
+For "will this help in a season we have never seen", the effective n is the season count. Seeds are
+COMMON RANDOM NUMBERS (`seed = s + 1 + yr*1000`), so configs meet identical market noise and bot
+seats -- every trial is a matched pair, and `--dump-trials <path>` now emits per-(season, seed)
+outcomes so paired tests can be run properly instead of comparing two aggregate percentages.
+
+Paired per-season result for the shipped config vs the old default: **better in 9 of 9 seasons**
+(sign test p = 0.002), paired mean +3.44pp, SD 1.51, t = 6.85 on 8 df. Observed per-season SD of
+1.51pp implies a **detection floor of ~1.5pp at 80% power** -- which is exactly why the +1.2pp WR
+candidate could never have been trusted from a single sweep.
+
+### Known structural weakness (not yet fixed)
+
+The sim's bots bid `trueVal` from `computeValues` -- OUR OWN valuation function -- plus noise. This
+is the same self-reference that hid the FLEX-baseline bug for months, and it means some of the
+shading gain is a correction for bidding against a noisy copy of ourselves. Giving the bots an
+INDEPENDENT value model (ADP, or ESPN's published values) is the highest-value remaining change.
+`calibrate` should also be extended to reproduce the league's real price DISTRIBUTION (median $2,
+61% of picks $1-5, top $80-106 from league-tendencies.md), not just positional spend shares.
 
 ## benchDiscount (2026-09-04): a bench-only player is not worth his standalone value
 

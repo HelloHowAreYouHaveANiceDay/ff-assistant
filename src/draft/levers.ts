@@ -34,7 +34,12 @@ export const DEFAULT_LEVERS: Levers = {
   // it. Verified to build a genuinely better team, not just a cheaper one -- +53.5 starting-lineup
   // points and 82% -> 92% of the field outscored, at the SAME spend (scripts/roster-strength.mjs).
   // Interior optimum: 0.4 collapses to 23.4%, 1.15 falls to 25.4%.
-  tierBreak: 0.75, maxKDst: 2, starterReserve: 15, benchReserve: 1, maxShare: 0.35, aggr: 0.7, premium: 2, sleeperThreshold: 5,
+  // starterReserve 4 / maxShare 0.25 (2026-09-04). The 91-cell sweep found reserve is nearly INERT
+  // under shading -- r0..r8 differ by <1pp at fixed share -- while share moves championships ~6pp.
+  // The old "reserve 15 is optimal" was share moving underneath an irrelevant dial. Share peaks at
+  // 0.25 and is properly bracketed (0.20 -> 35.5, 0.25 -> 37.0, 0.30 -> 36.8, 0.35 -> 35.4).
+  // Reserve kept small-but-nonzero for live robustness at no measured cost.
+  tierBreak: 0.75, maxKDst: 2, starterReserve: 4, benchReserve: 1, maxShare: 0.25, aggr: 0.7, premium: 2, sleeperThreshold: 5,
   benchDiscount: 0.25,
   // All 1.0 by evidence. multQB 0.7 DID measure +1.3 pts (27.6% -> 28.6%, n=800) while aggr was 1.0
   // -- but that gain was the WINNER'S CURSE correction wearing a QB costume. With aggr 0.7 shipped,

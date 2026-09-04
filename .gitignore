@@ -39,3 +39,4 @@ app/engine/
 data/mock-runs.jsonl
 data/mock-*.log
 data/auto-draft.lock
+data/history-*.bak.csv
