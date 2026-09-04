@@ -539,7 +539,7 @@ async function stubAgentTurn(msg, sink) {
   sink.done();
 }
 
-let copilotLog = [{ role: "assistant", parts: [{ t: "text", s: "Hi — I’m your draft copilot. Ask me anything about the board: “best available RB”, “is Josh Jacobs a value?”, “who should I target at WR?”. I read the live value board to answer." }] }];
+let copilotLog = [{ role: "assistant", parts: [{ t: "text", s: "Hi — I’m your draft assistant. Ask me anything about the board: “best available RB”, “is Josh Jacobs a value?”, “who should I target at WR?”. I read the live value board to answer." }] }];
 function renderCopilot() {
   const el = document.getElementById("cop-msgs"); if (!el) return;
   el.innerHTML = copilotLog.map(m => {
@@ -591,11 +591,11 @@ async function recheckAuth() {
 }
 function renderConnect() {
   const view = document.getElementById("view");
-  const sub = MC_AUTH.source === "expired" ? "Your Claude login has expired." : "The Copilot runs on your Claude subscription.";
+  const sub = MC_AUTH.source === "expired" ? "Your Claude login has expired." : "The Assistant runs on your Claude subscription.";
   view.innerHTML = `
     <div class="connect"><div class="connect-card">
       <div class="connect-h">Connect Claude</div>
-      <p class="mut">${sub} Log in with your Claude account (Max or Pro) to enable the draft copilot — it runs locally on your subscription, nothing is sent anywhere else.</p>
+      <p class="mut">${sub} Log in with your Claude account (Max or Pro) to enable the draft assistant — it runs locally on your subscription, nothing is sent anywhere else.</p>
       <div class="connect-actions">
         <button class="pbtn primary" id="cn-login">Log in with Claude</button>
         <button class="pbtn" id="cn-check">Check again</button>
@@ -612,7 +612,7 @@ function views_copilot() {
     <div class="copilot">
       <div class="cop-msgs" id="cop-msgs"></div>
       <div class="cop-input">
-        <input id="cop-q" placeholder="Ask the copilot…  (e.g. best available RB)" autocomplete="off">
+        <input id="cop-q" placeholder="Ask the assistant…  (e.g. best available RB)" autocomplete="off">
         <button class="pbtn" id="cop-send">Send</button>
       </div>
     </div>`;
@@ -655,7 +655,7 @@ const WH_NODES = [].concat(
    { id: "points", name: "points.csv", kind: "artifact", sub: "projection curve" },
    { id: "player_value", name: "player_value", kind: "mart", table: "player_value" },
    { id: "board", name: "board", kind: "mart", table: "board" },
-   { id: "view", name: "Players view", kind: "output", sub: "board + Copilot" }]
+   { id: "view", name: "Players view", kind: "output", sub: "board + Assistant" }]
 );
 const WH_EDGES = [
   ["src_fp", "ranking"], ["src_fp", "player"], ["src_fp", "weekly_rank"],
