@@ -54,7 +54,7 @@ CALLS one (listing proves registration, not execution):
 node scripts/mcp-smoke.mjs      # -> MCP STDIO SMOKE PASSED
 ```
 
-## The tools (15)
+## The tools (16)
 
 | Tool | What it does | Writes? |
 |---|---|---|
@@ -70,6 +70,7 @@ node scripts/mcp-smoke.mjs      # -> MCP STDIO SMOKE PASSED
 | `set_lever` | tune one strategy knob (clamped, logged) | **yes** (logged) |
 | `navigate` | point the app's embedded ESPN browser at a URL | app state |
 | `read_page` | read the visible text of the embedded page | no |
+| `click_page` | click an element by visible text or CSS selector; follows popups the webview blocks | app state |
 | `discover_leagues` | find my real leagues/teams by reading my ESPN home | writes store |
 | `league_sync` | read real league rules (size, scoring, slots, my team) into the store | writes store |
 | `read_league` | live roster, standings, draft status | no |
@@ -88,3 +89,28 @@ one audit trail. Writing to ESPN itself (lineups, waivers, trades) is **not** ex
   earlier than the room = a value**. Getting that sign backwards inverts every recommendation.
 - This does not touch the draft bidding path. `ff auto-draft` is unchanged and does not go through
   the agent or MCP.
+
+## Known limitation: the embedded webview cannot be DRIVEN by the bidding engine
+
+`navigate` / `read_page` / `click_page` reach the webview through the renderer
+(`webview.executeJavaScript`), which is why they work. The auction engine does not: `ff auto-draft`
+/ `launch-practice` / `read-block` attach with Playwright (`attach()` =
+`browser.contexts().flatMap(c => c.pages())`), and **Playwright does not enumerate an Electron
+`<webview>` as a page**. Measured on this machine (Electron 32.3.3, CDP 9223):
+
+- `GET /json/list` shows the guest as a target of type **`webview`** at `fantasy.espn.com`;
+- `ff attach --port 9223` reports exactly one page, the `file://` renderer.
+
+So `--port 9223` hands every draft verb the RENDERER, not ESPN -- `read-block` returns all nulls,
+and `launch-practice` would navigate the app's own UI window to the ESPN lobby. The app's
+"Start agent (practice)" button (`app/main.js` -> `ffSpawn(["launch-practice", "--port", CDP_PORT])`)
+depends on this and is affected.
+
+The path that works for bidding is a real browser where ESPN is a TOP-LEVEL page -- the bro session
+(`attachBro`), which is what the live mock runs of 2026-09-01/02 used.
+
+Separately, ESPN opens every draft room via `window.open`, and the main window's
+`setWindowOpenHandler` sends `http(s)` popups to `shell.openExternal` -- i.e. out to the system
+browser, not into the app. `click_page` patches `window.open` in the guest to capture and follow
+such URLs in-place, which handles the general case, but the lobby's "Practice Draft" button did not
+route through `window.open` in testing.
