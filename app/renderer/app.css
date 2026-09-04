@@ -17,10 +17,20 @@
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--tx);font:var(--fw-body) var(--fs-base)/1.45 var(--font-sans);overflow:hidden;-webkit-font-smoothing:antialiased}
 .lbl{font-size:var(--fs-xs);font-weight:var(--fw-label);letter-spacing:var(--tracking);text-transform:uppercase;color:var(--mut)}
-#app{display:grid;grid-template-columns:216px 1fr;grid-template-rows:minmax(0,1fr);height:100vh;overflow:hidden}
+#app{display:grid;grid-template-columns:340px 1fr;grid-template-rows:minmax(0,1fr);height:100vh;overflow:hidden}
 
 /* sidebar */
-#side{background:var(--bg);border-right:1px solid var(--line-str);display:flex;flex-direction:column;padding:var(--s4) 0 var(--s3)}
+#agent{background:var(--bg);border-right:1px solid var(--line-str);display:flex;flex-direction:column;min-height:0}
+#agent .brand{padding:var(--s4) var(--s4) var(--s3)}
+.tabrow{flex:0 0 auto;display:flex;align-items:center;gap:4px;padding:0 var(--s4);overflow-x:auto;white-space:nowrap}
+.tabrow.leagues{background:var(--bg);border-bottom:1px solid var(--line-str);padding-top:8px;gap:6px}
+.tabrow.pages{background:var(--paper);border-bottom:1px solid var(--line-str);height:38px}
+.tab{cursor:pointer;border:none;background:none;color:var(--mut);font-size:var(--fs-xs);font-weight:var(--fw-label);letter-spacing:var(--tracking);text-transform:uppercase;padding:9px 12px;border-bottom:2px solid transparent}
+.tab:hover{color:var(--tx)}
+.tab.on{color:var(--tx);border-bottom-color:var(--sel)}
+.tab.league{padding:7px 14px;border:1px solid var(--line);border-bottom:none;border-radius:6px 6px 0 0;background:var(--paper);text-transform:none;font-size:var(--fs-sm)}
+.tab.league.on{background:var(--sel);color:var(--sel-fg);border-color:var(--sel)}
+.tab.addleague{border-style:dashed;color:var(--mut)}
 .brand{display:flex;gap:10px;align-items:baseline;padding:0 var(--s4) var(--s3);border-bottom:1px solid var(--line-str)}
 .brand .logo{font-size:20px;align-self:center}
 .brand .bt{font-family:var(--font-serif);font-weight:var(--fw-head);font-size:var(--fs-md);line-height:1.05}

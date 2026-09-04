@@ -40,21 +40,49 @@ function rosterSlots() {
 }
 
 /* ---------- view switching ---------- */
-const TITLES = { board: "Players", team: "My Team", news: "News", room: "Draft Room", copilot: "Copilot", live: "Live Draft", sources: "Data Sources", settings: "Settings" };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-let cur = "board";
-function setView(v) {
+let cur = "board", curPage = "board";
+let ACTIVE_LEAGUE = null; // { leagueId, season, teamId, name }
+// Pages under the active league. ESPN pages drive the embedded (logged-in) webview to a league URL;
+// the rest render into #view.
+const PAGES = [
+  { id: "board", name: "Board", kind: "view" },
+  { id: "myteam", name: "My Team", kind: "espn", path: l => `team?leagueId=${l.leagueId}&seasonId=${l.season}${l.teamId ? `&teamId=${l.teamId}` : ""}` },
+  { id: "scoreboard", name: "Scoreboard", kind: "espn", path: l => `league/scoreboard?leagueId=${l.leagueId}&seasonId=${l.season}` },
+  { id: "standings", name: "Standings", kind: "espn", path: l => `league/standings?leagueId=${l.leagueId}&seasonId=${l.season}` },
+  { id: "draft", name: "Draft Room", kind: "espn", path: l => `draft?leagueId=${l.leagueId}&seasonId=${l.season}${l.teamId ? `&teamId=${l.teamId}` : ""}` },
+  { id: "news", name: "News", kind: "view" },
+  { id: "sources", name: "Data", kind: "view" },
+  { id: "settings", name: "Setup", kind: "view" },
+];
+const PAGE_VIEWS = { board: () => views_board(), news: () => views_news(), sources: () => views_sources(), settings: () => views_settings() };
+function espnGo(path) { const wv = document.getElementById("espnview"); if (wv && wv.loadURL) wv.loadURL("https://fantasy.espn.com/football/" + path); }
+function setPage(id) {
   if (roomTimer) { clearInterval(roomTimer); roomTimer = null; }
-  cur = v;
-  document.querySelectorAll(".nv").forEach(b => b.classList.toggle("on", b.dataset.view === v));
-  document.getElementById("crumb").textContent = TITLES[v] || "Players";
-  // Live Draft = the persistent webview layer (kept mounted so it stays a CDP target); other views
-  // render into #view. In browser preview (no window.mc) there's no webview, so fall through.
-  const showWebview = v === "live" && !!window.mc;
-  const wl = document.getElementById("webview-layer"); if (wl) wl.classList.toggle("off", !showWebview);
-  (views[v] || views.board)(); // #view still renders (covered by the webview layer when live)
+  const pg = PAGES.find(p => p.id === id) || PAGES[0];
+  curPage = cur = pg.id;
+  document.querySelectorAll("#pagetabs .tab").forEach(b => b.classList.toggle("on", b.dataset.page === pg.id));
+  const isEspn = pg.kind === "espn" && !!window.mc;
+  const wl = document.getElementById("webview-layer"); if (wl) wl.classList.toggle("off", !isEspn);
+  if (isEspn) { if (ACTIVE_LEAGUE && ACTIVE_LEAGUE.leagueId) espnGo(pg.path(ACTIVE_LEAGUE)); }
+  else (PAGE_VIEWS[pg.id] || views_board)();
 }
-document.querySelectorAll(".nv").forEach(b => b.onclick = () => setView(b.dataset.view));
+// legacy: agent tools + the copilot call setView(viewName); map old view names onto pages
+const VIEW_TO_PAGE = { board: "board", players: "board", team: "myteam", news: "news", room: "draft", live: "draft", sources: "sources", settings: "settings", copilot: "board" };
+function setView(v) { setPage(VIEW_TO_PAGE[v] || "board"); }
+function renderPageTabs() {
+  const el = document.getElementById("pagetabs"); if (!el) return;
+  el.innerHTML = PAGES.map(p => `<button class="tab ${p.id === curPage ? "on" : ""}" data-page="${p.id}">${esc(p.name)}</button>`).join("");
+  el.querySelectorAll(".tab").forEach(b => b.onclick = () => setPage(b.dataset.page));
+}
+async function renderLeagueTabs() {
+  const el = document.getElementById("leaguetabs"); if (!el) return;
+  let lg = null;
+  try { const info = await window.mc?.leagueInfo?.(); lg = info && info.league; if (lg) ACTIVE_LEAGUE = { leagueId: lg.league_id, season: lg.season, teamId: lg.team_id, name: lg.name }; } catch (e) { /* none synced */ }
+  el.innerHTML = (lg ? `<button class="tab league on" data-lg="${esc(lg.league_id)}">${esc(lg.name || "My League")}</button>` : `<button class="tab league on">Set up a league →</button>`)
+    + `<button class="tab league addleague" id="lg-add">+ league</button>`;
+  const add = document.getElementById("lg-add"); if (add) add.onclick = () => setPage("settings");
+}
 
 /* ---------- DRAFT BOARD ---------- */
 const COLS = [
@@ -556,7 +584,7 @@ async function sendCopilot(text) {
 let MC_AUTH = { authenticated: true }; // default true so browser preview shows the (stub) chat
 async function recheckAuth() {
   if (window.mc && window.mc.authStatus) { try { MC_AUTH = await window.mc.authStatus(); } catch (e) { /* keep */ } }
-  if (cur === "copilot") views_copilot();
+  renderCopilot(); // the copilot is always mounted in the left bar
 }
 function renderConnect() {
   const view = document.getElementById("view");
@@ -713,11 +741,20 @@ async function boot() {
   if (window.mc && window.mc.authStatus) { try { MC_AUTH = await window.mc.authStatus(); } catch (e) { /* keep default */ } }
   wireWebview(); // the persistent ESPN browsing surface (always mounted, always CDP-navigable)
   syncTeam();
-  const yr = CFG.season || new Date().getFullYear(); // season label from config, not hardcoded
-  const bs = document.getElementById("brand-season"); if (bs) bs.textContent = "Fantasy " + yr;
-  const vs = document.getElementById("values-season"); if (vs) vs.textContent = "Values: " + yr;
-  // Fresh install (no board yet) lands on Setup so the user onboards; otherwise the Players board.
+  initCopilot();          // the Copilot lives in the left bar now -- always present
+  await renderLeagueTabs(); // top row: the league(s); sets ACTIVE_LEAGUE for the ESPN pages
+  renderPageTabs();       // second row: Board + ESPN pages for the active league
+  const bs = document.getElementById("brand-season"); if (bs) bs.textContent = ACTIVE_LEAGUE ? (ACTIVE_LEAGUE.name || "Mission Control") : "Mission Control";
+  // Fresh install (no board yet) lands on Setup so the user onboards; otherwise the Board.
   const fresh = window.mc && (!DATA || DATA.length === 0);
-  setView(fresh ? "settings" : "board");
+  setPage(fresh ? "settings" : "board");
+}
+// The Copilot chat is mounted once in #agent (always present). Wire its input + paint the log.
+function initCopilot() {
+  renderCopilot();
+  const q = document.getElementById("cop-q"); if (!q) return;
+  const send = () => { const t = q.value.trim(); if (!t) return; q.value = ""; sendCopilot(t); };
+  const sb = document.getElementById("cop-send"); if (sb) sb.onclick = send;
+  q.onkeydown = e => { if (e.key === "Enter") send(); };
 }
 boot();
