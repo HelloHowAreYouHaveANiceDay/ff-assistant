@@ -5,7 +5,8 @@
 > points-weighted), which moved the whole bid table; see "Weighted FLEX baselines" below. Numbers
 > measured before that date are EVEN-SPLIT-curve numbers and are retired as current guidance, the
 > same way the old uniform-bot 36% figures were. **Current headline (weighted curve, full-system
-> no-lookahead + inflation, realistic field, 2015-2024, n=400): 24.4% championships, 87% playoffs.**
+> no-lookahead + inflation, realistic field, 2015-2024, n=400): 28.0% championships, 88% playoffs**
+> (24.4% before the benchDiscount lever below).
 > When you record a new number here, name its curve.
 
 Two tools, both offline/fast/deterministic per seed:
@@ -16,6 +17,38 @@ Two tools, both offline/fast/deterministic per seed:
 - **`ff sim`** (fast season-points proxy): one draft, score by starting-lineup season points. Handy
   for quick iteration, but it over-rewards top-heavy rosters (no playoffs) -- prefer backtest for
   strategy calls.
+
+## benchDiscount (2026-09-04): a bench-only player is not worth his standalone value
+
+Found by reading actual sim rosters rather than aggregates: with a filled QB slot the agent would
+still pay real money for a second QB (one seed: Burrow $56 AND Herbert $36 -- $92 of a $200 budget
+on a position that starts one player, next to a single RB). Our value table prices every player as
+if he starts; a player who can only fill a BENCH slot never enters the lineup, so that price
+overstates what he is worth to THIS roster.
+
+`benchDiscount` multiplies our value when the on-block player fits ONLY a bench slot (starter and
+FLEX slots are untouched -- unit-bound). Swept on the championship backtest, full-system
+no-lookahead + inflation, 2015-2024:
+
+| benchDiscount | 1.0 (was) | 0.7 | 0.5 | 0.3 | 0.25 | 0.2 | 0.1 | 0.0 |
+|---|---|---|---|---|---|---|---|---|
+| n=150 | 25.7% | 25.9% | 26.2% | 27.3% | -- | 27.5% | 25.9% | 19.6% |
+| n=400 | **24.4%** | -- | -- | 26.9% | **28.0%** | 27.1% | -- | -- |
+
+**Shipped default 0.25: 24.4% -> 28.0% championships at n=400 (SE ~0.6, so ~6 SE), better or equal
+in all 9 seasons.** The curve has a real shape rather than a monotone slope -- it peaks at 0.2-0.3
+and COLLAPSES to 19.6% at 0.0, because a roster that never buys bench depth loses to byes and
+injuries. That collapse is the evidence the lever is doing what it claims: if the gain were noise
+or a degenerate "spend less" effect, 0.0 would be best.
+
+The default is carried in `DEFAULT_LEVERS` **and** written to the persisted config (`settings.config`),
+which is what the live agent actually reads -- `scripts/set-lever.mjs` patches it and reads it back.
+Verified end-to-end by running the backtest with NO flag and getting 28.0%, so the shipped default
+is genuinely on (defining a lever and never wiring it reads identically to a lever that does nothing).
+
+**Reserve/max-share re-verified under the new discount** (3x3, n=150): the shipped 15/0.35 is now
+the outright best cell at 28.9% (next: 0.45 at 27.9%, reserve 20/0.35 at 27.5%); reserve 10 is worse
+at every share. Defaults unchanged.
 
 ## Weighted FLEX baselines (2026-09-03) -- the largest single value fix to date
 
