@@ -36,11 +36,11 @@ export const DEFAULT_LEVERS: Levers = {
   // Interior optimum: 0.4 collapses to 23.4%, 1.15 falls to 25.4%.
   tierBreak: 0.75, maxKDst: 2, starterReserve: 15, benchReserve: 1, maxShare: 0.35, aggr: 0.7, premium: 2, sleeperThreshold: 5,
   benchDiscount: 0.25,
-  // multQB 0.7 measured 2026-09-04: 27.6% -> 28.6% championships (n=800 x 9 seasons, SE ~0.42),
-  // playoffs 88% -> 90%. We were spending ~$59/draft (30% of budget) on QB, essentially one elite
-  // QB at ~$56, against a room that spends ~$20/team there; the freed dollars go to RB. Both tails
-  // are worse (0.45 -> 27.6%, 1.3 -> 26.2%), so this is an interior peak, not "spend less".
-  multQB: 0.7, multRB: 1, multWR: 1, multTE: 1,
+  // All 1.0 by evidence. multQB 0.7 DID measure +1.3 pts (27.6% -> 28.6%, n=800) while aggr was 1.0
+  // -- but that gain was the WINNER'S CURSE correction wearing a QB costume. With aggr 0.7 shipped,
+  // multQB 1.0 and 0.7 both score 33.7% at n=800: exactly zero effect. Positional multipliers stay
+  // at 1.0 until one of them beats the global dial on its own; see docs/validation.md.
+  multQB: 1, multRB: 1, multWR: 1, multTE: 1,
 };
 
 export interface LeverMeta { label: string; min: number; max: number; step: number; board: boolean; help: string; }
