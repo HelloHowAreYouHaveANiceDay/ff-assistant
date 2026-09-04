@@ -176,6 +176,11 @@ tr.mine{background:#f4f6f2} tr.mine:hover{background:#eef1ea}
 .leverrow label{font-size:var(--fs-sm)}
 .leverrow input{width:88px;font-family:var(--font-mono);font-size:var(--fs-xs);padding:4px 7px;border:.8px solid var(--faint);border-radius:var(--radius-sm);background:var(--paper);color:var(--tx);text-align:right}
 .tag{font-size:9px;text-transform:uppercase;letter-spacing:.05em;background:var(--sel);color:var(--sel-fg);border-radius:3px;padding:1px 5px;margin-left:4px}
+.srctbl{border-collapse:collapse;max-width:820px;width:100%;margin-top:8px}
+.srctbl th{text-align:left;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:var(--tracking);color:var(--mut);font-weight:var(--fw-label);padding:4px 10px;border-bottom:1px solid var(--line)}
+.srctbl td{padding:7px 10px;border-bottom:1px solid var(--line);font-size:var(--fs-sm);vertical-align:middle}
+.srctbl td.num{font-family:var(--font-mono);text-align:right}
+.srctbl tr:hover{background:var(--paper)}
 .cmd{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 14px;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--tx);white-space:pre-wrap;max-width:820px;overflow:auto;margin:8px 0}
 code{font-family:var(--font-mono);font-size:.95em;background:var(--hover);padding:1px 4px;border-radius:var(--radius-sm)}
 

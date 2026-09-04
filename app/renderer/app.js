@@ -40,7 +40,7 @@ function rosterSlots() {
 }
 
 /* ---------- view switching ---------- */
-const TITLES = { board: "Players", team: "My Team", news: "News", room: "Draft Room", copilot: "Copilot", live: "Live Draft", settings: "Settings" };
+const TITLES = { board: "Players", team: "My Team", news: "News", room: "Draft Room", copilot: "Copilot", live: "Live Draft", sources: "Data Sources", settings: "Settings" };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let cur = "board";
 function setView(v) {
@@ -593,7 +593,61 @@ function views_copilot() {
   q.focus();
 }
 
-const views = { board: views_board, team: views_team, news: views_news, room: views_room, copilot: views_copilot, live: views_live, settings: views_settings };
+const views = { board: views_board, team: views_team, news: views_news, room: views_room, copilot: views_copilot, live: views_live, sources: views_sources, settings: views_settings };
+
+/* ---------- DATA SOURCES ---------- */
+function relTime(iso) {
+  if (!iso) return "never";
+  const t = Date.parse(iso); if (Number.isNaN(t)) return String(iso).slice(0, 10);
+  const s = (Date.now() - t) / 1000;
+  if (s < 90) return "just now";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+}
+function freshDot(iso) {
+  if (!iso) return "grey";
+  const d = (Date.now() - Date.parse(iso)) / 86400000;
+  return d < 2 ? "green" : d < 7 ? "amber" : "red";
+}
+function views_sources() {
+  const v = document.getElementById("view");
+  v.innerHTML = `<div class="settings">
+    <div class="sec"><h2>Data Sources</h2><span class="lbl">pipeline freshness</span></div>
+    <div id="src-banner" class="setupbanner mut">Loading…</div>
+    <div class="btnrow"><button class="pbtn primary" id="src-update">Update all sources</button></div>
+    <pre class="cmd" id="src-log">Ready.</pre>
+    <div id="src-table"></div>
+  </div>`;
+  const log = document.getElementById("src-log");
+  document.getElementById("src-update").onclick = async () => {
+    if (!window.mc) return log.textContent = "Run inside the app to update.";
+    log.textContent = "Updating all sources (nflverse/ESPN/Sleeper/… fetch + rebuild, ~5s)…";
+    const r = await window.mc.refreshData(); log.textContent = (r.out || "done").split("\n").slice(-3).join("\n");
+    if (r.ok) { log.textContent += "\nReloading…"; setTimeout(() => location.reload(), 900); }
+  };
+  loadSources();
+}
+async function loadSources() {
+  const banner = document.getElementById("src-banner"), tbl = document.getElementById("src-table");
+  if (!banner || !window.mc?.dataSources) { if (banner) banner.textContent = "Open inside the app to see sources."; return; }
+  const d = await window.mc.dataSources().catch(() => null);
+  if (!d) { banner.textContent = "Could not read sources."; return; }
+  banner.className = "setupbanner ok";
+  banner.innerHTML = `Last full refresh <b>${relTime(d.lastIngest)}</b> · ${d.sources.length} sources feed the board`;
+  tbl.innerHTML = `<table class="srctbl"><thead><tr><th></th><th>Source</th><th>Feeds</th><th>Rows</th><th>Updated</th><th></th></tr></thead><tbody>`
+    + d.sources.map(s => `<tr>
+        <td><i class="dot ${freshDot(s.updated)}"></i></td>
+        <td class="l"><b>${esc(s.name)}</b></td>
+        <td class="mut">${esc(s.feeds)}</td>
+        <td class="num">${s.rows || "—"}</td>
+        <td class="mut">${relTime(s.updated)}</td>
+        <td><button class="pbtn sm src-one" data-id="${s.id}">update</button></td>
+      </tr>`).join("") + `</tbody></table>`;
+  // per-source buttons trigger a full rebuild for now (the board depends on the whole DAG); a granular
+  // per-asset materialize is the next step (see the DAG design).
+  tbl.querySelectorAll(".src-one").forEach(b => b.onclick = () => document.getElementById("src-update").click());
+}
 
 // Boot: in Electron, pull the live board + news from the SQLite store (via the ff engine) before
 // the first paint; otherwise render the embedded data.js fallback. Either way, paint the board.

@@ -169,6 +169,32 @@ async function cmdServe(rest: string[]) {
           result = picks.length ? { picks } : null;
           break;
         }
+        case "data-sources": {
+          const meta = (id: string, name: string, feeds: string, table: string, tsCol: string, stage: string) => {
+            let rows = 0, updated: string | null = null;
+            try { const r = db.prepare(`SELECT count(*) c, max(${tsCol}) t FROM ${table}`).get() as { c: number; t: string | null }; rows = r.c; updated = r.t; } catch { /* table/col absent */ }
+            return { id, name, feeds, table, stage, rows, updated };
+          };
+          const lastIngest = (db.prepare("SELECT value FROM settings WHERE key='last_ingest'").get() as { value: string } | undefined)?.value ?? null;
+          result = {
+            lastIngest,
+            sources: [
+              meta("ecr", "FantasyPros ECR", "player base + consensus rank", "ranking", "fetched_at", "ingest"),
+              meta("bio", "nflverse players + combine", "age / height / 40", "player_bio", "updated_at", "ingest"),
+              meta("advanced", "nflverse snaps + PFR", "snap% / aDOT / drop%", "player_advanced", "updated_at", "ingest"),
+              meta("trade", "DynastyProcess values", "trade value 1QB/2QB", "trade_value", "updated_at", "ingest"),
+              meta("weekly", "FantasyPros weekly", "this-week rank", "weekly_rank", "scraped", "ingest"),
+              meta("status", "Sleeper status + trending", "injury / depth / waiver buzz", "player_status", "updated_at", "ingest"),
+              meta("odds", "ESPN Vegas odds", "implied team totals", "team_odds", "updated_at", "ingest"),
+              meta("boris", "Boris Chen tiers", "positional tiers", "boris_tier", "scraped", "ingest"),
+              meta("adp", "FFC draft-market ADP", "ADP + vsADP", "adp", "scraped", "ingest"),
+              meta("market", "FantasyCalc market", "market value + momentum", "market_value", "updated_at", "ingest"),
+              meta("news", "RSS + Sleeper news", "injury flags / headlines", "news", "asof", "ingest"),
+              meta("league", "ESPN league sync", "format + scoring model", "league", "last_synced_at", "league"),
+            ],
+          };
+          break;
+        }
         case "config-get": result = getConfig(db); break;
         case "config-set": setConfig(db, (params.config as Record<string, unknown>) ?? {}); result = getConfig(db); break;
         case "levers-set": { // clamp each knob to its valid range before storing
