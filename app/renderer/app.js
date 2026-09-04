@@ -5,7 +5,7 @@ let NEWS = window.NEWS || [];
 let CFG = window.CONFIG || { budget: 200, slots: ["QB","RB","RB","WR","WR","TE","FLEX","K","DST","BE","BE","BE"], flex_ok: ["RB","WR","TE"] };
 const YR = window.LAST_YR || "LastYr";
 let byName = new Map(DATA.map(p => [p.Player, p]));
-document.getElementById("s-players").textContent = DATA.length;
+{ const sp = document.getElementById("s-players"); if (sp) sp.textContent = DATA.length; }
 
 const num = v => (v === "" || v == null || isNaN(v)) ? null : +v;
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
@@ -20,7 +20,7 @@ function draft(n) { const p = byName.get(n); if (!p || onTeam(n)) return; TEAM.p
 function undraft(n) { TEAM = TEAM.filter(t => t.name !== n); saveTeam(); syncTeam(); }
 function setPrice(n, v) { const t = TEAM.find(x => x.name === n); if (t) { t.price = Math.max(0, +v || 0); saveTeam(); syncTeam(); } }
 function syncTeam() {
-  document.getElementById("s-roster").textContent = `${TEAM.length}/${CFG.slots.length}  $${spent()}`;
+  const sr = document.getElementById("s-roster"); if (sr) sr.textContent = `${TEAM.length}/${CFG.slots.length}  $${spent()}`;
   if (cur === "board") drawBody();
   if (cur === "team") views.team();
 }

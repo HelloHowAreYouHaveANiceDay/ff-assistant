@@ -40,7 +40,6 @@ body{margin:0;background:var(--bg);color:var(--tx);font:var(--fw-body) var(--fs-
 .nv span{width:16px;text-align:center;filter:grayscale(.3);font-size:12px}
 .nv:hover{color:var(--tx);background:var(--hover)}
 .nv.on{color:var(--tx);border-left-color:var(--line-str);font-weight:var(--fw-head)}
-.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding:var(--s3) var(--s4) 0;border-top:1px solid var(--line)}
 .stat{display:flex;justify-content:space-between;color:var(--mut);font-size:var(--fs-sm)}
 .stat b{color:var(--tx);font-family:var(--font-mono);font-weight:var(--fw-label)} .stat b.ok{color:var(--good)}
 
