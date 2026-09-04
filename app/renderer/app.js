@@ -751,7 +751,7 @@ async function boot() {
   if (window.mc && window.mc.syncRosters && ACTIVE_LEAGUE) {
     window.mc.syncRosters().then(() => window.mc.ownership()).then(o => { OWNERSHIP = (o && o.ownership) || {}; if (cur === "board") drawBody(); }).catch(() => {});
   }
-  const bs = document.getElementById("brand-season"); if (bs) bs.textContent = ACTIVE_LEAGUE ? (ACTIVE_LEAGUE.name || "Mission Control") : "Mission Control";
+  // (Assistant subtitle stays "Mission Control" -- it's app-wide, not tied to one league.)
   // Fresh install (no board yet) lands on Setup so the user onboards; otherwise the Board.
   const fresh = window.mc && (!DATA || DATA.length === 0);
   setPage(fresh ? "settings" : "board");
