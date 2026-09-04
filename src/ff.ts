@@ -665,9 +665,9 @@ async function cmdValuesCheck(rest: string[]) {
 }
 
 // Draft-day NEWS view (Layer 2 tailoring): consume the GENERAL league-neutral feed
-// data/player-news.csv (tools/build_player_news.py -- injuries + depth-chart role + RSS headlines),
-// join it to OUR value table via nameKey, and surface the draftable players whose news the consensus
-// rank may not fully price. Read-only; it does NOT change values (a deliberate later step).
+// data/player-news.csv (built by `ff ingest-source news` -- src/data/news.ts: injuries + RSS
+// headlines + Sleeper trending), join it to OUR value table via nameKey, and surface the draftable
+// players whose news the consensus rank may not fully price. Read-only; it does NOT change values.
 async function cmdNews(rest: string[]) {
   const { readFileSync, existsSync } = await import("node:fs");
   const { nameKey } = await import("./draft/values.js");
@@ -677,7 +677,7 @@ async function cmdNews(rest: string[]) {
   const minVal = Number(valueOf(rest, "--min") ?? 3); // skip the $1-2 replacement tail
   const showHeadlines = !rest.includes("--no-headlines");
   if (!existsSync(newsFile)) {
-    console.log(`no ${newsFile} -- build it first:\n  uv run --with nflreadpy --with polars --with feedparser tools/build_player_news.py`);
+    console.log(`no ${newsFile} -- build it first:\n  npm run ff -- ingest-source news`);
     return;
   }
   // OUR values keyed by nameKey (so ESPN/nflverse spelling drift resolves the same as the bidder).

@@ -45,12 +45,14 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
    ```
    Add `--no-rebuild` to push the current CSV without refetching. Uses bim-cli's google driver
    (`bim google login` once if auth lapses).
-4c. **Interactive board (double-click, offline)** -- a self-contained HTML app over the same data:
+4c. **Interactive board (the desktop app)** -- the live, league-synced Board page in Fantasy
+   Mission Control: `cd app && npm start` (dev) or run the installed app.
    ```
-   uv run python tools/build_ui.py     # -> ui/draft-board.html (open it: no server needed)
+   cd app && npm run build:engine && npm start
    ```
    Search, position filter, click-to-sort, tier coloring, green vsECR sleeper highlights, injury/
-   durability/buzz badges, and clickable news. This is the first slice of the packaged-app UI.
+   durability/buzz badges, live ownership, and an always-present Assistant. (The old standalone
+   `tools/build_ui.py` HTML board was superseded by this app.)
 
 ## What the cheat sheet gives you (the human copilot view)
 
