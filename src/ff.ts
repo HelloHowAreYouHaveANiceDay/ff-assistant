@@ -803,6 +803,7 @@ async function cmdSim(rest: string[]) {
     premium: Number(valueOf(rest, "--premium") ?? lv.premium),
     aggr: Number(valueOf(rest, "--aggr") ?? lv.aggr),
     maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
+    maxKDst: Number(valueOf(rest, "--max-kdst") ?? lv.maxKDst),
   };
   let sumPts = 0, sumRank = 0, sumField = 0, top1 = 0, top3 = 0, sumTop3Spend = 0;
   for (let s = 0; s < n; s++) {
@@ -966,6 +967,7 @@ async function cmdBacktest(rest: string[]) {
     benchReserve: Number(valueOf(rest, "--bench-reserve") ?? lv.benchReserve),
     premium: Number(valueOf(rest, "--premium") ?? lv.premium),
     aggr: Number(valueOf(rest, "--aggr") ?? lv.aggr), maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
+    maxKDst: Number(valueOf(rest, "--max-kdst") ?? lv.maxKDst),
     inflation: rest.includes("--inflation"), scarcity: rest.includes("--scarcity"),
     posInflation: rest.includes("--pos-inflation"),
   };
@@ -1209,6 +1211,7 @@ async function cmdAutoDraft(rest: string[]) {
     premium: Number(valueOf(rest, "--premium") ?? lv.premium),
     aggr: Number(valueOf(rest, "--aggr") ?? lv.aggr),
     maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
+    maxKDst: Number(valueOf(rest, "--max-kdst") ?? lv.maxKDst),
     // LIVE inflation repricing is ON by default -- backtested +~2 championship pts / +3 playoff pts
     // (docs/validation.md). Toggle: --no-inflation. Scarcity is a REJECTED feature (backtested
     // NEGATIVE, and its live wiring passed teams=[ours]) -- removed from auto-draft (Step 6).

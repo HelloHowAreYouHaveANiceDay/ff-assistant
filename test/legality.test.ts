@@ -290,3 +290,24 @@ test("v2 fill-floor: soft reserve never BLOCKS a needed slot we can afford", () 
   const st = baseState({ myBudget: 5, mySlots: { RB: 1, WR: 1, K: 1 }, onBlock });
   assert.ok(s.maxBid(st).maxBid >= 1);
 });
+
+// F3: live ESPN shows "Texans D/ST" where our table stores "HOU D/ST", so the value lookup MISSES
+// and falls back to ESPN's on-screen value -- which the table's own $2 clamp never sees. The cap
+// has to live in maxBid, on the final number.
+test("v2 K/DST cap: an unmatched DST falls back to ESPN's value but still caps at $2", () => {
+  const dst = { name: "Texans D/ST", pos: "DST" as const, team: "HOU", espnPreDraftVal: 8 };
+  const s = makeV2Strategy({ values: { "HOU D/ST": 2 }, premium: 2 }); // our table keyed the OTHER way
+  const st = baseState({ mySlots: { DST: 1, BENCH: 3 }, onBlock: dst });
+  const bid = s.maxBid(st);
+  assert.match(bid.reason ?? "", /src=espn/, "the lookup must genuinely miss (that is the bug)");
+  assert.ok(bid.maxBid <= 2, `DST bid must cap at $2, got ${bid.maxBid}`);
+});
+
+// FI for the cap above: raise the dial and the SAME state must bid high. Proves the $2 came from
+// maxKDst and not from some unrelated reserve/share cap that happened to bind.
+test("v2 K/DST cap FAULT: maxKDst=99 lets the same DST bid rise to its ESPN value", () => {
+  const dst = { name: "Texans D/ST", pos: "DST" as const, team: "HOU", espnPreDraftVal: 8 };
+  const s = makeV2Strategy({ values: { "HOU D/ST": 2 }, premium: 2, maxKDst: 99 });
+  const st = baseState({ mySlots: { DST: 1, BENCH: 3 }, onBlock: dst });
+  assert.ok(s.maxBid(st).maxBid >= 8, `uncapped DST should reach ~10, got ${s.maxBid(st).maxBid}`);
+});

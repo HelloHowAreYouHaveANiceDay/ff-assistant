@@ -138,6 +138,9 @@ export interface V2Config {
   inflation?: boolean; // LIVE: reprice by remaining$ / remaining value (needs board + teams in state)
   scarcity?: boolean;  // LIVE: add a positional VONA premium as a position runs dry (needs board)
   posInflation?: boolean; // LIVE: fade positions the room is overpaying (needs state.posInflation)
+  maxKDst?: number; // hard cap on ANY K/DST bid (default 2). Defence in depth: the value table's
+  // own $2 clamp is keyed by name, and live ESPN shows "Texans D/ST" where our table stores
+  // "HOU D/ST" -- the lookup misses and falls back to ESPN's UNCAPPED on-screen value (F3).
 }
 
 const isBench = (slotKey: string) => /^(BE|BENCH|IR)$/i.test(slotKey);
@@ -162,6 +165,7 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
   const aggr = cfg.aggr ?? 1.0;
   const maxShare = cfg.maxShare ?? 0.35;
   const startBudget = cfg.startBudget ?? 200;
+  const maxKDst = cfg.maxKDst ?? 2;
   const nk = cfg.nameKey ?? ((s: string) => s);
   // Resolve a player's value AND where it came from: our table (src=ours), ESPN's on-screen value
   // (src=espn), or the $1 floor (src=floor). The source is surfaced in the bid reason so a silent
@@ -213,7 +217,10 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       // Concentration cap: never sink more than maxShare of the STARTING budget into one player
       // (stops the stars-and-scrubs failure where 3 studs eat the budget and the tail can't fill).
       const shareCap = Math.floor(startBudget * maxShare);
-      let maxBid = Math.min(wantVal, softAffordable, shareCap);
+      // K/DST cap, applied to the FINAL number (after premium/inflation) so no repricing path can
+      // route around it -- and independent of whether the value table resolved the name at all.
+      const kdstCap = (base === "K" || base === "DST") ? maxKDst : Infinity;
+      let maxBid = Math.min(wantVal, softAffordable, shareCap, kdstCap);
       // Fill-floor: never let a reserve BLOCK a needed slot we can legally afford ($1).
       if (maxBid < 1 && hardAffordable >= 1) maxBid = 1;
       maxBid = Math.max(0, Math.min(maxBid, hardAffordable));
