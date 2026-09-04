@@ -15,7 +15,11 @@ export const nameKey = (s) => String(s).toLowerCase()
 /** first-initial + surname, e.g. "L. Jackson" and "Lamar Jackson" both -> "l|jackson". */
 export const initialKey = (s) => {
   const clean = String(s).replace(/\((QB|RB|WR|TE|K|DST)\)\s*$/, "").trim();
-  const parts = clean.split(/\s+/).filter(Boolean);
+  // Drop generational suffixes BEFORE picking the surname. "H. Fannin Jr." would otherwise take
+  // "Jr." as the surname, nameKey it to "", and key as "h|" -- which matches nothing, so every
+  // suffixed player (Fannin Jr., Burden III) resolved to "?" and silently fell out of the TE count.
+  const parts = clean.split(/\s+/).filter(Boolean)
+    .filter((t) => !/^(jr|sr|ii|iii|iv|v)\.?$/i.test(t));
   if (parts.length < 2) return nameKey(clean);
   const surname = nameKey(parts[parts.length - 1]);
   const initial = (parts[0][0] || "").toLowerCase();
@@ -89,4 +93,20 @@ export function parseDraftLog(log) {
     dupeNominations: [...counts.entries()].filter(([, c]) => c > 1).map(([n, c]) => `${n} x${c}`),
     stalls: log.split("\n").filter((l) => /stall|disconnect|error|Error|cannot|failed to/i.test(l)).slice(0, 10),
   };
+}
+
+/** name -> position, harvested from an auto-draft log's own bid/pass lines ("bid Trey McBride (TE)").
+ *  This disambiguates roster entries the store cannot: `ff roster` abbreviates to "M. Evans", and
+ *  several players share an initial+surname, but the log records the FULL name of the player we
+ *  actually bid on, so it resolves exactly the ones the index must refuse to guess. */
+export function positionsFromLog(log) {
+  const byFull = new Map(), byInitial = new Map();
+  for (const m of log.matchAll(/(?:bid|pass|skip) (.+?) \((QB|RB|WR|TE|K|DST)\)/g)) {
+    const name = m[1].trim(), pos = m[2];
+    byFull.set(nameKey(name), pos);
+    const k = initialKey(name);
+    if (byInitial.has(k) && byInitial.get(k) !== pos) byInitial.set(k, "?");
+    else if (!byInitial.has(k)) byInitial.set(k, pos);
+  }
+  return { byFull, byInitial };
 }
