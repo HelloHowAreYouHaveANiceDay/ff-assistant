@@ -8,7 +8,7 @@
 // Per draft it records: whether the roster filled 12/12, $ spent, positional mix, TE count, the
 // most ever paid for a K/DST, and every stall/error line. Results append to data/mock-runs.jsonl
 // (gitignored) so a crashed run never loses earlier drafts.
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -56,6 +56,11 @@ function parseRoster(txt) {
   return { filled: filled ? Number(filled[1]) : null, slots: filled ? Number(filled[2]) : null, spent: spent ? Number(spent[1]) : null, won };
 }
 
+// Record WHICH BUILD produced each draft. The suite runs for hours and the tree can move under it
+// (it did: benchDiscount shipped mid-suite), so a record without a SHA cannot be compared later.
+let buildSha = "unknown";
+try { buildSha = execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim(); } catch {}
+
 const results = [];
 for (let i = 1; i <= N; i++) {
   const started = new Date().toISOString();
@@ -86,8 +91,10 @@ for (let i = 1; i <= N; i++) {
   for (const w of roster.won) byPos[w.pos] = (byPos[w.pos] || 0) + 1;
   const kdstMax = Math.max(0, ...roster.won.filter((w) => w.pos === "K" || w.pos === "DST").map((w) => w.price));
 
+  let shaNow = buildSha;
+  try { shaNow = execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim(); } catch {}
   const rec = {
-    i, started, minutes: mins, roomUrl,
+    i, started, minutes: mins, roomUrl, build: shaNow,
     complete: roster.filled === roster.slots && roster.slots > 0,
     filled: roster.filled, slots: roster.slots, spent: roster.spent,
     byPos, teCount: byPos.TE || 0, kdstMax,
