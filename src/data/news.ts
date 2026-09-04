@@ -41,8 +41,9 @@ function parseRss(xml: string): { title: string; link: string; desc: string; dat
   }
   return out;
 }
-// RSS pubDate -> ISO date (best-effort); "" -> "recent"
-function isoDate(s: string): string { if (!s) return "recent"; const d = new Date(s); return Number.isNaN(d.getTime()) ? "recent" : d.toISOString().slice(0, 10); }
+// RSS pubDate -> full ISO timestamp (keeps the time, so the feed can show minute-level freshness);
+// "" or unparseable -> the sync time (so it still sorts + shows "just now" rather than a bare label)
+function isoDate(s: string): string { const d = new Date(s); return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString(); }
 
 export async function ingestNews(db: DB, season: number): Promise<Record<string, number>> {
   const rows: NewsRow[] = [];
@@ -53,8 +54,8 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
   for (const p of players) if (p.name && p.name.includes(" ")) nameIndex.set(p.name.toLowerCase(), { name: p.name, pos: p.position, team: p.nfl_team || "" });
 
   // A: injuries (try season, fall back to season-1 -- nflverse structured data lags). REG week 1.
-  let inj: Record<string, string>[] = []; let injSeason = season;
-  for (const s of [season, season - 1]) { try { inj = await fetchCsv(`${NFLVERSE}/injuries/injuries_${s}.csv`); injSeason = s; break; } catch { /* try next */ } }
+  let inj: Record<string, string>[] = [];
+  for (const s of [season, season - 1]) { try { inj = await fetchCsv(`${NFLVERSE}/injuries/injuries_${s}.csv`); break; } catch { /* try next */ } }
   for (const r of inj) {
     if (pick(r, "season_type") !== "REG" || Number(pick(r, "week")) !== 1) continue;
     const status = pick(r, "report_status");
@@ -63,7 +64,7 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
     const injury = pick(r, "report_primary_injury");
     rows.push({ player: pick(r, "full_name"), pos, team: pick(r, "team"), category: "injury",
       severity: status === "Questionable" ? "medium" : "high",
-      detail: injury ? `${status} - ${injury}` : status, source: "nflverse-injury", asof: `${injSeason} wk1`, url: "" });
+      detail: injury ? `${status} - ${injury}` : status, source: "nflverse-injury", asof: new Date().toISOString(), url: "" });
   }
 
   // C: RSS headlines tagged to the fantasy players they name (whole first+last match)
@@ -91,7 +92,7 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
         rows.push({ player: meta.name, pos: meta.pos, team: meta.team || "", category: "trending",
           severity: i < 10 ? "medium" : "low",
           detail: `trending ${kind === "add" ? "added" : "dropped"} across leagues (Sleeper #${i + 1}, ${item.count || 0} moves)`,
-          source: `sleeper:${kind}`, asof: "recent", url: "" });
+          source: `sleeper:${kind}`, asof: new Date().toISOString(), url: "" });
       });
     }
   } catch { /* sleeper best-effort */ }

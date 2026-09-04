@@ -245,26 +245,35 @@ function bestAvail(need) {
 }
 
 /* ---------- NEWS ---------- */
-let nst = { cat: "all" };
+let nst = { cat: "all", q: "" };
 function views_news() {
   const cats = [["all","All"],["headline","Headlines"],["injury","Injuries"],["trending","Buzz"]];
-  const prio = { injury:0, headline:1, trending:2 };
   document.getElementById("view").innerHTML = `
-    <div class="toolbar"><div class="pills" id="ncat"></div><span class="count">${NEWS.length} items</span></div>
-    <div class="feed" id="feed"></div>`;
+    <div class="toolbar">
+      <input type="search" id="nq" placeholder="Search news…" value="${esc(nst.q)}">
+      <div class="pills" id="ncat"></div>
+      <span class="count" id="ncount"></span>
+    </div>
+    <div class="newsfeed" id="feed"></div>`;
   const el = document.getElementById("ncat");
   cats.forEach(([k,l]) => { const b = document.createElement("div"); b.className = "pill"+(k===nst.cat?" on":""); b.textContent = l;
     b.onclick = () => { nst.cat = k; [...el.children].forEach(c=>c.classList.toggle("on",c.textContent===l)); drawFeed(); }; el.appendChild(b); });
+  let qt; document.getElementById("nq").oninput = e => { const v = e.target.value.toLowerCase(); clearTimeout(qt); qt = setTimeout(() => { nst.q = v; drawFeed(); }, 90); };
   drawFeed();
   function drawFeed() {
-    let items = NEWS.filter(n => nst.cat==="all" || n.category===nst.cat);
-    items.sort((a,b) => (prio[a.category]-prio[b.category]) || String(b.asof).localeCompare(String(a.asof)));
-    document.getElementById("feed").innerHTML = items.slice(0, 400).map(n => {
+    let items = NEWS.filter(n => (nst.cat==="all" || n.category===nst.cat)
+      && (!nst.q || `${n.player} ${n.detail} ${n.source}`.toLowerCase().includes(nst.q)));
+    items.sort((a,b) => (Date.parse(b.asof) || 0) - (Date.parse(a.asof) || 0)); // latest first
+    const cnt = document.getElementById("ncount"); if (cnt) cnt.textContent = `${items.length} items`;
+    document.getElementById("feed").innerHTML = items.slice(0, 600).map(n => {
       const val = (byName.get(n.player)||{})["OurValue$"];
       const tag = n.category==="injury"?`<span class="badge b-out">${esc((n.detail||"").split(" - ")[0])}</span>`
         : n.category==="trending"?`<span class="badge ${/add/.test(n.source)?'b-add':'b-drop'}">${/add/.test(n.source)?'+ADD':'-DROP'}</span>` : "";
       const body = n.url ? `<a href="#" onclick="return openUrl('${esc(n.url)}')">${esc(n.detail)}</a>` : esc(n.detail);
-      return `<div class="feeditem"><div class="fhead"><span class="pl">${esc(n.player)}</span> <span class="pos ${n.pos}">${esc(n.pos)}</span>${val?`<span class="mut"> · $${val}</span>`:""} ${tag}<span class="fsrc mut">${esc(n.source)} · ${esc(n.asof)}</span></div><div class="fbody">${body}</div></div>`;
+      return `<div class="newsrow"><span class="ntime mut" title="${esc(n.asof)}">${esc(relTime(n.asof))}</span>`
+        + `<span class="pos ${n.pos}">${esc(n.pos)}</span><span class="pl">${esc(n.player)}</span>`
+        + `${val?`<span class="nval mut">$${val}</span>`:""}${tag}`
+        + `<span class="ntext">${body}</span><span class="nsrc mut">${esc(n.source)}</span></div>`;
     }).join("") || '<div class="placeholder"><p>No items.</p></div>';
   }
 }
