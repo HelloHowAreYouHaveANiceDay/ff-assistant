@@ -620,7 +620,7 @@ async function cmdCheatsheet(rest: string[]) {
 // listed with --list-absent). Reuses the REAL nameKey so the check can't drift from production.
 async function cmdValuesCheck(rest: string[]) {
   const { readFileSync } = await import("node:fs");
-  const { nameKey } = await import("./draft/values.js");
+  const { nameKey, dstAliasKey } = await import("./draft/values.js");
   const valuesFile = valueOf(rest, "--values") ?? dataPath("values.csv");
   const recapFile = valueOf(rest, "--recap") ?? dataPath("recaps.json");
   const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear() - 1);
@@ -648,7 +648,11 @@ async function cmdValuesCheck(rest: string[]) {
   for (const pk of picks) {
     const pos = norm(pk.pos);
     const isExact = displaySet.has(pk.player);
-    const isKey = keySet.has(nameKey(pk.player));
+    // Mirror production's lookup exactly: the live strategy resolves a DST nickname through the
+    // alias map (Step 9a), so this check must too -- otherwise every defense lands in "absent" and
+    // the guard buries the very miss it exists to surface (F3).
+    const alias = pos === "DST" ? dstAliasKey(pk.player) : null;
+    const isKey = keySet.has(nameKey(pk.player)) || (alias != null && keySet.has(alias));
     if (isExact) exact++;
     if (isKey) { keyM++; if (!isExact) rescued.push(`${pk.player} (${pos})`); }
     else {

@@ -363,3 +363,15 @@ test("v2 nominate FAULT: with no target protection the #1-value player is what g
   assert.equal(s.nominate!(st).player.name, "Stud A",
     "unprotected, the policy nominates our own best player -- this is what targets prevents");
 });
+
+// Step 9a end-to-end: the alias must fire in the LIVE value lookup, not just in the map. Same state
+// as the K/DST cap test above, which asserts src=espn -- here our table is keyed the way it really
+// is ("HOU D/ST") and the ESPN spelling must now resolve to it.
+test("v2 DST alias: ESPN's 'Texans D/ST' resolves our 'HOU D/ST' value (src=ours(dst-alias))", () => {
+  const dst = { name: "Texans D/ST", pos: "DST" as const, team: "HOU", espnPreDraftVal: 8 };
+  const s = makeV2Strategy({ values: { "hou": 2 }, nameKey, premium: 2 });
+  const st = baseState({ mySlots: { DST: 1, BENCH: 3 }, onBlock: dst });
+  const bid = s.maxBid(st);
+  assert.match(bid.reason ?? "", /src=ours\(dst-alias\)/, "the alias join must resolve the name");
+  assert.ok(bid.maxBid <= 2, `still capped at $2, got ${bid.maxBid}`);
+});

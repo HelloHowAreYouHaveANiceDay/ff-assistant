@@ -16,6 +16,45 @@ export function nameKey(s: string): string {
     .replace(/[^a-z]/g, "");
 }
 
+// Our value table stores defenses by ABBREVIATION ("HOU D/ST" -> nameKey "hou"), but ESPN's draft
+// room displays the NICKNAME ("Texans D/ST" -> nameKey "texans"), so a live DST lookup misses and
+// falls back to ESPN's on-screen value (F3). This maps every nickname/city spelling ESPN might show
+// onto the abbreviation our table is keyed by. Built through nameKey so both sides normalize
+// identically -- note "49ers" keys as "ers" once non-letters are stripped, which is exactly why the
+// map is derived rather than hand-typed.
+const DST_ALIASES: [string, string][] = [
+  ["Cardinals", "ARI"], ["Arizona", "ARI"], ["Falcons", "ATL"], ["Atlanta", "ATL"],
+  ["Ravens", "BAL"], ["Baltimore", "BAL"], ["Bills", "BUF"], ["Buffalo", "BUF"],
+  ["Panthers", "CAR"], ["Carolina", "CAR"], ["Bears", "CHI"], ["Chicago", "CHI"],
+  ["Bengals", "CIN"], ["Cincinnati", "CIN"], ["Browns", "CLE"], ["Cleveland", "CLE"],
+  ["Cowboys", "DAL"], ["Dallas", "DAL"], ["Broncos", "DEN"], ["Denver", "DEN"],
+  ["Lions", "DET"], ["Detroit", "DET"], ["Packers", "GB"], ["Green Bay", "GB"],
+  ["Texans", "HOU"], ["Houston", "HOU"], ["Colts", "IND"], ["Indianapolis", "IND"],
+  ["Jaguars", "JAC"], ["Jacksonville", "JAC"], ["Chiefs", "KC"], ["Kansas City", "KC"],
+  ["Chargers", "LAC"], ["Rams", "LAR"], ["Raiders", "LV"], ["Las Vegas", "LV"],
+  ["Dolphins", "MIA"], ["Miami", "MIA"], ["Vikings", "MIN"], ["Minnesota", "MIN"],
+  ["Patriots", "NE"], ["New England", "NE"], ["Saints", "NO"], ["New Orleans", "NO"],
+  ["Giants", "NYG"], ["Jets", "NYJ"], ["Eagles", "PHI"], ["Philadelphia", "PHI"],
+  ["Steelers", "PIT"], ["Pittsburgh", "PIT"], ["Seahawks", "SEA"], ["Seattle", "SEA"],
+  ["49ers", "SF"], ["San Francisco", "SF"], ["Niners", "SF"],
+  ["Buccaneers", "TB"], ["Bucs", "TB"], ["Tampa Bay", "TB"],
+  ["Titans", "TEN"], ["Tennessee", "TEN"], ["Commanders", "WAS"], ["Washington", "WAS"],
+];
+
+/** nameKey(ESPN's DST spelling) -> nameKey(our table's "<ABBR> D/ST" spelling). Abbreviations map to
+ *  themselves so an already-correct name is a no-op. */
+export const DST_KEY_ALIASES: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+  for (const [alias, abbr] of DST_ALIASES) m[nameKey(alias)] = nameKey(abbr);
+  for (const [, abbr] of DST_ALIASES) m[nameKey(abbr)] = nameKey(abbr);
+  return m;
+})();
+
+/** Resolve any DST spelling to the key our value table uses; null if it is not a known defense. */
+export function dstAliasKey(name: string): string | null {
+  return DST_KEY_ALIASES[nameKey(name)] ?? null;
+}
+
 export interface ValueLeague {
   teams: number;
   budget: number;

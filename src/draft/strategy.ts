@@ -5,6 +5,7 @@
 
 import type { Pos } from "../data/rankings.js";
 import { computeInflation, scarcityPremium } from "./inflation.js";
+import { dstAliasKey } from "./values.js";
 
 // Rough share of league STARTING demand by position (QB1 RB2 WR2 TE1 FLEX1 K1 DST1, FLEX -> RB/WR/TE).
 // Used only to estimate live positional need for the scarcity premium.
@@ -173,6 +174,13 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
   const valSrc = (p: PlayerRef): { v: number; src: string } => {
     const ours = cfg.values?.[nk(p.name)];
     if (ours != null) return { v: ours, src: "ours" };
+    // DST second chance: ESPN shows "Texans D/ST", our table stores "HOU D/ST" (F3). Without this
+    // every defense falls through to the ESPN value and leaves the inflation universe unpriced.
+    if (p.pos === "DST") {
+      const alias = dstAliasKey(p.name);
+      const aliased = alias != null ? cfg.values?.[alias] : undefined;
+      if (aliased != null) return { v: aliased, src: "ours(dst-alias)" };
+    }
     if (p.espnPreDraftVal != null) return { v: p.espnPreDraftVal, src: "espn" };
     return { v: 1, src: "floor" };
   };

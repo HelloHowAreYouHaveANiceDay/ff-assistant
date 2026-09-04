@@ -62,3 +62,31 @@ test("FAULT: an elite TE is priced LOWER under the weighted curve than under the
   assert.ok(val(weighted, "WR1") > val(even, "WR1"),
     `weighted WR1 ${val(weighted, "WR1")} must be > even-split WR1 ${val(even, "WR1")}`);
 });
+
+// F3 / Step 9a: our table keys defenses by ABBREVIATION ("HOU D/ST" -> "hou"); ESPN's draft room
+// shows the NICKNAME ("Texans D/ST" -> "texans"), so the live lookup missed all 32.
+import fs from "node:fs";
+import { dstAliasKey, DST_KEY_ALIASES } from "../src/draft/values.ts";
+
+test("DST alias: every defense in the SHIPPED value table is reachable from its nickname", () => {
+  // Coverage is DERIVED from the real table, not a hand-typed list -- so a team rename or an added
+  // defense fails here instead of silently escaping the map.
+  const keys = fs.readFileSync("data/values.csv", "utf8").trim().split("\n").slice(1)
+    .map((l) => l.split(","))
+    .filter((c) => c[1] === "DST")
+    .map((c) => c[0]);
+  assert.equal(keys.length, 32, "the table should carry all 32 defenses");
+  const reachable = new Set(Object.values(DST_KEY_ALIASES));
+  for (const name of keys) {
+    const abbrKey = name.toLowerCase().replace(/\bd\/?st\b/g, " ").replace(/[^a-z]/g, "");
+    assert.ok(reachable.has(abbrKey), `no nickname maps to ${name} (key ${abbrKey})`);
+  }
+});
+
+test("DST alias: ESPN spellings resolve to our abbreviation key; a non-defense returns null", () => {
+  assert.equal(dstAliasKey("Texans D/ST"), "hou");
+  assert.equal(dstAliasKey("49ers D/ST"), "sf");       // non-letters stripped -> "ers"
+  assert.equal(dstAliasKey("Washington D/ST"), "was");
+  assert.equal(dstAliasKey("HOU D/ST"), "hou");        // already-correct name is a no-op
+  assert.equal(dstAliasKey("Ja'Marr Chase"), null);
+});
