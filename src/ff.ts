@@ -306,7 +306,19 @@ async function cmdMyRosterSet(rest: string[]) {
 }
 
 // Attach via bro's session by default; allow --port for a manually-launched browser.
+//
+// `--app` targets the DESKTOP APP's embedded ESPN webview instead. That guest is not a Playwright
+// page (connectOverCDP enumerates only the file:// renderer), so it is wrapped by
+// src/browser/webviewPage.ts, which implements the slice of the Page API espnAuction uses on top of
+// webview.executeJavaScript. Plain `--port <app port>` does NOT work for draft verbs: it hands them
+// the renderer. bro remains the default and is unaffected.
 async function attachFor(rest: string[]): Promise<Attached> {
+  if (rest.includes("--app")) {
+    const { attachWebview } = await import("./browser/webviewPage.js");
+    const portArg = valueOf(rest, "--port");
+    const w = await attachWebview(portArg ? Number(portArg) : undefined);
+    return { browser: w.browser, context: w.browser.contexts()[0], pages: [w.page] } as Attached;
+  }
   const port = valueOf(rest, "--port");
   if (port) return attach(Number(port));
   const site = valueOf(rest, "--site") ?? "espn";
