@@ -23,19 +23,22 @@
   <main id="main">
     <div id="leaguetabs" class="tabrow leagues"></div>
     <div id="pagetabs" class="tabrow pages"></div>
-    <section id="view"></section>
-    <!-- Persistent authenticated ESPN browsing surface: mounted once so it survives view switches
-         and is ALWAYS a CDP target the engine/agent can navigate (through the app's own session,
-         never bro). Shown under the Live Draft toolbar; hidden elsewhere. -->
-    <div id="webview-layer" class="off">
-      <div class="livebar">
-        <button class="pbtn" id="lv-back" title="Back">&#8592;</button>
-        <button class="pbtn" id="lv-reload" title="Reload">&#8635;</button>
-        <button class="pbtn" id="lv-home" title="Fantasy home">Home</button>
-        <span class="lv-url mono mut" id="lv-url"></span>
-        <span class="lv-status mut" id="lv-status"></span>
+    <!-- content region below the two tab rows; the webview-layer fills THIS (not the tabs) -->
+    <div id="content">
+      <section id="view"></section>
+      <!-- Persistent authenticated ESPN browsing surface: mounted once so it survives page switches
+           and is ALWAYS a CDP target the engine/agent can navigate (through the app's own session,
+           never bro). Shown for ESPN pages; hidden elsewhere. -->
+      <div id="webview-layer" class="off">
+        <div class="livebar">
+          <button class="pbtn" id="lv-back" title="Back">&#8592;</button>
+          <button class="pbtn" id="lv-reload" title="Reload">&#8635;</button>
+          <button class="pbtn" id="lv-home" title="Fantasy home">Home</button>
+          <span class="lv-url mono mut" id="lv-url"></span>
+          <span class="lv-status mut" id="lv-status"></span>
+        </div>
+        <webview id="espnview" partition="persist:espn" src="https://fantasy.espn.com/football/" allowpopups></webview>
       </div>
-      <webview id="espnview" partition="persist:espn" src="https://fantasy.espn.com/football/" allowpopups></webview>
     </div>
   </main>
 </div>
