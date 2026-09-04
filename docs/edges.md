@@ -4,6 +4,20 @@ All championship numbers are from the multi-season backtest (`ff backtest --seas
 docs/validation.md); random baseline = 6.3% (1 of 16). Directions are robust; absolute magnitudes
 depend on the bot model, so weigh them as "big / medium / none", not to the decimal.
 
+> **Curve note (2026-09-03):** the percentages on this page were measured under the OLD even-split
+> FLEX baseline. The value curve has since changed (points-weighted FLEX allocation), which moved
+> the full-system no-lookahead headline from 13.6% to **24.4%** championships -- see "Weighted FLEX
+> baselines" in docs/validation.md. The RANKING of the edges below is unaffected (the fix is itself
+> an instance of edge #2: a better independent value table); the absolute numbers are stale.
+
+### 0. Get the value curve itself right -- BIG, proven [13.6% -> 24.4%]
+Before any strategy dial: the bid table must price positions the way the format actually consumes
+them. Splitting FLEX slots evenly across RB/WR/TE instead of allocating them by projected points
+gave TE 11 phantom starting slots and cost ~11 championship points. This dwarfed every config
+lever we had tuned, and no test caught it because the sim's bot book shared the same function.
+Lesson: an artifact BOTH sides of a comparison are computed from cannot be validated by that
+comparison.
+
 ## Edges the harness QUANTIFIES (draft edges)
 
 ### 1. Discipline vs an overpaying room -- BIG, proven [~27%, 4.4x random]

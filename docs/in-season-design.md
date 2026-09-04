@@ -47,7 +47,7 @@ NOT sharing the room's numbers -- docs/edges.md):
 | **Weekly** | in-season lineups | per-week projections, refreshed each week (matchups, injuries, role) |
 | **Rest-of-season (ROS)** | waivers, trades, keep/cut | rolling projection of remaining weeks |
 
-Interface (all name-keyed, No-PPR, our league settings):
+Interface (all name-keyed, half-PPR, our league settings):
 `projSeason(): Map<name, pts>` | `projWeek(week): Map<name, pts>` | `projROS(fromWeek): Map<name, pts>`.
 Same normalization/name-matching as the draft (ESPN names; dynastyprocess crosswalk if needed).
 

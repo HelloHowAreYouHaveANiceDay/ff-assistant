@@ -1,8 +1,11 @@
 # Values Table: Methods & Plan (research synthesis, 2026-09-01)
 
 How to build the `data/values.csv` the Strategy bids against, for our league: **16 teams, $200,
-No-PPR (standard), auction**. Sourced from a 3-way web recon (formulas, inflation/budget,
-data sources). Cites inline.
+HALF-PPR auction** (the synced ESPN settings are `ppr: 0.5`). This doc was originally written
+assuming No-PPR; the formulas are scoring-agnostic, but every positional split quoted below was
+reasoned from the OLD No-PPR assumption and reads RB too rich / WR too thin for half-PPR. The
+engine takes its scoring from the synced config, not from this page. Sourced from a 3-way web
+recon (formulas, inflation/budget, data sources). Cites inline.
 
 ## 1. Projections -> VOR -> auction dollars (the core formula)
 
@@ -23,7 +26,7 @@ value(player) = max(1, round( 1 + VOR(player) x rate ))
 For us: teams=16, budget=$200 -> total $3,200; minus $1 x every roster spot. rate = discretionary /
 total positive VOR. (fantasyfootballanalytics.net; pitcherlist.com worked example.)
 
-Gotchas: floor every value at $1; INCLUDE bench-worthy players' positive VOR in the sum; No-PPR
+Gotchas: floor every value at $1; INCLUDE bench-worthy players' positive VOR in the sum; scoring
 shifts value toward volume RBs vs PPR. (Z-score/std-dev is an alternative that also rewards
 consistency, but VOR is the standard and enough for v1.)
 
@@ -31,7 +34,8 @@ consistency, but VOR is the standard and enough for v1.)
 
 Use to sanity-check the value table and to set the Strategy's per-position tilt
 (fantasylife.com; fulltimefantasy.com; si.com):
-- **RB 35-45% (~$70-90)** -- real scarcity in No-PPR; **WR 40-45% (~$80-90)** -- deepest;
+- **RB 35-45% (~$70-90)** -- real scarcity under the OLD No-PPR assumption; **WR 40-45%
+  (~$80-90)** -- deepest;
   **QB 5-7% (~$10-14)** (elite $25-30 but $8-10 gets ~90%); **TE 5-15%**; **K/DST 1-2% ($1-2 each)**.
 - **85-90% on starters, 10-15% on bench** ($1-5 each). **Never >70% of budget on 3 players.**
 
@@ -66,7 +70,7 @@ reach. (draftsharks.com) -- our v2 already caps at value+premium; add tier-thinn
 
 ## 6. Data sources -- how to actually GET a values table (ranked, easiest first)
 
-**Fastest (ready-made auction values, customize to 16-team/$200/No-PPR, then export to our CSV):**
+**Fastest (ready-made auction values, customize to 16-team/$200/half-PPR, then export to our CSV):**
 1. **RotoWire** auction values -- free, customizable, $200/standard default. https://www.rotowire.com/football/auction-values.php
 2. **RotoAlpha** auction calculator -- free, no signup, set teams/budget/scoring. https://www.rotoalpha.com/tools/auction-values
 3. **Draft Sharks** -- free base values (default 1QB/2RB/2WR/1TE/1FLEX/1K/1DEF, $200). https://www.draftsharks.com/auction-values
@@ -84,7 +88,7 @@ this. (nflreadpy docs; ffopportunity.)
 ## Plan for this project
 
 - **v1 (before draft):** pull a ready-made **RotoWire/RotoAlpha** auction table set to 16-team /
-  $200 / No-PPR -> write `data/values.csv` (`player,pos,value`). Name-match to ESPN (normalized;
+  $200 / half-PPR -> write `data/values.csv` (`player,pos,value`). Name-match to ESPN (normalized;
   D/ST as team name). This alone gives the Strategy OUR values (a small edge + targeting).
 - **v2 (in-strategy):** add **live inflation** (section 3) to `makeV2Strategy` using opponent
   budgets + remaining-pool value; add **tier-thinness premium** and the smarter **nominate()**.

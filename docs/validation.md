@@ -1,5 +1,13 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> **Every championship number in this file is only meaningful together with the VALUE CURVE it was
+> measured under.** On 2026-09-03 the FLEX-baseline allocation changed (even 3-way split ->
+> points-weighted), which moved the whole bid table; see "Weighted FLEX baselines" below. Numbers
+> measured before that date are EVEN-SPLIT-curve numbers and are retired as current guidance, the
+> same way the old uniform-bot 36% figures were. **Current headline (weighted curve, full-system
+> no-lookahead + inflation, realistic field, 2015-2024, n=400): 24.4% championships, 87% playoffs.**
+> When you record a new number here, name its curve.
+
 Two tools, both offline/fast/deterministic per seed:
 - **`ff backtest`** (the trustworthy one for CHAMPIONSHIPS): drafts on a past season's projections,
   then plays a real head-to-head season + playoffs on that season's ACTUAL weekly results ->
@@ -9,11 +17,65 @@ Two tools, both offline/fast/deterministic per seed:
   for quick iteration, but it over-rewards top-heavy rosters (no playoffs) -- prefer backtest for
   strategy calls.
 
+## Weighted FLEX baselines (2026-09-03) -- the largest single value fix to date
+
+`baselines()` in `src/draft/values.ts` split the league's 32 FLEX slots evenly across RB/WR/TE
+(`round(flexTotal / 3)` = 11 each). Filling those slots with the best leftover players by projected
+points instead gives **RB 13 / WR 19 / TE 0** -- TE wins none. The even split therefore took TE's
+replacement baseline 11 ranks too deep (TE28 @ 71.0 pts instead of TE17 @ 103.1), inflating every
+TE's VOR, and symmetrically starved WR (baseline WR28 @ 159.8 instead of WR36 @ 143.5).
+
+Effect on the shipped bid table (`player_value`), before -> after, vs what the room actually spent
+in 2025: TE book **$803 -> $421** (room ~$206); WR **$843 -> $1,127** (room ~$1,291); RB
+**$1,087 -> $1,187** (room ~$1,292); QB $704 -> $707 (room ~$328 -- our deliberate contrarian
+stance, deliberately kept). Per player: Bowers $90 -> $72, McBride $66 -> $49, Kelce $35 -> $17;
+Chase $90 -> $99, Nacua $72 -> $81, Jefferson $41 -> $50, Gibbs $107 -> $111.
+
+Measured on `ff backtest --full --no-lookahead --inflation --seasons 2015-2024 --n 400`
+(n = 400 x 9 scored seasons = 3,600 trials/arm; SE ~0.6 pts; random baseline 6.3%; deterministic
+per seed, so these are exact and reproducible, not estimates):
+
+| arm | our book | market book | championships | playoffs | per season 2016..2024 |
+|---|---|---|---|---|---|
+| M1 (pre-fix) | even | even | 13.6% | 70% | 13 11 11 14 13 14 18 17 12 |
+| M2 (our values only) | weighted | even | 22.2% | 83% | 13 19 19 25 22 30 29 27 18 |
+| **M3 (SHIPPED)** | weighted | weighted | **24.4%** | **87%** | 20 22 21 30 29 23 31 27 17 |
+
+M3 is the conservative frame -- the sim's bot book is computed by the same `baselines()`, so
+landing the fix makes the modelled market rational too -- and it still beats M2, because a rational
+market prices TEs sanely and our other edges (the real lineup optimizer, budget discipline) do the
+rest. Weighted-everywhere therefore ships as ONE behavior; no two-track split was needed.
+
+**Bot calibration improved as predicted** (`ff calibrate --n 300`, mean abs error sim vs real
+2023-25 spend): WR **18% -> 7%**, RB 8% -> 6%, top-3 concentration 8% -> 7%, TE 2% (unchanged),
+QB 7% -> 8%. A lower-TE book makes the modelled bots spend near the room's real ~7% TE share.
+
+**Why nothing caught this earlier:** the sim's bot book (`trueVal` in `sim.ts`) is computed by the
+SAME `baselines()`, so the entire backtest ecosystem shared the artifact and graded its own
+homework; the unit tests use fixture tables. The bug could only bite in a REAL room, where TEs are
+priced at market -- the agent would have "won" mid-TEs at a discount against its own wrong book,
+stuffed both FLEX slots with them, and underbid WRs, in a half-PPR league. `test/values.test.ts`
+now locks the weighted fill, keeps the even split reachable for regression, and carries a fault
+injection that fails if the default flips back.
+
+**Levers re-verified under the new curve** (3x3, n=150, SE ~1.0 pt). The defaults were tuned on the
+old curve and still hold:
+
+| reserve \\ maxShare | 0.25 | 0.35 | 0.45 |
+|---|---|---|---|
+| 10 | 22.1% | 24.6% | 23.2% |
+| **15** | 24.6% | **25.7% (default)** | 25.9% |
+| 20 | 24.4% | 24.1% | 24.1% |
+
+Best cell (15/0.45, 25.9%) is 0.2 pts from the shipped 15/0.35 -- far inside 2 SE, so the defaults
+are unchanged. The plateau is broad; reserve 10 and 20 are both worse than 15 at every share.
+
 ## `ff backtest` -- optimize championship wins (2024)
 
 `npm run ff -- backtest --n 800 [--starter-reserve N --max-share F --premium N]`
 Draft with 2024 values (data/values-2024.csv, from data/points-2024.csv), simulate the 2024 season
-(weeks 1-14) + playoffs (top 6, weeks 15-17) on real weekly points (data/weekly.csv). Lineups are set
+(weeks 1-14) + playoffs (top `playoffTeams` from the synced config -- currently 7, not the 6 this
+line used to claim; weeks 15-17) on real weekly points (data/weekly.csv). Lineups are set
 each week by projection, scored by ACTUAL, and a bye/injured starter can't play -> DEPTH matters.
 
 **Projection UNCERTAINTY (the key knob, default sd 0.30):** everyone drafts on a NOISY projection of
@@ -116,8 +178,10 @@ seasons: values.ts (VOR->$) -> strategy.ts (draftField) -> projections.ts -> ins
 - `--no-lookahead` = our projection for season Y is season Y-1's actuals (a real, crude forecast
   with ZERO future knowledge); scored by Y's weekly truth.
 
-Result (2015-2024) against the REALISTIC per-manager field (see below): **~13% championships,
-~2.1x random, 66% playoffs**, stable 6-23% by year. Draft-only is ~18% (2.9x). These REPLACED the
+Result (2015-2024) against the REALISTIC per-manager field (see below): **24.4% championships,
+~3.9x random, 87% playoffs** on the WEIGHTED curve (n=400). The ~13% / 66% figures this line used
+to quote were measured on the EVEN-SPLIT curve and are retired -- see the weighted-FLEX section at
+the top. Draft-only was ~18% (2.9x) on the old curve; not yet re-measured under the new one. These REPLACED the
 earlier ~36%/~27% numbers, which were measured against a uniform "everyone overpays for studs" bot;
 that bot left random value everywhere and flattered us. The realistic heterogeneous field
 (QB-payers, RB-first, QB/TE-punters, calibrated to real spending) is a genuinely harder, more honest
@@ -174,7 +238,8 @@ and the multiple-of-random, not the decimal. Our own values are last-year actual
 rookies and undervalue players hurt last year -- so a real preseason projection
 (ffanalytics/FantasyPros) would do better, and waivers/trades would ADD edge on top. (Any "36%"
 elsewhere in older text was the pre-managers.ts uniform-bot number and has been retracted -- the
-realistic-field figures are ~13% full-system no-lookahead / ~24% for the balanced draft config.)
+realistic-field figures were ~13% full-system no-lookahead / ~24% for the balanced draft config
+on the EVEN-SPLIT value curve; on the weighted curve that ships today it is 24.4% full-system.)
 
 ## `ff sim` (season-points proxy)
 
@@ -205,8 +270,9 @@ The harness repeatedly corrected intuition -- which is the point:
 - **From tendencies alone I guessed "go fully balanced." Wrong.** Over-balance (reserve 20,
   max-share 0.25) finishes WORST in every run.
 - On the **2024-actuals** proxy, MODERATE won (reserve ~8, ~$95 on top 3).
-- On the **forward-looking 2025 projections** (steep top, deep 16-team No-PPR), **CONCENTRATION
-  wins** -- more aggression -> better finish (reserve 2 / max-share 0.8 / $181-on-3 finished ~2.6
+- On the **forward-looking 2025 projections** (steep top, deep 16-team; measured under the OLD
+  No-PPR assumption), **CONCENTRATION wins** -- more aggression -> better finish
+  (reserve 2 / max-share 0.8 / $181-on-3 finished ~2.6
   vs ~3.5 for moderate). This MATCHES the league's real behavior (61% of picks are $1-5).
 - **`ff sim` prefers concentration, but that is the season-points proxy over-rewarding top-heavy
   rosters (it has no playoffs) -- do NOT pick the config from it.** The real default is BALANCED
@@ -227,7 +293,9 @@ keeps real depth. A future harness upgrade: simulate weekly head-to-head wins, n
   firsts") are inflated because the bots are simple. Trust the RELATIVE comparison between configs,
   not the absolute win rate.
 - Scoring truth = `data/points.csv`, now **2025 forward-looking projections** (FantasyPros redraft
-  consensus ranks mapped onto a 2024 No-PPR points-by-rank curve -- `tools/build_projections.py`).
+  consensus ranks mapped onto a 2024 No-PPR points-by-rank curve -- `tools/build_projections.py`;
+  that legacy Python path and its No-PPR curve are superseded by `ff refresh`, which scores under
+  the synced half-PPR rules).
   Independent of ESPN. A true multi-source projection (ffanalytics / a projections API) would sharpen
   it further; the harness workflow is unchanged.
 - The sim does not model nomination gamesmanship, keepers, or in-season waivers.

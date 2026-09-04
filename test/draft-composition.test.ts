@@ -11,8 +11,11 @@ const points = readCsv("data/points.csv").map((f) => ({ name: f[0].trim(), pos: 
 const ourValues = new Map<string, number>();
 for (const f of readCsv("data/values.csv")) ourValues.set(f[0].trim(), Number(f[2]));
 
-// The live default bidding dials (cmdAutoDraft): reserve 20 / maxShare 0.35 / premium 2 (Step 5).
-const cfg = { values: Object.fromEntries(ourValues), starterReserve: 20, benchReserve: 1, premium: 2, maxShare: 0.35 };
+// The live default bidding dials (cmdAutoDraft / DEFAULT_LEVERS): reserve 15 / maxShare 0.35 /
+// premium 2 / maxKDst 2. Re-verified under the weighted-FLEX curve on 2026-09-03 (docs/validation.md
+// 3x3 sweep); an earlier comment here said reserve 20, which stopped being the live default when a
+// live mock showed reserve 20 strands budget once the room pays > $20/starter.
+const cfg = { values: Object.fromEntries(ourValues), starterReserve: 15, benchReserve: 1, premium: 2, maxShare: 0.35, maxKDst: 2 };
 
 test("SIM COMPOSITION: our team drafts EXACTLY 2 K/DST across 20 seeds (no bench K/DST)", () => {
   const counts: number[] = [];

@@ -45,7 +45,7 @@ The value source is pluggable (a values CSV overrides per name), but we have no 
 yet -- it falls back to ESPN's pre-draft value. That's serviceable but it's the field's consensus,
 so we have no EDGE and can't target. **Action:** generate an auction value table for OUR league's
 settings (projections -> VOR -> $, or a trusted source), keyed by name, and load via `--csv`.
-Must match ESPN's scoring (No-PPR here) and $200/16 budget.
+Must match ESPN's scoring (HALF-PPR here -- synced `ppr: 0.5`) and $200/16 budget.
 
 ### G6 [PARTIAL] Roster BALANCE (stars-and-scrubs tendency)
 v2 + jump-bidding wins studs but over-concentrated in the first live run ($176/3). Tuned via

@@ -1,18 +1,30 @@
 # Draft-day runbook
 
 The exact steps to run the agent for the REAL league draft (462233, seacaptaindate.com, 16-team
-$200 auction). All commands from `H:/working/ff-assistant`. The agent bids from `data/values.csv`;
-you co-pilot from `data/cheatsheet.md` -- both come from the same values.
+$200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All commands from
+`H:/working/ff-assistant`. The agent bids from the SQLite `player_value` table; you co-pilot from
+`data/cheatsheet.md`. Rebuild both from ONE `ff refresh` so every surface agrees (see step 2).
 
 ## The evening before
 
 1. **Session up + logged in** (only human step): `cd H:/working/bro && npm run -s bro -- session start espn`, then log into ESPN in that browser window. `ff` attaches over CDP; it never logs in or handles a password. Verify: `npm run ff -- preflight` (attached, logged in, real league reachable).
-2. **Rebuild projections + values fresh** (the #1 edge is an independent, current projection):
+2. **Rebuild projections + values fresh** (the #1 edge is an independent, current projection).
+   The CANONICAL sequence is all-TypeScript and must be run as ONE build, in this order:
    ```
-   uv run --with nflreadpy --with polars tools/build_projections.py   # -> data/points.csv
-   npm run ff -- values                                               # -> data/values.csv (VOR -> $)
+   npm run ff -- refresh       # ingest -> project -> assemble (writes data/points.csv AND player_value)
+   npm run ff -- values        # -> data/values.csv   (the offline mirror: cheatsheet/sim/tests)
+   npm run ff -- cheatsheet    # -> data/cheatsheet.md (your co-pilot sheet, same build)
+   node scripts/value-gates.mjs   # sanity-assert the book; MUST print ALL GATES PASS
    ```
-   Without `values.csv` the agent uses ESPN's on-screen values (legal, competitive, but no edge).
+   `tools/build_projections.py` is the LEGACY Python pipeline -- it is not part of this sequence
+   and running it will fork the curve. Do not mix them.
+
+   Verify by the gates, never by a success line: `value-gates.mjs` checks points.csv >= 450 rows
+   (a partial nflverse fetch shrinks it silently), the positional book totals (TE $380-470, WR
+   >= $1,050, top TE <= $75 -- a TE book near $800 means the FLEX-baseline fix regressed), and
+   that values.csv's top-12 matches `player_value`'s.
+
+   Without a value table the agent uses ESPN's on-screen values (legal, competitive, but no edge).
 2b. **Refresh the NEWS aggregator and read it** (general league-neutral feed, then tailored to you):
    ```
    uv run --with nflreadpy --with polars --with feedparser --with requests tools/build_player_news.py  # -> data/player-news.csv
@@ -77,7 +89,15 @@ you co-pilot from `data/cheatsheet.md` -- both come from the same values.
 
 ## Run the draft
 
-7. **Full-auto:** `npm run ff -- auto-draft` (add `--csv data/values.csv` to force our values).
+7. **Full-auto:** `npm run ff -- auto-draft` -- no `--csv`, and check the startup line.
+   - **Confirm `[auto-draft] value source:` reads `sqlite:player_value(...)` before the first bid**
+     (`ff.ts` prints it at startup, with the row count). That table is the freshest surface,
+     written by `ff refresh`.
+   - `--csv data/values.csv` is a FALLBACK, not an override: the CSV is read only when the DB
+     lookup returned zero rows (`ff.ts`: `if (Object.keys(values).length === 0 && csv)`). So
+     passing it cannot displace a healthy `player_value` -- but it also does not protect you, and
+     it makes the startup line ambiguous. Leave it off; read the value-source line instead.
+     If that line says `csv:` or `espn`, the DB table is empty -- STOP and re-run step 2.
    - Fills a full legal roster in budget; bids our values with budget discipline; **live inflation
      ON** (reprices as money/talent leave, +~2 champ pts). The bid log shows `infl=` and `[$ left,
      open N]`. It runs to a full roster (defaults to 1600 rounds and a draft-over/stall guard) --

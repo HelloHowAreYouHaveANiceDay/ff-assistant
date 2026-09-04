@@ -1,6 +1,9 @@
 # League Tendencies: seacaptaindate.com (462233)
 
-Pulled live from ESPN draft recaps 2023-2025 (16-team, $200, No-PPR auction). The league is
+Pulled live from ESPN draft recaps 2023-2025 (16-team, $200 auction). **Scoring: the synced 2026
+ESPN settings are HALF-PPR (`ppr: 0.5` in `league.scoring_json`)** -- the engine reads the synced
+rules and is correct; earlier revisions of this doc said No-PPR and were wrong. Where the spend
+analysis below reasons from No-PPR it is flagged as the OLD assumption. The league is
 long-running (seasons 2012-2026) with mostly returning managers -- so these tendencies are a real,
 stable read on how THIS room drafts. Raw data: `data/draft-recap-{2023,2024,2025}-raw.txt`
 (analyze with `node analyze.mjs <file>`).
@@ -27,7 +30,9 @@ stable read on how THIS room drafts. Raw data: `data/draft-recap-{2023,2024,2025
 1. **~3-4 studs at $80-106, then the roster filled at $1-5.** 61% of every draft is $1-5 picks
    (median $2) EVERY year. This room concentrates budget hard on the top.
 2. **Elite RB/WR set the top of the market at $80-106.** RB studs consistently go highest
-   (No-PPR RB premium): Bijan $103, Saquon $101, Gibbs $95 in 2025; a $106 RB in 2024.
+   (attributed at the time to a No-PPR RB premium -- OLD ASSUMPTION; the synced settings are
+   half-PPR, so expect the room to pay hotter for pass-catchers than this history implies):
+   Bijan $103, Saquon $101, Gibbs $95 in 2025; a $106 RB in 2024.
 3. **One elite TE goes big ($74/$47/$83), the rest punt TE** (~$11 avg).
 4. **QB is streaky** -- some years an elite QB goes $60-68 (Lamar $68), other years the top QB is
    only $32. So elite QBs are SOMETIMES cheap.

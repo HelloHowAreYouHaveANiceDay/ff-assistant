@@ -15,14 +15,15 @@ Ja'Marr Chase,WR,62
 Bijan Robinson,RB,60
 ...
 ```
-- `value` = OUR auction dollar value, scaled to the league budget ($200) and scoring (No-PPR here).
+- `value` = OUR auction dollar value, scaled to the league budget ($200) and scoring (HALF-PPR
+  here -- the synced ESPN settings are `ppr: 0.5`; this doc previously said No-PPR, incorrectly).
 - `player` names must match ESPN's (normalized: case/space/punct-insensitive). D/ST as the team
   name ESPN shows (e.g. `Ravens`). See `data/values.sample.csv`.
 
 ## Generating a real value table (the edge -- G5)
 
 ESPN's pre-draft values are consensus, so overriding with OUR values is where an edge comes from:
-1. Get projections for the league's scoring (No-PPR): nflreadpy / FantasyPros / your own.
+1. Get projections for the league's scoring (HALF-PPR, `ppr: 0.5`): nflreadpy / FantasyPros / your own.
 2. Compute **VOR** (points over the last starter at each position, given 16 teams x the roster
    slots) and convert to **auction $** so the total across draftable players ~= 16 x $200, minus
    $1 x (roster spots) held back. (Standard value-based auction math.)
