@@ -13,6 +13,14 @@ export interface Levers {
   premium: number;          // extra $ willing to pay at the margin to win a targeted player
   sleeperThreshold: number; // min vsECR for a player to count as a SLEEPER (board filter)
   benchDiscount: number;    // value multiplier for a player who can ONLY fill a bench slot
+  // Per-position multipliers on OUR value. 1 = trust the VOR book as-is. These correct for the fact
+  // that VOR prices a position in isolation, while the ROSTER decides how many startable weeks a
+  // dollar there actually buys (1 QB slot vs 4 RB/WR/TE-eligible starting slots).
+  // K/DST deliberately have no multiplier: maxKDst hard-caps them at $2, so one could not bind.
+  multQB: number;
+  multRB: number;
+  multWR: number;
+  multTE: number;
 }
 
 // Defaults reproduce the proven BALANCED auto-draft posture (reserve 15 / max-share 0.35 / premium 2).
@@ -22,6 +30,11 @@ export interface Levers {
 export const DEFAULT_LEVERS: Levers = {
   tierBreak: 0.75, maxKDst: 2, starterReserve: 15, benchReserve: 1, maxShare: 0.35, aggr: 1.0, premium: 2, sleeperThreshold: 5,
   benchDiscount: 0.25,
+  // multQB 0.7 measured 2026-09-04: 27.6% -> 28.6% championships (n=800 x 9 seasons, SE ~0.42),
+  // playoffs 88% -> 90%. We were spending ~$59/draft (30% of budget) on QB, essentially one elite
+  // QB at ~$56, against a room that spends ~$20/team there; the freed dollars go to RB. Both tails
+  // are worse (0.45 -> 27.6%, 1.3 -> 26.2%), so this is an interior peak, not "spend less".
+  multQB: 0.7, multRB: 1, multWR: 1, multTE: 1,
 };
 
 export interface LeverMeta { label: string; min: number; max: number; step: number; board: boolean; help: string; }
@@ -35,6 +48,10 @@ export const LEVER_META: Record<keyof Levers, LeverMeta> = {
   premium:          { label: "Outbid premium $", min: 0, max: 10, step: 1, board: false, help: "Extra dollars to win a specifically targeted player." },
   sleeperThreshold: { label: "Sleeper cutoff (vsECR)", min: 1, max: 20, step: 1, board: false, help: "Min vsECR for the SLEEPERS board filter." },
   benchDiscount:    { label: "Bench discount", min: 0.1, max: 1, step: 0.05, board: false, help: "How much a bench-only player is worth vs his standalone value. 1 = no discount." },
+  multQB:         { label: "QB value x", min: 0.4, max: 1.5, step: 0.05, board: false, help: "Multiplier on OUR QB values. <1 = pay less for QB than raw VOR says." },
+  multRB:         { label: "RB value x", min: 0.4, max: 1.5, step: 0.05, board: false, help: "Multiplier on OUR RB values. <1 = pay less for RB than raw VOR says." },
+  multWR:         { label: "WR value x", min: 0.4, max: 1.5, step: 0.05, board: false, help: "Multiplier on OUR WR values. <1 = pay less for WR than raw VOR says." },
+  multTE:         { label: "TE value x", min: 0.4, max: 1.5, step: 0.05, board: false, help: "Multiplier on OUR TE values. <1 = pay less for TE than raw VOR says." },
 };
 
 /** Coerce + clamp a single lever to its metadata range. Returns null for an unknown key or NaN. */

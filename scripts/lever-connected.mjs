@@ -7,8 +7,12 @@ import { readFileSync } from "node:fs";
 import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
 
 const [, , lever, aRaw, bRaw] = process.argv;
-if (!lever) { console.error("usage: lever-connected.mjs <lever> <valueA> <valueB>"); process.exit(2); }
-const A = Number(aRaw), B = Number(bRaw);
+if (!lever) { console.error("usage: lever-connected.mjs <lever> <valueA> <valueB>   (values may be JSON)"); process.exit(2); }
+// Levers are not all scalars -- posMult is an object. Passing a number where an object is expected
+// silently exercises nothing and reports DEAD, which is a bug in the CHECK, not in the lever.
+const parse = (v) => { try { return JSON.parse(v); } catch { return Number(v); } };
+const A = parse(aRaw), B = parse(bRaw);
+if (JSON.stringify(A) === JSON.stringify(B)) { console.error("valueA and valueB are identical -- that cannot detect anything"); process.exit(2); }
 
 const readCsv = (p) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
 const points = readCsv("data/points.csv").map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);

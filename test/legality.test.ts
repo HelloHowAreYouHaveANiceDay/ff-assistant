@@ -402,3 +402,28 @@ test("v2 DST alias: resolves even when ESPN reports the wrong position for a def
   const st = baseState({ mySlots: { DST: 1, K: 1, BENCH: 3 }, onBlock: dst });
   assert.match(s.maxBid(st).reason ?? "", /src=ours\(dst-alias\)/);
 });
+
+// Per-position value multipliers. VOR prices a position in isolation; the ROSTER decides how many
+// startable weeks a dollar there buys (1 QB slot vs 4 RB/WR/TE-eligible starting slots).
+test("v2 posMult: scales OUR value for the named position only", () => {
+  const qb = { name: "Big Arm", pos: "QB" as const, team: "X", espnPreDraftVal: 50 };
+  const rb = { name: "Big Legs", pos: "RB" as const, team: "Y", espnPreDraftVal: 50 };
+  const vals = { "Big Arm": 50, "Big Legs": 50 };
+  const flat = makeV2Strategy({ values: vals, premium: 0, maxShare: 1 });
+  const cut  = makeV2Strategy({ values: vals, premium: 0, maxShare: 1, posMult: { QB: 0.7 } });
+  const st = (onBlock: typeof qb) => baseState({ mySlots: { QB: 1, RB: 1, BENCH: 3 }, onBlock });
+  assert.equal(cut.maxBid(st(qb)).maxBid, Math.round(flat.maxBid(st(qb)).maxBid * 0.7));
+  assert.equal(cut.maxBid(st(rb)).maxBid, flat.maxBid(st(rb)).maxBid, "RB must be untouched by a QB multiplier");
+});
+
+// FI: an absent position key must mean 1x, not 0 -- a lookup miss that silently zeroed a value would
+// make us refuse every player at that position.
+test("v2 posMult FAULT: a position with no entry is unchanged, never zeroed", () => {
+  const te = { name: "Tight End", pos: "TE" as const, team: "Z", espnPreDraftVal: 30 };
+  const vals = { "Tight End": 30 };
+  const a = makeV2Strategy({ values: vals, premium: 0, maxShare: 1 });
+  const b = makeV2Strategy({ values: vals, premium: 0, maxShare: 1, posMult: { QB: 0.5 } });
+  const st = baseState({ mySlots: { TE: 1, BENCH: 3 }, onBlock: te });
+  assert.equal(b.maxBid(st).maxBid, a.maxBid(st).maxBid);
+  assert.ok(b.maxBid(st).maxBid > 0);
+});

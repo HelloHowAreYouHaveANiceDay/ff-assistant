@@ -142,6 +142,9 @@ export interface V2Config {
   benchDiscount?: number; // value multiplier for a player who can ONLY fill a bench slot (default 1
   // = off). A backup behind a filled starter slot cannot score for us; his standalone value
   // overstates what he is worth to THIS roster. See docs/validation.md before changing.
+  posMult?: Record<string, number>; // EXPERIMENT: per-position multiplier on OUR value. Used to ask
+  // "are we valuing position X too high for this room?" -- our book prices QB at ~$707 while the
+  // room historically spends ~$328 there. Default: none (1x everywhere).
   maxKDst?: number; // hard cap on ANY K/DST bid (default 2). Defence in depth: the value table's
   // own $2 clamp is keyed by name, and live ESPN shows "Texans D/ST" where our table stores
   // "HOU D/ST" -- the lookup misses and falls back to ESPN's UNCAPPED on-screen value (F3).
@@ -212,7 +215,7 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       // Hard reserve ($1/other slot) is the never-strand floor -- a legal roster stays completable.
       const hardAffordable = state.myBudget - reserveForOthers(state, fillingBench, 1, 1);
       // LIVE repricing: correct the static value table for how the auction is actually flowing.
-      let liveVal = val(p) * aggr * (cfg.targets?.[p.name] ?? 1);
+      let liveVal = val(p) * aggr * (cfg.targets?.[p.name] ?? 1) * (cfg.posMult?.[base] ?? 1);
       // A bench-only player never enters the lineup, so he is worth less to us than his standalone
       // value (which prices him as if he started). Off by default; the backtest is the arbiter.
       if (fillingBench) liveVal *= benchDiscount;

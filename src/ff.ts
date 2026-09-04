@@ -312,6 +312,15 @@ async function cmdMyRosterSet(rest: string[]) {
 // src/browser/webviewPage.ts, which implements the slice of the Page API espnAuction uses on top of
 // webview.executeJavaScript. Plain `--port <app port>` does NOT work for draft verbs: it hands them
 // the renderer. bro remains the default and is unaffected.
+/** `--pos-mult QB:0.7,RB:1.1` -> { QB: 0.7, RB: 1.1 }. Overrides the persisted lever per position,
+ *  for sweeps; positions not named keep the lever value. */
+function parsePosMult(arg: string | undefined): Record<string, number> {
+  if (!arg) return {};
+  const out: Record<string, number> = {};
+  for (const kv of arg.split(",")) { const [k, v] = kv.split(":"); if (k && v != null && Number.isFinite(Number(v))) out[k.toUpperCase()] = Number(v); }
+  return out;
+}
+
 async function attachFor(rest: string[]): Promise<Attached> {
   if (rest.includes("--app")) {
     const { attachWebview } = await import("./browser/webviewPage.js");
@@ -828,6 +837,7 @@ async function cmdSim(rest: string[]) {
     maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
     maxKDst: Number(valueOf(rest, "--max-kdst") ?? lv.maxKDst),
     benchDiscount: Number(valueOf(rest, "--bench-discount") ?? lv.benchDiscount),
+    posMult: { QB: lv.multQB, RB: lv.multRB, WR: lv.multWR, TE: lv.multTE, ...parsePosMult(valueOf(rest, "--pos-mult")) },
   };
   let sumPts = 0, sumRank = 0, sumField = 0, top1 = 0, top3 = 0, sumTop3Spend = 0;
   for (let s = 0; s < n; s++) {
@@ -993,6 +1003,7 @@ async function cmdBacktest(rest: string[]) {
     aggr: Number(valueOf(rest, "--aggr") ?? lv.aggr), maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
     maxKDst: Number(valueOf(rest, "--max-kdst") ?? lv.maxKDst),
     benchDiscount: Number(valueOf(rest, "--bench-discount") ?? lv.benchDiscount),
+    posMult: { QB: lv.multQB, RB: lv.multRB, WR: lv.multWR, TE: lv.multTE, ...parsePosMult(valueOf(rest, "--pos-mult")) },
     inflation: rest.includes("--inflation"), scarcity: rest.includes("--scarcity"),
     posInflation: rest.includes("--pos-inflation"),
   };
@@ -1268,6 +1279,7 @@ async function cmdAutoDraft(rest: string[]) {
     maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
     maxKDst: Number(valueOf(rest, "--max-kdst") ?? lv.maxKDst),
     benchDiscount: Number(valueOf(rest, "--bench-discount") ?? lv.benchDiscount),
+    posMult: { QB: lv.multQB, RB: lv.multRB, WR: lv.multWR, TE: lv.multTE, ...parsePosMult(valueOf(rest, "--pos-mult")) },
     // LIVE inflation repricing is ON by default -- backtested +~2 championship pts / +3 playoff pts
     // (docs/validation.md). Toggle: --no-inflation. Scarcity is a REJECTED feature (backtested
     // NEGATIVE, and its live wiring passed teams=[ours]) -- removed from auto-draft (Step 6).
