@@ -90,27 +90,47 @@ one audit trail. Writing to ESPN itself (lineups, waivers, trades) is **not** ex
 - This does not touch the draft bidding path. `ff auto-draft` is unchanged and does not go through
   the agent or MCP.
 
-## Known limitation: the embedded webview cannot be DRIVEN by the bidding engine
+## Driving the draft engine inside the app: use `--app`
 
-`navigate` / `read_page` / `click_page` reach the webview through the renderer
-(`webview.executeJavaScript`), which is why they work. The auction engine does not: `ff auto-draft`
-/ `launch-practice` / `read-block` attach with Playwright (`attach()` =
-`browser.contexts().flatMap(c => c.pages())`), and **Playwright does not enumerate an Electron
-`<webview>` as a page**. Measured on this machine (Electron 32.3.3, CDP 9223):
+Playwright's `connectOverCDP` does NOT enumerate an Electron `<webview>` as a page (the guest is a
+target of type `webview`; `attach()` sees only the `file://` renderer), so **`--port 9223` hands
+every draft verb the renderer** -- `read-block --port 9223` returns all nulls and `launch-practice`
+would navigate the app's own UI to ESPN.
 
-- `GET /json/list` shows the guest as a target of type **`webview`** at `fantasy.espn.com`;
-- `ff attach --port 9223` reports exactly one page, the `file://` renderer.
+`--app` fixes that. `src/browser/webviewPage.ts` implements the slice of Playwright's `Page` API the
+draft code actually uses on top of the renderer's `webview.executeJavaScript`, so
+**`espnAuction.ts` runs unchanged** against the embedded guest -- no parallel reader/actor to drift.
 
-So `--port 9223` hands every draft verb the RENDERER, not ESPN -- `read-block` returns all nulls,
-and `launch-practice` would navigate the app's own UI window to the ESPN lobby. The app's
-"Start agent (practice)" button (`app/main.js` -> `ffSpawn(["launch-practice", "--port", CDP_PORT])`)
-depends on this and is affected.
+```
+npm run ff -- launch-practice --app     # opens an ESPN practice auction IN the app
+npm run ff -- read-block --app          # what's on the block right now
+npm run ff -- roster --app
+npm run ff -- auto-draft --app          # the agent bids, in the app's own logged-in session
+node scripts/webview-selftest.mjs       # positive control for the shim (see below)
+```
 
-The path that works for bidding is a real browser where ESPN is a TOP-LEVEL page -- the bro session
-(`attachBro`), which is what the live mock runs of 2026-09-01/02 used.
+Verified live on 2026-09-04 in a league-specific practice auction: `launch-practice --app` entered
+the room, `read-block --app` returned a populated block (player/offer/myMax/canBid), and
+`auto-draft --app` passed, nominated and bid against real opponents.
 
-Separately, ESPN opens every draft room via `window.open`, and the main window's
-`setWindowOpenHandler` sends `http(s)` popups to `shell.openExternal` -- i.e. out to the system
-browser, not into the app. `click_page` patches `window.open` in the guest to capture and follow
-such URLs in-place, which handles the general case, but the lobby's "Practice Draft" button did not
-route through `window.open` in testing.
+### Shim notes (the two bugs that made it look like it worked when it did not)
+
+- **The locator resolver must RETURN its IIFE's value.** Without the `return`, every locator
+  resolved to `undefined` -> `count() === 0`, which is indistinguishable from "no such element" --
+  and outside a draft room, where everything legitimately reads null, completely invisible.
+  `scripts/webview-selftest.mjs` exists for exactly this: it drives the shim against DOM that is
+  known to exist and asserts NON-empty results (174 anchors, the Practice Draft button found,
+  `isDisabled()` false, real geometry). A shim that always returns null passes every null test.
+- **`page.evaluate` takes expressions OR statements.** `espnAuction` passes expression strings;
+  `cmdLaunchPractice` passes statement strings. Wrapping a statement string in `return (...)` is a
+  syntax error, which Electron reports only as a locationless "Script failed to execute", so the
+  shim classifies the string by compiling it in Node first (`asBody`).
+- `page.url()` is **synchronous** in Playwright (`findPage` does `p.url().includes(...)`), so the
+  shim serves a cached value refreshed around navigation.
+
+ESPN opens draft rooms via `window.open`, and the app's `setWindowOpenHandler` sends `http(s)`
+popups to `shell.openExternal` -- out to the system browser. Both `launch-practice` and the
+`click_page` MCP tool patch `window.open` in the guest (and `click_page` also retargets
+`_blank` anchors) so the room lands in the webview instead.
+
+The bro path (`attachBro`, no flag) is unchanged and remains available as a fallback.
