@@ -226,11 +226,35 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       maxBid = Math.max(0, Math.min(maxBid, hardAffordable));
       return { maxBid, reason: `val${val(p)} src=${valSrc(p).src} soft${softAffordable} -> ${maxBid}` };
     },
+    // LIVE nomination. The sim never calls this (draftField has its own nomination paths), so this
+    // is live-only behavior and does not move backtest numbers.
+    //
+    // The policy it replaces ("first player worth <= $1, else the lowest-value VISIBLE player") was
+    // bad in a real room in both halves of the draft (F4). ESPN's board virtualizes to ~18 rows, so
+    // EARLY every visible player is valuable and "lowest visible" is a mid-tier player -- possibly
+    // one of our own targets -- put up at $1. LATE it nominates scrubs we explicitly do not want,
+    // and an unwanted $1 nomination in a real room often draws no other bidder, so WE win the player
+    // we chose precisely for being unwanted, burning one of only 4 bench slots.
+    //
+    // Instead: EARLY/MID drain the room's money on the most expensive player we are NOT targeting
+    // (no self-win risk -- the room bids real dollars on a real player -- and our own targets come
+    // up later, when everyone else is poorer). LATE, when everything visible is cheap, nominate the
+    // best player we would be HAPPY to own: self-winning a $1 sleeper into a bench slot is a feature.
     nominate(state) {
-      const wanted = new Set(state.myRoster.map((r) => r.name));
-      const sorted = state.board.filter((p) => !wanted.has(p.name)).sort((a, b) => val(b) - val(a));
-      const drain = sorted.find((p) => val(p) <= 1) ?? sorted[sorted.length - 1] ?? state.board[0];
-      return { player: drain, openingBid: 1, reason: "drain-nominate" };
+      const rostered = new Set(state.myRoster.map((r) => r.name));
+      const avail = state.board.filter((p) => !rostered.has(p.name));
+      const byVal = avail.slice().sort((a, b) => val(b) - val(a));
+      const fills = (p: PlayerRef) => (state.mySlots[p.pos] ?? 0) > 0
+        || (["RB", "WR", "TE"].includes(p.pos) && (state.mySlots.FLEX ?? 0) > 0)
+        || (state.mySlots.BENCH ?? 0) > 0;
+      // Our live targets = the top-N fillable players by OUR value (N=8, a judgment call: deep
+      // enough to cover a nomination round, shallow enough to leave real drain candidates).
+      const targets = new Set(byVal.filter(fills).slice(0, 8).map((p) => p.name));
+      const drain = byVal.find((p) => !targets.has(p.name) && val(p) >= 10);
+      if (drain) return { player: drain, openingBid: 1, reason: `drain non-target $${val(drain)}` };
+      const keeper = byVal.find((p) => fills(p) && p.pos !== "K" && p.pos !== "DST")
+        ?? byVal[0] ?? state.board[0];
+      return { player: keeper, openingBid: 1, reason: "late: best cheap keeper" };
     },
   };
 }

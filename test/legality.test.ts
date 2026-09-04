@@ -311,3 +311,55 @@ test("v2 K/DST cap FAULT: maxKDst=99 lets the same DST bid rise to its ESPN valu
   const st = baseState({ mySlots: { DST: 1, BENCH: 3 }, onBlock: dst });
   assert.ok(s.maxBid(st).maxBid >= 8, `uncapped DST should reach ~10, got ${s.maxBid(st).maxBid}`);
 });
+
+// F4: live nomination. Early, ESPN's board virtualizes to ~18 rows -- all valuable -- so the old
+// "lowest visible" policy put up a mid-tier player, sometimes one of ours. New policy: drain the
+// most expensive player we are NOT targeting.
+const richBoard = () => [
+  { name: "Stud A", pos: "RB" as const, team: "A", espnPreDraftVal: 60 },
+  { name: "Stud B", pos: "WR" as const, team: "B", espnPreDraftVal: 55 },
+  { name: "Stud C", pos: "RB" as const, team: "C", espnPreDraftVal: 50 },
+  { name: "Stud D", pos: "WR" as const, team: "D", espnPreDraftVal: 45 },
+  { name: "Mid E", pos: "TE" as const, team: "E", espnPreDraftVal: 40 },
+  { name: "Mid F", pos: "QB" as const, team: "F", espnPreDraftVal: 35 },
+  { name: "Mid G", pos: "RB" as const, team: "G", espnPreDraftVal: 30 },
+  { name: "Mid H", pos: "WR" as const, team: "H", espnPreDraftVal: 25 },
+  { name: "Mid I", pos: "TE" as const, team: "I", espnPreDraftVal: 20 },
+  { name: "Mid J", pos: "WR" as const, team: "J", espnPreDraftVal: 15 },
+];
+
+test("v2 nominate EARLY: puts up an expensive NON-target, never our #1 value", () => {
+  const s = makeV2Strategy({});
+  const board = richBoard();
+  const st = baseState({ board, onBlock: null });
+  const n = s.nominate!(st);
+  assert.notEqual(n.player.name, "Stud A", "must never nominate our own top target");
+  assert.ok((n.player.espnPreDraftVal ?? 0) >= 10, "early nomination must drain real money");
+  assert.match(n.reason ?? "", /drain non-target/);
+});
+
+test("v2 nominate LATE: everything cheap -> the best fillable non-K/DST keeper", () => {
+  const s = makeV2Strategy({});
+  const board = [
+    { name: "Some K", pos: "K" as const, team: "K", espnPreDraftVal: 3 },
+    { name: "Some DST", pos: "DST" as const, team: "D", espnPreDraftVal: 3 },
+    { name: "Sleeper WR", pos: "WR" as const, team: "W", espnPreDraftVal: 3 },
+    { name: "Scrub RB", pos: "RB" as const, team: "R", espnPreDraftVal: 1 },
+  ];
+  const st = baseState({ board, onBlock: null, mySlots: { WR: 1, BENCH: 2 } });
+  const n = s.nominate!(st);
+  assert.equal(n.player.name, "Sleeper WR", "late, self-winning our best cheap keeper is a feature");
+  assert.match(n.reason ?? "", /late: best cheap keeper/);
+});
+
+// FI for target protection: with the roster already full of everyone EXCEPT the studs, `fills`
+// still holds (bench open), so the top-8 target set covers Stud A. Shrink the protected set by
+// filling every slot -- nothing "fills", targets goes empty -- and the #1 value gets nominated.
+test("v2 nominate FAULT: with no target protection the #1-value player is what goes up", () => {
+  const s = makeV2Strategy({});
+  const board = richBoard();
+  // Every slot closed -> fills() is false for all -> targets is EMPTY -> drain picks byVal[0].
+  const st = baseState({ board, onBlock: null, mySlots: { QB: 0, RB: 0, WR: 0, TE: 0, FLEX: 0, K: 0, DST: 0, BENCH: 0 } });
+  assert.equal(s.nominate!(st).player.name, "Stud A",
+    "unprotected, the policy nominates our own best player -- this is what targets prevents");
+});
