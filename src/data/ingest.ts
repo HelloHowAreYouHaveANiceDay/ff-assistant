@@ -158,8 +158,9 @@ export async function ingestAll(dbPath?: string): Promise<void> {
   const sleeper = await ingestSleeper(db);      // Sleeper live injury/depth + add/drop trending
   const odds = await ingestOdds(db);            // ESPN Vegas implied team totals
   const boris = await ingestBorisTiers(db, scoring); // Boris Chen positional tiers
+  const numQbs = cfg.slots.filter((s) => s === "QB" || s === "OP" || s === "SUPERFLEX" || s === "SF").length || 1; // superflex-aware
   const adp = await ingestAdp(db, SEASON, scoring, teams);  // FFC real draft-market ADP (league size)
-  const mkt = await ingestMarketValue(db, scoring, teams);  // FantasyCalc market values (league size)
+  const mkt = await ingestMarketValue(db, scoring, teams, numQbs);  // FantasyCalc market values (league size + QBs)
   setSetting(db, "last_ingest", nowIso());
   setSetting(db, "season", String(SEASON));
   const newsTotal = Object.values(news).reduce((a, b) => a + b, 0);

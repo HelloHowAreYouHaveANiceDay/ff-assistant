@@ -153,11 +153,11 @@ export async function ingestAdp(db: DB, season: number, scoring = "HALF", teams 
 
 // FantasyCalc real-trade market values + 30-day momentum -> market_value.
 const FC_PPR: Record<string, number> = { STD: 0, HALF: 0.5, PPR: 1 };
-export async function ingestMarketValue(db: DB, scoring = "HALF", teams = 12): Promise<number> {
+export async function ingestMarketValue(db: DB, scoring = "HALF", teams = 12, numQbs = 1): Promise<number> {
   const known = knownIds(db);
   const ppr = FC_PPR[scoring] ?? 0.5;
   let arr: any[] = [];
-  try { arr = await (await fetch(`https://api.fantasycalc.com/values/current?isDynasty=false&numQbs=1&numTeams=${teams}&ppr=${ppr}`)).json(); } catch { return 0; }
+  try { arr = await (await fetch(`https://api.fantasycalc.com/values/current?isDynasty=false&numQbs=${numQbs}&numTeams=${teams}&ppr=${ppr}`)).json(); } catch { return 0; }
   const up = db.prepare(
     `INSERT INTO market_value (player_id, value, overall_rank, pos_rank, trend_30d, adp, tier, sleeper_id, espn_id, updated_at)
      VALUES (@id, @val, @orank, @prank, @trend, @adp, @tier, @sid, @eid, @now)

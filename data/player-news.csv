@@ -37,8 +37,9 @@ Xavier Worthy,WR,KC,headline,low,Graziano's bold-but-realistic predictions for a
 Travis Hunter,WR,JAC,headline,low,Graziano's bold-but-realistic predictions for all 32 NFL teams: Don't be surprised if ...,rss:espn,2026-09-02,https://www.espn.com/nfl/story/_/id/49793475/2026-nfl-surprise-predictions-32-teams-stat-leaders-breakouts-fantasy-football
 Geno Smith,QB,NYJ,headline,low,Geno Smith looking forward to writing comeback story for Act II in New York,rss:espn,2026-09-03,https://www.espn.com/nfl/story/_/id/49797721/new-york-jets-geno-smith-comeback-narrative
 Kaleb Johnson,RB,PIT,headline,low,Grading NFL offseason trades: Sizing up RB Kaleb Johnson to the Packers,rss:espn,2026-09-03,https://www.espn.com/nfl/story/_/id/48915601/2026-nfl-offseason-trade-grades-best-worst-moves-training-camp-preseason
-Travis Kelce,TE,KC,headline,low,Travis Kelce reveals his and Taylor Swift's dog to the world in photo shoot,rss:espn,2026-09-02,https://www.espn.com/nfl/story/_/id/49794143/travis-kelce-taylor-swift-dog-tommy-hilfiger-kansas-city-chiefs-samoyed
 D'Andre Swift,RB,CHI,headline,low,NFL news; live updates: Bears' Rome Odunze; D'Andre Swift exit practice with injuries Thursday; WR Michael Wilson; Cardinals reportedly agree on 3-year extension,rss:yahoo,2026-08-20,https://sports.yahoo.com/nfl/live/nfl-news-injury-roster-updates-contract-extension-news-ahead-of-week-1-143714619.html
+CeeDee Lamb,WR,DAL,headline,low,Stephen Jones: It will be "real difficult" to keep both George Pickens and CeeDee Lamb long term,rss:yahoo,2026-09-04,https://sports.yahoo.com/articles/stephen-jones-real-difficult-keep-001327638.html
+George Pickens,WR,DAL,headline,low,Stephen Jones: It will be "real difficult" to keep both George Pickens and CeeDee Lamb long term,rss:yahoo,2026-09-04,https://sports.yahoo.com/articles/stephen-jones-real-difficult-keep-001327638.html
 Chase Brown,RB,CIN,headline,low,Why the Bengals may choose not to extend DJ Turner; Dax Hill; or Chase Brown right now,rss:yahoo,2026-09-03,https://sports.yahoo.com/articles/why-bengals-may-choose-not-231021674.html
 Tutu Atwell,WR,LAR,headline,low,Tutu Atwell on Rams return: I feel like I never left,rss:yahoo,2026-09-03,https://sports.yahoo.com/articles/tutu-atwell-rams-return-feel-224256513.html
 Marquez Valdes-Scantling,WR,DAL,headline,low,Raiders work out 16 players; including OL Evan Neal; WR Marquez Valdes-Scantling,rss:yahoo,2026-09-03,https://sports.yahoo.com/articles/raiders-16-players-including-ol-224241773.html
@@ -50,11 +51,10 @@ Kayshon Boutte,WR,HOU,headline,low,Kayshon Boutte takes Mike Vrabel's "inactive"
 Ty Simpson,QB,LAR,headline,low,Rams' depth chart lists Stetson Bennett as No. 2 QB; Ty Simpson No. 3,rss:yahoo,2026-09-03,https://sports.yahoo.com/articles/rams-depth-chart-lists-stetson-201731269.html
 Jahmyr Gibbs,RB,DET,headline,low,NFL Offensive Player of the Year Odds: Jahmyr Gibbs Poised for a Career Year?,rss:yahoo,2026-09-03,https://sports.yahoo.com/articles/nfl-offensive-player-odds-nacua-183400310.html
 TreVeyon Henderson,RB,NE,headline,low,TreVeyon Henderson remains out of Patriots practice,rss:yahoo,2026-09-03,https://sports.yahoo.com/articles/treveyon-henderson-remains-patriots-practice-192800669.html
-TreVeyon Henderson,RB,NE,headline,low,Patriots practice report: TreVeyon Henderson remains sidelined as Seattle prep continues,rss:yahoo,2026-09-03,https://sports.yahoo.com/articles/patriots-practice-report-treveyon-henderson-190353974.html
 Cam Skattebo,RB,NYG,headline,low,Giants' Cam Skattebo considered retirement after gruesome injury; explains relationship with John Harbaugh,rss:cbs,2026-09-03,https://www.cbssports.com/nfl/news/giants-cam-skattebo-says-he-considered-retirement/
 Hunter Luepke,RB,DAL,headline,low,Cowboys' Von Miller secures desired No. 40 from teammate with rare compensation that could last a lifetime,rss:cbs,2026-09-03,https://www.cbssports.com/nfl/news/cowboys-von-miller-no-40-uniform-teammate-compensation/
 Michael Wilson,WR,ARI,headline,low,Michael Wilson to sign massive extension: Why Cards made him one of NFL's top-paid No. 2 WRs,rss:cbs,2026-09-03,https://www.cbssports.com/nfl/news/cardinals-sign-michael-wilson-to-massive-extension/
-Puka Nacua,WR,LAR,headline,low,Puka Nacua suspension watch: Will NFL discipline Rams star WR? How might a suspension impact L.A.?,rss:cbs,2026-09-03,https://www.cbssports.com/nfl/news/puka-nacua-suspension-watch-will-nfl-discipline-rams-star/
+Puka Nacua,WR,LAR,headline,low,Puka Nacua suspension watch: Will NFL discipline Rams star WR? How might a suspension impact L.A.?,rss:cbs,2026-09-04,https://www.cbssports.com/nfl/news/puka-nacua-suspension-watch-will-nfl-discipline-rams-star/
 Quinshon Judkins,RB,CLE,headline,low,Browns DT Mike Hall addresses 'mishap on the field' with teammate Quinshon Judkins,rss:cbs,2026-09-03,https://www.cbssports.com/nfl/news/browns-mike-hall-addresses-mishap-quinshon-judkins/
 Drake Maye,QB,NE,headline,low,Renner's 2027 NFL Draft scouting series: Arch Manning tops QB rankings; another passer draws Drake Maye comp,rss:cbs,2026-09-03,https://www.cbssports.com/nfl/draft/news/2027-nfl-draft-qb-rankings-arch-manning/
 Justin Jefferson,WR,MIN,headline,low,2026 Minnesota Vikings betting preview; predictions: Four NFL player props to target before Week 1,rss:cbs,2026-09-03,https://www.cbssports.com/betting/news/2026-minnesota-vikings-betting-preview-predictions-four-nfl-player-props-to-target-before-week-1/
@@ -62,6 +62,8 @@ Fernando Mendoza,QB,LV,headline,low,Klint Kubiak names Kirk Cousins starter over
 Kirk Cousins,QB,LV,headline,low,Klint Kubiak names Kirk Cousins starter over No. 1 pick Fernando Mendoza,rss:cbs,2026-09-02,https://www.cbssports.com/nfl/news/klint-kubiak-names-kirk-cousins-starter-over-no-1-pick-fernando-mendoza/
 Cam Skattebo,RB,NYG,headline,low,Agent's Take: Does Cam Skattebo need better advice after recent Giants antics?,rss:cbs,2026-09-02,https://www.cbssports.com/nfl/news/agents-take-cam-skattebos-giants/
 Deshaun Watson,QB,CLE,headline,low,2026 NFL Comeback Player of Year trends; odds: Sportsbook rooting against Patrick Mahomes; Deshaun Watson,rss:cbs,2026-09-02,https://www.cbssports.com/betting/news/2026-nfl-comeback-player-of-year-trends-odds-sportsbook-rooting-against-patrick-mahomes-deshaun-watson/
+CeeDee Lamb,WR,DAL,headline,low,Stephen Jones: It will be "real difficult" to keep both George Pickens and CeeDee Lamb long term,rss:pft,2026-09-04,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/stephen-jones-it-will-be-real-difficult-to-keep-both-george-pickens-and-ceedee-lamb-long-term
+George Pickens,WR,DAL,headline,low,Stephen Jones: It will be "real difficult" to keep both George Pickens and CeeDee Lamb long term,rss:pft,2026-09-04,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/stephen-jones-it-will-be-real-difficult-to-keep-both-george-pickens-and-ceedee-lamb-long-term
 Tutu Atwell,WR,LAR,headline,low,Tutu Atwell on Rams return: I feel like I never left,rss:pft,2026-09-03,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/tutu-atwell-on-rams-return-i-feel-like-i-was-never-gone
 Marquez Valdes-Scantling,WR,DAL,headline,low,Raiders work out 16 players; including OL Evan Neal; WR Marquez Valdes-Scantling,rss:pft,2026-09-03,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/raiders-work-out-16-players-including-ol-evan-neal-wr-marquez-valdes-scantling
 Marquez Valdes-Scantling,WR,DAL,headline,low,Cowboys release WR Marquez Valdes-Scantling,rss:pft,2026-08-30,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/cowboys-release-wr-marquez-valdes-scantling
@@ -74,7 +76,6 @@ TreVeyon Henderson,RB,NE,headline,low,TreVeyon Henderson remains out of Patriots
 Kyler Murray,QB,MIN,headline,low,Vikings name eight captains; including Kyler Murray,rss:pft,2026-09-03,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/vikings-name-eight-captains-including-kyler-murray
 Keenan Allen,WR,IND,headline,low,Keenan Allen won't discuss "ongoing legal matter",rss:pft,2026-09-03,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/keenan-allen-wont-discuss-ongoing-legal-matter
 Cam Skattebo,RB,NYG,headline,low,Cam Skattebo thought about walking away from football after ankle injury,rss:pft,2026-09-03,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/cam-skattebo-thought-about-walking-away-from-football-after-ankle-injury
-Zay Flowers,WR,BAL,headline,low,Zay Flowers returned to practice Thursday,rss:pft,2026-09-03,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/zay-flowers-returned-to-practice-thursday
 Kyler Murray,QB,MIN,headline,low,Vikings' Kyler Murray gets blunt reminder of what's at stake this season,rss:yardbarker,2026-09-03,https://www.yardbarker.com/nfl/articles/vikings_kyler_murray_gets_blunt_reminder_of_whats_at_stake_this_season/s1_13132_44255838
 George Pickens,WR,DAL,headline,low,Cowboys' George Pickens told to 'prove it' this season,rss:yardbarker,2026-09-03,https://www.yardbarker.com/nfl/articles/cowboys_george_pickens_told_to_prove_it_this_season/s1_13132_44255871
 Travis Hunter,WR,JAC,headline,low,Jaguars HC Liam Coen addresses plan for Travis Hunter on offense,rss:yardbarker,2026-09-03,https://www.yardbarker.com/nfl/articles/jaguars_hc_liam_coen_addresses_plan_for_travis_hunter_on_offense/s1_13132_44255878
@@ -84,47 +85,47 @@ Kyler Murray,QB,MIN,headline,low,NFL insider sounds work ethic alarms about Viki
 Lamar Jackson,QB,BAL,headline,low,NFL executive shares concern about Ravens' Lamar Jackson amid contract uncertainty,rss:yardbarker,2026-09-03,https://www.yardbarker.com/nfl/articles/nfl_executive_shares_concern_about_ravens_lamar_jackson_amid_contract_uncertainty/s1_13132_44254529
 C.J. Stroud,QB,HOU,headline,low,Texans' C.J. Stroud has seemingly made contract decision after Nick Caserio comments,rss:yardbarker,2026-09-02,https://www.yardbarker.com/nfl/articles/texans_cj_stroud_has_seemingly_made_contract_decision_after_nick_caserio_comments/s1_13132_44250217
 Ashton Jeanty,RB,LV,headline,low,Optimism about Raiders RB Ashton Jeanty's Week 1 status grows after Klint Kubiak's update,rss:yardbarker,2026-09-03,https://www.yardbarker.com/nfl/articles/optimism_about_raiders_rb_ashton_jeantys_week_1_status_grows_after_klint_kubiaks_update/s1_13132_44251021
-Roschon Johnson,RB,CHI,trending,medium,trending added across leagues (Sleeper #1; 222040 moves),sleeper:add,recent,
-Jacob Saylors,RB,DET,trending,medium,trending added across leagues (Sleeper #2; 126175 moves),sleeper:add,recent,
-Malik Davis,RB,DAL,trending,medium,trending added across leagues (Sleeper #3; 73512 moves),sleeper:add,recent,
-Devaughn Vele,WR,NOS,trending,medium,trending added across leagues (Sleeper #4; 68159 moves),sleeper:add,recent,
-MarShawn Lloyd,RB,GBP,trending,medium,trending added across leagues (Sleeper #5; 49185 moves),sleeper:add,recent,
-Darren Waller,TE,CAR,trending,medium,trending added across leagues (Sleeper #6; 42435 moves),sleeper:add,recent,
-Tre Tucker,WR,LVR,trending,medium,trending added across leagues (Sleeper #7; 39072 moves),sleeper:add,recent,
-Sione Vaki,RB,DET,trending,medium,trending added across leagues (Sleeper #8; 38955 moves),sleeper:add,recent,
-Dohnte Meyers,WR,CIN,trending,medium,trending added across leagues (Sleeper #9; 31797 moves),sleeper:add,recent,
-Caleb Douglas,WR,MIA,trending,low,trending added across leagues (Sleeper #11; 29760 moves),sleeper:add,recent,
-Tank Dell,WR,HOU,trending,low,trending added across leagues (Sleeper #13; 27376 moves),sleeper:add,recent,
-Kaelon Black,RB,SFO,trending,low,trending added across leagues (Sleeper #14; 25914 moves),sleeper:add,recent,
-Zavion Thomas,WR,CHI,trending,low,trending added across leagues (Sleeper #15; 21816 moves),sleeper:add,recent,
-Justice Hill,RB,BAL,trending,low,trending added across leagues (Sleeper #16; 21402 moves),sleeper:add,recent,
-Kirk Cousins,QB,LVR,trending,low,trending added across leagues (Sleeper #17; 20792 moves),sleeper:add,recent,
-Odell Beckham,WR,NYG,trending,low,trending added across leagues (Sleeper #18; 19558 moves),sleeper:add,recent,
-Emmett Johnson,RB,KCC,trending,low,trending added across leagues (Sleeper #20; 18585 moves),sleeper:add,recent,
-Barion Brown,WR,NOS,trending,low,trending added across leagues (Sleeper #22; 17118 moves),sleeper:add,recent,
-Seth McGowan,RB,IND,trending,low,trending added across leagues (Sleeper #23; 16784 moves),sleeper:add,recent,
-Malik Washington,WR,MIA,trending,low,trending added across leagues (Sleeper #24; 15744 moves),sleeper:add,recent,
-Malik Willis,QB,MIA,trending,low,trending added across leagues (Sleeper #25; 14910 moves),sleeper:add,recent,
-Jaydon Blue,RB,DAL,trending,medium,trending dropped across leagues (Sleeper #1; 37400 moves),sleeper:drop,recent,
-Oronde Gadsden,TE,LAC,trending,medium,trending dropped across leagues (Sleeper #2; 22060 moves),sleeper:drop,recent,
-Alvin Kamara,RB,NOS,trending,medium,trending dropped across leagues (Sleeper #3; 21968 moves),sleeper:drop,recent,
-Brenton Strange,TE,JAC,trending,medium,trending dropped across leagues (Sleeper #4; 21690 moves),sleeper:drop,recent,
-Malik Davis,RB,DAL,trending,medium,trending dropped across leagues (Sleeper #5; 19503 moves),sleeper:drop,recent,
-Emanuel Wilson,RB,SEA,trending,medium,trending dropped across leagues (Sleeper #6; 19026 moves),sleeper:drop,recent,
-Tyreek Hill,WR,FA,trending,medium,trending dropped across leagues (Sleeper #7; 18080 moves),sleeper:drop,recent,
-Kenyon Sadiq,TE,NYJ,trending,medium,trending dropped across leagues (Sleeper #8; 17568 moves),sleeper:drop,recent,
-Isiah Pacheco,RB,DET,trending,medium,trending dropped across leagues (Sleeper #9; 17432 moves),sleeper:drop,recent,
-Jam Miller,RB,NEP,trending,low,trending dropped across leagues (Sleeper #11; 16326 moves),sleeper:drop,recent,
-Jalen Nailor,WR,LVR,trending,low,trending dropped across leagues (Sleeper #12; 14805 moves),sleeper:drop,recent,
-Keaton Mitchell,RB,LAC,trending,low,trending dropped across leagues (Sleeper #13; 14499 moves),sleeper:drop,recent,
-Jerry Jeudy,WR,CLE,trending,low,trending dropped across leagues (Sleeper #14; 14112 moves),sleeper:drop,recent,
-Cyrus Allen,WR,KCC,trending,low,trending dropped across leagues (Sleeper #15; 13992 moves),sleeper:drop,recent,
-Fernando Mendoza,QB,LVR,trending,low,trending dropped across leagues (Sleeper #16; 13800 moves),sleeper:drop,recent,
-Travis Hunter,WR,JAC,trending,low,trending dropped across leagues (Sleeper #17; 13590 moves),sleeper:drop,recent,
-J'Mari Taylor,RB,JAC,trending,low,trending dropped across leagues (Sleeper #18; 13266 moves),sleeper:drop,recent,
-Tank Bigsby,RB,PHI,trending,low,trending dropped across leagues (Sleeper #19; 13258 moves),sleeper:drop,recent,
-Josh Jacobs,RB,GBP,trending,low,trending dropped across leagues (Sleeper #20; 13175 moves),sleeper:drop,recent,
-Jordyn Tyson,WR,NOS,trending,low,trending dropped across leagues (Sleeper #21; 13136 moves),sleeper:drop,recent,
-Omar Cooper Jr.,WR,NYJ,trending,low,trending dropped across leagues (Sleeper #22; 13104 moves),sleeper:drop,recent,
-Justin Joly,TE,DEN,trending,low,trending dropped across leagues (Sleeper #24; 12655 moves),sleeper:drop,recent,
-Malik Washington,WR,MIA,trending,low,trending dropped across leagues (Sleeper #25; 12312 moves),sleeper:drop,recent,
+Roschon Johnson,RB,CHI,trending,medium,trending added across leagues (Sleeper #1; 288872 moves),sleeper:add,recent,
+Jacob Saylors,RB,DET,trending,medium,trending added across leagues (Sleeper #2; 121310 moves),sleeper:add,recent,
+Malik Davis,RB,DAL,trending,medium,trending added across leagues (Sleeper #3; 71172 moves),sleeper:add,recent,
+Devaughn Vele,WR,NOS,trending,medium,trending added across leagues (Sleeper #4; 67193 moves),sleeper:add,recent,
+MarShawn Lloyd,RB,GBP,trending,medium,trending added across leagues (Sleeper #5; 47286 moves),sleeper:add,recent,
+Darren Waller,TE,CAR,trending,medium,trending added across leagues (Sleeper #6; 42129 moves),sleeper:add,recent,
+Tre Tucker,WR,LVR,trending,medium,trending added across leagues (Sleeper #7; 38856 moves),sleeper:add,recent,
+Sione Vaki,RB,DET,trending,medium,trending added across leagues (Sleeper #8; 37268 moves),sleeper:add,recent,
+Dohnte Meyers,WR,CIN,trending,medium,trending added across leagues (Sleeper #10; 30474 moves),sleeper:add,recent,
+Caleb Douglas,WR,MIA,trending,low,trending added across leagues (Sleeper #11; 29192 moves),sleeper:add,recent,
+Tank Dell,WR,HOU,trending,low,trending added across leagues (Sleeper #13; 27336 moves),sleeper:add,recent,
+Kaelon Black,RB,SFO,trending,low,trending added across leagues (Sleeper #14; 25487 moves),sleeper:add,recent,
+Zavion Thomas,WR,CHI,trending,low,trending added across leagues (Sleeper #15; 21762 moves),sleeper:add,recent,
+Justice Hill,RB,BAL,trending,low,trending added across leagues (Sleeper #16; 20880 moves),sleeper:add,recent,
+Kirk Cousins,QB,LVR,trending,low,trending added across leagues (Sleeper #17; 20096 moves),sleeper:add,recent,
+Odell Beckham,WR,NYG,trending,low,trending added across leagues (Sleeper #19; 18914 moves),sleeper:add,recent,
+Emmett Johnson,RB,KCC,trending,low,trending added across leagues (Sleeper #20; 18684 moves),sleeper:add,recent,
+Barion Brown,WR,NOS,trending,low,trending added across leagues (Sleeper #22; 16884 moves),sleeper:add,recent,
+Seth McGowan,RB,IND,trending,low,trending added across leagues (Sleeper #23; 16448 moves),sleeper:add,recent,
+Malik Washington,WR,MIA,trending,low,trending added across leagues (Sleeper #24; 15488 moves),sleeper:add,recent,
+Keaton Mitchell,RB,LAC,trending,low,trending added across leagues (Sleeper #25; 14670 moves),sleeper:add,recent,
+Jaydon Blue,RB,DAL,trending,medium,trending dropped across leagues (Sleeper #1; 37352 moves),sleeper:drop,recent,
+Alvin Kamara,RB,NOS,trending,medium,trending dropped across leagues (Sleeper #2; 22104 moves),sleeper:drop,recent,
+Oronde Gadsden,TE,LAC,trending,medium,trending dropped across leagues (Sleeper #3; 22045 moves),sleeper:drop,recent,
+Brenton Strange,TE,JAC,trending,medium,trending dropped across leagues (Sleeper #4; 21969 moves),sleeper:drop,recent,
+Malik Davis,RB,DAL,trending,medium,trending dropped across leagues (Sleeper #5; 20601 moves),sleeper:drop,recent,
+Emanuel Wilson,RB,SEA,trending,medium,trending dropped across leagues (Sleeper #6; 19368 moves),sleeper:drop,recent,
+Tyreek Hill,WR,FA,trending,medium,trending dropped across leagues (Sleeper #7; 18128 moves),sleeper:drop,recent,
+Kenyon Sadiq,TE,NYJ,trending,medium,trending dropped across leagues (Sleeper #8; 17604 moves),sleeper:drop,recent,
+Isiah Pacheco,RB,DET,trending,medium,trending dropped across leagues (Sleeper #9; 17096 moves),sleeper:drop,recent,
+Jam Miller,RB,NEP,trending,low,trending dropped across leagues (Sleeper #11; 16020 moves),sleeper:drop,recent,
+Keaton Mitchell,RB,LAC,trending,low,trending dropped across leagues (Sleeper #12; 15183 moves),sleeper:drop,recent,
+Jalen Nailor,WR,LVR,trending,low,trending dropped across leagues (Sleeper #13; 14949 moves),sleeper:drop,recent,
+Cyrus Allen,WR,KCC,trending,low,trending dropped across leagues (Sleeper #14; 14154 moves),sleeper:drop,recent,
+Jerry Jeudy,WR,CLE,trending,low,trending dropped across leagues (Sleeper #15; 13950 moves),sleeper:drop,recent,
+Fernando Mendoza,QB,LVR,trending,low,trending dropped across leagues (Sleeper #16; 13656 moves),sleeper:drop,recent,
+Tank Bigsby,RB,PHI,trending,low,trending dropped across leagues (Sleeper #17; 13573 moves),sleeper:drop,recent,
+Travis Hunter,WR,JAC,trending,low,trending dropped across leagues (Sleeper #18; 13566 moves),sleeper:drop,recent,
+Jordyn Tyson,WR,NOS,trending,low,trending dropped across leagues (Sleeper #19; 13296 moves),sleeper:drop,recent,
+J'Mari Taylor,RB,JAC,trending,low,trending dropped across leagues (Sleeper #20; 13194 moves),sleeper:drop,recent,
+Omar Cooper Jr.,WR,NYJ,trending,low,trending dropped across leagues (Sleeper #21; 13184 moves),sleeper:drop,recent,
+Josh Jacobs,RB,GBP,trending,low,trending dropped across leagues (Sleeper #22; 12995 moves),sleeper:drop,recent,
+Justin Joly,TE,DEN,trending,low,trending dropped across leagues (Sleeper #24; 12630 moves),sleeper:drop,recent,
+Malik Washington,WR,MIA,trending,low,trending dropped across leagues (Sleeper #25; 12400 moves),sleeper:drop,recent,

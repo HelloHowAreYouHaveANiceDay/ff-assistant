@@ -69,6 +69,8 @@ async function main() {
       return cmdBacktest(rest);
     case "build-history":
       return cmdBuildHistory(rest);
+    case "scrape-league":
+      return cmdScrapeLeague(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -789,6 +791,76 @@ async function cmdBuildHistory(rest: string[]) {
   console.log(`building history for ${seasons.length} seasons under ${conf.scoring} scoring (rec ${conf.scoring_rules.rec}/pt)...`);
   const r = await buildHistory(seasons, conf.scoring_rules);
   console.log(`wrote history-points (${r.points} rows) + history-weekly (${r.weekly} rows) for ${r.seasons.length} seasons: ${r.seasons.join(",")}`);
+}
+
+// Build per-manager draft tendencies for MY league from its real auction history (prior seasons),
+// read through the app's logged-in ESPN session. Config-driven: works for any league. Writes
+// managers.json (the sim's bot field). Needs the desktop app open (for the authenticated session).
+async function cmdScrapeLeague(rest: string[]) {
+  const { chromium } = await import("playwright-core");
+  const { openDb, getConfig } = await import("./db/db.js");
+  const { buildManagerProfiles } = await import("./draft/scout.js");
+  type Recap = import("./draft/scout.js").Recap;
+  const { dataPath } = await import("./data/paths.js");
+  const { writeFileSync } = await import("node:fs");
+  const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
+  const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db);
+  const lgRow = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string } | undefined;
+  db.close();
+  if (!lgRow) { console.log("no league synced -- run league_sync (or discover_leagues) first"); return; }
+  const leagueId = lgRow.league_id;
+  const years = Number(valueOf(rest, "--years") ?? 4);
+  const seasons: number[] = []; for (let y = conf.season - years; y < conf.season; y++) seasons.push(y); // prior N seasons
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
+  if (!browser) { console.log("app not running -- open the desktop app (its logged-in session is needed)"); return; }
+  const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://"));
+  if (!page) { console.log("app renderer not found"); await browser.close(); return; }
+  const wvEval = (js: string): Promise<string> => page.evaluate(async (code) => { const wv = document.getElementById("espnview") as any; if (!wv?.executeJavaScript) return ""; try { return await wv.executeJavaScript(code); } catch (e: any) { return "ERR:" + (e?.message ?? e); } }, js);
+  const cur = await wvEval("location.href");
+  if (!/fantasy\.espn\.com/.test(cur)) { await page.evaluate(() => { const w = window as any; if (w.setView) w.setView("live"); const wv = document.getElementById("espnview") as any; if (wv?.loadURL) wv.loadURL("https://fantasy.espn.com/football/"); }); await page.waitForTimeout(4000); }
+  const SLOT_POS: Record<number, string> = { 0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K" };
+  const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
+  // ESPN playerId -> position, from the public player pools (fetched Node-side, no auth). In an auction
+  // most picks are slotted to bench, so lineupSlotId alone can't give position -- this is the real map.
+  const posMap = new Map<number, string>();
+  const poolFilter = JSON.stringify({ players: { limit: 1500, sortDraftRanks: { sortPriority: 1, sortAsc: true, value: "STANDARD" } } });
+  for (const yr of [...seasons, conf.season]) {
+    try {
+      const res = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}/segments/0/leaguedefaults/3?view=kona_player_info`, { headers: { "x-fantasy-filter": poolFilter } });
+      if (!res.ok) continue;
+      const data = await res.json() as { players?: { player?: { id?: number; defaultPositionId?: number } }[] };
+      for (const pe of data.players ?? []) { const pl = pe.player ?? {}; if (pl.id != null && !posMap.has(pl.id)) { const pos = ESPN_POS[pl.defaultPositionId ?? -1]; if (pos) posMap.set(pl.id, pos); } }
+    } catch { /* skip a season's pool */ }
+  }
+  console.log(`scraping league ${leagueId} draft history for seasons ${seasons.join(", ")} (${posMap.size} players position-mapped)...`);
+  const recaps: Recap[] = [];
+  for (const yr of seasons) {
+    const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}/segments/0/leagues/${leagueId}?view=mDraftDetail&view=mTeam`;
+    const raw = await wvEval(`fetch(${JSON.stringify(url)},{credentials:'include'}).then(function(r){return r.ok?r.text():('HTTP '+r.status)}).catch(function(e){return 'ERR '+e.message})`);
+    if (!raw || raw.startsWith("HTTP") || raw.startsWith("ERR")) { console.log(`  ${yr}: ${raw || "no data"}`); continue; }
+    let j: any; try { j = JSON.parse(raw); } catch { console.log(`  ${yr}: parse error`); continue; }
+    const picks = j.draftDetail?.picks ?? [];
+    if (!j.draftDetail?.drafted || !picks.length) { console.log(`  ${yr}: no completed draft`); continue; }
+    const memberName = new Map<string, string>((j.members ?? []).map((m: any) => [m.id, (m.displayName || m.firstName || m.id)]));
+    const teamAbbrev = new Map<number, string>((j.teams ?? []).map((t: any) => [t.id, t.abbrev || ("T" + t.id)]));
+    const posById = new Map<number, string>(); // resolve FLEX/bench via any concrete-slot appearance
+    for (const p of picks) { const sp = SLOT_POS[p.lineupSlotId]; if (sp && !posById.has(p.playerId)) posById.set(p.playerId, sp); }
+    const byMember = new Map<string, { owner: string; teamId: number; picks: { pos: string; price: number }[] }>();
+    for (const p of picks) {
+      const owner = memberName.get(p.memberId) || `member ${String(p.memberId).slice(0, 8)}`;
+      const pos = posMap.get(p.playerId) ?? SLOT_POS[p.lineupSlotId] ?? posById.get(p.playerId) ?? "FLEX";
+      const rec = byMember.get(p.memberId) ?? byMember.set(p.memberId, { owner, teamId: p.teamId, picks: [] }).get(p.memberId)!;
+      rec.picks.push({ pos, price: p.bidAmount || 1 });
+    }
+    for (const v of byMember.values()) recaps.push({ season: yr, owner: v.owner, abbrev: teamAbbrev.get(v.teamId) || v.owner.slice(0, 4), picks: v.picks });
+    console.log(`  ${yr}: ${picks.length} picks, ${byMember.size} owners`);
+  }
+  await browser.close();
+  if (!recaps.length) { console.log("no draft history found (league may predate these seasons, or be snake not auction)"); return; }
+  const data = buildManagerProfiles(recaps);
+  writeFileSync(dataPath("managers.json"), JSON.stringify(data), "utf8");
+  console.log(`wrote ${data.profiles.length} owner profiles from ${recaps.length} team-seasons -> ${dataPath("managers.json")}`);
+  console.log("league spend mix: " + Object.entries(data.leagueShare).map(([p, s]) => `${p} ${Math.round(Number(s) * 100)}%`).join(" "));
 }
 
 // Championship backtest: draft with a past season's values, play a real H2H season + playoffs on

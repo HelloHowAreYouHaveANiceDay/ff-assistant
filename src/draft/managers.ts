@@ -8,8 +8,7 @@
 // the known position-payers) a real, testable edge. See docs/league-managers.md.
 
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dataPath } from "../data/paths.js";
 
 export interface ManagerProfile {
   owner: string;
@@ -39,9 +38,8 @@ let _cache: ManagerData | null = null;
 export function loadManagers(): ManagerData {
   if (_cache) return _cache;
   try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    // src/draft -> repo root/data/managers.json (present only on the author's machine, never shipped)
-    _cache = JSON.parse(readFileSync(join(here, "..", "..", "data", "managers.json"), "utf8")) as ManagerData;
+    // per-league profiles built by `ff scrape-league` into the writable data root (FF_DATA-aware)
+    _cache = JSON.parse(readFileSync(dataPath("managers.json"), "utf8")) as ManagerData;
   } catch {
     _cache = GENERIC_MANAGERS; // no history file: use the generic field so the sim still runs
   }

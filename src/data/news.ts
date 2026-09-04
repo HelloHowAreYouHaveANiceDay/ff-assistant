@@ -9,6 +9,7 @@
 // byte-compatible so the not-yet-ported build_report can still join news into the board).
 import { writeFileSync } from "node:fs";
 import { fetchText, fetchCsv, pick } from "./nflverse.js";
+import { dataPath } from "./paths.js";
 import { nameKey } from "../draft/values.js";
 import { type DB } from "../db/db.js";
 
@@ -113,7 +114,7 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
   const clean = (s: string) => (s || "").replace(/,/g, ";").replace(/\n/g, " ").trim();
   const lines = [cols.join(",")];
   for (const r of uniq) lines.push(cols.map((c) => clean(r[c])).join(","));
-  writeFileSync("data/player-news.csv", lines.join("\n") + "\n", "utf8");
+  writeFileSync(dataPath("player-news.csv"), lines.join("\n") + "\n", "utf8");
 
   const byCat: Record<string, number> = {};
   for (const r of uniq) byCat[r.category] = (byCat[r.category] || 0) + 1;

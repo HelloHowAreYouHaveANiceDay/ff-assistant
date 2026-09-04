@@ -41,7 +41,9 @@ test("real profiles load and cover the 2025 league (16 owners)", () => {
   const { profiles, leagueShare } = loadManagers();
   assert.ok(profiles.length >= 14, `expected the returning field, got ${profiles.length}`);
   assert.ok(leagueShare.RB > 0.2 && leagueShare.WR > 0.2, "RB+WR dominate league spend");
-  assert.ok(profiles.some((p) => p.owner === "<owner>"), "the scouted managers are present");
+  // profiles are real signatures: each has an owner + seasons, and the field spans concentration styles
+  assert.ok(profiles.every((p) => p.owner && p.seasons.length >= 1), "every profile has an owner + seasons");
+  assert.ok(profiles.some((p) => p.conc > 0.6), "some managers draft stars-and-scrubs (high concentration)");
 });
 
 // --- nomination policy ---------------------------------------------------------------------

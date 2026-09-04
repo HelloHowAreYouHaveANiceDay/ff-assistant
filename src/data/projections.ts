@@ -14,8 +14,8 @@ const CURVE_POS = ["QB", "RB", "WR", "TE"] as const;
 
 // curve[pos][k] = mean across seasons of the k-th best player's season points at that position,
 // scored under the LEAGUE's scoring model (so the curve is in league points, not generic No-PPR)
-async function buildCurve(scoring: ScoringRules): Promise<Record<string, number[]>> {
-  const seasons = [2019, 2020, 2021, 2022, 2023, 2024];
+async function buildCurve(scoring: ScoringRules, season: number): Promise<Record<string, number[]>> {
+  const seasons = Array.from({ length: 6 }, (_, i) => season - 6 + i); // the 6 completed seasons before `season`
   const perSeason: Record<string, number[][]> = { QB: [], RB: [], WR: [], TE: [] };
   for (const yr of seasons) {
     const rows = await fetchCsv(`${NFLVERSE}/stats_player/stats_player_week_${yr}.csv`);
@@ -45,7 +45,7 @@ export async function project(dbPath?: string, outPath = dataPath("points.csv"))
   const db = openDb(dbPath);
   const cfg = getConfig(db);
   const season = cfg.season;
-  const curve = await buildCurve(cfg.scoring_rules);
+  const curve = await buildCurve(cfg.scoring_rules, season);
   const proj = (pos: string, r: number) => { const cv = curve[pos]; return cv && cv.length ? cv[Math.min(r, cv.length - 1)] : 0; };
 
   // ECR players ordered by ecr; within-position 0-indexed rank = k for the curve lookup
