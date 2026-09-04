@@ -1162,7 +1162,37 @@ function positionalStats(picks: { pos: string | null; price: number; name: strin
 // (ESPN auto-nominates on our turn); we bid on any on-block player that fills an open slot,
 // up to min(our value / ESPN pre-draft val / floor, ESPN's legal max). ESPN's myMax already
 // reserves $1/open slot, so we can never strand a slot -> the done-bar is structurally safe.
+/** Refuse to run a second bidding agent in the same seat. Returns a release function.
+ *  A lock whose PID is no longer alive is stale (crash/kill) and is taken over. */
+async function acquireDraftLock(force: boolean): Promise<() => void> {
+  const { existsSync, readFileSync, writeFileSync, unlinkSync } = await import("node:fs");
+  const lock = dataPath("auto-draft.lock");
+  const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  if (existsSync(lock) && !force) {
+    const prev = Number((readFileSync(lock, "utf8").match(/pid=(\d+)/) ?? [])[1] ?? 0);
+    if (prev && prev !== process.pid && alive(prev)) {
+      console.error(`another auto-draft is already running (pid ${prev}). Two agents in one seat bid`);
+      console.error(`against each other. Stop it first, or pass --force-lock if you know it is dead.`);
+      console.error(`Windows: taskkill /F /T /PID ${prev}`);
+      process.exit(2);
+    }
+    console.log(`[auto-draft] reclaiming stale lock (pid ${prev || "?"} not running)`);
+  }
+  writeFileSync(lock, `pid=${process.pid} started=${new Date().toISOString()}\n`, "utf8");
+  let released = false;
+  return () => { if (released) return; released = true; try { unlinkSync(lock); } catch { /* already gone */ } };
+}
+
 async function cmdAutoDraft(rest: string[]) {
+  // SINGLE INSTANCE. Two agents in one seat bid against each other, re-nominate the same player,
+  // and produce a draft nobody can interpret -- and it is easy to end up there, because killing the
+  // shell that launched an agent does NOT kill the node process tree on Windows. Observed
+  // 2026-09-04: three concurrent auto-drafts in one practice room. Refuse to start unless the
+  // holder is genuinely gone (stale lock from a crash is reclaimed).
+  const releaseLock = await acquireDraftLock(rest.includes("--force-lock"));
+  process.on("exit", releaseLock);
+  process.on("SIGINT", () => { releaseLock(); process.exit(130); });
+  process.on("SIGTERM", () => { releaseLock(); process.exit(143); });
   const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, readLeague, nominate, readTurn } = await import("./draft/espnAuction.js");
   const { loadRankings } = await import("./data/rankings.js");
   const { makeV2Strategy, legalCap, jumpTarget } = await import("./draft/strategy.js");

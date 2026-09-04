@@ -38,3 +38,4 @@ app/engine/
 # mock-draft harness output (per-run logs + records)
 data/mock-runs.jsonl
 data/mock-*.log
+data/auto-draft.lock
