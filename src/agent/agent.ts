@@ -283,6 +283,60 @@ function buildTools(dbPath: string | undefined, season: number) {
         },
       ),
       tool(
+        "click_page",
+        "Click an element in the embedded ESPN page by its visible TEXT (or a CSS selector). Use after navigate/read_page to actually operate the site -- e.g. entering a mock draft room from the lobby. Returns what was clicked and the resulting URL/title.",
+        {
+          text: z.string().optional().describe("visible text of the button/link, e.g. 'Practice Draft'"),
+          selector: z.string().optional().describe("CSS selector, used instead of text when given"),
+          nth: z.number().optional().describe("which match to click when several tie, 0-based (default 0)"),
+        },
+        async (args) => {
+          const { browser, page } = await rendererPage();
+          if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "app not available" }] }; }
+          try {
+            // Runs INSIDE the webview guest. Matches only rendered, non-hidden elements and prefers
+            // the SMALLEST element containing the text, so "Practice Draft" hits the button and not
+            // the <body> that also contains it.
+            const payload = JSON.stringify({ text: args.text ?? "", selector: args.selector ?? "", nth: args.nth ?? 0 });
+            // The webview BLOCKS window.open, so any control that launches a popup (ESPN opens every
+            // draft room that way) silently does nothing. Patch window.open to capture the URL
+            // instead -- same trick cmdEnterDraft uses -- then navigate the webview there ourselves.
+            const js = "(function(){var a=" + payload + ";" +
+              "window.__ffOpen=null;if(!window.__ffPatched){window.__ffPatched=1;" +
+              "window.open=function(u){try{window.__ffOpen=String(u||'');}catch(e){}" +
+              "return {closed:false,focus:function(){},blur:function(){},close:function(){},postMessage:function(){}};};}" +
+              "function vis(e){var r=e.getBoundingClientRect();var s=getComputedStyle(e);" +
+              "return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';}" +
+              "var c=[];" +
+              "if(a.selector){c=Array.prototype.slice.call(document.querySelectorAll(a.selector)).filter(vis);}" +
+              "else{var t=a.text.toLowerCase();" +
+              "c=Array.prototype.slice.call(document.querySelectorAll('a,button,input,[role=button],div,span,td'))" +
+              ".filter(function(e){var x=(e.innerText||e.value||'').trim().toLowerCase();return x&&x.indexOf(t)>=0&&vis(e);})" +
+              ".sort(function(p,q){return (p.innerText||'').length-(q.innerText||'').length;});}" +
+              "if(!c.length)return 'NOMATCH';" +
+              "var el=c[Math.min(a.nth,c.length-1)];" +
+              "var label=(el.innerText||el.value||el.tagName).trim().slice(0,60);" +
+              "el.scrollIntoView({block:'center'});el.click();" +
+              "return 'CLICKED:'+label;})()";
+            const res = await wvEval(page, js);
+            if (res === "NOMATCH") { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: `no visible element matched ${args.selector ? "selector " + args.selector : `text "${args.text}"`}` }] }; }
+            await page.waitForTimeout(2000);
+            // If the click tried to pop a window, follow it in-place.
+            const popped = await wvEval(page, "String(window.__ffOpen||'')");
+            let followed = "";
+            if (popped && popped !== "null") {
+              const abs = popped.startsWith("http") ? popped : new URL(popped, await wvEval(page, "location.href")).href;
+              await wvNavigate(page, abs);
+              followed = ` (followed blocked popup -> ${abs})`;
+            }
+            await page.waitForTimeout(1500);
+            const after = await page.evaluate(() => { const wv = document.getElementById("espnview") as unknown as { getURL?: () => string; getTitle?: () => string }; return { url: wv?.getURL ? wv.getURL() : "", title: wv?.getTitle ? wv.getTitle() : "" }; });
+            await browser?.close().catch(() => {});
+            return { content: [{ type: "text", text: `${res}${followed} -> ${after.url || "(same page)"} | ${after.title || ""}` }] };
+          } catch (e) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "click error: " + String(e).slice(0, 140) }] }; }
+        },
+      ),
+      tool(
         "discover_leagues",
         "Browse MY ESPN fantasy home and list my leagues/teams (leagueId, season, team) by reading page links -- more reliable than guessing IDs. Saves them to the store.",
         {},
