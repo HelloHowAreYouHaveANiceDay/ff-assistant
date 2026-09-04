@@ -15,7 +15,14 @@ import path from "node:path";
 const N = Number(process.argv[2] || 1);
 const KEEP = process.argv.includes("--keep");
 const OUT = path.join("data", "mock-runs.jsonl");
-const DRAFT_TIMEOUT_MS = 75 * 60 * 1000; // a 192-pick auction at ~10-20s/nomination
+// A 192-pick ESPN auction runs ~60-100 min of WALL time (their nomination clock, not our polling),
+// and the cheap endgame -- where we fill most slots -- is the slowest part per slot. Measured mock 1
+// at ~64 min to reach 4/12. A timeout shorter than the draft records a spurious INCOMPLETE, which
+// would look exactly like an engine failure.
+const DRAFT_TIMEOUT_MS = 150 * 60 * 1000;
+// auto-draft's own round cap must also outlast the draft: it exits when rounds are exhausted, with
+// slots still open. ~3.6s/round observed => 4000 rounds ~ 4h of headroom.
+const DRAFT_ROUNDS = 4000;
 const LAUNCH_TIMEOUT_MS = 5 * 60 * 1000;
 
 const run = (args, timeoutMs, logPath) => new Promise((resolve) => {
@@ -79,7 +86,7 @@ for (let i = 1; i <= N; i++) {
   console.log(`  room: ${roomUrl.slice(0, 90)}`);
 
   const t0 = Date.now();
-  const draft = await run(["auto-draft", "--app"], DRAFT_TIMEOUT_MS, logPath);
+  const draft = await run(["auto-draft", "--app", "--rounds", String(DRAFT_ROUNDS)], DRAFT_TIMEOUT_MS, logPath);
   const mins = Math.round((Date.now() - t0) / 60000);
 
   const rosterRes = await run(["roster", "--app"], 3 * 60 * 1000, logPath);
