@@ -71,3 +71,22 @@ export function parseRoster(txt, idx) {
     unresolved: won.filter((w) => w.pos === "?").map((w) => w.name),
   };
 }
+
+/** Metrics read out of an auto-draft log. Shared so the suite and the single-run recorder report the
+ *  SAME fields -- the suite previously omitted dupeNominations entirely, and `(r.dupeNominations||[])
+ *  .length` then reported 0 for every run, which reads exactly like "no duplicates found". */
+export function parseDraftLog(log) {
+  const noms = [...log.matchAll(/^r(\d+): NOMINATE (.+?) \((our turn|fallback)\)(.*)$/gm)]
+    .map((m) => ({ round: Number(m[1]), player: m[2].trim(), turn: m[3], failed: /failed/.test(m[4]) }));
+  const counts = new Map();
+  for (const n of noms) counts.set(n.player, (counts.get(n.player) || 0) + 1);
+  return {
+    srcCounts: (log.match(/src=[a-z()-]+/g) || []).reduce((a, s) => (a[s] = (a[s] || 0) + 1, a), {}),
+    nominations: noms.length,
+    failedNominations: noms.filter((n) => n.failed).length,
+    // Same player nominated more than once. Benign in practice (the repeat targets the SAME player
+    // and only one nomination results), but tracked so a change in the pattern is visible.
+    dupeNominations: [...counts.entries()].filter(([, c]) => c > 1).map(([n, c]) => `${n} x${c}`),
+    stalls: log.split("\n").filter((l) => /stall|disconnect|error|Error|cannot|failed to/i.test(l)).slice(0, 10),
+  };
+}

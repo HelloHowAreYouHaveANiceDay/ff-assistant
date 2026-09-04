@@ -5,7 +5,7 @@
 //   node scripts/record-run.mjs 1 <build-sha> <minutes>
 import fs from "node:fs";
 import { execSync } from "node:child_process";
-import { loadPositionIndex, parseRoster } from "./lib-roster.mjs";
+import { loadPositionIndex, parseRoster, parseDraftLog } from "./lib-roster.mjs";
 
 const [, , idxArg, shaArg, minsArg] = process.argv;
 const i = Number(idxArg || 1);
@@ -26,14 +26,7 @@ const rec = {
   complete: R.filled != null && R.filled === R.slots,
   filled: R.filled, slots: R.slots, spent: R.spent,
   byPos: R.byPos, teCount: R.teCount, kdstMax: R.kdstMax, unresolved: R.unresolved,
-  srcCounts: (log.match(/src=[a-z()-]+/g) || []).reduce((a, s) => (a[s] = (a[s] || 0) + 1, a), {}),
-  dupeNominations: (() => {
-    const noms = (log.match(/NOMINATE ([A-Za-z'.\- ]+?)\s+\(/g) || []).map((x) => x.replace(/^NOMINATE /, "").trim());
-    const seen = new Map();
-    for (const n of noms) seen.set(n, (seen.get(n) || 0) + 1);
-    return [...seen.entries()].filter(([, c]) => c > 1).map(([n, c]) => `${n} x${c}`);
-  })(),
-  stalls: log.split("\n").filter((l) => /stall|disconnect|error|Error|cannot|failed/i.test(l)).slice(0, 10),
+  ...parseDraftLog(log),
   won,
 };
 fs.appendFileSync("data/mock-runs.jsonl", JSON.stringify(rec) + "\n");

@@ -393,3 +393,12 @@ test("v2 benchDiscount: a bench-only player's ceiling drops; a STARTER's does no
   assert.equal(full.maxBid(startState).maxBid, off.maxBid(startState).maxBid,
     "a starter must be priced identically whether or not benchDiscount is set");
 });
+
+// Live mock 3 (r1530) read "Steelers D/ST" with pos=K, so a position-gated alias lookup missed and
+// the value fell through to ESPN's. The alias must key off the NAME.
+test("v2 DST alias: resolves even when ESPN reports the wrong position for a defense", () => {
+  const dst = { name: "Steelers D/ST", pos: "K" as const, team: "PIT", espnPreDraftVal: 7 };
+  const s = makeV2Strategy({ values: { "pit": 2 }, nameKey, premium: 2 });
+  const st = baseState({ mySlots: { DST: 1, K: 1, BENCH: 3 }, onBlock: dst });
+  assert.match(s.maxBid(st).reason ?? "", /src=ours\(dst-alias\)/);
+});

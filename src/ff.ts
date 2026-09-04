@@ -1428,9 +1428,14 @@ async function cmdAutoDraft(rest: string[]) {
       const turn = await readTurn(page).catch(() => ({ ourNomination: false, nominatingTeam: null }));
       const fallbackTurn = idlePolls >= 14 && picks.length > 0; // ~14 ticks x 1.4s ~= 20s, post-countdown
       // COOLDOWN. ESPN does not clear "our nomination turn" the instant the click lands, so the next
-      // poll (~1.4s later) saw the same turn and nominated AGAIN -- observed on every nomination of
-      // mock 1 (r149/r151, r476/r478, r800/r801). A duplicate can put up a player we did not choose
-      // and burns our nomination. Hold off until the block actually changes, or the cooldown lapses.
+      // poll saw the same turn and nominated AGAIN -- on every nomination (mock 1: r149/r151,
+      // r476/r478, r800/r801). MEASURED IMPACT: benign. The repeat targets the SAME player (the
+      // board has not changed, so the strategy re-picks him) and exactly one nomination results --
+      // mock 3 r283/r291 A.J. Brown then bid at r304, r618/r626 Waddle then bid at r640. So this is
+      // a redundant click, not a wasted nomination; the cooldown just stops us spamming it. It does
+      // NOT eliminate the repeat (ESPN can still report our turn 8 rounds later) and does not need
+      // to -- do not "fix" it further without evidence that a duplicate ever nominates a DIFFERENT
+      // player, which no log has shown.
       if ((turn.ourNomination || fallbackTurn) && i >= nomCooldownUntil) {
         const board = await readBoard(page);
         const boardRefs = board.map((p) => ({ name: p.name, pos: (normPos(p.pos) ?? "RB") as never, team: "", espnPreDraftVal: p.value }));

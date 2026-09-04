@@ -35,7 +35,7 @@ const run = (args, timeoutMs, logPath) => new Promise((resolve) => {
   c.on("close", (code) => { clearTimeout(timer); log.end(); resolve({ out, timedOut: false, code }); });
 });
 
-import { loadPositionIndex, parseRoster } from "./lib-roster.mjs";
+import { loadPositionIndex, parseRoster, parseDraftLog } from "./lib-roster.mjs";
 const posIndex = loadPositionIndex();
 
 // Record WHICH BUILD produced each draft. The suite runs for hours and the tree can move under it
@@ -67,8 +67,8 @@ for (let i = 1; i <= N; i++) {
   const rosterRes = await run(["roster", "--app"], 3 * 60 * 1000, logPath);
   const roster = parseRoster(rosterRes.out, posIndex);
 
-  const lines = draft.out.split("\n");
-  const stalls = lines.filter((l) => /stall|disconnect|error|Error|cannot|failed/i.test(l)).slice(0, 10);
+  const L = parseDraftLog(draft.out);
+  const stalls = L.stalls;
   const byPos = roster.byPos;
   const kdstMax = roster.kdstMax;
 
@@ -80,6 +80,8 @@ for (let i = 1; i <= N; i++) {
     filled: roster.filled, slots: roster.slots, spent: roster.spent,
     byPos, teCount: roster.teCount, kdstMax, unresolved: roster.unresolved,
     timedOut: draft.timedOut, exitCode: draft.code,
+    srcCounts: L.srcCounts, nominations: L.nominations, failedNominations: L.failedNominations,
+    dupeNominations: L.dupeNominations,
     won: roster.won, stalls,
   };
   results.push(rec);

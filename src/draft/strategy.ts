@@ -180,7 +180,11 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
     if (ours != null) return { v: ours, src: "ours" };
     // DST second chance: ESPN shows "Texans D/ST", our table stores "HOU D/ST" (F3). Without this
     // every defense falls through to the ESPN value and leaves the inflation universe unpriced.
-    if (p.pos === "DST") {
+    //
+    // Gated on the NAME, not the position: live mock 3 read "Steelers D/ST" with pos=K (r1530), so a
+    // `p.pos === "DST"` guard missed it and the lookup fell through to src=espn. dstAliasKey returns
+    // null for anything that is not a known defense, so trying it on every miss is safe.
+    {
       const alias = dstAliasKey(p.name);
       const aliased = alias != null ? cfg.values?.[alias] : undefined;
       if (aliased != null) return { v: aliased, src: "ours(dst-alias)" };
