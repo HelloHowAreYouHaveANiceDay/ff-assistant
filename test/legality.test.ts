@@ -375,3 +375,21 @@ test("v2 DST alias: ESPN's 'Texans D/ST' resolves our 'HOU D/ST' value (src=ours
   assert.match(bid.reason ?? "", /src=ours\(dst-alias\)/, "the alias join must resolve the name");
   assert.ok(bid.maxBid <= 2, `still capped at $2, got ${bid.maxBid}`);
 });
+
+// benchDiscount: a player who can ONLY fill a bench slot is worth less to this roster than his
+// standalone value, because he never enters the lineup. Off by default (1 = no change).
+test("v2 benchDiscount: a bench-only player's ceiling drops; a STARTER's does not", () => {
+  const qb = { name: "Backup QB", pos: "QB" as const, team: "X", espnPreDraftVal: 40 };
+  const vals = { "Backup QB": 40 };
+  const full = makeV2Strategy({ values: vals, premium: 0, benchDiscount: 0.5, maxShare: 1 });
+  const off  = makeV2Strategy({ values: vals, premium: 0, benchDiscount: 1,   maxShare: 1 });
+  // QB slot FILLED -> he can only go to the bench.
+  const benchState = baseState({ mySlots: { QB: 0, BENCH: 3 }, onBlock: qb });
+  const a = off.maxBid(benchState).maxBid, b = full.maxBid(benchState).maxBid;
+  assert.ok(b < a, `discounted bench bid ${b} must be below undiscounted ${a}`);
+  assert.equal(b, Math.round(a * 0.5));
+  // QB slot OPEN -> he is a starter; the discount must NOT apply.
+  const startState = baseState({ mySlots: { QB: 1, BENCH: 3 }, onBlock: qb });
+  assert.equal(full.maxBid(startState).maxBid, off.maxBid(startState).maxBid,
+    "a starter must be priced identically whether or not benchDiscount is set");
+});
