@@ -1302,7 +1302,8 @@ async function cmdAutoDraft(rest: string[]) {
   const refreshesPerMin = 60 / 5.6;
   const stallStop = Math.round(stallMin * refreshesPerMin);
   const stallWarn = Math.round(3 * refreshesPerMin);
-  let loggedSlots = false; // one-time live-vs-sim slot-count check
+  let loggedSlots = false;
+  let nomCooldownUntil = 0; // round index before which we must not nominate again (see below) // one-time live-vs-sim slot-count check
   let wasPaused = false; // copresent PAUSE-file state (Step 9)
   // Live-state file the desktop app (Mission Control) reads each tick to render the agent's
   // current decision (on-block player, our recommended max bid + reason), our roster/budget, and
@@ -1426,7 +1427,11 @@ async function cmdAutoDraft(rest: string[]) {
       idlePolls++;
       const turn = await readTurn(page).catch(() => ({ ourNomination: false, nominatingTeam: null }));
       const fallbackTurn = idlePolls >= 14 && picks.length > 0; // ~14 ticks x 1.4s ~= 20s, post-countdown
-      if (turn.ourNomination || fallbackTurn) {
+      // COOLDOWN. ESPN does not clear "our nomination turn" the instant the click lands, so the next
+      // poll (~1.4s later) saw the same turn and nominated AGAIN -- observed on every nomination of
+      // mock 1 (r149/r151, r476/r478, r800/r801). A duplicate can put up a player we did not choose
+      // and burns our nomination. Hold off until the block actually changes, or the cooldown lapses.
+      if ((turn.ourNomination || fallbackTurn) && i >= nomCooldownUntil) {
         const board = await readBoard(page);
         const boardRefs = board.map((p) => ({ name: p.name, pos: (normPos(p.pos) ?? "RB") as never, team: "", espnPreDraftVal: p.value }));
         const myNames = r.slots.filter((s) => s.player).map((s) => ({ name: s.player as string, pos: "RB" as never, team: "", espnPreDraftVal: null }));
@@ -1437,6 +1442,9 @@ async function cmdAutoDraft(rest: string[]) {
         });
         const ok = choice.player ? await nominate(page, choice.player.name) : false;
         console.log(`r${i}: NOMINATE ${choice.player?.name ?? "?"} ${turn.ourNomination ? "(our turn)" : "(fallback)"} ${ok ? "" : "(failed -- not our turn / not visible)"}`);
+        // A successful click needs a few ticks for ESPN to put the player on the block; a FAILED one
+        // should retry sooner (it may simply not have been our turn yet).
+        nomCooldownUntil = i + (ok ? 8 : 3);
         idlePolls = 0;
       }
     } else {

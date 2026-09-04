@@ -35,33 +35,8 @@ const run = (args, timeoutMs, logPath) => new Promise((resolve) => {
   c.on("close", (code) => { clearTimeout(timer); log.end(); resolve({ out, timedOut: false, code }); });
 });
 
-// Positions come from the store, not from the roster line: `ff roster` prints the SLOT a player
-// occupies, and a TE in a FLEX or BE slot still prints FLEX/BE -- counting TEs off the slot would
-// undercount exactly the thing we are checking.
-import Database from "better-sqlite3";
-const db = new Database("data/ff.db", { readonly: true });
-const posRows = db.prepare("SELECT name, position FROM player").all();
-db.close();
-const posByKey = new Map();
-const nameKey = (s) => String(s).toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, " ").replace(/\bd\/?st\b/g, " ").replace(/[^a-z]/g, "");
-for (const r of posRows) posByKey.set(nameKey(r.name), r.position);
-
-// Parse the final roster straight from `ff roster --app` rather than from the draft log, so the
-// record reflects what ESPN says we own, not what the agent believes it won.
-// Line shape: `won: QB Josh Allen $52 | FLEX Some Guy $7 | BE Other Guy $1`
-function parseRoster(txt) {
-  const filled = /filled (\d+)\/(\d+)/.exec(txt);
-  const spent = /spent \$(\d+)/.exec(txt);
-  const won = [];
-  const line = (/^won: (.*)$/m.exec(txt) || [])[1] || "";
-  if (line && !/^\(none\)/.test(line)) {
-    for (const part of line.split("|")) {
-      const m = /^\s*(QB|RB|WR|TE|K|DST|FLEX|BE|BENCH|IR)\s+(.+?)\s+\$(\d+)\s*$/.exec(part);
-      if (m) won.push({ slot: m[1], name: m[2].trim(), pos: posByKey.get(nameKey(m[2])) || "?", price: Number(m[3]) });
-    }
-  }
-  return { filled: filled ? Number(filled[1]) : null, slots: filled ? Number(filled[2]) : null, spent: spent ? Number(spent[1]) : null, won };
-}
+import { loadPositionIndex, parseRoster } from "./lib-roster.mjs";
+const posIndex = loadPositionIndex();
 
 // Record WHICH BUILD produced each draft. The suite runs for hours and the tree can move under it
 // (it did: benchDiscount shipped mid-suite), so a record without a SHA cannot be compared later.
@@ -90,13 +65,12 @@ for (let i = 1; i <= N; i++) {
   const mins = Math.round((Date.now() - t0) / 60000);
 
   const rosterRes = await run(["roster", "--app"], 3 * 60 * 1000, logPath);
-  const roster = parseRoster(rosterRes.out);
+  const roster = parseRoster(rosterRes.out, posIndex);
 
   const lines = draft.out.split("\n");
   const stalls = lines.filter((l) => /stall|disconnect|error|Error|cannot|failed/i.test(l)).slice(0, 10);
-  const byPos = {};
-  for (const w of roster.won) byPos[w.pos] = (byPos[w.pos] || 0) + 1;
-  const kdstMax = Math.max(0, ...roster.won.filter((w) => w.pos === "K" || w.pos === "DST").map((w) => w.price));
+  const byPos = roster.byPos;
+  const kdstMax = roster.kdstMax;
 
   let shaNow = buildSha;
   try { shaNow = execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim(); } catch {}
@@ -104,7 +78,7 @@ for (let i = 1; i <= N; i++) {
     i, started, minutes: mins, roomUrl, build: shaNow,
     complete: roster.filled === roster.slots && roster.slots > 0,
     filled: roster.filled, slots: roster.slots, spent: roster.spent,
-    byPos, teCount: byPos.TE || 0, kdstMax,
+    byPos, teCount: roster.teCount, kdstMax, unresolved: roster.unresolved,
     timedOut: draft.timedOut, exitCode: draft.code,
     won: roster.won, stalls,
   };
