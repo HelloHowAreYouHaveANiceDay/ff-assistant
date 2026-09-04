@@ -26,6 +26,11 @@ data/managers.json
 data/owners.json
 data/recaps.json
 
+# derived per-league backtest history (scored under the league's own scoring model) -- rebuild with
+# `ff build-history`; committing it would ship one league's scoring to everyone
+data/history-points.csv
+data/history-weekly.csv
+
 # electron-builder output + compiled engine bundle
 dist-app/
 app/engine/

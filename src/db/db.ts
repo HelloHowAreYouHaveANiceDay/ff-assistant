@@ -57,6 +57,8 @@ export const DEFAULT_CONFIG = {
   season: 2026, budget: 200, teams: 16,
   slots: ["QB", "RB", "WR", "TE", "FLEX", "FLEX", "DST", "K", "BE", "BE", "BE", "BE"],
   flex_ok: ["RB", "WR", "TE"],
+  playoffTeams: 6,   // seeds into the backtest bracket (league_sync sets the real count)
+  regWeeks: 14,      // fantasy regular-season length before playoffs
   scoring: "HALF", // STD | HALF | PPR -- selects the Boris/ADP/market consensus VARIANT
   // the actual per-stat scoring model that tailors OUR points/values (populated by league_sync)
   scoring_rules: DEFAULT_SCORING as ScoringRules,

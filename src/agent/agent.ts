@@ -319,7 +319,7 @@ function boardServer(dbPath: string | undefined, season: number) {
             const j = await espnGet<any>(page, espnLeagueUrl(lg.season, lg.league_id, ["mSettings", "mTeam"]));
             await browser?.close().catch(() => {});
             if (!j) { shut(); return { content: [{ type: "text", text: "could not read league (not logged in, or wrong league id)" }] }; }
-            const s = j.settings ?? {}; const rs = s.rosterSettings ?? {}; const sc = s.scoringSettings ?? {}; const ds = s.draftSettings ?? {};
+            const s = j.settings ?? {}; const rs = s.rosterSettings ?? {}; const sc = s.scoringSettings ?? {}; const ds = s.draftSettings ?? {}; const sch = s.scheduleSettings ?? {};
             const mine = (j.teams ?? []).find((t: any) => (t.owners ?? []).some((o: string) => swid && normSwid(o) === normSwid(swid)));
             const slots = rs.lineupSlotCounts ?? {};
             const slotSummary = Object.entries(slots).filter(([, n]) => Number(n) > 0).map(([id, n]) => `${n}x${ESPN_SLOT[Number(id)] ?? id}`).join(", ");
@@ -337,9 +337,11 @@ function boardServer(dbPath: string | undefined, season: number) {
             for (const it of sc.scoringItems ?? []) { const key = ESPN_STAT_TO_RULE[it.statId]; if (key) rules[key] = Number(it.points ?? it.pointsOverrides?.["16"] ?? 0); }
             db.prepare("UPDATE league SET name=@n, season=@se, scoring_json=@sj, team_id=@tid, last_synced_at=@now WHERE league_id=@lid")
               .run({ n: s.name ?? null, se: lg.season, sj: JSON.stringify({ scoringType: sc.scoringType, ppr: recPts, draftType: ds.type, auctionBudget: ds.auctionBudget, slots, size: s.size, rules }), tid: mine ? String(mine.id) : lg.team_id, now: new Date().toISOString(), lid: lg.league_id });
+            const playoffTeams = Number(sch.playoffTeamCount) || getConfig(db).playoffTeams;
+            const regWeeks = Number(sch.matchupPeriodCount) || getConfig(db).regWeeks;
             const before = getConfig(db);
             // align the app's format + scoring MODEL to the real league (values recompute on next `ff refresh`)
-            setConfig(db, { scoring, slots: configSlots, budget, teams, scoring_rules: rules });
+            setConfig(db, { scoring, slots: configSlots, budget, teams, scoring_rules: rules, playoffTeams, regWeeks });
             const changed = scoring !== before.scoring || budget !== before.budget || teams !== before.teams || JSON.stringify(configSlots) !== JSON.stringify(before.slots) || JSON.stringify(rules) !== JSON.stringify(before.scoring_rules);
             shut();
             return { content: [{ type: "text", text: `synced "${s.name}" (league ${lg.league_id}, ${lg.season}): ${s.size} teams, ${ds.type ?? "?"} draft${ds.auctionBudget ? ` $${ds.auctionBudget}` : ""}, ${sc.scoringType}, ${scoring} scoring. My team: "${mineName ?? "?"}" (id ${mine?.id ?? "?"}). Roster: ${slotSummary}.${changed ? " Config updated to match -- run `ff refresh` to recompute values/tiers for this format." : ""}` }] };

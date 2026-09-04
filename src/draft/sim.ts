@@ -9,6 +9,11 @@ import { planDrainNomination, payersFrom } from "./nomination.js";
 import { positionInflationFactors } from "./inflation.js";
 
 export interface SimLeague { teams: number; budget: number; slots: string[]; }
+/** Build the sim/backtest league from the app config, so it simulates the USER's exact format
+ *  (teams/budget/roster) rather than a hardcoded one. The single source of format truth. */
+export function leagueFromConfig(c: { teams: number; budget: number; slots: string[] }): SimLeague {
+  return { teams: c.teams, budget: c.budget, slots: c.slots };
+}
 // Real league (462233, seacaptaindate.com): 16 teams x 12 slots (2025 recap = 192 picks). Roster per
 // the LIVE ESPN settings: 8 starters (QB/RB/WR/TE/2x FLEX/DST/K) + 4 bench. Kept in lockstep with
 // DEFAULT_CONFIG.slots (a test binds them); when the app is config-driven end-to-end this comes from config.

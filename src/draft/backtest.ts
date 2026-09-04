@@ -12,9 +12,24 @@ import type { V2Config } from "./strategy.js";
 function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 
 export type Weekly = Map<string, Map<number, number>>; // name -> week -> actual points
-const REG_WEEKS = Array.from({ length: 14 }, (_, i) => i + 1); // fantasy weeks 1-14
 
 export interface BacktestResult { champ: boolean; madePlayoffs: boolean; wins: number; regPoints: number; }
+
+/** Single-elimination playoff with byes for the top seeds (handles 4/6/7/8...). seeds[0] = best;
+ *  each round the top `byes` seeds skip, the rest pair highest-vs-lowest, winners reseed by rank. */
+function playoffWinner(seeds: number[], beat: (a: number, b: number, wk: number) => number, startWeek: number): number {
+  let alive = seeds.map((team, seed) => ({ team, seed }));
+  let wk = startWeek;
+  while (alive.length > 1) {
+    const byes = 2 ** Math.ceil(Math.log2(alive.length)) - alive.length; // top `byes` seeds skip
+    const bye = alive.slice(0, byes), play = alive.slice(byes);
+    const winners: { team: number; seed: number }[] = [];
+    for (let i = 0; i < play.length / 2; i++) { const a = play[i], b = play[play.length - 1 - i]; winners.push(beat(a.team, b.team, wk) === a.team ? a : b); }
+    alive = [...bye, ...winners].sort((x, y) => x.seed - y.seed);
+    wk++;
+  }
+  return alive[0].team;
+}
 
 /** Choose the lineup by a selection value (default = season projection = a NAIVE manager who ignores
  *  weekly matchup/health), score by that week's ACTUAL. A skilled manager passes `sel` = a WEEKLY
@@ -50,7 +65,8 @@ function realWeekScore(roster: { name: string; pos: string; proj: number }[], we
   return total;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false): BacktestResult {
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14): BacktestResult {
+  const REG_WEEKS = Array.from({ length: regWeeks }, (_, i) => i + 1); // fantasy regular-season weeks
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
   const us = ourSd == null ? marketSd : ourSd; // our projection error; < marketSd => a VALUE EDGE
@@ -126,12 +142,9 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
       if (scores[a] >= scores[b]) wins[a]++; else wins[b]++;
     }
   }
-  const seeds = [...Array(lg.teams).keys()].sort((x, y) => wins[y] - wins[x] || totPts[y] - totPts[x]).slice(0, 6);
+  const seeds = [...Array(lg.teams).keys()].sort((x, y) => wins[y] - wins[x] || totPts[y] - totPts[x]).slice(0, playoffTeams);
   const madePlayoffs = seeds.includes(0);
   const beat = (a: number, b: number, wk: number) => (wkS(a, wk) >= wkS(b, wk) ? a : b);
-  const [s1, s2, s3, s4, s5, s6] = seeds;
-  const w36 = beat(s3, s6, 15), w45 = beat(s4, s5, 15);
-  const semi1 = beat(s1, w45, 16), semi2 = beat(s2, w36, 16);
-  const champ = beat(semi1, semi2, 17);
+  const champ = playoffWinner(seeds, beat, regWeeks + 1); // playoffs begin the week after the regular season
   return { champ: champ === 0, madePlayoffs, wins: wins[0], regPoints: Math.round(totPts[0]) };
 }

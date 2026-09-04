@@ -67,6 +67,8 @@ async function main() {
       return cmdSim(rest);
     case "backtest":
       return cmdBacktest(rest);
+    case "build-history":
+      return cmdBuildHistory(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -674,13 +676,16 @@ async function cmdNews(rest: string[]) {
 }
 
 async function cmdValues(rest: string[]) {
-  const { computeValues } = await import("./draft/values.js");
+  const { computeValues, resolveValueLeague } = await import("./draft/values.js");
+  const { openDb, getConfig } = await import("./db/db.js");
   const { readFileSync, writeFileSync } = await import("node:fs");
   const src = valueOf(rest, "--points") ?? "data/points.csv";
   const out = valueOf(rest, "--out") ?? "data/values.csv";
   const [, ...lines] = readFileSync(src, "utf8").trim().split(/\r?\n/);
   const points = lines.map((l) => { const f = l.split(","); return { name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) }; }).filter((p) => p.name && p.points);
-  const vals = computeValues(points);
+  // config-driven so values.csv matches the board (same league shape + K/DST cap)
+  const db = openDb(valueOf(rest, "--db")); const cfg = getConfig(db); db.close();
+  const vals = computeValues(points, resolveValueLeague(cfg), cfg.levers.maxKDst);
   writeFileSync(out, "player,pos,value\n" + vals.map((v) => `${v.name},${v.pos},${v.value}`).join("\n") + "\n", "utf8");
   console.log(`wrote ${vals.length} values -> ${out}`);
   console.log("top 12:", vals.slice(0, 12).map((v) => `${v.name}($${v.value})`).join(" "));
@@ -739,32 +744,51 @@ async function cmdCalibrate(rest: string[]) {
 }
 
 async function cmdSim(rest: string[]) {
-  const { runSim } = await import("./draft/sim.js");
+  const { runSim, leagueFromConfig } = await import("./draft/sim.js");
+  const { openDb, getConfig } = await import("./db/db.js");
+  const { dataPath } = await import("./data/paths.js");
   const { readFileSync } = await import("node:fs");
   const readCsv = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
-  const pointsFile = valueOf(rest, "--points") ?? "data/points.csv";
-  const valuesFile = valueOf(rest, "--values") ?? "data/values.csv";
+  const pointsFile = valueOf(rest, "--points") ?? dataPath("points.csv");
+  const valuesFile = valueOf(rest, "--values") ?? dataPath("values.csv");
   const n = Number(valueOf(rest, "--n") ?? 100);
   const points = readCsv(pointsFile).map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
   const ourValues = new Map<string, number>();
   for (const f of readCsv(valuesFile)) ourValues.set(f[0].trim(), Number(f[2]));
+  // league shape + bidding levers come from the SYNCED config (per league); CLI flags still override
+  const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db); db.close();
+  const lg = leagueFromConfig(conf); const lv = conf.levers;
   const cfg = {
     values: Object.fromEntries(ourValues),
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 15),
-    benchReserve: 1,
-    premium: Number(valueOf(rest, "--premium") ?? 2),
-    aggr: Number(valueOf(rest, "--aggr") ?? 1.0),
-    maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? lv.starterReserve),
+    benchReserve: Number(valueOf(rest, "--bench-reserve") ?? lv.benchReserve),
+    premium: Number(valueOf(rest, "--premium") ?? lv.premium),
+    aggr: Number(valueOf(rest, "--aggr") ?? lv.aggr),
+    maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
   };
   let sumPts = 0, sumRank = 0, sumField = 0, top1 = 0, top3 = 0, sumTop3Spend = 0;
   for (let s = 0; s < n; s++) {
-    const r = runSim(points, ourValues, cfg, s + 1);
+    const r = runSim(points, ourValues, cfg, s + 1, lg);
     sumPts += r.ourPoints; sumRank += r.ourRank; sumField += r.fieldMean; sumTop3Spend += r.ourSpentTop3;
     if (r.ourRank === 1) top1++; if (r.ourRank <= 3) top3++;
   }
-  console.log(`SIM (${n} drafts) values=${valuesFile} reserve=${cfg.starterReserve} maxShare=${cfg.maxShare} premium=${cfg.premium}`);
+  console.log(`SIM (${n} drafts) ${lg.teams}-team $${lg.budget} ${conf.scoring} | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare} premium=${cfg.premium}`);
   console.log(`  our starting pts: ${(sumPts / n).toFixed(0)}  |  field avg: ${(sumField / n).toFixed(0)}  |  edge: ${((sumPts / n) - (sumField / n)).toFixed(0)}`);
-  console.log(`  avg finish: ${(sumRank / n).toFixed(2)} of ${16}  |  1st: ${((top1 / n) * 100).toFixed(0)}%  |  top-3: ${((top3 / n) * 100).toFixed(0)}%  |  $ on top3 players: ${(sumTop3Spend / n).toFixed(0)}`);
+  console.log(`  avg finish: ${(sumRank / n).toFixed(2)} of ${lg.teams}  |  1st: ${((top1 / n) * 100).toFixed(0)}%  |  top-3: ${((top3 / n) * 100).toFixed(0)}%  |  $ on top3 players: ${(sumTop3Spend / n).toFixed(0)}`);
+}
+
+// Rebuild the multi-season backtest history scored under the LEAGUE's scoring model (so the
+// championship backtest validates the strategy on the same ruleset the league actually uses).
+async function cmdBuildHistory(rest: string[]) {
+  const { buildHistory } = await import("./data/history.js");
+  const { openDb, getConfig } = await import("./db/db.js");
+  const range = (valueOf(rest, "--seasons") ?? "2014-2024").split("-").map(Number);
+  const [lo, hi] = [range[0], range[1] ?? range[0]];
+  const seasons: number[] = []; for (let y = lo; y <= hi; y++) seasons.push(y);
+  const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db); db.close();
+  console.log(`building history for ${seasons.length} seasons under ${conf.scoring} scoring (rec ${conf.scoring_rules.rec}/pt)...`);
+  const r = await buildHistory(seasons, conf.scoring_rules);
+  console.log(`wrote history-points (${r.points} rows) + history-weekly (${r.weekly} rows) for ${r.seasons.length} seasons: ${r.seasons.join(",")}`);
 }
 
 // Championship backtest: draft with a past season's values, play a real H2H season + playoffs on
@@ -772,14 +796,21 @@ async function cmdSim(rest: string[]) {
 // objective for "optimize championship wins".
 async function cmdBacktest(rest: string[]) {
   const { runBacktest } = await import("./draft/backtest.js");
+  const { leagueFromConfig } = await import("./draft/sim.js");
+  const { openDb, getConfig } = await import("./db/db.js");
+  const { dataPath } = await import("./data/paths.js");
   const { readFileSync } = await import("node:fs");
   const rows = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
   const nPerSeason = Number(valueOf(rest, "--n") ?? 300);
+  // league shape, bidding levers, and playoff format all come from the SYNCED config (per league)
+  const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db); db.close();
+  const lg = leagueFromConfig(conf); const lv = conf.levers;
   const cfg = {
     values: {} as Record<string, number>,
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? 15),
-    benchReserve: 1, premium: Number(valueOf(rest, "--premium") ?? 2),
-    aggr: Number(valueOf(rest, "--aggr") ?? 1.0), maxShare: Number(valueOf(rest, "--max-share") ?? 0.35),
+    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? lv.starterReserve),
+    benchReserve: Number(valueOf(rest, "--bench-reserve") ?? lv.benchReserve),
+    premium: Number(valueOf(rest, "--premium") ?? lv.premium),
+    aggr: Number(valueOf(rest, "--aggr") ?? lv.aggr), maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
     inflation: rest.includes("--inflation"), scarcity: rest.includes("--scarcity"),
     posInflation: rest.includes("--pos-inflation"),
   };
@@ -787,12 +818,12 @@ async function cmdBacktest(rest: string[]) {
   const range = (valueOf(rest, "--seasons") ?? "2014-2024").split("-").map(Number);
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const pts = new Map<number, { name: string; pos: string; points: number }[]>();
-  for (const f of rows(valueOf(rest, "--points") ?? "data/history-points.csv")) {
+  for (const f of rows(valueOf(rest, "--points") ?? dataPath("history-points.csv"))) {
     const yr = Number(f[0]); if (yr < lo || yr > hi) continue;
     (pts.get(yr) ?? pts.set(yr, []).get(yr)!).push({ name: f[1].trim(), pos: f[2].trim().toUpperCase(), points: Number(f[3]) });
   }
   const wk = new Map<number, Map<string, Map<number, number>>>();
-  for (const f of rows(valueOf(rest, "--weekly") ?? "data/history-weekly.csv")) {
+  for (const f of rows(valueOf(rest, "--weekly") ?? dataPath("history-weekly.csv"))) {
     const yr = Number(f[0]); if (yr < lo || yr > hi) continue;
     const m = wk.get(yr) ?? wk.set(yr, new Map()).get(yr)!;
     const name = f[1].trim(); (m.get(name) ?? m.set(name, new Map()).get(name)!).set(Number(f[3]), Number(f[4]));
@@ -813,12 +844,12 @@ async function cmdBacktest(rest: string[]) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
     const proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, undefined, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++; }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
   const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
-  console.log(`BACKTEST ${mode}  reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
-  console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / 16).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
+  console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
+  console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   console.log(`  per season: ${perYear.join("  ")}`);
 }
 
