@@ -84,4 +84,15 @@ for aggr in 0.55 0.6 0.65 0.7 0.75 0.8 0.9; do
   run aggr "a$aggr" "$N" $aggr $B_BENCH $B_RES $B_SHARE $B_PREM $B_MKT "$B_MULT" 1
 done
 
+echo "=== 8. reserve x share EXTENDED -- the first grid's best cell (r8/s0.25) sat on its EDGE, ==="
+echo "===    which means the optimum was never bracketed. Go down and out until it turns over. ==="
+# reserve 0 is the boundary case: the soft per-starter reserve vanishes and only the hard $1-per-open-
+# slot floor remains. Including it matters -- if the best cell is still an edge, the answer is that
+# the reserve is doing nothing useful, not that "lower is better" forever.
+for res in 0 2 4 6 8; do
+  for share in 0.15 0.20 0.25; do
+    run reserve2 "r$res-s$share" "$N" $B_AGGR $B_BENCH $res $share $B_PREM $B_MKT "$B_MULT" 1
+  done
+done
+
 echo "ALL DONE" | tee -a "$OUT"
