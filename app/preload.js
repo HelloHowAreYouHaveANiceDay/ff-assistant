@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld("mc", {
   leagueInfo: () => ipcRenderer.invoke("mc:leagueInfo"),
   dataSources: () => ipcRenderer.invoke("mc:dataSources"),
   ingestSource: (id) => ipcRenderer.invoke("mc:ingestSource", id),
+  // per-league ownership overlay for the board (who owns each player) + a roster resync
+  ownership: () => ipcRenderer.invoke("mc:ownership"),
+  syncRosters: () => ipcRenderer.invoke("mc:syncRosters"),
   syncLeague: () => ipcRenderer.invoke("mc:syncLeague"),
   // tuning levers: clamped write of a partial {key:value} patch, returns the new levers
   setLevers: (patch) => ipcRenderer.invoke("mc:setLevers", patch),

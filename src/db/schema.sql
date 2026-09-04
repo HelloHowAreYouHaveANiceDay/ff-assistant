@@ -332,6 +332,17 @@ CREATE TABLE IF NOT EXISTS projection (
   fetched_at  TEXT,
   PRIMARY KEY (league_id, player_id, week, source)
 );
+-- who owns each player in a league (all teams' rosters) -- the board's per-league ownership overlay.
+CREATE TABLE IF NOT EXISTS ownership (
+  league_id    TEXT,
+  player_id    TEXT,                  -- name_key
+  owner        TEXT,                  -- manager display name
+  team_abbrev  TEXT,
+  slot         TEXT,                  -- lineup slot they're rostered in
+  updated_at   TEXT,
+  PRIMARY KEY (league_id, player_id)
+);
+
 CREATE TABLE IF NOT EXISTS matchup (
   league_id        TEXT,
   week             INTEGER,

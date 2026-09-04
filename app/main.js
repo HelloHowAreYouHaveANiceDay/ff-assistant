@@ -267,6 +267,8 @@ ipcMain.handle("mc:isPaused", () => {
 ipcMain.handle("mc:openExternal", (e, url) => { if (/^https?:/.test(url)) shell.openExternal(url); });
 ipcMain.handle("mc:leagueInfo", () => rpc("league-info").catch(() => null));
 ipcMain.handle("mc:dataSources", () => rpc("data-sources").catch(() => null));
+ipcMain.handle("mc:ownership", () => rpc("ownership").catch(() => null));
+ipcMain.handle("mc:syncRosters", () => ffRun(["sync-rosters"]));
 // materialize one source (asset) + its downstream -- a separate process so the serve helper isn't blocked
 ipcMain.handle("mc:ingestSource", (e, id) => ffRun(["ingest-source", String(id)]));
 ipcMain.handle("mc:setLevers", (e, patch) => rpc("levers-set", { patch: patch || {} }).catch(() => null));

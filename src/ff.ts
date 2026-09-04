@@ -74,6 +74,8 @@ async function main() {
       return cmdScrapeLeague(rest);
     case "ingest-source":
       return cmdIngestSource(rest);
+    case "sync-rosters":
+      return cmdSyncRosters(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -190,6 +192,17 @@ async function cmdServe(rest: string[]) {
           }
           const lastIngest = (db.prepare("SELECT value FROM settings WHERE key='last_ingest'").get() as { value: string } | undefined)?.value ?? null;
           result = { lastIngest, tables };
+          break;
+        }
+        case "ownership": {
+          const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string } | undefined;
+          const map: Record<string, { owner: string; team: string; slot: string }> = {};
+          if (lg) {
+            for (const r of db.prepare("SELECT p.name AS name, o.owner, o.team_abbrev, o.slot FROM ownership o JOIN player p ON p.player_id=o.player_id WHERE o.league_id=?").all(lg.league_id) as { name: string; owner: string; team_abbrev: string; slot: string }[]) {
+              map[r.name] = { owner: r.owner, team: r.team_abbrev, slot: r.slot };
+            }
+          }
+          result = { leagueId: lg?.league_id ?? null, ownership: map };
           break;
         }
         case "config-get": result = getConfig(db); break;
@@ -800,6 +813,44 @@ async function cmdSim(rest: string[]) {
   console.log(`SIM (${n} drafts) ${lg.teams}-team $${lg.budget} ${conf.scoring} | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare} premium=${cfg.premium}`);
   console.log(`  our starting pts: ${(sumPts / n).toFixed(0)}  |  field avg: ${(sumField / n).toFixed(0)}  |  edge: ${((sumPts / n) - (sumField / n)).toFixed(0)}`);
   console.log(`  avg finish: ${(sumRank / n).toFixed(2)} of ${lg.teams}  |  1st: ${((top1 / n) * 100).toFixed(0)}%  |  top-3: ${((top3 / n) * 100).toFixed(0)}%  |  $ on top3 players: ${(sumTop3Spend / n).toFixed(0)}`);
+}
+
+// Sync all teams' rosters for the active league -> ownership overlay (who owns each player). Read
+// through the app's logged-in ESPN session. Empty pre-draft; populates once the league drafts.
+async function cmdSyncRosters(rest: string[]) {
+  const { chromium } = await import("playwright-core");
+  const { openDb, nowIso } = await import("./db/db.js");
+  const { nameKey } = await import("./draft/values.js");
+  const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
+  const db = openDb(valueOf(rest, "--db"));
+  const lg = db.prepare("SELECT league_id, season FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; season: number } | undefined;
+  if (!lg) { db.close(); console.log("no league synced -- run league_sync first"); return; }
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
+  if (!browser) { db.close(); console.log("app not running -- open the desktop app (its logged-in session is needed)"); return; }
+  const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://"));
+  if (!page) { db.close(); await browser.close(); console.log("app renderer not found"); return; }
+  const wvEval = (js: string): Promise<string> => page.evaluate(async (code) => { const wv = document.getElementById("espnview") as any; if (!wv?.executeJavaScript) return ""; try { return await wv.executeJavaScript(code); } catch (e: any) { return "ERR:" + (e?.message ?? e); } }, js);
+  const cur = await wvEval("location.href");
+  if (!/fantasy\.espn\.com/.test(cur)) { await page.evaluate(() => { const wv = document.getElementById("espnview") as any; if (wv?.loadURL) wv.loadURL("https://fantasy.espn.com/football/"); }); await page.waitForTimeout(4000); }
+  const ESPN_SLOT: Record<number, string> = { 0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K", 20: "BE", 21: "IR", 23: "FLEX" };
+  const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${lg.season}/segments/0/leagues/${lg.league_id}?view=mRoster&view=mTeam`;
+  const raw = await wvEval(`fetch(${JSON.stringify(url)},{credentials:'include'}).then(function(r){return r.ok?r.text():('HTTP '+r.status)}).catch(function(e){return 'ERR '+e.message})`);
+  await browser.close();
+  let j: any; try { j = JSON.parse(raw); } catch { db.close(); console.log(`could not read rosters: ${raw?.slice(0, 60)}`); return; }
+  const memberName = new Map<string, string>((j.members ?? []).map((m: any) => [m.id, m.displayName || m.firstName || m.id]));
+  const up = db.prepare("INSERT OR REPLACE INTO ownership (league_id, player_id, owner, team_abbrev, slot, updated_at) VALUES (@lid,@pid,@own,@abr,@slot,@now)");
+  const now = nowIso(); let n = 0, teams = 0;
+  db.transaction(() => {
+    db.prepare("DELETE FROM ownership WHERE league_id=?").run(lg.league_id);
+    for (const t of j.teams ?? []) {
+      const owner = memberName.get((t.owners ?? [])[0]) || `${t.location ?? ""} ${t.nickname ?? ""}`.trim() || `Team ${t.id}`;
+      const abbr = t.abbrev || `T${t.id}`;
+      const entries = t.roster?.entries ?? []; if (entries.length) teams++;
+      for (const e of entries) { const p = e.playerPoolEntry?.player ?? {}; const k = nameKey(p.fullName ?? ""); if (!k) continue; up.run({ lid: lg.league_id, pid: k, own: owner, abr: abbr, slot: ESPN_SLOT[e.lineupSlotId] ?? "", now }); n++; }
+    }
+  })();
+  db.close();
+  console.log(`ownership synced: ${n} rostered players across ${teams} teams (league ${lg.league_id})`);
 }
 
 // Materialize ONE data source (asset) + its downstream (project/assemble). Powers the DAG view's

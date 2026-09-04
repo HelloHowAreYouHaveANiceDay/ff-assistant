@@ -88,7 +88,7 @@ async function renderLeagueTabs() {
 const COLS = [
  ["act","","act"],["Rank","#","num"],["Player","Player","player"],["Pos","Pos","pos"],
  ["Us_Pos","Us","t"],["ECR_Pos","ECR","t"],["ESPN_Pos","ESPN","t"],["Tier","Tier","t"],
- ["Team","Team","team"],["Bye","Bye","num"],["Age","Age","num"],
+ ["Team","Team","team"],["Owner","Owner","owner"],["Bye","Bye","num"],["Age","Age","num"],
  ["OurValue$","Val$","val"],["vsECR","vsECR","delta"],
  ["ADP","ADP","num1"],["vsADP","vsADP","delta"],["Mkt30d","Mkt30d","delta"],
  ["ProjPts","Proj","num1"],
@@ -96,11 +96,12 @@ const COLS = [
  ["ECR","ECR","num1"],["ESPN_Rank","ESPN#","num"],["ESPN_ADP","eADP","num1"],["Rostered%","Own%","num"],
  ["flags","News / Flags","flags"]
 ];
-const LEFT = new Set(["player","pos","flags","t","act"]);
+const LEFT = new Set(["player","pos","flags","t","act","owner"]);
 // columns where higher = better -> first click sorts descending (best first); everything else ascending
 const DESC_FIRST = new Set(["OurValue$","vsECR","vsADP","Mkt30d","ProjPts",YR+"Pts",YR+"Gms","Rostered%"]);
 const POS = ["ALL","QB","RB","WR","TE","K","DST"];
 let bst = { q:"", pos:"ALL", sleep:false, avail:false, hideDrafted:false, sort:"Rank", dir:1 };
+let OWNERSHIP = {}; // player name -> {owner, team, slot} for the active league (empty = all free agents)
 
 // NFL primary team colors for the Team chips. Aliases fold old/relocated abbreviations onto the current one.
 const TEAM_COLORS = {
@@ -139,6 +140,7 @@ function views_board() {
   document.getElementById("hd").onchange = e => { bst.hideDrafted = e.target.checked; drawBody(); };
   document.getElementById("tbody").onclick = e => { const b = e.target.closest("[data-add]"); if (b) { const n = b.dataset.add; onTeam(n) ? undraft(n) : draft(n); } };
   thead(); drawBody();
+  if (window.mc && window.mc.ownership) window.mc.ownership().then(o => { OWNERSHIP = (o && o.ownership) || {}; drawBody(); }).catch(() => {});
 }
 function thead() {
   const tr = COLS.map(([k,l,kind]) => { const isL = LEFT.has(kind) || k==="Team" || k==="Tier";
@@ -155,6 +157,7 @@ function cell(r,k,kind) {
   if (kind==="player") return `<td class="l pl">${esc(r.Player)}</td>`;
   if (kind==="pos") return `<td class="l"><span class="pos ${r.Pos}">${esc(r.Pos)}</span></td>`;
   if (kind==="team") return `<td class="l">${teamChip(r.Team)}</td>`;
+  if (kind==="owner") { const o = OWNERSHIP[r.Player]; return `<td class="l">${o ? `<span class="owner-chip" title="${esc(o.owner||"")}${o.slot?" · "+esc(o.slot):""}">${esc(o.team||o.owner||"?")}</span>` : '<span class="mut fa">FA</span>'}</td>`; }
   if (kind==="val") return `<td class="val">$${esc(r["OurValue$"])}</td>`;
   if (kind==="delta") { const v = num(r[k]); return `<td class="${v>0?'pos-hi':(v<0?'neg-hi':'')}">${v==null?"":(v>0?"+"+v:v)}</td>`; }
   if (kind==="gms") { const v = num(r[YR+"Gms"]); return `<td class="${(v!=null&&v<10)?'neg-hi':''}">${v==null?"":v}</td>`; }
@@ -744,6 +747,10 @@ async function boot() {
   initCopilot();          // the Copilot lives in the left bar now -- always present
   await renderLeagueTabs(); // top row: the league(s); sets ACTIVE_LEAGUE for the ESPN pages
   renderPageTabs();       // second row: Board + ESPN pages for the active league
+  // sync who-owns-what for the active league (empty pre-draft), then refresh the board overlay
+  if (window.mc && window.mc.syncRosters && ACTIVE_LEAGUE) {
+    window.mc.syncRosters().then(() => window.mc.ownership()).then(o => { OWNERSHIP = (o && o.ownership) || {}; if (cur === "board") drawBody(); }).catch(() => {});
+  }
   const bs = document.getElementById("brand-season"); if (bs) bs.textContent = ACTIVE_LEAGUE ? (ACTIVE_LEAGUE.name || "Mission Control") : "Mission Control";
   // Fresh install (no board yet) lands on Setup so the user onboards; otherwise the Board.
   const fresh = window.mc && (!DATA || DATA.length === 0);

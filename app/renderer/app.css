@@ -124,6 +124,8 @@ td.flagcell .news{display:inline}
 .val{font-weight:var(--fw-head);font-family:var(--font-mono)}
 .pos{display:inline-block;min-width:28px;text-align:center;border:.8px solid var(--line);border-radius:var(--radius-sm);padding:0 4px;font-weight:var(--fw-head);font-size:10px;letter-spacing:.03em}
 .team-chip{display:inline-block;min-width:34px;text-align:center;border-radius:var(--radius-sm);padding:1px 6px;font-weight:var(--fw-head);font-size:10px;letter-spacing:.04em;font-variant-numeric:normal}
+.owner-chip{display:inline-block;border:1px solid var(--faint);border-radius:var(--radius-sm);padding:1px 6px;font-size:10px;font-weight:var(--fw-label);color:var(--tx);background:var(--paper)}
+.fa{font-size:10px;opacity:.5}
 .QB{color:var(--qb);border-color:var(--qb)}.RB{color:var(--rb);border-color:var(--rb)}.WR{color:var(--wr);border-color:var(--wr)}.TE{color:var(--te);border-color:var(--te)}.K{color:var(--k)}.DST{color:var(--dst);border-color:var(--dst)}
 .badge{display:inline-block;border-radius:var(--radius-sm);padding:0 4px;font-size:10px;font-weight:var(--fw-head);letter-spacing:.03em;text-transform:uppercase;margin-left:3px;font-family:var(--font-mono);border:.8px solid}
 .b-out{color:var(--bad);border-color:var(--bad)}.b-dur{color:#9a6212;border-color:#c99a3a}.b-add{color:var(--good);border-color:var(--good)}.b-drop{color:var(--bad);border-color:var(--bad)}.b-dep{color:var(--mut);border-color:var(--line)}
