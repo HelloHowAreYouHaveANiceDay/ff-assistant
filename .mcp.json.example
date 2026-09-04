@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ff-draft": {
+      "command": "npx",
+      "args": ["tsx", "src/ff.ts", "mcp"],
+      "cwd": "H:/working/ff-assistant"
+    }
+  }
+}

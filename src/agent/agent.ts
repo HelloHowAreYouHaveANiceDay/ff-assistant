@@ -44,11 +44,12 @@ const fmt = (rows: Row[]) => rows.length === 0 ? "none" : rows.map((r) => {
   return `#${r.our_rank} ${r.name} (${r.pos}${r.pos_rank ? " " + r.pos_rank : ""}) $${r.our_value} | vsECR ${sgn(vsEcr)} | vsESPN ${sgn(vsEspn)} | proj ${r.proj_pts ?? "?"} | ECR ${r.ecr ?? "?"} ESPN ${r.espn ?? "?"} | tier ${r.tier ?? "?"} bye ${r.bye ?? "?"}`;
 }).join("\n");
 
-function boardServer(dbPath: string | undefined, season: number) {
-  return createSdkMcpServer({
-    name: "ff-draft",
-    version: "1.0.0",
-    tools: [
+// The ONE control surface. Both consumers are built from this array: the in-app copilot
+// (boardServer -> the Agent SDK) and any EXTERNAL agent such as Claude Code (src/agent/mcp-stdio.ts
+// serves the very same McpServer instance over stdio). Add a tool here and both surfaces get it --
+// there is no second list to keep in sync.
+function buildTools(dbPath: string | undefined, season: number) {
+  return [
       tool(
         "read_board",
         "Read the top available players by OUR auction $ value, optionally filtered by position (QB, RB, WR, TE, K, DST). Returns our rank/value, projection, FantasyPros ECR, ESPN rank, tier, and bye.",
@@ -382,7 +383,19 @@ function boardServer(dbPath: string | undefined, season: number) {
           } catch (e) { await browser?.close().catch(() => {}); shut(); return { content: [{ type: "text", text: "read error: " + String(e).slice(0, 140) }] }; }
         },
       ),
-    ],
+  ];
+}
+
+/** Every tool name on the control surface, derived from the surface itself (never hand-typed -- an
+ *  enumerated copy silently stops covering tools added later). Building the array is pure; the
+ *  handlers only touch the DB when called, so throwaway args are fine. */
+export const TOOL_NAMES: string[] = buildTools(undefined, 0).map((t) => t.name);
+
+export function boardServer(dbPath: string | undefined, season: number) {
+  return createSdkMcpServer({
+    name: "ff-draft",
+    version: "1.0.0",
+    tools: buildTools(dbPath, season),
   });
 }
 
@@ -445,7 +458,9 @@ export async function agentAsk(question: string, opts: { dbPath?: string; season
     prompt: question,
     options: {
       mcpServers: { "ff-draft": server },
-      allowedTools: ["mcp__ff-draft__read_board", "mcp__ff-draft__player_detail", "mcp__ff-draft__read_my_team", "mcp__ff-draft__read_needs", "mcp__ff-draft__draft_player", "mcp__ff-draft__drop_player", "mcp__ff-draft__set_price", "mcp__ff-draft__read_actions", "mcp__ff-draft__navigate", "mcp__ff-draft__read_page", "mcp__ff-draft__discover_leagues", "mcp__ff-draft__league_sync", "mcp__ff-draft__read_league", "mcp__ff-draft__read_levers", "mcp__ff-draft__set_lever"],
+      // Derived from the surface, not retyped: a hand-listed copy silently omits any tool added
+      // later (the omitted tool is simply never offered, with no error anywhere).
+      allowedTools: TOOL_NAMES.map((n) => `mcp__ff-draft__${n}`),
       systemPrompt: SYSTEM,
       maxTurns: 8,
       permissionMode: "bypassPermissions",

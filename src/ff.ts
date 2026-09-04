@@ -103,6 +103,13 @@ async function main() {
     }
     case "agent-ask":
       return cmdAgentAsk(rest);
+    // BYO agent: serve the SAME control surface the in-app copilot uses over stdio MCP, so Claude
+    // Code (or any MCP client) can drive the draft. See docs/mcp.md.
+    case "mcp": {
+      const { serveMcpStdio } = await import("./agent/mcp-stdio.js");
+      const seasonArg = valueOf(rest, "--season");
+      return serveMcpStdio({ dbPath: valueOf(rest, "--db"), season: seasonArg ? Number(seasonArg) : undefined });
+    }
     case "my-roster-set":
       return cmdMyRosterSet(rest);
     case "assemble":
