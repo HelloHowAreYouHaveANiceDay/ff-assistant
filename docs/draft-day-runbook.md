@@ -15,7 +15,13 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
    npm run ff -- values        # -> data/values.csv   (the offline mirror: cheatsheet/sim/tests)
    npm run ff -- cheatsheet    # -> data/cheatsheet.md (your co-pilot sheet, same build)
    node scripts/value-gates.mjs   # sanity-assert the book; MUST print ALL GATES PASS
+   node scripts/scoring-history.mjs   # MUST print ALL MATCH (needs the desktop app open)
    ```
+   `scoring-history.mjs` asks ESPN directly what format this league will actually run -- teams,
+   budget, roster slots, reception points -- and diffs it against the synced config the values were
+   computed from. Both scripts exit non-zero on failure, so they are safe to chain. A slot or
+   team-count mismatch invalidates the whole value curve (the FLEX count is what the weighted
+   baseline allocates), so fix it BEFORE drafting rather than discovering it live.
    `tools/build_projections.py` is the LEGACY Python pipeline -- it is not part of this sequence
    and running it will fork the curve. Do not mix them.
 
