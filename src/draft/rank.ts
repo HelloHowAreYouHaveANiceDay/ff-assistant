@@ -26,12 +26,23 @@ export function replacementBaselines(
   const flex = league.starters.FLEX ?? 0;
   const baselines = {} as Record<Pos, number>;
 
+  // FLEX slots are allocated POINTS-WEIGHTED, mirroring baselines() in values.ts (which is the one
+  // the shipped bid table uses). An even 3-way split gives TE phantom starting slots it never wins.
+  const flexTotal = flex * league.teams;
+  const flexPool: { pos: Pos; proj: number }[] = [];
+  for (const pos of FLEX_ELIGIBLE as Pos[]) {
+    const dedicated = (league.starters[pos] ?? 0) * league.teams;
+    const sorted = (byPos[pos] ?? []).slice().sort((a, b) => b.proj - a.proj);
+    for (let i = dedicated; i < sorted.length; i++) flexPool.push({ pos, proj: sorted[i].proj });
+  }
+  flexPool.sort((a, b) => b.proj - a.proj);
+  const flexCount = {} as Record<string, number>;
+  for (const pos of FLEX_ELIGIBLE) flexCount[pos] = 0;
+  for (const p of flexPool.slice(0, flexTotal)) flexCount[p.pos]++;
+
   for (const pos of Object.keys(byPos) as Pos[]) {
     const dedicated = (league.starters[pos] ?? 0) * league.teams;
-    // Approximate the FLEX draw on this position: split flex slots across eligible pos.
-    const flexShare = FLEX_ELIGIBLE.includes(pos)
-      ? Math.round((flex * league.teams) / FLEX_ELIGIBLE.length)
-      : 0;
+    const flexShare = FLEX_ELIGIBLE.includes(pos) ? flexCount[pos] : 0;
     const startableCount = dedicated + flexShare;
     const sorted = byPos[pos].slice().sort((a, b) => b.proj - a.proj);
     // Baseline = the first NON-startable player's projection (replacement level).

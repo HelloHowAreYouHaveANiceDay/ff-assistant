@@ -48,16 +48,39 @@ export function resolveValueLeague(cfg: { teams: number; budget: number; slots: 
 }
 
 /** Replacement baseline points per position = the points of the first NON-startable player at
- *  that position across the whole league (dedicated starters + this position's share of FLEX). */
-export function baselines(points: PointsRow[], lg: ValueLeague): Record<string, number> {
+ *  that position across the whole league (dedicated starters + this position's share of FLEX).
+ *
+ *  The FLEX share is allocated POINTS-WEIGHTED by default (`flexWeighted`): the league's FLEX slots
+ *  are filled with the best leftover FLEX-eligible players by projected points, and each position's
+ *  share is however many of those it actually claims. The old even 3-way split
+ *  (`round(flexTotal / 3)`) handed TE ~11 phantom starting slots in this league -- a weighted fill
+ *  gives TE ZERO -- which took TE's baseline 11 ranks too deep and inflated every TE's VOR (and
+ *  symmetrically starved WR). Measured at 13.6% -> 22.2% championships on the 2015-2024 backtest
+ *  (docs/validation.md). `flexWeighted = false` keeps the old behavior for regression tests. */
+export function baselines(points: PointsRow[], lg: ValueLeague, flexWeighted = true): Record<string, number> {
   const byPos: Record<string, number[]> = {};
   for (const p of points) (byPos[p.pos] ??= []).push(p.points);
   for (const k of Object.keys(byPos)) byPos[k].sort((a, b) => b - a);
   const flexTotal = (lg.starters.FLEX ?? 0) * lg.teams;
+  let flexCount: Record<string, number> | null = null;
+  if (flexWeighted) {
+    // Pool = every FLEX-eligible player beyond his position's DEDICATED starters, league-wide.
+    const pool: { pos: string; pts: number }[] = [];
+    for (const pos of FLEX_ELIGIBLE) {
+      const dedicated = (lg.starters[pos] ?? 0) * lg.teams;
+      const arr = byPos[pos] ?? [];
+      for (let i = dedicated; i < arr.length; i++) pool.push({ pos, pts: arr[i] });
+    }
+    pool.sort((a, b) => b.pts - a.pts);
+    flexCount = { RB: 0, WR: 0, TE: 0 };
+    for (const p of pool.slice(0, flexTotal)) flexCount[p.pos]++;
+  }
   const out: Record<string, number> = {};
   for (const pos of Object.keys(byPos)) {
     const dedicated = (lg.starters[pos] ?? 0) * lg.teams;
-    const flexShare = FLEX_ELIGIBLE.includes(pos) ? Math.round(flexTotal / FLEX_ELIGIBLE.length) : 0;
+    const flexShare = FLEX_ELIGIBLE.includes(pos)
+      ? (flexCount ? flexCount[pos] : Math.round(flexTotal / FLEX_ELIGIBLE.length))
+      : 0;
     const startable = dedicated + flexShare;
     const arr = byPos[pos];
     out[pos] = arr[startable] ?? arr[arr.length - 1] ?? 0; // first non-starter's points
@@ -69,8 +92,8 @@ export function baselines(points: PointsRow[], lg: ValueLeague): Record<string, 
  *  discretionary money (total budget minus $1 per roster spot) across total positive VOR.
  *  K/DST are clamped to `maxKDst` ($2) -- this league streams them at $1-2 (finding #1), so a
  *  nominal points curve must not be allowed to price them like real starters. */
-export function computeValues(points: PointsRow[], lg: ValueLeague = DEFAULT_VALUE_LEAGUE, maxKDst = 2): ValueRow[] {
-  const base = baselines(points, lg);
+export function computeValues(points: PointsRow[], lg: ValueLeague = DEFAULT_VALUE_LEAGUE, maxKDst = 2, flexWeighted = true): ValueRow[] {
+  const base = baselines(points, lg, flexWeighted);
   const withVor = points.map((p) => ({ ...p, vor: Math.max(0, p.points - (base[p.pos] ?? 0)) }));
   const totalVor = withVor.reduce((s, p) => s + p.vor, 0) || 1;
   const discretionary = lg.teams * lg.budget - lg.teams * lg.rosterSpots * 1;
