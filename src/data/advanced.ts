@@ -2,12 +2,10 @@
 //   ingestAdvanced   -> player_advanced: snap % (snap_counts) + PFR receiving efficiency (adot, yac/rec, drop%)
 //   ingestTradeValues-> trade_value: dynastyprocess 1QB/2QB values (for trade analysis)
 //   ingestWeekly     -> weekly_rank: FantasyPros current-week positional rankings (in-season start/sit)
-import { fetchCsv, pick } from "./nflverse.js";
+import { fetchCsv, pick, NFLVERSE, DPROC } from "./nflverse.js";
 import { nameKey } from "../draft/values.js";
 import { nowIso, type DB } from "../db/db.js";
 
-const NFLVERSE = "https://github.com/nflverse/nflverse-data/releases/download";
-const DPROC = "https://raw.githubusercontent.com/dynastyprocess/data/master/files";
 const num = (s: string): number | null => { const n = Number(s); return Number.isFinite(n) ? n : null; };
 const int = (s: string): number | null => { const n = num(s); return n == null ? null : Math.round(n); };
 const knownIds = (db: DB) => new Set((db.prepare("SELECT player_id FROM player").all() as { player_id: string }[]).map((r) => r.player_id));

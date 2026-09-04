@@ -8,14 +8,12 @@
 // board's minor "Depth" badge. Writes the news table (source of truth) + data/player-news.csv (kept
 // byte-compatible so the not-yet-ported build_report can still join news into the board).
 import { writeFileSync } from "node:fs";
-import { fetchText, fetchCsv, pick } from "./nflverse.js";
+import { fetchText, fetchCsv, pick, NFLVERSE, DPROC } from "./nflverse.js";
 import { dataPath } from "./paths.js";
 import { nameKey } from "../draft/values.js";
 import { type DB } from "../db/db.js";
 
 const POS = new Set(["QB", "RB", "WR", "TE", "K"]);
-const NFLVERSE = "https://github.com/nflverse/nflverse-data/releases/download";
-const DPROC = "https://raw.githubusercontent.com/dynastyprocess/data/master/files";
 const RSS: Record<string, string> = {
   espn: "https://www.espn.com/espn/rss/nfl/news",
   yahoo: "https://sports.yahoo.com/nfl/rss.xml",

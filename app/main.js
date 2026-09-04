@@ -20,6 +20,9 @@ if (CDP_PORT) app.commandLine.appendSwitch("remote-debugging-port", CDP_PORT);
 const NODE_BIN = path.join(process.resourcesPath || "", "runtime", "node.exe");
 const ENGINE_JS = path.join(process.resourcesPath || "", "engine", "ff.cjs");
 const DB_PATH = app.isPackaged ? path.join(app.getPath("userData"), "ff.db") : path.join(REPO, "data", "ff.db");
+// Where the engine writes its runtime files (live-state.json, draft-log-*, PAUSE). Matches FF_DATA
+// passed to the engine (userData when packaged -- the install dir isn't writable; REPO/data in dev).
+const DATA_DIR = app.isPackaged ? app.getPath("userData") : path.join(REPO, "data");
 function ensureDb() {
   // A shipped build carries NO personal database -- a fresh install starts EMPTY and the user onboards
   // (Setup: log into ESPN -> Sync league -> Build board). The engine's openDb creates the schema +
@@ -123,7 +126,7 @@ function createWindow() {
 
 // --- IPC to the engine ---
 function newestDraftLog() {
-  const dir = path.join(REPO, "data");
+  const dir = DATA_DIR;
   let files = [];
   try {
     files = fs.readdirSync(dir)
@@ -220,7 +223,7 @@ ipcMain.handle("mc:teamGet", () => rpc("my-roster-get").catch(() => []));
 ipcMain.handle("mc:liveState", async () => {
   // prefer the store (via the helper); fall back to the file if the engine hasn't written the DB yet
   try { const r = await rpc("live-state"); if (r) return r; } catch (_) { /* fall back */ }
-  const f = path.join(REPO, "data", "live-state.json");
+  const f = path.join(DATA_DIR, "live-state.json");
   try {
     const m = fs.statSync(f).mtimeMs;
     return { ageSec: Math.round((Date.now() - m) / 1000), data: JSON.parse(fs.readFileSync(f, "utf8")) };
@@ -251,7 +254,7 @@ ipcMain.handle("mc:agentStop", () => {
   return { ok: true };
 });
 ipcMain.handle("mc:pause", (e, on) => {
-  const f = path.join(REPO, "data", "PAUSE");
+  const f = path.join(DATA_DIR, "PAUSE");
   try {
     if (on) fs.writeFileSync(f, "paused");
     else if (fs.existsSync(f)) fs.unlinkSync(f);
@@ -259,7 +262,7 @@ ipcMain.handle("mc:pause", (e, on) => {
   } catch (err) { return { ok: false, out: String(err) }; }
 });
 ipcMain.handle("mc:isPaused", () => {
-  try { return fs.existsSync(path.join(REPO, "data", "PAUSE")); } catch (e) { return false; }
+  try { return fs.existsSync(path.join(DATA_DIR, "PAUSE")); } catch (e) { return false; }
 });
 ipcMain.handle("mc:openExternal", (e, url) => { if (/^https?:/.test(url)) shell.openExternal(url); });
 ipcMain.handle("mc:leagueInfo", () => rpc("league-info").catch(() => null));

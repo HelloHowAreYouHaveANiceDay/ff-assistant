@@ -3,8 +3,8 @@
 // .csv asset; FantasyPros ECR lives in dynastyprocess/data as db_fpecr_latest.csv.)
 import { gunzipSync } from "node:zlib";
 
-const NFLVERSE = "https://github.com/nflverse/nflverse-data/releases/download";
-const DPROC = "https://raw.githubusercontent.com/dynastyprocess/data/master/files";
+export const NFLVERSE = "https://github.com/nflverse/nflverse-data/releases/download";
+export const DPROC = "https://raw.githubusercontent.com/dynastyprocess/data/master/files";
 
 /** Canonical source URLs. Kept in one place so a nflverse asset rename is a one-line fix. */
 export const URLS = {

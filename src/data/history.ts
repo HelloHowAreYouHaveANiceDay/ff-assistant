@@ -3,11 +3,10 @@
 // league uses (half-PPR, PPR, standard...). Was a Python one-off (build_history.py) hardcoded to
 // No-PPR; this is the config-driven TS port. Fetches nflverse stats_player_week per season.
 import { writeFileSync } from "node:fs";
-import { fetchCsv, pick } from "./nflverse.js";
+import { fetchCsv, pick, NFLVERSE } from "./nflverse.js";
 import { scoreWeek, type ScoringRules } from "../draft/scoring.js";
 import { dataPath } from "./paths.js";
 
-const NFLVERSE = "https://github.com/nflverse/nflverse-data/releases/download";
 const FANTASY_POS = new Set(["QB", "RB", "WR", "TE"]); // skill positions (K/DST aren't in this feed)
 const clean = (s: string) => s.replace(/,/g, " ").trim();
 

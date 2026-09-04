@@ -13,6 +13,7 @@ import { loadRankings } from "./data/rankings.js";
 import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank.js";
 import { ingestAll } from "./data/ingest.js";
 import { openDb } from "./db/db.js";
+import { dataPath } from "./data/paths.js";
 
 const DEFAULT_LEAGUE: LeagueSettings = {
   teams: 10,
@@ -224,7 +225,7 @@ async function cmdAgentAsk(rest: string[]) {
 // Projection curve (TS port of build_projections) -> data/points.csv. Reads ECR from the store.
 async function cmdProjections(rest: string[]) {
   const { project } = await import("./data/projections.js");
-  const n = await project(valueOf(rest, "--db"), valueOf(rest, "--out") ?? "data/points.csv");
+  const n = await project(valueOf(rest, "--db"), valueOf(rest, "--out") ?? dataPath("points.csv"));
   console.log(`wrote points.csv (${n} players)`);
 }
 
@@ -243,7 +244,7 @@ async function cmdRefresh(rest: string[]) {
 // + points.csv, fetches ESPN/last-year, computes derived fields, writes the value/board tables.
 async function cmdAssemble(rest: string[]) {
   const { assemble } = await import("./data/assemble.js");
-  const n = await assemble(valueOf(rest, "--db"), valueOf(rest, "--points") ?? "data/points.csv");
+  const n = await assemble(valueOf(rest, "--db"), valueOf(rest, "--points") ?? dataPath("points.csv"));
   console.log(`assembled ${n} players -> player_value + board + ranking:espn`);
 }
 
@@ -499,7 +500,7 @@ async function cmdLineup(rest: string[]) {
   const { isAvailable } = await import("./inseason/espnTeam.js");
   const { SIM_LEAGUE } = await import("./draft/sim.js");
   const { readFileSync } = await import("node:fs");
-  const proj = loadProjections(valueOf(rest, "--points") ?? "data/points.csv", valueOf(rest, "--def") ?? "data/def-ratings.csv");
+  const proj = loadProjections(valueOf(rest, "--points") ?? dataPath("points.csv"), valueOf(rest, "--def") ?? dataPath("def-ratings.csv"));
   const rosterFile = valueOf(rest, "--roster");
   if (!rosterFile) { console.log("usage: ff lineup --roster <csv: player[,opp][,injury]>  (live copresent read lands at season start)"); return; }
   const rows = readFileSync(rosterFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
@@ -520,7 +521,7 @@ async function cmdProject(rest: string[]) {
   const { loadProjections } = await import("./projections.js");
   const name = rest.find((r) => !r.startsWith("--"));
   const opp = valueOf(rest, "--vs");
-  const proj = loadProjections(valueOf(rest, "--points") ?? "data/points.csv", valueOf(rest, "--def") ?? "data/def-ratings.csv");
+  const proj = loadProjections(valueOf(rest, "--points") ?? dataPath("points.csv"), valueOf(rest, "--def") ?? dataPath("def-ratings.csv"));
   if (!name) {
     const top = proj.all().sort((a, b) => b.season - a.season).slice(0, 10);
     console.log("top by season projection:"); for (const p of top) console.log(`  ${p.season.toFixed(0)}  ${p.pos}  ${p.name}`);
@@ -537,8 +538,8 @@ async function cmdProject(rest: string[]) {
 // bids from these same values; the sheet is the human-copilot view of the same plan.
 async function cmdCheatsheet(rest: string[]) {
   const { readFileSync, writeFileSync } = await import("node:fs");
-  const valuesFile = valueOf(rest, "--values") ?? "data/values.csv";
-  const out = valueOf(rest, "--out") ?? "data/cheatsheet.md";
+  const valuesFile = valueOf(rest, "--values") ?? dataPath("values.csv");
+  const out = valueOf(rest, "--out") ?? dataPath("cheatsheet.md");
   const budget = Number(valueOf(rest, "--budget") ?? 200);
   const { tierize } = await import("./draft/cheatsheet.js");
   const rows = readFileSync(valuesFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
@@ -551,7 +552,7 @@ async function cmdCheatsheet(rest: string[]) {
   // a live read for you -- docs/league-managers.md.)
   let nomPlan = "";
   try {
-    const mgr = JSON.parse(readFileSync("data/managers.json", "utf8")) as { leagueShare: Record<string, number>; profiles: { owner: string; share: Record<string, number> }[] };
+    const mgr = JSON.parse(readFileSync(dataPath("managers.json"), "utf8")) as { leagueShare: Record<string, number>; profiles: { owner: string; share: Record<string, number> }[] };
     const payers = (pos: string) => mgr.profiles.filter((p) => (p.share[pos] ?? 0) / Math.max(mgr.leagueShare[pos] ?? 0.01, 0.01) > 1.25).map((p) => p.owner);
     const lines = ["QB", "TE"].map((pos) => { const who = payers(pos); return who.length ? `- **Nominate a top ${pos} early** to drain: ${who.join(", ")}` : ""; }).filter(Boolean);
     nomPlan = lines.join("\n");
@@ -584,9 +585,9 @@ async function cmdCheatsheet(rest: string[]) {
 async function cmdValuesCheck(rest: string[]) {
   const { readFileSync } = await import("node:fs");
   const { nameKey } = await import("./draft/values.js");
-  const valuesFile = valueOf(rest, "--values") ?? "data/values.csv";
-  const recapFile = valueOf(rest, "--recap") ?? "data/recaps.json";
-  const season = Number(valueOf(rest, "--season") ?? 2025);
+  const valuesFile = valueOf(rest, "--values") ?? dataPath("values.csv");
+  const recapFile = valueOf(rest, "--recap") ?? dataPath("recaps.json");
+  const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear() - 1);
   const topN = Number(valueOf(rest, "--top") ?? 150);
   const vals = readFileSync(valuesFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","))
     .map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), value: Number(f[2]) }))
@@ -635,8 +636,8 @@ async function cmdNews(rest: string[]) {
   const { readFileSync, existsSync } = await import("node:fs");
   const { nameKey } = await import("./draft/values.js");
   const { classifyNews } = await import("./news.js");
-  const newsFile = valueOf(rest, "--news") ?? "data/player-news.csv";
-  const valuesFile = valueOf(rest, "--values") ?? "data/values.csv";
+  const newsFile = valueOf(rest, "--news") ?? dataPath("player-news.csv");
+  const valuesFile = valueOf(rest, "--values") ?? dataPath("values.csv");
   const minVal = Number(valueOf(rest, "--min") ?? 3); // skip the $1-2 replacement tail
   const showHeadlines = !rest.includes("--no-headlines");
   if (!existsSync(newsFile)) {
@@ -681,8 +682,8 @@ async function cmdValues(rest: string[]) {
   const { computeValues, resolveValueLeague } = await import("./draft/values.js");
   const { openDb, getConfig } = await import("./db/db.js");
   const { readFileSync, writeFileSync } = await import("node:fs");
-  const src = valueOf(rest, "--points") ?? "data/points.csv";
-  const out = valueOf(rest, "--out") ?? "data/values.csv";
+  const src = valueOf(rest, "--points") ?? dataPath("points.csv");
+  const out = valueOf(rest, "--out") ?? dataPath("values.csv");
   const [, ...lines] = readFileSync(src, "utf8").trim().split(/\r?\n/);
   const points = lines.map((l) => { const f = l.split(","); return { name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) }; }).filter((p) => p.name && p.points);
   // config-driven so values.csv matches the board (same league shape + K/DST cap)
@@ -704,9 +705,9 @@ async function cmdCalibrate(rest: string[]) {
   const { loadManagers } = await import("./draft/managers.js");
   const { readFileSync } = await import("node:fs");
   const readCsv = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
-  const points = readCsv(valueOf(rest, "--points") ?? "data/points.csv").map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
+  const points = readCsv(valueOf(rest, "--points") ?? dataPath("points.csv")).map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
   const ourValues = new Map<string, number>();
-  for (const f of readCsv(valueOf(rest, "--values") ?? "data/values.csv")) ourValues.set(f[0].trim(), Number(f[2]));
+  for (const f of readCsv(valueOf(rest, "--values") ?? dataPath("values.csv"))) ourValues.set(f[0].trim(), Number(f[2]));
   const n = Number(valueOf(rest, "--n") ?? 300);
   const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
   const { profiles } = loadManagers();
@@ -748,7 +749,6 @@ async function cmdCalibrate(rest: string[]) {
 async function cmdSim(rest: string[]) {
   const { runSim, leagueFromConfig } = await import("./draft/sim.js");
   const { openDb, getConfig } = await import("./db/db.js");
-  const { dataPath } = await import("./data/paths.js");
   const { readFileSync } = await import("node:fs");
   const readCsv = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
   const pointsFile = valueOf(rest, "--points") ?? dataPath("points.csv");
@@ -784,7 +784,7 @@ async function cmdSim(rest: string[]) {
 async function cmdBuildHistory(rest: string[]) {
   const { buildHistory } = await import("./data/history.js");
   const { openDb, getConfig } = await import("./db/db.js");
-  const range = (valueOf(rest, "--seasons") ?? "2014-2024").split("-").map(Number);
+  const range = (valueOf(rest, "--seasons") ?? `2014-${new Date().getFullYear() - 1}`).split("-").map(Number);
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const seasons: number[] = []; for (let y = lo; y <= hi; y++) seasons.push(y);
   const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db); db.close();
@@ -801,7 +801,6 @@ async function cmdScrapeLeague(rest: string[]) {
   const { openDb, getConfig } = await import("./db/db.js");
   const { buildManagerProfiles } = await import("./draft/scout.js");
   type Recap = import("./draft/scout.js").Recap;
-  const { dataPath } = await import("./data/paths.js");
   const { writeFileSync } = await import("node:fs");
   const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
   const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db);
@@ -870,7 +869,6 @@ async function cmdBacktest(rest: string[]) {
   const { runBacktest } = await import("./draft/backtest.js");
   const { leagueFromConfig } = await import("./draft/sim.js");
   const { openDb, getConfig } = await import("./db/db.js");
-  const { dataPath } = await import("./data/paths.js");
   const { readFileSync } = await import("node:fs");
   const rows = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
   const nPerSeason = Number(valueOf(rest, "--n") ?? 300);
@@ -887,7 +885,7 @@ async function cmdBacktest(rest: string[]) {
     posInflation: rest.includes("--pos-inflation"),
   };
   // Load all seasons from the combined history files, filter to --seasons range (default all).
-  const range = (valueOf(rest, "--seasons") ?? "2014-2024").split("-").map(Number);
+  const range = (valueOf(rest, "--seasons") ?? `2014-${new Date().getFullYear() - 1}`).split("-").map(Number);
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const pts = new Map<number, { name: string; pos: string; points: number }[]>();
   for (const f of rows(valueOf(rest, "--points") ?? dataPath("history-points.csv"))) {
@@ -927,7 +925,7 @@ async function cmdBacktest(rest: string[]) {
 
 async function cmdDumpValues(rest: string[]) {
   const { dumpValues } = await import("./draft/espnAuction.js");
-  const out = valueOf(rest, "--out") ?? "data/values.espn.csv";
+  const out = valueOf(rest, "--out") ?? dataPath("values.espn.csv");
   const a = await attachFor(rest);
   const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
   const players = await dumpValues(page);
@@ -1067,7 +1065,7 @@ async function cmdAutoDraft(rest: string[]) {
   const csvArg = valueOf(rest, "--csv");
   const csvExplicit = csvArg !== undefined;
   let csv = csvArg;
-  if (csv === undefined) csv = existsSync("data/values.csv") ? "data/values.csv" : undefined;
+  if (csv === undefined) csv = existsSync(dataPath("values.csv")) ? dataPath("values.csv") : undefined;
 
   // OUR value overrides (nameKey -> $) + pos. Both sides of the join are keyed by nameKey so ESPN
   // spelling drift (suffixes, "D/ST") does not silently miss (finding #5). Crucially, when loading
@@ -1160,7 +1158,7 @@ async function cmdAutoDraft(rest: string[]) {
   // Live-state file the desktop app (Mission Control) reads each tick to render the agent's
   // current decision (on-block player, our recommended max bid + reason), our roster/budget, and
   // live inflation. Stable filename so the app polls ONE file. Best-effort, overwritten each tick.
-  const liveStatePath = "data/live-state.json";
+  const liveStatePath = dataPath("live-state.json");
   let lastDecision: { player: string; pos: string | null; offer: number; cap: number; reason: string; action: string } | null = null;
   const logPath = `data/draft-log-${Date.now()}.json`;
   // also write the live snapshot into the store (draft_state) so the app reads it via the helper
@@ -1215,7 +1213,7 @@ async function cmdAutoDraft(rest: string[]) {
     }
     // Copresent PAUSE (Step 9): while data/PAUSE exists, READ state but never bid or nominate --
     // the human has the wheel. Log once per transition; delete the file to resume.
-    const paused = existsSync("data/PAUSE");
+    const paused = existsSync(dataPath("PAUSE"));
     if (paused !== wasPaused) { console.log(`r${i}: ${paused ? "PAUSED -- data/PAUSE present; reading only, not bidding/nominating (delete to resume)" : "RESUMED -- data/PAUSE removed"}`); wasPaused = paused; }
     const b = await readBlock(page);
     if (!paused && b.onBlock && b.player && b.canBid) {
@@ -1330,7 +1328,7 @@ async function cmdAutoDraft(rest: string[]) {
 }
 
 async function cmdInspect(rest: string[]) {
-  const out = valueOf(rest, "--out") ?? "data/draft-dom-snapshot.json";
+  const out = valueOf(rest, "--out") ?? dataPath("draft-dom-snapshot.json");
   const a = await attachFor(rest);
   const page = findPage(a, "espn.com");
   if (!page) {
@@ -1345,7 +1343,7 @@ async function cmdInspect(rest: string[]) {
 }
 
 function cmdRank(rest: string[]) {
-  const csv = valueOf(rest, "--csv") ?? "data/rankings.sample.csv";
+  const csv = valueOf(rest, "--csv") ?? dataPath("rankings.sample.csv");
   const rankings = loadRankings(csv);
   const baselines = replacementBaselines(rankings, DEFAULT_LEAGUE);
   const valued = withVOR(rankings, baselines).sort((x, y) => y.vor - x.vor);

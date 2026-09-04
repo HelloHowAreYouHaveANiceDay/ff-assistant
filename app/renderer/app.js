@@ -615,6 +615,9 @@ async function boot() {
   if (window.mc && window.mc.authStatus) { try { MC_AUTH = await window.mc.authStatus(); } catch (e) { /* keep default */ } }
   wireWebview(); // the persistent ESPN browsing surface (always mounted, always CDP-navigable)
   syncTeam();
+  const yr = CFG.season || new Date().getFullYear(); // season label from config, not hardcoded
+  const bs = document.getElementById("brand-season"); if (bs) bs.textContent = "Fantasy " + yr;
+  const vs = document.getElementById("values-season"); if (vs) vs.textContent = "Values: " + yr;
   // Fresh install (no board yet) lands on Setup so the user onboards; otherwise the Players board.
   const fresh = window.mc && (!DATA || DATA.length === 0);
   setView(fresh ? "settings" : "board");

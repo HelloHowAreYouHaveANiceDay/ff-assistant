@@ -4,13 +4,11 @@
 // computes every derived field (rank/pos_rank/tier/vsECR/age/ht/espn_pos), and writes L1 player_value
 // + L2 board + the ESPN ranking. Only remaining Python after this: build_projections (the curve).
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { fetchCsv, pick } from "./nflverse.js";
+import { fetchCsv, pick, NFLVERSE } from "./nflverse.js";
 import { nameKey, computeValues, resolveValueLeague, type PointsRow } from "../draft/values.js";
 import { scoreWeek, type ScoringRules } from "../draft/scoring.js";
 import { openDb, getConfig, nowIso } from "../db/db.js";
 import { dataPath } from "./paths.js";
-
-const NFLVERSE = "https://github.com/nflverse/nflverse-data/releases/download";
 
 // last-year (season-1) REG fantasy points + games played under the LEAGUE's scoring, keyed by name_key
 async function lastYear(season: number, scoring: ScoringRules): Promise<Map<string, { pts: number; gms: number }>> {

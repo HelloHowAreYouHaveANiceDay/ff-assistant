@@ -1,15 +1,14 @@
-// TS port of the projection curve (was tools/build_projections.py) -- the LAST Python file. The
-// projection for a player = the mean historical (2019-24) REG No-PPR points of the k-th best player
-// at their position, where k = their within-position ECR rank. K/DST get a small nominal (they
+// Projection curve. A player's projection = the mean historical (last 6 completed seasons) REG points
+// -- scored under the LEAGUE's scoring model -- of the k-th best player at their position, where k is
+// their within-position ECR rank. K/DST get a small nominal (they
 // stream; computeValues clamps their $). Writes data/points.csv. Reads current ECR from the store,
 // so run after `ff ingest`. Formula is LINEAR, so summing per-week == Python's sum-then-formula.
 import { writeFileSync } from "node:fs";
-import { fetchCsv, pick } from "./nflverse.js";
+import { fetchCsv, pick, NFLVERSE } from "./nflverse.js";
 import { openDb, getConfig } from "../db/db.js";
 import { scoreWeek, type ScoringRules } from "../draft/scoring.js";
 import { dataPath } from "./paths.js";
 
-const NFLVERSE = "https://github.com/nflverse/nflverse-data/releases/download";
 const CURVE_POS = ["QB", "RB", "WR", "TE"] as const;
 
 // curve[pos][k] = mean across seasons of the k-th best player's season points at that position,
