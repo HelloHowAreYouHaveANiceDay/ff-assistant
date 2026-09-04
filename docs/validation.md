@@ -50,6 +50,26 @@ is genuinely on (defining a lever and never wiring it reads identically to a lev
 the outright best cell at 28.9% (next: 0.45 at 27.9%, reserve 20/0.35 at 27.5%); reserve 10 is worse
 at every share. Defaults unchanged.
 
+### Rejected: an extra discount for bench players who cannot fill FLEX (2026-09-04)
+
+Live mock 2 finished with FOUR QBs (Allen $58 + Burrow $12 + Hurts $6 + Herbert $5) in a league that
+starts one, and the sim agrees: QB count stays median 3 / max 5 even WITH benchDiscount. Hypothesis:
+a bench RB/WR/TE can be started in a FLEX slot on a bye or injury week, but a backup QB starts only
+if our starter is out, so he should be discounted further.
+
+Swept `benchNonFlex` (an extra multiplier on bench-only QB/K/DST), n=150: **28.9% / 28.4% / 28.8% /
+28.4%** at 1 / 0.6 / 0.4 / 0.2 -- flat inside noise. **Rejected; the lever was removed.**
+
+The null is trustworthy because the lever was proven CONNECTED first
+(`scripts/lever-connected.mjs benchNonFlex 1 0.2`): it does change the drafted roster, QB 3.30 ->
+3.17 per draft. A dead lever produces exactly the same flat line, so a sweep alone cannot tell the
+two apart -- always check the lever moves the roster before believing its null.
+
+**Why it cannot help, structurally:** the QBs in question cost $1-5. The fill-floor guarantees $1 for
+any slot we still need, so no discount short of refusing the position outright changes whether a $1
+bench QB is taken -- it only changes what we would have paid, and we were already paying the floor.
+Cheap bench QBs are not what costs championships.
+
 ## Weighted FLEX baselines (2026-09-03) -- the largest single value fix to date
 
 `baselines()` in `src/draft/values.ts` split the league's 32 FLEX slots evenly across RB/WR/TE
