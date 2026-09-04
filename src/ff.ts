@@ -72,6 +72,8 @@ async function main() {
       return cmdBuildHistory(rest);
     case "scrape-league":
       return cmdScrapeLeague(rest);
+    case "ingest-source":
+      return cmdIngestSource(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -803,6 +805,17 @@ async function cmdSim(rest: string[]) {
   console.log(`SIM (${n} drafts) ${lg.teams}-team $${lg.budget} ${conf.scoring} | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare} premium=${cfg.premium}`);
   console.log(`  our starting pts: ${(sumPts / n).toFixed(0)}  |  field avg: ${(sumField / n).toFixed(0)}  |  edge: ${((sumPts / n) - (sumField / n)).toFixed(0)}`);
   console.log(`  avg finish: ${(sumRank / n).toFixed(2)} of ${lg.teams}  |  1st: ${((top1 / n) * 100).toFixed(0)}%  |  top-3: ${((top3 / n) * 100).toFixed(0)}%  |  $ on top3 players: ${(sumTop3Spend / n).toFixed(0)}`);
+}
+
+// Materialize ONE data source (asset) + its downstream (project/assemble). Powers the DAG view's
+// per-node update.
+async function cmdIngestSource(rest: string[]) {
+  const { ingestOne } = await import("./data/ingest.js");
+  const id = rest.find((a) => !a.startsWith("--")) ?? "";
+  if (!id) { console.log("usage: ff ingest-source <id>"); return; }
+  const t0 = Date.now();
+  const r = await ingestOne(valueOf(rest, "--db"), id);
+  console.log(`materialized ${id}: ${r.rows} rows + rebuilt board (${Date.now() - t0}ms)`);
 }
 
 // Rebuild the multi-season backtest history scored under the LEAGUE's scoring model (so the

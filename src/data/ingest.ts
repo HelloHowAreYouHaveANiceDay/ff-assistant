@@ -168,6 +168,41 @@ export async function ingestAll(dbPath?: string): Promise<void> {
   db.close();
 }
 
+// Materialize ONE source (asset) + only its affected downstream: ECR feeds the projection curve, so
+// it re-projects then re-assembles; every other source feeds the board directly, so it just
+// re-assembles. This is the per-node "materialize" behind the pipeline DAG view.
+export async function ingestOne(dbPath: string | undefined, id: string): Promise<{ rows: number }> {
+  const { ingestNews } = await import("./news.js");
+  const { ingestAdvanced, ingestTradeValues, ingestWeekly, ingestSleeper, ingestOdds, ingestBorisTiers, ingestAdp, ingestMarketValue } = await import("./advanced.js");
+  const { getConfig } = await import("../db/db.js");
+  const { project } = await import("./projections.js");
+  const { assemble } = await import("./assemble.js");
+  const db = openDb(dbPath);
+  const cfg = getConfig(db);
+  const SEASON = Number(process.env.FF_SEASON ?? cfg.season);
+  const teams = cfg.teams, scoring = cfg.scoring;
+  const numQbs = cfg.slots.filter((s) => s === "QB" || s === "OP" || s === "SUPERFLEX" || s === "SF").length || 1;
+  let rows = 0;
+  switch (id) {
+    case "ecr": rows = (await ingestEcr(db, SEASON)).players; break;
+    case "bio": rows = await ingestBio(db, SEASON); break;
+    case "advanced": rows = (await ingestAdvanced(db, SEASON)).snap; break;
+    case "trade": rows = await ingestTradeValues(db); break;
+    case "weekly": rows = await ingestWeekly(db); break;
+    case "status": rows = (await ingestSleeper(db)).status; break;
+    case "odds": rows = await ingestOdds(db); break;
+    case "boris": rows = await ingestBorisTiers(db, scoring); break;
+    case "adp": rows = await ingestAdp(db, SEASON, scoring, teams); break;
+    case "market": rows = await ingestMarketValue(db, scoring, teams, numQbs); break;
+    case "news": rows = Object.values(await ingestNews(db, SEASON)).reduce((a, b) => a + b, 0); break;
+    default: db.close(); throw new Error(`unknown source: ${id}`);
+  }
+  db.close();
+  if (id === "ecr") await project(dbPath); // ECR changes the within-position rank -> re-derive the curve
+  await assemble(dbPath);                  // every source feeds the board -> rebuild it
+  return { rows };
+}
+
 // standalone: tsx src/data/ingest.ts
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("ingest.ts")) {
   ingestAll().catch((e) => { console.error(String(e)); process.exit(1); });

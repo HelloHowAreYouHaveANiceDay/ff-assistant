@@ -181,6 +181,20 @@ tr.mine{background:#f4f6f2} tr.mine:hover{background:#eef1ea}
 .srctbl td{padding:7px 10px;border-bottom:1px solid var(--line);font-size:var(--fs-sm);vertical-align:middle}
 .srctbl td.num{font-family:var(--font-mono);text-align:right}
 .srctbl tr:hover{background:var(--paper)}
+#dag-wrap{overflow:auto;max-width:100%;margin-top:10px;padding-bottom:8px}
+#dag{display:block}
+.dag-edge{fill:none;stroke:var(--faint);stroke-width:1.5}
+.dag-node rect{fill:var(--paper);stroke:var(--line);stroke-width:1}
+.dag-node.source{cursor:pointer}
+.dag-node.source:hover rect{stroke:var(--sel);stroke-width:1.6}
+.dag-node.transform rect{fill:color-mix(in srgb,var(--sel) 8%,var(--paper));stroke-dasharray:4 2}
+.dag-node.output rect{fill:var(--sel)}
+.dag-node.output .dag-name,.dag-node.output .dag-sub{fill:var(--sel-fg)}
+.dag-name{font-size:12px;font-weight:600;fill:var(--tx)}
+.dag-sub{font-size:9.5px;fill:var(--mut)}
+.dot-green{fill:#2a9d3f}.dot-amber{fill:#d99a00}.dot-red{fill:#c0392b}.dot-grey{fill:#9aa}
+.dag-node.running rect{stroke:var(--sel);stroke-width:2;animation:dagpulse 1s ease-in-out infinite}
+@keyframes dagpulse{0%,100%{opacity:1}50%{opacity:.45}}
 .cmd{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 14px;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--tx);white-space:pre-wrap;max-width:820px;overflow:auto;margin:8px 0}
 code{font-family:var(--font-mono);font-size:.95em;background:var(--hover);padding:1px 4px;border-radius:var(--radius-sm)}
 

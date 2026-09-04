@@ -610,43 +610,66 @@ function freshDot(iso) {
   const d = (Date.now() - Date.parse(iso)) / 86400000;
   return d < 2 ? "green" : d < 7 ? "amber" : "red";
 }
+// pipeline edges: sources fan into assemble (ECR also drives the projection curve) -> board
+const DAG_EDGES = [["ecr", "projections"], ["league", "projections"], ["projections", "assemble"], ["assemble", "board"]]
+  .concat(["bio", "advanced", "trade", "weekly", "status", "odds", "boris", "adp", "market", "news", "league"].map(s => [s, "assemble"]));
 function views_sources() {
-  const v = document.getElementById("view");
-  v.innerHTML = `<div class="settings">
-    <div class="sec"><h2>Data Sources</h2><span class="lbl">pipeline freshness</span></div>
+  document.getElementById("view").innerHTML = `<div class="settings">
+    <div class="sec"><h2>Data Sources</h2><span class="lbl">pipeline DAG — click a source to update just it</span></div>
     <div id="src-banner" class="setupbanner mut">Loading…</div>
-    <div class="btnrow"><button class="pbtn primary" id="src-update">Update all sources</button></div>
-    <pre class="cmd" id="src-log">Ready.</pre>
-    <div id="src-table"></div>
+    <div class="btnrow"><button class="pbtn primary" id="src-update">Update all</button><span class="mut" id="src-status"></span></div>
+    <div id="dag-wrap"><svg id="dag"></svg></div>
   </div>`;
-  const log = document.getElementById("src-log");
   document.getElementById("src-update").onclick = async () => {
-    if (!window.mc) return log.textContent = "Run inside the app to update.";
-    log.textContent = "Updating all sources (nflverse/ESPN/Sleeper/… fetch + rebuild, ~5s)…";
-    const r = await window.mc.refreshData(); log.textContent = (r.out || "done").split("\n").slice(-3).join("\n");
-    if (r.ok) { log.textContent += "\nReloading…"; setTimeout(() => location.reload(), 900); }
+    if (!window.mc) return; document.getElementById("src-status").textContent = "updating all sources (~5s)…";
+    const r = await window.mc.refreshData();
+    document.getElementById("src-status").textContent = r.ok ? "all sources updated — reloading…" : "update failed";
+    if (r.ok) setTimeout(() => location.reload(), 900);
   };
-  loadSources();
+  loadDag();
 }
-async function loadSources() {
-  const banner = document.getElementById("src-banner"), tbl = document.getElementById("src-table");
-  if (!banner || !window.mc?.dataSources) { if (banner) banner.textContent = "Open inside the app to see sources."; return; }
+async function loadDag() {
+  const banner = document.getElementById("src-banner"), svg = document.getElementById("dag");
+  if (!banner || !window.mc?.dataSources || typeof dagre === "undefined") { if (banner) banner.textContent = "Open inside the app to see the pipeline."; return; }
   const d = await window.mc.dataSources().catch(() => null);
   if (!d) { banner.textContent = "Could not read sources."; return; }
   banner.className = "setupbanner ok";
-  banner.innerHTML = `Last full refresh <b>${relTime(d.lastIngest)}</b> · ${d.sources.length} sources feed the board`;
-  tbl.innerHTML = `<table class="srctbl"><thead><tr><th></th><th>Source</th><th>Feeds</th><th>Rows</th><th>Updated</th><th></th></tr></thead><tbody>`
-    + d.sources.map(s => `<tr>
-        <td><i class="dot ${freshDot(s.updated)}"></i></td>
-        <td class="l"><b>${esc(s.name)}</b></td>
-        <td class="mut">${esc(s.feeds)}</td>
-        <td class="num">${s.rows || "—"}</td>
-        <td class="mut">${relTime(s.updated)}</td>
-        <td><button class="pbtn sm src-one" data-id="${s.id}">update</button></td>
-      </tr>`).join("") + `</tbody></table>`;
-  // per-source buttons trigger a full rebuild for now (the board depends on the whole DAG); a granular
-  // per-asset materialize is the next step (see the DAG design).
-  tbl.querySelectorAll(".src-one").forEach(b => b.onclick = () => document.getElementById("src-update").click());
+  banner.innerHTML = `Last full refresh <b>${relTime(d.lastIngest)}</b> · ${d.sources.length} sources → projections → assemble → board`;
+  const nodes = {};
+  for (const s of d.sources) nodes[s.id] = { ...s, kind: "source" };
+  nodes.projections = { id: "projections", name: "projections", sub: "VOR curve", kind: "transform" };
+  nodes.assemble = { id: "assemble", name: "assemble", sub: "values · tiers · vsADP", kind: "transform" };
+  nodes.board = { id: "board", name: "board", sub: (d.sources.find(s => s.id === "ecr")?.rows || "") && "the Players view", kind: "output" };
+  const W = 170, H = 46;
+  const g = new dagre.graphlib.Graph(); g.setGraph({ rankdir: "LR", nodesep: 14, ranksep: 66, marginx: 10, marginy: 10 }); g.setDefaultEdgeLabel(() => ({}));
+  for (const id in nodes) g.setNode(id, { width: W, height: H });
+  for (const [a, b] of DAG_EDGES) if (nodes[a] && nodes[b]) g.setEdge(a, b);
+  dagre.layout(g);
+  const gw = Math.ceil(g.graph().width), gh = Math.ceil(g.graph().height);
+  svg.setAttribute("width", gw); svg.setAttribute("height", gh); svg.setAttribute("viewBox", `0 0 ${gw} ${gh}`);
+  let h = "";
+  for (const e of g.edges()) h += `<polyline points="${g.edge(e).points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" class="dag-edge"/>`;
+  for (const id in nodes) {
+    const n = nodes[id], p = g.node(id); if (!p) continue;
+    const dot = n.kind === "source" ? freshDot(n.updated) : "";
+    const sub = n.kind === "source" ? `${n.rows} · ${relTime(n.updated)}` : n.sub;
+    h += `<g class="dag-node ${n.kind}" data-id="${id}" transform="translate(${(p.x - W / 2).toFixed(1)},${(p.y - H / 2).toFixed(1)})">`
+      + `<rect width="${W}" height="${H}" rx="7"/>`
+      + (dot ? `<circle cx="13" cy="14" r="4" class="dot-${dot}"/>` : "")
+      + `<text x="${dot ? 24 : 12}" y="18" class="dag-name">${esc(n.name)}</text>`
+      + `<text x="12" y="35" class="dag-sub">${esc(String(sub || ""))}</text></g>`;
+  }
+  svg.innerHTML = h;
+  svg.querySelectorAll(".dag-node.source").forEach(el => el.onclick = () => materialize(el.dataset.id));
+}
+async function materialize(id) {
+  if (!window.mc?.ingestSource) return;
+  const el = document.querySelector(`.dag-node[data-id="${id}"]`); if (el) el.classList.add("running");
+  const st = document.getElementById("src-status"); if (st) st.textContent = `materializing ${id} → rebuilding board…`;
+  const r = await window.mc.ingestSource(id).catch(() => ({ ok: false }));
+  if (st) st.textContent = r.ok ? `${id} updated` : `failed to update ${id}`;
+  await loadDag(); // refresh freshness dots
+  try { const ad = await window.mc.appData(); if (ad?.players?.length) { DATA = ad.players; byName = new Map(DATA.map(p => [p.Player, p])); } } catch (e) { /* keep */ }
 }
 
 // Boot: in Electron, pull the live board + news from the SQLite store (via the ff engine) before

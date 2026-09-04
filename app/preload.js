@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld("mc", {
   // onboarding: synced-league status (config + league row + player count), and a one-shot league sync
   leagueInfo: () => ipcRenderer.invoke("mc:leagueInfo"),
   dataSources: () => ipcRenderer.invoke("mc:dataSources"),
+  ingestSource: (id) => ipcRenderer.invoke("mc:ingestSource", id),
   syncLeague: () => ipcRenderer.invoke("mc:syncLeague"),
   // tuning levers: clamped write of a partial {key:value} patch, returns the new levers
   setLevers: (patch) => ipcRenderer.invoke("mc:setLevers", patch),
