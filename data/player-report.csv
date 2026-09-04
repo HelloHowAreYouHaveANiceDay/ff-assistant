@@ -5,11 +5,11 @@ Rank,Player,Pos,Us_Pos,ECR_Pos,ESPN_Pos,Tier,Team,Bye,Age,Exp,Ht,Wt,40yd,OurValu
 4,Brock Bowers,TE,TE1,TE1,TE2,TE-T1,LV,13,23.7,3,6'3",235,,90,15,40.7,37,237,235.5,142.2,12,19.03,11,57,21,23.9,100,,,,
 5,Bijan Robinson,RB,RB2,RB2,RB2,RB-T1,ATL,11,24.6,4,5'11",215,4.46,89,-1,2.3,-3,-245,310.9,329.3,17,4.1,2,7,2,2.4,99,,,,
 6,Christian McCaffrey,RB,RB3,RB3,RB3,RB-T1,SF,8,30.2,10,5'11",210,4.48,82,3,6.9,1,280,297.5,365.6,17,9.24,5,24,6,7.7,100,,,,
-7,Lamar Jackson,QB,QB2,QB2,QB3,QB-T1,BAL,13,28.4,3,6'2",212,4.58,78,25,56.3,49,-127,372.2,212.9,13,32.06,25,61,58,34.6,99,,,NFL executive shares concern about Ravens' Lamar Jackson amid contract uncertainty (rss:yardbarker),https://www.yardbarker.com/nfl/articles/nfl_executive_shares_concern_about_ravens_lamar_jackson_amid_contract_uncertainty/s1_13132_44254529
+7,Lamar Jackson,QB,QB2,QB2,QB3,QB-T1,BAL,13,28.4,3,6'2",212,4.58,78,25,56.3,49,-127,372.2,212.9,13,32.06,25,61,58,34.6,99,,,,
 8,Drake Maye,QB,QB3,QB3,QB4,QB-T1,NE,11,24,3,6'4",225,,73,30,52.1,44,146,363.4,347.5,17,37.67,26,74,60,47.2,99,,,Renner's 2027 NFL Draft scouting series: Arch Manning tops QB rankings  another passer draws Drake Maye comp (rss:cbs),https://www.cbssports.com/nfl/draft/news/2027-nfl-draft-qb-rankings-arch-manning/
 9,Puka Nacua,WR,WR2,WR2,WR2,WR-T1,LAR,11,25.3,4,6'2",216,,72,-6,2.8,-6,-419,292.4,310.5,16,3.19,1,8,4,5.3,100,,,Puka Nacua suspension watch: Will NFL discipline Rams star WR? How might a suspension impact L.A.? (rss:cbs),https://www.cbssports.com/nfl/news/puka-nacua-suspension-watch-will-nfl-discipline-rams-star/
 10,Jonathan Taylor,RB,RB4,RB4,RB4,RB-T2,IND,13,27.6,7,5'10",226,4.39,72,2,5.8,-4,-18,278.8,337.3,17,11.93,7,33,7,6.2,99,,,,
-11,Joe Burrow,QB,QB4,QB4,QB6,QB-T2,CIN,6,29.7,7,6'4",215,,66,35,54.4,43,-809,350,134.5,8,45.81,27,72,81,53.6,98,,,,
+11,Joe Burrow,QB,QB4,QB4,QB6,QB-T2,CIN,6,29.7,7,6'4",215,,66,35,54.4,43,-809,350,134.5,8,45.81,27,72,81,53.6,98,,,Bengals' Joe Burrow sends warning to NFL after Super Bowl talk (rss:yardbarker),https://www.yardbarker.com/nfl/articles/bengals_joe_burrow_sends_warning_to_nfl_after_super_bowl_talk/s1_13132_44253594
 12,Trey McBride,TE,TE2,TE2,TE1,TE-T2,ARI,14,26.8,5,6'4",246,,66,9,38,26,-371,191.4,252.9,17,21,16,57,20,22.9,99,,,,
 13,Jaxon Smith-Njigba,WR,WR3,WR3,WR3,WR-T2,SEA,11,24.5,4,6'0",202,,61,-8,5.4,-8,57,270.9,300.4,17,4.67,1,8,5,6.3,100,,,,
 14,James Cook III,RB,RB5,RB5,RB6,RB-T2,BUF,7,26.9,5,5'11",190,4.42,60,2,9.1,-5,492,257.3,285.7,17,15.97,7,34,12,10.1,100,,,,
@@ -39,7 +39,7 @@ Rank,Player,Pos,Us_Pos,ECR_Pos,ESPN_Pos,Tier,Team,Bye,Age,Exp,Ht,Wt,40yd,OurValu
 38,Derrick Henry,RB,RB12,RB12,RB5,RB-T4,BAL,13,32.7,11,6'3",252,4.54,33,0,10.3,-28,479,207.1,272,17,37.72,16,47,11,16.6,99,,,,
 39,Breece Hall,RB,RB13,RB13,RB13,RB-T4,NYJ,13,25.3,5,5'11",217,4.39,32,1,32.6,-6,-534,204.6,189.7,16,39.93,28,56,22,36,98,,,,
 40,George Kittle,TE,TE10,TE10,TE8,TE-T4,SF,8,32.9,10,6'4",250,4.52,32,59,89.2,49,144,129.2,133,11,98.93,66,229,124,73.4,90,,,,
-41,Brock Purdy,QB,QB11,QB11,QB11,QB-T4,SF,8,26.7,5,6'1",220,4.84,31,56,84.7,44,-39,284.8,175.4,9,96.5,63,119,99,110.4,86,,,,
+41,Brock Purdy,QB,QB11,QB11,QB11,QB-T4,SF,8,26.7,5,6'1",220,4.84,31,56,84.7,44,-39,284.8,175.4,9,96.5,63,119,99,110.4,86,,,49ers' Brock Purdy may have found a goldmine in new teammate (rss:yardbarker),https://www.yardbarker.com/nfl/articles/49ers_brock_purdy_may_have_found_a_goldmine_in_new_teammate/s1_13132_44256204
 42,A.J. Brown,WR,WR8,WR8,WR10,WR-T4,NE,11,29.2,8,6'1",226,4.49,30,-28,17.1,-25,881,214,181.3,15,14.25,6,35,26,21,99,,,,
 43,Jeremiyah Love,RB,RB14,RB14,RB10,RB-T4,ARI,14,21.3,R,6'0",214,4.36,30,-2,29.2,-14,-470,201.6,,,41.44,27,65,17,26,98,,,,
 44,Dalton Kincaid,TE,TE11,TE11,TE14,TE-T4,BUF,7,26.9,4,6'3",246,,28,68,141.8,98,137,121.7,106.6,12,112.42,85,155,138,130.9,84,,,,
@@ -47,7 +47,7 @@ Rank,Player,Pos,Us_Pos,ECR_Pos,ESPN_Pos,Tier,Team,Bye,Age,Exp,Ht,Wt,40yd,OurValu
 46,Kyren Williams,RB,RB15,RB15,RB17,RB-T4,LAR,11,26,5,5'9",207,4.65,27,-4,26.9,-19,733,195.9,245.3,17,41.52,24,59,38,35.1,98,,,,
 47,Dallas Goedert,TE,TE12,TE12,TE10,TE-T4,PHI,10,31.7,9,6'5",256,,27,70,117.9,71,284,119.9,155.1,15,117.24,85,173,126,103.6,86,,,,
 48,Chris Olave,WR,WR10,WR10,WR11,WR-T4,NO,8,26.2,5,6'0",187,4.39,26,-30,23,-25,642,206.2,218,16,17.99,9,36,27,29.3,98,,,,
-49,Jake Ferguson,TE,TE13,TE13,TE13,TE-T4,DAL,14,27.6,5,6'5",250,4.81,26,69,142.1,93,-235,117.7,145.1,17,118.47,73,181,135,110.7,84,,,,
+49,Jake Ferguson,TE,TE13,TE13,TE13,TE-T4,DAL,14,27.6,5,6'5",250,4.81,26,69,142.1,93,-235,117.7,145.1,17,118.47,73,181,135,110.7,84,,,Sources: Cowboys open up $19M in cap space (rss:espn),https://www.espn.com/nfl/story/_/id/49819676/sources-cowboys-restructure-deals-clark-bland-ferguson
 50,George Pickens,WR,WR11,WR11,WR12,WR-T4,DAL,14,25.5,5,6'3",205,4.47,24,-30,18.8,-31,-325,202.3,243.4,17,20.43,9,40,28,28.2,99,,,Stephen Jones: It will be "real difficult" to keep both George Pickens and CeeDee Lamb long term (rss:yahoo),https://sports.yahoo.com/articles/stephen-jones-real-difficult-keep-001327638.html
 51,Javonte Williams,RB,RB16,RB16,RB15,RB-T5,DAL,14,26.4,6,5'10",220,4.55,24,-6,31.9,-19,484,191.2,225.3,16,44.62,31,61,30,32.8,98,,,,
 52,Isaiah Likely,TE,TE14,TE14,TE15,TE-T4,NYG,8,26.4,5,6'4",245,,24,71,135.2,83,238,114.6,48.2,12,123.13,87,236,145,122.3,82,,,,
@@ -167,7 +167,7 @@ Rank,Player,Pos,Us_Pos,ECR_Pos,ESPN_Pos,Tier,Team,Bye,Age,Exp,Ht,Wt,40yd,OurValu
 166,Aaron Jones Sr.,RB,RB40,RB40,RB41,RB-T10,MIN,6,31.7,10,5'9",208,4.56,1,-50,106.7,-59,-74,107.8,104.7,12,115.78,77,156,152,113.8,74,,,,
 167,Kyle Monangai,RB,RB41,RB41,RB34,RB-T10,CHI,10,24.2,2,5'8",207,4.6,1,-50,107.7,-59,-261,106.8,133.7,17,116.95,84,162,130,123.7,80,,,,
 168,De'Zhaun Stribling,WR,WR54,WR54,WR40,WR-T11,SF,8,23.7,R,6'2",207,,1,-35,125,-43,160,106.1,,,132.96,71,281,92,138.7,50,,,,
-169,Kirk Cousins,QB,QB33,QB33,QB34,QB-T8,LV,13,38,15,6'3",214,4.84,1,120,,,45,105.9,103.5,10,288.51,179,347,430,170,5,ADD,,Raiders name Cousins starting QB for Week 1 (rss:espn),https://www.espn.com/nfl/story/_/id/49804802/raiders-name-kirk-cousins-starting-qb-week-1-fernando-mendoza
+169,Kirk Cousins,QB,QB33,QB33,QB34,QB-T8,LV,13,38,15,6'3",214,4.84,1,120,,,45,105.9,103.5,10,288.51,179,347,430,170,5,ADD,,Klint Kubiak names Kirk Cousins starter over No. 1 pick Fernando Mendoza (rss:cbs),https://www.cbssports.com/nfl/news/klint-kubiak-names-kirk-cousins-starter-over-no-1-pick-fernando-mendoza/
 170,Jordyn Tyson,WR,WR55,WR55,WR64,WR-T11,NO,8,22.1,R,6'2",200,,1,-35,158.9,-11,-1138,104.4,,,135.15,91,241,197,168.1,68,DROP,,,
 171,Woody Marks,RB,RB42,RB42,RB42,RB-T10,HOU,8,25.7,2,5'10",208,4.54,1,-34,138.9,-32,147,103.1,133.1,16,137.25,93,168,153,151.9,51,,,,
 172,Deebo Samuel Sr.,WR,WR56,WR56,WR54,WR-T11,SF,8,30.6,8,6'0",215,4.48,1,-33,106.4,-66,146,102.8,152.2,16,138.51,81,232,159,143.6,60,,,,
@@ -280,7 +280,7 @@ Rank,Player,Pos,Us_Pos,ECR_Pos,ESPN_Pos,Tier,Team,Bye,Age,Exp,Ht,Wt,40yd,OurValu
 279,Tyreek Hill,WR,WR109,WR109,WR161,WR-T11,FA,,32.5,10,5'10",191,,1,4,,,,45.4,43,4,282.61,192,385,1732,169.9,15,DROP,,,
 280,George Holani,RB,RB70,RB70,RB73,RB-T10,SEA,11,26.7,3,5'10",210,4.52,1,-36,,,,45.2,13.8,10,243.54,154,332,346,170.3,5,,,,
 281,Xavier Hutchinson,WR,WR110,WR110,WR85,WR-T11,HOU,8,26.3,4,6'3",210,4.53,1,6,,,,44.9,80.5,16,287.42,176,384,328,170.3,4,,,,
-282,Anthony Richardson Sr.,QB,QB44,QB44,QB43,QB-T8,IND,13,24.3,4,6'4",244,4.43,1,65,,,,44.6,1.7,2,346.95,295,392,478,170,9,,,,
+282,Anthony Richardson Sr.,QB,QB44,QB44,QB43,QB-T8,IND,13,24.3,4,6'4",244,4.43,1,65,,,,44.6,1.7,2,346.95,295,392,478,170,9,,,Colts make major Anthony Richardson Sr. decision ahead of Week 1 (rss:yardbarker),https://www.yardbarker.com/nfl/articles/colts_make_major_anthony_richardson_sr_decision_ahead_of_week_1/s1_13132_44254482
 283,Hollywood Brown,WR,WR111,WR111,WR120,WR-T11,PHI,10,,,,,,1,6,,,,44.4,,,288.84,239,382,1047,170,3,,,,
 284,Erick All Jr.,TE,TE45,TE45,TE38,TE-T11,CIN,6,26,3,6'5",255,,1,30,,,,44.4,,,314.23,209,409,445,170,1,,,,
 285,Ollie Gordon II,RB,RB71,RB71,RB62,RB-T10,MIA,6,22.6,2,6'2",225,4.61,1,-36,52,-233,,44.3,50.6,17,248.68,162,332,308,170.7,2,,,,
@@ -289,7 +289,7 @@ Rank,Player,Pos,Us_Pos,ECR_Pos,ESPN_Pos,Tier,Team,Bye,Age,Exp,Ht,Wt,40yd,OurValu
 288,Bryce Lance,WR,WR113,WR113,WR115,WR-T11,NO,8,24,R,6'3",204,4.34,1,2,,,,42.8,,,289.7,180,351,1011,170,2,,,,
 289,Isaiah Bond,WR,WR114,WR114,WR119,WR-T11,CLE,11,22.5,2,5'11",180,4.39,1,1,,,,42.1,45.7,15,290.48,224,380,1041,170,1,,,,
 290,Najee Harris,RB,RB72,RB72,RB56,RB-T10,NYG,8,28.5,6,6'1",232,,1,-41,,,17,41.6,10.1,3,249.45,160,360,222,170.2,8,,,,
-291,Cade Klubnik,QB,QB45,QB45,QB51,QB-T8,NYJ,13,22.9,R,6'2",207,,1,57,,,,41.4,,,347.83,325,398,1260,170,5,,,,
+291,Cade Klubnik,QB,QB45,QB45,QB51,QB-T8,NYJ,13,22.9,R,6'2",207,,1,57,,,,41.4,,,347.83,325,398,1260,170,5,,,Jets work out draft bust Will Levis after Titans release (rss:yahoo),https://sports.yahoo.com/articles/jets-draft-bust-levis-titans-205904297.html
 292,Kendrick Bourne,WR,WR115,WR115,WR110,WR-T11,ARI,14,31.1,10,6'1",203,4.68,1,1,,,,41.2,73.6,14,292.65,224,365,984,170,2,,,,
 293,Eli Raridon,TE,TE47,TE47,TE50,TE-T11,NE,11,22.6,R,6'6",245,,1,30,,,,41.2,,,323.22,209,411,473,170,4,,,,
 294,Demond Claiborne,RB,RB73,RB73,RB85,RB-T10,MIN,6,22.9,R,5'10",188,4.37,1,-42,,,,40.3,,,252.01,160,354,398,170.3,10,,,,

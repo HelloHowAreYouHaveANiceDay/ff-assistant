@@ -610,65 +610,86 @@ function freshDot(iso) {
   const d = (Date.now() - Date.parse(iso)) / 86400000;
   return d < 2 ? "green" : d < 7 ? "amber" : "red";
 }
-// pipeline edges: sources fan into assemble (ECR also drives the projection curve) -> board
-const DAG_EDGES = [["ecr", "projections"], ["league", "projections"], ["projections", "assemble"], ["assemble", "board"]]
-  .concat(["bio", "advanced", "trade", "weekly", "status", "odds", "boris", "adp", "market", "news", "league"].map(s => [s, "assemble"]));
+// --- Data-warehouse lineage: external sources -> landing tables -> config/curve -> marts -> view ---
+const WH_NODES = [].concat(
+  [["src_fp", "FantasyPros"], ["src_nflverse", "nflverse"], ["src_espn", "ESPN"], ["src_sleeper", "Sleeper"],
+   ["src_dproc", "DynastyProcess"], ["src_ffc", "FF Calculator"], ["src_fcalc", "FantasyCalc"], ["src_boris", "Boris Chen"], ["src_rss", "RSS feeds"]]
+    .map(([id, name]) => ({ id, name, kind: "source" })),
+  // L1 landing tables: [table, materializing source id]
+  [["player", "ecr"], ["ranking", "ecr"], ["player_bio", "bio"], ["team_bye", "byes"], ["player_advanced", "advanced"],
+   ["trade_value", "trade"], ["weekly_rank", "weekly"], ["player_status", "status"], ["trending", "status"],
+   ["team_odds", "odds"], ["boris_tier", "boris"], ["adp", "adp"], ["market_value", "market"], ["news", "news"], ["league", "league"]]
+    .map(([id, mat]) => ({ id, name: id, kind: "table", table: id, mat })),
+  [{ id: "settings", name: "config", kind: "config", sub: "scoring · format" },
+   { id: "points", name: "points.csv", kind: "artifact", sub: "projection curve" },
+   { id: "player_value", name: "player_value", kind: "mart", table: "player_value" },
+   { id: "board", name: "board", kind: "mart", table: "board" },
+   { id: "view", name: "Players view", kind: "output", sub: "board + Copilot" }]
+);
+const WH_EDGES = [
+  ["src_fp", "ranking"], ["src_fp", "player"], ["src_fp", "weekly_rank"],
+  ["src_nflverse", "player_bio"], ["src_nflverse", "team_bye"], ["src_nflverse", "player_advanced"], ["src_nflverse", "points"],
+  ["src_espn", "team_odds"], ["src_espn", "league"], ["src_espn", "ranking"],
+  ["src_sleeper", "player_status"], ["src_sleeper", "trending"],
+  ["src_dproc", "trade_value"], ["src_ffc", "adp"], ["src_fcalc", "market_value"], ["src_boris", "boris_tier"], ["src_rss", "news"],
+  ["league", "settings"], ["ranking", "points"], ["settings", "points"], ["points", "player_value"], ["settings", "player_value"],
+  ["board", "view"],
+].concat(["player_value", "player_bio", "player_advanced", "trade_value", "weekly_rank", "player_status", "trending", "team_odds", "boris_tier", "adp", "market_value", "news", "ranking", "team_bye"].map(t => [t, "board"]));
 function views_sources() {
   document.getElementById("view").innerHTML = `<div class="settings">
-    <div class="sec"><h2>Data Sources</h2><span class="lbl">pipeline DAG — click a source to update just it</span></div>
+    <div class="sec"><h2>Data Warehouse</h2><span class="lbl">lineage DAG — click a table to re-materialize it</span></div>
     <div id="src-banner" class="setupbanner mut">Loading…</div>
-    <div class="btnrow"><button class="pbtn primary" id="src-update">Update all</button><span class="mut" id="src-status"></span></div>
+    <div class="btnrow"><button class="pbtn primary" id="src-update">Rebuild all</button><span class="mut" id="src-status"></span></div>
     <div id="dag-wrap"><svg id="dag"></svg></div>
   </div>`;
   document.getElementById("src-update").onclick = async () => {
-    if (!window.mc) return; document.getElementById("src-status").textContent = "updating all sources (~5s)…";
+    if (!window.mc) return; document.getElementById("src-status").textContent = "rebuilding the whole warehouse (~5s)…";
     const r = await window.mc.refreshData();
-    document.getElementById("src-status").textContent = r.ok ? "all sources updated — reloading…" : "update failed";
+    document.getElementById("src-status").textContent = r.ok ? "rebuilt — reloading…" : "rebuild failed";
     if (r.ok) setTimeout(() => location.reload(), 900);
   };
   loadDag();
 }
 async function loadDag() {
   const banner = document.getElementById("src-banner"), svg = document.getElementById("dag");
-  if (!banner || !window.mc?.dataSources || typeof dagre === "undefined") { if (banner) banner.textContent = "Open inside the app to see the pipeline."; return; }
+  if (!banner || !window.mc?.dataSources || typeof dagre === "undefined") { if (banner) banner.textContent = "Open inside the app to see the warehouse."; return; }
   const d = await window.mc.dataSources().catch(() => null);
-  if (!d) { banner.textContent = "Could not read sources."; return; }
+  if (!d) { banner.textContent = "Could not read the warehouse."; return; }
+  const tbls = d.tables || {};
+  const nTables = WH_NODES.filter(n => n.kind === "table").length;
   banner.className = "setupbanner ok";
-  banner.innerHTML = `Last full refresh <b>${relTime(d.lastIngest)}</b> · ${d.sources.length} sources → projections → assemble → board`;
-  const nodes = {};
-  for (const s of d.sources) nodes[s.id] = { ...s, kind: "source" };
-  nodes.projections = { id: "projections", name: "projections", sub: "VOR curve", kind: "transform" };
-  nodes.assemble = { id: "assemble", name: "assemble", sub: "values · tiers · vsADP", kind: "transform" };
-  nodes.board = { id: "board", name: "board", sub: (d.sources.find(s => s.id === "ecr")?.rows || "") && "the Players view", kind: "output" };
-  const W = 170, H = 46;
-  const g = new dagre.graphlib.Graph(); g.setGraph({ rankdir: "LR", nodesep: 14, ranksep: 66, marginx: 10, marginy: 10 }); g.setDefaultEdgeLabel(() => ({}));
-  for (const id in nodes) g.setNode(id, { width: W, height: H });
-  for (const [a, b] of DAG_EDGES) if (nodes[a] && nodes[b]) g.setEdge(a, b);
+  banner.innerHTML = `Last full rebuild <b>${relTime(d.lastIngest)}</b> · 9 sources → ${nTables} tables → player_value → board`;
+  const W = 156, H = 42;
+  const g = new dagre.graphlib.Graph(); g.setGraph({ rankdir: "LR", nodesep: 10, ranksep: 58, marginx: 10, marginy: 10 }); g.setDefaultEdgeLabel(() => ({}));
+  for (const n of WH_NODES) g.setNode(n.id, { width: W, height: H });
+  for (const [a, b] of WH_EDGES) g.setEdge(a, b);
   dagre.layout(g);
   const gw = Math.ceil(g.graph().width), gh = Math.ceil(g.graph().height);
   svg.setAttribute("width", gw); svg.setAttribute("height", gh); svg.setAttribute("viewBox", `0 0 ${gw} ${gh}`);
   let h = "";
   for (const e of g.edges()) h += `<polyline points="${g.edge(e).points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" class="dag-edge"/>`;
-  for (const id in nodes) {
-    const n = nodes[id], p = g.node(id); if (!p) continue;
-    const dot = n.kind === "source" ? freshDot(n.updated) : "";
-    const sub = n.kind === "source" ? `${n.rows} · ${relTime(n.updated)}` : n.sub;
-    h += `<g class="dag-node ${n.kind}" data-id="${id}" transform="translate(${(p.x - W / 2).toFixed(1)},${(p.y - H / 2).toFixed(1)})">`
-      + `<rect width="${W}" height="${H}" rx="7"/>`
-      + (dot ? `<circle cx="13" cy="14" r="4" class="dot-${dot}"/>` : "")
-      + `<text x="${dot ? 24 : 12}" y="18" class="dag-name">${esc(n.name)}</text>`
-      + `<text x="12" y="35" class="dag-sub">${esc(String(sub || ""))}</text></g>`;
+  for (const n of WH_NODES) {
+    const p = g.node(n.id); if (!p) continue;
+    const t = n.table ? tbls[n.table] : null;
+    const hasDot = n.kind === "table" || n.kind === "mart";
+    const dot = hasDot ? freshDot(t?.updated) : "";
+    const sub = t ? `${t.rows} rows · ${relTime(t.updated)}` : n.sub;
+    h += `<g class="dag-node ${n.kind}${n.mat ? " clickable" : ""}" data-mat="${n.mat || ""}" data-id="${n.id}" transform="translate(${(p.x - W / 2).toFixed(1)},${(p.y - H / 2).toFixed(1)})">`
+      + `<rect width="${W}" height="${H}" rx="6"/>`
+      + (dot ? `<circle cx="12" cy="13" r="3.5" class="dot-${dot}"/>` : "")
+      + `<text x="${dot ? 22 : 11}" y="17" class="dag-name">${esc(n.name)}</text>`
+      + `<text x="11" y="32" class="dag-sub">${esc(String(sub || ""))}</text></g>`;
   }
   svg.innerHTML = h;
-  svg.querySelectorAll(".dag-node.source").forEach(el => el.onclick = () => materialize(el.dataset.id));
+  svg.querySelectorAll(".dag-node.clickable").forEach(el => el.onclick = () => materialize(el.dataset.mat, el.dataset.id));
 }
-async function materialize(id) {
-  if (!window.mc?.ingestSource) return;
-  const el = document.querySelector(`.dag-node[data-id="${id}"]`); if (el) el.classList.add("running");
-  const st = document.getElementById("src-status"); if (st) st.textContent = `materializing ${id} → rebuilding board…`;
-  const r = await window.mc.ingestSource(id).catch(() => ({ ok: false }));
-  if (st) st.textContent = r.ok ? `${id} updated` : `failed to update ${id}`;
-  await loadDag(); // refresh freshness dots
+async function materialize(mat, nodeId) {
+  if (!window.mc?.ingestSource || !mat) return;
+  document.querySelectorAll(`.dag-node[data-mat="${mat}"]`).forEach(el => el.classList.add("running"));
+  const st = document.getElementById("src-status"); if (st) st.textContent = `materializing ${nodeId} → rebuilding board…`;
+  const r = await window.mc.ingestSource(mat).catch(() => ({ ok: false }));
+  if (st) st.textContent = r.ok ? `${nodeId} + board re-materialized` : `failed to materialize ${nodeId}`;
+  await loadDag(); // refresh freshness across the warehouse
   try { const ad = await window.mc.appData(); if (ad?.players?.length) { DATA = ad.players; byName = new Map(DATA.map(p => [p.Player, p])); } } catch (e) { /* keep */ }
 }
 

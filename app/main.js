@@ -124,7 +124,7 @@ function createWindow() {
   }
 }
 
-// --- IPC to the engine ---
+// --- IPC to the engine (data-sources returns per-table warehouse freshness) ---
 function newestDraftLog() {
   const dir = DATA_DIR;
   let files = [];

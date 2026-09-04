@@ -186,6 +186,7 @@ export async function ingestOne(dbPath: string | undefined, id: string): Promise
   switch (id) {
     case "ecr": rows = (await ingestEcr(db, SEASON)).players; break;
     case "bio": rows = await ingestBio(db, SEASON); break;
+    case "byes": rows = await ingestByes(db, SEASON); break;
     case "advanced": rows = (await ingestAdvanced(db, SEASON)).snap; break;
     case "trade": rows = await ingestTradeValues(db); break;
     case "weekly": rows = await ingestWeekly(db); break;

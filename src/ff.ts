@@ -172,29 +172,24 @@ async function cmdServe(rest: string[]) {
           break;
         }
         case "data-sources": {
-          const meta = (id: string, name: string, feeds: string, table: string, tsCol: string, stage: string) => {
-            let rows = 0, updated: string | null = null;
-            try { const r = db.prepare(`SELECT count(*) c, max(${tsCol}) t FROM ${table}`).get() as { c: number; t: string | null }; rows = r.c; updated = r.t; } catch { /* table/col absent */ }
-            return { id, name, feeds, table, stage, rows, updated };
-          };
+          // freshness (rows + last-updated) for every table node in the warehouse DAG; the renderer
+          // holds the static lineage and looks up each table here by name.
+          const TS: [string, string][] = [
+            ["player", "updated_at"], ["ranking", "fetched_at"], ["player_bio", "updated_at"], ["team_bye", ""],
+            ["player_advanced", "updated_at"], ["trade_value", "updated_at"], ["weekly_rank", "scraped"],
+            ["player_status", "updated_at"], ["trending", "scraped"], ["team_odds", "updated_at"], ["boris_tier", "scraped"],
+            ["adp", "scraped"], ["market_value", "updated_at"], ["news", "asof"], ["league", "last_synced_at"],
+            ["player_value", "updated_at"], ["board", "updated_at"],
+          ];
+          const tables: Record<string, { rows: number; updated: string | null }> = {};
+          for (const [t, col] of TS) {
+            try {
+              const r = db.prepare(`SELECT count(*) c${col ? `, max(${col}) u` : ""} FROM ${t}`).get() as { c: number; u?: string | null };
+              tables[t] = { rows: r.c, updated: r.u ?? null };
+            } catch { tables[t] = { rows: 0, updated: null }; }
+          }
           const lastIngest = (db.prepare("SELECT value FROM settings WHERE key='last_ingest'").get() as { value: string } | undefined)?.value ?? null;
-          result = {
-            lastIngest,
-            sources: [
-              meta("ecr", "FantasyPros ECR", "player base + consensus rank", "ranking", "fetched_at", "ingest"),
-              meta("bio", "nflverse players + combine", "age / height / 40", "player_bio", "updated_at", "ingest"),
-              meta("advanced", "nflverse snaps + PFR", "snap% / aDOT / drop%", "player_advanced", "updated_at", "ingest"),
-              meta("trade", "DynastyProcess values", "trade value 1QB/2QB", "trade_value", "updated_at", "ingest"),
-              meta("weekly", "FantasyPros weekly", "this-week rank", "weekly_rank", "scraped", "ingest"),
-              meta("status", "Sleeper status + trending", "injury / depth / waiver buzz", "player_status", "updated_at", "ingest"),
-              meta("odds", "ESPN Vegas odds", "implied team totals", "team_odds", "updated_at", "ingest"),
-              meta("boris", "Boris Chen tiers", "positional tiers", "boris_tier", "scraped", "ingest"),
-              meta("adp", "FFC draft-market ADP", "ADP + vsADP", "adp", "scraped", "ingest"),
-              meta("market", "FantasyCalc market", "market value + momentum", "market_value", "updated_at", "ingest"),
-              meta("news", "RSS + Sleeper news", "injury flags / headlines", "news", "asof", "ingest"),
-              meta("league", "ESPN league sync", "format + scoring model", "league", "last_synced_at", "league"),
-            ],
-          };
+          result = { lastIngest, tables };
           break;
         }
         case "config-get": result = getConfig(db); break;

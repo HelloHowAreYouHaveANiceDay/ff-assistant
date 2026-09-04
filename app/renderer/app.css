@@ -185,13 +185,16 @@ tr.mine{background:#f4f6f2} tr.mine:hover{background:#eef1ea}
 #dag{display:block}
 .dag-edge{fill:none;stroke:var(--faint);stroke-width:1.5}
 .dag-node rect{fill:var(--paper);stroke:var(--line);stroke-width:1}
-.dag-node.source{cursor:pointer}
-.dag-node.source:hover rect{stroke:var(--sel);stroke-width:1.6}
-.dag-node.transform rect{fill:color-mix(in srgb,var(--sel) 8%,var(--paper));stroke-dasharray:4 2}
+.dag-node.source rect{fill:color-mix(in srgb,var(--faint) 22%,var(--paper));stroke:var(--faint)}
+.dag-node.config rect{fill:color-mix(in srgb,#d99a00 12%,var(--paper));stroke-dasharray:4 2}
+.dag-node.artifact rect{fill:color-mix(in srgb,var(--sel) 6%,var(--paper));stroke-dasharray:4 2}
+.dag-node.mart rect{fill:color-mix(in srgb,var(--sel) 13%,var(--paper))}
 .dag-node.output rect{fill:var(--sel)}
 .dag-node.output .dag-name,.dag-node.output .dag-sub{fill:var(--sel-fg)}
-.dag-name{font-size:12px;font-weight:600;fill:var(--tx)}
-.dag-sub{font-size:9.5px;fill:var(--mut)}
+.dag-node.clickable{cursor:pointer}
+.dag-node.clickable:hover rect{stroke:var(--sel);stroke-width:1.6}
+.dag-name{font-size:11.5px;font-weight:600;fill:var(--tx)}
+.dag-sub{font-size:9px;fill:var(--mut)}
 .dot-green{fill:#2a9d3f}.dot-amber{fill:#d99a00}.dot-red{fill:#c0392b}.dot-grey{fill:#9aa}
 .dag-node.running rect{stroke:var(--sel);stroke-width:2;animation:dagpulse 1s ease-in-out infinite}
 @keyframes dagpulse{0%,100%{opacity:1}50%{opacity:.45}}
