@@ -54,6 +54,58 @@ taking "Jr." as the surname so suffixed players fell out of the TE count (mean 2
 fixed); and logs paired to records POSITIONALLY while two suites both wrote `mock-01.log`. Check the
 instrument before believing the reading.
 
+## Bot budget anxiety: fixing the top of the market (2026-09-05)
+
+`scripts/sim-vs-mock.mjs` compares the SIM against the 10 live ESPN mock drafts we ran
+(`data/draft-log-*.json`, every pick + price) and against this league's real drafts, truncating all
+markets to the same 90-pick prefix (auto-draft exits when OUR roster fills, so the mock logs cover
+only the early/mid draft -- comparing 90 picks against 192 would be meaningless).
+
+It found one defect confirmed by TWO independent references at once: the ESPN mocks top out at
+**$105** and this league's real drafts at **$103**, while the sim was pricing its top player at
+**$132 (vor) / $147 (rank)**. No manager in this league has ever paid that: historical `maxBuy` runs
+$47-89, mean $72.
+
+**Cause:** `makeBotBidder` ignored `profile.maxBuy` entirely -- the bots had no budget anxiety, so
+nothing stopped two of them escalating a stud past any price a human would pay. **Fix:** a SOFT cap
+at `maxBuy x U(0.95, 1.30)`, soft because `maxBuy` is an average of yearly maxima and a manager can
+exceed it in a given year; a hard ceiling would clip the top of the distribution flat.
+
+| top price | before | after | reference |
+|---|---|---|---|
+| sim, vor book | $132 | **$99.5** | ESPN mocks $105, real league $103 |
+| sim, rank book | $147 | **$101.4** | |
+
+The calibrated rank book now scores **9/10** face-validity metrics (only median $3.5 vs $2 remains),
+with QB $297 and TE $237 both in range.
+
+### The correction removed the model disagreement
+
+Every lever had been tuned against the old, too-hot field, so the shipped config was re-verified.
+The two opponent models now AGREE:
+
+| aggr | corrected vor | corrected rank |
+|---|---|---|
+| 0.6 | 32.7 | 34.6 |
+| **0.7** | **34.6** | **36.7** |
+| 0.85 | 30.5 | 30.7 |
+| 1.0 | 24.4 | 26.6 |
+
+0.7 is the peak under BOTH books -- the minimax tension that briefly argued for 0.6 was an artifact
+of an unrealistic field, not a real uncertainty. Shading remains the largest lever (+10.2pp vor,
++10.1pp rank). Shipped default verified flagless: **34.6% championships, 94% playoffs**.
+
+### What the sim/mock comparison also settled
+
+**The sim models this room better than the ESPN mock rooms do.** Positional-$ distance from your
+2025 draft: **sim rank book 123, ESPN mocks 341, sim vor book 728**. The mock rooms punt QB far
+harder than your league ($144 vs $328 over the same prefix), which is why mock outcomes were never
+used to tune strategy -- that refusal now has a number behind it. Money FLOW matches everywhere
+(~$3,000 in the first 90 picks across all three markets).
+
+Remaining gap: the sim has 8-12% of early picks at $1-5 against the mocks' 28%, so our bots bid up
+the early-mid tier more uniformly than real auto-teams do.
+
 ## Breaking the self-reference + calibrating the opponent model (2026-09-04/05)
 
 The sim's bots priced players with `computeValues` -- OUR OWN valuation function -- so the field was

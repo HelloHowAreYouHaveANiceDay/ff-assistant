@@ -94,6 +94,16 @@ export function makeBotBidder(profile: ManagerProfile, leagueShare: Record<strin
         else if (pos === "RB" || pos === "WR" || pos === "TE") bid = Math.max(bid, Math.min(remaining * 0.4, trueVal * 1.1));
       }
     }
+    // BUDGET ANXIETY at the top of the market. Without this the field bid a top price of $132-147,
+    // which no manager in this league has ever paid: historical maxBuy runs $47-89 (mean $72), and
+    // the real top price is $88-106 -- ESPN mock rooms independently top out at $105. A bot that
+    // will bid $147 makes the elite tier look hotter than it is, which is exactly the price region
+    // maxShare governs.
+    //
+    // maxBuy is an AVERAGE of yearly maxima, so a manager can exceed it in a given year -- the cap
+    // is soft, drawn per bid in [0.95, 1.30] x maxBuy, rather than a hard ceiling that would clip
+    // the top of the distribution flat.
+    if (profile.maxBuy > 0) bid = Math.min(bid, profile.maxBuy * (0.95 + rng() * 0.35));
     return Math.max(1, Math.round(bid));
   };
 }
