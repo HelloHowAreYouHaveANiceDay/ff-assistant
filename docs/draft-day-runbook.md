@@ -7,7 +7,12 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
 
 ## The evening before
 
-1. **Session up + logged in** (only human step): `cd H:/working/bro && npm run -s bro -- session start espn`, then log into ESPN in that browser window. `ff` attaches over CDP; it never logs in or handles a password. Verify: `npm run ff -- preflight` (attached, logged in, real league reachable).
+1. **App up + logged in** (only human step): `cd app && npm start`, then log into ESPN in the app
+   window. The login persists across restarts (`persist:espn` partition), so this is once per machine.
+   **Use `--app` on every draft verb** -- that drives the app's own embedded browser and is the path
+   all 10 validation mock drafts ran through. (The older bro path, `bro session start espn` with no
+   `--app` flag, still works and remains the fallback; plain `--port 9223` does NOT -- Playwright
+   cannot see the Electron webview and hands the draft verbs the app's UI window instead.)
 2. **Rebuild projections + values fresh** (the #1 edge is an independent, current projection).
    The CANONICAL sequence is all-TypeScript and must be run as ONE build, in this order:
    ```
@@ -43,10 +48,14 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
    live headlines for players you'd draft. Read-only -- the bidder does NOT auto-apply it yet; use it
    to set `--avoids` or to bid with your eyes open. (`--no-headlines` for just the flags.)
 3. **Confirm the config on the trustworthy harness** (championship rate, not season points):
-   `npm run ff -- backtest --full --no-lookahead --inflation --seasons 2015-2024 --n 400` -- default
-   reserve 15 / max-share 0.35 / premium 2 (BALANCED; the reserve 12-20 plateau is ~24%, beats the old
-   aggressive-lean 5/0.6 by ~8.5 championship pts; 15 chosen over 20 for live robustness -- see
-   validation.md). `ff sim` is a season-points proxy only -- don't pick the config from it.
+   ```
+   npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
+   ```
+   Expect **~33%** championships / ~94% playoffs. A very different number means an input drifted --
+   find it before drafting. Shipped levers (2026-09-05): **aggr 0.7, benchDiscount 0.25,
+   starterReserve 4, maxShare 0.25, premium 2**, all positional multipliers 1.0, inflation ON.
+   `node scripts/read-config.mjs` prints what the engine will ACTUALLY use (stored config wins over
+   code defaults). `ff sim` is a season-points proxy only -- never pick the config from it.
 4. **Generate the cheat sheet:** `npm run ff -- cheatsheet` -> `data/cheatsheet.md`. Keep it open.
 4b. **Full draft board (Google-Sheets table):**
    ```
@@ -84,18 +93,21 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
 
 ## When the draft room opens
 
-5. **Enter the real room:** `npm run ff -- enter-draft` (expect `IN THE DRAFT ROOM ...leagueId=462233`).
-   For a rehearsal use `npm run ff -- launch-practice` instead.
+5. **Enter the real room:** `npm run ff -- enter-draft --app` (expect `IN THE DRAFT ROOM ...leagueId=462233`).
+   For a rehearsal use `npm run ff -- launch-practice --app` instead. Do NOT run `enter-draft`
+   before the room opens -- a duplicate draft connection kicks your seat.
 6. **Sanity-check the reads** against the real settings:
    ```
-   npm run ff -- roster        # slot layout matches the real league (incl. any extra slots)
-   npm run ff -- read-block    # if a player is up: name/pos/offer/myMax/canBid look right
-   npm run ff -- board         # available players + values
+   npm run ff -- roster --app       # slot layout matches the real league (incl. any extra slots)
+   npm run ff -- read-block --app   # if a player is up: name/pos/offer/myMax/canBid look right
+   npm run ff -- board              # available players + values (reads the store, no browser)
    ```
 
 ## Run the draft
 
-7. **Full-auto:** `npm run ff -- auto-draft` -- no `--csv`, and check the startup line.
+7. **Full-auto:** `npm run ff -- auto-draft --app` -- no `--csv`, and check the startup line.
+   A single-instance lock prevents a second agent sharing your seat; if it refuses to start it prints
+   the exact `taskkill` command for the stale one.
    - **Confirm `[auto-draft] value source:` reads `sqlite:player_value(...)` before the first bid**
      (`ff.ts` prints it at startup, with the row count). That table is the freshest surface,
      written by `ff refresh`.
