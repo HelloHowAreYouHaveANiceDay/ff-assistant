@@ -504,7 +504,9 @@ no-lookahead championship rate, `backtest --full --no-lookahead --inflation --se
 
 Championship rises with the per-starter RESERVE up to a plateau at reserve 12-20 (~24%), then
 COLLAPSES at 25 (8 other starters x $25 = the whole $200 budget -> we bid $1 on everyone). **Default
-= reserve 15 / max-share 0.35 / premium 2** (~24% at n=400). The whole plateau 12-20 is statistically
+= reserve 15 / max-share 0.35 / premium 2** (~24% at n=400) -- **SUPERSEDED 2026-09-05: shipped is
+reserve 4 / max-share 0.25 under aggr 0.7; reserve proved nearly INERT once bids are shaded.** The
+whole plateau 12-20 is statistically
 tied (SE ~0.6 pts), and it beats the old aggressive-lean 5/0.6 (15.7%) by ~8.5 pts, far more than 2
 SE. Cross-checks agree: without inflation the top cells drop to 20.3% (inflation stays ON, +~4 pts);
 draft-only lookahead has 15/0.35 at ~25% vs 5/0.6 at 19.7%.
@@ -529,7 +531,8 @@ truth. Sweep (11 seasons, config fixed):
   room's blind spots.**
 - tighter accuracy: 0.25 -> 41%, 0.20 -> 43%, 0.12 -> 44%, 0.05 -> 46%.
 So VALUES are the top tunable lever. Full breakdown: docs/edges.md. Config is NOT neutral though
-(see the Step 5 table above): keep the BALANCED default (reserve 15 / max-share 0.35) -- the deep
+(see the Step 5 table above; **the specific values are SUPERSEDED -- see the 2026-09-05 sections at
+the top of this file**): keep a BALANCED default (then reserve 15 / max-share 0.35) -- the deep
 roster banks the room's stud-overpay -- and invest most in better VALUES + discipline vs the room.
 
 ## FULL-SYSTEM backtest (`--full --no-lookahead`) -- the whole pipeline end-to-end
@@ -639,7 +642,8 @@ The harness repeatedly corrected intuition -- which is the point:
   vs ~3.5 for moderate). This MATCHES the league's real behavior (61% of picks are $1-5).
 - **`ff sim` prefers concentration, but that is the season-points proxy over-rewarding top-heavy
   rosters (it has no playoffs) -- do NOT pick the config from it.** The real default is BALANCED
-  (reserve 15 / max-share 0.35, premium 2), chosen from the championship backtest (Step 5 table
+  (reserve 15 / max-share 0.35, premium 2 -- **SUPERSEDED, now 4 / 0.25 / 2**), chosen from the
+  championship backtest (Step 5 table
   above), which the sim's own "Known limitation" section below predicts.
 
 ## Known limitation to weigh (why we don't just go max-aggression)

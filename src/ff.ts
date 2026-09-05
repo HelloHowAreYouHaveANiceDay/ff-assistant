@@ -152,7 +152,7 @@ async function cmdServe(rest: string[]) {
   const { openDb, getConfig, setMyRoster, getMyRoster, setConfig } = await import("./db/db.js");
   const { appDataPayload } = await import("./data/appdata.js");
   const { authStatus } = await import("./agent/auth.js");
-  const { applyLevers } = await import("./draft/levers.js");
+  const { applyLevers, DEFAULT_LEVERS } = await import("./draft/levers.js");
   const db = openDb(valueOf(rest, "--db"));
   const send = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
   const curSeason = () => getConfig(db).season;
@@ -215,7 +215,15 @@ async function cmdServe(rest: string[]) {
         case "config-get": result = getConfig(db); break;
         case "config-set": setConfig(db, (params.config as Record<string, unknown>) ?? {}); result = getConfig(db); break;
         case "levers-set": { // clamp each knob to its valid range before storing
-          const next = applyLevers(getConfig(db).levers, (params.patch as Record<string, unknown>) ?? {});
+          const patch = (params.patch as Record<string, unknown>) ?? {};
+          // `reset: true` restores DEFAULT_LEVERS *server-side*. The renderer must never carry its
+          // own copy of the values: it did, and that copy went stale -- the app's "Reset levers"
+          // button held aggr 1.0 / reserve 15 / maxShare 0.35 and no benchDiscount or multipliers,
+          // so one click would have silently reverted the tuned config to the pre-shading posture
+          // (worth about -10 championship pts) with nothing to warn you.
+          const next = patch.reset === true
+            ? { ...DEFAULT_LEVERS }
+            : applyLevers(getConfig(db).levers, patch);
           setConfig(db, { levers: next }); result = next; break;
         }
         case "league-info": {

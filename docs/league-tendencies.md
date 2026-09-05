@@ -65,7 +65,10 @@ stable read on how THIS room drafts. Raw data: `data/draft-recap-{2023,2024,2025
 
 > **Corrected by the CHAMPIONSHIP backtest (Step 5, docs/validation.md):** the SIM (season points)
 > liked concentration, but that proxy over-rewards top-heavy rosters. On the trustworthy full-system
-> no-lookahead backtest, **BALANCED wins**: defaults are now `--starter-reserve 15 --max-share 0.35`
+> no-lookahead backtest, **BALANCED wins**. (Those defaults were superseded 2026-09-05: the shipped
+> posture is `--aggr 0.7 --starter-reserve 4 --max-share 0.25`, ~33% -- reserve turned out to be
+> nearly INERT under shading and maxShare is what binds. docs/validation.md.) Historic values:
+> `--starter-reserve 15 --max-share 0.35`
 > (measured on the EVEN-SPLIT value curve: 24.2% titles vs 15.7% for the old aggressive-lean 5/0.6;
 > re-verified on the shipped weighted curve at 25.7% vs 24.6%/24.1% neighbours -- docs/validation.md).
 > The room overpays for STUDS that bust

@@ -425,8 +425,10 @@ function views_settings() {
     renderLevers(); drawBody && drawBody();
   };
   document.getElementById("reset-levers").onclick = async () => {
-    const defaults = { tierBreak: 0.75, maxKDst: 2, starterReserve: 15, benchReserve: 1, maxShare: 0.35, aggr: 1.0, premium: 2, sleeperThreshold: 5 };
-    const next = await window.mc?.setLevers?.(defaults); if (next) CFG.levers = next;
+    // Ask the ENGINE for its defaults -- never hardcode them here. This list used to be duplicated
+    // in the renderer and went stale (aggr 1.0 / reserve 15 / maxShare 0.35, missing benchDiscount
+    // and the positional multipliers), so "Reset levers" would have quietly undone the tuning.
+    const next = await window.mc?.setLevers?.({ reset: true }); if (next) CFG.levers = next;
     renderLevers(); log.textContent = "Levers reset to defaults. Run Refresh to rebuild the board.";
   };
   loadLeagueStatus();

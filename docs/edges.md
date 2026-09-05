@@ -6,11 +6,13 @@ depend on the bot model, so weigh them as "big / medium / none", not to the deci
 
 > **Curve note (2026-09-03):** the percentages on this page were measured under the OLD even-split
 > FLEX baseline. The value curve has since changed (points-weighted FLEX allocation), which moved
-> the full-system no-lookahead headline from 13.6% to **24.4%** championships -- see "Weighted FLEX
+> the full-system no-lookahead headline from 13.6% to 24.4% championships -- and later work (bid
+> shading, benchDiscount, reserve/share) took it to **~33% on 25 seasons**. Numbers on this page are
+> pre-shading and stale in MAGNITUDE; the RANKING of edges still holds. See "Weighted FLEX
 > baselines" in docs/validation.md. The RANKING of the edges below is unaffected (the fix is itself
 > an instance of edge #2: a better independent value table); the absolute numbers are stale.
 
-### 0. Get the value curve itself right -- BIG, proven [13.6% -> 24.4%]
+### 0. Get the value curve itself right -- BIG, proven [13.6% -> 24.4%, pre-shading]
 Before any strategy dial: the bid table must price positions the way the format actually consumes
 them. Splitting FLEX slots evenly across RB/WR/TE instead of allocating them by projected points
 gave TE 11 phantom starting slots and cost ~11 championship points. This dwarfed every config
@@ -52,7 +54,8 @@ The agent also never forgets to set a lineup or misses a bye -- a real edge over
 ### 5. Roster construction / aggression dial -- BALANCED WINS (corrected Step 5, 2026-09-02)
 The earlier "NONE across seasons (~27-28%)" was the OLD uniform bot on the wrong 16-slot roster and
 did not hold. On the realistic per-manager field + the real 12-slot roster + the multi-season value
-curve, championship rises with the per-starter reserve to a plateau at reserve 15-20 (~24%) and
+curve AND at aggr 1.0, championship rose with the per-starter reserve to a plateau at 15-20 (~24%)
+and
 collapses at 25 (over-reserved). New default: **reserve 15 / max-share 0.35** (~24%, the 12-20 plateau; 15 over 20 for live robustness) vs the old
 aggressive-lean 5/0.6 (15.7%) -- a ~8.5-pt swing, measured against the realistic field on the
 12-slot roster; the earlier neutrality was the uniform bot. Full table: docs/validation.md.
