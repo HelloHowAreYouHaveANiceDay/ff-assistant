@@ -54,7 +54,7 @@ CALLS one (listing proves registration, not execution):
 node scripts/mcp-smoke.mjs      # -> MCP STDIO SMOKE PASSED
 ```
 
-## The tools (16)
+## The tools (25)
 
 | Tool | What it does | Writes? |
 |---|---|---|
@@ -74,6 +74,47 @@ node scripts/mcp-smoke.mjs      # -> MCP STDIO SMOKE PASSED
 | `discover_leagues` | find my real leagues/teams by reading my ESPN home | writes store |
 | `league_sync` | read real league rules (size, scoring, slots, my team) into the store | writes store |
 | `read_league` | live roster, standings, draft status | no |
+| `fill_page` | type into an input (React-safe native setter) | page |
+| `scroll_page` | scroll the page or a scrollable element; wheel-event aware | page |
+| `read_dom` | structured elements (tag/text/class/disabled/href), not flat text | no |
+| `wait_for` | poll until text or a selector appears | no |
+| `read_block` | live auction: player, offer, your legal max, canBid | no |
+| `read_turn` | is it OUR nomination turn | no |
+| `read_draft_roster` | your roster AS ESPN SEES IT in the live room | no |
+| `place_bid` | **places a REAL bid** (quick bid, or a guarded jump bid) | **LIVE $** |
+| `nominate_player` | nominate a player in the live room | **LIVE** |
+
+### The live-draft tools
+
+They delegate to `src/draft/espnAuction.ts` through the webview Page shim -- the same live-verified
+reader/actor `ff auto-draft --app` uses. Nothing is reimplemented, so there is no second copy to
+drift.
+
+`place_bid` carries three guards, each verified live in a practice auction:
+
+| guard | behaviour |
+|---|---|
+| nothing on the block / cannot bid | refuses with the reason |
+| jump bid without `confirm: true` | refuses (a quick +1 bid needs no confirm) |
+| jump bid below the current offer | refuses |
+| **jump bid above your budget** | **clamped to ESPN's legal max** -- `$9999` became `$189` |
+
+**Decision note (extends D10):** the deterministic `auto-draft` loop is unchanged and remains how the
+draft is actually run. These add a manual/agent-driven path BESIDE it. No LLM sits inside the bid
+loop; an agent using `place_bid` is a human-equivalent operator, not part of the engine.
+
+### QA (2026-09-05, live practice auctions)
+
+All nine new tools exercised end-to-end through the stdio surface, not in-process: `wait_for` proven
+in BOTH directions (timeout on the impossible, `found` on the real), `fill_page` accepted by a
+React-controlled field, `nominate_player` put a real player on the block, `place_bid` placed a real
+bid and every guard fired. `auto-draft --app` re-verified afterwards in a clean room -- unchanged,
+`cap=50` / `soft168` confirming maxShare 0.25 and starterReserve 4.
+
+**`scroll_page` failed its first live test and was fixed:** ESPN's board is a virtualised
+`fixed-data-table` that consumes WHEEL events, so assigning `scrollTop` did nothing (it stayed 0).
+It now walks to a scrollable ancestor AND dispatches a real wheel event. Verified by CONTENT, not by
+return value -- the top board row changed and rendered rows went 30 -> 54.
 
 Every mutation goes through the same `action_log` the in-app copilot uses, so the two agents share
 one audit trail. Writing to ESPN itself (lineups, waivers, trades) is **not** exposed -- reads only.

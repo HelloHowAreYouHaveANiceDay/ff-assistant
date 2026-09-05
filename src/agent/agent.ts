@@ -9,6 +9,7 @@ import { openDb, getConfig, setConfig, appendUsage, getMyRoster, setMyRoster, lo
 import { nameKey } from "../draft/values.js";
 import { DEFAULT_SCORING, ESPN_STAT_TO_RULE, type ScoringRules } from "../draft/scoring.js";
 import { LEVER_META, clampLever, applyLevers } from "../draft/levers.js";
+import { browserTools } from "./browserTools.js";
 
 // ESPN fantasy id maps (defaultPositionId / lineupSlotId)
 const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
@@ -336,6 +337,7 @@ function buildTools(dbPath: string | undefined, season: number) {
           } catch (e) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "click error: " + String(e).slice(0, 140) }] }; }
         },
       ),
+      ...(browserTools(tool as never) as never[]),
       tool(
         "discover_leagues",
         "Browse MY ESPN fantasy home and list my leagues/teams (leagueId, season, team) by reading page links -- more reliable than guessing IDs. Saves them to the store.",
