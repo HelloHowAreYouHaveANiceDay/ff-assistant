@@ -23,7 +23,10 @@ export interface Levers {
   multTE: number;
 }
 
-// Defaults reproduce the proven BALANCED auto-draft posture (reserve 15 / max-share 0.35 / premium 2).
+// Defaults = the shipped, holdout-validated posture (2026-09-05): aggr 0.7 / benchDiscount 0.25 /
+// starterReserve 4 / maxShare 0.25 / premium 2, all positional multipliers 1.0. ~33% championships
+// on 25 scored seasons. Do NOT edit a value here without re-reading docs/validation.md -- several of
+// these were measured, rejected, and re-measured, and the reasoning is recorded per lever below.
 // benchDiscount 0.25 measured 2026-09-04: full-system no-lookahead championships 24.4% -> 28.0%
 // (n=400 x 9 seasons, SE ~0.6). A bench-only player never enters the lineup, so his standalone
 // value overstates him; 0 collapses to 19.6% because depth still matters for byes/injuries.

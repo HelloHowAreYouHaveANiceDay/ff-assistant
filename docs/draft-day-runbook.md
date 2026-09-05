@@ -161,9 +161,27 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
 
 ## What's validated vs not (trust the right things)
 
-- **Validated + shipped:** independent+current values, discipline vs an overpaying room, live
-  inflation (clamped [0.8,1.4]). With the balanced default (reserve 15 / max-share 0.35), ~25% titles
-  draft-only / ~24% full-system no-lookahead vs a realistic field (~4x random). docs/validation.md.
+- **Validated + shipped (2026-09-05):** independent+current values; **bid shading `aggr` 0.7** (the
+  winner's-curse correction, the largest single lever, ~+10pp); `benchDiscount` 0.25 (+4.4pp); live
+  inflation ON, clamped [0.8,1.4] (+4.2pp); `starterReserve` 4 / `maxShare` 0.25; `premium` 2; all
+  positional multipliers 1.0. **~33% championships / 94% playoffs** on 25 scored seasons
+  (1999-2024), ~5x random, and it replicates on a 1999-2013 holdout no tuning ever saw.
+  docs/validation.md.
+
+### The full lever set (what `node scripts/read-config.mjs` should print)
+
+`aggr 0.7` · `benchDiscount 0.25` · `starterReserve 4` · `benchReserve 1` · `maxShare 0.25` ·
+`premium 2` · `multQB/RB/WR/TE 1/1/1/1` · `tierBreak 0.75` · `maxKDst 2` · `sleeperThreshold 5`
+
+The last three are board/display knobs, not bidding: `tierBreak` sets where a positional tier
+breaks, `maxKDst` hard-caps any K/DST bid at $2, `sleeperThreshold` is the vsECR cutoff for the
+board's sleeper flag. All 13 travel in code, so a fresh machine gets them automatically.
+
+**`playoffTeams` is NOT a lever and is not carried in code.** `DEFAULT_CONFIG` seeds it to 6 and
+`league_sync` overwrites it from ESPN (this league: **7**). A fresh bootstrap therefore reads 6 until
+step 1 runs. It affects only the BACKTEST bracket -- never bidding -- so a wrong value changes the
+championship number you validate against, not what the agent does in the draft. If it still reads 6
+after bootstrap, `league_sync` did not take.
 - **Human-only (not auto):** nomination gamesmanship.
 - **Not yet live:** in-season lineup SUBMIT (recommend path works offline: `ff lineup --roster`).
 
