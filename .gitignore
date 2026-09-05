@@ -40,3 +40,6 @@ data/mock-runs.jsonl
 data/mock-*.log
 data/auto-draft.lock
 data/history-*.bak.csv
+data/trials/
+data/managers.*.bak.json
+data/pos-sweep.txt
