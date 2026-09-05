@@ -1,5 +1,11 @@
 # AGENTS.md -- canonical instruction file for headless workers
 
+> **Claude sessions: read `CLAUDE.md` first.** It carries the measurement discipline (the backtest
+> is the only arbiter; re-measure candidates against the baseline you intend to ship; prove a lever
+> is connected before believing its null) and the traps that have already cost real time -- the
+> Electron webview not being a Playwright page, the auto-draft single-instance lock, stored-vs-code
+> lever precedence, and the npm install order. This file is the work contract; that one is the map.
+
 This repo has a WORKING Phase-2 engine: the `ff` TypeScript CLI (draft agent + validation
 harness) -- see `README.md` for the current stack and layout. The PACKAGED APP (Electron +
 Claude Agent SDK + SQLite, `docs/architecture.md`) is still design-stage and delegated to

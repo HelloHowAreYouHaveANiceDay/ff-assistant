@@ -23,10 +23,12 @@ app a non-technical friend can run; the engine underneath is deterministic and v
 
 ## The three things it is
 
-1. **A copresent draft/season agent.** `bro` (a sibling repo) owns a persistent, logged-in ESPN
-   browser; `ff` and the app attach over CDP and act inside the user's real session — reading the
-   draft room, bidding, and reading team pages. We never log in or handle a password (login is
-   manual, one time). `src/browser/`.
+1. **A copresent draft/season agent.** The agent acts inside a real, logged-in ESPN session and
+   never handles a password (login is manual, once). Two attach paths: **`--app`** drives the
+   desktop app's own embedded ESPN webview (the validated path — all 10 live mock drafts ran through
+   it) via `src/browser/webviewPage.ts`; without the flag it attaches to a `bro` browser session.
+   Note a plain `--port <app port>` does NOT work: Playwright cannot see an Electron `<webview>` as
+   a page and hands the draft verbs the app's own UI window instead. `src/browser/`.
 2. **A validation harness.** Every strategy idea runs through a season+playoffs backtest on real
    historical NFL data before it ships. This has rejected more features than it shipped — see
    `docs/edges.md`, `docs/validation.md`. `src/draft/backtest.ts`.
@@ -86,25 +88,41 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   `build:engine` first bundles the engine to `app/engine/ff.cjs` (esbuild); the app ships that bundle
   + a pinned node runtime, so the packaged app has no dev dependencies.
 - **Check:** `npm run typecheck` and `npm test`.
+- **New machine:** `npm install better-sqlite3` FIRST, then `npm install` (a bare install aborts on
+  a node-gyp source build and leaves nothing runnable), then `bash scripts/bootstrap-machine.sh`.
+  See `docs/draft-day-runbook.md`.
 
 ### Key commands (`npm run ff -- <cmd>`)
 - **Data/values:** `ingest` (all sources -> store), `ingest-source <id>` (one asset + downstream),
   `values`, `project`, `cheatsheet`, `build-history` (per-league backtest data)
 - **Validation:** `sim`, `backtest` (championship rate; `--full --no-lookahead` is the trustworthy
   mode), `calibrate`
-- **Live draft:** `attach`, `launch-practice`, `enter-draft`, `preflight`, `auto-draft`, `roster`,
-  `board`, `read-block`
+- **Live draft (add `--app` to drive the desktop app's ESPN webview):** `attach`, `launch-practice`,
+  `enter-draft`, `preflight`, `auto-draft`, `roster`, `board`, `read-block`. `auto-draft` holds a
+  single-instance lock — two agents in one seat bid against each other.
+- **BYO agent:** `mcp` serves the Assistant's own 16-tool control surface over stdio MCP, so Claude
+  Code (or any MCP client) can drive the draft. `docs/mcp.md`; `claude mcp add ff-draft -- npx tsx
+  <repo>/src/ff.ts mcp`.
 - **In-season:** `lineup --roster <csv>` (optimal-lineup recommendation), `sync-rosters` (ownership)
 
 ## What the harness decided (docs/edges.md, docs/validation.md)
 
-- **Shipped (validated):** independent + current values, budget discipline vs an overpaying room,
-  live inflation repricing (+~4 championship pts, clamped [0.8,1.4]). Balanced default (reserve 15 /
-  max-share 0.35) ~= 25% titles draft-only / ~24% full-system no-lookahead vs the realistic field
-  (~4x random) — up from the old aggressive-lean (~20% / ~16%).
-- **Rejected (measured neutral-to-negative, off by default):** automated waivers, per-position
-  inflation, live scarcity/VONA premium, drain-nomination-as-auto, **injury-proneness discount** and
-  **rookie weighting** (both left to the ECR consensus + human judgment — 2026-09-03).
+Headline: **~33% championships / 94% playoffs** (full-system, no-lookahead, 25 scored seasons
+1999-2024, random = 6.3%). Shipped levers: `aggr 0.7`, `benchDiscount 0.25`, `starterReserve 4`,
+`maxShare 0.25`, `premium 2`, all positional multipliers `1.0`, inflation ON.
+
+- **Shipped (validated):** independent + current values; **bid shading (`aggr` 0.7)** — the biggest
+  single lever, a winner's-curse correction worth ~+10pp; **`benchDiscount` 0.25** (a bench-only
+  player cannot score, so he is not worth his standalone value, +4.4pp); live inflation repricing
+  (+4.2pp, clamped [0.8,1.4]); points-weighted FLEX baselines in the value curve.
+- **Rejected (measured neutral-to-negative, off by default):** all four **positional value
+  multipliers** (QB/RB/WR/TE — each looked like a gain until re-measured against a corrected
+  baseline, then vanished or reversed), automated waivers, per-position inflation, live
+  scarcity/VONA, drain-nomination-as-auto, injury-proneness discount, rookie weighting.
+- **Known model limits (documented, not hidden):** per-manager opponent profiles carry **no
+  out-of-sample signal** (predicting an owner's held-out season from their own history is no better
+  than assuming league-average), so per-owner targeting advice is not trustworthy; and the sim's
+  price curve is least reliable at the very top, which is what `maxShare` governs.
 
 ## Where planning lives
 
