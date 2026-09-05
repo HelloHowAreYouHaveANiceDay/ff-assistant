@@ -39,12 +39,28 @@ export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile
   botBook?: "vor" | "rank";
 }
 
+/** Steepness of the rank-price curve. CALIBRATED against this room's real drafts rather than
+ *  guessed: docs/league-tendencies.md reports median $2, 61% of picks $1-5 and a top price of
+ *  $88-106 across 2023-2025, and `scripts/face-validity.mjs` scores a candidate book against those.
+ *  The first value tried (2.2) spread money far too evenly -- median $8, only 39% cheap picks --
+ *  which would have modelled a room that does not exist. Override with FF_RANK_DECAY to re-tune. */
+export const RANK_DECAY = Number(process.env.FF_RANK_DECAY ?? 5);
+// Calibration result (scripts/face-validity.mjs, 40 all-bot drafts vs 2023-25 real drafts):
+//   decay 2.2 -> median $8.0, 39% of picks $1-5   (7/10 metrics)  -- a room that does not exist
+//   decay 4   -> median $4.6, 54% cheap, top $121 (9/10)
+//   decay 5   -> median $2.9, 60% cheap, top $148 (9/10)  <- SHIPPED
+// 5 reproduces the MASS of the real distribution (total $3,157 = 2025 exactly; median $2.9 vs $2;
+// 60.1% vs 61% of picks at $1-5) and the positional split (QB $296 vs 192-328, TE $233 vs 199-215).
+// KNOWN RESIDUAL: top price $148 vs a real $88-106. Our bots are not budget-anxious at the very top,
+// so the stud market is modelled hotter than reality -- treat conclusions about the most expensive
+// handful of players (maxShare especially) as the least trustworthy part of the model.
+
 /** An independent market book: price decays with a position's DRAFT RANK rather than with value over
  *  replacement. Real auction prices follow roughly this shape, and critically it is not our formula,
  *  so an edge measured against it is not an edge against a mirror of ourselves. Normalised so the
  *  book totals the league's discretionary money, exactly as computeValues does, to keep the two
  *  books on the same dollar scale (otherwise a cheaper book alone would look like an edge). */
-export function rankBook(points: PointsRow[], lg: SimLeague): Map<string, number> {
+export function rankBook(points: PointsRow[], lg: SimLeague, decay = RANK_DECAY): Map<string, number> {
   const byPos = new Map<string, PointsRow[]>();
   for (const p of points) { if (!byPos.has(p.pos)) byPos.set(p.pos, []); byPos.get(p.pos)!.push(p); }
   const discretionary = lg.teams * lg.budget - lg.teams * lg.slots.length;
@@ -54,7 +70,7 @@ export function rankBook(points: PointsRow[], lg: SimLeague): Map<string, number
     arr.sort((a, b) => b.points - a.points);
     // Starters demanded league-wide at this position; beyond that the curve flattens to the $1 tail.
     const starters = Math.max(1, (lg.slots.filter((sl) => sl === pos).length + (["RB", "WR", "TE"].includes(pos) ? lg.slots.filter((sl) => sl === "FLEX").length : 0)) * lg.teams);
-    const w = arr.map((_, i) => Math.exp(-2.2 * (i / starters)));
+    const w = arr.map((_, i) => Math.exp(-decay * (i / starters)));
     const wTot = w.reduce((a, b) => a + b, 0) || 1;
     // SHAPE from rank decay (independent of VOR); LEVEL from what this room really spends at the
     // position. Without the level anchor a pure decay prices the top KICKER like an elite RB -- an

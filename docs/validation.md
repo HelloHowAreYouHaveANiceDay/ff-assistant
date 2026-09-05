@@ -54,40 +54,57 @@ taking "Jr." as the surname so suffixed players fell out of the TE count (mean 2
 fixed); and logs paired to records POSITIONALLY while two suites both wrote `mock-01.log`. Check the
 instrument before believing the reading.
 
-## Breaking the self-reference, and why the shipped aggr is 0.6 not 0.7 (2026-09-04)
+## Breaking the self-reference + calibrating the opponent model (2026-09-04/05)
 
 The sim's bots priced players with `computeValues` -- OUR OWN valuation function -- so the field was
-a noisy mirror of us. That is the self-reference that hid the FLEX-baseline bug for months, and any
+a noisy mirror of us. That is the self-reference that hid the FLEX-baseline bug for months, and an
 edge measured against it might be an edge against ourselves. `--bot-book rank` gives the bots a
-structurally INDEPENDENT book: shape from a rank-decay curve, LEVEL anchored to this league's real
-positional spend shares. `scripts/book-compare.mjs` gates it -- the two books must share a dollar
-scale (else a cheaper book alone looks like an edge) but must NOT price alike (else nothing was made
-independent): $3,523 vs $3,499 total, Spearman rho 0.87, 195/516 identical.
+structurally independent book: shape from a rank-decay curve, level anchored to this league's real
+positional spend. `scripts/book-compare.mjs` gates it -- same dollar scale (else a cheaper book alone
+looks like an edge) but genuinely different pricing (rho 0.87, 195/516 identical).
 
-**A first version of that book failed the realism check and would have made the test meaningless:**
-a pure rank decay priced the top KICKER at $35, same as an elite RB. Anchoring the level to real
-spend fixed it -- and the resulting book matches the room far better than ours does
-(QB $336 vs the room's real ~$328; our VOR book says $707).
+**Face validity: does either book reproduce how this room ACTUALLY prices?**
+`scripts/face-validity.mjs` scores 40 all-bot drafts against the three real drafts in
+league-tendencies.md. The two books failed in OPPOSITE ways:
 
-**The headline finding SURVIVES the independent book** -- shading is worth +9.2pp there
-(27.1% at 0.7 vs 17.9% at 1.0) versus +9.9pp against the mirror. It is not an artifact.
+| metric | vor book | rank book (decay 2.2) | real |
+|---|---|---|---|
+| median price | 1.4 ok | **8.0 OFF** | $2 |
+| % picks $1-5 | 57 ok | **39 OFF** | 61% |
+| QB total | **550 OFF** | 289 ok | 192-328 |
+| TE total | **336 OFF** | 153 ok | 199-215 |
 
-**But the OPTIMAL AMOUNT of shading depends on whose book the bots bid** (25 seasons, n=150):
+The VOR book gets the price SHAPE right and the POSITIONAL SPLIT wrong -- **the bots inherit our own
+QB/TE overvaluation**, which is the self-reference made visible and measurable. The rank book did the
+reverse. Calibrating the decay against the real distribution (`RANK_DECAY` 5) fixes the shape while
+keeping the split: total **$3,157** (2025 exactly), median $2.9 vs $2, 60.1% vs 61% cheap picks,
+QB $296, TE $233 -- **9 of 10 metrics** within tolerance.
 
-| aggr | 0.5 | **0.6** | 0.65 | 0.7 | 0.85 | 1.0 |
-|---|---|---|---|---|---|---|
-| vor book (self-referential) | ~28 | **32.9** | 33.3 | **34.9** | 29.4 | 25.3 |
-| rank book (independent) | **35.5** | **33.3** | ~30 | 27.1 | 20.3 | 17.9 |
-| worst case | ~28 | **32.9** | ~30 | 27.1 | 20.3 | 17.9 |
+**Known residual:** top price $148 vs a real $88-106. Our bots are not budget-anxious at the very
+top, so the stud market is modelled hotter than reality. Conclusions about the most expensive handful
+of players -- `maxShare` above all -- are the least trustworthy part of the model.
 
-**Shipped 0.6 on a MINIMAX basis, not argmax.** 0.7 is better if the room resembles our own book and
-collapses to 27.1% if it resembles the independent one; 0.6 scores ~33% under both. We do not know
-which model is right -- and the one that is *closer to this league's observed spend* is the one that
-punishes 0.7 -- so optimising against either single model would be optimising against an assumption.
-Verified flagless: **32.9% (vor book) / 33.3% (rank book)**.
+### The headline survives; the tuning briefly did not
 
-The direction is robust across every framing tested (both books, marketSd 0.20-0.45, the 1999-2013
-holdout). Only the magnitude is model-dependent, which is exactly what a minimax choice is for.
+Shading is worth **+9.2pp against the independent book** (27.1% vs 17.9% at decay 2.2) and remains
+the largest lever under every framing tested. But the OPTIMUM moved, and the story is worth keeping:
+
+| aggr | 0.6 | 0.65 | **0.7** | 1.0 |
+|---|---|---|---|---|
+| vor book (mirror) | 32.9 | 33.3 | **34.9** | 25.3 |
+| rank book (calibrated) | **34.7** | 34.2 | 34.3 | 25.8 |
+| worst case | 32.9 | 33.3 | **34.3** | 25.3 |
+
+**Shipped 0.7 on minimax.** An earlier UNCALIBRATED rank book put the optimum at 0.5 and made 0.7
+look like a collapse to 27.1%, on which 0.6 was briefly shipped -- then face validity showed that
+book had a median price of $8 and 39% cheap picks, i.e. it modelled a room that does not exist.
+Calibration moved the optimum to a 0.6-0.7 plateau and restored 0.7.
+
+**The lesson: a robustness check is only as good as the realism of the challenger it tests against.**
+An unvalidated alternative model overruled a correct result for about an hour. Validate the
+challenger before letting it change a decision.
+
+Verified flagless: **34.9% (vor book) / 34.3% (calibrated rank book)**.
 
 ## Properly-powered paired statistics on 25 seasons (2026-09-04, supersedes the 9-season figures)
 
