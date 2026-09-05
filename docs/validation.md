@@ -54,6 +54,57 @@ taking "Jr." as the surname so suffixed players fell out of the TE count (mean 2
 fixed); and logs paired to records POSITIONALLY while two suites both wrote `mock-01.log`. Check the
 instrument before believing the reading.
 
+## The opponent model's per-manager profiles carry NO out-of-sample signal (2026-09-05)
+
+`ff calibrate` compares each simulated owner's positional spend to that owner's historical average
+and reports small errors -- but **the profile is built from exactly the seasons it is scored on**.
+That is fitting and grading on the same data; a profile can look perfect there and predict nothing.
+`scripts/manager-stability.mjs` asks the out-of-sample question instead, leave-one-season-out:
+does an owner's own history predict their HELD-OUT season better than assuming they draft
+league-average?
+
+League history pulled back to 2012 (the scraper defaulted to `--years 4`, which is why the first
+pass had only 50 cases; the league has run since 2012 -> **98 team-seasons, 18 owners**):
+
+| predictor | mean abs error on the held-out season |
+|---|---|
+| the owner's own past seasons | **7.99 pp** |
+| "everyone drafts league-average" | **7.67 pp** |
+
+**The personalised profile is WORSE, and wins in 44/92 cases (48%) -- a coin flip.** Manager
+positional tendencies vary more year-to-year than they do between managers. So the heterogeneous
+field is not the edge the docs implied, and `calibrate`'s numbers are an in-sample fit statistic,
+not a validation.
+
+### Does that break the strategy conclusions? No -- tested, not assumed
+
+`--homogeneous` replaces every bot with one league-average manager: the honest null field. Shading
+survives and gets STRONGER:
+
+| field | aggr 0.7 | aggr 1.0 | delta |
+|---|---|---|---|
+| heterogeneous, vor book | 34.6% | 24.4% | +10.2 |
+| heterogeneous, rank book | 36.7% | 26.6% | +10.1 |
+| **homogeneous (null field)** | **29.8%** | **16.7%** | **+13.1** |
+
+Shading does not depend on modelling opponent identities we cannot actually predict. Combined with
+the 1999-2013 season holdout (+8.6pp) and the marketSd sweep, it is robust on every axis tested.
+
+### What this DOES invalidate
+
+Per-owner targeting advice. `ff cheatsheet` prints lines like "nominate a top QB early to drain
+<owner>, <owner>, ..." -- that is precisely the per-owner prediction this test shows we
+cannot make. Treat the drain plan as entertainment, not strategy. (The `--drain-nom` lever was
+already backtest-rejected, so nothing in the shipped bidding path depends on it.)
+
+### What the deeper history DID improve
+
+The extra seasons feed two things that are NOT per-owner predictions and so are unaffected by the
+null above: `maxBuy` (the budget-anxiety cap -- 98 team-seasons instead of 54) and `leagueShare`
+(the rank book's level anchor; QB share settles at 7.8% over 14 years vs 9.4% over 4). Face validity
+holds at **9/10** and the shipped default is verified on the fuller data: **32.9% (vor book) /
+34.2% (rank book)**, 94-95% playoffs.
+
 ## Bot budget anxiety: fixing the top of the market (2026-09-05)
 
 `scripts/sim-vs-mock.mjs` compares the SIM against the 10 live ESPN mock drafts we ran

@@ -37,6 +37,12 @@ export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile
    *  rank-decay curve fitted to how auction prices actually fall off, sharing no code path with
    *  computeValues beyond the raw projection everyone can see. */
   botBook?: "vor" | "rank";
+  /** Replace every bot with ONE league-average manager. Per-owner profiles were shown (2026-09-05,
+   *  scripts/manager-stability.mjs) to carry NO out-of-sample signal -- predicting an owner's
+   *  held-out season from their own history is 18% WORSE than assuming they draft league-average --
+   *  so this is the honest null field, and any conclusion that survives both is not relying on
+   *  opponent identities we cannot actually predict. */
+  homogeneous?: boolean;
 }
 
 /** Steepness of the rank-price curve. CALIBRATED against this room's real drafts rather than
@@ -104,7 +110,16 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
   const includeUs = opts.includeUs !== false;
   // seat -> manager profile (null = us). Bots get real profiles; if a profiles[] is passed use it.
   const botCount = includeUs ? lg.teams - 1 : lg.teams;
-  const botProfiles = opts.profiles ?? assignSeats(botCount);
+  let botProfiles = opts.profiles ?? assignSeats(botCount);
+  if (opts.homogeneous) {
+    const all = botProfiles;
+    const avg = (f: (p: ManagerProfile) => number) => all.reduce((a, p) => a + f(p), 0) / all.length;
+    const share: Record<string, number> = {};
+    for (const k of Object.keys(all[0].share)) share[k] = avg((p) => p.share[k] ?? 0);
+    const mean: ManagerProfile = { owner: "league-average", abbrev: "AVG", seasons: all[0].seasons,
+      share, conc: avg((p) => p.conc), maxBuy: avg((p) => p.maxBuy), cheap: avg((p) => p.cheap) };
+    botProfiles = all.map(() => mean);
+  }
   const seatProfiles: (ManagerProfile | null)[] = [];
   const bidders: (BotBidder | null)[] = [];
   let bi = 0;
