@@ -54,6 +54,52 @@ taking "Jr." as the surname so suffixed players fell out of the TE count (mean 2
 fixed); and logs paired to records POSITIONALLY while two suites both wrote `mock-01.log`. Check the
 instrument before believing the reading.
 
+## Properly-powered paired statistics on 25 seasons (2026-09-04, supersedes the 9-season figures)
+
+Run with `--dump-trials` (per-(season, seed) outcomes) + `scripts/paired-analysis.mjs`. Seeds are
+COMMON RANDOM NUMBERS, so each trial is a matched pair; the unit of GENERALISATION is the season, so
+the CI is bootstrapped over seasons, not trials.
+
+**Shading vs no shading** (shipped vs aggr 1.0), 25 seasons, 5,000 paired trials each:
+
+| test | result |
+|---|---|
+| McNemar (trial pairs) | 1,239 vs 746 discordant, chi2(1) = **121.95**, p < 1e-6 |
+| season-level paired mean | **+9.86pp** (SD 7.55, SE 1.51, t = 6.53 on 24 df) |
+| bootstrap 95% CI over seasons | **[6.92, 12.90]pp** |
+| seasons better | **24 of 25** |
+
+**Reserve/share change** (shipped r4/s0.25 vs old r15/s0.35):
+
+| test | result |
+|---|---|
+| McNemar | 530 vs 437, chi2(1) = 8.75, p = 3.1e-3 |
+| season-level paired mean | **+1.86pp** (SE 0.55, t = 3.37) |
+| bootstrap 95% CI | **[0.74, 2.92]pp** |
+| seasons better | 19 of 25 (worse in 5) |
+
+> **CORRECTION.** This file previously reported the reserve/share change as **+3.44pp, better in 9 of
+> 9 seasons, t = 6.85**. That was measured on the 9-season window the config was SELECTED on. On 25
+> seasons the same comparison is **+1.86pp and it loses in 5 of them**. The "9 of 9" was a
+> small-sample artifact of the tuning window, not a property of the change. The effect is real
+> (CI excludes zero) but roughly HALF the advertised size. Detectable effect at 80% power with 25
+> seasons is ~1.6pp, so this sits barely above the floor -- treat it as a modest, real improvement,
+> and do not quote the old figure.
+
+**Component levers re-verified on all 25 seasons** (baseline = shipped, 34.9%), because the 91-cell
+campaign ran on 9 seasons only:
+
+| lever | off / alternative | shipped | delta |
+|---|---|---|---|
+| benchDiscount | 1.0 -> 30.5% | 0.25 -> **34.9%** | +4.4pp |
+| live inflation | off -> 30.7% | on -> **34.9%** | +4.2pp |
+| premium | 0 -> 32.5%, 4 -> 33.6% | 2 -> **34.9%** | +2.4pp vs 0 |
+
+`premium` is worth noting: on 9 seasons it read as flat noise across 0/1/2 and I nearly called it
+irrelevant. On 25 seasons premium 2 clearly beats premium 0 by +2.4pp. **More seasons changed a
+"no effect" into a real one** -- the same power problem that made three positional multipliers look
+like gains, running in the other direction.
+
 ## The lever campaign + a proper holdout (2026-09-04)
 
 91 pinned backtest configurations (`scripts/full-sweep.sh` -> `data/full-sweep.tsv`), then a
@@ -113,10 +159,10 @@ COMMON RANDOM NUMBERS (`seed = s + 1 + yr*1000`), so configs meet identical mark
 seats -- every trial is a matched pair, and `--dump-trials <path>` now emits per-(season, seed)
 outcomes so paired tests can be run properly instead of comparing two aggregate percentages.
 
-Paired per-season result for the shipped config vs the old default: **better in 9 of 9 seasons**
-(sign test p = 0.002), paired mean +3.44pp, SD 1.51, t = 6.85 on 8 df. Observed per-season SD of
-1.51pp implies a **detection floor of ~1.5pp at 80% power** -- which is exactly why the +1.2pp WR
-candidate could never have been trusted from a single sweep.
+Paired per-season result on the 9-season tuning window was +3.44pp, better in 9 of 9. **On 25
+seasons it is +1.86pp, better in 19 of 25** -- see the correction above; quote the 25-season figure.
+The detection floor at 80% power is ~1.6pp, which is why the +1.2pp WR candidate could never have
+been trusted from a single sweep.
 
 ### Known structural weakness (not yet fixed)
 
