@@ -29,7 +29,42 @@ export function mulberry32(seed: number) {
 function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 
 export interface Pick { name: string; pos: string; team: number; price: number; }
-export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile[]; drainNom?: boolean; greedyNom?: boolean; }
+export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile[]; drainNom?: boolean; greedyNom?: boolean;
+  /** How the BOTS price players. "vor" (default) computes their book with computeValues -- OUR OWN
+   *  valuation function -- which makes the whole field a noisy copy of us. That self-reference is
+   *  what hid the FLEX-baseline bug for months, and it means any edge measured against these bots
+   *  might be an edge against ourselves. "rank" gives them a structurally INDEPENDENT book: a
+   *  rank-decay curve fitted to how auction prices actually fall off, sharing no code path with
+   *  computeValues beyond the raw projection everyone can see. */
+  botBook?: "vor" | "rank";
+}
+
+/** An independent market book: price decays with a position's DRAFT RANK rather than with value over
+ *  replacement. Real auction prices follow roughly this shape, and critically it is not our formula,
+ *  so an edge measured against it is not an edge against a mirror of ourselves. Normalised so the
+ *  book totals the league's discretionary money, exactly as computeValues does, to keep the two
+ *  books on the same dollar scale (otherwise a cheaper book alone would look like an edge). */
+export function rankBook(points: PointsRow[], lg: SimLeague): Map<string, number> {
+  const byPos = new Map<string, PointsRow[]>();
+  for (const p of points) { if (!byPos.has(p.pos)) byPos.set(p.pos, []); byPos.get(p.pos)!.push(p); }
+  const discretionary = lg.teams * lg.budget - lg.teams * lg.slots.length;
+  const { leagueShare } = loadManagers();
+  const out = new Map<string, number>();
+  for (const [pos, arr] of byPos) {
+    arr.sort((a, b) => b.points - a.points);
+    // Starters demanded league-wide at this position; beyond that the curve flattens to the $1 tail.
+    const starters = Math.max(1, (lg.slots.filter((sl) => sl === pos).length + (["RB", "WR", "TE"].includes(pos) ? lg.slots.filter((sl) => sl === "FLEX").length : 0)) * lg.teams);
+    const w = arr.map((_, i) => Math.exp(-2.2 * (i / starters)));
+    const wTot = w.reduce((a, b) => a + b, 0) || 1;
+    // SHAPE from rank decay (independent of VOR); LEVEL from what this room really spends at the
+    // position. Without the level anchor a pure decay prices the top KICKER like an elite RB -- an
+    // independent book, but one no real room resembles, so robustness measured against it would be
+    // meaningless.
+    const posMoney = (leagueShare[pos] ?? 0.01) * discretionary;
+    arr.forEach((p, i) => out.set(p.name, Math.max(1, Math.round(1 + (w[i] / wTot) * posMoney))));
+  }
+  return out;
+}
 
 /** Run the auction. Seat 0 is US (real makeV2Strategy) unless includeUs=false; every other seat is a
  *  real MANAGER BOT modelled on this league's history (src/draft/managers.ts): each reproduces that
@@ -44,7 +79,9 @@ export function draftField(points: PointsRow[], ourValues: Map<string, number>, 
 export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, opts: DraftFieldOpts = {}): { picks: Pick[]; seatProfiles: (ManagerProfile | null)[] } {
   const rng = mulberry32(seed);
   const posMap = new Map(points.map((p) => [p.name, p.pos]));
-  const trueVal = new Map(computeValues(points, DEFAULT_VALUE_LEAGUE).map((v) => [v.name, v.value]));
+  const trueVal = opts.botBook === "rank"
+    ? rankBook(points, lg)
+    : new Map(computeValues(points, DEFAULT_VALUE_LEAGUE).map((v) => [v.name, v.value]));
   const studRank = new Map([...trueVal.entries()].sort((a, b) => b[1] - a[1]).map(([n], i) => [n, i]));
   const { leagueShare } = loadManagers();
 

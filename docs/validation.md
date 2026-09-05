@@ -54,6 +54,41 @@ taking "Jr." as the surname so suffixed players fell out of the TE count (mean 2
 fixed); and logs paired to records POSITIONALLY while two suites both wrote `mock-01.log`. Check the
 instrument before believing the reading.
 
+## Breaking the self-reference, and why the shipped aggr is 0.6 not 0.7 (2026-09-04)
+
+The sim's bots priced players with `computeValues` -- OUR OWN valuation function -- so the field was
+a noisy mirror of us. That is the self-reference that hid the FLEX-baseline bug for months, and any
+edge measured against it might be an edge against ourselves. `--bot-book rank` gives the bots a
+structurally INDEPENDENT book: shape from a rank-decay curve, LEVEL anchored to this league's real
+positional spend shares. `scripts/book-compare.mjs` gates it -- the two books must share a dollar
+scale (else a cheaper book alone looks like an edge) but must NOT price alike (else nothing was made
+independent): $3,523 vs $3,499 total, Spearman rho 0.87, 195/516 identical.
+
+**A first version of that book failed the realism check and would have made the test meaningless:**
+a pure rank decay priced the top KICKER at $35, same as an elite RB. Anchoring the level to real
+spend fixed it -- and the resulting book matches the room far better than ours does
+(QB $336 vs the room's real ~$328; our VOR book says $707).
+
+**The headline finding SURVIVES the independent book** -- shading is worth +9.2pp there
+(27.1% at 0.7 vs 17.9% at 1.0) versus +9.9pp against the mirror. It is not an artifact.
+
+**But the OPTIMAL AMOUNT of shading depends on whose book the bots bid** (25 seasons, n=150):
+
+| aggr | 0.5 | **0.6** | 0.65 | 0.7 | 0.85 | 1.0 |
+|---|---|---|---|---|---|---|
+| vor book (self-referential) | ~28 | **32.9** | 33.3 | **34.9** | 29.4 | 25.3 |
+| rank book (independent) | **35.5** | **33.3** | ~30 | 27.1 | 20.3 | 17.9 |
+| worst case | ~28 | **32.9** | ~30 | 27.1 | 20.3 | 17.9 |
+
+**Shipped 0.6 on a MINIMAX basis, not argmax.** 0.7 is better if the room resembles our own book and
+collapses to 27.1% if it resembles the independent one; 0.6 scores ~33% under both. We do not know
+which model is right -- and the one that is *closer to this league's observed spend* is the one that
+punishes 0.7 -- so optimising against either single model would be optimising against an assumption.
+Verified flagless: **32.9% (vor book) / 33.3% (rank book)**.
+
+The direction is robust across every framing tested (both books, marketSd 0.20-0.45, the 1999-2013
+holdout). Only the magnitude is model-dependent, which is exactly what a minimax choice is for.
+
 ## Properly-powered paired statistics on 25 seasons (2026-09-04, supersedes the 9-season figures)
 
 Run with `--dump-trials` (per-(season, seed) outcomes) + `scripts/paired-analysis.mjs`. Seeds are

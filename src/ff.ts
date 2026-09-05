@@ -1034,6 +1034,10 @@ async function cmdBacktest(rest: string[]) {
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;
   const perYear: string[] = [];
+  // Whose book do the BOTS bid? Default "vor" reuses computeValues -- our own function -- so the
+  // field is a noisy mirror of us. "rank" gives them an independent curve; if an edge survives that,
+  // it is not an artifact of self-reference.
+  const botBook = (valueOf(rest, "--bot-book") === "rank" ? "rank" : "vor") as "vor" | "rank";
   const dumpPath = valueOf(rest, "--dump-trials");
   const dumpRows: string[] = [];
   const { writeFileSync: writeDump } = await import("node:fs");
@@ -1045,7 +1049,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever, botBook); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a
