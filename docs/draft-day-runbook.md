@@ -173,10 +173,26 @@ Most state is in the repo; four things are not, because they are either derived,
 browser-local. One command rebuilds all of them:
 
 ```
-git clone <repo> && cd ff-assistant && npm install && (cd app && npm install)
-cd app && npm start          # then LOG INTO ESPN in the app window, once
+git clone <repo> && cd ff-assistant
+npm install better-sqlite3      # MUST be first -- see the install trap below
+npm install
+(cd app && npm install)
+cd app && npm start             # then LOG INTO ESPN in the app window, once
 cd .. && bash scripts/bootstrap-machine.sh
 ```
+
+> **Install trap, verified on a clean clone (2026-09-05, Node v24.14.1 / npm 11.11.0).** A plain
+> `npm install` FAILS: better-sqlite3 13.0.3 falls back to a node-gyp SOURCE build, which needs a
+> C++ toolchain this machine does not have. It is not a warning -- it aborts the whole install, so
+> `tsx` never lands and no `ff` command runs at all. **Retrying does not help.** Installing
+> better-sqlite3 explicitly FIRST resolves the prebuilt binary, after which `npm install` completes
+> normally. The bootstrap script now preflights both modules and fails with this instruction rather
+> than letting you discover it mid-setup.
+
+**End-to-end verified on a fresh clone:** bootstrap ran clean, all value gates passed, the ESPN
+config cross-check reported ALL MATCH, tests 72/72, and the backtest reproduced this machine
+EXACTLY -- 32.9% championships / 94% playoffs. The tuned levers arrived from code as designed
+(`aggr 0.7, benchDiscount 0.25, starterReserve 4, maxShare 0.25`).
 
 **Travels with the repo (nothing to do):** the tuned levers -- they live in `src/draft/levers.ts`
 (`DEFAULT_LEVERS`) and a fresh `data/ff.db` is seeded from `DEFAULT_CONFIG`, so `aggr`,

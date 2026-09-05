@@ -18,7 +18,15 @@
 # ("persist:espn"), which is per-machine browser storage, not a file we can copy safely.
 #
 # PREREQUISITES (do these first, by hand):
-#   1. git clone + `npm install` in the repo root AND in app/
+#   1. git clone, then install deps -- IN THIS ORDER, because a plain `npm install` FAILS:
+#        npm install better-sqlite3     # fetches the PREBUILT binary
+#        npm install                    # everything else
+#        (cd app && npm install)
+#      Verified on a clean clone 2026-09-05, Node v24.14.1 / npm 11.11.0: a bare `npm install`
+#      makes better-sqlite3 13.0.3 fall back to a node-gyp SOURCE build, which needs MSVC and dies
+#      -- and it aborts the whole install, so tsx never lands either and nothing runs. Retrying does
+#      NOT help. Installing better-sqlite3 explicitly first resolves the prebuild and the rest then
+#      completes. See docs/draft-day-runbook.md.
 #   2. `cd app && npm start`
 #   3. log into ESPN inside the app window, once
 # Then run this from the repo root:  bash scripts/bootstrap-machine.sh
@@ -28,7 +36,11 @@ cd "$(dirname "$0")/.."
 say() { printf '\n=== %s\n' "$1"; }
 fail() { printf '\nFAILED: %s\n' "$1"; exit 1; }
 
-say "0. checking the app is running and logged in"
+say "0. preflight: dependencies actually load"
+node -e "require('better-sqlite3')" 2>/dev/null   || fail "better-sqlite3 will not load. Run: npm install better-sqlite3 && npm install  (see header)"
+npx tsx --version >/dev/null 2>&1 || fail "tsx missing -- the npm install did not complete (see header)"
+
+say "0b. checking the app is running and logged in"
 curl -s -m 5 http://127.0.0.1:9223/json/version >/dev/null 2>&1 \
   || fail "no app on CDP 9223. Start it (cd app && npm start) and log into ESPN first."
 node scripts/mcp-call.mjs read_needs '{}' >/dev/null 2>&1 || true
