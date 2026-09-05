@@ -154,3 +154,36 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
   draft-only / ~24% full-system no-lookahead vs a realistic field (~4x random). docs/validation.md.
 - **Human-only (not auto):** nomination gamesmanship.
 - **Not yet live:** in-season lineup SUBMIT (recommend path works offline: `ff lineup --roster`).
+
+## Setting this up on a DIFFERENT computer
+
+Most state is in the repo; four things are not, because they are either derived, personal, or
+browser-local. One command rebuilds all of them:
+
+```
+git clone <repo> && cd ff-assistant && npm install && (cd app && npm install)
+cd app && npm start          # then LOG INTO ESPN in the app window, once
+cd .. && bash scripts/bootstrap-machine.sh
+```
+
+**Travels with the repo (nothing to do):** the tuned levers -- they live in `src/draft/levers.ts`
+(`DEFAULT_LEVERS`) and a fresh `data/ff.db` is seeded from `DEFAULT_CONFIG`, so `aggr`,
+`benchDiscount`, `starterReserve` and `maxShare` arrive automatically. Also `data/points.csv`,
+`data/values.csv`, and everything under `src/`, `docs/`, `scripts/`.
+
+> **Precedence trap:** `getConfig` deep-merges the STORED levers OVER the code defaults. On a fresh
+> machine there is no stored value, so the code wins and you get the tuned config. On a machine with
+> an existing `data/ff.db`, a stale stored lever wins over a newer code default and nothing warns
+> you. `node scripts/read-config.mjs` prints what the engine will actually use -- trust that, not
+> the source file.
+
+**Rebuilt by the script (all gitignored):** `data/ff.db` (league settings, `player_value`, board),
+`data/managers.json` (opponent profiles -- personal league data, deliberately not shipped),
+`data/history-*.csv` (backtest seasons, scored under THIS league's rules), `data/cheatsheet.md`.
+
+**Cannot be scripted or copied:** the ESPN login. It lives in the Electron webview's persistent
+partition (`persist:espn`), which is per-machine browser storage. Logging in once on the new machine
+is the only manual step, and it survives app restarts thereafter.
+
+The script ends by running `value-gates.mjs` and `scoring-history.mjs`, so a broken bootstrap fails
+loudly instead of leaving you to discover it during the draft.
