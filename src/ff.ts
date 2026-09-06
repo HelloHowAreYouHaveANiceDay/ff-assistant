@@ -1321,30 +1321,57 @@ async function cmdAutoDraft(rest: string[]) {
   }
   console.log(`[auto-draft] value source: ${valueSource} (${Object.keys(values).length} priced)`);
   const { openDb: openCfgDb, getConfig: getCfg } = await import("./db/db.js");
-  const _cfgDb = openCfgDb(valueOf(rest, "--db"));
-  const lv = getCfg(_cfgDb).levers; _cfgDb.close(); // bidding defaults come from the configured levers
-  const strat = makeV2Strategy({
+  const { leversToV2Config } = await import("./draft/levers.js");
+  // Bidding levers come from the configured levers, RE-READ each tick (see refreshStrategy below).
+  // They used to be read once here and frozen into the strategy closure, so changing a lever in the
+  // app's Settings mid-draft did nothing to a running auto-draft -- while the UI said "Bidding/UI
+  // levers apply now". Live-reading them is the only mid-draft escape hatch there is: `aggr` and
+  // `maxShare` are otherwise fixed for the whole auction, and `maxShare` is the lever the backtest
+  // says matters most (~6pp). Behaviour is unchanged if nobody touches the levers.
+  //
+  // CLI flags still WIN over stored levers, for the whole run: passing --aggr means "use this",
+  // not "use this until someone edits the database".
+  const cliOverrides: Record<string, string | undefined> = {
+    starterReserve: valueOf(rest, "--starter-reserve"), benchReserve: valueOf(rest, "--bench-reserve"),
+    premium: valueOf(rest, "--premium"), aggr: valueOf(rest, "--aggr"),
+    maxShare: valueOf(rest, "--max-share"), maxKDst: valueOf(rest, "--max-kdst"),
+    benchDiscount: valueOf(rest, "--bench-discount"),
+  };
+  const readLevers = () => {
+    const d = openCfgDb(valueOf(rest, "--db"));
+    const l = { ...getCfg(d).levers } as Record<string, number>;
+    d.close();
+    for (const [k, v] of Object.entries(cliOverrides)) if (v != null) l[k] = Number(v);
+    return l as unknown as import("./draft/levers.js").Levers;
+  };
+  const buildStrat = (l: import("./draft/levers.js").Levers) => makeV2Strategy({
     values: Object.keys(values).length ? values : undefined,
     nameKey,
-    // Defaults = BALANCED (reserve 15 / max-share 0.35 / premium 2), from the trustworthy full-system
-    // no-lookahead backtest on the real 12-slot roster (Step 5): the reserve 12-20 plateau is ~24%
-    // vs the old aggressive-lean 5/0.6 at 15.7% (n=400, 2015-2024, inflation ON). Reserve was set to
-    // 15 (not 20) after a live mock showed reserve 20 STRANDS budget once the room pays > $20/starter
-    // (soft cap collapses to $20 after one buy); at 15 the max-share cap governs ($70) so we stay in
-    // the auction, and the sim is statistically tied (23.7 vs 24.0). Values = OUR VOR->$.
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? lv.starterReserve),
-    benchReserve: Number(valueOf(rest, "--bench-reserve") ?? lv.benchReserve),
-    premium: Number(valueOf(rest, "--premium") ?? lv.premium),
-    aggr: Number(valueOf(rest, "--aggr") ?? lv.aggr),
-    maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
-    maxKDst: Number(valueOf(rest, "--max-kdst") ?? lv.maxKDst),
-    benchDiscount: Number(valueOf(rest, "--bench-discount") ?? lv.benchDiscount),
-    posMult: { QB: lv.multQB, RB: lv.multRB, WR: lv.multWR, TE: lv.multTE, ...parsePosMult(valueOf(rest, "--pos-mult")) },
-    // LIVE inflation repricing is ON by default -- backtested +~2 championship pts / +3 playoff pts
-    // (docs/validation.md). Toggle: --no-inflation. Scarcity is a REJECTED feature (backtested
-    // NEGATIVE, and its live wiring passed teams=[ours]) -- removed from auto-draft (Step 6).
+    ...leversToV2Config(l),
+    posMult: { ...leversToV2Config(l).posMult, ...parsePosMult(valueOf(rest, "--pos-mult")) },
+    // LIVE inflation repricing is ON by default -- backtested +4.8pp at aggr 0.7 (docs/validation.md).
+    // Toggle: --no-inflation. Scarcity is a REJECTED feature (backtested NEGATIVE at 10.6% vs 32.9%,
+    // and its live wiring passed teams=[ours]) -- removed from auto-draft (Step 6).
     inflation: !rest.includes("--no-inflation"),
   });
+  let lv = readLevers();
+  let strat = buildStrat(lv);
+  const leverSig = (l: Record<string, unknown>) => JSON.stringify(l);
+  let lastLeverSig = leverSig(lv as unknown as Record<string, unknown>);
+  // Cheap: one indexed read of the settings row per tick, and the strategy is only rebuilt when a
+  // value actually changed -- announced, so a mid-draft edit is visible in the log you post-mortem.
+  const refreshStrategy = () => {
+    try {
+      const next = readLevers();
+      const sig = leverSig(next as unknown as Record<string, unknown>);
+      if (sig === lastLeverSig) return;
+      const before = lv as unknown as Record<string, number>, after = next as unknown as Record<string, number>;
+      const changed = Object.keys(after).filter((k) => after[k] !== before[k])
+        .map((k) => `${k} ${before[k]} -> ${after[k]}`).join(", ");
+      lv = next; strat = buildStrat(next); lastLeverSig = sig;
+      console.log(`[auto-draft] LEVERS CHANGED mid-draft: ${changed}`);
+    } catch { /* a locked/!busy db must never stop the bidder -- keep the last good strategy */ }
+  };
   const normPos = (p: string | null): string | null => {
     if (!p) return null;
     const u = p.toUpperCase().replace("/", "");
@@ -1377,6 +1404,26 @@ async function cmdAutoDraft(rest: string[]) {
   let loggedSlots = false;
   let nomCooldownUntil = 0; // round index before which we must not nominate again (see below) // one-time live-vs-sim slot-count check
   let wasPaused = false; // copresent PAUSE-file state (Step 9)
+  // Losing the draft room MID-DRAFT is the one failure that costs you the season silently: the empty
+  // -roster guard below fires, prints a calm "not in a draft room", and exits 0 with slots unfilled.
+  // A 2026-09-05 mock died exactly this way at r412 -- ESPN raised a Disney-ID re-auth + reCAPTCHA
+  // and the page context went away -- and another finished at 2/12 the same way. So: remember the
+  // room we were in, tell the two cases apart, SHOUT about the bad one, and try to walk back in.
+  let draftUrl: string | null = null;
+  let sawDraft = false, lastFilled = 0, lastOpen = 0, recoveries = 0;
+  const MAX_RECOVERIES = 3;
+  // What does the page look like right now? Used only for the operator-facing message.
+  const diagnose = async (): Promise<string> => {
+    let where = "";
+    try { where = page.url() || ""; } catch { /* shim may not have a cached url yet */ }
+    let auth = false;
+    try {
+      auth = Boolean(await page.evaluate(
+        "!!document.querySelector('iframe[src*=\"registerdisney\"], iframe[src*=\"recaptcha\"], input[type=\"password\"]')",
+      ));
+    } catch { /* evaluate can itself fail if the context is gone -- that is informative too */ }
+    return `url=${where || "(unknown)"}${auth ? " | AUTH CHALLENGE VISIBLE (Disney login / reCAPTCHA)" : ""}`;
+  };
   // Live-state file the desktop app (Mission Control) reads each tick to render the agent's
   // current decision (on-block player, our recommended max bid + reason), our roster/budget, and
   // live inflation. Stable filename so the app polls ONE file. Best-effort, overwritten each tick.
@@ -1392,13 +1439,36 @@ async function cmdAutoDraft(rest: string[]) {
       // Roster panel not rendered yet (pre-draft countdown) OR not in a draft. Tolerate a
       // startup window before giving up.
       if (++emptyReads > 25) {
-        console.log(`no draft roster after ${emptyReads} reads -- not in a draft room. Stopping.`);
+        const where = await diagnose();
+        // Case 1: we were IN the draft and still had slots to fill -> we were thrown out. Do not
+        // quietly stop with an unfinished roster; say so at top volume and try to walk back in.
+        if (sawDraft && lastOpen > 0 && draftUrl && recoveries < MAX_RECOVERIES) {
+          recoveries++;
+          console.log(`\n*** r${i}: LOST THE DRAFT ROOM mid-draft -- ${lastFilled}/${lastFilled + lastOpen} slots filled, $${r.spent || 0} spent.`);
+          console.log(`*** ${where}`);
+          console.log(`*** Re-entering (attempt ${recoveries}/${MAX_RECOVERIES}). If an ESPN login is on screen, clear it NOW -- the agent cannot log in for you.\n`);
+          await page.goto(draftUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+          await page.waitForTimeout(3000);
+          emptyReads = 0;
+          continue;
+        }
+        if (sawDraft && lastOpen > 0) {
+          console.log(`\n*** r${i}: FATAL -- out of the draft room with ${lastFilled}/${lastFilled + lastOpen} slots UNFILLED after ${recoveries} re-entry attempts.`);
+          console.log(`*** ${where}`);
+          console.log(`*** DRAFT MANUALLY NOW. Your remaining slots will otherwise be auto-picked by ESPN.\n`);
+        } else {
+          console.log(`no draft roster after ${emptyReads} reads -- not in a draft room (${where}). Stopping.`);
+        }
         break;
       }
       await page.waitForTimeout(1400);
       continue;
     }
     emptyReads = 0;
+    // We are demonstrably in a room: remember it so a later eviction can be told apart from
+    // "never started", and so we know where to walk back to.
+    if (!sawDraft) { sawDraft = true; try { draftUrl = page.url() || null; } catch { draftUrl = null; } }
+    lastFilled = r.filled; lastOpen = r.open;
     if (!loggedSlots) {
       const liveSlots = r.filled + r.open;
       console.log(`roster slots live=${liveSlots} sim=${SIM_LEAGUE.slots.length}`);
@@ -1437,6 +1507,9 @@ async function cmdAutoDraft(rest: string[]) {
     // the human has the wheel. Log once per transition; delete the file to resume.
     const paused = existsSync(dataPath("PAUSE"));
     if (paused !== wasPaused) { console.log(`r${i}: ${paused ? "PAUSED -- data/PAUSE present; reading only, not bidding/nominating (delete to resume)" : "RESUMED -- data/PAUSE removed"}`); wasPaused = paused; }
+    // Pick up any mid-draft lever edit (app Settings / set_lever) BEFORE reading the block, so the
+    // very next bid uses it. Pairs with data/PAUSE: pause, retune, resume.
+    refreshStrategy();
     const b = await readBlock(page);
     if (!paused && b.onBlock && b.player && b.canBid) {
       const pos = normPos(b.pos) ?? normPos(posByName.get(nameKey(b.player)) ?? null);

@@ -239,3 +239,29 @@ code{font-family:var(--font-mono);font-size:.95em;background:var(--hover);paddin
 .pick-bid{font-family:var(--font-serif);font-weight:var(--fw-head);font-size:38px;line-height:1;margin:4px 0 6px;display:flex;gap:12px;align-items:baseline}
 .act{font-family:var(--font-sans);font-size:var(--fs-sm);font-weight:var(--fw-head);letter-spacing:.06em;padding:2px 8px;border:1px solid;border-radius:var(--radius-sm)}
 .a-bid{color:var(--good);border-color:var(--good)} .a-pass{color:var(--bad);border-color:var(--bad)} .a-lead{color:#1f5fb0;border-color:#1f5fb0} .a-mut{color:var(--mut);border-color:var(--line)}
+
+/* ---------- DRAFT COCKPIT (left rail; replaces the retired chat Assistant) ---------- */
+/* Read at a glance, from across the room, while the ESPN draft room fills the main area. */
+#cockpit{flex:1;overflow:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px;font-size:var(--fs-sm)}
+.ck-status{display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:var(--fs-xs);letter-spacing:var(--tracking);text-transform:uppercase}
+.ck-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.ck-dot.ok{background:var(--good)} .ck-dot.warn{background:#b8860b} .ck-dot.bad{background:var(--bad)}
+.ck-alert{padding:6px 8px;border-left:3px solid var(--line-str);background:var(--hover);font-size:var(--fs-xs);line-height:1.35}
+.ck-alert.bad{border-left-color:var(--bad);color:var(--bad);font-weight:var(--fw-label)}
+.ck-alert.warn{border-left-color:#b8860b}
+.ck-alert.ok{border-left-color:var(--good);color:var(--good)}
+/* The on-the-block card is the decision surface: green rail = we are in, red = we are out. */
+.ck-block{border:1px solid var(--line);border-left-width:4px;padding:8px 10px;background:var(--paper)}
+.ck-block.in{border-left-color:var(--good)} .ck-block.out{border-left-color:var(--bad)}
+.ck-block.idle{border-left-color:var(--line);text-align:center;padding:14px 10px}
+.ck-name{font-weight:var(--fw-head);font-size:var(--fs-base);margin-bottom:4px}
+.ck-verdict{font-family:var(--font-mono);font-weight:var(--fw-head);letter-spacing:var(--tracking);margin-top:5px}
+.ck-block.in .ck-verdict{color:var(--good)} .ck-block.out .ck-verdict{color:var(--bad)}
+.ck-why{font-size:var(--fs-xs);font-family:var(--font-mono);margin-top:2px;word-break:break-all}
+.ck-h{font-size:var(--fs-xs);letter-spacing:var(--tracking);text-transform:uppercase;color:var(--mut);border-bottom:1px solid var(--line);padding-bottom:3px;margin-top:4px}
+.ck-row{display:flex;justify-content:space-between;gap:8px}
+.ck-tbl{width:100%;border-collapse:collapse;font-size:var(--fs-xs)}
+.ck-tbl td{padding:2px 0;border-bottom:1px solid var(--line)}
+.ck-tbl td.r{text-align:right;font-family:var(--font-mono)}
+.ck-empty{text-align:center;padding:18px 8px;line-height:1.6}
+.ck-empty code{display:block;font-family:var(--font-mono);font-size:var(--fs-xs);margin-top:4px}

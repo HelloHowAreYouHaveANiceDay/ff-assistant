@@ -558,18 +558,91 @@ async function stubAgentTurn(msg, sink) {
 }
 
 let copilotLog = [{ role: "assistant", parts: [{ t: "text", s: "Hi — I’m your draft assistant. Ask me anything about the board: “best available RB”, “is Josh Jacobs a value?”, “who should I target at WR?”. I read the live value board to answer." }] }];
-function renderCopilot() {
-  const el = document.getElementById("cop-msgs"); if (!el) return;
-  el.innerHTML = copilotLog.map(m => {
-    if (m.role === "user") return `<div class="cmsg cuser"><div class="cbody">${esc(m.text)}</div></div>`;
-    const body = m.parts.map(p => p.t === "text"
-      ? `<div class="ctext">${esc(p.s)}</div>`
-      : `<div class="ctool"><span class="chip">&#9881;&#65039; ${esc(p.name)}(${esc(fmtArgs(p.args))})</span> <span class="cres mut">${p.res != null ? esc(p.res) : "…"}</span></div>`).join("");
-    const pend = m.pending ? `<div class="ctext mut">…thinking</div>` : "";
-    return `<div class="cmsg casst"><div class="cbody">${body}${pend}</div></div>`;
-  }).join("");
-  el.scrollTop = el.scrollHeight;
+// ---------- DRAFT COCKPIT (replaces the chat Assistant in the left rail) ----------
+// One job: show, at a glance, whether the agent is alive and what it is about to do -- so a human
+// can decide to step in. Everything here is READ-ONLY; intervening means bidding yourself in the
+// draft room, changing a lever in Setup (auto-draft re-reads them every tick), or `touch data/PAUSE`.
+const money = (n) => "$" + (Number(n) || 0);
+function cockpitAlerts(d, ageSec) {
+  const a = [];
+  // Staleness is the alarm that matters: if auto-draft died or lost the room, this panel is the ONLY
+  // on-screen sign -- ESPN's own UI looks completely normal while our bidder is gone.
+  // Thresholds are set off MEASURED cadence, not the tick rate: the state file is rewritten only on
+  // ticks that see a block, so ~11s between writes is normal and quiet stretches happen between
+  // nominations. 25s = worth a glance, 45s = something is actually wrong. Tuned deliberately high --
+  // a panel that cries wolf gets ignored, and this one has to be believed at 10am.
+  if (ageSec == null) a.push(["bad", "No agent data -- auto-draft has not started"]);
+  else if (ageSec > 45) a.push(["bad", `Agent silent ${ageSec}s -- likely dead or out of the room. CHECK IT.`]);
+  else if (ageSec > 25) a.push(["warn", `No update for ${ageSec}s (normal between nominations)`]);
+  if (d && d.paused) a.push(["warn", "PAUSED (data/PAUSE present) -- not bidding; delete the file to resume"]);
+  const us = d && d.us;
+  if (us && us.open === 0) a.push(["ok", `Roster complete -- ${us.filled} slots, ${money(us.spent)} spent`]);
+  // Late and rich: the room is nearly out of money and we still hold most of ours. Not a fault --
+  // it is the shape of this strategy -- but it is the moment a human might want to spend faster.
+  if (us && d && d.league && us.open > 0) {
+    const ourLeft = 200 - (us.spent || 0);
+    if ((d.league.remainingDollars || 0) < 600 && ourLeft > 80) {
+      a.push(["warn", `${money(ourLeft)} unspent with ${us.open} slots open and the room down to ${money(d.league.remainingDollars)}`]);
+    }
+  }
+  return a;
 }
+function renderCockpit() {
+  const el = document.getElementById("cockpit"); if (!el) return;
+  const st = COCKPIT, d = st && st.data, ageSec = st ? st.ageSec : null;
+  const alerts = cockpitAlerts(d, ageSec);
+  const badge = ageSec == null ? `<span class="ck-dot bad"></span>OFFLINE`
+    : ageSec > 45 ? `<span class="ck-dot bad"></span>STALE ${ageSec}s`
+    : (d && d.paused) ? `<span class="ck-dot warn"></span>PAUSED`
+    : ageSec > 25 ? `<span class="ck-dot warn"></span>${ageSec}s`
+    : `<span class="ck-dot ok"></span>LIVE`;
+  if (!d) {
+    el.innerHTML = `<div class="ck-status">${badge}</div>` +
+      alerts.map(([k, t]) => `<div class="ck-alert ${k}">${esc(t)}</div>`).join("") +
+      `<div class="ck-empty mut">Start the draft:<br><code>ff enter-draft --app</code><br><code>ff auto-draft --app</code></div>`;
+    return;
+  }
+  const b = d.onBlock, dec = d.decision, us = d.us || {}, lg = d.league || {};
+  const ourLeft = 200 - (us.spent || 0);
+  // The single most useful line: what is up, what we think it is worth, and are we in or out.
+  const blockHtml = b && b.player ? `
+    <div class="ck-block ${dec && dec.action === "bid" ? "in" : "out"}">
+      <div class="ck-name">${esc(b.player)} <span class="mut">${esc(b.pos || "")}</span></div>
+      <div class="ck-row"><span>offer</span><b>${money(b.currentOffer)}</b></div>
+      <div class="ck-row"><span>our cap</span><b>${dec ? money(dec.cap) : "--"}</b></div>
+      <div class="ck-verdict">${dec ? (dec.action === "bid" ? "BIDDING" : "PASS") : "--"}</div>
+      <div class="ck-why mut">${dec ? esc(dec.reason || "") : ""}</div>
+    </div>` : `<div class="ck-block idle mut">nobody on the block</div>`;
+  const rosterHtml = (us.roster || []).length
+    ? `<table class="ck-tbl">${us.roster.map(p => `<tr><td class="mut">${esc(p.pos || "")}</td><td>${esc(p.name || "")}</td><td class="r">${money(p.price)}</td></tr>`).join("")}</table>`
+    : `<div class="mut">no players won yet</div>`;
+  const recent = (d.recentPicks || []).slice(-6).reverse().map(p =>
+    `<tr><td>${esc(p.name)}</td><td class="mut">${esc(p.pos || "")}</td><td class="r">${money(p.price)}</td></tr>`).join("");
+  el.innerHTML = `
+    <div class="ck-status">${badge} <span class="mut">r${d.round ?? "--"} &middot; infl ${d.liveInflation != null ? d.liveInflation.toFixed(2) : "--"}</span></div>
+    ${alerts.map(([k, t]) => `<div class="ck-alert ${k}">${esc(t)}</div>`).join("")}
+    ${blockHtml}
+    <div class="ck-h">Us</div>
+    <div class="ck-row"><span>budget left</span><b>${money(ourLeft)}</b></div>
+    <div class="ck-row"><span>max legal bid</span><b>${b && b.myMax != null ? money(b.myMax) : "--"}</b></div>
+    <div class="ck-row"><span>roster</span><b>${us.filled ?? 0}/${(us.filled ?? 0) + (us.open ?? 0)}</b></div>
+    ${rosterHtml}
+    <div class="ck-h">Room</div>
+    <div class="ck-row"><span>money left</span><b>${money(lg.remainingDollars)}</b></div>
+    <div class="ck-row"><span>picks made</span><b>${lg.picksMade ?? 0}</b></div>
+    <div class="ck-h">Recent picks</div>
+    <table class="ck-tbl">${recent || `<tr><td class="mut">none yet</td></tr>`}</table>`;
+}
+let COCKPIT = null;
+async function pollCockpit() {
+  try { if (window.mc && window.mc.liveState) COCKPIT = await window.mc.liveState(); } catch (e) { COCKPIT = null; }
+  renderCockpit();
+}
+// 1.5s ~= the agent's own tick, so the panel is never more than one decision behind.
+setInterval(pollCockpit, 1500);
+pollCockpit();
+
+function renderCopilot() { /* Assistant retired -- Claude Code drives the app over CDP instead. */ }
 // While a real-agent turn streams, its events route to this message. Set up ONE persistent listener.
 let curAgent = null;
 if (window.mc && window.mc.onAgentEvent) window.mc.onAgentEvent((e) => {
