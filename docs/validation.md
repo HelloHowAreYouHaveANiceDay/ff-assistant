@@ -776,3 +776,62 @@ And the per-season deltas split cleanly across the tuning/holdout boundary:
 the overfitting signature this file already has scar tissue for (a cell that measured +3.4pp became
 +1.0pp held out). It was also the best of 8 cells, and selection alone inflates the winner. Not
 shipped. If it is ever revisited, the test is a PRE-REGISTERED holdout run, not another sweep.
+
+## `multQB` 0.7: found by watching LIVE drafts, confirmed in the sim, still a judgment call (2026-09-06)
+
+The strongest candidate this harness has produced in a while, and the first one found by watching the
+agent draft rather than by sweeping. Four COMPLETE ESPN practice auctions the night before the real
+draft (the first complete ones ever recorded here -- earlier attempts all died early) showed the same
+thing twice at the shipped config:
+
+| mock | filled | clicks | QBs rostered | dead bench-QB $ | spent |
+|---|---|---|---|---|---|
+| 1 (shipped) | 12/12 | 148/148 | 3 | $13 | $117 |
+| 2 (shipped) | 12/12 | 143/143 | **4** | $16 | $111 |
+| 3 (`--pos-mult QB:0.70`) | 12/12 | 146/146 | 3 | **$4** | $83 |
+
+Three and then FOUR quarterbacks on a ONE-QB roster, while the starting WR cost $5-12 and $83-89 sat
+unspent. `benchDiscount 0.25` shrinks those bids but does not stop them: Maye at $12 is exactly
+`74 x 0.7 x 0.8 x 0.25 + 2`.
+
+**Cause: our value book overprices QB.** It prices QB ~$707 league-wide against this room's real
+~$328. Whenever the room does not want a backup QB, our book says he is a bargain and we take him.
+
+**Why no sweep ever caught it.** `multQB 0.7` measured EXACTLY 0.0 under `--bot-book vor` -- because
+those bots price with OUR OWN `computeValues` and inherit the same QB bias, so QBs are expensive in
+that sim and we never hoover them. `rank` prices QB independently (sim-vs-mock: QB $206 vs vor's
+$470 vs this league's real $328) and is the only shipped opponent model that can see this at all.
+A lever can be genuinely wrong and measure zero in a self-referential market.
+
+Re-measured, 1999-2024, n=150:
+
+| | multQB 1.0 (shipped) | multQB 0.7 |
+|---|---|---|
+| rank book | 34.2% | **36.1%** (0.60 -> 35.4, 0.85 -> 35.2: interior optimum) |
+| vor book | 32.9% | **33.8%** |
+
+Paired vs the shipped arm on identical seeds (rank): McNemar chi2 6.60, **p = 0.010**; season-level
+mean **+1.97pp**, SE 0.74, t 2.67/24df; bootstrap 95% CI **[+0.56, +3.47]pp** (excludes zero); better
+in **19/25 seasons**. And the holdout split runs the RIGHT way, unlike `premium 1`:
+
+| era | seasons | mean delta |
+|---|---|---|
+| holdout 2000-2013 | 14 | **+2.36pp** |
+| tuning era 2014-2024 | 11 | +1.27pp |
+
+Minimax across both books favours 0.7 (worst case 33.8 vs the shipped 32.9), which is the same
+criterion that chose `aggr` 0.7.
+
+**NOT SHIPPED, deliberately.** It cleared every statistical bar, but the live mock only half-confirms
+it: the QB leak closed ($16 -> $4) while total spend FELL to $83, so the money was not redirected
+into better starters -- it just was not spent. n=1 per arm in a room whose price curve is not this
+league's. Changing a validated lever hours before a real draft, on a benefit the live evidence does
+not yet show, is exactly the impatience this file exists to prevent. Ship it after the season, with a
+pre-registered holdout, or run it live as `--pos-mult QB:0.70` with eyes open.
+
+### Robustness, same four mocks
+
+**580 bid clicks, 0 failures.** The earlier "~14% of clicks fail" estimate does NOT reproduce: it was
+an artifact of manual `ff bid` calls, each paying a fresh CDP attach (15-30s, racy). The persistent
+auto-draft loop is 100% reliable. Click health is now counted and surfaced live (log + cockpit), so
+this is measurable during the real draft rather than inferred afterwards.
