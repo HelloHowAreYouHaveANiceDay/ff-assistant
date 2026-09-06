@@ -107,14 +107,31 @@ async function ingestBio(db: DB, SEASON: number): Promise<number> {
 const TEAM_ALIAS: Record<string, string> = { LA: "LAR", JAX: "JAC", OAK: "LV", SD: "LAC", STL: "LAR", WSH: "WAS", ARZ: "ARI" };
 const canonTeam = (t: string): string => TEAM_ALIAS[t] ?? t;
 
-/** Derive each team's bye week from the season schedule (the week it plays no game). */
+/**
+ * Persist the season schedule and derive each team's bye (the week it plays no game).
+ *
+ * One fetch answers both. The bye is a by-product of the opponent map, so keeping the map costs a
+ * table write and unlocks every opponent-by-week question -- most importantly playoff-weeks SOS,
+ * which season-total projections structurally cannot see.
+ */
 async function ingestByes(db: DB, SEASON: number): Promise<number> {
   const games = (await fetchCsv(URLS.schedules)).filter((r) => num(pick(r, "season")) === SEASON);
   const weeksByTeam = new Map<string, Set<number>>();
+  // one row per TEAM per game (both directions) -- see schema.sql `game`
+  const sched: { wk: number; team: string; opp: string; home: number; sp: number | null; tot: number | null }[] = [];
   for (const g of games) {
     const wk = num(pick(g, "week"));
     if (wk == null) continue;
-    for (const t of [canonTeam(pick(g, "away_team")), canonTeam(pick(g, "home_team"))]) {
+    const away = canonTeam(pick(g, "away_team")), home = canonTeam(pick(g, "home_team"));
+    // nflverse: spread_line POSITIVE = home favoured. We store team-relative, NEGATIVE = favoured
+    // (matching team_odds), so the home row flips sign and the away row keeps it.
+    const raw = num(pick(g, "spread_line"));
+    const tot = num(pick(g, "total_line"));
+    if (home && away) {
+      sched.push({ wk, team: home, opp: away, home: 1, sp: raw == null ? null : -raw, tot });
+      sched.push({ wk, team: away, opp: home, home: 0, sp: raw, tot });
+    }
+    for (const t of [away, home]) {
       if (!t) continue;
       if (!weeksByTeam.has(t)) weeksByTeam.set(t, new Set());
       weeksByTeam.get(t)!.add(wk);
@@ -125,6 +142,13 @@ async function ingestByes(db: DB, SEASON: number): Promise<number> {
     `INSERT INTO team_bye (season, team, bye) VALUES (?, ?, ?)
      ON CONFLICT(season, team) DO UPDATE SET bye=excluded.bye`,
   );
+  const upGame = db.prepare(
+    `INSERT INTO game (season, week, team, opponent, home, spread_line, total_line)
+     VALUES (@season, @wk, @team, @opp, @home, @sp, @tot)
+     ON CONFLICT(season, week, team) DO UPDATE SET
+       opponent=excluded.opponent, home=excluded.home,
+       spread_line=excluded.spread_line, total_line=excluded.total_line`,
+  );
   let n = 0;
   const run = db.transaction(() => {
     db.prepare(`DELETE FROM team_bye WHERE season = ?`).run(SEASON); // full refresh (drop renamed teams)
@@ -133,6 +157,8 @@ async function ingestByes(db: DB, SEASON: number): Promise<number> {
       for (let w = 1; w <= maxWk; w++) if (!weeks.has(w)) { bye = w; break; }
       if (bye != null) { up.run(SEASON, team, bye); n++; }
     }
+    db.prepare(`DELETE FROM game WHERE season = ?`).run(SEASON); // full refresh (schedule can move)
+    for (const s of sched) upGame.run({ season: SEASON, ...s });
   });
   run();
   return n;

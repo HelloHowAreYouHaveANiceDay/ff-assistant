@@ -197,6 +197,27 @@ CREATE TABLE IF NOT EXISTS team_bye (
   PRIMARY KEY (season, team)
 );
 
+-- The full season schedule, ONE ROW PER TEAM PER GAME (both directions), so "who does X play in
+-- week 16" is a point query. We already download this file to derive byes; keeping the opponent map
+-- is what makes playoff-weeks strength of schedule answerable offline.
+--
+-- spread_line/total_line are the BOOKS' lines and are NULL for weeks not yet posted (in September
+-- only ~weeks 1-7 carry them). They fill in as the season runs, which is why a week-15 SOS computed
+-- at the trade deadline is far better grounded than one computed in preseason.
+--
+-- SIGN CONVENTION: spread_line here matches team_odds -- NEGATIVE means THIS team is favoured.
+-- nflverse's raw games.csv uses the opposite (positive = HOME favoured); ingestSchedule flips it.
+CREATE TABLE IF NOT EXISTS game (
+  season      INTEGER,
+  week        INTEGER,
+  team        TEXT,
+  opponent    TEXT,
+  home        INTEGER,               -- 1 = team is at home
+  spread_line REAL,                  -- negative = this team favoured; NULL until the book posts it
+  total_line  REAL,
+  PRIMARY KEY (season, week, team)
+);
+
 -- news / flags. player_name/pos/team are denormalized so the feed renders without a join AND
 -- survives news about a player outside the ranking universe (so NO FK on player_id here).
 CREATE TABLE IF NOT EXISTS news (
