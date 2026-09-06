@@ -133,6 +133,7 @@ export function baselines(points: PointsRow[], lg: ValueLeague, flexWeighted = t
  *  nominal points curve must not be allowed to price them like real starters. */
 export function computeValues(points: PointsRow[], lg: ValueLeague = DEFAULT_VALUE_LEAGUE, maxKDst = 2, flexWeighted = true): ValueRow[] {
   const base = baselines(points, lg, flexWeighted);
+  const ptsBy = new Map(points.map((p) => [p.name, p.points])); // for the tail tie-break below
   const withVor = points.map((p) => ({ ...p, vor: Math.max(0, p.points - (base[p.pos] ?? 0)) }));
   const totalVor = withVor.reduce((s, p) => s + p.vor, 0) || 1;
   const discretionary = lg.teams * lg.budget - lg.teams * lg.rosterSpots * 1;
@@ -143,5 +144,13 @@ export function computeValues(points: PointsRow[], lg: ValueLeague = DEFAULT_VAL
       const value = (p.pos === "K" || p.pos === "DST") ? Math.min(raw, maxKDst) : raw;
       return { name: p.name, pos: p.pos, value };
     })
-    .sort((a, b) => b.value - a.value);
+    // Ties break on PROJECTED POINTS, not arbitrarily. Below replacement level VOR is 0 and every
+    // player collapses to the $1 floor -- correct as valuation (no surplus over a freely available
+    // body) but it destroys the ordering of a large, useful tail. At QB the baseline is the 17th QB
+    // (one slot x sixteen teams, no FLEX), so ~10 startable quarterbacks all price at $1 despite a
+    // 74-point spread between them. In the 2026-09-06 draft our cap was floored at $1 for the last
+    // several slots, and the book gave the bidder no way to prefer Jordan Love (222 pts) over Jacoby
+    // Brissett (149) -- it took whoever happened to be nominated. Dollar values are unchanged, so the
+    // value gates are unaffected; this only fixes the ORDER the tail is presented in.
+    .sort((a, b) => b.value - a.value || (ptsBy.get(b.name) ?? 0) - (ptsBy.get(a.name) ?? 0));
 }

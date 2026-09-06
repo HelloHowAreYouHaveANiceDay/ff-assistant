@@ -476,6 +476,17 @@ const REAL_TEAM = "8";
 // readBlock/readRoster/readBoard/quickBid/jumpBid all transfer. The real draft opens a few
 // minutes before start; run this then, then `ff auto-draft`. Tries, in order: an "Enter Draft"
 // control from the league (captured window.open), then the direct draft URL.
+/** The SWID cookie, which ESPN's draft URL wants as `memberId`. Read straight from the page we are
+ *  already on, so it works for both a real Playwright Page and the webview shim (both have
+ *  `evaluate`). Returns null rather than throwing -- the URL still resolves without it in some
+ *  cases, and a missing memberId should degrade to the clubhouse fallback, not abort entry. */
+async function espnSwidFor(page: { evaluate: (js: string) => Promise<unknown> }): Promise<string | null> {
+  try {
+    const raw = String((await page.evaluate("(document.cookie.match(/SWID=([^;]+)/)||[])[1]||''")) || "");
+    return raw ? decodeURIComponent(raw) : null;
+  } catch { return null; }
+}
+
 async function cmdEnterDraft(rest: string[]) {
   const { readRoster } = await import("./draft/espnAuction.js");
   const { openDb, getConfig } = await import("./db/db.js");
@@ -502,27 +513,40 @@ async function cmdEnterDraft(rest: string[]) {
   }
   const page = a.pages.find((p) => !/\/football\/draft/.test(p.url())) ?? (await a.context.newPage());
 
-  // Strategy 1: from the league clubhouse, click an "Enter Draft"/"Draft Now" control (opens the
-  // draft app via window.open, like practice). Capture the URL and navigate our single tab.
-  await page.goto(`https://fantasy.espn.com/football/team?leagueId=${league}&teamId=${team}`, { waitUntil: "networkidle" }).catch(() => {});
-  await page.evaluate("window.__ffOpen=null; if(!window.__ffPatched){window.__ffPatched=1; window.open=function(u){try{window.__ffOpen=String(u||'');}catch(e){} return {closed:false,focus(){},blur(){},close(){},postMessage(){}};};}");
-  const enterBtn = page.getByRole("button", { name: /enter draft|draft now|join draft|go to draft|enter live draft/i })
-    .or(page.getByRole("link", { name: /enter draft|draft now|join draft|go to draft|enter live draft/i }));
-  if ((await enterBtn.count()) > 0) {
-    await enterBtn.first().click({ timeout: 6000 }).catch((e) => console.error("enter-click:", e.message));
-    await page.waitForTimeout(1500);
-    const opened = (await page.evaluate("window.__ffOpen")) as string | null;
-    if (opened) {
-      await page.goto(opened.startsWith("http") ? opened : new URL(opened, page.url()).href, { waitUntil: "domcontentloaded" }).catch(() => {});
-    }
-  } else {
-    console.log("No 'Enter Draft' control on the clubhouse (draft not open yet?). Trying direct URL.");
-  }
+  // ORDER MATTERS, and this is why (2026-09-06, the real draft): the clubhouse-click strategy used
+  // to run FIRST and called `page.getByRole`, which the webview shim (src/browser/webviewPage.ts)
+  // does not implement -- it only ports the slice of the Page API espnAuction.ts uses. So under
+  // --app it threw "page.getByRole is not a function" and died BEFORE reaching the direct-URL
+  // fallback that actually works. Every mock used `launch-practice`, so this path had never run.
+  //
+  // Direct URL is now Strategy 1: it needs no Locator API, and it is the same navigation
+  // `launch-practice` has always used. Note the memberId param -- without it ESPN redirects to the
+  // fantasy homepage rather than the draft room.
+  const swid = await espnSwidFor(page).catch(() => null);
+  const directUrl = `https://fantasy.espn.com/football/draft?leagueId=${league}&seasonId=${season}&teamId=${team}`
+    + (swid ? `&memberId=${swid}` : "");
+  await page.goto(directUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.waitForTimeout(1500);
 
-  // Strategy 2: direct draft URL (works once the draft room is live).
-  if (!(await inDraft(page))) {
-    await page.goto(`https://fantasy.espn.com/football/draft?leagueId=${league}&seasonId=${season}&teamId=${team}`, { waitUntil: "domcontentloaded" }).catch(() => {});
-    await page.waitForTimeout(1500);
+  // Strategy 2 (fallback): from the clubhouse, click an "Enter Draft" control -- it opens the draft
+  // app via window.open, which we shim to capture the URL rather than spawn a second tab (a
+  // duplicate draft connection kicks the seat). Guarded: `getByRole` exists on a real Playwright
+  // Page but not on the webview shim, so feature-detect instead of assuming.
+  if (!(await inDraft(page)) && typeof (page as { getByRole?: unknown }).getByRole === "function") {
+    await page.goto(`https://fantasy.espn.com/football/team?leagueId=${league}&teamId=${team}`, { waitUntil: "networkidle" }).catch(() => {});
+    await page.evaluate("window.__ffOpen=null; if(!window.__ffPatched){window.__ffPatched=1; window.open=function(u){try{window.__ffOpen=String(u||'');}catch(e){} return {closed:false,focus(){},blur(){},close(){},postMessage(){}};};}");
+    const enterBtn = page.getByRole("button", { name: /enter draft|draft now|join draft|go to draft|enter live draft/i })
+      .or(page.getByRole("link", { name: /enter draft|draft now|join draft|go to draft|enter live draft/i }));
+    if ((await enterBtn.count()) > 0) {
+      await enterBtn.first().click({ timeout: 6000 }).catch((e) => console.error("enter-click:", e.message));
+      await page.waitForTimeout(1500);
+      const opened = (await page.evaluate("window.__ffOpen")) as string | null;
+      if (opened) {
+        await page.goto(opened.startsWith("http") ? opened : new URL(opened, page.url()).href, { waitUntil: "domcontentloaded" }).catch(() => {});
+      }
+    } else {
+      console.log("No 'Enter Draft' control on the clubhouse (draft not open yet?).");
+    }
   }
 
   if (await inDraft(page)) {
@@ -1340,9 +1364,20 @@ async function cmdAutoDraft(rest: string[]) {
   const { SIM_LEAGUE } = await import("./draft/sim.js");
   // A full 16-team auction runs ~25-30 min; at ~1.4s/tick + read overhead that's ~1000+ ticks, so the
   // cap must comfortably outlast the whole draft (it exits early on a full roster or a stall).
-  const rounds = Number(valueOf(rest, "--rounds") ?? 1600);
-  const jump = Number(valueOf(rest, "--jump") ?? 5);   // fixed jump-bid step (Step 8); 0 = +1 bids only
+  // How long to keep bidding. Expressed in TIME, not ticks: `--rounds 1600` used to be the default
+  // and it silently ended the 2026-09-06 real draft at 3/12 filled -- 1600 x 1.4s is ~37 minutes,
+  // and a 16-team auction runs far longer. It printed a normal `final:` line and exited 0, which is
+  // indistinguishable from a completed draft unless you read the roster count. Every mock finished
+  // inside 1600 ticks, so the ceiling was never hit before the one draft that mattered.
+  //
+  // The real stop conditions are the roster filling (`DONE`) and the stall guard; this is only a
+  // backstop against an unattended process running forever. 6h covers any draft.
   const tick = Number(valueOf(rest, "--tick") ?? 1400); // poll cadence (ms); lower for a fast bid timer
+  const maxHours = Number(valueOf(rest, "--max-hours") ?? 6);
+  const rounds = valueOf(rest, "--rounds")
+    ? Number(valueOf(rest, "--rounds"))
+    : Math.ceil((maxHours * 3600 * 1000) / tick);
+  const jump = Number(valueOf(rest, "--jump") ?? 5);   // fixed jump-bid step (Step 8); 0 = +1 bids only
   // Value source (the pluggable knob). Preference: the single SQLite store (player_value) ->
   // data/values.csv -> ESPN's on-screen pre-draft value. Pass an explicit --csv (incl. --csv "")
   // to bypass the DB and force the CSV/ESPN path.
@@ -1582,6 +1617,19 @@ async function cmdAutoDraft(rest: string[]) {
     // Pick up any mid-draft lever edit (app Settings / set_lever) BEFORE reading the block, so the
     // very next bid uses it. Pairs with data/PAUSE: pause, retune, resume.
     refreshStrategy();
+    // EARLY auth-challenge warning. The eviction guard below is reactive -- it fires only after the
+    // page context is already gone, and by then ESPN may have auto-bid on our behalf (2026-09-06:
+    // an eviction at pick 1 let ESPN buy a $59-book player for $88 while we were disconnected).
+    // The Disney login iframe appears BEFORE the teardown, so polling for it cheaply gives the human
+    // a window to clear it first. Throttled -- one warning per minute, not per tick.
+    if (i % Math.max(1, Math.round(60000 / tick)) === 0) {
+      const challenged = await page.evaluate(
+        "!!document.querySelector('iframe[src*=\"registerdisney\"], iframe[src*=\"recaptcha\"], input[type=\"password\"]')",
+      ).catch(() => false);
+      if (challenged) {
+        console.log(`r${i}: !! ESPN AUTH CHALLENGE ON SCREEN -- clear the login NOW. If it evicts us mid-auction, ESPN bids for you at ITS price, not ours.`);
+      }
+    }
     const b = await readBlock(page);
     if (!paused && b.onBlock && b.player && b.canBid) {
       const pos = normPos(b.pos) ?? normPos(posByName.get(nameKey(b.player)) ?? null);
