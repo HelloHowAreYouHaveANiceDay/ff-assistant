@@ -585,6 +585,14 @@ function cockpitAlerts(d, ageSec) {
       a.push(["warn", `${money(ourLeft)} unspent with ${us.open} slots open and the room down to ${money(d.league.remainingDollars)}`]);
     }
   }
+  // Click health: the agent can be deciding perfectly and still not land bids (button re-render
+  // race). Nothing else on screen would show it -- the roster just mysteriously fails to grow.
+  const ck = d && d.clicks;
+  if (ck && ck.attempts >= 5) {
+    const pct = Math.round((ck.fails / ck.attempts) * 100);
+    if (pct >= 25) a.push(["bad", `${ck.fails}/${ck.attempts} bid clicks FAILED (${pct}%) -- bid manually if this keeps up`]);
+    else if (pct >= 10) a.push(["warn", `${ck.fails}/${ck.attempts} bid clicks failed (${pct}%)`]);
+  }
   return a;
 }
 function renderCockpit() {

@@ -537,10 +537,72 @@ async function cmdEnterDraft(rest: string[]) {
 }
 
 // Pre-draft readiness check (G2/G9): session live + logged in + league reachable + draft state.
+// Draft-morning go/no-go. The OFFLINE half runs with no browser and answers "is the engine ready to
+// bid": is the book built, are the levers the ones we validated, is there a stale lock, how old is
+// the data. Then the ONLINE half checks the session. Everything prints OK / CHECK / FAIL so it can
+// be read in ten seconds at 08:30 without interpreting anything.
+async function preflightOffline(rest: string[]): Promise<void> {
+  const { openDb, getConfig } = await import("./db/db.js");
+  const { valueBook } = await import("./data/appdata.js");
+  const { DEFAULT_LEVERS } = await import("./draft/levers.js");
+  const { existsSync, statSync, readFileSync } = await import("node:fs");
+  const line = (ok: boolean | null, msg: string) => console.log(`${ok === null ? "CHECK" : ok ? "OK   " : "FAIL "}: ${msg}`);
+  let db;
+  try { db = openDb(valueOf(rest, "--db")); } catch (e) { line(false, `cannot open the store -- ${(e as Error).message}`); return; }
+  const cfg = getConfig(db);
+  const season = Number(valueOf(rest, "--season") ?? cfg.season);
+
+  // 1. The value book the bidder will actually use.
+  const book = valueBook(db, season);
+  line(book.length >= 450, `value book: ${book.length} priced players for ${season} (player_value)`);
+  if (book.length) line(true, `  top: ${book.slice(0, 5).map((p) => `${p.name} $${p.value}`).join(", ")}`);
+
+  // 2. Levers -- STORED config wins over code defaults, so print what will really be used and say
+  //    loudly if it differs from the validated posture (a mid-draft retune left behind, say).
+  const lv = cfg.levers as unknown as Record<string, number>;
+  const def = DEFAULT_LEVERS as unknown as Record<string, number>;
+  const drift = Object.keys(def).filter((k) => lv[k] !== def[k]).map((k) => `${k} ${lv[k]} (validated ${def[k]})`);
+  line(drift.length === 0, drift.length ? `levers DIFFER from the validated posture: ${drift.join(", ")}` : `levers match the validated posture (aggr ${lv.aggr}, maxShare ${lv.maxShare}, reserve ${lv.starterReserve})`);
+
+  // 3. League shape.
+  line(cfg.teams > 0 && cfg.slots.length > 0, `league: ${cfg.teams} teams, $${cfg.budget}, ${cfg.slots.length} slots, ${cfg.scoring}, ${cfg.playoffTeams}-team playoff`);
+
+  // 4. A lock left by a killed run blocks the next auto-draft -- at 09:00 that is the last thing
+  //    you want to debug. Killing the shell does NOT kill the node tree on Windows.
+  const lock = dataPath("auto-draft.lock");
+  if (existsSync(lock)) {
+    let pid = "";
+    try { pid = readFileSync(lock, "utf8").trim(); } catch { /* unreadable */ }
+    line(false, `STALE LOCK present (${pid}) -- delete data/auto-draft.lock or auto-draft will refuse to start`);
+  } else line(true, "no stale auto-draft lock");
+
+  // 5. Data freshness. Rebuild the morning of: projections move on injury news.
+  for (const f of ["points.csv", "values.csv"]) {
+    try {
+      const h = (Date.now() - statSync(dataPath(f)).mtimeMs) / 3600000;
+      line(h < 24 ? true : null, `data/${f} is ${h.toFixed(1)}h old${h >= 24 ? " -- run `ff refresh`" : ""}`);
+    } catch { line(false, `data/${f} missing -- run \`ff refresh\``); }
+  }
+
+  // 6. The clock. ESPN's draftSettings.date was read at setup; if we stored it, say how long is left.
+  try {
+    const row = db.prepare("SELECT scoring_json FROM league WHERE league_id = ?").get(REAL_LEAGUE) as { scoring_json?: string } | undefined;
+    const draftAt = row?.scoring_json ? (JSON.parse(row.scoring_json) as { draftDate?: number }).draftDate : undefined;
+    if (draftAt) {
+      const mins = Math.round((draftAt - Date.now()) / 60000);
+      line(true, `draft at ${new Date(draftAt).toLocaleString()} (${mins > 0 ? `${Math.floor(mins / 60)}h ${mins % 60}m away; room opens 60m before` : "STARTED"})`);
+    }
+  } catch { /* optional */ }
+  db.close();
+}
+
 async function cmdPreflight(rest: string[]) {
   const { readRoster } = await import("./draft/espnAuction.js");
   const league = valueOf(rest, "--league") ?? REAL_LEAGUE;
   const team = valueOf(rest, "--team") ?? REAL_TEAM;
+  console.log("--- engine (offline) ---");
+  await preflightOffline(rest).catch((e) => console.log(`FAIL : offline checks threw -- ${(e as Error).message}`));
+  console.log("--- session (browser) ---");
   let a: Attached;
   try { a = await attachFor(rest); } catch (e) { console.log(`FAIL: cannot attach to bro session -- ${(e as Error).message}`); return; }
   console.log(`OK: attached to browser (${a.pages.length} tabs)`);
@@ -556,7 +618,10 @@ async function cmdPreflight(rest: string[]) {
   const title = (await page.title().catch(() => "")) || "";
   const loggedIn = !/log ?in|sign ?in/i.test(title) && /espn/i.test(title.length ? title : page.url());
   console.log(`${loggedIn ? "OK" : "CHECK"}: league page title = "${title}" (logged in: ${loggedIn})`);
-  console.log(`When the draft opens: npm run ff -- enter-draft  (then auto-draft)`);
+  // --app is mandatory: plain --port hands the draft verbs the app's own UI window, not the ESPN
+  // webview, and fails silently. Do not enter before the room opens -- a duplicate connection kicks
+  // the seat (docs/draft-day-runbook.md).
+  console.log(`When the room OPENS (not before): npm run ff -- enter-draft --app   then: npm run ff -- auto-draft --app`);
   await detach(a);
 }
 
@@ -1411,6 +1476,7 @@ async function cmdAutoDraft(rest: string[]) {
   // room we were in, tell the two cases apart, SHOUT about the bad one, and try to walk back in.
   let draftUrl: string | null = null;
   let sawDraft = false, lastFilled = 0, lastOpen = 0, recoveries = 0;
+  let bidAttempts = 0, bidFails = 0; // click health -- surfaced live and in the final summary
   const MAX_RECOVERIES = 3;
   // What does the page look like right now? Used only for the operator-facing message.
   const diagnose = async (): Promise<string> => {
@@ -1549,6 +1615,16 @@ async function cmdAutoDraft(rest: string[]) {
           } else {
             ok = await quickBid(page);
           }
+          // Click health. A bid we DECIDED to make but failed to click is invisible otherwise: the
+          // "(noclick)" suffix below only prints on a player's FIRST sighting, so every re-bid that
+          // silently failed left no trace at all. Manual probing on 2026-09-05 measured ~2 failures
+          // in 14 clicks (button re-render race), which would be undetectable in a real draft.
+          // Count every attempt, and shout on each failure with the running rate.
+          bidAttempts++;
+          if (!ok) {
+            bidFails++;
+            console.log(`r${i}: !! CLICK FAILED on ${b.player} at $${offer} (cap ${cap}) -- ${bidFails}/${bidAttempts} bids have failed to click (${Math.round((bidFails / bidAttempts) * 100)}%)`);
+          }
           if (b.player !== lastPlayer)
             console.log(`r${i}: bid ${b.player} (${pos}) $${offer} cap=${cap} infl=${liveInflation.toFixed(2)} [${decision.reason}] myMax=${b.myMax} [$${league.remainingDollars} left, open ${r.open}]${ok ? "" : " (noclick)"}`);
           lastPlayer = b.player;
@@ -1617,6 +1693,9 @@ async function cmdAutoDraft(rest: string[]) {
         us: { budget: 200 - r.spent, spent: r.spent, filled: r.filled, open: r.open,
               openByBase: r.openByBase, flexOpen: r.flexOpen, benchOpen: r.benchOpen, roster },
         liveInflation,
+        // Click health rides along so the cockpit can show it: a rising failure rate means the
+        // bidder is DECIDING correctly but not landing the clicks -- invisible in the roster.
+        clicks: { attempts: bidAttempts, fails: bidFails },
         league: { remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length },
         recentPicks: picks.slice(-12).map((p) => ({ pick: p.pick, name: p.name, pos: p.pos, team: p.fantasyTeam, price: p.price })),
       };
@@ -1631,6 +1710,7 @@ async function cmdAutoDraft(rest: string[]) {
   try { draftDb?.close(); } catch { /* ignore */ }
   const fin = await readRoster(page);
   console.log(`final: filled ${fin.filled}/${fin.filled + fin.open} spent $${fin.spent} open ${fin.open}`);
+  console.log(`clicks: ${bidAttempts - bidFails}/${bidAttempts} landed${bidAttempts ? ` (${Math.round((bidFails / bidAttempts) * 100)}% failed)` : ""}`);
   await detach(a);
 }
 
