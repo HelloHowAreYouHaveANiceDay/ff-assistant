@@ -604,24 +604,51 @@ async function cmdProject(rest: string[]) {
   console.log(`${p.name} (${p.pos}): season ${proj.season(p.name).toFixed(0)} | this week${opp ? " vs " + opp : ""} ${proj.week(p.name, p.pos, opp).toFixed(1)} | ROS(10 gms) ${proj.ros(p.name, 10).toFixed(0)}`);
 }
 
+// Load OUR value book for a reporting surface (cheatsheet / news / values-check). The STORE wins:
+// player_value is what the live bidder reads (`sqlite:player_value(...)`), so a report built from a
+// stale data/values.csv could show numbers we will not actually bid. The CSV stays the checked-in
+// SEED and the fallback for a clone that has not run `ff refresh` yet -- and when it is used we SAY
+// so, rather than letting the two quietly differ. An explicit --values always wins: that is the
+// caller deliberately asking for a file.
+async function loadValueBook(rest: string[]): Promise<{ name: string; pos: string; value: number }[]> {
+  const explicit = valueOf(rest, "--values");
+  const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
+  if (!explicit) {
+    try {
+      const { openDb } = await import("./db/db.js");
+      const { valueBook } = await import("./data/appdata.js");
+      const db = openDb(valueOf(rest, "--db"));
+      const rows = valueBook(db, season);
+      db.close();
+      if (rows.length) return rows;
+    } catch { /* fall through to the CSV seed */ }
+  }
+  const { readFileSync } = await import("node:fs");
+  const file = explicit ?? dataPath("values.csv");
+  if (!explicit) console.log(`  (player_value empty for ${season} -- using the ${file} seed; run 'ff refresh')`);
+  return readFileSync(file, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","))
+    .map((f) => ({ name: (f[0] ?? "").trim(), pos: (f[1] ?? "").trim().toUpperCase(), value: Number(f[2]) }))
+    .filter((v) => v.name && v.value > 0);
+}
+
 // Draft-day cheat sheet: a tiered value board + the per-manager nomination drain plan + budget
 // guidance, written to a markdown file to keep in front of you DURING the draft. Pure offline --
-// operationalizes our values (data/values.csv) + manager scouting (data/managers.json). The agent
-// bids from these same values; the sheet is the human-copilot view of the same plan.
+// operationalizes our values (player_value, the same book the bidder uses) + manager scouting
+// (data/league-managers.md, per-install). The agent bids from these same values; the sheet is the
+// human-copilot view of the same plan.
 async function cmdCheatsheet(rest: string[]) {
-  const { readFileSync, writeFileSync } = await import("node:fs");
-  const valuesFile = valueOf(rest, "--values") ?? dataPath("values.csv");
+  const { writeFileSync } = await import("node:fs");
   const out = valueOf(rest, "--out") ?? dataPath("cheatsheet.md");
   const budget = Number(valueOf(rest, "--budget") ?? 200);
   const { tierize } = await import("./draft/cheatsheet.js");
-  const rows = readFileSync(valuesFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
-  const players = rows.map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), value: Number(f[2]) })).filter((p) => p.name && p.value > 0);
+  const players = await loadValueBook(rest);
   // How many players per position are actually rosterable/relevant (skip the $1 replacement tail).
   const RELEVANT: Record<string, number> = { RB: 40, WR: 45, TE: 18, QB: 18, K: 12, DST: 12 };
   const tiersFor = (pos: string) => tierize(players.filter((p) => p.pos === pos).sort((a, b) => b.value - a.value).slice(0, RELEVANT[pos] ?? 20));
   // Manager nomination plan: owners who overweight a position (share/leagueShare high) are the ones to
   // drain -- nominate that position early. (Human-only edge; sim showed it's not an auto-win, but it's
   // a live read for you -- data/league-managers.md, per-install and gitignored.)
+  const { readFileSync } = await import("node:fs");
   let nomPlan = "";
   try {
     const mgr = JSON.parse(readFileSync(dataPath("managers.json"), "utf8")) as { leagueShare: Record<string, number>; profiles: { owner: string; share: Record<string, number> }[] };
@@ -632,8 +659,14 @@ async function cmdCheatsheet(rest: string[]) {
 
   const POS = ["RB", "WR", "TE", "QB", "K", "DST"];
   const fmtTier = (t: { name: string; value: number }[], i: number) => `  T${i + 1} ($${t[0].value}-${t[t.length - 1].value}): ` + t.map((p) => `${p.name} $${p.value}`).join(", ");
-  let md = `# Draft-day cheat sheet\n\nGenerated from ${valuesFile}. Our $ values (VOR->auction $, ${budget} budget). The agent bids from these; this is your live copilot view.\n\n`;
-  md += `## Budget plan (default BALANCED -- reserve 15 / max-share 0.35)\nSpread the budget for a DEEP roster of solid starters, not 2-3 studs: cap any one player at ~$${Math.round(budget * 0.35)} (the max-share cap) and keep >=$1/slot so every slot fills. The room is stars-and-scrubs (61% of picks $1-5) and overpays for studs that bust weekly -- let those bidding wars pass and buy the middle where the room is broke. This balanced posture won the backtest (24.2% titles vs 15.7% aggressive-lean; docs/validation.md).\n\n`;
+  // Quote the levers the ENGINE will actually use, never a hardcoded pair -- this sheet is what you
+  // read during the draft, and it previously advertised reserve 15 / max-share 0.35 (a cap of $70)
+  // while the shipped posture was reserve 4 / max-share 0.25 (a cap of $50).
+  const { openDb, getConfig } = await import("./db/db.js");
+  const cdb = openDb(valueOf(rest, "--db")); const lv = getConfig(cdb).levers; cdb.close();
+  const shareCap = Math.round(budget * lv.maxShare);
+  let md = `# Draft-day cheat sheet\n\nGenerated from player_value -- the same book the agent bids from (VOR->auction $, $${budget} budget). This is your live copilot view of that plan.\n\n`;
+  md += `## Budget plan (shipped posture -- aggr ${lv.aggr} / reserve ${lv.starterReserve} / max-share ${lv.maxShare})\nSpread the budget for a DEEP roster of solid starters, not 2-3 studs: any one player is capped at $${shareCap} (max-share) and >=$1/slot is held back so every slot fills. The room is stars-and-scrubs (61% of picks $1-5) and overpays for studs that bust weekly -- let those bidding wars pass and buy the middle where the room is broke. This posture is the backtest winner (~33% titles on 25 seasons; docs/validation.md).\n\n`;
   md += `## Nomination drain plan\n${nomPlan}\n- QB/TE go **cheap once the payers are spent** -- wait them out.\n\n`;
   md += `## Top overall (by value)\n` + players.sort((a, b) => b.value - a.value).slice(0, 15).map((p, i) => `${i + 1}. ${p.name} (${p.pos}) **$${p.value}**`).join("\n") + "\n\n";
   md += `## Tiers by position\n`;
@@ -657,13 +690,12 @@ async function cmdCheatsheet(rest: string[]) {
 async function cmdValuesCheck(rest: string[]) {
   const { readFileSync } = await import("node:fs");
   const { nameKey, dstAliasKey } = await import("./draft/values.js");
-  const valuesFile = valueOf(rest, "--values") ?? dataPath("values.csv");
   const recapFile = valueOf(rest, "--recap") ?? dataPath("recaps.json");
   const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear() - 1);
   const topN = Number(valueOf(rest, "--top") ?? 150);
-  const vals = readFileSync(valuesFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","))
-    .map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), value: Number(f[2]) }))
-    .filter((v) => v.name && v.value > 0).sort((a, b) => b.value - a.value).slice(0, topN);
+  // Check the book the BIDDER uses. Checking the CSV instead would let a name-normalizer bug pass
+  // here and still bite live, which is the whole point of this command.
+  const vals = (await loadValueBook(rest)).sort((a, b) => b.value - a.value).slice(0, topN);
   const keySet = new Set(vals.map((v) => nameKey(v.name)));
   const displaySet = new Set(vals.map((v) => v.name));
   // surname / team nickname = the LAST word after removing suffix + d/st tokens (so "Tyrone Tracy
@@ -696,7 +728,7 @@ async function cmdValuesCheck(rest: string[]) {
       (sigSet.has(sig) ? fuzzy : absent).push(`${pk.player} (${pos})`);
     }
   }
-  console.log(`VALUES-CHECK ${valuesFile} top-${topN} vs ${season} recap (${picks.length} drafted)`);
+  console.log(`VALUES-CHECK ${valueOf(rest, "--values") ?? "player_value"} top-${topN} vs ${season} recap (${picks.length} drafted)`);
   console.log(`  exact-name matches: ${exact}  |  nameKey matches: ${keyM}  |  rescued by nameKey: ${rescued.length}${rescued.length ? " (" + rescued.join(", ") + ")" : ""}`);
   console.log(`  FUZZY-ONLY misses (our table has the entity, nameKey failed): ${fuzzy.length}${fuzzy.length ? " -- " + fuzzy.join(", ") : ""}`);
   console.log(`  absent (rookies / outside top-${topN}, expected): ${absent.length}`);
@@ -713,19 +745,16 @@ async function cmdNews(rest: string[]) {
   const { nameKey } = await import("./draft/values.js");
   const { classifyNews } = await import("./news.js");
   const newsFile = valueOf(rest, "--news") ?? dataPath("player-news.csv");
-  const valuesFile = valueOf(rest, "--values") ?? dataPath("values.csv");
   const minVal = Number(valueOf(rest, "--min") ?? 3); // skip the $1-2 replacement tail
   const showHeadlines = !rest.includes("--no-headlines");
   if (!existsSync(newsFile)) {
     console.log(`no ${newsFile} -- build it first:\n  npm run ff -- ingest-source news`);
     return;
   }
-  // OUR values keyed by nameKey (so ESPN/nflverse spelling drift resolves the same as the bidder).
+  // OUR values keyed by nameKey (so ESPN/nflverse spelling drift resolves the same as the bidder),
+  // read from player_value so the digest ranks players by what we will actually bid.
   const val = new Map<string, { value: number; pos: string; name: string }>();
-  for (const l of readFileSync(valuesFile, "utf8").trim().split(/\r?\n/).slice(1)) {
-    const f = l.split(","); const name = f[0]?.trim(); const v = Number(f[2]);
-    if (name && v > 0) val.set(nameKey(name), { value: v, pos: (f[1] || "").trim().toUpperCase(), name });
-  }
+  for (const r of await loadValueBook(rest)) val.set(nameKey(r.name), { value: r.value, pos: r.pos, name: r.name });
   // Group feed items by OUR player (only those in the value table >= minVal).
   interface Item { category: string; severity: string; detail: string; source: string; asof: string; }
   const byPlayer = new Map<string, { v: { value: number; pos: string; name: string }; items: Item[] }>();

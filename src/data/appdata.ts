@@ -31,3 +31,18 @@ export function appDataPayload(db: DB, season: number) {
   // never round-trip back through `setConfig` and get persisted as if it were stored state.
   return { players, news, config, lastYr, leverSpecs: LEVER_SPECS };
 }
+
+/** OUR value book as the BIDDER sees it: player_value, the store the live auto-draft reads
+ *  (`sqlite:player_value(...)`). Every surface that shows or reasons about our values should come
+ *  through here so the cheatsheet, the news digest and the bidder can never disagree.
+ *
+ *  data/values.csv is a checked-in SEED (it makes a fresh clone work before any refresh), not a
+ *  second source of truth -- callers fall back to it only when the table is empty, and say so.
+ *  scripts/value-gates.mjs asserts the two agree after a build. */
+export function valueBook(db: DB, season: number): { name: string; pos: string; value: number }[] {
+  return (db.prepare(
+    "SELECT p.name AS name, p.position AS pos, pv.our_value AS value FROM player_value pv " +
+    "JOIN player p USING(player_id) WHERE pv.season = ? ORDER BY pv.our_value DESC",
+  ).all(season) as { name: string; pos: string; value: number }[])
+    .filter((r) => r.name && typeof r.value === "number" && !Number.isNaN(r.value));
+}
