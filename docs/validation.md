@@ -380,6 +380,24 @@ any slot we still need, so no discount short of refusing the position outright c
 bench QB is taken -- it only changes what we would have paid, and we were already paying the floor.
 Cheap bench QBs are not what costs championships.
 
+**Refusing the position outright (2026-09-05): also rejected, and mildly NEGATIVE.** The sweep above
+could not reach the one case its own conclusion names, so it was tested directly: a hard guard that
+returns `maxBid: 0` for a QB who can only fill a bench slot (the same rule already applied to bench
+K/DST). Full-system no-lookahead, 25 seasons, n=150: **31.3% championships / 92% playoffs vs the
+shipped 32.9% / 94%.**
+
+Season-level, which is the unit that generalises: **7 seasons better, 4 tied, 14 worse.** McNemar on
+the 21 discordant seasons gives p ~= 0.19 -- not a significant regression, but no evidence of a gain
+and a 2:1 lean against. Rejected; the lever was removed.
+
+The mechanism is worth keeping, because the intuition is wrong in an instructive way. A bench K/DST
+is genuinely dead roster -- it is streamed weekly and can never enter our lineup. A backup QB is not
+the same object: in a 1-QB league he is real bye-week and injury insurance, and losing the starter
+with no backup is catastrophic. Forcing the guard also spends those $1 slots on a *fifth WR* --
+depth behind depth. `scripts/sample-rosters.mjs` shows the swap cleanly at equal cost (seed 1:
+QB 5 -> 1, RB 1 -> 2, WR 2 -> 5, both at $117). The sim prices that trade correctly and it is a
+small loss, not a win.
+
 ## Weighted FLEX baselines (2026-09-03) -- the largest single value fix to date
 
 `baselines()` in `src/draft/values.ts` split the league's 32 FLEX slots evenly across RB/WR/TE
@@ -673,3 +691,44 @@ keeps real depth. A future harness upgrade: simulate weekly head-to-head wins, n
 `data/values.csv`. Rebuild before the draft:
 `uv run --with nflreadpy --with polars tools/build_projections.py` then `npm run ff -- values`,
 then re-run `npm run ff -- sim --n 400 ...` to pick the config.
+
+## The arbiter was pricing for the WRONG LEAGUE (2026-09-05) -- fixed
+
+`backtest.ts` and `sim.ts` built OUR value book with the hardcoded `DEFAULT_VALUE_LEAGUE` literal,
+while the live board (`ff.ts:767`) and the app payload (`assemble.ts:74`) built it with
+`resolveValueLeague(config)`. The backtest also passed no `maxKDst`, so the value table's K/DST clamp
+came from the literal `2` rather than from the lever.
+
+For THIS league the two are identical -- 16 teams, $200, 12 slots -- which is exactly why it survived:
+every backtest anyone had ever run produced the right answer by coincidence. For any other league the
+arbiter would have been valuing players for a format nobody was playing, silently.
+
+Both now pass the league already in scope (`lg`, which `ff.ts` builds from the SYNCED config) plus
+`cfg.maxKDst`. Verified behaviour-preserving here: **32.9% / 94% with all 25 per-season numbers
+bit-identical**, which is the required result given the two leagues coincide.
+
+**That regression cannot prove the fix, only that nothing broke** -- under the old code the number
+would be identical too. The assertions that actually lock it are in `test/values.test.ts`: they use a
+deliberately different format (10-12 teams, $300, 14 slots) and assert the value book DIVERGES, that
+`resolveValueLeague` consumes a `SimLeague` shape as-is, and that `computeValues` honours the
+`maxKDst` it is handed. A "the backtest still prints 32.9%" check is structurally blind to this class
+of bug; only a differing-league assertion sees it.
+
+## Lever registry (2026-09-05) -- one entry per lever, everything else derived
+
+`src/draft/levers.ts` now holds `LEVER_SPECS` as the single source of truth. `DEFAULT_LEVERS`,
+`LEVER_META`, the backtest CLI flags (`leverOverridesFromArgv`), the strategy mapping
+(`leversToV2Config`) and the app's Settings rows are all DERIVED from it, and a compile-time
+`Record<keyof Levers, LeverSpec>` check fails the build if a lever is added without a spec.
+
+This closes three drift bugs that were live at the time:
+- `tierBreak` and `sleeperThreshold` had **no CLI flag at all**, so the arbiter could not measure them.
+- the backtest's `maxKDst` flag reached the strategy but not the value table (above).
+- the renderer's `LEVERS_UI` table listed **8 of 13** levers -- `benchDiscount` (the largest measured
+  win, 24.4% -> 28.0%) and all four positional multipliers were invisible and uneditable in the app.
+
+Also new: `--lever-off <key>` sets a lever to its declared no-op value, and an out-of-range CLI value
+is clamped **loudly** rather than silently reporting a number for a config nobody ran. Note that not
+every lever has a no-op setting -- `tierBreak`, `maxKDst`, `maxShare` and `sleeperThreshold` declare
+none, because any "off" for them would fall outside their own legal range. `test/levers.test.ts`
+locks all of it, including a regression lock on the shipped defaults.

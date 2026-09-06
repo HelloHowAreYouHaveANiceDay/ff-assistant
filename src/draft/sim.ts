@@ -3,7 +3,7 @@
 // AND by backtest.ts (real weekly schedule + playoffs -> championship rate). See docs/validation.md.
 
 import { makeV2Strategy, type DraftState, type V2Config } from "./strategy.js";
-import { computeValues, DEFAULT_VALUE_LEAGUE, type PointsRow } from "./values.js";
+import { computeValues, resolveValueLeague, type PointsRow } from "./values.js";
 import { loadManagers, makeBotBidder, assignSeats, type BotBidder, type ManagerProfile } from "./managers.js";
 import { planDrainNomination, payersFrom } from "./nomination.js";
 import { positionInflationFactors } from "./inflation.js";
@@ -103,7 +103,7 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
   const posMap = new Map(points.map((p) => [p.name, p.pos]));
   const trueVal = opts.botBook === "rank"
     ? rankBook(points, lg)
-    : new Map(computeValues(points, DEFAULT_VALUE_LEAGUE).map((v) => [v.name, v.value]));
+    : new Map(computeValues(points, resolveValueLeague(lg), cfg.maxKDst ?? 2).map((v) => [v.name, v.value]));
   const studRank = new Map([...trueVal.entries()].sort((a, b) => b[1] - a[1]).map(([n], i) => [n, i]));
   const { leagueShare } = loadManagers();
 

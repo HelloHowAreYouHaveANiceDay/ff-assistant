@@ -56,9 +56,12 @@ The earlier "NONE across seasons (~27-28%)" was the OLD uniform bot on the wrong
 did not hold. On the realistic per-manager field + the real 12-slot roster + the multi-season value
 curve AND at aggr 1.0, championship rose with the per-starter reserve to a plateau at 15-20 (~24%)
 and
-collapses at 25 (over-reserved). New default: **reserve 15 / max-share 0.35** (~24%, the 12-20 plateau; 15 over 20 for live robustness) vs the old
+collapses at 25 (over-reserved). Default at the time: **reserve 15 / max-share 0.35** (~24%, the 12-20 plateau; 15 over 20 for live robustness) vs the old
 aggressive-lean 5/0.6 (15.7%) -- a ~8.5-pt swing, measured against the realistic field on the
 12-slot roster; the earlier neutrality was the uniform bot. Full table: docs/validation.md.
+**SUPERSEDED 2026-09-05:** the whole sweep above was run at `aggr 1.0`. With shading shipped
+(`aggr 0.7`) the reserve is nearly INERT and `maxShare` is what binds; the shipped posture is
+**reserve 4 / max-share 0.25**, ~33%. Read the numbers above as history, not as a default.
 
 ## Edges that are REAL but the bot-sim can't see (agent vs HUMANS)
 

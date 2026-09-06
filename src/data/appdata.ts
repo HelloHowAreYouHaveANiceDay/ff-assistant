@@ -1,6 +1,7 @@
 // The app's data payload (board + news + config), read from the store. Shared by `ff app-data`
 // (one-shot) and `ff serve` (the persistent helper), so there's one definition.
 import { getConfig, type DB } from "../db/db.js";
+import { LEVER_SPECS } from "../draft/levers.js";
 
 const NUM = new Set(["Rank", "Bye", "Age", "Wt", "40yd", "OurValue$", "vsECR", "ProjPts", "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "ESPN_ADP", "Rostered%", "Depth"]);
 
@@ -23,5 +24,10 @@ export function appDataPayload(db: DB, season: number) {
     ? (Object.keys(players[0]).find((k) => k.endsWith("Gms") && /^\d{4}/.test(k))?.slice(0, 4) ?? "LastYr")
     : "LastYr";
   const config = { ...getConfig(db), season };
-  return { players, news, config, lastYr };
+  // Ship the lever REGISTRY to the renderer so the Settings UI is generated from it. The renderer
+  // used to carry its own `LEVERS_UI` table, which had drifted to 8 of the 13 levers -- benchDiscount
+  // (the largest measured win, 24.4% -> 28.0%) and all four positional multipliers were invisible
+  // and uneditable in the app. Sent as a sibling of `config`, NOT inside it, so this derived data can
+  // never round-trip back through `setConfig` and get persisted as if it were stored state.
+  return { players, news, config, lastYr, leverSpecs: LEVER_SPECS };
 }

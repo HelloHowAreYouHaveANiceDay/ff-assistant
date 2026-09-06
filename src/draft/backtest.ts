@@ -5,7 +5,7 @@
 // the strategy verdict trustworthy for "optimize championship wins" (season-points sim can't see it).
 
 import { draftField, mulberry32, SIM_LEAGUE, type SimLeague } from "./sim.js";
-import { computeValues, type PointsRow } from "./values.js";
+import { computeValues, resolveValueLeague, type PointsRow } from "./values.js";
 import { optimalLineup } from "../inseason/lineup.js";
 import type { V2Config } from "./strategy.js";
 
@@ -80,7 +80,12 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   // OUR values. Optional injury lever: discount by prior-season availability (avail = games/regWeeks),
   // modelling "pay less for injury-prone players". injuryLever=0 => baseline (no discount). Only OUR
   // team applies it (it's our strategy); the market/bots still bid on projMarket.
-  const useValues = new Map(computeValues(seasonPoints.map((p) => ({ ...p, points: projUs.get(p.name) ?? 0 }))).map((v) => {
+  // Price OUR book for the league actually under test (`lg`, which ff.ts builds from the SYNCED
+  // config), not the hardcoded DEFAULT_VALUE_LEAGUE. For a 16-team $200 12-slot league the two are
+  // identical -- which is exactly why this went unnoticed -- but for any other league the ARBITER
+  // was valuing players for a different format than the live board (`ff.ts:767`) prices them for.
+  // maxKDst likewise comes from the lever instead of the literal 2.
+  const useValues = new Map(computeValues(seasonPoints.map((p) => ({ ...p, points: projUs.get(p.name) ?? 0 })), resolveValueLeague(lg), cfg.maxKDst ?? 2).map((v) => {
     const a = injuryLever ? (avail.get(v.name) ?? 1) : 1; // unknown players (e.g. rookies) => assume healthy
     return [v.name, Math.max(1, v.value * (1 - injuryLever * (1 - a)))] as [string, number];
   }));

@@ -3,7 +3,7 @@
 // wins; the weighted fill (default) allocates them by projected points. Run: npm test.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baselines, computeValues, type PointsRow, type ValueLeague } from "../src/draft/values.ts";
+import { baselines, computeValues, resolveValueLeague, type PointsRow, type ValueLeague } from "../src/draft/values.ts";
 
 // 4 teams, 1 RB / 1 WR / 1 TE dedicated + 1 FLEX each => 4 dedicated per pos, 4 flex slots.
 const LG: ValueLeague = {
@@ -89,4 +89,55 @@ test("DST alias: ESPN spellings resolve to our abbreviation key; a non-defense r
   assert.equal(dstAliasKey("Washington D/ST"), "was");
   assert.equal(dstAliasKey("HOU D/ST"), "hou");        // already-correct name is a no-op
   assert.equal(dstAliasKey("Ja'Marr Chase"), null);
+});
+
+// --- the value book must follow the CONFIGURED league, not a hardcoded default -------------------
+//
+// `backtest.ts` and `sim.ts` used to price OUR book with the literal DEFAULT_VALUE_LEAGUE while the
+// live board (`ff.ts:767`) priced it with resolveValueLeague(config). For a 16-team $200 12-slot
+// league those two are identical, which is exactly why the divergence went unnoticed -- and why the
+// "backtest still prints 32.9%" regression check CANNOT catch it. These tests use a deliberately
+// DIFFERENT league so the two paths are distinguishable.
+
+test("the value book actually depends on the league: a different format prices players differently", () => {
+  const pts = fixture();
+  const small: ValueLeague = { teams: 4, budget: 200, rosterSpots: 8, starters: { QB: 1, RB: 1, WR: 1, TE: 1, FLEX: 1 } };
+  const big: ValueLeague = { teams: 10, budget: 300, rosterSpots: 14, starters: { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 2 } };
+  const a = new Map(computeValues(pts, small).map((v) => [v.name, v.value]));
+  const b = new Map(computeValues(pts, big).map((v) => [v.name, v.value]));
+  // Deeper starting requirements push replacement level down and more money chases the same pool,
+  // so the top of the book must move. If these ever match, someone has re-hardcoded the league.
+  assert.notDeepEqual([...a.entries()], [...b.entries()], "value book ignored the league it was given");
+  assert.notEqual(a.get("RB1"), b.get("RB1"), "RB1 priced identically in two different formats");
+});
+
+test("resolveValueLeague accepts a SimLeague as-is -- the shape the backtest passes down", () => {
+  // SimLeague is {teams, budget, slots}: the exact structural contract backtest.ts/sim.ts rely on
+  // when they hand `lg` to resolveValueLeague. A field rename there would break the fix silently.
+  const simShaped = { teams: 12, budget: 300, slots: ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DST", "BE", "BE", "BE", "BE", "BE"] };
+  const vl = resolveValueLeague(simShaped);
+  assert.equal(vl.teams, 12);
+  assert.equal(vl.budget, 300);
+  assert.equal(vl.rosterSpots, 14, "rosterSpots must count ALL slots, bench included");
+  assert.equal(vl.starters.RB, 2);
+  assert.equal(vl.starters.FLEX, 1);
+  assert.equal(vl.starters.BE, undefined, "bench slots must not be counted as starters");
+});
+
+test("computeValues honours the maxKDst it is GIVEN, not the literal default", () => {
+  // A dedicated fixture: the cap can only be OBSERVED if the uncapped price would exceed it, which
+  // needs a K whose points sit far above his own replacement level. (With a single K in the pool the
+  // baseline falls back to that same player, VOR is 0, and the cap never binds -- so a naive fixture
+  // passes whether or not the argument is honoured.)
+  const pts: PointsRow[] = [
+    { name: "RB1", pos: "RB", points: 100 }, { name: "RB2", pos: "RB", points: 90 },
+    { name: "RB3", pos: "RB", points: 80 }, { name: "RB4", pos: "RB", points: 70 },
+    { name: "K1", pos: "K", points: 500 }, { name: "K2", pos: "K", points: 100 },
+    { name: "K3", pos: "K", points: 90 }, { name: "K4", pos: "K", points: 80 },
+  ];
+  const lg: ValueLeague = { teams: 2, budget: 200, rosterSpots: 4, starters: { RB: 1, K: 1 } };
+  const uncapped = new Map(computeValues(pts, lg, 999).map((v) => [v.name, v.value]));
+  assert.ok(uncapped.get("K1")! > 7, "fixture is not exercising the cap");
+  assert.equal(new Map(computeValues(pts, lg, 2).map((v) => [v.name, v.value])).get("K1"), 2);
+  assert.equal(new Map(computeValues(pts, lg, 7).map((v) => [v.name, v.value])).get("K1"), 7);
 });

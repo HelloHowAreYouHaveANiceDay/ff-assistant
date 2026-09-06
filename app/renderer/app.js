@@ -413,10 +413,10 @@ function views_settings() {
   document.getElementById("save-levers").onclick = async () => {
     if (!window.mc?.setLevers) return log.textContent = "Run inside the app to save levers.";
     const patch = {}; let boardChanged = false;
-    for (const [k, , , , , board] of LEVERS_UI) {
-      const el = document.getElementById("lv-" + k); if (!el) continue;
-      const v = Number(el.value); patch[k] = v;
-      if (board && v !== (CFG.levers?.[k])) boardChanged = true;
+    for (const s of LEVER_SPECS_UI) {
+      const el = document.getElementById("lv-" + s.key); if (!el) continue;
+      const v = Number(el.value); patch[s.key] = v;
+      if (s.board && v !== (CFG.levers?.[s.key])) boardChanged = true;
     }
     const next = await window.mc.setLevers(patch);
     if (next) CFG.levers = next;
@@ -434,23 +434,30 @@ function views_settings() {
   loadLeagueStatus();
 }
 
-// [key, label, min, max, step, affectsBoard, help]
-const LEVERS_UI = [
-  ["tierBreak", "Tier break", 0.5, 0.95, 0.01, true, "Lower = fewer, bigger tiers"],
-  ["maxKDst", "Max K/DST $", 1, 10, 1, true, "Cap on kicker/defense price"],
-  ["starterReserve", "Starter reserve $", 0, 60, 1, false, "Held back for unfilled starters"],
-  ["benchReserve", "Bench reserve $", 0, 10, 1, false, "Held back per bench slot"],
-  ["maxShare", "Max share", 0.1, 0.7, 0.01, false, "Max fraction of budget on one player"],
-  ["aggr", "Aggressiveness", 0.5, 2, 0.05, false, ">1 chases, <1 waits for value"],
-  ["premium", "Outbid premium $", 0, 10, 1, false, "Extra $ to win a targeted player"],
-  ["sleeperThreshold", "Sleeper cutoff (vsECR)", 1, 20, 1, false, "Min vsECR for the SLEEPERS filter"],
-];
+// The lever rows are GENERATED from the engine's registry (src/draft/levers.ts), delivered by
+// appData() as `leverSpecs`. Never hardcode a lever table here: this file used to carry its own,
+// and it silently drifted to 8 of the 13 levers -- benchDiscount and every positional multiplier
+// were missing, so the app could not show or edit the largest measured lever in the config.
+let LEVER_SPECS_UI = [];
+
 function renderLevers() {
   const box = document.getElementById("levers-box"); if (!box) return;
   const lv = CFG.levers || {};
-  box.innerHTML = LEVERS_UI.map(([k, label, min, max, step, board, help]) =>
-    `<div class="leverrow"><label for="lv-${k}"><b>${label}</b>${board ? ' <span class="tag">board</span>' : ""}<span class="mut"> ${help}</span></label>` +
-    `<input id="lv-${k}" type="number" min="${min}" max="${max}" step="${step}" value="${lv[k] ?? ""}"></div>`).join("");
+  if (!LEVER_SPECS_UI.length) { box.innerHTML = '<span class="mut">Levers load with the board — click Refresh.</span>'; return; }
+  // Group so a long list stays readable, in the registry's own order within each group.
+  const GROUPS = [["value", "Value"], ["bidding", "Bidding"], ["board", "Board"]];
+  box.innerHTML = GROUPS.map(([g, title]) => {
+    const rows = LEVER_SPECS_UI.filter((s) => s.group === g);
+    if (!rows.length) return "";
+    return `<div class="leverGroup"><h3 class="mut">${title}</h3>` + rows.map((s) => {
+      const off = Number(lv[s.key]) === Number(s.off);
+      return `<div class="leverrow"><label for="lv-${s.key}"><b>${esc(s.label)}</b>` +
+        `${s.board ? ' <span class="tag">board</span>' : ""}` +
+        `${off ? ' <span class="tag">off</span>' : ""}` +
+        `<span class="mut"> ${esc(s.help)}</span></label>` +
+        `<input id="lv-${s.key}" type="number" min="${s.min}" max="${s.max}" step="${s.step}" value="${lv[s.key] ?? ""}"></div>`;
+    }).join("") + "</div>";
+  }).join("");
 }
 
 async function loadLeagueStatus() {
@@ -743,6 +750,7 @@ async function boot() {
       const d = await window.mc.appData();
       if (d && Array.isArray(d.players) && d.players.length) {
         DATA = d.players; NEWS = Array.isArray(d.news) ? d.news : []; CFG = d.config || CFG;
+        if (Array.isArray(d.leverSpecs)) LEVER_SPECS_UI = d.leverSpecs; // engine owns the lever table
         byName = new Map(DATA.map(p => [p.Player, p]));
         const sp = document.getElementById("s-players"); if (sp) sp.textContent = DATA.length;
       }

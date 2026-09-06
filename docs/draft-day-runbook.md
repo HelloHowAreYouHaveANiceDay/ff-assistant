@@ -126,8 +126,18 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
 ## Toggles (defaults are the backtested winners -- change only with reason)
 
 - `--no-inflation` -- disable live inflation repricing (default ON, +~2 pts).
-- `--starter-reserve N --max-share F --premium N` -- strategy dials (default 15 / 0.35 / 2; higher
-  reserve = more balanced/less concentration). The balanced default is the backtested winner (Step 5).
+- **Every lever has a CLI flag, derived from `LEVER_SPECS`** (`src/draft/levers.ts`) -- there is no
+  hand-maintained flag list to fall out of sync, so a lever added there is measurable by the backtest
+  immediately. Current set: `--tier-break --max-kdst --starter-reserve --bench-reserve --max-share
+  --aggr --premium --sleeper-threshold --bench-discount --mult-qb --mult-rb --mult-wr --mult-te`.
+  Shipped defaults are **aggr 0.7 / starterReserve 4 / maxShare 0.25 / premium 2 / benchDiscount
+  0.25**, multipliers 1.0 (higher reserve = more balanced/less concentration). These are the
+  backtested winners; `node scripts/read-config.mjs` prints what the engine will ACTUALLY use.
+- `--lever-off <key>` -- set one lever to its declared no-op value. Not every lever has one:
+  `tierBreak`, `maxKDst`, `maxShare` and `sleeperThreshold` always do something, so they declare none
+  and the flag refuses them rather than writing an illegal value.
+- An out-of-range lever value is **clamped loudly** (`NOTE: --aggr 9 is outside its allowed range;
+  clamped to 2`), so a sweep can never quietly report a number for a config that never ran.
 - `--stall-min N` -- stop after N min of no new league picks (default 10; WARN at ~3 min).
 - REJECTED by backtest, off by default, don't enable to "win": `--pos-inflation`, `--drain-nom`,
   `--waivers` (all measured neutral-to-negative -- see docs/edges.md). `--scarcity` was removed from

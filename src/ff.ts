@@ -1003,15 +1003,18 @@ async function cmdBacktest(rest: string[]) {
   // league shape, bidding levers, and playoff format all come from the SYNCED config (per league)
   const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db); db.close();
   const lg = leagueFromConfig(conf); const lv = conf.levers;
+  // Levers resolve in one place: registry defaults <- STORED config <- CLI overrides. Because
+  // `leverOverridesFromArgv` walks the registry rather than a hand-written list of flags, a lever
+  // added to LEVER_SPECS is measurable by the arbiter immediately -- the gap that left `maxKDst`
+  // with no backtest flag at all. Out-of-range requests are clamped LOUDLY, never silently.
+  const { applyLevers, leverOverridesFromArgv, leversToV2Config } = await import("./draft/levers.js");
+  const lvEff = applyLevers(lv, leverOverridesFromArgv(rest, (k, asked, got) =>
+    console.log(`  NOTE: --${k} ${asked} is outside its allowed range; clamped to ${got}`)));
+  const fromLevers = leversToV2Config(lvEff);
   const cfg = {
     values: {} as Record<string, number>,
-    starterReserve: Number(valueOf(rest, "--starter-reserve") ?? lv.starterReserve),
-    benchReserve: Number(valueOf(rest, "--bench-reserve") ?? lv.benchReserve),
-    premium: Number(valueOf(rest, "--premium") ?? lv.premium),
-    aggr: Number(valueOf(rest, "--aggr") ?? lv.aggr), maxShare: Number(valueOf(rest, "--max-share") ?? lv.maxShare),
-    maxKDst: Number(valueOf(rest, "--max-kdst") ?? lv.maxKDst),
-    benchDiscount: Number(valueOf(rest, "--bench-discount") ?? lv.benchDiscount),
-    posMult: { QB: lv.multQB, RB: lv.multRB, WR: lv.multWR, TE: lv.multTE, ...parsePosMult(valueOf(rest, "--pos-mult")) },
+    ...fromLevers,
+    posMult: { ...fromLevers.posMult, ...parsePosMult(valueOf(rest, "--pos-mult")) },
     inflation: rest.includes("--inflation"), scarcity: rest.includes("--scarcity"),
     posInflation: rest.includes("--pos-inflation"),
   };
