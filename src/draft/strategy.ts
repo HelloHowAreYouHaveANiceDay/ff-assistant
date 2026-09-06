@@ -31,6 +31,19 @@ export interface DraftState {
   posInflation?: Record<string, number>; // LIVE: per-position repricing factor (fade overpaid positions)
   board: PlayerRef[]; // available players (for nomination + planning)
   teams: Array<{ name: string; budgetLeft: number; openSlots?: number }>; // ALL teams' budgets + open slots (for live inflation)
+  // The room's money and unfilled slots, stated EXPLICITLY rather than derived from `teams`.
+  // `teams` is a real per-seat array in the sim but a single aggregate pseudo-team live, carrying
+  // OUR open-slot count -- which is precisely how `--scarcity` came to compute a different thing
+  // live than in the backtest. Any term that reasons about the room reads these two fields, so the
+  // two paths cannot silently diverge; both callers set them.
+  leagueDollars?: number;    // dollars still unspent across ALL teams (including ours)
+  leagueOpenSlots?: number;  // roster slots still unfilled across ALL teams (including ours)
+  // How many players we have already WON at each position. `myRoster` is passed empty by both
+  // callers and always has been, so anything keyed off it is a dead lever that measures identically
+  // to a real null -- this is the counted form, populated by both. Needed by any rule about roster
+  // SHAPE (e.g. "never roster a third QB"), which slot counts alone cannot express: once the QB slot
+  // is filled, every further QB is just "bench", indistinguishable from the first backup.
+  myPosCounts?: Record<string, number>;
 }
 
 /** What the Strategy tells the Engine. The Engine still clamps to legality. */
@@ -145,6 +158,17 @@ export interface V2Config {
   posMult?: Record<string, number>; // EXPERIMENT: per-position multiplier on OUR value. Used to ask
   // "are we valuing position X too high for this room?" -- our book prices QB at ~$707 while the
   // room historically spends ~$328 there. Default: none (1x everywhere).
+  budgetPressure?: boolean; // LIVE + sim: bid up when WE are rich relative to the room (default off)
+  maxPressure?: number;     // ceiling on that multiplier (default 1.6)
+  /** Hard cap on how many players we will roster at a position, e.g. {QB: 2}. Default: none.
+   *
+   *  Aimed at a REAL failure seen in complete live mocks (2026-09-06): the agent rostered three and
+   *  then FOUR quarterbacks on a one-QB roster. This is NOT the already-rejected `noBenchQB`, which
+   *  refused every bench QB and cost 1.6pp -- correctly, because the FIRST backup is genuine bye and
+   *  injury insurance. The third is not: you cannot start three quarterbacks, so he is dead roster
+   *  by construction, the same argument that already bans a bench K/DST. A cap distinguishes the two
+   *  cases; a boolean cannot. */
+  maxAtPos?: Record<string, number>;
   maxKDst?: number; // hard cap on ANY K/DST bid (default 2). Defence in depth: the value table's
   // own $2 clamp is keyed by name, and live ESPN shows "Texans D/ST" where our table stores
   // "HOU D/ST" -- the lookup misses and falls back to ESPN's UNCAPPED on-screen value (F3).
@@ -210,6 +234,13 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       // Never draft a K or DST onto the bench: they stream at ~$1 and a bench K/DST is dead roster.
       // The room punts K/DST at $1 (docs/league-tendencies.md); enforce it here (finding #1).
       if (fillingBench && (base === "K" || base === "DST")) return { maxBid: 0, reason: "bench K/DST" };
+      // Positional roster cap: the Nth player at a position we can never start is dead roster, the
+      // same argument as bench K/DST above. Counted from what we have actually WON (myPosCounts),
+      // not from open slots, because slot counts cannot tell a first backup from a fourth.
+      const capAt = cfg.maxAtPos?.[base];
+      if (capAt != null && (state.myPosCounts?.[base] ?? 0) >= capAt) {
+        return { maxBid: 0, reason: `already have ${state.myPosCounts?.[base]} ${base} (cap ${capAt})` };
+      }
       // Soft reserve (balanced target: keep real $ for other starters) limits early concentration.
       const softAffordable = state.myBudget - reserveForOthers(state, fillingBench, starterReserve, benchReserve);
       // Hard reserve ($1/other slot) is the never-strand floor -- a legal roster stays completable.
@@ -233,6 +264,35 @@ export function makeV2Strategy(cfg: V2Config = {}): Strategy {
       }
       // Per-position fade needs only state.posInflation (not the board), so it runs independently.
       if (cfg.posInflation && state.posInflation) liveVal *= state.posInflation[p.pos] ?? 1;
+      // BUDGET PRESSURE. A dollar we never spend is worth exactly zero -- there is no carry-over out
+      // of a draft -- so our willingness to pay should rise as we get rich RELATIVE to the room.
+      //
+      // `liveInflation` cannot do this: it is a league-AGGREGATE ratio (room money / board value) and
+      // is blind to who holds the money. Late in a 2026-09-06 mock the room held $365 across fifteen
+      // teams while we held $152 -- we were comfortably the wealthiest bidder at the table and the
+      // aggregate ratio was still deflating our bids to its 0.80 floor. That draft ended 12/12 with
+      // $111 unspent, having bought $5 starters.
+      //
+      // Measured as dollars-per-remaining-slot, ours vs theirs, so it is scale-free and needs no
+      // notion of "late": it is ~1.0 while budgets are even and only grows once we are genuinely
+      // ahead. Floored at 1.0 -- this term never SHRINKS a bid (deflation is inflation's job) -- and
+      // capped, because the ratio explodes when we hold the last slot or two.
+      //
+      // Multiplicative on value, deliberately: it deploys money where it BUYS THE MOST, scaling a
+      // $40 starter by more absolute dollars than a $2 filler. Spending the budget on scrubs is not
+      // the goal; spending it on the best thing still available is.
+      if (cfg.budgetPressure) {
+        const ourOpen = Object.values(state.mySlots).reduce((a, b) => a + Math.max(0, b), 0);
+        const roomSlots = state.leagueOpenSlots ?? 0;
+        const roomCash = state.leagueDollars ?? 0;
+        if (ourOpen > 0 && roomSlots > 0 && roomCash > 0) {
+          const ourPerSlot = state.myBudget / ourOpen;
+          const roomPerSlot = roomCash / roomSlots;
+          if (roomPerSlot > 0) {
+            liveVal *= Math.min(cfg.maxPressure ?? 1.6, Math.max(1, ourPerSlot / roomPerSlot));
+          }
+        }
+      }
       // Apply the outbid premium only to real values (>= $5); the $1 tail must not be overpaid by
       // $premium (a $1 filler should stay $1, not become $3 -- finding, Step 6).
       const wantVal = Math.round(liveVal) + (liveVal >= 5 ? premium : 0);

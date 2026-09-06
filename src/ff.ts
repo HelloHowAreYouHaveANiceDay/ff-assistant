@@ -1111,6 +1111,9 @@ async function cmdBacktest(rest: string[]) {
     posMult: { ...fromLevers.posMult, ...parsePosMult(valueOf(rest, "--pos-mult")) },
     inflation: rest.includes("--inflation"), scarcity: rest.includes("--scarcity"),
     posInflation: rest.includes("--pos-inflation"),
+    budgetPressure: rest.includes("--budget-pressure"),
+    maxPressure: Number(valueOf(rest, "--max-pressure") ?? 1.6),
+    maxAtPos: parsePosMult(valueOf(rest, "--max-at-pos")),
   };
   // Load all seasons from the combined history files, filter to --seasons range (default all).
   const range = (valueOf(rest, "--seasons") ?? `2014-${new Date().getFullYear() - 1}`).split("-").map(Number);
@@ -1166,7 +1169,7 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   if (dumpPath) {
@@ -1418,6 +1421,9 @@ async function cmdAutoDraft(rest: string[]) {
     // Toggle: --no-inflation. Scarcity is a REJECTED feature (backtested NEGATIVE at 10.6% vs 32.9%,
     // and its live wiring passed teams=[ours]) -- removed from auto-draft (Step 6).
     inflation: !rest.includes("--no-inflation"),
+    budgetPressure: rest.includes("--budget-pressure"),
+    maxPressure: Number(valueOf(rest, "--max-pressure") ?? 1.6),
+    maxAtPos: parsePosMult(valueOf(rest, "--max-at-pos")),
   });
   let lv = readLevers();
   let strat = buildStrat(lv);
@@ -1584,10 +1590,22 @@ async function cmdAutoDraft(rest: string[]) {
         // Delegate the ceiling to the Strategy (budget-aware value); Engine clamps to ESPN's hard
         // legal max (myMax) and slot legality. liveInflation is the EXACT remaining$/remaining-value
         // factor computed above from the scraped drafted set (refreshed every few ticks).
+        // What we have already WON, by position -- feeds maxAtPos. The ESPN roster panel gives the
+        // slot a player sits in, which is NOT his position once he is on the bench ("BE"), so resolve
+        // through the same posByName/nameKey path the bidder uses; fall back to the slot label when
+        // the slot IS a position. Without this the cap would silently never fire on bench players --
+        // exactly the case it exists for.
+        const myPosCounts: Record<string, number> = {};
+        for (const sl of r.slots) {
+          if (!sl.player) continue;
+          const rp = normPos(posByName.get(nameKey(sl.player)) ?? null) ?? normPos(sl.slot);
+          if (rp) myPosCounts[rp] = (myPosCounts[rp] ?? 0) + 1;
+        }
         const state = {
           myBudget: 200 - r.spent,
           mySlots: { ...r.openByBase, FLEX: r.flexOpen, BENCH: r.benchOpen },
           myRoster: [],
+          myPosCounts,
           onBlock: { name: b.player, pos: pos as never, team: "", espnPreDraftVal: b.preDraftVal },
           currentOffer: b.currentOffer,
           secondsLeft: null,
@@ -1595,6 +1613,11 @@ async function cmdAutoDraft(rest: string[]) {
           liveInflation,
           board: [{ name: b.player, pos: pos as never, team: "", espnPreDraftVal: b.preDraftVal }], // non-empty so the inflation branch runs
           teams: [{ name: "LEAGUE", budgetLeft: league.remainingDollars || (200 - r.spent), openSlots: r.open }],
+          // Room money + unfilled slots, EXPLICIT (see DraftState). Note `teams` above is a single
+          // aggregate pseudo-team whose openSlots is OURS, not the league's -- reading the room off
+          // it is the bug that made `--scarcity` compute something different live than in the sim.
+          leagueDollars: league.remainingDollars,
+          leagueOpenSlots: Math.max(0, league.teams * (r.filled + r.open) - picks.length),
         };
         const decision = strat.maxBid(state);
         // ESPN's myMax already reserves $ for a legal roster. If it is UNREADABLE, legalCap falls

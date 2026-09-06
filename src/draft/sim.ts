@@ -195,7 +195,17 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
         }
         // Per-position inflation: empirical $/book by position from picks so far (market book = trueVal).
         const posInflation = cfg.posInflation ? positionInflationFactors(picks.map((pk) => ({ pos: pk.pos, price: pk.price, value: trueVal.get(pk.name) ?? 0 }))) : undefined;
-        const state: DraftState = { myBudget: t.budget, mySlots: slotsOpenByKey(t), myRoster: [], onBlock: { name, pos: pos as never, team: "", espnPreDraftVal: ourValues.get(name) ?? null }, currentOffer: null, secondsLeft: null, iAmHighBidder: false, board, teams: allTeams, posInflation };
+        // Room money + unfilled slots, stated explicitly so budgetPressure computes the SAME
+        // quantity here and live (ff.ts). Cheap: one pass over teams, only when a term needs it.
+        let leagueDollars: number | undefined, leagueOpenSlots: number | undefined;
+        if (cfg.budgetPressure) {
+          leagueDollars = teams.reduce((a, tt) => a + Math.max(0, tt.budget), 0);
+          leagueOpenSlots = teams.reduce((a, tt) => a + openCount(tt), 0);
+        }
+        // What we have already WON, by position -- feeds maxAtPos. Cheap: our own filled slots.
+        const myPosCounts: Record<string, number> = {};
+        for (const nm of t.slots) if (nm) { const pp = posMap.get(nm); if (pp) myPosCounts[pp] = (myPosCounts[pp] ?? 0) + 1; }
+        const state: DraftState = { myBudget: t.budget, mySlots: slotsOpenByKey(t), myRoster: [], myPosCounts, onBlock: { name, pos: pos as never, team: "", espnPreDraftVal: ourValues.get(name) ?? null }, currentOffer: null, secondsLeft: null, iAmHighBidder: false, board, teams: allTeams, posInflation, leagueDollars, leagueOpenSlots };
         max = Math.min(ourStrat.maxBid(state).maxBid, aff);
       } else {
         const base = trueVal.get(name) ?? 1;

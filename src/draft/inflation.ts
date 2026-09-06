@@ -29,7 +29,15 @@ export function computeInflation(remaining: RemainingPlayer[], remainingDollars:
   // Bounded to the documented [0.8, 1.4] band (was [0.7, 2.0], which let a value-rich board deflate
   // our bids to 0.70 and, live, kept us from winning a competitive roster). A live draft repriced to
   // 0.7 stranded ~$130 of budget (2026-09-02 mock); tightening the floor keeps us in the auction.
-  return Math.max(0.8, Math.min(1.4, inf));
+  //
+  // The floor BINDS almost all the time, so it is effectively a second aggressiveness dial rather
+  // than a safety rail: in a complete mock (2026-09-06) 50 of 69 bid decisions sat exactly on 0.80,
+  // i.e. 72% of the draft was bid at value x aggr x 0.80 = 56% of our own valuation -- and that mock
+  // ended 12/12 with $111 of $200 unspent. Raising it 0.7 -> 0.8 was the right direction and too
+  // small. Overridable so the band can be swept like any other lever instead of re-editing this file.
+  const lo = Number(process.env.FF_INFL_FLOOR ?? 0.8);
+  const hi = Number(process.env.FF_INFL_CEIL ?? 1.4);
+  return Math.max(lo, Math.min(hi, inf));
 }
 
 /** Per-position repricing factors from the DRAFTED picks so far. Each position's EMPIRICAL inflation

@@ -835,3 +835,65 @@ pre-registered holdout, or run it live as `--pos-mult QB:0.70` with eyes open.
 an artifact of manual `ff bid` calls, each paying a fresh CDP attach (15-30s, racy). The persistent
 auto-draft loop is 100% reliable. Click health is now counted and surfaced live (log + cockpit), so
 this is measurable during the real draft rather than inferred afterwards.
+
+## THE REAL DRAFT (2026-09-06) -- what a live auction taught that no mock did
+
+Final: **12/12, $199 of $200, 53/53 clicks landed, 0 failures.** Roster came in at **1.01x book**
+(spent $198 / book $196), so the bidding maths was sound end-to-end. Everything below is what the
+live room exposed that four complete mocks the night before did not.
+
+### The one expensive failure: eviction -> ESPN auto-bids on your behalf
+
+Twice mid-draft ESPN raised a Disney-ID re-auth and the webview lost its page context. The recovery
+built the night before caught both, named the cause, and walked back in unaided -- it works.
+
+But the FIRST eviction hit at pick 1 while our own nomination (Amon-Ra St. Brown) was on the block,
+and with us disconnected **ESPN auto-bid to $88 on a player our book valued at $59 and our cap
+limited to $43**. Our bidder never made that bid and could not have. That single 40-second window:
+
+  - cost ~$29 of surplus directly, and
+  - committed 44% of budget to one player, which set us at $10/slot while the eventual best-value
+    team (0.66x book) sat at $15/slot with the pick of the endgame.
+
+Strip that pick and the roster is ~0.86x book. **The entire performance gap traces to one
+disconnection, not to the strategy.** Ideas: pre-emptively re-auth before the room opens; detect the
+auth iframe BEFORE it tears the context down; never nominate while a re-auth is pending.
+
+### Bugs that only a real draft could surface
+
+- **`enter-draft --app` is broken.** It calls `page.getByRole`, which the webview shim does not
+  implement, so it throws before reaching its own direct-URL fallback. Every mock used
+  `launch-practice`, so this path had never run. Worked around by navigating the webview directly --
+  and note the draft URL needs the **`memberId`** query param or ESPN bounces you to the homepage.
+- **`--rounds` defaults to 1600** (~37 min at a 1.4s tick). A real draft is longer: the bidder exited
+  cleanly at 3/12 with `final:` and had to be restarted with `--rounds 20000`. Every mock finished
+  inside 1600 so it never showed. Should be time-based, or default far higher.
+- **The QB tail is unrankable.** Our VOR floor collapses ~10 startable QBs (Love, Mayfield, Darnold,
+  Stroud, Young, Ward, Jones...) to book $1, so at a $1 cap the bidder cannot prefer one over
+  another -- it takes whoever is nominated. We landed Goff (book $8) for $1, which was luck.
+- **Duplicate player entries.** "Patrick Mahomes" (drafted $4) and "Patrick Mahomes II" (book $12)
+  both exist, so the book can chase a player who is already gone.
+- **D/ST/K have no real projection** -- `20 - rank*0.1` is a synthetic ordering, not an opinion.
+  Fine given maxKDst $2, but do not read "#6 defense" as analysis.
+
+### Levers at a $1 cap are INERT -- and that produced a wrong call
+
+Late in the draft, with `soft-1`, the fill-floor pins EVERY cap to $1 regardless of position. A
+`multRB 1.5` set to bias the last bench slot toward a running back therefore did nothing, and the
+slot went to a $1 WR. The reasoning error was assuming the bidder CHOOSES between candidates: it
+does not -- it evaluates one nominated player at a time, so a positional multiplier can only change
+what we would PAY, never what we prefer. At a floored cap it changes nothing at all.
+
+**If roster SHAPE matters at the end, it needs a shape rule (`maxAtPos`-style), not a price lever.**
+
+### Mid-draft lever changes work, and they mattered
+
+`aggr 0.7 -> 1.0` and `multRB 1.0 -> 1.5` were applied live and took effect on the next bid
+(confirmed by the `LEVERS CHANGED mid-draft` log line). They bought Breece Hall at $41 -- at the
+shipped settings our cap was $22 and he would have gone elsewhere, exactly as Jeremiyah Love did at
+$44 twenty picks earlier. Same for `multTE 1.3` -> Loveland at $25. The live-lever work shipped the
+night before is what made the recovery possible.
+
+Caveat for the record: those values are IN-DRAFT JUDGEMENT CALLS, not backtested settings, and the
+stored config has been reset to the validated posture. `aggr 1.0` in particular is the worst cell in
+every sweep we have run.
