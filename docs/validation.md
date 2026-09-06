@@ -733,3 +733,46 @@ is clamped **loudly** rather than silently reporting a number for a config nobod
 every lever has a no-op setting -- `tierBreak`, `maxKDst`, `maxShare` and `sleeperThreshold` declare
 none, because any "off" for them would fall outside their own legal range. `test/levers.test.ts`
 locks all of it, including a regression lock on the shipped defaults.
+
+## Shipped levers re-verified under the INDEPENDENT opponent book (2026-09-06, pre-draft)
+
+Every shipped value had been tuned mostly against `--bot-book vor`, where the bots price with OUR OWN
+`computeValues`. `scripts/sim-vs-mock.mjs` measures that market as the one FURTHEST from this
+league's real positional spend -- distance **877**, vs **523** for the rank book and **376** for the
+ESPN mock rooms (the sim over-spends QB ~$470 vs the room's real ~$328, and under-spends RB/WR by
+$300-400). A value that only wins under `vor` is fitted to our own bias, not to the room.
+
+Re-swept at `--bot-book rank`, full-system no-lookahead + inflation, 1999-2024, n=150:
+
+| lever | cells (championship %) | verdict |
+|---|---|---|
+| `aggr` | 0.60 **34.6** / 0.65 34.2 / **0.70 34.2** / 0.80 32.3 | plateau 0.6-0.7; shipped 0.70 stands (it is also the minimax choice across books) |
+| `maxShare` | 0.15 32.8 / 0.20 **34.7** / **0.25 34.2** / 0.35 32.6 / 0.45 31.7 | **bracketed BOTH sides for the first time**; 0.20-0.25 is a plateau |
+| `benchDiscount` | 0.15 32.1 / **0.25 34.2** / 0.40 32.2 | bracketed both sides; 0.25 confirmed |
+| `premium` | **1 -> 35.4** / **2 -> 34.2** | apparent +1.2pp -- REJECTED, see below |
+
+Note the `maxShare` shape: under `rank` it is a PLATEAU at <=0.25, not a peak AT 0.25 as the earlier
+`vor` sweep reported. 0.20 measures 0.5pp higher, inside noise. Nothing to change, but do not quote
+"peaks at 0.25" as if the curve were single-peaked under every book.
+
+### `premium 1` looked like a +1.2pp win and is an overfit -- rejected
+
+It was the only candidate the sweep produced, and it beat `premium 2` under BOTH books (vor 35.1 vs
+34.6; rank 35.4 vs 34.2), which is normally a good sign. The paired test says otherwise:
+
+    McNemar chi2 2.95, p ~ 0.086      (not significant)
+    season-level mean +1.28pp, SE 0.73, t 1.75 / 24 df
+    bootstrap 95% CI [-0.13, +2.67]pp -- CROSSES ZERO
+    detectable effect at 80% power with 25 seasons: ~2.12pp -- larger than the effect itself
+
+And the per-season deltas split cleanly across the tuning/holdout boundary:
+
+| era | seasons | mean delta (premium 1 - premium 2) |
+|---|---|---|
+| holdout 2000-2013 | 14 | **+0.36pp** |
+| tuning era 2014-2024 | 11 | **+2.36pp** |
+
+**The whole gain lives in the seasons `premium` was tuned on and vanishes on the holdout.** That is
+the overfitting signature this file already has scar tissue for (a cell that measured +3.4pp became
++1.0pp held out). It was also the best of 8 cells, and selection alone inflates the winner. Not
+shipped. If it is ever revisited, the test is a PRE-REGISTERED holdout run, not another sweep.
