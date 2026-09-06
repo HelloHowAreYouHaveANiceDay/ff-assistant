@@ -81,6 +81,7 @@ budgets, section 4 of value-methods) since they will overpay.
 ## Follow-ups (not done)
 - Per-MANAGER tendencies (who specifically overpays for RBs / punts QB) -- the recap groups picks by
   team but the scrape didn't reliably attach team labels; a cell-level scrape could map $ to
-  manager. Returning managers are identifiable by abbreviation across seasons (e.g. MOOS = <owner>
-  <owner>, "Out of the Country, Cant Draft").
+  manager. Returning managers are identifiable by their team abbreviation across seasons, which is
+  how the per-owner join is done (the identities themselves stay in the gitignored per-install data,
+  never in this repo).
 - Champions/standings trends (who is good) -- history page has 2012-2026; not yet extracted.

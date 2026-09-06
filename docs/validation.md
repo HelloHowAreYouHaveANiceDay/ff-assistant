@@ -574,7 +574,8 @@ opponent -- trust these lower numbers, not the old ones.
 ## REALISTIC opponent field (src/draft/managers.ts) -- the bot model
 
 The 15 bot seats are each a REAL manager from this league, modelled on 4 years of auction history
-(docs/league-managers.md, `data/managers.json`). Each bot reproduces its owner's positional appetite
+(`data/league-managers.md` + `data/managers.json`, both per-install and gitignored -- they name real
+league members). Each bot reproduces its owner's positional appetite
 (a QB-payer chases QB; a punter won't), a per-position spend budget (share x $200 -> stops chasing a
 position once its allocation is spent), and a concentration-scaled stars-and-scrubs curve.
 

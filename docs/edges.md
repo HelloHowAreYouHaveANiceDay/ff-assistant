@@ -80,7 +80,8 @@ software agent beats distracted humans:
   statically. (`--scarcity` to experiment.)
 
 - **Nomination gamesmanship** -- nominate players you don't want at a known payer's craved position
-  to drain them (`src/draft/nomination.ts`, cheat sheet in docs/league-managers.md). **Built AND
+  to drain them (`src/draft/nomination.ts`, scouting report in the per-install, gitignored
+  `data/league-managers.md`). **Built AND
   measured: in the backtest it is NEUTRAL-to-NEGATIVE** (drain-nom 18%->12%; greedy-non-target 15.5%;
   value-greedy default wins). Rational bots don't tilt, so the sim can't reward it -- exactly why this
   belongs in "can't see it" (below). It's a real edge only vs distracted HUMANS; kept as a documented

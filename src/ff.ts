@@ -621,7 +621,7 @@ async function cmdCheatsheet(rest: string[]) {
   const tiersFor = (pos: string) => tierize(players.filter((p) => p.pos === pos).sort((a, b) => b.value - a.value).slice(0, RELEVANT[pos] ?? 20));
   // Manager nomination plan: owners who overweight a position (share/leagueShare high) are the ones to
   // drain -- nominate that position early. (Human-only edge; sim showed it's not an auto-win, but it's
-  // a live read for you -- docs/league-managers.md.)
+  // a live read for you -- data/league-managers.md, per-install and gitignored.)
   let nomPlan = "";
   try {
     const mgr = JSON.parse(readFileSync(dataPath("managers.json"), "utf8")) as { leagueShare: Record<string, number>; profiles: { owner: string; share: Record<string, number> }[] };

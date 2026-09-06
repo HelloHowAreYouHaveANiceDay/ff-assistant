@@ -1,4 +1,5 @@
-// Nomination policy: turn the per-manager scouting (docs/league-managers.md) into a concrete
+// Nomination policy: turn the per-manager scouting (data/league-managers.md -- per-install and
+// gitignored, because it names real people) into a concrete
 // drain-first nomination. The room is full of known position-payers (Maria Jose pays premium QB
 // every year, McDermott buys an elite TE, etc.). On our nomination turn we put up a player WE DON'T
 // WANT at a position a well-funded payer craves -- they bid it up, draining budget away from the

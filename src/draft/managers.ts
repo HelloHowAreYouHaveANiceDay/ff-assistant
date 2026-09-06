@@ -5,7 +5,8 @@
 // heterogeneous: some managers pay premium QB every year, some never bid QB/TE, some are RB-first.
 // A realistic field reproduces each manager's positional appetite AND the league-wide
 // stars-and-scrubs concentration -- which is exactly what makes nomination gamesmanship (draining
-// the known position-payers) a real, testable edge. See docs/league-managers.md.
+// the known position-payers) a real, testable edge. The scouting report itself is PER-INSTALL and
+// gitignored (data/league-managers.md) -- it names real league members, so it never ships.
 
 import { readFileSync } from "node:fs";
 import { dataPath } from "../data/paths.js";
