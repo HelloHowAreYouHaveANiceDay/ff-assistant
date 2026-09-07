@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { Database as DB } from "better-sqlite3";
 import { optimalLineup } from "../inseason/lineup.js";
+import { dstAliasKey } from "../draft/values.js";
 import type { LeaguePlayer, LeagueProvider, LeagueTeam } from "./types.js";
 export type { LeaguePlayer, LeagueTeam, FreeAgent, LeagueShape, LeagueProvider } from "./types.js";
 
@@ -120,8 +121,26 @@ export async function openLeague(opts: { dbPath?: string; points?: string } = {}
     posOf.set(nameKey(r.name), r.position);
     teamOf.set(nameKey(r.name), r.nfl_team);
   }
+  /**
+   * Resolve a name to our lookup key, falling back to the DST alias table.
+   *
+   * Our tables key defenses by ABBREVIATION ("MIN D/ST" -> "min") while ESPN's rosters say
+   * "Vikings D/ST" ("vikings"). Without the alias every DST on every roster resolved to a projection
+   * of ZERO -- a ~125-point hole per team. It affected all 16 teams about equally, so trade and
+   * ranking comparisons still ordered correctly, which is exactly why it survived a full day of use:
+   * the number that was obviously wrong (a 0 next to every other DST's 100-171) only shows up when
+   * you print a roster and look at it.
+   *
+   * dstAliasKey already existed for this, built when the same bug bit the live draft. The adaptor
+   * simply never called it -- a fix applied at one call site and not the others.
+   */
+  const lookupKey = (name: string): string => {
+    const k = nameKey(name);
+    if (projOf.has(k) || posOf.has(k)) return k;
+    return dstAliasKey(name) ?? k;
+  };
   const enrich = (p: LeaguePlayer): LeaguePlayer => {
-    const k = nameKey(p.name);
+    const k = lookupKey(p.name);
     return { ...p, proj: projOf.get(k) ?? 0, team: p.team ?? teamOf.get(k) };
   };
 
@@ -137,9 +156,9 @@ export async function openLeague(opts: { dbPath?: string; points?: string } = {}
   return {
     provider, db, season: shape.season, slots: shape.slots, teams, me, score,
     regWeeks: shape.regWeeks, nflWeeks: shape.nflWeeks, playoffWeeks: shape.playoffWeeks,
-    proj: (n) => projOf.get(nameKey(n)) ?? 0,
-    posOf: (n) => posOf.get(nameKey(n)),
-    teamOf: (n) => teamOf.get(nameKey(n)),
+    proj: (n) => projOf.get(lookupKey(n)) ?? 0,
+    posOf: (n) => posOf.get(lookupKey(n)),
+    teamOf: (n) => teamOf.get(lookupKey(n)),
     close: async () => { await provider.close(); db.close(); },
   };
 }
