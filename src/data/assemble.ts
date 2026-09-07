@@ -9,6 +9,7 @@ import { nameKey, computeValues, resolveValueLeague, type PointsRow } from "../d
 import { scoreWeek, type ScoringRules } from "../draft/scoring.js";
 import { openDb, getConfig, nowIso } from "../db/db.js";
 import { dataPath } from "./paths.js";
+import { boardSpreads } from "../draft/spread.js";
 
 // last-year (season-1) REG fantasy points + games played under the LEAGUE's scoring, keyed by name_key
 async function lastYear(season: number, scoring: ScoringRules): Promise<Map<string, { pts: number; gms: number }>> {
@@ -55,9 +56,9 @@ function fmtHt(h: string): string {
 
 type Row = Record<string, string | number>;
 const COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "espn_pos", "tier", "team", "bye", "age", "exp", "ht", "wt", "forty",
-  "our_value", "edge", "adp", "vs_adp", "mkt_trend", "proj_pts", "last_pts", "last_gms", "ecr", "best", "worst", "espn_rank", "espn_adp", "rostered", "buzz", "depth", "news", "news_url"];
+  "our_value", "edge", "adp", "vs_adp", "mkt_trend", "proj_pts", "p10", "p50", "p90", "last_pts", "last_gms", "ecr", "best", "worst", "espn_rank", "espn_adp", "rostered", "buzz", "depth", "news", "news_url"];
 const header = (lastYr: number) => ["Rank", "Player", "Pos", "Us_Pos", "ECR_Pos", "ESPN_Pos", "Tier", "Team", "Bye", "Age", "Exp", "Ht", "Wt", "40yd",
-  "OurValue$", "vsECR", "ADP", "vsADP", "Mkt30d", "ProjPts", `${lastYr}Pts`, `${lastYr}Gms`, "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "ESPN_ADP", "Rostered%", "SleeperBuzz", "Depth", "Latest News", "NewsURL"];
+  "OurValue$", "vsECR", "ADP", "vsADP", "Mkt30d", "ProjPts", "P10", "P50", "P90", `${lastYr}Pts`, `${lastYr}Gms`, "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "ESPN_ADP", "Rostered%", "SleeperBuzz", "Depth", "Latest News", "NewsURL"];
 
 export async function assemble(dbPath?: string, pointsPath = dataPath("points.csv")): Promise<number> {
   const db = openDb(dbPath);
@@ -135,6 +136,37 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     if (!(p in tierTop) || (r.our_value as number) < tierTop[p] * cfg.levers.tierBreak) { tierNo[p] = (tierNo[p] ?? 0) + 1; tierTop[p] = r.our_value as number; }
     r.tier = `${p}-T${tierNo[p]}`;
   });
+  // 6b. THE BAND BEHIND EACH PROJECTION (p10/p90 of the season total).
+  //
+  // Runs AFTER pos_rank is assigned, because the bootstrap pools are joined on preseason positional
+  // rank -- that join is the whole mechanism, and doing this earlier would silently pass rank 0 for
+  // every player and hand back one identical band for the entire board. A uniform band is exactly
+  // the kind of wrong answer that looks like a working feature.
+  try {
+    const outcomes = JSON.parse(readFileSync(dataPath("rank-outcomes.json"), "utf8"));
+    const corrModel = JSON.parse(readFileSync(dataPath("correlation-model.json"), "utf8"));
+    const inputs = rows.map((r) => ({
+      name: r.player as string, pos: r.pos as string, team: (r.team as string) || undefined,
+      posRank: Number(String(r.pos_rank).replace(/^[A-Z]+/, "")) || 0,
+      projPts: typeof r.proj_pts === "number" ? r.proj_pts : 0,
+    }));
+    const { spreads, uncalibrated } = boardSpreads(inputs, outcomes, corrModel);
+    for (const r of rows) {
+      const s = spreads.get(r.player as string);
+      r.p10 = s ? s.p10 : "";
+      r.p50 = s ? s.p50 : "";
+      r.p90 = s ? s.p90 : "";
+    }
+    const banded = rows.filter((r) => r.p10 !== "").length;
+    console.log(`  spread: p10/p90 on ${banded}/${rows.length} players` +
+      (uncalibrated.length ? ` (${uncalibrated.length} left uncalibrated -- pool/projection ratio outside [0.5, 2.0])` : ""));
+  } catch (e) {
+    // A missing fitted model must not take the board down -- but it must not be silent either, or
+    // the column just quietly empties and looks like players legitimately having no band.
+    console.log(`  spread: SKIPPED -- ${(e as Error).message}`);
+    for (const r of rows) { r.p10 = ""; r.p50 = ""; r.p90 = ""; }
+  }
+
   // ESPN positional rank (within pos, by ESPN overall)
   const byPos: Record<string, Row[]> = {};
   for (const r of rows) if (typeof r.espn_rank === "number") (byPos[r.pos as string] ??= []).push(r);

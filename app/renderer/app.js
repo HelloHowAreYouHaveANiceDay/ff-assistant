@@ -91,14 +91,14 @@ const COLS = [
  ["Team","Team","team"],["Owner","Owner","owner"],["Bye","Bye","num"],["Age","Age","num"],
  ["OurValue$","Val$","val"],["vsECR","vsECR","delta"],
  ["ADP","ADP","num1"],["vsADP","vsADP","delta"],["Mkt30d","Mkt30d","delta"],
- ["ProjPts","Proj","num1"],
+ ["ProjPts","Proj","num1"],["band","Range p10-p90","band"],
  [YR+"Pts",YR+"Pts","num1"],[YR+"Gms",YR+"G","gms"],
  ["ECR","ECR","num1"],["ESPN_Rank","ESPN#","num"],["ESPN_ADP","eADP","num1"],["Rostered%","Own%","num"],
  ["flags","News / Flags","flags"]
 ];
 const LEFT = new Set(["player","pos","flags","t","act","owner"]);
 // columns where higher = better -> first click sorts descending (best first); everything else ascending
-const DESC_FIRST = new Set(["OurValue$","vsECR","vsADP","Mkt30d","ProjPts",YR+"Pts",YR+"Gms","Rostered%"]);
+const DESC_FIRST = new Set(["OurValue$","vsECR","vsADP","Mkt30d","ProjPts","band",YR+"Pts",YR+"Gms","Rostered%"]);
 const POS = ["ALL","QB","RB","WR","TE","K","DST"];
 let bst = { q:"", pos:"ALL", sleep:false, avail:false, hideDrafted:false, sort:"Rank", dir:1 };
 let OWNERSHIP = {}; // player name -> {owner, team, slot} for the active league (empty = all free agents)
@@ -151,8 +151,71 @@ function thead() {
     // first click on a "higher = better" column sorts DESCENDING (best first); rank-like columns ascending
     if (bst.sort===k) bst.dir *= -1; else { bst.sort = k; bst.dir = DESC_FIRST.has(k) ? -1 : 1; } thead(); drawBody(); });
 }
-function sortVal(r,k) { if (k==="flags"||k==="act") return 0; const n = num(r[k]); return n==null ? (typeof r[k]==="string"?r[k]:1e9) : n; }
+function sortVal(r,k) {
+  if (k==="flags"||k==="act") return 0;
+  // The band column holds no field of its own, so sort it by what it actually shows: WIDTH. That is
+  // the useful question ("who is most uncertain?") and without this the header would compare
+  // undefined for every row and appear to do nothing when clicked.
+  if (k==="band") { const a = num(r.P10), b = num(r.P90); return (a==null||b==null) ? "" : b - a; }
+  const n = num(r[k]); return n==null ? (typeof r[k]==="string"?r[k]:1e9) : n;
+}
+// ---------- PROJECTION BAND ----------
+// `ProjPts 319.2` is false precision. Our own measurement puts seasonal projections at 14-26% of
+// within-position variance explained (QB, at the top of the board where a dollar error is largest,
+// is the WORST at 7-15%), so a tenth of a point invites a comparison the model cannot support. The
+// band is p10-p90 of the season total, resampled from the same bootstrap pools the simulator uses.
+//
+// THE AXIS IS PER POSITION AND SHARED DOWN THE COLUMN. A bar scaled to its own row would make every
+// player look identically uncertain, which is the opposite of the point -- the comparison being
+// drawn is between players, so the scale has to be too. Positions get separate axes because a QB
+// (~400 pts) and a TE (~150) on one scale would flatten the TEs into a stub.
+//
+// The REPLACEMENT LINE is drawn on that axis because VOR is the entire basis of the dollar values
+// and is currently nowhere on screen: a $121 next to a band means little until you can see how much
+// of the band sits above the player who would otherwise fill the slot.
+let AXIS = null;              // pos -> {lo, hi, repl}
+function buildAxis() {
+  AXIS = {};
+  const byPos = {};
+  for (const r of DATA) {
+    if (r.P10 === "" || r.P10 == null) continue;
+    (byPos[r.Pos] ??= []).push(r);
+  }
+  const starters = { QB: 16, RB: 40, WR: 48, TE: 16, K: 16, DST: 16 };   // 16 teams x slots incl. flex
+  for (const pos in byPos) {
+    const list = byPos[pos];
+    const lo = Math.min(...list.map(r => num(r.P10) ?? 0));
+    const hi = Math.max(...list.map(r => num(r.P90) ?? 0));
+    // Replacement = the projection of the last starter at the position, by our own ranking. Derived
+    // from the roster shape rather than hardcoded, so a league-settings change moves the line.
+    const ranked = list.slice().sort((a, b) => (num(b.ProjPts) ?? 0) - (num(a.ProjPts) ?? 0));
+    const idx = Math.min(ranked.length - 1, (starters[pos] ?? 16) - 1);
+    AXIS[pos] = { lo, hi, repl: num(ranked[idx]?.ProjPts) ?? null };
+  }
+}
+function bandCell(r) {
+  const p10 = num(r.P10), p50 = num(r.P50), p90 = num(r.P90);
+  if (p10 == null || p90 == null) {
+    // Deliberately blank, not zero-width. These are players whose pool/projection ratio fell outside
+    // the [0.5, 2.0] calibration guard -- backups joined to pools posted by players who actually
+    // held that rank and actually played. Their raw band would be a different player's band.
+    return `<td class="bandcell mut" title="no calibrated band -- projection is far below the historical outcomes at this rank (bench/backup)">--</td>`;
+  }
+  const ax = (AXIS && AXIS[r.Pos]) || { lo: p10, hi: p90, repl: null };
+  const span = (ax.hi - ax.lo) || 1;
+  const pct = (v) => Math.max(0, Math.min(100, ((v - ax.lo) / span) * 100));
+  const l = pct(p10), rgt = pct(p90), mid = p50 != null ? pct(p50) : (l + rgt) / 2;
+  const replPct = ax.repl != null ? pct(ax.repl) : null;
+  const title = `p10 ${p10} - p90 ${p90} (median ${p50 != null ? p50 : "?"})` +
+    (ax.repl != null ? ` | replacement ${r.Pos} ~${Math.round(ax.repl)}` : "");
+  return `<td class="bandcell" title="${esc(title)}"><span class="band">` +
+    (replPct != null ? `<i class="repl" style="left:${replPct.toFixed(1)}%"></i>` : "") +
+    `<i class="rng" style="left:${l.toFixed(1)}%;width:${Math.max(1, rgt - l).toFixed(1)}%"></i>` +
+    `<i class="med" style="left:${mid.toFixed(1)}%"></i>` +
+    `</span></td>`;
+}
 function cell(r,k,kind) {
+  if (kind==="band") return bandCell(r);
   if (kind==="act") { const on = onTeam(r.Player); return `<td class="l"><button class="add ${on?'on':''}" data-add="${esc(r.Player)}" title="${on?'Drafted (click to remove)':'Draft to my team'}">${on?'&#10003;':'+'}</button></td>`; }
   if (kind==="player") return `<td class="l pl">${esc(r.Player)}</td>`;
   if (kind==="pos") return `<td class="l"><span class="pos ${r.Pos}">${esc(r.Pos)}</span></td>`;
@@ -191,6 +254,7 @@ function drawBody() {
     if (isNum) { const xe = x===""||x==null, ye = y===""||y==null; if (xe && ye) return 0; if (xe) return 1; if (ye) return -1; }
     return (x<y?-1:x>y?1:0)*bst.dir;
   });
+  buildAxis();   // shared per-position scale + replacement line, recomputed from the current DATA
   const tb = document.getElementById("tbody"); if (!tb) return;
   tb.innerHTML = rs.map(r => `<tr${onTeam(r.Player)?' class="mine"':''}>` + COLS.map(([k,l,kind]) => cell(r,k,kind)).join("") + "</tr>").join("");
   const c = document.getElementById("count"); if (c) c.textContent = rs.length + " of " + DATA.length;

@@ -265,3 +265,15 @@ code{font-family:var(--font-mono);font-size:.95em;background:var(--hover);paddin
 .ck-tbl td.r{text-align:right;font-family:var(--font-mono)}
 .ck-empty{text-align:center;padding:18px 8px;line-height:1.6}
 .ck-empty code{display:block;font-family:var(--font-mono);font-size:var(--fs-xs);margin-top:4px}
+
+/* ---------- PROJECTION BAND (p10-p90 of the season total) ----------
+   A shared per-position axis down the column, so the bars are comparable BETWEEN rows -- that is the
+   whole reason the column exists. The median tick and the replacement rule are the two readings that
+   carry decisions: where the middle sits, and how much of the range clears the player who would
+   otherwise fill the slot. */
+.bandcell{width:150px;padding:0 8px}
+.band{position:relative;display:block;height:16px}
+.band .rng{position:absolute;top:6px;height:4px;border-radius:2px;background:var(--line-str);opacity:.30}
+.band .med{position:absolute;top:2px;width:2px;height:12px;background:var(--line-str);border-radius:1px}
+/* Replacement level: dashed, behind the bar, deliberately quieter than the player's own data. */
+.band .repl{position:absolute;top:0;width:0;height:16px;border-left:1px dashed var(--faint);opacity:.75}
