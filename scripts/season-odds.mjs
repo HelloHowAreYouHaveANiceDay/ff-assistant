@@ -41,7 +41,7 @@ const playoffTeams = 7;
 await lg.close();
 
 console.log(`SEASON ODDS -- ${lg.season}, ${teams.length} teams, ${weeks.length} scheduled weeks, ${TRIALS} trials`);
-console.log(`variance model fitted on ${vm.seasons.length} seasons; UNFITTED positions: ${vm.unfitted.join(", ")}\n`);
+console.log(`variance model fitted on ${vm.seasons.length} seasons; UNFITTED positions: ${vm.unfitted.length ? vm.unfitted.join(", ") : "none -- every position has real weekly data"}\n`);
 
 // POOL RANKS. Tiers in the variance model are positions within the FULL seasonal player pool, so
 // they must be supplied from points.csv -- ranking within rostered players instead would map a
@@ -108,7 +108,7 @@ console.log(`\n=== SENSITIVITY ===`);
 const variants = [
   ["projections treated as TRUTH (projSd 0)", { ...base, projSd: 0 }],
   ["higher projection error (projSd 0.40)", { ...base, projSd: 0.40 }],
-  ["K/DST volatility x2 (they are UNFITTED)", { ...base, kdstCvScale: 2 }],
+  ["K/DST volatility x2", { ...base, kdstCvScale: 2 }],
   ["K/DST volatility x0.5", { ...base, kdstCvScale: 0.5 }],
 ];
 console.log(`  ${"variant".padEnd(42)} our playoff%   our title%`);
@@ -119,6 +119,7 @@ for (const [label, o] of variants) {
 }
 console.log(`\nIf "projections as TRUTH" is far from the baseline, that gap IS the honest uncertainty --`);
 console.log(`it is the difference between "our roster is exactly this good" and "we think it is about`);
-console.log(`this good". If the K/DST rows barely move, their missing data does not matter here.`);
+console.log(`this good". K/DST are now fitted from real weekly data; the scale test is kept as a`);
+console.log(`standing check that no one position's volatility is quietly driving the answer.`);
 console.log(`\nTrust the PLAYOFF number more than the title number: a 7-of-16 threshold is far less`);
 console.log(`sensitive to tail assumptions than a single-elimination bracket.`);

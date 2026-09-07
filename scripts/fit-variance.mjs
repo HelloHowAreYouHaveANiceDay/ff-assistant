@@ -69,28 +69,34 @@ for (const [, byPos] of bySeason) {
   }
 }
 
-// K and DST are ABSENT from every weekly source we have (history-weekly.csv and weekly.csv both
-// carry only QB/RB/WR/TE -- verified 2026-09-07). Rather than let them fall through to a silent
-// default that reads like a fitted number, they are stamped UNFITTED with published-range
-// placeholders, and season-odds.mjs reports a sensitivity check on them so the reader can see
-// whether the gap actually matters. Do not quote these two rows as measurements.
-const UNFITTED = {
+// FALLBACK placeholders, used ONLY when a position genuinely has no weekly rows.
+//
+// These were previously applied to K and DST UNCONDITIONALLY, because at the time neither had any
+// weekly data. Once history.ts started emitting both, the override kept firing and kept printing
+// "UNFITTED" over 273 real kicker samples -- a guard keyed on a hardcoded NAME rather than on the
+// condition it was standing in for, which is exactly the failure mode that survives the thing it
+// was guarding against. It is now keyed on whether samples actually exist.
+const FALLBACK = {
   K: { cv: 0.55, avail: 0.94, skew: 0.35 },
   DST: { cv: 0.80, avail: 1.00, skew: 0.70 },
+  _: { cv: 0.80, avail: 0.85, skew: 0.60 },
 };
 const MIN_N = 30;   // below this a tier's CV is noise; fall back to the nearest well-populated tier
 
-const model = { fittedFrom: "data/history-weekly.csv", seasons: [...bySeason.keys()].sort(), tiers: TIERS, unfitted: Object.keys(UNFITTED), pos: {} };
+const unfitted = [];
+const model = { fittedFrom: "data/history-weekly.csv", seasons: [...bySeason.keys()].sort(), tiers: TIERS, unfitted, pos: {} };
 console.log("weekly scoring variance, by position and tier (tier 0 = best by season total)");
 console.log("  pos  tier      n     CV   avail   skew   note");
 for (const p of POS) {
-  model.pos[p] = { cv: [], avail: [], skew: [], fitted: !UNFITTED[p] };
+  const anySamples = cvSamples[p].some((a) => a.length);
+  if (!anySamples) unfitted.push(p);
+  model.pos[p] = { cv: [], avail: [], skew: [], fitted: anySamples };
   for (let t = 0; t < TIERS; t++) {
     const cv = cvSamples[p][t], av = availSamples[p][t], sk = skewSamples[p][t];
     let cvV, avV, skV, note = "";
-    if (UNFITTED[p]) {
-      ({ cv: cvV, avail: avV, skew: skV } = UNFITTED[p]);
-      note = "UNFITTED -- no K/DST weekly data exists";
+    if (!cv.length) {
+      ({ cv: cvV, avail: avV, skew: skV } = FALLBACK[p] ?? FALLBACK._);
+      note = "UNFITTED -- no weekly rows for this position";
     } else if (cv.length < MIN_N) {
       // borrow the last tier that had enough samples, rather than publish a 2-sample CV
       const prev = model.pos[p].cv.length ? model.pos[p].cv.length - 1 : 0;

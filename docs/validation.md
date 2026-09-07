@@ -1,5 +1,43 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## K and DST existed on the live board but NOT in the backtest pool (fixed 2026-09-07)
+>
+> `src/data/history.ts` filtered history to QB/RB/WR/TE behind the comment *"K/DST aren't in this
+> feed"*. **That comment was wrong.** Kickers are in `stats_player_week` (569 rows in 2024) with full
+> distance-tiered columns, and team defenses are derivable from `stats_team_week` plus points-allowed
+> from the schedule. Two consequences, both invisible because nothing ever failed:
+>
+> 1. **Every backtested season ran with two starting slots EMPTY for all 16 teams**, while the live
+>    board (`points.csv`) carried 34 K and 32 DST. We validated on a pool we do not draft from.
+> 2. **`maxKDst` was inert.** `--max-kdst 2` and `--max-kdst 60` returned an identical 36.5% -- a cap
+>    on K/DST spending cannot bind when there is nothing to buy. A prior fix had added the missing
+>    `--max-kdst` flag and closed the gap; the flag worked, the lever stayed dead, because the missing
+>    piece was the DATA. Fixing the proximate cause is not fixing the cause.
+>
+> **The headline moves, and it is significant.** Paired by season, identical seeds, headline mode
+> (`--full --no-lookahead`, n=150): **28.1% -> 35.6% championships, +7.5pp, t = 3.52, 95% CI +2.7 to
+> +12.3** over 10 seasons. Playoffs 91% -> 94%.
+>
+> This is **not** the strategy improving. The backtest was *understating* it: fewer scoring starters
+> means higher relative weekly variance, and variance dilutes skill, so a real edge converted to
+> titles less often than it should have. Every championship figure below this line that predates
+> 2026-09-07 was measured on the K/DST-less pool and reads LOW by roughly this margin.
+>
+> **`maxKDst` measured for the first time: not significant.** Uncapped vs the shipped $2 cap is
+> **-1.4pp, t = -0.68, CI -6.1 to +3.3**. The cap is directionally right and costs nothing, so it
+> stays -- but it is a reasonable prior, not a validated win, and should be described that way.
+>
+> **Face validity was checked before any of this was believed.** 2024 kickers come out Boswell 189,
+> Aubrey 187, Dicker 173; 2024 defenses DEN 142, MIN 124, with CAR last at 11 -- the correct
+> *ordering* against reality, not merely plausible magnitudes. And the simulated field spends **1.8%**
+> of the room on K+DST against the real league's 1.3% historical / 3.2% in 2026, so the gain is not
+> an artifact of bots overpaying for newly-available players.
+>
+> One mapping is INFERRED and flagged in `scoring.ts`: ESPN publishes DST points-allowed across stat
+> ids whose tier boundaries are absent from the settings payload. The event values (sack 1, INT 2,
+> fumble recovery 1, safety 3, TD 8) are read directly; the PA ladder uses the standard boundaries
+> those values fit. Check it first if a DST total ever looks wrong.
+
 > ## The backtest now plays a REAL SCHEDULE (2026-09-07)
 >
 > Until now `backtest.ts` had **no schedule at all**: it re-shuffled the whole field every week, so

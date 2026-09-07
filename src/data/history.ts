@@ -4,11 +4,43 @@
 // No-PPR; this is the config-driven TS port. Fetches nflverse stats_player_week per season.
 import { writeFileSync } from "node:fs";
 import { fetchCsv, pick, NFLVERSE } from "./nflverse.js";
-import { scoreWeek, type ScoringRules } from "../draft/scoring.js";
+import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, type ScoringRules } from "../draft/scoring.js";
 import { dataPath } from "./paths.js";
 
-const FANTASY_POS = new Set(["QB", "RB", "WR", "TE"]); // skill positions (K/DST aren't in this feed)
+const SKILL_POS = new Set(["QB", "RB", "WR", "TE"]);
 const clean = (s: string) => s.replace(/,/g, " ").trim();
+
+/**
+ * K and DST were excluded here for the life of this file, behind the comment "K/DST aren't in this
+ * feed". That was simply WRONG, and it cost more than it looked: history-points.csv had no kickers
+ * or defenses, so the championship backtest drafted from a pool without them and ran every season
+ * with two starting slots permanently EMPTY for all 16 teams -- while the live board (points.csv)
+ * carries 34 K and 32 DST. It also left `maxKDst` inert: --max-kdst 2 and --max-kdst 60 returned
+ * an identical 36.5%, because a cap on K/DST spending cannot bind when there is nothing to buy.
+ *
+ * Kickers ARE in stats_player_week (569 rows in 2024) with full distance-tiered columns.
+ * Team defenses are not player rows at all -- they are built here from stats_team_week plus the
+ * points each defense allowed, which comes from the schedule.
+ */
+const TEAM_ALIAS: Record<string, string> = { LA: "LAR", JAX: "JAC", OAK: "LV", SD: "LAC", STL: "LAR", WSH: "WAS", ARZ: "ARI" };
+const canon = (t: string) => TEAM_ALIAS[t] ?? t;
+
+/** points ALLOWED by each team, per week, from the schedule's final scores. */
+async function pointsAllowed(yr: number): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const games = await fetchCsv(`${NFLVERSE}/schedules/games.csv`);
+  for (const g of games) {
+    if (Number(pick(g, "season")) !== yr) continue;
+    if (pick(g, "game_type") !== "REG") continue;
+    const wk = Number(pick(g, "week"));
+    const home = canon(pick(g, "home_team")), away = canon(pick(g, "away_team"));
+    const hs = Number(pick(g, "home_score")), as = Number(pick(g, "away_score"));
+    if (!wk || !home || !away || !Number.isFinite(hs) || !Number.isFinite(as)) continue;
+    out.set(`${home}|${wk}`, as);   // home defense allowed the away score
+    out.set(`${away}|${wk}`, hs);
+  }
+  return out;
+}
 
 /** Rebuild history-points (season totals) + history-weekly (per-week) under `scoring`, for `seasons`. */
 export async function buildHistory(seasons: number[], scoring: ScoringRules): Promise<{ points: number; weekly: number; seasons: number[] }> {
@@ -24,12 +56,31 @@ export async function buildHistory(seasons: number[], scoring: ScoringRules): Pr
     for (const r of rows) {
       if (pick(r, "season_type") !== "REG") continue;
       const name = pick(r, "player_display_name"); if (!name) continue;
-      const pos = pick(r, "position").toUpperCase(); if (!FANTASY_POS.has(pos)) continue;
+      const pos = pick(r, "position").toUpperCase();
+      const isK = pos === "K";
+      if (!SKILL_POS.has(pos) && !isK) continue;
       const week = Number(pick(r, "week")); if (!week) continue;
-      const pts = Math.round(scoreWeek(r, scoring) * 10) / 10;
+      const pts = Math.round((isK ? scoreKickerWeek(r) : scoreWeek(r, scoring)) * 10) / 10;
       wkLines.push(`${yr},${clean(name)},${pos},${week},${pts}`); nW++;
       const a = seasonAgg.get(name) ?? { pos, pts: 0 }; a.pts += pts; seasonAgg.set(name, a);
     }
+
+    // --- team defenses, from the TEAM feed + points allowed ------------------------------------
+    try {
+      const teamRows = await fetchCsv(`${NFLVERSE}/stats_team/stats_team_week_${yr}.csv`);
+      const pa = await pointsAllowed(yr);
+      for (const r of teamRows) {
+        if (pick(r, "season_type") !== "REG") continue;
+        const team = canon(pick(r, "team")); if (!team) continue;
+        const week = Number(pick(r, "week")); if (!week) continue;
+        const allowed = pa.get(`${team}|${week}`);
+        if (allowed == null) continue;   // no final score -> cannot score the PA ladder; skip, never assume 0
+        const pts = Math.round(scoreDefenseWeek(r, allowed) * 10) / 10;
+        const name = `${team} DST`;
+        wkLines.push(`${yr},${name},DST,${week},${pts}`); nW++;
+        const a = seasonAgg.get(name) ?? { pos: "DST", pts: 0 }; a.pts += pts; seasonAgg.set(name, a);
+      }
+    } catch { /* team feed absent for very old seasons -> that year simply has no DST */ }
     for (const [name, a] of seasonAgg) { ptLines.push(`${yr},${clean(name)},${a.pos},${Math.round(a.pts * 10) / 10}`); nP++; }
   }
   writeFileSync(dataPath("history-points.csv"), ptLines.join("\n") + "\n", "utf8");
