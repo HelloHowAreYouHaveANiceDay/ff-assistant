@@ -360,6 +360,7 @@ CREATE TABLE IF NOT EXISTS ownership (
   owner        TEXT,                  -- manager display name
   team_abbrev  TEXT,
   slot         TEXT,                  -- lineup slot they're rostered in
+  team_id      TEXT,                  -- ESPN numeric team id; joins to league.team_id to find OURS
   updated_at   TEXT,
   PRIMARY KEY (league_id, player_id)
 );

@@ -1078,7 +1078,7 @@ async function cmdSyncRosters(rest: string[]) {
   await browser.close();
   let j: any; try { j = JSON.parse(raw); } catch { db.close(); console.log(`could not read rosters: ${raw?.slice(0, 60)}`); return; }
   const memberName = new Map<string, string>((j.members ?? []).map((m: any) => [m.id, m.displayName || m.firstName || m.id]));
-  const up = db.prepare("INSERT OR REPLACE INTO ownership (league_id, player_id, owner, team_abbrev, slot, updated_at) VALUES (@lid,@pid,@own,@abr,@slot,@now)");
+  const up = db.prepare("INSERT OR REPLACE INTO ownership (league_id, player_id, owner, team_abbrev, slot, team_id, updated_at) VALUES (@lid,@pid,@own,@abr,@slot,@tid,@now)");
   const now = nowIso(); let n = 0, teams = 0;
   db.transaction(() => {
     db.prepare("DELETE FROM ownership WHERE league_id=?").run(lg.league_id);
@@ -1086,7 +1086,7 @@ async function cmdSyncRosters(rest: string[]) {
       const owner = memberName.get((t.owners ?? [])[0]) || `${t.location ?? ""} ${t.nickname ?? ""}`.trim() || `Team ${t.id}`;
       const abbr = t.abbrev || `T${t.id}`;
       const entries = t.roster?.entries ?? []; if (entries.length) teams++;
-      for (const e of entries) { const p = e.playerPoolEntry?.player ?? {}; const k = nameKey(p.fullName ?? ""); if (!k) continue; up.run({ lid: lg.league_id, pid: k, own: owner, abr: abbr, slot: ESPN_SLOT[e.lineupSlotId] ?? "", now }); n++; }
+      for (const e of entries) { const p = e.playerPoolEntry?.player ?? {}; const k = nameKey(p.fullName ?? ""); if (!k) continue; up.run({ lid: lg.league_id, pid: k, own: owner, abr: abbr, slot: ESPN_SLOT[e.lineupSlotId] ?? "", tid: String(t.id ?? ""), now }); n++; }
     }
   })();
   db.close();

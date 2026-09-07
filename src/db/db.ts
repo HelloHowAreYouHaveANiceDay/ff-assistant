@@ -32,6 +32,35 @@ export function openDb(path: string = DEFAULT_DB_PATH): DB {
 /** Apply schema.sql. CREATE ... IF NOT EXISTS throughout, so re-running is a no-op. */
 export function migrate(db: DB): void {
   db.exec(readFileSync(join(HERE, "schema.sql"), "utf8"));
+  addColumns(db);
+}
+
+/**
+ * Additive column migrations.
+ *
+ * schema.sql is `CREATE TABLE IF NOT EXISTS` throughout, which means a new column added there
+ * reaches a FRESH store and never an existing one -- the table already exists, so the statement is
+ * skipped in silence and the column is simply absent. Every query naming it then fails at runtime on
+ * exactly the machines that have real data. So a new column needs an explicit ALTER as well, and
+ * this is the one place they live.
+ *
+ * Idempotent by inspection rather than by catching an error, because `duplicate column name` and a
+ * genuinely malformed ALTER both arrive as the same exception type and swallowing one hides the
+ * other.
+ */
+function addColumns(db: DB): void {
+  const WANT: [string, string, string][] = [
+    // ESPN's numeric team id. ownership stored only the manager's display name and abbrev, so
+    // nothing in the store could answer "which of these sixteen rosters is MINE" -- league.team_id
+    // holds the number and there was no column to join it to.
+    ["ownership", "team_id", "TEXT"],
+  ];
+  for (const [table, col, type] of WANT) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.length) continue;                       // table not created yet; schema.sql owns that
+    if (cols.some((c) => c.name === col)) continue;
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  }
 }
 
 /** ISO-8601 UTC timestamp -- the store's timestamp convention (spec-data-model). */
