@@ -1034,8 +1034,15 @@ async function cmdBuildHistory(rest: string[]) {
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const seasons: number[] = []; for (let y = lo; y <= hi; y++) seasons.push(y);
   const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db); db.close();
-  console.log(`building history for ${seasons.length} seasons under ${conf.scoring} scoring (rec ${conf.scoring_rules.rec}/pt)...`);
-  const r = await buildHistory(seasons, conf.scoring_rules);
+  // Pass the FULL model when the league has synced one; the bare rules form silently means
+  // "K/DST from OUR defaults", which is the gap this closes.
+  const { DEFAULT_LEAGUE_SCORING } = await import("./draft/scoring.js");
+  const c = conf as unknown as { kicker?: unknown; defense?: unknown };
+  const model = { ...DEFAULT_LEAGUE_SCORING(), rules: conf.scoring_rules,
+    ...(c.kicker ? { kicker: c.kicker as never } : {}), ...(c.defense ? { defense: c.defense as never } : {}) };
+  const synced = c.kicker && c.defense ? "league-synced" : "DEFAULTS (league has not synced K/DST scoring)";
+  console.log(`building history for ${seasons.length} seasons under ${conf.scoring} scoring (rec ${conf.scoring_rules.rec}/pt); K/DST rules: ${synced}...`);
+  const r = await buildHistory(seasons, model);
   console.log(`wrote history-points (${r.points} rows) + history-weekly (${r.weekly} rows) for ${r.seasons.length} seasons: ${r.seasons.join(",")}`);
 }
 

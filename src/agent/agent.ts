@@ -7,7 +7,7 @@ import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk"
 import { z } from "zod";
 import { openDb, getConfig, setConfig, appendUsage, getMyRoster, setMyRoster, logAction, completeAction, recentActions, type RosterEntry } from "../db/db.js";
 import { nameKey } from "../draft/values.js";
-import { DEFAULT_SCORING, ESPN_STAT_TO_RULE, type ScoringRules } from "../draft/scoring.js";
+import { scoringFromEspn, type ScoringRules } from "../draft/scoring.js";
 import { LEVER_META, clampLever, applyLevers } from "../draft/levers.js";
 import { browserTools } from "./browserTools.js";
 
@@ -390,10 +390,12 @@ function buildTools(dbPath: string | undefined, season: number) {
             const teams = Number(s.size) || getConfig(db).teams;
             // Build the actual per-stat scoring model from the league's real scoringItems -- this is
             // what tailors OUR points/values (not just the HALF/PPR consensus bucket).
-            const rules: ScoringRules = { ...DEFAULT_SCORING };
-            for (const it of sc.scoringItems ?? []) { const key = ESPN_STAT_TO_RULE[it.statId]; if (key) rules[key] = Number(it.points ?? it.pointsOverrides?.["16"] ?? 0); }
+            // Build the WHOLE model -- offence, kicking AND defence. Only the offensive third used to
+            // be synced, so a league with different K/DST scoring kept ours and nothing failed.
+            const model = scoringFromEspn(sc.scoringItems ?? []);
+            const rules: ScoringRules = model.rules;
             db.prepare("UPDATE league SET name=@n, season=@se, scoring_json=@sj, team_id=@tid, last_synced_at=@now WHERE league_id=@lid")
-              .run({ n: s.name ?? null, se: lg.season, sj: JSON.stringify({ scoringType: sc.scoringType, ppr: recPts, draftType: ds.type, auctionBudget: ds.auctionBudget, slots, size: s.size, rules }), tid: mine ? String(mine.id) : lg.team_id, now: new Date().toISOString(), lid: lg.league_id });
+              .run({ n: s.name ?? null, se: lg.season, sj: JSON.stringify({ scoringType: sc.scoringType, ppr: recPts, draftType: ds.type, auctionBudget: ds.auctionBudget, slots, size: s.size, rules, kicker: model.kicker, defense: model.defense }), tid: mine ? String(mine.id) : lg.team_id, now: new Date().toISOString(), lid: lg.league_id });
             const playoffTeams = Number(sch.playoffTeamCount) || getConfig(db).playoffTeams;
             const regWeeks = Number(sch.matchupPeriodCount) || getConfig(db).regWeeks;
             const before = getConfig(db);

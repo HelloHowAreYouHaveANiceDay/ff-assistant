@@ -3,7 +3,7 @@
 // and schedule-derived team byes. The projection-curve port stays in Python until a validated
 // row-diff pass (that's the one place silent numeric drift hides).
 import { openDb, nowIso, setSetting, type DB } from "../db/db.js";
-import { fetchCsv, URLS, pick } from "./nflverse.js";
+import { fetchCsv, URLS, pick, canonTeam } from "./nflverse.js";
 import { nameKey } from "../draft/values.js";
 
 const FANTASY_POS = new Set(["QB", "RB", "WR", "TE", "K", "DST"]);
@@ -104,8 +104,7 @@ async function ingestBio(db: DB, SEASON: number): Promise<number> {
 }
 
 // nflverse schedule abbreviations -> the ECR/FantasyPros canonical ones (so team_bye joins player.nfl_team).
-const TEAM_ALIAS: Record<string, string> = { LA: "LAR", JAX: "JAC", OAK: "LV", SD: "LAC", STL: "LAR", WSH: "WAS", ARZ: "ARI" };
-const canonTeam = (t: string): string => TEAM_ALIAS[t] ?? t;
+
 
 /**
  * Persist the season schedule and derive each team's bye (the week it plays no game).

@@ -103,6 +103,52 @@ what makes an unattended full-auto tool trustworthy. Draft day is the first prov
 6. Agent calls `notify()` with a plain-English summary.
 7. Every turn's `usage` is appended to `usage_log`; the budget meter updates.
 
+## The data pipeline
+
+Three sources, one direction of flow, and one rule: **nothing downstream re-derives what an upstream
+layer already owns.**
+
+```
+nflverse (raw truth)          ESPN (league truth)         our board
+  stats_player_week   ---+      scoringItems  ---+          points.csv
+  stats_team_week        |      rosters/schedule |          values.csv
+  schedules/games        |                       |
+                         v                       v
+              src/draft/scoring.ts  <-- LeagueScoring (rules + kicker + defense)
+                         |
+                         v
+              src/data/history.ts  -->  history-points.csv / history-weekly.csv
+                         |
+                         v
+              backtest (strategy)  |  season.ts (this year's odds)
+```
+
+**Sources are addressed in one place.** `src/data/nflverse.ts` owns every URL (`URLS`,
+`playerWeekUrl`, `teamWeekUrl`) and the team-abbreviation map (`canonTeam`). The per-season stats
+URLs used to be built inline at each call site and `TEAM_ALIAS` existed in two files -- two copies of
+a join key that must agree, where disagreement fails SILENTLY (a team simply matches nothing).
+
+**Scoring is one model, synced or not as a whole.** `LeagueScoring` bundles offence, kicking and
+defence. Previously only the offensive third was league-driven: `history.ts` called
+`scoreKickerWeek(r)` and `scoreDefenseWeek(r, pa)` with *no rules argument*, so a different league
+would adapt its QB/RB/WR/TE scoring and keep scoring K and DST by our league's book, with nothing
+failing. `scoringFromEspn()` now builds all three from `scoringItems`, and `ff build-history` prints
+whether the K/DST rules are league-synced or defaults rather than leaving it unknowable.
+
+**The one part that cannot be synced** is the DST points-allowed ladder: ESPN spreads it across stat
+ids whose tier *boundaries* are absent from the settings payload. It is derived empirically instead
+(175 scored DST weeks) and marked as such in `scoring.ts`.
+
+**Correctness is checked against the other side, not against ourselves.**
+`scripts/validate-scoring.mjs` recomputes ESPN's own `appliedTotal` for ~700 player-weeks. QB/RB/WR/
+TE reproduce it exactly; K is within 0.24 pts/week; DST within 2.05. Face validity on *ranking* --
+which this pipeline passed for weeks while the DST ladder was overstating every defense by 4-5
+points a game -- cannot see a level error. Only the cross-check can.
+
+**Our own CSVs are comma-safe by construction:** `history.ts` runs every name through `clean()`,
+which strips commas, so downstream `split(",")` is sound *for files we write*. It is NOT sound for
+nflverse feeds, which contain quoted headshot URLs -- always use `fetchCsv` there.
+
 ## What is explicitly out of scope (v1)
 
 - Multiple leagues per user (design for one; leave room for N).

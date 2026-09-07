@@ -26,7 +26,60 @@ export const DEFAULT_SCORING: ScoringRules = { passYd: 1 / 25, passTD: 4, int: -
 // ESPN scoringItems statId -> our ScoringRules key (for league_sync to build the rules from a league).
 export const ESPN_STAT_TO_RULE: Record<number, keyof ScoringRules> = {
   3: "passYd", 4: "passTD", 20: "int", 24: "rushYd", 25: "rushTD", 42: "recYd", 43: "recTD", 53: "rec", 72: "fumble",
+  19: "twoPt", 26: "twoPt", 44: "twoPt",
 };
+
+/**
+ * The COMPLETE league scoring model: offence, kicking and defence together.
+ *
+ * These were split before, and only the offensive third was league-driven. `history.ts` called
+ * scoreKickerWeek/scoreDefenseWeek with NO rules argument, so they silently used constants baked to
+ * this one league -- meaning a different league (or this one changing its DST rules) would adapt its
+ * QB/RB/WR/TE scoring and keep scoring K and DST by the old league's book, with nothing failing.
+ * Bundling them makes the whole model one object that is either synced or not.
+ */
+export interface LeagueScoring {
+  rules: ScoringRules;
+  kicker: KickerRules;
+  defense: DefenseRules;
+}
+export const DEFAULT_LEAGUE_SCORING = (): LeagueScoring => ({
+  rules: { ...DEFAULT_SCORING },
+  kicker: { ...DEFAULT_KICKER },
+  defense: { ...DEFAULT_DEFENSE, paLadder: DEFAULT_DEFENSE.paLadder.map((p) => [...p] as [number, number]) },
+});
+
+/** ESPN kicking statId -> KickerRules key. Confirmed against ESPN's own appliedStats. */
+export const ESPN_STAT_TO_KICKER: Record<number, keyof KickerRules> = {
+  80: "fg0_39", 77: "fg40_49", 198: "fg50_59", 201: "fg60", 86: "pat", 88: "patMiss", 82: "fgMiss",
+};
+/** ESPN defense statId -> DefenseRules key. Values live under the "16" position override. */
+export const ESPN_STAT_TO_DEFENSE: Record<number, keyof Omit<DefenseRules, "paLadder">> = {
+  99: "sack", 95: "interception", 96: "fumbleRec", 106: "forcedFumble",
+  97: "blockedKick", 98: "safety", 113: "passDefended", 112: "tacklesForLoss",
+  101: "td", 102: "td", 103: "td", 104: "td",
+};
+
+/**
+ * Build the full scoring model from an ESPN scoringItems array.
+ *
+ * Only the PA ladder cannot be read this way: ESPN spreads points-allowed across ids whose tier
+ * BOUNDARIES are absent from the settings payload, so the ladder stays at its derived default (see
+ * DEFAULT_DEFENSE) and is the one part of the model that is not league-synced. Everything else is.
+ */
+export function scoringFromEspn(items: { statId: number; points?: number; pointsOverrides?: Record<string, number> }[]): LeagueScoring {
+  const out = DEFAULT_LEAGUE_SCORING();
+  for (const it of items ?? []) {
+    const val = () => Number(it.points || it.pointsOverrides?.["16"] || it.pointsOverrides?.["14"] || 0);
+    const rk = ESPN_STAT_TO_RULE[it.statId];
+    if (rk) { out.rules[rk] = val(); continue; }
+    const kk = ESPN_STAT_TO_KICKER[it.statId];
+    if (kk) { out.kicker[kk] = val(); continue; }
+    const dk = ESPN_STAT_TO_DEFENSE[it.statId];
+    if (dk) out.defense[dk] = val();
+  }
+  return out;
+}
 
 /**
  * KICKER scoring. Distance-tiered, which is why a flat "points per FG" cannot express it.

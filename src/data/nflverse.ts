@@ -14,6 +14,21 @@ export const URLS = {
   ecr: `${DPROC}/db_fpecr_latest.csv`,
 } as const;
 
+/** Per-season assets. These were built inline at every call site, which quietly broke the promise
+ *  the comment above makes -- a nflverse rename would have been a hunt, not a one-line fix. */
+export const playerWeekUrl = (season: number) => `${NFLVERSE}/stats_player/stats_player_week_${season}.csv`;
+export const teamWeekUrl = (season: number) => `${NFLVERSE}/stats_team/stats_team_week_${season}.csv`;
+
+/**
+ * nflverse team abbreviations -> the ECR/FantasyPros canonical ones.
+ *
+ * ONE copy. This table existed identically in ingest.ts and history.ts; two copies of a mapping
+ * that must agree is a drift waiting to happen, and the join it feeds (player.nfl_team, points
+ * allowed by team-week) fails SILENTLY when they disagree -- a team simply matches nothing.
+ */
+export const TEAM_ALIAS: Record<string, string> = { LA: "LAR", JAX: "JAC", OAK: "LV", SD: "LAC", STL: "LAR", WSH: "WAS", ARZ: "ARI" };
+export const canonTeam = (t: string): string => TEAM_ALIAS[t] ?? t;
+
 export async function fetchBytes(url: string): Promise<Buffer> {
   const res = await fetch(url, { redirect: "follow" });
   if (!res.ok) throw new Error(`fetch ${url} -> HTTP ${res.status}`);
