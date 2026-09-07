@@ -1,0 +1,210 @@
+/**
+ * FORWARD season Monte Carlo -- "given THESE rosters and THIS schedule, what are our odds?"
+ *
+ * Distinct from backtest.ts, and the difference matters. The backtest asks whether our DRAFT
+ * STRATEGY is good: it replays history, re-drafts each season, and scores against ACTUAL weekly
+ * results. This asks what happens to a roster that already exists in a season that has not happened,
+ * so every weekly score must be SAMPLED rather than replayed.
+ *
+ * THE THING THAT DECIDES WHETHER THE OUTPUT MEANS ANYTHING, stated first because it is the step
+ * most season simulators skip: PROJECTION ERROR DOMINATES WEEKLY NOISE. If you feed in our board as
+ * truth, the simulator answers "given that our roster is exactly the 7th best, here are the odds"
+ * and returns a precisely wrong number with tight error bars. The real uncertainty is whether we are
+ * 3rd or 12th. So each simulated season first draws every player's TRUE seasonal mean from our
+ * projection times a lognormal error (`projSd`, the same 0.30 the backtest uses for the market), and
+ * only then samples weeks around that. Setting projSd = 0 reproduces the overconfident version, and
+ * season-odds.mjs reports both so the difference is visible rather than assumed.
+ *
+ * WHAT IS MODELLED
+ *   - per-player TRUE mean drawn once per season (projection error)
+ *   - weekly scores around it, with position/tier CV and right-skew from data/variance-model.json
+ *   - availability: bye weeks plus per-position injury draws
+ *   - the real head-to-head schedule, seeding by record with points-for as tiebreak (verified: that
+ *     is exactly how this league seeds -- zero rank-vs-record inversions in 2025)
+ *   - single-elimination playoffs with byes for top seeds
+ *
+ * WHAT IS NOT, and both make the output slightly OVER-confident:
+ *   - NFL-teammate correlation. A QB and his WR1 boom together; independent draws understate how
+ *     often a good roster has a genuinely bad week, which is the tail that decides playoff races.
+ *   - in-season roster change. Justified here rather than assumed: this league averages ~0.1 trades
+ *     per team per season, so ignoring trades is accuracy, not simplification. Waivers are real
+ *     (~15 adds/team) and their omission understates every team roughly equally.
+ */
+import { mulberry32 } from "./sim.js";
+import { optimalLineup } from "../inseason/lineup.js";
+
+export interface VarianceModel {
+  tiers: number;
+  unfitted: string[];
+  pos: Record<string, { cv: number[]; avail: number[]; skew: number[]; fitted: boolean }>;
+}
+
+export interface SeasonPlayer { name: string; pos: string; proj: number; bye?: number | null }
+export interface SeasonTeamInput { id: string; name: string; roster: SeasonPlayer[] }
+export interface SeasonOpts {
+  weeks: number;
+  playoffTeams: number;
+  slots: string[];
+  /** Lognormal sd of our projection error. 0 = treat the board as truth (overconfident). */
+  projSd: number;
+  trials: number;
+  seed?: number;
+  /** Multiplier applied to every K/DST CV, for the sensitivity check on those unfitted rows. */
+  kdstCvScale?: number;
+  /** name -> rank within the FULL projection pool at that position. Required for tiers to match the
+   *  variance fit; see the tiering note in simulateSeasons. */
+  poolRank?: Map<string, { rank: number; of: number }>;
+}
+export interface SeasonOdds { id: string; name: string; playoffs: number; champion: number; meanWins: number; meanPoints: number }
+
+function gauss(rng: () => number): number {
+  const u = Math.max(1e-9, rng()), v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+/** Tier a player by his projection relative to the others at his position, matching how the model
+ *  was fitted (within-position rank, split into equal quartiles). */
+function tierFor(rankFrac: number, tiers: number): number {
+  return Math.min(tiers - 1, Math.max(0, Math.floor(rankFrac * tiers)));
+}
+
+/**
+ * Sample one week. `mean` is the player's true per-game mean; noise is lognormal so the draw is
+ * non-negative and right-skewed, matching the fitted skew -- a symmetric normal both produces
+ * impossible negative scores and understates the ceiling games that win playoff weeks.
+ */
+function sampleWeek(mean: number, cv: number, rng: () => number): number {
+  if (mean <= 0) return 0;
+  const sigma = Math.sqrt(Math.log(1 + cv * cv));
+  const mu = -0.5 * sigma * sigma;                 // so E[exp(mu + sigma*Z)] = 1
+  return Math.max(0, mean * Math.exp(mu + sigma * gauss(rng)));
+}
+
+function playoffWinner(seeds: number[], beat: (a: number, b: number) => number): number {
+  let alive = seeds.map((team, seed) => ({ team, seed }));
+  while (alive.length > 1) {
+    const byes = 2 ** Math.ceil(Math.log2(alive.length)) - alive.length;
+    const bye = alive.slice(0, byes), play = alive.slice(byes);
+    const winners: { team: number; seed: number }[] = [];
+    for (let i = 0; i < play.length / 2; i++) {
+      const a = play[i], b = play[play.length - 1 - i];
+      winners.push(beat(a.team, b.team) === a.team ? a : b);
+    }
+    alive = [...bye, ...winners].sort((x, y) => x.seed - y.seed);
+  }
+  return alive[0].team;
+}
+
+export function simulateSeasons(
+  teams: SeasonTeamInput[],
+  schedule: [number, number][][],
+  vm: VarianceModel,
+  opts: SeasonOpts,
+): SeasonOdds[] {
+  const N = teams.length;
+  const rng = mulberry32(opts.seed ?? 20260907);
+  const kScale = opts.kdstCvScale ?? 1;
+
+  // TIERING MUST MATCH HOW THE MODEL WAS FITTED, and getting this wrong is silent and severe.
+  // fit-variance.mjs tiers within the FULL seasonal player pool at a position. Tiering by rank among
+  // ROSTERED players instead maps a 16-team league's WR4 -- a top-60 WR, genuinely tier 0/1 -- onto
+  // the historical tier 3, whose fitted availability is 0.29. The first run of this did exactly that
+  // and produced 56 pts/week against a 72.7 projection, because a third of every roster was being
+  // treated as barely-playing depth. `poolRank` supplies each player's rank in the full projection
+  // pool so the tiers line up with the fit.
+  const tierOf = new Map<SeasonPlayer, number>();
+  for (const tm of teams) {
+    for (const p of tm.roster) {
+      const pr = opts.poolRank?.get(p.name);
+      tierOf.set(p, pr ? tierFor(pr.rank / Math.max(1, pr.of), vm.tiers) : 0);
+    }
+  }
+
+  const playoffs = new Array(N).fill(0), champs = new Array(N).fill(0);
+  const totWins = new Array(N).fill(0), totPts = new Array(N).fill(0);
+
+  for (let trial = 0; trial < opts.trials; trial++) {
+    // --- draw each player's TRUE season mean once (projection error) -----------------------------
+    const trueMean = new Map<SeasonPlayer, number>();
+    for (const tm of teams) {
+      for (const p of tm.roster) {
+        const err = opts.projSd > 0 ? Math.exp(gauss(rng) * opts.projSd - 0.5 * opts.projSd ** 2) : 1;
+        trueMean.set(p, Math.max(0, (p.proj / 17) * err));
+      }
+    }
+    // --- play the weeks --------------------------------------------------------------------------
+    const wins = new Array(N).fill(0), pts = new Array(N).fill(0);
+    const weekPts: number[][] = Array.from({ length: N }, () => []);
+    for (let w = 1; w <= opts.weeks; w++) {
+      const scores = teams.map((tm) => {
+        const players = tm.roster.map((p) => {
+          const tier = tierOf.get(p) ?? 0;
+          const m = vm.pos[p.pos] ?? vm.pos.WR;
+          const onBye = p.bye === w;
+          // The fitted avail is games/17, which ALREADY includes the bye. Applying the bye
+          // separately (so the RIGHT week is missed, which a season total cannot see) means the
+          // injury rate must have the bye divided back out, or every player is benched twice.
+          const injuryOk = rng() < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+          const healthy = injuryOk;
+          const cvBase = m.cv[tier] ?? 0.8;
+          const cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
+          const actual = (onBye || !healthy) ? null : sampleWeek(trueMean.get(p) ?? 0, cv, rng);
+          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
+        });
+        // Lineup is set on the TRUE mean (what a competent manager approximates), scored on the
+        // sampled week -- never on the sampled value itself, which would be lookahead.
+        const res = optimalLineup(players, opts.slots);
+        let total = 0;
+        for (const s of res.starters) {
+          const hit = players.find((x) => x.name === s.name);
+          if (hit?.actual != null) total += hit.actual;
+        }
+        return total;
+      });
+      for (let t = 0; t < N; t++) { pts[t] += scores[t]; weekPts[t].push(scores[t]); }
+      for (const [a, b] of schedule[(w - 1) % schedule.length]) {
+        if (scores[a] >= scores[b]) wins[a]++; else wins[b]++;
+      }
+    }
+    // --- seed by record, points-for as tiebreak (verified against this league) --------------------
+    const order = [...Array(N).keys()].sort((x, y) => wins[y] - wins[x] || pts[y] - pts[x]);
+    const seeds = order.slice(0, opts.playoffTeams);
+    for (const s of seeds) playoffs[s]++;
+    // playoff weeks: a fresh sampled week per matchup, same generative model
+    const playoffWeek = new Map<number, number>();
+    const beat = (a: number, b: number) => {
+      const draw = (t: number) => {
+        if (playoffWeek.has(t)) return playoffWeek.get(t)!;
+        const tm = teams[t];
+        const players = tm.roster.map((p) => {
+          const tier = tierOf.get(p) ?? 0;
+          const m = vm.pos[p.pos] ?? vm.pos.WR;
+          const healthy = rng() < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+          const cvBase = m.cv[tier] ?? 0.8;
+          const cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
+          const actual = healthy ? sampleWeek(trueMean.get(p) ?? 0, cv, rng) : null;
+          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
+        });
+        const res = optimalLineup(players, opts.slots);
+        let total = 0;
+        for (const s of res.starters) { const hit = players.find((x) => x.name === s.name); if (hit?.actual != null) total += hit.actual; }
+        return total;
+      };
+      // redraw both sides each ROUND so a team is not locked to one score all playoffs
+      playoffWeek.clear();
+      const sa = draw(a); playoffWeek.set(a, sa);
+      const sb = draw(b); playoffWeek.set(b, sb);
+      return sa >= sb ? a : b;
+    };
+    champs[playoffWinner(seeds, beat)]++;
+    for (let t = 0; t < N; t++) { totWins[t] += wins[t]; totPts[t] += pts[t]; }
+  }
+
+  return teams.map((tm, i) => ({
+    id: tm.id, name: tm.name,
+    playoffs: playoffs[i] / opts.trials,
+    champion: champs[i] / opts.trials,
+    meanWins: totWins[i] / opts.trials,
+    meanPoints: totPts[i] / opts.trials,
+  }));
+}
