@@ -62,6 +62,8 @@ async function main() {
       return cmdProject(rest);
     case "lineup":
       return cmdLineup(rest);
+    case "handcuffs":
+      return cmdHandcuffs(rest);
     case "calibrate":
       return cmdCalibrate(rest);
     case "sim":
@@ -666,6 +668,72 @@ async function cmdPreflight(rest: string[]) {
 // In-season weekly lineup optimizer. Reads a roster (offline CSV now: player[,opp][,injury]; live
 // copresent read once the season starts), projects each via the shared layer, and recommends the
 // optimal legal AVAILABLE lineup. `--set` would submit it (live, at season start).
+/**
+ * `ff handcuffs [--pos RB,WR] [--weeks N] [--free] [--json]`
+ *
+ * Who is worth a bench slot because of who is ahead of them. Ranked by the CONDITIONAL payoff -- what
+ * the man scores in a week the starter misses -- rather than by expected value, because a handcuff's
+ * EV is a small probability times a moderate gain and sorting on it buries precisely the asymmetric
+ * bets that justify holding one.
+ */
+async function cmdHandcuffs(rest: string[]) {
+  const { openDb, getConfig } = await import("./db/db.js");
+  const { handcuffBoard } = await import("./inseason/handcuff.js");
+  const { readFileSync } = await import("node:fs");
+  const db = openDb(valueOf(rest, "--db"));
+  const season = getConfig(db).season;
+  const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8"));
+  const positions = (valueOf(rest, "--pos") ?? "RB").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+  const weeks = Number(valueOf(rest, "--weeks") ?? 17);
+
+  const rows = db.prepare(
+    "SELECT b.row_json, s.depth_order AS depth FROM board b LEFT JOIN player_status s USING(player_id) WHERE b.season = ?",
+  ).all(season) as { row_json: string; depth: number | null }[];
+  if (!rows.length) { console.log("no board -- run `ff refresh` first"); return; }
+
+  const parsed = rows.map((r) => ({ j: JSON.parse(r.row_json) as Record<string, unknown>, depth: r.depth }));
+  // Pool rank per position, from OUR ranking, so the lead's injury tier lines up with how the
+  // variance model was fitted (tiers are fractions of the full positional pool, not of a roster).
+  const poolSize: Record<string, number> = {};
+  const poolRank = new Map<string, number>();
+  for (const pos of positions) {
+    const list = parsed.filter((p) => p.j.Pos === pos).sort((a, b) => (Number(b.j.ProjPts) || 0) - (Number(a.j.ProjPts) || 0));
+    poolSize[pos] = list.length;
+    list.forEach((p, i) => poolRank.set(String(p.j.Player), i));
+  }
+  const entries = parsed.map((p) => ({
+    name: String(p.j.Player), pos: String(p.j.Pos), team: String(p.j.Team ?? ""),
+    depthOrder: p.depth, projPts: Number(p.j.ProjPts) || 0,
+    rosteredPct: typeof p.j["Rostered%"] === "number" ? (p.j["Rostered%"] as number) : null,
+    poolRank: poolRank.get(String(p.j.Player)) ?? null,
+  }));
+
+  let board = handcuffBoard(entries, vm, { weeks, positions, poolSize });
+  if (rest.includes("--free")) board = board.filter((r) => r.rosteredPct == null || r.rosteredPct < 50);
+  if (rest.includes("--json")) { console.log(JSON.stringify(board, null, 2)); return; }
+
+  console.log(`HANDCUFFS -- ${positions.join("/")}, ${weeks} weeks remaining${rest.includes("--free") ? ", rostered <50% only" : ""}`);
+  console.log(`what each man scores IF the starter ahead of him misses a week.\n`);
+  console.log("  backup                team  d  behind                now    if out    lift   miss%   EV    own%");
+  for (const r of board.slice(0, 25)) {
+    console.log(
+      `  ${(r.name.slice(0, 19) + (r.contested ? "*" : "")).padEnd(20)} ${r.team.padEnd(4)} ${String(r.depthOrder).padStart(1)}  ${r.lead.slice(0, 18).padEnd(18)}` +
+      ` ${r.basePerWk.toFixed(1).padStart(5)} ${r.activePerWk.toFixed(1).padStart(8)} ${("+" + r.liftPerWk.toFixed(1)).padStart(7)}` +
+      ` ${(100 * r.missProb).toFixed(0).padStart(6)}% ${r.expectedPts.toFixed(0).padStart(5)} ${r.rosteredPct == null ? "   --" : (r.rosteredPct.toFixed(0) + "%").padStart(6)}`,
+    );
+  }
+  console.log(`\n  * = the published depth chart calls him the starter but our projection does not -- a`);
+  console.log(`    TIMESHARE, where he may take over with nobody getting hurt at all.`);
+  console.log(`  Sorted by IF-OUT. Not by lift or EV: lift = -0.078*base + 0.402*lead, so its coefficient`);
+  console.log(`  on the backup's own value is NEGATIVE and ranking on it returns the WORST player behind`);
+  console.log(`  the best starter (Vaki 9.6 above Pacheco 12.5 behind the same back). EV inherits that.`);
+  console.log(`  Measured on 27 seasons: a depth-2 back gains +4.4 pts/wk when the lead misses (t=14.2,`);
+  console.log(`  positive in 79% of 307 cases). The payoff lands near 10.7 pts/wk REGARDLESS of how good`);
+  console.log(`  the starter is -- elite handcuffs are cheaper for the same payoff, not richer.`);
+  console.log(`  NOT added to the board projection: the rank curve already contains the seasons where`);
+  console.log(`  the man ahead got hurt, so adding it there would count the same event twice.`);
+}
+
 async function cmdLineup(rest: string[]) {
   const { loadProjections } = await import("./projections.js");
   const { optimalLineup } = await import("./inseason/lineup.js");
