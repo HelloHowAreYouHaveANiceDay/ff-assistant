@@ -825,6 +825,53 @@ async function materialize(mat, nodeId) {
 
 // Boot: in Electron, pull the live board + news from the SQLite store (via the ff engine) before
 // the first paint; otherwise render the embedded data.js fallback. Either way, paint the board.
+//
+// THE FALLBACK MUST ANNOUNCE ITSELF. data.js is a checked-in snapshot that nothing regenerates any
+// more (the engine replaced it -- see the note at src/ff.ts `app-data`), and it renders IDENTICALLY
+// to live data. So every way the live path can fail -- opened in a browser with no window.mc, engine
+// crash, empty board, a season in config that the board has no rows for -- used to degrade in
+// silence to a snapshot whose numbers are entirely plausible and simply old. That is how a rebuilt
+// board "does not update": it did update, and the UI was never reading it. The stale numbers even
+// look right, which is what makes it expensive. Record WHICH source won and say so on screen.
+let DATA_SOURCE = { live: false, why: "not attempted", stamp: window.DATA_JS_STAMP || "unknown" };
+
+// THE OTHER HALF OF THE SAME PROBLEM. The banner below catches "the renderer never had live data".
+// This catches "the renderer HAD live data and it went out of date underneath it": the board is
+// loaded once at boot, so a `ff refresh` run from a terminal rewrites SQLite while the window keeps
+// serving the numbers it read at startup. Nothing was broken in that case and nothing said anything
+// -- which is exactly why a rebuilt board appears not to have rebuilt. Poll the engine's cheap
+// builtAt stamp and offer a reload when it moves.
+function watchForRebuild(seenAt) {
+  if (!seenAt || !window.mc || !window.mc.appData) return;
+  setInterval(async () => {
+    try {
+      const d = await window.mc.appData();
+      if (d && d.builtAt && d.builtAt !== seenAt && !document.getElementById("rebuilt-bar")) {
+        const b = document.createElement("div");
+        b.id = "rebuilt-bar";
+        b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#065f46;color:#fff;" +
+          "font:600 12px/1.5 system-ui,sans-serif;padding:6px 12px;text-align:center;cursor:pointer";
+        b.textContent = "Board rebuilt outside the app -- click to load the new values";
+        b.onclick = () => location.reload();
+        document.body.appendChild(b);
+        document.body.style.paddingTop = "28px";
+      }
+    } catch (e) { /* a transient engine hiccup is not worth a banner */ }
+  }, 15000);
+}
+
+// A persistent, unmissable bar. Not a toast and not a console line: the whole failure mode is that
+// nobody notices, so it must survive on screen for as long as the stale data does.
+function showStaleBanner(src) {
+  if (document.getElementById("stale-banner")) return;
+  const b = document.createElement("div");
+  b.id = "stale-banner";
+  b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fff;" +
+    "font:600 12px/1.5 system-ui,sans-serif;padding:6px 12px;text-align:center;letter-spacing:.02em";
+  b.textContent = `SNAPSHOT DATA from ${src.stamp} -- NOT the live board. Rebuilds will not appear here. Reason: ${src.why}`;
+  document.body.appendChild(b);
+  document.body.style.paddingTop = "28px";
+}
 async function boot() {
   if (window.mc && window.mc.appData) {
     try {
@@ -834,9 +881,21 @@ async function boot() {
         if (Array.isArray(d.leverSpecs)) LEVER_SPECS_UI = d.leverSpecs; // engine owns the lever table
         byName = new Map(DATA.map(p => [p.Player, p]));
         const sp = document.getElementById("s-players"); if (sp) sp.textContent = DATA.length;
+        DATA_SOURCE = { live: true, why: "", stamp: "", builtAt: d.builtAt || null };
+        watchForRebuild(d.builtAt || null);
+      } else {
+        // The call SUCCEEDED and returned nothing. Distinct from a throw, and the likelier bug:
+        // appDataPayload queries `board` for config.season, so a season with no rows yields an
+        // empty array rather than an error.
+        DATA_SOURCE.why = `engine returned ${d && d.players ? d.players.length : 0} players for season ${(d && d.config && d.config.season) || "?"}`;
       }
-    } catch (e) { /* fall back to embedded data.js */ }
+    } catch (e) {
+      DATA_SOURCE.why = `engine call failed: ${e && e.message ? e.message : e}`;
+    }
+  } else {
+    DATA_SOURCE.why = "no engine bridge (window.mc) -- this is a browser preview, not the app";
   }
+  if (!DATA_SOURCE.live) showStaleBanner(DATA_SOURCE);
   // team source of truth is the store (my_roster via the helper); localStorage is the browser fallback
   if (window.mc && window.mc.teamGet) {
     try { const t = await window.mc.teamGet(); if (Array.isArray(t)) TEAM = t; } catch (e) { /* keep localStorage */ }

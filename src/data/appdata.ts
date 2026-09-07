@@ -29,7 +29,13 @@ export function appDataPayload(db: DB, season: number) {
   // (the largest measured win, 24.4% -> 28.0%) and all four positional multipliers were invisible
   // and uneditable in the app. Sent as a sibling of `config`, NOT inside it, so this derived data can
   // never round-trip back through `setConfig` and get persisted as if it were stored state.
-  return { players, news, config, lastYr, leverSpecs: LEVER_SPECS };
+  // WHEN the board was built, so the renderer can show its age and notice a rebuild that happened
+  // underneath a running app. The app loads the board once at boot; a `ff refresh` run from a
+  // terminal changes SQLite and nothing tells the window, so a correctly-rebuilt board sits
+  // invisible behind a correctly-loaded stale one. Both halves of that are silent without this.
+  const builtAt = (db.prepare("SELECT MAX(updated_at) AS m FROM board WHERE season = ?")
+    .get(season) as { m: string | null } | undefined)?.m ?? null;
+  return { players, news, config, lastYr, leverSpecs: LEVER_SPECS, builtAt };
 }
 
 /** OUR value book as the BIDDER sees it: player_value, the store the live auto-draft reads
