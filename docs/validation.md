@@ -18,6 +18,12 @@
 > (`--full --no-lookahead`, n=150): **28.1% -> 35.6% championships, +7.5pp, t = 3.52, 95% CI +2.7 to
 > +12.3** over 10 seasons. Playoffs 91% -> 94%.
 >
+> **The CURRENT headline is 34.9%, not 35.6%** -- that paired test was run before the DST scoring was
+> ground-truthed against ESPN later the same day, which moved it 35.6 -> 34.9 (well inside the CI, so
+> the +7.5pp conclusion stands). Both numbers are kept rather than one overwritten, because the delta
+> and the level were measured at different points and quoting the newer level beside the older delta
+> would imply a comparison that was never run.
+>
 > This is **not** the strategy improving. The backtest was *understating* it: fewer scoring starters
 > means higher relative weekly variance, and variance dilutes skill, so a real edge converted to
 > titles less often than it should have. Every championship figure below this line that predates

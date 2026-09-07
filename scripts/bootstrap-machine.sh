@@ -58,6 +58,16 @@ npm run ff -- scrape-league --years 14 2>&1 | tail -2
 say "3. backtest history from nflverse (network, no login needed)"
 npm run ff -- build-history --seasons 1999-2024 2>&1 | tail -1
 
+say "3b. models FITTED FROM that history -- variance, correlation, bootstrap pools"
+# These must be refitted HERE, after step 3, not trusted from the repo. variance-model.json and
+# correlation-model.json are checked in, so a fresh clone gets a copy -- but a copy fitted against
+# whatever history the last committer had. Refitting binds them to the history this machine just
+# built. rank-outcomes.json is 2.1 MB and gitignored, so it does not travel at all and MUST be built.
+node --import tsx scripts/fit-variance.mjs    2>&1 | tail -1
+node --import tsx scripts/fit-correlation.mjs 2>&1 | tail -1
+node --import tsx scripts/fit-bootstrap.mjs   2>&1 | tail -1
+test -s data/rank-outcomes.json || fail "rank-outcomes.json missing -- season-odds cannot run"
+
 say "4. projections, values and the co-pilot cheatsheet -- ONE build, so every surface agrees"
 npm run ff -- refresh 2>&1 | tail -1
 npm run ff -- values 2>&1 | tail -1

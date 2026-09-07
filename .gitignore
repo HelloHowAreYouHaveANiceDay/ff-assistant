@@ -36,6 +36,7 @@ data/league-managers.md
 # `ff build-history`; committing it would ship one league's scoring to everyone
 data/history-points.csv
 data/history-weekly.csv
+data/rank-outcomes.json
 
 # electron-builder output + compiled engine bundle
 dist-app/

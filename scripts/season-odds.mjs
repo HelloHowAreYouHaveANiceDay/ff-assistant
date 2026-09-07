@@ -16,8 +16,17 @@ const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
 // BOOTSTRAP is the default sampler: real historical weeks joined on preseason positional rank, with
 // NFL teammates correlated. --parametric falls back to the fitted-lognormal path for comparison.
 const PARAMETRIC = process.argv.includes("--parametric");
-const outcomes = PARAMETRIC ? null : JSON.parse(readFileSync("data/rank-outcomes.json", "utf8"));
-const corrModel = PARAMETRIC ? null : JSON.parse(readFileSync("data/correlation-model.json", "utf8"));
+// Read the fitted models with an actionable failure. rank-outcomes.json is 2.1 MB and gitignored, so
+// it is exactly the file a fresh clone will be missing -- and a raw ENOENT stack trace names the path
+// without saying how to produce it.
+const need = (path, how) => {
+  try { return JSON.parse(readFileSync(path, "utf8")); }
+  catch { console.log(`missing ${path}
+  rebuild it with:  ${how}
+  (or run with --parametric to use the older fitted-lognormal sampler)`); process.exit(1); }
+};
+const outcomes = PARAMETRIC ? null : need("data/rank-outcomes.json", "node --import tsx scripts/fit-bootstrap.mjs");
+const corrModel = PARAMETRIC ? null : need("data/correlation-model.json", "node --import tsx scripts/fit-correlation.mjs");
 
 const lg = await openLeague();
 const sched = lg.provider.matchups ? await lg.provider.matchups() : null;
