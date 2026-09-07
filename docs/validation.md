@@ -1,5 +1,30 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## The backtest now plays a REAL SCHEDULE (2026-09-07)
+>
+> Until now `backtest.ts` had **no schedule at all**: it re-shuffled the whole field every week, so
+> each opponent was an independent uniform draw. That is *unbiased* -- every team's average opponent
+> is the league mean -- but it got two things structurally wrong: **no repeat cap** (you could draw
+> the best roster four times and the worst never, where a real schedule caps any opponent at two),
+> and **no correlated schedule risk** (in a real league you play three division rivals twice each, so
+> a strong division is a season-long tax; independent weekly draws average that away entirely).
+>
+> Replaced by `src/draft/schedule.ts`: **standard divisional play** -- 6 in-division (double
+> round-robin) + 8 cross-division (two other divisions once each; the third goes unplayed, which is
+> forced by 14 weeks against 15 possible opponents). Non-16/4 leagues fall back to a plain
+> round-robin, still better than random pairing. `--random-schedule` restores the old behaviour.
+>
+> **It does not move the headline number, and that was the expected result.** Measured as a matched
+> pair on identical seeds (so the drafts are byte-identical and the schedule is the only variable),
+> over 11 seasons at n=150: **+1.00pp, sd 4.34, t = 0.76, 95% CI -1.9 to +3.9pp.** Replacing an
+> unbiased sampler with a real schedule buys realism, not a different answer -- and it confirms the
+> historical championship figures in this file were *not* distorted by the missing schedule.
+>
+> `test/schedule.test.ts` asserts the invariants that separate a real schedule from a
+> plausible-looking one (perfect matching each week, 6 in-division, every rival exactly twice, the
+> 2-game repeat cap) **plus a positive control** that reproduces the old random pairing and asserts
+> it FAILS those same invariants -- because a schedule test that passes on both is worthless.
+
 > **Every championship number in this file is only meaningful together with the VALUE CURVE it was
 > measured under.** On 2026-09-03 the FLEX-baseline allocation changed (even 3-way split ->
 > points-weighted), which moved the whole bid table; see "Weighted FLEX baselines" below. Numbers

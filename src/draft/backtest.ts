@@ -7,6 +7,7 @@
 import { draftField, mulberry32, SIM_LEAGUE, type SimLeague } from "./sim.js";
 import { computeValues, resolveValueLeague, type PointsRow } from "./values.js";
 import { optimalLineup } from "../inseason/lineup.js";
+import { buildSchedule } from "./schedule.js";
 import type { V2Config } from "./strategy.js";
 
 function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
@@ -65,7 +66,7 @@ function realWeekScore(roster: { name: string; pos: string; proj: number }[], we
   return total;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14, avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" = "vor", homogeneous = false): BacktestResult {
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14, avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" = "vor", homogeneous = false, divisions = 0): BacktestResult {
   const REG_WEEKS = Array.from({ length: regWeeks }, (_, i) => i + 1); // fantasy regular-season weeks
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
@@ -142,13 +143,31 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
 
   const wins = new Array(lg.teams).fill(0);
   const totPts = new Array(lg.teams).fill(0);
-  for (const wk of REG_WEEKS) {
+  // SCHEDULE. Previously the field was reshuffled every week, so each opponent was an independent
+  // uniform draw -- unbiased in expectation, but it capped nothing (you could draw the best roster
+  // four times) and erased correlated schedule risk entirely (a hard division is a season-long tax
+  // that independent draws average away). `divisions` builds standard divisional play instead:
+  // 6 in-division + 8 cross. Seat assignment to divisions is randomised per season so our team (0)
+  // is not permanently in the same division as the same bots.
+  const sched = divisions > 0 ? buildSchedule(lg.teams, regWeeks, divisions) : null;
+  let seat: number[] = [];
+  if (sched) {
+    seat = [...Array(lg.teams).keys()];
+    for (let i = seat.length - 1; i > 0; i--) { const j = Math.floor(rngM() * (i + 1)); [seat[i], seat[j]] = [seat[j], seat[i]]; }
+  }
+  for (const [wi, wk] of REG_WEEKS.entries()) {
     runWaiver(wk); // process waivers before this week's games
-    const order = [...Array(lg.teams).keys()];
-    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rngM() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
     const scores = rosters.map((_, t) => wkS(t, wk));
-    for (let i = 0; i < lg.teams; i += 2) {
-      const a = order[i], b = order[i + 1];
+    const games: [number, number][] = sched
+      ? sched.weeks[wi].map(([a, b]) => [seat[a], seat[b]] as [number, number])
+      : (() => {
+        const order = [...Array(lg.teams).keys()];
+        for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rngM() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+        const out: [number, number][] = [];
+        for (let i = 0; i < lg.teams; i += 2) out.push([order[i], order[i + 1]]);
+        return out;
+      })();
+    for (const [a, b] of games) {
       totPts[a] += scores[a]; totPts[b] += scores[b];
       if (scores[a] >= scores[b]) wins[a]++; else wins[b]++;
     }

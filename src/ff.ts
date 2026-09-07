@@ -1171,6 +1171,14 @@ async function cmdBacktest(rest: string[]) {
   // it is not an artifact of self-reference.
   const botBook = (valueOf(rest, "--bot-book") === "rank" ? "rank" : "vor") as "vor" | "rank";
   const homogeneous = rest.includes("--homogeneous"); // all bots = one league-average manager
+  // SCHEDULE. A real schedule is the default: standard divisional play (6 in-division + 8 cross)
+  // for a 16/4 league, and a plain round-robin otherwise -- both strictly more faithful than the
+  // fresh random weekly pairing this replaced, which capped no repeat and erased correlated
+  // schedule risk. Measured against the old behaviour on identical seeds it moves the championship
+  // rate by +1.0pp, t=0.76 over 11 seasons (95% CI -1.9 to +3.9) -- i.e. not at all, which is the
+  // expected result for replacing an unbiased sampler. `--random-schedule` restores the old
+  // pairing for comparison; `--divisions N` overrides the division count.
+  const divisions = rest.includes("--random-schedule") ? 0 : Number(valueOf(rest, "--divisions") ?? 4);
   const dumpPath = valueOf(rest, "--dump-trials");
   const dumpRows: string[] = [];
   const { writeFileSync: writeDump } = await import("node:fs");
@@ -1182,7 +1190,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever, botBook, homogeneous); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever, botBook, homogeneous, divisions); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a
