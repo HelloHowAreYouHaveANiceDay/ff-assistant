@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld("mc", {
   // streams its turns ({t:"text"|"tool"|"done", ...}) as they arrive.
   agentAsk: (message) => ipcRenderer.invoke("mc:agentAsk", message),
   onAgentEvent: (cb) => ipcRenderer.on("mc:agentEvent", (_e, data) => cb(data)),
+  // Pushed by main after any engine invocation whose board stamp differs from the last one seen.
+  // Carries the stamp itself so the renderer decides, rather than trusting "something happened".
+  onBoardChanged: (cb) => ipcRenderer.on("mc:boardChanged", (_e, data) => cb(data)),
   // the drafted team lives in SQLite (my_roster) now -- read/write via the helper (source of truth)
   teamSet: (team) => ipcRenderer.invoke("mc:teamSet", team),
   teamGet: () => ipcRenderer.invoke("mc:teamGet"),

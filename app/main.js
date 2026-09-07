@@ -44,9 +44,34 @@ function ffRun(args) {
   return new Promise((res) => {
     const p = ffSpawn(args); let out = "";
     p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (out += d));
-    p.on("close", (c) => res({ ok: c === 0, out: out.slice(-1800) }));
+    p.on("close", (c) => { res({ ok: c === 0, out: out.slice(-1800) }); noticeBoardChange(); });
     p.on("error", (e) => res({ ok: false, out: String(e) }));
   });
+}
+
+// BOARD-CHANGE NOTIFICATION, hung on the CHOKEPOINTS rather than on a list of commands.
+//
+// Every `ff` invocation the app makes goes through exactly two places: ffRun (one-shot verbs) and
+// rpc (the persistent serve helper). The copilot and the MCP tool surface are not exceptions -- the
+// agent is itself spawned as `ff agent-ask`, so its work lands here too. Notifying from here rather
+// than from each board-mutating tool matters because that tool list would be a hand-maintained
+// enumeration of a set that grows: there are 25 MCP tools today, several of which rewrite values
+// (set_lever, set_price, league_sync, draft_player), and the next one added would silently not
+// notify. A guard built by enumeration is a snapshot of the day it was written.
+//
+// The renderer is told the STAMP, not "something happened", and decides for itself by comparing
+// against what it booted with. So a spurious ping costs nothing, and a ping that never arrives is
+// still caught by the renderer's own slow poll -- neither side is load-bearing alone.
+let lastBoardStamp = null;
+async function noticeBoardChange() {
+  try {
+    const s = await rpc("board-stamp");
+    if (!s || !s.builtAt) return;
+    if (lastBoardStamp && s.builtAt !== lastBoardStamp && win && !win.isDestroyed()) {
+      win.webContents.send("mc:boardChanged", s);
+    }
+    lastBoardStamp = s.builtAt;
+  } catch (_) { /* the helper may be restarting; the renderer's poll is the backstop */ }
 }
 
 function createWindow() {
@@ -185,7 +210,20 @@ function rpc(method, params) {
     pending.set(id, { resolve, reject });
     serve.stdin.write(JSON.stringify({ id, method, params: params || {} }) + "\n");
     setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error("rpc timeout: " + method)); } }, 30000);
-  }));
+  })).then((r) => {
+    // The second chokepoint. `board-stamp` is excluded because noticeBoardChange() issues it -- a
+    // generic hook here without that exclusion is an infinite mutual recursion, not a slow path.
+    // Everything else is allowed through regardless of whether it looks like a mutation: the
+    // renderer compares stamps and ignores a no-change ping, so over-notifying is free while an
+    // under-maintained "which methods mutate?" list is exactly the enumeration bug being avoided.
+    if (method !== "board-stamp") debouncedNotice();
+    return r;
+  });
+}
+let noticeTimer = null;
+function debouncedNotice() {
+  if (noticeTimer) return;                       // coalesce a burst of calls into one probe
+  noticeTimer = setTimeout(() => { noticeTimer = null; noticeBoardChange(); }, 400);
 }
 
 ipcMain.handle("mc:appData", () => rpc("app-data").catch(() => null));

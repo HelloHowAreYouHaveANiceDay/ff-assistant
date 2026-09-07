@@ -100,7 +100,11 @@ test("boot arms the rebuild watcher on the live path", () => {
   const w = extractFn(SRC, "watchForRebuild");
   assert.match(w, /if\s*\(!seenAt\s*\|\|\s*!window\.mc/,
     "the watcher must no-op without a stamp or an engine bridge, or it polls forever in a browser");
-  assert.match(w, /d\.builtAt\s*!==\s*seenAt/, "it must compare against the stamp it booted with");
+  assert.match(w, /stamp === seenAt/, "it must compare against the stamp it booted with");
+  // Push and poll must funnel through ONE comparison. Two copies of "has it changed?" is how the
+  // fast path and the backstop drift into disagreeing about what stale means.
+  assert.equal((w.match(/stamp === seenAt/g) || []).length, 1,
+    "exactly one change-comparison, shared by the push and the poll");
 });
 
 test("data.js carries a generation stamp so the banner can name a date", () => {

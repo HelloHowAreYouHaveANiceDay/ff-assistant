@@ -843,21 +843,29 @@ let DATA_SOURCE = { live: false, why: "not attempted", stamp: window.DATA_JS_STA
 // builtAt stamp and offer a reload when it moves.
 function watchForRebuild(seenAt) {
   if (!seenAt || !window.mc || !window.mc.appData) return;
+  const check = (stamp) => {
+    if (!stamp || stamp === seenAt || document.getElementById("rebuilt-bar")) return;
+    const b = document.createElement("div");
+    b.id = "rebuilt-bar";
+    b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#065f46;color:#fff;" +
+      "font:600 12px/1.5 system-ui,sans-serif;padding:6px 12px;text-align:center;cursor:pointer";
+    b.textContent = "Board rebuilt -- click to load the new values";
+    b.onclick = () => location.reload();
+    document.body.appendChild(b);
+    document.body.style.paddingTop = "28px";
+  };
+  // PUSH is the fast path: main notifies after any engine invocation (including every MCP tool call,
+  // since the agent is itself spawned through that chokepoint), so a rebuild surfaces in under a
+  // second rather than on the next poll.
+  if (window.mc.onBoardChanged) window.mc.onBoardChanged((s) => check(s && s.builtAt));
+  // POLL is the backstop, and it stays even though push covers the normal case: push depends on main
+  // being wired correctly, and the whole class of bug here is a notification path that quietly is
+  // not connected. Both compare the SAME stamp, so whichever notices first wins and the other is a
+  // no-op. Slow, because it is only insurance.
   setInterval(async () => {
-    try {
-      const d = await window.mc.appData();
-      if (d && d.builtAt && d.builtAt !== seenAt && !document.getElementById("rebuilt-bar")) {
-        const b = document.createElement("div");
-        b.id = "rebuilt-bar";
-        b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#065f46;color:#fff;" +
-          "font:600 12px/1.5 system-ui,sans-serif;padding:6px 12px;text-align:center;cursor:pointer";
-        b.textContent = "Board rebuilt outside the app -- click to load the new values";
-        b.onclick = () => location.reload();
-        document.body.appendChild(b);
-        document.body.style.paddingTop = "28px";
-      }
-    } catch (e) { /* a transient engine hiccup is not worth a banner */ }
-  }, 15000);
+    try { const d = await window.mc.appData(); check(d && d.builtAt); }
+    catch (e) { /* a transient engine hiccup is not worth a banner */ }
+  }, 60000);
 }
 
 // A persistent, unmissable bar. Not a toast and not a console line: the whole failure mode is that

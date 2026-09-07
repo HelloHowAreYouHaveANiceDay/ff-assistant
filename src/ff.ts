@@ -167,6 +167,17 @@ async function cmdServe(rest: string[]) {
       let result: unknown;
       switch (method) {
         case "ping": result = "pong"; break;
+        // Cheap staleness probe: MAX(board.updated_at) and a row count, nothing else. The app calls
+        // this after EVERY engine invocation to decide whether the open window is now showing an
+        // out-of-date board, so it must stay a single indexed aggregate -- app-data serialises 523
+        // player rows and is far too expensive to poll.
+        case "board-stamp": {
+          const s = Number(params.season) || curSeason();
+          const row = db.prepare("SELECT MAX(updated_at) AS m, COUNT(*) AS n FROM board WHERE season = ?")
+            .get(s) as { m: string | null; n: number };
+          result = { builtAt: row?.m ?? null, players: row?.n ?? 0, season: s };
+          break;
+        }
         case "app-data": result = appDataPayload(db, Number(params.season) || curSeason()); break;
         case "my-roster-get": result = getMyRoster(db, String(params.draftId ?? "local")); break;
         case "my-roster-set": setMyRoster(db, String(params.draftId ?? "local"), (params.roster as { name: string; price: number }[]) ?? []); result = { ok: true, n: ((params.roster as unknown[]) ?? []).length }; break;
