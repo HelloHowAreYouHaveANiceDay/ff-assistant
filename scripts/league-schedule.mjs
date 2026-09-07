@@ -65,6 +65,50 @@ if (twices.size > 1) bad.push(`teams face a different number of opponents twice:
 
 console.log(`\n  ${bad.length ? "IMBALANCED" : "BALANCED"} -- ${bad.length ? bad.join("; ") : "every team plays the same number of games, the same number in division, and the same repeat pattern"}`);
 
+// --- division vs division matrix -----------------------------------------------------------------
+// The structural test the per-team table cannot make. In a balanced 4x4 format every pair of
+// divisions meets the same number of times, and each division's internal count is identical. A
+// lopsided cell means one division is being fed a different diet of opponents than another.
+const dIdx = new Map(divisions.map((d, i) => [d.id, i]));
+const M = divisions.map(() => divisions.map(() => 0));
+for (const g of reg) {
+  const a = dIdx.get(divOf.get(g.homeId)?.id), b = dIdx.get(divOf.get(g.awayId)?.id);
+  if (a == null || b == null) continue;
+  if (a === b) M[a][b] += 1;            // internal game, counted once
+  else { M[a][b] += 1; M[b][a] += 1; }  // cross game, counted for both divisions
+}
+console.log(`\nDIVISION vs DIVISION (games between each pair; diagonal = games INSIDE that division)`);
+console.log("  " + "".padEnd(24) + divisions.map((d) => d.name.slice(0, 9).padStart(10)).join(""));
+divisions.forEach((d, i) => {
+  console.log(`  ${d.name.slice(0, 22).padEnd(24)}` + M[i].map((n, j) => String(n).padStart(10)).join("") +
+    (d.teamIds.includes(lg.me.id) ? "   <<< US" : ""));
+});
+const diag = divisions.map((_, i) => M[i][i]);
+const cross = [];
+for (let i = 0; i < divisions.length; i++) for (let j = i + 1; j < divisions.length; j++) cross.push(M[i][j]);
+console.log(`\n  internal games per division: ${diag.join(", ")}   (a full double round-robin of 4 teams = 12)`);
+console.log(`  cross-division pairings:     ${[...new Set(cross)].sort((a, b) => a - b).join(", ")}`);
+if (new Set(diag).size > 1) {
+  console.log(`  -> divisions do NOT play themselves equally: ${divisions.map((d, i) => `${d.name}=${diag[i]}`).join(", ")}`);
+}
+if (new Set(cross).size > 1) {
+  console.log(`  -> cross-division pairings are UNEVEN (range ${Math.min(...cross)}-${Math.max(...cross)}); some divisions`);
+  console.log(`     see far more of each other than others do.`);
+}
+
+// --- our own out-of-division diet -----------------------------------------------------------------
+const myDiv = divOf.get(lg.me.id);
+const mine = opps.get(lg.me.id) ?? new Map();
+const outByDiv = new Map(divisions.map((d) => [d.name, 0]));
+for (const [oid, n] of mine) {
+  const dn = divOf.get(oid)?.name;
+  if (dn && dn !== myDiv?.name) outByDiv.set(dn, (outByDiv.get(dn) ?? 0) + n);
+}
+const unplayed = lg.teams.filter((t) => t.id !== lg.me.id && !mine.has(t.id));
+console.log(`\nOUR OUT-OF-DIVISION DIET (${myDiv?.name})`);
+for (const [dn, n] of outByDiv) if (dn !== myDiv?.name) console.log(`  vs ${dn.padEnd(22)} ${n} games`);
+console.log(`  never play: ${unplayed.length ? unplayed.map((t) => t.name).join(", ") : "(nobody -- we face every team)"}`);
+
 // --- competitive strength of schedule ------------------------------------------------------------
 // Structural balance says nothing about WHO you drew. Weight each opponent by our projection of
 // their optimal starting lineup -- the same measure power-rankings uses.

@@ -80,7 +80,7 @@ export interface LeagueProvider {
   acquisitionRules?(): Promise<AcquisitionRules>;
 
   /** OPTIONAL capability: the head-to-head schedule and division layout. */
-  matchups?(): Promise<LeagueSchedule>;
+  matchups?(season?: number): Promise<LeagueSchedule>;
 
   /** OPTIONAL capability: past seasons of this same league -- format changes and draft history.
    *  Takes the whole list so an adaptor can batch per-season lookups it would otherwise repeat. */
@@ -151,7 +151,12 @@ export interface SeasonTeam {
   wins: number;
   losses: number;
   pointsFor: number;
+  /** Final PLACEMENT after playoffs -- a 9-5 champion outranks an 11-3 team here, so this cannot
+   *  be used to ask how the league SEEDED anyone. */
   finalRank: number | null;
+  /** Regular-season playoff SEED. This is the field that answers whether division winners get
+   *  auto-bids: a seed above a team with a strictly better record means they do. */
+  playoffSeed: number | null;
 }
 
 /**

@@ -228,6 +228,7 @@ export class EspnLeague implements LeagueProvider {
         losses: Number(rec.losses ?? 0),
         pointsFor: Number(rec.pointsFor ?? 0),
         finalRank: t.rankCalculatedFinal ?? t.playoffSeed ?? null,
+        playoffSeed: t.playoffSeed ?? null,
       };
     });
     const picks = (j.draftDetail?.picks ?? []).map((p) => {
@@ -335,11 +336,11 @@ export class EspnLeague implements LeagueProvider {
 
   /** Head-to-head schedule + divisions. `matchupPeriodId` is the fantasy WEEK; entries past the
    *  regular season are playoff brackets and are excluded by the caller via LeagueShape.regWeeks. */
-  async matchups(): Promise<LeagueSchedule> {
+  async matchups(season = this.cfg.season): Promise<LeagueSchedule> {
     // mMatchup is required for the `schedule` array -- mSettings+mTeam alone return divisions but no
     // games, which the guard below catches rather than reporting an empty schedule as balanced.
     // (mMatchupScore also works but embeds every roster, for a far larger payload.)
-    const url = `${HOST}/seasons/${this.cfg.season}/segments/0/leagues/${this.leagueId}?view=mSettings&view=mTeam&view=mMatchup`;
+    const url = `${HOST}/seasons/${season}/segments/0/leagues/${this.leagueId}?view=mSettings&view=mTeam&view=mMatchup`;
     const j = await this.wv.fetchJson<{
       settings?: { scheduleSettings?: { divisions?: { id: number; name: string }[] } };
       teams?: (EspnTeam & { divisionId?: number })[];
