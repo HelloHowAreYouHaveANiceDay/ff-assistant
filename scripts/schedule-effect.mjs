@@ -1,3 +1,10 @@
+// FROZEN MEASUREMENT -- 2026-09-07. Re-running this does NOT measure the current system.
+//
+// The per-season arrays below are hardcoded results captured from specific backtest runs on that
+// day's code, kept because they are the arithmetic behind a recorded conclusion. Both arms predate
+// the K/DST history rebuild, the DST scoring ground-truthing and the projection-curve fix, so the
+// LEVELS are stale; the DELTA is what this file exists to compute and it is the part that stands.
+//
 // Paired test: does standard divisional play change the championship rate, or only its realism?
 // Both arms use identical seeds, so the DRAFTS are identical and the schedule is the only variable.
 // The unit of generalization is the SEASON (11 here), not the trial -- per-season rates are highly

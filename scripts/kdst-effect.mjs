@@ -1,3 +1,15 @@
+// FROZEN MEASUREMENT -- 2026-09-07. Re-running this does NOT measure the current system.
+//
+// The per-season arrays below are hardcoded results captured from specific backtest runs on that
+// day's code. They are kept because they are the arithmetic behind a recorded conclusion, and a
+// claim of significance should be reproducible rather than asserted. They are NOT a live check.
+//
+// SUPERSEDED, and by how much: the "with K/DST" arm was measured before the DST scoring was
+// ground-truthed against ESPN and before the projection curve was rebuilt, both later the same day.
+// The current headline is 35.5% (2015-2024, n=150), not the 35.6% below. The +7.5pp conclusion
+// survives -- every later change measured neutral within noise -- but quote validation.md for the
+// LEVEL and this file only for the DELTA it computes.
+//
 // Two paired tests on the K/DST rebuild, both in the documented headline mode
 // (--full --no-lookahead, n=150, identical seeds so the only variable is the one under test).
 // Unit of generalization is the SEASON (10), never the trial (1500).
