@@ -843,8 +843,51 @@ let DATA_SOURCE = { live: false, why: "not attempted", stamp: window.DATA_JS_STA
 // builtAt stamp and offer a reload when it moves.
 function watchForRebuild(seenAt) {
   if (!seenAt || !window.mc || !window.mc.appData) return;
-  const check = (stamp) => {
-    if (!stamp || stamp === seenAt || document.getElementById("rebuilt-bar")) return;
+  let applying = false;
+  // APPLY THE NEW BOARD IN PLACE. Asking the user to click a bar was the wrong default: the app
+  // knows the values changed and can just show them. A reload is only the fallback for the case
+  // where re-fetching fails, and the toast exists because a board that changes underneath you with
+  // no acknowledgement is the same silence this whole mechanism was built to remove -- values are
+  // what trades get priced off, so a change in them should be stated, not merely performed.
+  const apply = async (stamp) => {
+    if (!stamp || stamp === seenAt || applying) return;
+    applying = true;
+    try {
+      const d = await window.mc.appData();
+      if (d && Array.isArray(d.players) && d.players.length) {
+        DATA = d.players; NEWS = Array.isArray(d.news) ? d.news : []; CFG = d.config || CFG;
+        byName = new Map(DATA.map(p => [p.Player, p]));
+        const sp = document.getElementById("s-players"); if (sp) sp.textContent = DATA.length;
+        seenAt = d.builtAt || stamp;              // adopt the new baseline; do not re-fire on it
+        // Re-render the current page -- EXCEPT an ESPN page, whose setPage re-navigates the webview
+        // and would yank the draft room out from under whoever is watching it.
+        const pg = PAGES.find(p => p.id === curPage);
+        if (!pg || pg.kind !== "espn") setPage(curPage);
+        toastRebuild(`Board updated -- ${DATA.length} players reloaded`);
+      } else {
+        showRebuiltBar();                          // engine answered with nothing; let the user decide
+      }
+    } catch (e) {
+      showRebuiltBar();                            // could not fetch; offer the manual path
+    } finally { applying = false; }
+  };
+  const check = (stamp) => { apply(stamp); };
+  function toastRebuild(msg) {
+    let t = document.getElementById("rebuilt-toast");
+    if (!t) {
+      t = document.createElement("div");
+      t.id = "rebuilt-toast";
+      t.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:9999;background:#065f46;color:#fff;" +
+        "font:600 12px/1.5 system-ui,sans-serif;padding:8px 14px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
+      document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.opacity = "1";
+    clearTimeout(t._h);
+    t._h = setTimeout(() => { t.style.opacity = "0"; }, 4000);
+  }
+  function showRebuiltBar() {
+    if (document.getElementById("rebuilt-bar")) return;
     const b = document.createElement("div");
     b.id = "rebuilt-bar";
     b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#065f46;color:#fff;" +
@@ -853,7 +896,7 @@ function watchForRebuild(seenAt) {
     b.onclick = () => location.reload();
     document.body.appendChild(b);
     document.body.style.paddingTop = "28px";
-  };
+  }
   // PUSH is the fast path: main notifies after any engine invocation (including every MCP tool call,
   // since the agent is itself spawned through that chokepoint), so a rebuild surfaces in under a
   // second rather than on the next poll.

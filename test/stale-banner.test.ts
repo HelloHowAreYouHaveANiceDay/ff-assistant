@@ -107,6 +107,27 @@ test("boot arms the rebuild watcher on the live path", () => {
     "exactly one change-comparison, shared by the push and the poll");
 });
 
+// A rebuild should just APPEAR. Asking the user to click a bar made the app's own knowledge into
+// the user's chore -- it knew the values changed and made them ask for them.
+test("a rebuild is applied in place, not merely announced", () => {
+  const w = extractFn(SRC, "watchForRebuild");
+  assert.match(w, /DATA = d\.players/, "must adopt the new board, not just offer a reload");
+  assert.match(w, /byName = new Map/, "the name index must be rebuilt with it or lookups go stale");
+  assert.match(w, /setPage\(curPage\)/, "must re-render the current page so the new values are visible");
+  assert.match(w, /seenAt = d\.builtAt/, "must adopt the new stamp as baseline or it re-fires forever");
+  // The webview carve-out: setPage on an ESPN page re-navigates the embedded draft room.
+  assert.match(w, /pg\.kind !== "espn"/, "must not re-render an ESPN page out from under the user");
+  // The manual bar survives only as the failure path.
+  assert.match(w, /catch \(e\) \{\s*showRebuiltBar\(\)/, "a failed fetch must fall back to the manual reload");
+});
+
+test("auto-apply is guarded against re-entrancy", () => {
+  const w = extractFn(SRC, "watchForRebuild");
+  assert.match(w, /if \(!stamp \|\| stamp === seenAt \|\| applying\) return/,
+    "push and poll can fire together; a second apply must not race the first");
+  assert.match(w, /finally \{ applying = false/, "the guard must clear even when the fetch throws");
+});
+
 test("data.js carries a generation stamp so the banner can name a date", () => {
   const dj = readFileSync("app/renderer/data.js", "utf8").slice(0, 200);
   assert.match(dj, /^window\.DATA_JS_STAMP\s*=\s*"\d{4}-\d{2}-\d{2}"/,
