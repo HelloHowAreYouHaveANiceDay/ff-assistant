@@ -119,6 +119,55 @@ export class EspnLeague implements LeagueProvider {
   }
 
   /**
+   * Per-team in-season activity scraped from the RENDERED Transaction Counter page, as an
+   * alternative to the JSON `transactionCounter`.
+   *
+   * Why both exist. The JSON views are gated and can go quiet without warning -- mTransactions2
+   * returns an empty array and the league communication feed 404s, both silently. The rendered page
+   * is what the user actually sees, so it keeps working when a view is withdrawn.
+   *
+   * Verified 2026-09-07: for 2025 the two agree EXACTLY, column for column (TRADE/ACQ/DROP/ACTIVATE
+   * vs trades/acquisitions/drops/moveToActive). But the page carries NO FAAB column, so the JSON is
+   * strictly richer here -- which is why `history()` prefers JSON and falls back to this, rather
+   * than the other way round. Set FF_LEAGUE_SOURCE=browser to force the scrape.
+   *
+   * Columns are read BY HEADER NAME, never by position: a page redesign that inserts a column would
+   * otherwise silently shift every value one to the left and still parse.
+   */
+  private async activityFromDom(season: number): Promise<Map<string, { trades: number; acquisitions: number; drops: number; lineupMoves: number }>> {
+    await this.wv.goto(`https://fantasy.espn.com/football/league/transactioncounter?leagueId=${this.leagueId}&seasonId=${season}`);
+    for (let i = 0; i < 10; i++) {
+      await this.wv.waitForTimeout(2000);
+      if (Number(await this.wv.evaluate(`return document.querySelectorAll('tr').length;`)) > 3) break;
+    }
+    const raw = await this.wv.evaluate(`
+      var tables = document.querySelectorAll('table');
+      if (tables.length < 2) return null;
+      var names = [];
+      tables[0].querySelectorAll('tbody tr').forEach(function(r){ names.push((r.innerText||'').trim()); });
+      var hdr = [];
+      tables[1].querySelectorAll('thead tr th, thead tr td').forEach(function(c){ hdr.push((c.innerText||'').trim().toUpperCase()); });
+      var rows = [];
+      tables[1].querySelectorAll('tbody tr').forEach(function(r){
+        rows.push(Array.prototype.map.call(r.querySelectorAll('td,th'), function(c){ return (c.innerText||'').trim(); }));
+      });
+      return { names: names, hdr: hdr, rows: rows };
+    `) as { names: string[]; hdr: string[]; rows: string[][] } | null;
+
+    const out = new Map<string, { trades: number; acquisitions: number; drops: number; lineupMoves: number }>();
+    if (!raw?.names?.length || !raw.rows?.length) return out;
+    const col = (want: string) => raw.hdr.indexOf(want);
+    const iT = col("TRADE"), iA = col("ACQ"), iD = col("DROP"), iM = col("ACTIVATE");
+    if (iT < 0 || iA < 0 || iD < 0 || iM < 0) return out;   // headers moved -> report nothing, do not guess
+    const num = (r: string[], i: number) => Number(String(r[i] ?? "").replace(/[^0-9-]/g, "")) || 0;
+    for (let i = 0; i < Math.min(raw.names.length, raw.rows.length); i++) {
+      out.set(raw.names[i], { trades: num(raw.rows[i], iT), acquisitions: num(raw.rows[i], iA),
+        drops: num(raw.rows[i], iD), lineupMoves: num(raw.rows[i], iM) });
+    }
+    return out;
+  }
+
+  /**
    * playerId -> position/name for one season, from the PUBLIC pool. ESPN slots most auction picks
    * straight to the bench, so `lineupSlotId` alone cannot give a position. Cached because a history
    * sweep asks for the same season repeatedly.
@@ -150,15 +199,37 @@ export class EspnLeague implements LeagueProvider {
     const j = await this.wv.fetchJson<{
       draftDetail?: { picks?: { teamId: number; playerId: number; bidAmount?: number; lineupSlotId?: number; memberId?: string }[] };
       members?: { id: string; displayName?: string; firstName?: string }[];
-      teams?: (EspnTeam & { primaryOwner?: string })[];
+      teams?: (EspnTeam & {
+        primaryOwner?: string;
+        rankCalculatedFinal?: number;
+        playoffSeed?: number;
+        transactionCounter?: Record<string, unknown>;
+        record?: { overall?: { wins?: number; losses?: number; pointsFor?: number } };
+      })[];
     }>(url);
     const member = new Map((j.members ?? []).map((m) => [m.id, m.displayName || m.firstName || m.id]));
-    const teams = (j.teams ?? []).map((t) => ({
-      id: String(t.id),
-      name: (t.name || `${t.location ?? ""} ${t.nickname ?? ""}`).trim() || `Team ${t.id}`,
-      ownerId: t.primaryOwner ?? "",
-      owner: member.get(t.primaryOwner ?? "") ?? (t.primaryOwner ?? ""),
-    }));
+    const teams = (j.teams ?? []).map((t) => {
+      // transactionCounter is ESPN's per-team in-season activity tally -- the only reliable source
+      // for it here: mTransactions2 returns an empty array and the communication feed 404s.
+      const tc = t.transactionCounter ?? {};
+      const rec = t.record?.overall ?? {};
+      return {
+        id: String(t.id),
+        name: (t.name || `${t.location ?? ""} ${t.nickname ?? ""}`).trim() || `Team ${t.id}`,
+        ownerId: t.primaryOwner ?? "",
+        owner: member.get(t.primaryOwner ?? "") ?? (t.primaryOwner ?? ""),
+        acquisitions: Number(tc.acquisitions ?? 0),
+        faabSpent: Number(tc.acquisitionBudgetSpent ?? 0),
+        drops: Number(tc.drops ?? 0),
+        trades: Number(tc.trades ?? 0),
+        lineupMoves: Number(tc.moveToActive ?? 0),
+        acquisitionsByWeek: (tc.matchupAcquisitionTotals ?? {}) as Record<string, number>,
+        wins: Number(rec.wins ?? 0),
+        losses: Number(rec.losses ?? 0),
+        pointsFor: Number(rec.pointsFor ?? 0),
+        finalRank: t.rankCalculatedFinal ?? t.playoffSeed ?? null,
+      };
+    });
     const picks = (j.draftDetail?.picks ?? []).map((p) => {
       const meta = posById.get(p.playerId);
       return {
@@ -208,6 +279,30 @@ export class EspnLeague implements LeagueProvider {
 
       let picks: DraftPick[] = [], teams: SeasonSnapshot["teams"] = [];
       try { ({ picks, teams } = await this.picksFor(season)); } catch { /* settings without a draft is still useful */ }
+
+      // Activity source. JSON is preferred because it is the only one carrying FAAB, but a gated or
+      // withdrawn view returns all-zero counters that look exactly like a genuinely inactive league
+      // -- so an all-zero read on a season that clearly WAS played falls back to the rendered page.
+      const played = teams.some((t) => t.wins + t.losses > 0);
+      const jsonEmpty = teams.length > 0 && teams.every((t) => t.acquisitions === 0 && t.drops === 0 && t.lineupMoves === 0);
+      const forceBrowser = process.env.FF_LEAGUE_SOURCE === "browser";
+      if (teams.length && (forceBrowser || (played && jsonEmpty))) {
+        try {
+          const dom = await this.activityFromDom(season);
+          if (dom.size) {
+            for (const t of teams) {
+              const d = dom.get(t.name);
+              if (!d) continue;
+              t.acquisitions = d.acquisitions;
+              t.drops = d.drops;
+              t.trades = d.trades;
+              t.lineupMoves = d.lineupMoves;
+              // faabSpent deliberately untouched -- the page has no FAAB column, and overwriting a
+              // real JSON value with 0 would silently turn "unknown" into "spent nothing".
+            }
+          }
+        } catch { /* keep whatever JSON gave us */ }
+      }
 
       out.push({
         season, available: true,

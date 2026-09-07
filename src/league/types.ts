@@ -123,8 +123,35 @@ export interface SeasonSnapshot {
    *  every prior year's pass-catcher spend an understatement of what the room will now pay. */
   pprPoints: number | null;
   slotCounts: Record<string, number>;
-  teams: { id: string; name: string; ownerId: string; owner: string }[];
+  teams: SeasonTeam[];
   picks: DraftPick[];
+}
+
+/**
+ * One team's season: who owned it, how they BEHAVED in-season, and how they finished.
+ *
+ * The behaviour fields are what make in-season tendencies possible at all. A draft recap says how
+ * a manager values positions in August; it says nothing about whether they stream defenses, hoard
+ * FAAB, or stop setting a lineup in November. Pairing activity with `finalRank` also answers the
+ * only question that matters about a tendency: whether it is associated with winning IN THIS ROOM.
+ */
+export interface SeasonTeam {
+  id: string;
+  name: string;
+  ownerId: string;
+  owner: string;
+  // in-season activity
+  acquisitions: number;
+  faabSpent: number;
+  drops: number;
+  trades: number;
+  lineupMoves: number;                          // bench <-> starter changes; engagement proxy
+  acquisitionsByWeek: Record<string, number>;   // when they were active
+  // outcome
+  wins: number;
+  losses: number;
+  pointsFor: number;
+  finalRank: number | null;
 }
 
 /**
