@@ -151,6 +151,43 @@ export class WebviewPage {
     return await this.evalRaw(asBody(js));
   }
 
+  /**
+   * Authenticated fetch from INSIDE the guest, so the logged-in user's cookies apply. This is the
+   * transport primitive every league adaptor needs -- read the site's own API as the user, without
+   * scraping the DOM or handling credentials ourselves. It is deliberately platform-agnostic: the
+   * caller supplies the URL and headers, so an ESPN, Sleeper or Yahoo adaptor all use this one path.
+   *
+   * It canNOT go through evaluate(): evalRaw JSON.stringifies its result synchronously, and a
+   * Promise stringifies to `{}`, so a fetch would silently return nothing. Electron's
+   * executeJavaScript DOES resolve promises, so this drives it directly.
+   *
+   * Returns the raw body. Network and HTTP errors surface as a thrown Error rather than an empty
+   * string -- a caller that JSON.parses "" gets an unreadable failure a dozen frames from the cause.
+   */
+  async fetchText(url: string, headers?: Record<string, string>): Promise<string> {
+    const init = JSON.stringify({ credentials: "include", headers: headers ?? {} });
+    const js = `fetch(${JSON.stringify(url)},${init}).then(function(r){
+      return r.ok ? r.text() : ('__HTTP__' + r.status);
+    }).catch(function(e){ return '__ERR__' + (e && e.message || e); })`;
+    const out = await this.renderer.evaluate(async (code) => {
+      const wv = document.getElementById("espnview") as unknown as { executeJavaScript?: (c: string) => Promise<string> };
+      if (!wv?.executeJavaScript) return "__ERR__no webview";
+      try { return await wv.executeJavaScript(code); } catch (e) { return "__ERR__" + String(e); }
+    }, js);
+    const body = String(out ?? "");
+    if (body.startsWith("__HTTP__")) throw new Error(`fetch ${url} -> HTTP ${body.slice(8)}`);
+    if (body.startsWith("__ERR__")) throw new Error(`fetch ${url} -> ${body.slice(7)}`);
+    return body;
+  }
+
+  /** fetchText + JSON.parse, with the response head in the error when the body is not JSON (an
+   *  expired session returns an HTML login page, which is the single most common failure). */
+  async fetchJson<T = unknown>(url: string, headers?: Record<string, string>): Promise<T> {
+    const body = await this.fetchText(url, headers);
+    try { return JSON.parse(body) as T; }
+    catch { throw new Error(`fetch ${url} -> not JSON (session expired?): ${body.slice(0, 120)}`); }
+  }
+
   locator(sel: string, opts?: { hasText?: RegExp | string; has?: WvLocator }): WvLocator {
     return new WvLocator((j) => this.evalRaw(j), stepsFor(sel, opts));
   }

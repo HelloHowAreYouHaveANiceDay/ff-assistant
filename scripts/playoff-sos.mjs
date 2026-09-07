@@ -28,18 +28,19 @@
 // real but SMALL: it breaks ties between comparable players and does not overturn a projection gap.
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
+import { leagueCalendar, nameKey } from "../src/league/index.ts";
 
 const args = process.argv.slice(2);
 const ALL = args.includes("--all");
 const named = args.filter((a) => !a.startsWith("--"));
-const PLAYOFF_WEEKS = [15, 16, 17];
 const HOME_EDGE = 1.0; // points; modern NFL home field
 // fantasy points lost per point of harder opponent, per position -- measured, see header
 const PTS_PER_SPREAD = { QB: 0.308, RB: 0.271, WR: 0.161, TE: 0.087 };
 
 const db = new Database("data/ff.db", { readonly: true });
-const cfg = JSON.parse(db.prepare("SELECT value FROM settings WHERE key='config'").get().value);
-const SEASON = cfg.season;
+// Calendar from the LEAGUE, not hardcoded: a 13-week regular season moves the playoffs, and a
+// hardcoded 15/16/17 would be silently wrong rather than broken.
+const { season: SEASON, regWeeks, playoffWeeks: PLAYOFF_WEEKS } = leagueCalendar(db);
 const games = db.prepare("SELECT week, team, opponent, home, spread_line FROM game WHERE season=?").all(SEASON);
 if (!games.length) { console.log("no schedule rows -- run: npx tsx src/ff.ts ingest-source byes"); process.exit(1); }
 
@@ -73,10 +74,11 @@ for (const t of teams) {
 const ranked = [...sos.entries()].sort((a, z) => a[1].avg - z[1].avg); // easiest first
 const rankOf = new Map(ranked.map(([t], i) => [t, i + 1]));
 
+const nGames = 32 * PLAYOFF_WEEKS.length;
 const pricedPlayoff = games.filter((g) => PLAYOFF_WEEKS.includes(g.week) && g.spread_line != null).length;
-console.log(`PLAYOFF SOS -- ${SEASON} weeks ${PLAYOFF_WEEKS.join("/")}`);
+console.log(`PLAYOFF SOS -- ${SEASON} weeks ${PLAYOFF_WEEKS.join("/")}  (regular season ends week ${regWeeks})`);
 console.log(`team ratings solved from ${withLine.length} priced games (points vs league average).`);
-console.log(`${pricedPlayoff} of ${32 * PLAYOFF_WEEKS.length} playoff-week games have a posted line yet,`);
+console.log(`${pricedPlayoff} of ${nGames} playoff-week games have a posted line yet,`);
 console.log(`so opponent quality is the market's CURRENT read, projected forward. Re-run in November.\n`);
 
 const line = (t) => {
@@ -94,17 +96,25 @@ if (ALL) {
 }
 
 // --- players: ours, or the ones named on the command line --------------------------------------
-const nk = (s) => String(s).toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, " ").replace(/[^a-z]/g, "");
+// Named players resolve from our own db, so the common cases stay runnable OFFLINE. Only "our
+// roster" needs the live league, and that is the one thing the adaptor must be opened for.
 const teamOf = new Map(), posOf = new Map(), projOf = new Map();
-for (const r of db.prepare("SELECT name, position, nfl_team FROM player").all()) { teamOf.set(nk(r.name), r.nfl_team); posOf.set(nk(r.name), r.position); }
-for (const f of readFileSync("data/points.csv", "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","))) projOf.set(nk(f[0]), Number(f[2]));
+for (const r of db.prepare("SELECT name, position, nfl_team FROM player").all()) {
+  teamOf.set(nameKey(r.name), r.nfl_team);
+  posOf.set(nameKey(r.name), r.position);
+}
+for (const f of readFileSync("data/points.csv", "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(",")))
+  projOf.set(nameKey(f[0]), Number(f[2]));
+const nk = nameKey;
 
-let who = named;
+let who = named, league = null;
 if (!who.length) {
-  who = db.prepare("SELECT name FROM my_roster").all().map((r) => r.name);
-  if (!who.length) { console.log("no my_roster rows and no players named -- pass names, or use --all"); db.close(); process.exit(0); }
+  const { openLeague } = await import("../src/league/index.ts");
+  league = await openLeague();
+  who = league.me.roster.map((p) => p.name);
 }
 db.close();
+if (league) await league.close();
 
 console.log("  pos  player                  team  playoff SOS   rk    season proj   SOS cost/wk");
 const rows = who.map((n) => {
