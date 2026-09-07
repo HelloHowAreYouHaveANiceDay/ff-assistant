@@ -42,11 +42,13 @@ export interface LeagueScoring {
   rules: ScoringRules;
   kicker: KickerRules;
   defense: DefenseRules;
+  idp: IdpRules;
 }
 export const DEFAULT_LEAGUE_SCORING = (): LeagueScoring => ({
   rules: { ...DEFAULT_SCORING },
   kicker: { ...DEFAULT_KICKER },
   defense: { ...DEFAULT_DEFENSE, paLadder: DEFAULT_DEFENSE.paLadder.map((p) => [...p] as [number, number]) },
+  idp: { ...DEFAULT_IDP },
 });
 
 /** ESPN kicking statId -> KickerRules key. Confirmed against ESPN's own appliedStats. */
@@ -135,6 +137,56 @@ export const DEFAULT_DEFENSE: DefenseRules = {
 };
 
 const nz = (r: Record<string, string>, k: string): number => { const v = Number(r[k]); return Number.isFinite(v) ? v : 0; };
+
+/**
+ * INDIVIDUAL DEFENSIVE PLAYER scoring -- a BENCHMARK surface, not a league requirement.
+ *
+ * Our league does not use IDP, so there is nothing to sync and these defaults cannot be validated
+ * against an ESPN applied-points feed the way the offensive rules were. That is exactly why it is
+ * worth building: IDP is a completely different stat vocabulary (tackles, passes defended, TFL)
+ * driven by columns the rest of the pipeline never touches, so if the projection curve, the value
+ * book and the simulator all handle it without special-casing, the generality is real rather than
+ * asserted. If they do not, the special cases surface here instead of on the day someone changes
+ * league format.
+ *
+ * The values below are a widely-used baseline IDP ruleset (solo 1 / assist 0.5 / sack 2 / INT 6 /
+ * forced fumble 3 / recovery 3 / TD 6 / pass defended 1 / safety 2 / TFL 1). They are DEFAULTS, not
+ * measurements -- unlike DEFAULT_DEFENSE, no line of this was ground-truthed, and it should not be
+ * quoted as though it were.
+ */
+export interface IdpRules {
+  soloTackle: number; assistTackle: number; sack: number; interception: number;
+  forcedFumble: number; fumbleRec: number; td: number; passDefended: number;
+  safety: number; tacklesForLoss: number;
+}
+export const DEFAULT_IDP: IdpRules = {
+  soloTackle: 1, assistTackle: 0.5, sack: 2, interception: 6,
+  forcedFumble: 3, fumbleRec: 3, td: 6, passDefended: 1, safety: 2, tacklesForLoss: 1,
+};
+
+/** nflverse position -> the IDP fantasy group it is rostered as. Returns null for non-IDP. */
+export function idpGroup(pos: string): "DL" | "LB" | "DB" | null {
+  const p = pos.toUpperCase();
+  if (["DE", "DT", "NT", "DL"].includes(p)) return "DL";
+  if (["LB", "OLB", "ILB", "MLB"].includes(p)) return "LB";
+  if (["CB", "SAF", "S", "DB", "FS", "SS"].includes(p)) return "DB";
+  return null;
+}
+
+/** One nflverse stats_player_week row for a defender -> IDP fantasy points. */
+export function scoreIdpWeek(r: Record<string, string>, d: IdpRules = DEFAULT_IDP): number {
+  return nz(r, "def_tackles_solo") * d.soloTackle
+    + nz(r, "def_tackle_assists") * d.assistTackle
+    + nz(r, "def_sacks") * d.sack
+    + nz(r, "def_interceptions") * d.interception
+    + nz(r, "def_fumbles_forced") * d.forcedFumble
+    + nz(r, "fumble_recovery_opp") * d.fumbleRec
+    + nz(r, "def_tds") * d.td
+    + nz(r, "def_pass_defended") * d.passDefended
+    + nz(r, "def_safeties") * d.safety
+    + nz(r, "def_tackles_for_loss") * d.tacklesForLoss;
+}
+
 
 /** One nflverse stats_player_week row for a KICKER -> fantasy points. */
 export function scoreKickerWeek(r: Record<string, string>, k: KickerRules = DEFAULT_KICKER): number {

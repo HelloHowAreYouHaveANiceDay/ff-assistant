@@ -135,13 +135,38 @@ export function computeValues(points: PointsRow[], lg: ValueLeague = DEFAULT_VAL
   const base = baselines(points, lg, flexWeighted);
   const ptsBy = new Map(points.map((p) => [p.name, p.points])); // for the tail tie-break below
   const withVor = points.map((p) => ({ ...p, vor: Math.max(0, p.points - (base[p.pos] ?? 0)) }));
-  const totalVor = withVor.reduce((s, p) => s + p.vor, 0) || 1;
-  const discretionary = lg.teams * lg.budget - lg.teams * lg.rosterSpots * 1;
+  const streamed = (pos: string) => pos === "K" || pos === "DST";
+
+  // K/DST are EXCLUDED from the VOR pool, not merely clamped after it.
+  //
+  // They used to be clamped at the end while their VOR still sat in the denominator. That was
+  // harmless only because the projection curve gave them a fake ~20-point season, so their VOR was
+  // ~0 and the denominator barely moved. Once K/DST got REAL projections (2026-09-07) their VOR
+  // entered the pool properly, cut `rate` for every other player, and then evaporated at the clamp:
+  // Gibbs fell $111 -> $96, a ~13% deflation of the entire book. Bidding a uniformly 13%-low book
+  // against a room that is not 13% low would have quietly lost auctions, on top of the deliberate
+  // `aggr` shading which is calibrated against a correctly-scaled book.
+  //
+  // The right accounting: if the policy is to spend at most $maxKDst on these positions, that money
+  // is not discretionary and their surplus is not competing for it. Reserve their spend, take them
+  // out of the denominator, and share what remains among the players actually being bid on.
+  // ...but they get their OWN pool rather than no pool. A first version of this simply dropped them
+  // from the denominator, which collapsed every kicker to the $1 floor and made `maxKDst` INERT --
+  // the same dead-lever shape as the pre-2026-09-07 bug where the cap could not bind because the
+  // pool held no K/DST to cap. test/values.test.ts caught it: its own fixture guard ("not exercising
+  // the cap") fired, which is precisely why that guard is written to assert the cap CAN bind rather
+  // than only that it does.
+  const totalVor = withVor.reduce((s, p) => s + (streamed(p.pos) ? 0 : p.vor), 0) || 1;
+  const kdstVor = withVor.reduce((s, p) => s + (streamed(p.pos) ? p.vor : 0), 0) || 1;
+  const kdstSlots = lg.teams * 2;   // one K + one DST per team
+  const reserved = kdstSlots * Math.max(0, maxKDst - 1);   // above the $1 floor everyone already gets
+  const discretionary = lg.teams * lg.budget - lg.teams * lg.rosterSpots * 1 - reserved;
   const rate = discretionary / totalVor;
+  const kdstRate = reserved / kdstVor;   // scales WITH maxKDst, so the lever stays live
   return withVor
     .map((p) => {
-      const raw = Math.max(1, Math.round(1 + p.vor * rate));
-      const value = (p.pos === "K" || p.pos === "DST") ? Math.min(raw, maxKDst) : raw;
+      const raw = Math.max(1, Math.round(1 + p.vor * (streamed(p.pos) ? kdstRate : rate)));
+      const value = streamed(p.pos) ? Math.min(raw, maxKDst) : raw;
       return { name: p.name, pos: p.pos, value };
     })
     // Ties break on PROJECTED POINTS, not arbitrarily. Below replacement level VOR is 0 and every

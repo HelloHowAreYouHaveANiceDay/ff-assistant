@@ -4,7 +4,7 @@
 // No-PPR; this is the config-driven TS port. Fetches nflverse stats_player_week per season.
 import { writeFileSync } from "node:fs";
 import { fetchCsv, pick, URLS, playerWeekUrl, teamWeekUrl, canonTeam } from "./nflverse.js";
-import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, DEFAULT_LEAGUE_SCORING, type LeagueScoring, type ScoringRules } from "../draft/scoring.js";
+import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, scoreIdpWeek, idpGroup, DEFAULT_LEAGUE_SCORING, type LeagueScoring, type ScoringRules } from "../draft/scoring.js";
 import { dataPath } from "./paths.js";
 
 const SKILL_POS = new Set(["QB", "RB", "WR", "TE"]);
@@ -67,11 +67,17 @@ export async function buildHistory(seasons: number[], scoring: ScoringRules | Le
     for (const r of rows) {
       if (pick(r, "season_type") !== "REG") continue;
       const name = pick(r, "player_display_name"); if (!name) continue;
-      const pos = pick(r, "position").toUpperCase();
-      const isK = pos === "K";
-      if (!SKILL_POS.has(pos) && !isK) continue;
+      const rawPos = pick(r, "position").toUpperCase();
+      const isK = rawPos === "K";
+      // IDP players are emitted under their FANTASY GROUP (DL/LB/DB), not their depth-chart position,
+      // because that is the unit a roster slot is defined in. Included even though this league does
+      // not use IDP -- see the benchmark note on DEFAULT_IDP.
+      const idp = (!SKILL_POS.has(rawPos) && !isK) ? idpGroup(rawPos) : null;
+      if (!SKILL_POS.has(rawPos) && !isK && !idp) continue;
+      const pos = idp ?? rawPos;
       const week = Number(pick(r, "week")); if (!week) continue;
-      const pts = Math.round((isK ? scoreKickerWeek(r, model.kicker) : scoreWeek(r, model.rules)) * 10) / 10;
+      const raw = idp ? scoreIdpWeek(r, model.idp) : isK ? scoreKickerWeek(r, model.kicker) : scoreWeek(r, model.rules);
+      const pts = Math.round(raw * 10) / 10;
       wkLines.push(`${yr},${clean(name)},${pos},${week},${pts},${canonTeam(pick(r, "team"))}`); nW++;
       const a = seasonAgg.get(name) ?? { pos, pts: 0 }; a.pts += pts; seasonAgg.set(name, a);
     }

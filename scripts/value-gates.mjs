@@ -26,6 +26,21 @@ gate(byPos.TE && byPos.TE.total >= 380 && byPos.TE.total <= 470, `TE book = $${b
 gate(byPos.WR && byPos.WR.total >= 1050, `WR book = $${byPos.WR?.total} (>= $1,050)`);
 gate(byPos.TE && byPos.TE.top <= 75, `top TE = $${byPos.TE?.top} (<= $75)`);
 
+// 2b. K/DST PROJECTIONS are real, and their PRICE is still capped.
+// These two gates cover a hole that let a 6x defect through for the life of the project: every gate
+// above asserts the TE and WR books, and nothing asserted K or DST at all. The projection curve gave
+// them a hardcoded ~20-point SEASON (real: ~130-190) and no gate could see it -- coverage by
+// enumeration, missing the two positions nobody thought about. The pair is deliberate: the first
+// asserts the DATA is honest, the second that the STRATEGY still refuses to pay for it. Fixing the
+// projection without the second gate would have been how a kicker quietly becomes a $30 player.
+const pts = fs.readFileSync("data/points.csv", "utf8").trim().split("\n").slice(1)
+  .map((l) => { const c = l.split(","); return { pos: (c[1] || "").toUpperCase(), pts: Number(c[2]) }; });
+for (const pos of ["K", "DST"]) {
+  const top = Math.max(0, ...pts.filter((p) => p.pos === pos).map((p) => p.pts));
+  gate(top >= 100 && top <= 260, `top ${pos} PROJECTION = ${top} pts (in 100-260; a ~20 here means the curve is faking them)`);
+  gate(byPos[pos] && byPos[pos].top <= 5, `top ${pos} PRICE = $${byPos[pos]?.top} (<= $5; maxKDst must still bind)`);
+}
+
 // 3. values.csv top-12 == player_value top-12 (one build, no drift between surfaces)
 const csv = fs.readFileSync("data/values.csv", "utf8").trim().split("\n").slice(1)
   .map((l) => { const c = l.split(","); return { name: c[0], value: Number(c[c.length - 1]) }; })
