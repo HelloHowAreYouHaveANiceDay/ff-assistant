@@ -1,0 +1,15 @@
+{
+  "fittedFrom": "data/history-weekly.csv",
+  "teamWeeks": 13469,
+  "pairs": {
+    "QB-WR": 0.3478,
+    "QB-TE": 0.223,
+    "QB-RB": 0.0801,
+    "RB-WR": -0.0131,
+    "WR-TE": -0.0027,
+    "RB-TE": 0.0113,
+    "QB-DST": 0.0104,
+    "QB-K": 0.1414,
+    "K-DST": 0.2266
+  }
+}

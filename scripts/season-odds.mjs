@@ -13,6 +13,11 @@ import { simulateSeasons } from "../src/draft/season.ts";
 
 const TRIALS = Number(process.argv[2] ?? 4000);
 const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
+// BOOTSTRAP is the default sampler: real historical weeks joined on preseason positional rank, with
+// NFL teammates correlated. --parametric falls back to the fitted-lognormal path for comparison.
+const PARAMETRIC = process.argv.includes("--parametric");
+const outcomes = PARAMETRIC ? null : JSON.parse(readFileSync("data/rank-outcomes.json", "utf8"));
+const corrModel = PARAMETRIC ? null : JSON.parse(readFileSync("data/correlation-model.json", "utf8"));
 
 const lg = await openLeague();
 const sched = lg.provider.matchups ? await lg.provider.matchups() : null;
@@ -27,7 +32,7 @@ for (const r of lg.db.prepare(
 const idx = new Map(lg.teams.map((t, i) => [t.id, i]));
 const teams = lg.teams.map((t) => ({
   id: t.id, name: t.name,
-  roster: t.roster.map((p) => ({ name: p.name, pos: p.pos, proj: p.proj, bye: byeOf.get(nameKey(p.name)) ?? null })),
+  roster: t.roster.map((p) => ({ name: p.name, pos: p.pos, proj: p.proj, team: p.team, bye: byeOf.get(nameKey(p.name)) ?? null })),
 }));
 // the REAL schedule, as team indices
 const weeks = [];
@@ -69,7 +74,31 @@ for (const t of teams) for (const p of t.roster) {
 console.log(`rostered players by fitted tier: ${Object.entries(tierCount).map(([t, n]) => `t${t}=${n}`).join("  ")}`);
 console.log(`(a 16-team league rosters mostly tier 0 -- if most land in t2/t3 the tiering is wrong)\n`);
 
-const base = { weeks: weeks.length, playoffTeams, slots: lg.slots, projSd: 0.30, trials: TRIALS, seed: 7, poolRank };
+console.log(`sampler: ${outcomes ? "BOOTSTRAP (real weeks by preseason rank) + correlated NFL teammates" : "parametric lognormal"}
+`);
+const base = { weeks: weeks.length, playoffTeams, slots: lg.slots, projSd: 0.30, trials: TRIALS, seed: 7, poolRank,
+  ...(outcomes ? { bootstrap: { outcomes, corr: corrModel, calibration: "scale" } } : {}) };
+// Surface what the calibration guard refused to trust. A pool ratio far from 1 is a BROKEN
+// PROJECTION, not a modelling choice, and it must not stay invisible just because the guard handled
+// it safely -- silently-correct is how a defect survives.
+if (outcomes) {
+  const { prepare } = await import("../src/draft/bootstrap.ts");
+  const pp = lg.me.roster.map((p) => ({ name: p.name, pos: p.pos, team: p.team,
+    rank: (poolRank.get(p.name)?.rank ?? 0) + 1, projPerGame: p.proj / 17 }));
+  const { uncalibrated } = prepare(pp, outcomes, corrModel, "scale");
+  if (uncalibrated.length) {
+    const byPos = {};
+    for (const u of uncalibrated) (byPos[u.pos] ??= []).push(u.ratio);
+    console.log(`  WARNING -- ${uncalibrated.length} of our players have a projection the pools do not support,`);
+    console.log(`  so their pools were left at the HISTORICAL level rather than rescaled:`);
+    for (const [pos, rs] of Object.entries(byPos)) {
+      console.log(`    ${pos}: our projection is ${(rs.reduce((a, b) => a + b, 0) / rs.length).toFixed(2)}x the real pool mean (${rs.length} player(s))`);
+    }
+    console.log(`  This is a defect in points.csv, not in the simulator. See scripts/bootstrap-calibration.mjs.
+`);
+  }
+}
+
 const odds = simulateSeasons(teams, weeks, vm, base);
 
 const rows = [...odds].sort((a, z) => z.playoffs - a.playoffs);
@@ -105,12 +134,22 @@ if (bad) { console.log(`\n  ${bad} INVARIANT FAILED -- the table above is not tr
 // --- how much does the answer depend on the assumptions? ----------------------------------------
 // Three checks, because a single point estimate hides which inputs it is resting on.
 console.log(`\n=== SENSITIVITY ===`);
-const variants = [
-  ["projections treated as TRUTH (projSd 0)", { ...base, projSd: 0 }],
-  ["higher projection error (projSd 0.40)", { ...base, projSd: 0.40 }],
-  ["K/DST volatility x2", { ...base, kdstCvScale: 2 }],
-  ["K/DST volatility x0.5", { ...base, kdstCvScale: 0.5 }],
-];
+// In BOOTSTRAP mode projSd and the CV model are ignored by construction, so varying them would print
+// four identical rows -- a sensitivity table that cannot move is worse than none, because it reads as
+// evidence of robustness. The variants that matter here are the SAMPLER itself and the correlation.
+const variants = outcomes
+  ? [
+    ["parametric lognormal (the old sampler)", { ...base, bootstrap: undefined, projSd: 0.30 }],
+    ["bootstrap, correlation ZEROED (= ffsimulator)", { ...base, bootstrap: { outcomes, corr: { pairs: {} }, calibration: "scale" } }],
+    ["bootstrap, UNCALIBRATED pools (pool level, not our board)", { ...base, bootstrap: { outcomes, corr: corrModel, calibration: "none" } }],
+    ["bootstrap, correlation DOUBLED", { ...base, bootstrap: { outcomes, corr: { pairs: Object.fromEntries(Object.entries(corrModel.pairs).map(([k, v]) => [k, Math.min(0.95, v * 2)])) }, calibration: "scale" } }],
+  ]
+  : [
+    ["projections treated as TRUTH (projSd 0)", { ...base, projSd: 0 }],
+    ["higher projection error (projSd 0.40)", { ...base, projSd: 0.40 }],
+    ["K/DST volatility x2", { ...base, kdstCvScale: 2 }],
+    ["K/DST volatility x0.5", { ...base, kdstCvScale: 0.5 }],
+  ];
 console.log(`  ${"variant".padEnd(42)} our playoff%   our title%`);
 console.log(`  ${"(baseline, projSd 0.30)".padEnd(42)} ${(me.playoffs * 100).toFixed(1).padStart(11)}% ${(me.champion * 100).toFixed(1).padStart(11)}%`);
 for (const [label, o] of variants) {

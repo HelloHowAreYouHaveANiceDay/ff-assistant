@@ -32,6 +32,7 @@
  */
 import { mulberry32 } from "./sim.js";
 import { optimalLineup } from "../inseason/lineup.js";
+import { prepare as prepBootstrap, sampleWeek as bootstrapWeek, type RankOutcomes, type CorrelationModel, type PoolPlayer } from "./bootstrap.js";
 
 export interface VarianceModel {
   tiers: number;
@@ -39,7 +40,9 @@ export interface VarianceModel {
   pos: Record<string, { cv: number[]; avail: number[]; skew: number[]; fitted: boolean }>;
 }
 
-export interface SeasonPlayer { name: string; pos: string; proj: number; bye?: number | null }
+/** `team` is the NFL team, required only in bootstrap mode: it is what identifies teammates to
+ *  correlate. Absent, a player is simply drawn independently. */
+export interface SeasonPlayer { name: string; pos: string; proj: number; bye?: number | null; team?: string }
 export interface SeasonTeamInput { id: string; name: string; roster: SeasonPlayer[] }
 export interface SeasonOpts {
   weeks: number;
@@ -54,6 +57,18 @@ export interface SeasonOpts {
   /** name -> rank within the FULL projection pool at that position. Required for tiers to match the
    *  variance fit; see the tiering note in simulateSeasons. */
   poolRank?: Map<string, { rank: number; of: number }>;
+  /**
+   * BOOTSTRAP mode. When supplied, weekly scores are resampled from the real historical outcomes of
+   * players who entered a season at the same positional rank, with NFL teammates coupled through a
+   * Gaussian copula -- replacing the parametric path entirely.
+   *
+   * It SUBSUMES three of the options above, which are therefore ignored in this mode: `projSd` (the
+   * rank pool already contains busts and league-winners in their real proportions), the variance
+   * model's CV (the pool is the distribution), and its availability rate (a week the player missed is
+   * a real 0 in the pool). Byes are still applied from the schedule, because the pool is built only
+   * from weeks a player's team actually played and would otherwise double-count them.
+   */
+  bootstrap?: { outcomes: RankOutcomes; corr: CorrelationModel; calibration?: "none" | "scale" };
 }
 export interface SeasonOdds { id: string; name: string; playoffs: number; champion: number; meanWins: number; meanPoints: number }
 
@@ -123,12 +138,28 @@ export function simulateSeasons(
   const playoffs = new Array(N).fill(0), champs = new Array(N).fill(0);
   const totWins = new Array(N).fill(0), totPts = new Array(N).fill(0);
 
+  // BOOTSTRAP prep, once: per-player sorted pools + the Cholesky factor for each NFL-team group.
+  // Grouping is per FANTASY team, which is what makes a roster's own variance right -- two managers
+  // holding opposite ends of the same NFL stack is a head-to-head covariance we do not need.
+  const boot = opts.bootstrap
+    ? teams.map((tm) => {
+      const pp: PoolPlayer[] = tm.roster.map((p) => ({
+        name: p.name, pos: p.pos, team: p.team,
+        rank: (opts.poolRank?.get(p.name)?.rank ?? 0) + 1,
+        projPerGame: p.proj / 17,
+      }));
+      return { pp, byName: new Map(pp.map((x) => [x.name, x])), prep: prepBootstrap(pp, opts.bootstrap!.outcomes, opts.bootstrap!.corr, opts.bootstrap!.calibration ?? "none") };
+    })
+    : null;
+
   for (let trial = 0; trial < opts.trials; trial++) {
     // --- draw each player's TRUE season mean once (projection error) -----------------------------
+    // In bootstrap mode this is only the LINEUP-SETTING estimate (a manager picks starters on what he
+    // thinks they are worth); the scores themselves come from the resampled pools.
     const trueMean = new Map<SeasonPlayer, number>();
     for (const tm of teams) {
       for (const p of tm.roster) {
-        const err = opts.projSd > 0 ? Math.exp(gauss(rng) * opts.projSd - 0.5 * opts.projSd ** 2) : 1;
+        const err = (!boot && opts.projSd > 0) ? Math.exp(gauss(rng) * opts.projSd - 0.5 * opts.projSd ** 2) : 1;
         trueMean.set(p, Math.max(0, (p.proj / 17) * err));
       }
     }
@@ -136,7 +167,21 @@ export function simulateSeasons(
     const wins = new Array(N).fill(0), pts = new Array(N).fill(0);
     const weekPts: number[][] = Array.from({ length: N }, () => []);
     for (let w = 1; w <= opts.weeks; w++) {
-      const scores = teams.map((tm) => {
+      const scores = teams.map((tm, ti) => {
+        if (boot) {
+          const b = boot[ti];
+          const drawn = bootstrapWeek(b.pp, b.prep, () => gauss(rng), rng);
+          const players = tm.roster.map((p) => {
+            const onBye = p.bye === w;
+            const pp = b.byName.get(p.name);
+            const actual = onBye || !pp ? null : (drawn.get(pp) ?? 0);
+            return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
+          });
+          const res = optimalLineup(players, opts.slots);
+          let total = 0;
+          for (const s of res.starters) { const hit = players.find((x) => x.name === s.name); if (hit?.actual != null) total += hit.actual; }
+          return total;
+        }
         const players = tm.roster.map((p) => {
           const tier = tierOf.get(p) ?? 0;
           const m = vm.pos[p.pos] ?? vm.pos.WR;

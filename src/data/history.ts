@@ -53,7 +53,10 @@ export async function buildHistory(seasons: number[], scoring: ScoringRules | Le
     ? scoring as LeagueScoring
     : { ...DEFAULT_LEAGUE_SCORING(), rules: scoring as ScoringRules };
   const ptLines = ["season,name,pos,points"];
-  const wkLines = ["season,name,pos,week,points"];
+  // `team` is APPENDED as the last column: both existing consumers (ff.ts backtest loader,
+  // fit-variance.mjs) read fields 0-4 positionally, so adding at the end cannot shift them.
+  // It is needed to measure and then MODEL correlation between rostered NFL teammates.
+  const wkLines = ["season,name,pos,week,points,team"];
   let nP = 0, nW = 0; const got: number[] = [];
   for (const yr of seasons) {
     let rows: Record<string, string>[];
@@ -69,7 +72,7 @@ export async function buildHistory(seasons: number[], scoring: ScoringRules | Le
       if (!SKILL_POS.has(pos) && !isK) continue;
       const week = Number(pick(r, "week")); if (!week) continue;
       const pts = Math.round((isK ? scoreKickerWeek(r, model.kicker) : scoreWeek(r, model.rules)) * 10) / 10;
-      wkLines.push(`${yr},${clean(name)},${pos},${week},${pts}`); nW++;
+      wkLines.push(`${yr},${clean(name)},${pos},${week},${pts},${canonTeam(pick(r, "team"))}`); nW++;
       const a = seasonAgg.get(name) ?? { pos, pts: 0 }; a.pts += pts; seasonAgg.set(name, a);
     }
 
@@ -85,7 +88,7 @@ export async function buildHistory(seasons: number[], scoring: ScoringRules | Le
         if (allowed == null) continue;   // no final score -> cannot score the PA ladder; skip, never assume 0
         const pts = Math.round(scoreDefenseWeek(r, allowed, model.defense) * 10) / 10;
         const name = `${team} DST`;
-        wkLines.push(`${yr},${name},DST,${week},${pts}`); nW++;
+        wkLines.push(`${yr},${name},DST,${week},${pts},${team}`); nW++;
         const a = seasonAgg.get(name) ?? { pos: "DST", pts: 0 }; a.pts += pts; seasonAgg.set(name, a);
       }
     } catch { /* team feed absent for very old seasons -> that year simply has no DST */ }
