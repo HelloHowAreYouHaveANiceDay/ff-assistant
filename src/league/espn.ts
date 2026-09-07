@@ -13,7 +13,7 @@ import type { Database as DB } from "better-sqlite3";
 import { attachWebview } from "../browser/webviewPage.js";
 import type { WebviewPage } from "../browser/webviewPage.js";
 import type { Browser } from "playwright-core";
-import type { AcquisitionRules, DraftPick, FreeAgent, LeagueProvider, LeagueShape, LeagueTeam } from "./types.js";
+import type { AcquisitionRules, DraftPick, FreeAgent, LeagueProvider, LeagueSchedule, LeagueShape, LeagueTeam } from "./types.js";
 
 const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
 /** lineupSlotId -> position, the fallback when a drafted player is missing from the public pool. */
@@ -156,6 +156,31 @@ export class EspnLeague implements LeagueProvider {
       seasonLimit: lim(a.acquisitionLimit),
       weeklyLimit: lim(a.acquisitionLimitPerWeek),
     };
+  }
+
+  /** Head-to-head schedule + divisions. `matchupPeriodId` is the fantasy WEEK; entries past the
+   *  regular season are playoff brackets and are excluded by the caller via LeagueShape.regWeeks. */
+  async matchups(): Promise<LeagueSchedule> {
+    // mMatchup is required for the `schedule` array -- mSettings+mTeam alone return divisions but no
+    // games, which the guard below catches rather than reporting an empty schedule as balanced.
+    // (mMatchupScore also works but embeds every roster, for a far larger payload.)
+    const url = `${HOST}/seasons/${this.cfg.season}/segments/0/leagues/${this.leagueId}?view=mSettings&view=mTeam&view=mMatchup`;
+    const j = await this.wv.fetchJson<{
+      settings?: { scheduleSettings?: { divisions?: { id: number; name: string }[] } };
+      teams?: (EspnTeam & { divisionId?: number })[];
+      schedule?: { matchupPeriodId?: number; home?: { teamId?: number }; away?: { teamId?: number } }[];
+    }>(url);
+    const divs = j.settings?.scheduleSettings?.divisions ?? [];
+    const teams = j.teams ?? [];
+    const divisions = divs.map((d) => ({
+      id: String(d.id), name: d.name,
+      teamIds: teams.filter((t) => t.divisionId === d.id).map((t) => String(t.id)),
+    }));
+    const games = (j.schedule ?? [])
+      .filter((m) => m.home?.teamId != null && m.away?.teamId != null)
+      .map((m) => ({ week: Number(m.matchupPeriodId ?? 0), homeId: String(m.home!.teamId), awayId: String(m.away!.teamId) }));
+    if (!games.length) throw new Error("ESPN returned no schedule entries -- session expired, or the API shape changed.");
+    return { divisions, games };
   }
 
   async close(): Promise<void> { await this.browser.close().catch(() => {}); }

@@ -78,6 +78,15 @@ export interface LeagueProvider {
   /** OPTIONAL capability: how players are acquired in-season. Normalized, because platforms model
    *  FAAB, waiver order and free-for-all differently and a consumer should not have to care. */
   acquisitionRules?(): Promise<AcquisitionRules>;
+
+  /** OPTIONAL capability: the head-to-head schedule and division layout. */
+  matchups?(): Promise<LeagueSchedule>;
+}
+
+/** The fantasy head-to-head schedule, with divisions, for fairness and playoff-path analysis. */
+export interface LeagueSchedule {
+  divisions: { id: string; name: string; teamIds: string[] }[];
+  games: { week: number; homeId: string; awayId: string }[];
 }
 
 export interface DraftPick {
