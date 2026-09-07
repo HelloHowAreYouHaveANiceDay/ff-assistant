@@ -81,6 +81,10 @@ export interface LeagueProvider {
 
   /** OPTIONAL capability: the head-to-head schedule and division layout. */
   matchups?(): Promise<LeagueSchedule>;
+
+  /** OPTIONAL capability: past seasons of this same league -- format changes and draft history.
+   *  Takes the whole list so an adaptor can batch per-season lookups it would otherwise repeat. */
+  history?(seasons: number[]): Promise<SeasonSnapshot[]>;
 }
 
 /** The fantasy head-to-head schedule, with divisions, for fairness and playoff-path analysis. */
@@ -94,6 +98,33 @@ export interface DraftPick {
   name: string;
   pos: string;
   price: number;
+  /** The human, not the team slot. Team names change yearly; owner identity is what persists, and
+   *  it is the only key a multi-season manager profile can legitimately be built on. */
+  ownerId?: string;
+  owner?: string;
+}
+
+/**
+ * One PAST season of this league -- enough to answer "did the format change?" and "how has each
+ * manager drafted historically?".
+ *
+ * `available: false` rather than a throw is a DELIBERATE exception to the adaptor's throw-on-empty
+ * rule. An empty current-season read means something broke. A missing 2019 means the league did not
+ * exist yet, or this owner had no access -- an ordinary fact about the past, not a failure, and a
+ * history sweep must be able to report it per-season and carry on.
+ */
+export interface SeasonSnapshot {
+  season: number;
+  available: boolean;
+  note?: string;
+  size: number | null;
+  auctionBudget: number | null;
+  /** Points per reception. The single most format-defining number: a league moving 0 -> 0.5 makes
+   *  every prior year's pass-catcher spend an understatement of what the room will now pay. */
+  pprPoints: number | null;
+  slotCounts: Record<string, number>;
+  teams: { id: string; name: string; ownerId: string; owner: string }[];
+  picks: DraftPick[];
 }
 
 /**

@@ -13,11 +13,19 @@ import type { Database as DB } from "better-sqlite3";
 import { attachWebview } from "../browser/webviewPage.js";
 import type { WebviewPage } from "../browser/webviewPage.js";
 import type { Browser } from "playwright-core";
-import type { AcquisitionRules, DraftPick, FreeAgent, LeagueProvider, LeagueSchedule, LeagueShape, LeagueTeam } from "./types.js";
+import type { AcquisitionRules, DraftPick, FreeAgent, LeagueProvider, LeagueSchedule, LeagueShape, LeagueTeam, SeasonSnapshot } from "./types.js";
 
 const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
 /** lineupSlotId -> position, the fallback when a drafted player is missing from the public pool. */
 const SLOT_POS: Record<number, string> = { 0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K" };
+/** lineupSlotId -> slot NAME, for reporting a league's roster shape. 23 is FLEX, NOT IR (IR is 21)
+ *  -- getting that backwards would hide the FLEX slots the whole value curve is built on. */
+const SLOT_NAME: Record<number, string> = {
+  0: "QB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP",
+  16: "DST", 17: "K", 20: "BE", 21: "IR", 23: "FLEX",
+};
+/** ESPN statId for a reception -- the PPR dial. */
+const RECEPTION_STAT_ID = 53;
 const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 
 interface EspnPlayer { fullName?: string; defaultPositionId?: number; proTeamId?: number; ownership?: { percentOwned?: number } }
@@ -111,33 +119,105 @@ export class EspnLeague implements LeagueProvider {
   }
 
   /**
-   * The completed draft. ESPN slots most auction picks straight to the bench, so `lineupSlotId`
-   * cannot give a position -- the public player pool is fetched separately to map playerId ->
-   * position, with the slot id as a fallback for anyone missing from it.
+   * playerId -> position/name for one season, from the PUBLIC pool. ESPN slots most auction picks
+   * straight to the bench, so `lineupSlotId` alone cannot give a position. Cached because a history
+   * sweep asks for the same season repeatedly.
    */
-  async draftPicks(): Promise<DraftPick[]> {
-    const posById = new Map<number, { pos: string; name: string }>();
+  private readonly poolCache = new Map<number, Map<number, { pos: string; name: string }>>();
+  private async playerPool(season: number): Promise<Map<number, { pos: string; name: string }>> {
+    const hit = this.poolCache.get(season);
+    if (hit) return hit;
+    const out = new Map<number, { pos: string; name: string }>();
     try {
       const filter = { players: { limit: 2000, sortDraftRanks: { sortPriority: 1, sortAsc: true, value: "STANDARD" } } };
       const pool = await this.wv.fetchJson<{ players?: { player?: EspnPlayer & { id?: number } }[] }>(
-        `${HOST}/seasons/${this.cfg.season}/segments/0/leaguedefaults/3?view=kona_player_info`,
+        `${HOST}/seasons/${season}/segments/0/leaguedefaults/3?view=kona_player_info`,
         { "x-fantasy-filter": JSON.stringify(filter) });
       for (const pe of pool.players ?? []) {
         const pl = pe.player ?? {};
-        if (pl.id != null) posById.set(pl.id, { pos: ESPN_POS[pl.defaultPositionId ?? -1] ?? "?", name: pl.fullName ?? "" });
+        if (pl.id != null) out.set(pl.id, { pos: ESPN_POS[pl.defaultPositionId ?? -1] ?? "?", name: pl.fullName ?? "" });
       }
-    } catch { /* fall back to slot ids below */ }
+    } catch { /* callers fall back to slot ids */ }
+    this.poolCache.set(season, out);
+    return out;
+  }
 
-    const url = `${HOST}/seasons/${this.cfg.season}/segments/0/leagues/${this.leagueId}?view=mDraftDetail&view=mTeam&view=mRoster`;
-    const j = await this.wv.fetchJson<{ draftDetail?: { picks?: { teamId: number; playerId: number; bidAmount?: number; lineupSlotId?: number }[] } }>(url);
-    const picks = j.draftDetail?.picks ?? [];
-    if (!picks.length) throw new Error("no draft picks found -- has the draft completed?");
-    return picks.map((p) => {
+  /** The completed draft for one season, with OWNER identity attached (team names change; owners
+   *  persist, and a multi-season profile is only meaningful keyed on the human). */
+  private async picksFor(season: number): Promise<{ picks: DraftPick[]; teams: SeasonSnapshot["teams"] }> {
+    const posById = await this.playerPool(season);
+    const url = `${HOST}/seasons/${season}/segments/0/leagues/${this.leagueId}?view=mDraftDetail&view=mTeam`;
+    const j = await this.wv.fetchJson<{
+      draftDetail?: { picks?: { teamId: number; playerId: number; bidAmount?: number; lineupSlotId?: number; memberId?: string }[] };
+      members?: { id: string; displayName?: string; firstName?: string }[];
+      teams?: (EspnTeam & { primaryOwner?: string })[];
+    }>(url);
+    const member = new Map((j.members ?? []).map((m) => [m.id, m.displayName || m.firstName || m.id]));
+    const teams = (j.teams ?? []).map((t) => ({
+      id: String(t.id),
+      name: (t.name || `${t.location ?? ""} ${t.nickname ?? ""}`).trim() || `Team ${t.id}`,
+      ownerId: t.primaryOwner ?? "",
+      owner: member.get(t.primaryOwner ?? "") ?? (t.primaryOwner ?? ""),
+    }));
+    const picks = (j.draftDetail?.picks ?? []).map((p) => {
       const meta = posById.get(p.playerId);
-      const name = meta?.name || `#${p.playerId}`;
-      return { teamId: String(p.teamId), name,
-        pos: meta?.pos || SLOT_POS[p.lineupSlotId ?? -1] || "?", price: p.bidAmount || 0 };
+      return {
+        teamId: String(p.teamId),
+        name: meta?.name || `#${p.playerId}`,
+        pos: meta?.pos || SLOT_POS[p.lineupSlotId ?? -1] || "?",
+        price: p.bidAmount || 0,
+        ownerId: p.memberId ?? "",
+        owner: p.memberId ? (member.get(p.memberId) ?? p.memberId) : "",
+      };
     });
+    return { picks, teams };
+  }
+
+  async draftPicks(): Promise<DraftPick[]> {
+    const { picks } = await this.picksFor(this.cfg.season);
+    if (!picks.length) throw new Error("no draft picks found -- has the draft completed?");
+    return picks;
+  }
+
+  /**
+   * Past seasons of this same league. Per-season failures are REPORTED, not thrown: a season the
+   * league did not exist for is an ordinary fact, and one missing year must not abort the sweep.
+   */
+  async history(seasons: number[]): Promise<SeasonSnapshot[]> {
+    const out: SeasonSnapshot[] = [];
+    for (const season of seasons) {
+      const empty = { season, size: null, auctionBudget: null, pprPoints: null, slotCounts: {}, teams: [], picks: [] };
+      let settings;
+      try {
+        settings = await this.wv.fetchJson<{ settings?: {
+          size?: number;
+          draftSettings?: { auctionBudget?: number };
+          scoringSettings?: { scoringItems?: { statId: number; points: number }[] };
+          rosterSettings?: { lineupSlotCounts?: Record<string, number> };
+        } }>(`${HOST}/seasons/${season}/segments/0/leagues/${this.leagueId}?view=mSettings`);
+      } catch (e) {
+        out.push({ ...empty, available: false, note: String((e as Error).message).slice(0, 120) });
+        continue;
+      }
+      const s = settings.settings ?? {};
+      const slotCounts: Record<string, number> = {};
+      for (const [k, n] of Object.entries(s.rosterSettings?.lineupSlotCounts ?? {})) {
+        if (n > 0) slotCounts[SLOT_NAME[Number(k)] ?? `slot${k}`] = n;
+      }
+      const rec = (s.scoringSettings?.scoringItems ?? []).find((it) => it.statId === RECEPTION_STAT_ID);
+
+      let picks: DraftPick[] = [], teams: SeasonSnapshot["teams"] = [];
+      try { ({ picks, teams } = await this.picksFor(season)); } catch { /* settings without a draft is still useful */ }
+
+      out.push({
+        season, available: true,
+        size: s.size ?? null,
+        auctionBudget: s.draftSettings?.auctionBudget ?? null,
+        pprPoints: rec?.points ?? null,
+        slotCounts, teams, picks,
+      });
+    }
+    return out;
   }
 
   /** ESPN's acquisitionSettings, normalized. Its flags are inverted in places (isUsingWaiverOrder
