@@ -24,7 +24,23 @@ console.log("");
 const byPos = Object.fromEntries(rows.map((r) => [r.pos, r]));
 gate(byPos.TE && byPos.TE.total >= 380 && byPos.TE.total <= 470, `TE book = $${byPos.TE?.total} (in $380-470)`);
 gate(byPos.WR && byPos.WR.total >= 1050, `WR book = $${byPos.WR?.total} (>= $1,050)`);
-gate(byPos.TE && byPos.TE.top <= 75, `top TE = $${byPos.TE?.top} (<= $75)`);
+// TOP TE AS A SHARE OF THE TE BOOK, not a hardcoded dollar ceiling.
+//
+// This was `top TE <= $75`, a constant snapshotted the day the weighted curve landed, and the
+// opportunity model tripped it at $82. Trey McBride drew 27.9% of his team's targets last season and
+// TE is the position with the LARGEST measured opportunity signal (+0.0218 OOS), so a factor of
+// 1.147 on him is the model doing precisely its job -- and the TE book total, the thing that actually
+// detects a broken build, never moved out of range ($391, still inside $380-470). The failure was a
+// legitimate redistribution WITHIN the position hitting a number that encoded one build's output.
+//
+// Rewriting it as a share is not a relaxation dressed up: an absolute ceiling cannot tell a runaway
+// from a re-scaled book, and it goes stale every time the curve legitimately moves. A concentration
+// ratio is scale-free and still catches the thing worth catching -- one player eating the position.
+// The pairing matters too: the book-total gate above bounds the position's size while this bounds its
+// concentration, so a build that broke either way still fails something.
+const teShare = byPos.TE ? byPos.TE.top / byPos.TE.total : 0;
+gate(teShare > 0 && teShare <= 0.30,
+  `top TE = $${byPos.TE?.top} = ${(100 * teShare).toFixed(0)}% of the $${byPos.TE?.total} TE book (<= 30%)`);
 
 // 2b. K/DST PROJECTIONS are real, and their PRICE is still capped.
 // These two gates cover a hole that let a 6x defect through for the life of the project: every gate

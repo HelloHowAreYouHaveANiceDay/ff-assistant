@@ -20,6 +20,7 @@
 // belongs, in the `maxKDst` lever that already caps their price.
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { ageFactor, ageCoverage, type AgeCurve } from "../draft/age.js";
+import { opportunityFactor, opportunityCoverage, type OpportunityModel } from "../draft/opportunity.js";
 import { openDb, getConfig } from "../db/db.js";
 import { dataPath } from "./paths.js";
 
@@ -65,12 +66,21 @@ function loadAgeCurve(): AgeCurve | null {
   try { return JSON.parse(readFileSync(p, "utf8")) as AgeCurve; } catch { return null; }
 }
 
-export async function project(dbPath?: string, outPath = dataPath("points.csv"), useAge = true): Promise<number> {
+/** The fitted opportunity model, or null if it has not been built -- same contract as the age curve:
+ *  absent, every multiplier is 1 and the projection is exactly what it was before it existed. */
+function loadOpportunity(): OpportunityModel | null {
+  const p = dataPath("opportunity-model.json");
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, "utf8")) as OpportunityModel; } catch { return null; }
+}
+
+export async function project(dbPath?: string, outPath = dataPath("points.csv"), useAge = true, useOpp = true): Promise<number> {
   const db = openDb(dbPath);
   const cfg = getConfig(db);
   const season = cfg.season;
   const curve = buildCurveFromHistory(season);
   const age = useAge ? loadAgeCurve() : null;
+  const opp = useOpp ? loadOpportunity() : null;
   const proj = (pos: string, r: number) => { const cv = curve[pos]; return cv && cv.length ? cv[Math.min(r, cv.length - 1)] : 0; };
 
   // ECR players ordered by ecr; within-position 0-indexed rank = k for the curve lookup
@@ -82,14 +92,30 @@ export async function project(dbPath?: string, outPath = dataPath("points.csv"),
   for (const row of ecrRows) {
     const pos = row.pos;
     const r = posCount[pos] ?? 0; posCount[pos] = r + 1; // 0-indexed within position
-    // AGE. A multiplier on the rank curve, 1 when the player's age is unknown -- see draft/age.ts.
-    const p = Math.round(proj(pos, r) * ageFactor(age, row.name, pos, season) * 10) / 10;
+    // TWO MULTIPLIERS ON THE RANK CURVE, each 1 when its input is unknown.
+    //   AGE          -- who holds the rank (draft/age.ts)
+    //   OPPORTUNITY  -- how he earned it last season (draft/opportunity.ts)
+    // They are independent questions and multiply: a 30-year-old back whose usage also collapsed
+    // gets both haircuts, which is the intended reading. Both are clamped to +/-25% before their
+    // per-position amplitude is applied, so the compounded worst case is bounded rather than
+    // unbounded -- worth stating because two stacked multipliers is exactly where a projection can
+    // quietly run away.
+    const usageRank = r + 1;                    // opportunity buckets are 1-based; `r` is 0-indexed
+    const p = Math.round(
+      proj(pos, r)
+      * ageFactor(age, row.name, pos, season)
+      * opportunityFactor(opp, row.name, pos, usageRank, season)
+      * 10) / 10;
     // DST names are already canonical ("SF D/ST") from ingest -- use as-is
     if (p > 0) out.push([row.name, pos, p]);
   }
   if (age) {
     const cov = ageCoverage(age, out.map((o) => o[0]));
     console.log(`  age curve applied to ${cov.known}/${cov.total} players (the rest keep a multiplier of 1)`);
+  }
+  if (opp) {
+    const cov = opportunityCoverage(opp, out.map((o) => o[0]), season);
+    console.log(`  opportunity applied to ${cov.known}/${cov.total} players (QB is flat by measurement; rookies keep 1)`);
   }
   out.sort((a, b) => b[2] - a[2]);
   writeFileSync(outPath, "player,pos,points\n" + out.map(([n, p, pt]) => `${n},${p},${pt}`).join("\n") + "\n", "utf8");

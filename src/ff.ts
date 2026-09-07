@@ -1269,10 +1269,15 @@ async function cmdBacktest(rest: string[]) {
   // that skipped it would be validating a system we do not actually run -- the exact mismatch that
   // let the FLEX-baseline and K/DST bugs survive. `--no-age-curve` is the escape hatch for A/B.
   const { ageFactor } = await import("./draft/age.js");
+  const { opportunityFactor } = await import("./draft/opportunity.js");
   const fsMod = await import("node:fs");
   const agePath = dataPath("age-curve.json");
   const ageCurve = (!rest.includes("--no-age-curve") && fsMod.existsSync(agePath))
     ? JSON.parse(fsMod.readFileSync(agePath, "utf8"))
+    : null;
+  const oppPath = dataPath("opportunity-model.json");
+  const oppModel = (!rest.includes("--no-opportunity") && fsMod.existsSync(oppPath))
+    ? JSON.parse(fsMod.readFileSync(oppPath, "utf8"))
     : null;
   const dumpPath = valueOf(rest, "--dump-trials");
   const dumpRows: string[] = [];
@@ -1286,6 +1291,18 @@ async function cmdBacktest(rest: string[]) {
     // comparable; --age-curve turns it on and the pair is the measurement.
     if (ageCurve && noLookahead) {
       proj = proj.map((r) => ({ ...r, points: r.points * ageFactor(ageCurve, r.name, r.pos, yr) }));
+    }
+    // OPPORTUNITY, same rule and for the same reason: it adjusts a PROJECTION, so it is meaningless
+    // where the "projection" is the season's own truth. Rank is recomputed from the proj list here
+    // rather than taken from the board -- inside the backtest there is no board, and the model's
+    // rank buckets must be indexed by the same within-position ordering the live path uses or the
+    // "relative to your rank" denominator silently refers to a different rank.
+    if (oppModel && noLookahead) {
+      const seen: Record<string, number> = {};
+      const ranked = proj.slice().sort((a, b) => b.points - a.points);
+      const rankOf = new Map<string, number>();
+      for (const r of ranked) { seen[r.pos] = (seen[r.pos] ?? 0) + 1; rankOf.set(r.name, seen[r.pos]); }
+      proj = proj.map((r) => ({ ...r, points: r.points * opportunityFactor(oppModel, r.name, r.pos, rankOf.get(r.name) ?? 999, yr) }));
     }
     // availability signal for the injury lever: prior-season games played / the busiest player's games
     const avail = new Map<string, number>();
@@ -1303,7 +1320,7 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   if (dumpPath) {
