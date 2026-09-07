@@ -22,7 +22,20 @@ import { fetchCsv, URLS } from "../src/data/nflverse.ts";
 
 const POS = ["QB", "RB", "WR", "TE"];
 const MIN_AGE = 21, MAX_AGE = 39;
-const SHRINK_N = 40;   // ratios shrink toward 1.0 with this pseudo-count -- thin ages must not swing
+const SHRINK_N = 40;
+// PER-POSITION AMPLITUDE, tied to measured signal. feature-value.mjs fits and scores age WITHIN each
+// position, out-of-sample: RB +0.0369, WR +0.0204, QB +0.0072, TE -0.0019. A pooled test says only
+// "age helps"; it cannot say for whom, and the first version of this curve got the amplitudes exactly
+// backwards -- it gave QB the WIDEST swing (1.25 -> 0.83) on the SMALLEST measured signal, and gave
+// TE a full curve on no signal at all. That reshaped the top of the board hard (Drake Maye $73 ->
+// $95, Josh Allen $91 -> $70) on evidence that did not support it.
+//
+// So each position's curve is shrunk toward 1.0 in proportion to its own measured lift, normalised
+// to the strongest (RB). This is the same discipline as the defense-vs-position shrinkage: let the
+// data decide how much of the observed shape to keep, and let a position with no signal go flat.
+const SIGNAL = { RB: 0.0369, WR: 0.0204, QB: 0.0072, TE: 0 };
+const MAX_SIGNAL = Math.max(...Object.values(SIGNAL));
+const AMPLITUDE = Object.fromEntries(Object.entries(SIGNAL).map(([k, v]) => [k, Math.max(0, v) / MAX_SIGNAL]));
 
 const tot = new Map();
 for (const line of readFileSync("data/history-points.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
@@ -72,23 +85,86 @@ for (const v of tot.values()) {
   acc[v.pos][age].push(v.pts / pred);
 }
 
-const model = { fittedFrom: "data/history-points.csv", shrinkN: SHRINK_N, minAge: MIN_AGE, maxAge: MAX_AGE, pos: {} };
-console.log("AGE CURVE -- actual points as a multiple of what the RANK curve predicts");
-console.log("1.00 = age adds nothing beyond rank. Shrunk toward 1.0 by sample size.\n");
+// Birth YEARS travel with the curve. Both consumers need them -- the live board (projections.ts) and
+// the backtest, which needs HISTORICAL ages our player_bio table does not carry (it holds only
+// current players). Baking them into the artifact means neither path makes a network call, and the
+// ages used to APPLY the curve are exactly the ones used to FIT it.
+const birthYear = {};
+for (const [name, bd] of bio) {
+  const y = Number(String(bd).slice(0, 4));
+  if (Number.isFinite(y) && y > 1940 && y < 2015) birthYear[name] = y;
+}
+const model = { fittedFrom: "data/history-points.csv", shrinkN: SHRINK_N, minAge: MIN_AGE, maxAge: MAX_AGE, pos: {}, birthYear };
+// SMOOTH, then NORMALISE. A raw per-age cell mean fails twice, and a first version of this shipped
+// both failures:
+//
+// 1. IT FITS NOISE. QB came out 23 -> 1.44, 25 -> 0.98, 28 -> 1.10, 32 -> 1.09: no monotone shape at
+//    all, just cell-level sampling noise dressed as a curve. A quadratic in age has three parameters
+//    and cannot chase individual cells, which is exactly why the aging-curve literature uses one.
+//
+// 2. IT SMUGGLES IN A LEVEL SHIFT. The ratio actual/rank-predicted averages ~0.87, NOT 1.0 -- and
+//    that is REGRESSION TO THE MEAN, not aging. The player who finished RB8 got partly lucky, so he
+//    averages less than curve[RB8] the following year at EVERY age. Applying the raw ratio would
+//    have deflated every projection ~13%, which is harmless for VOR (a uniform scale cancels in the
+//    dollar split) but very much not harmless for the season simulator, whose bootstrap pools are
+//    calibrated against real point levels.
+//
+// So: fit a quadratic per position by weighted least squares, then divide by the sample-weighted
+// mean so the curve carries the age SHAPE and nothing else. A multiplier of 1.0 now means "average
+// for his position", not "average across all football".
+function fitQuadratic(pts) {   // pts: [{x, y, w}]
+  const S = [0, 0, 0, 0, 0], T = [0, 0, 0];
+  for (const { x, y, w } of pts) {
+    const p1 = x, p2 = x * x;
+    S[0] += w; S[1] += w * p1; S[2] += w * p2; S[3] += w * p1 * p2; S[4] += w * p2 * p2;
+    T[0] += w * y; T[1] += w * p1 * y; T[2] += w * p2 * y;
+  }
+  const A = [[S[0], S[1], S[2]], [S[1], S[2], S[3]], [S[2], S[3], S[4]]];
+  const M = A.map((row, i) => [...row, T[i]]);
+  for (let c = 0; c < 3; c++) {
+    let piv = c;
+    for (let r = c + 1; r < 3; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    if (Math.abs(M[c][c]) < 1e-12) return null;
+    for (let r = 0; r < 3; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= 3; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return [M[0][3] / M[0][0], M[1][3] / M[1][1], M[2][3] / M[2][2]];
+}
+
+console.log("AGE CURVE -- points relative to the rank curve, by age, SMOOTHED and NORMALISED");
+console.log("1.00 = average for that position. Quadratic fit; level shift (regression to the mean) removed.\n");
 console.log("  age " + POS.map((p) => p.padStart(8)).join("") + "      (n per cell)");
 for (const pos of POS) model.pos[pos] = {};
+const rawFit = {};
+for (const pos of POS) {
+  const pts = [];
+  for (let a = MIN_AGE; a <= MAX_AGE; a++) {
+    const xs = acc[pos][a];
+    if (xs.length < 10) continue;                    // a 3-observation cell steers nothing
+    pts.push({ x: a, y: xs.reduce((s, x) => s + x, 0) / xs.length, w: xs.length });
+  }
+  const beta = pts.length >= 4 ? fitQuadratic(pts) : null;
+  const val = (a) => (beta ? beta[0] + beta[1] * a + beta[2] * a * a : 1);
+  // sample-weighted mean of the fitted curve -> divide it out, leaving pure shape
+  let num = 0, den = 0;
+  for (const { x, w } of pts) { num += w * val(x); den += w; }
+  const mean = den ? num / den : 1;
+  rawFit[pos] = { val, mean };
+}
 for (let a = MIN_AGE; a <= MAX_AGE; a++) {
   const cells = [], ns = [];
   for (const pos of POS) {
-    const xs = acc[pos][a];
-    // SHRINKAGE, per the research: an age with 5 observations must not move the projection.
-    // ratio = (sum + SHRINK_N * 1.0) / (n + SHRINK_N) -- pulls toward 1.0 exactly as far as the
-    // sample is thin, and equals the raw mean once n is large.
-    const raw = xs.length ? xs.reduce((s, x) => s + x, 0) : 0;
-    const val = (raw + SHRINK_N * 1) / (xs.length + SHRINK_N);
-    model.pos[pos][a] = Number(val.toFixed(4));
-    cells.push(val.toFixed(3).padStart(8));
-    ns.push(xs.length);
+    const { val, mean } = rawFit[pos];
+    // clamp: a quadratic extrapolates violently past the data it saw
+    const shape = Math.max(0.75, Math.min(1.25, val(a) / (mean || 1)));
+    const f = 1 + (shape - 1) * (AMPLITUDE[pos] ?? 0);   // amplitude = measured signal, TE -> flat
+    model.pos[pos][a] = Number(f.toFixed(4));
+    cells.push(f.toFixed(3).padStart(8));
+    ns.push(acc[pos][a].length);
   }
   console.log(`  ${String(a).padStart(3)} ${cells.join("")}      ${ns.join("/")}`);
 }
@@ -114,6 +190,8 @@ const declines = POS.map((p) => {
   return `${p} ${young.toFixed(2)}->${old.toFixed(2)}`;
 });
 console.log(`  age 24 -> 31 ratio: ${declines.join(", ")}`);
+console.log(`  amplitude by measured out-of-sample signal: ${POS.map((p) => `${p} ${(AMPLITUDE[p] * 100).toFixed(0)}%`).join(", ")}`);
+console.log(`  (TE measured -0.0019 -- no signal -- so its curve is FLAT at 1.0 rather than fitted.)`);
 console.log(`  This is a CHANGE curve (actual vs prior-year rank), NOT an absolute-level aging curve;`);
 console.log(`  a monotonic decline is what an absolute peak near 27 looks like in these units.`);
 console.log(`  Earned inclusion out-of-sample: +0.0154 R-sq over rank+position (feature-value.mjs).`);

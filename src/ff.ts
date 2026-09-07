@@ -1186,12 +1186,28 @@ async function cmdBacktest(rest: string[]) {
   // expected result for replacing an unbiased sampler. `--random-schedule` restores the old
   // pairing for comparison; `--divisions N` overrides the division count.
   const divisions = rest.includes("--random-schedule") ? 0 : Number(valueOf(rest, "--divisions") ?? 4);
+  // AGE CURVE ON BY DEFAULT, matching the shipped board. projections.ts applies it, so a backtest
+  // that skipped it would be validating a system we do not actually run -- the exact mismatch that
+  // let the FLEX-baseline and K/DST bugs survive. `--no-age-curve` is the escape hatch for A/B.
+  const { ageFactor } = await import("./draft/age.js");
+  const fsMod = await import("node:fs");
+  const agePath = dataPath("age-curve.json");
+  const ageCurve = (!rest.includes("--no-age-curve") && fsMod.existsSync(agePath))
+    ? JSON.parse(fsMod.readFileSync(agePath, "utf8"))
+    : null;
   const dumpPath = valueOf(rest, "--dump-trials");
   const dumpRows: string[] = [];
   const { writeFileSync: writeDump } = await import("node:fs");
   for (const yr of seasons) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
-    const proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
+    let proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
+    // AGE CURVE. Only meaningful in no-lookahead mode, where our projection really IS a projection
+    // (prior-season actuals) rather than the season's truth plus noise -- with lookahead there is
+    // nothing for an age adjustment to improve. Off by default so the historical numbers stay
+    // comparable; --age-curve turns it on and the pair is the measurement.
+    if (ageCurve && noLookahead) {
+      proj = proj.map((r) => ({ ...r, points: r.points * ageFactor(ageCurve, r.name, r.pos, yr) }));
+    }
     // availability signal for the injury lever: prior-season games played / the busiest player's games
     const avail = new Map<string, number>();
     const priorWk = wk.get(projYr);
@@ -1208,7 +1224,7 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   if (dumpPath) {

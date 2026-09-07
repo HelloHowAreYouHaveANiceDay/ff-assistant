@@ -75,6 +75,7 @@ for (const s of SEASONS) {
       tgtG: o.tgt / o.g, carG: o.car / o.g, airG: o.air / o.g, touchG: o.touch / o.g, games: o.g });
   }
 }
+const ALL_ROWS = [...rows];
 console.log(`${rows.length} player-seasons with prior-year rank, opportunity and age\n`);
 
 // --- OLS with season-held-out scoring -------------------------------------------------------------
@@ -149,6 +150,26 @@ for (const [name, cols] of MODELS) {
   const flag = name.startsWith("rank +") ? "" : Math.abs(d) < 0.004 ? "   (no real change)" : d > 0 ? "   <- ADDS SIGNAL" : "   <- HURTS";
   console.log(`  ${name.padEnd(36)} ${r2.toFixed(4)}   ${(d >= 0 ? "+" : "") + d.toFixed(4)}${flag}`);
 }
+// --- PER-POSITION age test ------------------------------------------------------------------------
+// The pooled test says "age helps" but cannot say FOR WHOM, and that matters here. The raw QB age
+// cells showed NO monotone pattern (23 -> 1.44, 25 -> 0.98, 28 -> 1.10), and a quadratic will
+// happily impose a confident shape on noise. If QB's age effect is not real, the smoothed curve
+// swings a 23-year-old QB up ~25% and a 30-year-old down ~6% on nothing -- and QBs sit at the top of
+// the board, where a dollar error is largest. So fit and score WITHIN each position.
+console.log(`\n\nPER-POSITION: does age add out-of-sample WITHIN each position?`);
+console.log(`  pos     n    rank-only   +age curve    delta`);
+for (const pos of POS) {
+  const sub = ALL_ROWS.filter((r) => r.pos === pos);
+  if (sub.length < 120) { console.log(`  ${pos.padEnd(5)} ${String(sub.length).padStart(5)}   too few rows`); continue; }
+  rows.length = 0; rows.push(...sub);
+  const b0 = oosR2([RANK, RANK2]);
+  const b1 = oosR2([RANK, RANK2, (r) => r.age, (r) => r.age * r.age]);
+  rows.length = 0; rows.push(...ALL_ROWS);
+  const d = b1 - b0;
+  const verdict = Math.abs(d) < 0.004 ? "(noise)" : d > 0 ? "<- REAL" : "<- HURTS";
+  console.log(`  ${pos.padEnd(5)} ${String(sub.length).padStart(5)}   ${b0.toFixed(4)}      ${b1.toFixed(4)}   ${(d >= 0 ? "+" : "") + d.toFixed(4)}  ${verdict}`);
+}
+
 console.log(`\n  A feature only earns its place if it adds out-of-sample. Consensus rank already encodes a`);
 console.log(`  lot of what age and opportunity say -- experts know who gets the carries and who is 33 --`);
 console.log(`  so a flat result here means the information is ALREADY IN the rank, not that it is`);

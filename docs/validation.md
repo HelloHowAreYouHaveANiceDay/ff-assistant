@@ -1,5 +1,48 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## The AGE CURVE ships, on R-squared evidence, with the championship number recorded as directional (2026-09-07)
+>
+> The rank curve knows nothing about WHO holds a rank -- a 33-year-old back and a 25-year-old back
+> entering ranked RB8 got identical projections. `data/age-curve.json` is a fitted multiplier on it,
+> applied by `projections.ts` and ON BY DEFAULT in the backtest (`--no-age-curve` to disable).
+>
+> **It earned inclusion before it was built.** `scripts/feature-value.mjs` measured it out-of-sample
+> over 2,276 player-seasons, holding out one season at a time AND controlling for position:
+> **+0.0154 R-squared** over a rank+position baseline. The position control was essential -- without
+> it a sibling feature (opportunity) looks 3x more valuable than it is, because carries-vs-targets
+> silently identifies position.
+>
+> **PER-POSITION amplitude, because the pooled test cannot say FOR WHOM.** Fitting and scoring age
+> within each position separately: **RB +0.0369, WR +0.0204, QB +0.0072, TE -0.0019.** The first
+> shipped curve had these backwards -- it gave QB the WIDEST swing (1.25 -> 0.83) on the smallest
+> signal and gave TE a full curve on none at all, reshaping the top of the board hard (Drake Maye
+> $73 -> $95, Josh Allen $91 -> $70) on evidence that did not support it. Each position's amplitude
+> is now scaled to its own measured lift: RB 100%, WR 55%, QB 20%, **TE flat at 1.0**.
+>
+> **The championship translation is +0.6pp, t = 0.40 -- not established.** And the correction MADE
+> THAT NUMBER WORSE: the over-amplified curve scored +2.0pp. That is the point rather than an
+> embarrassment. A noise-fit can score well on any single measurement, and a backtest used as the
+> only arbiter will happily reward one. The per-position R-squared test is the stronger evidence and
+> it says the shipped amplitudes are right. `scripts/age-curve-effect.mjs` holds both arms frozen.
+>
+> **Shipped on the projection evidence, not the championship number**, because the board also feeds
+> trades, waivers and season odds -- the projection improvement is real for all of them. Anyone
+> quoting this as a championship gain is quoting a t of 0.40.
+>
+> **Two things were nearly shipped wrong and are worth remembering.** The first fit used raw per-age
+> cell means, which (a) fitted noise -- QB came out 23 -> 1.44, 25 -> 0.98, 28 -> 1.10, with no
+> monotone shape -- and (b) carried a level shift: the ratio averages ~0.87 because a player who
+> finished RB8 got partly lucky and regresses, at EVERY age. That is regression to the mean, not
+> aging, and applying it would have deflated every projection ~13%. Harmless for VOR (a uniform scale
+> cancels in the dollar split) but not for the season simulator, whose bootstrap pools are calibrated
+> against real point levels. The fix is a quadratic fit per position, normalised to a weighted mean of
+> 1.0, so the curve carries the age SHAPE and nothing else.
+>
+> Known blemish: the TE curve turns back UP past age 34, which is quadratic extrapolation into cells
+> holding 1-7 observations. The +/-25% clamp bounds it and no rostered TE is that old, but it is an
+> artifact rather than a finding.
+
+
 > ## K and DST existed on the live board but NOT in the backtest pool (fixed 2026-09-07)
 >
 > `src/data/history.ts` filtered history to QB/RB/WR/TE behind the comment *"K/DST aren't in this

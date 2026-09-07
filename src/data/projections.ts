@@ -19,6 +19,7 @@
 // season per team. Projections are now TRUE for every position; the streaming policy lives where it
 // belongs, in the `maxKDst` lever that already caps their price.
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { ageFactor, ageCoverage, type AgeCurve } from "../draft/age.js";
 import { openDb, getConfig } from "../db/db.js";
 import { dataPath } from "./paths.js";
 
@@ -56,11 +57,20 @@ export function buildCurveFromHistory(season: number, nSeasons = 6, path = dataP
   return curve;
 }
 
-export async function project(dbPath?: string, outPath = dataPath("points.csv")): Promise<number> {
+/** The fitted age curve, or null if it has not been built. Absent, every multiplier is 1 and the
+ *  projection is exactly what it was before the curve existed. */
+function loadAgeCurve(): AgeCurve | null {
+  const p = dataPath("age-curve.json");
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, "utf8")) as AgeCurve; } catch { return null; }
+}
+
+export async function project(dbPath?: string, outPath = dataPath("points.csv"), useAge = true): Promise<number> {
   const db = openDb(dbPath);
   const cfg = getConfig(db);
   const season = cfg.season;
   const curve = buildCurveFromHistory(season);
+  const age = useAge ? loadAgeCurve() : null;
   const proj = (pos: string, r: number) => { const cv = curve[pos]; return cv && cv.length ? cv[Math.min(r, cv.length - 1)] : 0; };
 
   // ECR players ordered by ecr; within-position 0-indexed rank = k for the curve lookup
@@ -72,9 +82,14 @@ export async function project(dbPath?: string, outPath = dataPath("points.csv"))
   for (const row of ecrRows) {
     const pos = row.pos;
     const r = posCount[pos] ?? 0; posCount[pos] = r + 1; // 0-indexed within position
-    const p = Math.round(proj(pos, r) * 10) / 10;   // every position, including K/DST -- see the header
+    // AGE. A multiplier on the rank curve, 1 when the player's age is unknown -- see draft/age.ts.
+    const p = Math.round(proj(pos, r) * ageFactor(age, row.name, pos, season) * 10) / 10;
     // DST names are already canonical ("SF D/ST") from ingest -- use as-is
     if (p > 0) out.push([row.name, pos, p]);
+  }
+  if (age) {
+    const cov = ageCoverage(age, out.map((o) => o[0]));
+    console.log(`  age curve applied to ${cov.known}/${cov.total} players (the rest keep a multiplier of 1)`);
   }
   out.sort((a, b) => b[2] - a[2]);
   writeFileSync(outPath, "player,pos,points\n" + out.map(([n, p, pt]) => `${n},${p},${pt}`).join("\n") + "\n", "utf8");
