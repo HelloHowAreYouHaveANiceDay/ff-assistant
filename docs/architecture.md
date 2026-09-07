@@ -141,7 +141,7 @@ ids whose tier *boundaries* are absent from the settings payload. It is derived 
 
 **Correctness is checked against the other side, not against ourselves.**
 `scripts/validate-scoring.mjs` recomputes ESPN's own `appliedTotal` for ~700 player-weeks. QB/RB/WR/
-TE reproduce it exactly; K is within 0.24 pts/week; DST within 2.05. Face validity on *ranking* --
+TE reproduce it exactly; K is within 0.24 pts/week; DST within 1.84. Face validity on *ranking* --
 which this pipeline passed for weeks while the DST ladder was overstating every defense by 4-5
 points a game -- cannot see a level error. Only the cross-check can.
 

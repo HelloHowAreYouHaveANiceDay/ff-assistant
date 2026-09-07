@@ -116,23 +116,62 @@ export const DEFAULT_KICKER: KickerRules = { fg0_39: 3, fg40_49: 4, fg50_59: 5, 
  * + def_pat_blocks + def_fg_blocks (57/57 exact), 98 -> def_safeties, 99 -> def_sacks,
  * 106 -> def_fumbles_forced (55/57), 113 -> def_pass_defended.
  *
- * ONE APPROXIMATION REMAINS, and it is deliberate. Id 112 (0.5/unit) is a tackle-for-loss-shaped
- * stat that matches NO nflverse column exactly -- ESPN and nflverse count TFL differently, so
- * `def_tackles_for_loss` agrees only 19% of the time. It is used as the best available proxy.
+ * BOTH REMAINING APPROXIMATIONS WERE CHASED DOWN ON 2026-09-07, and one of them was recorded WRONG.
  *
- * Also approximate: ESPN's points-allowed EXCLUDES points the opponent scored on defense or special
- * teams, while we read the final score. That is visible in the derivation as tier disagreements at
- * boundaries (PA 19 crediting -3 or -1) and costs at most one tier in games with a pick-six.
+ * Points allowed: this comment used to say ESPN "excludes points the opponent scored on defense or
+ * special teams". Half right, and the wrong half was harmful -- excluding special teams made
+ * accuracy WORSE. Measured against ESPN's credited tier over 203 scored DST weeks, the definition is
+ * the final score minus SIX points per opponent DEFENSIVE touchdown, special teams included in the
+ * total and the PAT after a pick-six still counting: 97.0% vs 93.6% for the plain final score. See
+ * espnPointsAllowed().
+ *
+ * Stat 112: still a proxy, but now a CALIBRATED one. It is tackle-for-loss-shaped and matches no
+ * nflverse column exactly, because ESPN counts from play-by-play we cannot see. Over 203 team-weeks
+ * it correlates 0.456 with `def_tackles_for_loss` and runs ~15% lower in the mean (4.50 vs 5.30), so
+ * `tflProviderScale` corrects the LEVEL. The per-game noise is irreducible from our side; the
+ * seasonal total, which is what the projection curve consumes, is now unbiased.
  */
 export interface DefenseRules {
   sack: number; interception: number; fumbleRec: number; forcedFumble: number;
   blockedKick: number; safety: number; passDefended: number; tacklesForLoss: number; td: number;
+  /**
+   * ESPN counts stat 112 (a tackles-for-loss-shaped stat) about 15% LOWER than nflverse's
+   * `def_tackles_for_loss`: means 4.50 vs 5.30 over 203 scored team-weeks, correlation 0.456. Same
+   * concept, different provider counting. Scaling by the measured ratio fixes the LEVEL, which is
+   * what matters when the number is summed over a season -- without it a season's TFL contribution
+   * is ~15% too high. The per-game correlation cannot be fixed from our side; ESPN does not publish
+   * the underlying play-by-play it counts from.
+   */
+  tflProviderScale: number;
   /** [maxPointsAllowed, points] ascending; first match wins. Derived from 175 scored DST weeks. */
   paLadder: [number, number][];
+}
+
+/**
+ * The points-allowed figure ESPN actually scores a DST on: the final score MINUS the opponent's
+ * DEFENSIVE touchdowns, at 6 points each.
+ *
+ * Every part of that was measured against ESPN's own credited tier over 203 scored DST weeks, and
+ * every part contradicted a plausible guess:
+ *
+ *   final score                       93.6%   <- what we shipped, and what the code comment claimed
+ *   minus 6 x opponent DEF tds        97.0%   <- this
+ *   minus 7 x opponent DEF tds        95.1%   so the PAT after a pick-six still counts against you
+ *   minus 6 x opponent ST tds         88.7%   special-teams returns are NOT excluded
+ *   minus 6 x (def + ST)              91.1%   which is why excluding both made it WORSE
+ *
+ * The earlier code comment asserted ESPN "excludes points the opponent scored on defense or special
+ * teams". Half right, and the wrong half was actively harmful: adjusting for special teams cost
+ * accuracy. Defensive TDs only, at 6.
+ */
+export function espnPointsAllowed(finalScore: number, opponentRow: Record<string, string> | null | undefined): number {
+  const oppDefTds = Number(opponentRow?.def_tds ?? 0) || 0;
+  return Math.max(0, finalScore - 6 * oppDefTds);
 }
 export const DEFAULT_DEFENSE: DefenseRules = {
   sack: 1, interception: 2, fumbleRec: 1, forcedFumble: 1,
   blockedKick: 3, safety: 4, passDefended: 0.25, tacklesForLoss: 0.5, td: 8,
+  tflProviderScale: 0.85,   // measured: ESPN 4.50 vs nflverse 5.30 per team-week
   paLadder: [[6, 0], [13, -1], [17, -2], [21, -3], [27, -4], [34, -5], [45, -6], [Infinity, -7]],
 };
 
@@ -206,7 +245,7 @@ export function scoreDefenseWeek(r: Record<string, string>, pointsAllowed: numbe
     + blocks * d.blockedKick
     + nz(r, "def_safeties") * d.safety
     + nz(r, "def_pass_defended") * d.passDefended
-    + nz(r, "def_tackles_for_loss") * d.tacklesForLoss
+    + nz(r, "def_tackles_for_loss") * (d.tflProviderScale ?? 1) * d.tacklesForLoss
     + tds * d.td;
   const pa = d.paLadder.find(([max]) => pointsAllowed <= max)?.[1] ?? 0;
   return base + pa;

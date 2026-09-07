@@ -4,7 +4,7 @@
 // No-PPR; this is the config-driven TS port. Fetches nflverse stats_player_week per season.
 import { writeFileSync } from "node:fs";
 import { fetchCsv, pick, URLS, playerWeekUrl, teamWeekUrl, canonTeam } from "./nflverse.js";
-import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, scoreIdpWeek, idpGroup, DEFAULT_LEAGUE_SCORING, type LeagueScoring, type ScoringRules } from "../draft/scoring.js";
+import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, scoreIdpWeek, idpGroup, espnPointsAllowed, DEFAULT_LEAGUE_SCORING, type LeagueScoring, type ScoringRules } from "../draft/scoring.js";
 import { dataPath } from "./paths.js";
 
 const SKILL_POS = new Set(["QB", "RB", "WR", "TE"]);
@@ -86,13 +86,23 @@ export async function buildHistory(seasons: number[], scoring: ScoringRules | Le
     try {
       const teamRows = await fetchCsv(teamWeekUrl(yr));
       const pa = await pointsAllowed(yr);
+      // Opponent lookup, so points-allowed can exclude the opponent's DEFENSIVE touchdowns the way
+      // ESPN does -- 97.0% tier agreement against ESPN's own credited tier, vs 93.6% for the raw
+      // final score. Special-teams returns are NOT excluded; see espnPointsAllowed.
+      const byTeamWeek = new Map<string, Record<string, string>>();
+      for (const r of teamRows) {
+        if (pick(r, "season_type") !== "REG") continue;
+        byTeamWeek.set(`${canonTeam(pick(r, "team"))}|${pick(r, "week")}`, r);
+      }
       for (const r of teamRows) {
         if (pick(r, "season_type") !== "REG") continue;
         const team = canonTeam(pick(r, "team")); if (!team) continue;
         const week = Number(pick(r, "week")); if (!week) continue;
         const allowed = pa.get(`${team}|${week}`);
         if (allowed == null) continue;   // no final score -> cannot score the PA ladder; skip, never assume 0
-        const pts = Math.round(scoreDefenseWeek(r, allowed, model.defense) * 10) / 10;
+        const opp = canonTeam(pick(r, "opponent_team"));
+        const adjusted = espnPointsAllowed(allowed, opp ? byTeamWeek.get(`${opp}|${week}`) : null);
+        const pts = Math.round(scoreDefenseWeek(r, adjusted, model.defense) * 10) / 10;
         const name = `${team} DST`;
         wkLines.push(`${yr},${name},DST,${week},${pts},${team}`); nW++;
         const a = seasonAgg.get(name) ?? { pos: "DST", pts: 0 }; a.pts += pts; seasonAgg.set(name, a);

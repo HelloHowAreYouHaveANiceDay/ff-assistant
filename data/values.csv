@@ -95,38 +95,29 @@ Brian Thomas Jr.,WR,4
 Tony Pollard,RB,3
 Mark Andrews,TE,3
 Brandon Aubrey,K,2
-HOU D/ST,DST,2
 Ka'imi Fairbairn,K,2
+HOU D/ST,DST,2
 Cameron Dicker,K,2
 Cam Little,K,2
-DEN D/ST,DST,2
 Jason Myers,K,2
 Eddy Pineiro,K,2
+DEN D/ST,DST,2
 Tyler Loop,K,2
 Evan McPherson,K,2
 Michael Pittman Jr.,WR,2
-LAR D/ST,DST,2
 Cairo Santos,K,2
-SEA D/ST,DST,2
+LAR D/ST,DST,2
 Jake Bates,K,2
 Andy Borregales,K,2
+SEA D/ST,DST,2
 PHI D/ST,DST,2
-Chase McLaughlin,K,2
-Harrison Mevis,K,2
-Harrison Butker,K,2
 MIN D/ST,DST,2
-Chris Boswell,K,2
 PIT D/ST,DST,2
-Will Reichard,K,2
 NE D/ST,DST,2
 JAC D/ST,DST,2
 LAC D/ST,DST,2
 BAL D/ST,DST,2
 GB D/ST,DST,2
-KC D/ST,DST,2
-DET D/ST,DST,2
-CLE D/ST,DST,2
-BUF D/ST,DST,2
 Kyler Murray,QB,1
 Jordan Love,QB,1
 Baker Mayfield,QB,1
@@ -145,14 +136,19 @@ Jonathon Brooks,RB,1
 Courtland Sutton,WR,1
 RJ Harvey,RB,1
 Josh Downs,WR,1
+Chase McLaughlin,K,1
 Michael Wilson,WR,1
 Geno Smith,QB,1
 Kenny Gainwell,RB,1
+Harrison Mevis,K,1
+Harrison Butker,K,1
 Stefon Diggs,WR,1
 Chuba Hubbard,RB,1
 Quentin Johnston,WR,1
+Chris Boswell,K,1
 Fernando Mendoza,QB,1
 Alec Pierce,WR,1
+Will Reichard,K,1
 Jayden Reed,WR,1
 Wil Lutz,K,1
 J.K. Dobbins,RB,1
@@ -183,73 +179,76 @@ Kirk Cousins,QB,1
 Kyle Monangai,RB,1
 Ryan Fitzgerald,K,1
 Xavier Worthy,WR,1
+KC D/ST,DST,1
 Jordyn Tyson,WR,1
 Charlie Smyth,K,1
 Woody Marks,RB,1
 Brenton Strange,TE,1
 Deebo Samuel Sr.,WR,1
 Dalton Schultz,TE,1
+DET D/ST,DST,1
 Rashid Shaheed,WR,1
 Zane Gonzalez,K,1
 Tyler Allgeier,RB,1
 Chig Okonkwo,TE,1
 Deshaun Watson,QB,1
 Denzel Boston,WR,1
-TEN D/ST,DST,1
+CLE D/ST,DST,1
 Tre Tucker,WR,1
 Tyjae Spears,RB,1
+BUF D/ST,DST,1
 Hunter Henry,TE,1
 Adonai Mitchell,WR,1
-DAL D/ST,DST,1
 Brandon McManus,K,1
 Kayshon Boutte,WR,1
 Chris Rodriguez Jr.,RB,1
+TEN D/ST,DST,1
 Jerry Jeudy,WR,1
 Shedeur Sanders,QB,1
-NO D/ST,DST,1
 Jauan Jennings,WR,1
 Josh Jacobs,RB,1
+DAL D/ST,DST,1
 T.J. Hockenson,TE,1
 Jalen McMillan,WR,1
-SF D/ST,DST,1
 Omar Cooper Jr.,WR,1
 Dylan Sampson,RB,1
 Ben Sauls,K,1
 Terrance Ferguson,TE,1
+NO D/ST,DST,1
 Jonah Coleman,RB,1
 Tre' Harris,WR,1
-CIN D/ST,DST,1
 Mike Washington Jr.,RB,1
 AJ Barner,TE,1
 Jake Browning,QB,1
 Dontayvion Wicks,WR,1
+SF D/ST,DST,1
 Keaton Mitchell,RB,1
 Pat Bryant,WR,1
-CHI D/ST,DST,1
 Ryan Flournoy,WR,1
 Greg Dulcich,TE,1
-ATL D/ST,DST,1
+CIN D/ST,DST,1
 Zach Charbonnet,RB,1
 Malik Washington,WR,1
 Keenan Allen,WR,1
 Jalen Nailor,WR,1
-NYG D/ST,DST,1
 Gunnar Helm,TE,1
 Travis Hunter,WR,1
 Carson Beck,QB,1
+CHI D/ST,DST,1
 Jaylin Noel,WR,1
 Joey Slye,K,1
 Alvin Kamara,RB,1
 Tank Bigsby,RB,1
 Caleb Douglas,WR,1
-WAS D/ST,DST,1
+ATL D/ST,DST,1
 Ja'Kobi Lane,WR,1
 Tyrone Tracy Jr.,RB,1
 Kenyon Sadiq,TE,1
 Calvin Ridley,WR,1
+NYG D/ST,DST,1
 Braelon Allen,RB,1
 Troy Franklin,WR,1
-IND D/ST,DST,1
+WAS D/ST,DST,1
 Cyrus Allen,WR,1
 Oronde Gadsden II,TE,1
 Chad Ryland,K,1
@@ -258,7 +257,7 @@ Isaac TeSlaa,WR,1
 J.J. McCarthy,QB,1
 Malachi Fields,WR,1
 Pat Freiermuth,TE,1
-LV D/ST,DST,1
+IND D/ST,DST,1
 Emmett Johnson,RB,1
 Cooper Kupp,WR,1
 Darnell Mooney,WR,1
@@ -267,7 +266,7 @@ Tank Dell,WR,1
 Jake Elliott,K,1
 Rashod Bateman,WR,1
 David Njoku,TE,1
-CAR D/ST,DST,1
+LV D/ST,DST,1
 Chris Bell,WR,1
 Drew Allar,QB,1
 Ray Davis,RB,1
@@ -276,7 +275,7 @@ Evan Engram,TE,1
 Isiah Pacheco,RB,1
 Germie Bernard,WR,1
 Ted Hurst III,WR,1
-TB D/ST,DST,1
+CAR D/ST,DST,1
 Jack Bech,WR,1
 Devaughn Vele,WR,1
 Kimani Vidal,RB,1
@@ -286,13 +285,13 @@ Keon Coleman,WR,1
 Darren Waller,TE,1
 Chimere Dike,WR,1
 Mason Taylor,TE,1
+TB D/ST,DST,1
 Sean Tucker,RB,1
 Drew Stevens,K,1
 Elic Ayomanor,WR,1
 Mike Gesicki,TE,1
 Mac Jones,QB,1
 Tory Horton,WR,1
-ARI D/ST,DST,1
 Nicholas Singleton,RB,1
 Tyquan Thornton,WR,1
 Charlie Kolar,TE,1
@@ -303,6 +302,7 @@ Theo Johnson,TE,1
 Jalen Milroe,QB,1
 Kaelon Black,RB,1
 DeMario Douglas,WR,1
+ARI D/ST,DST,1
 Eli Stowers,TE,1
 Justice Hill,RB,1
 Marvin Mims Jr.,WR,1
@@ -315,7 +315,6 @@ Michael Mayer,TE,1
 Najee Harris,RB,1
 Kyle Williams,WR,1
 Dominic Zvada,K,1
-NYJ D/ST,DST,1
 Emanuel Wilson,RB,1
 Brandon Aiyuk,WR,1
 Darnell Washington,TE,1
@@ -328,6 +327,7 @@ Oscar Delp,TE,1
 Malik Davis,RB,1
 Eli Raridon,TE,1
 Bryce Lance,WR,1
+NYJ D/ST,DST,1
 Xavier Hutchinson,WR,1
 Jaylen Wright,RB,1
 Quinn Ewers,QB,1
@@ -338,7 +338,6 @@ Hollywood Brown,WR,1
 Cole Kmet,TE,1
 Jalen Tolbert,WR,1
 Isaiah Bond,WR,1
-MIA D/ST,DST,1
 Kaleb Johnson,RB,1
 Tyler Higbee,TE,1
 Anthony Richardson Sr.,QB,1
@@ -353,6 +352,7 @@ Noah Gray,TE,1
 Ollie Gordon II,RB,1
 Ty Simpson,QB,1
 Max Klare,TE,1
+MIA D/ST,DST,1
 Samaje Perine,RB,1
 Kendrick Bourne,WR,1
 Isaiah Davis,RB,1
