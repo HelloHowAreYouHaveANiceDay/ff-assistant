@@ -1,5 +1,246 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## PHASE 1 REDESIGN: the projection curve was the wrong quantity, and the season sim was half as
+> ## uncertain as the world (2026-09-08)
+>
+> Three defects, found by asking what quantity each number actually IS rather than whether it looked
+> reasonable. All three had been visible for the life of the project and none had ever failed.
+>
+> **THE HEADLINE THIS WAS MEASURED AGAINST IS 38.2%, NOT THE 34.9% THIS FILE RECORDED BELOW.** Read
+> that first, because everything after it is a paired delta against 38.2%. On the shipped config
+> (`playoffTeams: 7`, the synced league value) at HEAD `468ced6`, the flagless arbiter run returns:
+>
+> ```
+> npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
+>   CHAMPIONSHIPS: 38.2%  (random 6.3%)  |  playoffs: 96%
+>   2000:32% 2001:37% 2002:25% 2003:52% 2004:43% 2005:15% 2006:55% 2007:20% 2008:33% 2009:41%
+>   2010:39% 2011:57% 2012:52% 2013:37% 2014:35% 2015:29% 2016:30% 2017:29% 2018:41% 2019:35%
+>   2020:35% 2021:45% 2022:53% 2023:31% 2024:54%
+> ```
+>
+> **That is a stale record, not a drifted input, and it was checked rather than assumed.** The
+> arbiter's own rule says a materially different number means an input moved, so: `npm test` 199/199,
+> `typecheck` clean, `value-gates` ALL PASS, history covering 1999-2025, and the positional book
+> totals identical to the dollar (QB $689, RB $1,213, WR $1,126, TE $403, K $45, DST $44). The inputs
+> are the ones the 34.9% was measured on. What moved is CODE: 34.9% was written at commit `51ea5c8`
+> and roughly twenty commits have landed since, several of which change what the simulator scores
+> (`677b765` "every roster in the league was missing its defense", `fc869a6` "an unfillable slot
+> scores replacement level, not zero", `0361075` K/DST added to the history pool). Two variants were
+> run to rule out the obvious suspects: the pre-`93de4df` opportunity model gives **39.5%** (so the QB
+> opportunity refit COSTS ~1.3pp and is not the inflater), and `playoffTeams: 6` gives **39.1% / 94%**
+> (so the 96% vs 94% playoff line is entirely the 7-team playoff, and championships are unaffected).
+>
+> ---
+>
+> ### FINDING A -- the curve answered a different question from the one the board asks
+>
+> `buildCurveFromHistory` averaged the k-th best FINISHER's season and applied it to the player
+> ranked k in preseason ECR. The k-th best finisher is an ORDER STATISTIC: by construction the best of
+> everyone who could have finished there, carrying the winner's luck of whoever won the slot. The
+> board needs a CONDITIONAL EXPECTATION -- E[points | this player enters ranked k] -- the average over
+> everyone who entered there, busts included. Measured on `history-points.csv` (1999-2025):
+>
+> | pos k | order-stat | E[pts \| prior-year finish k] | E[pts \| preseason ECR k] (2020-25) | SHIPPED conditional |
+> |---|---|---|---|---|
+> | QB 1 | 400 | 264 (n 51) | 341 (n 12) | 322 |
+> | QB 12 | 273 | 202 (n 127) | 242 (n 30) | 246 |
+> | RB 1 | 345 | 225 (n 51) | 189 | 251 |
+> | RB 12 | 208 | 170 (n 128) | 212 | 190 |
+> | WR 1 | 326 | 212 (n 52) | 213 | 223 |
+> | WR 12 | 201 | 164 (n 128) | 165 | 175 |
+> | TE 1 | 238 | 160 (n 51) | 173 | 180 |
+> | TE 12 | 120 | 90 (n 124) | 113 | 101 |
+>
+> **The error lands exactly where a dollar is most expensive.** VOR of the #1 player -- the number the
+> entire auction book is scaled from -- goes QB **169 -> 90**, RB **203 -> 135**, WR **182 -> 101**,
+> TE **134 -> 89**. Reproduce with `node --import tsx scripts/curve-report.mjs`.
+>
+> **This is regression to the mean, and it had been found three times already** -- in the age fit, the
+> opportunity fit, and the bootstrap calibration -- and normalised away as a nuisance level shift each
+> time. It was never a nuisance; it was this curve seen from three directions. `scripts/nested-cv.mjs`
+> had been fitting `E[y | rank]` internally the whole time, so the validation harness and the shipped
+> projection disagreed about what a projection even is. (Its numbers are therefore UNCHANGED by this
+> work: age +0.0069, opportunity +0.0095, both +0.0157 over the market bar.)
+>
+> **How the two conditionals combine.** SHAPE from the prior-year-finish conditional (25 season pairs,
+> n 50-130 per rank, stable, but conditioned on the wrong variable); LEVEL from the preseason-ECR
+> conditional (the variable the board is actually indexed by, but only six seasons, n 12-30, and its
+> RB curve is not even monotone -- RB1 189 < RB5 242 on n=12). Per-position ECR level factors: **QB
+> 1.218, RB 1.116, TE 1.127, WR 1.074**. Isotonic non-increasing repair is applied because
+> `baselines()` reads a replacement level off this curve, so a rise would hand a worse player a higher
+> VOR. **Stated bias:** 635 of 3,329 preseason-ranked player-seasons never appear in the scored
+> history -- a ranked player who never played is a hidden zero that is dropped, which biases the ECR
+> level UP. The level correction is therefore conservative; the true conditional is lower still.
+>
+> **Book by position, before -> after.** All value gates PASS UNCHANGED -- no gate was touched.
+>
+> | | QB | RB | WR | TE | K | DST | top price | top QB |
+> |---|---|---|---|---|---|---|---|---|
+> | order-stat | $689 | $1,213 | $1,126 | $403 | $45 | $44 | $116 | $84 |
+> | conditional | **$548** | $1,296 | $1,204 | $383 | $44 | $45 | $105 | **$60** |
+>
+> QB loses $141 of book against a room that really spends $240-330 there, and the money moves into RB
+> and WR depth.
+>
+> **Independent corroboration from a completely different measurement.** `bootstrap-calibration.mjs`
+> compares our projections against the historical pools, and every ratio moves toward 1.0: mean
+> **0.81 -> 0.92**, with QB1 0.68 -> 0.86, RB1 0.63 -> 0.82, WR1 0.64 -> 0.88, TE1 0.59 -> 0.79.
+> Spread preservation improves at every position (WR 0.37 -> 0.68, RB 0.52 -> 0.70, QB 0.58 -> 0.88).
+> Players the [0.5, 2.0] guard refused to calibrate fall **113 -> 46**. Nothing in that script knows
+> about the curve change; it simply stops disagreeing with the board.
+>
+> #### The championship number, paired -- and what it can and cannot support
+>
+> `--projection conditional` gives the backtest an EXPANDING WINDOW: the curve for season Y is fitted
+> on season pairs strictly before Y. The market and bots are unchanged (prior-year actuals plus
+> noise), so this isolates OUR book being a conditional expectation while the room's is still an order
+> statistic -- the live situation.
+>
+> **Two limits bound how far this measurement reaches, and both are the honest kind.** (1) The
+> FantasyPros archive begins in 2020 and rank 1 needs about five seasons of it, so NO backtested
+> season through 2024 can receive the ECR level correction: this arm measures the SHAPE half only,
+> while the shipped board gets both. (2) The window needs ~10 prior pairs before rank 1 has a sample,
+> so the usable range is **2011-2024, 14 seasons**, and the baseline was re-run over exactly that
+> range so the seeds pair.
+>
+> | book | baseline | conditional | mean | SE | t | 95% CI | seasons better |
+> |---|---|---|---|---|---|---|---|
+> | vor (mirror) | 40.2% | 41.2% | **+1.00pp** | 1.43 | 0.70 | [-1.90, +3.57] | 10/14 |
+> | rank (independent) | 35.3% | 37.6% | **+2.33pp** | 1.32 | 1.76 | [-0.14, +4.86] | 9/14 |
+>
+> **Positive under both books, significant under neither** (detectable effect at 80% power with 14
+> seasons is ~3.9pp, so this test could not have resolved an effect this size). The curve does not
+> ship on this number. It ships on being the right quantity, on the book totals matching how the room
+> actually spends, and on the calibration agreement above -- and the championship figure is recorded
+> as directional, exactly as the age curve was.
+>
+> #### Pre-registered predictions, recorded whether or not they held
+>
+> - **P1 -- championships rise under both books. HELD in direction, not in significance.** +1.00pp
+>   (vor) and +2.33pp (rank); neither CI excludes zero.
+> - **P2 -- the `aggr` optimum moves to >= 0.8 under the conditional curve. FAILED.** Swept on the
+>   same 14 seasons: **0.7 -> 41.2%**, 0.8 -> 39.5%, 0.9 -> 36.4%, 1.0 -> 31.2%. The optimum does not
+>   move; it stays at 0.7 and the gradient away from it is steeper than before. `DEFAULT_LEVERS` is
+>   deliberately UNCHANGED in this phase.
+> - **P3 -- the `multQB 0.7` edge shrinks toward zero. HELD, and it reversed sign.** Against +1.97pp
+>   measured on 2026-09-06 under the order-stat curve, the paired delta under the conditional curve
+>   and the rank book is **-0.95pp** (SE 0.86, t -1.11, CI [-2.57, +0.71], better in 5/14 seasons).
+>   That is the mechanistically satisfying result: `multQB 0.7` was a hand-tuned patch for exactly the
+>   QB over-pricing this curve removes at source, and once the source is fixed the patch is dead
+>   weight. It was already deliberately not shipped; this is the reason it never should be.
+>
+> ---
+>
+> ### FINDING B -- the season simulator was half as uncertain as the world
+>
+> The bootstrap pools were a flat bag of weekly scores per rank and the simulator drew each week
+> independently. A player-season is not sixteen independent weeks: it carries persistent state -- a
+> torn ACL, a bust, a breakout -- and independent draws average exactly that away. Measured on
+> `history-weekly.csv` (16 played weeks per player-season):
+>
+> | pos rank | n | empirical season sd | iid-week sd | ratio | empirical p10/p90 | iid p10/p90 |
+> |---|---|---|---|---|---|---|
+> | QB 1 | 51 | 92.4 | 42.6 | 2.17 | 131 / 370 | 205 / 315 |
+> | QB 5 | 126 | 86.4 | 35.4 | 2.44 | 108 / 340 | 193 / 283 |
+> | RB 1 | 51 | 107.6 | 46.5 | 2.32 | 82 / 369 | 168 / 287 |
+> | RB 10 | 129 | 86.2 | 36.0 | 2.40 | 62 / 284 | 123 / 215 |
+> | WR 5 | 129 | 65.4 | 33.2 | 1.97 | 99 / 263 | 145 / 231 |
+> | TE 3 | 76 | 52.7 | 27.3 | 1.93 | 66 / 203 | 100 / 170 |
+>
+> Every position and rank lands between 1.6x and 2.8x. Every consequence pointed the same way, toward
+> FALSE CONFIDENCE: `spread.ts` p10/p90 bands about half their true width, over-confident title and
+> playoff probabilities, and depth under-priced. `season.ts` drops `projSd` in bootstrap mode on the
+> grounds that the pool already carries projection error -- it carries it PER WEEK, which is a
+> different claim, and the two compounded.
+>
+> **`rank-outcomes.json` is now schema 2**: one array per player-season, in week order. The draw moved
+> up a level -- from "which week does he post" to "which season does he have" -- with the same
+> Cholesky groups, the same identity-keyed RNG (week 0 plus a new `PURPOSE.season`, so paired runs
+> stay paired), and the same empirical quantile. Pools are sorted by SEASON TOTAL so the copula's
+> uniform is a season quantile. A schema-1 file is REFUSED with an actionable message: read leniently,
+> each of its weeks becomes a one-week season, which is this exact bug reintroduced by the data with
+> nothing failing. The registry check is keyed on the SHAPE as well as the version number.
+>
+> **Measured after the change** (`scripts/verify-marginal.mjs`):
+>
+> | | pool sd | drawn sd |
+> |---|---|---|
+> | QB rank 3 | 89.2 | 88.4 |
+> | WR rank 5 | 65.4 | 65.2 |
+> | TE rank 4 | 52.6 | 53.0 |
+> | RB rank 8 (uncoupled control) | 84.9 | 84.5 |
+>
+> - the WEEKLY marginal is untouched: worst quantile error **1.13%** of the p10-p90 span
+> - `bootstrap-calibration` is UNMOVED at 0.92, which is the right negative control: preserving the
+>   weekly marginal must not move a weekly statistic
+>
+> **Season odds, generated schedule, before -> after** (`scripts/season-odds-spread.mjs`):
+>
+> | | before (iid weeks) | after (trajectories) |
+> |---|---|---|
+> | favourite | 16.93% | **15.17%** |
+> | median team | 4.81% | 4.87% |
+> | worst team | 1.03% | **1.70%** |
+> | favourite / worst | 16.5x | **8.9x** |
+> | sd across teams | 3.66pp | 3.12pp |
+>
+> The favourite falls and the pack compresses -- what a correctly-wide season model does. The old one
+> had effectively decided the draft settled the year.
+>
+> **KNOWN LIMIT, recorded now rather than discovered later.** The +0.348 QB-WR correlation was
+> measured on SAME-WEEK residuals and is now applied to the season quantile. Season totals hit the
+> target (**+0.329**); the same-week figure falls to **+0.107**, cross-team stays at +0.013. Teammates
+> now share season quality, not the particular week they boomed. That is the right trade -- season
+> dispersion was wrong by a factor of two, which dominates a weekly correlation that only moves
+> head-to-head weekly variance -- but it is a real gap. Restoring the within-week component without
+> disturbing the marginal is Phase 2, and it must not be done by scaling noise onto the scores.
+>
+> **A test was DELETED, and that is worth flagging.** `test/spread.test.ts` asserted "the band narrows
+> RELATIVE to the total as weeks accumulate (it is a sum, not a scaling)". That was a correct test of
+> a wrong model, and it would have blocked this fix. It is replaced by the invariance that actually
+> holds, so a convolution cannot be quietly reintroduced.
+>
+> ---
+>
+> ### FINDING C -- the board showed the wrong man's age
+>
+> `player_bio` is keyed by name_key alone, so two real people sharing a name share a row. The board
+> was the last consumer still joining on that name:
+>
+> | | before | after | whose birth date it was |
+> |---|---|---|---|
+> | Justin Jefferson (WR, ECR 9) | 23.5, rookie badge | **27.2** | a Browns LINEBACKER, born 2003 |
+> | DeVonta Smith (WR) | 23.7, rookie badge | **27.8** | a different DeVonta Smith, born 2002 |
+> | Lamar Jackson (QB) | 28.4 | **29.6** | the Panthers CORNERBACK, born 1998 |
+>
+> `stg_player` had all three right the whole time. Resolution now uses the rule this function already
+> applies to `player_sk` -- position first, then a name belonging to exactly one player -- plus TEAM,
+> which the first version of this fix omitted and which turned out to be load-bearing: `nameKey`
+> strips generational suffixes on purpose, so **Marvin Harrison Jr. collapses onto his father**, and
+> staging holds only the FATHER (WR, IND, born 1973). Position matches, so a name+position lookup
+> returns a Hall of Famer who retired in 2008 and prints **53** on a 24-year-old. Requiring the staged
+> row not to contradict the board's team rejects him and falls back to the bio row, which is his son's
+> (24.1). That regression was introduced by this work and caught by diffing the top 100 rows, not by a
+> test -- so it has one now.
+>
+> EXPERIENCE has no staged equivalent, so the bio `exp` is kept only where its birth date agrees with
+> staging's; otherwise the row is somebody else's and so is his experience. Blank experience rises
+> 40 -> 65 of 523 and blank age 40 -> 42. Those are cells where the honest answer is "we do not know
+> which of two men this is". **Top-100 board rows changed: 3 ages, 4 experience values.**
+>
+> The age CURVE is unaffected -- it reads `bySk` and always did. This was a presentation defect, which
+> is why it survived: every model was right and the thing people look at was wrong.
+>
+> ---
+>
+> ### What this phase did NOT do
+>
+> - **`DEFAULT_LEVERS` is untouched**, including `aggr`, despite the sweep above. Moving a shipped
+>   lever is the owner's decision and belongs to its own measurement.
+> - The conditional curve is measured in the backtest WITHOUT its ECR level half (see the two limits
+>   above), so the backtested arm is strictly weaker than the shipped board.
+> - Same-week teammate correlation is a recorded regression (+0.348 -> +0.107), deferred to Phase 2.
+
 > ## The AGE CURVE ships, on R-squared evidence, with the championship number recorded as directional (2026-09-07)
 >
 > The rank curve knows nothing about WHO holds a rank -- a 33-year-old back and a 25-year-old back

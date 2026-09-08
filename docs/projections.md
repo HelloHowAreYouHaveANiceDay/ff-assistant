@@ -15,9 +15,34 @@ all()                     -> the player table
 `loadProjections(pointsCsv, defCsv)` loads from the CSVs the tools build. Demo: `ff project
 "Bijan Robinson" --vs KC`.
 
+## The season curve is a CONDITIONAL EXPECTATION, not an order statistic (2026-09-08)
+
+`ff projections` builds `data/points.csv` by looking each player's ECR rank up in a curve. Which
+curve is the load-bearing choice, and it was wrong until 2026-09-08.
+
+- **order statistic** (what shipped before, still reachable via `--curve orderstat`): the mean season
+  of the k-th best FINISHER. That is by construction the best of everyone who could have finished
+  there, so it carries the winner's luck of whoever won the slot.
+- **conditional** (the default): `E[points | this player enters ranked k]` -- the average over
+  everyone who entered at that rank, busts included.
+
+They differ by 20-35% at the top, and the error concentrates where a dollar is most expensive. VOR of
+the #1 player, which is the number the whole auction book is scaled from: QB 169 -> 90, RB 203 -> 135,
+WR 182 -> 101, TE 134 -> 89. See `docs/validation.md` and `scripts/curve-report.mjs`.
+
+The shipped curve takes its **shape** from the prior-year-finish conditional (25 season pairs, n
+50-130 per rank -- stable, but conditioned on the wrong variable) and its **level** from the
+preseason-ECR conditional (the variable the board is actually indexed by, but only six seasons and
+too thin to take a shape from). It is then made monotone non-increasing, because `baselines()` reads
+a replacement level off it and a rising curve would hand a worse player a higher VOR.
+
+Known bias, stated rather than buried: the ECR half can only score players who actually posted a
+season, so a ranked player who never played is a hidden zero that gets dropped. That biases the level
+UP, making the correction conservative.
+
 ## Data (all nflverse, independent of ESPN)
-- **season** -- `data/points.csv` from `tools/build_projections.py` (current FantasyPros redraft
-  ranks -> historical points-by-rank curve; forward-looking, our own).
+- **season** -- `data/points.csv` from `ff projections` (current FantasyPros redraft ranks -> the
+  CONDITIONAL points-by-rank curve above; forward-looking, our own).
 - **defense-vs-position** -- `data/def-ratings.csv` from `tools/build_def_ratings.py` (each team's
   pts allowed to each position vs league avg, latest season, as priors).
 - upgrade path: multi-source consensus (ffanalytics) for `season`; live-updating weekly/ROS once
