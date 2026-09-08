@@ -42,6 +42,10 @@ export interface SimContext {
   clone: (t?: SeasonTeamInput[]) => SeasonTeamInput[];
   board: Map<string, { name: string; pos: string; proj: number; team: string }>;
   ownedIds: Set<string>;
+  /** The league's starting template and FLEX eligibility, so a caller building a hypothetical roster
+   *  can ask whether it is legal (rosterGaps) instead of finding out when the simulator refuses. */
+  slots: string[];
+  flexOk?: string[];
 }
 
 /**
@@ -152,12 +156,17 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     weeks: weeks.length,
     playoffTeams: cfg.playoffTeams ?? 7,     // FROM CONFIG -- a hardcoded 7 is right by coincidence
     slots: cfg.slots,
+    // The league's own FLEX eligibility, which was being dropped here. optimalLineup defaults to
+    // RB/WR/TE, which happens to be right for this league and would be silently wrong for a
+    // superflex one -- a config value the code ignores reads as configured behaviour.
+    flexOk: cfg.flex_ok,
     projSd: 0.30,
     trials, seed, poolRank,
     bootstrap: { outcomes, corr, calibration: "scale" as const },
   });
   return {
     teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds,
+    slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined,
     opts: mkOpts,
     run: (t, trials, seed) => simulateSeasons(t, weeks, vm, mkOpts(trials, seed)),
     clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),

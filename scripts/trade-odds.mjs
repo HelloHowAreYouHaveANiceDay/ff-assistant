@@ -26,6 +26,8 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { openLeague, nameKey } from "../src/league/index.ts";
+import { dstAliasKey } from "../src/draft/values.ts";
+import { rosterGaps } from "../src/draft/season.ts";
 import { simulateSeasons } from "../src/draft/season.ts";
 
 const TRIALS = Number(process.argv[2] ?? 1200);
@@ -58,7 +60,11 @@ try {
   console.log(`  quotable. Trade deltas are, because both arms share the schedule and the seed.\n`);
 }
 const store = new Database("data/ff.db", { readonly: true });
-const cfgFlex = JSON.parse(store.prepare("SELECT value FROM settings WHERE key='config'").get().value).flex_ok;
+const cfgAll = JSON.parse(store.prepare("SELECT value FROM settings WHERE key='config'").get().value);
+const cfgFlex = cfgAll.flex_ok;
+// FROM CONFIG. This was a hardcoded 7 in two places -- right for this league by coincidence, and
+// silently wrong for any other. Same class as the flex_ok the simulator was ignoring.
+const PLAYOFF_TEAMS = cfgAll.playoffTeams ?? 7;
 const byeOf = new Map();
 const season = lg ? lg.season : 2026;
 for (const r of store.prepare(
@@ -84,9 +90,13 @@ if (!offline) {
     board.set(r.player_id, { name: j.Player, pos: j.Pos, proj: j.ProjPts || 0, team: j.Team || "" });
   }
   const byTeam = new Map();
+  const dropped = [];
   for (const r of store.prepare("SELECT player_id, team_id, owner, team_abbrev FROM ownership WHERE league_id=?").all(lgRow.league_id)) {
-    const b = board.get(r.player_id);
-    if (!b) continue;                                   // DSTs the board does not carry
+    // ESPN keys a defense by nickname ("packers"), the board by abbreviation ("gb"). This line used
+    // to read `if (!b) continue; // DSTs the board does not carry` -- the board carries all 32, and
+    // that comment turned a join failure into documented behaviour for as long as anyone read it.
+    const b = board.get(r.player_id) ?? board.get(dstAliasKey(r.player_id) ?? "");
+    if (!b) { dropped.push(r.player_id); continue; }
     if (!byTeam.has(r.team_id)) byTeam.set(r.team_id, { id: r.team_id, name: r.team_abbrev || r.owner, roster: [] });
     byTeam.get(r.team_id).roster.push({ ...b, bye: byeOf.get(nameKey(b.name)) ?? null });
   }
@@ -96,6 +106,7 @@ if (!offline) {
   slots = cfgRow.slots;
   regWeeks = cfgRow.regWeeks ?? 14;
   console.log(`  offline rosters: ${baseTeams.length} teams, we are index ${meIdx} (${baseTeams[meIdx]?.name})`);
+  if (dropped.length) console.log(`  WARNING: ${dropped.length} rostered players matched no board row: ${dropped.slice(0, 10).join(", ")}`);
 }
 
 const weeks = [];
@@ -133,7 +144,7 @@ for (const line of readFileSync("data/points.csv", "utf8").trim().split(/\r?\n/)
 }
 if (lg) await lg.close();
 
-const OPTS = { weeks: weeks.length, playoffTeams: 7, slots, projSd: 0.30, trials: TRIALS, seed: SEED, poolRank,
+const OPTS = { weeks: weeks.length, playoffTeams: PLAYOFF_TEAMS, slots, flexOk: cfgFlex, projSd: 0.30, trials: TRIALS, seed: SEED, poolRank,
   bootstrap: { outcomes, corr: corrModel, calibration: "scale" } };
 
 // ONE simulation returns every team's odds, so read both sides out of the same call. The first
@@ -194,8 +205,25 @@ for (let ti = 0; ti < baseTeams.length; ti++) {
     }
   }
 }
-const only = process.argv.includes("--rb") ? cand.filter((c) => c.get.pos === "RB") : cand;
-console.log(`evaluating ${only.length} one-for-one swaps at ${TRIALS} trials each...\n`);
+const wanted = process.argv.includes("--rb") ? cand.filter((c) => c.get.pos === "RB") : cand;
+
+// A swap that leaves EITHER side unable to field a lineup is not a trade anyone would make -- giving
+// away your only quarterback for a receiver means you immediately claim a replacement quarterback,
+// not that you start nobody. Before the roster guard existed these were simulated anyway and priced
+// with an empty slot; now they would abort the whole sweep on the first one. Filter them out and say
+// how many, so the exclusion is visible rather than silent.
+const legal = [], illegal = [];
+for (const c of wanted) {
+  const mine = baseTeams[meIdx].roster.filter((p) => p.name !== c.give.name).concat([c.get]);
+  const theirs = baseTeams[c.ti].roster.filter((p) => p.name !== c.get.name).concat([c.give]);
+  const gaps = rosterGaps(
+    [{ id: "me", name: "us", roster: mine }, { id: "them", name: baseTeams[c.ti].name, roster: theirs }],
+    slots, cfgFlex,
+  );
+  (gaps.length ? illegal : legal).push(c);
+}
+const only = legal;
+console.log(`evaluating ${only.length} one-for-one swaps at ${TRIALS} trials each${illegal.length ? " (" + illegal.length + " skipped: would leave a side unable to fill a slot)" : ""}...\n`);
 
 // The unchanged baseline for EVERY team, computed once. Their "before" does not depend on which
 // trade we are evaluating, so recomputing it per candidate bought nothing.
@@ -214,7 +242,7 @@ const baseAll = runAll(baseTeams);
 // BIT-identical before the sweep starts.
 const { runPool, assertDeterministic } = await import("../src/draft/simPool.ts");
 const poolInit = {
-  baseTeams, weeks, slots, playoffTeams: 7, projSd: 0.30, poolRank,
+  baseTeams, weeks, slots, flexOk: cfgFlex, playoffTeams: PLAYOFF_TEAMS, projSd: 0.30, poolRank,
   varianceModelPath: "data/variance-model.json",
   outcomesPath: "data/rank-outcomes.json",
   corrPath: "data/correlation-model.json",

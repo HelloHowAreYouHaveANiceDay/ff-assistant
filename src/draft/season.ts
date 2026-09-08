@@ -146,6 +146,30 @@ export function assertRostersCanFillLineup(
   slots: string[],
   flexOk?: Iterable<string>,
 ): void {
+  const problems = rosterGaps(teams, slots, flexOk);
+  if (problems.length) {
+    throw new Error(
+      `roster cannot fill the lineup -- these slots would score zero in EVERY week of EVERY trial, ` +
+      `which is a data defect and not a football outcome:\n  ${problems.join("\n  ")}\n` +
+      `If partial rosters are genuinely intended (a mid-draft simulation, say), pass ` +
+      `allowIncompleteRosters: true to say so deliberately.`,
+    );
+  }
+}
+
+/**
+ * The same check, reported rather than thrown.
+ *
+ * Callers that CONSTRUCT hypothetical rosters need to ask the question before simulating, not be
+ * stopped afterwards -- scripts/waiver-check.mjs proposes dropping each player in turn, and dropping
+ * the only kicker is a proposal to evaluate and reject, not a crash. Returns one line per gap, empty
+ * when every team is legal.
+ */
+export function rosterGaps(
+  teams: SeasonTeamInput[],
+  slots: string[],
+  flexOk?: Iterable<string>,
+): string[] {
   const flex = new Set(flexOk ?? ["RB", "WR", "TE"]);
   const start = slots.filter((s) => s !== "BE" && s !== "BENCH" && s !== "IR");
   const need: Record<string, number> = {};
@@ -164,14 +188,7 @@ export function assertRostersCanFillLineup(
     for (const pos of flex) spare += Math.max(0, (have[pos] ?? 0) - (need[pos] ?? 0));
     if (spare < flexN) problems.push(`${t.name || t.id}: ${spare} flex-eligible players spare of the fixed slots but the lineup starts ${flexN} FLEX`);
   }
-  if (problems.length) {
-    throw new Error(
-      `roster cannot fill the lineup -- these slots would score zero in EVERY week of EVERY trial, ` +
-      `which is a data defect and not a football outcome:\n  ${problems.join("\n  ")}\n` +
-      `If partial rosters are genuinely intended (a mid-draft simulation, say), pass ` +
-      `allowIncompleteRosters: true to say so deliberately.`,
-    );
-  }
+  return problems;
 }
 
 export function simulateSeasons(
@@ -250,7 +267,7 @@ export function simulateSeasons(
             const actual = onBye || !pp ? null : (drawn.get(pp) ?? 0);
             return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
           });
-          const res = optimalLineup(players, opts.slots);
+          const res = optimalLineup(players, opts.slots, opts.flexOk);
           let total = 0;
           for (const s of res.starters) { const hit = players.find((x) => x.name === s.name); if (hit?.actual != null) total += hit.actual; }
           return total;
@@ -271,7 +288,7 @@ export function simulateSeasons(
         });
         // Lineup is set on the TRUE mean (what a competent manager approximates), scored on the
         // sampled week -- never on the sampled value itself, which would be lookahead.
-        const res = optimalLineup(players, opts.slots);
+        const res = optimalLineup(players, opts.slots, opts.flexOk);
         let total = 0;
         for (const s of res.starters) {
           const hit = players.find((x) => x.name === s.name);
@@ -310,7 +327,7 @@ export function simulateSeasons(
           const actual = healthy ? sampleWeek(trueMean.get(p) ?? 0, cv, () => unitDraw(seedNum, trial, 100 + poRound, pid(p.name), PURPOSE.playoffPerf)) : null;
           return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
         });
-        const res = optimalLineup(players, opts.slots);
+        const res = optimalLineup(players, opts.slots, opts.flexOk);
         let total = 0;
         for (const s of res.starters) { const hit = players.find((x) => x.name === s.name); if (hit?.actual != null) total += hit.actual; }
         return total;

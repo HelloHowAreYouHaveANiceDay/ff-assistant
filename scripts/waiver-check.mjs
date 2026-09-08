@@ -14,6 +14,7 @@
 // Several seeds per option, and the standard error is reported. Drop candidates sit close together
 // by construction, so a ranking without its own error bars would be an invitation to read noise.
 import { loadSimContext } from "../src/draft/simContext.ts";
+import { rosterGaps } from "../src/draft/season.ts";
 
 const ADD = process.argv[2] ?? "Braelon Allen";
 const TRIALS = Number(process.argv[3] ?? 3000);
@@ -41,8 +42,20 @@ console.log(`ADD ${ADD} (${addP.pos}, ${addP.proj.toFixed(0)} proj) -- ${TRIALS}
 console.log(`  BASE: ${mean(baseBySeed).toFixed(2)}% title\n`);
 console.log("  drop                   pos   proj    title after   delta    +/-SE");
 
-const rows = [];
+// Some drops are not options at all. Dropping the only kicker to roster a fourth back leaves a slot
+// that scores zero every week, and no manager does that -- he claims another kicker instead. Before
+// the roster guard existed this script simulated it anyway and returned a number; now it would throw
+// mid-run. Neither is right: the honest answer is to name the candidate and say why it is excluded,
+// because scoring it as an empty slot overstates the cost of a move nobody would make that way.
+const rows = [], illegal = [];
 for (const cand of baseTeams[meIdx].roster) {
+  const probe = clone();
+  probe[meIdx].roster = probe[meIdx].roster.filter((p) => p.name !== cand.name).concat([{ ...addP }]);
+  const gaps = rosterGaps([probe[meIdx]], ctx.slots, ctx.flexOk);
+  if (gaps.length) {
+    illegal.push({ name: cand.name, pos: cand.pos, why: gaps[0].replace(/^[^:]*:\s*/, "") });
+    continue;
+  }
   const after = SEEDS.map((s, i) => {
     const teams = clone();
     teams[meIdx].roster = teams[meIdx].roster.filter((p) => p.name !== cand.name)
@@ -55,6 +68,11 @@ rows.sort((a, b) => b.d - a.d);
 for (const r of rows) {
   console.log(`  ${r.name.slice(0, 21).padEnd(21)} ${r.pos.padEnd(4)} ${r.proj.toFixed(0).padStart(5)}  ` +
     `${(mean(baseBySeed) + r.d).toFixed(2)}%`.padStart(11) + `  ${(r.d >= 0 ? "+" : "") + r.d.toFixed(2)}pp`.padStart(9) + `  +/-${r.se.toFixed(2)}`);
+}
+if (illegal.length) {
+  console.log(`\n  NOT REAL OPTIONS -- dropping these leaves a slot nothing can fill, so you would be`);
+  console.log(`  claiming a replacement at that position instead, not fielding an empty one:`);
+  for (const r of illegal) console.log(`    ${r.name.slice(0, 21).padEnd(21)} ${r.pos.padEnd(4)} -- ${r.why}`);
 }
 console.log(`
   A positive delta means the claim is worth making by dropping that man. Options whose deltas
