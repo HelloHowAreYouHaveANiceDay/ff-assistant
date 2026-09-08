@@ -85,7 +85,7 @@ if (!cand.length) { console.log("  nothing within the value band -- widen it wit
 // --- simulate ---------------------------------------------------------------------------------------
 const { runPool, assertDeterministic } = await import("../src/draft/simPool.ts");
 const poolInit = {
-  baseTeams: teams, weeks: ctx.weeks, slots, flexOk,
+  baseTeams: teams, weeks: ctx.weeks, slots, flexOk, replacement: ctx.replacement,
   playoffTeams: cfg.playoffTeams ?? 7, projSd: 0.30,
   poolRank: (() => {
     const byPos = {}, m = new Map();

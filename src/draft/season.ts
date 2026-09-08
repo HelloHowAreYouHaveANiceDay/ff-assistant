@@ -187,9 +187,14 @@ export function assertRostersCanFillLineup(
   teams: SeasonTeamInput[],
   slots: string[],
   flexOk?: Iterable<string>,
+  replacement?: Record<string, number>,
 ): void {
   const problems = rosterGaps(teams, slots, flexOk);
-  if (problems.length) {
+  if (!problems.length) return;
+
+  // WITHOUT a streaming floor the original premise holds exactly: the slot scores zero in every week
+  // of every trial, which is never a football outcome. Refuse.
+  if (!replacement) {
     throw new Error(
       `roster cannot fill the lineup -- these slots would score zero in EVERY week of EVERY trial, ` +
       `which is a data defect and not a football outcome:\n  ${problems.join("\n  ")}\n` +
@@ -197,6 +202,31 @@ export function assertRostersCanFillLineup(
       `allowIncompleteRosters: true to say so deliberately.`,
     );
   }
+
+  // WITH a streaming floor the shape alone no longer decides, because punting a position and
+  // streaming it weekly is a real strategy and the simulator can now price it. What still cannot
+  // happen is MANY teams short at the SAME position: sixteen managers do not independently abandon
+  // the same mandatory slot, and that pattern is what a failed join looks like from the inside --
+  // it is precisely the signature of every roster in the league losing its defense to a nickname vs
+  // abbreviation mismatch. So the test moves from "is this roster odd" to "is this shortfall
+  // SYSTEMATIC", which is the question that actually separates a data defect from a decision.
+  const shortByPos: Record<string, number> = {};
+  for (const line of problems) {
+    const m = /has \d+ (\w+) but the lineup starts/.exec(line);
+    if (m) shortByPos[m[1]] = (shortByPos[m[1]] ?? 0) + 1;
+  }
+  const threshold = Math.max(2, Math.ceil(teams.length * 0.25));
+  const systematic = Object.entries(shortByPos).filter(([, n]) => n >= threshold);
+  if (systematic.length) {
+    throw new Error(
+      `${systematic.map(([pos, n]) => `${n} of ${teams.length} teams have no ${pos}`).join("; ")} -- ` +
+      `that many teams do not independently punt the same mandatory slot, so this is a data defect ` +
+      `(a failed join upstream), not a roster choice:\n  ${problems.slice(0, 8).join("\n  ")}\n` +
+      `If it really is intended, pass allowIncompleteRosters: true.`,
+    );
+  }
+  // One or two teams short, with streaming configured: legal, priced, and not worth a warning on
+  // every call -- the sweeps construct thousands of these deliberately.
 }
 
 /**
@@ -239,7 +269,7 @@ export function simulateSeasons(
   vm: VarianceModel,
   opts: SeasonOpts,
 ): SeasonOdds[] {
-  if (!opts.allowIncompleteRosters) assertRostersCanFillLineup(teams, opts.slots, opts.flexOk);
+  if (!opts.allowIncompleteRosters) assertRostersCanFillLineup(teams, opts.slots, opts.flexOk, opts.replacement);
   const N = teams.length;
   // IDENTITY-KEYED DRAWS. Every random value below is a pure function of (seed, trial, week,
   // player, purpose), so a shared player lives through the SAME season in two rosters that differ

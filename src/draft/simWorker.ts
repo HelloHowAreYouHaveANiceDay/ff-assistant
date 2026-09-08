@@ -24,6 +24,10 @@ interface InitData {
   slots: string[];
   /** The league flex_ok; without it the worker silently defaults to RB/WR/TE. */
   flexOk?: string[];
+  /** The streaming floor. Omitting it makes every worker result a DIFFERENT model from the caller's
+   *  own baseline -- arms scored with empty slots at zero, base scored with replacement level -- and
+   *  the two would have been printed side by side in one table. */
+  replacement?: Record<string, number>;
   playoffTeams: number;
   projSd: number;
   poolRank: [string, { rank: number; of: number }][];
@@ -57,7 +61,7 @@ const poolRank = new Map(init.poolRank);
 function run(teams: SeasonTeamInput[], trials: number, seed: number) {
   return simulateSeasons(teams, init.weeks, vm, {
     weeks: init.weeks.length, playoffTeams: init.playoffTeams, slots: init.slots,
-    projSd: init.projSd, trials, seed, poolRank, flexOk: init.flexOk,
+    projSd: init.projSd, trials, seed, poolRank, flexOk: init.flexOk, replacement: init.replacement,
     bootstrap: { outcomes, corr, calibration: "scale" },
   });
 }

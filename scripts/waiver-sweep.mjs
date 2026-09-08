@@ -59,16 +59,20 @@ for (const [pos, list] of Object.entries(byPos)) {
 cands.sort((a, b) => b.proj - a.proj);
 const adds = cands.slice(0, TOP);
 
-// --- which drops are legal, per add -----------------------------------------------------------------
-const pairs = [], illegal = new Map();
+// --- which drops leave us PUNTING a slot -------------------------------------------------------------
+// These used to be excluded outright, on the grounds that dropping your only kicker means fielding
+// nobody. That was true when an unfillable slot scored zero. It is not true now: with a streaming
+// floor the slot scores replacement level, so punting a position and streaming it weekly is a real
+// strategy and the simulator can price it -- which is the whole reason to have modelled streaming.
+//
+// They are still marked, because the simulator prices the STREAM but not the hassle: you have to
+// remember every week, and you are picking from what is left after fifteen other managers.
+const pairs = [];
 for (const add of adds) {
   for (const drop of mine) {
     const after = mine.filter((p) => p.name !== drop.name).concat([add]);
-    if (rosterGaps([{ id: "me", name: "us", roster: after }], slots, flexOk).length) {
-      illegal.set(drop.name, drop.pos);
-      continue;
-    }
-    pairs.push({ add, drop });
+    const punts = rosterGaps([{ id: "me", name: "us", roster: after }], slots, flexOk).length > 0;
+    pairs.push({ add, drop, punts });
   }
 }
 console.log(`WAIVER SWEEP -- ${adds.length} free agents x legal drops = ${pairs.length} claims`);
@@ -103,7 +107,7 @@ console.log(`  BASE: ${base.toFixed(2)}% title -- a delta under about ${noise.to
 // job (theirIdx -1, the free agent carried on the job itself).
 const { runPool } = await import("../src/draft/simPool.ts");
 const poolInit = {
-  baseTeams: teams, weeks: ctx.weeks, slots, flexOk,
+  baseTeams: teams, weeks: ctx.weeks, slots, flexOk, replacement: ctx.replacement,
   playoffTeams: cfgPlayoffTeams, projSd: 0.30, poolRank,
   varianceModelPath: "data/variance-model.json",
   outcomesPath: "data/rank-outcomes.json",
@@ -125,9 +129,9 @@ const out = await runPool(poolInit, jobs, {
   onProgress: (d, t) => { if (d % 100 === 0 || d === t) process.stderr.write(`  ${d}/${t} (${((Date.now() - t0) / d).toFixed(0)}ms each)\n`); },
 });
 const rows = [];
-pairs.forEach(({ add, drop }, i) => {
+pairs.forEach(({ add, drop, punts }, i) => {
   const d = SEEDS.map((_, k) => out[i * SEEDS.length + k].mine - baseBySeed[k]);
-  rows.push({ add, drop, d: mean(d), spread: Math.abs(d[0] - d[1]) });
+  rows.push({ add, drop, punts, d: mean(d), spread: Math.abs(d[0] - d[1]) });
 });
 rows.sort((a, b) => b.d - a.d);
 
@@ -137,7 +141,7 @@ for (const r of rows.slice(0, 18)) {
   const flag = r.d > noise ? "" : "   (inside noise)";
   console.log(`  ${r.add.name.slice(0, 20).padEnd(20)} ${r.add.pos.padEnd(4)} ${r.add.proj.toFixed(0).padStart(5)}  ` +
     `${r.drop.name.slice(0, 20).padEnd(20)} ${((r.d >= 0 ? "+" : "") + r.d.toFixed(2) + "pp").padStart(8)}   ` +
-    `${r.spread.toFixed(2)}${flag}`);
+    `${r.spread.toFixed(2)}${r.punts ? "  PUNT" : ""}${flag}`);
 }
 
 // Best claim per ADD, which is the form the decision actually takes: you claim a player, then decide
@@ -150,12 +154,20 @@ console.log("  add                   pos  proj   drop him              delta");
 for (const r of perAdd) {
   console.log(`  ${r.add.name.slice(0, 20).padEnd(20)} ${r.add.pos.padEnd(4)} ${r.add.proj.toFixed(0).padStart(5)}  ` +
     `${r.drop.name.slice(0, 20).padEnd(20)} ${((r.d >= 0 ? "+" : "") + r.d.toFixed(2) + "pp").padStart(8)}` +
-    `${r.d > noise ? "" : "   (inside noise)"}`);
+    `${r.punts ? "  PUNT" : ""}${r.d > noise ? "" : "   (inside noise)"}`);
 }
 
-if (illegal.size) {
-  console.log(`\n  NEVER DROPPABLE (only body at a mandatory slot -- you would claim a replacement instead):`);
-  console.log(`    ${[...illegal].map(([n, p]) => `${n} (${p})`).join(", ")}`);
+const puntRows = rows.filter((r) => r.punts).sort((a, b) => b.d - a.d);
+if (puntRows.length) {
+  console.log(`\n  BEST PUNT (drop the only body at a slot and stream it weekly)`);
+  console.log("  add                   pos  proj   drop him              delta");
+  for (const r of puntRows.slice(0, 5)) {
+    console.log(`  ${r.add.name.slice(0, 20).padEnd(20)} ${r.add.pos.padEnd(4)} ${r.add.proj.toFixed(0).padStart(5)}  ` +
+      `${r.drop.name.slice(0, 20).padEnd(20)} ${((r.d >= 0 ? "+" : "") + r.d.toFixed(2) + "pp").padStart(8)}` +
+      `${r.d > noise ? "" : "   (inside noise)"}`);
+  }
+  console.log(`  Priced at the streaming floor, which is generous: it assumes you remember every week`);
+  console.log(`  and that the player is still there after fifteen other managers have looked.`);
 }
 const clear = rows.filter((r) => r.d > noise);
 console.log(`\n  ${clear.length} of ${rows.length} claims clear the noise floor.`);

@@ -50,6 +50,46 @@ test("the opt-out works, and is the only way through", () => {
   assert.doesNotThrow(() => assertRostersCanFillLineup(team(noDst), SLOTS.filter((s) => s !== "DST")));
 });
 
+// --- SYSTEMATIC vs INDIVIDUAL -----------------------------------------------------------------------
+// Once streaming is modelled, an unfillable slot no longer scores zero -- it scores replacement level,
+// and punting a position to stream it weekly becomes a real strategy the simulator can price. So the
+// guard can no longer refuse on SHAPE alone without blocking legitimate analysis.
+//
+// What still cannot happen is many teams short at the same position: sixteen managers do not
+// independently abandon the same mandatory slot, and that pattern is exactly what the missing-defense
+// join failure looked like. The test therefore moved from "is this roster odd" to "is this shortfall
+// systematic", and these pin both sides of that line.
+const REP = { QB: 13, RB: 6, WR: 8, TE: 7, K: 9, DST: 7 };
+const league = (n: number, missing: string) => Array.from({ length: 16 }, (_, i) => ({
+  id: String(i), name: `T${i}`,
+  roster: ([["QB", 300], ["RB", 250], ["RB", 200], ["WR", 240], ["WR", 210], ["WR", 180], ["TE", 150], ["K", 120], ["DST", 110]] as [string, number][])
+    .filter(([p]) => !(i < n && p === missing))
+    .map(([p, v]) => ({ name: `${p}${v}-t${i}`, pos: p, proj: v, bye: null })),
+}));
+const FULL_SLOTS = ["QB", "RB", "WR", "TE", "FLEX", "FLEX", "DST", "K", "BE"];
+
+test("SYSTEMATIC shortfall is still refused even with streaming on -- the original bug", () => {
+  assert.throws(() => assertRostersCanFillLineup(league(16, "DST"), FULL_SLOTS, ["RB", "WR", "TE"], REP),
+    /16 of 16 teams have no DST/);
+});
+
+test("ONE team punting a position is allowed once streaming can price it", () => {
+  assert.doesNotThrow(() => assertRostersCanFillLineup(league(1, "DST"), FULL_SLOTS, ["RB", "WR", "TE"], REP));
+  assert.doesNotThrow(() => assertRostersCanFillLineup(league(3, "DST"), FULL_SLOTS, ["RB", "WR", "TE"], REP));
+});
+
+test("the systematic threshold bites at a quarter of the league", () => {
+  // Stated as a test rather than a comment so the boundary cannot drift unnoticed.
+  assert.throws(() => assertRostersCanFillLineup(league(4, "DST"), FULL_SLOTS, ["RB", "WR", "TE"], REP), /4 of 16/);
+});
+
+test("with NO streaming floor the original premise holds and any gap is refused", () => {
+  // The old rationale is exactly true here: the slot really would score zero every week, so a single
+  // team short is still a defect. This is what keeps unmigrated callers safe.
+  assert.throws(() => assertRostersCanFillLineup(league(1, "DST"), FULL_SLOTS, ["RB", "WR", "TE"]),
+    /score zero in EVERY week/);
+});
+
 test("flexOk is honoured -- a superflex league can fill FLEX with the spare QB", () => {
   // Guards against the check hardcoding RB/WR/TE the way optimalLineup once did.
   const spec: [string, number][] = [["QB", 3], ["RB", 1], ["WR", 1], ["TE", 1], ["K", 1], ["DST", 1]];
