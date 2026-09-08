@@ -100,7 +100,32 @@ for (const [key, bd] of bio) {
   const y = Number(String(bd).slice(0, 4));
   if (Number.isFinite(y) && y > 1940 && y < 2015) birthYear[key] = y;   // key is "POS|Name"
 }
-const model = { fittedFrom: "data/history-points.csv", shrinkN: SHRINK_N, minAge: MIN_AGE, maxAge: MAX_AGE, pos: {}, birthYear };
+// ALSO KEY BY player_sk. The POS|Name map stays as the fallback for players the identity registry
+// does not know (mostly pre-2019), but where a surrogate key exists it is what the projection path
+// uses -- a stable key cannot be knocked onto the wrong man by a suffix, a punctuation change or a
+// position reclassification, which is how a father's birth year reached his son in the first place.
+const bySk = {};
+try {
+  const Database = (await import("better-sqlite3")).default;
+  const { nameKey } = await import("../src/draft/values.ts");
+  const idb = new Database("data/ff.db", { readonly: true });
+  const byNK = new Map();
+  for (const r of idb.prepare("SELECT name_key, position, player_sk FROM stg_player").all()) byNK.set(r.name_key + "|" + r.position, r.player_sk);
+  idb.close();
+  for (const [key, y] of Object.entries(birthYear)) {
+    const i = key.indexOf("|");
+    const pos = key.slice(0, i), nm = key.slice(i + 1);
+    const sk = byNK.get(nameKey(nm) + "|" + pos);
+    if (sk != null) bySk[String(sk)] = y;
+  }
+  console.log(`  player_sk birth years: ${Object.keys(bySk).length} resolved from ${Object.keys(birthYear).length} name keys`);
+} catch (e) {
+  // Reported, not swallowed. A silent failure here would leave bySk empty and every projection would
+  // quietly fall back to the name map -- which still works, and would hide that the stable key was
+  // never applied at all.
+  console.log(`  player_sk map SKIPPED: ${e.message}  (the POS|Name fallback still applies)`);
+}
+const model = { fittedFrom: "data/history-points.csv", shrinkN: SHRINK_N, minAge: MIN_AGE, maxAge: MAX_AGE, pos: {}, birthYear, bySk };
 // SMOOTH, then NORMALISE. A raw per-age cell mean fails twice, and a first version of this shipped
 // both failures:
 //

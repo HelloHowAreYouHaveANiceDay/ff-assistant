@@ -22,6 +22,7 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { ageFactor, ageCoverage, type AgeCurve } from "../draft/age.js";
 import { opportunityFactor, opportunityCoverage, type OpportunityModel } from "../draft/opportunity.js";
 import { openDb, getConfig } from "../db/db.js";
+import { nameKey } from "../draft/values.js";
 import { dataPath } from "./paths.js";
 
 /**
@@ -85,10 +86,22 @@ export async function project(dbPath?: string, outPath = dataPath("points.csv"),
 
   // ECR players ordered by ecr; within-position 0-indexed rank = k for the curve lookup
   const ecrRows = db.prepare("SELECT p.name, p.position AS pos, r.overall_rank AS ecr FROM ranking r JOIN player p USING(player_id) WHERE r.source='fantasypros_ecr' AND r.season=@s ORDER BY r.overall_rank").all({ s: season }) as { name: string; pos: string; ecr: number }[];
+  // THE STABLE KEY, resolved once here and carried into points.csv. Everything downstream -- values,
+  // the board, the simulator, the age and opportunity models -- has been joining on a normalised
+  // NAME, which is what let a father's birth year be applied to his son. Resolving identity at the
+  // point the projection is produced means no consumer has to do it again, differently.
+  const skRows = db.prepare("SELECT name_key, position, player_sk FROM stg_player").all() as { name_key: string; position: string; player_sk: number }[];
+  const skOf = new Map<string, number>(), skByName = new Map<string, number | null>();
+  for (const r of skRows) {
+    skOf.set(`${r.name_key}|${r.position}`, r.player_sk);
+    skByName.set(r.name_key, skByName.has(r.name_key) ? null : r.player_sk);   // null = shared name
+  }
   db.close();
+  const resolveSk = (name: string, pos: string): number | null =>
+    skOf.get(`${nameKey(name)}|${pos.toUpperCase()}`) ?? skByName.get(nameKey(name)) ?? null;
 
   const posCount: Record<string, number> = {};
-  const out: [string, string, number][] = [];
+  const out: [string, string, number, number | null][] = [];
   for (const row of ecrRows) {
     const pos = row.pos;
     const r = posCount[pos] ?? 0; posCount[pos] = r + 1; // 0-indexed within position
@@ -101,23 +114,29 @@ export async function project(dbPath?: string, outPath = dataPath("points.csv"),
     // unbounded -- worth stating because two stacked multipliers is exactly where a projection can
     // quietly run away.
     const usageRank = r + 1;                    // opportunity buckets are 1-based; `r` is 0-indexed
+    const sk = resolveSk(row.name, pos);
     const p = Math.round(
       proj(pos, r)
-      * ageFactor(age, row.name, pos, season)
-      * opportunityFactor(opp, row.name, pos, usageRank, season)
+      * ageFactor(age, row.name, pos, season, sk)
+      * opportunityFactor(opp, row.name, pos, usageRank, season, sk)
       * 10) / 10;
     // DST names are already canonical ("SF D/ST") from ingest -- use as-is
-    if (p > 0) out.push([row.name, pos, p]);
+    if (p > 0) out.push([row.name, pos, p, sk]);
   }
+  const withSk = out.filter((o) => o[3] != null).length;
+  console.log(`  player_sk resolved for ${withSk}/${out.length} projections`);
   if (age) {
-    const cov = ageCoverage(age, out.map((o) => ({ name: o[0], pos: o[1] })));
+    const cov = ageCoverage(age, out.map((o) => ({ name: o[0], pos: o[1], sk: o[3] })));
     console.log(`  age curve applied to ${cov.known}/${cov.total} players (the rest keep a multiplier of 1)`);
   }
   if (opp) {
-    const cov = opportunityCoverage(opp, out.map((o) => o[0]), season);
+    const cov = opportunityCoverage(opp, out.map((o) => ({ name: o[0], sk: o[3] })), season);
     console.log(`  opportunity applied to ${cov.known}/${cov.total} players (QB is flat by measurement; rookies keep 1)`);
   }
   out.sort((a, b) => b[2] - a[2]);
-  writeFileSync(outPath, "player,pos,points\n" + out.map(([n, p, pt]) => `${n},${p},${pt}`).join("\n") + "\n", "utf8");
+  // player_sk is APPENDED, never inserted. Fifty-odd readers destructure the first three columns
+  // positionally (`const [name, pos, pts] = line.split(",")`), so a new column at the end is
+  // invisible to them and a new column in the middle would silently shift every value they read.
+  writeFileSync(outPath, "player,pos,points,player_sk\n" + out.map(([n, p, pt, sk]) => `${n},${p},${pt},${sk ?? ""}`).join("\n") + "\n", "utf8");
   return out.length;
 }

@@ -24,12 +24,32 @@ export interface AgeCurve {
   minAge: number;
   maxAge: number;
   pos: Record<string, Record<string, number>>;
-  birthYear: Record<string, number>;
+  birthYear: Record<string, number>;      // "POS|Name" -> year. Fallback for players the registry lacks.
+  bySk?: Record<string, number>;          // player_sk -> year. The stable key; preferred when present.
+}
+
+/** Shared so the sk path and the name path cannot drift into computing the factor differently. */
+function factorFor(curve: AgeCurve, pos: string, age: number): number {
+  if (!Number.isFinite(age)) return 1;
+  const clamped = Math.min(curve.maxAge, Math.max(curve.minAge, age));
+  const f = curve.pos?.[pos]?.[String(clamped)];
+  return typeof f === "number" && f > 0 ? f : 1;
 }
 
 /** Multiplier for a player at `season`; 1 when age is unknown or the position is not fitted. */
-export function ageFactor(curve: AgeCurve | null, name: string, pos: string, season: number): number {
+export function ageFactor(curve: AgeCurve | null, name: string, pos: string, season: number, sk?: number | null): number {
   if (!curve) return 1;
+  // PREFER THE STABLE KEY. bySk is populated by the fit from the identity registry; the POS|Name map
+  // below is the fallback for a player the registry does not know. Name keys are what put a father's
+  // birth year on his son (Antonio Williams, +19.5% on a 29-year-old scored as 22), so where a
+  // surrogate key exists it decides.
+  if (sk != null && curve.bySk) {
+    const by = curve.bySk[String(sk)];
+    if (by) return factorFor(curve, pos, season - by);
+    // A known player with no baked birth year: fall through to the name map rather than returning 1,
+    // since the fallback may still know him. It cannot resolve to a DIFFERENT man than the sk names,
+    // because the sk was resolved from this same (name, position).
+  }
   // KEYED "POS|Name". A name-only key merges distinct people who share one -- almost always father
   // and son in this data -- and it silently put the wrong birth year on 38 names, one of which
   // reached the live board (Antonio Williams the RB, born 1997, aged with the 2004 birth year of
@@ -40,20 +60,16 @@ export function ageFactor(curve: AgeCurve | null, name: string, pos: string, sea
   // which is the correct thing to do when we do not know who someone is.
   const by = curve.birthYear?.[`${pos}|${name}`];
   if (!by) return 1;
-  const age = season - by;
-  if (!Number.isFinite(age)) return 1;
-  const clamped = Math.min(curve.maxAge, Math.max(curve.minAge, age));
-  const f = curve.pos?.[pos]?.[String(clamped)];
-  return typeof f === "number" && f > 0 ? f : 1;
+  return factorFor(curve, pos, season - by);
 }
 
 /** How many of `names` the curve can actually age -- for reporting coverage rather than assuming it. */
-export function ageCoverage(curve: AgeCurve | null, players: { name: string; pos: string }[]): { known: number; total: number } {
+export function ageCoverage(curve: AgeCurve | null, players: { name: string; pos: string; sk?: number | null }[]): { known: number; total: number } {
   if (!curve) return { known: 0, total: players.length };
   let known = 0;
   // Coverage must ask the SAME question ageFactor asks. It previously took bare names and counted
   // name-only hits, which would now report a coverage number the model cannot actually use -- the
   // classic shape of a check that measures something adjacent to the thing it claims to measure.
-  for (const p of players) if (curve.birthYear?.[`${p.pos}|${p.name}`]) known++;
+  for (const p of players) if ((p.sk != null && curve.bySk?.[String(p.sk)]) || curve.birthYear?.[`${p.pos}|${p.name}`]) known++;
   return { known, total: players.length };
 }

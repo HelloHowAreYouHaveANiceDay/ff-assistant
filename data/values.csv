@@ -4,65 +4,66 @@ Bijan Robinson,RB,109
 Ja'Marr Chase,WR,101
 Puka Nacua,WR,92
 Josh Allen,QB,84
-Trey McBride,TE,82
-Jaxon Smith-Njigba,WR,80
-Drake Maye,QB,77
+Trey McBride,TE,81
+Jaxon Smith-Njigba,WR,79
+Drake Maye,QB,76
 Christian McCaffrey,RB,76
 Lamar Jackson,QB,72
-Jonathan Taylor,RB,70
-De'Von Achane,RB,64
+Jonathan Taylor,RB,71
+De'Von Achane,RB,65
 Joe Burrow,QB,61
-James Cook III,RB,58
-Amon-Ra St. Brown,WR,58
+Amon-Ra St. Brown,WR,57
 Jayden Daniels,QB,56
 Jeremiyah Love,RB,56
 Omarion Hampton,RB,53
 Caleb Williams,QB,48
+James Cook III,RB,48
 Drake London,WR,48
-CeeDee Lamb,WR,47
 Jalen Hurts,QB,46
+CeeDee Lamb,WR,46
+Chase Brown,RB,46
 Brock Bowers,TE,46
-Chase Brown,RB,45
-Cam Skattebo,RB,43
+Cam Skattebo,RB,44
 Breece Hall,RB,42
-Ashton Jeanty,RB,41
+Ashton Jeanty,RB,42
 Justin Herbert,QB,40
+Kyren Williams,RB,40
 Trevor Lawrence,QB,39
-Kyren Williams,RB,39
 George Pickens,WR,39
-Justin Jefferson,WR,39
-Quinshon Judkins,RB,35
-Rashee Rice,WR,35
+Justin Jefferson,WR,38
+Quinshon Judkins,RB,36
 Bucky Irving,RB,34
+Rashee Rice,WR,34
 Malik Nabers,WR,34
 Chris Olave,WR,33
-Brock Purdy,QB,32
-Javonte Williams,RB,32
+Javonte Williams,RB,33
 Nico Collins,WR,32
+Brock Purdy,QB,31
 Kenneth Walker III,RB,31
 A.J. Brown,WR,31
 Dak Prescott,QB,30
 Jaxson Dart,QB,29
 Tetairoa McMillan,WR,29
-Zay Flowers,WR,27
+Kyle Pitts Sr.,TE,28
 George Kittle,TE,27
+Zay Flowers,WR,26
+Saquon Barkley,RB,26
 Tyler Warren,TE,26
-Saquon Barkley,RB,25
-D'Andre Swift,RB,24
-Jadarian Price,RB,24
-Travis Etienne Jr.,RB,24
+D'Andre Swift,RB,25
+Jadarian Price,RB,25
 Colston Loveland,TE,23
 DeVonta Smith,WR,22
 Garrett Wilson,WR,22
 Jaylen Waddle,WR,19
+Travis Etienne Jr.,RB,19
 Sam LaPorta,TE,19
 Ladd McConkey,WR,18
 Harold Fannin Jr.,TE,18
 Tucker Kraft,TE,18
 Carnell Tate,WR,17
-Tee Higgins,WR,17
 Travis Kelce,TE,17
 Bo Nix,QB,16
+Tee Higgins,WR,16
 Jameson Williams,WR,16
 Emeka Egbuka,WR,16
 Luther Burden III,WR,16
@@ -70,15 +71,14 @@ Rome Odunze,WR,16
 TreVeyon Henderson,RB,15
 Terry McLaurin,WR,15
 Davante Adams,WR,15
-Kyle Pitts Sr.,TE,15
-Patrick Mahomes II,QB,13
-Derrick Henry,RB,13
+Derrick Henry,RB,14
+Jonathon Brooks,RB,12
 Dallas Goedert,TE,12
-Jonathon Brooks,RB,11
 Christian Watson,WR,11
 Parker Washington,WR,11
+Patrick Mahomes II,QB,10
 Marvin Harrison Jr.,WR,10
-Jaylen Warren,RB,8
+Jaylen Warren,RB,9
 DJ Moore,WR,8
 Brian Thomas Jr.,WR,7
 Juwan Johnson,TE,7
@@ -86,9 +86,9 @@ Dalton Kincaid,TE,7
 Jared Goff,QB,6
 Wan'Dale Robinson,WR,5
 Mike Evans,WR,4
+David Montgomery,RB,4
+Bhayshul Tuten,RB,4
 Matthew Stafford,QB,3
-David Montgomery,RB,3
-Bhayshul Tuten,RB,3
 DK Metcalf,WR,3
 Jake Ferguson,TE,3
 Hunter Henry,TE,3
@@ -103,7 +103,8 @@ Eddy Pineiro,K,2
 DEN D/ST,DST,2
 Tyler Loop,K,2
 Evan McPherson,K,2
-Michael Pittman Jr.,WR,2
+Rico Dowdle,RB,2
+RJ Harvey,RB,2
 Cairo Santos,K,2
 LAR D/ST,DST,2
 Jake Bates,K,2
@@ -128,11 +129,10 @@ Daniel Jones,QB,1
 Cam Ward,QB,1
 Bryce Young,QB,1
 Jacoby Brissett,QB,1
-Rico Dowdle,RB,1
-RJ Harvey,RB,1
 Kenny Gainwell,RB,1
 Michael Wilson,WR,1
 Chris Godwin Jr.,WR,1
+Michael Pittman Jr.,WR,1
 Aaron Rodgers,QB,1
 Courtland Sutton,WR,1
 Rhamondre Stevenson,RB,1
@@ -178,7 +178,6 @@ Jalen Coker,WR,1
 Mark Andrews,TE,1
 Xavier Worthy,WR,1
 Woody Marks,RB,1
-Aaron Jones Sr.,RB,1
 Matthew Golden,WR,1
 Blake Grupe,K,1
 Zach Charbonnet,RB,1
@@ -212,6 +211,8 @@ Jalen McMillan,WR,1
 T.J. Hockenson,TE,1
 TEN D/ST,DST,1
 Jerry Jeudy,WR,1
+Tre' Harris,WR,1
+Aaron Jones Sr.,RB,1
 Tyrone Tracy Jr.,RB,1
 DAL D/ST,DST,1
 Dylan Sampson,RB,1
@@ -221,7 +222,6 @@ Ben Sauls,K,1
 Dontayvion Wicks,WR,1
 NO D/ST,DST,1
 Adonai Mitchell,WR,1
-Tre' Harris,WR,1
 Greg Dulcich,TE,1
 Ja'Kobi Lane,WR,1
 SF D/ST,DST,1
@@ -257,7 +257,6 @@ Mason Taylor,TE,1
 WAS D/ST,DST,1
 Chris Bell,WR,1
 Chad Ryland,K,1
-Brian Robinson Jr.,RB,1
 Zachariah Branch,WR,1
 Colby Parkinson,TE,1
 Calvin Ridley,WR,1
@@ -289,6 +288,7 @@ Jake Tonges,TE,1
 Elic Ayomanor,WR,1
 Sean Tucker,RB,1
 Chimere Dike,WR,1
+Brian Robinson Jr.,RB,1
 Tory Horton,WR,1
 Devaughn Vele,WR,1
 Kaytron Allen,RB,1
@@ -339,15 +339,14 @@ NYJ D/ST,DST,1
 Demond Claiborne,RB,1
 Erick All Jr.,TE,1
 Malik Davis,RB,1
-Chris Brazzell II,WR,1
 George Holani,RB,1
 Hollywood Brown,WR,1
 Jordan James,RB,1
+Anthony Richardson Sr.,QB,1
 Jalen Tolbert,WR,1
 Dohnte Meyers,WR,1
 LeQuint Allen Jr.,RB,1
 Elijah Arroyo,TE,1
-Anthony Richardson Sr.,QB,1
 Jason Sanders,K,1
 Chris Brooks,RB,1
 Isaiah Davis,RB,1
@@ -357,6 +356,7 @@ Jaydon Blue,RB,1
 Noah Gray,TE,1
 Noah Fant,TE,1
 Max Klare,TE,1
+Chris Brazzell II,WR,1
 Konata Mumpfield,WR,1
 MIA D/ST,DST,1
 Ja'Tavion Sanders,TE,1

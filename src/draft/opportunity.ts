@@ -40,7 +40,8 @@ export interface OpportunityModel {
   season: number;
   amplitude: Record<string, number>;
   pos: Record<string, { b0: number; bFd: number; bTs: number; mean: number; amp: number } | null>;
-  players: Record<string, { fd: number; ts: number }>;
+  players: Record<string, { fd: number; ts: number }>;   // "season|Name" -- fallback
+  bySk?: Record<string, { fd: number; ts: number }>;     // "season|player_sk" -- preferred
   bucketMeans: Record<string, Record<string, { fd: number; ts: number }>>;
 }
 
@@ -52,7 +53,7 @@ const LO = 0.75, HI = 1.25;
  * Multiplier for one player at a given within-position rank.
  * `posRank` is 1-based -- the same rank the projection curve is being indexed at.
  */
-export function opportunityFactor(model: OpportunityModel | null, name: string, pos: string, posRank: number, season: number): number {
+export function opportunityFactor(model: OpportunityModel | null, name: string, pos: string, posRank: number, season: number, sk?: number | null): number {
   if (!model) return 1;
   const p = model.pos?.[pos];
   // Two distinct ways a position carries no opinion, and they are NOT the same code path:
@@ -67,7 +68,10 @@ export function opportunityFactor(model: OpportunityModel | null, name: string, 
   // `season` itself would be lookahead -- it would project 2026 using 2026 usage, score beautifully
   // in any backtest, and be worthless in production. The key carries the year precisely so this
   // cannot be got wrong silently.
-  const u = model.players?.[`${season - 1}|${name}`];
+  // PREFER THE STABLE KEY, same rule as the age curve: bySk is keyed "season|player_sk" and decides
+  // when present, with the name map as the fallback for players the registry does not know. The
+  // season stays in both keys because usage is a per-season fact, unlike a birth year.
+  const u = (sk != null ? model.bySk?.[`${season - 1}|${sk}`] : undefined) ?? model.players?.[`${season - 1}|${name}`];
   if (!u) return 1;                                    // no prior-season usage -> no opinion
   if (!Number.isFinite(posRank) || posRank < 1 || posRank > model.maxRank) return 1;
   const bucket = Math.floor((posRank - 1) / model.bucket);
@@ -84,9 +88,9 @@ export function opportunityFactor(model: OpportunityModel | null, name: string, 
 }
 
 /** How many of `names` the model can actually adjust for `season` -- reported, never assumed. */
-export function opportunityCoverage(model: OpportunityModel | null, names: string[], season: number): { known: number; total: number } {
-  if (!model) return { known: 0, total: names.length };
+export function opportunityCoverage(model: OpportunityModel | null, players: { name: string; sk?: number | null }[], season: number): { known: number; total: number } {
+  if (!model) return { known: 0, total: players.length };
   let known = 0;
-  for (const n of names) if (model.players?.[`${season - 1}|${n}`]) known++;
-  return { known, total: names.length };
+  for (const p of players) if ((p.sk != null && model.bySk?.[`${season - 1}|${p.sk}`]) || model.players?.[`${season - 1}|${p.name}`]) known++;
+  return { known, total: players.length };
 }

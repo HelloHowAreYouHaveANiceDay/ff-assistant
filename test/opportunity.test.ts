@@ -104,9 +104,16 @@ test("a zero-usage bucket does not divide by ~0 and blow the factor up", () => {
 });
 
 test("coverage counts prior-season entries for the season asked about", () => {
-  assert.deepEqual(opportunityCoverage(M, ["Heavy", "Light", "Nobody"], 2026), { known: 2, total: 3 });
-  assert.deepEqual(opportunityCoverage(M, ["Heavy", "OldOnly"], 2025), { known: 1, total: 2 });
-  assert.deepEqual(opportunityCoverage(null, ["Heavy"], 2026), { known: 0, total: 1 });
+  // Takes {name, sk} now: coverage must ask the same question opportunityFactor asks, and the
+  // factor prefers the stable key. Passing bare names here would report a coverage number for a
+  // lookup the model no longer performs first.
+  const P = (...ns) => ns.map((name) => ({ name }));
+  assert.deepEqual(opportunityCoverage(M, P("Heavy", "Light", "Nobody"), 2026), { known: 2, total: 3 });
+  assert.deepEqual(opportunityCoverage(M, P("Heavy", "OldOnly"), 2025), { known: 1, total: 2 });
+  assert.deepEqual(opportunityCoverage(null, P("Heavy"), 2026), { known: 0, total: 1 });
+  // ...and the sk path counts too, without a name match.
+  const withSk = { ...M, bySk: { "2025|77": { fd: 4, ts: 0.2 } } };
+  assert.deepEqual(opportunityCoverage(withSk, [{ name: "Unknown", sk: 77 }], 2026), { known: 1, total: 1 });
 });
 
 // --- the SHIPPED model, so a bad refit cannot pass unnoticed ---------------------------------------
