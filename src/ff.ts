@@ -76,6 +76,10 @@ async function main() {
       return cmdBacktest(rest);
     case "build-history":
       return cmdBuildHistory(rest);
+    case "build-features":
+      return cmdBuildFeatures(rest);
+    case "build-picks":
+      return cmdBuildPicks(rest);
     case "scrape-league":
       return cmdScrapeLeague(rest);
     case "ingest-source":
@@ -1350,7 +1354,13 @@ async function cmdBuildHistory(rest: string[]) {
   const range = (valueOf(rest, "--seasons") ?? `2014-${new Date().getFullYear() - 1}`).split("-").map(Number);
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const seasons: number[] = []; for (let y = lo; y <= hi; y++) seasons.push(y);
-  const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db); db.close();
+  const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db);
+  // IDENTITY IS RESOLVED WHERE THE FILE IS PRODUCED, once, and carried in a `player_sk` column --
+  // the same move points.csv already makes. Every fit script downstream has been re-joining these
+  // rows on a display name, which is the join that put one man's birth year on another.
+  const { buildSkResolver } = await import("./data/skResolve.js");
+  const resolver = buildSkResolver(db);
+  db.close();
   // Pass the FULL model when the league has synced one; the bare rules form silently means
   // "K/DST from OUR defaults", which is the gap this closes.
   const { DEFAULT_LEAGUE_SCORING } = await import("./draft/scoring.js");
@@ -1359,8 +1369,11 @@ async function cmdBuildHistory(rest: string[]) {
     ...(c.kicker ? { kicker: c.kicker as never } : {}), ...(c.defense ? { defense: c.defense as never } : {}) };
   const synced = c.kicker && c.defense ? "league-synced" : "DEFAULTS (league has not synced K/DST scoring)";
   console.log(`building history for ${seasons.length} seasons under ${conf.scoring} scoring (rec ${conf.scoring_rules.rec}/pt); K/DST rules: ${synced}...`);
-  const r = await buildHistory(seasons, model);
+  const r = await buildHistory(seasons, model, resolver);
   console.log(`wrote history-points (${r.points} rows) + history-weekly (${r.weekly} rows) for ${r.seasons.length} seasons: ${r.seasons.join(",")}`);
+  const tot = r.resolved + r.unresolved;
+  console.log(`  player_sk resolved for ${r.resolved}/${tot} season rows (${((r.resolved / Math.max(1, tot)) * 100).toFixed(1)}%) ` +
+    `from ${resolver.staged} staged players; unresolved rows are KEPT and carry an empty key`);
 }
 
 // Build per-manager draft tendencies for MY league from its real auction history (prior seasons),
@@ -1635,6 +1648,40 @@ async function cmdBacktest(rest: string[]) {
     console.log(`  wrote ${dumpRows.length} trial rows -> ${dumpPath}`);
   }
   console.log(`  per season: ${perYear.join("  ")}`);
+}
+
+// ONE pipeline for the point-in-time feature tables. See src/features/build.ts for what it replaces.
+async function cmdBuildFeatures(rest: string[]) {
+  const { buildFeatures } = await import("./features/build.js");
+  const range = (valueOf(rest, "--seasons") ?? "1999-2025").split("-").map(Number);
+  const [lo, hi] = [range[0], range[1] ?? range[0]];
+  const seasons: number[] = []; for (let y = lo; y <= hi; y++) seasons.push(y);
+  const t0 = Date.now();
+  const r = await buildFeatures({ dbPath: valueOf(rest, "--db"), seasons, weeks: !rest.includes("--no-weeks") });
+  console.log(`feat_player_season: ${r.seasonRows} rows over ${r.seasons.length} seasons ` +
+    `(${((r.seasonResolved / Math.max(1, r.seasonRows)) * 100).toFixed(1)}% with player_sk)`);
+  console.log(`feat_player_week:   ${r.weekRows} rows ` +
+    `(${((r.weekResolved / Math.max(1, r.weekRows)) * 100).toFixed(1)}% with player_sk)`);
+  console.log(`  season   rows  scored   +ecr  +usage    +age`);
+  for (const s of r.perSeason) {
+    console.log(`  ${s.season}  ${String(s.rows).padStart(5)}  ${String(s.scored).padStart(6)}  ` +
+      `${String(s.withEcr).padStart(5)}  ${String(s.withUsage).padStart(6)}  ${String(s.withAge).padStart(6)}`);
+  }
+  console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+}
+
+// One row per real draft pick this league made, with the consensus as it stood. See features/picks.ts.
+async function cmdBuildPicks(rest: string[]) {
+  const { buildDraftPicks } = await import("./features/picks.js");
+  const r = buildDraftPicks({ dbPath: valueOf(rest, "--db"), recapPath: valueOf(rest, "--recap") });
+  console.log(`fact_draft_pick: ${r.rows} rows`);
+  console.log(`  season  picks  total$   sk%   consensus  as-of`);
+  for (const s of r.perSeason) {
+    console.log(`  ${s.season}  ${String(s.picks).padStart(5)}  ${String(s.total).padStart(6)}  ` +
+      `${((s.resolved / Math.max(1, s.picks)) * 100).toFixed(0).padStart(3)}%  ` +
+      `${String(s.withConsensus).padStart(9)}  ${s.asOf ?? "(none)"}`);
+  }
+  if (r.absent.length) console.log(`  seasons ABSENT from the store: ${r.absent.join(", ")}`);
 }
 
 async function cmdDumpValues(rest: string[]) {

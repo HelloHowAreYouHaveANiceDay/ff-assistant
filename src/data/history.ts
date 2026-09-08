@@ -3,9 +3,10 @@
 // league uses (half-PPR, PPR, standard...). Was a Python one-off (build_history.py) hardcoded to
 // No-PPR; this is the config-driven TS port. Fetches nflverse stats_player_week per season.
 import { writeFileSync } from "node:fs";
-import { fetchCsv, pick, URLS, playerWeekUrl, teamWeekUrl, canonTeam } from "./nflverse.js";
+import { fetchCsvCached, pick, URLS, playerWeekUrl, teamWeekUrl, canonTeam, cacheTag } from "./nflverse.js";
 import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, scoreIdpWeek, idpGroup, espnPointsAllowed, DEFAULT_LEAGUE_SCORING, type LeagueScoring, type ScoringRules } from "../draft/scoring.js";
 import { dataPath } from "./paths.js";
+import { dstKey, type SkResolver } from "./skResolve.js";
 
 const SKILL_POS = new Set(["QB", "RB", "WR", "TE"]);
 const clean = (s: string) => s.replace(/,/g, " ").trim();
@@ -27,7 +28,7 @@ const clean = (s: string) => s.replace(/,/g, " ").trim();
 /** points ALLOWED by each team, per week, from the schedule's final scores. */
 async function pointsAllowed(yr: number): Promise<Map<string, number>> {
   const out = new Map<string, number>();
-  const games = await fetchCsv(URLS.schedules);
+  const games = await fetchCsvCached(URLS.schedules, cacheTag.schedules);
   for (const g of games) {
     if (Number(pick(g, "season")) !== yr) continue;
     if (pick(g, "game_type") !== "REG") continue;
@@ -48,22 +49,29 @@ async function pointsAllowed(yr: number): Promise<Map<string, number>> {
  * the gap this parameter exists to close, so it is accepted but normalized here rather than left to
  * each call site to remember.
  */
-export async function buildHistory(seasons: number[], scoring: ScoringRules | LeagueScoring): Promise<{ points: number; weekly: number; seasons: number[] }> {
+export async function buildHistory(
+  seasons: number[],
+  scoring: ScoringRules | LeagueScoring,
+  resolver?: SkResolver | null,
+): Promise<{ points: number; weekly: number; seasons: number[]; resolved: number; unresolved: number }> {
   const model: LeagueScoring = "rules" in scoring
     ? scoring as LeagueScoring
     : { ...DEFAULT_LEAGUE_SCORING(), rules: scoring as ScoringRules };
-  const ptLines = ["season,name,pos,points"];
-  // `team` is APPENDED as the last column: both existing consumers (ff.ts backtest loader,
-  // fit-variance.mjs) read fields 0-4 positionally, so adding at the end cannot shift them.
-  // It is needed to measure and then MODEL correlation between rostered NFL teammates.
-  const wkLines = ["season,name,pos,week,points,team"];
+  // `player_sk` is APPENDED as the LAST column of both files, for exactly the reason `team` was:
+  // roughly fifty readers destructure the leading fields positionally (`const [s, name, pos, pts] =
+  // line.split(",")`), so a column at the end is invisible to them and a column in the middle would
+  // silently shift every value they read. See src/data/skResolve.ts for how the key is decided and
+  // why a DST row carries `DST:<TEAM>` rather than a minted surrogate key.
+  const ptLines = ["season,name,pos,points,player_sk"];
+  const wkLines = ["season,name,pos,week,points,team,player_sk"];
   let nP = 0, nW = 0; const got: number[] = [];
+  let resolved = 0, unresolved = 0;
   for (const yr of seasons) {
     let rows: Record<string, string>[];
-    try { rows = await fetchCsv(playerWeekUrl(yr)); } catch { continue; }
+    try { rows = await fetchCsvCached(playerWeekUrl(yr), cacheTag.playerWeek(yr)); } catch { continue; }
     if (!rows.length) continue;
     got.push(yr);
-    const seasonAgg = new Map<string, { pos: string; pts: number }>();
+    const seasonAgg = new Map<string, { pos: string; pts: number; sk: string | null }>();
     for (const r of rows) {
       if (pick(r, "season_type") !== "REG") continue;
       const name = pick(r, "player_display_name"); if (!name) continue;
@@ -78,13 +86,18 @@ export async function buildHistory(seasons: number[], scoring: ScoringRules | Le
       const week = Number(pick(r, "week")); if (!week) continue;
       const raw = idp ? scoreIdpWeek(r, model.idp) : isK ? scoreKickerWeek(r, model.kicker) : scoreWeek(r, model.rules);
       const pts = Math.round(raw * 10) / 10;
-      wkLines.push(`${yr},${clean(name)},${pos},${week},${pts},${canonTeam(pick(r, "team"))}`); nW++;
-      const a = seasonAgg.get(name) ?? { pos, pts: 0 }; a.pts += pts; seasonAgg.set(name, a);
+      const team = canonTeam(pick(r, "team"));
+      // `player_id` in this feed IS the gsis id, which is the strongest evidence the resolver has.
+      const sk = resolver
+        ? resolver.resolve({ gsis: pick(r, "player_id"), name, pos, team })
+        : null;
+      wkLines.push(`${yr},${clean(name)},${pos},${week},${pts},${team},${sk ?? ""}`); nW++;
+      const a = seasonAgg.get(name) ?? { pos, pts: 0, sk }; a.pts += pts; if (a.sk == null) a.sk = sk; seasonAgg.set(name, a);
     }
 
     // --- team defenses, from the TEAM feed + points allowed ------------------------------------
     try {
-      const teamRows = await fetchCsv(teamWeekUrl(yr));
+      const teamRows = await fetchCsvCached(teamWeekUrl(yr), cacheTag.teamWeek(yr));
       const pa = await pointsAllowed(yr);
       // Opponent lookup, so points-allowed can exclude the opponent's DEFENSIVE touchdowns the way
       // ESPN does -- 97.0% tier agreement against ESPN's own credited tier, vs 93.6% for the raw
@@ -104,13 +117,17 @@ export async function buildHistory(seasons: number[], scoring: ScoringRules | Le
         const adjusted = espnPointsAllowed(allowed, opp ? byTeamWeek.get(`${opp}|${week}`) : null);
         const pts = Math.round(scoreDefenseWeek(r, adjusted, model.defense) * 10) / 10;
         const name = `${team} DST`;
-        wkLines.push(`${yr},${name},DST,${week},${pts},${team}`); nW++;
-        const a = seasonAgg.get(name) ?? { pos: "DST", pts: 0 }; a.pts += pts; seasonAgg.set(name, a);
+        const sk = dstKey(team);
+        wkLines.push(`${yr},${name},DST,${week},${pts},${team},${sk}`); nW++;
+        const a = seasonAgg.get(name) ?? { pos: "DST", pts: 0, sk }; a.pts += pts; seasonAgg.set(name, a);
       }
     } catch { /* team feed absent for very old seasons -> that year simply has no DST */ }
-    for (const [name, a] of seasonAgg) { ptLines.push(`${yr},${clean(name)},${a.pos},${Math.round(a.pts * 10) / 10}`); nP++; }
+    for (const [name, a] of seasonAgg) {
+      ptLines.push(`${yr},${clean(name)},${a.pos},${Math.round(a.pts * 10) / 10},${a.sk ?? ""}`); nP++;
+      if (a.sk == null) unresolved++; else resolved++;
+    }
   }
   writeFileSync(dataPath("history-points.csv"), ptLines.join("\n") + "\n", "utf8");
   writeFileSync(dataPath("history-weekly.csv"), wkLines.join("\n") + "\n", "utf8");
-  return { points: nP, weekly: nW, seasons: got };
+  return { points: nP, weekly: nW, seasons: got, resolved, unresolved };
 }

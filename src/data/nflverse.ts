@@ -79,3 +79,39 @@ export function pick(row: Record<string, string>, ...keys: string[]): string {
   for (const k of keys) { const v = row[k]; if (v != null && v !== "") return v; }
   return "";
 }
+
+// ==================================================================================================
+// DISK-CACHED FETCH.
+//
+// Several fit scripts grew their own copy of this (feature-sweep.mjs had the canonical one) while
+// the SHIPPED path -- history.ts -- had none and re-downloaded ~300MB of season files on every
+// rebuild. That asymmetry is why `build-history` could not run offline, and why every script that
+// wanted the same columns went and fetched them again, differently.
+//
+// One copy, in the module that owns the URLs. The on-disk layout is `data/cache/<tag>.csv.gz`, the
+// same names the scripts already write, so an existing cache is picked up rather than re-fetched.
+// ==================================================================================================
+
+/** Cache tags for the per-season assets, so a tag is never typed twice. */
+export const cacheTag = {
+  playerWeek: (s: number) => `pw-${s}`,
+  teamWeek: (s: number) => `tw-${s}`,
+  schedules: "schedules",
+  players: "players",
+  draftPicks: "draft-picks",
+} as const;
+
+export const draftPicksUrl = `${NFLVERSE}/draft_picks/draft_picks.csv`;
+
+export async function fetchCsvCached(url: string, tag: string, refresh = false): Promise<Record<string, string>[]> {
+  const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { gzipSync, gunzipSync: gunzip } = await import("node:zlib");
+  const { dataPath } = await import("./paths.js");
+  const dir = dataPath("cache");
+  const p = `${dir}/${tag}.csv.gz`;
+  if (!refresh && existsSync(p)) return parseCsv(gunzip(readFileSync(p)).toString("utf8"));
+  const text = await fetchText(url);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(p, gzipSync(Buffer.from(text)));
+  return parseCsv(text);
+}

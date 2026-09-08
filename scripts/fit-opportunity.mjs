@@ -29,9 +29,21 @@
 // is a WR5; that is already in the rank and adding it again would double count. What carries new
 // information is whether he had MORE usage than players at his rank typically do. So each feature is
 // divided by the mean for that rank bucket, and 1.0 means "exactly what his rank implies".
-import { readFileSync, writeFileSync } from "node:fs";
-import { fetchCsv, playerWeekUrl } from "../src/data/nflverse.ts";
+//
+// PHASE 2a: THIS SCRIPT NO LONGER DERIVES ITS OWN INPUTS. Prior-year finish rank, prior-season usage
+// per game and the rank curve now come from `feat_player_season` (`ff build-features`), which is the
+// same table the shipped projector reads. It used to rebuild all three here -- a fourth copy of the
+// rank curve, a second aggregation of the nflverse player-week feed, and a name-keyed join -- and a
+// fit script that quietly disagrees with the shipped model does not fail, it reports a coefficient.
+//
+// One consequence is a REPAIR rather than a refactor: the shipped artifact carries a `bySk` map that
+// models.ts requires, and this script never wrote one. Re-running it as it stood would have produced
+// an artifact the registry check rejects. The feature table carries `player_sk` on every row, so the
+// map now falls out of the data instead of being bolted on afterwards.
+import { writeFileSync } from "node:fs";
+import { loadFeatures } from "./lib/features.mjs";
 
+const OUT = (() => { const i = process.argv.indexOf("--out"); return i > 0 ? process.argv[i + 1] : "data/opportunity-model.json"; })();
 const POS = ["QB", "RB", "WR", "TE"];
 // 2006 onward. An earlier version of this stopped at 2016 for no reason beyond where I started
 // typing, and that choice was not harmless: the backtest replays 2005-2024, so with usage baked only
@@ -44,60 +56,25 @@ const MAX_RANK = 60;
 const BUCKET = 6;                       // rank bucket width for the "typical at this rank" baseline
 const N = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
 
-// --- season totals + ranks, and the rank curve itself ---------------------------------------------
-const tot = new Map();
-for (const line of readFileSync("data/history-points.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
-  const [s, name, pos, pts] = line.split(",");
-  if (POS.includes(pos)) tot.set(`${Number(s)}|${name}`, { pos, pts: Number(pts), name, season: Number(s) });
-}
-const seasons = [...new Set([...tot.values()].map((v) => v.season))].sort();
-const rank = new Map();
-for (const s of seasons) {
-  for (const pos of POS) {
-    [...tot.entries()].filter(([, v]) => v.season === s && v.pos === pos)
-      .sort((a, b) => b[1].pts - a[1].pts).forEach(([k], i) => rank.set(k, i + 1));
-  }
-}
-const curve = {};
-for (const pos of POS) {
-  const lists = seasons.map((s) => [...tot.values()].filter((v) => v.season === s && v.pos === pos).map((v) => v.pts).sort((a, b) => b - a));
-  const maxlen = Math.max(0, ...lists.map((l) => l.length));
-  curve[pos] = [];
-  for (let k = 0; k < maxlen; k++) {
-    let sum = 0, c = 0;
-    for (const l of lists) if (k < l.length) { sum += l[k]; c++; }
-    curve[pos][k] = c ? sum / c : 0;
-  }
-}
-
-// --- prior-season usage ---------------------------------------------------------------------------
-const usage = new Map();
-for (const yr of [SEASONS[0] - 1, ...SEASONS]) {
-  let rows;
-  try { rows = await fetchCsv(playerWeekUrl(yr)); } catch { continue; }
-  const agg = new Map();
-  for (const r of rows) {
-    if (r.season_type !== "REG") continue;
-    const name = (r.player_display_name || "").trim();
-    if (!name || !POS.includes((r.position || "").toUpperCase())) continue;
-    const a = agg.get(name) ?? { g: 0, fd: 0, ts: 0, att: 0, ryd: 0 };
-    a.g += 1;
-    a.fd += N(r.receiving_first_downs) + N(r.rushing_first_downs);
-    a.ts += N(r.target_share);
-    // QUARTERBACK WORKLOAD. The two fields above describe a pass CATCHER: a quarterback has no target
-    // share and no receiving first downs, so for twenty seasons QB "usage" here was his scrambles and
-    // nothing else. It measured ~0, that null was recorded as a fact about quarterbacks, and a guard
-    // in models.ts was written to enforce it. Measured with the columns that actually describe the
-    // job (scripts/qb-usage-probe.mjs), the shipped pair scores -0.0060 and attempts + rushing yards
-    // scores +0.0035 nested, chosen by inner CV in 18 of 19 folds.
-    a.att += N(r.attempts);
-    a.ryd += N(r.rushing_yards);
-    agg.set(name, a);
-  }
-  for (const [name, a] of agg) {
-    if (a.g < 4) continue;
-    usage.set(`${yr}|${name}`, { fd: a.fd / a.g, ts: a.ts / a.g, attempts: a.att / a.g, rushYards: a.ryd / a.g, g: a.g });
-  }
+// --- everything the fit needs, from the ONE feature table -----------------------------------------
+//
+// QUARTERBACK WORKLOAD, which is the reason the feature list below is per position. Target share and
+// receiving first downs describe a pass CATCHER; a quarterback has neither, so for twenty seasons QB
+// "usage" here was his scrambles and nothing else. It measured ~0, that null was recorded as a fact
+// about quarterbacks, and a guard in models.ts was written to enforce it. Measured with the columns
+// that actually describe the job (scripts/qb-usage-probe.mjs), the shipped pair scores -0.0060 and
+// attempts + rushing yards scores +0.0035 nested, chosen by inner CV in 18 of 19 folds.
+const all = loadFeatures({ from: SEASONS[0], to: SEASONS[SEASONS.length - 1], ranked: false, scored: false });
+// The usage of season S lives on the season S+1 row, which is what "prior" means and where the
+// point-in-time guarantee comes from. Under four games there is no honest per-game rate, which is
+// the same threshold this script always used.
+const usage = new Map();      // "season|name"      -- the legacy fallback key
+const usageSk = new Map();    // "season|player_sk" -- the stable key models.ts requires
+for (const r of all) {
+  if (!(r.prior_games >= 4) || r.prior_fd == null) continue;
+  const u = { fd: r.prior_fd, ts: r.prior_ts ?? 0, attempts: r.prior_attempts ?? 0, rushYards: r.prior_rush_yards ?? 0, g: r.prior_games };
+  usage.set(`${r.season - 1}|${r.name}`, u);
+  if (r.player_sk) usageSk.set(`${r.season - 1}|${r.player_sk}`, u);
 }
 
 /**
@@ -117,17 +94,25 @@ const FEATURES = {
 const FLOOR = { fd: 0.05, ts: 0.005, attempts: 1.0, rushYards: 0.5 };
 
 // --- cases: ratio of actual to rank-predicted, plus usage RELATIVE to the rank bucket -------------
+// The denominator is the ORDER-STATISTIC curve column, because that is the quantity the shipped
+// amplitudes were fitted against. `curve_value_prior` (the conditional curve) is the better
+// projection and would change every coefficient here; swapping it in is a REFIT, not a migration,
+// and belongs to its own measurement.
+//
+// STATED, because it is a real difference and not a wash: the table's order-statistic column is
+// POINT-IN-TIME (six seasons strictly before the row's season), while this script previously fitted
+// one curve over the whole history and applied it to every year. The old denominator saw the future.
+// So re-running this script now produces slightly different coefficients from the shipped artifact,
+// and data/opportunity-model.json is deliberately NOT refitted in this phase -- Phase 2a builds the
+// pipeline, it does not move a shipped number. Use `--out` to fit to a scratch file and compare.
 const raw = [];
-for (const v of tot.values()) {
-  if (!SEASONS.includes(v.season)) continue;
-  const r = rank.get(`${v.season - 1}|${v.name}`);
-  if (!r || r > MAX_RANK) continue;
-  const pred = curve[v.pos]?.[r - 1];
+for (const v of loadFeatures({ from: SEASONS[0], to: SEASONS[SEASONS.length - 1], maxRank: MAX_RANK })) {
+  const pred = v.curve_value_orderstat;
   if (!pred || pred < 20) continue;
   const u = usage.get(`${v.season - 1}|${v.name}`);
   if (!u) continue;
   raw.push({
-    season: v.season, pos: v.pos, name: v.name, rank: r, ratio: v.pts / pred, y: v.pts,
+    season: v.season, pos: v.pos, name: v.name, rank: v.rank, ratio: v.pts / pred, y: v.pts,
     fd: u.fd, ts: u.ts, attempts: u.attempts, rushYards: u.rushYards,
   });
 }
@@ -210,7 +195,7 @@ const AMP = Object.fromEntries(POS.map((p) => [p, SIGNAL[p] / MAXSIG]));
 const model = {
   fittedFrom: "share-features.mjs + qb-usage-probe.mjs + this",
   bucket: BUCKET, maxRank: MAX_RANK, schema: 2, features: FEATURES, floor: FLOOR,
-  pos: {}, amplitude: AMP, players: {},
+  pos: {}, amplitude: AMP, players: {}, bySk: {},
 };
 console.log("\nFITTED COEFFICIENTS (on the ratio actual/rank-predicted), normalised to mean 1.0");
 console.log("  pos    features            coefficients        amplitude   factor at 0.7x / 1.0x / 1.4x");
@@ -237,24 +222,34 @@ for (const pos of POS) {
 // than the one shipped is worse than no harness, and this codebase has already paid for that lesson
 // once with the age curve. Age got away with a season-independent key (birth year); usage does not,
 // so the year goes in the key and the consumer looks up season-1.
+//
+// AND BAKE IT TWICE: once keyed `season|name` (the legacy fallback) and once keyed
+// `season|player_sk` (the stable key opportunity.ts prefers and models.ts REQUIRES). This script
+// never wrote the second map -- the shipped artifact carries 8,991 entries that came from somewhere
+// else -- so re-running it as it stood would have produced an artifact the registry check rejects
+// with "bySk map missing or tiny". The feature table carries player_sk on every row, so the map is
+// now a property of the data rather than a later bolt-on.
 const latest = Math.max(...SEASONS);
 let baked = 0;
+const round = (u) => ({
+  fd: Math.round(u.fd * 1000) / 1000,
+  ts: Math.round(u.ts * 10000) / 10000,
+  attempts: Math.round(u.attempts * 1000) / 1000,
+  rushYards: Math.round(u.rushYards * 1000) / 1000,
+});
+for (const [k, u] of usageSk) model.bySk[k] = round(u);
 for (const [k, u] of usage) {
   // ALL four fields, not just the pair a given position uses. The key is `season|name` and carries no
   // position, so a row that stored only one position's features would silently hand a quarterback a
   // receiver's usage the moment a name appeared at both -- and the consumer, which looks up by
   // position, would find the wrong two numbers and adjust on them.
-  model.players[k] = {
-    fd: Math.round(u.fd * 1000) / 1000,
-    ts: Math.round(u.ts * 10000) / 10000,
-    attempts: Math.round(u.attempts * 1000) / 1000,
-    rushYards: Math.round(u.rushYards * 1000) / 1000,
-  };
+  model.players[k] = round(u);
   baked++;
 }
 model.bucketMeans = bmean;
 model.season = latest;
-writeFileSync("data/opportunity-model.json", JSON.stringify(model, null, 2));
-console.log(`\nwrote data/opportunity-model.json -- ${baked} player-seasons of usage baked in (latest ${latest})`);
+writeFileSync(OUT, JSON.stringify(model, null, 2));
+console.log(`\nwrote ${OUT} -- ${baked} player-seasons of usage baked in by name, ` +
+  `${Object.keys(model.bySk).length} by player_sk (latest ${latest})`);
 console.log(`  A player with no prior-season usage (rookie, or under 4 games) gets a factor of exactly`);
 console.log(`  1.0 -- never a guess. That is the same rule the age curve uses for an unknown birth date.`);

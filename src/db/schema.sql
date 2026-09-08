@@ -499,3 +499,120 @@ CREATE TABLE IF NOT EXISTS matchup (
   fetched_at       TEXT,
   PRIMARY KEY (league_id, week)
 );
+
+-- ================= FEATURE LAYER: feat_* =================
+--
+-- POINT-IN-TIME feature tables, one row per (entity, time), carrying only what was knowable at
+-- `as_of` plus the TARGET the model is fitted against. Derived, single-writer (src/features/build.ts
+-- via `ff build-features`), and droppable: everything here is rebuildable from raw + staging + the
+-- nflverse cache.
+--
+-- WHY THIS LAYER EXISTS. Before it, every fit script re-derived the same three things from scratch --
+-- prior-year finish rank, prior-season usage, and the rank curve -- each with its own copy of the
+-- code, its own season range, and its own name-keyed join. There were at least three separate curve
+-- builders in scripts/. Copies drift, and a copy that drifts inside a fit script produces a NUMBER,
+-- not an error. One table, one writer, one definition of each feature.
+--
+-- THE KEY IS TEXT, not the surrogate integer, and that is deliberate. It holds a `player_sk`
+-- rendered as text for a person, `DST:<TEAM>` for a team defense (which is not a person and has no
+-- row in the identity registry), and NULL where identity could not be resolved -- a state that is
+-- recorded rather than dropped. See src/data/skResolve.ts.
+
+CREATE TABLE IF NOT EXISTS feat_player_season (
+  feat_key        TEXT,              -- player_sk, or 'NK:<name_key>|<pos>' when unresolved
+  player_sk       TEXT,              -- the stable key; NULL when unresolved (row is KEPT and marked)
+  season          INTEGER,
+  as_of           TEXT,              -- ISO date. Preseason rows are '<season>-09-01'.
+  name            TEXT,
+  name_key        TEXT,
+  pos             TEXT,
+  team            TEXT,
+  -- ------- knowable before as_of -------
+  prior_pos_rank  INTEGER,           -- finish rank at this position in season-1
+  prior_pts       REAL,
+  prior_games     INTEGER,
+  age             REAL,              -- years at as_of, from the identity registry's birthdate
+  prior_fd        REAL,              -- prior-season usage PER GAME
+  prior_ts        REAL,
+  prior_attempts  REAL,
+  prior_rush_yards REAL,
+  prior_air_yards_share REAL,
+  prior_wopr      REAL,
+  team_changed    INTEGER,           -- 1 = different team from season-1
+  draft_year      INTEGER,
+  draft_round     INTEGER,
+  draft_pick      INTEGER,
+  ecr_pos_rank    REAL,              -- preseason consensus positional rank (see build.ts for source)
+  ecr_sd          REAL,
+  -- The conditional curve evaluated point-in-time: fitted ONLY on seasons strictly before `season`.
+  -- Two of them because the two consumers index the curve at different ranks -- the board at ECR,
+  -- the backtest at prior-year finish -- and a single column would have to pick one and silently be
+  -- wrong for the other caller.
+  curve_value_prior REAL,
+  curve_value_ecr   REAL,
+  curve_value_orderstat REAL,        -- the pre-2026-09-08 order statistic, kept for regression only
+  -- ------- TARGETS (never features; a projector must not read these) -------
+  pts             REAL,
+  games           INTEGER,
+  updated_at      TEXT,
+  PRIMARY KEY (season, feat_key)
+);
+CREATE INDEX IF NOT EXISTS idx_feat_season_pos ON feat_player_season (season, pos);
+CREATE INDEX IF NOT EXISTS idx_feat_sk ON feat_player_season (player_sk, season);
+
+CREATE TABLE IF NOT EXISTS feat_player_week (
+  feat_key        TEXT,
+  player_sk       TEXT,
+  season          INTEGER,
+  week            INTEGER,
+  as_of           TEXT,              -- the day before that week's first game, else its Tuesday
+  name            TEXT,
+  pos             TEXT,
+  team            TEXT,
+  opponent        TEXT,
+  home            INTEGER,
+  spread_line     REAL,              -- from the nflverse schedules feed, as published
+  total_line      REAL,
+  implied_team_total REAL,           -- derived: total/2 + spread/2 from this team's point of view
+  is_bye          INTEGER,
+  -- usage TO DATE through week-1, per game played. Strictly prior information.
+  td_games        INTEGER,
+  td_fd           REAL,
+  td_ts           REAL,
+  td_attempts     REAL,
+  td_rush_yards   REAL,
+  td_pts          REAL,
+  -- ------- TARGET -------
+  pts             REAL,
+  updated_at      TEXT,
+  PRIMARY KEY (season, week, feat_key)
+);
+CREATE INDEX IF NOT EXISTS idx_featwk_sk ON feat_player_week (player_sk, season, week);
+
+-- ================= FACT LAYER: one row per real event =================
+--
+-- fact_draft_pick is one row per pick actually made in THIS league, with the market consensus as it
+-- stood at the time. It is the training set a price model needs and the store had nowhere to put:
+-- `draft_pick` is draft-RUNTIME state (keyed by a live draft_id, empty between drafts), which is a
+-- different thing from the historical record.
+CREATE TABLE IF NOT EXISTS fact_draft_pick (
+  season          INTEGER,
+  league_id       TEXT,
+  team_id         TEXT,
+  owner           TEXT,
+  team_name       TEXT,
+  player_sk       TEXT,              -- NULL when unresolved; the row is kept and counted
+  name            TEXT,
+  name_key        TEXT,
+  pos             TEXT,
+  price           INTEGER,
+  pick_order      INTEGER,
+  draft_date      TEXT,              -- NULL where unknown; consensus then falls back, see build.ts
+  consensus_asof  TEXT,              -- the scrape_date the consensus columns were read at
+  consensus_pos_rank_asof REAL,
+  consensus_sd_asof REAL,
+  updated_at      TEXT,
+  PRIMARY KEY (season, team_name, pick_order)
+);
+CREATE INDEX IF NOT EXISTS idx_fdp_season ON fact_draft_pick (season);
+CREATE INDEX IF NOT EXISTS idx_fdp_sk ON fact_draft_pick (player_sk);

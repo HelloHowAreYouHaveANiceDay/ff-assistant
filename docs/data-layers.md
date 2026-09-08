@@ -104,6 +104,36 @@ raw + staging.
 
 Current: `board`, `player_value`, `projection`.
 
+### FEATURE — `feat_*` (a consumer table with one extra rule)
+
+What a MODEL is fitted on and served from. Derived, single-writer, rebuildable from raw + staging --
+so it obeys every consumer rule above -- plus one more that only a model needs.
+
+- **Rule: POINT-IN-TIME.** Every row carries an `as_of`, and nothing in it may depend on information
+  that did not exist at that moment. A preseason row is stamped `<season>-09-01`; a week row is
+  stamped the day before that week's first game. This is not tidiness: a feature derived from the
+  whole history and then used for 2010 is lookahead moved one level UP, out of the data and into the
+  model, where no data-level check can see it. It is why the curve columns are refitted per season on
+  an expanding window instead of once on everything.
+- **Rule: the TARGET lives in the same row, and is named as a target.** `pts` and `games` are what a
+  model is fitted against. A feature table you have to join to a second table to train from is a
+  feature table people bypass, and the bypass is where the leakage gets in.
+- **Rule: one derivation per feature, here and nowhere else.** Before this layer, prior-year finish
+  rank was re-derived in five scripts and prior-season usage in three, each with its own season range
+  and its own name-keyed join, and there were three separate copies of the rank-curve builder in
+  `scripts/`. Copies drift, and a copy that drifts inside a fit script produces a COEFFICIENT, not an
+  error.
+- **Rule: a row that cannot be resolved is KEPT and MARKED**, never dropped. `player_sk` is NULL and
+  `feat_key` says so. Dropping it shrinks the training set in a way nothing downstream can notice.
+
+Current: `feat_player_season` (preseason, one row per scored player-season), `feat_player_week`
+(one row per player-week including byes). Built by `ff build-features`.
+
+`fact_draft_pick` sits beside them: one row per pick this league really made, with the market
+consensus as it stood. It is a FACT table rather than a feature table -- a record of an event, not a
+point-in-time view of an entity -- and it is deliberately not `draft_pick`, which is draft-runtime
+state keyed by a live `draft_id` and empty between drafts. Built by `ff build-picks`.
+
 ## Why the runtime tables are not one of the three
 
 `draft`, `draft_pick`, `draft_state`, `my_roster`, `usage_log`, `action_log`, `league`, `roster`,
