@@ -52,8 +52,14 @@ standard master-data practice rather than anything invented here:
   source_id)`, many rows per player. A single `espn_id` column cannot express a player with two ids,
   nor an id later reassigned to someone else.
 - **Matching is exact and ordered**, strongest evidence first: gsis, espn, sleeper, then
-  (name_key, position). No fuzzy scoring -- fuzzy matching is where master-data systems quietly merge
-  people, and this store managed to merge two men three separate ways without any fuzziness at all.
+  (name_key, **birthdate**). No fuzzy scoring -- fuzzy matching is where master-data systems quietly
+  merge people, and this store managed to merge two men three separate ways without any fuzziness.
+- **Position is an ATTRIBUTE, never identity.** It is multi-valued (ESPN grants one player RB *and*
+  WR eligibility), time-varying (Bredeson RB -> TE, Ojulari LB -> EDGE) and source-specific (PK vs K).
+  Keying identity on it split **178 real players into two surrogate keys each** -- every man a source
+  ever reclassified became two people. Birthdate is the stable discriminator: of 493 name keys that
+  look ambiguous by position, 230 are genuinely different people whom birthdate separates and 178 are
+  one person who moved. Eligibility lives in `player_position`, many rows per player.
 - **A disputed id is inert.** An id claimed by two people neither matches nor is recorded. Both
   guards are needed and they protect different steps: refusing the LINK is too late, because the
   merge already happened at MATCH time.

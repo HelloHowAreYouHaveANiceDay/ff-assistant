@@ -814,7 +814,16 @@ const WH_NODES = [].concat(
    ["trade_value", "trade"], ["weekly_rank", "weekly"], ["player_status", "status"], ["trending", "status"],
    ["team_odds", "odds"], ["boris_tier", "boris"], ["adp", "adp"], ["market_value", "market"], ["news", "news"], ["league", "league"]]
     .map(([id, mat]) => ({ id, name: id, kind: "table", table: id, mat })),
-  [{ id: "settings", name: "config", kind: "config", sub: "scoring · format" },
+  // RAW archives loaded once rather than per-refresh (ff ingest-ecr / ff ingest-playerids), so they
+  // carry no `mat` id and are not click-to-rebuild.
+  [{ id: "ranking_history", name: "ranking_history", kind: "table", table: "ranking_history", sub: "ECR archive" },
+   { id: "player_ids", name: "player_ids", kind: "table", table: "player_ids", sub: "id crosswalk" },
+   // IDENTITY + STAGING -- the layer that decides who a player is, once, so no consumer has to.
+   { id: "player_identity", name: "player_identity", kind: "identity", table: "player_identity", sub: "surrogate keys" },
+   { id: "player_xref", name: "player_xref", kind: "identity", table: "player_xref", sub: "source ids" },
+   { id: "player_position", name: "player_position", kind: "identity", table: "player_position", sub: "eligibility" },
+   { id: "stg_player", name: "stg_player", kind: "staging", table: "stg_player", sub: "conformed dimension" },
+   { id: "settings", name: "config", kind: "config", sub: "scoring · format" },
    { id: "points", name: "points.csv", kind: "artifact", sub: "projection curve" },
    { id: "player_value", name: "player_value", kind: "mart", table: "player_value" },
    { id: "board", name: "board", kind: "mart", table: "board" },
@@ -828,6 +837,13 @@ const WH_EDGES = [
   ["src_dproc", "trade_value"], ["src_ffc", "adp"], ["src_fcalc", "market_value"], ["src_boris", "boris_tier"], ["src_rss", "news"],
   ["league", "settings"], ["ranking", "points"], ["settings", "points"], ["points", "player_value"], ["settings", "player_value"],
   ["board", "view"],
+  // IDENTITY SPINE: raw archives -> registry -> staging -> the marts, which now carry player_sk.
+  // Drawn because it is now a real dependency: board and player_value get their stable id from
+  // stg_player, so a lineage that stopped at the landing tables would be showing the old shape.
+  ["src_dproc", "player_ids"], ["src_fp", "ranking_history"],
+  ["player_ids", "player_identity"], ["player_identity", "player_xref"], ["player_identity", "player_position"],
+  ["player_identity", "stg_player"], ["player_ids", "stg_player"],
+  ["stg_player", "player_value"], ["stg_player", "board"],
 ].concat(["player_value", "player_bio", "player_advanced", "trade_value", "weekly_rank", "player_status", "trending", "team_odds", "boris_tier", "adp", "market_value", "news", "ranking", "team_bye"].map(t => [t, "board"]));
 function views_sources() {
   document.getElementById("view").innerHTML = `<div class="settings">

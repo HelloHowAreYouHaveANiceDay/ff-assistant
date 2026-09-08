@@ -277,3 +277,9 @@ code{font-family:var(--font-mono);font-size:.95em;background:var(--hover);paddin
 .band .med{position:absolute;top:2px;width:2px;height:12px;background:var(--line-str);border-radius:1px}
 /* Replacement level: dashed, behind the bar, deliberately quieter than the player's own data. */
 .band .repl{position:absolute;top:0;width:0;height:16px;border-left:1px dashed var(--faint);opacity:.75}
+
+/* Identity + staging nodes in the lineage DAG. Given their own fills because they are a distinct
+   LAYER, not another landing table: identity decides who a player is, staging conforms him, and
+   everything downstream joins on the key they produce rather than on a name. */
+.dag-node.identity rect{fill:color-mix(in srgb,#2f7d5c 14%,var(--paper));stroke:#2f7d5c}
+.dag-node.staging rect{fill:color-mix(in srgb,#2f7d5c 26%,var(--paper));stroke:#2f7d5c;stroke-width:1.5}

@@ -213,6 +213,11 @@ async function cmdServe(rest: string[]) {
             ["player_status", "updated_at"], ["trending", "scraped"], ["team_odds", "updated_at"], ["boris_tier", "scraped"],
             ["adp", "scraped"], ["market_value", "updated_at"], ["news", "asof"], ["league", "last_synced_at"],
             ["player_value", "updated_at"], ["board", "updated_at"],
+            // identity + staging: freshness for the new spine, so the lineage view can show row
+            // counts for them like any other node rather than rendering them permanently empty.
+            ["ranking_history", "fetched_at"], ["player_ids", "updated_at"],
+            ["player_identity", "created_at"], ["player_xref", "created_at"], ["player_position", ""],
+            ["stg_player", "updated_at"],
           ];
           const tables: Record<string, { rows: number; updated: string | null }> = {};
           for (const [t, col] of TS) {

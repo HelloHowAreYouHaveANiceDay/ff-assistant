@@ -40,7 +40,7 @@ export const ID_SOURCES = ["gsis", "espn", "sleeper", "fantasypros"] as const;
 export type IdSource = typeof ID_SOURCES[number];
 
 export interface ResolveInput {
-  name: string; nameKey: string; position: string;
+  name: string; nameKey: string; position: string; birthdate?: string | null;
   ids: Partial<Record<IdSource, string | null>>;
 }
 
@@ -66,17 +66,31 @@ export function resolveOrMint(db: DB, inp: ResolveInput, disputed?: Set<string>)
     const hit = findBySource.get(s, v) as { player_sk: number } | undefined;
     if (hit) return { sk: hit.player_sk, matchedBy: s, minted: false };
   }
-  // Fall back to the conformed natural key. Weakest evidence, so it is tried last, and it is exact:
-  // a name alone is never enough -- that is what merged A.J. Green the WR with A.J. Green the DB.
-  const byName = db.prepare(
-    "SELECT player_sk FROM player_identity WHERE name_key = ? AND position = ?",
-  ).get(inp.nameKey, normPos(inp.position)) as { player_sk: number } | undefined;
-  if (byName) return { sk: byName.player_sk, matchedBy: "name+pos", minted: false };
+  // NAME + BIRTHDATE. Birthdate is the stable discriminator; POSITION IS NOT ONE, and using it here
+  // split 178 real players into two surrogate keys each -- every man a source reclassified (Bredeson
+  // RB -> TE, Ojulari LB -> EDGE) became two people, and ESPN grants multi-position eligibility as a
+  // matter of course. Measured on the crosswalk: of 493 name keys that look ambiguous by position,
+  // 230 are genuinely different people whom birthdate separates, and 178 are one person who moved.
+  const bd = inp.birthdate || null;
+  if (bd) {
+    const byBirth = db.prepare(
+      "SELECT player_sk FROM player_identity WHERE name_key = ? AND birthdate = ?",
+    ).get(inp.nameKey, bd) as { player_sk: number } | undefined;
+    if (byBirth) return { sk: byBirth.player_sk, matchedBy: "name+birthdate", minted: false };
+  } else {
+    // No birthdate: fall back to position, but ONLY among rows that also lack one. Matching a
+    // birthdate-less row onto a player who HAS a birthdate would merge on the weakest evidence
+    // available while stronger evidence sat unused.
+    const byPos = db.prepare(
+      "SELECT player_sk FROM player_identity WHERE name_key = ? AND birthdate IS NULL AND primary_position = ?",
+    ).get(inp.nameKey, normPos(inp.position)) as { player_sk: number } | undefined;
+    if (byPos) return { sk: byPos.player_sk, matchedBy: "name+pos-no-birthdate", minted: false };
+  }
 
   const r = db.prepare(
-    `INSERT INTO player_identity (name_key, position, first_name, matched_by, created_at)
-     VALUES (?,?,?,?,?)`,
-  ).run(inp.nameKey, normPos(inp.position), inp.name, "minted", nowIso());
+    `INSERT INTO player_identity (name_key, birthdate, primary_position, first_name, matched_by, created_at)
+     VALUES (?,?,?,?,?,?)`,
+  ).run(inp.nameKey, bd, normPos(inp.position), inp.name, "minted", nowIso());
   return { sk: Number(r.lastInsertRowid), matchedBy: "minted", minted: true };
 }
 
@@ -110,7 +124,7 @@ export function buildIdentity(dbPath?: string): IdentityResult {
   const res: IdentityResult = { players: 0, minted: 0, matched: {}, conflicts: [], disputedIds: 0 };
 
   const rows = db.prepare(
-    "SELECT name_key, position, name, gsis_id, espn_id, sleeper_id, fantasypros_id FROM player_ids",
+    "SELECT name_key, position, name, birthdate, gsis_id, espn_id, sleeper_id, fantasypros_id FROM player_ids",
   ).all() as Record<string, string | null>[];
 
   // Every source id claimed by more than one real person, computed from the RAW feed before any
@@ -128,10 +142,16 @@ export function buildIdentity(dbPath?: string): IdentityResult {
   db.transaction(() => {
     for (const p of rows) {
       const inp: ResolveInput = {
-        name: p.name ?? "", nameKey: p.name_key!, position: p.position!,
+        name: p.name ?? "", nameKey: p.name_key!, position: p.position!, birthdate: p.birthdate,
         ids: { gsis: p.gsis_id, espn: p.espn_id, sleeper: p.sleeper_id, fantasypros: p.fantasypros_id },
       };
       const { sk, matchedBy, minted } = resolveOrMint(db, inp, disputed);
+      // Position is recorded as ELIGIBILITY, many rows per player, because that is what it is: ESPN
+      // qualifies one man at several positions and sources reclassify him between seasons. Holding a
+      // single position on the identity row is what made those look like different people.
+      db.prepare(
+        "INSERT INTO player_position (player_sk, position, source) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+      ).run(sk, normPos(p.position!), "playerids");
       res.players++;
       if (minted) res.minted++;
       res.matched[matchedBy] = (res.matched[matchedBy] ?? 0) + 1;

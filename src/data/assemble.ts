@@ -181,17 +181,31 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     db.prepare("DELETE FROM ranking WHERE source='espn' AND season=@s").run({ s: season });
     db.prepare("DELETE FROM board WHERE season=@s").run({ s: season });
     const upPlayer = db.prepare("INSERT INTO player (player_id, name, position, updated_at) VALUES (?,?,?,?) ON CONFLICT(player_id) DO NOTHING");
-    const upVal = db.prepare("INSERT INTO player_value (player_id, season, our_value, our_rank, pos_rank, tier, proj_pts, last_pts, last_gms, updated_at) VALUES (@id,@s,@v,@rk,@pr,@t,@pp,@lp,@lg,@now)");
+    // player_sk comes from STAGING, looked up by (name_key, position). Consumers get the stable id so
+    // they can stop joining on names; player_id stays for the callers not yet migrated.
+    const skOf = new Map<string, number>();
+    const byNameOnly = new Map<string, number | null>();   // null = the name is shared, do not guess
+    for (const r of db.prepare("SELECT name_key, position, player_sk FROM stg_player").all() as { name_key: string; position: string; player_sk: number }[]) {
+      skOf.set(r.name_key + "|" + r.position, r.player_sk);
+      byNameOnly.set(r.name_key, byNameOnly.has(r.name_key) ? null : r.player_sk);
+    }
+    const upVal = db.prepare("INSERT INTO player_value (player_id, player_sk, season, our_value, our_rank, pos_rank, tier, proj_pts, last_pts, last_gms, updated_at) VALUES (@id,@sk,@s,@v,@rk,@pr,@t,@pp,@lp,@lg,@now)");
     const upRank = db.prepare("INSERT INTO ranking (player_id, source, season, overall_rank, pos_rank, adp, fetched_at) VALUES (@id,'espn',@s,@rank,@pos,@adp,@now) ON CONFLICT(player_id,source,season) DO UPDATE SET overall_rank=excluded.overall_rank, pos_rank=excluded.pos_rank, adp=excluded.adp, fetched_at=excluded.fetched_at");
-    const upBoard = db.prepare("INSERT INTO board (player_id, season, row_json, updated_at) VALUES (@id,@s,@json,@now)");
+    const upBoard = db.prepare("INSERT INTO board (player_id, player_sk, season, row_json, updated_at) VALUES (@id,@sk,@s,@json,@now)");
     const numOrNull = (x: unknown) => typeof x === "number" ? x : null;
     for (const r of rows) {
       const id = nameKey(r.player as string); if (!id) continue;
       upPlayer.run(id, r.player, r.pos, now);
-      upVal.run({ id, s: season, v: r.our_value, rk: r.rank, pr: r.pos_rank, t: r.tier, pp: numOrNull(r.proj_pts), lp: numOrNull(r.last_pts), lg: numOrNull(r.last_gms), now });
+      // Position first, then NAME ALONE but only when that name belongs to exactly one player.
+      // Sources disagree about positions -- our board has Max Bredeson at RB, the crosswalk at TE --
+      // and requiring agreement left him with no stable id at all. This is the same rule staging used
+      // to decide he was one man rather than two; using a different rule here would let the consumer
+      // and the layer above it disagree about who he is, which is the whole failure being retired.
+      const sk = skOf.get(id + "|" + String(r.pos).toUpperCase()) ?? byNameOnly.get(id) ?? null;
+      upVal.run({ id, sk, s: season, v: r.our_value, rk: r.rank, pr: r.pos_rank, t: r.tier, pp: numOrNull(r.proj_pts), lp: numOrNull(r.last_pts), lg: numOrNull(r.last_gms), now });
       if (typeof r.espn_rank === "number") upRank.run({ id, s: season, rank: r.espn_rank, pos: r.espn_pos || null, adp: numOrNull(r.espn_adp), now });
       const obj: Record<string, unknown> = {}; COLS.forEach((c, i) => (obj[HEAD[i]] = r[c]));
-      upBoard.run({ id, s: season, json: JSON.stringify(obj), now });
+      upBoard.run({ id, sk, s: season, json: JSON.stringify(obj), now });
     }
   });
   tx();

@@ -33,16 +33,22 @@ function scratch(): string {
 test("rebuilding mints nothing and moves no key -- the foundation property", (t) => {
   if (!ready) return t.skip("registry not built (run: ff build-identity)");
   const p = scratch();
+  // KEYED ON THE SURROGATE, which is the only genuinely unique column here. Keying the comparison on
+  // (name_key, birthdate) looked natural and was wrong: two different Aaron Browns both have a NULL
+  // birthdate, so that pair is not unique, the map held one of them, and the test reported a key
+  // "changing" when nothing had moved. The property is "each sk still describes the same person",
+  // so the sk is what the lookup must be by.
   const before = new Map((new Database(p, { readonly: true })
-    .prepare("SELECT player_sk, name_key, position FROM player_identity").all() as { player_sk: number; name_key: string; position: string }[])
-    .map((r) => [`${r.name_key}|${r.position}`, r.player_sk]));
+    .prepare("SELECT player_sk, name_key, birthdate FROM player_identity").all() as { player_sk: number; name_key: string; birthdate: string | null }[])
+    .map((r) => [r.player_sk, `${r.name_key}|${r.birthdate ?? ""}`]));
   const r = buildIdentity(p);
   assert.equal(r.minted, 0, `a rebuild minted ${r.minted} keys -- the registry is not stable`);
   const after = new Database(p, { readonly: true })
-    .prepare("SELECT player_sk, name_key, position FROM player_identity").all() as { player_sk: number; name_key: string; position: string }[];
+    .prepare("SELECT player_sk, name_key, birthdate FROM player_identity").all() as { player_sk: number; name_key: string; birthdate: string | null }[];
+  assert.equal(after.length, before.size, "a rebuild must not add or drop identity rows");
   for (const a of after) {
-    const was = before.get(`${a.name_key}|${a.position}`);
-    if (was !== undefined) assert.equal(a.player_sk, was, `${a.name_key}/${a.position} changed key ${was} -> ${a.player_sk}`);
+    const was = before.get(a.player_sk);
+    assert.equal(`${a.name_key}|${a.birthdate ?? ""}`, was, `sk ${a.player_sk} now describes a different person`);
   }
 });
 
@@ -54,21 +60,24 @@ test("nobody is absorbed: every crosswalk player has their own key", (t) => {
   // crosswalk players. Staging then began minting keys for board-only players -- correctly -- and the
   // test failed reporting "-39 players absorbed" when nobody had been absorbed at all. A count is a
   // proxy for the property; the property is that no two crosswalk players share a key.
+  // A DISTINCT PERSON is (name_key, birthdate) -- NOT (name_key, position). Position is
+  // multi-valued and time-varying, and keying identity on it split 178 real players into two keys
+  // each: every man a source reclassified became two people. So two crosswalk rows that differ only
+  // by position SHOULD now share a key, and this test would be wrong to forbid it.
   const dup = db.prepare(
     `SELECT COUNT(*) c FROM (
        SELECT i.player_sk FROM player_ids p
-       JOIN player_identity i ON i.name_key = p.name_key
-         AND i.position = CASE p.position WHEN 'PK' THEN 'K' ELSE p.position END
-       GROUP BY i.player_sk HAVING COUNT(*) > 1)`,
+       JOIN player_identity i ON i.name_key = p.name_key AND IFNULL(i.birthdate,'') = IFNULL(p.birthdate,'')
+       GROUP BY i.player_sk HAVING COUNT(DISTINCT IFNULL(p.birthdate,'')) > 1)`,
   ).get() as { c: number };
   // The failure this catches actually happened: matching on a DISPUTED gsis absorbed 15 players into
   // other people's keys, and Bobby McCray -- who shares gsis 00-0022888 with punter Jake Schum --
   // ended up with no identity row at all.
-  assert.equal(dup.c, 0, `${dup.c} surrogate keys are shared by more than one crosswalk player`);
+  assert.equal(dup.c, 0, `${dup.c} surrogate keys are shared by people with different birthdates`);
   const orphan = db.prepare(
     `SELECT COUNT(*) c FROM player_ids p WHERE NOT EXISTS (
        SELECT 1 FROM player_identity i WHERE i.name_key = p.name_key
-         AND i.position = CASE p.position WHEN 'PK' THEN 'K' ELSE p.position END)`,
+         AND IFNULL(i.birthdate,'') = IFNULL(p.birthdate,''))`,
   ).get() as { c: number };
   db.close();
   assert.equal(orphan.c, 0, `${orphan.c} crosswalk players have no key at all`);
@@ -79,12 +88,14 @@ test("a disputed id neither matches nor gets recorded", (t) => {
   const db = new Database(DB, { readonly: true });
   const disputed = db.prepare(
     `SELECT gsis_id v FROM player_ids WHERE gsis_id IS NOT NULL
-     GROUP BY gsis_id HAVING COUNT(DISTINCT name_key || '|' || position) > 1`,
+     GROUP BY gsis_id HAVING COUNT(DISTINCT name_key || '|' || IFNULL(birthdate,'')) > 1`,
   ).all() as { v: string }[];
   for (const d of disputed) {
-    const claimants = db.prepare("SELECT name_key, position FROM player_ids WHERE gsis_id = ?").all(d.v) as { name_key: string; position: string }[];
+    // Claimants are distinct PEOPLE -- (name_key, birthdate). Counting distinct positions here would
+    // count one reclassified man as two claimants and demand two keys for him.
+    const claimants = db.prepare("SELECT DISTINCT name_key, birthdate FROM player_ids WHERE gsis_id = ?").all(d.v) as { name_key: string; birthdate: string | null }[];
     const sks = new Set(claimants.map((c) =>
-      (db.prepare("SELECT player_sk FROM player_identity WHERE name_key=? AND position=?").get(c.name_key, c.position) as { player_sk: number } | undefined)?.player_sk));
+      (db.prepare("SELECT player_sk FROM player_identity WHERE name_key=? AND IFNULL(birthdate,'')=IFNULL(?,'')").get(c.name_key, c.birthdate) as { player_sk: number } | undefined)?.player_sk));
     assert.equal(sks.size, claimants.length, `disputed gsis ${d.v} merged ${claimants.length} people into ${sks.size} key(s)`);
     assert.ok(!sks.has(undefined as never), `a claimant of ${d.v} has no key at all`);
   }
@@ -98,12 +109,12 @@ test("a NEW source id attaches to the existing player rather than minting a seco
   // Someone currently keyed only by name+pos: the case where later learning an id must NOT create a
   // duplicate, which is exactly what a natural key would have done (his key would have changed).
   const row = db.prepare(
-    `SELECT i.player_sk, i.name_key, i.position FROM player_identity i
+    `SELECT i.player_sk, i.name_key, i.primary_position AS position, i.birthdate FROM player_identity i
      WHERE NOT EXISTS (SELECT 1 FROM player_xref x WHERE x.player_sk = i.player_sk AND x.source='gsis') LIMIT 1`,
-  ).get() as { player_sk: number; name_key: string; position: string } | undefined;
+  ).get() as { player_sk: number; name_key: string; position: string; birthdate: string | null } | undefined;
   if (!row) { db.close(); return t.skip("everyone already has a gsis"); }
   const before = row.player_sk;
-  const again = resolveOrMint(db, { name: "x", nameKey: row.name_key, position: row.position, ids: { gsis: "00-9999999" } });
+  const again = resolveOrMint(db, { name: "x", nameKey: row.name_key, position: row.position, birthdate: row.birthdate, ids: { gsis: "00-9999999" } });
   assert.equal(again.sk, before, "learning a new id must not mint a second key for the same player");
   assert.equal(linkId(db, before, "gsis", "00-9999999"), null, "the new id should attach cleanly");
   const third = resolveOrMint(db, { name: "x", nameKey: "someoneelse", position: "RB", ids: { gsis: "00-9999999" } });

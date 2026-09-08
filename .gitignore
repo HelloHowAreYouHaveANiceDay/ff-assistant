@@ -50,3 +50,6 @@ data/history-*.bak.csv
 data/trials/
 data/managers.*.bak.json
 data/pos-sweep.txt
+
+# Runtime bridge endpoint: holds a live auth token for the app's loopback API. Never commit.
+data/app-bridge.json

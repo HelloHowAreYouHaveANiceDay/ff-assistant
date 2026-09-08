@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS player_bio (
 -- OUR valuation + draft-season projection (proj_pts here is the full-season number; the L5
 -- `projection` table is the in-season WEEKLY grain -- different things, do not conflate)
 CREATE TABLE IF NOT EXISTS player_value (
-  player_id   TEXT PRIMARY KEY REFERENCES player(player_id),
+  player_id   TEXT PRIMARY KEY REFERENCES player(player_id),   -- legacy name_key
+  player_sk   INTEGER REFERENCES player_identity(player_sk),  -- stable identity: join HERE, not on the name
   season      INTEGER,
   our_value   INTEGER,
   our_rank    INTEGER,
@@ -241,7 +242,8 @@ CREATE INDEX IF NOT EXISTS idx_news_player ON news(player_id);
 -- Derived entirely from L1 by the assembler; rebuilt wholesale each assembly. NOT a source of
 -- truth -- the engine/agent read L1. Rebuild this whenever L1 changes.
 CREATE TABLE IF NOT EXISTS board (
-  player_id   TEXT,                  -- name_key
+  player_id   TEXT,                  -- legacy name_key
+  player_sk   INTEGER REFERENCES player_identity(player_sk),  -- stable identity: join HERE, not on the name
   season      INTEGER,
   row_json    TEXT,
   updated_at  TEXT,
@@ -372,12 +374,29 @@ CREATE TABLE IF NOT EXISTS ownership (
 CREATE TABLE IF NOT EXISTS player_identity (
   player_sk    INTEGER PRIMARY KEY AUTOINCREMENT,   -- surrogate; never reused, never renumbered
   name_key     TEXT,
-  position     TEXT,
+  birthdate    TEXT,               -- the stable discriminator. POSITION IS NOT ONE: it is
+                                   -- multi-valued (ESPN grants RB/WR eligibility), time-varying
+                                   -- (Bredeson RB->TE) and source-specific (PK vs K). Keying on it
+                                   -- split 178 real players into two surrogate keys each.
+  primary_position TEXT,           -- an ATTRIBUTE, freely updatable; never part of identity
   first_name   TEXT,               -- the name we first saw; display names change, keys must not
   matched_by   TEXT,               -- how identity was decided, for debugging a merge later
   created_at   TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_natural ON player_identity (name_key, position);
+-- Uniqueness on (name_key, birthdate). SQLite treats NULLs as distinct, which is the behaviour we
+-- want: two players with the same name and no known birthdate stay separate rather than colliding.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_natural ON player_identity (name_key, birthdate);
+
+-- Position ELIGIBILITY, many per player. ESPN qualifies a player at several positions at once, so a
+-- single position column cannot hold the truth -- and holding it on the identity row made position
+-- changes look like new people.
+CREATE TABLE IF NOT EXISTS player_position (
+  player_sk  INTEGER REFERENCES player_identity(player_sk),
+  position   TEXT,
+  source     TEXT,
+  PRIMARY KEY (player_sk, position, source)
+);
+CREATE INDEX IF NOT EXISTS idx_pos_sk ON player_position (player_sk);
 
 -- One row per (source, source_id). MANY per player: a single espn_id column cannot express a player
 -- with two ids, nor an id later reassigned. UNIQUE on (source, source_id) is what makes a disputed

@@ -54,6 +54,11 @@ function addColumns(db: DB): void {
     // nothing in the store could answer "which of these sixteen rosters is MINE" -- league.team_id
     // holds the number and there was no column to join it to.
     ["ownership", "team_id", "TEXT"],
+    // The surrogate player key on the CONSUMER tables. Additive rather than a new PK: board and
+    // player_value are still written and read by name_key everywhere, and swapping the primary key
+    // under live consumers is a much larger change than giving them the stable id to migrate onto.
+    ["board", "player_sk", "INTEGER"],
+    ["player_value", "player_sk", "INTEGER"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
