@@ -24,6 +24,7 @@
 // schedule; the delta is then attributable to the roster change rather than to which arm drew a
 // luckier season. Without this the ranking is mostly noise and would look perfectly plausible.
 import { readFileSync } from "node:fs";
+import Database from "better-sqlite3";
 import { openLeague, nameKey } from "../src/league/index.ts";
 import { simulateSeasons } from "../src/draft/season.ts";
 
@@ -33,26 +34,82 @@ const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
 const outcomes = JSON.parse(readFileSync("data/rank-outcomes.json", "utf8"));
 const corrModel = JSON.parse(readFileSync("data/correlation-model.json", "utf8"));
 
-const lg = await openLeague();
-const sched = lg.provider.matchups ? await lg.provider.matchups() : null;
-if (!sched) { console.log("adaptor exposes no schedule"); await lg.close(); process.exit(1); }
-const byeOf = new Map();
-for (const r of lg.db.prepare(
-  `SELECT p.name, r.bye FROM player p JOIN ranking r ON r.player_id=p.player_id AND r.source='fantasypros_ecr' AND r.season=?`,
-).all(lg.season)) byeOf.set(nameKey(r.name), r.bye);
-
-const idx = new Map(lg.teams.map((t, i) => [t.id, i]));
-const baseTeams = lg.teams.map((t) => ({
-  id: t.id, name: t.name,
-  roster: t.roster.map((p) => ({ name: p.name, pos: p.pos, proj: p.proj, team: p.team, bye: byeOf.get(nameKey(p.name)) ?? null })),
-}));
-const weeks = [];
-for (let w = 1; w <= lg.regWeeks; w++) {
-  const games = sched.games.filter((g) => g.week === w).map((g) => [idx.get(g.homeId), idx.get(g.awayId)]).filter(([a, b]) => a != null && b != null);
-  if (games.length) weeks.push(games);
+// OFFLINE FALLBACK. openLeague() reaches ESPN through the desktop app's webview over CDP, so it
+// fails whenever the app is closed or its debugging port is not bound -- and this script is most
+// wanted precisely when someone is sitting there deciding whether to accept an offer. The ROSTERS
+// are already persisted (ownership, synced with team ids); only the SCHEDULE is fetched live and the
+// matchup table is empty. So fall back to rosters from the store plus a structurally correct
+// generated schedule.
+//
+// The substitution is honest for THIS question and it is worth being precise about why: an invented
+// schedule changes the ABSOLUTE odds, because who you actually play matters. It barely touches the
+// DELTAS, because both arms run the same schedule under the same seed and the trade is the only
+// thing that differs. Absolute numbers from offline mode should not be quoted; the ranking is sound.
+let lg = null, sched = null, offline = false;
+try {
+  lg = await openLeague();
+  sched = lg.provider.matchups ? await lg.provider.matchups() : null;
+  if (!sched) throw new Error("adaptor exposes no schedule");
+} catch (e) {
+  offline = true;
+  if (lg) { try { await lg.close(); } catch { /* already down */ } lg = null; }
+  console.log(`OFFLINE MODE -- could not reach the app (${String(e.message).split("\n")[0]})`);
+  console.log(`  rosters come from the store; the schedule is GENERATED, so absolute odds are not`);
+  console.log(`  quotable. Trade deltas are, because both arms share the schedule and the seed.\n`);
 }
-const meIdx = idx.get(lg.me.id);
-const slots = lg.slots;
+const store = new Database("data/ff.db", { readonly: true });
+const byeOf = new Map();
+const season = lg ? lg.season : 2026;
+for (const r of store.prepare(
+  `SELECT p.name, r.bye FROM player p JOIN ranking r ON r.player_id=p.player_id AND r.source='fantasypros_ecr' AND r.season=?`,
+).all(season)) byeOf.set(nameKey(r.name), r.bye);
+
+let baseTeams, idx, meIdx, slots, regWeeks;
+if (!offline) {
+  idx = new Map(lg.teams.map((t, i) => [t.id, i]));
+  baseTeams = lg.teams.map((t) => ({
+    id: t.id, name: t.name,
+    roster: t.roster.map((p) => ({ name: p.name, pos: p.pos, proj: p.proj, team: p.team, bye: byeOf.get(nameKey(p.name)) ?? null })),
+  }));
+  meIdx = idx.get(lg.me.id);
+  slots = lg.slots;
+  regWeeks = lg.regWeeks;
+} else {
+  const cfgRow = JSON.parse(store.prepare("SELECT value FROM settings WHERE key='config'").get().value);
+  const lgRow = store.prepare("SELECT league_id, team_id FROM league WHERE season=? AND team_id IS NOT NULL").get(cfgRow.season);
+  const board = new Map();
+  for (const r of store.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(cfgRow.season)) {
+    const j = JSON.parse(r.row_json);
+    board.set(r.player_id, { name: j.Player, pos: j.Pos, proj: j.ProjPts || 0, team: j.Team || "" });
+  }
+  const byTeam = new Map();
+  for (const r of store.prepare("SELECT player_id, team_id, owner, team_abbrev FROM ownership WHERE league_id=?").all(lgRow.league_id)) {
+    const b = board.get(r.player_id);
+    if (!b) continue;                                   // DSTs the board does not carry
+    if (!byTeam.has(r.team_id)) byTeam.set(r.team_id, { id: r.team_id, name: r.team_abbrev || r.owner, roster: [] });
+    byTeam.get(r.team_id).roster.push({ ...b, bye: byeOf.get(nameKey(b.name)) ?? null });
+  }
+  baseTeams = [...byTeam.values()].sort((a, b) => Number(a.id) - Number(b.id));
+  idx = new Map(baseTeams.map((t, i) => [t.id, i]));
+  meIdx = idx.get(String(lgRow.team_id));
+  slots = cfgRow.slots;
+  regWeeks = cfgRow.regWeeks ?? 14;
+  console.log(`  offline rosters: ${baseTeams.length} teams, we are index ${meIdx} (${baseTeams[meIdx]?.name})`);
+}
+
+const weeks = [];
+if (!offline) {
+  for (let w = 1; w <= regWeeks; w++) {
+    const games = sched.games.filter((g) => g.week === w).map((g) => [idx.get(g.homeId), idx.get(g.awayId)]).filter(([a, b]) => a != null && b != null);
+    if (games.length) weeks.push(games);
+  }
+} else {
+  // Divisional structure matching the real league shape (16 teams, 4 divisions) so the generated
+  // season has the right in-division/cross-division mix rather than a round robin.
+  const { buildSchedule } = await import("../src/draft/schedule.ts");
+  const built = buildSchedule(baseTeams.length, regWeeks, 4);
+  weeks.push(...built.weeks);
+}
 
 // pool ranks from the FULL projection pool -- tiers are fractions of that, not of a roster
 const poolRank = new Map();
@@ -73,7 +130,7 @@ for (const line of readFileSync("data/points.csv", "utf8").trim().split(/\r?\n/)
   const f = line.split(",");
   if (f[0]) projOf.set(f[0].trim(), { pos: f[1].trim().toUpperCase(), proj: Number(f[2]) });
 }
-await lg.close();
+if (lg) await lg.close();
 
 const OPTS = { weeks: weeks.length, playoffTeams: 7, slots, projSd: 0.30, trials: TRIALS, seed: SEED, poolRank,
   bootstrap: { outcomes, corr: corrModel, calibration: "scale" } };
@@ -104,7 +161,7 @@ function run(teams) {
 const clone = (teams) => teams.map((t) => ({ ...t, roster: t.roster.map((p) => ({ ...p })) }));
 
 const base = run(baseTeams);
-console.log(`TRADE ODDS -- ${lg.season}, ${baseTeams.length} teams, ${weeks.length} weeks, ${TRIALS} trials, seed ${SEED} (common random numbers)`);
+console.log(`TRADE ODDS -- ${season}, ${baseTeams.length} teams, ${weeks.length} weeks, ${TRIALS} trials, seed ${SEED} (common random numbers)`);
 console.log(`  BASE: ${base.title.toFixed(1)}% title, ${base.playoff.toFixed(1)}% playoffs\n`);
 
 // A null control. Re-running the identical roster must return the identical number; if it does not,
@@ -183,6 +240,11 @@ for (const d of out.slice(0, 15)) {
 // PLAUSIBLY ACCEPTABLE DEALS -- the list above is dominated by proposals the other manager loses ten
 // to twenty points on, which are not offers, they are fantasies. A deal is only actionable if the
 // partner's own title odds survive it.
+// Declared here because the acceptability filter below uses it -- it was originally defined after
+// that block and threw a temporal-dead-zone ReferenceError, after four hundred simulations had
+// already run. Cheap to fix, expensive to hit: the whole sweep is wasted when it fails at the end.
+const noise = 2 * Math.sqrt(base.title * (100 - base.title) / TRIALS);
+
 // ABSOLUTE POINTS ARE THE WRONG YARDSTICK FOR THE PARTNER, and filtering on them alone produced a
 // misleading recommendation. A contender at 20% who drops 2.5pp has given up an eighth of his
 // equity; a team at 1.5% who drops 1.1pp has given up THREE QUARTERS of his. The absolute filter
@@ -206,7 +268,7 @@ for (const d of okDeals.slice(0, 12)) {
 }
 if (!okDeals.length) console.log("  (none -- every trade that materially helps us takes a quarter or more of the partner's equity)");
 
-const noise = 2 * Math.sqrt(base.title * (100 - base.title) / TRIALS);
+
 console.log(`\n  A delta smaller than about ${noise.toFixed(2)}pp is inside this run's own noise even`);
 console.log(`  with common random numbers -- raise the trial count before acting on a close call.`);
 
