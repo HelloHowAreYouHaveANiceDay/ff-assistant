@@ -53,9 +53,10 @@ const PAGES = [
   { id: "draft", name: "Draft Room", kind: "espn", path: l => `draft?leagueId=${l.leagueId}&seasonId=${l.season}${l.teamId ? `&teamId=${l.teamId}` : ""}` },
   { id: "news", name: "News", kind: "view" },
   { id: "sources", name: "Data", kind: "view" },
+  { id: "model", name: "Model", kind: "view" },
   { id: "settings", name: "Setup", kind: "view" },
 ];
-const PAGE_VIEWS = { board: () => views_board(), news: () => views_news(), sources: () => views_sources(), settings: () => views_settings() };
+const PAGE_VIEWS = { board: () => views_board(), news: () => views_news(), sources: () => views_sources(), model: () => views_model(), settings: () => views_settings() };
 function espnGo(path) { const wv = document.getElementById("espnview"); if (wv && wv.loadURL) wv.loadURL("https://fantasy.espn.com/football/" + path); }
 function setPage(id) {
   if (roomTimer) { clearInterval(roomTimer); roomTimer = null; }
@@ -787,7 +788,7 @@ function views_copilot() {
   q.focus();
 }
 
-const views = { board: views_board, team: views_team, news: views_news, room: views_room, copilot: views_copilot, live: views_live, sources: views_sources, settings: views_settings };
+const views = { board: views_board, team: views_team, news: views_news, room: views_room, copilot: views_copilot, live: views_live, sources: views_sources, model: views_model, settings: views_settings };
 
 /* ---------- DATA SOURCES ---------- */
 function relTime(iso) {
@@ -893,6 +894,164 @@ async function loadDag() {
   svg.innerHTML = h;
   svg.querySelectorAll(".dag-node.clickable").forEach(el => el.onclick = () => materialize(el.dataset.mat, el.dataset.id));
 }
+// --- MODEL: how a projection is built, and what every fitted piece is worth -----------------------
+//
+// The Data page shows where a ROW came from and stops at the board -- which is where the interesting
+// part starts. A projection is a rank-curve value multiplied by fitted factors, and that product is
+// then fed to a simulator that turns points into a title probability. None of it was visible, so a
+// number on the board had to be taken on trust.
+//
+// Trust was misplaced three times in one week. A quarterback was scored on receiving columns for
+// twenty seasons and measured ~0 as a result. Sixteen rosters silently lost their defense to a
+// nickname-vs-abbreviation join. An unfillable slot scored zero, charging a penalty nobody pays.
+// Each was invisible on every screen this app had. That is the argument for the page: a model you
+// cannot see is a model nobody checks.
+const MODEL_NODES = [
+  { id: "hist", name: "history-weekly.csv", kind: "source", sub: "27 seasons of real weeks" },
+  { id: "nflv", name: "nflverse", kind: "source", sub: "usage · bio · schedule" },
+  { id: "boardn", name: "board", kind: "source", sub: "consensus rank + ECR" },
+
+  { id: "rank-outcomes", name: "rank-outcomes", kind: "model", sub: "bootstrap pools" },
+  { id: "variance-model", name: "variance-model", kind: "model", sub: "weekly CV · availability" },
+  { id: "correlation", name: "correlation", kind: "model", sub: "teammate copula" },
+  { id: "age-curve", name: "age-curve", kind: "model", sub: "points vs age" },
+  { id: "opportunity", name: "opportunity", kind: "model", sub: "prior-season usage" },
+  { id: "opponent-correlation", name: "opponent-corr", kind: "unused", sub: "measured, NOT wired in" },
+  { id: "kdst", name: "K / DST factors", kind: "rejected", sub: "measured, did not survive" },
+
+  { id: "curve", name: "rank curve", kind: "calc", sub: "mean points by rank" },
+  { id: "proj", name: "projection", kind: "calc", sub: "curve x age x opportunity" },
+  { id: "replacement", name: "streaming floor", kind: "calc", sub: "replacement level" },
+  { id: "sim", name: "season simulator", kind: "calc", sub: "Monte Carlo x 14 weeks" },
+
+  { id: "title", name: "title odds", kind: "output", sub: "the number decisions use" },
+  { id: "trades", name: "trades · waivers", kind: "output", sub: "delta vs base" },
+];
+const MODEL_EDGES = [
+  ["hist", "rank-outcomes"], ["hist", "variance-model"], ["hist", "correlation"], ["hist", "curve"],
+  ["hist", "age-curve"], ["nflv", "age-curve"], ["nflv", "opportunity"], ["hist", "opportunity"],
+  ["nflv", "opponent-correlation"], ["nflv", "kdst"],
+  ["boardn", "curve"], ["curve", "proj"], ["age-curve", "proj"], ["opportunity", "proj"],
+  ["boardn", "replacement"],
+  ["proj", "sim"], ["rank-outcomes", "sim"], ["variance-model", "sim"], ["correlation", "sim"], ["replacement", "sim"],
+  ["sim", "title"], ["title", "trades"],
+];
+
+function views_model() {
+  document.getElementById("view").innerHTML = `<div class="settings">
+    <div class="sec"><h2>Model</h2><span class="lbl">how a projection is built, and what each fitted piece measured</span></div>
+    <div id="mdl-banner" class="setupbanner mut">Loading…</div>
+    <div id="mdl-dag-wrap"><svg id="mdl-dag"></svg></div>
+    <div class="sec"><h2>Fitted models</h2><span class="lbl">out-of-sample lift under NESTED cross-validation — the honest number</span></div>
+    <div id="mdl-table"></div>
+    <div class="sec"><h2>Value trace</h2><span class="lbl">the multiplication behind a projection, per player</span></div>
+    <div class="btnrow" id="mdl-postabs"></div>
+    <div id="mdl-trace"></div>
+  </div>`;
+  loadModel();
+}
+let MODEL_DATA = null, MODEL_POS = "QB";
+async function loadModel() {
+  const banner = document.getElementById("mdl-banner");
+  if (!window.mc?.modelGraph) { banner.textContent = "Open inside the app to see the model."; return; }
+  const d = await window.mc.modelGraph().catch(() => null);
+  if (!d) { banner.textContent = "Could not read the model."; return; }
+  MODEL_DATA = d;
+  const bad = (d.models || []).filter(m => m.problem);
+  // A page about the model must say when the model is BROKEN, not merely draw it. A failing check is
+  // the whole reason the registry exists.
+  banner.className = "setupbanner " + (bad.length ? "warn" : "ok");
+  banner.innerHTML = bad.length
+    ? `<b>${bad.length} model(s) failing their own check:</b> ${bad.map(m => `${esc(m.key)} — ${esc(m.problem)}`).join(" · ")}`
+    : `${(d.models || []).filter(m => m.present).length} fitted models present and passing · ${esc(String(d.sim?.scoring || ""))} scoring · ${d.sim?.teams || "?"} teams · ${d.sim?.playoffTeams || "?"} make the playoffs`;
+  drawModelDag(d);
+  drawModelTable(d);
+  const positions = [...new Set((d.trace || []).map(t => t.pos))];
+  document.getElementById("mdl-postabs").innerHTML = positions
+    .map(p => `<button class="pbtn${p === MODEL_POS ? " primary" : ""}" data-pos="${esc(p)}">${esc(p)}</button>`).join("");
+  document.querySelectorAll("#mdl-postabs .pbtn").forEach(b => b.onclick = () => {
+    MODEL_POS = b.dataset.pos;
+    document.querySelectorAll("#mdl-postabs .pbtn").forEach(x => x.classList.toggle("primary", x.dataset.pos === MODEL_POS));
+    drawTrace(MODEL_DATA);
+  });
+  if (!positions.includes(MODEL_POS)) MODEL_POS = positions[0];
+  drawTrace(d);
+}
+function drawModelDag(d) {
+  const svg = document.getElementById("mdl-dag");
+  if (typeof dagre === "undefined") { svg.outerHTML = '<div class="mut">Graph library unavailable.</div>'; return; }
+  const byKey = Object.fromEntries((d.models || []).map(m => [m.key, m]));
+  const W = 158, H = 44;
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "LR", nodesep: 12, ranksep: 62, marginx: 10, marginy: 10 });
+  g.setDefaultEdgeLabel(() => ({}));
+  for (const n of MODEL_NODES) g.setNode(n.id, { width: W, height: H });
+  for (const [a, b] of MODEL_EDGES) g.setEdge(a, b);
+  dagre.layout(g);
+  const gw = Math.ceil(g.graph().width), gh = Math.ceil(g.graph().height);
+  svg.setAttribute("width", gw); svg.setAttribute("height", gh); svg.setAttribute("viewBox", `0 0 ${gw} ${gh}`);
+  let h = "";
+  for (const e of g.edges()) h += `<polyline points="${g.edge(e).points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" class="dag-edge"/>`;
+  for (const n of MODEL_NODES) {
+    const p = g.node(n.id); if (!p) continue;
+    const m = byKey[n.id];
+    // A model node shows its OWN measured lift, so the graph cannot show a confident box for a
+    // component that measured nothing.
+    let sub = n.sub;
+    if (m) sub = m.problem ? "FAILING CHECK" : (m.nestedLift != null ? `nested R2 +${m.nestedLift.toFixed(4)}` : n.sub);
+    const cls = m && m.problem ? "failing" : n.kind;
+    h += `<g class="dag-node ${cls}" transform="translate(${(p.x - W / 2).toFixed(1)},${(p.y - H / 2).toFixed(1)})">`
+      + `<rect width="${W}" height="${H}" rx="6"/>`
+      + `<text x="11" y="17" class="dag-name">${esc(n.name)}</text>`
+      + `<text x="11" y="32" class="dag-sub">${esc(String(sub || ""))}</text></g>`;
+  }
+  svg.innerHTML = h;
+}
+function drawModelTable(d) {
+  const rows = (d.models || []).map(m => {
+    // CLAIMED vs MEASURED side by side, permanently. Both shipped models were described at roughly
+    // double their real lift for weeks, because the loop that scored them had also chosen them.
+    const lift = m.nestedLift != null
+      ? `+${m.nestedLift.toFixed(4)}${m.claimedLift != null && Math.abs(m.claimedLift - m.nestedLift) > 1e-6 ? ` <span class="mut">(claimed +${m.claimedLift.toFixed(4)})</span>` : ""}`
+      : `<span class="mut">n/a — not a predictive model</span>`;
+    return `<tr class="${m.problem ? "bad" : ""}">
+      <td><b>${esc(m.key)}</b>${m.required ? "" : ' <span class="mut">optional</span>'}</td>
+      <td>${esc(m.what)}</td>
+      <td>${lift}</td>
+      <td>${m.present ? `${m.sizeKb}kb · ${m.ageDays}d old${m.seasons ? ` · ${esc(m.seasons)}` : ""}` : '<span class="mut">missing</span>'}</td>
+      <td>${m.problem ? `<b>${esc(m.problem)}</b>` : "ok"}</td></tr>`;
+  }).join("");
+  // Negative results belong on the page too. Without them "K and DST are unfitted" reads as an
+  // unfinished task, and the next person spends the same week finding the same nothing.
+  const rej = (d.rejected || []).map(r => `<tr class="mut">
+      <td><b>${esc(r.key)}</b> <span class="mut">not shipped</span></td>
+      <td>${esc(r.positions.join(" · "))} — screened, fitted, rejected</td>
+      <td>${Object.entries(r.nestedLift).map(([k, v]) => `${esc(k)} ${v > 0 ? "+" : ""}${v.toFixed(4)}`).join(" · ")}</td>
+      <td>${esc(r.date)}</td>
+      <td>${esc(r.why.slice(0, 130))}…</td></tr>`).join("");
+  document.getElementById("mdl-table").innerHTML =
+    `<table class="tbl"><thead><tr><th>model</th><th>what it measures</th><th>nested lift</th><th>artifact</th><th>check</th></tr></thead>
+     <tbody>${rows}${rej}</tbody></table>`;
+}
+function drawTrace(d) {
+  const t = (d.trace || []).filter(x => x.pos === MODEL_POS);
+  if (!t.length) { document.getElementById("mdl-trace").innerHTML = '<div class="mut">No trace for this position.</div>'; return; }
+  const pct = (f) => `${f >= 1 ? "+" : ""}${((f - 1) * 100).toFixed(1)}%`;
+  const cell = (f) => `<td class="${Math.abs(f - 1) < 0.0005 ? "mut" : f > 1 ? "up" : "down"}">${f.toFixed(3)} <span class="mut">${pct(f)}</span></td>`;
+  document.getElementById("mdl-trace").innerHTML =
+    `<table class="tbl"><thead><tr><th>#</th><th>player</th><th>rank curve</th><th>age</th><th>opportunity</th><th>projection</th><th>net</th></tr></thead><tbody>` +
+    t.map(x => `<tr><td class="mut">${x.rank}</td><td><b>${esc(x.name)}</b></td>
+      <td>${x.base.toFixed(1)}</td>${cell(x.age)}${cell(x.opp)}
+      <td><b>${x.final.toFixed(1)}</b></td>
+      <td class="${x.final >= x.base ? "up" : "down"}">${(x.final - x.base >= 0 ? "+" : "")}${(x.final - x.base).toFixed(1)}</td></tr>`).join("") +
+    `</tbody></table>
+     <div class="mut" style="margin-top:8px">
+       A factor of exactly 1.000 means the model had no opinion — an unknown birth date, a rookie with
+       no prior usage, or a position it measured no signal for. That is deliberate: a missing input
+       produces no adjustment rather than a guess.
+     </div>`;
+}
+
 async function materialize(mat, nodeId) {
   if (!window.mc?.ingestSource || !mat) return;
   document.querySelectorAll(`.dag-node[data-mat="${mat}"]`).forEach(el => el.classList.add("running"));

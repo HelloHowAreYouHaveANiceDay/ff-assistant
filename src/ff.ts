@@ -232,6 +232,74 @@ async function cmdServe(rest: string[]) {
           result = { lastIngest, tables };
           break;
         }
+        case "model-graph": {
+          // WHAT THE MODEL IS, AND WHERE A NUMBER CAME FROM.
+          //
+          // The warehouse lineage answers "where did this ROW come from". It stops at the board,
+          // which is exactly where the interesting part starts: a projection is a rank-curve value
+          // multiplied by fitted factors, then fed to a simulator that turns points into title
+          // probability. None of that was visible anywhere, so a number on the board had to be taken
+          // on trust -- and this session found three separate cases where trust was misplaced
+          // (a quarterback scored on receiving columns, sixteen rosters missing a defense, an empty
+          // slot scored as zero). Things that cannot be seen do not get checked.
+          //
+          // Two payloads: the REGISTRY (what is fitted, what it measured, what is failing its own
+          // check) and a TRACE (for real players, the multiplication that produced their projection,
+          // step by step).
+          const { readFileSync } = await import("node:fs");
+          const { dataPath } = await import("./data/paths.js");
+          const { modelStatus, EVALUATED_NOT_SHIPPED } = await import("./draft/models.js");
+          const { ageFactor } = await import("./draft/age.js");
+          const { opportunityFactor } = await import("./draft/opportunity.js");
+          const cfgRow = db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string } | undefined;
+          const cfg = cfgRow ? JSON.parse(cfgRow.value) : {};
+          const season = Number(cfg.season) || new Date().getFullYear();
+
+          let ageCurve: Record<string, unknown> | null = null, oppModel: Record<string, unknown> | null = null;
+          try { ageCurve = JSON.parse(readFileSync(dataPath("age-curve.json"), "utf8")); } catch { /* status says so */ }
+          try { oppModel = JSON.parse(readFileSync(dataPath("opportunity-model.json"), "utf8")); } catch { /* same */ }
+
+          // The trace runs on the REAL board rows, and per position so the rank each factor is keyed
+          // on is the rank the projection was actually built at.
+          const rows = db.prepare("SELECT row_json FROM board WHERE season=?").all(season) as { row_json: string }[];
+          const parsed = rows.map((r) => JSON.parse(r.row_json) as Record<string, unknown>);
+          const byPos: Record<string, { name: string; proj: number }[]> = {};
+          for (const j of parsed) {
+            const pos = String(j.Pos ?? "");
+            if (!pos) continue;
+            (byPos[pos] ??= []).push({ name: String(j.Player), proj: Number(j.ProjPts) || 0 });
+          }
+          const trace: Record<string, unknown>[] = [];
+          for (const [pos, list] of Object.entries(byPos)) {
+            list.sort((a, b) => b.proj - a.proj);
+            list.slice(0, 12).forEach((pl, i) => {
+              const rank = i + 1;
+              const age = ageCurve ? ageFactor(ageCurve as never, pl.name, pos, season) : 1;
+              const opp = oppModel ? opportunityFactor(oppModel as never, pl.name, pos, rank, season) : 1;
+              // The board value is POST-factor, so the pre-factor base is recovered by dividing. Doing
+              // it the other way -- multiplying the shipped number by the factors again -- would apply
+              // them twice and is the kind of error a display makes look authoritative.
+              const denom = (age || 1) * (opp || 1);
+              trace.push({
+                pos, rank, name: pl.name,
+                base: denom ? pl.proj / denom : pl.proj,
+                age, opp, final: pl.proj,
+              });
+            });
+          }
+          result = {
+            season,
+            models: modelStatus(),
+            rejected: EVALUATED_NOT_SHIPPED,
+            trace,
+            sim: {
+              slots: cfg.slots ?? [], flexOk: cfg.flex_ok ?? [],
+              playoffTeams: cfg.playoffTeams ?? null, regWeeks: cfg.regWeeks ?? null,
+              teams: cfg.teams ?? null, scoring: cfg.scoring ?? null,
+            },
+          };
+          break;
+        }
         case "ownership": {
           const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string } | undefined;
           const map: Record<string, { owner: string; team: string; slot: string }> = {};

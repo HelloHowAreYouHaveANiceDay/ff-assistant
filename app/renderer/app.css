@@ -216,6 +216,27 @@ tr.mine{background:#f4f6f2} tr.mine:hover{background:#eef1ea}
 .dag-node.mart rect{fill:color-mix(in srgb,var(--sel) 13%,var(--paper))}
 .dag-node.output rect{fill:var(--sel)}
 .dag-node.output .dag-name,.dag-node.output .dag-sub{fill:var(--sel-fg)}
+/* MODEL page. Node kinds carry meaning rather than decoration: a fitted model reads differently
+   from a derived calculation, a measured-but-unwired one differently again, and a model failing its
+   own registry check has to be impossible to miss -- that state is the entire reason the registry
+   exists, and a page that drew it in the same grey as everything else would hide the one thing worth
+   looking at. */
+.dag-node.model rect{fill:color-mix(in srgb,var(--sel) 10%,var(--paper));stroke:var(--sel)}
+.dag-node.calc rect{fill:color-mix(in srgb,var(--sel) 4%,var(--paper));stroke-dasharray:3 2}
+.dag-node.unused rect{fill:color-mix(in srgb,#d99a00 10%,var(--paper));stroke:#d99a00;stroke-dasharray:4 2}
+.dag-node.rejected rect{fill:var(--paper);stroke:var(--faint);stroke-dasharray:2 3}
+.dag-node.rejected .dag-name,.dag-node.rejected .dag-sub{fill:var(--mut)}
+.dag-node.failing rect{fill:rgba(190,40,40,.12);stroke:rgba(190,40,40,.75);stroke-width:1.6}
+#mdl-dag-wrap{overflow:auto;max-width:100%;margin:10px 0 4px;padding-bottom:8px}
+.setupbanner.warn{background:rgba(190,40,40,.10);border-color:rgba(190,40,40,.5)}
+/* Model tables are read, not scanned like the board, so they get ordinary flow rather than the
+   sticky-column treatment .tblwrap needs. */
+.tbl{border-collapse:collapse;width:100%;max-width:1100px;font-size:var(--fs-sm);margin-bottom:6px}
+.tbl th{text-align:left;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:var(--tracking);
+  color:var(--mut);font-weight:var(--fw-label);border-bottom:1px solid var(--line);padding:6px 10px 5px}
+.tbl td{padding:5px 10px;border-bottom:.8px solid var(--faint);vertical-align:top}
+.tbl tr.bad td{background:rgba(190,40,40,.08)}
+.tbl td.up{color:#2f7d3f} .tbl td.down{color:#b03030}
 .dag-node.clickable{cursor:pointer}
 .dag-node.clickable:hover rect{stroke:var(--sel);stroke-width:1.6}
 .dag-name{font-size:11.5px;font-weight:600;fill:var(--tx)}

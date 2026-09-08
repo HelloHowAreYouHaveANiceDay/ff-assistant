@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld("mc", {
   // onboarding: synced-league status (config + league row + player count), and a one-shot league sync
   leagueInfo: () => ipcRenderer.invoke("mc:leagueInfo"),
   dataSources: () => ipcRenderer.invoke("mc:dataSources"),
+  modelGraph: () => ipcRenderer.invoke("mc:modelGraph"),
   ingestSource: (id) => ipcRenderer.invoke("mc:ingestSource", id),
   // per-league ownership overlay for the board (who owns each player) + a roster resync
   ownership: () => ipcRenderer.invoke("mc:ownership"),
