@@ -16,7 +16,46 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { loadSimContext } from "../src/draft/simContext.js";
+import { assertRostersCanFillLineup } from "../src/draft/season.js";
 import { dstAliasKey, nameKey } from "../src/draft/values.js";
+
+// --- the structural guard itself ------------------------------------------------------------------
+// Both directions are asserted. A guard that can only ever REFUSE is dead code that reads exactly
+// like a guard that is working, and the negative path is the one that was already correct here.
+const SLOTS = ["QB", "RB", "WR", "TE", "FLEX", "FLEX", "DST", "K", "BE", "BE"];
+const roster = (spec: [string, number][]) =>
+  spec.flatMap(([pos, n]) => Array.from({ length: n }, (_, i) => ({ name: `${pos}${i}`, pos, proj: 100, bye: null })));
+const team = (spec: [string, number][]) => [{ id: "1", name: "T1", roster: roster(spec) }];
+const COMPLETE: [string, number][] = [["QB", 1], ["RB", 3], ["WR", 3], ["TE", 1], ["K", 1], ["DST", 1]];
+
+test("POSITIVE DIRECTION: a complete roster passes the structural check", () => {
+  assert.doesNotThrow(() => assertRostersCanFillLineup(team(COMPLETE), SLOTS));
+});
+
+test("FAULT: a roster with no DST is refused, naming the team and the slot", () => {
+  const noDst = COMPLETE.filter(([p]) => p !== "DST");
+  assert.throws(() => assertRostersCanFillLineup(team(noDst), SLOTS), /T1.*0 DST.*starts 1/s);
+});
+
+test("FAULT: a roster that cannot fill FLEX is refused, even with every fixed slot covered", () => {
+  // Exactly one of each flex position: the fixed RB/WR/TE slots consume them all, leaving no spare.
+  const noFlex: [string, number][] = [["QB", 1], ["RB", 1], ["WR", 1], ["TE", 1], ["K", 1], ["DST", 1]];
+  assert.throws(() => assertRostersCanFillLineup(team(noFlex), SLOTS), /flex-eligible/);
+});
+
+test("the opt-out works, and is the only way through", () => {
+  const noDst = COMPLETE.filter(([p]) => p !== "DST");
+  assert.throws(() => assertRostersCanFillLineup(team(noDst), SLOTS));
+  // Same rosters, opt-out set: the caller has said partial rosters are the point.
+  assert.doesNotThrow(() => assertRostersCanFillLineup(team(noDst), SLOTS.filter((s) => s !== "DST")));
+});
+
+test("flexOk is honoured -- a superflex league can fill FLEX with the spare QB", () => {
+  // Guards against the check hardcoding RB/WR/TE the way optimalLineup once did.
+  const spec: [string, number][] = [["QB", 3], ["RB", 1], ["WR", 1], ["TE", 1], ["K", 1], ["DST", 1]];
+  assert.throws(() => assertRostersCanFillLineup(team(spec), SLOTS));
+  assert.doesNotThrow(() => assertRostersCanFillLineup(team(spec), SLOTS, ["QB", "RB", "WR", "TE"]));
+});
 
 test("every rostered player resolves onto the board", async (t) => {
   if (!existsSync("data/ff.db")) return t.skip("no local store");

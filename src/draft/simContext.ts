@@ -97,18 +97,10 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
   if (unmatched.length) {
     console.warn(`WARNING: ${unmatched.length} rostered players matched no board row and were dropped from the simulation: ${unmatched.slice(0, 12).join(", ")}${unmatched.length > 12 ? " ..." : ""}`);
   }
-  // And the structural check the above cannot make: a roster short of the league's starting
-  // requirement means someone is being simulated with a slot they can never fill.
-  {
-    const need: Record<string, number> = {};
-    for (const s of (cfg.slots ?? []) as string[]) if (s !== "BE" && s !== "IR" && s !== "FLEX") need[s] = (need[s] ?? 0) + 1;
-    for (const t of byTeam.values()) {
-      for (const [pos, n] of Object.entries(need)) {
-        const have = t.roster.filter((p) => p.pos === pos).length;
-        if (have < n) console.warn(`WARNING: team ${t.name} has ${have} ${pos} but the lineup starts ${n} -- that slot will score zero every week.`);
-      }
-    }
-  }
+  // The structural consequence -- a roster that cannot fill the lineup -- is NOT checked here. It is
+  // enforced in simulateSeasons, which every path reaches and this one does not: six scripts build
+  // their teams without ever calling loadSimContext. Checking it in both places would mean two
+  // sources of truth for the same rule, and the weaker one warns where the other refuses.
   const teams = [...byTeam.values()].sort((a, b) => Number(a.id) - Number(b.id));
   const meIdx = teams.findIndex((t) => t.id === String(lgRow.team_id));
 

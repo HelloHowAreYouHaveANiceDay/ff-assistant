@@ -56,6 +56,15 @@ export interface SeasonOpts {
   seed?: number;
   /** Multiplier applied to every K/DST CV, for the sensitivity check on those unfitted rows. */
   kdstCvScale?: number;
+  /** FLEX eligibility, from the league's `flex_ok`. Defaults to RB/WR/TE. */
+  flexOk?: string[];
+  /**
+   * Opt out of the structural roster check. Only for cases where a partial roster is the POINT --
+   * simulating a half-finished draft, or a unit test of the scoring path. Never as a way past a
+   * failure: the check firing on a roster that should be complete means the roster is wrong, and
+   * silencing it restores exactly the bug it was written for.
+   */
+  allowIncompleteRosters?: boolean;
   /** name -> rank within the FULL projection pool at that position. Required for tiers to match the
    *  variance fit; see the tiering note in simulateSeasons. */
   poolRank?: Map<string, { rank: number; of: number }>;
@@ -112,12 +121,66 @@ function playoffWinner(seeds: number[], beat: (a: number, b: number) => number):
   return alive[0].team;
 }
 
+/**
+ * CAN THESE ROSTERS EVER FILL THIS LINEUP? Structural legality, checked before a single trial runs.
+ *
+ * There are two ways a starting slot ends up empty and they are not the same event:
+ *
+ *   - A player is on bye or hurt and the bench cannot cover. That is REAL FANTASY FOOTBALL and the
+ *     simulator must model it -- scoring zero there is the correct answer, and `optimalLineup`
+ *     rightly returns "(empty)".
+ *   - The roster contains nobody at that position AT ALL, so the slot is empty in all 3,000 trials of
+ *     all 14 weeks. That is never a football fact; it is a data defect upstream.
+ *
+ * Conflating them is what let sixteen rosters simulate for weeks with no defense. `optimalLineup`
+ * DID flag it -- it pushes "no available player to fill DST" into `flags` -- and `simulateSeasons`
+ * never read `flags`, so a real signal was produced and discarded on every one of millions of
+ * lineup calls. A warning nobody reads is indistinguishable from no warning.
+ *
+ * So the structural case is refused here, at the one function every path goes through, rather than
+ * being detected at any of the eight places that build rosters. An incomplete roster is now
+ * impossible to simulate by accident; it takes the explicitly-named opt-out below.
+ */
+export function assertRostersCanFillLineup(
+  teams: SeasonTeamInput[],
+  slots: string[],
+  flexOk?: Iterable<string>,
+): void {
+  const flex = new Set(flexOk ?? ["RB", "WR", "TE"]);
+  const start = slots.filter((s) => s !== "BE" && s !== "BENCH" && s !== "IR");
+  const need: Record<string, number> = {};
+  let flexN = 0;
+  for (const s of start) { if (s === "FLEX") flexN++; else need[s] = (need[s] ?? 0) + 1; }
+
+  const problems: string[] = [];
+  for (const t of teams) {
+    const have: Record<string, number> = {};
+    for (const p of t.roster) have[p.pos] = (have[p.pos] ?? 0) + 1;
+    for (const [pos, n] of Object.entries(need)) {
+      if ((have[pos] ?? 0) < n) problems.push(`${t.name || t.id}: has ${have[pos] ?? 0} ${pos} but the lineup starts ${n}`);
+    }
+    // FLEX needs players SPARE of the dedicated slots, not merely present.
+    let spare = 0;
+    for (const pos of flex) spare += Math.max(0, (have[pos] ?? 0) - (need[pos] ?? 0));
+    if (spare < flexN) problems.push(`${t.name || t.id}: ${spare} flex-eligible players spare of the fixed slots but the lineup starts ${flexN} FLEX`);
+  }
+  if (problems.length) {
+    throw new Error(
+      `roster cannot fill the lineup -- these slots would score zero in EVERY week of EVERY trial, ` +
+      `which is a data defect and not a football outcome:\n  ${problems.join("\n  ")}\n` +
+      `If partial rosters are genuinely intended (a mid-draft simulation, say), pass ` +
+      `allowIncompleteRosters: true to say so deliberately.`,
+    );
+  }
+}
+
 export function simulateSeasons(
   teams: SeasonTeamInput[],
   schedule: [number, number][][],
   vm: VarianceModel,
   opts: SeasonOpts,
 ): SeasonOdds[] {
+  if (!opts.allowIncompleteRosters) assertRostersCanFillLineup(teams, opts.slots, opts.flexOk);
   const N = teams.length;
   // IDENTITY-KEYED DRAWS. Every random value below is a pure function of (seed, trial, week,
   // player, purpose), so a shared player lives through the SAME season in two rosters that differ
