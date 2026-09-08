@@ -335,9 +335,17 @@ const flags = [];
 for (const d of out) {
   const same = out.filter((x) => x.ti === d.ti && x.give.name === d.give.name && x.get.pos === d.get.pos && x.get.proj > d.get.proj + 20);
   for (const better of same) {
-    if (better.dTitle < d.dTitle - noise) {
-      flags.push(`DOMINANCE (same partner ${d.abbr}): giving ${d.give.name}, the BETTER ${better.get.name} (${better.get.proj.toFixed(0)}) ` +
-        `scores ${better.dTitle.toFixed(2)}pp but the worse ${d.get.name} (${d.get.proj.toFixed(0)}) scores ${d.dTitle.toFixed(2)}pp`);
+    // TWO deltas are being compared, so the threshold is sqrt(2) x the single-delta noise, not the
+    // single-delta noise. Using the latter is how a 1.42pp gap cleared a 1.36pp bar by 0.06pp and
+    // was reported as structural -- it inverted completely at five times the trials.
+    if (better.dTitle < d.dTitle - noise * Math.SQRT2) {
+      flags.push({
+        kind: "DOMINANCE",
+        text: `DOMINANCE (same partner ${d.abbr}): giving ${d.give.name}, the BETTER ${better.get.name} (${better.get.proj.toFixed(0)}) ` +
+          `scores ${better.dTitle.toFixed(2)}pp but the worse ${d.get.name} (${d.get.proj.toFixed(0)}) scores ${d.dTitle.toFixed(2)}pp`,
+        probe: [better, d],
+        holds: (r) => r[0] < r[1] - noise * Math.SQRT2,
+      });
     }
   }
 }
@@ -359,8 +367,13 @@ for (const d of out) {
     baseTeams[meIdx].roster.filter((p) => p.name !== d.give.name).concat([d.get])));
   if (!after.has(d.get.name)) continue;                            // he would not start -> not an upgrade
   if (d.dTitle < -noise) {
-    flags.push(`FREE UPGRADE HURTS: ${d.give.name} (${d.give.proj.toFixed(0)}, benched) -> ${d.get.name} ` +
-      `(${d.get.proj.toFixed(0)}, WOULD START) = ${d.dTitle.toFixed(2)}pp`);
+    flags.push({
+      kind: "FREE UPGRADE",
+      text: `FREE UPGRADE HURTS: ${d.give.name} (${d.give.proj.toFixed(0)}, benched) -> ${d.get.name} ` +
+        `(${d.get.proj.toFixed(0)}, WOULD START) = ${d.dTitle.toFixed(2)}pp`,
+      probe: [d],
+      holds: (r) => r[0] < -noise,
+    });
   }
 }
 // 3. Zero-sum sanity. In a 16-team league a trade that massively helps us should cost the partner
@@ -381,5 +394,44 @@ if (rbGains.length && wrGains.length) {
     flags.push(`POSITION BLINDNESS: a 5th WR is worth more than a 2nd RB (${avg(wrGains).toFixed(2)} vs ${avg(rbGains).toFixed(2)}pp) on a one-RB roster`);
   }
 }
-console.log(flags.length ? `\n  ${flags.length} ANOMALIES:` : `\n  no anomalies -- every check above held.`);
-for (const f of flags.slice(0, 15)) console.log(`   - ${f}`);
+// --- CONFIRM EVERY FLAG AT A SECOND SEED ------------------------------------------------------------
+// All eight anomalies this scan reported on the previous run were Monte Carlo noise. Every one either
+// inverted or vanished at five times the trials -- the "better player scores worse" pair reversed
+// cleanly, and the four "free upgrade hurts" cases came back positive. That is not a coincidence, it
+// is what a scan does when its threshold sits at roughly the size of its own error and it reads a
+// single sample: across ~750 candidates it will manufacture a handful of confident findings every
+// time, and each one costs somebody an investigation.
+//
+// So a flag is now a HYPOTHESIS, and it has to survive being re-measured on an independent seed
+// before it is printed. This is the same rule applied everywhere else in this codebase and it was
+// missing from precisely the tool whose job is to find things that look wrong.
+const structural = flags.filter((f) => typeof f === "string");
+const probed = flags.filter((f) => typeof f !== "string");
+let confirmed = [], dropped = 0;
+if (probed.length) {
+  process.stderr.write(`  re-testing ${probed.length} flagged candidates at a second seed...\n`);
+  const cjobs = [];
+  for (const f of probed) {
+    for (const d of f.probe) {
+      cjobs.push({ idx: cjobs.length, meIdx, theirIdx: d.ti, giveName: d.give.name, getName: d.get.name, trials: TRIALS, seed: SEED + 1013 });
+    }
+  }
+  const cOut = await runPool(poolInit, cjobs, {});
+  // The baseline must come from the SAME seed as the arms it is compared against, or the delta
+  // mixes two samples -- which is the error that produced these flags in the first place.
+  const base2 = 100 * simulateSeasons(baseTeams, weeks, vm, { ...OPTS, seed: SEED + 1013 })[meIdx].champion;
+  let k = 0;
+  for (const f of probed) {
+    const deltas = f.probe.map(() => cOut[k++].mine - base2);
+    if (f.holds(deltas)) confirmed.push(f); else dropped++;
+  }
+}
+const shown = [...structural, ...confirmed.map((f) => f.text)];
+console.log(shown.length ? `\n  ${shown.length} ANOMALIES (confirmed on a second seed):` : `\n  no anomalies survived a second seed.`);
+for (const f of shown.slice(0, 15)) console.log(`   - ${f}`);
+if (dropped) {
+  console.log(`\n  ${dropped} flag(s) did NOT reproduce on an independent seed and were discarded.`);
+  console.log(`  That is the expected outcome for most of them: at ${TRIALS} trials a single delta`);
+  console.log(`  carries about +/-${noise.toFixed(2)}pp, and a scan reading one sample over ~${out.length} candidates`);
+  console.log(`  will invent a few confident findings every run.`);
+}
