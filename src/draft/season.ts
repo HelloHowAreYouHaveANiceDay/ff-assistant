@@ -40,7 +40,7 @@ import { optimalLineup } from "../inseason/lineup.js";
 // Imported as `unitDraw`, not `draw`: the playoff bracket already has a local `draw(teamIndex)` that
 // would shadow it, and the shadowed call type-checked as a wrong-arity error only by luck.
 import { draw as unitDraw, drawGauss, PURPOSE, PlayerIds } from "./rng.js";
-import { prepare as prepBootstrap, sampleWeek as bootstrapWeek, type RankOutcomes, type CorrelationModel, type PoolPlayer } from "./bootstrap.js";
+import { prepare as prepBootstrap, sampleSeason as bootstrapSeason, weekOf, type RankOutcomes, type CorrelationModel, type PoolPlayer } from "./bootstrap.js";
 
 export interface VarianceModel {
   tiers: number;
@@ -323,6 +323,21 @@ export function simulateSeasons(
         trueMean.set(p, Math.max(0, (p.proj / 17) * err));
       }
     }
+    // --- draw each player's whole SEASON once, then read weeks out of it ---------------------------
+    // The bootstrap draw happens HERE, not inside the week loop, and that is the entire change.
+    // Drawing per week made every week an independent sample from the rank pool, which understates
+    // season-total spread by 1.6-2.8x (see bootstrap.ts): a torn ACL in week 3 could not persist,
+    // because week 4 was a fresh draw from players who were healthy. Drawing a whole player-season
+    // and then reading week w out of it keeps that persistence exactly, with no model of it, and
+    // leaves the WEEKLY marginal untouched.
+    //
+    // Week 0 keys the draw so it cannot collide with any weekly draw, and so a paired run against a
+    // different config still meets the same seasons for the same players.
+    const seasonDraw = boot
+      ? boot.map((b) => bootstrapSeason(b.pp, b.prep,
+        (m, i) => drawGauss(seedNum, trial, 0, pid(m.name), PURPOSE.copulaA + i),
+        (m) => unitDraw(seedNum, trial, 0, pid(m.name), PURPOSE.season)))
+      : null;
     // --- play the weeks --------------------------------------------------------------------------
     const wins = new Array(N).fill(0), pts = new Array(N).fill(0);
     const weekPts: number[][] = Array.from({ length: N }, () => []);
@@ -330,13 +345,11 @@ export function simulateSeasons(
       const scores = teams.map((tm, ti) => {
         if (boot) {
           const b = boot[ti];
-          const drawn = bootstrapWeek(b.pp, b.prep,
-            (m, i) => drawGauss(seedNum, trial, w, pid(m.name), PURPOSE.copulaA + i),
-            (m) => unitDraw(seedNum, trial, w, pid(m.name), PURPOSE.perf));
+          const drawn = seasonDraw![ti];
           const players = tm.roster.map((p) => {
             const onBye = p.bye === w;
             const pp = b.byName.get(p.name);
-            const actual = onBye || !pp ? null : (drawn.get(pp) ?? 0);
+            const actual = onBye || !pp ? null : weekOf(drawn.get(pp), w);
             return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
           });
           const res = optimalLineup(players, opts.slots, opts.flexOk);

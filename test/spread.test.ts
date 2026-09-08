@@ -9,39 +9,57 @@ import type { RankOutcomes, CorrelationModel } from "../src/draft/bootstrap.js";
 
 const NO_CORR: CorrelationModel = { pairs: {} };
 
+// seasonSpread now takes whole player-SEASONS. `traj` turns a list of season totals into the
+// one-week-per-season trajectories these synthetic cases need; the real pools carry 16-17 weeks each.
+const traj = (totals: number[]) => totals.map((t) => ({ weeks: [t], total: t }));
+
 test("quantiles come back ordered", () => {
-  const s = seasonSpread([0, 5, 10, 15, 20], 17, 5000, mulberry32(1))!;
+  const s = seasonSpread(traj([0, 5, 10, 15, 20]), 17, 5000, mulberry32(1))!;
   assert.ok(s.p10 < s.p50 && s.p50 < s.p90, `expected p10<p50<p90, got ${JSON.stringify(s)}`);
 });
 
 // THE POSITIVE DIRECTION. Every test below could pass against a function that returns a constant
 // band, so first prove the band actually tracks the data it is drawn from.
 test("a wider pool produces a wider band", () => {
-  const tight = seasonSpread([9, 10, 10, 10, 11], 17, 20000, mulberry32(7))!;
-  const wide = seasonSpread([0, 0, 10, 20, 40], 17, 20000, mulberry32(7))!;
+  const tight = seasonSpread(traj([9, 10, 10, 10, 11]), 17, 20000, mulberry32(7))!;
+  const wide = seasonSpread(traj([0, 0, 10, 20, 40]), 17, 20000, mulberry32(7))!;
   const wTight = tight.p90 - tight.p10, wWide = wide.p90 - wide.p10;
   assert.ok(wWide > wTight * 3, `wide pool must widen the band: tight ${wTight.toFixed(1)} vs wide ${wWide.toFixed(1)}`);
 });
 
-test("the band narrows RELATIVE to the total as weeks accumulate (it is a sum, not a scaling)", () => {
-  const pool = [0, 4, 8, 12, 30];
-  const one = seasonSpread(pool, 1, 40000, mulberry32(3))!;
-  const many = seasonSpread(pool, 17, 40000, mulberry32(3))!;
+// THIS TEST REPLACES ONE THAT ASSERTED THE OPPOSITE, and the reversal is the point of the change.
+//
+// It used to read: "the band narrows RELATIVE to the total as weeks accumulate (it is a sum, not a
+// scaling)", and it locked in the convolution of independent weekly draws. That property was true of
+// the sampler and false of the world: real player-seasons at a given entering rank have season-total
+// sd 1.6-2.8x what independent weeks produce, because injuries, busts and breakouts persist. The old
+// test was therefore a correct test of a wrong model, and it would have blocked this fix.
+//
+// Resampling whole seasons makes `weeks` a pure rescaling -- there is no averaging-out left to do,
+// because the pool already holds real season totals -- so the relative width is now INVARIANT to it.
+// That is the honest property, and locking it stops anyone quietly reintroducing a convolution.
+test("relative band width is INVARIANT to the week count -- a season is resampled, not convolved", () => {
+  const pool = traj([0, 40, 90, 150, 300]);
+  const short = seasonSpread(pool, 14, 40000, mulberry32(3))!;
+  const long = seasonSpread(pool, 17, 40000, mulberry32(3))!;
   const rel = (s: { p10: number; p50: number; p90: number }) => (s.p90 - s.p10) / s.p50;
-  assert.ok(rel(many) < rel(one) / 2,
-    `17 independent weeks must average out: relative width ${rel(one).toFixed(2)} -> ${rel(many).toFixed(2)}`);
+  assert.ok(Math.abs(rel(long) - rel(short)) < 0.02,
+    `relative width must not move with the week count: ${rel(short).toFixed(3)} vs ${rel(long).toFixed(3)}`);
+  // and the LEVEL must scale with it, or `weeks` has quietly become inert
+  assert.ok(Math.abs(long.p50 / short.p50 - 17 / 14) < 0.02,
+    `p50 must scale with weeks: ${short.p50} -> ${long.p50}`);
 });
 
 test("the same seed gives the same band", () => {
-  const a = seasonSpread([0, 5, 12, 30], 17, 5000, mulberry32(42));
-  const b = seasonSpread([0, 5, 12, 30], 17, 5000, mulberry32(42));
+  const a = seasonSpread(traj([0, 5, 12, 30]), 17, 5000, mulberry32(42));
+  const b = seasonSpread(traj([0, 5, 12, 30]), 17, 5000, mulberry32(42));
   assert.deepEqual(a, b, "a band that moves between builds of identical data is unreadable as a signal");
 });
 
 test("degenerate inputs return null rather than a fake band", () => {
   assert.equal(seasonSpread([], 17, 100, mulberry32(1)), null);
-  assert.equal(seasonSpread([1, 2], 0, 100, mulberry32(1)), null);
-  assert.equal(seasonSpread([1, 2], 17, 0, mulberry32(1)), null);
+  assert.equal(seasonSpread(traj([1, 2]), 0, 100, mulberry32(1)), null);
+  assert.equal(seasonSpread(traj([1, 2]), 17, 0, mulberry32(1)), null);
 });
 
 // --- against the REAL fitted models, because a synthetic pool cannot catch a join defect ----------

@@ -13,7 +13,7 @@
 // This is a producer/consumer check of the kind that keeps paying: run the real sampler's real
 // output through an independent computation of the same quantity, rather than reasoning about it.
 import { readFileSync } from "node:fs";
-import { prepare, sampleWeek } from "../src/draft/bootstrap.ts";
+import { prepare, sampleSeason, weekOf } from "../src/draft/bootstrap.ts";
 
 const outcomes = JSON.parse(readFileSync("data/rank-outcomes.json", "utf8"));
 const corr = JSON.parse(readFileSync("data/correlation-model.json", "utf8"));
@@ -44,11 +44,26 @@ const players = [
 ];
 const prep = prepare(players, outcomes, corr, "none");
 
-const N = 200000;
+// SEASONS are drawn now, not weeks. Each trial draws one whole player-season per player (coupled
+// across teammates by the copula) and every week is read out of it -- so `drawn` still holds a long
+// stream of weekly scores and every marginal check below asks exactly the same question of it.
+// `seasonTotals` holds the season-level view, which is where the coupling now actually lives.
+const N = 20000;
 const drawn = new Map(players.map((p) => [p.name, []]));
+const seasonTotals = new Map(players.map((p) => [p.name, []]));
+const weekPairs = { qb: [], wr: [] };   // same-week teammate scores, for the WEEKLY correlation
 for (let i = 0; i < N; i++) {
-  const w = sampleWeek(players, prep, gauss, rng);
-  for (const p of players) drawn.get(p.name).push(w.get(p));
+  const sn = sampleSeason(players, prep, gauss, rng);
+  const len = Math.max(...players.map((p) => sn.get(p)?.weeks.length ?? 0));
+  for (const p of players) {
+    const t = sn.get(p);
+    seasonTotals.get(p.name).push(t ? t.total : 0);
+    for (let w = 1; w <= len; w++) drawn.get(p.name).push(weekOf(t, w));
+  }
+  for (let w = 1; w <= len; w++) {
+    weekPairs.qb.push(weekOf(sn.get(players[0]), w));
+    weekPairs.wr.push(weekOf(sn.get(players[1]), w));
+  }
 }
 
 const q = (sorted, u) => {
@@ -61,7 +76,9 @@ console.log(`${N} correlated weekly draws vs each player's own bootstrap pool\n`
 console.log("  player     n_pool    pool mean   drawn mean    pool p10/p50/p90      drawn p10/p50/p90     max|dq|");
 let worst = 0;
 for (const p of players) {
-  const pool = prep.pools.get(p);                       // already sorted ascending
+  // The pool is trajectories sorted by season total; the MARGINAL question is about weeks, so
+  // flatten it back to the weekly multiset -- which is exactly what schema 1 stored.
+  const pool = prep.pools.get(p).flatMap((t) => t.weeks).sort((a, b) => a - b);
   const got = drawn.get(p.name).slice().sort((a, b) => a - b);
   const qs = [0.1, 0.25, 0.5, 0.75, 0.9];
   const dq = qs.map((u) => Math.abs(q(pool, u) - q(got, u)));
@@ -82,10 +99,27 @@ const pear = (a, b) => {
   for (let i = 0; i < a.length; i++) { n += (a[i] - ma) * (b[i] - mb); da += (a[i] - ma) ** 2; db += (b[i] - mb) ** 2; }
   return n / Math.sqrt(da * db);
 };
-const rQBWR = pear(drawn.get("QB1"), drawn.get("WR1"));
-const rQBRB = pear(drawn.get("QB1"), drawn.get("RB_lone"));
-console.log(`\n  realised QB-WR correlation (same team, target +${(corr.pairs["QB-WR"] ?? 0).toFixed(3)}): ${rQBWR.toFixed(3)}`);
-console.log(`  realised QB-RB correlation (DIFFERENT teams, must be ~0):        ${rQBRB.toFixed(3)}`);
+const rQBWRweek = pear(weekPairs.qb, weekPairs.wr);
+const rQBWRseason = pear(seasonTotals.get("QB1"), seasonTotals.get("WR1"));
+const rQBRBseason = pear(seasonTotals.get("QB1"), seasonTotals.get("RB_lone"));
+console.log(`\n  COUPLING, now imposed at the SEASON level (target +${(corr.pairs["QB-WR"] ?? 0).toFixed(3)}):`);
+console.log(`    QB-WR, same team, SEASON TOTALS:      ${rQBWRseason.toFixed(3)}`);
+console.log(`    QB-WR, same team, SAME WEEK:          ${rQBWRweek.toFixed(3)}`);
+console.log(`    QB-RB, DIFFERENT teams (must be ~0):  ${rQBRBseason.toFixed(3)}`);
+console.log(`
+  KNOWN LIMIT, stated rather than discovered later. The +0.348 target was measured on SAME-WEEK
+  residuals, and it is now applied to the season quantile instead. Season totals therefore hit the
+  target while the same-week figure comes in BELOW it: two teammates share season quality, not the
+  particular week in which they boomed. That is a real gap and it is the right trade for now --
+  season-total dispersion was wrong by a factor of two, which dominates a weekly correlation that
+  only moves head-to-head weekly variance. Restoring the within-week component without disturbing
+  the marginal is Phase 2 work, and it must not be done by scaling noise onto the scores.`);
+console.log(`\n  SEASON-TOTAL sd, drawn vs the pool's own seasons (the statistic that was 2x too small):`);
+const sdOf = (a) => { const m = mean(a); return Math.sqrt(a.reduce((x, y) => x + (y - m) ** 2, 0) / (a.length - 1)); };
+for (const p of players) {
+  const pool = prep.pools.get(p).map((t) => t.total);
+  console.log(`    ${p.name.padEnd(9)} pool sd ${sdOf(pool).toFixed(1).padStart(6)}   drawn sd ${sdOf(seasonTotals.get(p.name)).toFixed(1).padStart(6)}`);
+}
 
 console.log(`\n  worst quantile error, as a share of each player's own p10-p90 span: ${(100 * worst).toFixed(2)}%`);
 console.log(worst < 0.02

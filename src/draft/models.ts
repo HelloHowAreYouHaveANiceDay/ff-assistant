@@ -39,8 +39,28 @@ export interface ModelSpec {
 export const MODELS: ModelSpec[] = [
   {
     key: "rank-outcomes", file: "rank-outcomes.json", required: true, nestedLift: null, claimedLift: null,
-    what: "real weekly outcomes by preseason positional rank -- the bootstrap pools the simulator draws from",
-    check: (j) => (j.pos && Object.keys(j.pos as object).length >= 4 ? null : "expected pools for at least 4 positions"),
+    what: "real player-SEASON trajectories by preseason positional rank (schema 2) -- the pools the " +
+      "simulator draws whole seasons from, so injuries, busts and breakouts persist across weeks",
+    check: (j) => {
+      if (Number(j.schema) < 2) {
+        return "schema 1 -- this file stores a FLAT bag of weekly scores per rank, which forces the " +
+          "simulator to draw weeks independently and understates season-total spread by 1.6-2.8x " +
+          "(RB1 sd 47 against a real 108). Refit with scripts/fit-bootstrap.mjs.";
+      }
+      const pos = (j.pos ?? {}) as Record<string, Record<string, unknown>>;
+      if (Object.keys(pos).length < 4) return "expected pools for at least 4 positions";
+      // KEYED ON THE SHAPE, not just the version number. A file could carry `schema: 2` and still
+      // hold schema-1 contents -- a hand-edited field, or a fitter half-migrated -- and the version
+      // alone cannot tell those apart. Every pool entry must be an ARRAY of trajectories.
+      for (const [p, byRank] of Object.entries(pos)) {
+        const first = Object.values(byRank)[0];
+        if (!Array.isArray(first) || !Array.isArray(first[0])) {
+          return `${p} pools are not arrays of trajectories -- schema 2 stores one array per ` +
+            `player-season, schema 1 stored a flat list of weekly scores`;
+        }
+      }
+      return null;
+    },
   },
   {
     key: "variance-model", file: "variance-model.json", required: true, nestedLift: null, claimedLift: null,

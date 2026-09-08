@@ -29,7 +29,7 @@
  * our own projection error about which rank a player belongs at -- that is a separate and larger
  * uncertainty, and pretending otherwise would understate the true spread.
  */
-import { prepare, type CorrelationModel, type PoolPlayer, type RankOutcomes, type Calibration } from "./bootstrap.js";
+import { prepare, type CorrelationModel, type PoolPlayer, type RankOutcomes, type Calibration, type Trajectory } from "./bootstrap.js";
 
 export interface Spread { p10: number; p50: number; p90: number }
 
@@ -51,17 +51,28 @@ function quantileOf(sorted: number[], u: number): number {
 }
 
 /**
- * The season-total distribution for one player: the sum of `weeks` independent draws from his pool.
- * Weeks are independent within a player -- the copula couples ACROSS players in a week, never a
- * player to his own next week -- so this is the correct convolution, not a simplification.
+ * The season-total distribution for one player: resample whole player-SEASONS from his pool.
+ *
+ * THIS USED TO SUM `weeks` INDEPENDENT WEEKLY DRAWS, and the comment above it argued that was "the
+ * correct convolution, not a simplification", because the copula couples across players within a
+ * week and never a player to his own next week. The premise was right and the conclusion was wrong:
+ * weeks being independent IN THE SAMPLER does not make them independent IN THE WORLD. Measured on
+ * data/history-weekly.csv, real player-seasons at a given entering rank have season-total sd 1.6-2.8x
+ * what independent weeks produce (RB1: 108 vs 47) -- a torn ACL, a bust or a breakout persists across
+ * every remaining week, and independent draws average that away. The bands this produced were about
+ * half their true width, which is precisely the direction that makes depth look unnecessary.
+ *
+ * Resampling the season instead needs no convolution at all: the pool already holds real season
+ * totals. `weeks` now only rescales a trajectory whose team played a different number of games, so a
+ * 17-week band and a 16-week trajectory stay comparable.
  */
-export function seasonSpread(pool: number[], weeks: number, trials: number, rng: () => number): Spread | null {
+export function seasonSpread(pool: Trajectory[], weeks: number, trials: number, rng: () => number): Spread | null {
   if (!pool.length || weeks <= 0 || trials <= 0) return null;
   const totals = new Array<number>(trials);
   for (let t = 0; t < trials; t++) {
-    let s = 0;
-    for (let w = 0; w < weeks; w++) s += pool[(rng() * pool.length) | 0];
-    totals[t] = s;
+    const tr = pool[(rng() * pool.length) | 0];
+    const n = tr.weeks.length;
+    totals[t] = n ? tr.total * (weeks / n) : 0;
   }
   totals.sort((a, b) => a - b);
   return {

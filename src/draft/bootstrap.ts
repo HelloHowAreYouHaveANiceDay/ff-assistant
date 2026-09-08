@@ -29,8 +29,47 @@
  * a defense together. So the pairwise matrix is built per team group and Cholesky-decomposed.
  */
 
-export interface RankOutcomes { pos: Record<string, Record<string, number[]>> }
+/**
+ * SCHEMA 2 -- pools of whole player-SEASONS, not a flat bag of weeks.
+ *
+ * Schema 1 stored `pos[POS][rank] = number[]`, every week from every player-season at that rank
+ * poured into one array, and the simulator drew weeks from it independently. Measured on
+ * data/history-weekly.csv, that understates SEASON-TOTAL dispersion by 1.6-2.8x at every position
+ * and rank (RB1 empirical sd 108 vs iid 47; QB5 86 vs 35; TE3 53 vs 27), because a player-season is
+ * not a set of independent weeks. It carries persistent state -- a season-ending injury, a bust, a
+ * breakout -- and independent draws average exactly that away.
+ *
+ * The consequences were all in the direction of false confidence: spread.ts bands were about half
+ * their true width, every title and playoff probability out of season.ts was over-confident, and
+ * depth was therefore under-priced. season.ts even drops `projSd` in bootstrap mode on the grounds
+ * that the pool already carries projection error -- it carries it PER WEEK, which is not the same
+ * claim, and the two together compounded the understatement.
+ */
+export interface RankOutcomes { schema?: number; pos: Record<string, Record<string, number[][]>> }
 export interface CorrelationModel { pairs: Record<string, number> }
+
+/** One player-season: the weeks his team played, in order, with a 0 where he did not appear. */
+export interface Trajectory { weeks: number[]; total: number }
+
+export const TRAJECTORY_SCHEMA = 2;
+
+/**
+ * A schema-1 file must be REFUSED, not read leniently.
+ *
+ * Its inner arrays are numbers where schema 2 has arrays, so a tolerant reader would see each WEEK
+ * as a one-week season: every trajectory length 1, season totals equal to single weekly scores, and
+ * a season-total distribution roughly 4x too narrow -- i.e. the exact bug this schema exists to fix,
+ * silently reintroduced by the file rather than by the code, with nothing failing.
+ */
+export function assertTrajectorySchema(o: RankOutcomes): void {
+  if (Number(o?.schema) === TRAJECTORY_SCHEMA) return;
+  throw new Error(
+    "data/rank-outcomes.json is schema " + (o?.schema ?? 1) + ", which stores a FLAT bag of weekly " +
+    "scores per rank. The simulator now resamples whole player-SEASONS, because drawing weeks " +
+    "independently understates season-total spread by 1.6-2.8x. Refit with:  " +
+    "node --import tsx scripts/fit-bootstrap.mjs",
+  );
+}
 
 /** Correlation between two positions on the same NFL team; 0 when unmeasured or below noise. */
 export function pairCorr(model: CorrelationModel, a: string, b: string): number {
@@ -113,7 +152,8 @@ export const CALIBRATION_LIMITS: [number, number] = [0.5, 2.0];
  * Cholesky factor of their correlation matrix. Done once per simulation, not per week.
  */
 export function prepare(players: PoolPlayer[], outcomes: RankOutcomes, corr: CorrelationModel, calibration: Calibration = "none") {
-  const pools = new Map<PoolPlayer, number[]>();
+  assertTrajectorySchema(outcomes);
+  const pools = new Map<PoolPlayer, Trajectory[]>();
   const uncalibrated: { name: string; pos: string; ratio: number }[] = [];
   for (const p of players) {
     const byRank = outcomes.pos[p.pos] ?? {};
@@ -125,17 +165,29 @@ export function prepare(players: PoolPlayer[], outcomes: RankOutcomes, corr: Cor
       const best = keys.reduce((a, b) => (Math.abs(b - p.rank) < Math.abs(a - p.rank) ? b : a), keys[0]);
       pool = byRank[String(best)];
     }
-    let vals = [...pool];
+    let trajs = pool.map((weeks) => weeks.slice());
     if (calibration === "scale" && p.projPerGame != null && p.projPerGame > 0) {
-      const pm = vals.reduce((a, b) => a + b, 0) / vals.length;
+      // The ratio is still measured PER WEEK -- the mean of every week in the pool -- so it is the
+      // same quantity the schema-1 guard used and the [0.5, 2.0] limits keep their meaning. Scaling
+      // multiplies every week of every trajectory, which preserves both the weekly shape and the
+      // season-to-season dispersion this schema exists to carry.
+      let sum = 0, n = 0;
+      for (const t of trajs) for (const v of t) { sum += v; n++; }
+      const pm = n ? sum / n : 0;
       const ratio = pm > 0 ? p.projPerGame / pm : 1;
       if (ratio >= CALIBRATION_LIMITS[0] && ratio <= CALIBRATION_LIMITS[1]) {
-        vals = vals.map((v) => v * ratio);
+        trajs = trajs.map((t) => t.map((v) => v * ratio));
       } else {
         uncalibrated.push({ name: p.name, pos: p.pos, ratio: pm > 0 ? p.projPerGame / pm : 0 });
       }
     }
-    pools.set(p, vals.sort((a, b) => a - b));
+    // SORTED BY SEASON TOTAL, which is what makes the copula's uniform a SEASON quantile: u = 0.9
+    // must mean "a top-decile year for this player", or coupling teammates would couple nothing
+    // meaningful. Sorting by anything else (or not at all) would still run and still look correct.
+    const withTotals: Trajectory[] = trajs
+      .map((weeks) => ({ weeks, total: weeks.reduce((a, b) => a + b, 0) }))
+      .sort((a, b) => a.total - b.total);
+    pools.set(p, withTotals);
   }
   const groups: { members: PoolPlayer[]; L: number[][] }[] = [];
   const byTeam = new Map<string, PoolPlayer[]>();
@@ -168,12 +220,25 @@ export function prepare(players: PoolPlayer[], outcomes: RankOutcomes, corr: Cor
  * removing one teammate would re-roll the whole stack. Each member's own normal is his, and the
  * Cholesky mixing below turns them into the correlated vector.
  */
-export function sampleWeek(
+/**
+ * ONE SEASON per player, drawn once per trial, coupled across NFL teammates by the copula.
+ *
+ * This is the schema-2 replacement for the old per-week `sampleWeek`. The draw moved UP a level --
+ * from "which week does he post" to "which season does he have" -- and everything else is unchanged:
+ * the same Cholesky groups, the same identity-keyed RNG, the same empirical quantile. Because the
+ * pools are sorted by SEASON TOTAL, a teammate correlation now couples season outcomes: a quarterback
+ * having a career year makes his own receiver's good season more likely, which is the dependence a
+ * fantasy roster actually lives or dies by.
+ *
+ * The marginal is still exactly the pool -- the copula property. Each player's set of seasons is
+ * untouched; only which of them co-occur changes.
+ */
+export function sampleSeason(
   players: PoolPlayer[],
   prepared: ReturnType<typeof prepare>,
   gauss: (p: PoolPlayer, i: number) => number,
   unif: (p: PoolPlayer) => number,
-): Map<PoolPlayer, number> {
+): Map<PoolPlayer, Trajectory | null> {
   const u = new Map<PoolPlayer, number>();
   const coupled = new Set<PoolPlayer>();
   for (const g of prepared.groups) {
@@ -186,7 +251,26 @@ export function sampleWeek(
     }
   }
   for (const p of players) if (!coupled.has(p)) u.set(p, unif(p));
-  const out = new Map<PoolPlayer, number>();
-  for (const p of players) out.set(p, quantile(prepared.pools.get(p) ?? [], u.get(p) ?? 0.5));
+  const out = new Map<PoolPlayer, Trajectory | null>();
+  for (const p of players) {
+    const pool = prepared.pools.get(p) ?? [];
+    if (!pool.length) { out.set(p, null); continue; }
+    const uu = u.get(p) ?? 0.5;
+    out.set(p, pool[Math.min(pool.length - 1, Math.max(0, Math.floor(uu * pool.length)))]);
+  }
   return out;
+}
+
+/**
+ * Week `week` (1-based) of a drawn season.
+ *
+ * Trajectories hold the weeks a player's TEAM played, 16-17 of them. The simulator's playoff weeks
+ * can run past that, so the index wraps rather than falling off the end -- returning 0 there would
+ * silently bench every player in the championship week, which is a far worse answer than reusing a
+ * real week from the same season. Byes are applied by the caller from the real schedule, exactly as
+ * before: they were never in the pool to begin with.
+ */
+export function weekOf(t: Trajectory | null | undefined, week: number): number {
+  if (!t || !t.weeks.length) return 0;
+  return t.weeks[(week - 1) % t.weeks.length];
 }

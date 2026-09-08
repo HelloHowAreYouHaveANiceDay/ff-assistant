@@ -25,6 +25,14 @@ for (const line of readFileSync("data/points.csv", "utf8").trim().split(/\r?\n/)
   if (!POS.includes(pos)) continue;
   (byPos[pos] ??= []).push({ name: f[0].trim(), pts: Number(f[2]) });
 }
+// Schema 2 stores TRAJECTORIES (one array per player-season). The question this script asks is about
+// the WEEKLY level, so the pool is flattened back to its weekly multiset -- which is exactly what
+// schema 1 held, so every ratio below is comparable to the ones recorded before the change.
+if (Number(outcomes.schema) < 2) {
+  console.error("data/rank-outcomes.json is schema 1; refit with scripts/fit-bootstrap.mjs");
+  process.exit(1);
+}
+const weeksOf = (pool) => pool.flat();
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 
 console.log("projection (per game) vs BOOTSTRAP POOL MEAN, by positional rank");
@@ -39,7 +47,7 @@ for (const pos of POS) {
     const p = list[r - 1];
     const pool = pools[String(r)];
     if (!p || !pool) continue;
-    const proj = p.pts / 17, pm = mean(pool);
+    const proj = p.pts / 17, pm = mean(weeksOf(pool));
     ratios.push(pm / proj);
     console.log(`  ${pos.padEnd(4)} ${String(r).padStart(4)}   ${proj.toFixed(1).padStart(10)} ${pm.toFixed(1).padStart(10)}   ${(pm / proj).toFixed(2)}`);
   }
@@ -58,7 +66,7 @@ for (const pos of POS) {
   const pa = pools["1"], pb = pools["24"];
   if (!a || !b || !pa || !pb) continue;
   const ourDrop = (a.pts - b.pts) / 17;
-  const poolDrop = mean(pa) - mean(pb);
+  const poolDrop = mean(weeksOf(pa)) - mean(weeksOf(pb));
   console.log(`  ${pos.padEnd(4)} ${ourDrop.toFixed(1).padStart(9)} ${poolDrop.toFixed(1).padStart(10)}   ${(poolDrop / ourDrop).toFixed(2)}`);
 }
 console.log(`\n  "preserved" near 1.0 means the pools separate players as much as our board does.`);

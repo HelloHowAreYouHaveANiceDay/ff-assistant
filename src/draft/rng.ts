@@ -47,6 +47,9 @@ export const PURPOSE = {
   copulaB: 0x5000,
   playoffInjury: 0x6000,
   playoffPerf: 0x7000,
+  /** The SEASON-level bootstrap draw: which whole player-season this trial gives him. Drawn once per
+   *  trial at week 0, so it is keyed like every other draw and two paired runs stay paired. */
+  season: 0x8000,
 } as const;
 
 /**

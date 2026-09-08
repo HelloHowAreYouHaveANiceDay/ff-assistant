@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { prepare, sampleWeek, cholesky, normalCdf, quantile, pairCorr, type RankOutcomes, type CorrelationModel } from "../src/draft/bootstrap.js";
+import { prepare, sampleSeason, weekOf, cholesky, normalCdf, quantile, pairCorr, type RankOutcomes, type CorrelationModel } from "../src/draft/bootstrap.js";
 import { mulberry32 } from "../src/draft/sim.js";
 
 // The two properties that make a copula the right tool, and one that makes it safe:
@@ -17,7 +17,14 @@ const gaussFrom = (rng: () => number) => () => {
 // pools with deliberately DIFFERENT shapes, so a corrupted marginal is detectable
 const POOL_A = Array.from({ length: 400 }, (_, i) => i * 0.1);        // 0..40 uniform
 const POOL_B = Array.from({ length: 400 }, (_, i) => (i < 200 ? 0 : 30)); // bimodal 0 / 30
-const outcomes: RankOutcomes = { pos: { QB: { 1: POOL_A }, WR: { 1: POOL_A }, TE: { 1: POOL_B }, RB: { 1: POOL_A } } };
+// SCHEMA 2 fixtures. Each "player-season" here is three weeks at a CONSTANT value, so the multiset
+// of weekly values is exactly POOL_A / POOL_B as before and every assertion below keeps its old
+// meaning -- while still exercising the real multi-week trajectory path rather than a special case.
+const asTraj = (pool: number[]) => pool.map((v) => [v, v, v]);
+const outcomes: RankOutcomes = {
+  schema: 2,
+  pos: { QB: { 1: asTraj(POOL_A) }, WR: { 1: asTraj(POOL_A) }, TE: { 1: asTraj(POOL_B) }, RB: { 1: asTraj(POOL_A) } },
+};
 const corr: CorrelationModel = { pairs: { "QB-WR": 0.348, "QB-TE": 0.223, "QB-RB": 0.08, "WR-TE": 0 } };
 
 const pearson = (xs: number[], ys: number[]) => {
@@ -35,8 +42,10 @@ function run(players: { name: string; pos: string; team?: string; rank: number }
   const prep = prepare(players, outcomes, corr);
   const series = new Map(players.map((p) => [p.name, [] as number[]]));
   for (let i = 0; i < n; i++) {
-    const wk = sampleWeek(players, prep, g, rng);
-    for (const p of players) series.get(p.name)!.push(wk.get(p) ?? 0);
+    // The draw moved from per-week to per-SEASON; the copula machinery under test is identical, so
+    // these properties are asserted on the season draw, read back at week 1.
+    const drawn = sampleSeason(players, prep, g, rng);
+    for (const p of players) series.get(p.name)!.push(weekOf(drawn.get(p), 1));
   }
   return series;
 }
@@ -118,8 +127,8 @@ test("FAULT INJECTION: zeroing the correlation model removes the coupling", () =
   const prep = prepare(players, outcomes, { pairs: {} });
   const a: number[] = [], b: number[] = [];
   for (let i = 0; i < 6000; i++) {
-    const wk = sampleWeek(players, prep, g, rng);
-    a.push(wk.get(players[0])!); b.push(wk.get(players[1])!);
+    const drawn = sampleSeason(players, prep, g, rng);
+    a.push(weekOf(drawn.get(players[0]), 1)); b.push(weekOf(drawn.get(players[1]), 1));
   }
   const r = pearson(a, b);
   assert.ok(Math.abs(r) < 0.06, `with a zeroed model teammates must be independent, got ${r.toFixed(3)}`);
