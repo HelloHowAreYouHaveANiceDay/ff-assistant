@@ -54,6 +54,73 @@ function fmtHt(h: string): string {
   return Number.isFinite(inches) ? `${Math.floor(inches / 12)}'${inches % 12}"` : h;
 }
 
+/** One staged identity row: who this name stands for, per the registry. */
+export interface StgIdentity { position: string | null; team: string | null; birthdate: string | null }
+/** The bio columns age/experience were being read from, keyed by NAME ALONE -- which is the defect. */
+export interface BioRow { birth_date?: string | null; exp?: number | null }
+
+/**
+ * Pick the staged row that is actually THIS board row's player, or null if none can be trusted.
+ *
+ * Position alone is not enough, and the case that proves it is Marvin Harrison Jr. `nameKey` strips
+ * generational suffixes -- deliberately, so "Odell Beckham Jr." matches across sources -- which means
+ * father and son collapse to the same key. Staging holds only the FATHER (WR, IND, born 1973), so a
+ * name+position lookup returns a Hall of Famer who retired in 2008 and puts age 53 on a 24-year-old.
+ * That is the same wrong-person defect as the Jeffersons, arriving from the opposite direction: there
+ * the registry knew about both men, here it knows about the wrong one.
+ *
+ * TEAM is what separates them, and it is already on the board row. So:
+ *   - position AND team both match, uniquely      -> that is him
+ *   - a unique candidate whose team does not CONTRADICT the board's -> accept (teams are sometimes
+ *     blank, and an offseason trade should degrade to the bio row rather than to a stranger)
+ *   - anything else                                -> null, and the caller falls back or blanks
+ */
+export function pickStaged(candidates: StgIdentity[], pos: string, team: string): StgIdentity | null {
+  const P = (pos ?? "").toUpperCase(), T = (team ?? "").toUpperCase();
+  const agrees = (r: StgIdentity) => !r.team || !T || r.team.toUpperCase() === T;
+  const exact = candidates.filter((r) => (r.position ?? "").toUpperCase() === P && agrees(r) && r.team && T);
+  if (exact.length === 1) return exact[0];
+  const byPos = candidates.filter((r) => (r.position ?? "").toUpperCase() === P && agrees(r));
+  if (byPos.length === 1) return byPos[0];
+  const any = candidates.filter(agrees);
+  if (any.length === 1) return any[0];
+  return null;
+}
+
+/**
+ * Age and experience for one board row, resolved through the identity registry.
+ *
+ * Pure and exported so the two-Justin-Jeffersons case can be tested without a database. The rule:
+ *
+ *   1. Birth date comes from the staged row `pickStaged` selected, when it has one.
+ *   2. Otherwise from the bio row -- but only if the name is not one staging knows to be shared. A
+ *      shared name with no usable staged row is a coin flip between two people, and a blank cell
+ *      beats a confidently wrong age.
+ *   3. Experience has no staged equivalent (stg_player carries identity, not career history), so the
+ *      bio value is kept only where that bio row can be shown to describe the SAME MAN: its birth
+ *      date must agree with staging's. Where they disagree the bio row is somebody else's and its
+ *      `exp` is his too -- which is exactly how a seventh-year receiver got a rookie badge.
+ */
+export function resolveAgeExp(
+  stg: StgIdentity | null,
+  bio: BioRow | null,
+  nameShared: boolean,
+  asof: number,
+): { age: number | ""; exp: string | number } {
+  const stgBirth = stg?.birthdate || null;
+  const birth = stgBirth ?? (nameShared ? null : (bio?.birth_date ?? null));
+  let age: number | "" = "";
+  if (birth) {
+    const d = Date.parse(String(birth).slice(0, 10));
+    if (!Number.isNaN(d)) age = Math.round((asof - d) / (365.25 * 864e5) * 10) / 10;
+  }
+  const bioMatches = !!bio?.birth_date && !!stgBirth
+    && String(bio.birth_date).slice(0, 10) === String(stgBirth).slice(0, 10);
+  const expOk = stgBirth ? bioMatches : !nameShared;
+  const exp: string | number = expOk ? (bio?.exp === 0 ? "R" : (bio?.exp ?? "")) : "";
+  return { age, exp };
+}
+
 type Row = Record<string, string | number>;
 const COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "espn_pos", "tier", "team", "bye", "age", "exp", "ht", "wt", "forty",
   "our_value", "edge", "adp", "vs_adp", "mkt_trend", "proj_pts", "p10", "p50", "p90", "last_pts", "last_gms", "ecr", "best", "worst", "espn_rank", "espn_adp", "rostered", "buzz", "depth", "news", "news_url"];
@@ -86,6 +153,25 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
   }
   const bio = new Map<string, { height: string; weight: number; forty: number; birth_date: string; exp: number }>();
   for (const b of db.prepare("SELECT player_id, height, weight, forty, birth_date, exp FROM player_bio").all() as { player_id: string; height: string; weight: number; forty: number; birth_date: string; exp: number }[]) bio.set(b.player_id, b);
+
+  // IDENTITY FOR AGE AND EXPERIENCE COMES FROM STAGING, NOT FROM A NAME-KEYED BIO ROW.
+  //
+  // `player_bio` is keyed by name_key alone, so two real people who share a name share a row and the
+  // last writer wins. On the live board that put the LINEBACKER Justin Jefferson's birth date
+  // (2003-03-20) on the WIDE RECEIVER at ECR 9 -- age 23.5 and a rookie badge on a 27-year-old in his
+  // seventh season -- and did the same to DeVonta Smith (23.7 and "R", against a real 27.8). This is
+  // the highest-traffic surface in the system and it was the one consumer still joining on a name.
+  //
+  // `stg_player` already resolves this: it holds BOTH Justin Jeffersons as separate rows with their
+  // own birth dates and marks the name `ambiguous`. The resolution rule is the same one this function
+  // already uses two hundred lines below to pick `player_sk` -- position first, then name alone but
+  // only when that name belongs to exactly one player -- because a consumer that resolved identity by
+  // a DIFFERENT rule than the layer above it is the whole failure being retired.
+  const stgByName = new Map<string, StgIdentity[]>();
+  for (const r of db.prepare("SELECT name_key, position, birthdate, team FROM stg_player").all() as { name_key: string; position: string; birthdate: string; team: string }[]) {
+    (stgByName.get(r.name_key) ?? stgByName.set(r.name_key, []).get(r.name_key)!)
+      .push({ position: r.position, team: r.team, birthdate: r.birthdate });
+  }
   const byes = new Map<string, number>();
   for (const t of db.prepare("SELECT team, bye FROM team_bye WHERE season=@s").all({ s: season }) as { team: string; bye: number }[]) byes.set(t.team, t.bye);
   // FFC draft-market ADP + FantasyCalc 30-day momentum, keyed by name_key
@@ -109,12 +195,12 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     const k = nameKey(v.name);
     const m = ecr.get(k); const b = bio.get(k); const nd = newsByKey.get(k);
     const team = m?.team ?? "";
-    let age: number | "" = "";
-    if (b?.birth_date) { const d = Date.parse(String(b.birth_date).slice(0, 10)); if (!Number.isNaN(d)) age = Math.round((asof - d) / (365.25 * 864e5) * 10) / 10; }
+    const cands = stgByName.get(k) ?? [];
+    const { age, exp } = resolveAgeExp(pickStaged(cands, v.pos, team), b ?? null, cands.length > 1, asof);
     const lyRow = ly.get(k); const es = espn.get(k);
     rows.push({
       player: v.name, pos: v.pos.toUpperCase(), team, bye: byes.get(team) ?? "",
-      age, exp: b?.exp === 0 ? "R" : (b?.exp ?? ""), ht: fmtHt(b?.height ?? ""), wt: b?.weight ?? "", forty: b?.forty ?? "",
+      age, exp, ht: fmtHt(b?.height ?? ""), wt: b?.weight ?? "", forty: b?.forty ?? "",
       our_value: Math.round(v.value), adp: adpMap.get(k) ?? "", mkt_trend: trendMap.get(k) ?? "",
       proj_pts: Math.round((projByName.get(v.name) ?? 0) * 10) / 10,
       last_pts: lyRow ? lyRow.pts : "", last_gms: lyRow ? lyRow.gms : "",

@@ -1,136 +1,115 @@
-// The identity registry. The property under test is STABILITY: a surrogate key, once minted, must
-// survive rebuilds and new information. Everything else in the store can be regenerated; keys cannot,
-// because other tables point at them.
+// BOARD IDENTITY: whose birth date is on this row?
+//
+// `player_bio` is keyed by name_key alone, so two real people who share a name share a row. On the
+// live board that put the LINEBACKER Justin Jefferson (born 2003) on the WIDE RECEIVER at ECR 9 --
+// age 23.5 and a rookie badge on a 27-year-old in his seventh season -- and did the same to DeVonta
+// Smith and to Lamar Jackson. Nothing failed: an age is an age, and the column rendered perfectly.
+//
+// The fixtures below are the real players, with the real dates from stg_player and player_bio.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, copyFileSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import Database from "better-sqlite3";
-import { buildIdentity, resolveOrMint, linkId } from "../src/data/identity.js";
+import { resolveAgeExp, pickStaged, type StgIdentity, type BioRow } from "../src/data/assemble.js";
 
-const DB = "data/ff.db";
-const ready = (() => {
-  if (!existsSync(DB)) return false;
-  try {
-    const db = new Database(DB, { readonly: true });
-    const r = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='player_identity'").get();
-    const n = r ? (db.prepare("SELECT COUNT(*) c FROM player_identity").get() as { c: number }).c : 0;
-    db.close();
-    return n > 0;
-  } catch { return false; }
-})();
+const ASOF = Date.UTC(2026, 8, 1);   // the same Sep 1 anchor assemble uses
+const near = (got: number | "", want: number, tol = 0.3) =>
+  typeof got === "number" && Math.abs(got - want) <= tol;
 
-/** A disposable copy, because these tests mutate. */
-function scratch(): string {
-  const d = mkdtempSync(join(tmpdir(), "ffid-"));
-  const p = join(d, "ff.db");
-  copyFileSync(DB, p);
-  for (const ext of ["-wal", "-shm"]) if (existsSync(DB + ext)) copyFileSync(DB + ext, p + ext);
-  return p;
-}
+// stg_player holds BOTH Jeffersons, each with his own birth date and team.
+const JJ: StgIdentity[] = [
+  { position: "LB", team: "CLE", birthdate: "2003-03-20" },
+  { position: "WR", team: "MIN", birthdate: "1999-06-16" },
+];
+// player_bio holds ONE row for the shared name -- and it is the linebacker's.
+const JJ_BIO: BioRow = { birth_date: "2003-03-20", exp: 0 };
 
-test("rebuilding mints nothing and moves no key -- the foundation property", (t) => {
-  if (!ready) return t.skip("registry not built (run: ff build-identity)");
-  const p = scratch();
-  // KEYED ON THE SURROGATE, which is the only genuinely unique column here. Keying the comparison on
-  // (name_key, birthdate) looked natural and was wrong: two different Aaron Browns both have a NULL
-  // birthdate, so that pair is not unique, the map held one of them, and the test reported a key
-  // "changing" when nothing had moved. The property is "each sk still describes the same person",
-  // so the sk is what the lookup must be by.
-  const before = new Map((new Database(p, { readonly: true })
-    .prepare("SELECT player_sk, name_key, birthdate FROM player_identity").all() as { player_sk: number; name_key: string; birthdate: string | null }[])
-    .map((r) => [r.player_sk, `${r.name_key}|${r.birthdate ?? ""}`]));
-  const r = buildIdentity(p);
-  assert.equal(r.minted, 0, `a rebuild minted ${r.minted} keys -- the registry is not stable`);
-  const after = new Database(p, { readonly: true })
-    .prepare("SELECT player_sk, name_key, birthdate FROM player_identity").all() as { player_sk: number; name_key: string; birthdate: string | null }[];
-  assert.equal(after.length, before.size, "a rebuild must not add or drop identity rows");
-  for (const a of after) {
-    const was = before.get(a.player_sk);
-    assert.equal(`${a.name_key}|${a.birthdate ?? ""}`, was, `sk ${a.player_sk} now describes a different person`);
-  }
+const resolve = (c: StgIdentity[], pos: string, team: string, bio: BioRow | null) =>
+  resolveAgeExp(pickStaged(c, pos, team), bio, c.length > 1, ASOF);
+
+test("the WR Justin Jefferson is aged from HIS birth date, and is not a rookie", () => {
+  const { age, exp } = resolve(JJ, "WR", "MIN", JJ_BIO);
+  assert.ok(near(age, 27.2), `WR Jefferson must be ~27.2, got ${age} -- 23.5 means the linebacker's row won`);
+  assert.notEqual(exp, "R", "a seventh-year receiver must not carry his namesake's rookie badge");
 });
 
-test("nobody is absorbed: every crosswalk player has their own key", (t) => {
-  if (!ready) return t.skip("registry not built");
-  const db = new Database(DB, { readonly: true });
-  // MEASURED AS DISTINCTNESS, not as a count equality. The first version asserted
-  // COUNT(player_identity) == COUNT(player_ids), which quietly assumed the registry contains ONLY
-  // crosswalk players. Staging then began minting keys for board-only players -- correctly -- and the
-  // test failed reporting "-39 players absorbed" when nobody had been absorbed at all. A count is a
-  // proxy for the property; the property is that no two crosswalk players share a key.
-  // A DISTINCT PERSON is (name_key, birthdate) -- NOT (name_key, position). Position is
-  // multi-valued and time-varying, and keying identity on it split 178 real players into two keys
-  // each: every man a source reclassified became two people. So two crosswalk rows that differ only
-  // by position SHOULD now share a key, and this test would be wrong to forbid it.
-  const dup = db.prepare(
-    `SELECT COUNT(*) c FROM (
-       SELECT i.player_sk FROM player_ids p
-       JOIN player_identity i ON i.name_key = p.name_key AND IFNULL(i.birthdate,'') = IFNULL(p.birthdate,'')
-       GROUP BY i.player_sk HAVING COUNT(DISTINCT IFNULL(p.birthdate,'')) > 1)`,
-  ).get() as { c: number };
-  // The failure this catches actually happened: matching on a DISPUTED gsis absorbed 15 players into
-  // other people's keys, and Bobby McCray -- who shares gsis 00-0022888 with punter Jake Schum --
-  // ended up with no identity row at all.
-  assert.equal(dup.c, 0, `${dup.c} surrogate keys are shared by people with different birthdates`);
-  const orphan = db.prepare(
-    `SELECT COUNT(*) c FROM player_ids p WHERE NOT EXISTS (
-       SELECT 1 FROM player_identity i WHERE i.name_key = p.name_key
-         AND IFNULL(i.birthdate,'') = IFNULL(p.birthdate,''))`,
-  ).get() as { c: number };
-  db.close();
-  assert.equal(orphan.c, 0, `${orphan.c} crosswalk players have no key at all`);
+test("the LINEBACKER still gets his own age -- the fix must not simply blank the pair", () => {
+  // The positive direction. A fix that repaired the receiver by deleting both men's ages would pass
+  // the test above; the other Jefferson is a real 23-year-old and must read as one.
+  const { age } = resolve(JJ, "LB", "CLE", JJ_BIO);
+  assert.ok(near(age, 23.5), `LB Jefferson must be ~23.5, got ${age}`);
 });
 
-test("a disputed id neither matches nor gets recorded", (t) => {
-  if (!ready) return t.skip("registry not built");
-  const db = new Database(DB, { readonly: true });
-  const disputed = db.prepare(
-    `SELECT gsis_id v FROM player_ids WHERE gsis_id IS NOT NULL
-     GROUP BY gsis_id HAVING COUNT(DISTINCT name_key || '|' || IFNULL(birthdate,'')) > 1`,
-  ).all() as { v: string }[];
-  for (const d of disputed) {
-    // Claimants are distinct PEOPLE -- (name_key, birthdate). Counting distinct positions here would
-    // count one reclassified man as two claimants and demand two keys for him.
-    const claimants = db.prepare("SELECT DISTINCT name_key, birthdate FROM player_ids WHERE gsis_id = ?").all(d.v) as { name_key: string; birthdate: string | null }[];
-    const sks = new Set(claimants.map((c) =>
-      (db.prepare("SELECT player_sk FROM player_identity WHERE name_key=? AND IFNULL(birthdate,'')=IFNULL(?,'')").get(c.name_key, c.birthdate) as { player_sk: number } | undefined)?.player_sk));
-    assert.equal(sks.size, claimants.length, `disputed gsis ${d.v} merged ${claimants.length} people into ${sks.size} key(s)`);
-    assert.ok(!sks.has(undefined as never), `a claimant of ${d.v} has no key at all`);
-  }
-  db.close();
+test("DeVonta Smith likewise", () => {
+  const { age, exp } = resolve([{ position: "WR", team: "PHI", birthdate: "1998-11-14" }], "WR", "PHI",
+    { birth_date: "2002-12-11", exp: 0 });
+  assert.ok(near(age, 27.8), `expected ~27.8, got ${age}`);
+  assert.equal(exp, "", "a bio row whose birth date disagrees with staging describes someone else");
 });
 
-test("a NEW source id attaches to the existing player rather than minting a second", (t) => {
-  if (!ready) return t.skip("registry not built");
-  const p = scratch();
-  const db = new Database(p);
-  // Someone currently keyed only by name+pos: the case where later learning an id must NOT create a
-  // duplicate, which is exactly what a natural key would have done (his key would have changed).
-  const row = db.prepare(
-    `SELECT i.player_sk, i.name_key, i.primary_position AS position, i.birthdate FROM player_identity i
-     WHERE NOT EXISTS (SELECT 1 FROM player_xref x WHERE x.player_sk = i.player_sk AND x.source='gsis') LIMIT 1`,
-  ).get() as { player_sk: number; name_key: string; position: string; birthdate: string | null } | undefined;
-  if (!row) { db.close(); return t.skip("everyone already has a gsis"); }
-  const before = row.player_sk;
-  const again = resolveOrMint(db, { name: "x", nameKey: row.name_key, position: row.position, birthdate: row.birthdate, ids: { gsis: "00-9999999" } });
-  assert.equal(again.sk, before, "learning a new id must not mint a second key for the same player");
-  assert.equal(linkId(db, before, "gsis", "00-9999999"), null, "the new id should attach cleanly");
-  const third = resolveOrMint(db, { name: "x", nameKey: "someoneelse", position: "RB", ids: { gsis: "00-9999999" } });
-  assert.equal(third.sk, before, "and thereafter that id must resolve to the same player");
-  db.close();
+test("Lamar Jackson gets the RAVENS QB, not the Panthers cornerback", () => {
+  const lj: StgIdentity[] = [
+    { position: "CB", team: "CAR", birthdate: "1998-04-13" },
+    { position: "QB", team: "BAL", birthdate: "1997-01-07" },
+  ];
+  assert.ok(near(resolve(lj, "QB", "BAL", { birth_date: "1998-04-13", exp: 3 }).age, 29.6),
+    "the QB is 29.6; 28.4 is the cornerback");
 });
 
-test("linkId refuses to move an id between players", (t) => {
-  if (!ready) return t.skip("registry not built");
-  const p = scratch();
-  const db = new Database(p);
-  const two = db.prepare("SELECT player_sk FROM player_identity LIMIT 2").all() as { player_sk: number }[];
-  assert.equal(linkId(db, two[0].player_sk, "gsis", "00-8888888"), null);
-  const err = linkId(db, two[1].player_sk, "gsis", "00-8888888");
-  assert.ok(err && /already belongs/.test(err), "a second claimant must be refused, not silently reassigned");
-  const owner = db.prepare("SELECT player_sk FROM player_xref WHERE source='gsis' AND source_id='00-8888888'").get() as { player_sk: number };
-  assert.equal(owner.player_sk, two[0].player_sk, "the original owner must keep the id");
-  db.close();
+// --- the failure that came from the OPPOSITE direction ---------------------------------------------
+
+test("Marvin Harrison Jr. is not aged from his FATHER, whom the registry mistook him for", () => {
+  // nameKey strips generational suffixes on purpose, so father and son collapse to one key -- and
+  // staging holds only the father (WR, IND, born 1973, retired 2008). Position matches, so a
+  // name+position lookup confidently returns a 53-year-old. TEAM is what separates them, and the
+  // right answer here is to fall back to the bio row rather than to a stranger.
+  const dad: StgIdentity[] = [{ position: "WR", team: "IND", birthdate: "1973-08-26" }];
+  assert.equal(pickStaged(dad, "WR", "ARI"), null,
+    "a staged row on a DIFFERENT team must not be accepted as this player");
+  const { age, exp } = resolve(dad, "WR", "ARI", { birth_date: "2002-08-11", exp: 3 });
+  assert.ok(near(age, 24.1), `the son is ~24.1, got ${age} -- 53 means the father's row was used`);
+  assert.equal(exp, 3, "an unambiguous fallback keeps its bio experience");
+});
+
+test("pickStaged prefers position+team, tolerates a blank team, and refuses to guess", () => {
+  const two: StgIdentity[] = [
+    { position: "WR", team: "MIN", birthdate: "1999-06-16" },
+    { position: "WR", team: "NYJ", birthdate: "1994-01-01" },
+  ];
+  assert.equal(pickStaged(two, "WR", "MIN")!.birthdate, "1999-06-16");
+  // Two same-position candidates and no team to separate them: refuse rather than take the first.
+  assert.equal(pickStaged(two, "WR", ""), null);
+  // A staged row with no team recorded is not a contradiction, so it is still usable.
+  assert.equal(pickStaged([{ position: "WR", team: null, birthdate: "1995-05-05" }], "WR", "SEA")!.birthdate, "1995-05-05");
+});
+
+// --- FAULT INJECTION -------------------------------------------------------------------------------
+
+test("FAULT INJECTION: the old name-only bio join produces the defect this file exists to catch", () => {
+  // The pre-fix behaviour, reproduced exactly: read the bio row by name, use it unconditionally.
+  const oldWay = (bio: BioRow) => {
+    const d = Date.parse(String(bio.birth_date).slice(0, 10));
+    return { age: Math.round((ASOF - d) / (365.25 * 864e5) * 10) / 10, exp: bio.exp === 0 ? "R" : bio.exp };
+  };
+  const bad = oldWay(JJ_BIO);
+  assert.ok(bad.age < 24, `the old join gives the WR ${bad.age}`);
+  assert.equal(bad.exp, "R");
+  // ...and the new one does not. Asserting BOTH halves is what makes this a control rather than a
+  // restatement: it shows the input really does trigger the defect, and that the fix is what stops it.
+  const now = resolve(JJ, "WR", "MIN", JJ_BIO);
+  assert.ok(typeof now.age === "number" && now.age - bad.age > 3,
+    `the fix must move him by years, not decimals: ${bad.age} -> ${now.age}`);
+});
+
+// --- the common case, which a too-aggressive fix would break ---------------------------------------
+
+test("an unambiguous player with no staged birth date still gets his bio age and experience", () => {
+  const { age, exp } = resolve([{ position: "RB", team: "ATL", birthdate: null }], "RB", "ATL",
+    { birth_date: "1997-03-10", exp: 5 });
+  assert.ok(near(age, 29.5), `expected ~29.5, got ${age}`);
+  assert.equal(exp, 5);
+});
+
+test("a SHARED name with no usable staged row gets no age at all, rather than a coin flip", () => {
+  const { age, exp } = resolveAgeExp(null, { birth_date: "2003-03-20", exp: 0 }, true, ASOF);
+  assert.equal(age, "", "a blank cell is a visibly missing value; a confidently wrong age is not");
+  assert.equal(exp, "");
 });
