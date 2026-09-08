@@ -554,8 +554,26 @@ CREATE TABLE IF NOT EXISTS feat_player_season (
   -- ------- TARGETS (never features; a projector must not read these) -------
   pts             REAL,
   games           INTEGER,
+  -- DERIVED FROM THE TARGET, and therefore a target itself: this season's own finish rank. It is
+  -- here because the NEXT season's row needs it as `prior_pos_rank`, and deriving it in two places
+  -- is how the two would come to disagree. A model must never read it for its own season.
+  pos_rank        INTEGER,
   updated_at      TEXT,
   PRIMARY KEY (season, feat_key)
+);
+
+-- The point-in-time curve itself, one row per (season, kind, position, rank), so a consumer can read
+-- the curve for season Y at ANY rank rather than only at the ranks that happen to appear on a
+-- feature row. The backtest needs exactly that: its draft pool is the players who scored in Y-1, and
+-- some of them never appear in Y at all.
+CREATE TABLE IF NOT EXISTS feat_curve (
+  season          INTEGER,
+  kind            TEXT,              -- conditional | orderstat
+  pos             TEXT,
+  rank            INTEGER,           -- 1-based
+  value           REAL,
+  updated_at      TEXT,
+  PRIMARY KEY (season, kind, pos, rank)
 );
 CREATE INDEX IF NOT EXISTS idx_feat_season_pos ON feat_player_season (season, pos);
 CREATE INDEX IF NOT EXISTS idx_feat_sk ON feat_player_season (player_sk, season);

@@ -108,7 +108,7 @@ async function seasonUsage(yr: number, resolver: SkResolver): Promise<Map<string
   return out;
 }
 
-interface EcrRow { rank: number; sd: number | null }
+interface EcrRow { rank: number; sd: number | null; name: string; pos: string; team: string | null }
 
 /**
  * Preseason consensus positional rank for a season.
@@ -135,7 +135,7 @@ function ecrForSeason(db: DB, yr: number, currentSeason: number, resolver: SkRes
       if (!FEAT_POS.includes(pos)) continue;
       seen[pos] = (seen[pos] ?? 0) + 1;
       const sk = resolver.resolve({ name: r.name, pos, team: r.team });
-      out.set(featKey(sk, nameKey(r.name), pos), { rank: seen[pos], sd: null });
+      out.set(featKey(sk, nameKey(r.name), pos), { rank: seen[pos], sd: null, name: r.name, pos, team: r.team ?? null });
     }
     return out;
   }
@@ -161,7 +161,7 @@ function ecrForSeason(db: DB, yr: number, currentSeason: number, resolver: SkRes
     list.sort((a, b) => a.ecr - b.ecr);
     list.forEach((r, i) => {
       const sk = resolver.resolve({ name: r.name, pos, team: r.team });
-      out.set(featKey(sk, nameKey(r.name), pos), { rank: i + 1, sd: orNull(r.sd) });
+      out.set(featKey(sk, nameKey(r.name), pos), { rank: i + 1, sd: orNull(r.sd), name: r.name, pos, team: r.team ?? null });
     });
   }
   return out;
@@ -230,9 +230,9 @@ export async function buildFeatures(opts: {
     `INSERT INTO feat_player_season (feat_key, player_sk, season, as_of, name, name_key, pos, team,
       prior_pos_rank, prior_pts, prior_games, age, prior_fd, prior_ts, prior_attempts, prior_rush_yards,
       prior_air_yards_share, prior_wopr, team_changed, draft_year, draft_round, draft_pick,
-      ecr_pos_rank, ecr_sd, curve_value_prior, curve_value_ecr, curve_value_orderstat, pts, games, updated_at)
+      ecr_pos_rank, ecr_sd, curve_value_prior, curve_value_ecr, curve_value_orderstat, pts, games, pos_rank, updated_at)
      VALUES (@key,@sk,@season,@asOf,@name,@nk,@pos,@team,@priorRank,@priorPts,@priorGames,@age,@fd,@ts,
-             @att,@ry,@ays,@wopr,@changed,@dy,@dr,@dp,@ecr,@ecrSd,@cvPrior,@cvEcr,@cvOs,@pts,@games,@now)
+             @att,@ry,@ays,@wopr,@changed,@dy,@dr,@dp,@ecr,@ecrSd,@cvPrior,@cvEcr,@cvOs,@pts,@games,@posRank,@now)
      ON CONFLICT(season, feat_key) DO UPDATE SET
        player_sk=excluded.player_sk, as_of=excluded.as_of, name=excluded.name, pos=excluded.pos,
        team=excluded.team, prior_pos_rank=excluded.prior_pos_rank, prior_pts=excluded.prior_pts,
@@ -243,7 +243,11 @@ export async function buildFeatures(opts: {
        draft_round=excluded.draft_round, draft_pick=excluded.draft_pick, ecr_pos_rank=excluded.ecr_pos_rank,
        ecr_sd=excluded.ecr_sd, curve_value_prior=excluded.curve_value_prior,
        curve_value_ecr=excluded.curve_value_ecr, curve_value_orderstat=excluded.curve_value_orderstat,
-       pts=excluded.pts, games=excluded.games, updated_at=excluded.updated_at`,
+       pts=excluded.pts, games=excluded.games, pos_rank=excluded.pos_rank, updated_at=excluded.updated_at`,
+  );
+  const insCurve = db.prepare(
+    `INSERT INTO feat_curve (season, kind, pos, rank, value, updated_at) VALUES (@s,@k,@p,@r,@v,@now)
+     ON CONFLICT(season, kind, pos, rank) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
   );
 
   const res: BuildFeaturesResult = { seasons: [], seasonRows: 0, seasonResolved: 0, weekRows: 0, weekResolved: 0, perSeason: [] };
@@ -254,6 +258,12 @@ export async function buildFeatures(opts: {
     if (!rows && !isCurrent) continue;
     const prior = hist.get(yr - 1);
     const priorUsage = await usageFor(yr - 1);
+    // The CURRENT season's feed too, for `team` and `team_changed`. Not a leak: which shirt a man
+    // wears is settled before week 1, which is what `as_of` is anchored to. Reading it from the
+    // cache map keyed by year -- as an earlier version did -- silently returned undefined for every
+    // row, because that map is only populated one season BEHIND the loop, and `team_changed` was
+    // therefore null on all 17,189 rows while looking perfectly well-formed.
+    const curUsage = await usageFor(yr);
     const ecr = ecrForSeason(db, yr, cfg.season, resolver);
 
     // POINT-IN-TIME CURVES: fitted on seasons strictly before yr. Rebuilt per season rather than
@@ -267,16 +277,32 @@ export async function buildFeatures(opts: {
       return v[Math.min(rank - 1, v.length - 1)];
     };
 
-    // prior-season finish rank, from the SAME list the prior-season row set is built from.
-    const priorRank = new Map<string, number>();
-    if (prior) {
+    // Finish rank within position, computed ONCE here from the same row set the table is built
+    // from. The prior season's ranks index the curve; this season's are stored so next season's
+    // build does not derive them a second time and differently.
+    const rankOf = (set: Map<string, SeasonRow> | undefined) => {
+      const m = new Map<string, number>();
+      if (!set) return m;
       const byPos = new Map<string, SeasonRow[]>();
-      for (const r of prior.values()) (byPos.get(r.pos) ?? byPos.set(r.pos, []).get(r.pos)!).push(r);
+      for (const r of set.values()) (byPos.get(r.pos) ?? byPos.set(r.pos, []).get(r.pos)!).push(r);
       for (const list of byPos.values()) {
         list.sort((a, b) => b.pts - a.pts);
-        list.forEach((r, i) => priorRank.set(r.key, i + 1));
+        list.forEach((r, i) => m.set(r.key, i + 1));
       }
-    }
+      return m;
+    };
+    const priorRank = rankOf(prior);
+    const ownRank = rankOf(rows);
+
+    // The curve itself, so a consumer can read season yr at ANY rank rather than only at the ranks
+    // that happen to appear on a feature row.
+    db.transaction(() => {
+      for (const [kind, c] of [["conditional", condCurve], ["orderstat", osCurve]] as const) {
+        for (const [pos, v] of Object.entries(c)) {
+          for (let i = 0; i < v.length; i++) insCurve.run({ s: yr, k: kind, p: pos, r: i + 1, v: v[i], now });
+        }
+      }
+    })();
 
     // The universe. A completed season is everyone who was SCORED; the live season has no scored
     // players yet, so it is everyone the consensus ranks.
@@ -292,20 +318,24 @@ export async function buildFeatures(opts: {
         const pu = priorUsage.get(key);
         const pr = prior?.get(key);
         const sk = r?.sk ?? (key.startsWith("NK:") ? null : key);
-        const pos = r?.pos ?? key.split("|").pop() ?? "";
-        const name = r?.name ?? "";
+        // Name and position come from whichever source knows this row. For the LIVE season there is
+        // no scored history at all, so the consensus is the only source -- and taking the position
+        // from the key instead (`key.split("|").pop()`) silently returned the surrogate key itself
+        // for every resolved player, which produced a board of one row and no error.
+        const pos = r?.pos ?? e?.pos ?? "";
+        const name = r?.name ?? e?.name ?? "";
         // Age at as_of, from the registry. Missing stays NULL -- never a league-average guess, which
         // would move a projection for a player we know nothing about.
         const bd = sk ? birth.get(sk) : undefined;
         const age = bd ? (Date.parse(`${yr}-09-01T00:00:00Z`) - Date.parse(`${bd}T00:00:00Z`)) / 3.15576e10 : null;
-        const team = pu?.team ?? r?.team ?? null;
-        const priorTeam = priorUsage.get(key)?.team ?? null;
-        const cur2 = usageCache.get(yr)?.get(key)?.team ?? null;
+        const cur2 = curUsage.get(key)?.team ?? null;
+        const team = cur2 ?? e?.team ?? pu?.team ?? r?.team ?? null;
+        const priorTeam = pu?.team ?? null;
         const dc = drafted.get(key);
         const g = pu?.games ?? 0;
         const rank = priorRank.get(key) ?? null;
         ins.run({
-          key, sk, season: yr, asOf, name, nk: r?.nameKey ?? "", pos, team,
+          key, sk, season: yr, asOf, name, nk: r?.nameKey ?? nameKey(name), pos, team,
           priorRank: rank, priorPts: orNull(pr?.pts ?? null), priorGames: pr ? (pr.games || null) : null,
           age: age != null && age > 15 && age < 50 ? Math.round(age * 100) / 100 : null,
           fd: g ? pu!.fd / g : null, ts: g ? pu!.ts / g : null,
@@ -317,6 +347,7 @@ export async function buildFeatures(opts: {
           cvPrior: orNull(at(condCurve, pos, rank)), cvEcr: orNull(at(condCurve, pos, e?.rank ?? null)),
           cvOs: orNull(at(osCurve, pos, rank)),
           pts: r ? r.pts : null, games: r ? r.games : null,
+          posRank: ownRank.get(key) ?? null,
           now,
         });
         n++; if (sk) resolved++;

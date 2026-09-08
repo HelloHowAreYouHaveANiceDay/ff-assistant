@@ -59,6 +59,8 @@ function addColumns(db: DB): void {
     // under live consumers is a much larger change than giving them the stable id to migrate onto.
     ["board", "player_sk", "INTEGER"],
     ["player_value", "player_sk", "INTEGER"],
+    // This season's own finish rank, which the following season reads as prior_pos_rank.
+    ["feat_player_season", "pos_rank", "INTEGER"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];

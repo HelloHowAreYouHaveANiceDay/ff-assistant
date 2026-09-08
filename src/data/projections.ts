@@ -19,8 +19,6 @@
 // season per team. Projections are now TRUE for every position; the streaming policy lives where it
 // belongs, in the `maxKDst` lever that already caps their price.
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
-import { ageFactor, ageCoverage, type AgeCurve } from "../draft/age.js";
-import { opportunityFactor, opportunityCoverage, type OpportunityModel } from "../draft/opportunity.js";
 import { openDb, getConfig } from "../db/db.js";
 import { nameKey } from "../draft/values.js";
 import { dataPath } from "./paths.js";
@@ -338,91 +336,61 @@ export function buildCurve(
   return kind === "orderstat" ? buildCurveFromHistory(season, 6, path) : buildConditionalCurve(db, season, path).curve;
 }
 
-/** The fitted age curve, or null if it has not been built. Absent, every multiplier is 1 and the
- *  projection is exactly what it was before the curve existed. */
-function loadAgeCurve(): AgeCurve | null {
-  const p = dataPath("age-curve.json");
-  if (!existsSync(p)) return null;
-  try { return JSON.parse(readFileSync(p, "utf8")) as AgeCurve; } catch { return null; }
-}
+/**
+ * `project` is now a THIN CALLER of the shared projector.
+ *
+ * It used to look the curve up itself and multiply the age and opportunity factors in here, which
+ * meant the backtest had to do the same thing again a thousand lines away in ff.ts, with slightly
+ * different arguments (no player_sk, a rank recomputed from a different list). Two implementations
+ * of "the projection", one of which was the thing being validated and the other the thing being
+ * shipped. The multipliers now live inside the artifact's multiplicative stage, so there is exactly
+ * one place they are applied and no consumer applies them separately.
+ *
+ * IT FAILS LOUDLY WITHOUT AN ARTIFACT rather than falling back to a bare curve. A silent fallback is
+ * indistinguishable from a working model at every place anyone looks -- the board renders, the
+ * dollars add up, nothing throws -- which is precisely why it must not exist.
+ */
+export const ARTIFACT_FILE = "projection-artifact.json";
 
-/** The fitted opportunity model, or null if it has not been built -- same contract as the age curve:
- *  absent, every multiplier is 1 and the projection is exactly what it was before it existed. */
-function loadOpportunity(): OpportunityModel | null {
-  const p = dataPath("opportunity-model.json");
-  if (!existsSync(p)) return null;
-  try { return JSON.parse(readFileSync(p, "utf8")) as OpportunityModel; } catch { return null; }
-}
-
-export async function project(dbPath?: string, outPath = dataPath("points.csv"), useAge = true, useOpp = true, curveKind: CurveKind = "conditional"): Promise<number> {
+export async function project(dbPath?: string, outPath = dataPath("points.csv"), useAge = true, useOpp = true, _curveKind: CurveKind = "conditional"): Promise<number> {
+  const { loadArtifact } = await import("../model/projector.js");
+  const { boardProjection } = await import("../model/features.js");
+  const ap = dataPath(ARTIFACT_FILE);
+  if (!existsSync(ap)) {
+    throw new Error(
+      `${ap} missing -- the projection is produced by an ARTIFACT, not by a curve lookup.\n` +
+      `  build the honest floor with:  npm run ff -- build-artifact --curve-only\n` +
+      `  or train one with:            uv run --with scikit-learn --with numpy tools/train_projection.py --db data/ff.db --out ${ap}\n` +
+      `  There is deliberately no fallback: a projection that quietly degrades to something else ` +
+      `looks exactly like one that works.`);
+  }
+  const artifact = loadArtifact(JSON.parse(readFileSync(ap, "utf8")));
   const db = openDb(dbPath);
-  const cfg = getConfig(db);
-  const season = cfg.season;
-  const curve = buildCurve(curveKind, season, db);
-  if (curveKind === "conditional") {
-    const { levelFactor } = buildConditionalCurve(db, season);
-    console.log(`  curve: CONDITIONAL (E[pts | rank]) -- ECR level factor ` +
-      Object.entries(levelFactor).map(([p, f]) => `${p} ${f.toFixed(2)}`).join(" "));
-  } else {
-    console.log(`  curve: ORDER-STATISTIC (k-th best finisher) -- the pre-2026-09-08 behaviour`);
-  }
-  const age = useAge ? loadAgeCurve() : null;
-  const opp = useOpp ? loadOpportunity() : null;
-  const proj = (pos: string, r: number) => { const cv = curve[pos]; return cv && cv.length ? cv[Math.min(r, cv.length - 1)] : 0; };
-
-  // ECR players ordered by ecr; within-position 0-indexed rank = k for the curve lookup
-  const ecrRows = db.prepare("SELECT p.name, p.position AS pos, r.overall_rank AS ecr FROM ranking r JOIN player p USING(player_id) WHERE r.source='fantasypros_ecr' AND r.season=@s ORDER BY r.overall_rank").all({ s: season }) as { name: string; pos: string; ecr: number }[];
-  // THE STABLE KEY, resolved once here and carried into points.csv. Everything downstream -- values,
-  // the board, the simulator, the age and opportunity models -- has been joining on a normalised
-  // NAME, which is what let a father's birth year be applied to his son. Resolving identity at the
-  // point the projection is produced means no consumer has to do it again, differently.
-  const skRows = db.prepare("SELECT name_key, position, player_sk FROM stg_player").all() as { name_key: string; position: string; player_sk: number }[];
-  const skOf = new Map<string, number>(), skByName = new Map<string, number | null>();
-  for (const r of skRows) {
-    skOf.set(`${r.name_key}|${r.position}`, r.player_sk);
-    skByName.set(r.name_key, skByName.has(r.name_key) ? null : r.player_sk);   // null = shared name
-  }
+  const season = getConfig(db).season;
+  const rows = boardProjection(db, season, artifact);
+  const featCount = db.prepare("SELECT COUNT(*) c FROM feat_player_season WHERE season = ?").get(season) as { c: number };
   db.close();
-  const resolveSk = (name: string, pos: string): number | null =>
-    skOf.get(`${nameKey(name)}|${pos.toUpperCase()}`) ?? skByName.get(nameKey(name)) ?? null;
-
-  const posCount: Record<string, number> = {};
-  const out: [string, string, number, number | null][] = [];
-  for (const row of ecrRows) {
-    const pos = row.pos;
-    const r = posCount[pos] ?? 0; posCount[pos] = r + 1; // 0-indexed within position
-    // TWO MULTIPLIERS ON THE RANK CURVE, each 1 when its input is unknown.
-    //   AGE          -- who holds the rank (draft/age.ts)
-    //   OPPORTUNITY  -- how he earned it last season (draft/opportunity.ts)
-    // They are independent questions and multiply: a 30-year-old back whose usage also collapsed
-    // gets both haircuts, which is the intended reading. Both are clamped to +/-25% before their
-    // per-position amplitude is applied, so the compounded worst case is bounded rather than
-    // unbounded -- worth stating because two stacked multipliers is exactly where a projection can
-    // quietly run away.
-    const usageRank = r + 1;                    // opportunity buckets are 1-based; `r` is 0-indexed
-    const sk = resolveSk(row.name, pos);
-    const p = Math.round(
-      proj(pos, r)
-      * ageFactor(age, row.name, pos, season, sk)
-      * opportunityFactor(opp, row.name, pos, usageRank, season, sk)
-      * 10) / 10;
-    // DST names are already canonical ("SF D/ST") from ingest -- use as-is
-    if (p > 0) out.push([row.name, pos, p, sk]);
+  if (!featCount.c) {
+    throw new Error(`feat_player_season holds no rows for ${season} -- run \`npm run ff -- build-features --seasons 1999-${season}\``);
   }
-  const withSk = out.filter((o) => o[3] != null).length;
+  console.log(`  artifact: ${artifact.fittedFrom} (base ${artifact.base}, ` +
+    `${artifact.features.length} fitted features, multiplicative stage [${artifact.multiplicative.join(", ") || "none"}])`);
+  if (useAge === false || useOpp === false) {
+    console.log(`  NOTE: useAge/useOpp are now properties of the ARTIFACT's multiplicative stage, ` +
+      `not of this call -- build a different artifact to change them.`);
+  }
+  const out = rows.filter((r) => r.mean > 0).map((r) => ({ ...r, mean: Math.round(r.mean * 10) / 10 }));
+  const withSk = out.filter((o) => o.player_sk != null).length;
   console.log(`  player_sk resolved for ${withSk}/${out.length} projections`);
-  if (age) {
-    const cov = ageCoverage(age, out.map((o) => ({ name: o[0], pos: o[1], sk: o[3] })));
-    console.log(`  age curve applied to ${cov.known}/${cov.total} players (the rest keep a multiplier of 1)`);
-  }
-  if (opp) {
-    const cov = opportunityCoverage(opp, out.map((o) => ({ name: o[0], sk: o[3] })), season);
-    console.log(`  opportunity applied to ${cov.known}/${cov.total} players (QB is flat by measurement; rookies keep 1)`);
-  }
-  out.sort((a, b) => b[2] - a[2]);
-  // player_sk is APPENDED, never inserted. Fifty-odd readers destructure the first three columns
-  // positionally (`const [name, pos, pts] = line.split(",")`), so a new column at the end is
-  // invisible to them and a new column in the middle would silently shift every value they read.
-  writeFileSync(outPath, "player,pos,points,player_sk\n" + out.map(([n, p, pt, sk]) => `${n},${p},${pt},${sk ?? ""}`).join("\n") + "\n", "utf8");
+  out.sort((a, b) => b.mean - a.mean);
+  // player_sk was APPENDED, never inserted, and p10/p50/p90 are appended AFTER it for the same
+  // reason. Fifty-odd readers destructure the first three columns positionally
+  // (`const [name, pos, pts] = line.split(",")`), so a new column at the end is invisible to them
+  // and a new column in the middle would silently shift every value they read.
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  writeFileSync(outPath,
+    "player,pos,points,player_sk,p10,p50,p90\n" +
+    out.map((o) => `${o.name},${o.pos},${o.mean},${o.player_sk ?? ""},${r1(o.p10)},${r1(o.p50)},${r1(o.p90)}`).join("\n") + "\n",
+    "utf8");
   return out.length;
 }
