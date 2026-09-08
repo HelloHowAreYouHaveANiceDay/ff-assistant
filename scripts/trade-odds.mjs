@@ -199,41 +199,53 @@ console.log(`evaluating ${only.length} one-for-one swaps at ${TRIALS} trials eac
 // The unchanged baseline for EVERY team, computed once. Their "before" does not depend on which
 // trade we are evaluating, so recomputing it per candidate bought nothing.
 const baseAll = runAll(baseTeams);
-const out = [];
-let done = 0;
+
+// PARALLEL. Every candidate is an independent simulation over the same read-only inputs, so this was
+// one core doing what 31 could -- a 700-candidate sweep at 3200 trials took ~40 minutes while the
+// rest of the machine idled.
+//
+// The precondition is DETERMINISM, and it is new. Under the old sequential RNG a job's result
+// depended on how many draws had already been consumed, which in a pool means it depends on which
+// worker picked it up and when -- run-to-run variation indistinguishable from Monte Carlo noise and
+// effectively undebuggable. The identity-keyed draws make a result a pure function of its job, so
+// worker count and scheduling cannot reach it. assertDeterministic proves that on this data rather
+// than trusting the argument: the same jobs are run on 1 worker and on 4 and required to be
+// BIT-identical before the sweep starts.
+const { runPool, assertDeterministic } = await import("../src/draft/simPool.ts");
+const poolInit = {
+  baseTeams, weeks, slots, playoffTeams: 7, projSd: 0.30, poolRank,
+  varianceModelPath: "data/variance-model.json",
+  outcomesPath: "data/rank-outcomes.json",
+  corrPath: "data/correlation-model.json",
+};
+const jobs = only.map((c, idx) => ({
+  idx, meIdx, theirIdx: c.ti, giveName: c.give.name, getName: c.get.name, trials: TRIALS, seed: SEED,
+}));
+process.stderr.write(`  checking pool determinism...\n`);
+await assertDeterministic(poolInit, jobs);
+process.stderr.write(`  OK -- 1 worker and 4 workers agree exactly\n`);
+
 const t0 = Date.now();
-for (const c of only) {
-  const teams = clone(baseTeams);
-  teams[meIdx].roster = teams[meIdx].roster.filter((p) => p.name !== c.give.name).concat([{ ...c.get }]);
-  teams[c.ti].roster = teams[c.ti].roster.filter((p) => p.name !== c.get.name).concat([{ ...c.give }]);
-  // THEIR side matters too: a proposal the other manager loses on gets rejected, so a deal that only
-  // helps us is not a plan. Both sides come out of this ONE simulation.
-  const odds = runAll(teams);
-  out.push({
-    ...c,
-    dTitle: 100 * odds[meIdx].champion - base.title,
-    // `.playoffs`, not `.playoff`. I fixed this once in run() and left the SECOND caller wrong, so
-    // the header still read fine while every row printed NaN -- the recurring half-fix. The guard in
-    // runAll() proved the field exists and said nothing about whether each reader spells it right,
-    // which is the difference between checking a contract and checking every use of it.
-    dPlayoff: 100 * odds[meIdx].playoffs - base.playoff,
-    dThem: 100 * (odds[c.ti].champion - baseAll[c.ti].champion),
-    abbr: baseTeams[c.ti].name,
-  });
-  // NEWLINE, not a carriage return. A \r-terminated counter renders fine in a terminal and is
-  // useless the moment the run is redirected to a file: the line is rewritten in place, nothing is
-  // flushed as a record, and reading the tail shows a number far behind the truth. I killed two
-  // otherwise-healthy sweeps as "too slow" on exactly that misreading -- the profile says a
-  // candidate costs about a second, not the twenty-four I inferred from the stale counter.
-  if (++done % 25 === 0) process.stderr.write(`  ${done}/${only.length} (${((Date.now() - t0) / done).toFixed(0)}ms each)\n`);
-}
+const poolOut = await runPool(poolInit, jobs, {
+  onProgress: (d, total) => { if (d % 50 === 0 || d === total) process.stderr.write(`  ${d}/${total} (${((Date.now() - t0) / d).toFixed(0)}ms each)\n`); },
+});
+const out = only.map((c, i) => ({
+  ...c,
+  dTitle: poolOut[i].mine - base.title,
+  // The worker returns championship odds only; playoff odds are not part of the ranking and were
+  // costing a second field to keep in sync across a thread boundary. Dropped rather than carried
+  // wrong -- this field printed NaN for an entire session because one of two readers spelled it
+  // `.playoff` instead of `.playoffs`.
+  dThem: poolOut[i].theirs - 100 * baseAll[c.ti].champion,
+  abbr: baseTeams[c.ti].name,
+}));
+process.stderr.write(`  swept ${jobs.length} candidates in ${((Date.now() - t0) / 1000).toFixed(0)}s\n`);
 out.sort((a, b) => b.dTitle - a.dTitle);
-console.log("  we give               we get                pos  partner                title    playoff   them");
+console.log("  we give               we get                pos  partner                title     them");
 for (const d of out.slice(0, 15)) {
   console.log(
     `  ${d.give.name.slice(0, 20).padEnd(20)}  ${d.get.name.slice(0, 20).padEnd(20)}  ${d.get.pos.padEnd(3)}  ${String(d.abbr).slice(0, 18).padEnd(18)} ` +
     `${(d.dTitle >= 0 ? "+" : "") + d.dTitle.toFixed(2)}pp`.padStart(9) +
-    `${(d.dPlayoff >= 0 ? "+" : "") + d.dPlayoff.toFixed(2)}pp`.padStart(10) +
     `${(d.dThem >= 0 ? "+" : "") + d.dThem.toFixed(2)}pp`.padStart(9),
   );
 }
