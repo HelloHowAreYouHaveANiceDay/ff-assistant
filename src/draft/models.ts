@@ -20,6 +20,7 @@
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dataPath } from "../data/paths.js";
+import { loadArtifact } from "../model/projector.js";
 
 export interface ModelSpec {
   key: string;
@@ -37,6 +38,29 @@ export interface ModelSpec {
 }
 
 export const MODELS: ModelSpec[] = [
+  {
+    key: "projection", file: "projection-artifact.json", required: true,
+    // Filled from `ff evaluate-projection`, which scores the SHIPPED projector on held-out seasons
+    // against two baselines computed by the same code path. Null until that has been run: an
+    // invented lift figure on a registry whose whole purpose is to keep claimed and measured apart
+    // would be the exact defect this file was built to end.
+    nestedLift: null, claimedLift: null,
+    what: "the projection ARTIFACT the board and the backtest both evaluate -- point-in-time curve, " +
+      "named features with per-position coefficients, and p10/p50/p90 quantile heads",
+    check: (j) => {
+      // Loaded through the SHIPPED loader, not re-validated here. A second validator in the registry
+      // would be a second opinion about the same contract, and the two would drift -- which is the
+      // failure this artifact's golden block exists to prevent one layer down.
+      try {
+        const a = loadArtifact(j);
+        if (!a.golden?.length) {
+          return "no golden block -- nothing checks that the trainer and this evaluator agree, which " +
+            "is the one failure a producer shipping its own validator cannot catch";
+        }
+        return null;
+      } catch (e) { return (e as Error).message; }
+    },
+  },
   {
     key: "rank-outcomes", file: "rank-outcomes.json", required: true, nestedLift: null, claimedLift: null,
     what: "real player-SEASON trajectories by preseason positional rank (schema 2) -- the pools the " +
