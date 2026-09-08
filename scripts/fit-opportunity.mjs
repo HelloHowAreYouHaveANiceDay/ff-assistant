@@ -80,14 +80,41 @@ for (const yr of [SEASONS[0] - 1, ...SEASONS]) {
     if (r.season_type !== "REG") continue;
     const name = (r.player_display_name || "").trim();
     if (!name || !POS.includes((r.position || "").toUpperCase())) continue;
-    const a = agg.get(name) ?? { g: 0, fd: 0, ts: 0 };
+    const a = agg.get(name) ?? { g: 0, fd: 0, ts: 0, att: 0, ryd: 0 };
     a.g += 1;
     a.fd += N(r.receiving_first_downs) + N(r.rushing_first_downs);
     a.ts += N(r.target_share);
+    // QUARTERBACK WORKLOAD. The two fields above describe a pass CATCHER: a quarterback has no target
+    // share and no receiving first downs, so for twenty seasons QB "usage" here was his scrambles and
+    // nothing else. It measured ~0, that null was recorded as a fact about quarterbacks, and a guard
+    // in models.ts was written to enforce it. Measured with the columns that actually describe the
+    // job (scripts/qb-usage-probe.mjs), the shipped pair scores -0.0060 and attempts + rushing yards
+    // scores +0.0035 nested, chosen by inner CV in 18 of 19 folds.
+    a.att += N(r.attempts);
+    a.ryd += N(r.rushing_yards);
     agg.set(name, a);
   }
-  for (const [name, a] of agg) if (a.g >= 4) usage.set(`${yr}|${name}`, { fd: a.fd / a.g, ts: a.ts / a.g, g: a.g });
+  for (const [name, a] of agg) {
+    if (a.g < 4) continue;
+    usage.set(`${yr}|${name}`, { fd: a.fd / a.g, ts: a.ts / a.g, attempts: a.att / a.g, rushYards: a.ryd / a.g, g: a.g });
+  }
 }
+
+/**
+ * WHICH FEATURES DESCRIBE USAGE, PER POSITION.
+ *
+ * This map is the fix. It existed implicitly before as "everyone gets fd and ts", which is correct
+ * for the three positions that catch passes and meaningless for the one that throws them. Keeping it
+ * explicit means a position whose workload is measured by the wrong columns is now a visible claim
+ * rather than an unstated assumption.
+ */
+const FEATURES = {
+  QB: ["attempts", "rushYards"],
+  RB: ["fd", "ts"], WR: ["fd", "ts"], TE: ["fd", "ts"],
+};
+/** Denominator floors, per feature: below these a bucket's mean usage is ~0 and the ratio explodes
+ *  into a meaningless number rather than a large one. */
+const FLOOR = { fd: 0.05, ts: 0.005, attempts: 1.0, rushYards: 0.5 };
 
 // --- cases: ratio of actual to rank-predicted, plus usage RELATIVE to the rank bucket -------------
 const raw = [];
@@ -99,7 +126,10 @@ for (const v of tot.values()) {
   if (!pred || pred < 20) continue;
   const u = usage.get(`${v.season - 1}|${v.name}`);
   if (!u) continue;
-  raw.push({ season: v.season, pos: v.pos, name: v.name, rank: r, ratio: v.pts / pred, y: v.pts, fd: u.fd, ts: u.ts });
+  raw.push({
+    season: v.season, pos: v.pos, name: v.name, rank: r, ratio: v.pts / pred, y: v.pts,
+    fd: u.fd, ts: u.ts, attempts: u.attempts, rushYards: u.rushYards,
+  });
 }
 // bucket means, per position, so "relative to his rank" is well defined
 const bucketOf = (r) => Math.floor((r - 1) / BUCKET);
@@ -109,14 +139,19 @@ for (const pos of POS) {
   const g = raw.filter((x) => x.pos === pos);
   for (const b of new Set(g.map((x) => bucketOf(x.rank)))) {
     const inB = g.filter((x) => bucketOf(x.rank) === b);
-    bmean[pos][b] = { fd: inB.reduce((a, x) => a + x.fd, 0) / inB.length, ts: inB.reduce((a, x) => a + x.ts, 0) / inB.length };
+    bmean[pos][b] = {};
+    for (const c of FEATURES[pos]) bmean[pos][b][c] = inB.reduce((a, x) => a + (x[c] ?? 0), 0) / inB.length;
   }
 }
-for (const x of raw) {
-  const m = bmean[x.pos][bucketOf(x.rank)];
-  x.relFd = m && m.fd > 0.05 ? x.fd / m.fd : 1;
-  x.relTs = m && m.ts > 0.005 ? x.ts / m.ts : 1;
-}
+/** A feature RELATIVE to what its rank bucket typically shows. 1.0 = exactly as expected, which is
+ *  what keeps this from re-learning the rank the projection is already indexed by. */
+const relOf = (x, c, means) => {
+  const m = (means ?? bmean[x.pos])[bucketOf(x.rank)]?.[c];
+  const v = x[c];
+  if (v == null || !Number.isFinite(v) || m == null || !(m > (FLOOR[c] ?? 0))) return 1;
+  return v / m;
+};
+for (const x of raw) x.rel = FEATURES[x.pos].map((c) => relOf(x, c));
 console.log(`${raw.length} player-seasons with a prior rank inside ${MAX_RANK} and prior-season usage\n`);
 
 // --- per-position OOS signal, which SETS THE AMPLITUDE --------------------------------------------
@@ -151,14 +186,15 @@ function oosR2(data, cols) {
 }
 const RANKC = [(r) => r.rank, (r) => r.rank * r.rank];
 const SIGNAL = {};
-console.log("PER-POSITION OOS SIGNAL of the fitted pair (relFd + relTs), which sets each amplitude");
-console.log("  pos     n    rank-only   + usage     delta");
+console.log("PER-POSITION OOS SIGNAL of each position's own usage pair, which sets its amplitude");
+console.log("  pos     n    features            rank-only   + usage     delta");
 for (const pos of POS) {
   const sub = raw.filter((x) => x.pos === pos);
   if (sub.length < 120) { SIGNAL[pos] = 0; console.log(`  ${pos.padEnd(5)} ${String(sub.length).padStart(5)}   too few`); continue; }
-  const b0 = oosR2(sub, RANKC), b1 = oosR2(sub, [...RANKC, (r) => r.relFd, (r) => r.relTs]);
+  const cols = FEATURES[pos].map((c, i) => (r) => r.rel[i]);
+  const b0 = oosR2(sub, RANKC), b1 = oosR2(sub, [...RANKC, ...cols]);
   SIGNAL[pos] = Math.max(0, b1 - b0);
-  console.log(`  ${pos.padEnd(5)} ${String(sub.length).padStart(5)}   ${b0.toFixed(4)}   ${b1.toFixed(4)}   ${(b1 - b0 >= 0 ? "+" : "") + (b1 - b0).toFixed(4)}`);
+  console.log(`  ${pos.padEnd(5)} ${String(sub.length).padStart(5)}   ${FEATURES[pos].join(" + ").padEnd(19)} ${b0.toFixed(4)}   ${b1.toFixed(4)}   ${(b1 - b0 >= 0 ? "+" : "") + (b1 - b0).toFixed(4)}`);
 }
 const MAXSIG = Math.max(...Object.values(SIGNAL)) || 1;
 const AMP = Object.fromEntries(POS.map((p) => [p, SIGNAL[p] / MAXSIG]));
@@ -171,21 +207,26 @@ const AMP = Object.fromEntries(POS.map((p) => [p, SIGNAL[p] / MAXSIG]));
 // next year at every level of opportunity. Shipping the raw fit would deflate every projection ~13%
 // -- invisible in VOR, where a uniform scale cancels in the dollar split, and very much not
 // invisible to the season simulator, whose bootstrap pools are calibrated against real point levels.
-const model = { fittedFrom: "share-features.mjs + this", bucket: BUCKET, maxRank: MAX_RANK, pos: {}, amplitude: AMP, players: {} };
+const model = {
+  fittedFrom: "share-features.mjs + qb-usage-probe.mjs + this",
+  bucket: BUCKET, maxRank: MAX_RANK, schema: 2, features: FEATURES, floor: FLOOR,
+  pos: {}, amplitude: AMP, players: {},
+};
 console.log("\nFITTED COEFFICIENTS (on the ratio actual/rank-predicted), normalised to mean 1.0");
-console.log("  pos    b_relFd   b_relTs   amplitude   factor at 0.7x / 1.0x / 1.4x usage");
+console.log("  pos    features            coefficients        amplitude   factor at 0.7x / 1.0x / 1.4x");
 for (const pos of POS) {
   const sub = raw.filter((x) => x.pos === pos);
   if (sub.length < 120 || AMP[pos] <= 0) { model.pos[pos] = null; console.log(`  ${pos.padEnd(5)}  (flat -- no measured signal)`); continue; }
-  const b = ols(sub.map((x) => ({ ...x, y: x.ratio })), [(r) => r.relFd, (r) => r.relTs]);
-  const val = (relFd, relTs) => b[0] + b[1] * relFd + b[2] * relTs;
-  const mean = sub.reduce((a, x) => a + val(x.relFd, x.relTs), 0) / sub.length;
-  model.pos[pos] = { b0: b[0], bFd: b[1], bTs: b[2], mean, amp: AMP[pos] };
+  const feats = FEATURES[pos];
+  const b = ols(sub.map((x) => ({ ...x, y: x.ratio })), feats.map((c, i) => (r) => r.rel[i]));
+  const val = (rels) => b[0] + rels.reduce((a, v, i) => a + v * b[i + 1], 0);
+  const mean = sub.reduce((a, x) => a + val(x.rel), 0) / sub.length;
+  model.pos[pos] = { feats, b, mean, amp: AMP[pos] };
   const f = (r) => {
-    const shape = Math.max(0.75, Math.min(1.25, val(r, r) / (mean || 1)));
+    const shape = Math.max(0.75, Math.min(1.25, val(feats.map(() => r)) / (mean || 1)));
     return 1 + (shape - 1) * AMP[pos];
   };
-  console.log(`  ${pos.padEnd(5)} ${b[1].toFixed(4).padStart(8)} ${b[2].toFixed(4).padStart(9)} ${(100 * AMP[pos]).toFixed(0).padStart(9)}%   ${f(0.7).toFixed(3)} / ${f(1.0).toFixed(3)} / ${f(1.4).toFixed(3)}`);
+  console.log(`  ${pos.padEnd(5)} ${feats.join(" + ").padEnd(19)} ${b.slice(1).map((x) => x.toFixed(4)).join(", ").padEnd(19)} ${(100 * AMP[pos]).toFixed(0).padStart(6)}%   ${f(0.7).toFixed(3)} / ${f(1.0).toFixed(3)} / ${f(1.4).toFixed(3)}`);
 }
 
 // --- bake the CURRENT usage in, so neither consumer makes a network call --------------------------
@@ -199,7 +240,16 @@ for (const pos of POS) {
 const latest = Math.max(...SEASONS);
 let baked = 0;
 for (const [k, u] of usage) {
-  model.players[k] = { fd: Math.round(u.fd * 1000) / 1000, ts: Math.round(u.ts * 10000) / 10000 };
+  // ALL four fields, not just the pair a given position uses. The key is `season|name` and carries no
+  // position, so a row that stored only one position's features would silently hand a quarterback a
+  // receiver's usage the moment a name appeared at both -- and the consumer, which looks up by
+  // position, would find the wrong two numbers and adjust on them.
+  model.players[k] = {
+    fd: Math.round(u.fd * 1000) / 1000,
+    ts: Math.round(u.ts * 10000) / 10000,
+    attempts: Math.round(u.attempts * 1000) / 1000,
+    rushYards: Math.round(u.rushYards * 1000) / 1000,
+  };
   baked++;
 }
 model.bucketMeans = bmean;

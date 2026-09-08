@@ -86,12 +86,31 @@ export const MODELS: ModelSpec[] = [
   },
   {
     key: "opportunity", file: "opportunity-model.json", required: false, nestedLift: 0.0095, claimedLift: 0.0186,
-    what: "prior-season usage relative to rank (first downs, target share)",
+    what: "prior-season usage relative to rank -- per position: QB attempts+rush yards, others first downs+target share",
     check: (j) => {
-      const amp = (j.amplitude ?? {}) as Record<string, number>;
-      // QB measured ~0 across 20 seasons. A large QB amplitude means a refit wrote an unmeasured
-      // signal straight through, and QB sits at the top of the board where a dollar error is largest.
-      if ((amp.QB ?? 0) > 0.15) return `QB amplitude ${amp.QB} -- measured signal is ~0`;
+      const pos = (j.pos ?? {}) as Record<string, { feats?: string[] } | null>;
+      if (Number(j.schema) < 2) {
+        return "schema 1 -- this file measures a quarterback's workload with target share and receiving " +
+          "first downs, which he has none of. Refit with scripts/fit-opportunity.mjs.";
+      }
+      // THE GUARD THAT REPLACED A WRONG ONE. This slot previously read `if (amp.QB > 0.15) return
+      // "QB amplitude -- measured signal is ~0"`, which enforced an artifact: the ~0 came from
+      // measuring QB usage with receiver columns, so the guard's job was to keep the fix out. Keyed
+      // on a MAGNITUDE, it could not tell a bad refit from a corrected one.
+      //
+      // Keyed instead on the thing itself: a quarterback must not be scored on pass-catching
+      // columns. That is a signal the broken case is structurally incapable of satisfying, and it
+      // stays correct whatever the amplitude turns out to be on the next refit.
+      const qb = pos.QB?.feats ?? [];
+      if (qb.some((f) => f === "ts" || f === "fd")) {
+        return `QB is being scored on ${qb.join("+")} -- target share and receiving first downs describe a pass catcher, not a passer`;
+      }
+      if (!qb.includes("attempts")) return `QB features ${qb.join("+") || "(none)"} do not include passing volume`;
+      // The pass catchers must NOT have been switched onto the passing columns by the same edit.
+      for (const p of ["RB", "WR", "TE"]) {
+        const f = pos[p]?.feats ?? [];
+        if (f.length && !f.includes("ts")) return `${p} features ${f.join("+")} -- expected target share`;
+      }
       return (j.bySk && Object.keys(j.bySk as object).length > 1000)
         ? null : "bySk map missing or tiny -- the stable-key path is not populated";
     },

@@ -11,14 +11,29 @@
  * forced to mean the same thing for a back and a receiver -- position dummies move the intercept
  * only. Fitted and scored WITHIN each position, out of sample, one season held out at a time:
  *
- *   RB +0.0289    WR +0.0286    TE +0.0189    QB -0.0014
+ *   RB +0.0186    WR +0.0148    TE +0.0218    QB +0.0051
  *
- * Larger than the age curve's own per-position numbers, which are already shipped.
+ * EACH POSITION IS SCORED ON ITS OWN COLUMNS, and the QB row above is a correction, not a refit.
  *
- * TWO NULL CONTROLS, both predicted before the run rather than read off after it. QB has no target
- * share, so nothing should help there -- nothing does, and QB is left FLAT rather than fitted. And
- * efficiency should not persist while volume does -- `racr` came back negative for RB and WR. A run
- * where efficiency had won would have been a reason to distrust the harness, not a discovery.
+ * For twenty seasons every position was measured as `receiving first downs + target share`. A
+ * quarterback has neither, so QB usage was in practice his scrambles: it measured -0.0014, and that
+ * number was then written down as a fact about quarterbacks -- "QB has no target share, so nothing
+ * should help there" -- used to leave QB flat, and finally hardened into a guard in models.ts that
+ * REJECTED any QB amplitude above 0.15. A measurement that had never been connected to the right
+ * column became a fact, then a rule enforcing that fact, and the guard's remaining job was to keep
+ * the fix out.
+ *
+ * What a quarterback's workload actually is: pass attempts and rushing yards. Nested (inner-CV model
+ * selection, scripts/qb-usage-probe.mjs) that scores +0.0035, and the inner loop picks the same pair
+ * in 18 of 19 folds. The shipped pair scored -0.0060 on the same data, so the correction is worth
+ * about 0.0095 at QB rather than 0.0035.
+ *
+ * THE SURVIVING NULL CONTROL, predicted before the run rather than read off after it: efficiency
+ * should not persist while volume does -- `racr` came back negative for RB and WR. A run where
+ * efficiency had won would have been a reason to distrust the harness, not a discovery. The OTHER
+ * null control this file used to claim -- "QB should show nothing, and shows nothing" -- was not a
+ * control at all. It predicted the result of a broken measurement and was confirmed by it, which is
+ * the most expensive kind of agreement.
  *
  * THE FEATURES ARE RELATIVE TO THE RANK, which is what stops this double-counting the rank itself. A
  * WR5's raw target share is high BECAUSE he is a WR5, and that is already priced into his rank.
@@ -27,7 +42,7 @@
  *
  * PER-POSITION AMPLITUDE, scaled to each position's own measured lift, for the reason the age curve
  * had to learn twice: a pooled result cannot say FOR WHOM, and an unscaled curve gave QB the widest
- * swing on the smallest signal. RB 100%, WR 99%, TE 65%, QB flat.
+ * swing on the smallest signal. TE 100%, RB 85%, WR 68%, QB 24%.
  *
  * MISSING USAGE MEANS A MULTIPLIER OF 1, never a guess -- a rookie, or anyone under four games last
  * season, gets the unadjusted rank projection. That is the same rule the age curve uses for an
@@ -38,12 +53,23 @@ export interface OpportunityModel {
   bucket: number;
   maxRank: number;
   season: number;
+  /** 2 = per-position feature sets. Absent or 1 = the old fd/ts-for-everyone shape, which measured a
+   *  quarterback's workload with a receiver's columns; such a file is REJECTED rather than run down a
+   *  legacy path, because a silently-degraded model is what this schema change exists to end. */
+  schema?: number;
+  features?: Record<string, string[]>;
+  floor?: Record<string, number>;
   amplitude: Record<string, number>;
-  pos: Record<string, { b0: number; bFd: number; bTs: number; mean: number; amp: number } | null>;
-  players: Record<string, { fd: number; ts: number }>;   // "season|Name" -- fallback
-  bySk?: Record<string, { fd: number; ts: number }>;     // "season|player_sk" -- preferred
-  bucketMeans: Record<string, Record<string, { fd: number; ts: number }>>;
+  pos: Record<string, { feats: string[]; b: number[]; mean: number; amp: number } | null>;
+  players: Record<string, Record<string, number>>;   // "season|Name" -- fallback
+  bySk?: Record<string, Record<string, number>>;     // "season|player_sk" -- preferred
+  bucketMeans: Record<string, Record<string, Record<string, number>>>;
 }
+
+/** Below these a bucket's mean usage is ~0, and dividing by it produces a meaningless number rather
+ *  than a large one. Mirrors FLOOR in fit-opportunity.mjs; the model carries its own copy so a refit
+ *  with different floors cannot drift from the consumer. */
+const DEFAULT_FLOOR: Record<string, number> = { fd: 0.05, ts: 0.005, attempts: 1.0, rushYards: 0.5 };
 
 /** Clamp matching the fit: a linear model extrapolates without limit, and a 60% haircut on a
  *  player whose usage collapsed is a bet the data does not support. */
@@ -77,11 +103,22 @@ export function opportunityFactor(model: OpportunityModel | null, name: string, 
   const bucket = Math.floor((posRank - 1) / model.bucket);
   const m = model.bucketMeans?.[pos]?.[String(bucket)];
   if (!m) return 1;
-  // Guard the denominators: a bucket whose mean usage is ~0 makes the ratio explode, and for a
-  // position/rank where nobody sees targets that ratio is meaningless rather than large.
-  const relFd = m.fd > 0.05 ? u.fd / m.fd : 1;
-  const relTs = m.ts > 0.005 ? u.ts / m.ts : 1;
-  const val = p.b0 + p.bFd * relFd + p.bTs * relTs;
+  // Each position reads ITS OWN features. QB is attempts + rushing yards; the pass catchers are first
+  // downs + target share. Before this, every position was read as fd + ts, so a quarterback -- who
+  // has neither -- was adjusted on his scrambles, measured at ~0, and that null shipped as a fact.
+  const feats = p.feats;
+  if (!Array.isArray(feats) || !feats.length || !Array.isArray(p.b) || p.b.length !== feats.length + 1) return 1;
+  const floor = model.floor ?? DEFAULT_FLOOR;
+  let val = p.b[0];
+  for (let i = 0; i < feats.length; i++) {
+    const c = feats[i];
+    const mv = m[c], uv = u[c];
+    // Guard the denominator: a bucket whose mean usage is at or below the floor makes the ratio
+    // explode, and for a position/rank where nobody sees that kind of work it is meaningless rather
+    // than large. A missing input contributes exactly 1 -- "as expected" -- never a guess.
+    const rel = (uv != null && Number.isFinite(uv) && mv != null && mv > (floor[c] ?? 0)) ? uv / mv : 1;
+    val += p.b[i + 1] * rel;
+  }
   if (!Number.isFinite(val) || !(p.mean > 0)) return 1;
   const shape = Math.max(LO, Math.min(HI, val / p.mean));
   return 1 + (shape - 1) * p.amp;

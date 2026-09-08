@@ -7,22 +7,27 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { opportunityFactor, opportunityCoverage, type OpportunityModel } from "../src/draft/opportunity.js";
 
+// SCHEMA 2: each position names its own features. Note this fixture had to be converted, and the
+// conversion mattered more than it looks -- against the old shape the consumer returns 1 for
+// everything, so the four "must be exactly 1" tests below would all have passed VACUOUSLY while
+// proving nothing. A fixture one schema behind its consumer is a silent way to disarm a suite.
+const PAIR = ["fd", "ts"];
 const M: OpportunityModel = {
-  bucket: 6, maxRank: 60, season: 2025,
-  amplitude: { RB: 1, WR: 0.68, TE: 1, QB: 0.05 },
+  bucket: 6, maxRank: 60, season: 2025, schema: 2,
+  amplitude: { RB: 1, WR: 0.68, TE: 1, QB: 0.24 },
   pos: {
-    RB: { b0: 0.5, bFd: 0.4, bTs: 0.02, mean: 0.92, amp: 1 },
+    RB: { feats: PAIR, b: [0.5, 0.4, 0.02], mean: 0.92, amp: 1 },
     QB: null,                                                        // never fitted
     // Fitted but shrunk to nothing -- a DIFFERENT code path from `null`, and the one the shipped
     // model actually uses for a no-signal position once a refit nudges it off exactly zero.
-    K: { b0: 0.5, bFd: 0.4, bTs: 0.02, mean: 0.92, amp: 0 },
+    K: { feats: PAIR, b: [0.5, 0.4, 0.02], mean: 0.92, amp: 0 },
     // A NEGATIVE amplitude is what the guard actually protects against, and finding that out took
     // three attempts. amp === 0 cannot distinguish a working guard from a missing one, because
     // `1 + (shape - 1) * 0` is already exactly 1 -- the arithmetic does the guard's job. Only a
     // negative amplitude behaves differently, and it inverts the adjustment: a heavily-used player
     // gets marked DOWN. Not hypothetical -- QB measured -0.0014 on the 10-season fit, and a refit
     // that writes a negative lift straight through would silently invert that position's board.
-    DST: { b0: 0.5, bFd: 0.4, bTs: 0.02, mean: 0.92, amp: -0.5 },
+    DST: { feats: PAIR, b: [0.5, 0.4, 0.02], mean: 0.92, amp: -0.5 },
   },
   players: {
     "2025|Heavy": { fd: 4.0, ts: 0.20 },
@@ -117,13 +122,44 @@ test("coverage counts prior-season entries for the season asked about", () => {
 });
 
 // --- the SHIPPED model, so a bad refit cannot pass unnoticed ---------------------------------------
-test("the shipped model keeps QB flat and every position inside the clamp", (t) => {
+// THE POSITIVE DIRECTION FOR QB. Everything above would pass against a QB path that is correctly
+// wired and completely inert -- which is precisely the state QB was in for twenty seasons, returning
+// a factor of 1 for every quarterback because its inputs were always zero. So: manufacture a
+// high-volume and a low-volume passer against the SHIPPED model and require them to differ.
+test("the shipped model actually moves a QB on his passing volume", (t) => {
   if (!existsSync("data/opportunity-model.json")) return t.skip("model not built");
   const real = JSON.parse(readFileSync("data/opportunity-model.json", "utf8")) as OpportunityModel;
-  // QB measured ~0 across 20 seasons; its amplitude must stay negligible or the top of the board
-  // moves on a signal that is not there. This is the mistake the age curve shipped and had to undo.
-  const qbAmp = real.pos?.QB?.amp ?? 0;
-  assert.ok(qbAmp <= 0.15, `QB amplitude ${qbAmp} -- measured signal is ~0, it must not swing the board`);
+  if (!real.pos?.QB) return t.skip("QB not fitted in this build");
+  const bm = real.bucketMeans?.QB?.["0"];
+  assert.ok(bm?.attempts, "QB bucket means carry no attempts -- the feature is not populated");
+  const probe = {
+    ...real,
+    players: {
+      ...real.players,
+      "2025|__Workhorse": { attempts: bm.attempts * 1.35, rushYards: (bm.rushYards ?? 10) * 1.35 },
+      "2025|__Gametime": { attempts: bm.attempts * 0.65, rushYards: (bm.rushYards ?? 10) * 0.65 },
+    },
+  };
+  const hi = opportunityFactor(probe, "__Workhorse", "QB", 3, 2026);
+  const lo = opportunityFactor(probe, "__Gametime", "QB", 3, 2026);
+  assert.ok(hi > lo, `a higher-volume passer must be marked above a lower-volume one, got ${hi} vs ${lo}`);
+  assert.notEqual(hi, 1, "the QB factor is pinned at 1 -- the path is wired but inert");
+  assert.ok(hi >= 0.7 && lo <= 1.3, `QB factors escaped the clamp: ${hi}, ${lo}`);
+});
+
+test("the shipped model scores a QB on PASSING columns, and stays inside the clamp", (t) => {
+  if (!existsSync("data/opportunity-model.json")) return t.skip("model not built");
+  const real = JSON.parse(readFileSync("data/opportunity-model.json", "utf8")) as OpportunityModel;
+  // This assertion replaced `qbAmp <= 0.15`, which was written to enforce a measurement taken with
+  // the wrong columns -- a quarterback scored on target share and receiving first downs, neither of
+  // which he has. Keyed on a magnitude it could not tell a bad refit from a corrected one, and its
+  // remaining effect was to block the fix. Keyed on the columns instead: a state the broken version
+  // is structurally unable to satisfy, and one that survives whatever the next refit does to the
+  // amplitude.
+  const qb = real.pos?.QB?.feats ?? [];
+  assert.ok(!qb.includes("ts") && !qb.includes("fd"),
+    `QB scored on ${qb.join("+")} -- those columns describe a pass catcher`);
+  assert.ok(qb.includes("attempts"), `QB features ${qb.join("+")} omit passing volume`);
   const names = Object.keys(real.players).filter((k) => k.startsWith(`${real.season}|`)).slice(0, 400);
   for (const key of names) {
     const name = key.slice(String(real.season).length + 1);
