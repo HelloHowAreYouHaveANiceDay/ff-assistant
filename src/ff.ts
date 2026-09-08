@@ -729,7 +729,7 @@ async function cmdBuildStaging(rest: string[]) {
   const { openDb } = await import("./db/db.js");
   const r = buildStgPlayer(valueOf(rest, "--db"));
   console.log(`stg_player: ${r.rows.toLocaleString()} rows`);
-  console.log(`  ${r.withGsis.toLocaleString()} keyed by gsis_id, the rest by POS:name_key`);
+  console.log(`  ${r.withGsis.toLocaleString()} carry a trusted gsis_id (the key is player_sk for every row)`);
   console.log(`  ${r.ambiguous.toLocaleString()} flagged ambiguous (name shared with another real player)`);
   console.log(`  ${r.fromBoardOnly} on our board but absent from the crosswalk -- kept, with no ids`);
   const db = openDb(valueOf(rest, "--db"));

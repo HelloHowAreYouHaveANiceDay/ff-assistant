@@ -75,14 +75,17 @@ Conformed. This is where identity is decided, once, so nothing downstream has to
 - **Rule:** one row per real-world entity. If two raw rows are the same player, they are one staging
   row. If two raw rows share a name and are different people, they are two staging rows with
   different keys.
-- **Rule:** every staging row carries `player_key`, and every consumer joins on it rather than on a
-  name.
+- **Rule:** every staging row carries `player_sk` from the identity registry, and every consumer
+  joins on it rather than on a name. Staging does not DECIDE identity, it READS it -- deciding it
+  here is how the layer ended up minting its own natural key and reproducing the merge.
 - **Rule:** where identity cannot be resolved, the row is marked `ambiguous` rather than guessed.
   A consumer may then choose to skip it — which is what the age curve does by returning a multiplier
   of 1 for an unknown player.
 - **Rule:** no business logic. Conforming is not valuing. `player_value` does not belong here.
 
-Current: `stg_player`. This is the layer that barely exists yet; building it out is the work.
+Current: `stg_player`, keyed by `player_sk` and rebuilt from the registry. 11,966 rows: 11,927 from
+the crosswalk plus 39 board players it does not know. Building out the rest -- staged projections,
+staged rankings -- is the work.
 
 ### CONSUMER — `cons_*` (and the existing `board`)
 

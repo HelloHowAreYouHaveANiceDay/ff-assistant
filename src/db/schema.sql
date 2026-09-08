@@ -396,10 +396,14 @@ CREATE INDEX IF NOT EXISTS idx_xref_sk ON player_xref (player_sk);
 -- name) and every consumer re-solved identity for itself -- which shipped three bugs in one week,
 -- the last a +19.5% markup on a player aged with another man's birth year. See docs/data-layers.md.
 --
--- player_key is the gsis id where one exists (stable across seasons and feeds) and pos:name_key
+-- Keyed by player_sk from the identity registry. It was keyed by a NATURAL key derived from the
+-- player's own attributes (gsis, else POS:name_key), which moves whenever an attribute moves -- a
+-- player learning his gsis, or reclassified RB -> TE, silently changed identity. See identity.ts.
+-- Legacy note, kept because the old text is still true of what it described:
+-- player_key was the gsis id where one exists (stable across seasons and feeds) and pos:name_key
 -- where it does not. Never a bare name_key: that is the thing being fixed.
 CREATE TABLE IF NOT EXISTS stg_player (
-  player_key     TEXT PRIMARY KEY,   -- gsis_id, else POS:name_key
+  player_sk      INTEGER PRIMARY KEY REFERENCES player_identity(player_sk),
   name_key       TEXT,               -- the legacy join key, kept for migration
   name           TEXT,
   position       TEXT,

@@ -20,10 +20,10 @@ const ready = (() => {
 })();
 const open = () => new Database(DB, { readonly: true });
 
-test("player_key is unique -- staging is one row per real player", (t) => {
+test("player_sk is unique -- staging is one row per real player", (t) => {
   if (!ready) return t.skip("stg_player not built (run: ff build-staging)");
   const db = open();
-  const dupes = db.prepare("SELECT COUNT(*) c FROM (SELECT player_key FROM stg_player GROUP BY player_key HAVING COUNT(*)>1)").get() as { c: number };
+  const dupes = db.prepare("SELECT COUNT(*) c FROM (SELECT player_sk FROM stg_player GROUP BY player_sk HAVING COUNT(*)>1)").get() as { c: number };
   db.close();
   assert.equal(dupes.c, 0);
 });
@@ -40,7 +40,7 @@ test("a gsis_id shared by different people is never used as a key, and never rec
      GROUP BY gsis_id HAVING COUNT(DISTINCT name_key || '|' || position) > 1`,
   ).all() as { gsis_id: string }[];
   for (const s of shared) {
-    const used = db.prepare("SELECT COUNT(*) c FROM stg_player WHERE player_key = ? OR gsis_id = ?").get(s.gsis_id, s.gsis_id) as { c: number };
+    const used = db.prepare("SELECT COUNT(*) c FROM stg_player WHERE player_sk = ? OR gsis_id = ?").get(s.gsis_id, s.gsis_id) as { c: number };
     assert.equal(used.c, 0, `disputed gsis ${s.gsis_id} must not be a key or a recorded id`);
   }
   // ...and the people who shared it must both survive as separate rows.

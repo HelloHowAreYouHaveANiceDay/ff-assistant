@@ -49,13 +49,29 @@ test("rebuilding mints nothing and moves no key -- the foundation property", (t)
 test("nobody is absorbed: every crosswalk player has their own key", (t) => {
   if (!ready) return t.skip("registry not built");
   const db = new Database(DB, { readonly: true });
-  const ids = (db.prepare("SELECT COUNT(*) c FROM player_ids").get() as { c: number }).c;
-  const sks = (db.prepare("SELECT COUNT(*) c FROM player_identity").get() as { c: number }).c;
-  db.close();
+  // MEASURED AS DISTINCTNESS, not as a count equality. The first version asserted
+  // COUNT(player_identity) == COUNT(player_ids), which quietly assumed the registry contains ONLY
+  // crosswalk players. Staging then began minting keys for board-only players -- correctly -- and the
+  // test failed reporting "-39 players absorbed" when nobody had been absorbed at all. A count is a
+  // proxy for the property; the property is that no two crosswalk players share a key.
+  const dup = db.prepare(
+    `SELECT COUNT(*) c FROM (
+       SELECT i.player_sk FROM player_ids p
+       JOIN player_identity i ON i.name_key = p.name_key
+         AND i.position = CASE p.position WHEN 'PK' THEN 'K' ELSE p.position END
+       GROUP BY i.player_sk HAVING COUNT(*) > 1)`,
+  ).get() as { c: number };
   // The failure this catches actually happened: matching on a DISPUTED gsis absorbed 15 players into
   // other people's keys, and Bobby McCray -- who shares gsis 00-0022888 with punter Jake Schum --
   // ended up with no identity row at all.
-  assert.equal(sks, ids, `${ids - sks} players were absorbed into someone else's key`);
+  assert.equal(dup.c, 0, `${dup.c} surrogate keys are shared by more than one crosswalk player`);
+  const orphan = db.prepare(
+    `SELECT COUNT(*) c FROM player_ids p WHERE NOT EXISTS (
+       SELECT 1 FROM player_identity i WHERE i.name_key = p.name_key
+         AND i.position = CASE p.position WHEN 'PK' THEN 'K' ELSE p.position END)`,
+  ).get() as { c: number };
+  db.close();
+  assert.equal(orphan.c, 0, `${orphan.c} crosswalk players have no key at all`);
 });
 
 test("a disputed id neither matches nor gets recorded", (t) => {

@@ -6,10 +6,10 @@
  * bugs came out of that in one week, the last one shipping a +19.5% markup on a 29-year-old because
  * the age curve read another man's birth year. See docs/data-layers.md.
  *
- * THE KEY. `player_key` is the gsis id where one exists, because it is stable across seasons and
- * across every nflverse feed. Where it does not, the key falls back to `pos:name_key`, which is
- * unambiguous within this store even though it is not portable. Deliberately NOT a bare name_key:
- * that is the thing being fixed.
+ * THE KEY comes from the identity registry (data/identity.ts): player_sk, an internal integer minted
+ * once and never changed. It was previously derived here as gsis-else-POS:name_key -- a NATURAL key,
+ * which moves whenever an attribute moves, so a player learning his gsis silently became a different
+ * row. Staging no longer decides identity; it READS it, which is why the registry exists.
  *
  * AMBIGUITY IS MARKED, NEVER GUESSED. When a name_key maps to several real players, each gets its
  * own row and all of them are flagged `ambiguous = 1`. A consumer that cannot tell them apart should
@@ -21,6 +21,7 @@
  * belong in staging.
  */
 import { openDb, nowIso, type DB } from "../db/db.js";
+import { resolveOrMint } from "./identity.js";
 
 export interface StgBuildResult {
   rows: number; withGsis: number; ambiguous: number; fromBoardOnly: number;
@@ -76,10 +77,10 @@ export function buildStgPlayer(dbPath?: string): StgBuildResult {
   ).all() as { gsis_id: string }[]) badGsis.add(r.gsis_id);
 
   const ins = db.prepare(
-    `INSERT INTO stg_player (player_key, name_key, name, position, team, birthdate, gsis_id, espn_id,
+    `INSERT INTO stg_player (player_sk, name_key, name, position, team, birthdate, gsis_id, espn_id,
                              sleeper_id, fantasypros_id, ambiguous, source, updated_at)
      VALUES (@key,@nk,@name,@pos,@team,@bd,@gsis,@espn,@sleeper,@fp,@amb,@src,@now)
-     ON CONFLICT(player_key) DO UPDATE SET
+     ON CONFLICT(player_sk) DO UPDATE SET
        name=excluded.name, team=excluded.team, birthdate=excluded.birthdate,
        gsis_id=COALESCE(excluded.gsis_id, stg_player.gsis_id),
        espn_id=COALESCE(excluded.espn_id, stg_player.espn_id),
@@ -98,7 +99,8 @@ export function buildStgPlayer(dbPath?: string): StgBuildResult {
       const gsisOk = p.gsis_id && !badGsis.has(p.gsis_id);
       const amb = ((ambiguity.get(nk) ?? 1) > 1 || (p.gsis_id && badGsis.has(p.gsis_id))) ? 1 : 0;
       ins.run({
-        key: gsisOk ? p.gsis_id! : `${pos}:${nk}`, nk, name: p.name, pos, team: p.team, bd: p.birthdate,
+        key: resolveOrMint(db, { name: p.name ?? "", nameKey: nk, position: pos, ids: {} }).sk,
+        nk, name: p.name, pos, team: p.team, bd: p.birthdate,
         gsis: gsisOk ? p.gsis_id : null,          // a disputed id is not recorded as this man's id
         espn: p.espn_id, sleeper: p.sleeper_id, fp: p.fantasypros_id,
         amb, src: "playerids", now,
@@ -131,7 +133,8 @@ export function buildStgPlayer(dbPath?: string): StgBuildResult {
       const known = db.prepare("SELECT 1 FROM stg_player WHERE name_key = ? AND position = ?").get(b.player_id, pos);
       if (known) continue;
       ins.run({
-        key: `${pos}:${b.player_id}`, nk: b.player_id, name: String(j.Player ?? ""), pos,
+        key: resolveOrMint(db, { name: String(j.Player ?? ""), nameKey: b.player_id, position: pos, ids: {} }).sk,
+        nk: b.player_id, name: String(j.Player ?? ""), pos,
         team: String(j.Team ?? ""), bd: null, gsis: null, espn: null, sleeper: null, fp: null,
         amb: (ambiguity.get(b.player_id) ?? 1) > 1 ? 1 : 0, src: "board", now,
       });
@@ -149,8 +152,8 @@ export function buildStgPlayer(dbPath?: string): StgBuildResult {
  * bare name has to guess when the name is shared, and guessing is what produced the shipped bug.
  * Returns null when unknown so the caller must decide, instead of receiving a plausible wrong row.
  */
-export function playerKey(db: DB, nameKeyed: string, pos: string): string | null {
-  const r = db.prepare("SELECT player_key FROM stg_player WHERE name_key = ? AND position = ?")
-    .get(nameKeyed, normPos(pos)) as { player_key: string } | undefined;
-  return r?.player_key ?? null;
+export function playerKey(db: DB, nameKeyed: string, pos: string): number | null {
+  const r = db.prepare("SELECT player_sk FROM stg_player WHERE name_key = ? AND position = ?")
+    .get(nameKeyed, normPos(pos)) as { player_sk: number } | undefined;
+  return r?.player_sk ?? null;
 }
