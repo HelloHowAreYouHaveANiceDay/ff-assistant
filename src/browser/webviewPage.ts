@@ -165,6 +165,14 @@ export class WebviewPage {
    * string -- a caller that JSON.parses "" gets an unreadable failure a dozen frames from the cause.
    */
   async fetchText(url: string, headers?: Record<string, string>): Promise<string> {
+    // PREFER THE APP BRIDGE. Same webview, same cookies, same result -- but reached through a
+    // one-route loopback endpoint the app publishes rather than through Chromium's debugging port.
+    // The CDP path below is kept as the fallback, not deleted: the bridge only exists in an app
+    // started from the current main.js, and a hard cutover would strand anyone who has not
+    // restarted. See browser/appBridge.ts for why the debugging port is the worse channel.
+    const { bridgeAvailable, bridgeFetch } = await import("./appBridge.js");
+    if (bridgeAvailable()) return bridgeFetch(url, headers);
+
     const init = JSON.stringify({ credentials: "include", headers: headers ?? {} });
     const js = `fetch(${JSON.stringify(url)},${init}).then(function(r){
       return r.ok ? r.text() : ('__HTTP__' + r.status);

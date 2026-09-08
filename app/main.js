@@ -340,9 +340,70 @@ ipcMain.handle("mc:pushSheet", async (e, id) => {
   return await run("uv", args);
 });
 
+// --- THE APP BRIDGE: a door the engine can knock on -------------------------------------------
+//
+// The engine runs as a SEPARATE OS PROCESS. The app spawns it and talks to it over stdio (ff serve),
+// which is app -> engine. But roster sync and the league adaptor need the other direction: reach
+// INTO the app to run a fetch inside the webview that holds the ESPN login. CDP was the only wire
+// for that, and it is a bad fit three ways -- it depends on a remote-debugging-port switch that can
+// silently fail to bind (it did, for hours), it exposes the ENTIRE app to any local process, and it
+// pulls in playwright-core just to make one authenticated HTTP request.
+//
+// The app already owns the webview natively. So it opens a minimal loopback endpoint instead: one
+// route, bound to 127.0.0.1 only, gated by a random token written to a file alongside the port. The
+// engine reads that file to discover both. No debug port, no playwright, and the surface is one
+// function rather than the whole renderer.
+function startBridge() {
+  const http = require("http");
+  const crypto = require("crypto");
+  const token = crypto.randomBytes(24).toString("hex");
+  const server = http.createServer((req, res) => {
+    const reply = (code, obj) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
+    if (req.headers["x-ff-token"] !== token) return reply(403, { error: "bad token" });
+    if (req.method !== "POST" || req.url !== "/fetch") return reply(404, { error: "no such route" });
+    let body = "";
+    req.on("data", (d) => { body += d; if (body.length > 1e6) req.destroy(); });
+    req.on("end", async () => {
+      let url, headers;
+      try { const j = JSON.parse(body); url = j.url; headers = j.headers || {}; } catch { return reply(400, { error: "bad json" }); }
+      // Only ESPN. The bridge exists to reuse ONE login, not to become a general-purpose proxy that
+      // any local process can point anywhere with the app's cookies attached.
+      if (!/^https:\/\/[a-z0-9.-]*espn\.com\//i.test(String(url))) return reply(400, { error: "url must be https and on espn.com" });
+      if (!win || win.isDestroyed()) return reply(503, { error: "no window" });
+      try {
+        // Built by JSON-encoding the url and init separately so nothing the caller sends can break
+        // out of the string literal it lands in -- this is code being assembled, not data.
+        const initJson = JSON.stringify({ credentials: "include", headers: headers || {} });
+        const inner = `fetch(${JSON.stringify(url)},${initJson})` +
+          `.then(function(r){ return r.text().then(function(t){ return { status: r.status, body: t }; }); })` +
+          `.catch(function(e){ return { error: String((e && e.message) || e) }; })`;
+        const out = await win.webContents.executeJavaScript(
+          `(async () => { const wv = document.getElementById("espnview");` +
+          `  if (!wv || !wv.executeJavaScript) return { error: "webview not mounted" };` +
+          `  return await wv.executeJavaScript(${JSON.stringify(inner)});` +
+          `})()`);
+        return reply(200, out ?? { error: "no result" });
+      } catch (e) { return reply(500, { error: String((e && e.message) || e) }); }
+    });
+  });
+  server.listen(0, "127.0.0.1", () => {
+    const port = server.address().port;
+    const f = path.join(DATA_DIR, "app-bridge.json");
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(f, JSON.stringify({ port, token, pid: process.pid, started: new Date().toISOString() }));
+      // Stale-file safety: the engine checks the pid is alive, but removing it on exit is cheaper
+      // than a false "app is up" that costs a confusing failure downstream.
+      app.on("before-quit", () => { try { fs.unlinkSync(f); } catch (_) { /* already gone */ } });
+      console.error(`[bridge] listening on 127.0.0.1:${port}`);
+    } catch (e) { console.error(`[bridge] could not publish ${f}: ${e.message}`); }
+  });
+}
+
 app.whenReady().then(() => {
   ensureDb();   // packaged first-run: copy the seeded store into writable userData
   startServe(); // one long-lived DB helper for the whole session
+  startBridge();// loopback door so the engine can use the app's authenticated webview
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
