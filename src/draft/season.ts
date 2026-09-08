@@ -29,6 +29,12 @@
  *   - in-season roster change. Justified here rather than assumed: this league averages ~0.1 trades
  *     per team per season, so ignoring trades is accuracy, not simplification. Waivers are real
  *     (~15 adds/team) and their omission understates every team roughly equally.
+ *
+ *     THAT LAST CLAIM WAS TRUE ACROSS TEAMS AND FALSE ACROSS POSITIONS, which is the axis every
+ *     roster decision runs along. QB, K and DST are streamed in every real league; a manager whose
+ *     only quarterback is on bye adds one, he does not field nobody. Scoring the empty slot as zero
+ *     charged a penalty that is never paid, and charged it only to rosters carrying one body at a
+ *     mandatory slot. See  in SeasonOpts, which is now the streaming floor.
  */
 import { optimalLineup } from "../inseason/lineup.js";
 // Imported as `unitDraw`, not `draw`: the playoff bracket already has a local `draw(teamIndex)` that
@@ -58,6 +64,25 @@ export interface SeasonOpts {
   kdstCvScale?: number;
   /** FLEX eligibility, from the league's `flex_ok`. Defaults to RB/WR/TE. */
   flexOk?: string[];
+  /**
+   * STREAMING / REPLACEMENT LEVEL: per-position WEEKLY points available for free off waivers.
+   *
+   * Without this a slot the roster cannot fill scores ZERO, which is not how anyone plays. Nobody
+   * takes a zero at quarterback in Goff's bye week -- they add whoever is free that Tuesday, and at
+   * QB, K and DST the freely available option is barely worse than a rostered one. Scoring the empty
+   * slot as zero therefore invents a penalty that does not exist, and it does NOT fall equally on
+   * every team: it lands entirely on rosters carrying one body at a mandatory slot.
+   *
+   * That distortion is not academic. It inflated the K slot's apparent leverage, made a fourth-string
+   * quarterback look like a top waiver claim purely as bye insurance, and marked our only kicker,
+   * quarterback and defense "never droppable" when in reality you drop one the moment you add
+   * another. The header below used to justify omitting waivers on the grounds that they "understate
+   * every team roughly equally" -- true across teams, false across POSITIONS, which is the axis every
+   * roster decision runs along.
+   *
+   * Left undefined, an empty slot still scores zero and the old behaviour is unchanged.
+   */
+  replacement?: Record<string, number>;
   /**
    * Opt out of the structural roster check. Only for cases where a partial roster is the POINT --
    * simulating a half-finished draft, or a unit test of the scoring path. Never as a way past a
@@ -104,6 +129,23 @@ function sampleWeek(mean: number, cv: number, rng: () => number): number {
   const sigma = Math.sqrt(Math.log(1 + cv * cv));
   const mu = -0.5 * sigma * sigma;                 // so E[exp(mu + sigma*Z)] = 1
   return Math.max(0, mean * Math.exp(mu + sigma * gauss(rng)));
+}
+
+/**
+ * Points for a starting slot nothing on the roster can fill this week.
+ *
+ * Zero is the answer only when no replacement level is configured. Otherwise it is what a manager
+ * would actually get by claiming the best free agent at that position -- and for FLEX, the best of
+ * the positions eligible to fill it.
+ */
+function emptySlotPoints(slot: string, opts: SeasonOpts): number {
+  const rep = opts.replacement;
+  if (!rep) return 0;
+  if (slot === "FLEX") {
+    const flex = opts.flexOk ?? ["RB", "WR", "TE"];
+    return Math.max(0, ...flex.map((p) => rep[p] ?? 0));
+  }
+  return rep[slot] ?? 0;
 }
 
 function playoffWinner(seeds: number[], beat: (a: number, b: number) => number): number {
@@ -269,7 +311,11 @@ export function simulateSeasons(
           });
           const res = optimalLineup(players, opts.slots, opts.flexOk);
           let total = 0;
-          for (const s of res.starters) { const hit = players.find((x) => x.name === s.name); if (hit?.actual != null) total += hit.actual; }
+          for (const s of res.starters) {
+            const hit = players.find((x) => x.name === s.name);
+            if (hit?.actual != null) total += hit.actual;
+            else if (s.name === "(empty)") total += emptySlotPoints(s.slot, opts);
+          }
           return total;
         }
         const players = tm.roster.map((p) => {
@@ -293,6 +339,7 @@ export function simulateSeasons(
         for (const s of res.starters) {
           const hit = players.find((x) => x.name === s.name);
           if (hit?.actual != null) total += hit.actual;
+          else if (s.name === "(empty)") total += emptySlotPoints(s.slot, opts);
         }
         return total;
       });
@@ -329,7 +376,11 @@ export function simulateSeasons(
         });
         const res = optimalLineup(players, opts.slots, opts.flexOk);
         let total = 0;
-        for (const s of res.starters) { const hit = players.find((x) => x.name === s.name); if (hit?.actual != null) total += hit.actual; }
+        for (const s of res.starters) {
+          const hit = players.find((x) => x.name === s.name);
+          if (hit?.actual != null) total += hit.actual;
+          else if (s.name === "(empty)") total += emptySlotPoints(s.slot, opts);
+        }
         return total;
       };
       // redraw both sides each ROUND so a team is not locked to one score all playoffs

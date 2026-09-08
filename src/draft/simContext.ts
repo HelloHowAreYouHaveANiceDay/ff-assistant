@@ -46,6 +46,8 @@ export interface SimContext {
    *  can ask whether it is legal (rosterGaps) instead of finding out when the simulator refuses. */
   slots: string[];
   flexOk?: string[];
+  /** Per-position WEEKLY points freely available off waivers -- the streaming floor. */
+  replacement: Record<string, number>;
 }
 
 /**
@@ -152,6 +154,36 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     syntheticSchedule = true;
   }
 
+  /**
+   * STREAMING FLOOR, measured from the actual free-agent pool rather than assumed.
+   *
+   * QB, K and DST are streamable in every real league: if your starter is on bye you add whoever is
+   * free that week, and at those positions the free option is close to the rostered one. The
+   * simulator scored an unfillable slot as ZERO, which is a penalty nobody actually pays and which
+   * falls entirely on rosters carrying one body at a mandatory slot -- ours carries one QB, one K,
+   * one DST and one RB, so it was taking four guaranteed zeroes a season that would never happen.
+   *
+   * NOT the best free agent: fifteen other managers stream too, and the top man is gone by the time
+   * most of them look. The SECOND-best available is a deliberately modest stand-in for that
+   * competition. It is a judgement call, so it is stated here rather than buried, and the resolved
+   * values are printed by `ff models`.
+   */
+  const REPLACEMENT_INDEX = 1;
+  const replacement: Record<string, number> = {};
+  {
+    const freeByPos: Record<string, number[]> = {};
+    for (const [id, p] of board) {
+      if (ownedIds.has(id)) continue;
+      (freeByPos[p.pos] ??= []).push(p.proj);
+    }
+    for (const [pos, list] of Object.entries(freeByPos)) {
+      list.sort((a, b) => b - a);
+      const seasonPts = list[Math.min(REPLACEMENT_INDEX, list.length - 1)] ?? 0;
+      // Season projection -> per week. A streamed player is started for one week, not a season.
+      replacement[pos] = Math.max(0, seasonPts / Math.max(1, regWeeks));
+    }
+  }
+
   const mkOpts = (trials: number, seed: number) => ({
     weeks: weeks.length,
     playoffTeams: cfg.playoffTeams ?? 7,     // FROM CONFIG -- a hardcoded 7 is right by coincidence
@@ -161,12 +193,13 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     // superflex one -- a config value the code ignores reads as configured behaviour.
     flexOk: cfg.flex_ok,
     projSd: 0.30,
+    replacement,
     trials, seed, poolRank,
     bootstrap: { outcomes, corr, calibration: "scale" as const },
   });
   return {
     teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds,
-    slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined,
+    slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement,
     opts: mkOpts,
     run: (t, trials, seed) => simulateSeasons(t, weeks, vm, mkOpts(trials, seed)),
     clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),
