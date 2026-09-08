@@ -98,6 +98,36 @@ export const MODELS: ModelSpec[] = [
   },
 ];
 
+/**
+ * MODELS THAT WERE BUILT, MEASURED, AND DELIBERATELY NOT SHIPPED.
+ *
+ * Without this, "K and DST are unfitted" reads as "nobody got round to it", and the next person to
+ * notice that a kicker's projection is just his rank-curve value will spend the same week finding
+ * the same nothing. A negative result is only worth what it saves, and it saves nothing if it is not
+ * written down where the gap is visible.
+ */
+export const EVALUATED_NOT_SHIPPED = [
+  {
+    key: "kdst", positions: ["K", "DST"], date: "2026-09-08",
+    fitBy: "scripts/fit-kdst.mjs", screenedBy: "scripts/kdst-sweep.mjs",
+    nestedLift: { K: -0.0073, DST: -0.0041 },
+    naiveLift: { K: -0.0058, DST: 0.0071 },
+    why:
+      "A screen over the fg_*/pat_* and def_* columns found correlations with the residual (K longAttRate " +
+      "+0.128, DST vegasImpliedPts +0.121 among others), and NONE of it survived nested cross-validation. " +
+      "DST went from +0.0071 naive to -0.0041 once feature selection happened inside the fold -- a selection " +
+      "effect larger than the entire naive lift. K was already negative before nesting. The per-fold picks " +
+      "were also unstable: the folds chose fgAtt+avgWind, not the longAttRate+patPct the whole-data screen " +
+      "picked, which is what an unstable correlation looks like from the inside. " +
+      "The fit harness was verified able to detect a planted signal (R2 0.44 at K, 0.35 at DST) before the " +
+      "null was accepted, so this is a measurement and not a silence. " +
+      "NOTE THIS DOES NOT MEAN THE SLOTS ARE UNIMPORTANT: kdst-leverage.mjs puts the K slot second only to " +
+      "QB in title probability swung on our roster. Both can be true, and together they say something " +
+      "useful -- take the best-ranked kicker available and spend no further thought on him, because the " +
+      "value is in not carrying a bad one, not in out-predicting the rank.",
+  },
+] as const;
+
 export interface ModelStatus {
   key: string; file: string; what: string; required: boolean;
   present: boolean; ageDays: number | null; sizeKb: number | null;
