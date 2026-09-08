@@ -95,8 +95,17 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
 ### Key commands (`npm run ff -- <cmd>`)
 - **Data/values:** `ingest` (all sources -> store), `ingest-source <id>` (one asset + downstream),
   `values`, `project`, `cheatsheet`, `build-history` (per-league backtest data)
+- **Model pipeline:** `build-features` (the point-in-time `feat_*` tables -- run after
+  `build-history`), `build-picks` (`fact_draft_pick`, one row per real pick with the consensus as it
+  stood), `build-artifact --curve-only` (the projection artifact; `ff projections` REFUSES to run
+  without one rather than falling back to a bare curve)
 - **Validation:** `sim`, `backtest` (championship rate; `--full --no-lookahead` is the trustworthy
-  mode), `calibrate`
+  mode), `calibrate`, `evaluate-projection` (nested CV through the SHIPPED projector, with the
+  trainer re-invoked blind to each held-out season; `--dump-residuals`, `--keep-artifacts`),
+  `residuals` (which slices the model is systematically wrong about)
+- **Training (Python, off the hot path):** `uv run --with scikit-learn --with numpy
+  tools/train_projection.py --db data/ff.db --out data/projection-artifact.json`. The artifact
+  carries a golden block the TypeScript loader recomputes; a disagreement over 1e-6 is refused.
 - **Live draft (add `--app` to drive the desktop app's ESPN webview):** `attach`, `launch-practice`,
   `enter-draft`, `preflight`, `auto-draft`, `roster`, `board`, `read-block`. `auto-draft` holds a
   single-instance lock — two agents in one seat bid against each other.

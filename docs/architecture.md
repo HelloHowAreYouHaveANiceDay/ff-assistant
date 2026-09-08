@@ -118,10 +118,41 @@ nflverse (raw truth)          ESPN (league truth)         our board
                          |
                          v
               src/data/history.ts  -->  history-points.csv / history-weekly.csv
+                         |                      (both carry player_sk, appended last)
+                         v
+              src/features/build.ts  -->  feat_player_season / feat_player_week / feat_curve
+                         |                                    fact_draft_pick
+                         v
+              tools/train_projection.py  -->  data/projection-artifact.json  (golden block)
+                         |
+                         v
+              src/model/projector.ts  (PURE: artifact + feature rows -> projections)
+                    /              \
+        project() -> points.csv     backtest --projection artifact
                          |
                          v
               backtest (strategy)  |  season.ts (this year's odds)
 ```
+
+**One projector, two callers, and the multipliers applied exactly once.** The board and the backtest
+each used to look the curve up and multiply the age and opportunity factors in themselves, a thousand
+lines apart and with slightly different arguments. `src/model/projector.ts` is a pure function of
+(artifact, feature rows) -- no file reads, no network, no clock -- which is precisely what lets the
+two callers be tested against each other. The multipliers live in the artifact's `multiplicative`
+stage, so there is one place they are applied; `test/projector.test.ts` asserts `mean == base x
+factors` exactly, a claim a double application is structurally incapable of satisfying.
+
+**The feature layer is point-in-time.** Every `feat_*` row carries an `as_of` and nothing in it may
+depend on information that did not exist then -- which is why the curve columns are refitted per
+season on an expanding window instead of fitted once on everything. A curve fitted on all 27 seasons
+and used as a feature for 2010 is lookahead moved one level UP, into the model, where no data-level
+check can see it. See `docs/data-layers.md`.
+
+**Training is Python, serving is TypeScript, and the seam is validated.** The artifact carries five
+fixture rows with the trainer's own predictions; the TS loader recomputes them and refuses the
+artifact if they disagree by more than 1e-6. It also refuses an artifact naming a feature it cannot
+compute, or missing a quantile head -- each of which would otherwise degrade to "that coefficient
+contributes zero", a slightly different projection and no error at all.
 
 **Sources are addressed in one place.** `src/data/nflverse.ts` owns every URL (`URLS`,
 `playerWeekUrl`, `teamWeekUrl`) and the team-abbreviation map (`canonTeam`). The per-season stats

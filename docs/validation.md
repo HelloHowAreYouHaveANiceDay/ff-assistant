@@ -1,5 +1,231 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## PHASE 2a: the measurement loop was right and the MODELLING side could not absorb a feature
+> ## (2026-09-08)
+>
+> Phase 1 found that the projection answered the wrong question. Phase 2a is about why that took so
+> long to find and why nothing could be done about it quickly: the projection was a curve times two
+> hand-built multipliers, each with its own fit script, its own artifact, its own clamp and its own
+> amplitude, each applied by the CONSUMER. Adding a third feature meant a third fit script, a third
+> artifact and a third pair of call sites. Meanwhile every fit script re-derived prior-year rank and
+> prior-season usage for itself, joined by NAME, and at least three separate copies of the curve
+> builder lived in `scripts/`. `nested-cv.mjs` -- the thing that decided what was true -- did not run
+> the shipped model at all; it reimplemented it.
+>
+> **Nothing in this phase moves a shipped number on purpose.** The flagless arbiter is unchanged at
+> **38.2% / 96%**, per-season identical to Phase 1, and the shipped board's 523 point values reproduce
+> exactly. What changed is that there is now one feature table, one projector, one train/serve
+> contract and one evaluation that runs the shipped code.
+>
+> ### The pipeline
+>
+> | | what it is | built by |
+> |---|---|---|
+> | `feat_player_season` | 17,189 rows, 1999-2026, `as_of <season>-09-01` | `ff build-features` |
+> | `feat_player_week` | 287,632 rows including byes, `as_of` = day before kickoff | same |
+> | `feat_curve` | 66,645 rows: the point-in-time curve per (season, kind, pos, rank) | same |
+> | `fact_draft_pick` | 738 real picks, 2022-2025, with the consensus as it stood | `ff build-picks` |
+>
+> **Point-in-time is the rule the layer exists for.** The curve columns are refitted PER SEASON on an
+> expanding window rather than fitted once on everything. A curve fitted on 27 seasons and then used
+> as a feature for 2010 is lookahead moved one level UP, out of the data and into the model, where no
+> data-level check can see it.
+>
+> **Identity resolution.** `history-points.csv` and `history-weekly.csv` now carry `player_sk` as an
+> appended last column, resolved gsis-first, then `(name_key, position, team)`. Team is load-bearing:
+> `nameKey` strips generational suffixes on purpose, so a name+position lookup hands Marvin Harrison
+> Jr. his father's row.
+>
+> | slice | resolved |
+> |---|---|
+> | history-points, skill positions 2010-2025 | **99.88%** (9,071 / 9,082) |
+> | history-points, every row 1999-2025 | 91.49% (37,736 / 41,245) -- the shortfall is IDP, which the crosswalk covers thinly |
+> | `feat_player_season`, all rows | **99.0%** |
+> | `feat_player_week`, all rows | 98.9% |
+> | `fact_draft_pick` | 99-100% per season |
+>
+> The rebuild was verified against the previous files rather than assumed: **41,245 shared
+> (season, name, pos) rows compared, 0 differ by more than 0.05**; 422,187 weekly rows, 0 differ
+> (`scripts/history-rebuild-check.mjs`).
+>
+> **`fact_draft_pick` totals match `docs/league-tendencies.md` to the dollar** -- 2796 / 2783 / 2767 /
+> 3157 for 2022-2025. **2026 is recorded as ABSENT** from the store copy rather than quietly missing
+> from a table of counts.
+>
+> ### Nested CV that runs the SHIPPED code
+>
+> `ff evaluate-projection --seasons 2008-2025`. For each held-out season the TRAINER is re-invoked as
+> a subprocess with `--holdout-season Y`, so the coefficients, the transform centres, the bucket means
+> and the alpha search are all re-derived blind to Y; the artifact is loaded through the shipped
+> loader; the projection comes from `projectSeason`, the same function the board calls. All three
+> rungs are scored by one function, because a comparison between two things measured by two pieces of
+> code is not a comparison.
+>
+> Pooled over 16 held-out seasons, 7,569 player-seasons. `crps` is the mean pinball loss over the
+> three quantiles -- a proper scoring rule, and deliberately not the continuous ranked probability
+> score, which we do not have the distribution for.
+>
+> | slice | carry rmse / r2 / crps | CURVE-ONLY | TRAINED |
+> |---|---|---|---|
+> | ALL | 59.2 / 0.428 / 13.8 | 55.0 / 0.504 / 13.1 | **54.4 / 0.516 / 12.8** |
+> | QB | 86.6 / 0.480 / 21.4 | 86.6 / 0.487 / 21.6 | 84.7 / 0.511 / 19.7 |
+> | RB | 69.0 / 0.267 / 16.0 | 62.2 / 0.403 / 14.9 | 61.7 / 0.414 / 14.7 |
+> | WR | 54.4 / 0.423 / 13.1 | 49.8 / 0.518 / 12.8 | 49.3 / 0.528 / 12.7 |
+> | TE | 39.3 / 0.421 / 9.2 | **37.1 / 0.484 / 8.7** | 37.3 / 0.479 / 8.5 |
+> | rank 1-6 | 89.5 / -0.066 / 18.6 | **70.2 / 0.347 / 17.2** | 73.2 / 0.290 / 16.5 |
+> | rank 7-12 | 66.8 / 0.294 / 15.5 | **63.1 / 0.369 / 15.2** | 63.9 / 0.355 / 14.6 |
+> | rank 13-24 | 64.2 / 0.169 / 14.8 | 61.1 / 0.250 / 14.4 | 59.3 / 0.291 / 14.2 |
+> | rank 25-40 | 67.7 / 0.057 / 17.4 | 64.8 / 0.139 / 15.5 | 63.0 / 0.186 / 15.2 |
+> | rank 41-60 | 58.0 / 0.114 / 14.1 | 56.2 / 0.161 / 14.0 | 55.4 / 0.184 / 13.7 |
+>
+> Carry-forward is the free baseline; **the curve is the bar that matters**, because the curve is
+> free too. The trained model beats it overall and loses to it at TE and at the top two rank bands --
+> exactly the region a dollar is most expensive.
+>
+> ### THE GATE FAILED, AND THE CURVE-ONLY ARTIFACT SHIPS
+>
+> Pre-registered: the trained artifact must beat curve-only in BOTH pinball and RMSE on the pooled
+> 2015-2025 holdouts, AND p10/p90 coverage must land in [0.75, 0.85].
+>
+> | | trained | curve-only | verdict |
+> |---|---|---|---|
+> | RMSE | 54.31 | 54.66 | PASS |
+> | pinball | 12.62 | 12.91 | PASS |
+> | coverage | 0.614 | 0.586 | **FAIL** ([0.75, 0.85]) |
+>
+> **The gate is all three, so the curve-only artifact is the shipped default.** No tuning was done
+> afterwards: tuning against a gate you have already watched fail is how a gate stops being a
+> measurement.
+>
+> Coverage per rank band tells you exactly where the bands are wrong, and it is worth reading before
+> anyone "fixes" the pooled number:
+>
+> | band | curve-only inside | trained inside |
+> |---|---|---|
+> | 1-6 | 0.918 | 0.887 |
+> | 7-12 | 0.887 | 0.858 |
+> | 13-24 | 0.828 | 0.809 |
+> | 25-40 | 0.651 | 0.680 |
+> | 41-60 | 0.557 | 0.620 |
+>
+> Both artifacts fit their quantile heads on **ranks 1-36 only** -- past that the curve has flattened
+> onto its last fitted value and `actual / curve` stops measuring dispersion. So the pooled 0.614 is
+> a fit on one sample scored on another, and the honest reading is that the bands are slightly too
+> WIDE at the top and much too narrow past rank 24. Widening the fitted range is the obvious next
+> move and it belongs to Phase 2b with its own pre-registration.
+>
+> ### Residual slices, from those same per-fold residuals
+>
+> `ff residuals --seasons 2011-2025`, 7,263 rows. A large consistent bias says something real is
+> missing; large-but-zero-mean is the ceiling.
+>
+> | slice | n | bias | sd | t |
+> |---|---|---|---|---|
+> | ALL | 7,263 | -0.0 | 54.4 | -0.03 |
+> | **rank 1-6** | 527 | **-14.1** | 73.1 | **-4.42** |
+> | **TE** | 1,369 | **-2.9** | 37.2 | **-2.90** |
+> | **RB rank 1-6** | 89 | **-35.3** | 93.6 | **-3.56** |
+> | **TE rank 1-6** | 88 | **-20.6** | 56.4 | **-3.42** |
+> | **TE rank 7-12** | 86 | **-16.3** | 51.4 | **-2.94** |
+> | WR | 2,435 | +2.0 | 49.3 | +2.01 |
+> | rank 25-40 | 1,132 | +3.3 | 63.3 | +1.73 |
+>
+> **The model over-projects the elite tier and it is not close.** An RB entering top-6 comes in 35
+> points under his projection on average; the same is true of top-12 tight ends. Phase 1 halved the
+> top of the curve and this says it is still too high there.
+>
+> ### Feature screen (run once, nothing fitted)
+>
+> `scripts/feature-sweep.mjs` now reads candidates from `feat_player_season` and the residuals from
+> `ff evaluate-projection --dump-residuals`. It no longer rebuilds its own model. 85 candidates,
+> Benjamini-Hochberg FDR at 0.1. Survivors, `rho(bare curve)` / `rho(shipped)`:
+>
+> | feature | scope | n | rho(bare) | rho(shipped) | p |
+> |---|---|---|---|---|---|
+> | passAirYards | QB | 669 | +0.252 | +0.105 | 0.0063 |
+> | epaPass | QB | 669 | +0.218 | +0.100 | 0.0094 |
+> | teamPassEpa | all | 5,305 | +0.065 | +0.061 | 9.4e-6 |
+> | primetimeShare | all | 5,305 | +0.061 | +0.061 | 7.4e-6 |
+> | adot | WR/TE | 2,943 | -0.002 | +0.058 | 0.0018 |
+> | tdPerYard | all | 4,974 | -0.020 | -0.047 | 0.0010 |
+> | offSundayShare | all | 5,305 | +0.045 | +0.043 | 0.0017 |
+> | rookieSeason | all | 5,305 | +0.022 | -0.041 | 0.0028 |
+> | avgTemp | all | 5,305 | -0.035 | -0.036 | 0.0087 |
+> | teamYards | all | 5,305 | +0.042 | +0.035 | 0.0106 |
+> | twoPt | all | 5,024 | +0.017 | -0.035 | 0.0123 |
+> | birthYear | all | 5,305 | +0.034 | -0.035 | 0.0118 |
+>
+> **NOTHING WAS FITTED FROM THIS.** Surviving is a licence to run a proper nested-CV evaluation and
+> nothing more.
+>
+> **A control had to be repaired to stay a control.** The positive control is "age must correlate with
+> the residual, because we know age is real". Once age became a fitted feature of the trained
+> artifact, that control could no longer fire -- and a control that cannot fire looks exactly like one
+> that is passing. It reported `NOT DETECTED ... the screen is mis-wired`, which was a false alarm
+> about a real problem. The fix is a fourth rung, `bare`: the curve with an EMPTY multiplicative
+> stage. Against it, age reads **rho -0.118, detected**, and against the shipped model **+0.004** --
+> the model absorbing its own signal, which is the pattern that should be there. The negative control
+> (a seeded random column) reads rho -0.013, p 0.356, and does not survive.
+>
+> ### The championship backtest, paired
+>
+> `--full --no-lookahead --inflation --seasons 2010-2024 --n 150`, i.e. the 14 seasons 2011-2024,
+> which is exactly the range Phase 1's arm could run. Trials dumped, `scripts/paired-analysis.mjs`.
+>
+> | book | baseline | projector (curve-only) | mean | SE | t | 95% CI | seasons better |
+> |---|---|---|---|---|---|---|---|
+> | vor (mirror) | 40.2% | 41.7% | **+1.48pp** | 1.64 | 0.90 | [-1.48, +4.62] | 7/14 |
+> | rank (independent) | 35.3% | 36.2% | **+0.90pp** | 1.76 | 0.51 | [-2.24, +4.33] | 7/14 |
+>
+> **P4 -- the projector arm is within noise of Phase 1's conditional arm. HELD.** Phase 1 measured
+> +1.00pp (vor) and +2.33pp (rank); Phase 2a measures +1.48pp and +0.90pp through completely
+> different code. Both are positive under both books and significant under neither -- the detectable
+> effect at 80% power with 14 seasons is ~4.8pp, so this test could not have resolved an effect of
+> this size either time. The baseline arm reproduced Phase 1's 40.2% / 35.3% to the tenth, which is
+> what makes the two phases comparable at all.
+>
+> **P4's second clause -- "does not regress with the trained one" -- is NOT cleanly confirmed.** The
+> trained arm was run properly, with `--artifact-dir` pointing at 15 per-season artifacts each blind
+> to its own season (a single artifact fitted on 1999-2025 would have seen every season being
+> replayed). It comes in at **39.0%**, i.e. **-1.29pp** against the baseline (SE 2.38, CI [-5.71,
+> +3.19]) and **-2.76pp** against the curve-only arm (SE 2.33, CI [-7.05, +1.81]). Within noise both
+> times, and directionally negative both times. Together with the failed coverage gate and the
+> residual slices showing it over-projects the elite tier harder than the curve does, the picture is
+> consistent: **the trained artifact is not ready and the curve-only one ships.**
+>
+> ### What was deprecated rather than migrated
+>
+> - **`scripts/nested-cv.mjs` and `scripts/residual-analysis.mjs` are DELETED**, replaced by
+>   `ff evaluate-projection` and `ff residuals`. They reimplemented the curve and both multipliers
+>   internally, so they measured a model we do not ship -- and that is not hypothetical: the harness
+>   had been fitting `E[y | rank]` for years while the board applied an order statistic, which is
+>   Phase 1's Finding A seen from the other end.
+> - **`scripts/feature-value.mjs` is marked DEPRECATED at its head and left in place.**
+>   `docs/validation.md` and `src/draft/age.ts` both cite its numbers, and deleting the source of a
+>   recorded figure makes the record unverifiable. It should not be re-run to decide anything: it
+>   derives prior rank and usage for itself by name, holds one season out and reports that as
+>   out-of-sample, and scores against the order-statistic curve.
+>
+> ### Two defects found in passing, recorded rather than fixed here
+>
+> - **`fit-opportunity.mjs` never wrote the `bySk` map that `models.ts` REQUIRES.** The shipped
+>   artifact carries 8,991 entries that came from somewhere else, so re-running the script as it
+>   stood would have produced an artifact the registry rejects with "bySk map missing or tiny". The
+>   migration onto `feat_player_season` fixes it, because the table carries `player_sk` on every row.
+> - **The shipped opportunity amplitudes were fitted against a curve that had seen the future.** The
+>   old script fitted one curve over the whole history and applied it to every year. Re-run against
+>   the point-in-time column, RB's measured signal collapses from +0.0186 to **+0.0005** (amplitude
+>   85% -> 3%) while WR rises to +0.0156 and TE holds at +0.0203. `data/opportunity-model.json` is
+>   deliberately NOT refitted in this phase -- Phase 2a builds the pipeline, it does not move a
+>   shipped number -- but this is a real finding and it should be the first thing Phase 2b re-measures.
+> - **`player_ids` merges Marvin Harrison Sr. and Jr. into one raw row**: the father's name, team and
+>   1973 birth date carrying the SON's gsis id. That is a RAW-layer defect upstream of everything
+>   built here. The feature table reports his age as NULL rather than 52 only because of an
+>   implausible-age clamp, which is a guard doing the right thing for a reason that would not
+>   generalise to a father twenty years younger.
+>
+> ---
+
 > ## PHASE 1 REDESIGN: the projection curve was the wrong quantity, and the season sim was half as
 > ## uncertain as the world (2026-09-08)
 >

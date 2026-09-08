@@ -40,6 +40,60 @@ Known bias, stated rather than buried: the ECR half can only score players who a
 season, so a ranked player who never played is a hidden zero that gets dropped. That biases the level
 UP, making the correction conservative.
 
+## The projection is produced by an ARTIFACT, and one projector serves both callers (2026-09-08)
+
+`project()` no longer looks the curve up and multiplies factors in. It loads
+`data/projection-artifact.json`, calls `src/model/projector.ts:projectSeason`, and writes
+`data/points.csv`. The backtest calls the SAME function with a different rank basis. Before this,
+the board and the backtest each applied the age and opportunity multipliers themselves, a thousand
+lines apart and with slightly different arguments -- two implementations of "the projection", one of
+which was the thing being validated and the other the thing being shipped.
+
+- **The projector is PURE.** No file reads, no network, no clock. That is what makes the two callers
+  testable against each other: a test of "identical inputs" is a fiction if either side can reach
+  for a file.
+- **The multipliers live in the artifact's `multiplicative` stage**, so there is exactly one place
+  they are applied. A trained artifact that regresses on age declares an EMPTY stage, because
+  declaring the age multiplier as well would apply age twice -- and 0.9 squared is 0.81, which is a
+  perfectly plausible projection with no symptom.
+- **`project()` FAILS LOUDLY without an artifact** rather than falling back to a bare curve. A silent
+  fallback is indistinguishable from a working model at every place anyone looks.
+- **The rank basis is named, not implicit.** The board indexes at preseason consensus rank (the
+  variable the auction is priced against); the backtest indexes at prior-year finish rank, because
+  the FantasyPros archive only begins in 2020.
+
+`points.csv` gains `p10,p50,p90`, appended AFTER `player_sk` -- roughly fifty readers destructure the
+leading columns positionally, so a new column at the end is invisible and one in the middle would
+shift every value they read.
+
+### Which artifact ships, and why
+
+Two are producible:
+
+- **curve-only** (`ff build-artifact --curve-only`) -- every non-intercept coefficient zero, the two
+  shipped multipliers in the multiplicative stage, quantile heads from the empirical quantiles of
+  `actual / curve` on ranks 1-36. It reproduces the pre-2026-09-08 board exactly.
+- **trained** (`uv run --with scikit-learn --with numpy tools/train_projection.py`) -- ridge on the
+  RATIO of actual to curve, with age, usage relative to the rank bucket, team change, prior games and
+  draft capital, plus pinball-loss quantile heads.
+
+**The curve-only artifact is the shipped default.** The trained one beats it on RMSE and pinball
+under nested CV but fails the pre-registered p10/p90 coverage gate, and the gate is all three. See
+`docs/validation.md`, Phase 2a.
+
+### The train/serve contract
+
+The artifact carries a **golden block**: five fixture feature rows together with the TRAINER'S OWN
+predictions for them. The TypeScript loader recomputes them and REFUSES the artifact if the two
+disagree by more than 1e-6. `featureValue()` exists in both Python and TypeScript deliberately --
+that is not duplication to refactor away, it is what makes the comparison mean anything. A producer
+that ships its own validator grades its own homework and passes forever while every consumer rejects
+its output; this repo has that scar already.
+
+The loader also refuses an artifact naming a feature it cannot compute, missing a quantile head, or
+carrying a coefficient for an undeclared feature. Each of those degrades, without the guard, to "that
+coefficient contributes zero" -- a slightly different projection and no error at all.
+
 ## Data (all nflverse, independent of ESPN)
 - **season** -- `data/points.csv` from `ff projections` (current FantasyPros redraft ranks -> the
   CONDITIONAL points-by-rank curve above; forward-looking, our own).

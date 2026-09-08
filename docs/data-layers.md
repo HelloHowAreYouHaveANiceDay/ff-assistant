@@ -104,7 +104,7 @@ raw + staging.
 
 Current: `board`, `player_value`, `projection`.
 
-### FEATURE — `feat_*` (a consumer table with one extra rule)
+### FEATURE -- `feat_*` (a consumer table with one extra rule)
 
 What a MODEL is fitted on and served from. Derived, single-writer, rebuildable from raw + staging --
 so it obeys every consumer rule above -- plus one more that only a model needs.
