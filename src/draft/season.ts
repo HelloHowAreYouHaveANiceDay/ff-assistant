@@ -30,8 +30,10 @@
  *     per team per season, so ignoring trades is accuracy, not simplification. Waivers are real
  *     (~15 adds/team) and their omission understates every team roughly equally.
  */
-import { mulberry32 } from "./sim.js";
 import { optimalLineup } from "../inseason/lineup.js";
+// Imported as `unitDraw`, not `draw`: the playoff bracket already has a local `draw(teamIndex)` that
+// would shadow it, and the shadowed call type-checked as a wrong-arity error only by luck.
+import { draw as unitDraw, drawGauss, PURPOSE, PlayerIds } from "./rng.js";
 import { prepare as prepBootstrap, sampleWeek as bootstrapWeek, type RankOutcomes, type CorrelationModel, type PoolPlayer } from "./bootstrap.js";
 
 export interface VarianceModel {
@@ -117,7 +119,13 @@ export function simulateSeasons(
   opts: SeasonOpts,
 ): SeasonOdds[] {
   const N = teams.length;
-  const rng = mulberry32(opts.seed ?? 20260907);
+  // IDENTITY-KEYED DRAWS. Every random value below is a pure function of (seed, trial, week,
+  // player, purpose), so a shared player lives through the SAME season in two rosters that differ
+  // elsewhere -- which is what makes a paired comparison actually paired. See draft/rng.ts for the
+  // measurement showing the previous sequential stream delivered none of that.
+  const seedNum = (opts.seed ?? 20260907) | 0;
+  const ids = new PlayerIds();
+  const pid = (name: string) => ids.id(name);
   const kScale = opts.kdstCvScale ?? 1;
 
   // TIERING MUST MATCH HOW THE MODEL WAS FITTED, and getting this wrong is silent and severe.
@@ -159,7 +167,7 @@ export function simulateSeasons(
     const trueMean = new Map<SeasonPlayer, number>();
     for (const tm of teams) {
       for (const p of tm.roster) {
-        const err = (!boot && opts.projSd > 0) ? Math.exp(gauss(rng) * opts.projSd - 0.5 * opts.projSd ** 2) : 1;
+        const err = (!boot && opts.projSd > 0) ? Math.exp(drawGauss(seedNum, trial, 0, pid(p.name), PURPOSE.projErr) * opts.projSd - 0.5 * opts.projSd ** 2) : 1;
         trueMean.set(p, Math.max(0, (p.proj / 17) * err));
       }
     }
@@ -170,7 +178,9 @@ export function simulateSeasons(
       const scores = teams.map((tm, ti) => {
         if (boot) {
           const b = boot[ti];
-          const drawn = bootstrapWeek(b.pp, b.prep, () => gauss(rng), rng);
+          const drawn = bootstrapWeek(b.pp, b.prep,
+            (m, i) => drawGauss(seedNum, trial, w, pid(m.name), PURPOSE.copulaA + i),
+            (m) => unitDraw(seedNum, trial, w, pid(m.name), PURPOSE.perf));
           const players = tm.roster.map((p) => {
             const onBye = p.bye === w;
             const pp = b.byName.get(p.name);
@@ -189,11 +199,11 @@ export function simulateSeasons(
           // The fitted avail is games/17, which ALREADY includes the bye. Applying the bye
           // separately (so the RIGHT week is missed, which a season total cannot see) means the
           // injury rate must have the bye divided back out, or every player is benched twice.
-          const injuryOk = rng() < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+          const injuryOk = unitDraw(seedNum, trial, w, pid(p.name), PURPOSE.injury) < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
           const healthy = injuryOk;
           const cvBase = m.cv[tier] ?? 0.8;
           const cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
-          const actual = (onBye || !healthy) ? null : sampleWeek(trueMean.get(p) ?? 0, cv, rng);
+          const actual = (onBye || !healthy) ? null : sampleWeek(trueMean.get(p) ?? 0, cv, () => unitDraw(seedNum, trial, w, pid(p.name), PURPOSE.perf));
           return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
         });
         // Lineup is set on the TRUE mean (what a competent manager approximates), scored on the
@@ -217,17 +227,24 @@ export function simulateSeasons(
     for (const s of seeds) playoffs[s]++;
     // playoff weeks: a fresh sampled week per matchup, same generative model
     const playoffWeek = new Map<number, number>();
+    // A matchup counter, because the bracket exposes no round index and playoff draws still need a
+    // key that varies between rounds. This part CANNOT be perfectly aligned across arms and it is
+    // worth saying why: a trade that changes the standings changes who is in the bracket at all, so
+    // there is no correspondence to preserve. The regular season -- fourteen of the weeks, and what
+    // determines seeding -- is fully aligned, which is where the variance reduction comes from.
+    let poRound = 0;
     const beat = (a: number, b: number) => {
+      poRound++;
       const draw = (t: number) => {
         if (playoffWeek.has(t)) return playoffWeek.get(t)!;
         const tm = teams[t];
         const players = tm.roster.map((p) => {
           const tier = tierOf.get(p) ?? 0;
           const m = vm.pos[p.pos] ?? vm.pos.WR;
-          const healthy = rng() < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+          const healthy = unitDraw(seedNum, trial, 100 + poRound, pid(p.name), PURPOSE.playoffInjury) < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
           const cvBase = m.cv[tier] ?? 0.8;
           const cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
-          const actual = healthy ? sampleWeek(trueMean.get(p) ?? 0, cv, rng) : null;
+          const actual = healthy ? sampleWeek(trueMean.get(p) ?? 0, cv, () => unitDraw(seedNum, trial, 100 + poRound, pid(p.name), PURPOSE.playoffPerf)) : null;
           return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
         });
         const res = optimalLineup(players, opts.slots);

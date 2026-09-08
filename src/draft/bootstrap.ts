@@ -156,16 +156,28 @@ export function prepare(players: PoolPlayer[], outcomes: RankOutcomes, corr: Cor
  * One simulated week for the whole set of players. Returns name -> points.
  * `gauss` must return standard normal draws; `unif` uniform [0,1).
  */
+/**
+ * `gauss` and `unif` take the PLAYER they are drawing for, so the value can be keyed to his identity
+ * rather than to his position in a stream. Passing bare `() => number` generators -- which this used
+ * to -- makes every draw depend on how many draws came before it, so swapping one player on one
+ * roster shifts every subsequent value and two "paired" simulations stop sharing anything. See
+ * draft/rng.ts. Callers that genuinely want an unkeyed stream can ignore the argument.
+ *
+ * THE COPULA'S z VECTOR IS KEYED PER MEMBER, not per group, and that detail is load-bearing: keying
+ * it to the group would make a team's shared draw depend on that group's membership, so adding or
+ * removing one teammate would re-roll the whole stack. Each member's own normal is his, and the
+ * Cholesky mixing below turns them into the correlated vector.
+ */
 export function sampleWeek(
   players: PoolPlayer[],
   prepared: ReturnType<typeof prepare>,
-  gauss: () => number,
-  unif: () => number,
+  gauss: (p: PoolPlayer, i: number) => number,
+  unif: (p: PoolPlayer) => number,
 ): Map<PoolPlayer, number> {
   const u = new Map<PoolPlayer, number>();
   const coupled = new Set<PoolPlayer>();
   for (const g of prepared.groups) {
-    const z = g.members.map(() => gauss());
+    const z = g.members.map((m, i) => gauss(m, i));
     for (let i = 0; i < g.members.length; i++) {
       let v = 0;
       for (let k = 0; k <= i; k++) v += g.L[i][k] * z[k];
@@ -173,7 +185,7 @@ export function sampleWeek(
       coupled.add(g.members[i]);
     }
   }
-  for (const p of players) if (!coupled.has(p)) u.set(p, unif());
+  for (const p of players) if (!coupled.has(p)) u.set(p, unif(p));
   const out = new Map<PoolPlayer, number>();
   for (const p of players) out.set(p, quantile(prepared.pools.get(p) ?? [], u.get(p) ?? 0.5));
   return out;
