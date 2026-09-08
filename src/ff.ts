@@ -375,7 +375,10 @@ async function cmdAgentAsk(rest: string[]) {
 // Projection curve (TS port of build_projections) -> data/points.csv. Reads ECR from the store.
 async function cmdProjections(rest: string[]) {
   const { project } = await import("./data/projections.js");
-  const n = await project(valueOf(rest, "--db"), valueOf(rest, "--out") ?? dataPath("points.csv"));
+  // --curve orderstat restores the pre-2026-09-08 order-statistic curve, for A/B only. The default
+  // is the conditional curve; see the header of src/data/projections.ts for why they differ.
+  const curve = valueOf(rest, "--curve") === "orderstat" ? "orderstat" : "conditional";
+  const n = await project(valueOf(rest, "--db"), valueOf(rest, "--out") ?? dataPath("points.csv"), true, true, curve);
   console.log(`wrote points.csv (${n} players)`);
 }
 
@@ -1517,9 +1520,78 @@ async function cmdBacktest(rest: string[]) {
   const dumpPath = valueOf(rest, "--dump-trials");
   const dumpRows: string[] = [];
   const { writeFileSync: writeDump } = await import("node:fs");
+
+  // OUR PROJECTION: raw prior-year actuals (default) or the CONDITIONAL CURVE evaluated at each
+  // player's prior-year finish rank (`--projection conditional`).
+  //
+  // The market/bots are UNCHANGED either way -- they keep drafting on prior-year actuals plus noise.
+  // That is the point of the comparison: it isolates the effect of OUR book being a conditional
+  // expectation while the room's is still an order statistic, which is exactly the live situation.
+  //
+  // EXPANDING WINDOW, and it is load-bearing. The curve for season Y is fitted on season pairs
+  // STRICTLY BEFORE Y. Fitting it on all 25 seasons and then testing on 2010 would let the curve
+  // know how 2010 turned out -- the lookahead this whole mode exists to exclude, reintroduced one
+  // level up in the model rather than in the data. Seasons with fewer than MIN_PAIRS prior pairs are
+  // skipped rather than run on a curve fitted on nothing, which also means the season SET shrinks:
+  // the baseline arm must be re-run over the same --seasons range or the trials are not paired.
+  //
+  // The ECR level correction is likewise restricted to scrapes before Y, and the archive only starts
+  // in 2019 -- so early backtest seasons get the prior-rank shape with no level rescale. That is the
+  // honest no-lookahead answer (nobody had a FantasyPros archive in 2005), not a degradation.
+  const projMode = valueOf(rest, "--projection") === "conditional" ? "conditional" : "actuals";
+  const MIN_PAIRS = 5;
+  // THE SEASON GATE IS KEYED ON THE CURVE, NOT ON THE PAIR COUNT -- and the difference was not
+  // academic. Gating on `pairs >= 5` admitted 2005-2010, whose curves came back EMPTY (the per-rank
+  // minimum-observation rule needs ~10 pairs before rank 1 has a sample), and an empty curve falls
+  // through to raw actuals. Those six seasons therefore ran the BASELINE inside the arm labelled
+  // "conditional", and reported themselves as six seasons of exactly zero effect. The tell was that
+  // their per-season championship percentages were IDENTICAL to the baseline arm's, to the point --
+  // which is not something two different projections do.
+  //
+  // So the gate asks the question that actually matters: did a usable curve come out at every
+  // position the league starts? A season that cannot answer yes is skipped.
+  const CURVE_POS_REQUIRED = ["QB", "RB", "WR", "TE"];
+  const condCurves = new Map<number, Record<string, number[]>>();
+  if (projMode === "conditional") {
+    if (!noLookahead) throw new Error("--projection conditional is only meaningful with --no-lookahead");
+    const { buildConditionalCurve } = await import("./data/projections.js");
+    const db2 = openDb(valueOf(rest, "--db"));
+    const skipped: number[] = [];
+    for (const yr of [...pts.keys()].sort()) {
+      const { curve, pairs } = buildConditionalCurve(db2, yr, valueOf(rest, "--points") ?? dataPath("history-points.csv"), yr);
+      const ok = pairs >= MIN_PAIRS && CURVE_POS_REQUIRED.every((p) => (curve[p]?.length ?? 0) >= 24);
+      if (ok) condCurves.set(yr, curve); else skipped.push(yr);
+    }
+    db2.close();
+    console.log(`  --projection conditional: expanding window, curve fitted on prior seasons only`);
+    console.log(`    usable in ${condCurves.size}/${pts.size} seasons; skipped ${skipped.join(",") || "none"}`);
+    // The ECR level correction cannot reach any backtested season: the FantasyPros archive begins in
+    // 2020 and rank 1 needs ~5 seasons of it, so a no-lookahead curve for any season through 2024
+    // gets the prior-rank SHAPE with no level rescale. The shipped board (2026) gets both halves.
+    // Stated here rather than in a footnote because it bounds what this measurement can be read as.
+    console.log(`    NOTE: ECR level correction is unavailable before 2025 (archive starts 2020),`);
+    console.log(`          so this arm measures the SHAPE half of the conditional curve only.`);
+  }
+
   for (const yr of seasons) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
     let proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
+    if (projMode === "conditional") {
+      const curve = condCurves.get(yr);
+      if (!curve) continue;                          // too few prior pairs to fit an honest curve
+      // Prior-year finish rank within position, computed from the SAME list the projection is built
+      // from, so the rank the curve is read at is the rank the player actually held.
+      const seenP: Record<string, number> = {};
+      const rankOf = new Map<string, number>();
+      for (const r of proj.slice().sort((a, b) => b.points - a.points)) {
+        seenP[r.pos] = (seenP[r.pos] ?? 0) + 1; rankOf.set(r.name, seenP[r.pos]);
+      }
+      proj = proj.map((r) => {
+        const cv = curve[r.pos];
+        const k = (rankOf.get(r.name) ?? 999) - 1;
+        return { ...r, points: cv && cv.length ? cv[Math.min(k, cv.length - 1)] : r.points };
+      });
+    }
     // AGE CURVE. Only meaningful in no-lookahead mode, where our projection really IS a projection
     // (prior-season actuals) rather than the season's truth plus noise -- with lookahead there is
     // nothing for an age adjustment to improve. Off by default so the historical numbers stay
@@ -1555,7 +1627,7 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "conditional" ? "+CONDITIONAL-CURVE" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   if (dumpPath) {
