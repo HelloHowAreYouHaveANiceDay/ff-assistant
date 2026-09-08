@@ -58,6 +58,7 @@ try {
   console.log(`  quotable. Trade deltas are, because both arms share the schedule and the seed.\n`);
 }
 const store = new Database("data/ff.db", { readonly: true });
+const cfgFlex = JSON.parse(store.prepare("SELECT value FROM settings WHERE key='config'").get().value).flex_ok;
 const byeOf = new Map();
 const season = lg ? lg.season : 2026;
 for (const r of store.prepare(
@@ -255,6 +256,8 @@ for (const d of out.slice(0, 15)) {
 // Declared here because the acceptability filter below uses it -- it was originally defined after
 // that block and threw a temporal-dead-zone ReferenceError, after four hundred simulations had
 // already run. Cheap to fix, expensive to hit: the whole sweep is wasted when it fails at the end.
+const { optimalLineup: optLineup } = await import("../src/inseason/lineup.ts");
+const optimalLineupNames = (roster) => optLineup(roster.map((p) => ({ ...p, available: true })), slots, cfgFlex).starters.map((x) => x.name);
 const noise = 2 * Math.sqrt(base.title * (100 - base.title) / TRIALS);
 
 // ABSOLUTE POINTS ARE THE WRONG YARDSTICK FOR THE PARTNER, and filtering on them alone produced a
@@ -311,10 +314,25 @@ for (const d of out) {
   }
 }
 // 2. Free upgrades. Trading a player we cannot start for a clear starter should not HURT.
-const startable = new Set(baseTeams[meIdx].roster.slice().sort((a, b) => b.proj - a.proj).slice(0, 8).map((p) => p.name));
+// A HIGHER PROJECTION IS NOT AN UPGRADE, and the first version of this check assumed it was. It
+// flagged "Godwin (142, unstartable) -> Kyler Murray (230) = -0.88pp" as a defect. It is not: we
+// already start Goff at 240, so Murray never plays, and the trade swaps one unstartable body for
+// another WHILE handing the partner a useful receiver. A small negative is the correct answer.
+//
+// So the test has to be positional: the incoming player is only an upgrade if he would actually
+// crack OUR lineup. Comparing raw projections across positions measures nothing -- a third-string
+// quarterback out-projects a starting tight end and is worth less than the bench spot he occupies.
+// (Third time an anomaly here has been my check rather than the model. The pattern is the same each
+// time: a rule stated in terms that are easy to compute rather than in terms of what matters.)
+const lineupNow = new Set(optimalLineupNames(baseTeams[meIdx].roster));
 for (const d of out) {
-  if (!startable.has(d.give.name) && d.get.proj > d.give.proj + 60 && d.dTitle < -noise) {
-    flags.push(`FREE UPGRADE HURTS: ${d.give.name} (${d.give.proj.toFixed(0)}, unstartable) -> ${d.get.name} (${d.get.proj.toFixed(0)}) = ${d.dTitle.toFixed(2)}pp`);
+  if (lineupNow.has(d.give.name)) continue;                       // giving up a starter is not "free"
+  const after = new Set(optimalLineupNames(
+    baseTeams[meIdx].roster.filter((p) => p.name !== d.give.name).concat([d.get])));
+  if (!after.has(d.get.name)) continue;                            // he would not start -> not an upgrade
+  if (d.dTitle < -noise) {
+    flags.push(`FREE UPGRADE HURTS: ${d.give.name} (${d.give.proj.toFixed(0)}, benched) -> ${d.get.name} ` +
+      `(${d.get.proj.toFixed(0)}, WOULD START) = ${d.dTitle.toFixed(2)}pp`);
   }
 }
 // 3. Zero-sum sanity. In a 16-team league a trade that massively helps us should cost the partner
