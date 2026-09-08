@@ -1,0 +1,395 @@
+// EVERY FEATURE WE CAN DERIVE, SCREENED AGAINST THE MODEL'S ERROR, IN ONE PASS.
+//
+//   node --import tsx scripts/feature-sweep.mjs [--refresh]
+//
+// scripts/nflverse-audit.mjs lists the columns we have never read -- 87 in the player-week feed
+// alone. That is an inventory, and an inventory is not a measurement: most of those columns are
+// genuinely irrelevant to season-long fantasy, and the ones that are not cannot be picked out by
+// reading their names. So this derives a feature from each plausible column, or combination, and
+// screens all of them at once against the residual.
+//
+// SCREENING AGAINST THE RESIDUAL, not against points, is the whole trick. Correlating a candidate
+// with fantasy points mostly re-measures what preseason rank already knows -- carries correlate with
+// points because good players get carries. Correlating it with what the model gets WRONG asks the
+// only question that matters: does this column know something the model does not?
+//
+// THE HAZARD, and it is the reason for most of the code below. Screening ~50 candidates at p<0.05
+// produces two or three "significant" results from pure noise, every time, by construction. That is
+// not a risk, it is arithmetic. Three defences:
+//
+//   1. BENJAMINI-HOCHBERG false discovery rate control over the whole family, so the reported
+//      survivors carry a bounded expected proportion of false ones.
+//   2. A NEGATIVE CONTROL -- a seeded random feature. It must not survive. If it does, the screen is
+//      broken and every other row on the page is uninterpretable.
+//   3. A POSITIVE CONTROL -- age, which we know is real because it is already shipped and measured.
+//      It must survive against the bare curve. A screen that only ever reports nothing looks exactly
+//      like a screen that is not connected to its data.
+//
+// Surviving here is a licence to run a proper nested-CV evaluation, and nothing more. The age curve
+// and the opportunity model both came in at roughly HALF their claimed lift once the evaluation
+// stopped seeing the selection, and every candidate below was selected by looking at these residuals.
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { gzipSync, gunzipSync } from "node:zlib";
+import { parseCsv, playerWeekUrl, URLS } from "../src/data/nflverse.ts";
+
+const REFRESH = process.argv.includes("--refresh");
+const POS = ["QB", "RB", "WR", "TE"];
+const SEASONS = Array.from({ length: 20 }, (_, i) => 2006 + i);
+const CACHE = "data/cache";
+if (!existsSync(CACHE)) mkdirSync(CACHE, { recursive: true });
+const N = (x) => { const v = Number(x); return Number.isFinite(v) ? v : 0; };
+
+// Disk-cached fetch. Nineteen season files is roughly 300MB over the wire; re-downloading it on every
+// iteration of a screen makes the screen too expensive to iterate on, which is how a sweep silently
+// becomes a one-off nobody re-runs.
+async function csv(url, tag) {
+  const p = `${CACHE}/${tag}.csv.gz`;
+  if (!REFRESH && existsSync(p)) return parseCsv(gunzipSync(readFileSync(p)).toString("utf8"));
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  const text = await res.text();
+  writeFileSync(p, gzipSync(Buffer.from(text)));
+  return parseCsv(text);
+}
+
+// --- the target: what the model gets wrong ---------------------------------------------------------
+const tot = new Map();
+for (const line of readFileSync("data/history-points.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
+  const [s, name, pos, pts] = line.split(",");
+  if (POS.includes(pos)) tot.set(`${Number(s)}|${name}`, { pos, pts: Number(pts), name, season: Number(s) });
+}
+const seasons = [...new Set([...tot.values()].map((v) => v.season))].sort().filter((s) => s >= 2007);
+const rank = new Map();
+for (const s of seasons.concat([seasons[0] - 1])) {
+  for (const pos of POS) {
+    [...tot.entries()].filter(([, v]) => v.season === s && v.pos === pos)
+      .sort((a, b) => b[1].pts - a[1].pts).forEach(([k], i) => rank.set(k, i + 1));
+  }
+}
+const rows = [];
+for (const v of tot.values()) {
+  if (!seasons.includes(v.season)) continue;
+  const r = rank.get(`${v.season - 1}|${v.name}`);
+  if (!r || r > 60) continue;
+  rows.push({ season: v.season, pos: v.pos, name: v.name, y: v.pts, rank: r });
+}
+const fitCurve = (train) => {
+  const c = {};
+  for (const pos of POS) {
+    const byRank = new Map();
+    for (const r of train) { if (r.pos !== pos) continue; if (!byRank.has(r.rank)) byRank.set(r.rank, []); byRank.get(r.rank).push(r.y); }
+    c[pos] = new Map([...byRank].map(([k, a]) => [k, a.reduce((x, y) => x + y, 0) / a.length]));
+  }
+  return c;
+};
+const curveAt = (c, pos, rk) => {
+  const m = c[pos]; if (!m?.size) return null;
+  if (m.has(rk)) return m.get(rk);
+  let best = null, bd = Infinity;
+  for (const [k, v] of m) { const d = Math.abs(k - rk); if (d < bd) { bd = d; best = v; } }
+  return best;
+};
+for (const hold of seasons) {
+  const train = rows.filter((r) => r.season !== hold);
+  if (train.length < 200) continue;
+  const c = fitCurve(train);
+  for (const r of rows.filter((x) => x.season === hold)) {
+    r.pred = curveAt(c, r.pos, r.rank) ?? 0;
+    r.resid = r.y - r.pred;
+  }
+}
+const { ageFactor } = await import("../src/draft/age.ts");
+const { opportunityFactor } = await import("../src/draft/opportunity.ts");
+let ageCurve = null, oppModel = null;
+try { ageCurve = JSON.parse(readFileSync("data/age-curve.json", "utf8")); } catch { /* screen still runs */ }
+try { oppModel = JSON.parse(readFileSync("data/opportunity-model.json", "utf8")); } catch { /* same */ }
+for (const r of rows) {
+  if (r.pred == null) continue;
+  const af = ageCurve ? ageFactor(ageCurve, r.name, r.pos, r.season) : 1;
+  const of = oppModel ? opportunityFactor(oppModel, r.name, r.pos, r.rank, r.season) : 1;
+  r.residFull = r.y - r.pred * af * of;
+}
+const scored = rows.filter((r) => r.pred != null && r.pred > 20 && r.residFull != null);
+
+// --- PRIOR-SEASON player features -------------------------------------------------------------------
+// Everything here is measured in season S-1 and screened against the error in season S, which is the
+// only ordering a preseason projection could actually use.
+console.log(`fetching player-week stats (cached in ${CACHE}) ...`);
+const feat = new Map();
+for (const yr of [SEASONS[0] - 1, ...SEASONS]) {
+  let raw;
+  try { raw = await csv(playerWeekUrl(yr), `pw-${yr}`); } catch { continue; }
+  const agg = new Map();
+  for (const r of raw) {
+    if (r.season_type !== "REG") continue;
+    const name = (r.player_display_name || "").trim();
+    if (!name || !POS.includes((r.position || "").toUpperCase())) continue;
+    let a = agg.get(name);
+    if (!a) { a = { g: 0, wk: [] }; agg.set(name, a); }
+    a.g += 1;
+    a.wk.push(N(r.fantasy_points_ppr));
+    const add = (k, v) => { a[k] = (a[k] ?? 0) + v; };
+    // volume
+    add("att", N(r.attempts)); add("cmp", N(r.completions)); add("car", N(r.carries)); add("tgt", N(r.targets)); add("rec", N(r.receptions));
+    // yards
+    add("pyd", N(r.passing_yards)); add("ryd", N(r.rushing_yards)); add("recyd", N(r.receiving_yards));
+    add("pay", N(r.passing_air_yards)); add("ray", N(r.receiving_air_yards));
+    add("pyac", N(r.passing_yards_after_catch)); add("ryac", N(r.receiving_yards_after_catch));
+    // scoring
+    add("ptd", N(r.passing_tds)); add("rtd", N(r.rushing_tds)); add("rectd", N(r.receiving_tds));
+    // first downs
+    add("pfd", N(r.passing_first_downs)); add("rfd", N(r.rushing_first_downs)); add("recfd", N(r.receiving_first_downs));
+    // efficiency / advanced -- rate stats, so averaged over games below
+    add("_epaP", N(r.passing_epa)); add("_epaR", N(r.rushing_epa)); add("_epaRec", N(r.receiving_epa));
+    add("_cpoe", N(r.passing_cpoe)); add("_pacr", N(r.pacr)); add("_racr", N(r.racr));
+    add("_ts", N(r.target_share)); add("_ays", N(r.air_yards_share)); add("_wopr", N(r.wopr));
+    // explosives (counts of plays over N yards)
+    add("p20", N(r.passing_20)); add("p40", N(r.passing_40));
+    add("r20", N(r.rushing_20)); add("r40", N(r.rushing_40));
+    add("rec20", N(r.receiving_20)); add("rec40", N(r.receiving_40));
+    // negative events
+    add("sack", N(r.sacks_suffered)); add("sackyd", N(r.sack_yards_lost));
+    add("fum", N(r.fumbles_total)); add("fumlost", N(r.fumbles_lost_total));
+    add("pen", N(r.penalties)); add("penyd", N(r.penalty_yards));
+    add("int", N(r.passing_interceptions));
+    // return work -- a real usage signal for the back half of a depth chart
+    add("kr", N(r.kickoff_returns)); add("pr", N(r.punt_returns));
+  }
+  for (const [name, a] of agg) {
+    if (a.g < 4) continue;
+    const per = (k) => (a[k] ?? 0) / a.g;
+    const rate = (n, d) => (a[d] > 0 ? a[n] / a[d] : null);
+    const m = a.wk.reduce((x, y) => x + y, 0) / a.wk.length;
+    const v = a.wk.reduce((x, y) => x + (y - m) ** 2, 0) / Math.max(1, a.wk.length - 1);
+    const touches = (a.car ?? 0) + (a.rec ?? 0);
+    const yards = (a.ryd ?? 0) + (a.recyd ?? 0);
+    feat.set(`${yr}|${name}`, {
+      games: a.g,
+      // --- volume, per game
+      carries: per("car"), targets: per("tgt"), receptions: per("rec"), attempts: per("att"),
+      touches: touches / a.g, airYards: per("ray"), passAirYards: per("pay"),
+      firstDowns: (per("rfd") + per("recfd")),
+      // --- efficiency
+      ypc: rate("ryd", "car"), ypt: rate("recyd", "tgt"), ypr: rate("recyd", "rec"),
+      ypa: rate("pyd", "att"), cmpPct: rate("cmp", "att"),
+      yacPerRec: rate("ryac", "rec"), adot: rate("ray", "tgt"),
+      epaPass: per("_epaP"), epaRush: per("_epaR"), epaRec: per("_epaRec"),
+      cpoe: per("_cpoe"), pacr: per("_pacr"), racr: per("_racr"),
+      targetShare: per("_ts"), airYardsShare: per("_ays"), wopr: per("_wopr"),
+      // --- explosive-play rates
+      explRush: rate("r20", "car"), explRec: rate("rec20", "tgt"), explPass: rate("p20", "att"),
+      breakaway: rate("r40", "car"),
+      // --- touchdown dependence: the classic regression candidate. A player whose points came from
+      //     scores rather than yards is expected to give some back, because TD rate is far less
+      //     stable year to year than volume is.
+      tdPerTouch: touches > 0 ? ((a.rtd ?? 0) + (a.rectd ?? 0)) / touches : null,
+      tdPerYard: yards > 0 ? ((a.rtd ?? 0) + (a.rectd ?? 0)) / (yards / 100) : null,
+      passTdRate: rate("ptd", "att"),
+      // --- negative events
+      sackRate: a.att > 0 ? (a.sack ?? 0) / (a.att + (a.sack ?? 0)) : null,
+      fumblesPerTouch: touches > 0 ? (a.fum ?? 0) / touches : null,
+      intRate: rate("int", "att"),
+      penalties: per("pen"),
+      // --- availability and consistency
+      weeklyCv: m > 0 ? Math.sqrt(v) / m : null,
+      weeklySd: Math.sqrt(v),
+      bestWeek: Math.max(...a.wk), worstWeek: Math.min(...a.wk),
+      // --- special teams usage
+      returns: (per("kr") + per("pr")),
+    });
+  }
+}
+
+// --- BIOGRAPHICAL and DRAFT-CAPITAL features ------------------------------------------------------
+// Draft capital is the one candidate with a strong prior attached before any measurement: teams give
+// early picks the benefit of the doubt for years, and that is opportunity a stat line cannot see.
+console.log("fetching players + combine ...");
+const bio = new Map();
+try {
+  for (const r of await csv(URLS.players, "players")) {
+    const n = (r.display_name || r.football_name || "").trim();
+    if (!n) continue;
+    bio.set(n, {
+      draftRound: r.draft_round ? Number(r.draft_round) : null,
+      draftPick: r.draft_pick ? Number(r.draft_pick) : null,
+      height: N(r.height) || null, weight: N(r.weight) || null,
+      bmi: N(r.height) > 0 ? (N(r.weight) * 703) / N(r.height) ** 2 : null,
+      rookieSeason: r.rookie_season ? Number(r.rookie_season) : null,
+    });
+  }
+} catch (e) { console.log(`  players feed unavailable: ${e.message}`); }
+const combine = new Map();
+try {
+  for (const r of await csv(URLS.combine, "combine")) {
+    const n = (r.player_name || "").trim();
+    if (!n) continue;
+    combine.set(n, {
+      forty: N(r.forty) || null, vertical: N(r.vertical) || null,
+      broad: N(r.broad_jump) || null, cone: N(r.cone) || null, shuttle: N(r.shuttle) || null, bench: N(r.bench) || null,
+    });
+  }
+} catch (e) { console.log(`  combine feed unavailable: ${e.message}`); }
+
+// --- assemble the candidate matrix -----------------------------------------------------------------
+let seed = 20260908;
+const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+for (const r of scored) {
+  const f = feat.get(`${r.season - 1}|${r.name}`) ?? {};
+  const b = bio.get(r.name) ?? {};
+  const c = combine.get(r.name) ?? {};
+  r.f = { ...f, ...b, ...c };
+  // Experience derived here rather than taken from the feed's own years_of_experience, which is
+  // relative to the CURRENT season and would leak the future into a historical row.
+  r.f.experience = b.rookieSeason ? r.season - b.rookieSeason : null;
+  r.f.age = ageCurve?.birthYear ? (() => {
+    const y = ageCurve.birthYear[`${r.pos}|${r.name}`]; return y ? r.season - y : null;
+  })() : null;
+  r.f.__random = rnd();          // negative control
+}
+
+// --- statistics ------------------------------------------------------------------------------------
+const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+function spearman(a, b) {
+  const rk = (arr) => {
+    const idx = arr.map((v, i) => [v, i]).sort((x, y) => x[0] - y[0]);
+    const out = new Array(arr.length);
+    for (let i = 0; i < idx.length;) {
+      let j = i; while (j + 1 < idx.length && idx[j + 1][0] === idx[i][0]) j++;
+      const avg = (i + j) / 2 + 1;
+      for (let k = i; k <= j; k++) out[idx[k][1]] = avg;
+      i = j + 1;
+    }
+    return out;
+  };
+  const ra = rk(a), rb = rk(b), ma = mean(ra), mb = mean(rb);
+  let n = 0, da = 0, db = 0;
+  for (let i = 0; i < ra.length; i++) { n += (ra[i] - ma) * (rb[i] - mb); da += (ra[i] - ma) ** 2; db += (rb[i] - mb) ** 2; }
+  return da > 0 && db > 0 ? n / Math.sqrt(da * db) : 0;
+}
+// Two-sided p from a normal approximation to Fisher's z. Ample at these sample sizes.
+const erf = (x) => {
+  const t = 1 / (1 + 0.3275911 * Math.abs(x));
+  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return x >= 0 ? y : -y;
+};
+const pValue = (rho, n) => {
+  if (n < 10 || Math.abs(rho) >= 1) return 1;
+  const z = Math.atanh(rho) * Math.sqrt(n - 3);
+  return 2 * (1 - 0.5 * (1 + erf(Math.abs(z) / Math.SQRT2)));
+};
+
+// Which positions a feature is even defined for -- screening a passing rate across all four positions
+// buries a real QB signal in three positions of zeros.
+const SCOPE = {
+  attempts: ["QB"], ypa: ["QB"], cmpPct: ["QB"], epaPass: ["QB"], cpoe: ["QB"], pacr: ["QB"],
+  passTdRate: ["QB"], sackRate: ["QB"], intRate: ["QB"], explPass: ["QB"], passAirYards: ["QB"],
+  carries: ["RB", "QB"], ypc: ["RB", "WR"], explRush: ["RB"], breakaway: ["RB"], epaRush: ["RB", "QB"],
+  targets: ["RB", "WR", "TE"], receptions: ["RB", "WR", "TE"], ypt: ["WR", "TE", "RB"], ypr: ["WR", "TE", "RB"],
+  adot: ["WR", "TE"], racr: ["WR", "TE"], airYards: ["WR", "TE"], airYardsShare: ["WR", "TE"],
+  targetShare: ["RB", "WR", "TE"], wopr: ["WR", "TE"], explRec: ["WR", "TE"], epaRec: ["WR", "TE", "RB"],
+  yacPerRec: ["WR", "TE", "RB"], returns: ["RB", "WR"],
+  forty: ["RB", "WR", "TE"], vertical: ["RB", "WR", "TE"], broad: ["RB", "WR", "TE"],
+  cone: ["RB", "WR", "TE"], shuttle: ["RB", "WR", "TE"], bench: ["RB", "WR", "TE"],
+};
+const LABEL = {
+  __random: "RANDOM (negative control)", age: "age (positive control)",
+};
+
+const CANDIDATES = [...new Set(scored.flatMap((r) => Object.keys(r.f)))].sort();
+const results = [];
+for (const key of CANDIDATES) {
+  const scope = SCOPE[key];
+  const g = scored.filter((r) => (!scope || scope.includes(r.pos)) && r.f[key] != null && Number.isFinite(r.f[key]));
+  if (g.length < 150) continue;
+  const xs = g.map((r) => r.f[key]);
+  if (new Set(xs).size < 8) continue;            // effectively constant
+  const rhoBare = spearman(xs, g.map((r) => r.resid));
+  const rho = spearman(xs, g.map((r) => r.residFull));
+  results.push({ key, n: g.length, scope: scope ? scope.join("/") : "all", rhoBare, rho, p: pValue(rho, g.length) });
+}
+
+// --- Benjamini-Hochberg over the whole family --------------------------------------------------------
+const FDR = 0.10;
+const byP = [...results].sort((a, b) => a.p - b.p);
+let cut = 0;
+byP.forEach((r, i) => { if (r.p <= ((i + 1) / byP.length) * FDR) cut = i + 1; });
+const passing = new Set(byP.slice(0, cut).map((r) => r.key));
+results.sort((a, b) => Math.abs(b.rho) - Math.abs(a.rho));
+
+console.log(`\n${"=".repeat(96)}`);
+console.log(`FEATURE SWEEP -- ${results.length} candidates vs ${scored.length} out-of-sample errors, ${seasons.length} seasons`);
+console.log(`Spearman rho against the residual. BH-FDR at ${FDR} over the whole family of ${results.length} tests.`);
+console.log(`${"=".repeat(96)}\n`);
+console.log("  feature                 scope        n    rho(bare)  rho(shipped)      p     survives FDR");
+for (const r of results) {
+  const mark = passing.has(r.key) ? "  YES" : "";
+  const label = LABEL[r.key] ?? r.key;
+  console.log(
+    `  ${label.padEnd(24)} ${r.scope.padEnd(11)} ${String(r.n).padStart(5)} ` +
+    `${(r.rhoBare >= 0 ? "+" : "") + r.rhoBare.toFixed(3)}`.padStart(11) +
+    `${(r.rho >= 0 ? "+" : "") + r.rho.toFixed(3)}`.padStart(14) +
+    `${r.p < 1e-4 ? r.p.toExponential(1) : r.p.toFixed(4)}`.padStart(11) + mark,
+  );
+}
+
+// --- ARE THE SURVIVORS INDEPENDENT? -------------------------------------------------------------------
+// Nine surviving QB columns is not nine opportunities. Passing volume, efficiency and touchdown rate
+// all move together, so reporting them as separate findings would overstate what is available by
+// roughly the number of ways we happened to measure the same thing. Cluster them by mutual
+// correlation and treat each cluster as ONE candidate.
+const surv = results.filter((r) => passing.has(r.key) && r.key !== "__random" && r.key !== "age");
+console.log(`\n${"-".repeat(96)}\nARE THE SURVIVORS INDEPENDENT? (mutual |rho| >= 0.5 grouped)\n`);
+const clusters = [];
+// Scope must be honoured here too. Without it, two features defined for disjoint positions get
+// compared on whatever handful of rows happens to carry both -- a receiver's receptions against a
+// quarterback's air yards -- and land in the same cluster on a correlation drawn from noise.
+const inScope = (key, r) => { const sc = SCOPE[key]; return (!sc || sc.includes(r.pos)) && r.f[key] != null && Number.isFinite(r.f[key]); };
+for (const s of surv) {
+  const mine = scored.filter((r) => inScope(s.key, r));
+  let placed = false;
+  for (const c of clusters) {
+    const other = c[0];
+    const both = mine.filter((r) => inScope(other.key, r));
+    if (both.length > 120 && Math.abs(spearman(both.map((r) => r.f[s.key]), both.map((r) => r.f[other.key]))) >= 0.5) {
+      c.push(s); placed = true; break;
+    }
+  }
+  if (!placed) clusters.push([s]);
+}
+clusters.sort((a, b) => Math.abs(b[0].rho) - Math.abs(a[0].rho));
+clusters.forEach((c, i) => {
+  console.log(`  cluster ${i + 1} (best rho ${c[0].rho.toFixed(3)}, scope ${c[0].scope}): ${c.map((x) => x.key).join(", ")}`);
+});
+console.log(`\n  ${clusters.length} independent candidates, not ${surv.length}.`);
+
+// --- the controls decide whether any of the above is readable -----------------------------------------
+const neg = results.find((r) => r.key === "__random");
+const pos = results.find((r) => r.key === "age");
+console.log(`\n${"-".repeat(96)}\nCONTROLS\n`);
+if (neg) {
+  const ok = !passing.has("__random");
+  console.log(`  negative (random column): rho ${neg.rho.toFixed(3)}, p ${neg.p.toFixed(3)} -- ` +
+    (ok ? "does NOT survive, as required. The screen is not simply rewarding noise."
+        : "*** SURVIVED. The screen is broken and nothing above can be believed. ***"));
+}
+if (pos) {
+  console.log(`  positive (age, already shipped): rho ${pos.rhoBare.toFixed(3)} against the bare curve -- ` +
+    (Math.abs(pos.rhoBare) > 0.05 ? "detected, so the screen can find a signal it was not told about."
+        : "*** NOT DETECTED. The screen cannot see a feature we know is real; it is mis-wired. ***"));
+  console.log(`     and ${pos.rho.toFixed(3)} against the shipped model -- the age factor absorbing its own signal.`);
+}
+console.log(`
+${"-".repeat(96)}
+READING THIS
+
+Surviving FDR means "worth the cost of a proper evaluation", not "true" and not "worth shipping".
+Every candidate here was chosen by looking at these residuals, which is the same selection effect
+that cut the age curve from a claimed +0.0154 R2 to a measured +0.0069 and the opportunity model from
++0.0186 to +0.0095 once nested CV stopped seeing the selection. Expect roughly half.
+
+rho(bare) far from rho(shipped) means an existing feature already captures most of it -- adding it
+would be paying twice for one signal. The two columns being close means it is genuinely new.
+
+Features are screened only within the positions they exist for. Screening a passing rate across all
+four positions buries a real QB effect under three positions of zeros, which is how a sweep returns a
+confident nothing.`);
