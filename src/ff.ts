@@ -1216,7 +1216,7 @@ async function cmdSim(rest: string[]) {
 async function cmdSyncRosters(rest: string[]) {
   const { chromium } = await import("playwright-core");
   const { openDb, nowIso } = await import("./db/db.js");
-  const { nameKey } = await import("./draft/values.js");
+  const { nameKey, dstAliasKey } = await import("./draft/values.js");
   const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
   const db = openDb(valueOf(rest, "--db"));
   const lg = db.prepare("SELECT league_id, season FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; season: number } | undefined;
@@ -1242,7 +1242,18 @@ async function cmdSyncRosters(rest: string[]) {
       const owner = memberName.get((t.owners ?? [])[0]) || `${t.location ?? ""} ${t.nickname ?? ""}`.trim() || `Team ${t.id}`;
       const abbr = t.abbrev || `T${t.id}`;
       const entries = t.roster?.entries ?? []; if (entries.length) teams++;
-      for (const e of entries) { const p = e.playerPoolEntry?.player ?? {}; const k = nameKey(p.fullName ?? ""); if (!k) continue; up.run({ lid: lg.league_id, pid: k, own: owner, abr: abbr, slot: ESPN_SLOT[e.lineupSlotId] ?? "", tid: String(t.id ?? ""), now }); n++; }
+      for (const e of entries) {
+        const p = e.playerPoolEntry?.player ?? {};
+        let k = nameKey(p.fullName ?? "");
+        if (!k) continue;
+        // ESPN names a defense by its nickname ("Packers D/ST" -> "packers") while every table we
+        // join against keys it by abbreviation ("GB D/ST" -> "gb"). Written raw, the row matches
+        // nothing downstream and the roster silently comes up one starter short. Gated on ESPN's own
+        // position id rather than the lineup slot, because a benched defense sits in a BE slot.
+        if (p.defaultPositionId === 16) k = dstAliasKey(k) ?? k;
+        up.run({ lid: lg.league_id, pid: k, own: owner, abr: abbr, slot: ESPN_SLOT[e.lineupSlotId] ?? "", tid: String(t.id ?? ""), now });
+        n++;
+      }
     }
   })();
   db.close();

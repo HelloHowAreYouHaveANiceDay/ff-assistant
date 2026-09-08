@@ -25,7 +25,7 @@ import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { simulateSeasons, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "./season.js";
 import { buildSchedule } from "./schedule.js";
-import { nameKey } from "./values.js";
+import { nameKey, dstAliasKey } from "./values.js";
 import { dataPath } from "../data/paths.js";
 
 export interface SimContext {
@@ -76,12 +76,38 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
   }
   const ownedIds = new Set<string>();
   const byTeam = new Map<string, SeasonTeamInput>();
+  const unmatched: string[] = [];
   for (const r of db.prepare("SELECT player_id, team_id, team_abbrev, owner FROM ownership WHERE league_id=?").all(lgRow.league_id) as { player_id: string; team_id: string; team_abbrev: string; owner: string }[]) {
     ownedIds.add(r.player_id);
-    const b = board.get(r.player_id);
-    if (!b) continue;
+    // ESPN keys defenses by NICKNAME ("packers"); the board keys them by ABBREVIATION ("gb"). The
+    // alias table for exactly this has existed in values.ts since the draft-room lookup needed it,
+    // and was simply never applied here -- so every one of the sixteen rosters silently lost its
+    // defense, and every title probability this tool has ever produced was computed with all sixteen
+    // teams fielding an empty DST slot.
+    const alias = dstAliasKey(r.player_id);
+    const b = board.get(r.player_id) ?? (alias ? board.get(alias) : undefined);
+    if (!b) { unmatched.push(r.player_id); continue; }
+    if (alias) ownedIds.add(alias);
     if (!byTeam.has(r.team_id)) byTeam.set(r.team_id, { id: r.team_id, name: r.team_abbrev || r.owner, roster: [] });
     byTeam.get(r.team_id)!.roster.push({ ...b, bye: byeOf.get(nameKey(b.name)) ?? null });
+  }
+  // A roster row that matches nothing used to be skipped in silence, which is why the defect above
+  // survived: an incomplete roster and a correct one produce the same output, and the simulator
+  // happily fields an empty slot rather than complaining. Anything unmatched is now reported.
+  if (unmatched.length) {
+    console.warn(`WARNING: ${unmatched.length} rostered players matched no board row and were dropped from the simulation: ${unmatched.slice(0, 12).join(", ")}${unmatched.length > 12 ? " ..." : ""}`);
+  }
+  // And the structural check the above cannot make: a roster short of the league's starting
+  // requirement means someone is being simulated with a slot they can never fill.
+  {
+    const need: Record<string, number> = {};
+    for (const s of (cfg.slots ?? []) as string[]) if (s !== "BE" && s !== "IR" && s !== "FLEX") need[s] = (need[s] ?? 0) + 1;
+    for (const t of byTeam.values()) {
+      for (const [pos, n] of Object.entries(need)) {
+        const have = t.roster.filter((p) => p.pos === pos).length;
+        if (have < n) console.warn(`WARNING: team ${t.name} has ${have} ${pos} but the lineup starts ${n} -- that slot will score zero every week.`);
+      }
+    }
   }
   const teams = [...byTeam.values()].sort((a, b) => Number(a.id) - Number(b.id));
   const meIdx = teams.findIndex((t) => t.id === String(lgRow.team_id));
