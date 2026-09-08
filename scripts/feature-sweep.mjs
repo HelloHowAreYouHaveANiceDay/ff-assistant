@@ -30,7 +30,7 @@
 // stopped seeing the selection, and every candidate below was selected by looking at these residuals.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { gzipSync, gunzipSync } from "node:zlib";
-import { parseCsv, playerWeekUrl, URLS } from "../src/data/nflverse.ts";
+import { parseCsv, playerWeekUrl, teamWeekUrl, canonTeam, URLS } from "../src/data/nflverse.ts";
 
 const REFRESH = process.argv.includes("--refresh");
 const POS = ["QB", "RB", "WR", "TE"];
@@ -154,6 +154,16 @@ for (const yr of [SEASONS[0] - 1, ...SEASONS]) {
     add("int", N(r.passing_interceptions));
     // return work -- a real usage signal for the back half of a depth chart
     add("kr", N(r.kickoff_returns)); add("pr", N(r.punt_returns));
+    add("kryd", N(r.kickoff_return_yards)); add("pryd", N(r.punt_return_yards));
+    add("sttd", N(r.special_teams_tds)); add("misc", N(r.misc_yards));
+    // MID-TIER explosives. The 20+ and 40+ columns catch the highlight plays; the 10/12/16-yard
+    // columns are a different thing -- the rate at which a player moves the chains without breaking
+    // one. A back who gains 11 yards twice a game and a back who breaks one 40 have the same total
+    // and are not the same asset.
+    add("p10", N(r.passing_10)); add("p16", N(r.passing_16));
+    add("r10", N(r.rushing_10)); add("r12", N(r.rushing_12));
+    add("rec10", N(r.receiving_10)); add("rec16", N(r.receiving_16));
+    add("twoPt", N(r.passing_2pt_conversions) + N(r.rushing_2pt_conversions) + N(r.receiving_2pt_conversions));
   }
   for (const [name, a] of agg) {
     if (a.g < 4) continue;
@@ -196,9 +206,132 @@ for (const yr of [SEASONS[0] - 1, ...SEASONS]) {
       bestWeek: Math.max(...a.wk), worstWeek: Math.min(...a.wk),
       // --- special teams usage
       returns: (per("kr") + per("pr")),
+      returnYards: (per("kryd") + per("pryd")),
+      stTds: per("sttd"), miscYards: per("misc"), twoPt: per("twoPt"),
+      // --- mid-tier chain-moving rates, distinct from the 20+/40+ highlight rates above
+      steadyRush: rate("r10", "car"), steadyRec: rate("rec10", "tgt"), steadyPass: rate("p10", "att"),
+      midRush: rate("r12", "car"), midRec: rate("rec16", "tgt"), midPass: rate("p16", "att"),
     });
   }
 }
+
+// --- TEAM CONTEXT ---------------------------------------------------------------------------------
+// A player's offence is not visible in his own stat line. Two receivers with identical usage on a
+// 1,100-play pass-first offence and a 950-play run-first one are not the same asset, and preseason
+// rank prices the player rather than the situation he is walking into.
+//
+// Team is taken from history-weekly (the modal team a player actually played for), so a player who
+// changed teams is attributed to where he was, not where the feed's latest_team says he ended up.
+const playerTeam = new Map();
+{
+  const seen = new Map();
+  for (const line of readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
+    const [s, name, , , , team] = line.split(",");
+    if (!team) continue;
+    const k = `${s}|${name}`;
+    if (!seen.has(k)) seen.set(k, new Map());
+    const m = seen.get(k);
+    m.set(team, (m.get(team) ?? 0) + 1);
+  }
+  for (const [k, m] of seen) playerTeam.set(k, [...m].sort((a, b) => b[1] - a[1])[0][0]);
+}
+console.log("fetching team-week stats ...");
+const teamCtx = new Map();
+for (const yr of [SEASONS[0] - 1, ...SEASONS]) {
+  let raw;
+  try { raw = await csv(teamWeekUrl(yr), `tw-${yr}`); } catch { continue; }
+  const agg = new Map();
+  for (const r of raw) {
+    if (r.season_type !== "REG") continue;
+    const t = canonTeam((r.team || r.recent_team || "").trim());
+    if (!t) continue;
+    let a = agg.get(t);
+    if (!a) { a = { g: 0 }; agg.set(t, a); }
+    a.g += 1;
+    const add = (k, v) => { a[k] = (a[k] ?? 0) + v; };
+    add("att", N(r.attempts)); add("car", N(r.carries));
+    add("pyd", N(r.passing_yards)); add("ryd", N(r.rushing_yards));
+    add("ptd", N(r.passing_tds)); add("rtd", N(r.rushing_tds));
+    add("pay", N(r.passing_air_yards)); add("epaP", N(r.passing_epa)); add("epaR", N(r.rushing_epa));
+    add("tgt", N(r.targets)); add("rec", N(r.receptions));
+  }
+  for (const [t, a] of agg) {
+    const plays = (a.att ?? 0) + (a.car ?? 0);
+    teamCtx.set(`${yr}|${t}`, {
+      teamPlays: plays / a.g,
+      teamPassRate: plays > 0 ? a.att / plays : null,
+      teamYards: ((a.pyd ?? 0) + (a.ryd ?? 0)) / a.g,
+      teamTds: ((a.ptd ?? 0) + (a.rtd ?? 0)) / a.g,
+      teamPassEpa: (a.epaP ?? 0) / a.g,
+      teamRushEpa: (a.epaR ?? 0) / a.g,
+      teamAirYards: (a.pay ?? 0) / a.g,
+    });
+  }
+}
+
+// --- SCHEDULE AND MARKET CONTEXT --------------------------------------------------------------------
+// The games feed carries the betting market, which is the sharpest single estimate of team strength
+// that exists, plus the physical environment.
+//
+// LEAKAGE, handled explicitly: a game's spread and total are set shortly before kickoff, so season-S
+// lines encode how season S is going and using them would be cheating. Only WEEK 1 lines of season S
+// are taken -- those are published well before the season and are genuinely available at draft time.
+// Everything else here is season S-1 and backward-looking.
+console.log("fetching schedules ...");
+const teamEnv = new Map();      // S-1 environment
+const teamMarket = new Map();   // season-S week-1 lines, preseason-knowable
+try {
+  const games = await csv(URLS.schedules, "schedules");
+  const envAgg = new Map();
+  for (const g of games) {
+    if (g.game_type !== "REG") continue;
+    const season = Number(g.season), wk = Number(g.week);
+    for (const side of ["home", "away"]) {
+      const t = canonTeam((g[`${side}_team`] || "").trim());
+      if (!t) continue;
+      let a = envAgg.get(`${season}|${t}`);
+      if (!a) { a = { g: 0, dome: 0, temp: 0, tempN: 0, wind: 0, windN: 0, div: 0, rest: 0, restN: 0 }; envAgg.set(`${season}|${t}`, a); }
+      a.g += 1;
+      if (/dome|closed|indoor/i.test(g.roof || "")) a.dome += 1;
+      if (/turf|synthetic|astro|field ?turf/i.test(g.surface || "")) a.turf = (a.turf ?? 0) + 1;
+      // Primetime: a night kickoff, or any game not on a Sunday. Fewer of them, and they are the
+      // games a fantasy roster is most often short-handed for.
+      const hh = Number(String(g.gametime || "").slice(0, 2));
+      if (Number.isFinite(hh) && hh >= 19) a.prime = (a.prime ?? 0) + 1;
+      if (g.weekday && !/sunday/i.test(g.weekday)) a.offday = (a.offday ?? 0) + 1;
+      if (g.temp !== "" && g.temp != null) { a.temp += N(g.temp); a.tempN += 1; }
+      if (g.wind !== "" && g.wind != null) { a.wind += N(g.wind); a.windN += 1; }
+      if (N(g.div_game) === 1) a.div += 1;
+      const rest = N(g[`${side}_rest`]);
+      if (rest > 0) { a.rest += rest; a.restN += 1; }
+      if (wk === 1) {
+        // Positive spread_line favours the home team in this feed, so flip it for the away side to
+        // get "points this team is favoured by".
+        const spread = g.spread_line === "" ? null : N(g.spread_line) * (side === "home" ? 1 : -1);
+        const total = g.total_line === "" ? null : N(g.total_line);
+        teamMarket.set(`${season}|${t}`, {
+          vegasWk1Spread: spread,
+          vegasWk1Total: total,
+          // Implied team points: half the total, shifted by half the spread. The market's own
+          // preseason estimate of how much offence this team will produce.
+          vegasImpliedPts: total != null && spread != null ? total / 2 + spread / 2 : null,
+        });
+      }
+    }
+  }
+  for (const [k, a] of envAgg) {
+    teamEnv.set(k, {
+      domeShare: a.g > 0 ? a.dome / a.g : null,
+      avgTemp: a.tempN > 0 ? a.temp / a.tempN : null,
+      avgWind: a.windN > 0 ? a.wind / a.windN : null,
+      divShare: a.g > 0 ? a.div / a.g : null,
+      avgRest: a.restN > 0 ? a.rest / a.restN : null,
+      turfShare: a.g > 0 ? (a.turf ?? 0) / a.g : null,
+      primetimeShare: a.g > 0 ? (a.prime ?? 0) / a.g : null,
+      offSundayShare: a.g > 0 ? (a.offday ?? 0) / a.g : null,
+    });
+  }
+} catch (e) { console.log(`  schedules feed unavailable: ${e.message}`); }
 
 // --- BIOGRAPHICAL and DRAFT-CAPITAL features ------------------------------------------------------
 // Draft capital is the one candidate with a strong prior attached before any measurement: teams give
@@ -215,6 +348,10 @@ try {
       height: N(r.height) || null, weight: N(r.weight) || null,
       bmi: N(r.height) > 0 ? (N(r.weight) * 703) / N(r.height) ** 2 : null,
       rookieSeason: r.rookie_season ? Number(r.rookie_season) : null,
+      // Birth date straight from the feed. The age used as the positive control comes from our own
+      // fitted age-curve map, which only covers players that fit reached; this covers everyone, so a
+      // gap in that map cannot masquerade as an absence of age signal.
+      birthYear: r.birth_date ? Number(String(r.birth_date).slice(0, 4)) : null,
     });
   }
 } catch (e) { console.log(`  players feed unavailable: ${e.message}`); }
@@ -237,13 +374,23 @@ for (const r of scored) {
   const f = feat.get(`${r.season - 1}|${r.name}`) ?? {};
   const b = bio.get(r.name) ?? {};
   const c = combine.get(r.name) ?? {};
-  r.f = { ...f, ...b, ...c };
+  // Prior-season team for backward-looking context; the SEASON-S team for the market lines, because
+  // where a player will play is known at draft time even though how he plays is not.
+  const prevTeam = playerTeam.get(`${r.season - 1}|${r.name}`);
+  const thisTeam = playerTeam.get(`${r.season}|${r.name}`);
+  const tc = prevTeam ? teamCtx.get(`${r.season - 1}|${prevTeam}`) ?? {} : {};
+  const te = prevTeam ? teamEnv.get(`${r.season - 1}|${prevTeam}`) ?? {} : {};
+  const tm = thisTeam ? teamMarket.get(`${r.season}|${thisTeam}`) ?? {} : {};
+  r.f = { ...f, ...b, ...c, ...tc, ...te, ...tm };
+  // Did he change teams? A move resets the depth chart and the scheme, and rank cannot see it.
+  r.f.changedTeam = prevTeam && thisTeam ? (prevTeam === thisTeam ? 0 : 1) : null;
   // Experience derived here rather than taken from the feed's own years_of_experience, which is
   // relative to the CURRENT season and would leak the future into a historical row.
   r.f.experience = b.rookieSeason ? r.season - b.rookieSeason : null;
   r.f.age = ageCurve?.birthYear ? (() => {
     const y = ageCurve.birthYear[`${r.pos}|${r.name}`]; return y ? r.season - y : null;
   })() : null;
+  r.f.ageFromFeed = b.birthYear ? r.season - b.birthYear : null;
   r.f.__random = rnd();          // negative control
 }
 
@@ -287,7 +434,9 @@ const SCOPE = {
   targets: ["RB", "WR", "TE"], receptions: ["RB", "WR", "TE"], ypt: ["WR", "TE", "RB"], ypr: ["WR", "TE", "RB"],
   adot: ["WR", "TE"], racr: ["WR", "TE"], airYards: ["WR", "TE"], airYardsShare: ["WR", "TE"],
   targetShare: ["RB", "WR", "TE"], wopr: ["WR", "TE"], explRec: ["WR", "TE"], epaRec: ["WR", "TE", "RB"],
-  yacPerRec: ["WR", "TE", "RB"], returns: ["RB", "WR"],
+  yacPerRec: ["WR", "TE", "RB"], returns: ["RB", "WR"], returnYards: ["RB", "WR"],
+  steadyPass: ["QB"], midPass: ["QB"], steadyRush: ["RB"], midRush: ["RB"],
+  steadyRec: ["WR", "TE", "RB"], midRec: ["WR", "TE"],
   forty: ["RB", "WR", "TE"], vertical: ["RB", "WR", "TE"], broad: ["RB", "WR", "TE"],
   cone: ["RB", "WR", "TE"], shuttle: ["RB", "WR", "TE"], bench: ["RB", "WR", "TE"],
 };
@@ -378,6 +527,61 @@ if (pos) {
         : "*** NOT DETECTED. The screen cannot see a feature we know is real; it is mis-wired. ***"));
   console.log(`     and ${pos.rho.toFixed(3)} against the shipped model -- the age factor absorbing its own signal.`);
 }
+// --- COVERAGE: WHICH RAW COLUMNS HAS THIS SWEEP STILL NEVER TOUCHED? ---------------------------------
+// The list of consumed columns is written by hand, which normally rots the moment a feed adds one --
+// so it is diffed against the LIVE headers rather than against a second hand-written list. A column
+// added upstream shows up here as unconsumed on the next run without anyone remembering to add it.
+const CONSUMED = new Set([
+  // player-week
+  "attempts", "completions", "carries", "targets", "receptions", "passing_yards", "rushing_yards",
+  "receiving_yards", "passing_air_yards", "receiving_air_yards", "passing_yards_after_catch",
+  "receiving_yards_after_catch", "passing_tds", "rushing_tds", "receiving_tds", "passing_first_downs",
+  "rushing_first_downs", "receiving_first_downs", "passing_epa", "rushing_epa", "receiving_epa",
+  "passing_cpoe", "pacr", "racr", "target_share", "air_yards_share", "wopr", "passing_20", "passing_40",
+  "rushing_20", "rushing_40", "receiving_20", "receiving_40", "sacks_suffered", "sack_yards_lost",
+  "fumbles_total", "fumbles_lost_total", "penalties", "penalty_yards", "passing_interceptions",
+  "kickoff_returns", "punt_returns", "fantasy_points_ppr",
+  "kickoff_return_yards", "punt_return_yards", "special_teams_tds", "misc_yards",
+  "passing_10", "passing_16", "rushing_10", "rushing_12", "receiving_10", "receiving_16",
+  "passing_2pt_conversions", "rushing_2pt_conversions", "receiving_2pt_conversions",
+  // players / combine
+  "draft_round", "draft_pick", "height", "weight", "rookie_season", "forty", "vertical", "broad_jump",
+  "cone", "shuttle", "bench", "birth_date",
+  // schedules
+  "roof", "temp", "wind", "div_game", "away_rest", "home_rest", "spread_line", "total_line",
+  "surface", "gametime", "weekday",
+]);
+const FEEDS = {
+  "stats_player_week": `${CACHE}/pw-2023.csv.gz`,
+  "stats_team_week": `${CACHE}/tw-2023.csv.gz`,
+  "players": `${CACHE}/players.csv.gz`,
+  "combine": `${CACHE}/combine.csv.gz`,
+  "schedules": `${CACHE}/schedules.csv.gz`,
+};
+// Identifiers and pure labels. Listing them as "unscanned signal" would bury the real gaps.
+const IDCOL = /^(season|week|season_type|game_id|player_id|player_name|player_display_name|gsis_id|pfr_id|pff_id|otc_id|esb_id|smart_id|espn_id|yahoo_id|sleeper_id|rotowire_id|rotoworld_id|sportradar_id|fantasy_data_id|team|recent_team|opponent_team|position|position_group|headshot|headshot_url|display_name|full_name|first_name|last_name|common_first_name|short_name|football_name|suffix|status|.*status.*|nfl_id|old_game_id|nfl_detail_id|pff|ftn|gsis|pfr|espn|cfb_id|stadium_id|jersey_number|uniform_number|current_team_id|.*_id)$/;
+console.log(`\n${"-".repeat(96)}\nCOVERAGE -- raw columns this sweep has still never derived a feature from\n`);
+let totalGap = 0;
+for (const [name, path] of Object.entries(FEEDS)) {
+  if (!existsSync(path)) { console.log(`  ${name}: not cached, skipped`); continue; }
+  const text = gunzipSync(readFileSync(path)).toString("utf8");
+  const cols = text.slice(0, text.indexOf("\n")).trim().split(",").map((c) => c.replace(/^"|"$/g, "").trim()).filter(Boolean);
+  const gap = cols.filter((c) => !CONSUMED.has(c) && !IDCOL.test(c));
+  totalGap += gap.length;
+  console.log(`  ${name}: ${cols.length} columns, ${cols.filter((c) => CONSUMED.has(c)).length} consumed, ${gap.length} untouched`);
+  if (gap.length) console.log(`    ${gap.join(", ")}\n`);
+}
+console.log(`  ${totalGap} untouched columns remain.
+
+  Most of what is left is genuinely out of scope rather than overlooked, and it is worth being
+  specific about which is which:
+    - KICKER and DEFENSE columns (fg_*, pat_*, pt_*, def_*) are unscanned because this sweep runs on
+      QB/RB/WR/TE only. They are a separate screen, not a gap in this one.
+    - Team-week offensive columns duplicate the player-week ones we already aggregate to team level.
+    - Coaching, referee, stadium and gameday columns are labels; using them would be fitting noise
+      with a plausible name attached.
+  What is NOT excused: anything offensive and player-level still on that list is a real gap.`);
+
 console.log(`
 ${"-".repeat(96)}
 READING THIS
@@ -389,6 +593,13 @@ that cut the age curve from a claimed +0.0154 R2 to a measured +0.0069 and the o
 
 rho(bare) far from rho(shipped) means an existing feature already captures most of it -- adding it
 would be paying twice for one signal. The two columns being close means it is genuinely new.
+
+A SURVIVOR CAN STILL BE A PROXY rather than a feature. primetimeShare is the clearest case here:
+the league schedules primetime games for teams it expects to be good, so a high share is mostly a
+restatement of preseason team quality -- which vegasImpliedPts measures directly and better. It is
+legitimately knowable at draft time (the schedule comes out in May), so it is not leakage; it is
+just unlikely to add anything once the market line is in the model. Test correlated survivors
+TOGETHER, not one at a time, or the same signal gets paid for twice.
 
 Features are screened only within the positions they exist for. Screening a passing rate across all
 four positions buries a real QB effect under three positions of zeros, which is how a sweep returns a
