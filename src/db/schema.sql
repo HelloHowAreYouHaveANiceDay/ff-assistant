@@ -365,6 +365,31 @@ CREATE TABLE IF NOT EXISTS ownership (
   PRIMARY KEY (league_id, player_id)
 );
 
+-- ======================= STAGING: conformed, identity decided =======================
+-- The layer this store never had. Raw feeds land keyed by whatever the source used (usually a
+-- name) and every consumer re-solved identity for itself -- which shipped three bugs in one week,
+-- the last a +19.5% markup on a player aged with another man's birth year. See docs/data-layers.md.
+--
+-- player_key is the gsis id where one exists (stable across seasons and feeds) and pos:name_key
+-- where it does not. Never a bare name_key: that is the thing being fixed.
+CREATE TABLE IF NOT EXISTS stg_player (
+  player_key     TEXT PRIMARY KEY,   -- gsis_id, else POS:name_key
+  name_key       TEXT,               -- the legacy join key, kept for migration
+  name           TEXT,
+  position       TEXT,
+  team           TEXT,
+  birthdate      TEXT,
+  gsis_id        TEXT,
+  espn_id        TEXT,
+  sleeper_id     TEXT,
+  fantasypros_id TEXT,
+  ambiguous      INTEGER,            -- 1 = this name_key stands for more than one real player
+  source         TEXT,               -- playerids | board (board = we lack ids for him)
+  updated_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_stg_namekey ON stg_player (name_key, position);
+CREATE INDEX IF NOT EXISTS idx_stg_ambig ON stg_player (ambiguous);
+
 -- CROSS-SOURCE PLAYER IDENTITY (DynastyProcess db_playerids). The player table has carried empty
 -- gsis_id/espn_id columns since the start with a comment calling them the crosswalk seam; this is
 -- the table that fills them. Keyed on (name_key, position) because name_key ALONE merges distinct

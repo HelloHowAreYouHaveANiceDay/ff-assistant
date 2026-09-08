@@ -1,0 +1,91 @@
+# Data layers: raw, staging, consumer
+
+## The problem this fixes
+
+The store already had a layer model (`L0` identity, `L1` reference facts, `L2` presentation, `L3`
+draft runtime, `L4` governance, `L5` in-season). It is not wrong, but it splits on **lifecycle**
+(how often a table is rewritten) rather than on **trust** (how far the data is from the source and
+what has been guaranteed about it). That distinction is not academic. It is why three identity bugs
+shipped in one week:
+
+- `resolvePlayer` matched *Josh Allen* to *Josh Allen Jr.*
+- the ECR ingest merged *A.J. Green* the WR with *A.J. Green* the DB
+- the age curve aged *Antonio Williams* the RB with the birth year of *Antonio Williams* the WR, and
+  that one reached the shipped board as a +19.5% markup on a 29-year-old scored as 22
+
+All three are the same failure: **raw, name-keyed source data flowed directly into a derived model
+with no step in between that was responsible for saying who a player is.** L1 holds both
+`player_bio` (whatever nflverse said) and `player_value` (something we computed), so there was no
+layer boundary to hang that guarantee on, and every consumer re-solved identity ad hoc — differently,
+and some of them wrong.
+
+We have RAW and we have CONSUMER. We have never had STAGING. That is the gap.
+
+## The three layers
+
+### RAW — `raw_*`
+
+Exactly what a source gave us, transformed as little as possible. One table per source feed.
+
+- **Rule:** no joins, no identity resolution, no derived columns. If the source says a player's name
+  is `A.J. Green` and his position is `DB`, that is what the row says.
+- **Rule:** a raw table must be reproducible by re-fetching. Nothing else in the store may be its only
+  home.
+- **Keyed** by whatever the source is keyed by, plus enough to be unique. Where the source has no
+  stable id, the key includes the discriminators that make rows distinct — this is why
+  `ranking_history` is keyed `(source, type, date, name_key, position)`: dropping `position`
+  silently merged two people.
+- **Ambiguity is preserved here, never resolved.** Two Antonio Williamses are two rows.
+
+Current: `ranking_history`, `player_ids`, `game`, `news`, `adp`, `market_value`, `trending`,
+`player_advanced`, `player_status`, `team_odds`, `boris_tier`, `weekly_rank`, `trade_value`,
+`player_bio`, `team_bye`, `ranking`, `ownership`.
+
+### STAGING — `stg_*`
+
+Conformed. This is where identity is decided, once, so nothing downstream has to.
+
+- **Rule:** one row per real-world entity. If two raw rows are the same player, they are one staging
+  row. If two raw rows share a name and are different people, they are two staging rows with
+  different keys.
+- **Rule:** every staging row carries `player_key`, and every consumer joins on it rather than on a
+  name.
+- **Rule:** where identity cannot be resolved, the row is marked `ambiguous` rather than guessed.
+  A consumer may then choose to skip it — which is what the age curve does by returning a multiplier
+  of 1 for an unknown player.
+- **Rule:** no business logic. Conforming is not valuing. `player_value` does not belong here.
+
+Current: `stg_player`. This is the layer that barely exists yet; building it out is the work.
+
+### CONSUMER — `cons_*` (and the existing `board`)
+
+What the app, the models and the simulator read. Derived, single-writer, always rebuildable from
+raw + staging.
+
+- **Rule:** exactly one writer per table. If two code paths write it they will disagree.
+- **Rule:** droppable. Anything that cannot be rebuilt from raw belongs in raw, not here.
+- **Rule:** consumers may not read raw directly for identity-bearing joins. Read staging.
+
+Current: `board`, `player_value`, `projection`.
+
+## Why the runtime tables are not one of the three
+
+`draft`, `draft_pick`, `draft_state`, `my_roster`, `usage_log`, `action_log`, `league`, `roster`,
+`matchup`, `settings` are **operational state**, not a pipeline. They record what happened or what
+the user configured; they are not derived from a source feed and cannot be rebuilt by re-fetching.
+Forcing them into raw/staging/consumer would make the model tidier and less true. They keep their
+own section.
+
+## Migration stance
+
+The three layers are a target, not a completed state. Today most tables sit in raw and most
+consumers still join on `name_key`. Renaming everything at once would be a large, risky change whose
+only immediate benefit is that the names look right.
+
+The order that actually buys something:
+
+1. **`stg_player` first** — it is where the identity guarantee lives, and identity is what broke.
+2. **Move consumers onto `player_key` one at a time**, starting with the ones that have already been
+   burned: the age curve, the opportunity model, the ECR joins.
+3. **Rename raw tables to `raw_*`** last, when the boundary is real rather than aspirational. A
+   prefix on a table nobody treats as raw is decoration.

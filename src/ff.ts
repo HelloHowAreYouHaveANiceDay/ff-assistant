@@ -90,6 +90,8 @@ async function main() {
       return cmdInspect(rest);
     case "rank":
       return cmdRank(rest);
+    case "build-staging":
+      return cmdBuildStaging(rest);
     case "ingest-playerids":
       return cmdIngestPlayerIds(rest);
     case "ingest-ecr":
@@ -689,6 +691,35 @@ async function cmdPreflight(rest: string[]) {
  * EV is a small probability times a moderate gain and sorting on it buries precisely the asymmetric
  * bets that justify holding one.
  */
+/**
+ * `ff build-staging`
+ *
+ * Rebuild the staging layer from raw. Cheap and full-rebuild by design -- a staging table that
+ * drifts from its sources is worse than one rebuilt on demand.
+ */
+async function cmdBuildStaging(rest: string[]) {
+  const { buildStgPlayer } = await import("./data/stgPlayer.js");
+  const { openDb } = await import("./db/db.js");
+  const r = buildStgPlayer(valueOf(rest, "--db"));
+  console.log(`stg_player: ${r.rows.toLocaleString()} rows`);
+  console.log(`  ${r.withGsis.toLocaleString()} keyed by gsis_id, the rest by POS:name_key`);
+  console.log(`  ${r.ambiguous.toLocaleString()} flagged ambiguous (name shared with another real player)`);
+  console.log(`  ${r.fromBoardOnly} on our board but absent from the crosswalk -- kept, with no ids`);
+  const db = openDb(valueOf(rest, "--db"));
+  const cov = db.prepare(
+    `SELECT COUNT(*) n, SUM(EXISTS(SELECT 1 FROM stg_player s WHERE s.name_key=b.player_id)) matched
+     FROM board b WHERE b.season = (SELECT CAST(json_extract(value,'$.season') AS INTEGER) FROM settings WHERE key='config')`,
+  ).get() as { n: number; matched: number };
+  console.log(`\n  board coverage: ${cov.matched}/${cov.n} current players resolve into staging`);
+  const amb = db.prepare(
+    `SELECT COUNT(*) c FROM board b JOIN stg_player s ON s.name_key=b.player_id
+     WHERE s.ambiguous=1 AND b.season=(SELECT CAST(json_extract(value,'$.season') AS INTEGER) FROM settings WHERE key='config')`,
+  ).get() as { c: number };
+  console.log(`  of which ${amb.c} carry a name shared with another real player -- the rows where a`);
+  console.log(`  name-based join can still silently return the wrong man.`);
+  db.close();
+}
+
 /**
  * `ff ingest-playerids [--file db_playerids.csv]`
  *
