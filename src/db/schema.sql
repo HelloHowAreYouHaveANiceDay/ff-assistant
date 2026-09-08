@@ -365,6 +365,32 @@ CREATE TABLE IF NOT EXISTS ownership (
   PRIMARY KEY (league_id, player_id)
 );
 
+-- ===================== IDENTITY REGISTRY: the durable surrogate key =====================
+-- player_sk is minted ONCE and never changes. Source ids (gsis, espn, ...) are ATTRIBUTES held in
+-- player_xref, never the identity itself -- a natural key moves when the attribute moves, which
+-- breaks every stored reference. See docs/data-layers.md and src/data/identity.ts.
+CREATE TABLE IF NOT EXISTS player_identity (
+  player_sk    INTEGER PRIMARY KEY AUTOINCREMENT,   -- surrogate; never reused, never renumbered
+  name_key     TEXT,
+  position     TEXT,
+  first_name   TEXT,               -- the name we first saw; display names change, keys must not
+  matched_by   TEXT,               -- how identity was decided, for debugging a merge later
+  created_at   TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_natural ON player_identity (name_key, position);
+
+-- One row per (source, source_id). MANY per player: a single espn_id column cannot express a player
+-- with two ids, nor an id later reassigned. UNIQUE on (source, source_id) is what makes a disputed
+-- id -- ten gsis ids belong to two people each -- a REFUSED link rather than a silent overwrite.
+CREATE TABLE IF NOT EXISTS player_xref (
+  player_sk    INTEGER REFERENCES player_identity(player_sk),
+  source       TEXT,               -- gsis | espn | sleeper | fantasypros
+  source_id    TEXT,
+  created_at   TEXT,
+  PRIMARY KEY (source, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_xref_sk ON player_xref (player_sk);
+
 -- ======================= STAGING: conformed, identity decided =======================
 -- The layer this store never had. Raw feeds land keyed by whatever the source used (usually a
 -- name) and every consumer re-solved identity for itself -- which shipped three bugs in one week,

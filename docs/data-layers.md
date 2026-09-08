@@ -41,6 +41,33 @@ Current: `ranking_history`, `player_ids`, `game`, `news`, `adp`, `market_value`,
 `player_advanced`, `player_status`, `team_odds`, `boris_tier`, `weekly_rank`, `trade_value`,
 `player_bio`, `team_bye`, `ranking`, `ownership`.
 
+### The identity registry sits under staging
+
+`player_identity` + `player_xref` are the foundation the whole dimension rests on, and they follow
+standard master-data practice rather than anything invented here:
+
+- **Surrogate key.** `player_sk` is an internal integer, minted once, never reused or renumbered.
+  It carries no meaning, which is precisely why it cannot go stale.
+- **Source ids are attributes, not identity.** They live in `player_xref` as `(player_sk, source,
+  source_id)`, many rows per player. A single `espn_id` column cannot express a player with two ids,
+  nor an id later reassigned to someone else.
+- **Matching is exact and ordered**, strongest evidence first: gsis, espn, sleeper, then
+  (name_key, position). No fuzzy scoring -- fuzzy matching is where master-data systems quietly merge
+  people, and this store managed to merge two men three separate ways without any fuzziness at all.
+- **A disputed id is inert.** An id claimed by two people neither matches nor is recorded. Both
+  guards are needed and they protect different steps: refusing the LINK is too late, because the
+  merge already happened at MATCH time.
+- **Unmatched is a state, not an error.** A player who resolves to nothing gets a fresh key and says
+  so. Dropping him loses a current player; guessing recreates the bug.
+
+The property that makes it a foundation is that a rebuild mints nothing and moves no key, including
+when new ids arrive for a player who previously had none. That is asserted in test/identity.test.ts,
+because a registry whose keys move on rebuild is not a foundation -- it is a cache.
+
+> The first version of `stg_player` keyed on `gsis_id || "POS:name_key"`. That is a NATURAL key and
+> it moves when the attributes move: a player learning his gsis, or being reclassified RB -> TE, would
+> silently change identity. The surrogate key exists to make that impossible.
+
 ### STAGING — `stg_*`
 
 Conformed. This is where identity is decided, once, so nothing downstream has to.

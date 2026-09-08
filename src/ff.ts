@@ -90,6 +90,8 @@ async function main() {
       return cmdInspect(rest);
     case "rank":
       return cmdRank(rest);
+    case "build-identity":
+      return cmdBuildIdentity(rest);
     case "build-staging":
       return cmdBuildStaging(rest);
     case "ingest-playerids":
@@ -691,6 +693,31 @@ async function cmdPreflight(rest: string[]) {
  * EV is a small probability times a moderate gain and sorting on it buries precisely the asymmetric
  * bets that justify holding one.
  */
+/**
+ * `ff build-identity`
+ *
+ * Mint/refresh the durable player surrogate keys. Rerunnable: existing players match on their source
+ * ids and keep their keys, so a second run mints nothing.
+ */
+async function cmdBuildIdentity(rest: string[]) {
+  const { buildIdentity } = await import("./data/identity.js");
+  const { openDb } = await import("./db/db.js");
+  const r = buildIdentity(valueOf(rest, "--db"));
+  console.log(`identity registry: ${r.players.toLocaleString()} players processed, ${r.minted.toLocaleString()} newly minted`);
+  console.log(`  matched by: ${Object.entries(r.matched).map(([k, v]) => `${k} ${v.toLocaleString()}`).join(", ")}`);
+  const db = openDb(valueOf(rest, "--db"));
+  const sk = db.prepare("SELECT COUNT(*) c FROM player_identity").get() as { c: number };
+  const xr = db.prepare("SELECT source, COUNT(*) c FROM player_xref GROUP BY source ORDER BY source").all() as { source: string; c: number }[];
+  console.log(`  registry holds ${sk.c.toLocaleString()} surrogate keys`);
+  console.log(`  crosswalk links: ${xr.map((x) => `${x.source} ${x.c.toLocaleString()}`).join(", ")}`);
+  db.close();
+  if (r.conflicts.length) {
+    console.log(`\n  ${r.conflicts.length} REFUSED id links -- one id claimed by two players:`);
+    for (const c of r.conflicts.slice(0, 6)) console.log(`    ${c}`);
+    console.log(`  Refused rather than moved: reassigning an id silently changes who a stored id points at.`);
+  }
+}
+
 /**
  * `ff build-staging`
  *
