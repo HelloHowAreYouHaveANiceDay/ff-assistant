@@ -10,58 +10,19 @@
 // It also reports the standard error, estimated by re-running each arm under several seeds, so a
 // number is never quoted without the width of its own uncertainty. scripts/sim-convergence.mjs
 // measured that width against a 12,000-trial reference; this reports it per deal.
-import { readFileSync } from "node:fs";
-import Database from "better-sqlite3";
-import { nameKey } from "../src/league/index.ts";
-import { simulateSeasons } from "../src/draft/season.ts";
-import { buildSchedule } from "../src/draft/schedule.ts";
+import { loadSimContext } from "../src/draft/simContext.ts";
 
 const TRIALS = Number(process.argv[2] ?? 3200);
 const WANT = process.argv.slice(3);
 const SEEDS = [7, 101, 202, 303];
 
-const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
-const outcomes = JSON.parse(readFileSync("data/rank-outcomes.json", "utf8"));
-const corrModel = JSON.parse(readFileSync("data/correlation-model.json", "utf8"));
-const db = new Database("data/ff.db", { readonly: true });
-const cfg = JSON.parse(db.prepare("SELECT value FROM settings WHERE key='config'").get().value);
-const lgRow = db.prepare("SELECT league_id, team_id FROM league WHERE season=? AND team_id IS NOT NULL").get(cfg.season);
-
-const byeOf = new Map();
-for (const r of db.prepare(
-  `SELECT p.name, r.bye FROM player p JOIN ranking r ON r.player_id=p.player_id AND r.source='fantasypros_ecr' AND r.season=?`,
-).all(cfg.season)) byeOf.set(nameKey(r.name), r.bye);
-const board = new Map();
-for (const r of db.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(cfg.season)) {
-  const j = JSON.parse(r.row_json);
-  board.set(r.player_id, { name: j.Player, pos: j.Pos, proj: j.ProjPts || 0, team: j.Team || "" });
-}
-const byTeam = new Map();
-for (const r of db.prepare("SELECT player_id, team_id, team_abbrev, owner FROM ownership WHERE league_id=?").all(lgRow.league_id)) {
-  const b = board.get(r.player_id);
-  if (!b) continue;
-  if (!byTeam.has(r.team_id)) byTeam.set(r.team_id, { id: r.team_id, name: r.team_abbrev || r.owner, roster: [] });
-  byTeam.get(r.team_id).roster.push({ ...b, bye: byeOf.get(nameKey(b.name)) ?? null });
-}
-const baseTeams = [...byTeam.values()].sort((a, b) => Number(a.id) - Number(b.id));
-const meIdx = baseTeams.findIndex((t) => t.id === String(lgRow.team_id));
-const weeks = buildSchedule(baseTeams.length, cfg.regWeeks ?? 14, 4).weeks;
-const poolRank = new Map();
-{
-  const byPos = {};
-  for (const line of readFileSync("data/points.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
-    const f = line.split(",");
-    if (!f[0] || !f[2]) continue;
-    (byPos[f[1].trim().toUpperCase()] ??= []).push({ name: f[0].trim(), pts: Number(f[2]) });
-  }
-  for (const [, l] of Object.entries(byPos)) { l.sort((a, b) => b.pts - a.pts); l.forEach((x, i) => poolRank.set(x.name, { rank: i, of: l.length })); }
-}
-const run = (teams, seed) => simulateSeasons(teams, weeks, vm, {
-  weeks: weeks.length, playoffTeams: 7, slots: cfg.slots, projSd: 0.30, trials: TRIALS, seed, poolRank,
-  bootstrap: { outcomes, corr: corrModel, calibration: "scale" },
-});
-const clone = (t) => t.map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) }));
-
+// One shared context: same rosters, same schedule, same config-derived options as every other tool.
+// Six scripts used to build this by hand and had already diverged -- three on the real schedule,
+// three on a generated one -- so the same roster returned three different base probabilities.
+const ctx = await loadSimContext();
+const baseTeams = ctx.teams, meIdx = ctx.meIdx;
+const run = (teams, seed) => ctx.run(teams, TRIALS, seed);
+const clone = () => ctx.clone();
 const find = (name) => {
   for (let ti = 0; ti < baseTeams.length; ti++) {
     const p = baseTeams[ti].roster.find((x) => x.name === name);

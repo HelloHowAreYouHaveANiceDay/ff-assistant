@@ -90,6 +90,8 @@ async function main() {
       return cmdInspect(rest);
     case "rank":
       return cmdRank(rest);
+    case "models":
+      return cmdModels();
     case "build-identity":
       return cmdBuildIdentity(rest);
     case "build-staging":
@@ -698,6 +700,38 @@ async function cmdPreflight(rest: string[]) {
  * EV is a small probability times a moderate gain and sorting on it buries precisely the asymmetric
  * bets that justify holding one.
  */
+/**
+ * `ff models`
+ *
+ * What is fitted, how old it is, whether it still passes its own checks, and -- the part that kept
+ * getting lost -- what each model is HONESTLY worth under nested cross-validation rather than under
+ * the loop that also chose its shape.
+ */
+async function cmdModels(): Promise<void> {
+  const { modelStatus } = await import("./draft/models.js");
+  const rows = modelStatus();
+  console.log("FITTED MODELS\n");
+  console.log("  model                 age    size   OOS lift (nested)   status");
+  for (const r of rows) {
+    const lift = r.nestedLift == null ? "      n/a" : `${r.nestedLift >= 0 ? "+" : ""}${r.nestedLift.toFixed(4)}`;
+    const claim = r.claimedLift != null && r.nestedLift != null && Math.abs(r.claimedLift - r.nestedLift) > 1e-6
+      ? `  (was claimed ${r.claimedLift >= 0 ? "+" : ""}${r.claimedLift.toFixed(4)})` : "";
+    const state = !r.present ? (r.required ? "MISSING -- required" : "missing (optional)")
+      : r.problem ? `FAILS: ${r.problem}` : "ok";
+    console.log(`  ${r.key.padEnd(20)} ${(r.ageDays == null ? "-" : r.ageDays + "d").padStart(5)} ${(r.sizeKb == null ? "-" : r.sizeKb + "kb").padStart(7)}   ${lift.padStart(10)}${claim ? "" : "        "}   ${state}${claim}`);
+  }
+  for (const r of rows) console.log(`\n  ${r.key}: ${r.what}`);
+  const bad = rows.filter((r) => !r.present || r.problem);
+  console.log(bad.length
+    ? `\n  ${bad.length} model(s) need attention. A missing optional model degrades SILENTLY -- every
+  factor returns 1 and the board looks entirely normal, which is why this command exists.`
+    : `\n  All models present and passing their checks.`);
+  console.log(`\n  Lifts are measured under NESTED cross-validation (scripts/nested-cv.mjs): the model is
+  refit inside every fold, so the score never includes the seasons used to choose its shape. Where a
+  claimed figure differs, the claim came from a single hold-one-out loop that ALSO picked the
+  amplitudes and clamps -- roughly half of those numbers was selection.`);
+}
+
 /**
  * `ff build-identity`
  *
