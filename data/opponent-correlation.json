@@ -1,0 +1,31 @@
+{
+  "fittedFrom": "history-weekly.csv joined to nflverse schedules",
+  "pairs": {
+    "QB-QB": 0.212,
+    "QB-WR": 0.185,
+    "QB-TE": 0.121,
+    "QB-RB": 0.01,
+    "WR-WR": 0.164,
+    "RB-RB": -0.11,
+    "DST-QB": -0.409,
+    "DST-WR": -0.162,
+    "DST-RB": -0.309,
+    "DST-DST": -0.225,
+    "K-K": -0.136,
+    "K-QB": -0.057
+  },
+  "n": {
+    "QB-QB": 11056,
+    "QB-WR": 11063,
+    "QB-TE": 10956,
+    "QB-RB": 11060,
+    "WR-WR": 11072,
+    "RB-RB": 11066,
+    "DST-QB": 11063,
+    "DST-WR": 11072,
+    "DST-RB": 11069,
+    "DST-DST": 11072,
+    "K-K": 11024,
+    "K-QB": 11039
+  }
+}

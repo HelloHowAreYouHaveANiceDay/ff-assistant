@@ -72,3 +72,33 @@ export async function bridgeFetch(url: string, headers?: Record<string, string>,
 export function bridgeAvailable(): boolean {
   return bridgeInfo() !== null;
 }
+
+export interface ReadResult { title: string; url: string; text: string }
+
+/**
+ * Render any public page in the app's browser and return its text.
+ *
+ * This is a DIFFERENT route from bridgeFetch and runs in a separate, off-the-record session
+ * partition -- research pages must not receive the ESPN cookies, and one route doing both jobs would
+ * send them to whatever host the caller named. The reason to route through the app rather than
+ * WebFetch is that this is a real Chromium: JavaScript executes and the fingerprint is a genuine
+ * browser, so pages that refuse a plain HTTP client render normally.
+ */
+export async function bridgeRead(url: string, waitMs = 2500, timeoutMs = 45000): Promise<ReadResult> {
+  const info = bridgeInfo();
+  if (!info) throw new Error("app bridge not available -- open the desktop app");
+  const payload = JSON.stringify({ url, waitMs });
+  const body = await new Promise<string>((resolve, reject) => {
+    const req = request({
+      host: "127.0.0.1", port: info.port, path: "/read", method: "POST",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload), "x-ff-token": info.token },
+      timeout: timeoutMs,
+    }, (res) => { let o = ""; res.on("data", (d) => (o += d)); res.on("end", () => resolve(o)); });
+    req.on("timeout", () => req.destroy(new Error(`page read timed out after ${timeoutMs}ms`)));
+    req.on("error", reject);
+    req.write(payload); req.end();
+  });
+  const parsed = JSON.parse(body) as ReadResult & { error?: string };
+  if (parsed.error) throw new Error(`read ${url}: ${parsed.error}`);
+  return parsed;
+}

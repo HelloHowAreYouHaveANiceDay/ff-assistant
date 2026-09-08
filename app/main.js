@@ -360,6 +360,41 @@ function startBridge() {
   const server = http.createServer((req, res) => {
     const reply = (code, obj) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
     if (req.headers["x-ff-token"] !== token) return reply(403, { error: "bad token" });
+    // /read -- render ANY public page in a real browser and return its text.
+    //
+    // Deliberately a SEPARATE ROUTE with a SEPARATE SESSION PARTITION rather than a wider allowlist
+    // on /fetch. /fetch exists to reuse the ESPN login and must stay narrow; research pages have no
+    // business receiving those cookies, and a single route doing both would send them to whatever
+    // host the caller named. This one runs in an off-the-record partition, so it carries no
+    // credentials anywhere.
+    //
+    // The point of using the app at all is that this is a real Chromium: it executes JavaScript and
+    // presents a genuine browser fingerprint, so pages that refuse a plain HTTP fetch render here.
+    if (req.method === "POST" && req.url === "/read") {
+      let body2 = "";
+      req.on("data", (d) => { body2 += d; if (body2.length > 1e6) req.destroy(); });
+      req.on("end", async () => {
+        let url, waitMs;
+        try { const j = JSON.parse(body2); url = j.url; waitMs = Math.min(15000, Number(j.waitMs) || 2500); }
+        catch { return reply(400, { error: "bad json" }); }
+        if (!/^https?:\/\//i.test(String(url))) return reply(400, { error: "url must be http(s)" });
+        let w = null;
+        try {
+          w = new BrowserWindow({
+            show: false, width: 1280, height: 900,
+            webPreferences: { partition: "research-ephemeral", contextIsolation: true, nodeIntegration: false, javascript: true },
+          });
+          await w.loadURL(String(url));
+          await new Promise((r) => setTimeout(r, waitMs));   // let client-side rendering settle
+          const text = await w.webContents.executeJavaScript(
+            `(() => ({ title: document.title, url: location.href, text: (document.body && document.body.innerText || "").slice(0, 200000) }))()`);
+          return reply(200, text);
+        } catch (e) {
+          return reply(200, { error: String((e && e.message) || e) });
+        } finally { if (w && !w.isDestroyed()) w.destroy(); }
+      });
+      return;
+    }
     if (req.method !== "POST" || req.url !== "/fetch") return reply(404, { error: "no such route" });
     let body = "";
     req.on("data", (d) => { body += d; if (body.length > 1e6) req.destroy(); });
