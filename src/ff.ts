@@ -6,8 +6,7 @@
 //   npm run ff -- inspect-draft     dump the live ESPN draft-room DOM to a file
 //   npm run ff -- rank              print top players by VOR from the rankings CSV
 
-import { attach, attachBro, findPage, detach, type Attached } from "./browser/attach.js";
-import { passthrough as broPassthrough } from "./browser/bro.js";
+import { findPage, detach, type Attached } from "./browser/attach.js";
 import { inspectDraftDom } from "./draft/espnReader.js";
 import { loadRankings } from "./data/rankings.js";
 import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank.js";
@@ -24,8 +23,13 @@ async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
     case "bro":
-      // Passthrough to the bro CLI: `ff bro session start espn`, `ff bro sessions`, ...
-      return void process.exit(broPassthrough(rest));
+      // Kept only to say where it went. A verb that silently vanishes leaves a user's muscle memory
+      // failing with "unknown command" and no idea what replaced it.
+      console.log("`ff bro` is gone -- the desktop app IS the browser now.\n" +
+        "  It holds the authenticated ESPN session in its own partition and is always a CDP target,\n" +
+        "  so there is no second browser to start or log into. Just open the app.\n" +
+        "  Escape hatch for a manually-launched Chrome: pass --port <N> to any browser verb.");
+      return void process.exit(2);
     case "attach":
       return cmdAttach(rest);
     case "goto":
@@ -123,9 +127,8 @@ async function main() {
     default:
       console.log(
         "commands:\n" +
-          "  bro <args...>              passthrough to the bro CLI (e.g. bro session start espn)\n" +
-          "  attach [--site espn|--port N]   test the copresent connection to bro's session\n" +
-          "  goto <url> [--site]        navigate the copresent session\n" +
+          "  attach [--port N]          test the connection to the app's embedded ESPN webview\n" +
+          "  goto <url>                 navigate the app's webview\n" +
           "  inspect-draft [--out FILE] dump the live ESPN draft-room DOM\n" +
           "  rank [--csv FILE]          top players by VOR (offline)",
       );
@@ -332,7 +335,7 @@ async function cmdMyRosterSet(rest: string[]) {
 // page (connectOverCDP enumerates only the file:// renderer), so it is wrapped by
 // src/browser/webviewPage.ts, which implements the slice of the Page API espnAuction uses on top of
 // webview.executeJavaScript. Plain `--port <app port>` does NOT work for draft verbs: it hands them
-// the renderer. bro remains the default and is unaffected.
+// the renderer. The app webview is the only session now.
 /** `--pos-mult QB:0.7,RB:1.1` -> { QB: 0.7, RB: 1.1 }. Overrides the persisted lever per position,
  *  for sweeps; positions not named keep the lever value. */
 function parsePosMult(arg: string | undefined): Record<string, number> {
@@ -342,17 +345,23 @@ function parsePosMult(arg: string | undefined): Record<string, number> {
   return out;
 }
 
+/**
+ * THE APP IS THE BROWSER. Every verb attaches to the desktop app's embedded ESPN webview.
+ *
+ * This used to default to a `bro` session and reach the app only behind `--app`, which had the
+ * dependency exactly backwards: it made the second browser -- a separate checkout, a separate login,
+ * a separate profile the user had to remember to start -- the normal path, and the app the special
+ * case. The app already holds an authenticated ESPN session in a persistent partition and is always
+ * a CDP target, so there is nothing bro provided that it does not.
+ *
+ * `--port` survives for a manually-launched Chrome, which is a genuine debugging escape hatch. The
+ * bro path is gone; `--site` went with it, since there is only one session now.
+ */
 async function attachFor(rest: string[]): Promise<Attached> {
-  if (rest.includes("--app")) {
-    const { attachWebview } = await import("./browser/webviewPage.js");
-    const portArg = valueOf(rest, "--port");
-    const w = await attachWebview(portArg ? Number(portArg) : undefined);
-    return { browser: w.browser, context: w.browser.contexts()[0], pages: [w.page] } as Attached;
-  }
   const port = valueOf(rest, "--port");
-  if (port) return attach(Number(port));
-  const site = valueOf(rest, "--site") ?? "espn";
-  return attachBro(site);
+  const { attachWebview } = await import("./browser/webviewPage.js");
+  const w = await attachWebview(port ? Number(port) : undefined);
+  return { browser: w.browser, context: w.browser.contexts()[0], pages: [w.page] } as Attached;
 }
 
 async function cmdAttach(rest: string[]) {
@@ -427,7 +436,7 @@ async function cmdText(rest: string[]) {
 async function cmdLaunchPractice(rest: string[]) {
   const a = await attachFor(rest);
   // The embedded ESPN webview is our ONE working page -- reuse it whatever it's showing (the old
-  // bro logic looked for a separate non-draft tab; here there's just the webview). Fall back to any
+  // the old logic looked for a separate non-draft tab; here there's just the webview). Fall back to any
   // non-draft page, then a new page.
   let page = a.pages.find((p) => /espn\.com/.test(p.url()) && !/recaptcha|imrworldwide|registerdisney/.test(p.url()))
     || a.pages.find((p) => !/\/football\/draft/.test(p.url()))
@@ -641,7 +650,7 @@ async function cmdPreflight(rest: string[]) {
   await preflightOffline(rest).catch((e) => console.log(`FAIL : offline checks threw -- ${(e as Error).message}`));
   console.log("--- session (browser) ---");
   let a: Attached;
-  try { a = await attachFor(rest); } catch (e) { console.log(`FAIL: cannot attach to bro session -- ${(e as Error).message}`); return; }
+  try { a = await attachFor(rest); } catch (e) { console.log(`FAIL: cannot attach to the app webview -- ${(e as Error).message}`); return; }
   console.log(`OK: attached to browser (${a.pages.length} tabs)`);
   const draftTab0 = a.pages.find((p) => /\/football\/draft/.test(p.url()));
   if (draftTab0) {

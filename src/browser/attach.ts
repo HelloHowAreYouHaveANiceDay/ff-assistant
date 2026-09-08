@@ -1,27 +1,19 @@
-// Copresent browser attach (D0): connect to the USER'S already-running, logged-in
-// browser over the DevTools Protocol. The session is OWNED BY bro (D2) -- bro launched
-// it with a persistent profile and holds the login; ff just joins it via
-// chromium.connectOverCDP. We never launch or log in a browser ourselves.
+// Low-level CDP attach. The DESKTOP APP is the browser -- it holds the authenticated ESPN session in
+// its own persistent partition and is always a CDP target (see browser/webviewPage.ts, which is what
+// every verb goes through). This file is the raw connect underneath that, plus the `--port` escape
+// hatch for a manually-launched Chrome.
+//
+// The `bro` subdriver this was written for is gone. It owned a SECOND browser with a second login and
+// a second profile the user had to remember to start, and it was the DEFAULT while the app was the
+// special case -- the dependency backwards from what the app made possible.
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
-import { resolveLivePort } from "./bro.js";
-
-// Domain that identifies each bro site's live browser (for robust port resolution).
-const SITE_DOMAIN: Record<string, string> = { espn: "espn.com", yahoo: "yahoo.com" };
 
 export interface Attached {
   browser: Browser;
   context: BrowserContext;
   /** All open pages across the connected browser's contexts. */
   pages: Page[];
-}
-
-/** Attach to the browser bro is holding for `site`. Resolves the CDP port robustly (bro's
- *  registry port can be stale -- verify by finding the port whose tabs contain the site domain). */
-export async function attachBro(site = "espn"): Promise<Attached> {
-  const domain = SITE_DOMAIN[site] ?? `${site}.com`;
-  const port = await resolveLivePort(site, domain);
-  return attach(port);
 }
 
 /** Connect to a running browser exposing a CDP endpoint on 127.0.0.1:<port>. */
@@ -31,9 +23,10 @@ export async function attach(port: number): Promise<Attached> {
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   } catch (err) {
     throw new Error(
-      `Could not attach to a browser on CDP port ${port}. ` +
-        `Start a bro session first (npm run ff -- bro session start espn) and log in. ` +
-        `Underlying error: ${(err as Error).message}`,
+      `Could not attach to a browser on CDP port ${port}.\n` +
+        `  Open the desktop app (cd app && npm start) -- it exposes CDP on 9223 and holds the ESPN login.\n` +
+        `  If it IS open, its debugging port did not bind: check MC_NO_CDP is unset, or pass MC_CDP_PORT.\n` +
+        `  Underlying error: ${(err as Error).message}`,
     );
   }
   // connectOverCDP exposes the real browser's existing context(s), not a fresh one.
