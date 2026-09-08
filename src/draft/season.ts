@@ -34,7 +34,7 @@
  *     roster decision runs along. QB, K and DST are streamed in every real league; a manager whose
  *     only quarterback is on bye adds one, he does not field nobody. Scoring the empty slot as zero
  *     charged a penalty that is never paid, and charged it only to rosters carrying one body at a
- *     mandatory slot. See  in SeasonOpts, which is now the streaming floor.
+ *     mandatory slot. See `replacement` in SeasonOpts, which is now the streaming floor.
  */
 import { optimalLineup } from "../inseason/lineup.js";
 // Imported as `unitDraw`, not `draw`: the playoff bracket already has a local `draw(teamIndex)` that
