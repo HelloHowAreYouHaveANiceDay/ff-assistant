@@ -17,11 +17,20 @@ export interface LineupResult {
   flags: string[]; // human-readable notes (unfillable slot, strong bench player, etc.)
 }
 
+/** Default FLEX eligibility. The league's own `flex_ok` overrides it -- see below. */
 const FLEX_OK = new Set(["RB", "WR", "TE"]);
 
 /** Assign the highest-projected legal lineup from the AVAILABLE players. `slots` is the starting
- *  template (e.g. QB,RB,RB,WR,WR,TE,FLEX,K,DST); BE entries are ignored (bench is the remainder). */
-export function optimalLineup(players: RosterPlayer[], slots: string[]): LineupResult {
+ *  template (e.g. QB,RB,RB,WR,WR,TE,FLEX,K,DST); BE entries are ignored (bench is the remainder).
+ *
+ *  `flexOk` defaults to RB/WR/TE. It exists because the store already carries `config.flex_ok` and
+ *  this function used to ignore it -- three callers were passing it as a third argument that the
+ *  signature did not accept, which TypeScript would have caught had the check not been run through a
+ *  pipe that swallowed its exit code. Harmless for THIS league, whose flex really is RB/WR/TE, and
+ *  silently wrong for a superflex league, where a QB is flex-eligible and would never be started. A
+ *  config value the code ignores is worse than no config value: it reads as configured behaviour. */
+export function optimalLineup(players: RosterPlayer[], slots: string[], flexOk?: Iterable<string>): LineupResult {
+  const flex = flexOk ? new Set(flexOk) : FLEX_OK;
   const startSlots = slots.filter((s) => s !== "BE" && s !== "BENCH");
   const byPos: Record<string, RosterPlayer[]> = {};
   for (const p of players) if (p.available) (byPos[p.pos] ??= []).push(p);
@@ -35,7 +44,7 @@ export function optimalLineup(players: RosterPlayer[], slots: string[]): LineupR
   for (const slot of startSlots) {
     let pick: RosterPlayer | undefined;
     if (slot === "FLEX") {
-      for (const pos of FLEX_OK) { const a = take(pos); if (a && (!pick || a.proj > pick.proj)) pick = a; }
+      for (const pos of flex) { const a = take(pos); if (a && (!pick || a.proj > pick.proj)) pick = a; }
     } else {
       pick = take(slot);
     }
