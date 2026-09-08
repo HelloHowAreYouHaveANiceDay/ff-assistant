@@ -53,3 +53,8 @@ data/pos-sweep.txt
 
 # Runtime bridge endpoint: holds a live auth token for the app's loopback API. Never commit.
 data/app-bridge.json
+
+# Downloaded nflverse feeds, kept so a feature sweep can be re-run in seconds instead of
+# re-fetching ~300MB. Pure cache: every file is reproducible with --refresh, and nothing
+# reads it that cannot rebuild it.
+data/cache/
