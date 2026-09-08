@@ -1,0 +1,232 @@
+{
+  "schema": 1,
+  "kind": "projection",
+  "fittedFrom": "curveOnlyArtifact (no fitted coefficients)",
+  "seasons": [
+    1999,
+    2000,
+    2001,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "holdoutSeason": null,
+  "base": "curve_value_ecr",
+  "features": [],
+  "multiplicative": [
+    "age_factor",
+    "opp_factor"
+  ],
+  "coef": {
+    "QB": {
+      "mean": {
+        "intercept": 1
+      },
+      "p10": {
+        "intercept": 0.22137402361764108
+      },
+      "p50": {
+        "intercept": 1.1515551664544037
+      },
+      "p90": {
+        "intercept": 2.112847018002099
+      }
+    },
+    "RB": {
+      "mean": {
+        "intercept": 1
+      },
+      "p10": {
+        "intercept": 0.2800429100108592
+      },
+      "p50": {
+        "intercept": 0.947148087195246
+      },
+      "p90": {
+        "intercept": 1.7538307487866516
+      }
+    },
+    "WR": {
+      "mean": {
+        "intercept": 1
+      },
+      "p10": {
+        "intercept": 0.48323492967094867
+      },
+      "p50": {
+        "intercept": 1.0343860986950464
+      },
+      "p90": {
+        "intercept": 1.5750677912370166
+      }
+    },
+    "TE": {
+      "mean": {
+        "intercept": 1
+      },
+      "p10": {
+        "intercept": 0.31954203404274867
+      },
+      "p50": {
+        "intercept": 1.0616190697103247
+      },
+      "p90": {
+        "intercept": 1.9491258681950796
+      }
+    },
+    "K": {
+      "mean": {
+        "intercept": 1
+      },
+      "p10": {
+        "intercept": 0.3814435624300823
+      },
+      "p50": {
+        "intercept": 1.1569002260205332
+      },
+      "p90": {
+        "intercept": 1.5641045686654083
+      }
+    },
+    "DST": {
+      "mean": {
+        "intercept": 1
+      },
+      "p10": {
+        "intercept": 0.5723519067008283
+      },
+      "p50": {
+        "intercept": 0.9721858249016877
+      },
+      "p90": {
+        "intercept": 1.4173828689752588
+      }
+    }
+  },
+  "clamps": {
+    "lo": 0.01,
+    "hi": 100
+  },
+  "notes": "curve-only: the projection IS the point-in-time curve, times the shipped age and opportunity multipliers. Quantile intercepts are ratio quantiles of actual/curve where the caller supplied them and 1.0 where it did not, in which case the three quantiles collapse onto the mean and say so rather than inventing a spread.",
+  "fittedAt": "2026-09-08",
+  "golden": [
+    {
+      "pos": "RB",
+      "base": 250,
+      "rank": 1,
+      "f": {
+        "age": 24,
+        "prior_pts": 300,
+        "prior_games": 17,
+        "prior_pos_rank": 1
+      },
+      "factors": {
+        "age_factor": 1,
+        "opp_factor": 1
+      },
+      "expect": {
+        "mean": 250,
+        "p10": 70.0107275027148,
+        "p50": 236.7870217988115,
+        "p90": 438.4576871966629
+      }
+    },
+    {
+      "pos": "WR",
+      "base": 175,
+      "rank": 12,
+      "f": {
+        "age": 29.5,
+        "prior_pts": 180,
+        "prior_games": 15,
+        "prior_pos_rank": 12
+      },
+      "factors": {
+        "age_factor": 0.95,
+        "opp_factor": 1.05
+      },
+      "expect": {
+        "mean": 174.5625,
+        "p10": 84.35469741068496,
+        "p50": 180.56502335345402,
+        "p90": 274.9477713078117
+      }
+    },
+    {
+      "pos": "QB",
+      "base": 246,
+      "rank": 12,
+      "f": {
+        "age": 33,
+        "prior_pts": 240,
+        "prior_games": 16,
+        "prior_pos_rank": 12
+      },
+      "factors": {
+        "age_factor": 0.9,
+        "opp_factor": 1
+      },
+      "expect": {
+        "mean": 221.4,
+        "p10": 49.01220882894573,
+        "p50": 254.95431385300498,
+        "p90": 467.78432978566474
+      }
+    },
+    {
+      "pos": "TE",
+      "base": 101,
+      "rank": 24,
+      "f": {
+        "age": 26,
+        "prior_pts": 95,
+        "prior_games": 12,
+        "prior_pos_rank": 24
+      },
+      "factors": {
+        "age_factor": 1,
+        "opp_factor": 0.9
+      },
+      "expect": {
+        "mean": 90.9,
+        "p10": 29.046370894485857,
+        "p50": 96.50117343666852,
+        "p90": 177.17554141893274
+      }
+    },
+    {
+      "pos": "RB",
+      "base": 120,
+      "rank": 30,
+      "f": {},
+      "factors": {},
+      "expect": {
+        "mean": 120,
+        "p10": 33.6051492013031,
+        "p50": 113.65777046342953,
+        "p90": 210.4596898543982
+      }
+    }
+  ]
+}

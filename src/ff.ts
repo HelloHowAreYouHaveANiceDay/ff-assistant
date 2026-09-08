@@ -82,6 +82,10 @@ async function main() {
       return cmdBuildPicks(rest);
     case "build-artifact":
       return cmdBuildArtifact(rest);
+    case "evaluate-projection":
+      return cmdEvaluateProjection(rest);
+    case "residuals":
+      return cmdResiduals(rest);
     case "scrape-league":
       return cmdScrapeLeague(rest);
     case "ingest-source":
@@ -803,7 +807,7 @@ async function cmdModels(): Promise<void> {
     ? `\n  ${bad.length} model(s) need attention. A missing optional model degrades SILENTLY -- every
   factor returns 1 and the board looks entirely normal, which is why this command exists.`
     : `\n  All models present and passing their checks.`);
-  console.log(`\n  Lifts are measured under NESTED cross-validation (scripts/nested-cv.mjs): the model is
+  console.log(`\n  Lifts are measured under NESTED cross-validation (\`ff evaluate-projection\`): the model is
   refit inside every fold, so the score never includes the seasons used to choose its shape. Where a
   claimed figure differs, the claim came from a single hold-one-out loop that ALSO picked the
   amplitudes and clamps -- roughly half of those numbers was selection.`);
@@ -1580,9 +1584,17 @@ async function cmdBacktest(rest: string[]) {
     const { loadArtifact } = await import("./model/projector.js");
     const { backtestProjection } = await import("./model/features.js");
     const { readFileSync: rf, existsSync: ex } = await import("node:fs");
+    // ONE artifact, or a DIRECTORY of per-season ones. The directory form is what makes a TRAINED
+    // artifact honestly backtestable: a single artifact fitted on 1999-2025 has seen every season
+    // being replayed, which is lookahead moved into the model -- the exact defect the expanding
+    // window exists to prevent, reintroduced one level up. `ff evaluate-projection --keep-artifacts
+    // <dir>` writes artifact-<season>.json per outer fold, each blind to its own season, and that is
+    // the directory to point here.
+    const artDir = valueOf(rest, "--artifact-dir");
     const ap = valueOf(rest, "--artifact") ?? dataPath("projection-artifact.json");
-    if (!ex(ap)) throw new Error(`${ap} missing -- build one with \`npm run ff -- build-artifact --curve-only\``);
-    const artifact = loadArtifact(JSON.parse(rf(ap, "utf8")));
+    if (!artDir && !ex(ap)) throw new Error(`${ap} missing -- build one with \`npm run ff -- build-artifact --curve-only\``);
+    const perYear = new Map<number, ReturnType<typeof loadArtifact>>();
+    const artifact = artDir ? null : loadArtifact(JSON.parse(rf(ap, "utf8")));
     const db2 = openDb(valueOf(rest, "--db"));
     const skipped: number[] = [];
     for (const yr of [...pts.keys()].sort()) {
@@ -1597,14 +1609,29 @@ async function cmdBacktest(rest: string[]) {
       ).all(yr) as { pos: string; n: number }[];
       const have = new Map(cov.map((c) => [c.pos, c.n]));
       if (!CURVE_POS_REQUIRED.every((p) => (have.get(p) ?? 0) >= 24)) { skipped.push(yr); continue; }
-      const rows = backtestProjection(db2, yr, artifact);
+      let a = artifact;
+      if (artDir) {
+        const p = `${artDir}/artifact-${yr}.json`;
+        if (!ex(p)) { skipped.push(yr); continue; }   // no artifact blind to this season -> no season
+        a = loadArtifact(JSON.parse(rf(p, "utf8")));
+        if (a.holdoutSeason !== yr) {
+          throw new Error(`${p} declares holdoutSeason ${a.holdoutSeason} but is being used for ${yr} ` +
+            `-- an artifact that saw the season it is projecting is lookahead, not a model`);
+        }
+        perYear.set(yr, a);
+      }
+      const rows = backtestProjection(db2, yr, a!);
       if (!rows.length) { skipped.push(yr); continue; }
       projByYear.set(yr, new Map(rows.map((r) => [r.name, r.mean])));
     }
     db2.close();
-    console.log(`  --projection ${projArg}: the SHIPPED projector, artifact ${ap}`);
-    console.log(`    ${artifact.fittedFrom}; base ${artifact.base}; ` +
-      `${artifact.features.length} fitted features; multiplicative [${artifact.multiplicative.join(", ") || "none"}]`);
+    const shown = artifact ?? [...perYear.values()][0];
+    console.log(`  --projection ${projArg}: the SHIPPED projector, ` +
+      (artDir ? `per-season artifacts from ${artDir} (each blind to its own season)` : `artifact ${ap}`));
+    if (shown) {
+      console.log(`    ${shown.fittedFrom}; base ${shown.base}; ` +
+        `${shown.features.length} fitted features; multiplicative [${shown.multiplicative.join(", ") || "none"}]`);
+    }
     console.log(`    usable in ${projByYear.size}/${pts.size} seasons; skipped ${skipped.join(",") || "none"}`);
     // The ECR level correction cannot reach any backtested season: the FantasyPros archive begins in
     // 2020 and rank 1 needs ~5 seasons of it, so a no-lookahead curve for any season through 2024
@@ -1732,6 +1759,135 @@ async function cmdBuildArtifact(rest: string[]) {
   console.log(`  ratio quantiles of actual/curve (the p10/p50/p90 heads):`);
   for (const [p, q] of Object.entries(quantiles)) {
     console.log(`    ${p.padEnd(4)} n=${String(q.n).padStart(5)}  p10 ${q.p10.toFixed(3)}  p50 ${q.p50.toFixed(3)}  p90 ${q.p90.toFixed(3)}`);
+  }
+}
+
+// NESTED CV through the SHIPPED projector -- see src/model/evaluate.ts for why the old script's
+// numbers were about a different model from the one we ship.
+async function cmdEvaluateProjection(rest: string[]) {
+  const { evaluateProjection, score, pool, RANK_BANDS } = await import("./model/evaluate.js");
+  const { writeFileSync } = await import("node:fs");
+  const range = (valueOf(rest, "--seasons") ?? "2008-2025").split("-").map(Number);
+  const seasons: number[] = []; for (let y = range[0]; y <= (range[1] ?? range[0]); y++) seasons.push(y);
+  console.log(`NESTED CV -- one outer fold per season, the trainer re-run blind to each`);
+  // --keep-artifacts writes each fold's artifact as artifact-<season>.json and does not delete it.
+  // That directory is what `backtest --artifact-dir` consumes: one artifact per season, each blind
+  // to its own, which is the only honest way to backtest a TRAINED model.
+  const keep = valueOf(rest, "--keep-artifacts");
+  if (keep) { const { mkdirSync } = await import("node:fs"); mkdirSync(keep, { recursive: true }); }
+  const folds = evaluateProjection({ dbPath: valueOf(rest, "--db"), seasons, keepArtifacts: keep });
+  if (!folds.length) { console.log("no usable folds"); return; }
+  if (keep) console.log(`  kept ${folds.filter((f) => f.trainerOk).length} per-fold artifacts in ${keep}`);
+
+  const SHOWN = ["carry", "curve", "trained"] as const;
+  const dump = valueOf(rest, "--dump-residuals");
+  if (dump) {
+    // TWO residuals per row: against the SHIPPED model, and against the BARE curve with no
+    // multipliers at all. The feature screen needs both -- one to ask "is this new", the other to
+    // keep its positive control able to fire now that age is inside the model.
+    const shipped = pool(folds, "trained").length ? pool(folds, "trained") : pool(folds, "curve");
+    const bare = new Map(pool(folds, "bare").map((r) => [`${r.season}|${r.pos}|${r.name}`, r]));
+    writeFileSync(dump,
+      ["season", "name", "pos", "rank", "band", "actual", "mean", "p10", "p50", "p90", "resid", "mean_bare", "resid_bare"].join("\t") + "\n" +
+      shipped.map((r) => {
+        const b = bare.get(`${r.season}|${r.pos}|${r.name}`);
+        return [r.season, r.name, r.pos, r.rank, r.band, r.actual, r.mean, r.p10, r.p50, r.p90, r.resid,
+          b ? b.mean : "", b ? b.resid : ""].join("\t");
+      }).join("\n") + "\n",
+      "utf8");
+    console.log(`  wrote ${shipped.length} per-fold residual rows -> ${dump}`);
+  }
+
+  const show = (label: string, sel: (r: { pos: string; band: string }) => boolean) => {
+    const line: string[] = [label.padEnd(9)];
+    for (const k of SHOWN) {
+      const s = score(pool(folds, k).filter(sel));
+      line.push(s.n ? `${s.rmse.toFixed(1).padStart(6)} ${s.r2.toFixed(3).padStart(7)} ${s.crps.toFixed(1).padStart(6)}` : "     -       -      -");
+    }
+    const c = score(pool(folds, "curve").filter(sel)), t = score(pool(folds, "trained").filter(sel));
+    line.push(t.n ? `${(c.rmse - t.rmse >= 0 ? "+" : "") + (c.rmse - t.rmse).toFixed(2)}` .padStart(8) : "       -");
+    console.log("  " + line.join("  "));
+  };
+
+  console.log(`\n  OUT-OF-SAMPLE, pooled over ${folds.length} held-out seasons`);
+  console.log(`  ${"".padEnd(9)}  ${"CARRY-FORWARD".padEnd(21)}  ${"CURVE-ONLY".padEnd(21)}  ${"TRAINED".padEnd(21)}  RMSE won`);
+  console.log(`  ${"".padEnd(9)}  ${"rmse      r2   crps"}   ${"rmse      r2   crps"}   ${"rmse      r2   crps"}`);
+  show("ALL", () => true);
+  for (const p of ["QB", "RB", "WR", "TE"]) show(p, (r) => r.pos === p);
+  for (const [b] of RANK_BANDS) show(b, (r) => r.band === b);
+
+  console.log(`\n  COVERAGE of the p10/p90 band (a calibrated 10/90 covers 0.80)`);
+  console.log(`  ${"".padEnd(9)}  p10-above   p90-below   inside`);
+  for (const k of SHOWN) {
+    const s = score(pool(folds, k));
+    if (!s.n) continue;
+    console.log(`  ${k.padEnd(9)}  ${s.cover10.toFixed(3).padStart(9)}   ${s.cover90.toFixed(3).padStart(9)}   ${(s.cover10 + s.cover90 - 1).toFixed(3).padStart(6)}`);
+  }
+  // PER BAND, because the pooled figure MIXES two different regions and a single number cannot say
+  // which. Both artifacts fit their quantile heads on ranks 1-36 -- past that the curve has
+  // flattened and actual/curve stops measuring dispersion -- so pooling over 1-60 reports a
+  // calibration that was never attempted out there. Reporting only the pooled number would be
+  // comparing a fit on one sample against a score on another and calling the gap a defect.
+  console.log(`  inside-band by rank, curve / trained (quantile heads are FITTED on ranks 1-36 only):`);
+  for (const [b] of RANK_BANDS) {
+    const cc = score(pool(folds, "curve").filter((r) => r.band === b));
+    const tt = score(pool(folds, "trained").filter((r) => r.band === b));
+    if (!cc.n) continue;
+    console.log(`    ${b.padEnd(7)} ${(cc.cover10 + cc.cover90 - 1).toFixed(3)} / ${tt.n ? (tt.cover10 + tt.cover90 - 1).toFixed(3) : "  -  "}`);
+  }
+
+  // THE GATE. Stated before the numbers were seen, and reported either way.
+  const GATE_FROM = 2015;
+  const inGate = (r: { season: number }) => r.season >= GATE_FROM;
+  const c = score(pool(folds, "curve").filter(inGate));
+  const t = score(pool(folds, "trained").filter(inGate));
+  console.log(`\n  GATE on the pooled ${GATE_FROM}-2025 holdouts:`);
+  if (!t.n) {
+    console.log(`    the trainer produced nothing -- SHIP THE CURVE-ONLY ARTIFACT.`);
+  } else {
+    const beatsRmse = t.rmse < c.rmse, beatsCrps = t.crps < c.crps;
+    const cov = t.cover10 + t.cover90 - 1;
+    const covOk = cov >= 0.75 && cov <= 0.85;
+    console.log(`    RMSE      trained ${t.rmse.toFixed(2)} vs curve ${c.rmse.toFixed(2)}   ${beatsRmse ? "PASS" : "FAIL"}`);
+    console.log(`    pinball   trained ${t.crps.toFixed(2)} vs curve ${c.crps.toFixed(2)}   ${beatsCrps ? "PASS" : "FAIL"}`);
+    console.log(`    coverage  trained ${cov.toFixed(3)} in [0.75, 0.85]        ${covOk ? "PASS" : "FAIL"}`);
+    console.log(`    => ${beatsRmse && beatsCrps && covOk
+      ? "the trained artifact may ship as the default."
+      : "SHIP THE CURVE-ONLY ARTIFACT. Do not tune until this passes -- tuning against a gate you " +
+        "have already seen fail is how the gate stops being a measurement."}`);
+  }
+}
+
+// Where is the model wrong? Residual slices computed from the SAME per-fold residuals the nested CV
+// scored, not from a reimplementation.
+async function cmdResiduals(rest: string[]) {
+  const { evaluateProjection, pool, RANK_BANDS } = await import("./model/evaluate.js");
+  const range = (valueOf(rest, "--seasons") ?? "2011-2025").split("-").map(Number);
+  const seasons: number[] = []; for (let y = range[0]; y <= (range[1] ?? range[0]); y++) seasons.push(y);
+  const rung = (valueOf(rest, "--rung") ?? "trained") as "carry" | "bare" | "curve" | "trained";
+  const folds = evaluateProjection({ dbPath: valueOf(rest, "--db"), seasons });
+  let rows = pool(folds, rung);
+  if (!rows.length) { console.log(`no ${rung} rows -- falling back to curve-only`); rows = pool(folds, "curve"); }
+  if (!rows.length) { console.log("nothing to analyse"); return; }
+
+  // A slice with a large CONSISTENT bias says something real is missing there and is worth chasing.
+  // A slice with large but ZERO-MEAN error is noise, and no feature will fix it -- that is the
+  // ceiling, not a lead. The two look identical if you only report the spread.
+  const slice = (label: string, sel: (r: typeof rows[number]) => boolean) => {
+    const s = rows.filter(sel);
+    if (s.length < 30) return;
+    const mean = s.reduce((a, r) => a + r.resid, 0) / s.length;
+    const sd = Math.sqrt(s.reduce((a, r) => a + (r.resid - mean) ** 2, 0) / s.length);
+    const t = mean / (sd / Math.sqrt(s.length));
+    console.log(`  ${label.padEnd(22)} n ${String(s.length).padStart(5)}   bias ${(mean >= 0 ? "+" : "") + mean.toFixed(1).padStart(6)}   sd ${sd.toFixed(1).padStart(6)}   t ${t.toFixed(2).padStart(6)}${Math.abs(t) > 2.5 ? "  <-- systematic" : ""}`);
+  };
+  console.log(`\nRESIDUAL SLICES (actual - projected), rung '${rung}', ${folds.length} held-out seasons`);
+  console.log(`  a large bias means something real is missing there; large-but-zero-mean is the ceiling`);
+  slice("ALL", () => true);
+  for (const p of ["QB", "RB", "WR", "TE"]) slice(p, (r) => r.pos === p);
+  for (const [b] of RANK_BANDS) slice(`rank ${b}`, (r) => r.band === b);
+  for (const p of ["QB", "RB", "WR", "TE"]) {
+    for (const [b] of RANK_BANDS.slice(0, 3)) slice(`${p} rank ${b}`, (r) => r.pos === p && r.band === b);
   }
 }
 

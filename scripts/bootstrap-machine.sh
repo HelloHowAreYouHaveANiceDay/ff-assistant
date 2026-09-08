@@ -68,6 +68,15 @@ node --import tsx scripts/fit-correlation.mjs 2>&1 | tail -1
 node --import tsx scripts/fit-bootstrap.mjs   2>&1 | tail -1
 test -s data/rank-outcomes.json || fail "rank-outcomes.json missing -- season-odds cannot run"
 
+say "3c. the point-in-time feature tables, the picks fact table, and the projection artifact"
+# The projector REFUSES to run without an artifact rather than falling back to a bare curve, so this
+# step is not optional -- `ff projections` fails loudly without it, on purpose. The features must be
+# built first: the artifact's quantile heads are measured from feat_player_season.
+npm run ff -- build-features --seasons 1999-"$(date +%Y)" 2>&1 | head -2
+npm run ff -- build-picks 2>&1 | head -1
+npm run ff -- build-artifact --curve-only 2>&1 | head -1
+test -s data/projection-artifact.json || fail "projection-artifact.json missing -- `ff projections` cannot run"
+
 say "4. projections, values and the co-pilot cheatsheet -- ONE build, so every surface agrees"
 npm run ff -- refresh 2>&1 | tail -1
 npm run ff -- values 2>&1 | tail -1

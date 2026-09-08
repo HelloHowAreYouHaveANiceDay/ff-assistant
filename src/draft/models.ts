@@ -40,13 +40,16 @@ export interface ModelSpec {
 export const MODELS: ModelSpec[] = [
   {
     key: "projection", file: "projection-artifact.json", required: true,
-    // Filled from `ff evaluate-projection`, which scores the SHIPPED projector on held-out seasons
-    // against two baselines computed by the same code path. Null until that has been run: an
-    // invented lift figure on a registry whose whole purpose is to keep claimed and measured apart
-    // would be the exact defect this file was built to end.
-    nestedLift: null, claimedLift: null,
+    // Measured by `ff evaluate-projection --seasons 2008-2025`: the SHIPPED projector, the trainer
+    // re-invoked blind to each held-out season, scored against two baselines computed by the same
+    // code path. R-squared of the shipped (curve-only) artifact 0.504 against carry-forward's
+    // 0.428, pooled over 16 held-out seasons and 7,569 player-seasons.
+    nestedLift: 0.0763, claimedLift: null,
     what: "the projection ARTIFACT the board and the backtest both evaluate -- point-in-time curve, " +
-      "named features with per-position coefficients, and p10/p50/p90 quantile heads",
+      "named features with per-position coefficients, and p10/p50/p90 quantile heads. The SHIPPED " +
+      "artifact is curve-only: the trained one wins RMSE (54.31 vs 54.66) and pinball (12.62 vs " +
+      "12.91) on the pooled 2015-2025 holdouts but FAILS the pre-registered coverage gate (0.614 " +
+      "against [0.75, 0.85]), and the gate is all three",
     check: (j) => {
       // Loaded through the SHIPPED loader, not re-validated here. A second validator in the registry
       // would be a second opinion about the same contract, and the two would drift -- which is the

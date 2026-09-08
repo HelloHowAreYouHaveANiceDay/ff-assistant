@@ -52,64 +52,57 @@ async function csv(url, tag) {
   return parseCsv(text);
 }
 
-// --- the target: what the model gets wrong ---------------------------------------------------------
-const tot = new Map();
-for (const line of readFileSync("data/history-points.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
-  const [s, name, pos, pts] = line.split(",");
-  if (POS.includes(pos)) tot.set(`${Number(s)}|${name}`, { pos, pts: Number(pts), name, season: Number(s) });
+// --- the target: what the SHIPPED model gets wrong --------------------------------------------------
+//
+// PHASE 2a: THE RESIDUALS COME FROM THE SHIPPED PROJECTOR, NOT FROM A REIMPLEMENTATION.
+//
+// This script used to rebuild the curve internally, hold out a season, and multiply the age and
+// opportunity factors back in by hand -- a fourth copy of the projection, screened against its own
+// errors. Screening candidates against the residual of a model we do not ship answers a question
+// nobody asked, and it is how nested-cv.mjs came to be fitting E[y | rank] for years while the board
+// applied an order statistic.
+//
+//   npm run ff -- evaluate-projection --seasons 2008-2025 --dump-residuals data/residuals.tsv
+//   node --import tsx scripts/feature-sweep.mjs --residuals data/residuals.tsv
+//
+// The rows themselves come from feat_player_season, so prior rank is the one the projector used.
+const residArg = (() => { const i = process.argv.indexOf("--residuals"); return i > 0 ? process.argv[i + 1] : "data/residuals.tsv"; })();
+if (!existsSync(residArg)) {
+  console.error(`${residArg} missing. Produce it with:
+  npm run ff -- evaluate-projection --seasons 2008-2025 --dump-residuals ${residArg}
+
+This screen deliberately has NO fallback to an internally-rebuilt model. Screening candidates
+against the residual of a model we do not ship is how the harness and the board came to disagree
+about what a projection is.`);
+  process.exit(1);
 }
-const seasons = [...new Set([...tot.values()].map((v) => v.season))].sort().filter((s) => s >= 2007);
-const rank = new Map();
-for (const s of seasons.concat([seasons[0] - 1])) {
-  for (const pos of POS) {
-    [...tot.entries()].filter(([, v]) => v.season === s && v.pos === pos)
-      .sort((a, b) => b[1].pts - a[1].pts).forEach(([k], i) => rank.set(k, i + 1));
-  }
-}
+const { loadFeatures } = await import("./lib/features.mjs");
+const featRows = loadFeatures({ from: 2007, to: 2025, pos: POS });
+const byKey = new Map(featRows.map((r) => [`${r.season}|${r.pos}|${r.name}`, r]));
 const rows = [];
-for (const v of tot.values()) {
-  if (!seasons.includes(v.season)) continue;
-  const r = rank.get(`${v.season - 1}|${v.name}`);
-  if (!r || r > 60) continue;
-  rows.push({ season: v.season, pos: v.pos, name: v.name, y: v.pts, rank: r });
+// TWO residual columns, and the distinction is the screen's whole method:
+//   resid      against the BARE curve, no multipliers -- "is there signal here at all?"
+//   residFull  against the SHIPPED model              -- "is there signal LEFT?"
+// A candidate whose two rho values are far apart is already captured by something we ship, and
+// adding it would be paying twice for one signal. The bare column is also what keeps the positive
+// control alive: age is now a fitted feature, so against the shipped model it MUST measure ~0.
+for (const line of readFileSync(residArg, "utf8").trim().split(/\r?\n/).slice(1)) {
+  const c = line.split("\t");
+  const [season, name, pos, rk] = c;
+  if (!POS.includes(pos)) continue;
+  const actual = Number(c[5]), mean = Number(c[6]), meanBare = c[11] === "" ? NaN : Number(c[11]);
+  const f = byKey.get(`${Number(season)}|${pos}|${name}`);
+  rows.push({
+    season: Number(season), pos, name, rank: Number(rk),
+    y: actual, pred: Number.isFinite(meanBare) ? meanBare : mean,
+    resid: actual - (Number.isFinite(meanBare) ? meanBare : mean),
+    residFull: actual - mean,
+    feat: f ?? null,
+  });
 }
-const fitCurve = (train) => {
-  const c = {};
-  for (const pos of POS) {
-    const byRank = new Map();
-    for (const r of train) { if (r.pos !== pos) continue; if (!byRank.has(r.rank)) byRank.set(r.rank, []); byRank.get(r.rank).push(r.y); }
-    c[pos] = new Map([...byRank].map(([k, a]) => [k, a.reduce((x, y) => x + y, 0) / a.length]));
-  }
-  return c;
-};
-const curveAt = (c, pos, rk) => {
-  const m = c[pos]; if (!m?.size) return null;
-  if (m.has(rk)) return m.get(rk);
-  let best = null, bd = Infinity;
-  for (const [k, v] of m) { const d = Math.abs(k - rk); if (d < bd) { bd = d; best = v; } }
-  return best;
-};
-for (const hold of seasons) {
-  const train = rows.filter((r) => r.season !== hold);
-  if (train.length < 200) continue;
-  const c = fitCurve(train);
-  for (const r of rows.filter((x) => x.season === hold)) {
-    r.pred = curveAt(c, r.pos, r.rank) ?? 0;
-    r.resid = r.y - r.pred;
-  }
-}
-const { ageFactor } = await import("../src/draft/age.ts");
-const { opportunityFactor } = await import("../src/draft/opportunity.ts");
-let ageCurve = null, oppModel = null;
-try { ageCurve = JSON.parse(readFileSync("data/age-curve.json", "utf8")); } catch { /* screen still runs */ }
-try { oppModel = JSON.parse(readFileSync("data/opportunity-model.json", "utf8")); } catch { /* same */ }
-for (const r of rows) {
-  if (r.pred == null) continue;
-  const af = ageCurve ? ageFactor(ageCurve, r.name, r.pos, r.season) : 1;
-  const of = oppModel ? opportunityFactor(oppModel, r.name, r.pos, r.rank, r.season) : 1;
-  r.residFull = r.y - r.pred * af * of;
-}
-const scored = rows.filter((r) => r.pred != null && r.pred > 20 && r.residFull != null);
+const seasons = [...new Set(rows.map((r) => r.season))].sort();
+console.log(`${rows.length} per-fold residual rows over ${seasons.length} seasons (${seasons[0]}-${seasons[seasons.length - 1]})`);
+const scored = rows.filter((r) => Number.isFinite(r.pred) && r.pred > 20 && Number.isFinite(r.residFull));
 
 // --- PRIOR-SEASON player features -------------------------------------------------------------------
 // Everything here is measured in season S-1 and screened against the error in season S, which is the
@@ -387,9 +380,14 @@ for (const r of scored) {
   // Experience derived here rather than taken from the feed's own years_of_experience, which is
   // relative to the CURRENT season and would leak the future into a historical row.
   r.f.experience = b.rookieSeason ? r.season - b.rookieSeason : null;
-  r.f.age = ageCurve?.birthYear ? (() => {
-    const y = ageCurve.birthYear[`${r.pos}|${r.name}`]; return y ? r.season - y : null;
-  })() : null;
+  // Age from the IDENTITY REGISTRY via feat_player_season, not from the age curve's own birthYear
+  // map. That map is keyed "POS|Name", which is the join that put a father's birth year on his son.
+  //
+  // NOTE ON THE POSITIVE CONTROL: age is now a FITTED FEATURE of the trained artifact, so when the
+  // residuals come from that rung age SHOULD measure near zero -- the model has already used it.
+  // That is the control passing in a new way, and it is only a control at all if the reader is told
+  // which rung produced the residuals. Screen against the curve-only rung to get the old reading.
+  r.f.age = r.feat?.age ?? null;
   r.f.ageFromFeed = b.birthYear ? r.season - b.birthYear : null;
   r.f.__random = rnd();          // negative control
 }

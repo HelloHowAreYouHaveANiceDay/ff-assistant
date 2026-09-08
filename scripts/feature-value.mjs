@@ -1,4 +1,19 @@
-// Do AGE and OPPORTUNITY metrics add anything ON TOP of the prior-season rank we already use?
+// DEPRECATED (Phase 2a, 2026-09-08). SUPERSEDED BY `ff evaluate-projection`.
+//
+// This script is left in place because docs/validation.md and src/draft/age.ts both cite its
+// numbers, and deleting the source of a recorded figure makes the record unverifiable. It is NOT
+// migrated onto feat_player_season and it should not be re-run to decide anything:
+//
+//   - it derives prior-year rank and prior-season usage for itself, from history-points.csv and a
+//     fresh nflverse download, joined by NAME -- the derivations Phase 2a consolidated into one
+//     table precisely because five copies of them had drifted;
+//   - it holds one season out and reports that as the out-of-sample number, which is the single-loop
+//     measurement whose selection effect halved both shipped lifts once nested CV saw it;
+//   - it scores against the ORDER-STATISTIC curve, which Phase 1 established is the wrong quantity.
+//
+// Use instead:  npm run ff -- evaluate-projection --seasons 2008-2025
+// which runs the SHIPPED projector, re-invokes the trainer per outer fold, and scores against two
+// baselines computed by the same code path.
 //
 //   node --import tsx scripts/feature-value.mjs
 //
