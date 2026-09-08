@@ -65,10 +65,16 @@ for (const pos of POS) {
   }
 }
 
+// KEYED BY POSITION AS WELL AS NAME. Keying birth dates on the name alone merges distinct
+// people who share one -- overwhelmingly father/son pairs in this data. It put the WRONG birth year
+// on 38 names, and one reached the live board: Antonio Williams the RB (born 1997) was aged with the
+// birth year of Antonio Williams the WR (born 2004), applying a +19.5% boost to a 29-year-old scored
+// as 22. ageFactor already receives the position, so the key can simply carry it.
 const bio = new Map();
 for (const r of await fetchCsv(URLS.players)) {
   const n = (r.display_name || r.full_name || "").trim();
-  if (n && r.birth_date) bio.set(n, r.birth_date);
+  const p = (r.position || "").trim().toUpperCase();
+  if (n && p && r.birth_date) bio.set(p + "|" + n, r.birth_date);
 }
 
 // ratio of actual to rank-predicted, bucketed by (pos, age)
@@ -79,7 +85,7 @@ for (const v of tot.values()) {
   if (!prior || prior > 60) continue;
   const pred = curve[v.pos]?.[prior - 1];
   if (!pred || pred < 20) continue;                 // a meaningless denominator makes a wild ratio
-  const bd = bio.get(v.name); if (!bd) continue;
+  const bd = bio.get(v.pos + "|" + v.name); if (!bd) continue;
   const age = v.season - Number(String(bd).slice(0, 4));
   if (!Number.isFinite(age) || age < MIN_AGE || age > MAX_AGE) continue;
   acc[v.pos][age].push(v.pts / pred);
@@ -90,9 +96,9 @@ for (const v of tot.values()) {
 // current players). Baking them into the artifact means neither path makes a network call, and the
 // ages used to APPLY the curve are exactly the ones used to FIT it.
 const birthYear = {};
-for (const [name, bd] of bio) {
+for (const [key, bd] of bio) {
   const y = Number(String(bd).slice(0, 4));
-  if (Number.isFinite(y) && y > 1940 && y < 2015) birthYear[name] = y;
+  if (Number.isFinite(y) && y > 1940 && y < 2015) birthYear[key] = y;   // key is "POS|Name"
 }
 const model = { fittedFrom: "data/history-points.csv", shrinkN: SHRINK_N, minAge: MIN_AGE, maxAge: MAX_AGE, pos: {}, birthYear };
 // SMOOTH, then NORMALISE. A raw per-age cell mean fails twice, and a first version of this shipped

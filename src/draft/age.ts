@@ -30,7 +30,15 @@ export interface AgeCurve {
 /** Multiplier for a player at `season`; 1 when age is unknown or the position is not fitted. */
 export function ageFactor(curve: AgeCurve | null, name: string, pos: string, season: number): number {
   if (!curve) return 1;
-  const by = curve.birthYear?.[name];
+  // KEYED "POS|Name". A name-only key merges distinct people who share one -- almost always father
+  // and son in this data -- and it silently put the wrong birth year on 38 names, one of which
+  // reached the live board (Antonio Williams the RB, born 1997, aged with the 2004 birth year of
+  // Antonio Williams the WR: a 29-year-old scored as 22 and marked up 19.5%).
+  //
+  // No name-only fallback. Adding one would restore exactly the ambiguity this key removes, and a
+  // missing entry already means a multiplier of 1 -- the same answer as before the curve existed,
+  // which is the correct thing to do when we do not know who someone is.
+  const by = curve.birthYear?.[`${pos}|${name}`];
   if (!by) return 1;
   const age = season - by;
   if (!Number.isFinite(age)) return 1;
@@ -40,9 +48,12 @@ export function ageFactor(curve: AgeCurve | null, name: string, pos: string, sea
 }
 
 /** How many of `names` the curve can actually age -- for reporting coverage rather than assuming it. */
-export function ageCoverage(curve: AgeCurve | null, names: string[]): { known: number; total: number } {
-  if (!curve) return { known: 0, total: names.length };
+export function ageCoverage(curve: AgeCurve | null, players: { name: string; pos: string }[]): { known: number; total: number } {
+  if (!curve) return { known: 0, total: players.length };
   let known = 0;
-  for (const n of names) if (curve.birthYear?.[n]) known++;
-  return { known, total: names.length };
+  // Coverage must ask the SAME question ageFactor asks. It previously took bare names and counted
+  // name-only hits, which would now report a coverage number the model cannot actually use -- the
+  // classic shape of a check that measures something adjacent to the thing it claims to measure.
+  for (const p of players) if (curve.birthYear?.[`${p.pos}|${p.name}`]) known++;
+  return { known, total: players.length };
 }

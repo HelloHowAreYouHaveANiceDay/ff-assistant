@@ -90,6 +90,8 @@ async function main() {
       return cmdInspect(rest);
     case "rank":
       return cmdRank(rest);
+    case "ingest-playerids":
+      return cmdIngestPlayerIds(rest);
     case "ingest-ecr":
       return cmdIngestEcr(rest);
     case "ingest":
@@ -687,6 +689,31 @@ async function cmdPreflight(rest: string[]) {
  * EV is a small probability times a moderate gain and sorting on it buries precisely the asymmetric
  * bets that justify holding one.
  */
+/**
+ * `ff ingest-playerids [--file db_playerids.csv]`
+ *
+ * Load the cross-source identity crosswalk and backfill player.gsis_id / player.espn_id, which have
+ * been empty on every row since the schema was written. Also reports how many names are genuinely
+ * ambiguous -- the blast radius of keying this store on normalised names.
+ */
+async function cmdIngestPlayerIds(rest: string[]) {
+  const { ingestPlayerIds, ambiguousNames } = await import("./data/playerIds.js");
+  const { openDb } = await import("./db/db.js");
+  const r = await ingestPlayerIds({ dbPath: valueOf(rest, "--db"), file: valueOf(rest, "--file") });
+  console.log(`read ${r.read.toLocaleString()} -> stored ${r.kept.toLocaleString()} players`);
+  console.log(`  with gsis_id ${r.withGsis.toLocaleString()}   with espn_id ${r.withEspn.toLocaleString()}`);
+  const db = openDb(valueOf(rest, "--db"));
+  const p = db.prepare("SELECT COUNT(*) n, SUM(gsis_id IS NOT NULL) g, SUM(espn_id IS NOT NULL) e FROM player").get() as { n: number; g: number; e: number };
+  console.log(`  backfilled player: ${p.g}/${p.n} now have gsis_id, ${p.e}/${p.n} have espn_id`);
+  const amb = ambiguousNames(db, 10);
+  console.log(`\n  ${r.ambiguous} name keys stand for MORE THAN ONE real player. Top:`);
+  for (const a of amb) console.log(`    ${a.name_key.padEnd(22)} ${String(a.names).slice(0, 40).padEnd(41)} ${a.positions}`);
+  console.log(`\n  Those are the names where a string join can silently return the wrong man. Joins in`);
+  console.log(`  this store still key on name_key -- this table makes the problem enumerable, and`);
+  console.log(`  migrating the joins is a separate change.`);
+  db.close();
+}
+
 /**
  * `ff ingest-ecr [--file <db_fpecr.csv.gz>] [--types ro,rp,wo,wp]`
  *

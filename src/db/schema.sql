@@ -365,6 +365,30 @@ CREATE TABLE IF NOT EXISTS ownership (
   PRIMARY KEY (league_id, player_id)
 );
 
+-- CROSS-SOURCE PLAYER IDENTITY (DynastyProcess db_playerids). The player table has carried empty
+-- gsis_id/espn_id columns since the start with a comment calling them the crosswalk seam; this is
+-- the table that fills them. Keyed on (name_key, position) because name_key ALONE merges distinct
+-- people: A.J. Green is both a WR and a DB, Anthony Brown both a QB and a DB.
+CREATE TABLE IF NOT EXISTS player_ids (
+  name_key       TEXT,
+  position       TEXT,
+  name           TEXT,
+  team           TEXT,
+  birthdate      TEXT,
+  gsis_id        TEXT,               -- nflverse / play-by-play
+  espn_id        TEXT,
+  sleeper_id     TEXT,
+  yahoo_id       TEXT,
+  pfr_id         TEXT,
+  fantasypros_id TEXT,
+  mfl_id         TEXT,
+  sportradar_id  TEXT,
+  updated_at     TEXT,
+  PRIMARY KEY (name_key, position)
+);
+CREATE INDEX IF NOT EXISTS idx_pids_gsis ON player_ids (gsis_id);
+CREATE INDEX IF NOT EXISTS idx_pids_espn ON player_ids (espn_id);
+
 -- Historical FantasyPros ECR (DynastyProcess db_fpecr archive). Distinct from `ranking`, which
 -- holds ONE row per (player, source, season) and so cannot answer what the market believed in a
 -- PAST season -- which is what every backtest currently substitutes prior-season finishing rank for.

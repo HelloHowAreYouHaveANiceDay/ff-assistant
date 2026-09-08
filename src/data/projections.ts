@@ -110,7 +110,7 @@ export async function project(dbPath?: string, outPath = dataPath("points.csv"),
     if (p > 0) out.push([row.name, pos, p]);
   }
   if (age) {
-    const cov = ageCoverage(age, out.map((o) => o[0]));
+    const cov = ageCoverage(age, out.map((o) => ({ name: o[0], pos: o[1] })));
     console.log(`  age curve applied to ${cov.known}/${cov.total} players (the rest keep a multiplier of 1)`);
   }
   if (opp) {
