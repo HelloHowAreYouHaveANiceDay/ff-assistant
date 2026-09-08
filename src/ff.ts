@@ -90,6 +90,8 @@ async function main() {
       return cmdInspect(rest);
     case "rank":
       return cmdRank(rest);
+    case "ingest-ecr":
+      return cmdIngestEcr(rest);
     case "ingest":
       return ingestAll(valueOf(rest, "--db"));
     case "migrate": {
@@ -685,6 +687,27 @@ async function cmdPreflight(rest: string[]) {
  * EV is a small probability times a moderate gain and sorting on it buries precisely the asymmetric
  * bets that justify holding one.
  */
+/**
+ * `ff ingest-ecr [--file <db_fpecr.csv.gz>] [--types ro,rp,wo,wp]`
+ *
+ * Load the DynastyProcess FantasyPros ECR archive into ranking_history. Downloads by default;
+ * `--file` uses a local copy, which is what you want when iterating, since the archive is ~100 MB.
+ */
+async function cmdIngestEcr(rest: string[]) {
+  const { ingestEcrHistory, REDRAFT_TYPES } = await import("./data/ecrHistory.js");
+  const file = valueOf(rest, "--file");
+  const types = (valueOf(rest, "--types") ?? REDRAFT_TYPES.join(",")).split(",").map((s) => s.trim()).filter(Boolean);
+  console.log(`ingesting ECR history (${file ? `local ${file}` : "downloading ~100MB"}), keeping types: ${types.join(", ")}`);
+  const r = await ingestEcrHistory({
+    dbPath: valueOf(rest, "--db"), file, types,
+    onProgress: (n) => { if (n % 100000 === 0) console.log(`  ${n.toLocaleString()} rows...`); },
+  });
+  console.log(`read ${r.read.toLocaleString()} rows -> kept ${r.kept.toLocaleString()}`);
+  console.log(`  skipped ${r.skippedType.toLocaleString()} (other ranking types), ${r.badRow.toLocaleString()} unparseable`);
+  console.log(`  seasons ${r.seasons.join(", ")}   types ${r.types.join(", ")}`);
+  if (!r.kept) console.log(`  NOTHING KEPT -- check --types against what the archive actually contains.`);
+}
+
 async function cmdHandcuffs(rest: string[]) {
   const { openDb, getConfig } = await import("./db/db.js");
   const { handcuffBoard } = await import("./inseason/handcuff.js");

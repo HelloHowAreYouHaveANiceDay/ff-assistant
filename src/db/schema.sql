@@ -365,6 +365,33 @@ CREATE TABLE IF NOT EXISTS ownership (
   PRIMARY KEY (league_id, player_id)
 );
 
+-- Historical FantasyPros ECR (DynastyProcess db_fpecr archive). Distinct from `ranking`, which
+-- holds ONE row per (player, source, season) and so cannot answer what the market believed in a
+-- PAST season -- which is what every backtest currently substitutes prior-season finishing rank for.
+CREATE TABLE IF NOT EXISTS ranking_history (
+  source       TEXT,                 -- fantasypros
+  ecr_type     TEXT,                 -- ro/rp = redraft overall/positional, wo/wp = weekly
+  season       INTEGER,
+  scrape_date  TEXT,                 -- ISO date; preseason vs in-season matters, do not mix them
+  player_id    TEXT,                 -- name_key, joins to player
+  name         TEXT,
+  pos          TEXT,
+  team         TEXT,
+  ecr          REAL,                 -- expert consensus rank
+  sd           REAL,                 -- dispersion of expert opinion
+  best         REAL,
+  worst        REAL,
+  fetched_at   TEXT,
+  -- POSITION IS PART OF THE KEY. name_key alone merges distinct people who share a name:
+  -- "A.J. Green" is both a WR and a DB, "Anthony Brown" both a QB and a DB. Without pos in the key
+  -- one silently overwrites the other on any shared scrape date -- 64 ids spanned multiple positions
+  -- in the first load. It also keeps a genuine reclassification (Ojulari LB -> EDGE) as two rows,
+  -- which is the honest record of what the rankers actually published.
+  PRIMARY KEY (source, ecr_type, scrape_date, player_id, pos)
+);
+CREATE INDEX IF NOT EXISTS idx_rankhist_season ON ranking_history (season, ecr_type, scrape_date);
+CREATE INDEX IF NOT EXISTS idx_rankhist_player ON ranking_history (player_id, season);
+
 CREATE TABLE IF NOT EXISTS matchup (
   league_id        TEXT,
   week             INTEGER,
