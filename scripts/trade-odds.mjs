@@ -144,6 +144,7 @@ console.log(`evaluating ${only.length} one-for-one swaps at ${TRIALS} trials eac
 const baseAll = runAll(baseTeams);
 const out = [];
 let done = 0;
+const t0 = Date.now();
 for (const c of only) {
   const teams = clone(baseTeams);
   teams[meIdx].roster = teams[meIdx].roster.filter((p) => p.name !== c.give.name).concat([{ ...c.get }]);
@@ -154,11 +155,20 @@ for (const c of only) {
   out.push({
     ...c,
     dTitle: 100 * odds[meIdx].champion - base.title,
-    dPlayoff: 100 * odds[meIdx].playoff - base.playoff,
+    // `.playoffs`, not `.playoff`. I fixed this once in run() and left the SECOND caller wrong, so
+    // the header still read fine while every row printed NaN -- the recurring half-fix. The guard in
+    // runAll() proved the field exists and said nothing about whether each reader spells it right,
+    // which is the difference between checking a contract and checking every use of it.
+    dPlayoff: 100 * odds[meIdx].playoffs - base.playoff,
     dThem: 100 * (odds[c.ti].champion - baseAll[c.ti].champion),
     abbr: baseTeams[c.ti].name,
   });
-  if (++done % 25 === 0) process.stderr.write(`  ${done}/${only.length}\r`);
+  // NEWLINE, not a carriage return. A \r-terminated counter renders fine in a terminal and is
+  // useless the moment the run is redirected to a file: the line is rewritten in place, nothing is
+  // flushed as a record, and reading the tail shows a number far behind the truth. I killed two
+  // otherwise-healthy sweeps as "too slow" on exactly that misreading -- the profile says a
+  // candidate costs about a second, not the twenty-four I inferred from the stale counter.
+  if (++done % 25 === 0) process.stderr.write(`  ${done}/${only.length} (${((Date.now() - t0) / done).toFixed(0)}ms each)\n`);
 }
 out.sort((a, b) => b.dTitle - a.dTitle);
 console.log("  we give               we get                pos  partner                title    playoff   them");
@@ -170,6 +180,32 @@ for (const d of out.slice(0, 15)) {
     `${(d.dThem >= 0 ? "+" : "") + d.dThem.toFixed(2)}pp`.padStart(9),
   );
 }
+// PLAUSIBLY ACCEPTABLE DEALS -- the list above is dominated by proposals the other manager loses ten
+// to twenty points on, which are not offers, they are fantasies. A deal is only actionable if the
+// partner's own title odds survive it.
+// ABSOLUTE POINTS ARE THE WRONG YARDSTICK FOR THE PARTNER, and filtering on them alone produced a
+// misleading recommendation. A contender at 20% who drops 2.5pp has given up an eighth of his
+// equity; a team at 1.5% who drops 1.1pp has given up THREE QUARTERS of his. The absolute filter
+// waves the second one through as "barely costs him" and flags the first as expensive, which is
+// backwards -- it systematically steers offers toward teams with the least left to lose, who are
+// precisely the managers most likely to notice they are being asked to sell their season.
+//
+// So report BOTH, and rank by the relative loss. A team already out of it may still deal, but that
+// is a judgement about his motivation, not a claim that the trade is cheap for him.
+const okDeals = out
+  .map((d) => ({ ...d, themBase: 100 * baseAll[d.ti].champion, rel: 100 * baseAll[d.ti].champion > 0.2 ? d.dThem / (100 * baseAll[d.ti].champion) : -1 }))
+  .filter((d) => d.dTitle > noise && d.rel > -0.25)
+  .sort((a, b) => b.dTitle - a.dTitle);
+console.log(`\n  DEALS THE PARTNER MIGHT ACTUALLY TAKE (he keeps >=75% of his own title equity):`);
+console.log("  we give               we get                pos  partner              us       them   (their base -> % of equity lost)");
+for (const d of okDeals.slice(0, 12)) {
+  console.log(
+    `  ${d.give.name.slice(0, 20).padEnd(20)}  ${d.get.name.slice(0, 20).padEnd(20)}  ${d.get.pos.padEnd(3)}  ${String(d.abbr).slice(0, 18).padEnd(18)} ` +
+    `${(d.dTitle >= 0 ? "+" : "") + d.dTitle.toFixed(2)}pp`.padStart(9) + `${(d.dThem >= 0 ? "+" : "") + d.dThem.toFixed(2)}pp`.padStart(9) +
+    `   (${d.themBase.toFixed(1)}% -> ${(-100 * d.rel).toFixed(0)}% lost)`);
+}
+if (!okDeals.length) console.log("  (none -- every trade that materially helps us takes a quarter or more of the partner's equity)");
+
 const noise = 2 * Math.sqrt(base.title * (100 - base.title) / TRIALS);
 console.log(`\n  A delta smaller than about ${noise.toFixed(2)}pp is inside this run's own noise even`);
 console.log(`  with common random numbers -- raise the trial count before acting on a close call.`);
@@ -183,11 +219,19 @@ const flags = [];
 
 // 1. Strict dominance. Receiving a strictly better player at the SAME position for the same cost
 //    cannot lower our title odds by more than noise.
+// SAME PARTNER ONLY, and the first version of this got it wrong in an instructive way. It compared
+// across teams and reported six "violations" -- Lamar Jackson (375) scoring 1.9pp WORSE than Joe
+// Burrow (350), and so on. Every pair was on a DIFFERENT team, so the comparison confounded "is this
+// player better" with "which rival did we just weaken". Taking a stud off a genuine contender helps
+// us twice; taking the same stud off a team that was going to miss the playoffs anyway helps once.
+// That is the simulator being RIGHT about a real effect, and it is worth more than the check was:
+// who you trade with matters nearly as much as what you get, and a value-based trade tool cannot see
+// that at all. Held to the same partner, the check means what it claims.
 for (const d of out) {
-  const same = out.filter((x) => x.give.name === d.give.name && x.get.pos === d.get.pos && x.get.proj > d.get.proj + 20);
+  const same = out.filter((x) => x.ti === d.ti && x.give.name === d.give.name && x.get.pos === d.get.pos && x.get.proj > d.get.proj + 20);
   for (const better of same) {
     if (better.dTitle < d.dTitle - noise) {
-      flags.push(`DOMINANCE: giving ${d.give.name}, getting the BETTER ${better.get.name} (${better.get.proj.toFixed(0)}) ` +
+      flags.push(`DOMINANCE (same partner ${d.abbr}): giving ${d.give.name}, the BETTER ${better.get.name} (${better.get.proj.toFixed(0)}) ` +
         `scores ${better.dTitle.toFixed(2)}pp but the worse ${d.get.name} (${d.get.proj.toFixed(0)}) scores ${d.dTitle.toFixed(2)}pp`);
     }
   }
