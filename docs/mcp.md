@@ -163,6 +163,22 @@ is no path to the answer that skips logging.
   does not overturn a projection gap. Check `pricedPlayoffGames` -- early in the season most
   playoff-week games have no posted line yet.
 
+**Verified against the live league (2026-09-08, read-only, through the app bridge.)** All five
+read-only verbs run end to end on the real sixteen rosters and the REAL schedule; `season_odds`
+returns 49.4% playoffs / 7.1% title for us against a 6.25% random baseline, and every conservation
+law holds on the real data as well as on the fixture.
+
+```
+node --import tsx scripts/copilot-crosscheck.mjs --schedule real --week 1
+```
+
+That script exists because a fixture cannot tell you the REAL bye column arrived populated or that
+the REAL injury table joins on the key the optimizer looks up. Two of its checks are POSITIVE
+CONTROLS -- "no starter is ruled OUT" passes vacuously if the availability map is empty, so it also
+asserts the store carries OUT designations at all (21 of 93 rows) and that our roster is unavailable
+somewhere across weeks 1-18 (7 of 18). And the OUT check is fault-injected in place: the same
+predicate is handed a lineup containing a man the store rules out, and must flag him.
+
 The eleven scripts these absorbed (`scripts/season-odds.mjs`, `trade-odds.mjs`, `trade-check.mjs`,
 `trade-finder.mjs`, `win-win.mjs`, `waiver-check.mjs`, `waiver-targets.mjs`, `depth-risk.mjs`,
 `power-rankings.mjs`, `playoff-sos.mjs`, `season-odds-spread.mjs`) are stamped DEPRECATED and kept,
