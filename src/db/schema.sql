@@ -1008,3 +1008,97 @@ CREATE TABLE IF NOT EXISTS feat_coverage (
   non_null    INTEGER,
   updated_at  TEXT,
   PRIMARY KEY (table_name, column_name, season));
+-- ================= WEEKLY TRACK =================
+--
+-- feat_player_week_model is the point-in-time feature view a WEEKLY model trains and serves from.
+-- It is a separate table from feat_player_week on purpose: that one is the raw week fact (schedule,
+-- usage-to-date, target), this one adds the derived, as-of-dated columns a weekly model needs and
+-- carries an as_of that is the day before the WEEK'S FIRST KICKOFF anywhere in the league -- earlier
+-- and therefore stricter than feat_player_week's per-team anchor.
+--
+-- THE INVARIANT: a row for (season Y, week w) may contain nothing dated on or after that as_of.
+-- src/weekly/features.ts states the as-of rule beside every column, and test/weekly-leakage.test.ts
+-- perturbs week w's source data and asserts no week-w feature moves.
+CREATE TABLE IF NOT EXISTS feat_player_week_model (
+  feat_key        TEXT,
+  player_sk       TEXT,
+  season          INTEGER,
+  week            INTEGER,
+  as_of           TEXT,              -- day before the week's FIRST kickoff, league-wide
+  name            TEXT,
+  pos             TEXT,
+  team            TEXT,
+  opponent        TEXT,
+  home            INTEGER,
+  is_bye          INTEGER,
+  season_line_pg  REAL,              -- preseason season projection / games, as of Y-09-01
+  td_games        INTEGER,           -- games played through w-1
+  td_ppg          REAL,              -- points per game through w-1
+  t4_mean         REAL,              -- mean of the last <=4 games played before w
+  t4_sd           REAL,              -- population sd of those same games (NULL when <2 games)
+  td_fd           REAL,              -- first downs per game through w-1
+  td_ts           REAL,              -- target share per game through w-1
+  td_attempts     REAL,
+  td_rush_yards   REAL,
+  dvp_mult        REAL,              -- opponent defence-vs-position multiplier, weeks < w + prior yr
+  dvp_n           INTEGER,           -- opponent games inside season Y that fed it
+  spread_line     REAL,
+  total_line      REAL,
+  implied_team_total REAL,
+  days_rest       REAL,              -- days since this team's previous game (NULL in its first)
+  -- ------- TARGET -------
+  pts             REAL,
+  updated_at      TEXT,
+  PRIMARY KEY (season, week, feat_key)
+);
+CREATE INDEX IF NOT EXISTS idx_fpwm_sk ON feat_player_week_model (player_sk, season, week);
+CREATE INDEX IF NOT EXISTS idx_fpwm_pos ON feat_player_week_model (season, week, pos);
+
+-- raw_espn_projection: ESPN's OWN weekly projection, snapshotted read-only through the app bridge.
+-- A third baseline the weekly model has to beat to be worth serving. `as_of` is when the snapshot
+-- was taken, and it is the whole value of the table: a projection read after the games is not a
+-- projection.
+CREATE TABLE IF NOT EXISTS raw_espn_projection (
+  season          INTEGER,
+  week            INTEGER,
+  espn_player_id  TEXT,
+  name            TEXT,
+  pos             TEXT,
+  proj_pts        REAL,
+  as_of           TEXT,
+  fetched_at      TEXT,
+  PRIMARY KEY (season, week, espn_player_id)
+);
+
+-- scorecard_prediction is the forward record: what we said, BEFORE it could be contaminated. A row
+-- is written once and never updated -- a prediction you can edit after the fact is not a prediction,
+-- so the insert is OR IGNORE and re-running the snapshot is a no-op rather than a rewrite.
+CREATE TABLE IF NOT EXISTS scorecard_prediction (
+  season          INTEGER,
+  week            INTEGER,           -- 0 for season-long kinds
+  kind            TEXT,              -- 'weekly' | 'season' | 'odds'
+  model           TEXT,              -- 'weekly' | 'season_line' | 'shipped_week' | 'trailing4' | 'espn'
+  subject         TEXT,              -- feat_key for player kinds, team/owner id for odds
+  name            TEXT,
+  pos             TEXT,
+  value           REAL,
+  p10             REAL,
+  p90             REAL,
+  as_of           TEXT,
+  created_at      TEXT,
+  PRIMARY KEY (season, week, kind, model, subject)
+);
+
+-- scorecard_result is the scored side, rebuilt from actuals whenever a week completes. Rebuildable
+-- BY DESIGN (predictions are not): scoring is a pure function of a frozen prediction and an actual.
+CREATE TABLE IF NOT EXISTS scorecard_result (
+  season          INTEGER,
+  week            INTEGER,
+  kind            TEXT,
+  model           TEXT,
+  metric          TEXT,              -- 'rmse' | 'crps' | 'coverage' | 'lineup_pts' | 'brier' | 'n'
+  value           REAL,
+  n               INTEGER,
+  scored_at       TEXT,
+  PRIMARY KEY (season, week, kind, model, metric)
+);

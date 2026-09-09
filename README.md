@@ -142,6 +142,13 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   team-mates out, depth rank) and `feat_player_season_ext` (draft capital, contract year, prior-season
   usage, September 1 depth and injury, preseason ADP), plus `feat_coverage`. It never rewrites the
   Phase 2a tables, so it can run before or after `build-features`.
+- **Weekly model (`docs/weekly.md`):** `build-weekly-features` (the point-in-time
+  `feat_player_week_model` view, with a leakage guard that is fault-injected against its own
+  detector), `evaluate-weekly` (nested by season; the decision metric is LINEUP REGRET, not RMSE),
+  `scorecard --season 2026` (freezes predictions before kickoff and scores each settled week; the
+  prediction table is write-once so a mid-season model change cannot rewrite its own record).
+  Trainer: `uv run --with scikit-learn --with numpy tools/train_weekly.py --db data/ff.db
+  --seasons 2010-2025 --out data/weekly-artifact.json`.
 
 ## What the harness decided (docs/edges.md, docs/validation.md)
 

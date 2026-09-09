@@ -148,6 +148,13 @@ async function main() {
       return cmdProjections(rest);
     case "refresh":
       return cmdRefresh(rest);
+    // ---- weekly track (src/weekly/) ----
+    case "build-weekly-features":
+      return cmdBuildWeeklyFeatures(rest);
+    case "evaluate-weekly":
+      return cmdEvaluateWeekly(rest);
+    case "scorecard":
+      return cmdScorecard(rest);
     default:
       console.log(
         "commands:\n" +
@@ -2662,6 +2669,83 @@ function cmdRank(rest: string[]) {
 function valueOf(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
   return i >= 0 ? args[i + 1] : undefined;
+}
+
+// ==================================================================================================
+// WEEKLY TRACK COMMANDS. Everything they call lives under src/weekly/; the imports are dynamic so
+// the CLI's start-up cost does not grow for the verbs that never touch the weekly path.
+// ==================================================================================================
+
+/** `--seasons 2010-2025` or `--seasons 2024`. */
+function seasonRange(spec: string | undefined, fallback: [number, number]): number[] {
+  const [lo, hi] = spec
+    ? (() => { const p = spec.split("-").map(Number); return [p[0], p.length > 1 ? p[1] : p[0]]; })()
+    : fallback;
+  const out: number[] = [];
+  for (let y = lo; y <= hi; y++) out.push(y);
+  return out;
+}
+
+async function cmdBuildWeeklyFeatures(rest: string[]) {
+  const { buildWeekModelFeatures, weeklyCoverage } = await import("./weekly/features.js");
+  const seasons = seasonRange(valueOf(rest, "--seasons"), [2010, 2025]);
+  const cur = valueOf(rest, "--current-season");
+  const res = await buildWeekModelFeatures({
+    dbPath: valueOf(rest, "--db"), seasons,
+    currentSeason: cur ? Number(cur) : undefined,
+    artifactPath: valueOf(rest, "--artifact"),
+  });
+  console.log(`feat_player_week_model: ${res.rows} rows over ${seasons.length} seasons`);
+  const db = openDb(valueOf(rest, "--db"));
+  try {
+    console.log("season  rows   " + ["season_line_pg", "td_ppg", "t4_mean", "dvp_mult", "spread_line", "days_rest", "pts"].map((c) => c.padStart(15)).join(""));
+    for (const c of weeklyCoverage(db, seasons)) {
+      const pct = (k: string) => (c.rows ? ((100 * c.cols[k]) / c.rows).toFixed(1) + "%" : "-").padStart(15);
+      console.log(`${c.season}  ${String(c.rows).padStart(5)}   ` +
+        ["season_line_pg", "td_ppg", "t4_mean", "dvp_mult", "spread_line", "days_rest", "pts"].map(pct).join(""));
+    }
+  } finally { db.close(); }
+}
+
+async function cmdScorecard(rest: string[]) {
+  const { runScorecard, formatScorecard } = await import("./weekly/scorecard.js");
+  const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
+  // The live season has no played weeks, so its rows come from the schedule and the board rather
+  // than from history. `--no-forward` skips it for a season already in feat_player_week_model.
+  if (!rest.includes("--no-forward")) {
+    const { buildForwardWeeks } = await import("./weekly/features.js");
+    const f = await buildForwardWeeks({
+      dbPath: valueOf(rest, "--db"), season, useTeamOdds: rest.includes("--team-odds"),
+    });
+    console.log(`forward features: ${f.rows} rows, ${f.players} players x ${f.weeks} weeks; ` +
+      `${f.withLine} with a season line, ${f.withLines} with a published spread; ` +
+      `weeks already played: ${f.playedWeeks.join(",") || "(none)"}`);
+  }
+  const res = await runScorecard({
+    dbPath: valueOf(rest, "--db"), season,
+    snapshot: !rest.includes("--score-only"),
+    score: !rest.includes("--snapshot-only"),
+    espn: rest.includes("--espn"),
+    week: valueOf(rest, "--week") ? Number(valueOf(rest, "--week")) : undefined,
+    today: valueOf(rest, "--today"),
+    rosters: valueOf(rest, "--rosters") ? Number(valueOf(rest, "--rosters")) : undefined,
+  });
+  if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
+  else console.log(formatScorecard(res));
+}
+
+async function cmdEvaluateWeekly(rest: string[]) {
+  const { evaluateWeekly, formatWeeklyReport } = await import("./weekly/evaluate.js");
+  const res = await evaluateWeekly({
+    dbPath: valueOf(rest, "--db"),
+    seasons: seasonRange(valueOf(rest, "--seasons"), [2012, 2025]),
+    trainSeasons: seasonRange(valueOf(rest, "--train-seasons"), [2010, 2025]),
+    rosters: Number(valueOf(rest, "--rosters") ?? 300),
+    features: valueOf(rest, "--features") ?? "all",
+    keepArtifacts: valueOf(rest, "--keep-artifacts"),
+  });
+  if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
+  else console.log(formatWeeklyReport(res));
 }
 
 main().catch((err) => {

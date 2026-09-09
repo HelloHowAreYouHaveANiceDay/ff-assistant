@@ -1,0 +1,245 @@
+{
+  "schema": 1,
+  "kind": "weekly",
+  "fittedFrom": "tools/train_weekly.py",
+  "fittedAt": "2026-09-08",
+  "seasons": [
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "holdoutSeason": null,
+  "target": "ratio_to_season_line",
+  "population": "rostered",
+  "trainMinLine": 3.0,
+  "features": [],
+  "coef": {
+    "QB": {
+      "mean": {
+        "intercept": 1.0
+      },
+      "p10": {
+        "intercept": 0.0
+      },
+      "p50": {
+        "intercept": 0.9257808350061796
+      },
+      "p90": {
+        "intercept": 2.726299932947121
+      }
+    },
+    "RB": {
+      "mean": {
+        "intercept": 1.0
+      },
+      "p10": {
+        "intercept": 0.0
+      },
+      "p50": {
+        "intercept": 0.6744547973167399
+      },
+      "p90": {
+        "intercept": 2.5643340100594982
+      }
+    },
+    "WR": {
+      "mean": {
+        "intercept": 1.0
+      },
+      "p10": {
+        "intercept": 0.0
+      },
+      "p50": {
+        "intercept": 0.7201052230849212
+      },
+      "p90": {
+        "intercept": 2.503663164093361
+      }
+    },
+    "TE": {
+      "mean": {
+        "intercept": 1.0
+      },
+      "p10": {
+        "intercept": 0.0
+      },
+      "p50": {
+        "intercept": 0.7570941828076
+      },
+      "p90": {
+        "intercept": 2.656780228768374
+      }
+    },
+    "K": {
+      "mean": {
+        "intercept": 1.0
+      },
+      "p10": {
+        "intercept": 0.0
+      },
+      "p50": {
+        "intercept": 1.0262806236080178
+      },
+      "p90": {
+        "intercept": 2.1900710877289806
+      }
+    },
+    "DST": {
+      "mean": {
+        "intercept": 1.0
+      },
+      "p10": {
+        "intercept": -0.1696316871991689
+      },
+      "p50": {
+        "intercept": 0.8090666113608167
+      },
+      "p90": {
+        "intercept": 2.3416110699676476
+      }
+    }
+  },
+  "clamps": {
+    "lo": 0.0,
+    "hi": 4.0
+  },
+  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 1.0) are 29.5% of the training rows.",
+  "golden": [
+    {
+      "pos": "RB",
+      "line": 14.5,
+      "f": {
+        "season_line_pg": 14.5,
+        "td_games": 6,
+        "td_ppg": 15.2,
+        "t4_mean": 17.0,
+        "t4_sd": 4.4,
+        "td_fd": 4.0,
+        "td_ts": 0.15,
+        "dvp_mult": 1.12,
+        "dvp_n": 6,
+        "home": 1,
+        "spread_line": -3.5,
+        "total_line": 47.5,
+        "implied_team_total": 25.5,
+        "days_rest": 7,
+        "week_no": 7
+      },
+      "expect": {
+        "mean": 14.5,
+        "p10": 0.0,
+        "p50": 9.779594561092727,
+        "p90": 37.182843145862726
+      }
+    },
+    {
+      "pos": "WR",
+      "line": 11.0,
+      "f": {
+        "season_line_pg": 11.0,
+        "td_games": 3,
+        "td_ppg": 6.1,
+        "t4_mean": 6.1,
+        "t4_sd": 3.0,
+        "td_fd": 2.2,
+        "td_ts": 0.24,
+        "dvp_mult": 0.88,
+        "dvp_n": 3,
+        "home": 0,
+        "spread_line": 6.5,
+        "total_line": 41.0,
+        "implied_team_total": 17.25,
+        "days_rest": 10,
+        "week_no": 4
+      },
+      "expect": {
+        "mean": 11.0,
+        "p10": 0.0,
+        "p50": 7.921157453934133,
+        "p90": 27.54029480502697
+      }
+    },
+    {
+      "pos": "QB",
+      "line": 19.5,
+      "f": {
+        "season_line_pg": 19.5,
+        "td_games": 11,
+        "td_ppg": 21.0,
+        "t4_mean": 24.5,
+        "t4_sd": 6.0,
+        "td_attempts": 35.0,
+        "td_rush_yards": 30.0,
+        "dvp_mult": 1.05,
+        "dvp_n": 11,
+        "home": 1,
+        "spread_line": -7.0,
+        "total_line": 49.5,
+        "implied_team_total": 28.25,
+        "days_rest": 6,
+        "week_no": 12
+      },
+      "expect": {
+        "mean": 19.5,
+        "p10": 0.0,
+        "p50": 18.0527262826205,
+        "p90": 53.162848692468856
+      }
+    },
+    {
+      "pos": "TE",
+      "line": 7.5,
+      "f": {
+        "season_line_pg": 7.5,
+        "td_games": 1,
+        "td_ppg": 2.0,
+        "t4_mean": 2.0,
+        "t4_sd": null,
+        "td_fd": 0.0,
+        "td_ts": 0.08,
+        "dvp_mult": 1.0,
+        "dvp_n": 1,
+        "home": 0,
+        "spread_line": 1.0,
+        "total_line": 44.0,
+        "implied_team_total": 21.5,
+        "days_rest": 14,
+        "week_no": 3
+      },
+      "expect": {
+        "mean": 7.5,
+        "p10": 0.0,
+        "p50": 5.678206371057,
+        "p90": 19.925851715762803
+      }
+    },
+    {
+      "pos": "RB",
+      "line": 9.0,
+      "f": {
+        "season_line_pg": 9.0,
+        "week_no": 1,
+        "td_games": 0
+      },
+      "expect": {
+        "mean": 9.0,
+        "p10": 0.0,
+        "p50": 6.070093175850658,
+        "p90": 23.079006090535483
+      }
+    }
+  ]
+}
