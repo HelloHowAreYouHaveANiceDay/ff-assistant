@@ -40,6 +40,42 @@ interface EspnConfig { season: number; slots: string[]; teams?: number; scoring?
 
 const NFL_WEEKS = 17;
 
+/**
+ * ONE SEASON'S FORMAT, from that season's own `scheduleSettings`.
+ *
+ * Deliberately returns `null` rather than a partial or defaulted block when any required field is
+ * missing. A half-read format is worse than none: it looks configured, and the consumer that gets it
+ * -- the per-season calibration -- would then score a season against a format nobody played. The
+ * live path (`formatFromEspnSettings`) THROWS on the same input, because there the answer is needed
+ * now and a wrong calendar is an immediate defect; here a missing season is an ordinary fact (ESPN
+ * 404s every year before this league existed) and the sweep must not abort on one.
+ */
+export function seasonFormat(ss: Record<string, unknown> | undefined): SeasonSnapshot["format"] {
+  if (!ss || typeof ss !== "object") return null;
+  const num = (k: string): number | null => {
+    const v = ss[k];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  };
+  const regWeeks = num("matchupPeriodCount");
+  const playoffTeams = num("playoffTeamCount");
+  const playoffRoundWeeks = num("playoffMatchupPeriodLength");
+  const tiebreak = ss.playoffSeedingRule;
+  const divisions = ss.divisions;
+  if (regWeeks == null || playoffTeams == null || playoffRoundWeeks == null) return null;
+  if (typeof tiebreak !== "string" || !tiebreak) return null;
+  if (ss.playoffReseed == null || !Array.isArray(divisions)) return null;
+  return {
+    regWeeks, playoffTeams, playoffRoundWeeks,
+    playoffReseed: Boolean(ss.playoffReseed),
+    // Same rule as the live block: ESPN does not publish "division winners seeded first" as a flag,
+    // it is implied by HAVING divisions. With one division the two rules are provably the same rule,
+    // so "record" there is a fact rather than an assumption.
+    seedingRule: divisions.length > 1 ? "division-winners-first" : "record",
+    tiebreak,
+    divisionCount: divisions.length,
+  };
+}
+
 export class EspnLeague implements LeagueProvider {
   readonly platform = "espn";
   private constructor(
@@ -269,7 +305,7 @@ export class EspnLeague implements LeagueProvider {
   async history(seasons: number[]): Promise<SeasonSnapshot[]> {
     const out: SeasonSnapshot[] = [];
     for (const season of seasons) {
-      const empty = { season, size: null, auctionBudget: null, pprPoints: null, slotCounts: {}, teams: [], picks: [] };
+      const empty = { season, size: null, auctionBudget: null, pprPoints: null, slotCounts: {}, format: null, teams: [], picks: [] };
       let settings;
       try {
         settings = await this.wv.fetchJson<{ settings?: {
@@ -277,6 +313,7 @@ export class EspnLeague implements LeagueProvider {
           draftSettings?: { auctionBudget?: number };
           scoringSettings?: { scoringItems?: { statId: number; points: number }[] };
           rosterSettings?: { lineupSlotCounts?: Record<string, number> };
+          scheduleSettings?: Record<string, unknown>;
         } }>(`${HOST}/seasons/${season}/segments/0/leagues/${this.leagueId}?view=mSettings`);
       } catch (e) {
         out.push({ ...empty, available: false, note: String((e as Error).message).slice(0, 120) });
@@ -321,6 +358,7 @@ export class EspnLeague implements LeagueProvider {
         size: s.size ?? null,
         auctionBudget: s.draftSettings?.auctionBudget ?? null,
         pprPoints: rec?.points ?? null,
+        format: seasonFormat(s.scheduleSettings),
         slotCounts, teams, picks,
       });
     }

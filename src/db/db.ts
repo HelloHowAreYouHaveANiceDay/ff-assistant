@@ -101,6 +101,32 @@ function addColumns(db: DB): void {
     // The share of the ROOM'S money this pick took. 14-team and 16-team seasons are $2,800 and
     // $3,200 rooms, and comparing raw dollars across them compares two different currencies.
     ["fact_draft_pick", "price_share", "REAL"],
+    // THE LEAGUE'S FORMAT, PER SEASON. Not one format with a season column bolted on -- the format
+    // is the thing that CHANGES, and the calibration had been assuming it did not.
+    //
+    // Phase 2c scored playoff-berth predictions for 2018-2025 against a constant 7-team field. This
+    // league ran a SIX-team field from 2018 to 2020 (and 14 teams, and one division), so the
+    // constant told the scorer that eight of fourteen teams missed the playoffs when in fact eight
+    // of fourteen did -- a berth is 43% likely in a 6-of-14 season and 44% in a 7-of-16 one, and the
+    // seeding rule differs outright: one division cannot have division winners. Every one of these
+    // columns is read from ESPN's own history settings, per season, and none is defaulted.
+    //
+    // They go on `raw_league_season` by ALTER rather than in schema.sql because schema.sql is only
+    // ever reached by a FRESH store (every statement is CREATE ... IF NOT EXISTS), so a new column
+    // added there lands on nobody's existing database.
+    ["raw_league_season", "reg_weeks", "INTEGER"],
+    ["raw_league_season", "playoff_teams", "INTEGER"],
+    ["raw_league_season", "playoff_round_weeks", "INTEGER"],
+    ["raw_league_season", "playoff_reseed", "INTEGER"],
+    ["raw_league_season", "seeding_rule", "TEXT"],
+    ["raw_league_season", "division_count", "INTEGER"],
+    // ...and carried onto the modelled layer, so a scorer joins one table rather than reaching back
+    // into raw.
+    ["fact_team_season", "reg_weeks", "INTEGER"],
+    ["fact_team_season", "playoff_teams", "INTEGER"],
+    ["fact_team_season", "playoff_reseed", "INTEGER"],
+    ["fact_team_season", "seeding_rule", "TEXT"],
+    ["fact_team_season", "division_count", "INTEGER"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];

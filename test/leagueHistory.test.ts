@@ -29,6 +29,10 @@ function rawDb(pickPk = "(league_id,season,pick_no)"): DB {
 CREATE TABLE raw_league_season (
   league_id TEXT NOT NULL, season INTEGER NOT NULL, available INTEGER NOT NULL, size INTEGER,
   auction_budget REAL, ppr_points REAL, slot_counts_json TEXT, note TEXT, fetched_at TEXT NOT NULL,
+  -- The per-season format columns. In a real store these are added by db.ts's ALTER path rather
+  -- than by schema.sql; here the fixture declares them, because the loader must write them.
+  reg_weeks INTEGER, playoff_teams INTEGER, playoff_round_weeks INTEGER, playoff_reseed INTEGER,
+  seeding_rule TEXT, division_count INTEGER,
   PRIMARY KEY (league_id, season));
 CREATE TABLE raw_league_team_season (
   league_id TEXT NOT NULL, season INTEGER NOT NULL, team_id TEXT NOT NULL, name TEXT, owner_id TEXT, owner TEXT,
@@ -152,6 +156,8 @@ test("FAULT: a name-keyed pick table cannot hold a repeated player", () => {
   CREATE TABLE raw_league_season (
     league_id TEXT NOT NULL, season INTEGER NOT NULL, available INTEGER NOT NULL, size INTEGER,
     auction_budget REAL, ppr_points REAL, slot_counts_json TEXT, note TEXT, fetched_at TEXT NOT NULL,
+    reg_weeks INTEGER, playoff_teams INTEGER, playoff_round_weeks INTEGER, playoff_reseed INTEGER,
+    seeding_rule TEXT, division_count INTEGER,
     PRIMARY KEY (league_id, season));
   CREATE TABLE raw_league_team_season (league_id TEXT, season INTEGER, team_id TEXT, name TEXT, owner_id TEXT, owner TEXT,
     acquisitions INTEGER, faab_spent REAL, drops INTEGER, trades INTEGER, lineup_moves INTEGER,

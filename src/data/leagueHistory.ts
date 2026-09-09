@@ -53,9 +53,18 @@ export function loadLeagueHistory(
   schedules: Record<string, LeagueSchedule>,
   fetchedAt: string,
 ): LeagueHistoryCounts {
-  const upSeason = db.prepare(`INSERT INTO raw_league_season VALUES (@l,@s,@a,@size,@b,@ppr,@slots,@note,@now)
+  // NAMED COLUMNS, not `VALUES (...)`. The per-season format columns are added by db.ts's ALTER
+  // path rather than by schema.sql (schema.sql only ever reaches a fresh store), so the column COUNT
+  // differs between a fresh database and a migrated one -- and a positional INSERT is exactly the
+  // statement that breaks silently in one of those two worlds.
+  const upSeason = db.prepare(`INSERT INTO raw_league_season
+      (league_id, season, available, size, auction_budget, ppr_points, slot_counts_json, note, fetched_at,
+       reg_weeks, playoff_teams, playoff_round_weeks, playoff_reseed, seeding_rule, division_count)
+    VALUES (@l,@s,@a,@size,@b,@ppr,@slots,@note,@now,@rw,@pt,@prw,@prs,@sr,@dc)
     ON CONFLICT(league_id,season) DO UPDATE SET available=excluded.available,size=excluded.size,auction_budget=excluded.auction_budget,
-    ppr_points=excluded.ppr_points,slot_counts_json=excluded.slot_counts_json,note=excluded.note,fetched_at=excluded.fetched_at`);
+    ppr_points=excluded.ppr_points,slot_counts_json=excluded.slot_counts_json,note=excluded.note,fetched_at=excluded.fetched_at,
+    reg_weeks=excluded.reg_weeks,playoff_teams=excluded.playoff_teams,playoff_round_weeks=excluded.playoff_round_weeks,
+    playoff_reseed=excluded.playoff_reseed,seeding_rule=excluded.seeding_rule,division_count=excluded.division_count`);
   const upTeam = db.prepare(`INSERT INTO raw_league_team_season VALUES (@l,@s,@id,@name,@oid,@owner,@acq,@faab,@drops,@trades,@moves,@abw,@w,@lo,@pf,@fr,@ps,@now)
     ON CONFLICT(league_id,season,team_id) DO UPDATE SET name=excluded.name,owner_id=excluded.owner_id,owner=excluded.owner,
     acquisitions=excluded.acquisitions,faab_spent=excluded.faab_spent,drops=excluded.drops,trades=excluded.trades,lineup_moves=excluded.lineup_moves,
@@ -75,6 +84,10 @@ export function loadLeagueHistory(
       upSeason.run({
         l: leagueId, s: s.season, a: s.available ? 1 : 0, size: s.size ?? null, b: s.auctionBudget ?? null,
         ppr: s.pprPoints ?? null, slots: JSON.stringify(s.slotCounts ?? {}), note: s.note ?? null, now: fetchedAt,
+        rw: s.format?.regWeeks ?? null, pt: s.format?.playoffTeams ?? null,
+        prw: s.format?.playoffRoundWeeks ?? null,
+        prs: s.format ? (s.format.playoffReseed ? 1 : 0) : null,
+        sr: s.format?.seedingRule ?? null, dc: s.format?.divisionCount ?? null,
       });
       counts.seasons++;
       if (s.available) counts.available++;

@@ -187,6 +187,27 @@ export interface SeasonSnapshot {
    *  every prior year's pass-catcher spend an understatement of what the room will now pay. */
   pprPoints: number | null;
   slotCounts: Record<string, number>;
+  /**
+   * THE SEASON'S OWN CALENDAR AND PLAYOFF FORMAT, from that season's `scheduleSettings`.
+   *
+   * The format is not a property of the league, it is a property of the SEASON: this room played 13
+   * weeks with a 6-team field and one division through 2020, then 14 weeks, then grew to 16 teams
+   * and four divisions in 2025 and back to 13 weeks in 2026. Any historical scorer that assumes one
+   * format is measuring a league that never existed, quietly and with plausible numbers.
+   *
+   * `null` when the season is unavailable or ESPN returned no scheduleSettings -- never defaulted.
+   */
+  format: {
+    regWeeks: number;
+    playoffTeams: number;
+    playoffRoundWeeks: number;
+    playoffReseed: boolean;
+    /** Our seeding vocabulary: "record" with one division, "division-winners-first" with more. */
+    seedingRule: SeedingRule;
+    /** ESPN's own tiebreak name, e.g. TOTAL_POINTS_SCORED. */
+    tiebreak: string;
+    divisionCount: number;
+  } | null;
   teams: SeasonTeam[];
   picks: DraftPick[];
 }

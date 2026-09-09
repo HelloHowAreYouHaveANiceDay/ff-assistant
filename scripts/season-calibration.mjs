@@ -66,6 +66,18 @@ const SEEDING = val("--seeding", "record");
 if (SEEDING !== "record" && SEEDING !== "division-winners-first") {
   throw new Error(`--seeding "${SEEDING}" is not a rule -- use record | division-winners-first.`);
 }
+// `--per-season-format` takes the field size, the seeding rule and the reseed flag from EACH
+// SEASON'S OWN ESPN settings (raw_league_season, populated by `ff ingest-raw league-history`)
+// instead of applying one rule to all eight. It is a flag rather than the default so the recorded
+// figures stay reproducible, and so the pair is a measurement rather than a replacement.
+//
+// `--field N` forces a CONSTANT field for every season. It exists only to reproduce the constant-7
+// arm that P49 is registered against; it is never the right way to score a league.
+const PER_SEASON_FORMAT = argv.includes("--per-season-format");
+const FIELD_OVERRIDE = val("--field", null) == null ? null : Number(val("--field", null));
+if (PER_SEASON_FORMAT && FIELD_OVERRIDE != null) {
+  throw new Error("--per-season-format and --field are contradictory: one reads the season's own field, the other overrides it.");
+}
 
 const db = new Database("data/ff.db", { readonly: true });
 const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
@@ -227,7 +239,19 @@ function buildSeason(season) {
     }
   }
 
-  const field = playoffFieldFor(teams.length);
+  // THE SEASON'S OWN FORMAT, from ESPN's settings for that season. `playoffFieldFor(teams.length)`
+  // is the fallback and it is a PROXY: it infers the field from the team count, which is right for
+  // this league's whole history and structurally incapable of being wrong out loud. `--field` forces
+  // a constant, which is the arm P49 is registered against.
+  const fmtRow = db.prepare(
+    "SELECT reg_weeks, playoff_teams, playoff_reseed, seeding_rule, division_count FROM raw_league_season WHERE season = ?",
+  ).get(season);
+  const espnField = fmtRow?.playoff_teams == null ? null : Number(fmtRow.playoff_teams);
+  const field = FIELD_OVERRIDE ?? ((PER_SEASON_FORMAT && espnField != null) ? espnField : playoffFieldFor(teams.length));
+  const fieldSource = FIELD_OVERRIDE != null ? `forced ${FIELD_OVERRIDE}`
+    : (PER_SEASON_FORMAT && espnField != null) ? "espn" : "team-count proxy";
+  const seasonSeeding = PER_SEASON_FORMAT && fmtRow?.seeding_rule ? String(fmtRow.seeding_rule) : SEEDING;
+  const seasonReseed = PER_SEASON_FORMAT && fmtRow?.playoff_reseed != null ? Boolean(Number(fmtRow.playoff_reseed)) : true;
 
   // DIVISIONS, from the league's own raw rows for THAT season -- not from today's four-division
   // config. 2018-2024 really did have one division and 2025 four, so a single hardcoded map would be
@@ -245,7 +269,7 @@ function buildSeason(season) {
     }
   }
 
-  return { season, teams, weeks, slots, reg, field, poolRank, replacement, matched, missed, divisionOf };
+  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -286,14 +310,14 @@ const perSeason = [];
 const bySeed = new Map();
 
 console.log(`SEASON-SIM CALIBRATION -- ${LO}-${HI}, ${TRIALS} trials, seed ${SEED}, seeding ${SEEDING}, per-fold artifacts from ${FOLD_DIR}\n`);
-console.log(`  season teams  reg  field  roster match   champion (seed)      sim's most likely champion`);
+console.log(`  season teams  reg  field(src)  seeding                 reseed  roster match   champion (seed)      sim's most likely champion`);
 
 for (const season of seasons) {
   const s = buildSeason(season);
   if (s.skip) { console.log(`  ${season}  SKIPPED -- ${s.skip}`); continue; }
   const odds = simulateSeasons(s.teams, s.weeks, vm, {
     weeks: s.weeks.length, playoffTeams: s.field, slots: s.slots, flexOk: ["RB", "WR", "TE"],
-    seeding: SEEDING, divisionOf: s.divisionOf,
+    seeding: s.seasonSeeding, divisionOf: s.divisionOf, playoffReseed: s.seasonReseed,
     projSd: 0.30, replacement: s.replacement, trials: TRIALS, seed: SEED, poolRank: s.poolRank,
     bootstrap: { outcomes, corr, calibration: "scale" },
     // A REAL POST-DRAFT ROSTER CAN BE SHORT AT A SLOT, and refusing to simulate it would drop the
@@ -335,10 +359,12 @@ for (const season of seasons) {
     }
   }
   const champ = s.teams.find((t) => t.outcome.champion);
-  console.log(`  ${season}  ${String(s.teams.length).padStart(4)}  ${String(s.reg).padStart(4)}  ${String(s.field).padStart(5)}  ` +
+  console.log(`  ${season}  ${String(s.teams.length).padStart(4)}  ${String(s.reg).padStart(4)}  ` +
+    `${String(s.field).padStart(2)} (${s.fieldSource.padEnd(16)})  ${s.seasonSeeding.padEnd(22)} ${s.seasonReseed ? "yes" : "no "}     ` +
     `${String(s.matched).padStart(4)}/${String(s.matched + s.missed).padEnd(4)}  ` +
     `${(champ ? `${champ.name} (${champ.outcome.seed})` : "?").padEnd(20)} ${simChamp ? `${simChamp.name} ${(100 * simChamp.p).toFixed(1)}%` : "-"}`);
-  perSeason.push({ season, teams: s.teams.length, field: s.field, matched: s.matched, missed: s.missed });
+  perSeason.push({ season, teams: s.teams.length, field: s.field, fieldSource: s.fieldSource,
+    seeding: s.seasonSeeding, reseed: s.seasonReseed, matched: s.matched, missed: s.missed });
 }
 
 if (!sim.playoff.length) { console.log("\nnothing scored."); process.exit(1); }

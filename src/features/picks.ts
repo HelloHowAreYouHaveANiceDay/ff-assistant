@@ -225,7 +225,7 @@ function liveConsensus(db: DB, yr: number, out: Map<string, { rank: number; sd: 
 
 export interface LeagueFactsResult {
   teamSeasons: number; matchups: number;
-  perSeason: { season: number; teams: number; games: number; champion: string | null; settled: boolean; playoffField: number; seedsAgree: boolean | null }[];
+  perSeason: { season: number; teams: number; games: number; champion: string | null; settled: boolean; playoffField: number; fieldSource: string; seedsAgree: boolean | null }[];
 }
 
 /**
@@ -253,6 +253,22 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
   const games = db.prepare(
     "SELECT league_id, season, week, home_id, away_id FROM raw_league_matchup ORDER BY season, week, home_id",
   ).all() as { league_id: string; season: number; week: number; home_id: string; away_id: string }[];
+  // THE SEASON'S OWN FORMAT, read from ESPN per season by `ingest-raw league-history`. Before this
+  // existed the field size was inferred from the team COUNT (`playoffFieldFor`), which is a proxy
+  // that happens to be right for this league's history and cannot ever be wrong out loud. Now the
+  // real number is available and the proxy is the fallback, reported when it is used.
+  const fmtBySeason = new Map<number, { regWeeks: number | null; playoffTeams: number | null; playoffReseed: number | null; seedingRule: string | null; divisionCount: number | null }>();
+  for (const r of db.prepare(
+    "SELECT season, reg_weeks, playoff_teams, playoff_reseed, seeding_rule, division_count FROM raw_league_season",
+  ).all() as Record<string, number | string | null>[]) {
+    fmtBySeason.set(Number(r.season), {
+      regWeeks: r.reg_weeks == null ? null : Number(r.reg_weeks),
+      playoffTeams: r.playoff_teams == null ? null : Number(r.playoff_teams),
+      playoffReseed: r.playoff_reseed == null ? null : Number(r.playoff_reseed),
+      seedingRule: r.seeding_rule == null ? null : String(r.seeding_rule),
+      divisionCount: r.division_count == null ? null : Number(r.division_count),
+    });
+  }
 
   const bySeason = new Map<number, Record<string, string | number | null>[]>();
   for (const r of rows) {
@@ -263,15 +279,18 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
   const insT = db.prepare(
     `INSERT INTO fact_team_season (league_id, season, team_id, team_name, owner_id, owner, wins, losses,
        points_for, playoff_seed, final_rank, champion, made_playoffs, settled, acquisitions, faab_spent,
-       drops, trades, lineup_moves, updated_at)
-     VALUES (@lg,@season,@team,@name,@oid,@owner,@w,@l,@pf,@seed,@rank,@champ,@playoffs,@settled,@acq,@faab,@drops,@trades,@moves,@now)
+       drops, trades, lineup_moves, updated_at,
+       reg_weeks, playoff_teams, playoff_reseed, seeding_rule, division_count)
+     VALUES (@lg,@season,@team,@name,@oid,@owner,@w,@l,@pf,@seed,@rank,@champ,@playoffs,@settled,@acq,@faab,@drops,@trades,@moves,@now,
+       @rw,@pt,@prs,@sr,@dc)
      ON CONFLICT(season, team_id) DO UPDATE SET
        team_name=excluded.team_name, owner=excluded.owner, owner_id=excluded.owner_id, wins=excluded.wins,
        losses=excluded.losses, points_for=excluded.points_for, playoff_seed=excluded.playoff_seed,
        final_rank=excluded.final_rank, champion=excluded.champion, made_playoffs=excluded.made_playoffs,
        settled=excluded.settled, acquisitions=excluded.acquisitions, faab_spent=excluded.faab_spent,
        drops=excluded.drops, trades=excluded.trades, lineup_moves=excluded.lineup_moves,
-       updated_at=excluded.updated_at`,
+       updated_at=excluded.updated_at, reg_weeks=excluded.reg_weeks, playoff_teams=excluded.playoff_teams,
+       playoff_reseed=excluded.playoff_reseed, seeding_rule=excluded.seeding_rule, division_count=excluded.division_count`,
   );
   const insM = db.prepare(
     `INSERT INTO fact_matchup (league_id, season, week, home_id, away_id, updated_at)
@@ -291,7 +310,10 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
         seed: r.playoff_seed == null ? null : Number(r.playoff_seed),
         rank: r.final_rank == null ? null : Number(r.final_rank),
       }));
-      const field = playoffFieldFor(list.length);
+      // ESPN'S OWN NUMBER FIRST, the size proxy only when ESPN has none for that season.
+      const sf = fmtBySeason.get(season);
+      const fieldSource = sf?.playoffTeams != null ? "espn" : "team-count proxy";
+      const field = sf?.playoffTeams ?? playoffFieldFor(list.length);
       const agrees = seedsAgreeAtField(seeded, field);
       let champion: string | null = null;
       for (const r of list) {
@@ -306,12 +328,14 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
           settled: settled ? 1 : 0,
           acq: r.acquisitions, faab: r.faab_spent, drops: r.drops, trades: r.trades, moves: r.lineup_moves,
           now,
+          rw: sf?.regWeeks ?? null, pt: sf?.playoffTeams ?? null, prs: sf?.playoffReseed ?? null,
+          sr: sf?.seedingRule ?? null, dc: sf?.divisionCount ?? null,
         });
         res.teamSeasons++;
       }
       const g = games.filter((x) => x.season === season);
       for (const x of g) { insM.run({ lg: x.league_id, season, week: x.week, home: x.home_id, away: x.away_id, now }); res.matchups++; }
-      res.perSeason.push({ season, teams: list.length, games: g.length, champion, settled, playoffField: field, seedsAgree: agrees });
+      res.perSeason.push({ season, teams: list.length, games: g.length, champion, settled, playoffField: field, fieldSource, seedsAgree: agrees });
     }
   })();
   db.close();
