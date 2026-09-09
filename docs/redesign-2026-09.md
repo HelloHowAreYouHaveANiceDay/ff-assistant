@@ -39,8 +39,8 @@ estimates of one quantity; they are answers to two different questions.
 | market model | our own projection plus one shared error of an asserted sd 0.30 | the real published FantasyPros consensus, shared error 0, per-bot view log-sd 0.20 |
 | churn | none -- the field never touches its roster | `--bot-churn`, at this room's observed waiver rate |
 | opponent book | `vor` -- our own valuation function | `price` -- fitted on this room's own 1,102 real picks |
-| seasons | 25 (2000-2024) | 4 usable (2021-2024); the ECR archive begins in 2020 and `--no-lookahead` drops the first |
-| projection | **actuals** -- it never opens the artifact | `--projection artifact`, the board being tested |
+| seasons | 25 (2000-2024) | at most 2020-2024; the ECR archive begins in 2020, so this arm can never reach earlier, and `--no-lookahead` drops the first season of whatever window is loaded (no prior year inside it). P32/P33 therefore ran on **four** seasons, 2021-2024 |
+| projection | **actuals** -- it never opens the artifact | **actuals** by default; P32/P33 add `--projection artifact` to put a BOARD under test |
 | result | **38.1% championships / 96% playoffs** | **14.5% / 49.0%** (V2, price book) |
 
 The tripwire reproducing to the season is the ONLY thing it is for. It says nothing about the board,
@@ -65,7 +65,7 @@ the table order.
 | 2c | `redesign/phase-2c-real-outcomes` | 9 (`8c2b5a1`..`825e915`) | ONE key space (staging reads the registry); the league's own history as facts; the price model refitted; the season simulator scored against eight seasons of real outcomes; the honest arbiter | **P16 FAILED** -- the title Brier is worse than uniform. The flagless arbiter becomes **38.1%** because the bot field was rebuilt from nine real drafts |
 | 2d | `redesign/phase-2d-weekly-features` | 5 (`6fc36d5`..`50dba8d`) | a two-part weekly model (will he play, then how much); per-position usage features admitted by the gate; the DAG node list derived | the gate refused a model that beats every baseline on accuracy, on a calibration clause it missed by five thousandths |
 | **3** | `redesign/phase-3-decision-layer` | 5 (`b126af4`..`668681f`) | roster-aware value; the derived bidder V3; the in-season objective re-based on P(playoffs); the odds accrual scorer | **P28 FAILED** -- V3 loses by 35 points of playoff rate in 12 of 12 seasons. V2 stays. The objective changed anyway |
-| **fin** | `redesign/final` | 5 (`89b798f`..`18d0a82`) | the 2d/3 merge; the four fenced leftovers closed; the new board arbitrated | **P32 and P33 both HELD** -- and the arm cannot detect anything under ~10pp, so "held" here mostly means "not adjudicated" |
+| **fin** | `redesign/final` | 8 (`89b798f`..HEAD) | the 2d/3 merge; the four fenced leftovers closed; the new board arbitrated | **P32 and P33 both HELD** -- and the arm cannot detect anything under ~10pp, so "held" here mostly means "not adjudicated" |
 
 **The chain, in order. It is now merged as far as `redesign/final`:**
 
@@ -82,10 +82,12 @@ main
   <- redesign/phase-2c-real-outcomes                     9 (8c2b5a1..825e915)
   <- redesign/phase-2d-weekly-features                   5 (6fc36d5..50dba8d)   siblings, both
      redesign/phase-3-decision-layer                     5 (b126af4..668681f)   cut from 825e915
-  <- redesign/final                                      5 (89b798f..18d0a82)
+  <- redesign/final                                      8 (89b798f..HEAD)
 ```
 
-`main..redesign/final` is **74 commits**. What remains for the owner is one merge of that branch,
+`main..redesign/final` carries the whole programme -- 78 commits as this was written; run
+`git rev-list --count main..redesign/final` for the current figure. What remains for the owner is one
+merge of that branch,
 not nine.
 
 The two siblings were built in parallel behind a file fence: 2d owned `src/weekly/**` (except
@@ -294,8 +296,9 @@ Three things have to be said with that, because "held" is doing very little work
   is nominally significant there (p = 0.032), but the unit of generalisation in this repo is the
   SEASON, not the trial, and the season-level interval contains zero comfortably. Reading the trial
   test as the answer is the specific mistake `scripts/paired-analysis.mjs` exists to prevent.
-- **The window is four seasons.** `--seasons 2020-2024` under `--no-lookahead` drops 2020, and the
-  FantasyPros archive cannot reach earlier. This arm can never have more.
+- **The window is four seasons.** `--no-lookahead` drops the first season of the loaded window,
+  because there is no prior year inside it, so `--seasons 2020-2024` scores 2021-2024. The
+  FantasyPros archive begins in 2020 and cannot reach earlier, so this arm can never have more.
 - **Both arms carry the same lookahead.** Each board is a single full-data artifact fitted on
   1999-2025, so both have seen the seasons being replayed. That makes the LEVELS optimistic in both
   arms and the COMPARISON fair, since the contamination is identical; it is not an unbiased estimate
