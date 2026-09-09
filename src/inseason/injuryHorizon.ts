@@ -25,6 +25,13 @@
  * the producer-consumer drift this repo has a scar from.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { openDb } from "../db/db.js";
+import { dataPath } from "../data/paths.js";
+import { normPos } from "../data/stgPlayer.js";
+import { injuryGroup } from "../features/sources/injuryDuration.js";
+import { espnStatusToReport } from "../features/sources/weekContext.js";
+
 /** THE PUBLISHED DICTIONARY of fields a feature spec may name. An artifact naming anything else is
  *  REFUSED, so a renamed column is an error rather than a coefficient that silently contributes 0. */
 export const HORIZON_FIELDS = [
@@ -234,4 +241,267 @@ export interface LiveEpisode extends HorizonRow {
    *  ESPN status plus the news table's injury detail). Travels into `assumptions` because the two
    *  are NOT the same evidence and a consumer must be able to say which it used. */
   source: "archive" | "live";
+}
+
+/** One player's horizon, as a decision surface reads it. */
+export interface InjuryOutlook {
+  nameKey: string;
+  name: string;
+  designation: string;
+  injuryGroup: string;
+  /** The injury as the feed wrote it ("Knee - ACL"), for display. Never parsed for the model. */
+  detail: string;
+  p: Record<Horizon, number>;
+  expectedGamesOut4: number;
+  /** The designation-only baseline's expectation, from the artifact's own baseline block. */
+  baselineExpectedGamesOut4: number | null;
+  source: "archive" | "live";
+}
+
+export interface InjuryOutlookSet {
+  artifactPresent: boolean;
+  source: "archive" | "live" | "none";
+  asOf: string | null;
+  byName: Map<string, InjuryOutlook>;
+  /**
+   * THE NUMBER THIS REPLACES, kept callable so a consumer can print both rather than assert an
+   * improvement. It is `missProb` from rosterValue.ts and `leadMissProb` from handcuff.ts -- the
+   * same function, ported nowhere: the variance model is read here and the arithmetic is the one
+   * line those two already share.
+   */
+  tierMissProb: (pos: string, poolRankFrac: number) => number;
+  /** One sentence for `assumptions.basisNote`. Says which evidence was used and what is missing. */
+  note: string;
+}
+
+/** The empty set: no artifact, no rows, and a tier rate that still works. Returned rather than null
+ *  so a consumer never has to branch on undefined and never silently gets a different code path. */
+export function emptyOutlookSet(tierMissProb: (pos: string, f: number) => number, note: string): InjuryOutlookSet {
+  return { artifactPresent: false, source: "none", asOf: null, byName: new Map(), tierMissProb, note };
+}
+
+/**
+ * BUILD THE OUTLOOK SET FOR ONE (season, week), FROM WHICHEVER EVIDENCE EXISTS.
+ *
+ * TWO SOURCES, AND THEY ARE NOT THE SAME EVIDENCE, so the set records which it used:
+ *
+ *   "archive"  feat_injury_horizon rows for that exact (season, week). Dated filings, read at this
+ *              team's own Friday cutoff. Available 2010-2024 and nowhere else, because the feed
+ *              stopped publishing a report date in 2025.
+ *   "live"     `player_status` (ESPN's designation plus `injury_body`, which is the injury type the
+ *              archive's report_primary_injury carries) escalated by high-severity `news` rows --
+ *              the SAME two feeds the lineup optimizer's OUT refusal reads, deliberately, so a man
+ *              the lineup refuses to start and a man the handcuff board prices as likely out cannot
+ *              be different men.
+ *
+ * WHAT THE LIVE PATH CANNOT SUPPLY, stated rather than guessed: PRACTICE STATUS. A live status feed
+ * publishes a designation, not Wednesday and Friday participation -- and the ablation in
+ * docs/validation.md puts practice status at 0.026 of log loss at k=1, the largest single block
+ * after the designation itself. So a live outlook is the model running with `practice_status` at its
+ * declared missing value, which is materially weaker than an archive one, and `note` says so.
+ */
+export function loadInjuryOutlook(opts: {
+  dbPath?: string;
+  season: number;
+  /** The week the decision is about. Omitted, it is the earliest week whose first kickoff is still
+   *  AHEAD -- the same point-in-time rule buildLiveWeekContext applies, and for the same reason:
+   *  once a game has been played, today's designations are contaminated by it. */
+  week?: number;
+  /** Injected by tests. Defaults to the shipped artifact under data/. */
+  artifact?: InjuryHorizonArtifact | null;
+  /** Injectable clock, so the week rule is testable without waiting for Sunday. */
+  now?: string;
+}): InjuryOutlookSet {
+  // Imported lazily-by-module (static imports, evaluated once) rather than passed in, because the
+  // two call sites in copilot.ts are synchronous and take no store handle.
+  const tier = tierMissProbFrom(readVarianceModel());
+  let a: InjuryHorizonArtifact | null;
+  if (opts.artifact !== undefined) a = opts.artifact;
+  else a = readShippedArtifact();
+  if (!a) {
+    return emptyOutlookSet(tier,
+      "no injury-duration artifact on file (data/" + INJURY_HORIZON_ARTIFACT + ") -- every miss " +
+      "probability below is the variance model's per-tier season availability, which knows the " +
+      "player's tier and nothing about any injury he has. Fit it with tools/train_injury_duration.py.");
+  }
+
+  const db = openDb(opts.dbPath);
+  try {
+    const week = opts.week ?? imminentWeek(db, opts.season, opts.now) ?? 1;
+    const nameOf = new Map<number, { nk: string; name: string; pos: string }>();
+    const skOfName = new Map<string, number>();
+    for (const r of db.prepare(
+      "SELECT player_sk, name_key, name, position FROM stg_player WHERE name_key IS NOT NULL AND COALESCE(ambiguous, 0) = 0",
+    ).all() as { player_sk: number; name_key: string; name: string | null; position: string | null }[]) {
+      nameOf.set(Number(r.player_sk), { nk: r.name_key, name: r.name ?? r.name_key, pos: normPos(r.position ?? "") });
+      if (!skOfName.has(r.name_key)) skOfName.set(r.name_key, Number(r.player_sk));
+    }
+
+    // ---- ARCHIVE ----------------------------------------------------------------------------
+    const arch = db.prepare(
+      `SELECT * FROM feat_injury_horizon WHERE season = ? AND week = ?`,
+    ).all(opts.season, week) as Record<string, string | number | null>[];
+    if (arch.length) {
+      const byName = new Map<string, InjuryOutlook>();
+      for (const r of arch) {
+        const id = nameOf.get(Number(r.player_sk));
+        if (!id) continue;
+        const e: LiveEpisode = {
+          playerSk: Number(r.player_sk), name: id.name, season: opts.season, week: week,
+          source: "archive",
+          designation: String(r.designation ?? ""), practice_status: String(r.practice_status ?? ""),
+          injury_group: String(r.injury_group ?? ""), pos: String(r.pos ?? id.pos),
+          weeks_missed_so_far: Number(r.weeks_missed_so_far ?? 0),
+          weeks_in_episode: Number(r.weeks_in_episode ?? 0),
+          prior_episodes_same: Number(r.prior_episodes_same ?? 0),
+          prior_episodes_any: Number(r.prior_episodes_any ?? 0),
+          age: r.age == null ? null : Number(r.age),
+          injury_secondary_present: Number(r.injury_secondary_present ?? 0),
+        };
+        (e as { detail?: string }).detail = String(r.injury_primary ?? "");
+        byName.set(id.nk, outlookFrom(a, e, id.nk));
+      }
+      return {
+        artifactPresent: true, source: "archive", asOf: String(arch[0].as_of ?? "") || null, byName,
+        tierMissProb: tier,
+        note: `${byName.size} injury horizons from feat_injury_horizon, season ${opts.season} week ` +
+          `${week}, read at each team's own Friday cutoff. Archive rows carry practice status.`,
+      };
+    }
+
+    // ---- LIVE -------------------------------------------------------------------------------
+    interface Live { report: string | null; body: string; from: string }
+    const live = new Map<string, Live>();
+    for (const r of db.prepare(
+      "SELECT player_id, injury_status, injury_body FROM player_status WHERE injury_status IS NOT NULL AND injury_status <> ''",
+    ).all() as { player_id: string; injury_status: string | null; injury_body: string | null }[]) {
+      const rep = espnStatusToReport(r.injury_status);
+      if (!rep) continue;
+      live.set(r.player_id, { report: rep, body: String(r.injury_body ?? ""), from: "player_status" });
+    }
+    // News ESCALATES only, never clears -- the same rule buildLiveWeekContext and `loadAvailability`
+    // follow, so the three surfaces cannot disagree about who can play.
+    for (const r of db.prepare(
+      "SELECT player_id, severity, detail FROM news WHERE category = 'injury'",
+    ).all() as { player_id: string | null; severity: string | null; detail: string | null }[]) {
+      if (String(r.severity ?? "").toLowerCase() !== "high" || !r.player_id) continue;
+      const cur = live.get(r.player_id);
+      if (cur?.report === "Out") continue;
+      live.set(r.player_id, { report: "Out", body: cur?.body || String(r.detail ?? ""), from: "news(injury/high)" });
+    }
+
+    // Episode history for the live rows: games already missed THIS season, and prior episodes in the
+    // two seasons before it. Both are strictly past information; where the season has no play record
+    // yet they are honestly zero rather than absent.
+    const missedSoFar = new Map<number, number>();
+    for (const r of db.prepare(
+      `SELECT player_sk, COUNT(*) n FROM feat_player_week
+       WHERE season = ? AND week < ? AND COALESCE(is_bye, 0) = 0 AND pts IS NULL AND player_sk IS NOT NULL
+       GROUP BY player_sk`,
+    ).all(opts.season, week) as { player_sk: string; n: number }[]) {
+      missedSoFar.set(Number(r.player_sk), Number(r.n));
+    }
+    const priorAny = new Map<number, number>(), priorGroup = new Map<string, number>();
+    for (const r of db.prepare(
+      "SELECT player_sk, injury_group, COUNT(*) n FROM fact_injury_episode WHERE season >= ? AND season < ? GROUP BY player_sk, injury_group",
+    ).all(opts.season - 2, opts.season) as { player_sk: number; injury_group: string; n: number }[]) {
+      priorAny.set(Number(r.player_sk), (priorAny.get(Number(r.player_sk)) ?? 0) + Number(r.n));
+      priorGroup.set(`${r.player_sk}|${r.injury_group}`, Number(r.n));
+    }
+    const birth = new Map<number, string>();
+    for (const r of db.prepare(
+      "SELECT player_sk, birthdate FROM player_identity WHERE birthdate IS NOT NULL AND birthdate <> ''",
+    ).all() as { player_sk: number; birthdate: string }[]) birth.set(Number(r.player_sk), r.birthdate);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const byName = new Map<string, InjuryOutlook>();
+    for (const [nk, l] of live) {
+      const sk = skOfName.get(nk) ?? null;
+      const id = sk != null ? nameOf.get(sk) : undefined;
+      const group = injuryGroup(l.body);
+      const bd = sk != null ? birth.get(sk) : undefined;
+      const e: LiveEpisode = {
+        playerSk: sk, name: id?.name ?? nk, season: opts.season, week: week, source: "live",
+        designation: l.report ?? "",
+        // NOT AVAILABLE LIVE, and left at the model's declared missing value rather than guessed at
+        // "DNP because he is Out" -- which would be a designation being counted twice.
+        practice_status: "",
+        injury_group: group, pos: id?.pos ?? "",
+        weeks_missed_so_far: sk != null ? (missedSoFar.get(sk) ?? 0) : 0,
+        weeks_in_episode: 0,
+        prior_episodes_same: sk != null ? (priorGroup.get(`${sk}|${group}`) ?? 0) : 0,
+        prior_episodes_any: sk != null ? (priorAny.get(sk) ?? 0) : 0,
+        age: bd ? Math.round(((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${bd}T00:00:00Z`)) / (365.2425 * 864e5)) * 100) / 100 : null,
+        injury_secondary_present: 0,
+      };
+      (e as { detail?: string }).detail = l.body;
+      byName.set(nk, outlookFrom(a, e, nk));
+    }
+    return {
+      artifactPresent: true, source: byName.size ? "live" : "none", asOf: today, byName,
+      tierMissProb: tier,
+      note: byName.size
+        ? `${byName.size} injury horizons from the LIVE feeds (player_status designations plus ` +
+          `high-severity news), season ${opts.season} week ${week}. feat_injury_horizon has no ` +
+          `row for this week: the archive stopped carrying report dates after 2024. PRACTICE STATUS ` +
+          `IS NOT AVAILABLE from these feeds and is left at the model's missing value, which is the ` +
+          `largest block the live path gives up (0.026 of log loss at k=1).`
+        : `no injury designations in the live feeds and no archive row for season ${opts.season} ` +
+          `week ${week} -- every miss probability below is the per-tier season availability.`,
+    };
+  } finally { db.close(); }
+}
+
+/** The earliest week whose first kickoff is still AHEAD of `now`. Null where the season holds no
+ *  dated games or every week has kicked off -- the caller then falls back to week 1 rather than
+ *  guessing a week in the middle. Same rule as buildLiveWeekContext, for the same reason: a
+ *  designation read after a week's first kickoff belongs to the NEXT week. */
+function imminentWeek(db: ReturnType<typeof openDb>, season: number, now?: string): number | null {
+  const today = (now ?? new Date().toISOString()).slice(0, 10);
+  const rows = db.prepare(
+    "SELECT week, MIN(gameday) d FROM raw_nfl_game WHERE season = ? AND game_type = 'REG' AND gameday IS NOT NULL GROUP BY week ORDER BY week",
+  ).all(season) as { week: number; d: string }[];
+  for (const r of rows) if (String(r.d) > today) return Number(r.week);
+  return null;
+}
+
+function readShippedArtifact(): InjuryHorizonArtifact | null {
+  const p = dataPath(INJURY_HORIZON_ARTIFACT);
+  if (!existsSync(p)) return null;
+  return loadInjuryHorizonArtifact(JSON.parse(readFileSync(p, "utf8")));
+}
+
+function readVarianceModel(): { tiers?: number; pos: Record<string, { avail: number[] }> } | null {
+  const p = dataPath("variance-model.json");
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; }
+}
+
+/** THE OLD NUMBER. Identical arithmetic to `missProb` (rosterValue.ts) and `leadMissProb`
+ *  (handcuff.ts), including the bye correction -- reproduced here only because this module must be
+ *  able to report it beside the model's answer without importing a season simulator. */
+function tierMissProbFrom(vm: { tiers?: number; pos: Record<string, { avail: number[] }> } | null) {
+  return (pos: string, poolRankFrac: number): number => {
+    const m = vm?.pos?.[pos];
+    if (!m) return 0.13;
+    const tiers = vm?.tiers ?? m.avail.length;
+    const tier = Math.min(m.avail.length - 1, Math.max(0, Math.floor((poolRankFrac || 0) * tiers)));
+    const perPlayable = Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+    return Math.max(0, Math.min(1, 1 - perPlayable));
+  };
+}
+
+/** Turn one point-in-time row into an outlook. Pure; the store side calls it. */
+export function outlookFrom(a: InjuryHorizonArtifact, e: LiveEpisode, nk: string): InjuryOutlook {
+  const h = horizonFor(a, e);
+  return {
+    nameKey: nk, name: e.name,
+    designation: e.designation ?? "",
+    injuryGroup: e.injury_group ?? "",
+    detail: (e as { detail?: string }).detail ?? "",
+    p: h.p,
+    expectedGamesOut4: h.expectedGamesOut4,
+    baselineExpectedGamesOut4: h.baseline ? HORIZONS.reduce((s, k) => s + h.baseline![k], 0) : null,
+    source: e.source,
+  };
 }

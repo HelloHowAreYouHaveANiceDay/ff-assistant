@@ -34,7 +34,7 @@
  * the black-box recorder sees every piece of advice given even though no roster move follows it.
  */
 import { optimalLineup } from "./lineup.js";
-import { handcuffBoard, type DepthEntry, type HandcuffRow } from "./handcuff.js";
+import { handcuffBoard, loadInjuryOutlook, type DepthEntry, type HandcuffRow, type InjuryOutlookSet } from "./handcuff.js";
 import { rosterGaps, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
 import { nameKey } from "../draft/values.js";
 import type { SimContext } from "../draft/simContext.js";
@@ -1043,19 +1043,44 @@ export function tradeFinder(
 // HANDCUFFS
 // ---------------------------------------------------------------------------------------------
 
-export interface HandcuffResult { rows: (HandcuffRow & { ours: boolean; rostered: boolean })[]; weeks: number; positions: string[]; objective: Objective; assumptions: Assumptions }
+export interface HandcuffResult {
+  rows: (HandcuffRow & { ours: boolean; rostered: boolean })[];
+  weeks: number; positions: string[];
+  /** How many leads on the board were priced by the injury model rather than by their tier. Zero is
+   *  a real answer (nobody is hurt, or no artifact is on file) and `assumptions.basisNote` says
+   *  which of the two it was -- a count with no reason attached reads as an absence of injuries. */
+  injuryPriced: number;
+  injurySource: "archive" | "live" | "none";
+  objective: Objective; assumptions: Assumptions;
+}
 
-/** Rank every backup by what he scores IF the man ahead of him misses a week. The model and its
- *  three rejected functional forms are documented in handcuff.ts; this only attaches league context
- *  -- who is already ours, and who is rostered anywhere -- and the assumptions block. */
+/**
+ * Rank every backup by what he scores IF the man ahead of him misses a week. The model and its three
+ * rejected functional forms are documented in handcuff.ts; this attaches league context -- who is
+ * already ours, and who is rostered anywhere -- the injury outlook, and the assumptions block.
+ *
+ * TRACK I: THE LEAD'S MISS RATE IS NO LONGER ONLY HIS TIER. `expectedPts` was `lift x missProb x
+ * weeks` where `missProb` came from the variance model's per-tier games/17, which is the same 0.129
+ * for every top-tier back whether he is healthy or has been Out for three weeks with a foot. For a
+ * lead who is ON THE INJURY REPORT the next four games are now priced by
+ * data/injury-duration-artifact.json and only the remainder stays on the tier rate. Both numbers
+ * travel on the row (`leadGamesOutNext4` against `leadGamesOutNext4Tier`) so the change is visible
+ * rather than asserted.
+ */
 export function handcuffs(
   ctx: SimContext,
-  o: BaseOpts & { depth: DepthEntry[]; vm: VarianceModel; weeks?: number; positions?: string[]; poolSize?: Record<string, number>; freeOnly?: boolean; ourPlayoffPct?: number } = { depth: [], vm: { pos: {} } as VarianceModel },
+  o: BaseOpts & {
+    depth: DepthEntry[]; vm: VarianceModel; weeks?: number; positions?: string[];
+    poolSize?: Record<string, number>; freeOnly?: boolean; ourPlayoffPct?: number;
+    /** Injected by tests. Absent, it is loaded from the store for (ctx.season, the coming week). */
+    outlook?: InjuryOutlookSet; week?: number; dbPath?: string;
+  } = { depth: [], vm: { pos: {} } as VarianceModel },
 ): HandcuffResult {
   const weeks = o.weeks ?? NFL_WEEKS;
   const positions = o.positions ?? ["RB"];
   const ourNames = new Set(ctx.teams[ctx.meIdx].roster.map((p) => nameKey(p.name)));
-  let rows = handcuffBoard(o.depth, o.vm, { weeks, positions, poolSize: o.poolSize })
+  const outlook = o.outlook ?? injuryOutlookFor(ctx, o.week, o.dbPath);
+  let rows = handcuffBoard(o.depth, o.vm, { weeks, positions, poolSize: o.poolSize, outlook })
     .map((r) => ({ ...r, ours: ourNames.has(nameKey(r.name)), rostered: ctx.ownedIds.has(nameKey(r.name)) }));
   if (o.freeOnly) rows = rows.filter((r) => !r.rostered);
   // HANDCUFFS ARE NOT SCORED IN PROBABILITY AND SAYING SO IS THE POINT. The ranking is a conditional
@@ -1063,7 +1088,37 @@ export function handcuffs(
   // it up as a playoff delta would be inventing a simulation that was never run. The objective block
   // travels anyway, naming the regime, so a consumer can see which question the rows do NOT answer.
   const objective = objectiveFor(o.ourPlayoffPct ?? null, o.secureThresholdPct);
-  return { rows, weeks, positions, objective, assumptions: assumptionsOf(ctx, "projection", o, null, null, objective) };
+  const assumptions = assumptionsOf(ctx, "projection", o, null, null, objective);
+  const priced = rows.filter((r) => r.missSource === "injury-model").length;
+  assumptions.basisNote =
+    `A backup's payoff is a conditional POINTS quantity, not a probability. The lead's miss rate ` +
+    `over ${weeks} weeks is ${priced ? `the injury model for ${priced} of ${rows.length} rows and ` : ""}` +
+    `the variance model's per-tier availability otherwise. ${outlook.note}`;
+  return {
+    rows, weeks, positions, injuryPriced: priced, injurySource: outlook.source,
+    objective, assumptions,
+  };
+}
+
+/**
+ * The injury outlook for the week a decision is being made about, loaded from the store.
+ *
+ * A FAILURE TO LOAD IS NOT A FAILURE OF THE VERB. The store may have no artifact, no injury table
+ * and no live status feed, and a handcuff board is still a useful answer with the tier rate in it.
+ * So this degrades to an EMPTY set carrying its own reason, which `assumptions.basisNote` prints --
+ * the opposite of `opportunity-model.json`, whose absence silently made every factor 1.0.
+ */
+function injuryOutlookFor(ctx: SimContext, week?: number, dbPath?: string): InjuryOutlookSet {
+  try {
+    return loadInjuryOutlook({ dbPath, season: ctx.season, week });
+  } catch (e) {
+    return {
+      artifactPresent: false, source: "none", asOf: null, byName: new Map(),
+      tierMissProb: () => 0.13,
+      note: `the injury horizon could not be read (${(e as Error).message}) -- every miss ` +
+        `probability below is the variance model's per-tier season availability.`,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1087,6 +1142,34 @@ export interface DepthRiskResult {
   se: number;
   noiseFloorPp: number;
   insurance: { name: string; pos: string; proj: number; from: string; free: boolean; recoversPp: number; recoversPlayoffWeekPts: number; recoversTitlePp: number }[];
+  /**
+   * HOW LONG HE IS ACTUALLY LIKELY TO BE OUT, which is a different question from every other number
+   * on this result. The four probabilities and the costs above all price "gone for the season" --
+   * a well-defined worst case and the right frame for "who insures him". This block prices the
+   * absence we are actually facing, and its `source` says on what evidence.
+   *
+   * `tierGamesOut4` is what this repo said before Track I: the variance model's per-tier games/17
+   * for his rank bucket, times four. It is carried BESIDE the model's number rather than replaced
+   * by it, because a consumer that cannot see both has no way to tell an improvement from a change.
+   */
+  horizon: {
+    source: "injury-model" | "tier-rate";
+    /** null when he is not on any injury report -- which is itself the answer, not a missing value. */
+    designation: string | null;
+    injury: string | null;
+    evidence: "archive" | "live" | "none";
+    /** P(he misses the next k games), k = 1..4. Empty on the tier-rate path. */
+    pMiss: Record<string, number>;
+    expectedGamesOut4: number;
+    tierGamesOut4: number;
+    /** What the DESIGNATION ALONE would have said over the same four games, from the baseline the
+     *  artifact carries. Null where no artifact is on file. */
+    designationOnlyGamesOut4: number | null;
+    /** The cost above, pro-rated to the absence we expect rather than to a season-long one:
+     *  (playoff-week points lost without him / playoff weeks) x expectedGamesOut4. It is a POINTS
+     *  quantity and is not a probability -- see `assumptions.basis`. */
+    expectedCostNext4Pts: number;
+  };
   objective: Objective;
   assumptions: Assumptions;
 }
@@ -1102,7 +1185,7 @@ export interface DepthRiskResult {
 export function depthRisk(
   ctx: SimContext,
   player: string,
-  o: BaseOpts & { insurers?: number } = {},
+  o: BaseOpts & { insurers?: number; outlook?: InjuryOutlookSet; week?: number; dbPath?: string } = {},
 ): DepthRiskResult {
   const trials = o.trials ?? 1200;
   const seeds = o.seeds ?? [7, 101];
@@ -1153,6 +1236,47 @@ export function depthRisk(
     };
   }).sort((a, b) => b.rankValue - a.rankValue).map(({ rankValue, ...rest }) => { void rankValue; return rest; });
 
+  // ---- TRACK I: HOW LONG IS HE ACTUALLY OUT? ----------------------------------------------
+  // The pool-rank fraction is derived from the BOARD -- his rank among all players at his position
+  // by projection, over the size of that pool -- which is the same quantity the handcuff board and
+  // rosterValue pass to their tier lookup. Derived rather than passed in, because a caller that
+  // forgot it would silently get tier 0 (the most durable bucket) for everybody.
+  const outlook = o.outlook ?? injuryOutlookFor(ctx, o.week, o.dbPath);
+  const samePos = [...ctx.board.values()].filter((p) => p.pos === at.pos).sort((a, b) => b.proj - a.proj);
+  const idx = samePos.findIndex((p) => nameKey(p.name) === nameKey(at.name));
+  const frac = samePos.length ? Math.max(0, idx) / samePos.length : 0;
+  const tierPerWeek = outlook.tierMissProb(at.pos, frac);
+  const ol = outlook.byName.get(nameKey(at.name)) ?? null;
+  // The league's own playoff weeks, from the format block WITH its provenance -- never a literal 3.
+  // A context built without a format block (a fixture) falls back to the count the block would have
+  // held for this league, stated here rather than silently dividing by an undefined.
+  const playoffWeeks = Math.max(1, ctx.format?.playoffWeeks?.length ?? 3);
+  const perWeekPts = cost.playoffWeekPts / playoffWeeks;
+  const expectedGamesOut4 = ol ? ol.expectedGamesOut4 : tierPerWeek * 4;
+  const horizon: DepthRiskResult["horizon"] = {
+    source: ol ? "injury-model" : "tier-rate",
+    designation: ol ? (ol.designation || "(on the report, no designation)") : null,
+    injury: ol ? (ol.detail || ol.injuryGroup || null) : null,
+    evidence: outlook.source,
+    pMiss: ol ? { "1": r3(ol.p[1]), "2": r3(ol.p[2]), "3": r3(ol.p[3]), "4": r3(ol.p[4]) } : {},
+    expectedGamesOut4: r2(expectedGamesOut4),
+    tierGamesOut4: r2(tierPerWeek * 4),
+    designationOnlyGamesOut4: ol?.baselineExpectedGamesOut4 != null ? r2(ol.baselineExpectedGamesOut4) : null,
+    expectedCostNext4Pts: r2(perWeekPts * expectedGamesOut4),
+  };
+
+  const assumptions = assumptionsOf(ctx, "simulation", o, trials, seeds, objective);
+  assumptions.basisNote =
+    `costPp / costPlayoffWeekPts / costTitlePp all price him GONE FOR THE SEASON, which is the frame ` +
+    `the insurance shortlist needs. \`horizon\` prices the absence actually in front of us and is a ` +
+    `POINTS quantity, not a probability. ${ol
+      ? `He is on the report (${horizon.designation}${horizon.injury ? ", " + horizon.injury : ""}): ` +
+        `the injury model expects ${horizon.expectedGamesOut4} of the next four games missed against ` +
+        `${horizon.tierGamesOut4} from the per-tier rate this repo used before Track I` +
+        (horizon.designationOnlyGamesOut4 != null ? ` and ${horizon.designationOnlyGamesOut4} from the designation alone` : "") + ". "
+      : `He is on no injury report, so the horizon falls back to the per-tier rate -- which is what ` +
+        `it is for. `}${outlook.note}`;
+
   return {
     player: { name: at.name, pos: at.pos, proj: r2(at.proj) },
     basePlayoffPct: r2(mean(baseBySeed.map((x) => x.playoffPct))),
@@ -1165,8 +1289,9 @@ export function depthRisk(
     se: cost.se,
     noiseFloorPp: noiseFloorPp(mean(baseBySeed.map((x) => x.playoffPct)), trials),
     insurance,
+    horizon,
     objective,
-    assumptions: assumptionsOf(ctx, "simulation", o, trials, seeds, objective),
+    assumptions,
   };
 }
 
