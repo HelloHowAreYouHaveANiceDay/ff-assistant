@@ -47,7 +47,7 @@ import {
   loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact,
   type WeeklyArtifact, type WeeklyProjRow,
 } from "./projector.js";
-import { loadWeeklyRows, type WeeklyRow } from "./features.js";
+import { loadWeeklyRows, PENDING_DATA_TRACK_FIELDS, type WeeklyRow } from "./features.js";
 
 export const MODELS = ["weekly", "season_line", "shipped_week", "trailing4", "zero"] as const;
 export type ModelName = typeof MODELS[number];
@@ -82,6 +82,48 @@ export interface Scored {
    */
   coverageNonZero: number;
   bias: number;
+  /** Share of scored rows whose ACTUAL was a zero week (pts <= 0). A property of the data, identical
+   *  for every model over the same rows -- it is the thing clause (c) compares a model against. */
+  zeroActual: number;
+  /** The model's own MEAN PREDICTED probability of a zero week. See `predZeroProb`. */
+  zeroPred: number;
+}
+
+/**
+ * WHAT COUNTS AS A ZERO WEEK, in one place because three clauses key on it.
+ *
+ * `pts <= 0` and not the trainer's `pts <= 1.0`. The two thresholds answer different questions and
+ * both are defensible; this one is chosen because gate clause (b) is coverage CONDITIONAL ON pts > 0
+ * and clause (c) is the share of zero weeks, and those two have to partition the same rows or the
+ * gate is grading two different populations. A negative week (a fumble-only line) is a zero week
+ * here: the manager who started him got nothing, which is what the atom is about.
+ */
+export const ZERO_PTS = 0;
+
+/**
+ * THE MODEL'S PREDICTED PROBABILITY OF A ZERO WEEK, P(Y <= 0).
+ *
+ * A two-part artifact carries this explicitly and it is used as given. A quantile-head artifact does
+ * not have one, so it is READ OFF THE LADDER the model does publish, by inverting the quantile
+ * function at 0 with linear interpolation through (0, 0), (0.10, p10), (0.50, p50), (0.90, p90).
+ * The anchor at q=0 is not an invention: the artifact's clamp floor is exactly 0, so 0 IS the bottom
+ * of the model's support and every quantile-head projection is a distribution on [0, hi].
+ *
+ * The consequence is deliberate and is the whole point of clause (c): a quantile-head model whose
+ * p10 sits exactly on the atom claims P(zero) = 0.10 and no more, because 0.10 is the smallest
+ * quantile level it publishes. If the real share is 40% it cannot say so, and the clause says so out
+ * loud rather than letting a coverage number that the atom inflates stand in for calibration.
+ */
+export function predZeroProb(p: Pred): number {
+  if (p.pZero != null && Number.isFinite(p.pZero)) return Math.min(1, Math.max(0, p.pZero));
+  const at = (qLo: number, qHi: number, vLo: number, vHi: number): number =>
+    vHi > vLo ? qLo + (qHi - qLo) * ((ZERO_PTS - vLo) / (vHi - vLo)) : qHi;
+  if (p.p10 > ZERO_PTS) return at(0, 0.10, 0, p.p10);
+  if (p.p50 > ZERO_PTS) return at(0.10, 0.50, p.p10, p.p50);
+  if (p.p90 > ZERO_PTS) return at(0.50, 0.90, p.p50, p.p90);
+  // Every published quantile is at or below zero. The ladder cannot say how much mass sits above
+  // 0.90, so this is reported as the LOWER BOUND it is rather than rounded up to 1.
+  return 0.90;
 }
 
 export interface WeeklyEvalResult {
@@ -96,10 +138,105 @@ export interface WeeklyEvalResult {
   bySeason: Record<string, Record<string, Scored>>;
   lineup: Record<string, Record<string, { meanCaptured: number; winShare: number; drawnRosters: number }>>;
   predictions: { id: string; claim: string; held: boolean | null; evidence: string }[];
-  gate: { passed: boolean; reason: string; ships: "weekly" | "season_line_only" };
+  gate: WeeklyGate;
 }
 
-export interface Pred { mean: number; p10: number; p50: number; p90: number }
+/** One clause of the gate, reported whether it passed or not, with the numbers that decided it. */
+export interface GateClause { id: "a" | "b" | "c"; claim: string; passed: boolean; evidence: string }
+
+export interface WeeklyGate {
+  passed: boolean;
+  reason: string;
+  ships: "weekly" | "season_line_only";
+  clauses: GateClause[];
+}
+
+/**
+ * THE PRE-REGISTERED GATE, in the form it was registered in for Phase 2d, BEFORE the run.
+ *
+ *   (a) pooled CRPS beats the shipped baseline;
+ *   (b) coverage CONDITIONAL ON pts > 0 lies in [0.75, 0.85] pooled and in [0.70, 0.90] per position;
+ *   (c) the predicted share of zero weeks is within 3 points of the actual share, pooled and per
+ *       position.
+ *
+ * WHY (b) MOVED and why that is not a gate being re-specified to fit a result. The original band was
+ * on POOLED coverage, and it failed at 0.876 for a reason that is a property of the target rather
+ * than of the model: the clamp floor is exactly 0, so p10 sits on the zero atom, an actual of 0 is
+ * therefore always inside [0, p90], and roughly 40% of the scored rows are zeros. That number cannot
+ * be brought inside [0.75, 0.85] by any improvement in calibration -- only by making the model WORSE
+ * about zeros. The corrected band grades the part of the distribution coverage can speak about, and
+ * clause (c) grades the atom directly instead of letting it hide inside a coverage figure. The
+ * correction was registered before this run and against the previous run's numbers, which is why it
+ * is stated here rather than discovered below.
+ *
+ * The bands are HARDCODED CONSTANTS ON PURPOSE. A gate whose thresholds are arguments is a gate a
+ * caller can widen at the moment it bites.
+ */
+export const GATE_COV_POOLED: [number, number] = [0.75, 0.85];
+export const GATE_COV_POS: [number, number] = [0.70, 0.90];
+export const GATE_ZERO_TOL = 0.03;
+
+export function weeklyGate(
+  pooled: Record<string, Scored>, byPos: Record<string, Record<string, Scored>>,
+  opts: { model?: string; baseline?: string } = {},
+): WeeklyGate {
+  const model = opts.model ?? "weekly";
+  const base = opts.baseline ?? BASELINE;
+  const m = pooled[model], b = pooled[base];
+  const f = (x: number, d = 3) => (Number.isFinite(x) ? x.toFixed(d) : "-");
+  const inBand = (x: number, [lo, hi]: [number, number]) => Number.isFinite(x) && x >= lo && x <= hi;
+
+  const aOk = Number.isFinite(m?.crps) && Number.isFinite(b?.crps) && m.crps < b.crps;
+  const a: GateClause = {
+    id: "a", passed: aOk,
+    claim: `pooled CRPS beats the shipped ${base} baseline`,
+    evidence: `${f(m?.crps, 4)} vs ${f(b?.crps, 4)}`,
+  };
+
+  const covPooledOk = inBand(m?.coverageNonZero, GATE_COV_POOLED);
+  const covPosBad = Object.entries(byPos)
+    .filter(([, byModel]) => byModel[model]?.n)
+    .filter(([, byModel]) => !inBand(byModel[model].coverageNonZero, GATE_COV_POS))
+    .map(([p, byModel]) => `${p} ${f(byModel[model].coverageNonZero)}`);
+  const bClause: GateClause = {
+    id: "b", passed: covPooledOk && covPosBad.length === 0,
+    claim: `coverage conditional on pts > 0 in [${GATE_COV_POOLED.join(", ")}] pooled and ` +
+      `[${GATE_COV_POS.join(", ")}] per position`,
+    evidence: `pooled ${f(m?.coverageNonZero)}` +
+      (covPosBad.length ? `; OUTSIDE the per-position band: ${covPosBad.join(", ")}` : "; every position inside"),
+  };
+
+  const dZero = Math.abs((m?.zeroPred ?? NaN) - (m?.zeroActual ?? NaN));
+  const zeroPooledOk = Number.isFinite(dZero) && dZero <= GATE_ZERO_TOL;
+  const zeroPosBad = Object.entries(byPos)
+    .filter(([, byModel]) => byModel[model]?.n)
+    .map(([p, byModel]) => [p, Math.abs(byModel[model].zeroPred - byModel[model].zeroActual), byModel[model]] as const)
+    .filter(([, d]) => !(Number.isFinite(d) && d <= GATE_ZERO_TOL))
+    .map(([p, d, s]) => `${p} ${f(s.zeroPred)} vs ${f(s.zeroActual)} (off by ${f(d)})`);
+  const c: GateClause = {
+    id: "c", passed: zeroPooledOk && zeroPosBad.length === 0,
+    claim: `predicted zero-week share within ${GATE_ZERO_TOL} of actual, pooled and per position`,
+    evidence: `pooled predicted ${f(m?.zeroPred)} vs actual ${f(m?.zeroActual)} (off by ${f(dZero)})` +
+      (zeroPosBad.length ? `; OUTSIDE: ${zeroPosBad.join(", ")}` : "; every position inside"),
+  };
+
+  const clauses = [a, bClause, c];
+  const passed = clauses.every((x) => x.passed);
+  return {
+    passed, clauses,
+    ships: passed ? "weekly" : "season_line_only",
+    reason: passed
+      ? "every clause held: " + clauses.map((x) => `(${x.id}) ${x.evidence}`).join("; ")
+      : "FAILED on " + clauses.filter((x) => !x.passed).map((x) => `(${x.id}) ${x.claim} -- ${x.evidence}`).join("; "),
+  };
+}
+
+export interface Pred {
+  mean: number; p10: number; p50: number; p90: number;
+  /** P(zero week), where the model publishes one. Only a two-part artifact does; for everything else
+   *  it is undefined and `predZeroProb` reads the ladder instead. */
+  pZero?: number;
+}
 export interface Scored1 { key: string; pos: string; band: string; season: number; week: number; actual: number; by: Record<string, Pred> }
 
 const pinball = (q: number, y: number, z: number) => (y >= z ? q * (y - z) : (1 - q) * (z - y));
@@ -114,18 +251,25 @@ const crps1 = (y: number, p: Pred) =>
   2 * (pinball(0.10, y, p.p10) + pinball(0.50, y, p.p50) + pinball(0.90, y, p.p90)) / 3;
 
 export function score(rows: { actual: number; p: Pred }[]): Scored {
-  if (!rows.length) return { n: 0, rmse: NaN, crps: NaN, coverage: NaN, coverageNonZero: NaN, bias: NaN };
-  let se = 0, cr = 0, cov = 0, bi = 0, nz = 0, covNz = 0;
+  if (!rows.length) {
+    return { n: 0, rmse: NaN, crps: NaN, coverage: NaN, coverageNonZero: NaN, bias: NaN, zeroActual: NaN, zeroPred: NaN };
+  }
+  let se = 0, cr = 0, cov = 0, bi = 0, nz = 0, covNz = 0, zAct = 0, zPred = 0;
   for (const r of rows) {
     se += (r.actual - r.p.mean) ** 2;
     cr += crps1(r.actual, r.p);
     const inside = r.actual >= r.p.p10 && r.actual <= r.p.p90;
     if (inside) cov++;
-    if (r.actual > 0) { nz++; if (inside) covNz++; }
+    if (r.actual > ZERO_PTS) { nz++; if (inside) covNz++; } else zAct++;
+    zPred += predZeroProb(r.p);
     bi += r.p.mean - r.actual;
   }
   const n = rows.length;
-  return { n, rmse: Math.sqrt(se / n), crps: cr / n, coverage: cov / n, coverageNonZero: nz ? covNz / nz : NaN, bias: bi / n };
+  return {
+    n, rmse: Math.sqrt(se / n), crps: cr / n, coverage: cov / n,
+    coverageNonZero: nz ? covNz / nz : NaN, bias: bi / n,
+    zeroActual: zAct / n, zeroPred: zPred / n,
+  };
 }
 
 /** Preseason-line rank band, within position and season. Point-in-time on purpose: banding by the
@@ -254,13 +398,17 @@ function withSpread(
   season: SeasonRows, artifact: WeeklyArtifact, lineOnly: WeeklyArtifact,
   points: Map<string, Record<ModelName, number>>, spread: SpreadTable,
 ): Scored1[] {
+  // `pZero` is carried through where the artifact publishes one (a two-part model) and left
+  // undefined where it does not, so `predZeroProb` reads the ladder for the models that only have
+  // a ladder. Filling in a 0 here instead would make every quantile model claim it had never seen
+  // a zero week, which is a fabricated number rather than an absent one.
   const trained = new Map<string, Pred>();
   for (const r of projectWeekly({ artifact, rows: season.rows })) {
-    trained.set(`${r.feat_key}|${r.week}`, { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90 });
+    trained.set(`${r.feat_key}|${r.week}`, { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90, pZero: r.pZero });
   }
   const lineQ = new Map<string, Pred>();
   for (const r of projectWeekly({ artifact: lineOnly, rows: season.rows })) {
-    lineQ.set(`${r.feat_key}|${r.week}`, { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90 });
+    lineQ.set(`${r.feat_key}|${r.week}`, { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90, pZero: r.pZero });
   }
   const out: Scored1[] = [];
   for (const r of season.rows) {
@@ -379,13 +527,16 @@ export interface EvalOpts {
 
 /** Train one holdout artifact by shelling out to the Python trainer -- the same binary the shipped
  *  artifact came from, so the thing evaluated is the thing that would ship. */
-function trainHoldout(dbPath: string, trainSeasons: number[], holdout: number, features: string, out: string): WeeklyArtifact | null {
+function trainHoldout(
+  dbPath: string, trainSeasons: number[], holdout: number, features: string, out: string,
+  zeroModel: string,
+): WeeklyArtifact | null {
   const lo = Math.min(...trainSeasons), hi = Math.max(...trainSeasons);
   try {
     execFileSync("uv", [
       "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_weekly.py",
       "--db", dbPath, "--seasons", `${lo}-${hi}`, "--holdout-season", String(holdout),
-      "--features", features, "--out", out, "--quiet",
+      "--features", features, "--zero-model", zeroModel, "--out", out, "--quiet",
     ], { stdio: "pipe" });
   } catch (e) {
     throw new Error(`train_weekly failed for holdout ${holdout}: ${e instanceof Error ? e.message : e}`);
@@ -423,18 +574,30 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   const db = openDb(dbPath);
   const all: Scored1[] = [];
   let featuresUsed: string[] = [];
+  let zeroModel = "quantile";
+  let shipArt: WeeklyArtifact | null = null;
   try {
     // The spread table for the baselines is measured on the TRAINING seasons, once, with the
     // FULL-DATA artifact -- it is a property of each baseline's calibration, not of a fold.
     const fullArt = loadWeeklyArtifact(JSON.parse(readFileSync("data/weekly-artifact.json", "utf8")));
     featuresUsed = fullArt.features.map((f) => f.name);
+    // WHICH MODEL THE FOLDS FIT IS READ OFF THE ARTIFACT THAT WOULD SHIP, not passed in.
+    // The harness's job is to score the thing that would actually ship, and the full-data artifact
+    // is that thing; taking the model kind from a flag instead would let the folds fit a two-part
+    // model while the file on disk was a quantile one, and the report would name neither.
+    zeroModel = fullArt.zeroModel ?? "quantile";
+    shipArt = fullArt;
     const trainOnly = opts.trainSeasons.filter((s) => !opts.seasons.includes(s));
     const spreadSeasons = (trainOnly.length ? trainOnly : opts.trainSeasons.slice(0, 2)).map((s) => loadSeason(db, s));
     const spreadLine = lineOnlyFor(db, opts.trainSeasons, -1);
     const spread = measureSpread(spreadSeasons, spreadSeasons.map((s) => pointPredictions(s, fullArt, spreadLine)));
 
     for (const yr of opts.seasons) {
-      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`));
+      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`), zeroModel);
+      if (art && (art.zeroModel ?? "quantile") !== zeroModel) {
+        throw new Error(`fold ${yr} produced a "${art.zeroModel}" artifact but the shipping artifact ` +
+          `is "${zeroModel}" -- the folds are not measuring the model that would ship`);
+      }
       if (!art) throw new Error(`no artifact produced for holdout ${yr}`);
       // The population is a CONTRACT and this is where it is checked. This harness scores every
       // non-bye week with a did-not-play week as a zero; an artifact fitted on appearances only is
@@ -499,37 +662,67 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     },
   ];
 
-  // ---- THE GATE. Beat baseline (b) on pooled CRPS, and coverage in [0.75, 0.85]. ----
-  const beat = pooled.weekly.crps < pooled[BASELINE].crps;
-  const covOk = pooled.weekly.coverage >= 0.75 && pooled.weekly.coverage <= 0.85;
-  // The gate is the PRE-REGISTERED one and it is not moved to fit the result. Where it fails on
-  // coverage alone, the atom-free figure is reported beside it as an explicit POST HOC observation,
-  // labelled as such -- it does not change what ships. Quietly re-specifying a gate the moment it
-  // bites is how a harness stops being able to tell anyone anything.
-  const covNzOk = pooled.weekly.coverageNonZero >= 0.75 && pooled.weekly.coverageNonZero <= 0.85;
-  const postHoc = !covOk && covNzOk
-    ? ` POST HOC, NOT PART OF THE GATE: over non-zero weeks the same statistic reads ` +
-      `${pooled.weekly.coverageNonZero.toFixed(3)}, against ${pooled[BASELINE].coverageNonZero.toFixed(3)} ` +
-      `for ${BASELINE}. The pooled figure is inflated by the zero atom sitting on a p10 of exactly 0 ` +
-      "-- those weeks really are inside the interval. The gate was specified without that in mind and " +
-      "is left exactly as specified."
-    : "";
-  const gate = {
-    passed: beat && covOk,
-    ships: (beat && covOk ? "weekly" : "season_line_only") as "weekly" | "season_line_only",
-    reason: (beat && covOk
-      ? `pooled CRPS ${pooled.weekly.crps.toFixed(4)} < ${pooled[BASELINE].crps.toFixed(4)} and coverage ${pooled.weekly.coverage.toFixed(3)} in [0.75, 0.85]`
-      : [
-        beat ? null : `pooled CRPS ${pooled.weekly.crps.toFixed(4)} does not beat ${BASELINE}'s ${pooled[BASELINE].crps.toFixed(4)}`,
-        covOk ? null : `coverage ${pooled.weekly.coverage.toFixed(3)} is outside [0.75, 0.85]`,
-      ].filter(Boolean).join("; ")) + postHoc,
-  };
+  // ---- PHASE 2d's THREE, about the TWO-PART model. Registered before the run; reported as held or
+  // failed and never restated. They are UNMEASURED against a quantile artifact rather than being
+  // quietly evaluated against the wrong model. ----
+  if (zeroModel === "two-part") {
+    const deep = lineup["deep-18"];
+    const gain18 = deep ? deep.weekly.meanCaptured - deep[BASELINE].meanCaptured : NaN;
+    const zBad = Object.entries(byPos)
+      .filter(([, m]) => m.weekly?.n)
+      .map(([p, m]) => [p, Math.abs(m.weekly.zeroPred - m.weekly.zeroActual)] as const)
+      .filter(([, d]) => !(d <= GATE_ZERO_TOL));
+    const dPooled = Math.abs(pooled.weekly.zeroPred - pooled.weekly.zeroActual);
+    // W6 reads the SHIPPING artifact's mean head. Both features are `center`-transformed on the same
+    // scale (divided by their own training standard deviation), so their coefficients are directly
+    // comparable in units of "a one-sigma move in this column"; comparing raw coefficients on
+    // differently-scaled columns would be comparing units, not effects.
+    const heads = shipArt?.coef ?? {};
+    const w6 = Object.entries(heads)
+      .filter(([, h]) => h.mean && (h.mean.implied_team_total != null || h.mean.dvp_mult != null))
+      .map(([p, h]) => [p, Math.abs(h.mean.implied_team_total ?? 0), Math.abs(h.mean.dvp_mult ?? 0)] as const)
+      .filter(([, , d]) => d > 0 || true);
+    const w6Fails = w6.filter(([, itt, dvp]) => !(itt > dvp));
+    predictions.push(
+      {
+        id: "W4",
+        claim: "the two-part model's lineup-regret gain over the shipped baseline is at least 5 points per lineup on deep-18",
+        held: Number.isFinite(gain18) ? gain18 >= 5 : null,
+        evidence: Number.isFinite(gain18)
+          ? `${gain18.toFixed(2)} points per lineup (deep-18: ${deep.weekly.meanCaptured.toFixed(2)} vs ${deep[BASELINE].meanCaptured.toFixed(2)})`
+          : "no rosters drawn",
+      },
+      {
+        id: "W5",
+        claim: `its predicted zero-week share matches actual within ${GATE_ZERO_TOL} pooled and per position`,
+        held: Number.isFinite(dPooled) ? dPooled <= GATE_ZERO_TOL && zBad.length === 0 : null,
+        evidence: `pooled ${pooled.weekly.zeroPred.toFixed(3)} vs ${pooled.weekly.zeroActual.toFixed(3)} ` +
+          `(off by ${dPooled.toFixed(3)})` +
+          (zBad.length ? `; outside per position: ${zBad.map(([p, d]) => `${p} ${d.toFixed(3)}`).join(", ")}` : "; every position inside"),
+      },
+      {
+        id: "W6",
+        claim: "implied_team_total carries a larger mean-head coefficient than dvp_mult at every position",
+        held: w6.length ? w6Fails.length === 0 : null,
+        evidence: w6.length
+          ? w6.map(([p, itt, dvp]) => `${p} ${itt.toFixed(4)} vs ${dvp.toFixed(4)}`).join("; ")
+          : "no position carries both coefficients",
+      },
+    );
+  }
+
+  // ---- THE GATE, as pre-registered for Phase 2d. See weeklyGate() for the clauses and for why
+  // clause (b) is conditional on pts > 0. It is applied exactly as registered; a failing clause
+  // keeps the season-line-only artifact shipping and says which clause. ----
+  const gate = weeklyGate(pooled, byPos);
 
   return {
     seasons: opts.seasons, trainSeasons: opts.trainSeasons, features,
     featuresUsed,
-    pendingDataTrack: ["injury_status_friday", "depth_chart_rank", "teammates_out",
-      "prior_snap_share", "prior_route_share", "vegas_implied_team_total"],
+    // What the data track STILL owes this model. The Wednesday injury pair is the surprise of Phase
+    // 2d: the columns exist, they are built with a cutoff of kickoff minus four days, and they are
+    // empty, because the feed's dated filings land at kickoff minus two or later.
+    pendingDataTrack: [...PENDING_DATA_TRACK_FIELDS],
     pooled, byPos, byBand, bySeason, lineup, predictions, gate,
   };
 }
@@ -538,13 +731,14 @@ const pad = (s: string, n: number) => (s.length >= n ? s : s + " ".repeat(n - s.
 const num = (x: number, d = 3) => (Number.isFinite(x) ? x.toFixed(d) : "-");
 
 function table(title: string, rows: Record<string, Record<string, Scored>>): string {
-  const out = [title, "  " + pad("group", 10) + pad("model", 14) + "      n     RMSE     CRPS    cover  cov(>0)     bias"];
+  const out = [title, "  " + pad("group", 10) + pad("model", 14) +
+    "      n     RMSE     CRPS    cover  cov(>0)     bias   zeroP   zeroA"];
   for (const [g, byModel] of Object.entries(rows)) {
     for (const m of MODELS) {
       const s = byModel[m]; if (!s || !s.n) continue;
       out.push("  " + pad(g, 10) + pad(m, 14) + String(s.n).padStart(7) + num(s.rmse).padStart(9) +
         num(s.crps).padStart(9) + num(s.coverage).padStart(9) + num(s.coverageNonZero).padStart(9) +
-        num(s.bias).padStart(9));
+        num(s.bias).padStart(9) + num(s.zeroPred).padStart(8) + num(s.zeroActual).padStart(8));
     }
   }
   return out.join("\n");
@@ -577,6 +771,12 @@ export function formatWeeklyReport(r: WeeklyEvalResult): string {
   for (const p of r.predictions) {
     out.push(`  ${p.id}  ${p.held === null ? "UNMEASURED" : p.held ? "HELD  " : "FAILED"}  ${p.claim}`);
     out.push(`        ${p.evidence}`);
+  }
+  out.push("");
+  out.push("GATE (pre-registered, clause by clause)");
+  for (const c of r.gate.clauses) {
+    out.push(`  (${c.id})  ${c.passed ? "PASS" : "FAIL"}  ${c.claim}`);
+    out.push(`        ${c.evidence}`);
   }
   out.push("");
   out.push(`GATE: ${r.gate.passed ? "PASSED" : "FAILED"} -- ships the ${r.gate.ships} artifact. ${r.gate.reason}`);

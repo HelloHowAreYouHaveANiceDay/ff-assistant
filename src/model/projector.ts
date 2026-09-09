@@ -30,6 +30,14 @@ export const FEATURE_FIELDS = [
   "prior_air_yards_share", "prior_wopr",
   "team_changed", "draft_round", "draft_pick", "draft_age",
   "ecr_pos_rank", "ecr_sd",
+  // ---- THE EXTENSION TABLE (feat_player_season_ext), Phase 2d ----
+  // Every one of these is keyed as-of September 1 of the season it sits on, so it is knowable at
+  // draft time by construction rather than by argument. They are DECLARED here -- so an artifact
+  // may name them and this evaluator can compute them -- which is a different thing from being
+  // FITTED: only the columns tools/train_projection.py puts in its feature lists get a coefficient,
+  // and the admission trace in docs/validation.md records which ones earned one.
+  "prior_snap_share", "prior_route_share", "prior_carries_per_game", "prior_carry_share",
+  "depth_rank_sep1", "contract_year", "adp", "adp_vs_ecr", "rookie_draft_pick",
 ] as const;
 export type FeatureField = typeof FEATURE_FIELDS[number];
 

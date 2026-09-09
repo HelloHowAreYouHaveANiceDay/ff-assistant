@@ -66,7 +66,7 @@ function seed(db: DB): void {
     `INSERT INTO feat_player_week (feat_key, player_sk, season, week, as_of, name, pos, team,
         opponent, home, spread_line, total_line, implied_team_total, is_bye, td_games, td_fd, td_ts,
         td_attempts, td_rush_yards, td_pts, pts, updated_at)
-      VALUES (@k,@k,@s,@w,@a,@n,@p,@t,@o,@h,@sp,@tl,@it,0,@tg,@tf,@tt,@ta,@tr,@tp,@pts,'x')`,
+      VALUES (@k,@sk,@s,@w,@a,@n,@p,@t,@o,@h,@sp,@tl,@it,0,@tg,@tf,@tt,@ta,@tr,@tp,@pts,'x')`,
   );
   const POS = ["QB", "RB", "WR", "TE"];
   db.transaction(() => {
@@ -79,7 +79,11 @@ function seed(db: DB): void {
           const { opp, home } = opponentOf(team, w);
           const pts = pointsFor(p + (yr === SEASON ? 0 : 100), w);
           ins.run({
-            k: `P${p}`, s: yr, w, a: `${yr}-09-${String(w).padStart(2, "0")}`,
+            // feat_key is a string key; player_sk is the NUMERIC surrogate key, and they are
+            // deliberately different values here. The availability block joins on player_sk, and a
+            // fixture that used one string for both would have made a join that cannot parse a
+            // surrogate key look like a join that works.
+            k: `P${p}`, sk: p + 1, s: yr, w, a: `${yr}-09-${String(w).padStart(2, "0")}`,
             n: `Player ${p}`, p: pos, t: team, o: opp, h: home,
             sp: (p % 7) - 3, tl: 44 + (w % 5), it: 22 + (w % 3),
             tg: g, tf: g ? 1.5 : null, tt: g ? 0.2 : null, ta: g ? 30 : null, tr: g ? 12 : null,
@@ -93,11 +97,49 @@ function seed(db: DB): void {
   })();
 }
 
+/**
+ * THE AVAILABILITY BLOCK'S SOURCE ROWS, seeded into the fixture.
+ *
+ * Without these the ten Phase-2d columns are NULL in every row of the fixture, and "they did not
+ * move under the perturbation" would be true of a column that is not connected to anything at all --
+ * exactly the shape of null this repo has been burned by. Every player carries a distinct injury and
+ * usage state so a join that silently matched the wrong row would show up as a moved column.
+ */
+function seedContext(db: DB): void {
+  const ins = db.prepare(
+    `INSERT INTO feat_player_week_context (player_sk, season, week, as_of, team, pos,
+        prior_snap_share, prior_route_share, depth_rank, teammates_out,
+        report_status_fri, practice_status_fri, updated_at)
+      VALUES (@sk,@s,@w,@a,@t,@p,@snap,@route,@depth,@out,@rs,@ps,'x')`,
+  );
+  const STATUS = [null, "Out", "Questionable", "Doubtful"];
+  const PRACTICE = [null, "Did Not Participate In Practice", "Limited Participation in Practice", "Full Participation in Practice"];
+  db.transaction(() => {
+    for (let p = 0; p < 24; p++) {
+      for (let w = 1; w <= WEEKS; w++) {
+        ins.run({
+          sk: p + 1, s: SEASON, w, a: `${SEASON}-09-${String(w).padStart(2, "0")}`,
+          t: TEAMS[p % TEAMS.length], p: ["QB", "RB", "WR", "TE"][p % 4],
+          snap: ((p * 7 + w * 3) % 100) / 100, route: ((p * 11 + w * 5) % 100) / 100,
+          depth: 1 + ((p + w) % 3), out: (p + w) % 3,
+          rs: STATUS[(p + w) % STATUS.length], ps: PRACTICE[(p * 3 + w) % PRACTICE.length],
+        });
+      }
+    }
+  })();
+}
+
+const CONTEXT_COLS = [
+  "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
+  "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",
+];
+
 interface Snap { [col: string]: number | string | null }
 function snapshot(db: DB, week: number): Map<string, Snap> {
   const rows = db.prepare(
     `SELECT feat_key, td_games, td_ppg, t4_mean, t4_sd, td_fd, td_ts, td_attempts, td_rush_yards,
-            dvp_mult, dvp_n, home, spread_line, total_line, implied_team_total, days_rest, as_of, pts
+            dvp_mult, dvp_n, home, spread_line, total_line, implied_team_total, days_rest, as_of, pts,
+            ${CONTEXT_COLS.join(", ")}
        FROM feat_player_week_model WHERE season = ? AND week = ?`,
   ).all(SEASON, week) as (Snap & { feat_key: string })[];
   return new Map(rows.map((r) => [r.feat_key, r]));
@@ -130,9 +172,21 @@ test("weekly features for week w do not move when week w's own results change", 
   const db = openDb(path);
   try {
     seed(db);
+    seedContext(db);
     await build(db);
     const W = 5;
     const before = snapshot(db, W);
+    // THE AVAILABILITY BLOCK IS CONNECTED. Ten columns that are NULL everywhere would satisfy
+    // "nothing moved" without being wired to anything, so establish first that they carry real,
+    // varying values in this fixture.
+    for (const c of CONTEXT_COLS) {
+      const vals = new Set([...before.values()].map((r) => String(r[c])));
+      assert.ok(!vals.has("null") || vals.size > 1,
+        `${c} is NULL in every row of the fixture -- 'it did not move' would be a statement about a ` +
+        "column that is not joined to anything");
+    }
+    assert.ok(new Set([...before.values()].map((r) => String(r.inj_out))).size > 1,
+      "inj_out is constant across the fixture -- the injury join is not reaching these rows");
     const afterBefore = snapshot(db, W + 1);
     assert.ok(before.size >= 20, `fixture produced ${before.size} rows for week ${W}`);
 
@@ -178,12 +232,46 @@ test("weekly features for week w do not move when week w's own results change", 
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("POSITIVE CONTROL: week w's availability columns DO move when week w's CONTEXT changes", async () => {
+  // The complement of the test above, and the half that makes it mean something. A change to week
+  // w's own RESULTS must not reach week w's features (that is lookahead); a change to week w's own
+  // INJURY REPORT must, because the report is published before his kickoff and is the whole point of
+  // the block. A join that was silently dead would pass the first assertion and fail this one.
+  const dir = mkdtempSync(join(tmpdir(), "ff-weekly-ctx-"));
+  const db = openDb(join(dir, "ctx.db"));
+  try {
+    seed(db); seedContext(db);
+    await build(db);
+    const W = 5;
+    const before = snapshot(db, W);
+    const otherWeek = snapshot(db, W + 1);
+    db.prepare(
+      "UPDATE feat_player_week_context SET report_status_fri = 'Out', practice_status_fri = " +
+      "'Did Not Participate In Practice', teammates_out = 3, depth_rank = 4, prior_snap_share = 0.01 " +
+      "WHERE season = ? AND week = ?",
+    ).run(SEASON, W);
+    await build(db);
+    const after = snapshot(db, W);
+    const moved = movedColumns(before, after);
+    for (const c of ["inj_out", "prac_dnp", "teammates_out", "depth_rank", "prior_snap_share"]) {
+      assert.ok(moved.includes(c),
+        `${c} did not move when week ${W}'s injury report changed -- the availability join is dead ` +
+        `code, and every 'it did not leak' verdict about it is vacuous. Moved: ${moved.join(", ") || "(none)"}`);
+    }
+    // And it must be SCOPED to week w: rewriting week w's report must not touch week w+1.
+    const spill = movedColumns(otherWeek, snapshot(db, W + 1));
+    assert.deepEqual(spill, [],
+      `changing week ${W}'s context moved week ${W + 1}: ${spill.join(", ")}`);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("FAULT INJECTION: a DvP window that includes week w makes the guard fire", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "ff-weekly-leak-fi-"));
   const path = join(dir, "leak.db");
   const db = openDb(path);
   try {
     seed(db);
+    seedContext(db);
     const W = 5;
     // Honest build, then the same build with the leak switched on. Nothing else differs, so any
     // difference in week W's dvp_mult IS the leak.

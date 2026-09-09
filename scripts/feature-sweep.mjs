@@ -360,6 +360,63 @@ try {
   }
 } catch (e) { console.log(`  combine feed unavailable: ${e.message}`); }
 
+// --- THE EXTENSION TABLE (Phase 2b/2c) --------------------------------------------------------------
+//
+// `feat_player_season_ext` is the data track's own season-level output: draft position, contract
+// year, prior snap/route/carry usage, September depth chart, and ADP. Every column is keyed as-of
+// September 1 of the season it sits on, so it is knowable at draft time by construction rather than
+// by argument -- which is what makes it screenable here at all.
+//
+// It is joined by SURROGATE KEY, not by name. The residual rows carry `feat.player_sk` from
+// feat_player_season, and that is the same key this table is written under; joining these two on
+// "POS|Name" is the join that once put a father's birth year on his son.
+//
+// Two of these columns duplicate a name in feat_player_season (prior_air_yards_share, prior_wopr).
+// They are read from the EXTENSION table here and named for it, because the question being screened
+// is whether the extension track's version adds anything -- and silently preferring one source over
+// the other is how two tables come to disagree without anyone noticing.
+const EXT_COLS = [
+  "draft_year", "draft_round", "draft_pick", "contract_year",
+  "prior_snap_share", "prior_route_share", "prior_carries_per_game", "prior_carry_share",
+  "prior_air_yards_share", "prior_wopr", "depth_rank_sep1", "injury_status_sep1", "adp",
+];
+const ext = new Map();
+const adpByPosSeason = new Map();
+{
+  const { default: Database } = await import("better-sqlite3");
+  const xdb = new Database("data/ff.db", { readonly: true });
+  const xrows = xdb.prepare(
+    `SELECT player_sk, season, pos, ${EXT_COLS.join(", ")} FROM feat_player_season_ext`,
+  ).all();
+  xdb.close();
+  for (const r of xrows) {
+    ext.set(`${r.season}|${r.player_sk}`, r);
+    if (r.adp != null) {
+      const k = `${r.season}|${r.pos}`;
+      // `String(...)` and not the raw value: `feat_player_season.player_sk` is a TEXT column (it
+      // holds "DST:ARI" for a defence) while `feat_player_season_ext.player_sk` is INTEGER, so 301
+      // and "301" are the same player and `===` says they are not. The `ext_*` columns joined anyway
+      // because a template literal coerces both to a string; only this lookup used a strict compare,
+      // and it silently returned zero rows for every player -- a candidate that never reached a test
+      // while looking exactly like one that measured nothing.
+      (adpByPosSeason.get(k) ?? adpByPosSeason.set(k, []).get(k)).push({ sk: String(r.player_sk), adp: r.adp });
+    }
+  }
+  // ADP is an OVERALL draft position and ECR here is a POSITIONAL rank, so the two are not
+  // comparable as published. Ranking ADP within (season, position) puts them on the same scale,
+  // which is the only form in which "is ADP the same consensus as ECR twice?" is a question about
+  // the data rather than about units.
+  for (const list of adpByPosSeason.values()) {
+    list.sort((a, b) => a.adp - b.adp);
+    list.forEach((x, i) => { x.posRank = i + 1; });
+  }
+  const nExt = [...ext.values()].length;
+  const seasonsExt = [...new Set(xrows.map((r) => r.season))].sort();
+  console.log(`feat_player_season_ext: ${nExt} rows, seasons ${seasonsExt[0]}-${seasonsExt[seasonsExt.length - 1]}`);
+}
+const adpRankOf = (season, pos, sk) =>
+  (adpByPosSeason.get(`${season}|${pos}`) ?? []).find((x) => x.sk === String(sk))?.posRank ?? null;
+
 // --- assemble the candidate matrix -----------------------------------------------------------------
 let seed = 20260908;
 const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -390,6 +447,31 @@ for (const r of scored) {
   r.f.age = r.feat?.age ?? null;
   r.f.ageFromFeed = b.birthYear ? r.season - b.birthYear : null;
   r.f.__random = rnd();          // negative control
+
+  // ---- the extension table's columns, joined by surrogate key ----
+  const sk = r.feat?.player_sk ?? null;
+  const x = sk != null ? ext.get(`${r.season}|${sk}`) ?? null : null;
+  for (const c of EXT_COLS) r.f[`ext_${c}`] = x?.[c] ?? null;
+
+  // OWNER-REQUESTED COMPARISONS, derived here so both sides of each pair come from the SAME source
+  // and the same rows. Screening a carry count from one table against a rushing-yard column from
+  // another compares two joins as much as two features.
+  //
+  // (1) QB: volume versus volume-times-efficiency. `prior_rush_yards` on feat_player_season is
+  //     already PER GAME (Lamar Jackson's 2023 row reads 51.3), so it is directly comparable with
+  //     carries per game and no rescaling is invented.
+  r.f.priorRushYardsPg = r.feat?.prior_rush_yards ?? null;
+  // (2) ROOKIES: draft_round is already a fitted feature of the shipped season model for EVERY
+  //     player, where it is mostly a proxy for career quality. The question the owner asked is
+  //     narrower -- does draft position tell you anything about a man with no prior season? -- so
+  //     these are non-null only for a rookie, and screening them measures that and nothing else.
+  const isRookie = x?.draft_year != null && Number(x.draft_year) === r.season;
+  r.f.rookieDraftRound = isRookie ? x.draft_round ?? null : null;
+  r.f.rookieDraftPick = isRookie ? x.draft_pick ?? null : null;
+  // (3) ADP RELATIVE TO ECR. Positive means the room drafts him later than the experts rank him.
+  //     P27 pre-registers that this does NOT survive: it is the same consensus measured twice.
+  const ar = sk != null ? adpRankOf(r.season, r.pos, sk) : null;
+  r.f.adpVsEcr = ar != null && r.feat?.ecr_pos_rank != null ? ar - r.feat.ecr_pos_rank : null;
 }
 
 // --- statistics ------------------------------------------------------------------------------------
@@ -437,6 +519,12 @@ const SCOPE = {
   steadyRec: ["WR", "TE", "RB"], midRec: ["WR", "TE"],
   forty: ["RB", "WR", "TE"], vertical: ["RB", "WR", "TE"], broad: ["RB", "WR", "TE"],
   cone: ["RB", "WR", "TE"], shuttle: ["RB", "WR", "TE"], bench: ["RB", "WR", "TE"],
+  // Extension-table columns. Same rule and the same reason: a carry share screened across all four
+  // positions buries a real running-back effect under two positions of zeros.
+  ext_prior_carries_per_game: ["QB", "RB"], ext_prior_carry_share: ["RB"],
+  ext_prior_air_yards_share: ["WR", "TE"], ext_prior_wopr: ["WR", "TE"],
+  ext_prior_route_share: ["RB", "WR", "TE"],
+  priorRushYardsPg: ["QB"],
 };
 const LABEL = {
   __random: "RANDOM (negative control)", age: "age (positive control)",
@@ -444,15 +532,31 @@ const LABEL = {
 
 const CANDIDATES = [...new Set(scored.flatMap((r) => Object.keys(r.f)))].sort();
 const results = [];
+// SKIPS ARE REPORTED, NOT SWALLOWED. A candidate dropped for thin coverage and a candidate that was
+// screened and measured nothing look identical in a table that only lists what it screened -- and
+// "it did not survive" is a claim about a TEST, so a pre-registered prediction cannot be settled by a
+// test that never ran. Phase 2d found six candidates falling through this hole, including one the
+// prediction P27 was written about.
+const skipped = [];
 for (const key of CANDIDATES) {
   const scope = SCOPE[key];
   const g = scored.filter((r) => (!scope || scope.includes(r.pos)) && r.f[key] != null && Number.isFinite(r.f[key]));
-  if (g.length < 150) continue;
+  if (g.length < 150) { skipped.push({ key, why: `only ${g.length} rows carry it (floor 150)` }); continue; }
   const xs = g.map((r) => r.f[key]);
-  if (new Set(xs).size < 8) continue;            // effectively constant
+  // THE FLOOR IS 2, NOT 8. It was 8, and that quietly excluded every BINARY feature this sweep has
+  // ever derived -- `changedTeam`, `divShare`, `contract_year` -- along with any coarse ordinal like
+  // a depth-chart rank. Spearman is perfectly well defined with ties, and the Fisher-z approximation
+  // is ample at n > 150; a two-valued column is a legitimate candidate, not a degenerate one. Only a
+  // genuinely CONSTANT column has nothing to correlate. Raised to 8 it looked like a coverage floor
+  // and behaved like a silent exclusion rule for a whole class of feature.
+  const distinct = new Set(xs).size;
+  if (distinct < 2) {
+    skipped.push({ key, why: `constant: ${distinct} distinct value over ${g.length} rows` });
+    continue;
+  }
   const rhoBare = spearman(xs, g.map((r) => r.resid));
   const rho = spearman(xs, g.map((r) => r.residFull));
-  results.push({ key, n: g.length, scope: scope ? scope.join("/") : "all", rhoBare, rho, p: pValue(rho, g.length) });
+  results.push({ key, n: g.length, distinct, scope: scope ? scope.join("/") : "all", rhoBare, rho, p: pValue(rho, g.length) });
 }
 
 // --- Benjamini-Hochberg over the whole family --------------------------------------------------------
@@ -477,6 +581,18 @@ for (const r of results) {
     `${(r.rho >= 0 ? "+" : "") + r.rho.toFixed(3)}`.padStart(14) +
     `${r.p < 1e-4 ? r.p.toExponential(1) : r.p.toFixed(4)}`.padStart(11) + mark,
   );
+}
+
+// --- WHAT WAS NOT SCREENED AT ALL, AND WHY -----------------------------------------------------------
+if (skipped.length) {
+  console.log(`\n${"-".repeat(96)}\nNOT SCREENED -- ${skipped.length} candidates never reached a test\n`);
+  for (const s of skipped.sort((a, b) => (a.key < b.key ? -1 : 1))) {
+    console.log(`  ${s.key.padEnd(28)} ${s.why}`);
+  }
+  console.log(`
+  These are NOT null results. "It did not survive" is a statement about a test that ran; a candidate
+  below had no test, and treating the two the same is how a pre-registered prediction gets settled by
+  a measurement that never happened.`);
 }
 
 // --- ARE THE SURVIVORS INDEPENDENT? -------------------------------------------------------------------

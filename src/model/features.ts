@@ -56,6 +56,82 @@ interface Raw {
 }
 
 /**
+ * THE EXTENSION TABLE'S SEASON COLUMNS, keyed by SURROGATE KEY (Phase 2d).
+ *
+ * `feat_player_season_ext` is the data track's own season-level output and it is written under
+ * `player_sk`, not under `feat_key`. Joining it by name would be the join that put a father's birth
+ * year on his son; joining it by feat_key would silently miss every row whose key has moved.
+ *
+ * Two of the columns are DERIVED here rather than read:
+ *   `adp_vs_ecr`        -- ADP is an overall draft position and ECR is a positional rank, so the raw
+ *                          two are not comparable. Ranking ADP within (season, position) puts them
+ *                          on one scale; positive means the room takes him later than the experts.
+ *   `rookie_draft_pick` -- draft position for a man with NO prior season, and NULL for everyone
+ *                          else. `draft_round` is already a fitted feature for every player, where
+ *                          it is largely a proxy for career quality; this asks the narrower question.
+ *
+ * A season the table does not cover (it starts in 2013) yields an empty map, and every column lands
+ * NULL -- which the artifact's declared `missing` handles, and `feat_coverage` reports.
+ */
+export interface ExtSeasonRow {
+  prior_snap_share: number | null; prior_route_share: number | null;
+  prior_carries_per_game: number | null; prior_carry_share: number | null;
+  depth_rank_sep1: number | null; contract_year: number | null;
+  adp: number | null; adp_vs_ecr: number | null; rookie_draft_pick: number | null;
+}
+
+export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow> {
+  const out = new Map<string, ExtSeasonRow>();
+  let rows: Record<string, unknown>[];
+  try {
+    rows = db.prepare(
+      `SELECT player_sk, pos, draft_year, draft_pick, contract_year, prior_snap_share,
+              prior_route_share, prior_carries_per_game, prior_carry_share, depth_rank_sep1, adp
+         FROM feat_player_season_ext WHERE season = ?`,
+    ).all(season) as Record<string, unknown>[];
+  } catch { return out; }                      // a store without the extension table: no columns, not zeros
+  // ECR positional rank comes from feat_player_season, which is the same place the model reads it,
+  // so the two halves of `adp_vs_ecr` cannot be two different rank definitions.
+  const ecr = new Map<string, number>();
+  for (const r of db.prepare(
+    "SELECT player_sk, ecr_pos_rank FROM feat_player_season WHERE season = ? AND player_sk IS NOT NULL",
+  ).all(season) as { player_sk: string; ecr_pos_rank: number | null }[]) {
+    if (r.ecr_pos_rank != null) ecr.set(String(r.player_sk), Number(r.ecr_pos_rank));
+  }
+  const byPos = new Map<string, { sk: string; adp: number }[]>();
+  for (const r of rows) {
+    if (r.adp == null) continue;
+    const p = String(r.pos ?? "");
+    (byPos.get(p) ?? byPos.set(p, []).get(p)!).push({ sk: String(r.player_sk), adp: Number(r.adp) });
+  }
+  const adpRank = new Map<string, number>();
+  for (const list of byPos.values()) {
+    list.sort((a, b) => a.adp - b.adp);
+    list.forEach((x, i) => adpRank.set(x.sk, i + 1));
+  }
+  const num = (v: unknown): number | null => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+  for (const r of rows) {
+    const sk = String(r.player_sk);
+    const ar = adpRank.get(sk), er = ecr.get(sk);
+    out.set(sk, {
+      prior_snap_share: num(r.prior_snap_share), prior_route_share: num(r.prior_route_share),
+      prior_carries_per_game: num(r.prior_carries_per_game), prior_carry_share: num(r.prior_carry_share),
+      depth_rank_sep1: num(r.depth_rank_sep1), contract_year: num(r.contract_year),
+      adp: num(r.adp),
+      adp_vs_ecr: ar != null && er != null ? ar - er : null,
+      rookie_draft_pick: num(r.draft_year) === season ? num(r.draft_pick) : null,
+    });
+  }
+  return out;
+}
+
+const EMPTY_EXT: ExtSeasonRow = {
+  prior_snap_share: null, prior_route_share: null, prior_carries_per_game: null,
+  prior_carry_share: null, depth_rank_sep1: null, contract_year: null,
+  adp: null, adp_vs_ecr: null, rookie_draft_pick: null,
+};
+
+/**
  * NOTHING HERE READS `age-curve.json` OR `opportunity-model.json` ANY MORE (Phase 2b).
  *
  * They were fitted outside every fold, by their own scripts, against their own curves -- and the
@@ -79,6 +155,7 @@ export function loadFeatureRows(db: DB, opts: LoadOpts): FeatureRow[] {
 
   const want = opts.positions ? new Set(opts.positions) : null;
   const baseCol = opts.base ?? "curve_value_ecr";
+  const xt = loadExtSeason(db, opts.season);
 
   const out: FeatureRow[] = [];
   for (const r of rows) {
@@ -101,6 +178,7 @@ export function loadFeatureRows(db: DB, opts: LoadOpts): FeatureRow[] {
         draft_round: r.draft_round, draft_pick: r.draft_pick,
         draft_age: r.draft_year != null && r.age != null ? r.age - (opts.season - r.draft_year) : null,
         ecr_pos_rank: r.ecr_pos_rank, ecr_sd: r.ecr_sd,
+        ...(r.player_sk != null ? xt.get(String(r.player_sk)) ?? EMPTY_EXT : EMPTY_EXT),
       },
     });
   }
@@ -166,6 +244,7 @@ export function backtestFeatureRows(db: DB, season: number, artifact: Projection
     own_rush_yards: number | null; own_air_yards_share: number | null; own_wopr: number | null;
   }[];
 
+  const xt = loadExtSeason(db, season);
   const own = new Map<string, Raw>();
   for (const r of db.prepare(
     `SELECT feat_key, player_sk, name, pos, prior_pos_rank, prior_pts, prior_games, age,
@@ -203,6 +282,10 @@ export function backtestFeatureRows(db: DB, season: number, artifact: Projection
         draft_pick: r?.draft_pick ?? p.draft_pick,
         draft_age: draftYear != null && age != null ? age - (season - draftYear) : null,
         ecr_pos_rank: r?.ecr_pos_rank ?? null, ecr_sd: r?.ecr_sd ?? null,
+        // The extension columns are as-of September 1 of season Y, so they belong to the Y row and
+        // are looked up under the Y surrogate key -- the SAME key the trainer reads them under. A
+        // man in the pool with no Y row has none of them, which is the honest answer.
+        ...(p.player_sk != null ? xt.get(String(p.player_sk)) ?? EMPTY_EXT : EMPTY_EXT),
       },
     });
   }

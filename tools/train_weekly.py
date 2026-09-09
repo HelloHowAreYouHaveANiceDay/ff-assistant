@@ -2,13 +2,13 @@
 
     uv run --with scikit-learn --with numpy tools/train_weekly.py \
         --db data/ff.db --seasons 2010-2025 --holdout-season none \
-        --features all --out data/weekly-artifact.json
+        --features all --zero-model two-part --out data/weekly-artifact.json
 
 WHY TRAINING LIVES HERE AND SERVING LIVES IN TYPESCRIPT: the same reason tools/train_projection.py
 gives one horizon up. The engine is TypeScript and runs inside an Electron app on a machine with no
 Python, in the middle of a live season. Quantile regression is a linear program. The seam between
 the two is the ARTIFACT, and a seam is exactly where a producer and a consumer drift apart while
-both stay green -- so the artifact carries a GOLDEN BLOCK, five fixture rows with THIS script's own
+both stay green -- so the artifact carries a GOLDEN BLOCK, six fixture rows with THIS script's own
 predictions, and src/weekly/projector.ts refuses the artifact if it cannot reproduce them to 1e-6.
 
 WHAT IS FITTED.
@@ -19,26 +19,34 @@ is; fitting points directly would spend the model's capacity re-learning talent.
 is then a statement about what the season line gets WRONG week to week, which is the only thing a
 weekly model can add.
 
-THE ZERO ATOM.
+THE ZERO ATOM, AND THE TWO MODELS THAT CAN TREAT IT.
 
 Weekly fantasy points are zero-inflated twice over: a rostered man can fail to play at all, and a
 receiver who plays can catch nothing. Measured on 2010-2025 rostered non-bye weeks, 29.5% of the rows
-this script trains on score at or below 1.0 point. Two treatments are defensible: a two-part model (P(zero week) from availability signals, times the ratio given a real
-week), or quantile heads that can reach zero. THIS SCRIPT USES QUANTILE HEADS -- the clamp floor is
-exactly 0, not the season model's 0.01, so p10 is free to sit on the atom and does.
+this script trains on score at or below 1.0 point.
 
-The reason is not elegance. The signals that would drive a two-part model's first stage -- injury
-designation as of the Friday report, depth-chart rank, whether the man ahead of him is out -- are the
-DATA TRACK's `feat_player_week_context` and do not exist in this table yet. A zero-probability stage
-fitted on to-date scoring alone fits the CONSEQUENCE of an injury rather than the injury; it would
-look like structure while measuring what the mean head already sees. `--zero-model two-part` is
-reserved for when those columns land, and refuses to run until they do rather than fitting a stage
-it cannot honestly feed.
+  --zero-model quantile  (Phase 2c, and still the default)
+      One set of heads fitted on the POOLED target, zeros included, with the clamp floor at exactly
+      0 so p10 is free to sit on the atom and does. Its limitation is structural rather than a
+      calibration failure: 0.10 is the smallest quantile level it publishes, so the largest zero
+      probability it can express is 0.10, however certain the zero is. Against an actual zero share
+      near 0.40 that is not a model that is slightly wrong, it is a model that cannot say the thing.
 
-THE MEAN HEAD IS FITTED ON THE POOLED TARGET, ZEROS INCLUDED. A lineup wants E[points]; the pooled
-ridge estimates exactly that, and excluding zero weeks would make every projection an estimate of
-"points given a good week", which is systematically too high for precisely the players a lineup
-should be benching.
+  --zero-model two-part  (Phase 2d, and what the availability columns make honest)
+      Stage one: P(zero week), a per-position REGULARISED LOGISTIC fit led by the injury designation,
+      the practice report, depth-chart rank and how many team-mates at his position are Out.
+      Stage two: the ratio GIVEN HE PLAYED, fitted on played weeks only, at a grid of quantile levels.
+      The published p10/p50/p90 are the MIXTURE's, so p10 is exactly 0 whenever the zero probability
+      exceeds 0.10, and E[points] is P(he plays) * E[ratio | he plays] * line.
+
+WHY --zero-model two-part USED TO REFUSE TO RUN. The signals that drive stage one -- injury
+designation, depth-chart rank, whether the man ahead of him is out -- were the DATA TRACK's
+`feat_player_week_context` and were not joined into this table. A zero-probability stage fitted on
+to-date scoring alone fits the CONSEQUENCE of an injury rather than the injury; it would look like
+structure while measuring what the mean head already sees. Those columns have landed, so the refusal
+is now CONDITIONAL on them actually being in the feature set rather than unconditional -- and it is
+still a refusal, because a two-part model fitted without them is the same worthless thing it always
+was.
 """
 
 import argparse
@@ -50,7 +58,7 @@ from datetime import date
 
 import numpy as np
 
-SCHEMA = 1
+SCHEMA = 2
 POS_FITTED = ["QB", "RB", "WR", "TE"]
 POS_INTERCEPT_ONLY = ["K", "DST"]
 
@@ -63,6 +71,18 @@ TRAIN_MIN_LINE = 3.0
 # into a small positive number that no metric flags.
 CLAMP_LO, CLAMP_HI = 0.0, 4.0
 
+# THE SECOND STAGE'S QUANTILE GRID. The consumer interpolates the mixture on it, so it is written ON
+# the artifact rather than agreed by convention. Seven levels rather than three because the mixture
+# shift q -> (q - pZero)/(1 - pZero) moves the level that has to be evaluated: with a zero
+# probability of 0.3, the published p50 is the 0.286-quantile of the played distribution and the
+# published p90 is its 0.857-quantile, neither of which a three-level ladder can supply.
+QUANTILE_GRID = [0.05, 0.10, 0.20, 0.30, 0.50, 0.70, 0.90]
+
+# A zero WEEK, and the same threshold src/weekly/evaluate.ts uses. `pts <= 0`, not the 1.0 the
+# earlier note quoted: gate clause (b) is coverage conditional on pts > 0 and clause (c) is the share
+# of zero weeks, and those two have to partition the same rows.
+ZERO_PTS = 0.0
+
 # Feature name -> transform family. The names are validated against src/weekly/features.ts's
 # published dictionary by the TypeScript loader; this list is the producing half of that contract.
 RATIO_TO_LINE = ["td_ppg", "t4_mean", "t4_sd"]
@@ -70,8 +90,19 @@ CENTER = [
     "td_games", "dvp_mult", "dvp_n", "spread_line", "total_line",
     "implied_team_total", "days_rest", "week_no", "season_line_pg",
     "td_fd", "td_ts", "td_attempts", "td_rush_yards",
+    # THE AVAILABILITY BLOCK. Every one of these is keyed to this team's own kickoff rather than to
+    # the league week's first kickoff; src/weekly/features.ts CONTEXT_FIELDS carries each column's
+    # as-of rule and the reason the anchor is different.
+    "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
 ]
-INDICATOR = ["home"]
+INDICATOR = [
+    "home",
+    "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited",
+    # NOT an injury signal: 1 where the feed published a dated report for this league-week at all.
+    # From 2025 it stopped publishing dates, so every status is NULL for reasons that have nothing
+    # to do with who could play, and without this column the model reads that as a healthy league.
+    "inj_feed",
+]
 
 # Which positions may carry a non-zero coefficient on each usage feature. A quarterback has no target
 # share and no receiving first downs; scoring him on them measures ~0 and then that null gets written
@@ -81,9 +112,24 @@ POS_GATED = {
     "td_ts": {"RB", "WR", "TE"},
     "td_attempts": {"QB"},
     "td_rush_yards": {"QB"},
+    # A quarterback runs no routes. The charted route share is a receiver's workload column and
+    # fitting it for QB measures the participation feed's coverage, not his job.
+    "prior_route_share": {"RB", "WR", "TE"},
 }
 
+# The columns stage one is not allowed to be run without. A two-part model whose first stage sees
+# only to-date scoring fits the consequence of an injury rather than the injury.
+AVAILABILITY_REQUIRED = ["inj_out", "depth_rank", "teammates_out", "prior_snap_share"]
+
 ALL_FEATURES = RATIO_TO_LINE + CENTER + INDICATOR
+
+SELECT_COLS = [
+    "feat_key", "player_sk", "season", "week", "name", "pos", "season_line_pg",
+    "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts", "td_attempts", "td_rush_yards",
+    "dvp_mult", "dvp_n", "home", "spread_line", "total_line", "implied_team_total", "days_rest",
+    "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
+    "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",
+]
 
 
 def parse_seasons(s):
@@ -91,6 +137,11 @@ def parse_seasons(s):
     lo = int(parts[0])
     hi = int(parts[1]) if len(parts) > 1 else lo
     return lo, hi
+
+
+def grid_head(q):
+    """Grid level -> head name. Mirrored in src/weekly/projector.ts gridHead()."""
+    return "q" + str(int(round(q * 100))).rjust(2, "0")
 
 
 def load_rows(db_path, lo, hi, population):
@@ -108,15 +159,16 @@ def load_rows(db_path, lo, hi, population):
 
     A bye is excluded from BOTH populations. Every model knows about a bye equally, from the
     schedule, so scoring it would hand every model the same free lunch and flatter all of them.
+
+    NOTE the two-part model uses BOTH: stage one is fitted on the whole `rostered` population (that
+    is where the zeros are) and stage two on its played subset. It is one population with a split
+    inside it, not two populations, which is why the artifact still records `rostered`.
     """
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     where = "pts IS NOT NULL" if population == "played" else "COALESCE(is_bye, 0) = 0"
     cur = con.execute(
-        "SELECT feat_key, player_sk, season, week, name, pos, season_line_pg,"
-        " td_games, td_ppg, t4_mean, t4_sd, td_fd, td_ts, td_attempts, td_rush_yards,"
-        " dvp_mult, dvp_n, home, spread_line, total_line, implied_team_total, days_rest,"
-        " COALESCE(pts, 0.0) AS pts"
+        "SELECT " + ", ".join(SELECT_COLS) + ", COALESCE(pts, 0.0) AS pts"
         " FROM feat_player_week_model"
         " WHERE season BETWEEN ? AND ? AND " + where + " AND season_line_pg IS NOT NULL",
         (lo, hi),
@@ -137,6 +189,12 @@ def build_specs(rows, wanted):
     mean-imputation, which is 0 after centring and is stated as such. For a ratio-to-line feature it
     is 1.0 -- "exactly what his season line implies" -- which is the only default that does not move
     a projection for a player we know nothing about.
+
+    An INDICATOR's missing default is 0, which for the injury block means "not carrying that
+    designation". That is the right reading where the feed spoke and said nothing about him, and the
+    WRONG one where the feed did not speak at all -- which is precisely what `inj_feed` is for: it
+    is 0 exactly there, so the model has a column that separates the two cases instead of a default
+    that quietly conflates them.
     """
     specs = []
     for name in RATIO_TO_LINE:
@@ -211,13 +269,62 @@ def quantile(a, q):
     return float(np.quantile(np.asarray(a, dtype=float), q)) if len(a) else 1.0
 
 
-def fit_position(rows, specs, pos, args):
-    """Ridge for the mean, pinball-loss linear fits for the three quantiles.
+def keep_for(specs, pos):
+    return [j for j, s in enumerate(specs)
+            if s["name"] not in POS_GATED or pos in POS_GATED[s["name"]]]
 
-    Alpha is chosen by SEASON-GROUPED cross-validation inside the training data. Grouping by season
-    matters more here than at the season horizon: player-weeks inside one year share the scoring era,
-    the schedule and the injury luck, and a random split puts the same player's week 4 in the
-    training fold and his week 5 in the test fold, which is a leak that flatters every alpha.
+
+def head_from(model_coef, model_intercept, specs, keep):
+    """One head, as a {intercept, feature: coefficient} dict with EVERY declared feature present.
+
+    An ABSENT coefficient and a ZERO one look the same in a prediction and completely different in a
+    schema check, and the loader refuses the absent case on purpose.
+    """
+    c = {"intercept": float(model_intercept)}
+    for j, jj in enumerate(keep):
+        c[specs[jj]["name"]] = float(model_coef[j])
+    for s in specs:
+        c.setdefault(s["name"], 0.0)
+    return c
+
+
+def flat_head(value, specs):
+    c = {"intercept": float(value)}
+    for s in specs:
+        c[s["name"]] = 0.0
+    return c
+
+
+def best_ridge_alpha(X, y, groups, alphas):
+    """Alpha by SEASON-GROUPED cross-validation inside the training data.
+
+    Grouping by season matters more here than at the season horizon: player-weeks inside one year
+    share the scoring era, the schedule and the injury luck, and a random split puts the same
+    player's week 4 in the training fold and his week 5 in the test fold, which is a leak that
+    flatters every alpha.
+    """
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import GroupKFold
+
+    n_splits = min(5, len(set(groups.tolist())))
+    best, best_err = alphas[0], float("inf")
+    if n_splits < 2:
+        return best
+    gkf = GroupKFold(n_splits=n_splits)
+    for a in alphas:
+        err, n = 0.0, 0
+        for tr, te in gkf.split(X, y, groups):
+            m = Ridge(alpha=a).fit(X[tr], y[tr])
+            p = m.predict(X[te])
+            err += float(np.sum((y[te] - p) ** 2))
+            n += len(te)
+        if n and err / n < best_err:
+            best_err, best = err / n, a
+    return best
+
+
+def fit_quantile_heads(X, y, levels, args, names_specs, keep):
+    """Pinball-loss linear quantile regression at each level, on a seeded uniform subsample.
 
     THE QUANTILES ARE FITTED ACROSS THE FULL RANK RANGE, unlike the season model, which caps at
     rank 36 because its curve flattens past that. There is no such flattening here: the denominator
@@ -225,119 +332,235 @@ def fit_position(rows, specs, pos, args):
     thing all the way down the board -- and a lineup decision at the bottom of a roster is exactly
     where a weekly spread has to be right.
     """
-    from sklearn.linear_model import Ridge, QuantileRegressor
-    from sklearn.model_selection import GroupKFold
+    from sklearn.linear_model import QuantileRegressor
 
-    sub = [r for r in rows if r["pos"] == pos]
-    if len(sub) < 500:
-        return None, len(sub)
-    keep = [j for j, s in enumerate(specs)
-            if s["name"] not in POS_GATED or pos in POS_GATED[s["name"]]]
-    X_all = design(sub, specs)
-    X = X_all[:, keep]
-    y = np.array([r["pts"] / r["season_line_pg"] for r in sub], dtype=float)
-    groups = np.array([r["season"] for r in sub])
-
-    alphas = [0.1, 1.0, 10.0, 100.0]
-    n_splits = min(5, len(set(groups.tolist())))
-    best_alpha, best_err = alphas[0], float("inf")
-    if n_splits >= 2:
-        gkf = GroupKFold(n_splits=n_splits)
-        for a in alphas:
-            err, n = 0.0, 0
-            for tr, te in gkf.split(X, y, groups):
-                m = Ridge(alpha=a).fit(X[tr], y[tr])
-                p = m.predict(X[te])
-                err += float(np.sum((y[te] - p) ** 2))
-                n += len(te)
-            if n and err / n < best_err:
-                best_err, best_alpha = err / n, a
-    mean_model = Ridge(alpha=best_alpha).fit(X, y)
-
-    coef = {"mean": {"intercept": float(mean_model.intercept_)}}
-    for j, jj in enumerate(keep):
-        coef["mean"][specs[jj]["name"]] = float(mean_model.coef_[j])
-
-    # The quantile solver is O(n^2)-ish in the number of rows; a uniform subsample keeps it tractable
-    # without selecting on anything. Seeded, so a rerun reproduces the artifact byte for byte.
     rng = np.random.default_rng(7)
     idx = np.arange(len(y))
     if len(y) > args.quantile_max_rows:
         idx = rng.choice(idx, size=args.quantile_max_rows, replace=False)
         idx.sort()
     Xq, yq = X[idx], y[idx]
-    for name, q in (("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
+    out = {}
+    for q in levels:
         if len(yq) >= 300:
             qm = QuantileRegressor(quantile=q, alpha=args.quantile_alpha, solver="highs").fit(Xq, yq)
-            c = {"intercept": float(qm.intercept_)}
-            for j, jj in enumerate(keep):
-                c[specs[jj]["name"]] = float(qm.coef_[j])
+            out[q] = head_from(qm.coef_, qm.intercept_, names_specs, keep)
         else:
-            c = {"intercept": quantile(yq, q)}
-        coef[name] = c
+            out[q] = flat_head(quantile(yq, q), names_specs)
+    return out
 
-    # Every declared feature needs a coefficient at every head, including the ones this position is
-    # not allowed to use. An ABSENT coefficient and a ZERO one look the same in a prediction and
-    # completely different in a schema check, and the loader refuses the absent case on purpose.
-    for h in ("mean", "p10", "p50", "p90"):
-        for s in specs:
-            coef[h].setdefault(s["name"], 0.0)
+
+def fit_position_quantile(rows, specs, pos, args):
+    """The Phase 2c model: ridge for the mean and three quantile heads, all on the POOLED target."""
+    from sklearn.linear_model import Ridge
+
+    sub = [r for r in rows if r["pos"] == pos]
+    if len(sub) < 500:
+        return None, len(sub)
+    keep = keep_for(specs, pos)
+    X = design(sub, specs)[:, keep]
+    y = np.array([r["pts"] / r["season_line_pg"] for r in sub], dtype=float)
+    groups = np.array([r["season"] for r in sub])
+
+    alpha = best_ridge_alpha(X, y, groups, [0.1, 1.0, 10.0, 100.0])
+    mean_model = Ridge(alpha=alpha).fit(X, y)
+    coef = {"mean": head_from(mean_model.coef_, mean_model.intercept_, specs, keep)}
+    heads = fit_quantile_heads(X, y, [0.10, 0.50, 0.90], args, specs, keep)
+    coef["p10"], coef["p50"], coef["p90"] = heads[0.10], heads[0.50], heads[0.90]
     return coef, len(sub)
 
 
-def intercept_only(rows, pos, specs):
+def fit_position_two_part(rows, specs, pos, args):
+    """STAGE ONE: will he play. STAGE TWO: how much, given he did.
+
+    Stage one is a logistic on the WHOLE rostered population -- that is where the zeros are -- with
+    the inverse-regularisation strength chosen by season-grouped CV on log loss, for the same reason
+    the ridge alpha is: a random split puts the same player's week 4 and week 5 on opposite sides.
+
+    Stage two is fitted on PLAYED WEEKS ONLY, which is the one place in this file where that
+    population is correct: it is estimating E[ratio | he played] and the quantiles of the same
+    conditional distribution, and the mixture puts the zeros back at serve time.
+    """
+    from sklearn.linear_model import LogisticRegression, Ridge
+    from sklearn.model_selection import GroupKFold
+
+    sub = [r for r in rows if r["pos"] == pos]
+    if len(sub) < 500:
+        return None, len(sub)
+    keep = keep_for(specs, pos)
+    X = design(sub, specs)[:, keep]
+    groups = np.array([r["season"] for r in sub])
+    yz = np.array([1 if r["pts"] <= ZERO_PTS else 0 for r in sub], dtype=int)
+
+    # ---- stage one ----
+    if len(set(yz.tolist())) < 2:
+        return None, len(sub)
+    n_splits = min(5, len(set(groups.tolist())))
+    Cs = [0.03, 0.1, 0.3, 1.0]
+    bestC, best_ll = Cs[0], float("inf")
+    if n_splits >= 2:
+        gkf = GroupKFold(n_splits=n_splits)
+        for C in Cs:
+            ll, n = 0.0, 0
+            for tr, te in gkf.split(X, yz, groups):
+                if len(set(yz[tr].tolist())) < 2:
+                    continue
+                m = LogisticRegression(C=C, max_iter=2000).fit(X[tr], yz[tr])
+                p = np.clip(m.predict_proba(X[te])[:, 1], 1e-9, 1 - 1e-9)
+                ll += float(-np.sum(yz[te] * np.log(p) + (1 - yz[te]) * np.log(1 - p)))
+                n += len(te)
+            if n and ll / n < best_ll:
+                best_ll, bestC = ll / n, C
+    zm = LogisticRegression(C=bestC, max_iter=2000).fit(X, yz)
+    coef = {"zero": head_from(zm.coef_[0], zm.intercept_[0], specs, keep)}
+
+    # ---- stage two, on played weeks only ----
+    played = yz == 0
+    if int(played.sum()) < 500:
+        return None, len(sub)
+    Xp = X[played]
+    yp = np.array([r["pts"] / r["season_line_pg"] for r in sub], dtype=float)[played]
+    gp = groups[played]
+    alpha = best_ridge_alpha(Xp, yp, gp, [0.1, 1.0, 10.0, 100.0])
+    mean_model = Ridge(alpha=alpha).fit(Xp, yp)
+    coef["mean"] = head_from(mean_model.coef_, mean_model.intercept_, specs, keep)
+    for q, h in fit_quantile_heads(Xp, yp, QUANTILE_GRID, args, specs, keep).items():
+        coef[grid_head(q)] = h
+    return coef, len(sub)
+
+
+def logit(p):
+    p = min(1 - 1e-9, max(1e-9, float(p)))
+    return math.log(p / (1 - p))
+
+
+def intercept_only(rows, pos, specs, zero_model):
+    """K and DST: this table carries no kicking or defensive usage columns, so there is nothing to
+    give them beyond the ratio's own distribution. Under the two-part model that still means two
+    intercepts -- the empirical zero rate and the played distribution -- not one."""
     sub = [r for r in rows if r["pos"] == pos]
     if len(sub) < 200:
         return None, 0
     ratios = [r["pts"] / r["season_line_pg"] for r in sub]
-    out = {}
-    for name, q in (("mean", None), ("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
-        v = float(np.mean(ratios)) if q is None else quantile(ratios, q)
-        c = {"intercept": v}
-        for s in specs:
-            c[s["name"]] = 0.0
-        out[name] = c
+    if zero_model == "quantile":
+        out = {}
+        for name, q in (("mean", None), ("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
+            v = float(np.mean(ratios)) if q is None else quantile(ratios, q)
+            out[name] = flat_head(v, specs)
+        return out, len(sub)
+    played = [r["pts"] / r["season_line_pg"] for r in sub if r["pts"] > ZERO_PTS]
+    if len(played) < 100:
+        return None, 0
+    zero_rate = 1.0 - len(played) / len(sub)
+    out = {"zero": flat_head(logit(zero_rate), specs),
+           "mean": flat_head(float(np.mean(played)), specs)}
+    for q in QUANTILE_GRID:
+        out[grid_head(q)] = flat_head(quantile(played, q), specs)
     return out, len(sub)
 
 
 def evaluate(artifact, row):
-    """Predict one row with THIS script's own arithmetic -- the golden block's source of truth."""
+    """Predict one row with THIS script's own arithmetic -- the golden block's source of truth.
+
+    MIRRORED, line for line, by src/weekly/projector.ts projectWeekly(). The mixture is where the two
+    sides are most likely to drift, because it is the only part with a branch in it, so the golden
+    block carries pZero as well as the four published heads.
+    """
     heads = artifact["coef"][row["pos"]]
-    x = [feature_value(s, row) for s in artifact["features"]]
-    out = {}
-    for h in ("mean", "p10", "p50", "p90"):
+    specs = artifact["features"]
+    x = [feature_value(s, row) for s in specs]
+    line = row["season_line_pg"]
+
+    def lin(h):
         c = heads[h]
-        lin = c.get("intercept", 0.0)
-        for j, s in enumerate(artifact["features"]):
-            lin += c.get(s["name"], 0.0) * x[j]
-        lin = min(artifact["clamps"]["hi"], max(artifact["clamps"]["lo"], lin))
-        out[h] = row["season_line_pg"] * lin
-    return out
+        v = c.get("intercept", 0.0)
+        for j, s in enumerate(specs):
+            v += c.get(s["name"], 0.0) * x[j]
+        return v
+
+    lo, hi = artifact["clamps"]["lo"], artifact["clamps"]["hi"]
+
+    def clamped(h):
+        return min(hi, max(lo, lin(h)))
+
+    if artifact.get("zeroModel") != "two-part":
+        return {h: line * clamped(h) for h in ("mean", "p10", "p50", "p90")}
+
+    z = lin("zero")
+    p_zero = 1.0 / (1.0 + math.exp(-z)) if z >= 0 else math.exp(z) / (1.0 + math.exp(z))
+    ratio = clamped("mean")
+    grid = artifact["quantileGrid"]
+    vals, prev = [], lo
+    for q in grid:
+        v = max(prev, clamped(grid_head(q)))
+        vals.append(v)
+        prev = v
+
+    def mix_q(q):
+        if p_zero >= 1:
+            return 0.0
+        qp = (q - p_zero) / (1.0 - p_zero)
+        if not (qp > 0):
+            return 0.0
+        if qp >= grid[-1]:
+            return vals[-1]
+        lo_q, lo_v = 0.0, 0.0
+        for i, g in enumerate(grid):
+            if qp <= g:
+                span = g - lo_q
+                return lo_v + (vals[i] - lo_v) * ((qp - lo_q) / span) if span > 0 else vals[i]
+            lo_q, lo_v = g, vals[i]
+        return vals[-1]
+
+    return {
+        "mean": line * (1.0 - p_zero) * ratio,
+        "p10": line * mix_q(0.10), "p50": line * mix_q(0.50), "p90": line * mix_q(0.90),
+        "pZero": p_zero,
+    }
 
 
 def golden_rows(artifact):
-    """Five fixtures, chosen to be the ones most likely to expose a disagreement."""
+    """Six fixtures, chosen to be the ones most likely to expose a disagreement."""
     fixtures = [
         {"pos": "RB", "season_line_pg": 14.5, "td_games": 6, "td_ppg": 15.2, "t4_mean": 17.0,
          "t4_sd": 4.4, "td_fd": 4.0, "td_ts": 0.15, "dvp_mult": 1.12, "dvp_n": 6, "home": 1,
          "spread_line": -3.5, "total_line": 47.5, "implied_team_total": 25.5, "days_rest": 7,
-         "week_no": 7},
+         "week_no": 7, "prior_snap_share": 0.72, "prior_route_share": 0.41, "depth_rank": 1,
+         "teammates_out": 0, "inj_out": 0, "inj_doubtful": 0, "inj_questionable": 0,
+         "prac_dnp": 0, "prac_limited": 0, "inj_feed": 1},
         {"pos": "WR", "season_line_pg": 11.0, "td_games": 3, "td_ppg": 6.1, "t4_mean": 6.1,
          "t4_sd": 3.0, "td_fd": 2.2, "td_ts": 0.24, "dvp_mult": 0.88, "dvp_n": 3, "home": 0,
          "spread_line": 6.5, "total_line": 41.0, "implied_team_total": 17.25, "days_rest": 10,
-         "week_no": 4},
+         "week_no": 4, "prior_snap_share": 0.61, "prior_route_share": 0.55, "depth_rank": 2,
+         "teammates_out": 1, "inj_out": 0, "inj_doubtful": 0, "inj_questionable": 1,
+         "prac_dnp": 0, "prac_limited": 1, "inj_feed": 1},
         {"pos": "QB", "season_line_pg": 19.5, "td_games": 11, "td_ppg": 21.0, "t4_mean": 24.5,
          "t4_sd": 6.0, "td_attempts": 35.0, "td_rush_yards": 30.0, "dvp_mult": 1.05, "dvp_n": 11,
          "home": 1, "spread_line": -7.0, "total_line": 49.5, "implied_team_total": 28.25,
-         "days_rest": 6, "week_no": 12},
+         "days_rest": 6, "week_no": 12, "prior_snap_share": 1.0, "depth_rank": 1,
+         "teammates_out": 0, "inj_out": 0, "inj_doubtful": 0, "inj_questionable": 0,
+         "prac_dnp": 0, "prac_limited": 0, "inj_feed": 1},
         {"pos": "TE", "season_line_pg": 7.5, "td_games": 1, "td_ppg": 2.0, "t4_mean": 2.0,
          "t4_sd": None, "td_fd": 0.0, "td_ts": 0.08, "dvp_mult": 1.0, "dvp_n": 1, "home": 0,
          "spread_line": 1.0, "total_line": 44.0, "implied_team_total": 21.5, "days_rest": 14,
-         "week_no": 3},
+         "week_no": 3, "prior_snap_share": 0.35, "prior_route_share": 0.22, "depth_rank": 3,
+         "teammates_out": 0, "inj_out": 0, "inj_doubtful": 0, "inj_questionable": 0,
+         "prac_dnp": 0, "prac_limited": 0, "inj_feed": 1},
         # WEEK ONE, every optional input missing. This is the row where the two implementations fall
         # back on their own defaults, which is precisely where they are most likely to differ -- and
         # it is not a corner case, it is every player in week 1.
         {"pos": "RB", "season_line_pg": 9.0, "week_no": 1, "td_games": 0},
+        # AN OUT DESIGNATION. The row the two-part model exists for: a healthy-looking usage history
+        # with the Friday report saying he will not play. Under the quantile model this fixture is
+        # nearly indistinguishable from the first one; under the two-part model p10 and p50 must
+        # collapse onto the atom, and if the consumer's mixture branch is wrong this is the row that
+        # says so.
+        {"pos": "WR", "season_line_pg": 13.0, "td_games": 8, "td_ppg": 14.0, "t4_mean": 15.5,
+         "t4_sd": 4.0, "td_fd": 3.4, "td_ts": 0.27, "dvp_mult": 1.02, "dvp_n": 8, "home": 1,
+         "spread_line": -2.5, "total_line": 46.0, "implied_team_total": 24.25, "days_rest": 7,
+         "week_no": 9, "prior_snap_share": 0.85, "prior_route_share": 0.78, "depth_rank": 1,
+         "teammates_out": 0, "inj_out": 1, "inj_doubtful": 0, "inj_questionable": 0,
+         "prac_dnp": 1, "prac_limited": 0, "inj_feed": 1},
     ]
     out = []
     for fx in fixtures:
@@ -374,14 +597,6 @@ def main():
     ap.add_argument("--quantile-max-rows", type=int, default=20000)
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
-
-    if args.zero_model == "two-part":
-        sys.exit(
-            "train_weekly: --zero-model two-part is reserved for when the DATA TRACK's "
-            "feat_player_week_context lands (injury designation, depth-chart rank, teammates out). "
-            "Fitting P(zero week) on to-date scoring alone fits the consequence of an injury rather "
-            "than the injury, and would look like structure while measuring what the mean head "
-            "already sees. Refusing rather than fitting a stage this table cannot honestly feed.")
 
     lo, hi = parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
@@ -420,6 +635,7 @@ def main():
                 "p90": {"intercept": quantile(sub, 0.90)},
             }
             counts[pos] = len(sub)
+        zero_model = "quantile"
         notes = ("season-line-only floor: mean intercept exactly 1.0, so the projection IS the "
                  "preseason season line per game. Quantile intercepts are the EMPIRICAL ratio "
                  "quantiles on the training seasons, which is a measured spread rather than an "
@@ -428,30 +644,59 @@ def main():
         specs = build_specs(rows, wanted)
         if not specs:
             sys.exit("train_weekly: no feature met its coverage floor -- nothing to fit")
+        zero_model = args.zero_model
+        # THE REFUSAL, now conditional on the columns rather than unconditional. A two-part model
+        # whose first stage cannot see the injury report, the depth chart or the snap history is
+        # fitting the CONSEQUENCE of an injury (a bad recent week) rather than the injury, and it
+        # would look like structure while measuring what the mean head already sees.
+        if zero_model == "two-part":
+            have = {s["name"] for s in specs}
+            gone = [c for c in AVAILABILITY_REQUIRED if c not in have]
+            if gone:
+                sys.exit(
+                    "train_weekly: --zero-model two-part needs the availability columns and these "
+                    "are absent from the fitted feature set: " + ", ".join(gone) + ". They come "
+                    "from feat_player_week_context via `ff build-weekly-features`; either that has "
+                    "not been run against this store, or --features excluded them, or they failed "
+                    "the 500-row coverage floor. Fitting P(zero week) on to-date scoring alone fits "
+                    "the consequence of an injury rather than the injury, so this refuses rather "
+                    "than fitting a stage it cannot honestly feed.")
         coef, counts = {}, {}
+        fit = fit_position_two_part if zero_model == "two-part" else fit_position_quantile
         for pos in POS_FITTED:
-            c, n = fit_position(rows, specs, pos, args)
+            c, n = fit(rows, specs, pos, args)
             counts[pos] = n
             if c:
                 coef[pos] = c
         for pos in POS_INTERCEPT_ONLY:
-            c, n = intercept_only(rows, pos, specs)
+            c, n = intercept_only(rows, pos, specs, zero_model)
             if c:
                 coef[pos] = c
                 counts[pos] = n
-        notes = ("Ridge on the ratio actual/season-line, alpha by season-grouped CV inside the "
-                 "training data; p10/p50/p90 by pinball-loss linear quantile regression across the "
-                 "FULL rank range. Zero weeks are IN the fit and the clamp floor is exactly 0, so "
-                 "p10 can sit on the zero atom. K and DST are intercept-only: this table carries no "
-                 "kicking or defensive usage columns, so there is nothing to give them.")
+        if zero_model == "two-part":
+            notes = ("TWO-PART. Stage one is a per-position logistic on P(pts <= 0) over the whole "
+                     "rostered population, C by season-grouped CV on log loss. Stage two is ridge "
+                     "for E[ratio | played] plus pinball-loss quantile heads at " +
+                     str(len(QUANTILE_GRID)) + " levels, fitted on PLAYED weeks only. The published "
+                     "p10/p50/p90 are the MIXTURE's, so p10 is exactly 0 wherever the zero "
+                     "probability exceeds 0.10 -- which a pooled quantile fit cannot say at all. "
+                     "K and DST are two intercepts: this table carries no kicking or defensive "
+                     "usage columns.")
+        else:
+            notes = ("Ridge on the ratio actual/season-line, alpha by season-grouped CV inside the "
+                     "training data; p10/p50/p90 by pinball-loss linear quantile regression across "
+                     "the FULL rank range. Zero weeks are IN the fit and the clamp floor is exactly "
+                     "0, so p10 can sit on the zero atom. K and DST are intercept-only: this table "
+                     "carries no kicking or defensive usage columns.")
 
     if not coef:
         sys.exit("train_weekly: nothing fitted")
 
-    zero_share = (sum(1 for r in rows if r["pts"] <= 1.0) / len(rows)) if rows else 0.0
+    zero_share = (sum(1 for r in rows if r["pts"] <= ZERO_PTS) / len(rows)) if rows else 0.0
     artifact = {
         "schema": SCHEMA,
         "kind": "weekly",
+        "zeroModel": zero_model,
         "fittedFrom": "tools/train_weekly.py",
         "fittedAt": date.today().isoformat(),
         "seasons": seasons,
@@ -462,9 +707,11 @@ def main():
         "features": specs,
         "coef": coef,
         "clamps": {"lo": CLAMP_LO, "hi": CLAMP_HI},
-        "notes": notes + " Zero weeks (pts <= 1.0) are " + format(100 * zero_share, ".1f") +
+        "notes": notes + " Zero weeks (pts <= 0) are " + format(100 * zero_share, ".1f") +
                  "% of the training rows.",
     }
+    if zero_model == "two-part":
+        artifact["quantileGrid"] = QUANTILE_GRID
     artifact["golden"] = golden_rows(artifact)
 
     with open(args.out, "w", encoding="ascii") as fh:
@@ -474,16 +721,25 @@ def main():
         print("  seasons " + str(seasons[0]) + "-" + str(seasons[-1]) +
               (" holding out " + str(holdout) if holdout else "") +
               "; " + str(len(rows)) + " player-weeks (" + args.population + "); " +
-              str(len(specs)) + " features")
+              str(len(specs)) + " features; zero-model " + zero_model)
         print("  features used: " + (", ".join(s["name"] for s in specs) or "(none)"))
-        print("  waiting on the data track: injury_status_friday, depth_chart_rank, teammates_out, "
-              "prior_snap_share, prior_route_share, vegas_implied_team_total")
+        print("  STILL waiting on the data track: report_status_wed, practice_status_wed "
+              "(the feed's dated filings land at kickoff minus two or later, so the Wednesday pair "
+              "is empty), a live in-week odds feed")
         for pos in sorted(coef):
-            m = coef[pos]["mean"]
+            m = coef[pos].get("mean", {})
             terms = ", ".join(k + " " + format(v, ".4f")
                               for k, v in sorted(m.items()) if k != "intercept" and abs(v) > 1e-4)
             print("  " + pos.ljust(4) + " n=" + str(counts.get(pos, 0)).rjust(6) +
-                  "  intercept " + format(m["intercept"], ".4f") + "  " + (terms or "(intercept only)"))
+                  "  intercept " + format(m.get("intercept", 0.0), ".4f") + "  " +
+                  (terms or "(intercept only)"))
+            if "zero" in coef[pos]:
+                z = coef[pos]["zero"]
+                zt = ", ".join(k + " " + format(v, ".4f")
+                               for k, v in sorted(z.items(), key=lambda kv: -abs(kv[1]))
+                               if k != "intercept" and abs(v) > 1e-4)
+                print("       P(zero) logit intercept " + format(z["intercept"], ".4f") +
+                      "  " + (zt or "(intercept only)"))
         print("  golden rows: " + str(len(artifact["golden"])))
 
 

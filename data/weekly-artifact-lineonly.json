@@ -1,8 +1,9 @@
 {
-  "schema": 1,
+  "schema": 2,
   "kind": "weekly",
+  "zeroModel": "quantile",
   "fittedFrom": "tools/train_weekly.py",
-  "fittedAt": "2026-09-08",
+  "fittedAt": "2026-09-09",
   "seasons": [
     2010,
     2011,
@@ -35,10 +36,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.9257808350061796
+        "intercept": 0.7149341382592773
       },
       "p90": {
-        "intercept": 2.726299932947121
+        "intercept": 2.189495490145957
       }
     },
     "RB": {
@@ -49,10 +50,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.6744547973167399
+        "intercept": 0.5754635983236951
       },
       "p90": {
-        "intercept": 2.5643340100594982
+        "intercept": 2.504425176255145
       }
     },
     "WR": {
@@ -63,10 +64,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.7201052230849212
+        "intercept": 0.6898743813249664
       },
       "p90": {
-        "intercept": 2.503663164093361
+        "intercept": 2.4854260696533377
       }
     },
     "TE": {
@@ -77,10 +78,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.7570941828076
+        "intercept": 0.6458285065865191
       },
       "p90": {
-        "intercept": 2.656780228768374
+        "intercept": 2.4160170331900233
       }
     },
     "K": {
@@ -91,10 +92,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 1.0262806236080178
+        "intercept": 0.9098253059277266
       },
       "p90": {
-        "intercept": 2.1900710877289806
+        "intercept": 1.9780776385261576
       }
     },
     "DST": {
@@ -102,13 +103,13 @@
         "intercept": 1.0
       },
       "p10": {
-        "intercept": -0.1696316871991689
+        "intercept": -0.17317395495396032
       },
       "p50": {
-        "intercept": 0.8090666113608167
+        "intercept": 0.8264777623659219
       },
       "p90": {
-        "intercept": 2.3416110699676476
+        "intercept": 2.386641748703289
       }
     }
   },
@@ -116,7 +117,7 @@
     "lo": 0.0,
     "hi": 4.0
   },
-  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 1.0) are 29.5% of the training rows.",
+  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 0) are 28.2% of the training rows.",
   "golden": [
     {
       "pos": "RB",
@@ -136,13 +137,23 @@
         "total_line": 47.5,
         "implied_team_total": 25.5,
         "days_rest": 7,
-        "week_no": 7
+        "week_no": 7,
+        "prior_snap_share": 0.72,
+        "prior_route_share": 0.41,
+        "depth_rank": 1,
+        "teammates_out": 0,
+        "inj_out": 0,
+        "inj_doubtful": 0,
+        "inj_questionable": 0,
+        "prac_dnp": 0,
+        "prac_limited": 0,
+        "inj_feed": 1
       },
       "expect": {
         "mean": 14.5,
         "p10": 0.0,
-        "p50": 9.779594561092727,
-        "p90": 37.182843145862726
+        "p50": 8.344222175693579,
+        "p90": 36.314165055699604
       }
     },
     {
@@ -163,13 +174,23 @@
         "total_line": 41.0,
         "implied_team_total": 17.25,
         "days_rest": 10,
-        "week_no": 4
+        "week_no": 4,
+        "prior_snap_share": 0.61,
+        "prior_route_share": 0.55,
+        "depth_rank": 2,
+        "teammates_out": 1,
+        "inj_out": 0,
+        "inj_doubtful": 0,
+        "inj_questionable": 1,
+        "prac_dnp": 0,
+        "prac_limited": 1,
+        "inj_feed": 1
       },
       "expect": {
         "mean": 11.0,
         "p10": 0.0,
-        "p50": 7.921157453934133,
-        "p90": 27.54029480502697
+        "p50": 7.5886181945746305,
+        "p90": 27.339686766186716
       }
     },
     {
@@ -190,13 +211,22 @@
         "total_line": 49.5,
         "implied_team_total": 28.25,
         "days_rest": 6,
-        "week_no": 12
+        "week_no": 12,
+        "prior_snap_share": 1.0,
+        "depth_rank": 1,
+        "teammates_out": 0,
+        "inj_out": 0,
+        "inj_doubtful": 0,
+        "inj_questionable": 0,
+        "prac_dnp": 0,
+        "prac_limited": 0,
+        "inj_feed": 1
       },
       "expect": {
         "mean": 19.5,
         "p10": 0.0,
-        "p50": 18.0527262826205,
-        "p90": 53.162848692468856
+        "p50": 13.941215696055908,
+        "p90": 42.69516205784616
       }
     },
     {
@@ -217,13 +247,23 @@
         "total_line": 44.0,
         "implied_team_total": 21.5,
         "days_rest": 14,
-        "week_no": 3
+        "week_no": 3,
+        "prior_snap_share": 0.35,
+        "prior_route_share": 0.22,
+        "depth_rank": 3,
+        "teammates_out": 0,
+        "inj_out": 0,
+        "inj_doubtful": 0,
+        "inj_questionable": 0,
+        "prac_dnp": 0,
+        "prac_limited": 0,
+        "inj_feed": 1
       },
       "expect": {
         "mean": 7.5,
         "p10": 0.0,
-        "p50": 5.678206371057,
-        "p90": 19.925851715762803
+        "p50": 4.843713799398894,
+        "p90": 18.120127748925174
       }
     },
     {
@@ -237,8 +277,45 @@
       "expect": {
         "mean": 9.0,
         "p10": 0.0,
-        "p50": 6.070093175850658,
-        "p90": 23.079006090535483
+        "p50": 5.179172384913256,
+        "p90": 22.539826586296307
+      }
+    },
+    {
+      "pos": "WR",
+      "line": 13.0,
+      "f": {
+        "season_line_pg": 13.0,
+        "td_games": 8,
+        "td_ppg": 14.0,
+        "t4_mean": 15.5,
+        "t4_sd": 4.0,
+        "td_fd": 3.4,
+        "td_ts": 0.27,
+        "dvp_mult": 1.02,
+        "dvp_n": 8,
+        "home": 1,
+        "spread_line": -2.5,
+        "total_line": 46.0,
+        "implied_team_total": 24.25,
+        "days_rest": 7,
+        "week_no": 9,
+        "prior_snap_share": 0.85,
+        "prior_route_share": 0.78,
+        "depth_rank": 1,
+        "teammates_out": 0,
+        "inj_out": 1,
+        "inj_doubtful": 0,
+        "inj_questionable": 0,
+        "prac_dnp": 1,
+        "prac_limited": 0,
+        "inj_feed": 1
+      },
+      "expect": {
+        "mean": 13.0,
+        "p10": 0.0,
+        "p50": 8.968366957224562,
+        "p90": 32.31053890549339
       }
     }
   ]

@@ -227,6 +227,211 @@
 > replaced them, but because P31 measured them flat and `starterReserve` provably inert at the shipped
 > `aggr`. That is a decision for the owner and `DEFAULT_LEVERS` is untouched here.
 >
+> ---
+
+> ## PHASE 2D: availability in the weekly model, features admitted by the gate (2026-09-09)
+>
+> Six pre-registered predictions, W4-W6 and P25-P27. **Three held and three failed.** The two gates
+> ran as written and one of them refused a model that beats every baseline on every accuracy metric
+> by a wide margin, on a calibration clause it missed by five thousandths. Nothing was re-specified
+> and nothing was tuned to make it pass.
+>
+> | | prediction | outcome |
+> |---|---|---|
+> | W4 | the two-part model's lineup gain is at least 5 points per lineup on deep-18 | **HELD** -- 6.08 (72.31 vs 66.22) |
+> | W5 | its predicted zero-week share matches actual within 3 points, pooled and per position | **FAILED** -- 0.035 pooled; RB 0.031, WR 0.039, TE 0.074 |
+> | W6 | `implied_team_total` carries a larger coefficient than `dvp_mult` at every position | **FAILED** -- `dvp_mult` is larger at all four fitted positions |
+> | P25 | at least one screen survivor improves pooled CRPS with coverage in band | **HELD** -- two do |
+> | P26 | for QB, carries per game beats rushing yards per game | **FAILED** -- rushing yards is the stronger; neither survives |
+> | P27 | ADP relative to ECR does NOT survive -- the same consensus twice | **HELD** -- rho +0.004, p 0.90, n 810 |
+>
+> ### The weekly gate, applied as pre-registered, on two models
+>
+> The Phase 2c gate failed on POOLED coverage at 0.876 for a reason that was not about calibration:
+> the clamp floor is exactly 0, p10 sits on the zero atom, an actual of 0 is therefore always inside
+> [0, p90], and 41.9% of the scored rows are zeros. No improvement in a model can bring that inside
+> [0.75, 0.85] -- only making it worse about zeros can. The band was corrected **before this run and
+> against the previous run's numbers**, and the atom was moved out of the coverage figure and graded
+> directly:
+>
+> > **(a)** pooled CRPS beats the shipped baseline; **(b)** coverage CONDITIONAL ON pts > 0 in
+> > [0.75, 0.85] pooled and [0.70, 0.90] per position; **(c)** the predicted share of zero weeks is
+> > within 3 points of actual, pooled and per position.
+>
+> Clause (c) needed a number no model here published. `predZeroProb` reads it off the ladder each
+> model *does* publish, inverting the quantile function at 0 with the artifact's own clamp floor as
+> the q=0 anchor -- and the consequence is the point: **a quantile-head model whose p10 sits on the
+> atom claims P(zero) = 0.10 and cannot claim more**, because 0.10 is the smallest level it
+> publishes.
+>
+> 14 held-out seasons, 112,782 player-weeks, same folds and baselines for both models:
+>
+> | clause | quantile heads (2c's features) | two-part (with availability) |
+> |---|---|---|
+> | (a) pooled CRPS vs shipped `week()` 2.664 | **PASS** 2.314 | **PASS** 2.150 |
+> | (b) cov(>0), pooled / per position | **PASS** 0.813 / all in band | **PASS** 0.798 / all in band |
+> | (c) zero-share within 0.03 | **FAIL** off by 0.287; outside at all 6 | **FAIL** off by 0.035; RB 0.031, WR 0.039, TE 0.074 |
+> | | RMSE 5.474, deep-18 70.77 | RMSE 5.268, deep-18 72.31 |
+>
+> **Both failed. The season-line-only artifact keeps shipping**, exactly as before Phase 2d, and
+> `lineupRecommend` is unchanged.
+>
+> The two failures say opposite things and that is why the clause was worth writing. The quantile
+> model misses by 0.287 because it *cannot say the number*. The two-part model misses pooled by
+> **0.035 against a tolerance of 0.030** -- it can express the atom and is not yet calibrated on it,
+> which is a bounded next job (the first stage is a plain logistic and its intercept is the only
+> thing between 0.384 and 0.419). The tolerance is not widened to 0.04. A tolerance chosen after
+> seeing 0.035 is not a tolerance.
+>
+> ### W4 settles the question W2 left open
+>
+> Phase 2c's W2 failed and the recorded reading was that the gain came from in-season form rather
+> than from anything the prediction was about -- because the table had no availability column to test
+> the availability claim with. It has one now, and adding those columns **alone**, on the same folds
+> against the same baseline, moves the deep-18 lineup from +4.55 to **+6.08** points over the shipped
+> path. Availability is worth about **1.5 points per lineup per week** on top of form and matchup. It
+> is the largest single effect this track has measured.
+>
+> What the first stage learned, logit coefficients on standardised columns:
+>
+> | position | `inj_out` | `inj_doubtful` | `prac_dnp` | next largest |
+> |---|---|---|---|---|
+> | QB | +3.38 | +2.67 | +2.38 | `prac_limited` +1.36 |
+> | RB | +4.91 | +3.96 | +1.75 | `td_games` -1.76 |
+> | WR | +5.18 | +3.17 | +1.62 | `td_games` -1.42 |
+> | TE | +3.95 | +2.85 | +1.88 | `td_games` -1.34 |
+>
+> ### W6 failed against the RECORD, not against a guess
+>
+> The recorded belief is that defence-versus-position is small (legacy calibration: talent alone
+> 0.717 correlation, +0.013 from DvP) and that the market's implied team total should dominate it. On
+> the fitted mean head -- both features centred and scaled by their own training standard deviation,
+> so the coefficients are comparable in units of a one-sigma move -- `dvp_mult` is the **larger** of
+> the two at all four fitted positions: QB 0.061 vs 0.036, RB 0.081 vs 0.033, WR 0.049 vs 0.032, TE
+> 0.049 vs 0.041. Two honest readings and this measurement does not separate them: the DvP built here
+> is a shrunk, prior-blended, point-in-time multiplier rather than the raw season table the legacy
+> calibration used, so it may simply be the better-constructed feature; or `implied_team_total` is
+> largely redundant with `spread_line` and `total_line`, which sit in the same fit, and the three are
+> splitting one effect. Either way, the record's claim as stated is not what the model does.
+>
+> ### The screen was measuring less than it looked like it was measuring
+>
+> Two defects, the same shape -- **a candidate that never reached a test, reported identically to one
+> that was tested and measured nothing**:
+>
+> 1. The distinct-value floor was **8**, which silently excluded every BINARY candidate the sweep has
+>    ever derived (`changedTeam`, `divShare`, `contract_year`) and any coarse ordinal. Spearman is
+>    well defined with ties and Fisher-z is ample at n > 150; only a constant column has nothing to
+>    correlate. Lowered to 2, it surfaced **the two strongest candidates in the whole sweep** --
+>    `depth_rank_sep1` at rho -0.186 and `contract_year` at -0.124, against a previous best of +0.105.
+> 2. `player_sk` is **TEXT** in `feat_player_season` and **INTEGER** in `feat_player_season_ext`, so
+>    the ADP-versus-ECR derivation's `===` matched nothing and produced **0 rows** -- a candidate with
+>    no test, indistinguishable from a null. The other extension columns joined fine because a
+>    template-literal key coerces both sides.
+>
+> The sweep now prints a **NOT SCREENED** block naming every candidate that reached no test and why.
+> Three still do: `injury_status_sep1` is 100% NULL (0 of 8,021 rows), and `rookieDraftPick` /
+> `rookieDraftRound` have **0 rows by construction** -- the residual universe is players with a
+> prior-season finish rank and a rookie has none. The owner's question about rookie draft capital
+> cannot be answered by this screen at all, and that is the answer, not a null.
+>
+> ### The admission trace
+>
+> Each candidate re-measured under the full nested evaluation, one at a time, in survivor order --
+> never on the residuals it was screened against. Keep-rule pre-registered: pooled CRPS improves AND
+> coverage stays in band.
+>
+> | step | RMSE | pinball | coverage | verdict |
+> |---|---|---|---|---|
+> | baseline (2c's nine features) | 54.17 | 12.31 | 0.759 | -- |
+> | `+ depth_rank_sep1` | **52.79** | **12.03** | 0.761 | **ADMIT** |
+> | `+ contract_year` | 52.79 | **12.02** | 0.760 | **ADMIT** |
+>
+> Per position with both admitted, against baseline: **QB 76.8 vs 82.4**, RB 61.9 vs 62.4, WR 49.7 vs
+> 49.6, TE 36.5 vs 36.9. Almost all of it is at quarterback, which is where a September depth chart
+> says the most: a starter is a starter and a backup scores nothing, and a curve indexed on last
+> year's finish cannot see a job change.
+>
+> `contract_year` clears the rule by **0.01 of pinball** with RMSE unchanged and coverage a thousandth
+> worse. It is admitted by the letter of a rule that has no effect-size floor, and it is recorded that
+> way rather than dressed up. A keep/drop rule with no minimum effect will eventually admit noise.
+>
+> **The board moved and the arbiter has not seen it.** Top-12 goes from twelve quarterbacks to eleven
+> plus Bijan Robinson; the value book's dollar share shifts WR 37.9% -> 41.0% and RB 32.5% -> 29.3%.
+> The QB share does **not** close the Phase 2c gap -- 16.4% -> 16.7% against a room maximum of 11.2%
+> -- and no positional multiplier was added. The flagless championship backtest projects from actuals
+> and does not read this artifact, so it is unchanged and has told us nothing about this board; a
+> value decision on it needs `backtest --projection artifact --artifact-dir <per-fold>` first.
+>
+> ### Coverage, and three things the feeds cannot do
+>
+> - **`report_status_wed` / `practice_status_wed` are empty** -- 11 and 389 values across 133,892
+>   player-weeks, because the feed's dated filings land at kickoff minus two or later. Phase 2d set
+>   out to declare them and reports their emptiness instead. A model fitting an intercept on 0.008% of
+>   its rows would have produced "Wednesday practice status did not help", a fact about the feed
+>   dressed as a fact about football.
+> - **From 2025 the injury feed publishes no report DATE.** An undated filing cannot be placed on
+>   either side of a cutoff, so all 6,068 of 2025's are dropped and every injury column reads NULL.
+>   `inj_feed` is 0 for exactly those league-weeks, so the model knows it is blind rather than
+>   concluding the league was healthy.
+> - **The live season has no availability at all**: `feat_player_week_context` holds no 2026 rows, so
+>   the two-part first stage would serve 2026 on its declared defaults. Running `ff build-features-ext`
+>   for 2026 is a data-track job and is not done here.
+>
+> ### Guards added, each fault-injected once
+>
+> - `weeklyGate` -- every clause exercised twice, once with an input that must fail it and once with
+>   an input that must pass, plus a whole-gate positive control. A gate nothing can ever pass would
+>   have kept the floor shipping forever while looking rigorous.
+> - The leakage guard gained its missing half: ten columns NULL everywhere would satisfy "nothing
+>   moved" without being wired to anything, so the fixture now seeds `feat_player_week_context` and
+>   asserts the **complement** -- week *w*'s injury report must move week *w*'s availability columns
+>   and must not touch *w+1*, while week *w*'s RESULTS still must not move any of them. It found a
+>   real bug on its first run: the fixture's synthetic `player_sk` was the string `P0`, the block
+>   joins on the numeric surrogate key, and all ten columns were silently NULL.
+> - `scripts/weekly-leak-audit.mjs` audits `inj_out` and `teammates_out` against an independent
+>   recomputation from `raw_injury`, parameterised by the cutoff: **5** mismatches at the Friday bound
+>   against **30** with the bound moved to kickoff, and **0** against the context table it is built
+>   from. The bound on the first is 0.5% and not zero because this recomputation resolves through the
+>   gsis crosswalk alone while the builder also falls back on name+position+team -- an independent
+>   implementation that agreed to the last row would be the same implementation. The discriminating
+>   assertion is the ratio, not the count.
+> - `test/dag-derivation.test.ts` -- remove two nodes and the unplaced-asset guard must name both,
+>   then return empty again with them restored.
+>
+> ### The arbiter, unchanged
+>
+> ```
+> npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
+>   CHAMPIONSHIPS: 38.1%  (random 6.3%)  |  playoffs: 96%
+> ```
+>
+> Identical to Phase 2c, and it should be: the flagless arbiter projects from **actuals**
+> (`projMode = "actuals"`), so it never reads `data/projection-artifact.json` and nothing in this
+> phase touched `src/draft/`. That is worth stating rather than assuming, because it is also the
+> reason the arbiter has said nothing at all about the new board -- a 3-point dollar-share
+> reallocation from RB to WR is exactly the kind of change this repo's one rule exists to arbitrate,
+> and it has not been arbitrated. `--projection artifact --artifact-dir <per-fold artifacts>` is the
+> run that would.
+>
+> ### Left undone, deliberately
+>
+> - **`src/draft/models.ts` is not updated.** The registry entry for the projection artifact still
+>   quotes the Phase 2c numbers (54.32 / 12.39 / 0.764 and the pre-rekey figures) and carries no
+>   weekly entry. `src/draft/**` is outside this phase's file fence. What it needs: `nestedLift` and
+>   the P5 line re-quoted to **RMSE 52.79 / pinball 12.02 / coverage 0.760** with `depth_rank_sep1`
+>   and `contract_year` named, and a `weekly` entry recording that the two-part artifact failed clause
+>   (c) and the floor ships.
+> - **`feat_player_week_model` is not in the engine's `data-sources` registry**, so it is still
+>   invisible on the Data page. The derivation places it the moment it is registered (asserted by
+>   test), and registering it is one line inside `cmdServe` -- also outside the fence.
+> - **The two-part artifact is not promoted to `lineupRecommend`**, correctly, because it failed its
+>   gate. Note that `ff scorecard` reads `data/weekly-artifact.json` and therefore WILL freeze 2026
+>   predictions with the two-part model while the lineup serves the floor. That split predates Phase
+>   2d and is defensible for a measurement surface, but it should be decided on purpose.
+>
+> ---
+
 > ## PHASE 2C: one key space, real outcomes, and the honest arbiter (2026-09-09)
 >
 > Eleven pre-registered predictions, P10 to P20. **Seven failed and four held.** The failures carry

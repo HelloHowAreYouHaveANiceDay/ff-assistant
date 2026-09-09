@@ -55,18 +55,63 @@ export const WEEKLY_FEATURE_FIELDS = [
   "dvp_mult", "dvp_n",
   "home", "spread_line", "total_line", "implied_team_total", "days_rest",
   "season_line_pg", "week_no",
+  // ---- THE AVAILABILITY BLOCK, from feat_player_week_context (the data track). See CONTEXT_FIELDS
+  // below for each column's as-of rule; they are NOT on the same anchor as the columns above and
+  // that difference is stated rather than buried.
+  "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
+  "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",
 ] as const;
 export type WeeklyFeatureField = typeof WEEKLY_FEATURE_FIELDS[number];
 
 /**
- * Columns the DATA TRACK owns and this table does not have yet. Named here so a report can say
- * which measurement was made WITHOUT them rather than implying the model saw everything. When
- * `feat_player_week_context` lands, these move into WEEKLY_FEATURE_FIELDS and the loader below
- * joins the table; nothing else in the weekly path needs to change.
+ * THE AVAILABILITY COLUMNS, their storage type, and the AS-OF RULE each one is keyed with.
+ *
+ * THE ANCHOR IS DIFFERENT FROM THE REST OF THIS TABLE AND THAT MATTERS. Everything above is keyed to
+ * `as_of` = the day before the week's FIRST kickoff, league-wide, which is the strictly-safest
+ * anchor and the same date for every row in a week. These come from `feat_player_week_context`,
+ * which is keyed PER TEAM: the injury pair at this team's kickoff minus two days, depth and usage at
+ * this team's kickoff minus one. For a team playing Sunday that is LATER than the league-wide
+ * anchor by up to four days.
+ *
+ * That is a real widening and it is accepted deliberately, for a reason that is checkable rather
+ * than a matter of taste: the later anchor is still strictly before THIS PLAYER'S OWN KICKOFF, which
+ * is the only thing a lineup decision needs, and the information it admits (a Friday injury
+ * designation) is not derived from any game's result. What it must not admit is week w's SCORING,
+ * and that is exactly what test/weekly-leakage.test.ts asserts -- extended in Phase 2d to perturb
+ * the raw injury rows themselves, so a column that read a report filed after the cutoff would fire.
+ *
+ * `inj_feed` exists because the alternative is a fabricated fact. From 2025 the nflverse injury feed
+ * stopped publishing a report DATE, so `feat_player_week_context` drops every 2025 report (an undated
+ * row cannot be placed on either side of a cutoff) and every injury column reads NULL. Without a
+ * feed indicator a model reads that as "nobody in the league was hurt in 2025", which is worse than
+ * missing data because it is confidently wrong. `inj_feed` is 0 for exactly those league-weeks.
+ */
+export const CONTEXT_FIELDS: { name: WeeklyFeatureField; sql: string; asOf: string }[] = [
+  { name: "prior_snap_share", sql: "REAL", asOf: "offense_pct in the last week he PLAYED before w; carried forward" },
+  { name: "prior_route_share", sql: "REAL", asOf: "charted pass plays / team pass plays, same rule; participation feed starts 2016" },
+  { name: "depth_rank", sql: "INTEGER", asOf: "depth chart at (this team's kickoff - 1 day)" },
+  { name: "teammates_out", sql: "INTEGER", asOf: "same team, same position, listed Out at (this team's kickoff - 2 days)" },
+  { name: "inj_out", sql: "INTEGER", asOf: "report_status_fri == 'Out' at (kickoff - 2 days)" },
+  { name: "inj_doubtful", sql: "INTEGER", asOf: "report_status_fri == 'Doubtful', same cutoff" },
+  { name: "inj_questionable", sql: "INTEGER", asOf: "report_status_fri in Questionable/Probable, same cutoff" },
+  { name: "prac_dnp", sql: "INTEGER", asOf: "practice_status_fri == did not participate, same cutoff" },
+  { name: "prac_limited", sql: "INTEGER", asOf: "practice_status_fri == limited, same cutoff" },
+  { name: "inj_feed", sql: "INTEGER", asOf: "1 where the injury feed published ANY dated report for this league-week" },
+];
+
+/**
+ * Columns the DATA TRACK owns and this table STILL does not have. Named here so a report can say
+ * which measurement was made without them rather than implying the model saw everything.
+ *
+ * The Wednesday injury pair is on this list and it is the surprise of Phase 2d. The columns exist,
+ * `buildWeekContext` fills them with a cutoff of (kickoff - 4 days), and they are EMPTY: eleven
+ * `report_status_wed` values and 389 `practice_status_wed` values across 133,892 player-weeks,
+ * because the feed's dated filings land at kickoff minus two or later. A model declaring them would
+ * fit an intercept on 0.008% of its rows and the report would say "Wednesday practice status did not
+ * help", which would be a fact about the feed dressed up as a fact about football.
  */
 export const PENDING_DATA_TRACK_FIELDS = [
-  "injury_status_friday", "depth_chart_rank", "teammates_out",
-  "prior_snap_share", "prior_route_share", "vegas_implied_team_total",
+  "report_status_wed", "practice_status_wed", "vegas_implied_team_total_live",
 ] as const;
 
 /** Games per team in a season's REGULAR schedule, read from the published schedule. Known in
@@ -94,6 +139,86 @@ export const DVP_PRIOR_WEIGHT = 6;
 
 const finite = (x: number | null | undefined): number | null =>
   x == null || !Number.isFinite(x) ? null : x;
+
+/**
+ * ADD THE AVAILABILITY COLUMNS TO AN EXISTING STORE.
+ *
+ * schema.sql is CREATE TABLE IF NOT EXISTS throughout, so a column added to the CREATE reaches a
+ * fresh store and never an existing one -- the table is already there, the statement is skipped in
+ * silence, and every query naming the column fails at runtime on exactly the machines that have real
+ * data. So the ALTER is explicit, idempotent BY INSPECTION rather than by swallowing an exception
+ * (a duplicate-column error and a malformed ALTER arrive as the same type), and it runs on every
+ * build rather than in a migration someone has to remember.
+ */
+export function ensureContextColumns(db: DB): void {
+  const have = new Set((db.prepare("PRAGMA table_info(feat_player_week_model)").all() as { name: string }[])
+    .map((c) => c.name));
+  if (!have.size) return;                              // table not created yet; schema.sql owns that
+  for (const c of CONTEXT_FIELDS) {
+    if (!have.has(c.name)) db.exec(`ALTER TABLE feat_player_week_model ADD COLUMN ${c.name} ${c.sql}`);
+  }
+}
+
+/** What the availability block holds for one row, before it is written. */
+export type ContextRow = Record<string, number | null>;
+
+const EMPTY_CONTEXT: ContextRow = Object.fromEntries(CONTEXT_FIELDS.map((c) => [c.name, null]));
+
+/** Normalised injury/practice buckets. The feed's strings are matched EXACTLY where it publishes a
+ *  controlled vocabulary and by prefix where it publishes a sentence ("Did Not Participate In
+ *  Practice"). An unrecognised string produces all-zero indicators rather than being silently
+ *  folded into the nearest bucket. */
+function injuryIndicators(status: string | null, practice: string | null): Record<string, number> {
+  const s = (status ?? "").trim();
+  const p = (practice ?? "").trim().toLowerCase();
+  return {
+    inj_out: s === "Out" ? 1 : 0,
+    inj_doubtful: s === "Doubtful" ? 1 : 0,
+    // Probable was retired from the report after 2015 and Questionable absorbed it. Folding them
+    // together is what makes one coefficient mean the same thing across the whole span; keeping them
+    // apart would fit a 2013-2015 indicator and a 2016+ indicator and call them one feature.
+    inj_questionable: s === "Questionable" || s === "Probable" ? 1 : 0,
+    prac_dnp: p.startsWith("did not participate") || p.startsWith("out (") ? 1 : 0,
+    prac_limited: p.startsWith("limited") ? 1 : 0,
+  };
+}
+
+/**
+ * THE AVAILABILITY BLOCK for one season, keyed (week|player_sk).
+ *
+ * Returns an empty map where `feat_player_week_context` has no rows for the season, which is a
+ * different statement from "everyone was healthy" and is why `inj_feed` is computed per LEAGUE-WEEK
+ * from the presence of any dated report at all rather than per player from his own NULL.
+ */
+export function contextFor(db: DB, season: number): Map<string, ContextRow> {
+  const out = new Map<string, ContextRow>();
+  const rows = db.prepare(
+    `SELECT week, player_sk, prior_snap_share, prior_route_share, depth_rank, teammates_out,
+            report_status_fri, practice_status_fri
+       FROM feat_player_week_context WHERE season = ?`,
+  ).all(season) as {
+    week: number; player_sk: number; prior_snap_share: number | null; prior_route_share: number | null;
+    depth_rank: number | null; teammates_out: number | null;
+    report_status_fri: string | null; practice_status_fri: string | null;
+  }[];
+  // Which league-weeks the feed actually spoke in. A week where NOBODY carries a status is a silent
+  // feed, not a healthy league: 2025 has 6,068 injury rows and not one of them is dated, so every
+  // status is NULL for reasons that have nothing to do with who could play.
+  const spoke = new Set<number>();
+  for (const r of rows) if (r.report_status_fri || r.practice_status_fri) spoke.add(r.week);
+  for (const r of rows) {
+    out.set(`${r.week}|${r.player_sk}`, {
+      prior_snap_share: r.prior_snap_share, prior_route_share: r.prior_route_share,
+      depth_rank: r.depth_rank,
+      teammates_out: spoke.has(r.week) ? (r.teammates_out ?? 0) : null,
+      ...(spoke.has(r.week)
+        ? injuryIndicators(r.report_status_fri, r.practice_status_fri)
+        : { inj_out: null, inj_doubtful: null, inj_questionable: null, prac_dnp: null, prac_limited: null }),
+      inj_feed: spoke.has(r.week) ? 1 : 0,
+    });
+  }
+  return out;
+}
 
 /** feat_key, exactly as src/features/build.ts forms it, so the two tables join. */
 export const weekFeatKey = (sk: string | null, name: string, pos: string): string =>
@@ -308,6 +433,31 @@ export function dvpTable(db: DB, season: number): {
   };
 }
 
+/**
+ * THE UPSERT, GENERATED FROM ONE COLUMN LIST rather than typed out twice.
+ *
+ * There were two copies of this statement -- the historical builder's and the forward builder's --
+ * and adding ten columns to a hand-written INSERT/VALUES/DO-UPDATE triple in two places is four
+ * opportunities to leave one column off one list, which SQLite reports as nothing at all: the row
+ * writes, the column stays NULL, and the model quietly trains without it. One list, three renderings.
+ */
+const WEEK_MODEL_BASE_COLS = [
+  "feat_key", "player_sk", "season", "week", "as_of", "name", "pos", "team", "opponent", "home",
+  "is_bye", "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
+  "td_attempts", "td_rush_yards", "dvp_mult", "dvp_n", "spread_line", "total_line",
+  "implied_team_total", "days_rest", "pts",
+];
+/** The three columns the conflict target keys on, which must not appear in the SET clause. */
+const WEEK_MODEL_KEY_COLS = new Set(["season", "week", "feat_key"]);
+
+export function weekModelInsertSql(): string {
+  const cols = [...WEEK_MODEL_BASE_COLS, ...CONTEXT_FIELDS.map((c) => c.name), "updated_at"];
+  const params = cols.map((c) => (c === "updated_at" ? "@now" : `@${c}`));
+  const set = cols.filter((c) => !WEEK_MODEL_KEY_COLS.has(c)).map((c) => `${c}=excluded.${c}`);
+  return `INSERT INTO feat_player_week_model (${cols.join(", ")}) VALUES (${params.join(",")})\n` +
+    `ON CONFLICT(season, week, feat_key) DO UPDATE SET ${set.join(", ")}`;
+}
+
 export interface BuildOpts {
   dbPath?: string;
   seasons: number[];
@@ -355,29 +505,14 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
   const sched = opts.sched ?? await loadSchedule(seasons);
   const now = nowIso();
 
-  const ins = db.prepare(
-    `INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, as_of, name, pos, team,
-        opponent, home, is_bye, season_line_pg, td_games, td_ppg, t4_mean, t4_sd, td_fd, td_ts,
-        td_attempts, td_rush_yards, dvp_mult, dvp_n, spread_line, total_line, implied_team_total,
-        days_rest, pts, updated_at)
-      VALUES (@feat_key,@player_sk,@season,@week,@as_of,@name,@pos,@team,@opponent,@home,@is_bye,
-        @season_line_pg,@td_games,@td_ppg,@t4_mean,@t4_sd,@td_fd,@td_ts,@td_attempts,@td_rush_yards,
-        @dvp_mult,@dvp_n,@spread_line,@total_line,@implied_team_total,@days_rest,@pts,@now)
-      ON CONFLICT(season, week, feat_key) DO UPDATE SET
-        player_sk=excluded.player_sk, as_of=excluded.as_of, name=excluded.name, pos=excluded.pos,
-        team=excluded.team, opponent=excluded.opponent, home=excluded.home, is_bye=excluded.is_bye,
-        season_line_pg=excluded.season_line_pg, td_games=excluded.td_games, td_ppg=excluded.td_ppg,
-        t4_mean=excluded.t4_mean, t4_sd=excluded.t4_sd, td_fd=excluded.td_fd, td_ts=excluded.td_ts,
-        td_attempts=excluded.td_attempts, td_rush_yards=excluded.td_rush_yards,
-        dvp_mult=excluded.dvp_mult, dvp_n=excluded.dvp_n, spread_line=excluded.spread_line,
-        total_line=excluded.total_line, implied_team_total=excluded.implied_team_total,
-        days_rest=excluded.days_rest, pts=excluded.pts, updated_at=excluded.updated_at`,
-  );
+  ensureContextColumns(db);
+  const ins = db.prepare(weekModelInsertSql());
 
   const res: BuildResult = { rows: 0, perSeason: [] };
   for (const season of seasons) {
     const line = artifact ? preseasonLinePerGame(db, season, artifact, sched, current) : new Map<string, number>();
     const dvp = dvpTable(db, season);
+    const ctx = contextFor(db, season);
     const raw = db.prepare(
       `SELECT feat_key, player_sk, season, week, name, pos, team, opponent, home, is_bye,
               spread_line, total_line, implied_team_total, td_games, td_fd, td_ts, td_attempts,
@@ -461,6 +596,10 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
           days_rest: daysRest,
           // TARGET. Not a feature; the loader below never selects it into a feature row.
           pts: finite(r.pts),
+          // THE AVAILABILITY BLOCK, joined by surrogate key. A row with no surrogate key (a
+          // synthetic DST) gets NULLs rather than zeros: "we cannot look him up" is not "he is fit".
+          ...EMPTY_CONTEXT,
+          ...(r.player_sk != null ? ctx.get(`${r.week}|${Number(r.player_sk)}`) ?? {} : {}),
           now,
         };
         ins.run(row);
@@ -484,9 +623,15 @@ export function weeklyCoverage(db: DB, seasons?: number[]): {
     "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
     "td_attempts", "td_rush_yards", "dvp_mult", "home", "spread_line", "total_line",
     "implied_team_total", "days_rest", "pts",
+    ...CONTEXT_FIELDS.map((c) => c.name),
   ];
+  // A column this store does not HAVE reports 0, exactly like a column it has and never filled.
+  // Both are "the model did not see it", which is what a coverage table is for.
+  const present = new Set<string>(presentContextFields(db).map((c) => String(c.name)));
+  const isContext = new Set<string>(CONTEXT_FIELDS.map((c) => String(c.name)));
   const where = seasons?.length ? ` WHERE season IN (${seasons.map(() => "?").join(",")})` : "";
-  const sel = cols.map((c) => `SUM(${c} IS NOT NULL) AS ${c}`).join(", ");
+  const sel = cols.map((c) =>
+    (!isContext.has(c) || present.has(c) ? `SUM(${c} IS NOT NULL)` : "0") + ` AS ${c}`).join(", ");
   const rows = db.prepare(
     `SELECT season, COUNT(*) AS rows_n, ${sel} FROM feat_player_week_model${where} GROUP BY season ORDER BY season`,
   ).all(...(seasons ?? [])) as Record<string, number>[];
@@ -504,12 +649,31 @@ export interface WeeklyRow {
   f: Partial<Record<WeeklyFeatureField, number | null>>;
 }
 
+/**
+ * Which availability columns THIS store actually has.
+ *
+ * `ensureContextColumns` adds them on every build, so a store that has been built is complete. A
+ * store that has not -- a hermetic test fixture, an old copy -- has the table without them, and
+ * naming a missing column in a SELECT is a hard SQLite error rather than a NULL. Reading the columns
+ * that exist and returning NULL for the rest says "this store does not carry that" in the one form
+ * every consumer already handles, which is the same thing a store that carries it and has no value
+ * says. The difference between the two is reported by `weeklyCoverage`, and the trainer REFUSES to
+ * fit a two-part model when they are absent rather than quietly fitting without them.
+ */
+export function presentContextFields(db: DB): typeof CONTEXT_FIELDS {
+  const have = new Set((db.prepare("PRAGMA table_info(feat_player_week_model)").all() as { name: string }[])
+    .map((c) => c.name));
+  return CONTEXT_FIELDS.filter((c) => have.has(c.name));
+}
+
 /** Load feature rows for one (season, week) -- or a whole season when `week` is omitted. */
 export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow[] {
+  const present = presentContextFields(db);
   const rows = db.prepare(
     `SELECT feat_key, player_sk, season, week, name, pos, team, opponent, home, season_line_pg,
             td_games, td_ppg, t4_mean, t4_sd, td_fd, td_ts, td_attempts, td_rush_yards,
             dvp_mult, dvp_n, spread_line, total_line, implied_team_total, days_rest
+            ${present.length ? ", " + present.map((c) => c.name).join(", ") : ""}
        FROM feat_player_week_model
       WHERE season = ?${week == null ? "" : " AND week = ?"}
       ORDER BY week, pos, name`,
@@ -538,6 +702,10 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
       days_rest: r.days_rest == null ? null : Number(r.days_rest),
       season_line_pg: r.season_line_pg == null ? null : Number(r.season_line_pg),
       week_no: Number(r.week),
+      ...Object.fromEntries(CONTEXT_FIELDS.map((c) =>
+        [c.name, r[c.name] == null ? null : Number(r[c.name])])),
+      // (the map above covers every declared field; the ones this store lacks were never selected
+      // and land as null, which is the same statement a NULL cell makes)
     },
   }));
 }
@@ -640,24 +808,9 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
 
   const dvp = dvpTable(db, season);
 
-  const ins = db.prepare(
-    `INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, as_of, name, pos, team,
-        opponent, home, is_bye, season_line_pg, td_games, td_ppg, t4_mean, t4_sd, td_fd, td_ts,
-        td_attempts, td_rush_yards, dvp_mult, dvp_n, spread_line, total_line, implied_team_total,
-        days_rest, pts, updated_at)
-      VALUES (@feat_key,@player_sk,@season,@week,@as_of,@name,@pos,@team,@opponent,@home,@is_bye,
-        @season_line_pg,@td_games,@td_ppg,@t4_mean,@t4_sd,@td_fd,@td_ts,@td_attempts,@td_rush_yards,
-        @dvp_mult,@dvp_n,@spread_line,@total_line,@implied_team_total,@days_rest,@pts,@now)
-      ON CONFLICT(season, week, feat_key) DO UPDATE SET
-        player_sk=excluded.player_sk, as_of=excluded.as_of, name=excluded.name, pos=excluded.pos,
-        team=excluded.team, opponent=excluded.opponent, home=excluded.home, is_bye=excluded.is_bye,
-        season_line_pg=excluded.season_line_pg, td_games=excluded.td_games, td_ppg=excluded.td_ppg,
-        t4_mean=excluded.t4_mean, t4_sd=excluded.t4_sd, td_fd=excluded.td_fd, td_ts=excluded.td_ts,
-        td_attempts=excluded.td_attempts, td_rush_yards=excluded.td_rush_yards,
-        dvp_mult=excluded.dvp_mult, dvp_n=excluded.dvp_n, spread_line=excluded.spread_line,
-        total_line=excluded.total_line, implied_team_total=excluded.implied_team_total,
-        days_rest=excluded.days_rest, pts=excluded.pts, updated_at=excluded.updated_at`,
-  );
+  ensureContextColumns(db);
+  const ins = db.prepare(weekModelInsertSql());
+  const ctx = contextFor(db, season);
 
   let rows = 0, withLine = 0, withLines = 0;
   db.transaction(() => {
@@ -711,6 +864,8 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
           spread_line: spread, total_line: total, implied_team_total: implied,
           days_rest: daysRest,
           pts: finite(hist?.get(week)?.pts ?? null),
+          ...EMPTY_CONTEXT,
+          ...(p.player_sk != null ? ctx.get(`${week}|${Number(p.player_sk)}`) ?? {} : {}),
           now,
         });
         rows++;

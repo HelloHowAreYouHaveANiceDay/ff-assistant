@@ -125,8 +125,60 @@ RATIO_FEATURES = {
 # sharply with rank -- a WR50's season is far less predictable in proportional terms than a WR3's --
 # and a quantile head with no rank term cannot express that at all. It is the single change that the
 # Phase 2a coverage table (0.83 at ranks 13-24, 0.56 at 41-60) points straight at.
-CENTER_FEATURES = ["age", "prior_games", "draft_round", "prior_pos_rank"]
-INDICATOR_FEATURES = ["team_changed"]
+# ADMITTED IN PHASE 2d, in survivor order, each re-measured under the full nested evaluation rather
+# than on the residuals it was screened against. The admission trace is in docs/validation.md.
+#   depth_rank_sep1  screen rho -0.186 (the strongest candidate the sweep has ever produced);
+#                    admitted at pinball 12.31 -> 12.03, RMSE 54.17 -> 52.79, coverage 0.759 -> 0.761.
+#   contract_year    screen rho -0.124; admitted at pinball 12.03 -> 12.02, RMSE unchanged,
+#                    coverage 0.761 -> 0.760. It clears the pre-registered rule (pooled CRPS improves,
+#                    coverage stays in band) by 0.01, which is the edge of what this evaluation can
+#                    resolve -- recorded plainly rather than dressed up, because a keep/drop rule with
+#                    no effect-size floor will eventually admit noise and this is the first candidate
+#                    to sit near it.
+CENTER_FEATURES = ["age", "prior_games", "draft_round", "prior_pos_rank", "depth_rank_sep1"]
+INDICATOR_FEATURES = ["team_changed", "contract_year"]
+
+# ==================================================================================================
+# THE EXTENSION TABLE'S CANDIDATE COLUMNS (Phase 2d), and why they are OPT-IN.
+#
+# `feat_player_season_ext` carries thirteen more season-level columns, every one keyed as-of
+# September 1 so it is knowable at draft time by construction. They are DECLARED here -- the loader
+# reads them and src/model/projector.ts can compute them -- but NONE is fitted by default. Admission
+# is one flag at a time (`--add-features prior_carry_share`), because the whole discipline of the
+# admission trace is that each candidate is re-measured against the baseline that would actually
+# ship, not against the one it was screened on. A column that quietly joined the default list would
+# be a feature admitted by a code edit rather than by a gate.
+#
+# Two are derived rather than read, in ONE place (src/model/features.ts loadExtSeason) so the
+# trainer and the serving path cannot compute them differently:
+#   adp_vs_ecr        -- ADP ranked within (season, position) minus ECR positional rank.
+#   rookie_draft_pick -- draft_pick where draft_year == season, NULL otherwise.
+# `depth_rank_sep1` and `contract_year` are in the DEFAULT lists above from Phase 2d onward; they
+# stay named here so the loader still reads them and so `--add-features` remains a complete list of
+# what the extension table offers.
+EXT_CENTER = [
+    "prior_snap_share", "prior_route_share", "prior_carries_per_game", "prior_carry_share",
+    "prior_air_yards_share", "prior_wopr", "depth_rank_sep1", "adp", "adp_vs_ecr",
+    "rookie_draft_pick",
+]
+EXT_INDICATOR = ["contract_year"]
+EXT_RATIO = {
+    # A carry rate divided by the mean for the player's rank bucket, for the same reason every other
+    # ratio feature is: an RB5's raw carry share is high BECAUSE he is an RB5, and the curve has
+    # already been paid for that.
+    "prior_carries_per_game": 0.5,
+    "prior_carry_share": 0.02,
+    "prior_air_yards_share": 0.02,
+    "prior_wopr": 0.02,
+}
+EXT_ALLOWED = {
+    "prior_carries_per_game": {"QB", "RB"},
+    "prior_carry_share": {"RB"},
+    "prior_air_yards_share": {"WR", "TE"},
+    "prior_wopr": {"WR", "TE"},
+    "prior_route_share": {"RB", "WR", "TE"},
+}
+ALL_EXT = sorted(set(EXT_CENTER) | set(EXT_INDICATOR))
 # Which positions may carry a non-zero coefficient on each ratio feature. A quarterback has no
 # target share and no receiving first downs; scoring him on them measured ~0 for twenty seasons and
 # that null was then written down as a fact about quarterbacks. His workload is attempts and rushing
@@ -158,8 +210,60 @@ def load_rows(db_path, lo, hi):
         (lo, hi),
     )
     rows = [dict(r) for r in cur.fetchall()]
+    attach_ext(con, rows)
     con.close()
     return rows
+
+
+def attach_ext(con, rows):
+    """Join feat_player_season_ext onto the training rows BY SURROGATE KEY.
+
+    Mirrors src/model/features.ts loadExtSeason(), including the two derived columns, because those
+    two are the ones a second implementation would get subtly wrong -- and the golden block only
+    proves the two sides agree about ARITHMETIC, not about what a column means.
+
+    A store without the extension table leaves every column absent, which the specs' declared
+    `missing` handles and `build_specs`' 200-row coverage floor keeps out of the fit entirely. The
+    columns start in 2013; earlier seasons legitimately have none, and the report says so.
+    """
+    try:
+        ext = con.execute(
+            "SELECT player_sk, season, pos, draft_year, draft_pick, contract_year, prior_snap_share,"
+            " prior_route_share, prior_carries_per_game, prior_carry_share, prior_air_yards_share,"
+            " prior_wopr, depth_rank_sep1, adp FROM feat_player_season_ext"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+    by_key = {}
+    adp_by_pos = {}
+    for r in ext:
+        d = dict(r)
+        by_key[(d["season"], str(d["player_sk"]))] = d
+        if d.get("adp") is not None:
+            adp_by_pos.setdefault((d["season"], d["pos"]), []).append((float(d["adp"]), str(d["player_sk"])))
+    adp_rank = {}
+    for (season, pos), lst in adp_by_pos.items():
+        lst.sort()
+        for i, (_, sk) in enumerate(lst):
+            adp_rank[(season, sk)] = i + 1
+    for r in rows:
+        sk = r.get("player_sk")
+        d = by_key.get((r["season"], str(sk))) if sk is not None else None
+        for c in EXT_CENTER + EXT_INDICATOR:
+            if c in ("adp_vs_ecr", "rookie_draft_pick"):
+                continue
+            # prior_air_yards_share / prior_wopr exist on BOTH tables. The extension version wins
+            # here because that is the column the screen measured; taking whichever happened to be
+            # non-null would make the fitted feature a different quantity from the screened one.
+            if d is not None and d.get(c) is not None:
+                r[c] = d[c]
+            else:
+                r.setdefault(c, None)
+        ar = adp_rank.get((r["season"], str(sk))) if sk is not None else None
+        er = r.get("ecr_pos_rank")
+        r["adp_vs_ecr"] = (ar - er) if (ar is not None and er is not None) else None
+        r["rookie_draft_pick"] = (
+            d["draft_pick"] if d is not None and d.get("draft_year") == r["season"] else None)
 
 
 # ==================================================================================================
@@ -693,7 +797,34 @@ def main():
                     help="w,mono,levelWeight,form -- skip the search. For fault injection and for "
                          "reproducing a recorded run, never for shipping.")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--add-features", default="",
+                    help="comma list of EXTENSION columns to admit into the fit, one admission step "
+                         "at a time. Known: " + ", ".join(ALL_EXT) + ". Nothing is admitted by "
+                         "default: a column that joined the default list by a code edit would be a "
+                         "feature admitted without a gate.")
     args = ap.parse_args()
+
+    # ---- ADMISSION. The lists are extended HERE, from the flag, so the default fit is byte-for-byte
+    # the one that shipped and a candidate's effect is exactly the difference the flag makes.
+    add = [s.strip() for s in args.add_features.split(",") if s.strip()]
+    unknown = [a for a in add if a not in ALL_EXT]
+    if unknown:
+        sys.exit("train_projection: unknown --add-features " + ", ".join(unknown) +
+                 ". Known: " + ", ".join(ALL_EXT))
+    for a in add:
+        # Already in the defaults (Phase 2d admitted two of them) -- naming it again must be a no-op
+        # rather than a duplicate column in the design matrix, which would halve each copy's
+        # coefficient and read as the feature getting weaker.
+        if a in CENTER_FEATURES or a in INDICATOR_FEATURES or a in RATIO_FEATURES:
+            continue
+        if a in EXT_RATIO:
+            RATIO_FEATURES[a] = EXT_RATIO[a]
+            if a in EXT_ALLOWED:
+                RATIO_ALLOWED[a] = EXT_ALLOWED[a]
+        elif a in EXT_INDICATOR:
+            INDICATOR_FEATURES.append(a)
+        else:
+            CENTER_FEATURES.append(a)
 
     lo, hi = parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
