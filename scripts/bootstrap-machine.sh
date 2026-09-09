@@ -50,10 +50,19 @@ say "1. league settings from ESPN (size, scoring, roster slots, your team)"
 node scripts/mcp-call.mjs discover_leagues '{}' 2>/dev/null | tail -2
 node scripts/mcp-call.mjs league_sync '{}' 2>/dev/null | tail -2
 
-say "2. opponent profiles from the league's full draft history"
-# --years 14 not the default 4: the league has run since 2012, and maxBuy (the bots' budget-anxiety
-# cap) and leagueShare are both materially better with 98 team-seasons than with 54.
-npm run ff -- scrape-league --years 14 2>&1 | tail -2
+say "2. the identity registry and the staging dimension -- BEFORE anything keyed on player_sk"
+# Order matters and the failure is silent. `stg_player` READS the registry rather than deciding
+# identity, so a store whose registry has not been built yet gets a staging layer that mints its own
+# keys -- which is exactly the two-key-space defect Phase 2c fixed. Every feature and fact table
+# below is keyed by what these two produce.
+npm run ff -- build-identity 2>&1 | head -2
+npm run ff -- build-staging  2>&1 | head -3
+
+say "2b. opponent profiles from the league's own draft history"
+# From fact_draft_pick + fact_team_season (built in 3c below on a re-run; on a first run this falls
+# back to the browser scrape). Nine seasons, 130 team-seasons, every pick attributed to a real owner
+# -- against the scrape's four seasons and two placeholder "member <guid>" profiles.
+npm run ff -- build-managers 2>&1 | head -2 || npm run ff -- scrape-league --years 14 2>&1 | tail -2
 
 say "3. backtest history from nflverse (network, no login needed)"
 npm run ff -- build-history --seasons 1999-2024 2>&1 | tail -1
