@@ -57,7 +57,8 @@ export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile
    * NOT MEASURED DIRECTLY, and that is stated rather than buried: outcomes can only see the room's
    * SHARED error, so nothing in the historical record isolates how far two bidders' private views
    * diverge. It is BOUNDED above by the price model's leave-one-season-out residual dispersion
-   * (0.43-0.61 in log dollars, scripts/price-loso.mjs) and set well below it, because a price
+   * (0.35-0.90 in log dollars by tier over 2018-2025, scripts/price-loso.mjs; it was quoted as
+   * 0.43-0.61 from the four-season fit) and set well below it, because a price
    * residual also contains roster need, budget state and auction noise -- all of which this
    * simulator already models separately and would otherwise count twice.
    */

@@ -1811,8 +1811,10 @@ async function cmdBacktest(rest: string[]) {
   // season is dropped rather than scored as a zero, which can only bias the dispersion down.
   const MARKET_SD_BAND: [number, number][] = [[6, 0.459], [12, 0.448], [24, 0.616], [40, 0.814], [60, 1.045], [Infinity, 1.214]];
   const bandSd = (rank: number | null) => (rank == null ? 1.214 : (MARKET_SD_BAND.find(([hi]) => rank <= hi) ?? MARKET_SD_BAND[5])[1]);
-  // The per-bot independent view. Bounded above by the price model's LOSO residual sds (0.43-0.61)
-  // and set below them; see DraftFieldOpts.botIdioSd. `--bot-noise` overrides.
+  // The per-bot independent view. Bounded above by the price model's LOSO residual sds (0.35-0.90
+  // by tier over 2018-2025) and set below them; see DraftFieldOpts.botIdioSd. `--bot-noise`
+  // overrides, and `--market ecr --market-noise 0 --bot-noise 0.20 --bot-churn` is the honest
+  // arbiter Phase 2c measured -- docs/validation.md has the grid.
   const botIdioSd = Number(valueOf(rest, "--bot-noise") ?? 0.20);
   if (marketMode === "ecr") {
     if (!noLookahead) throw new Error("--market ecr is only meaningful with --no-lookahead");
