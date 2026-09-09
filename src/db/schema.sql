@@ -858,3 +858,107 @@ CREATE TABLE IF NOT EXISTS raw_contract (
   fetched_at TEXT NOT NULL,
   PRIMARY KEY (player_key, contract_no));
 CREATE INDEX IF NOT EXISTS idx_raw_contract_player ON raw_contract (player, date_of_birth);
+
+-- ================= FEATURE EXTENSION TABLES =================
+--
+-- Two tables that extend the Phase 2a feature layer sideways rather than changing it:
+-- feat_player_season and feat_player_week keep their columns and their builder, and these carry the
+-- new point-in-time context from the raw feeds above. They obey every feature-layer rule in
+-- docs/data-layers.md, and they are keyed on `player_sk` ALONE -- an unresolved row is not written
+-- at all here, unlike the Phase 2a tables which keep it with a NK: key. That is deliberate: these
+-- columns exist to be JOINED onto those rows, and a second unresolved-row convention would be a
+-- second thing to get wrong.
+--
+-- Every column's as-of rule is written next to it. The two exceptions to "knowable before kickoff"
+-- are NAMED IN THEIR OWN COLUMN NAMES, because a leak you can read off the schema is a leak someone
+-- can catch.
+CREATE TABLE IF NOT EXISTS feat_player_week_context (
+  player_sk       INTEGER NOT NULL,
+  season          INTEGER NOT NULL,
+  week            INTEGER NOT NULL,
+  as_of           TEXT,              -- the day BEFORE this team's kickoff that week
+  team            TEXT,
+  pos             TEXT,
+  -- schedule: published in the spring, so knowable at as_of
+  opponent        TEXT,
+  home            INTEGER,
+  days_rest       INTEGER,           -- nflverse home_rest/away_rest for this team's game
+  roof            TEXT,              -- a property of the stadium, known when the schedule is
+  -- the market: the CLOSING line, so strictly knowable at kickoff rather than at as_of. Kept
+  -- because it is the best public estimate of a game's shape and feat_player_week already carries
+  -- it on the same convention -- but it is an hour of information ahead of as_of, not a week.
+  spread_line     REAL,
+  total_line      REAL,
+  implied_team_total REAL,
+  -- OBSERVED AT THE GAME. Not knowable at as_of, at all, and named so that a model using them as a
+  -- predictor for a pre-kickoff decision is visible in the query rather than hidden in a column
+  -- called `temp`. They are here for post-hoc analysis (how much does wind cost a passing game?),
+  -- not for projection.
+  temp_observed   REAL,
+  wind_observed   REAL,
+  -- usage through the PRIOR week only
+  prior_snap_share  REAL,            -- offense_pct in the most recent week played before this one
+  prior_route_share REAL,            -- charted pass plays / team charted pass plays, same week
+  -- the injury report, read at two points in the week. NULL where the feed publishes no report date
+  -- (2025+), which is a different thing from "no injury".
+  report_status_wed   TEXT,
+  report_status_fri   TEXT,
+  practice_status_wed TEXT,
+  practice_status_fri TEXT,
+  teammates_out   INTEGER,           -- same team, same position, listed Out on the Friday report
+  depth_rank      INTEGER,           -- depth chart as of this week
+  updated_at      TEXT,
+  PRIMARY KEY (season, week, player_sk));
+CREATE INDEX IF NOT EXISTS idx_fpwc_sk ON feat_player_week_context (player_sk, season, week);
+
+-- The preseason extension. as_of is <season>-09-01, the same anchor feat_player_season uses, so the
+-- two join row for row.
+CREATE TABLE IF NOT EXISTS feat_player_season_ext (
+  player_sk       INTEGER NOT NULL,
+  season          INTEGER NOT NULL,
+  as_of           TEXT,              -- <season>-09-01
+  team            TEXT,
+  pos             TEXT,
+  -- the NFL draft: knowable from the April of the player's rookie year onward
+  draft_year      INTEGER,
+  draft_round     INTEGER,
+  draft_pick      INTEGER,
+  -- contract: derived from (year_signed, years) evaluated at THIS season. 1 = this is the last
+  -- season of the deal. NULL = we have no contract for him, which is not the same as 0.
+  contract_year   INTEGER,
+  contract_year_signed INTEGER,
+  contract_years  REAL,
+  contract_apy    REAL,
+  -- prior season, all strictly before this season's first game
+  prior_snap_share      REAL,
+  prior_route_share     REAL,
+  prior_carries_per_game REAL,
+  prior_carry_share     REAL,        -- his carries / his team's carries, prior season
+  prior_air_yards_share REAL,
+  prior_wopr            REAL,
+  -- as of September 1 specifically
+  depth_rank_sep1  INTEGER,
+  injury_status_sep1 TEXT,
+  -- the draft market, from the FFC archive. adp_as_of is the archive's own window end and is NOT
+  -- always inside the season: standard 2008 and 2009 are both stamped 2010-06-20.
+  adp             REAL,
+  adp_format      TEXT,
+  adp_as_of       TEXT,
+  adp_stdev       REAL,
+  resolved_by     TEXT,              -- which rule matched: gsis | espn | sleeper | pfr | name-pos-team
+  updated_at      TEXT,
+  PRIMARY KEY (season, player_sk));
+CREATE INDEX IF NOT EXISTS idx_fpse_sk ON feat_player_season_ext (player_sk, season);
+
+-- COVERAGE, as data. Every column of both tables, per season, with how many rows are non-null.
+-- Written by the same run that builds them, so it cannot describe a different build -- and asserted
+-- by a test, because a column silently dropping to zero in a season it should cover is the failure
+-- that produces a coefficient rather than an error.
+CREATE TABLE IF NOT EXISTS feat_coverage (
+  table_name  TEXT NOT NULL,
+  column_name TEXT NOT NULL,
+  season      INTEGER NOT NULL,
+  rows        INTEGER,
+  non_null    INTEGER,
+  updated_at  TEXT,
+  PRIMARY KEY (table_name, column_name, season));
