@@ -2997,6 +2997,13 @@ async function cmdEvaluateWeekly(rest: string[]) {
  * rather than silently substituting a generated schedule), --trials, --seed, --week, --player,
  * --give/--get (comma-separated), --pos, --limit, --free, --max-gap, --json.
  */
+/** `--objective` as a value or an error, never as a silent fallback. */
+function objectiveOf(v: string | undefined): "expected" | "winprob" | undefined {
+  if (v == null) return undefined;
+  if (v === "expected" || v === "winprob") return v;
+  throw new Error(`--objective "${v}" is not an objective -- use expected | winprob.`);
+}
+
 async function cmdCopilot(rest: string[]) {
   const { runCopilot, COPILOT_VERBS } = await import("./inseason/copilotActions.js");
   const verbArg = rest.find((r) => !r.startsWith("--"));
@@ -3011,7 +3018,10 @@ async function cmdCopilot(rest: string[]) {
     console.log(`usage: ff copilot <${Object.keys(VERB_OF).join("|")}> [flags]\n` +
       `  --schedule real|generated|auto   real THROWS if the app is unreachable; auto says which it used\n` +
       `  --trials N  --seed N  --week N  --player "Name"  --give "A,B"  --get "C"  --pos RB,WR\n` +
-      `  --limit N   --free   --max-gap 0.15   --json`);
+      `  --limit N   --free   --max-gap 0.15   --json\n` +
+      `  --objective expected|winprob   LINEUP only. Default expected. winprob maximises P(beating\n` +
+      `                                 this week's real opponent and REFUSES a generated schedule;\n` +
+      `                                 it measured -0.59pp of team-weeks won, so it is not default.`);
     return;
   }
   const list = (flag: string) => (valueOf(rest, flag) ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -3028,6 +3038,9 @@ async function cmdCopilot(rest: string[]) {
     // list form still works and its first entry is used, because a caller who types the flag the
     // way every other verb takes it should get an answer rather than a usage error.
     pos: (valueOf(rest, "--pos") ?? "").split(",")[0].trim() || undefined,
+    // REJECTED BY NAME rather than silently defaulted: a typo'd objective that quietly returned the
+    // expected-points lineup would be a caller who believes he asked for something he did not get.
+    objective: objectiveOf(valueOf(rest, "--objective")),
   };
 
   const run = await runCopilot(verb, args, { dbPath: valueOf(rest, "--db") });

@@ -505,8 +505,12 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
     ),
     tool(
       "lineup_recommend",
-      "THIS WEEK'S BEST LEGAL STARTING LINEUP, with everyone who cannot play named and why (bye, or ruled OUT/IR/PUP in the store). QUESTIONABLE players are still started -- they play more often than not. Weekly points are the SEASON projection divided by 17, so this ranks the roster correctly but has no matchup, form or weather in it; do not present it as a matchup-aware weekly projection. It REFUSES to return a lineup that starts a man on a bye or ruled out. If you do not pass `week`, the result says where the week came from -- the store often does not know, and `weekSource: default` means ASK THE USER which week they mean.",
-      { week: z.number().optional().describe("NFL week to set a lineup for. Pass it: the store usually cannot determine the current week."), schedule: SCHEDULE },
+      "THIS WEEK'S BEST LEGAL STARTING LINEUP, with everyone who cannot play named and why (bye, or ruled OUT/IR/PUP in the store). QUESTIONABLE players are still started -- they play more often than not. Weekly points come through the PER-POSITION serve table (`WEEKLY_SERVE`): the matchup-aware streaming model at QB, K and DST, and the season-line floor -- season projection over 17, no matchup, no form, no weather -- at RB, WR and TE, because no candidate passed the gate there. Do not present the RB/WR/TE numbers as matchup-aware. It REFUSES to return a lineup that starts a man on a bye or ruled out. `objective` picks WHICH QUESTION: the default `expected` maximises expected points; `winprob` maximises P(beating this week's real opponent) and is NOT the default because a 2018-2025 replay measured it at -0.59 percentage points of team-weeks won -- quote that number whenever you use it, and note it REFUSES a generated schedule rather than inventing an opponent. If you do not pass `week`, the result says where the week came from -- the store often does not know, and `weekSource: default` means ASK THE USER which week they mean.",
+      {
+        week: z.number().optional().describe("NFL week to set a lineup for. Pass it: the store usually cannot determine the current week."),
+        objective: z.enum(["expected", "winprob"]).optional().describe("what to maximise. Default \"expected\" (expected points). \"winprob\" maximises P(beating this week's actual opponent); it needs the REAL schedule and measured -0.59pp of team-weeks won in replay, so it is a thing to show, not a thing to default to."),
+        schedule: SCHEDULE,
+      },
       call("lineup_recommend"),
     ),
     tool(

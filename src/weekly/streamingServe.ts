@@ -129,6 +129,9 @@ export interface StreamProj {
   team: string | null;
   mean: number;
   p10: number;
+  /** The median head. Carried because a WEEKLY BAND is p10/p50/p90 and a consumer that has to
+   *  re-project to recover one head is a second path to the same number. */
+  p50: number;
   p90: number;
   /** P(zero week). Only a two-part artifact publishes one; the floor does not, and a fabricated
    *  value here would let the floor claim a calibration it does not have. */
@@ -215,7 +218,7 @@ export function projectStreamingWith(db: StreamDb, season: number, week: number)
       for (const p of projectWeekly({ artifact: art, rows: subset })) {
         out.push({
           feat_key: p.feat_key, player_sk: p.player_sk ?? null, name: p.name, pos: p.pos, team: teamOf.get(p.feat_key) ?? null,
-          mean: p.mean, p10: p.p10, p90: p.p90,
+          mean: p.mean, p10: p.p10, p50: p.p50, p90: p.p90,
           pZero: p.pZero ?? null,
           rank: rank.get(p.feat_key) ?? 9999,
           artifact: file,

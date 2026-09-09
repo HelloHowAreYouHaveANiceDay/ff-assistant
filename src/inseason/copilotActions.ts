@@ -51,6 +51,18 @@ export interface CopilotArgs {
   maxGap?: number;
   /** stream_recommend: the ONE position the decision is about. */
   pos?: string;
+  /**
+   * lineup_recommend: WHICH QUESTION TO ANSWER. `expected` (the default) maximises expected points;
+   * `winprob` maximises P(beating THIS week's actual opponent).
+   *
+   * THE DEFAULT IS A MEASUREMENT, NOT AN OVERSIGHT. Track H replayed the win-probability lineup
+   * against 1,876 of this league's real team-weeks and it won 0.59 percentage points FEWER of them.
+   * It is reachable because the owner asked to see it and because a favourite wanting the floor and
+   * an underdog wanting variance is a real thing the expected-points rule cannot express -- but it
+   * ships behind a flag, and `winprob` REFUSES a generated schedule rather than inventing an
+   * opponent to be probable against.
+   */
+  objective?: "expected" | "winprob";
 }
 
 export interface CopilotRun<T = unknown> {
@@ -163,11 +175,23 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       return C.seasonOdds(ctx, { ...base, trials: a.trials ?? 2000 });
     case "lineup_recommend": {
       const wk = a.week ?? S.currentWeek(dbPath).week;
-      // The weekly projector, with the shipped season-line-only artifact. `null` when there is no
+      const objective = a.objective ?? "expected";
+      // The weekly projector, routed through `WEEKLY_SERVE` per position. `null` when there is no
       // artifact or no feature row for this week; `lineupRecommend` then falls back to the season
       // line and says so in `assumptions.basisNote` rather than silently.
-      const weekly = S.loadWeeklyProjection(ctx.season, wk, dbPath) ?? undefined;
-      return { ...C.lineupRecommend(ctx, wk, { provenance, availability: S.loadAvailability(dbPath), weekly }), weekSource: a.week != null ? "caller" : S.currentWeek(dbPath).source };
+      //
+      // The `winprob` arm needs BANDS as well as means, and takes both from ONE call so a mean and
+      // its own p10/p90 cannot come from two different reads of the table.
+      const withBands = objective === "winprob" ? S.loadWeeklyBands(ctx.season, wk, dbPath) : null;
+      const weekly = withBands?.weekly ?? S.loadWeeklyProjection(ctx.season, wk, dbPath) ?? undefined;
+      return {
+        ...C.lineupRecommend(ctx, wk, {
+          provenance, availability: S.loadAvailability(dbPath), weekly,
+          objective, bands: withBands?.bands,
+          winprob: { sims: a.trials ?? 8000, seed: a.seed ?? 7 },
+        }),
+        weekSource: a.week != null ? "caller" : S.currentWeek(dbPath).source,
+      };
     }
     case "waiver_targets":
       return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath) });

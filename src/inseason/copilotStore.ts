@@ -26,6 +26,7 @@ import { effectiveFormat } from "../league/index.js";
 import { loadWeeklyRows } from "../weekly/features.js";
 import { loadWeeklyArtifact, projectWeekly } from "../weekly/projector.js";
 import { projectStreamingWith, formatServeTable, serveTable, type StreamDb } from "../weekly/streamingServe.js";
+import type { WeeklyBand } from "./winprob.js";
 
 const open = (dbPath?: string) => new Database(dbPath ?? dataPath("ff.db"), { readonly: true });
 
@@ -316,6 +317,35 @@ export function loadWeeklyProjection(
     if (!projected?.rows.length) return null;
     for (const p of projected.rows) put(p.name, p.mean);
     return out;
+  } finally { db.close(); }
+}
+
+/**
+ * THE SAME PROJECTION, PLUS ITS SHAPE. `objective: "winprob"` needs a p10/p50/p90 and a P(zero week)
+ * per player, not a mean -- without a band there is no distribution to take a probability under.
+ *
+ * It is ONE function returning both maps rather than a second loader beside `loadWeeklyProjection`,
+ * because two loaders reading the same table on two calls is how a mean and a band start coming from
+ * different artifacts. The means this returns ARE the means that function returns; the test asserts
+ * it rather than the comment claiming it.
+ */
+export function loadWeeklyBands(
+  season: number, week: number, dbPath?: string,
+): { weekly: Map<string, number>; bands: Map<string, WeeklyBand> } | null {
+  const db = open(dbPath);
+  try {
+    const projected = projectStreamingWith(db as unknown as StreamDb, season, week);
+    if (!projected?.rows.length) return null;
+    const weekly = new Map<string, number>();
+    const bands = new Map<string, WeeklyBand>();
+    for (const p of projected.rows) {
+      const k = lineupNameKey(p.name);
+      const prev = weekly.get(k);
+      if (prev != null && prev >= p.mean) continue;
+      weekly.set(k, p.mean);
+      bands.set(k, { mean: p.mean, p10: p.p10, p50: p.p50, p90: p.p90, pZero: p.pZero });
+    }
+    return { weekly, bands };
   } finally { db.close(); }
 }
 
