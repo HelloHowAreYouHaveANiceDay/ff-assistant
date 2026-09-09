@@ -106,10 +106,10 @@ test("an unknown verb is refused rather than silently doing nothing", async () =
   assert.equal(rows(dbPath).length, 0, "an unknown verb still wrote a log row");
 });
 
-test("the dispatcher's verb list is the nine in-season verbs, in MCP tool-name form", () => {
+test("the dispatcher's verb list is the ten in-season verbs, in MCP tool-name form", () => {
   assert.deepEqual([...COPILOT_VERBS].sort(), [
     "depth_risk", "handcuffs", "lineup_recommend", "playoff_sos", "power_rankings",
-    "season_odds", "trade_check", "trade_finder", "waiver_targets",
+    "season_odds", "stream_recommend", "trade_check", "trade_finder", "waiver_targets",
   ]);
   for (const v of COPILOT_VERBS) assert.match(v, /^[a-z][a-z0-9_]*$/, `${v} is not a valid MCP identifier`);
 });

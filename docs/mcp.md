@@ -52,16 +52,18 @@ CALLS one (listing proves registration, not execution):
 
 ```
 node scripts/mcp-smoke.mjs              # -> MCP STDIO SMOKE PASSED       (draft surface)
-node scripts/copilot-mcp-smoke.mjs      # -> COPILOT MCP SMOKE PASSED     (in-season surface)
+node --import tsx scripts/copilot-mcp-smoke.mjs   # -> COPILOT MCP SMOKE PASSED  (in-season surface)
 ```
 
 The second one exists because the copilot tools are a different animal from `read_board`: each
-builds a full sim context and runs a Monte Carlo, so "the server lists nine new tools" says nothing
-about whether any of them can execute. It calls `season_odds` for real and then asserts the two
+builds a full sim context and runs a Monte Carlo, so "the server lists ten new tools" says nothing
+about whether any of them can execute. Its verb list is now IMPORTED from the dispatcher rather than
+retyped: it was a hand-written list of nine, and a hand-written list stops covering the surface the
+moment a tenth verb lands, while continuing to pass. It calls `season_odds` for real and then asserts the two
 things the descriptions promise -- that the answer carries its `assumptions` block, and that the
 call left a row in `action_log`.
 
-## The tools (34)
+## The tools (35)
 
 | Tool | What it does | Writes? |
 |---|---|---|
@@ -99,10 +101,11 @@ call left a row in `action_log`.
 | `depth_risk` | what losing one player costs, and who insures him | no |
 | `power_rankings` | the league by best starting lineup, with each team's odds beside it | no |
 | `playoff_sos` | weeks 15-17 opponent strength, solved from the posted lines | no |
+| `stream_recommend` | whom to START or ADD at ONE position this week, out of my men AND the free pool, in POINTS -- with p10/p90, P(zero) where the serving model publishes one, and the artifact that served each position | no |
 
 ### The in-season tools (the copilot surface)
 
-Nine READ-ONLY verbs over ONE sim context (`src/inseason/copilot.ts`), reached through ONE dispatcher
+Ten READ-ONLY verbs over ONE sim context (`src/inseason/copilot.ts`), reached through ONE dispatcher
 (`src/inseason/copilotActions.ts`) that `ff copilot <verb>` also uses. That single path is the point:
 six scripts used to hand-build the same context, three on the real schedule and three on a generated
 one, and the same roster returned a base title probability of 4.17%, 4.56% or 5.1% depending on which
@@ -292,3 +295,42 @@ popups to `shell.openExternal` -- out to the system browser. Both `launch-practi
 `_blank` anchors) so the room lands in the webview instead.
 
 The bro path (`attachBro`, no flag) is unchanged and remains available as a fallback.
+
+---
+
+## `stream_recommend` -- the tenth verb, and the only one about a POOL (Track C, 2026-09-09)
+
+Every other in-season verb is about the twelve men we own. `lineup_recommend` sets the best legal
+eleven out of them and cannot answer the question a manager actually asks in October: *my defence is
+on bye and there are nine defences free -- which one*. That decision is made at ONE position, out of
+a pool, and what decides it is almost entirely the matchup.
+
+```
+ff copilot stream --pos DST --week 3
+ff copilot stream --pos QB  --week 3 --json
+```
+
+**The unit is POINTS and the tool says so.** Everything else in the copilot is scored as a change in
+P(playoffs), because points cannot see a mandatory slot going empty or a top-heavy roster. A one-week
+start/sit at one position has none of those properties: it is a single slot, this Sunday, and the
+noise floor of a season simulation would be larger than the effect it was meant to price. So
+`assumptions.basis` is `weekly-model`, `trials` is `null`, and the objective block travels with the
+regime unknown -- exactly as `lineup_recommend` does -- rather than dressing a points quantity up as
+a probability.
+
+**Read `artifactByPos` and quote it.** The streaming gate is applied PER POSITION, so this is the
+only tool on the surface where different rows of one answer can come from different models. A
+position that passed serves `streaming-artifact.json`; one that did not serves
+`weekly-artifact-lineonly.json` -- the same floor the lineup is served from, which has no matchup, no
+form and no weather in it. A reader who cannot tell which would read a floor projection as a
+matchup-aware one, and there is no way to infer it from the number.
+
+What it returns: our men and the streamable pool ranked by the weekly projection with p10/p90 and,
+where the serving artifact publishes one, P(he scores nothing); the start and the sits with reasons;
+and the add/drop with the change in expected points **this week**. A man on ANOTHER roster is never
+in the pool -- he cannot be claimed, and recommending him is advice nobody can act on. Drops that
+leave a mandatory slot unfillable are REFUSED through the same `rosterGaps` check `waiver_targets`
+uses, and named rather than silently skipped.
+
+A position with no feature rows returns empty lists and says so in `assumptions.basisNote`. "We
+cannot answer" and "do nothing" are different answers and are not allowed to look the same.

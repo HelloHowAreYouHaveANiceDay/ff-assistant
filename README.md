@@ -18,8 +18,9 @@ app a non-technical friend can run; the engine underneath is deterministic and v
 - **Config-driven.** Everything the ranking depends on — scoring, roster slots, budget, playoff
   format, levers — lives in one per-league `settings.config`. The sim, backtest, and values all read
   it, so the app can be handed to a friend with a different league and it re-tailors itself.
-- **In-season copilot — working, read-only.** Nine decisions (season odds, weekly lineup, waivers,
-  trade check, trade finder, handcuffs, depth risk, power rankings, playoff SOS) as callable
+- **In-season copilot — working, read-only.** Ten decisions (season odds, weekly lineup, waivers,
+  trade check, trade finder, handcuffs, depth risk, power rankings, playoff SOS, and streaming --
+  whom to start or add at ONE position out of the free-agent pool) as callable
   functions over one sim context, reached identically from `ff copilot <verb>` and from the
   Assistant's MCP surface, almost all scored as a change in our PLAYOFF probability -- the factor the
   simulator has measured skill on -- with playoff-week strength as the secondary and the title
@@ -223,10 +224,24 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   Two more reports: `scripts/weekly-availability-coverage.mjs` (per-column coverage by season, with
   each column's as-of rule) and `scripts/weekly-artifact-probe.mjs` (load an artifact through the
   CONSUMER's loader -- "the trainer wrote a file" and "the engine can serve it" are two facts).
-- **BYO agent:** `mcp` serves the Assistant's own 34-tool control surface over stdio MCP, so Claude
+- **Streaming models, per position (`docs/weekly.md` section 6):** `build-streaming-features` builds
+  `feat_player_week_stream` -- twelve point-in-time columns about the OPPONENT and the stadium, on
+  the same anchor and under the same leakage guard. `evaluate-streaming` is nested by season and its
+  decision metric is STREAMING REGRET: take the free-agent pool, ask each model for its one best
+  pick, score what that man actually did. The gate is applied PER POSITION, so what ships is a
+  mapping rather than an artifact: **QB, K and DST ship the streaming model; RB, WR and TE failed
+  clause (c) -- the same clause and nearly the same numbers the weekly two-part model failed on --
+  and keep the floor.** `ff copilot stream --pos DST --week 3` and the `stream_recommend` MCP tool
+  serve it, and every result names which artifact served which position.
+  **Read the result with its control attached:** the twelve opponent columns are worth under 0.004
+  CRPS at every position against the same model without them, and P42 failed saying so. What passed
+  the gate is that K and DST are fitted at all instead of being two intercepts. Observed weather is
+  NOT a feature and a test asserts its absence -- `raw_nfl_game`'s `temp` and `wind` are measured
+  after the fact, and this store has no forecast feed.
+- **BYO agent:** `mcp` serves the Assistant's own 35-tool control surface over stdio MCP, so Claude
   Code (or any MCP client) can drive the draft and the season. `docs/mcp.md`; `claude mcp add
   ff-draft -- npx tsx <repo>/src/ff.ts mcp`.
-- **In-season copilot (`ff copilot <verb>`)** — the decision surface, READ-ONLY, and the same nine
+- **In-season copilot (`ff copilot <verb>`)** — the decision surface, READ-ONLY, and the same ten
   functions the Assistant reaches as MCP tools (`src/inseason/copilot.ts`, one dispatcher in
   `copilotActions.ts`, so a terminal and the Assistant cannot quote different numbers):
 
@@ -240,6 +255,7 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   npm run ff -- copilot depth-risk --player "Breece Hall"
   npm run ff -- copilot power-rankings
   npm run ff -- copilot playoff-sos
+  npm run ff -- copilot stream --pos DST --week 3
   ```
 
   Almost everything is scored in ONE unit — the change in our championship probability, under common

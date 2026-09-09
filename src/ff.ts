@@ -161,6 +161,11 @@ async function main() {
       return cmdBuildWeeklyFeatures(rest);
     case "evaluate-weekly":
       return cmdEvaluateWeekly(rest);
+    // ---- streaming track (src/weekly/streaming*.ts) ----
+    case "build-streaming-features":
+      return cmdBuildStreamingFeatures(rest);
+    case "evaluate-streaming":
+      return cmdEvaluateStreaming(rest);
     case "scorecard":
       return cmdScorecard(rest);
     default:
@@ -2818,6 +2823,53 @@ async function cmdBuildWeeklyFeatures(rest: string[]) {
   } finally { db.close(); }
 }
 
+/**
+ * `ff build-streaming-features` -- the opponent-and-environment table, with its coverage.
+ *
+ * COVERAGE IS PRINTED PER COLUMN PER SEASON and it is not decoration: the team-week feed is fetched
+ * per season and a season the feed does not cover leaves twelve columns NULL at once, which is
+ * indistinguishable in the table from a season where every team happened to have no data. The row
+ * count read from the feed is printed beside the coverage so the two cases can be told apart.
+ */
+async function cmdBuildStreamingFeatures(rest: string[]) {
+  const { buildStreamFeatures, streamCoverage, STREAM_FIELD_NAMES } = await import("./weekly/streamingFeatures.js");
+  const seasons = seasonRange(valueOf(rest, "--seasons"), [2010, 2026]);
+  const res = await buildStreamFeatures({ dbPath: valueOf(rest, "--db"), seasons });
+  console.log(`feat_player_week_stream: ${res.rows} rows over ${seasons.length} seasons`);
+  console.log("team-week feed rows read: " +
+    [...res.teamWeekRows.entries()].sort((a, b) => a[0] - b[0]).map(([s, n]) => `${s}:${n}`).join(" "));
+  const show = STREAM_FIELD_NAMES.filter((n) => n !== "opp_pa_pos_n");
+  const db = openDb(valueOf(rest, "--db"));
+  try {
+    console.log("season  rows   " + show.map((c) => c.slice(0, 12).padStart(13)).join(""));
+    for (const c of streamCoverage(db, seasons)) {
+      const pct = (k: string) => (c.rows ? ((100 * c.cols[k]) / c.rows).toFixed(1) + "%" : "-").padStart(13);
+      console.log(`${c.season}  ${String(c.rows).padStart(5)}   ` + show.map(pct).join(""));
+    }
+  } finally { db.close(); }
+}
+
+/**
+ * `ff evaluate-streaming` -- the nested-by-season evaluation of the per-position streaming models,
+ * the streaming-regret table, the pre-registered predictions P40-P42 and the per-position gate.
+ *
+ * It trains TWO artifacts per fold -- the streaming model and the same trainer with the twelve
+ * opponent columns removed -- because the control is what makes P41 a measurement rather than a
+ * comparison against a differently-shaped model.
+ */
+async function cmdEvaluateStreaming(rest: string[]) {
+  const { evaluateStreaming, formatStreamingReport } = await import("./weekly/streamingEvaluate.js");
+  const res = await evaluateStreaming({
+    dbPath: valueOf(rest, "--db"),
+    seasons: seasonRange(valueOf(rest, "--seasons"), [2012, 2025]),
+    trainSeasons: seasonRange(valueOf(rest, "--train-seasons"), [2010, 2025]),
+    keepArtifacts: valueOf(rest, "--keep-artifacts"),
+    poolScale: valueOf(rest, "--pool-scale") ? Number(valueOf(rest, "--pool-scale")) : undefined,
+  });
+  if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
+  else console.log(formatStreamingReport(res));
+}
+
 async function cmdScorecard(rest: string[]) {
   const { runScorecard, formatScorecard } = await import("./weekly/scorecard.js");
   const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
@@ -2905,6 +2957,7 @@ async function cmdEvaluateWeekly(rest: string[]) {
  *   depth-risk      what losing one player costs, and who insures him
  *   power-rankings  the league by best starting lineup, with each team's odds beside it
  *   playoff-sos     weeks 15-17 opponent strength, from the posted lines
+ *   stream          whom to START or ADD at ONE position this week, from our men plus the pool
  *
  * Flags: --schedule real|generated|auto (default auto; "real" needs the app running and THROWS
  * rather than silently substituting a generated schedule), --trials, --seed, --week, --player,
@@ -2917,6 +2970,7 @@ async function cmdCopilot(rest: string[]) {
     "season-odds": "season_odds", lineup: "lineup_recommend", waivers: "waiver_targets",
     "trade-check": "trade_check", "trade-finder": "trade_finder", handcuffs: "handcuffs",
     "depth-risk": "depth_risk", "power-rankings": "power_rankings", "playoff-sos": "playoff_sos",
+    stream: "stream_recommend",
   };
   const verb = verbArg ? VERB_OF[verbArg] : undefined;
   if (!verb) {
@@ -2936,6 +2990,10 @@ async function cmdCopilot(rest: string[]) {
     get: list("--get").length ? list("--get") : undefined,
     positions: list("--pos").length ? list("--pos") : undefined,
     limit: num("--limit"), freeOnly: rest.includes("--free"), maxGap: num("--max-gap"),
+    // `stream` is a ONE-position verb, so --pos takes a single value here rather than a list. The
+    // list form still works and its first entry is used, because a caller who types the flag the
+    // way every other verb takes it should get an answer rather than a usage error.
+    pos: (valueOf(rest, "--pos") ?? "").split(",")[0].trim() || undefined,
   };
 
   const run = await runCopilot(verb, args, { dbPath: valueOf(rest, "--db") });

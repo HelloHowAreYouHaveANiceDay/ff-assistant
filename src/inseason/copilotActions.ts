@@ -27,10 +27,13 @@ import { openDb, logAction } from "../db/db.js";
 import { loadSimContext, type SimContext } from "../draft/simContext.js";
 import * as C from "./copilot.js";
 import * as S from "./copilotStore.js";
+import { loadStreamingProjection } from "../weekly/streamingServe.js";
 
 export const COPILOT_VERBS = [
   "season_odds", "lineup_recommend", "waiver_targets", "trade_check",
   "trade_finder", "handcuffs", "depth_risk", "power_rankings", "playoff_sos",
+  // Track C. A tenth verb, and the only one that is about a POOL rather than a roster.
+  "stream_recommend",
 ] as const;
 export type CopilotVerb = (typeof COPILOT_VERBS)[number];
 
@@ -46,6 +49,8 @@ export interface CopilotArgs {
   limit?: number;
   freeOnly?: boolean;
   maxGap?: number;
+  /** stream_recommend: the ONE position the decision is about. */
+  pos?: string;
 }
 
 export interface CopilotRun<T = unknown> {
@@ -123,6 +128,19 @@ function summarize(verb: CopilotVerb, r: unknown): string {
       return `We are #${x.ourRank} of ${x.rows.length} (league mean ${x.leagueMeanStartPts} starter pts). Top: ` +
         x.rows.slice(0, 4).map((t) => `${t.rank}. ${t.team} ${t.startPts}pts / ${t.titlePct}% title`).join("; ") + `. ${caveat(x.assumptions)}`;
     }
+    case "stream_recommend": {
+      const x = r as C.StreamRecommendResult;
+      const who = x.start ? `START ${x.start.name} (${x.start.proj} pts, p10 ${x.start.p10}, p90 ${x.start.p90}` +
+        `${x.start.pZero == null ? "" : `, P(zero) ${x.start.pZero.toFixed(2)}`})` : "we have NOBODY startable there";
+      const claim = x.add
+        ? ` ADD ${x.add.add} / DROP ${x.add.drop}${x.add.legal ? "" : " -- ILLEGAL"}: ` +
+          `${x.add.gainPts >= 0 ? "+" : ""}${x.add.gainPts.toFixed(1)} pts this week${x.add.why ? ` (${x.add.why})` : ""}.`
+        : " No free player at this position beats what we already have.";
+      const top = x.pool.slice(0, 3).map((p) => `${p.name} ${p.proj}`).join(", ");
+      return `Week ${x.week} ${x.pos}: ${who}.${claim}` +
+        `${top ? ` Best free: ${top}.` : ""}` +
+        `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""} ${caveat(x.assumptions)}`;
+    }
     case "playoff_sos": {
       const x = r as C.SosResult;
       return `Weeks ${x.playoffWeeks.join("/")} (${x.pricedPlayoffGames} of ${x.playoffGames} games priced so far). ` +
@@ -171,7 +189,57 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       const { games, regWeeks } = S.loadGames(dbPath);
       return C.playoffSos(ctx, { provenance, games, regWeeks, teamOf: S.loadTeamOf(dbPath) });
     }
+    case "stream_recommend": {
+      const pos = String(a.pos ?? a.positions?.[0] ?? "").toUpperCase();
+      if (!pos) throw new Error("stream_recommend needs a position -- it is a one-position decision");
+      const wk = a.week ?? S.currentWeek(dbPath).week;
+      // The pool is built HERE and handed in, so copilot.ts stays pure. `loadStreamingProjection`
+      // is the only path to a projection and it consults the per-position ship mapping, so there is
+      // no way to reach a number without knowing which artifact produced it.
+      const proj = streamProjections(ctx, wk, dbPath);
+      return {
+        ...C.streamRecommend(ctx, wk, pos, {
+          provenance, availability: S.loadAvailability(dbPath),
+          pool: proj.pool, limit: a.limit, artifactByPos: proj.artifactByPos,
+        }),
+        weekSource: a.week != null ? "caller" : S.currentWeek(dbPath).source,
+        artifactByPos: proj.artifactByPos,
+        missingArtifact: proj.missing,
+      };
+    }
   }
+}
+
+/**
+ * Every candidate at every position for one week, in the shape `streamRecommend` takes.
+ *
+ * `ours` and `rostered` come from the LEAGUE (the sim context's rosters), which is the only place
+ * they exist -- the weekly feature table knows who plays football, not who is on somebody's team.
+ * A projected player nobody in the league can be matched to is streamable by definition, which is
+ * the right default: the failure mode to avoid is calling a rostered man free, and a name that
+ * matches nothing is not on a roster.
+ */
+function streamProjections(ctx: SimContext, week: number, dbPath?: string): {
+  pool: C.StreamPlayer[]; artifactByPos: Record<string, string>; missing: string[];
+} {
+  const p = loadStreamingProjection(ctx.season, week, dbPath);
+  if (!p) return { pool: [], artifactByPos: {}, missing: [] };
+  const ourNames = new Set(ctx.teams[ctx.meIdx].roster.map((r) => C.lineupNameKey(r.name)));
+  const leagueNames = new Set(ctx.teams.flatMap((t) => t.roster.map((r) => C.lineupNameKey(r.name))));
+  const pool = p.rows.map((r) => {
+    const k = C.lineupNameKey(r.name);
+    return {
+      name: r.name, pos: r.pos, team: r.team,
+      proj: Math.round(r.mean * 100) / 100,
+      p10: Math.round(r.p10 * 100) / 100,
+      p90: Math.round(r.p90 * 100) / 100,
+      pZero: r.pZero == null ? null : Math.round(r.pZero * 1000) / 1000,
+      ours: ourNames.has(k), rostered: leagueNames.has(k),
+      unavailable: null as string | null,
+      artifact: r.artifact,
+    };
+  });
+  return { pool, artifactByPos: p.artifactByPos, missing: p.missing };
 }
 
 /**

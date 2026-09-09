@@ -43,6 +43,25 @@ const skOf = new Map(
   db.prepare("SELECT gsis_id, player_sk FROM stg_player WHERE gsis_id IS NOT NULL AND COALESCE(ambiguous, 0) = 0")
     .all().map((r) => [r.gsis_id, Number(r.player_sk)]),
 );
+
+// ---- SOURCES FOR THE STREAMING AUDIT (Track C) ----
+// The streaming table is audited from the same handle, so a season with no streaming rows reports
+// that fact rather than opening a second connection to discover it.
+const hasStream = db.prepare(
+  "SELECT name FROM sqlite_master WHERE type='table' AND name='feat_player_week_stream'",
+).get();
+const stream = hasStream ? db.prepare(
+  `SELECT feat_key, week, pos, team, opponent, opp_pa_pos, opp_pa_pos_n, opp_def_sacks_pg,
+          opp_pass_yds_allowed_pg, team_fga_pg, roof_dome, opp_implied_total
+     FROM feat_player_week_stream WHERE season = ?`,
+).all(season) : [];
+const priorRaw = db.prepare(
+  "SELECT week, opponent, pos, pts FROM feat_player_week WHERE season = ? AND pts IS NOT NULL AND opponent IS NOT NULL",
+).all(season - 1);
+const modelLines = new Map(
+  db.prepare("SELECT feat_key, week, total_line, implied_team_total FROM feat_player_week_model WHERE season = ?")
+    .all(season).map((r) => [`${r.feat_key}|${r.week}`, r]),
+);
 db.close();
 
 if (!raw.length || !model.length) {
@@ -281,6 +300,193 @@ if (!avail.length) {
     console.log("\nFAIL: teammates_out is 0 in every row. A column that can only ever return one " +
       "value is not measuring anything, and its agreement with a recomputation that also returns " +
       "zero everywhere proves nothing.");
+  }
+}
+
+// ==================================================================================================
+// THE STREAMING BLOCK (Track C): feat_player_week_stream.
+//
+// Twelve columns about the OPPONENT and the STADIUM, and the leak available in them is not a
+// player's own week -- it is "what that defence allowed", computed for season Y instead of for the
+// weeks before w. Same method as everything above: recompute from the raw facts with an explicit
+// bound, and run the SAME code with the bound moved as a positive control.
+//
+// AN HONEST NOTE ON HOW INDEPENDENT THIS IS. The blend (weights 4 toward the league mean and 6
+// toward the prior season) is the SAME arithmetic the builder uses; reimplementing a weighted mean
+// differently would test nothing but arithmetic. What is independent here is the SOURCE -- straight
+// from feat_player_week and the cached nflverse team-week CSV rather than from the builder -- and
+// what is being tested is the BOUND, which is the only part that can leak. So the discriminating
+// assertion is the RATIO between the honest bound and the leaked one, exactly as it is for inj_out.
+// ==================================================================================================
+if (!stream.length) {
+  console.log(`\nnote: season ${season} has no feat_player_week_stream rows, so the streaming block ` +
+    "is NOT audited here. Run `ff build-streaming-features`. That is a coverage fact, not a clean bill.");
+} else {
+  const { fetchCsvCached, teamWeekUrl, cacheTag, canonTeam, pick } = await import("../src/data/nflverse.js");
+  const SHRINK = 4, PRIOR_W = 6;
+  const num = (v) => {
+    const s = String(v ?? "").trim();
+    if (!s || s === "NA") return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  };
+  const teamWeek = async (yr) => {
+    let rows = [];
+    try { rows = await fetchCsvCached(teamWeekUrl(yr), cacheTag.teamWeek(yr)); } catch { return []; }
+    return rows
+      .filter((r) => {
+        const t = String(pick(r, "season_type") ?? "").toUpperCase();
+        return !t || t === "REG";
+      })
+      .map((r) => ({
+        week: num(pick(r, "week")), team: canonTeam(String(pick(r, "team") ?? "")),
+        opponent: canonTeam(String(pick(r, "opponent_team") ?? "")),
+        defSacks: num(r.def_sacks), passYards: num(r.passing_yards), fgAtt: num(r.fg_att),
+      }))
+      .filter((r) => r.week && r.team);
+  };
+  const twCur = await teamWeek(season), twPrior = await teamWeek(season - 1);
+
+  /** A blended, shrunk mean of `valueOf` attributed to `keyOf`, over weeks < w + slack. */
+  const blend = (cur, prior, keyOf, valueOf) => (week, team, slack) => {
+    const bound = week - 1 + slack;
+    let sum = 0, n = 0, lg = 0, lgN = 0;
+    for (const r of cur) {
+      const v = valueOf(r); const k = keyOf(r);
+      if (v == null || !k || r.week > bound) continue;
+      lg += v; lgN++;
+      if (k === team) { sum += v; n++; }
+    }
+    let pSum = 0, pN = 0, pLg = 0, pLgN = 0;
+    for (const r of prior) {
+      const v = valueOf(r); const k = keyOf(r);
+      if (v == null || !k) continue;
+      pLg += v; pLgN++;
+      if (k === team) { pSum += v; pN++; }
+    }
+    const leagueMean = lgN > 0 ? lg / lgN : (pLgN > 0 ? pLg / pLgN : null);
+    if (leagueMean == null) return null;
+    const terms = [[SHRINK, leagueMean]];
+    if (n > 0) terms.push([n, sum / n]);
+    if (pN > 0) terms.push([PRIOR_W, pSum / pN]);
+    const wsum = terms.reduce((s, t) => s + t[0], 0);
+    return wsum > 0 ? terms.reduce((s, t) => s + t[0] * t[1], 0) / wsum : null;
+  };
+
+  // opp_pa_pos: fantasy points allowed per game to a POSITION, so its denominator is team-games
+  // faced rather than rows, and it needs its own recomputation rather than `blend`'s.
+  const paOf = (week, team, pos, slack) => {
+    const bound = week - 1 + slack;
+    let sum = 0, lg = 0;
+    const faced = new Set(), lgFaced = new Set();
+    for (const r of raw) {
+      if (r.pts == null || !r.opponent || r.week > bound) continue;
+      lgFaced.add(`${r.opponent}|${r.week}`);
+      if (r.pos === pos) lg += r.pts;
+      if (r.opponent === team) {
+        faced.add(r.week);
+        if (r.pos === pos) sum += r.pts;
+      }
+    }
+    let pSum = 0, pLg = 0;
+    const pFaced = new Set(), pLgFaced = new Set();
+    for (const r of priorRaw) {
+      if (r.pts == null || !r.opponent) continue;
+      pLgFaced.add(`${r.opponent}|${r.week}`);
+      if (r.pos === pos) pLg += r.pts;
+      if (r.opponent === team) {
+        pFaced.add(r.week);
+        if (r.pos === pos) pSum += r.pts;
+      }
+    }
+    const leagueMean = lgFaced.size > 0 ? lg / lgFaced.size : (pLgFaced.size > 0 ? pLg / pLgFaced.size : null);
+    if (leagueMean == null) return { value: null, n: faced.size };
+    const terms = [[SHRINK, leagueMean]];
+    if (faced.size > 0) terms.push([faced.size, sum / faced.size]);
+    if (pFaced.size > 0) terms.push([PRIOR_W, pSum / pFaced.size]);
+    const wsum = terms.reduce((s, t) => s + t[0], 0);
+    return { value: terms.reduce((s, t) => s + t[0] * t[1], 0) / wsum, n: faced.size };
+  };
+
+  const sacksOf = blend(twCur, twPrior, (r) => r.team, (r) => r.defSacks);
+  const passOf = blend(twCur, twPrior, (r) => r.opponent, (r) => r.passYards);
+  const fgaOf = blend(twCur, twPrior, (r) => r.team, (r) => r.fgAtt);
+
+  // A SAMPLE, not every row: the recomputation above is O(rows) per lookup and the whole table is
+  // ~12k rows a season. Every third week, every row in it -- which is thousands of comparisons and
+  // enough to make a systematic one-week shift impossible to miss, while a single leaked row would
+  // not be a leak, it would be a data error.
+  const sample = stream.filter((r) => r.week % 3 === 2 && r.opponent && r.team);
+  function auditStream(slack) {
+    const bad = { opp_pa_pos: 0, opp_def_sacks_pg: 0, opp_pass_yds_allowed_pg: 0, team_fga_pg: 0 };
+    let n = 0;
+    for (const r of sample) {
+      n++;
+      const cmp = (got, want, key) => {
+        if (got == null || want == null) return;
+        if (Math.abs(got - want) > 1e-6) bad[key]++;
+      };
+      cmp(r.opp_pa_pos, paOf(r.week, r.opponent, r.pos, slack).value, "opp_pa_pos");
+      cmp(r.opp_def_sacks_pg, sacksOf(r.week, r.opponent, slack), "opp_def_sacks_pg");
+      cmp(r.opp_pass_yds_allowed_pg, passOf(r.week, r.opponent, slack), "opp_pass_yds_allowed_pg");
+      cmp(r.team_fga_pg, fgaOf(r.week, r.team, slack), "team_fga_pg");
+    }
+    return { n, bad };
+  }
+  const honestS = auditStream(0);
+  const leakedS = auditStream(1);
+  console.log(`\nstreaming -- ${honestS.n} rows recomputed independently (every third week of ${season})`);
+  console.log("            mismatches vs `week < w`   vs `week <= w` (the leak)");
+  for (const k of Object.keys(honestS.bad)) {
+    console.log(`  ${k.padEnd(24)} ${String(honestS.bad[k]).padStart(6)} ${String(leakedS.bad[k]).padStart(22)}`);
+  }
+  for (const k of Object.keys(honestS.bad)) {
+    if (honestS.bad[k] > 0) {
+      failed = true;
+      console.log(`\nFAIL: ${k} disagrees with an independent 'weeks strictly before w' recomputation ` +
+        `in ${honestS.bad[k]} of ${honestS.n} sampled rows. Either the table is stale or the column ` +
+        "is reading week w itself.");
+    }
+    if (leakedS.bad[k] === 0) {
+      failed = true;
+      console.log(`\nFAIL: moving the bound to 'weeks <= w' changed NOTHING for ${k}. This comparison ` +
+        "cannot see the leak it exists to detect, so its clean verdict above means nothing.");
+    }
+  }
+
+  // The count of opponent-games behind opp_pa_pos must never reach the week being predicted -- the
+  // defence-side version of the same claim, asserted on the stored column rather than recomputed.
+  const nBad = stream.filter((r) => r.opp_pa_pos_n != null && r.opp_pa_pos_n > r.week - 1).length;
+  if (nBad) {
+    failed = true;
+    console.log(`\nFAIL: ${nBad} rows carry opp_pa_pos_n greater than week-1, i.e. the defence's ` +
+      "record includes the week being predicted.");
+  }
+
+  // opp_implied_total is derived, not accumulated, so it cannot leak by a bound -- it can only be
+  // WRONG, which a recomputation from the two published lines catches exactly.
+  let oitN = 0, oitBad = 0;
+  for (const r of stream) {
+    const m = modelLines.get(`${r.feat_key}|${r.week}`);
+    if (!m || m.total_line == null || m.implied_team_total == null || r.opp_implied_total == null) continue;
+    oitN++;
+    if (Math.abs(r.opp_implied_total - (m.total_line - m.implied_team_total)) > 1e-6) oitBad++;
+  }
+  console.log(`  opp_implied_total vs total_line - implied_team_total (must be exact): ${oitBad} of ${oitN}`);
+  if (oitBad > 0) {
+    failed = true;
+    console.log("\nFAIL: opp_implied_total is not the published total minus this team's implied total.");
+  }
+
+  // AND THE COLUMNS THAT MUST NOT EXIST. Observed weather is the most attractive leak on this table
+  // and its absence is a claim worth checking rather than trusting.
+  const cols = new Set(Object.keys(stream[0] ?? {}));
+  for (const banned of ["temp", "wind", "temperature", "wind_mph"]) {
+    if (cols.has(banned)) {
+      failed = true;
+      console.log(`\nFAIL: feat_player_week_stream carries '${banned}'. raw_nfl_game's weather is ` +
+        "OBSERVED, not forecast -- it is not knowable before kickoff and must not be a feature.");
+    }
   }
 }
 
