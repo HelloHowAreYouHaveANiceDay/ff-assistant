@@ -266,6 +266,10 @@ export function buildV3Config(
     ourSd: (process.env.FF_V3_SHADE === "off" || process.env.FF_V3_OURSD === "0") ? () => 0 : (name) => ourSdFor(posRank.get(name) ?? null),
     marketSd: process.env.FF_V3_SHADE === "off" ? () => 0 : (name) => priceNoiseFor(overallRank.get(name) ?? 9999)[1],
     defaultBidders: Math.max(2, Math.round(lg.teams / 2)),
+    // League-wide demand, which is what turns the streaming floor into a POSITIONAL REPLACEMENT
+    // baseline inside the marginal (P30's defect). Without it V3 prices the first quarterback
+    // against the waiver wire.
+    teams: lg.teams,
   };
 }
 
@@ -424,8 +428,12 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
         const posInflation = cfg.posInflation ? positionInflationFactors(picks.map((pk) => ({ pos: pk.pos, price: pk.price, value: trueVal.get(pk.name) ?? 0 }))) : undefined;
         // Room money + unfilled slots, stated explicitly so budgetPressure computes the SAME
         // quantity here and live (ff.ts). Cheap: one pass over teams, only when a term needs it.
+        // V3 needs `leagueOpenSlots` for a SECOND reason: its positional replacement baseline scales
+        // league-wide starting demand by the share of roster slots still open, so without it the
+        // baseline is frozen at the pre-draft board and cannot tighten -- a dead lever wearing the
+        // same flat line as a real null. V2's gate is untouched, so no V2 number moves.
         let leagueDollars: number | undefined, leagueOpenSlots: number | undefined;
-        if (cfg.budgetPressure) {
+        if (cfg.budgetPressure || useV3) {
           leagueDollars = teams.reduce((a, tt) => a + Math.max(0, tt.budget), 0);
           leagueOpenSlots = teams.reduce((a, tt) => a + openCount(tt), 0);
         }

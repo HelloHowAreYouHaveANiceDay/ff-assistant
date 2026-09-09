@@ -22,6 +22,8 @@ import { loadSimContext } from "../src/draft/simContext.ts";
 import { MarginalBook } from "../src/draft/rosterMarginal.ts";
 import { computeValues, resolveValueLeague } from "../src/draft/values.ts";
 import { loadPriceModel, priceFor } from "../src/model/price.ts";
+import { buildV3Config } from "../src/draft/sim.ts";
+import { makeV3Strategy } from "../src/draft/strategyV3.ts";
 
 const argv = process.argv.slice(2);
 const val = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : d; };
@@ -67,6 +69,37 @@ const vor = new Map(vorRows.map((r) => [r.name, r.value]));
 
 const candidates = [...pool].sort((a, b) => (vor.get(b.name) ?? 0) - (vor.get(a.name) ?? 0) || b.proj - a.proj).slice(0, CANDS);
 
+// --- V3'S ANALYTIC BOOK, the third column and the whole reason this script is worth re-running ---
+//
+// The simulated book above is the quantity V3's analytic surrogate is TRYING to approximate, and
+// P30 measured them disagreeing about quarterbacks by twenty points of share. Printing them side by
+// side on the SAME state, the SAME pool and the SAME price function is the only way to say which of
+// the two moved, so the analytic column is built here rather than in a separate script whose board
+// would differ in ways nobody could enumerate.
+//
+// THE BOARD IS THE WHOLE POOL, exactly as `sim.ts` hands it to V3 in a real auction -- the man on the
+// block and every other candidate included. An earlier cut of this barred the candidate set from the
+// board, copying `MarginalBook.fillExclude`, and that is a DIFFERENT and wrong thing here: V3 reads
+// the board for its positional replacement baseline as well as for its budget path, so removing the
+// top forty players took the quarterback baseline eleven ranks too deep and re-created the very
+// inflation being measured. The two modules bar different things because they use the pool for
+// different purposes; copying one into the other is how a harness invents its own result.
+const v3Slots = {};
+for (const s of ctx.slots) { const k = /^(BE|BENCH|IR|ER)$/i.test(s) ? "BENCH" : s; v3Slots[k] = (v3Slots[k] ?? 0) + 1; }
+const v3Board = pool.map((p) => ({ name: p.name, pos: p.pos, team: "", espnPreDraftVal: null }));
+const v3Cfg = buildV3Config(
+  pool.map((p) => ({ name: p.name, pos: p.pos, points: p.proj })),
+  { teams: 16, budget: 200, slots: ctx.slots },
+  { byeOf: (n) => byeOf.get(n) ?? null, priceOf: (n, pos) => priceOf({ name: n, pos, proj: 0 }) },
+);
+const v3Strat = makeV3Strategy(v3Cfg);
+const v3State = {
+  myBudget: 200, mySlots: { ...v3Slots }, myRoster: [], myPosCounts: {},
+  onBlock: null, currentOffer: null, secondsLeft: null, iAmHighBidder: false,
+  board: v3Board, teams: Array.from({ length: 16 }, (_, i) => ({ name: String(i), budgetLeft: 200, openSlots: ctx.slots.length })),
+};
+const v3 = new Map(candidates.map((c) => [c.name, v3Strat.value({ name: c.name, pos: c.pos, team: "", espnPreDraftVal: null }, v3State)]));
+
 // --- measure ----------------------------------------------------------------------------------
 const book = new MarginalBook(state, env, { trials: TRIALS, seed: SEED, fillExclude: candidates.map((c) => c.name) });
 // THE FIXED COST AND THE PER-CANDIDATE COST ARE TIMED SEPARATELY, because they are paid at different
@@ -84,12 +117,13 @@ console.log(`  budget curve (once per state): ${(msCurve / 1000).toFixed(1)}s`);
 console.log(`  ${book.runs} simulateSeasons calls; ${(ms / 1000).toFixed(1)}s for ${candidates.length} candidates = ${(ms / candidates.length).toFixed(0)} ms PER CANDIDATE`);
 console.log(`  shadow price ${book.shadowPricePpPerDollar().toFixed(4)} pp of P(playoffs) per dollar of the best alternative use`);
 console.log("");
-console.log("  ROSTER-AWARE (primary = P(playoffs))                        |  VOR BOOK");
-console.log(`  ${"#".padStart(3)} ${"player".padEnd(24)} ${"pos".padEnd(4)} ${"pp".padStart(6)} ${"$".padStart(5)} ${"titlePp".padStart(8)} ${"poPts".padStart(7)}  |  ${"player".padEnd(24)} ${"$".padStart(5)}`);
+console.log("  SIMULATED ROSTER-AWARE (primary = P(playoffs))             |  V3 ANALYTIC              |  VOR BOOK");
+console.log(`  ${"#".padStart(3)} ${"player".padEnd(24)} ${"pos".padEnd(4)} ${"pp".padStart(6)} ${"$".padStart(5)} ${"titlePp".padStart(8)} ${"poPts".padStart(7)}  |  ${"player".padEnd(20)} ${"$".padStart(5)}  |  ${"player".padEnd(20)} ${"$".padStart(5)}`);
 const byVor = [...candidates].sort((a, b) => (vor.get(b.name) ?? 0) - (vor.get(a.name) ?? 0));
+const byV3 = [...candidates].sort((a, b) => (v3.get(b.name) ?? 0) - (v3.get(a.name) ?? 0) || b.proj - a.proj);
 for (let i = 0; i < TOP && i < rows.length; i++) {
-  const r = rows[i], v = byVor[i];
-  console.log(`  ${String(i + 1).padStart(3)} ${r.name.slice(0, 24).padEnd(24)} ${r.pos.padEnd(4)} ${r.playoffsPp.toFixed(2).padStart(6)} ${String(r.dollars).padStart(5)} ${r.titlePp.toFixed(2).padStart(8)} ${r.playoffWeekPts.toFixed(1).padStart(7)}  |  ${v.name.slice(0, 24).padEnd(24)} ${String(vor.get(v.name) ?? 0).padStart(5)}`);
+  const r = rows[i], v = byVor[i], w = byV3[i];
+  console.log(`  ${String(i + 1).padStart(3)} ${r.name.slice(0, 24).padEnd(24)} ${r.pos.padEnd(4)} ${r.playoffsPp.toFixed(2).padStart(6)} ${String(r.dollars).padStart(5)} ${r.titlePp.toFixed(2).padStart(8)} ${r.playoffWeekPts.toFixed(1).padStart(7)}  |  ${`${w.name} (${w.pos})`.slice(0, 20).padEnd(20)} ${String(v3.get(w.name) ?? 0).padStart(5)}  |  ${`${v.name} (${v.pos})`.slice(0, 20).padEnd(20)} ${String(vor.get(v.name) ?? 0).padStart(5)}`);
 }
 
 // --- positional shares ------------------------------------------------------------------------
@@ -100,9 +134,14 @@ const share = (get, list) => {
 };
 const raShare = share((r) => r.dollars, rows);
 const vorShare = share((p) => vor.get(p.name) ?? 0, candidates.map((c) => ({ pos: c.pos, name: c.name })));
+const v3Share = share((p) => v3.get(p.name) ?? 0, candidates.map((c) => ({ pos: c.pos, name: c.name })));
 console.log("");
 console.log(`  POSITIONAL SHARE OF THE BOOK (over the ${CANDS} candidates priced)`);
-console.log(`  ${"pos".padEnd(6)} ${"roster-aware".padStart(13)} ${"VOR".padStart(8)}`);
+console.log(`  ${"pos".padEnd(6)} ${"simulated".padStart(13)} ${"V3 analytic".padStart(12)} ${"VOR".padStart(8)}`);
 for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
-  console.log(`  ${pos.padEnd(6)} ${(raShare[pos] ?? 0).toFixed(1).padStart(12)}% ${(vorShare[pos] ?? 0).toFixed(1).padStart(7)}%`);
+  console.log(`  ${pos.padEnd(6)} ${(raShare[pos] ?? 0).toFixed(1).padStart(12)}% ${(v3Share[pos] ?? 0).toFixed(1).padStart(11)}% ${(vorShare[pos] ?? 0).toFixed(1).padStart(7)}%`);
 }
+console.log("");
+console.log(`  P34 -- V3's QB share against the SIMULATED book measured in this same run:`);
+console.log(`    simulated ${(raShare.QB ?? 0).toFixed(1)}%   V3 analytic ${(v3Share.QB ?? 0).toFixed(1)}%   gap ${Math.abs((v3Share.QB ?? 0) - (raShare.QB ?? 0)).toFixed(1)} points`);
+console.log(`    against the registered 16.2%: gap ${Math.abs((v3Share.QB ?? 0) - 16.2).toFixed(1)} points`);

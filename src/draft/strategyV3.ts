@@ -29,7 +29,7 @@
  * here, and not decided by how clean the derivation looks.
  */
 import { reserveForOthers, type DraftState, type PlayerRef, type Strategy } from "./strategy.js";
-import { budgetPath, lineupMarginal, priceFromPath, type LmOpts, type LmPlayer, type PathPoint } from "./lineupMarginal.js";
+import { budgetPath, lineupMarginal, priceFromPath, starterBaselines, type LmOpts, type LmPlayer, type PathPoint } from "./lineupMarginal.js";
 
 export interface V3Config {
   /** SEASON projected points for a player. The only view of talent V3 has. */
@@ -58,6 +58,13 @@ export interface V3Config {
   pathSteps?: number;
   /** Bidders assumed live when the state does not say (the live path passes one aggregate team). */
   defaultBidders?: number;
+  /**
+   * How many teams the league has. Needed for the POSITIONAL REPLACEMENT BASELINE -- the last starter
+   * the league rosters at each position -- which is a property of league-wide demand and cannot be
+   * read off `lineup.slots` alone. Absent, V3 falls back to the streaming floor, which is the defect
+   * P30 named; every caller in this repo passes it.
+   */
+  teams?: number;
 }
 
 /** E[max of n independent standard normals], Blom's approximation. n <= 0 returns 0 -- there is no
@@ -122,14 +129,46 @@ export function makeV3Strategy(cfg: V3Config): Strategy {
     bye: cfg.byeOf?.(p.name) ?? null, avail: cfg.availOf?.(p.name, p.pos),
   });
 
+  /**
+   * THE LINEUP TEMPLATE PLUS THE POSITIONAL REPLACEMENT BASELINE, at this decision point.
+   *
+   * A STARTING SLOT IS MEASURED AGAINST THE LAST STARTER, NOT THE WAIVER WIRE, and that one change is
+   * what P30 asked for. Pricing the first quarterback against the streaming floor asks "how far does
+   * he beat the man nobody rosters", which in a one-QB, sixteen-team league is an enormous number and
+   * is not a question any bidder ever faces: the alternative to the best quarterback is the
+   * seventeenth. K, DST and every bench slot keep the streaming floor, because there the wire really
+   * is the alternative.
+   *
+   * Recomputed from the REMAINING board and the room's REMAINING open slots, at the same cadence as
+   * the budget path below, so it tightens as the draft empties the pool rather than being frozen at
+   * the pre-draft board. Cached because `nominate` prices the whole board through it.
+   */
+  const slotsPerTeam = Math.max(1, cfg.lineup.slots.length);
+  let lineupKey = "";
+  let lineup: LmOpts = cfg.lineup;
+  const lineupFor = (state: DraftState): LmOpts => {
+    if (cfg.teams == null) return cfg.lineup;   // no league-wide demand to compute against
+    const totalSlots = cfg.teams * slotsPerTeam;
+    const open = state.leagueOpenSlots ?? totalSlots;
+    const key = `${Math.floor(state.board.length / 8)}|${Math.floor(open / 4)}`;
+    if (key === lineupKey) return lineup;
+    const baseline = starterBaselines(
+      state.board.map(lm), { teams: cfg.teams, slots: cfg.lineup.slots },
+      open / Math.max(1, totalSlots), cfg.lineup.weeks, cfg.lineup.flexOk,
+    );
+    lineup = { ...cfg.lineup, baseline };
+    lineupKey = key;
+    return lineup;
+  };
+
   // The shadow price is a property of the STATE, not of the man on the block, so it is recomputed
   // only when our roster changes or the board has moved materially. Pricing two dozen candidates on
   // every one of two hundred nominations is the difference between a backtest that runs and one that
   // does not.
   let pathKey = "";
   let path: PathPoint[] = [];
-  const shadow = (state: DraftState, openSlots: string[]): PathPoint[] => {
-    const key = `${state.myRoster.length}|${state.myBudget}|${Math.floor(state.board.length / 8)}`;
+  const shadow = (state: DraftState, openSlots: string[], lo: LmOpts): PathPoint[] => {
+    const key = `${state.myRoster.length}|${state.myBudget}|${Math.floor(state.board.length / 8)}|${lineupKey}`;
     if (key === pathKey) return path;
     const roster = state.myRoster.map(lm);
     path = budgetPath(
@@ -141,7 +180,7 @@ export function makeV3Strategy(cfg: V3Config): Strategy {
       // started, every marginal became zero, and V3 declined every remaining player in the draft --
       // finishing with four empty roster spots and no bye cover. The roster OCCUPIES the template;
       // it does not define it.
-      cfg.lineup,
+      lo,
       { poolSize: cfg.pathPool ?? 60, steps: cfg.pathSteps ?? 40 },
     );
     pathKey = key;
@@ -157,9 +196,10 @@ export function makeV3Strategy(cfg: V3Config): Strategy {
     const openSlots = openSlotList(state.mySlots);
     if (!openSlots.length) return { m: 0, dollars: 0, canFill: false };
     const roster = state.myRoster.map(lm);
-    const m = lineupMarginal(roster, lm(p), cfg.lineup);
+    const lo = lineupFor(state);
+    const m = lineupMarginal(roster, lm(p), lo);
     if (!(m > 0)) return { m: 0, dollars: 0, canFill: true };
-    return { m, dollars: priceFromPath(shadow(state, openSlots), m, Math.max(0, state.myBudget)), canFill: true };
+    return { m, dollars: priceFromPath(shadow(state, openSlots, lo), m, Math.max(0, state.myBudget)), canFill: true };
   };
   const value = (p: PlayerRef, state: DraftState): number => detail(p, state).dollars;
 

@@ -58,7 +58,31 @@ export interface LmOpts {
   avail: Record<string, number>;
   /** Per-WEEK points freely available off waivers at each position -- the streaming floor. */
   replacement?: Record<string, number>;
+  /**
+   * PER-WEEK POINTS OF THE LAST STARTER THE LEAGUE ROSTERS AT EACH POSITION, plus a `FLEX` entry for
+   * the last man taken into the league's flex slots. This is the floor a STARTING slot is measured
+   * against, and supplying it is the difference between VOR and a waiver-wire book.
+   *
+   * WHY IT EXISTS, because it is the defect P30 named. An empty starting slot used to score the
+   * STREAMING FLOOR, so the first man at a position was priced by how far he beats the waiver wire.
+   * At quarterback that is a very long way -- the wire holds the thirtieth-best quarterback in a
+   * league that starts sixteen -- and V3 therefore paid 31-34% of its budget on quarterbacks against
+   * a room that pays 8-11% and a SIMULATED roster-aware book that says 15-16%. Nobody in a one-QB
+   * league ever has to accept the waiver quarterback: the alternative to the best one is the
+   * seventeenth, and that is the comparison a bid is actually about.
+   *
+   * K AND DST DELIBERATELY KEEP THE STREAMING FLOOR, and so does every bench slot. There the waiver
+   * wire really is the alternative -- this league streams both positions at $1-2 all season -- so a
+   * last-starter baseline would be modelling a scarcity that does not exist.
+   *
+   * Absent, every slot falls back to `replacement` and the module behaves exactly as it did before,
+   * which is what keeps the existing assertions meaningful rather than silently re-baselined.
+   */
+  baseline?: Record<string, number>;
 }
+
+/** Positions whose alternative really is the waiver wire, so a last-starter baseline does not apply. */
+const STREAMED = new Set(["K", "DST"]);
 
 const isBench = (s: string) => /^(BE|BENCH|IR|ER)$/i.test(s);
 const FLEX_KEYS = new Set(["FLEX", "OP", "RB/WR", "WR/TE"]);
@@ -104,6 +128,71 @@ export function availForRank(
 }
 
 /**
+ * THE LAST STARTER THE LEAGUE ROSTERS AT EACH POSITION, from the REMAINING pool and the REMAINING
+ * league-wide demand -- i.e. `values.ts baselines()`, recomputed at a decision point instead of once.
+ *
+ * It is deliberately the same construction, index for index: dedicated starting slots across the
+ * league, plus this position's POINTS-WEIGHTED share of the flex slots, and the man at that index is
+ * the baseline. `baselines()` allocates the flex by filling it greedily from the best leftovers,
+ * which is what gives a league with two flex slots a TE baseline of zero flex share; an even
+ * three-way split handed TE eleven phantom starting slots and was measured at 13.6% -> 22.2%
+ * championships when it was fixed. Reproducing the wrong allocation here would reintroduce that bug
+ * inside V3 only, where no existing test looks.
+ *
+ * WHY IT MOVES DURING THE DRAFT. Demand is scaled by `openFraction`, the share of the league's roster
+ * slots still unfilled, so with the room half drafted the baseline sits at half the starting demand
+ * INTO A POOL THAT HAS ALSO HALVED. Both ends tighten, which is the behaviour wanted: early, the
+ * alternative to the best quarterback is the seventeenth; late, when eleven are gone, it is whoever
+ * is actually left. The approximation, named rather than buried, is that the room's remaining slots
+ * are assumed to be spread across positions in the SAME proportions as the league template -- the
+ * Engine's `DraftState` carries a per-seat open-slot COUNT and no per-position breakdown, so a finer
+ * allocation would be invented rather than measured.
+ *
+ * The returned record carries one entry per position seen in the pool plus a `FLEX` entry: the last
+ * man taken into the flex slots, which is the flex's own cutoff and is NOT the max (or the min) of
+ * the positional baselines.
+ */
+export function starterBaselines(
+  pool: readonly { pos: string; proj: number }[],
+  lg: { teams: number; slots: readonly string[] },
+  openFraction: number,
+  weeks: number,
+  flexOk: readonly string[] = DEFAULT_FLEX,
+): Record<string, number> {
+  const frac = Math.min(1, Math.max(0, openFraction));
+  const byPos = new Map<string, number[]>();
+  for (const p of pool) (byPos.get(p.pos) ?? byPos.set(p.pos, []).get(p.pos)!).push(p.proj);
+  for (const l of byPos.values()) l.sort((a, b) => b - a);
+
+  const dedicatedSlots = (pos: string) => lg.slots.filter((s) => s === pos).length;
+  const flexSlots = lg.slots.filter((s) => FLEX_KEYS.has(s)).length;
+  const dedicated = (pos: string) => Math.round(dedicatedSlots(pos) * lg.teams * frac);
+  const flexTotal = Math.round(flexSlots * lg.teams * frac);
+
+  // The flex pool: every flex-eligible man beyond his own position's dedicated demand, best first.
+  const flexPool: { pos: string; pts: number }[] = [];
+  for (const pos of flexOk) {
+    const arr = byPos.get(pos) ?? [];
+    for (let i = dedicated(pos); i < arr.length; i++) flexPool.push({ pos, pts: arr[i] });
+  }
+  flexPool.sort((a, b) => b.pts - a.pts);
+  const claimed: Record<string, number> = {};
+  for (const p of flexPool.slice(0, flexTotal)) claimed[p.pos] = (claimed[p.pos] ?? 0) + 1;
+
+  const out: Record<string, number> = {};
+  for (const [pos, arr] of byPos) {
+    if (!arr.length) continue;
+    const startable = dedicated(pos) + (flexOk.includes(pos) ? (claimed[pos] ?? 0) : 0);
+    out[pos] = Math.max(0, (arr[startable] ?? arr[arr.length - 1]) / weeks);
+  }
+  // The flex's own cutoff: the last man the league's flex slots reach. With nothing left to reach
+  // for, the best remaining flex-eligible body is the honest answer rather than zero.
+  const lastFlex = flexPool[Math.max(0, Math.min(flexPool.length - 1, flexTotal))];
+  if (lastFlex) out.FLEX = Math.max(0, lastFlex.pts / weeks);
+  return out;
+}
+
+/**
  * Expected optimal-lineup points for ONE week.
  *
  * `week` decides byes only. Pass 0 for a week nobody is off, which is what the season total below
@@ -129,9 +218,27 @@ export function expectedWeekPoints(roster: readonly LmPlayer[], week: number, o:
     return e + none * floor;
   };
 
+  // THE FLOOR A SLOT SCORES WHEN NOBODY WE HOLD IS UP. A dedicated starting slot at a position the
+  // league actually rosters is measured against the LAST STARTER at it; K, DST and the flex are the
+  // exceptions, and the flex has its own entry because the three flex-eligible positions do not
+  // share a cutoff (a league that gives TE zero flex slots has a TE baseline well above the flex
+  // margin, so taking the max over positions would price the flex against the wrong man).
+  const floorFor = (slot: string): number => {
+    if (FLEX_KEYS.has(slot)) {
+      const b = o.baseline?.FLEX;
+      if (b != null) return b;
+      return Math.max(0, ...flex.map((p) => o.replacement?.[p] ?? 0));
+    }
+    if (!STREAMED.has(slot)) {
+      const b = o.baseline?.[slot];
+      if (b != null) return b;
+    }
+    return o.replacement?.[slot] ?? 0;
+  };
+
   let total = 0;
   for (const slot of start) {
-    const rep = o.replacement?.[slot] ?? 0;
+    const rep = floorFor(slot);
     if (FLEX_KEYS.has(slot)) {
       // The flex queue is whatever is LEFT across the eligible positions, merged by points.
       const merged: { pg: number; a: number; pos: string }[] = [];
@@ -140,8 +247,7 @@ export function expectedWeekPoints(roster: readonly LmPlayer[], week: number, o:
         for (let i = ptr[pos] ?? 0; i < l.length; i++) merged.push({ ...l[i], pos });
       }
       merged.sort((x, y) => y.pg - x.pg);
-      const floor = Math.max(0, ...flex.map((p) => o.replacement?.[p] ?? 0));
-      total += expected(merged, floor);
+      total += expected(merged, rep);
       if (merged.length) ptr[merged[0].pos] = (ptr[merged[0].pos] ?? 0) + 1;
     } else {
       const l = q.get(slot) ?? [];
