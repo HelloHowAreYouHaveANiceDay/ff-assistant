@@ -84,6 +84,25 @@ export interface SeasonOpts {
    */
   replacement?: Record<string, number>;
   /**
+   * ALSO report expected STARTING-LINEUP POINTS IN THE FANTASY PLAYOFF WEEKS (the three weeks after
+   * the regular season), per team, as `playoffWeekPts`.
+   *
+   * WHY IT IS A SEPARATE QUANTITY AND NOT READ OFF THE BRACKET. The bracket only scores teams that
+   * are actually alive in a round, so a team that missed the playoffs contributes no playoff-week
+   * score at all -- the average over trials would then be an average over the trials in which the
+   * team was good, which is a selection effect, not a strength. This draws the same three weeks for
+   * EVERY team in EVERY trial from the same generative model, independent of the bracket, so it is
+   * comparable across teams and across roster changes.
+   *
+   * It exists because P(title) = P(playoffs) x P(title | playoffs) and the simulator has measured
+   * skill on the first factor and none on the second (docs/validation.md, Phase 2c). Once a seed is
+   * secure the only quantity left worth improving is how much the roster scores in the three weeks
+   * that decide the bracket, and that is this number.
+   *
+   * Off by default: it costs three extra scored weeks per team per trial (~20%).
+   */
+  playoffWeekStrength?: boolean;
+  /**
    * Opt out of the structural roster check. Only for cases where a partial roster is the POINT --
    * simulating a half-finished draft, or a unit test of the scoring path. Never as a way past a
    * failure: the check firing on a roster that should be complete means the roster is wrong, and
@@ -106,7 +125,17 @@ export interface SeasonOpts {
    */
   bootstrap?: { outcomes: RankOutcomes; corr: CorrelationModel; calibration?: "none" | "scale" };
 }
-export interface SeasonOdds { id: string; name: string; playoffs: number; champion: number; meanWins: number; meanPoints: number }
+export interface SeasonOdds {
+  id: string; name: string; playoffs: number; champion: number; meanWins: number; meanPoints: number;
+  /** Mean TOTAL optimal-lineup points over the three fantasy playoff weeks, under availability.
+   *  Present only when `playoffWeekStrength` was asked for; NaN otherwise, so a consumer that
+   *  forgot to ask cannot silently read a zero as "this roster scores nothing in December". */
+  playoffWeekPts: number;
+}
+
+/** How many weeks the fantasy playoffs run. Three in this league (weeks 15-17 of a 14-week regular
+ *  season) and the number every playoff-week quantity below is averaged over. */
+export const PLAYOFF_WEEKS = 3;
 
 function gauss(rng: () => number): number {
   const u = Math.max(1e-9, rng()), v = rng();
@@ -297,6 +326,7 @@ export function simulateSeasons(
 
   const playoffs = new Array(N).fill(0), champs = new Array(N).fill(0);
   const totWins = new Array(N).fill(0), totPts = new Array(N).fill(0);
+  const poPts = new Array(N).fill(0);
 
   // BOOTSTRAP prep, once: per-player sorted pools + the Cholesky factor for each NFL-team group.
   // Grouping is per FANTASY team, which is what makes a roster's own variance right -- two managers
@@ -342,54 +372,71 @@ export function simulateSeasons(
         // member rather than per group so a roster change does not re-roll a shared stack.
         (m, week, i) => drawGauss(seedNum, trial, week, pid(m.name), PURPOSE.copulaB + i)))
       : null;
+    // --- one team, one week ------------------------------------------------------------------------
+    // ONE scoring path, used by the regular season, the playoff bracket AND the playoff-week strength
+    // measure. It used to be written out three times; a quantity meant to be comparable with the
+    // bracket's own scores must come from the same code, or the comparison is between two models.
+    //
+    //   `gameWeek`  the fantasy week, which decides byes and which slice of a drawn season is read.
+    //   `keyWeek`   the RNG key's week coordinate. Usually gameWeek; the bracket keys by round so a
+    //               team is not locked to one score all playoffs, and the strength measure keys
+    //               above both so it can never collide with either.
+    //   `byes`      whether NFL byes apply. They do not in weeks 15-17.
+    //   `playoffDraw` a post-season week: byes are off, the RNG purposes are the playoff ones, and
+    //               the score is drawn PARAMETRICALLY even in bootstrap mode. That last part is
+    //               inherited behaviour, not a choice made here -- the bracket has always sampled
+    //               from the variance model rather than from the resampled season, and the drawn
+    //               trajectory only covers the regular season's weeks anyway. It is preserved
+    //               exactly so this refactor moves no number; the playoff-week STRENGTH measure
+    //               uses the same path deliberately, so it is comparable with the bracket's own
+    //               scores rather than with a second model of the same weeks.
+    const scoreTeamWeek = (ti: number, gameWeek: number, keyWeek: number, byes: boolean, playoffDraw: boolean): number => {
+      const tm = teams[ti];
+      let players: { name: string; pos: string; proj: number; available: boolean; actual: number | null }[];
+      if (boot && !playoffDraw) {
+        const b = boot[ti];
+        const drawn = seasonDraw![ti];
+        players = tm.roster.map((p) => {
+          const onBye = byes && p.bye === gameWeek;
+          const pp = b.byName.get(p.name);
+          const actual = onBye || !pp ? null : weekOf(drawn.get(pp), gameWeek);
+          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
+        });
+      } else {
+        players = tm.roster.map((p) => {
+          const tier = tierOf.get(p) ?? 0;
+          const m = vm.pos[p.pos] ?? vm.pos.WR;
+          const onBye = byes && p.bye === gameWeek;
+          // The fitted avail is games/17, which ALREADY includes the bye. Applying the bye
+          // separately (so the RIGHT week is missed, which a season total cannot see) means the
+          // injury rate must have the bye divided back out, or every player is benched twice.
+          const healthy = unitDraw(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffInjury : PURPOSE.injury)
+            < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+          const cvBase = m.cv[tier] ?? 0.8;
+          const cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
+          const actual = (onBye || !healthy)
+            ? null
+            : sampleWeek(trueMean.get(p) ?? 0, cv, () => unitDraw(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffPerf : PURPOSE.perf));
+          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
+        });
+      }
+      // Lineup is set on the TRUE mean (what a competent manager approximates), scored on the
+      // sampled week -- never on the sampled value itself, which would be lookahead.
+      const res = optimalLineup(players, opts.slots, opts.flexOk);
+      let total = 0;
+      for (const s of res.starters) {
+        const hit = players.find((x) => x.name === s.name);
+        if (hit?.actual != null) total += hit.actual;
+        else if (s.name === "(empty)") total += emptySlotPoints(s.slot, opts);
+      }
+      return total;
+    };
+
     // --- play the weeks --------------------------------------------------------------------------
     const wins = new Array(N).fill(0), pts = new Array(N).fill(0);
     const weekPts: number[][] = Array.from({ length: N }, () => []);
     for (let w = 1; w <= opts.weeks; w++) {
-      const scores = teams.map((tm, ti) => {
-        if (boot) {
-          const b = boot[ti];
-          const drawn = seasonDraw![ti];
-          const players = tm.roster.map((p) => {
-            const onBye = p.bye === w;
-            const pp = b.byName.get(p.name);
-            const actual = onBye || !pp ? null : weekOf(drawn.get(pp), w);
-            return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
-          });
-          const res = optimalLineup(players, opts.slots, opts.flexOk);
-          let total = 0;
-          for (const s of res.starters) {
-            const hit = players.find((x) => x.name === s.name);
-            if (hit?.actual != null) total += hit.actual;
-            else if (s.name === "(empty)") total += emptySlotPoints(s.slot, opts);
-          }
-          return total;
-        }
-        const players = tm.roster.map((p) => {
-          const tier = tierOf.get(p) ?? 0;
-          const m = vm.pos[p.pos] ?? vm.pos.WR;
-          const onBye = p.bye === w;
-          // The fitted avail is games/17, which ALREADY includes the bye. Applying the bye
-          // separately (so the RIGHT week is missed, which a season total cannot see) means the
-          // injury rate must have the bye divided back out, or every player is benched twice.
-          const injuryOk = unitDraw(seedNum, trial, w, pid(p.name), PURPOSE.injury) < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
-          const healthy = injuryOk;
-          const cvBase = m.cv[tier] ?? 0.8;
-          const cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
-          const actual = (onBye || !healthy) ? null : sampleWeek(trueMean.get(p) ?? 0, cv, () => unitDraw(seedNum, trial, w, pid(p.name), PURPOSE.perf));
-          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
-        });
-        // Lineup is set on the TRUE mean (what a competent manager approximates), scored on the
-        // sampled week -- never on the sampled value itself, which would be lookahead.
-        const res = optimalLineup(players, opts.slots, opts.flexOk);
-        let total = 0;
-        for (const s of res.starters) {
-          const hit = players.find((x) => x.name === s.name);
-          if (hit?.actual != null) total += hit.actual;
-          else if (s.name === "(empty)") total += emptySlotPoints(s.slot, opts);
-        }
-        return total;
-      });
+      const scores = teams.map((_tm, ti) => scoreTeamWeek(ti, w, w, true, false));
       for (let t = 0; t < N; t++) { pts[t] += scores[t]; weekPts[t].push(scores[t]); }
       for (const [a, b] of schedule[(w - 1) % schedule.length]) {
         if (scores[a] >= scores[b]) wins[a]++; else wins[b]++;
@@ -409,27 +456,7 @@ export function simulateSeasons(
     let poRound = 0;
     const beat = (a: number, b: number) => {
       poRound++;
-      const draw = (t: number) => {
-        if (playoffWeek.has(t)) return playoffWeek.get(t)!;
-        const tm = teams[t];
-        const players = tm.roster.map((p) => {
-          const tier = tierOf.get(p) ?? 0;
-          const m = vm.pos[p.pos] ?? vm.pos.WR;
-          const healthy = unitDraw(seedNum, trial, 100 + poRound, pid(p.name), PURPOSE.playoffInjury) < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
-          const cvBase = m.cv[tier] ?? 0.8;
-          const cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
-          const actual = healthy ? sampleWeek(trueMean.get(p) ?? 0, cv, () => unitDraw(seedNum, trial, 100 + poRound, pid(p.name), PURPOSE.playoffPerf)) : null;
-          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
-        });
-        const res = optimalLineup(players, opts.slots, opts.flexOk);
-        let total = 0;
-        for (const s of res.starters) {
-          const hit = players.find((x) => x.name === s.name);
-          if (hit?.actual != null) total += hit.actual;
-          else if (s.name === "(empty)") total += emptySlotPoints(s.slot, opts);
-        }
-        return total;
-      };
+      const draw = (t: number) => playoffWeek.get(t) ?? scoreTeamWeek(t, opts.weeks + poRound, 100 + poRound, false, true);
       // redraw both sides each ROUND so a team is not locked to one score all playoffs
       playoffWeek.clear();
       const sa = draw(a); playoffWeek.set(a, sa);
@@ -437,6 +464,13 @@ export function simulateSeasons(
       return sa >= sb ? a : b;
     };
     champs[playoffWinner(seeds, beat)]++;
+    // PLAYOFF-WEEK STRENGTH, for every team, bracket or no bracket. Keyed at week 200+j so it can
+    // collide with neither the regular season (1..weeks) nor the bracket (100+round).
+    if (opts.playoffWeekStrength) {
+      for (let t = 0; t < N; t++) {
+        for (let j = 1; j <= PLAYOFF_WEEKS; j++) poPts[t] += scoreTeamWeek(t, opts.weeks + j, 200 + j, false, true);
+      }
+    }
     for (let t = 0; t < N; t++) { totWins[t] += wins[t]; totPts[t] += pts[t]; }
   }
 
@@ -446,5 +480,6 @@ export function simulateSeasons(
     champion: champs[i] / opts.trials,
     meanWins: totWins[i] / opts.trials,
     meanPoints: totPts[i] / opts.trials,
+    playoffWeekPts: opts.playoffWeekStrength ? poPts[i] / opts.trials : NaN,
   }));
 }
