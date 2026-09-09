@@ -54,9 +54,9 @@ export const TWO_PART_ARTIFACT = CHALLENGER_WEEKLY_ARTIFACT;
  */
 export const WEEKLY_SERVE: Record<string, string> = {
   QB: STREAMING_ARTIFACT,
-  RB: SHIPPED_WEEKLY_ARTIFACT,
-  WR: SHIPPED_WEEKLY_ARTIFACT,
-  TE: SHIPPED_WEEKLY_ARTIFACT,
+  RB: STREAMING_ARTIFACT,
+  WR: STREAMING_ARTIFACT,
+  TE: STREAMING_ARTIFACT,
   K: STREAMING_ARTIFACT,
   DST: STREAMING_ARTIFACT,
 };
@@ -65,6 +65,16 @@ export const WEEKLY_SERVE: Record<string, string> = {
  * THE DATE THE TABLE ABOVE WAS LAST CHANGED, LOCAL. It is written into the scorecard snapshot's
  * metadata so a series that changes model mid-season says WHEN and to WHAT, rather than leaving a
  * later reader to explain a step change in the numbers.
+ *
+ * 2026-09-09: OWNER DECISION -- the streaming model now serves all six positions. This is a
+ * CONSTANT change, not a gate change: `docs/validation.md` ("THE STREAMING GATE QUESTION --
+ * REPORTED, NOT DECIDED") found that under the full corrected weekly gate, including the pooled
+ * coverage band, the streaming artifact passes all three clauses at all six positions on the
+ * decision population (pooled coverage 0.847 in [0.75, 0.85]; pooled CRPS 2.7347 vs floor 3.2928;
+ * RB 2.7083 vs 3.3448, WR 2.8862 vs 3.3553, TE 2.2335 vs 2.5542, zero shares within 0.001 of
+ * actual). The only thing that had been holding RB/WR/TE to the floor was that
+ * `SHIPPED_STREAMING_POSITIONS` was set from a run of the streaming gate that predated the
+ * decision population; no gate, check, or clause was widened or altered to reach this table.
  */
 export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-09";
 
