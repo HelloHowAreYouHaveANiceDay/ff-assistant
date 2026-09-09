@@ -149,12 +149,24 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
   marginal now prices a starting slot against POSITIONAL REPLACEMENT rather than the waiver wire, and
   the shading uses only the PRIVATE part of our uncertainty -- and the answer did not change:
   **59.7% playoffs against V2's 88.9%, -29.17pp paired, still worse in twelve of twelve**
-  (docs/validation.md, Track A). It exists so the idea can be picked up again, not so it can be used;
-  what is left to fix is the analytic surrogate itself, not its inputs.
-  Four sensitivity arms: `FF_V3_SHADE=off` (no shading at all), `FF_V3_OURSD=full` (our whole spread,
+  (docs/validation.md, Track A). Track G (same day) then measured the analytic surrogate against the
+  SIMULATED marginal it approximates, calibrated it, and re-ran P28 a third time: **62.3% playoffs
+  against V2's 88.7%, -26.44pp paired, worse in twelve of twelve**. The calibration is connected --
+  it changes 627 of 1,800 trials -- and worth **+0.28pp**, CI [-3.28, +3.56]. It exists so the idea
+  can be picked up again, not so it can be used.
+  **What is left to fix is now named precisely, and it is structural rather than fitted.** The
+  surrogate's LEVEL has been measured, corrected and held out, and the correction buys nothing. Its
+  ORDER is what is wrong, in the region a draft is decided in: rank correlation against the simulated
+  marginal is 0.68 on an empty roster and **-0.29 / -0.51 after six and nine buys**. A monotone
+  calibration cannot repair an ordering.
+  Five sensitivity arms: `FF_V3_SHADE=off` (no shading at all), `FF_V3_OURSD=full` (our whole spread,
   the pre-2026-09-09 double-count), `FF_V3_OURSD=0` (market spread only, which in this harness is
-  what the shipped private component already computes), and `FF_V3_BASELINE=off` (the waiver-floor
-  marginal, i.e. the pre-2026-09-09 value term).
+  what the shipped private component already computes), `FF_V3_BASELINE=off` (the waiver-floor
+  marginal, i.e. the pre-2026-09-09 value term), and `FF_V3_SURROGATE=calibrated` (Track G's fitted
+  analytic-to-simulated level map, `SURROGATE_CALIBRATION` in `src/draft/lineupMarginal.ts`; default
+  off, and an empty table is the identity so the flag cannot look connected when no fit is compiled
+  in). The three harnesses behind it: `scripts/marginal-agreement.mjs` (where the two books
+  disagree), `scripts/marginal-mechanism.mjs` (why), `scripts/v3-calibrate.mjs` (the fit).
 - REJECTED by backtest, off by default, don't enable to "win": `--pos-inflation`, `--drain-nom`,
   `--waivers` (all measured neutral-to-negative -- see docs/edges.md). `--scarcity` was removed from
   `auto-draft` entirely (rejected + its live wiring was wrong); it survives only in `backtest`.
