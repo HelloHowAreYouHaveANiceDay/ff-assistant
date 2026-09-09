@@ -202,11 +202,42 @@ The last three are board/display knobs, not bidding: `tierBreak` sets where a po
 breaks, `maxKDst` hard-caps any K/DST bid at $2, `sleeperThreshold` is the vsECR cutoff for the
 board's sleeper flag. All 13 travel in code, so a fresh machine gets them automatically.
 
-**`playoffTeams` is NOT a lever and is not carried in code.** `DEFAULT_CONFIG` seeds it to 6 and
-`league_sync` overwrites it from ESPN (this league: **7**). A fresh bootstrap therefore reads 6 until
-step 1 runs. It affects only the BACKTEST bracket -- never bidding -- so a wrong value changes the
-championship number you validate against, not what the agent does in the draft. If it still reads 6
-after bootstrap, `league_sync` did not take.
+**The CALENDAR is not a lever either, and it is not carried in code.** The league's regular-season
+length, playoff field, bracket weeks, seeding rule and divisions live in one `format` block in
+`settings.config`, written either from ESPN or by the owner, and every consumer reads it. There is
+no default: a consumer that finds no block THROWS rather than assuming 14 weeks and a 7-team field.
+
+```
+npm run ff -- format show     # both blocks (ESPN's and the stored one) and which is IN FORCE
+npm run ff -- format sync     # re-read ESPN through the app bridge (read-only; app must be running)
+```
+
+Check it before draft day, because **this league has changed its calendar twice**: 13 weeks with
+playoffs in 14/15/16 through 2020, 14 weeks with playoffs in 15/16/17 from 2021, and four divisions
+plus a 7-team field from 2025. ESPN's settings for 2026 currently say **14 regular weeks, playoffs
+15/16/17, 7 teams, tiebreak TOTAL_POINTS_SCORED, four divisions**.
+
+**If the owner says the league plays 13 weeks with playoffs in 14/15/16, that is an OWNER OVERRIDE
+and must be set explicitly** -- it is a legitimate thing for a league to agree among itself, and
+ESPN's stored settings will not reflect it:
+
+```
+npm run ff -- format set --reg-weeks 13 --playoff-weeks 14,15,16 --seeding division-winners-first
+```
+
+The override is stored with `source: "owner-override"` and the date, ESPN's block is kept beside it
+as `formatEspn`, and `ff format show` prints the disagreement rather than hiding it. A later
+`ff format sync` refreshes ESPN's block but will NOT silently replace an override (`--adopt` does).
+
+Seeding is `record` (wins, then points-for) or `division-winners-first` (each division's best team
+takes a top seed, the rest fill by record). This league's own 2018-2025 seeds are consistent with
+BOTH -- no season can tell them apart -- so `division-winners-first` is used where divisions exist
+on ESPN's documented behaviour, and that is an assumption. See `docs/validation.md`, Track E.
+
+The calendar affects the BACKTEST bracket and the season simulator -- never bidding -- so a wrong
+value changes the championship number you validate against, not what the agent does in the draft.
+Measured: 13 weeks moves the tripwire by +1.5pp and division seeding by +0.7pp, neither separable
+from noise at 25 seasons.
 - **Human-only (not auto):** nomination gamesmanship.
 - **Not yet live:** in-season lineup SUBMIT (recommend path works offline: `ff lineup --roster`).
 

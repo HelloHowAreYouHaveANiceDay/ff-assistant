@@ -327,6 +327,23 @@ The whole programme, phase by phase, with the chain of branches, the two numbers
 their market models, the open decisions and the one piece of work worth doing next:
 `docs/redesign-2026-09.md`.
 
+## The league calendar (`ff format`)
+
+The regular-season length, playoff field, bracket weeks, seeding rule and divisions are **read from
+ESPN**, stored as one block with its provenance, and read by every consumer. There is no default --
+a missing field stops the sync rather than being invented.
+
+```
+npm run ff -- format show     # ESPN's block, the stored block, and which is IN FORCE
+npm run ff -- format sync     # re-read ESPN (read-only, through the app bridge)
+npm run ff -- format set --reg-weeks 13 --playoff-weeks 14,15,16 --seeding division-winners-first
+```
+
+The last one is the OWNER OVERRIDE, for when the league has agreed something ESPN's settings do not
+say. Seeding is `record` or `division-winners-first`. See `docs/validation.md` (Track E) for what
+each choice is worth: 13 weeks moves the championship tripwire by +1.5pp and division seeding by
++0.7pp, neither separable from noise at 25 seasons.
+
 ## Where planning lives
 
 Roadmap, phases, and issue tracking are in the wiki (`wiki/projects/project--ff-assistant.md` +

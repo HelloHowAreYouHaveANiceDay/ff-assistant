@@ -70,6 +70,8 @@ async function main() {
       return cmdHandcuffs(rest);
     case "copilot":
       return cmdCopilot(rest);
+    case "format":
+      return cmdFormat(rest);
     case "calibrate":
       return cmdCalibrate(rest);
     case "sim":
@@ -3083,4 +3085,128 @@ async function cmdBuildFeaturesExt(rest: string[]) {
     console.log(`    ${source.padEnd(26)} ${String(m.resolved).padStart(8)}/${String(m.rows).padStart(8)} (${pct}%)  ${rules}`);
   }
   console.log(`\n  ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+}
+
+// ==================================================================================================
+// `ff format` -- THE LEAGUE CALENDAR AND PLAYOFF FORMAT, AS A FACT WITH A SOURCE.
+//
+// Until now the calendar was a default: `regWeeks ?? 14` in the ESPN adaptor, `playoffTeams ?? 7` in
+// six scripts, and "seed by record" written into two simulators. Every one of those is right for
+// this league TODAY, and none of them was ever read from anywhere -- which means the code could not
+// tell "ESPN says 14" from "nobody asked". The first year the league moves its calendar, every
+// number downstream would be computed for a league that does not exist, and nothing would fail.
+//
+// Three verbs:
+//   ff format sync     read ESPN through the app bridge and store the block (source: "espn")
+//   ff format set      the OWNER overrules ESPN               (source: "owner-override")
+//   ff format show     print both blocks and say which is in force
+//
+// `sync --from-cache` reads data/cache/espn/settings-<season>.json instead of the network, so the
+// block can be rebuilt, and the tests can run, with no app and no session.
+// ==================================================================================================
+async function cmdFormat(rest: string[]) {
+  const { openDb, getConfig, setConfig } = await import("./db/db.js");
+  const { formatFromEspnSettings, effectiveFormat, localStamp, isSeedingRule, validateFormat } = await import("./league/index.js");
+  const sub = rest.find((r) => !r.startsWith("--")) ?? "show";
+  const db = openDb(valueOf(rest, "--db") ?? undefined);
+  try {
+    const cfg = getConfig(db) as Record<string, unknown>;
+    const season = Number(valueOf(rest, "--season") ?? cfg.season);
+
+    /** Mirror the block onto the flat keys the readers that predate it still use. Written from the
+     *  block and never independently: two numbers for one fact is how the fact stops being one. */
+    const store = (fmt: import("./league/types.js").LeagueFormat, espn?: import("./league/types.js").LeagueFormat | null) => {
+      const patch: Record<string, unknown> = { format: fmt, regWeeks: fmt.regWeeks, playoffTeams: fmt.playoffTeams };
+      if (espn !== undefined) patch.formatEspn = espn;
+      setConfig(db, patch as never);
+    };
+
+    if (sub === "sync") {
+      let payload: unknown;
+      if (rest.includes("--from-cache")) {
+        const { readFileSync } = await import("node:fs");
+        const p = `data/cache/espn/settings-${season}.json`;
+        payload = JSON.parse(readFileSync(p, "utf8"));
+        console.log(`read ${p}`);
+      } else {
+        const { bridgeFetch } = await import("./browser/appBridge.js");
+        const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string } | undefined;
+        if (!lg) throw new Error("no league synced -- run discover_leagues/league_sync in the app first.");
+        const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${lg.league_id}?view=mSettings&view=mTeam`;
+        payload = JSON.parse(await bridgeFetch(url));   // READ-ONLY: a GET through the app's session
+      }
+      const fmt = formatFromEspnSettings(payload);
+      // An owner override is NOT silently replaced by a sync. The ESPN block is refreshed either
+      // way, so `show` reports the real difference instead of an override that has quietly drifted.
+      const existing = cfg.format as import("./league/types.js").LeagueFormat | null;
+      if (existing?.source === "owner-override") {
+        setConfig(db, { formatEspn: fmt } as never);
+        console.log(`ESPN block refreshed for ${season}, but an OWNER OVERRIDE is in force and was left alone.`);
+        console.log(`  to adopt ESPN's:  ff format sync --adopt`);
+      }
+      const adopted = !existing || existing.source !== "owner-override" || rest.includes("--adopt");
+      if (adopted) store(fmt, fmt);
+      printFormat(adopted ? fmt : existing, adopted ? fmt : existing, fmt);
+      return;
+    }
+
+    if (sub === "set") {
+      const regWeeks = Number(valueOf(rest, "--reg-weeks") ?? NaN);
+      const weeksArg = valueOf(rest, "--playoff-weeks");
+      const seeding = valueOf(rest, "--seeding");
+      if (!Number.isFinite(regWeeks) || regWeeks <= 0) throw new Error("ff format set needs --reg-weeks <N>.");
+      if (!weeksArg) throw new Error("ff format set needs --playoff-weeks <a,b,c>.");
+      if (!isSeedingRule(seeding)) throw new Error(`ff format set needs --seeding record|division-winners-first (got ${JSON.stringify(seeding)}).`);
+      const playoffWeeks = weeksArg.split(",").map((s) => Number(s.trim()));
+      if (playoffWeeks.some((w) => !Number.isFinite(w) || w <= 0)) throw new Error(`--playoff-weeks "${weeksArg}" is not a list of week numbers.`);
+      const espn = (cfg.formatEspn ?? cfg.format) as import("./league/types.js").LeagueFormat | null;
+      const fmt = validateFormat({
+        regWeeks,
+        playoffTeams: Number(valueOf(rest, "--playoff-teams") ?? espn?.playoffTeams ?? NaN),
+        playoffRoundWeeks: Number(valueOf(rest, "--playoff-round-weeks") ?? espn?.playoffRoundWeeks ?? 1),
+        playoffWeeks, seeding,
+        tiebreak: valueOf(rest, "--tiebreak") ?? espn?.tiebreak ?? "TOTAL_POINTS_SCORED",
+        divisions: espn?.divisions ?? [],
+        source: "owner-override",
+        fetchedAt: localStamp(),
+        note: espn ? `ESPN said regWeeks ${espn.regWeeks}, playoffWeeks ${espn.playoffWeeks.join("/")}, seeding ${espn.seeding} (read ${espn.fetchedAt})` : "no ESPN block on file",
+      }, "ff format set");
+      store(fmt, (espn ?? null) as never);
+      printFormat(fmt, fmt, espn);
+      return;
+    }
+
+    if (sub === "show") {
+      let eff: import("./league/types.js").LeagueFormat | null = null;
+      try { eff = effectiveFormat(cfg as never); } catch (e) { console.log(`NO FORMAT IN FORCE: ${(e as Error).message}`); }
+      printFormat(eff, cfg.format as never, cfg.formatEspn as never);
+      return;
+    }
+
+    console.log("usage: ff format show | sync [--season N] [--from-cache] [--adopt] | set --reg-weeks 13 --playoff-weeks 14,15,16 --seeding division-winners-first");
+  } finally { db.close(); }
+}
+
+function printFormat(
+  eff: import("./league/types.js").LeagueFormat | null,
+  stored: import("./league/types.js").LeagueFormat | null,
+  espn: import("./league/types.js").LeagueFormat | null | undefined,
+) {
+  const one = (label: string, f: import("./league/types.js").LeagueFormat | null | undefined) => {
+    if (!f) { console.log(`${label}: (none)`); return; }
+    console.log(`${label}:`);
+    console.log(`  regular season   weeks 1-${f.regWeeks}`);
+    console.log(`  playoffs         weeks ${f.playoffWeeks.join("/")}  (${f.playoffTeams}-team field, ${f.playoffRoundWeeks} week(s) per round)`);
+    console.log(`  seeding          ${f.seeding}, tiebreak ${f.tiebreak}`);
+    console.log(`  divisions        ${f.divisions.length ? f.divisions.map((d) => `${d.name} [${d.teamIds.length}]`).join(", ") : "(none)"}`);
+    console.log(`  source           ${f.source}, read ${f.fetchedAt}${f.note ? `\n  note             ${f.note}` : ""}`);
+  };
+  console.log("=== LEAGUE FORMAT ===");
+  one("AS ESPN HAS IT", espn ?? null);
+  one("STORED", stored ?? null);
+  if (!eff) { console.log("\nIN FORCE: nothing -- every consumer will FAIL rather than default."); return; }
+  console.log(`\nIN FORCE: the ${eff.source} block -- weeks 1-${eff.regWeeks}, playoffs ${eff.playoffWeeks.join("/")}, ${eff.playoffTeams} teams, ${eff.seeding}.`);
+  if (espn && (espn.regWeeks !== eff.regWeeks || espn.playoffWeeks.join() !== eff.playoffWeeks.join() || espn.seeding !== eff.seeding)) {
+    console.log(`  IT DISAGREES WITH ESPN, which says weeks 1-${espn.regWeeks}, playoffs ${espn.playoffWeeks.join("/")}, ${espn.seeding}.`);
+  }
 }

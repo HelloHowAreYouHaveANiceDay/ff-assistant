@@ -51,6 +51,9 @@ export interface SimContext {
   flexOk?: string[];
   /** Per-position WEEKLY points freely available off waivers -- the streaming floor. */
   replacement: Record<string, number>;
+  /** The league's calendar and playoff format, WITH its provenance. Consumers that need the playoff
+   *  weeks or the field size read them here rather than re-deriving them from a literal. */
+  format: import("../league/types.js").LeagueFormat;
 }
 
 /**
@@ -129,9 +132,17 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
   }
   db.close();
 
-  const regWeeks = cfg.regWeeks ?? 14;
+  // THE FORMAT, from the block that has a source. `cfg.regWeeks ?? 14` used to live here, alongside
+  // `playoffTeams ?? 7` below, and the file's own header already called that out as "correct by
+  // coincidence" -- the coincidence just had no way to stop being one until the block existed.
+  const { effectiveFormat } = await import("../league/index.js");
+  const format = effectiveFormat(cfg);
+  const regWeeks = format.regWeeks;
   let weeks: [number, number][][] = [];
   let syntheticSchedule = true;
+  /** team index -> division index, in the order `teams` is built (ascending team id). Only the
+   *  GENERATED schedule can supply this; the real one is read back below from the format block. */
+  let divisionOf: number[] | undefined;
   if (want !== "generated") {
     try {
       const { openLeague } = await import("../league/index.js");
@@ -153,8 +164,19 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     }
   }
   if (!weeks.length) {
-    weeks = buildSchedule(teams.length, regWeeks, 4).weeks as [number, number][][];
+    const built = buildSchedule(teams.length, regWeeks, Math.max(1, format.divisions.length));
+    weeks = built.weeks as [number, number][][];
+    divisionOf = built.divisional ? built.divisionOf : undefined;
     syntheticSchedule = true;
+  }
+  // REAL schedule: divisions come from the format block, matched by ESPN team id. A team the block
+  // does not place is NOT silently dropped into division 0 -- that would hand it a division to win.
+  if (!syntheticSchedule && format.divisions.length > 1) {
+    const dOf = new Map<string, number>();
+    format.divisions.forEach((d, i) => d.teamIds.forEach((id) => dOf.set(String(id), i)));
+    const mapped = teams.map((t) => dOf.get(String(t.id)));
+    if (mapped.every((d) => d != null)) divisionOf = mapped as number[];
+    else console.warn(`WARNING: ${mapped.filter((d) => d == null).length} team(s) are in no division in the format block -- seeding falls back to record.`);
   }
 
   /**
@@ -189,7 +211,9 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
 
   const mkOpts = (trials: number, seed: number) => ({
     weeks: weeks.length,
-    playoffTeams: cfg.playoffTeams ?? 7,     // FROM CONFIG -- a hardcoded 7 is right by coincidence
+    playoffTeams: format.playoffTeams,       // FROM THE FORMAT BLOCK -- a hardcoded 7 was right by coincidence
+    seeding: format.seeding,
+    divisionOf,
     slots: cfg.slots,
     // The league's own FLEX eligibility, which was being dropped here. optimalLineup defaults to
     // RB/WR/TE, which happens to be right for this league and would be silently wrong for a
@@ -201,7 +225,7 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     bootstrap: { outcomes, corr, calibration: "scale" as const },
   });
   return {
-    teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds,
+    teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds, format,
     slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement,
     opts: mkOpts,
     run: (t, trials, seed, extra) => simulateSeasons(t, weeks, vm, { ...mkOpts(trials, seed), ...extra }),

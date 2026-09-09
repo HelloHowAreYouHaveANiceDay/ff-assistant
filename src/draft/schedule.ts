@@ -21,7 +21,17 @@
  * That is exactly the pattern this league's well-formed divisions follow, verified against ESPN
  * 2026-09-07 (two of its four divisions are misconfigured and play only 5 internal games; we model
  * the CORRECT format, not that bug).
+ *
+ * A 13-WEEK SEASON is 6 in-division + 7 cross, and the odd cross game is balanced by construction
+ * rather than by dropping a game from somebody: the 8 cross weeks are two blocks of four rounds
+ * (D0-D1 with D2-D3, then D0-D2 with D1-D3), and each ROUND is a complete matching of the whole
+ * league. Truncating to 13 therefore removes one whole round, not one game -- every team loses
+ * exactly one opponent, and each loses a DIFFERENT one (round r pairs a[i] with b[(i+r)%4], so the
+ * dropped round r=3 is a distinct pairing for every team). The resulting shape is: 6 in-division,
+ * 4 against one other division, 3 against another, 0 against the third. Test `13 weeks` in
+ * test/schedule.test.ts asserts exactly that, per team.
  */
+import type { SeedingRule } from "../league/types.js";
 
 /** One week: a perfect matching over all teams, as [teamA, teamB] pairs. */
 export type Week = [number, number][];
@@ -98,4 +108,43 @@ export function buildSchedule(teams: number, weeks: number, divisions = 0): { we
   const out: Week[] = [];
   for (let w = 0; w < weeks; w++) out.push(base[w % base.length].filter(([a, b]) => a < teams && b < teams));
   return { weeks: out, divisional: false, divisionOf };
+}
+
+/**
+ * SEED THE PLAYOFF FIELD -- one implementation, used by both simulators.
+ *
+ * "record"                 the whole league ordered by wins, then the tiebreak (points for). This is
+ *                          what both simulators have always done and what a one-division league
+ *                          means; it is unchanged, byte for byte, in behaviour.
+ *
+ * "division-winners-first" each division's best team (by the same wins-then-points order) takes one
+ *                          of the top D seeds, those D ordered among THEMSELVES by record; everyone
+ *                          else fills seeds D+1..playoffTeams by record. A division winner is
+ *                          therefore in the field even with a worse record than a team left out --
+ *                          which is the entire behavioural difference, and it only ever shows up in
+ *                          a season where some division's best team is not one of the best
+ *                          `playoffTeams` teams outright.
+ *
+ * `divisionOf[t]` is team t's division index. With fewer than two distinct divisions the two rules
+ * are provably identical, so the division rule DEGRADES to record rather than inventing a bracket.
+ */
+export function seedField(
+  order: { wins: number; pts: number }[],
+  playoffTeams: number,
+  seeding: SeedingRule,
+  divisionOf?: number[],
+): number[] {
+  const n = order.length;
+  const byRecord = [...Array(n).keys()].sort((x, y) => order[y].wins - order[x].wins || order[y].pts - order[x].pts);
+  const divs = new Set((divisionOf ?? []).slice(0, n));
+  if (seeding === "record" || !divisionOf || divs.size < 2) return byRecord.slice(0, playoffTeams);
+
+  const winnerOf = new Map<number, number>();       // division -> team index of its best record
+  for (const t of byRecord) {                        // byRecord is already best-first, so first wins
+    const d = divisionOf[t];
+    if (!winnerOf.has(d)) winnerOf.set(d, t);
+  }
+  const winners = [...winnerOf.values()].sort((x, y) => byRecord.indexOf(x) - byRecord.indexOf(y));
+  const wildcards = byRecord.filter((t) => !winnerOf.has(divisionOf[t]) || winnerOf.get(divisionOf[t]) !== t);
+  return [...winners, ...wildcards].slice(0, playoffTeams);
 }
