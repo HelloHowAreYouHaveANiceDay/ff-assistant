@@ -135,10 +135,16 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
 - **Cost.** **21-50MB per season, ~46,000 plays.** Ten seasons is roughly 400MB fetched and about
   460,000 rows to scan. This is by far the most expensive feed in this document, and the only one
   where the aggregation is a real computation rather than a column rename.
-- **Raw table.** `raw_participation`, aggregated to player-week (see the ingester's header for why
-  the play grain is not stored).
+- **Raw table.** `raw_participation`, **aggregated to player-week** (see the ingester's header for why
+  the play grain is not stored): `off_plays`, `pass_plays`, `games`, and the team denominators
+  `team_off_plays` / `team_pass_plays` on the same row, so a share can never be computed against a
+  denominator nobody can see.
+- **Measured after ingesting 2016-2025:** 182,303 player-weeks, 17,524-19,149 a season, 21 weeks
+  before 2021 and 22 after. `as_of` (the game day, joined from `raw_nfl_game`) resolves on 100%.
+  Face validity, 2023 week 1: every starting quarterback is at 100% of his team's charted pass
+  plays, and Keenan Allen at 33/33 is the top non-quarterback. 2026 has no asset yet.
 - **Feeds.** `prior_route_share` in both new feature tables.
-- **Status.** proposed / see Step-3 ordering in the branch report.
+- **Status.** ingested (this branch).
 
 ### 1.6 FTN charting -- `ftn_charting_<season>.csv`
 

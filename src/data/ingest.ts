@@ -286,6 +286,18 @@ export const RAW_ASSETS: RawAsset[] = [
     },
   },
   {
+    id: "participation",
+    table: "raw_participation",
+    what: "nflverse play-level participation (2016+), AGGREGATED to player-week: offensive plays, charted pass plays, and the team denominators",
+    defaultSeasons: [2016, new Date().getFullYear()],
+    async run(dbPath, seasons) {
+      const { ingestRawParticipation } = await import("./rawSources.js");
+      const r = await ingestRawParticipation({ dbPath, seasons });
+      reportSeasons(r);
+      return r.total;
+    },
+  },
+  {
     id: "adp-history",
     table: "raw_adp_history",
     what: "FantasyFootballCalculator ADP archive by format and year (standard 2008+, ppr 2010+, half-ppr 2018+; the API ignores `teams`)",

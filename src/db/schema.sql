@@ -810,3 +810,24 @@ CREATE TABLE IF NOT EXISTS raw_adp_history (
   fetched_at TEXT NOT NULL,
   PRIMARY KEY (format, season, teams, ffc_player_id));
 CREATE INDEX IF NOT EXISTS idx_raw_adp_season ON raw_adp_history (season, format);
+
+-- nflverse participation, AGGREGATED TO PLAYER-WEEK. The source grain is the PLAY: one row per snap
+-- with the on-field gsis ids in a semicolon-joined `offense_players` string, 21-50MB and ~46,000
+-- plays a season for 2016-2025. Storing the play grain would be ~460,000 rows nothing reads to
+-- answer the one question we have of it -- how often was this man on the field for a pass -- so this
+-- table is the aggregate and says so in its name and here.
+--
+-- WHAT `pass_plays` IS AND IS NOT. The feed's `route` column is the route run by the TARGETED
+-- receiver on that play, not a per-player field, so it cannot yield "routes run" for everyone on the
+-- field. `pass_plays` counts the plays this player was on the offense for WHERE A ROUTE WAS CHARTED
+-- -- the standard proxy for routes run, and a different number from what a charting service sells.
+-- Route SHARE is that over the team's own charted pass plays in the same week, and is computed in
+-- the feature layer, not here.
+CREATE TABLE IF NOT EXISTS raw_participation (
+  season INTEGER NOT NULL, week INTEGER NOT NULL, gsis_id TEXT NOT NULL, team TEXT NOT NULL,
+  as_of TEXT,                      -- the game day, from raw_nfl_game
+  off_plays INTEGER, pass_plays INTEGER, games INTEGER,
+  team_off_plays INTEGER, team_pass_plays INTEGER,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, week, gsis_id, team));
+CREATE INDEX IF NOT EXISTS idx_raw_part_gsis ON raw_participation (gsis_id, season, week);

@@ -28,7 +28,7 @@
 import { openDb, nowIso, type DB } from "../db/db.js";
 import {
   fetchCsvCached, cacheTag, rawTag, URLS, canonTeam, pick,
-  injuriesUrl, depthChartsUrl, snapCountsUrl, draftPicksUrl,
+  injuriesUrl, depthChartsUrl, snapCountsUrl, draftPicksUrl, participationUrl,
 } from "./nflverse.js";
 
 /** One season's outcome. `rows` is what LANDED, not what was parsed -- the two differ when a feed
@@ -448,6 +448,79 @@ export async function ingestRawDraftPicks(opts: { dbPath?: string; seasons?: num
   const seasons: SeasonResult[] = [...perSeason.keys()].sort((a, b) => a - b)
     .map((s) => ({ season: s, ok: true, rows: perSeason.get(s)! }));
   return { table: "raw_nfl_draft_pick", seasons, total: totalOf(seasons) };
+}
+
+// ==================================================================================================
+// raw_participation -- play-level participation, aggregated to player-week.
+// ==================================================================================================
+
+/**
+ * 2016-2025. THE MOST EXPENSIVE FEED IN THIS FILE by a wide margin: 21-50MB and ~46,000 plays a
+ * season, roughly 400MB and 460,000 plays over the range.
+ *
+ * The aggregation is the point. We want one number per player-week -- how often he was on the field
+ * for a pass -- and the feed answers it only by counting the plays his gsis id appears in the
+ * semicolon-joined `offense_players` string. The team totals are carried on the same row so a share
+ * can be computed without a second pass over 460,000 plays, and so that the DENOMINATOR is visible:
+ * a share whose denominator lives somewhere else is a share nobody can check.
+ */
+export async function ingestRawParticipation(opts: { dbPath?: string; seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const meta = new Map<string, { week: number; gameday: string | null }>();
+  for (const g of db.prepare("SELECT game_id, week, gameday FROM raw_nfl_game").all() as { game_id: string; week: number; gameday: string | null }[]) {
+    meta.set(g.game_id, { week: g.week, gameday: g.gameday });
+  }
+  const ins = db.prepare(
+    `INSERT INTO raw_participation (season, week, gsis_id, team, as_of, off_plays, pass_plays, games,
+       team_off_plays, team_pass_plays, fetched_at)
+     VALUES (@season,@week,@gsis,@team,@asOf,@off,@pass,@games,@teamOff,@teamPass,@now)
+     ON CONFLICT(season, week, gsis_id, team) DO UPDATE SET
+       as_of=excluded.as_of, off_plays=excluded.off_plays, pass_plays=excluded.pass_plays,
+       games=excluded.games, team_off_plays=excluded.team_off_plays,
+       team_pass_plays=excluded.team_pass_plays, fetched_at=excluded.fetched_at`,
+  );
+
+  const seasons = await perSeasonFeed(db, seasonRange(opts.seasons, 2016), participationUrl, rawTag.participation, opts.refresh ?? false, (season, rows) => {
+    interface Agg { off: number; pass: number; games: Set<string> }
+    const byPlayer = new Map<string, Agg>();
+    const byTeam = new Map<string, { off: number; pass: number }>();
+    const asOfOf = new Map<string, string | null>();
+    for (const r of rows) {
+      const gameId = pick(r, "nflverse_game_id");
+      const m = meta.get(gameId);
+      if (!m || m.week == null) continue;             // a game raw_nfl_game does not know
+      const team = canonTeam(pick(r, "possession_team"));
+      if (!team) continue;
+      // A CHARTED ROUTE marks a pass play. See the schema comment for what this is and is not.
+      const isPass = pick(r, "route") !== "";
+      const tk = `${m.week}|${team}`;
+      const t = byTeam.get(tk) ?? { off: 0, pass: 0 };
+      t.off++; if (isPass) t.pass++;
+      byTeam.set(tk, t);
+      asOfOf.set(tk, m.gameday);
+      for (const id of pick(r, "offense_players").split(";")) {
+        if (!id) continue;
+        const k = `${m.week}|${team}|${id}`;
+        const a = byPlayer.get(k) ?? { off: 0, pass: 0, games: new Set<string>() };
+        a.off++; if (isPass) a.pass++; a.games.add(gameId);
+        byPlayer.set(k, a);
+      }
+    }
+    let n = 0;
+    for (const [k, a] of byPlayer) {
+      const [wk, team, gsis] = k.split("|");
+      const t = byTeam.get(`${wk}|${team}`)!;
+      ins.run({
+        season, week: Number(wk), gsis, team, asOf: asOfOf.get(`${wk}|${team}`) ?? null,
+        off: a.off, pass: a.pass, games: a.games.size, teamOff: t.off, teamPass: t.pass, now,
+      });
+      n++;
+    }
+    return n;
+  });
+  db.close();
+  return { table: "raw_participation", seasons, total: totalOf(seasons) };
 }
 
 // ==================================================================================================

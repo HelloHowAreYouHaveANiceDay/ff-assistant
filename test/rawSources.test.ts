@@ -264,6 +264,34 @@ test("raw_nfl_draft_pick: hand-checked draft sizes, and as_of is the May after t
 });
 
 // ==================================================================================================
+// raw_participation
+// ==================================================================================================
+
+test("raw_participation: 2016-2025, aggregated to player-week, with its own denominators", { skip: !tableHasRows("raw_participation") ? "raw_participation not built" : false }, () => {
+  const db = open();
+  const rows = db.prepare(
+    "SELECT season, COUNT(*) n, COUNT(DISTINCT week) w, SUM(as_of IS NOT NULL) a FROM raw_participation GROUP BY season ORDER BY season",
+  ).all() as { season: number; n: number; w: number; a: number }[];
+  // Every share this table can produce must be a real share. A player cannot be on the field for
+  // more pass plays than his team ran, and cannot have more charted pass plays than total plays --
+  // both are the shape a mis-joined aggregation takes, and both are silent in a ratio.
+  const impossible = db.prepare(
+    "SELECT COUNT(*) c FROM raw_participation WHERE pass_plays > off_plays OR pass_plays > team_pass_plays OR off_plays > team_off_plays",
+  ).get() as { c: number };
+  db.close();
+  assert.equal(rows[0].season, 2016, "the participation feed starts in 2016");
+  assert.ok(rows.every((r) => r.season <= 2025), "2026 has no participation asset yet");
+  for (const r of rows) {
+    assert.ok(r.n > 15000, `${r.season}: ${r.n} player-weeks`);
+    assert.ok(r.w >= 21, `${r.season}: only ${r.w} weeks`);
+    // as_of is the game day, joined from raw_nfl_game. 100%, measured -- a drop means the two feeds'
+    // game ids have diverged, which is invisible in this table alone.
+    assert.equal(r.a, r.n, `${r.season}: ${r.n - r.a} rows without a game day`);
+  }
+  assert.equal(impossible.c, 0, "a player with more plays than his team");
+});
+
+// ==================================================================================================
 // raw_adp_history
 // ==================================================================================================
 
