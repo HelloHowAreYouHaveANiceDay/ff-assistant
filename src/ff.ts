@@ -305,6 +305,23 @@ async function cmdServe(rest: string[]) {
           result = computeLineage(db);
           break;
         }
+        // Cheap staleness probes, on the same principle as `board-stamp`: a stamp the app's push
+        // chokepoint (app/main.js) can poll after every engine call without serialising the whole
+        // graph/page. Built from the same freshness/mtime fields the full payloads carry, so a stamp
+        // change and a payload change can never disagree.
+        case "lineage-stamp": {
+          const { computeLineage } = await import("./lineage/dag.js");
+          const g = computeLineage(db);
+          const maxUpdated = g.nodes.reduce((m, n) => (n.updated && n.updated > m ? n.updated : m), "");
+          result = { stamp: `${g.nodes.length}:${g.edges.length}:${maxUpdated}` };
+          break;
+        }
+        case "models-stamp": {
+          const { modelStatus } = await import("./draft/models.js");
+          const rows = modelStatus();
+          result = { stamp: rows.map((r) => `${r.key}:${r.present}:${r.ageDays}:${r.problem ?? ""}`).join("|") };
+          break;
+        }
         case "model-page": {
           const { buildModelPage } = await import("./lineage/modelPage.js");
           result = buildModelPage(db);

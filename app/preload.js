@@ -32,6 +32,14 @@ contextBridge.exposeInMainWorld("mc", {
   leagueInfo: () => ipcRenderer.invoke("mc:leagueInfo"),
   dataSources: () => ipcRenderer.invoke("mc:dataSources"),
   modelGraph: () => ipcRenderer.invoke("mc:modelGraph"),
+  // THE DERIVED LINEAGE GRAPH and MODEL PAGE (src/lineage/dag.ts, src/lineage/modelPage.ts) -- what
+  // the Data page and Model page now render from, in place of dataSources/modelGraph.
+  lineage: () => ipcRenderer.invoke("mc:lineage"),
+  modelPage: () => ipcRenderer.invoke("mc:modelPage"),
+  // Pushed after any engine invocation whose lineage/model stamp differs from the last one seen --
+  // the same push chokepoint as onBoardChanged, watching two more stamps (app/main.js CHANGE_WATCHES).
+  onLineageChanged: (cb) => ipcRenderer.on("mc:lineageChanged", (_e, data) => cb(data)),
+  onModelsChanged: (cb) => ipcRenderer.on("mc:modelsChanged", (_e, data) => cb(data)),
   ingestSource: (id) => ipcRenderer.invoke("mc:ingestSource", id),
   // per-league ownership overlay for the board (who owns each player) + a roster resync
   ownership: () => ipcRenderer.invoke("mc:ownership"),

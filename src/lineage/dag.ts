@@ -42,6 +42,11 @@ export interface LineageNode {
   /** Present only for a model artifact file (from MODELS/modelStatus). */
   fittedAt?: string | null;
   seasons?: string | null;
+  /** The `ff ingest-source <id>` this node's click-to-rebuild button should run, when exactly one
+   *  ingest-registry producer writes it. A node written by more than one producer, or by a feature
+   *  builder/trainer rather than an ingest-source, carries no materialize id -- the Data page must
+   *  not invent a rebuild action the registry did not declare. */
+  materialize?: string;
 }
 export interface LineageEdge { from: string; to: string; producer: string }
 
@@ -119,6 +124,10 @@ export function computeLineage(db?: DB): LineageGraph {
     if (db && node.kind !== "external" && node.kind !== "artifact") {
       const stats = tableStats(db, id);
       if (stats) { node.rows = stats.rows; node.updated = stats.updated; }
+    }
+    const writers = [...(writtenBy.get(id) ?? [])].filter((w) => w.startsWith("ingest-source "));
+    if (writers.length === 1 && (writtenBy.get(id) ?? new Set()).size === 1) {
+      node.materialize = writers[0].replace(/^ingest-source /, "");
     }
     nodes.push(node);
   }

@@ -72,7 +72,33 @@ async function noticeBoardChange() {
     }
     lastBoardStamp = s.builtAt;
   } catch (_) { /* the helper may be restarting; the renderer's poll is the backstop */ }
+  // THE SAME CHOKEPOINT also watches the lineage graph and the model registry, on the identical
+  // principle: a cheap stamp (`lineage-stamp` / `models-stamp`, src/ff.ts), compared against what was
+  // last seen, pushed only on a real change. Step 5: the engine's ingest/feature/assemble/scorecard
+  // writes and any model artifact write change one of these stamps, and every `ff` invocation this
+  // app makes passes through here (see the header comment above) or through `rpc()` below, so there
+  // is no second chokepoint list to fall behind.
+  try {
+    const sl = await rpc("lineage-stamp");
+    if (sl && sl.stamp) {
+      if (lastLineageStamp && sl.stamp !== lastLineageStamp && win && !win.isDestroyed()) win.webContents.send("mc:lineageChanged", sl);
+      lastLineageStamp = sl.stamp;
+    }
+  } catch (_) { /* same backstop as above */ }
+  try {
+    const sm = await rpc("models-stamp");
+    if (sm && sm.stamp) {
+      if (lastModelsStamp && sm.stamp !== lastModelsStamp && win && !win.isDestroyed()) win.webContents.send("mc:modelsChanged", sm);
+      lastModelsStamp = sm.stamp;
+    }
+  } catch (_) { /* same backstop as above */ }
 }
+let lastLineageStamp = null;
+let lastModelsStamp = null;
+// `lineage-stamp`/`models-stamp` are noticeBoardChange's OWN probes -- excluded from rpc()'s
+// chokepoint below for the same reason `board-stamp` is: without the exclusion, probing here would
+// itself trigger another notify, forever.
+const SILENT_RPC_METHODS = new Set(["lineage-stamp", "models-stamp"]);
 
 function createWindow() {
   win = new BrowserWindow({
@@ -213,10 +239,12 @@ function rpc(method, params) {
   })).then((r) => {
     // The second chokepoint. `board-stamp` is excluded because noticeBoardChange() issues it -- a
     // generic hook here without that exclusion is an infinite mutual recursion, not a slow path.
+    // `lineage-stamp`/`models-stamp` are its own probes too (SILENT_RPC_METHODS), same reason.
     // Everything else is allowed through regardless of whether it looks like a mutation: the
     // renderer compares stamps and ignores a no-change ping, so over-notifying is free while an
     // under-maintained "which methods mutate?" list is exactly the enumeration bug being avoided.
-    if (method !== "board-stamp") debouncedNotice();
+    if (SILENT_RPC_METHODS.has(method)) { /* own probe -- see noticeBoardChange */ }
+    else if (method !== "board-stamp") debouncedNotice();
     return r;
   });
 }
@@ -306,6 +334,10 @@ ipcMain.handle("mc:openExternal", (e, url) => { if (/^https?:/.test(url)) shell.
 ipcMain.handle("mc:leagueInfo", () => rpc("league-info").catch(() => null));
 ipcMain.handle("mc:dataSources", () => rpc("data-sources").catch(() => null));
 ipcMain.handle("mc:modelGraph", () => rpc("model-graph").catch(() => null));
+// THE DERIVED LINEAGE GRAPH (src/lineage/dag.ts) and THE MODEL PAGE (src/lineage/modelPage.ts) --
+// what the Data page and Model page now render, in place of dataSources/modelGraph's curated lists.
+ipcMain.handle("mc:lineage", () => rpc("lineage").catch(() => null));
+ipcMain.handle("mc:modelPage", () => rpc("model-page").catch(() => null));
 ipcMain.handle("mc:ownership", () => rpc("ownership").catch(() => null));
 ipcMain.handle("mc:syncRosters", () => ffRun(["sync-rosters"]));
 // materialize one source (asset) + its downstream -- a separate process so the serve helper isn't blocked
