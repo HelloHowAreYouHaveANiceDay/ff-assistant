@@ -13,8 +13,14 @@ app a non-technical friend can run; the engine underneath is deterministic and v
   strategy is validated against a realistic, per-manager-modelled field (below).
 - **App — working.** The Electron app runs: a persistent Assistant, a league-synced value **Board**
   with live ownership, authenticated ESPN pages (My Team / Scoreboard / Standings / Draft Room), a
-  **News** feed, and a **Data** page that renders the warehouse as a Dagster-style DAG with
-  per-asset "materialize" buttons.
+  **News** feed, a **Data** page and a **Model** page. Both are DERIVED, not hand-maintained: the Data
+  page's DAG (nodes, edges, and per-asset "materialize" buttons) is computed by `src/lineage/dag.ts`
+  from two registries (the ingest sources in `src/data/ingest.ts`, the feature builders and trainers
+  in `src/lineage/registry.ts`) and served whole to the renderer, and the Model page renders
+  `src/lineage/modelPage.ts`'s assembly of the model registry, the weekly/streaming serve table, the
+  live scorecard, and the pre-registered prediction ledger -- so registering a table or an artifact is
+  the whole of making it visible on either page. Both push-notify the open page when the engine's
+  lineage or model stamp moves (`ff lineage --json`, `ff models --json`, `ff ledger sync`).
 - **Config-driven.** Everything the ranking depends on — scoring, roster slots, budget, playoff
   format, levers — lives in one per-league `settings.config`. The sim, backtest, and values all read
   it, so the app can be handed to a friend with a different league and it re-tailors itself.

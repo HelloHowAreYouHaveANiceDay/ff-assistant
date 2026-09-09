@@ -324,3 +324,36 @@ the old rows and simply added the new ones beside them: `feat_player_season` wen
 **33,086** and `feat_player_week` 287,632 -> **553,900**, with every per-season count still looking
 exactly right. Each builder now DELETES the season it is about to rebuild. **A rebuild of a season is
 a replacement of that season**, and an upsert cannot express that when the key itself is what moved.
+
+## The lineage graph is declared once, not photographed (Track K, 2026-09-09)
+
+Every layer above was documented by hand in this file. That is exactly the failure mode the Data
+page's node list hit twice: a curated list is a photograph of the day it was written, and the RAW and
+EXTENSION FEATURE layers both went invisible on the app's Data page for months because nobody typed a
+node for them (see `docs/validation.md`'s Phase 2d entry).
+
+`src/lineage/dag.ts` closes this at the source instead of patching the symptom again. Two registries
+declare, per producer, which tables/artifacts it `reads` and which it `writes`:
+
+- `src/data/ingest.ts` -- `RAW_ASSETS` (the raw-only sources `ff ingest-source` already knew about)
+  and a new `L1_ASSETS` (the L1 sources materialized through `ingestOne`'s switch: ecr, bio, byes,
+  advanced, trade, weekly, status, odds, boris, adp, market, news).
+- `src/lineage/registry.ts` -- `PRODUCERS`, the feature builders (`build-features`,
+  `build-features-ext`, `build-live-context`, `build-weekly-features`), `assemble`, `project`, the
+  four python trainers, and `scorecard`.
+
+`computeLineage()` builds the graph from those two registries plus the model registry
+(`src/draft/models.ts`), with external `src_*` nodes for the outside world. Nodes and edges are pure
+functions of the declarations -- there is no third list for the app to fall behind. It is a
+DIRECTED ACYCLIC graph by construction, checked by `test/dag-lineage.test.ts`; getting there required
+resolving three real coarse-grained false cycles by hand (documented at each exclusion in
+`src/lineage/registry.ts` and `src/lineage/dag.ts`): a producer reading back one of its own outputs
+(not a cross-producer dependency), and two cases of table-level lineage being too coarse to see that a
+producer writes a DIFFERENT partition of a shared table than the one another producer reads (`player`
+via a defensive backstop upsert, `ranking`'s `source='espn'` rows versus `source='fantasypros_ecr'`).
+
+Served as `lineage` over `ff serve` and `ff lineage --json`; the Data page (`app/renderer/app.js`)
+draws exactly that JSON (see "app: the Data page renders the declared lineage" and
+`test/dag-derivation.test.ts`). Registering a table's producer in one of the two registries is the
+whole of making it appear on the page, with the freshness/row-count/rebuild-button wiring that used to
+require a hand-typed entry.
