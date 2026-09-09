@@ -40,16 +40,18 @@ export interface ModelSpec {
 export const MODELS: ModelSpec[] = [
   {
     key: "projection", file: "projection-artifact.json", required: true,
-    // Measured by `ff evaluate-projection --seasons 2008-2025`: the SHIPPED projector, the trainer
-    // re-invoked blind to each held-out season, scored against two baselines computed by the same
-    // code path. R-squared of the shipped (curve-only) artifact 0.504 against carry-forward's
-    // 0.428, pooled over 16 held-out seasons and 7,569 player-seasons.
-    nestedLift: 0.0763, claimedLift: null,
-    what: "the projection ARTIFACT the board and the backtest both evaluate -- point-in-time curve, " +
-      "named features with per-position coefficients, and p10/p50/p90 quantile heads. The SHIPPED " +
-      "artifact is curve-only: the trained one wins RMSE (54.31 vs 54.66) and pinball (12.62 vs " +
-      "12.91) on the pooled 2015-2025 holdouts but FAILS the pre-registered coverage gate (0.614 " +
-      "against [0.75, 0.85]), and the gate is all three",
+    // Measured by `ff evaluate-projection --seasons 2008-2025` (Phase 2b): the SHIPPED projector,
+    // the trainer re-invoked blind to each held-out season and fitted only on seasons BEFORE it,
+    // scored against two baselines computed by the same code path. R-squared of the shipped
+    // (trained) artifact 0.520 against carry-forward's 0.432, pooled over 14 held-out seasons and
+    // 6,805 player-seasons. The curve-only rung sits at 0.497.
+    nestedLift: 0.0880, claimedLift: null,
+    what: "the projection ARTIFACT the board and the backtest both evaluate. It carries its OWN " +
+      "curve -- window, monotone repair and ECR level weight selected per position by " +
+      "forward-chaining inner CV -- plus named features with per-position coefficients and " +
+      "p10/p50/p90 heads fitted over ranks 1-60. The TRAINED artifact ships: it passed the " +
+      "pre-registered P5 gate (RMSE 54.32 vs 55.55, pinball 12.39 vs 13.17, coverage 0.764 in " +
+      "[0.75, 0.85] with every rank band in [0.70, 0.90]) on the pooled 2015-2025 holdouts",
     check: (j) => {
       // Loaded through the SHIPPED loader, not re-validated here. A second validator in the registry
       // would be a second opinion about the same contract, and the two would drift -- which is the
@@ -114,9 +116,26 @@ export const MODELS: ModelSpec[] = [
     key: "opponent-correlation", file: "opponent-correlation.json", required: false, nestedLift: null, claimedLift: null,
     what: "cross-team correlation in the same NFL game -- MEASURED BUT NOT YET WIRED INTO THE SIMULATOR",
   },
+  // ------------------------------------------------------------------------------------------
+  // RETIRED FROM THE PROJECTOR PATH (Phase 2b). Both files remain on disk and both still validate,
+  // because a recorded number whose source has been deleted is a number nobody can check. NOTHING
+  // READS THEM: `src/model/features.ts` no longer opens either, and `loadArtifact` REFUSES an
+  // artifact that declares a multiplicative stage, so a half-migration fails loudly instead of
+  // shipping a projection that is silently missing a factor it says it has.
+  //
+  // Why they had to go rather than be refitted: both were fitted OUTSIDE every fold, by their own
+  // scripts, against their own curves -- and the opportunity amplitudes against a curve that had
+  // seen the future, which is defect D1. A model that reaches for a fitted file on disk cannot be
+  // cross-validated, because it is the same file in every fold. Age is now a coefficient of the
+  // trainer; usage enters as a ratio to its rank bucket's mean over training seasons only. D1 is
+  // resolved BY CONSTRUCTION, and the point-in-time per-position usage lift is measured in the
+  // fold and recorded on the artifact as `usageLiftRmse` (RMSE points, season-grouped CV inside
+  // the training window): QB +0.06, RB +0.19, WR +0.33, TE +0.46.
+  // ------------------------------------------------------------------------------------------
   {
     key: "age-curve", file: "age-curve.json", required: false, nestedLift: 0.0069, claimedLift: 0.0154,
-    what: "points relative to prior-year rank, by age",
+    what: "RETIRED (Phase 2b) -- points relative to prior-year rank, by age. Kept for the record; " +
+      "age is now a fitted feature of the projection artifact and nothing reads this file",
     check: (j) => {
       const pos = j.pos as Record<string, Record<string, number>> | undefined;
       if (!pos) return "no fitted positions";
@@ -133,7 +152,9 @@ export const MODELS: ModelSpec[] = [
   },
   {
     key: "opportunity", file: "opportunity-model.json", required: false, nestedLift: 0.0095, claimedLift: 0.0186,
-    what: "prior-season usage relative to rank -- per position: QB attempts+rush yards, others first downs+target share",
+    what: "RETIRED (Phase 2b, and it is defect D1's resolution) -- prior-season usage relative to " +
+      "rank. Its amplitudes were fitted against a curve that had seen the future; usage is now a " +
+      "point-in-time ratio-to-bucket-mean feature of the projection artifact and nothing reads this file",
     check: (j) => {
       const pos = (j.pos ?? {}) as Record<string, { feats?: string[] } | null>;
       if (Number(j.schema) < 2) {

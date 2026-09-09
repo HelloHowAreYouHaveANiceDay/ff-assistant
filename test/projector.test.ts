@@ -1,21 +1,24 @@
-// ONE PROJECTOR, AND THE MULTIPLIER IS APPLIED EXACTLY ONCE.
+// ONE PROJECTOR, AND THE BASE IT USES IS THE BASE THE ARTIFACT DECLARES.
 //
-// The defect these tests exist to catch is the one Phase 2a was built to end: the board applied the
-// age and opportunity multipliers in projections.ts, and the backtest applied them again a thousand
-// lines away in ff.ts with slightly different arguments. Two implementations of "the projection",
-// one of which was the thing being validated and the other the thing being shipped, and they agreed
-// only by luck. Nothing about either output betrays a factor applied twice: a 0.9 multiplier squared
-// is 0.81, which is a perfectly plausible projection.
+// Phase 2a's defect was a multiplier applied by the projector AND again by the caller: two
+// implementations of "the projection", agreeing only by luck, and nothing about either output
+// betrays it -- a 0.9 factor squared is 0.81, a perfectly plausible projection. That stage is now
+// retired and `loadArtifact` refuses an artifact that still declares one.
 //
-// So the assertions are (a) both entry points route through the same pure function, and (b) the
-// arithmetic is exactly base x factors -- a claim a double application is structurally incapable of
+// Phase 2b's version of the same failure is one layer up. The curve now travels ON the artifact, so
+// its construction can be selected by the evaluation rather than compiled into the feature builder
+// -- and the way that goes wrong is a loader that ignores it and reads the precomputed column
+// instead. The board renders, every dollar adds up, and the curve the evaluation chose was never
+// used. So the assertions are (a) both entry points route through the same pure function, (b) a
+// curve-only projection is EXACTLY the base it was handed, and (c) doubling the artifact's curve
+// doubles every projection -- a claim a loader reading the column is structurally incapable of
 // satisfying.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { openDb } from "../src/db/db.js";
 import { projectSeason, loadArtifact, curveOnlyArtifact, checkGolden, type ProjectionArtifact } from "../src/model/projector.js";
-import { loadFeatureRows, backtestFeatureRows, boardProjection, backtestProjection } from "../src/model/features.js";
+import { loadFeatureRows, backtestFeatureRows, boardProjection, backtestProjection, curveAt } from "../src/model/features.js";
 
 const HAVE_DB = existsSync("data/ff.db");
 const ARTIFACT = "data/projection-artifact.json";
@@ -44,10 +47,7 @@ test("BOARD path is exactly projectSeason over the board's own feature rows", (t
   const db = openDb("data/ff.db");
   const direct = projectSeason({
     season: 2026, asOf: "2026-09-01", artifact: a,
-    features: loadFeatureRows(db, {
-      season: 2026, rankBasis: "ecr-else-prior", base: a.base,
-      useAge: a.multiplicative.includes("age_factor"), useOpp: a.multiplicative.includes("opp_factor"),
-    }),
+    features: loadFeatureRows(db, { season: 2026, rankBasis: "ecr-else-prior", base: a.base, curve: a.curve }),
   });
   const viaEntry = boardProjection(db, 2026, a);
   db.close();
@@ -78,59 +78,109 @@ test("both paths hand the SAME feature rows produce byte-identical projections",
 });
 
 /**
- * THE ONE THAT MATTERS. Under a curve-only artifact the projection IS the curve times the declared
- * multiplicative stage, so the arithmetic is checkable exactly, per row, against inputs the test
- * reads for itself. A path that applies the age factor a second time squares it, which this cannot
- * pass and which no amount of eyeballing a board would ever catch.
+ * THE ONE THAT MATTERS, Phase 2b edition.
+ *
+ * The defect it used to guard -- a multiplier applied by the projector AND again by the caller --
+ * cannot happen any more, because the multiplicative stage is gone and `loadArtifact` refuses an
+ * artifact that still declares one (asserted below). The defect that CAN happen now is the same
+ * shape one layer over: the base a caller supplies and the base the artifact's own curve implies
+ * silently disagree, and every projection is quietly a few percent wrong.
+ *
+ * So: under a curve-only artifact the projection IS the base, exactly, per row -- and the base is
+ * checked against the artifact's own curve read at the row's own rank.
  */
-function assertNoDoubleApplication(rows: ReturnType<typeof backtestFeatureRows>, out: ReturnType<typeof projectSeason>, a: ProjectionArtifact) {
+function assertProjectionIsTheBase(rows: ReturnType<typeof backtestFeatureRows>, out: ReturnType<typeof projectSeason>, a: ProjectionArtifact) {
   assert.ok(a.features.length === 0, "this check assumes a curve-only artifact");
+  assert.deepEqual(a.multiplicative, [], "the multiplicative stage is retired");
   const byName = new Map(rows.map((r) => [`${r.pos}|${r.name}`, r]));
-  let checked = 0, moved = 0;
+  let checked = 0;
+  const distinct = new Set<number>();
   for (const p of out) {
     const r = byName.get(`${p.pos}|${p.name}`);
     if (!r || r.base == null) continue;
-    let want = r.base;
-    for (const k of a.multiplicative) want *= r.factors[k];
-    assert.ok(Math.abs(p.mean - want) < 1e-9,
-      `${p.pos} ${p.name}: projector says ${p.mean}, base x factors is ${want} ` +
-      `(base ${r.base}, age ${r.factors.age_factor}, opp ${r.factors.opp_factor}). ` +
-      `A ratio near the square of a factor means it was applied twice.`);
+    assert.ok(Math.abs(p.mean - r.base) < 1e-9,
+      `${p.pos} ${p.name}: projector says ${p.mean}, the base it was handed is ${r.base}. ` +
+      `A curve-only artifact multiplies by exactly 1; anything else is a stage nobody declared.`);
     checked++;
-    if (Math.abs(r.factors.age_factor * r.factors.opp_factor - 1) > 1e-6) moved++;
+    distinct.add(Math.round(r.base * 100));
   }
   assert.ok(checked > 100, `only ${checked} rows checked`);
-  // POSITIVE CONTROL. If no row's factors differ from 1, the assertion above cannot tell a correct
-  // multiplication from no multiplication at all, and it would pass forever against a projector that
-  // ignored the multiplicative stage entirely.
-  assert.ok(moved > 20, `only ${moved} rows carry a multiplier away from 1.0 -- the check cannot distinguish ` +
-    `a correct multiplicative stage from an absent one`);
+  // POSITIVE CONTROL. If every base were the same number the assertion could not tell a real curve
+  // lookup from a constant, and it would pass forever against a loader that had stopped reading one.
+  assert.ok(distinct.size > 50,
+    `only ${distinct.size} distinct base values -- the check cannot distinguish a real curve from a constant`);
 }
 
-test("the multiplicative stage is applied EXACTLY ONCE on the backtest path", (t) => {
+test("a curve-only projection is EXACTLY the base, on the backtest path", (t) => {
   if (!existsSync(ARTIFACT) || !haveFeatures(2024)) return t.skip("no artifact or no 2024 features");
   const a = art();
+  if (a.features.length) return t.skip("the shipped artifact is trained, not curve-only");
   const db = openDb("data/ff.db");
   // Scored against the ENTRY POINT's output, not against a locally-assembled call. Asserting on
-  // projectSeason here would test the pure function -- which is correct -- while the extra multiply
-  // a caller could add sits outside it, and the guard would pass forever against the broken case.
+  // projectSeason here would test the pure function -- which is correct -- while an extra factor a
+  // caller could add sits outside it, and the guard would pass forever against the broken case.
   const rows = backtestFeatureRows(db, 2024, a);
   const out = backtestProjection(db, 2024, a);
   db.close();
-  assertNoDoubleApplication(rows, out, a);
+  assertProjectionIsTheBase(rows, out, a);
 });
 
-test("the multiplicative stage is applied EXACTLY ONCE on the board path", (t) => {
+test("a curve-only projection is EXACTLY the base, on the board path", (t) => {
   if (!existsSync(ARTIFACT) || !haveFeatures(2026)) return t.skip("no artifact or no 2026 features");
   const a = art();
+  if (a.features.length) return t.skip("the shipped artifact is trained, not curve-only");
   const db = openDb("data/ff.db");
-  const rows = loadFeatureRows(db, {
-    season: 2026, rankBasis: "ecr-else-prior", base: a.base,
-    useAge: a.multiplicative.includes("age_factor"), useOpp: a.multiplicative.includes("opp_factor"),
-  });
+  const rows = loadFeatureRows(db, { season: 2026, rankBasis: "ecr-else-prior", base: a.base, curve: a.curve });
   const out = boardProjection(db, 2026, a);
   db.close();
-  assertNoDoubleApplication(rows, out, a);
+  assertProjectionIsTheBase(rows, out, a);
+});
+
+test("an artifact that still declares a multiplicative stage is REFUSED, not quietly stripped", () => {
+  const a = base();
+  (a as { multiplicative: string[] }).multiplicative = ["age_factor"];
+  assert.throws(() => loadArtifact(a), /multiplicative stage/);
+});
+
+// --------------------------------------------------------------------------------------------
+// THE CURVE ON THE ARTIFACT IS THE CURVE THE BOARD READS.
+//
+// Phase 2b moved the curve onto the artifact so its construction could be a fitted hyperparameter.
+// The failure that buys is a loader that ignores it and reads the precomputed column instead: the
+// board renders, every dollar adds up, and the curve the evaluation selected was never used. So the
+// check is a live one -- double the artifact's curve and every projection must double.
+// --------------------------------------------------------------------------------------------
+test("the artifact's own curve is what a projection is built from", () => {
+  const a = curveOnlyArtifact({ positions: ["RB"], seasons: [2024] });
+  a.base = "artifact_curve";
+  a.curve = { RB: [300, 250, 200, 150] };
+  const rows = (curve: Record<string, number[]>) => [1, 2, 3, 9].map((rank) => ({
+    player_sk: null, name: `r${rank}`, pos: "RB", rank,
+    base: curveAt(curve, "RB", rank), f: {},
+  }));
+  const out = projectSeason({ season: 2024, asOf: "", artifact: a, features: rows(a.curve) });
+  assert.deepEqual(out.map((r) => r.mean), [300, 250, 200, 150],
+    "past the curve's end the last fitted value carries -- rank 9 must read 150, not undefined");
+  const doubled = { RB: a.curve.RB.map((v) => v * 2) };
+  const out2 = projectSeason({ season: 2024, asOf: "", artifact: { ...a, curve: doubled }, features: rows(doubled) });
+  assert.deepEqual(out2.map((r) => r.mean), [600, 500, 400, 300]);
+});
+
+test("the offset form is a DIFFERENT arithmetic from the ratio form, and both are clamped in the same units", () => {
+  const a = base();
+  a.coef.RB = { mean: { intercept: 10, age: 0 }, p10: { intercept: -20, age: 0 }, p50: { intercept: 0, age: 0 }, p90: { intercept: 30, age: 0 } };
+  a.clamps = { lo: 0.5, hi: 2 };
+  const feats = [{ player_sk: null, name: "x", pos: "RB", base: 100, rank: 1, f: { age: 26 } }];
+  const ratio = projectSeason({ season: 0, asOf: "", artifact: { ...a, form: "ratio" }, features: feats })[0];
+  const offset = projectSeason({ season: 0, asOf: "", artifact: { ...a, form: "offset" }, features: feats })[0];
+  // ratio: 100 * clamp(10, 0.5, 2) = 200. offset: clamp(100 + 10, 50, 200) = 110.
+  assert.equal(ratio.mean, 200);
+  assert.equal(offset.mean, 110);
+  assert.equal(offset.p10, 80);
+  assert.equal(offset.p90, 130);
+  // The default is "ratio", so every artifact written before the form existed still means what it
+  // meant. A silent flip here would move every projection on the board and throw nothing.
+  assert.equal(projectSeason({ season: 0, asOf: "", artifact: a, features: feats })[0].mean, 200);
 });
 
 test("a row with no curve value produces NO projection, never a zero", () => {
@@ -138,8 +188,8 @@ test("a row with no curve value produces NO projection, never a zero", () => {
   const out = projectSeason({
     season: 2024, asOf: "2024-09-01", artifact: a,
     features: [
-      { player_sk: "1", name: "Has Curve", pos: "RB", base: 200, rank: 1, f: {}, factors: { age_factor: 1, opp_factor: 1 } },
-      { player_sk: "2", name: "No Curve", pos: "RB", base: null, rank: null, f: {}, factors: { age_factor: 1, opp_factor: 1 } },
+      { player_sk: "1", name: "Has Curve", pos: "RB", base: 200, rank: 1, f: {} },
+      { player_sk: "2", name: "No Curve", pos: "RB", base: null, rank: null, f: {} },
     ],
   });
   // A zero is a real number that flows into VOR, the baselines and the auction book. "We have no

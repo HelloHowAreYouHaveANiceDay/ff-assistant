@@ -19,19 +19,49 @@ and the TypeScript loader recomputes them and refuses the artifact if the two di
 1e-6. That is the only test that can catch a transform the two sides implement differently, because
 it is the only one where the two implementations are genuinely independent.
 
-WHAT IS FITTED.
+==================================================================================================
+PHASE 2b: THE CURVE IS NO LONGER A CONSTANT. IT IS A HYPERPARAMETER, CHOSEN INSIDE THE FOLD.
+==================================================================================================
 
-The target is the RATIO of actual points to the point-in-time conditional curve, not points. The
-curve is a strong, honest predictor that already encodes rank; fitting points directly would spend
-the model's capacity re-learning it. Predicting the ratio makes every coefficient a statement about
-what the curve gets wrong, which is the only thing worth fitting -- and it is the same
-parameterisation the shipped age and opportunity multipliers already use, so their measured lifts
-are comparable to these.
+Until now the curve arrived precomputed in `feat_player_season.curve_value_prior`, built by one
+hand-written recipe: a +/-1 window at ranks 1-3 and +/-2 below, always monotone-repaired, always
+rescaled to the preseason-ECR level. Four choices, each defensible, none ever measured, and all four
+compiled into the feature builder where no evaluation could reach them. The owner's instruction for
+this phase is that the projection curve's construction be SELECTED BY THE EVALUATION SYSTEM, and
+this is where that happens.
 
-The model class is deliberately small: a per-position linear predictor over named features, clamped.
-The TypeScript evaluator is then a dot product, and the golden block is enough to prove the two
-agree. Anything richer would need its own evaluator shipped beside it, and the artifact schema says
-so out loud rather than leaving the next person to discover it.
+Four axes, 48 combinations, selected PER POSITION by out-of-sample pinball loss:
+
+    window       0, 1, 2, 3     how many neighbouring ranks are pooled into each rank's mean
+    monotone     on / off       cumulative-min repair, which forbids the curve to climb with rank
+    levelWeight  0, 0.5, 1      how far the prior-rank shape is rescaled toward the ECR-conditional
+                                level (0 = prior-rank pool only, 1 = the full ECR level correction)
+    form         ratio/offset   whether the linear stage multiplies the curve or adds to it
+
+THE INNER LOOP IS FORWARD-CHAINING, not a shuffled k-fold, and that is not fastidiousness. A curve
+is fitted on season pairs, so a random split lets a fold's curve be built from seasons that come
+AFTER the season it is scoring -- lookahead moved one level up, into the model, where no data-level
+check can see it. Forward chaining is the only split shape under which "the curve for season s was
+fitted on seasons before s" is true at every point in the search.
+
+EVERYTHING THIS SCRIPT FITS IS POINT-IN-TIME WITH RESPECT TO THE HOLDOUT. `--holdout-season Y`
+means the training set is seasons STRICTLY BEFORE Y -- not "every season except Y". The curve, the
+transform centres, the usage bucket means, the alpha search and the quantile heads all see only the
+past. That costs real data at the early folds and it is the only version of the number that means
+what it says.
+
+WHAT ELSE CHANGED, AND WHY.
+
+  - THE MULTIPLICATIVE STAGE IS RETIRED. `age-curve.json` and `opportunity-model.json` were fitted
+    outside every fold, by their own scripts, against their own curves -- and the opportunity one
+    against a curve that had seen the future, which is defect D1. Age is now a fitted feature here;
+    usage enters as a ratio to its rank bucket's mean, with the bucket means computed only on
+    training seasons. D1 is resolved BY CONSTRUCTION rather than by refitting an artifact that
+    still lives outside the fold.
+  - THE QUANTILE HEADS ARE FITTED ACROSS THE WHOLE RANK RANGE THE BOARD PRICES (1-60), with rank
+    itself as a feature. Phase 2a fitted them on ranks 1-36 and scored them on 1-60, so its 0.614
+    coverage was a fit on one sample scored on another; the bands came out much too narrow past
+    rank 24 (0.56 at 41-60) and nothing in the fit could have known.
 """
 
 import argparse
@@ -52,24 +82,50 @@ POS_FITTED = ["QB", "RB", "WR", "TE"]
 POS_INTERCEPT_ONLY = ["K", "DST"]
 
 BUCKET = 6
+# The deepest rank anything is FITTED at. A 16-team league starts 16 QBs, 48-64 RB/WR and 16 TEs, so
+# 60 covers every slot the board prices plus a bench, and the rank feature is winsorised there.
 MAX_RANK = 60
+# The deepest rank the CURVE is built to, which is a different question and was briefly conflated
+# with the one above at a cost of 7 RMSE points. The curve is a mean, honest wherever it has 20
+# observations, and it runs to WR 204 in this store; stopping it at 60 makes every deeper player
+# read as a WR60 -- and 42% of the scored rows are deeper. The FIT stays inside rank 60; the curve
+# does not have to.
+CURVE_MAX_RANK = 400
 # Below this the curve is not a meaningful denominator and the ratio is noise over a small number.
 MIN_BASE = 20.0
-# Beyond this rank the curve has flattened onto its last fitted value, so actual/curve stops
-# measuring dispersion and starts measuring how far past the end of the curve we are.
-QUANTILE_MAX_RANK = 36
 CLAMP_LO, CLAMP_HI = 0.05, 5.0
 
-# name -> (transform, source column). The RATIO features are divided by the mean for the player's
-# rank bucket, which is what stops them re-learning the rank the curve is already indexed by: a
-# WR5's raw target share is high BECAUSE he is a WR5, and that is already priced in.
+# --- curve construction ---------------------------------------------------------------------------
+# Below this many observations a rank has no honest mean of its own, and the curve ENDS there rather
+# than continuing on a smaller sample. Mirrors MIN_OBS in src/data/projections.ts.
+CURVE_MIN_OBS = 20
+# The ECR conditional gets a lower bar because it structurally cannot reach 20: the FantasyPros
+# archive spans six seasons.
+ECR_MIN_OBS = 10
+# The rank range the two curves' levels are matched over.
+LEVEL_RANKS = 24
+# A level factor outside this is a broken join, not a level correction.
+LEVEL_CLAMP = (0.5, 2.0)
+
+WINDOWS = [0, 1, 2, 3]
+MONOTONE = [True, False]
+LEVEL_WEIGHTS = [0.0, 0.5, 1.0]
+FORMS = ["ratio", "offset"]
+
+# name -> floor. The RATIO features are divided by the mean for the player's rank bucket, which is
+# what stops them re-learning the rank the curve is already indexed by: a WR5's raw target share is
+# high BECAUSE he is a WR5, and that is already priced in.
 RATIO_FEATURES = {
     "prior_fd": 0.05,
     "prior_ts": 0.005,
     "prior_attempts": 1.0,
     "prior_rush_yards": 0.5,
 }
-CENTER_FEATURES = ["age", "prior_games", "draft_round"]
+# `prior_pos_rank` is here for the QUANTILE heads above all. Dispersion around the curve widens
+# sharply with rank -- a WR50's season is far less predictable in proportional terms than a WR3's --
+# and a quantile head with no rank term cannot express that at all. It is the single change that the
+# Phase 2a coverage table (0.83 at ranks 13-24, 0.56 at 41-60) points straight at.
+CENTER_FEATURES = ["age", "prior_games", "draft_round", "prior_pos_rank"]
 INDICATOR_FEATURES = ["team_changed"]
 # Which positions may carry a non-zero coefficient on each ratio feature. A quarterback has no
 # target share and no receiving first downs; scoring him on them measured ~0 for twenty seasons and
@@ -90,21 +146,143 @@ def parse_seasons(s):
     return lo, hi
 
 
-def load_rows(db_path, lo, hi, base_col):
+def load_rows(db_path, lo, hi):
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     cur = con.execute(
         "SELECT feat_key, player_sk, season, name, pos, prior_pos_rank, prior_pts, prior_games, age,"
         " prior_fd, prior_ts, prior_attempts, prior_rush_yards, prior_air_yards_share, prior_wopr,"
-        " team_changed, draft_year, draft_round, draft_pick, ecr_pos_rank, ecr_sd,"
-        " " + base_col + " AS base, pts"
+        " team_changed, draft_year, draft_round, draft_pick, ecr_pos_rank, ecr_sd, pts"
         " FROM feat_player_season"
-        " WHERE season BETWEEN ? AND ? AND pts IS NOT NULL AND " + base_col + " IS NOT NULL",
+        " WHERE season BETWEEN ? AND ? AND pts IS NOT NULL",
         (lo, hi),
     )
     rows = [dict(r) for r in cur.fetchall()]
     con.close()
     return rows
+
+
+# ==================================================================================================
+# THE CURVE, built here rather than read from a column, because a column cannot be a hyperparameter.
+#
+# `CurveSource` precomputes, per (pos, rank), the season-by-season (count, sum) of the points posted
+# by players who ENTERED at that rank. Any prefix -- "everything strictly before season s" -- is then
+# a lookup, so building 27 seasons x 48 variants of the curve costs almost nothing and the search
+# stays honest instead of being cut down to fit a budget.
+# ==================================================================================================
+class CurveSource(object):
+    def __init__(self, rows):
+        self.seasons = sorted({r["season"] for r in rows})
+        self.sidx = {s: i for i, s in enumerate(self.seasons)}
+        n = len(self.seasons)
+        # by_prior[pos][rank] -> (count[n], total[n]) indexed by season position
+        self.by_prior = {}
+        self.by_ecr = {}
+        for r in rows:
+            for key, store in (("prior_pos_rank", self.by_prior), ("ecr_pos_rank", self.by_ecr)):
+                k = r.get(key)
+                if k is None:
+                    continue
+                k = int(round(k))
+                if k < 1 or k > CURVE_MAX_RANK + max(WINDOWS):
+                    continue
+                pos = store.setdefault(r["pos"], {})
+                cell = pos.get(k)
+                if cell is None:
+                    cell = (np.zeros(n), np.zeros(n))
+                    pos[k] = cell
+                i = self.sidx[r["season"]]
+                cell[0][i] += 1.0
+                cell[1][i] += float(r["pts"])
+        # cumulative, so a prefix is one subtraction
+        for store in (self.by_prior, self.by_ecr):
+            for pos in store.values():
+                for k in list(pos.keys()):
+                    c, t = pos[k]
+                    pos[k] = (np.cumsum(c), np.cumsum(t))
+
+    def _prefix(self, store, pos, rank, upto, allowed_mask):
+        """(count, total) over seasons strictly before `upto` that are in `allowed_mask`."""
+        cell = store.get(pos, {}).get(rank)
+        if cell is None:
+            return 0.0, 0.0
+        if allowed_mask is None:
+            # cumulative fast path
+            j = -1
+            for i, s in enumerate(self.seasons):
+                if s < upto:
+                    j = i
+                else:
+                    break
+            if j < 0:
+                return 0.0, 0.0
+            return float(cell[0][j]), float(cell[1][j])
+        # a restricted season set (inner folds) -- walk it; the arrays are tiny
+        c = t = 0.0
+        cc, tt = cell
+        prev_c = prev_t = 0.0
+        for i, s in enumerate(self.seasons):
+            dc, dt = cc[i] - prev_c, tt[i] - prev_t
+            prev_c, prev_t = cc[i], tt[i]
+            if s < upto and s in allowed_mask:
+                c += dc
+                t += dt
+        return c, t
+
+    def raw(self, store, pos, rank, window, upto, allowed):
+        c = t = 0.0
+        for j in range(rank - window, rank + window + 1):
+            if j < 1:
+                continue
+            dc, dt = self._prefix(store, pos, j, upto, allowed)
+            c += dc
+            t += dt
+        return c, t
+
+    def build(self, pos, variant, upto, allowed=None):
+        """The curve for `pos` as of `upto`, under `variant`. [] when it cannot be built honestly."""
+        window, monotone, level_w = variant[0], variant[1], variant[2]
+        shape = []
+        for k in range(1, CURVE_MAX_RANK + 1):
+            c, t = self.raw(self.by_prior, pos, k, window, upto, allowed)
+            if c < CURVE_MIN_OBS:
+                break                              # the honest end of the fitted range
+            shape.append(t / c)
+        if not shape:
+            return []
+        if monotone:
+            # Projection onto the monotone cone from above: it never invents a value, it only
+            # refuses to let the curve climb with rank. A curve that climbs hands a worse-ranked
+            # player a higher VOR, which is the ordering the whole book exists to express, inverted.
+            for i in range(1, len(shape)):
+                if shape[i] > shape[i - 1]:
+                    shape[i] = shape[i - 1]
+        f = 1.0
+        if level_w > 0:
+            ecr = []
+            for k in range(1, LEVEL_RANKS + 1):
+                c, t = self.raw(self.by_ecr, pos, k, max(1, window), upto, allowed)
+                if c < ECR_MIN_OBS:
+                    break
+                ecr.append(t / c)
+            n = min(LEVEL_RANKS, len(shape), len(ecr))
+            if n >= 12:
+                num, den = float(np.mean(ecr[:n])), float(np.mean(shape[:n]))
+                if den > 0 and LEVEL_CLAMP[0] <= num / den <= LEVEL_CLAMP[1]:
+                    full = num / den
+                    f = 1.0 + level_w * (full - 1.0)
+        return [v * f for v in shape]
+
+
+def curve_at(curve, rank):
+    """Read the curve at a rank, carrying the last fitted value past its end. Mirrors curveAt() in
+    src/model/features.ts -- stated once on each side, and the golden block proves they agree."""
+    if not curve or rank is None:
+        return None
+    k = int(round(rank))
+    if k < 1:
+        return None
+    return curve[min(k - 1, len(curve) - 1)]
 
 
 def bucket_of(rank):
@@ -118,7 +296,7 @@ def bucket_means(rows):
     for r in rows:
         if r["prior_pos_rank"] is None:
             continue
-        b = str(bucket_of(r["prior_pos_rank"]))
+        b = str(bucket_of(int(r["prior_pos_rank"])))
         for f in RATIO_FEATURES:
             v = r.get(f)
             if v is None:
@@ -149,11 +327,20 @@ def build_specs(rows, bmeans):
         mu, sd = float(np.mean(vals)), float(np.std(vals))
         if sd <= 0:
             continue
-        specs.append({
+        spec = {
             "name": name, "transform": "center", "center": mu, "scale": sd,
             # 0 after centring IS the training mean: an explicit, stated mean-imputation.
             "missing": 0.0,
-        })
+        }
+        # WINSORISE AT THE EDGE OF THE FITTED RANGE. Nothing past rank MAX_RANK is ever in the fit,
+        # and 42% of the scored rows in the store are out there -- WR runs to 225. Without the clip
+        # a rank-200 receiver is priced by extrapolating a coefficient ten standard deviations past
+        # anything it was fitted on, and that alone drove RB out-of-sample RMSE to 89 (r2 -0.23)
+        # while every rank band 1-60 improved. The model has no opinion past 60; it should say so.
+        if name == "prior_pos_rank":
+            spec["clipLo"] = 1.0
+            spec["clipHi"] = float(MAX_RANK)
+        specs.append(spec)
     for name in INDICATOR_FEATURES:
         n = sum(1 for r in rows if r.get(name) is not None)
         if n < 200:
@@ -180,6 +367,10 @@ def feature_value(spec, row):
     if raw is None or (isinstance(raw, float) and not math.isfinite(raw)):
         return spec["missing"]
     raw = float(raw)
+    if spec.get("clipLo") is not None:
+        raw = max(spec["clipLo"], raw)
+    if spec.get("clipHi") is not None:
+        raw = min(spec["clipHi"], raw)
     t = spec["transform"]
     if t == "identity":
         return raw
@@ -214,7 +405,117 @@ def quantile(a, q):
     return float(np.quantile(np.asarray(a, dtype=float), q)) if len(a) else 1.0
 
 
-def fit_position(rows, specs, pos, args):
+def pinball(actual, q, pred):
+    d = actual - pred
+    return np.where(d >= 0, q * d, (q - 1) * d)
+
+
+def predict_points(base, lin, form):
+    """The one arithmetic both sides implement. Mirrored in projectSeason()."""
+    if form == "offset":
+        return np.minimum(base * CLAMP_HI, np.maximum(base * CLAMP_LO, base + lin))
+    return base * np.minimum(CLAMP_HI, np.maximum(CLAMP_LO, lin))
+
+
+def target(base, pts, form):
+    return (pts - base) if form == "offset" else (pts / base)
+
+
+# ==================================================================================================
+# THE INNER LOOP.
+# ==================================================================================================
+def bases_for(sub, curves_by_season):
+    """base per row, from the curve that was fitted on seasons before that row's own."""
+    out = np.empty(len(sub))
+    for i, r in enumerate(sub):
+        c = curves_by_season.get(r["season"])
+        b = curve_at(c, r["prior_pos_rank"]) if c else None
+        out[i] = b if (b is not None and b > MIN_BASE) else np.nan
+    return out
+
+
+def score_variant(sub, X, specs, variant, source, pos, blocks, args):
+    """Mean pinball loss, in POINTS, over the forward-chaining inner folds.
+
+    THE QUANTILE HEADS USED HERE ARE EMPIRICAL RATIO QUANTILES of the fitted mean, not the linear
+    quantile regressions the final fit uses. That is a deliberate cost/honesty trade and it is stated
+    rather than hidden: 48 variants x 4 positions x 3 folds x 3 linear programs is hours, and the
+    thing being SELECTED is the curve, which the mean fit and the empirical spread both depend on in
+    the same direction. The selected variant is then refitted with the real quantile heads, and the
+    outer cross-validation scores THAT.
+    """
+    from sklearn.linear_model import Ridge
+
+    form = variant[3]
+    losses = []
+    for i in range(1, len(blocks)):
+        train_seasons = set()
+        for b in blocks[:i]:
+            train_seasons |= set(b)
+        val_seasons = set(blocks[i])
+        # curves are built ONLY from the inner-training seasons, and only from those before the
+        # season being priced. Forward chaining is what makes both statements true at once.
+        need = sorted(train_seasons | val_seasons)
+        curves = {}
+        for s in need:
+            curves[s] = source.build(pos, variant, s, allowed=train_seasons)
+        base = bases_for(sub, curves)
+        seasons = np.array([r["season"] for r in sub])
+        pts = np.array([float(r["pts"]) for r in sub])
+        ok = np.isfinite(base)
+        tr = ok & np.isin(seasons, list(train_seasons))
+        va = ok & np.isin(seasons, list(val_seasons))
+        if tr.sum() < 100 or va.sum() < 30:
+            continue
+        y = target(base[tr], pts[tr], form)
+        if not np.all(np.isfinite(y)):
+            continue
+        m = Ridge(alpha=args.alpha_default).fit(X[tr], y)
+        p_tr = predict_points(base[tr], m.predict(X[tr]), form)
+        r = pts[tr] / np.maximum(1e-6, p_tr)
+        qs = [float(np.quantile(r, q)) for q in (0.10, 0.50, 0.90)]
+        p_va = predict_points(base[va], m.predict(X[va]), form)
+        loss = 0.0
+        for q, mult in zip((0.10, 0.50, 0.90), qs):
+            loss += float(np.mean(pinball(pts[va], q, p_va * mult)))
+        losses.append(loss / 3.0)
+    return float(np.mean(losses)) if losses else float("inf")
+
+
+def forward_blocks(seasons, n_blocks):
+    """Contiguous, chronological blocks. Not a shuffle: see the header."""
+    seasons = sorted(seasons)
+    if len(seasons) < n_blocks + 1:
+        n_blocks = max(2, min(len(seasons), 2))
+    size = max(1, len(seasons) // n_blocks)
+    blocks, i = [], 0
+    while i < len(seasons):
+        blocks.append(seasons[i:i + size])
+        i += size
+    while len(blocks) > n_blocks:
+        blocks[-2] = blocks[-2] + blocks[-1]
+        blocks.pop()
+    return blocks
+
+
+def select_variant(sub, X, specs, source, pos, args):
+    seasons = sorted({r["season"] for r in sub})
+    blocks = forward_blocks(seasons, args.inner_folds + 1)
+    best, best_loss = None, float("inf")
+    table = []
+    for w in WINDOWS:
+        for mono in MONOTONE:
+            for lw in LEVEL_WEIGHTS:
+                for form in FORMS:
+                    v = (w, mono, lw, form)
+                    s = score_variant(sub, X, specs, v, source, pos, blocks, args)
+                    table.append((s, v))
+                    if s < best_loss:
+                        best_loss, best = s, v
+    return best, best_loss, table
+
+
+def fit_position(sub, X, specs, pos, base, args, form):
     """Ridge for the mean, pinball-loss linear fits for the three quantiles.
 
     Regularised, and the alpha is chosen by SEASON-GROUPED cross-validation inside the training data.
@@ -224,17 +525,14 @@ def fit_position(rows, specs, pos, args):
     from sklearn.linear_model import Ridge, QuantileRegressor
     from sklearn.model_selection import GroupKFold
 
-    sub = [r for r in rows if r["pos"] == pos]
-    if len(sub) < 200:
-        return None, len(sub)
     # Zero the coefficients a position must not carry, by zeroing its COLUMN. Doing it here rather
     # than after the fit means the other coefficients are fitted in the absence of the column, not
     # fitted with it and then had it removed underneath them.
     keep = [j for j, s in enumerate(specs)
             if s["name"] not in RATIO_ALLOWED or pos in RATIO_ALLOWED[s["name"]]]
-    X_all = design(sub, specs)
-    X = X_all[:, keep]
-    y = np.array([r["pts"] / r["base"] for r in sub], dtype=float)
+    Xk = X[:, keep]
+    pts = np.array([float(r["pts"]) for r in sub])
+    y = target(base, pts, form)
     groups = np.array([r["season"] for r in sub])
 
     alphas = [0.1, 1.0, 10.0, 100.0]
@@ -244,34 +542,34 @@ def fit_position(rows, specs, pos, args):
         gkf = GroupKFold(n_splits=n_splits)
         for a in alphas:
             err, n = 0.0, 0
-            for tr, te in gkf.split(X, y, groups):
-                m = Ridge(alpha=a).fit(X[tr], y[tr])
-                p = m.predict(X[te])
+            for tr, te in gkf.split(Xk, y, groups):
+                m = Ridge(alpha=a).fit(Xk[tr], y[tr])
+                p = m.predict(Xk[te])
                 err += float(np.sum((y[te] - p) ** 2))
                 n += len(te)
             if n and err / n < best_err:
                 best_err, best_alpha = err / n, a
-    mean_model = Ridge(alpha=best_alpha).fit(X, y)
+    mean_model = Ridge(alpha=best_alpha).fit(Xk, y)
 
-    coef = {}
-    coef["mean"] = {"intercept": float(mean_model.intercept_)}
+    coef = {"mean": {"intercept": float(mean_model.intercept_)}}
     for j, jj in enumerate(keep):
         coef["mean"][specs[jj]["name"]] = float(mean_model.coef_[j])
 
-    # QUANTILES on the subset the board actually prices. Past rank 36 the curve has flattened and
-    # `actual / curve` measures distance past the end of the curve rather than dispersion; left
-    # uncapped it produced a p90 ratio of 2.24 at QB, i.e. a 731-point quarterback.
-    qidx = [i for i, r in enumerate(sub)
-            if r["prior_pos_rank"] is not None and r["prior_pos_rank"] <= QUANTILE_MAX_RANK]
-    Xq, yq = X[qidx], y[qidx]
+    # QUANTILES ACROSS THE WHOLE RANK RANGE THE BOARD PRICES, with rank in the design.
+    #
+    # Phase 2a fitted these on ranks 1-36 and then scored them on 1-60, and reported the resulting
+    # 0.614 coverage as a property of the model. It was a property of the experiment: past rank 24
+    # the bands were far too narrow (0.56 at 41-60) and nothing in the fit had ever been asked about
+    # that region. Fitting where you score is not a refinement, it is the difference between a
+    # calibration and an extrapolation.
     for name, q in (("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
-        if len(yq) >= 150:
-            qm = QuantileRegressor(quantile=q, alpha=args.quantile_alpha, solver="highs").fit(Xq, yq)
+        if len(y) >= 150:
+            qm = QuantileRegressor(quantile=q, alpha=args.quantile_alpha, solver="highs").fit(Xk, y)
             c = {"intercept": float(qm.intercept_)}
             for j, jj in enumerate(keep):
                 c[specs[jj]["name"]] = float(qm.coef_[j])
         else:
-            c = {"intercept": quantile(yq, q)}
+            c = {"intercept": quantile(y, q)}
         coef[name] = c
 
     # Every declared feature needs a coefficient at every head, including the ones this position is
@@ -280,19 +578,15 @@ def fit_position(rows, specs, pos, args):
     for h in ("mean", "p10", "p50", "p90"):
         for s in specs:
             coef[h].setdefault(s["name"], 0.0)
-    return coef, len(sub)
+    return coef
 
 
-def intercept_only(rows, pos, specs):
-    sub = [r for r in rows
-           if r["pos"] == pos and r["prior_pos_rank"] is not None
-           and r["prior_pos_rank"] <= QUANTILE_MAX_RANK]
-    if len(sub) < 50:
-        return None
-    ratios = [r["pts"] / r["base"] for r in sub]
+def intercept_only(sub, base, specs, form):
+    pts = np.array([float(r["pts"]) for r in sub])
+    y = target(base, pts, form)
     out = {}
     for name, q in (("mean", None), ("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
-        v = float(np.mean(ratios)) if q is None else quantile(ratios, q)
+        v = float(np.mean(y)) if q is None else quantile(y, q)
         c = {"intercept": v}
         for s in specs:
             c[s["name"]] = 0.0
@@ -300,35 +594,72 @@ def intercept_only(rows, pos, specs):
     return out
 
 
+def usage_lift(sub, X, specs, pos, base, args, form):
+    """The point-in-time per-position lift of the USAGE features, measured here rather than claimed.
+
+    This is what replaces `opportunity-model.json`'s recorded amplitudes, and it is the number D1
+    said could not be trusted: those amplitudes were fitted against a curve that had seen the future.
+    Season-grouped CV inside the training data, ridge only, reported as the reduction in RMSE (in
+    points) from adding the four usage-ratio columns to a model that already has age, games, draft
+    round and rank.
+    """
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import GroupKFold
+
+    keep = [j for j, s in enumerate(specs)
+            if s["name"] not in RATIO_ALLOWED or pos in RATIO_ALLOWED[s["name"]]]
+    without = [j for j in keep if specs[j]["name"] not in RATIO_FEATURES]
+    if len(without) == len(keep):
+        return None
+    pts = np.array([float(r["pts"]) for r in sub])
+    y = target(base, pts, form)
+    groups = np.array([r["season"] for r in sub])
+    n_splits = min(5, len(set(groups.tolist())))
+    if n_splits < 2:
+        return None
+    gkf = GroupKFold(n_splits=n_splits)
+    err = {"with": 0.0, "without": 0.0}
+    n = 0
+    for tr, te in gkf.split(X, y, groups):
+        for label, cols in (("with", keep), ("without", without)):
+            m = Ridge(alpha=args.alpha_default).fit(X[np.ix_(tr, cols)], y[tr])
+            p = predict_points(base[te], m.predict(X[np.ix_(te, cols)]), form)
+            err[label] += float(np.sum((pts[te] - p) ** 2))
+        n += len(te)
+    if not n:
+        return None
+    return math.sqrt(err["without"] / n) - math.sqrt(err["with"] / n)
+
+
 def evaluate(artifact, row):
     """Predict one row with THIS script's own arithmetic -- the golden block's source of truth."""
     heads = artifact["coef"][row["pos"]]
     x = [feature_value(s, row) for s in artifact["features"]]
-    mult = 1.0
-    for k in artifact["multiplicative"]:
-        v = row.get(k, 1.0)
-        mult *= v if (v is not None and v > 0) else 1.0
+    form = artifact.get("form", "ratio")
     out = {}
     for h in ("mean", "p10", "p50", "p90"):
         c = heads[h]
         lin = c.get("intercept", 0.0)
         for j, s in enumerate(artifact["features"]):
             lin += c.get(s["name"], 0.0) * x[j]
-        lin = min(artifact["clamps"]["hi"], max(artifact["clamps"]["lo"], lin))
-        out[h] = row["base"] * lin * mult
+        b = row["base"]
+        if form == "offset":
+            out[h] = min(b * artifact["clamps"]["hi"], max(b * artifact["clamps"]["lo"], b + lin))
+        else:
+            out[h] = b * min(artifact["clamps"]["hi"], max(artifact["clamps"]["lo"], lin))
     return out
 
 
 def golden_rows(artifact):
     """Five fixtures, chosen to be the ones most likely to expose a disagreement."""
     fixtures = [
-        {"pos": "RB", "base": 250.0, "_rank": 1,
+        {"pos": "RB", "base": 250.0, "_rank": 1, "prior_pos_rank": 1,
          "age": 24.0, "prior_games": 17, "prior_fd": 5.0, "prior_ts": 0.18, "team_changed": 0},
-        {"pos": "WR", "base": 175.0, "_rank": 12,
+        {"pos": "WR", "base": 175.0, "_rank": 12, "prior_pos_rank": 12,
          "age": 29.5, "prior_games": 15, "prior_fd": 3.1, "prior_ts": 0.22, "team_changed": 1},
-        {"pos": "QB", "base": 246.0, "_rank": 12,
+        {"pos": "QB", "base": 246.0, "_rank": 12, "prior_pos_rank": 12,
          "age": 33.0, "prior_games": 16, "prior_attempts": 34.0, "prior_rush_yards": 12.0, "team_changed": 0},
-        {"pos": "TE", "base": 101.0, "_rank": 24,
+        {"pos": "TE", "base": 101.0, "_rank": 24, "prior_pos_rank": 24,
          "age": 26.0, "prior_games": 12, "prior_fd": 1.9, "prior_ts": 0.14, "team_changed": 0},
         # Every optional input missing. This is the row where the two implementations fall back on
         # their own defaults, which is precisely where they are most likely to differ.
@@ -350,46 +681,107 @@ def main():
     ap.add_argument("--seasons", default="1999-2025")
     ap.add_argument("--holdout-season", default="none")
     ap.add_argument("--out", default="data/projection-artifact.json")
-    ap.add_argument("--base", default="curve_value_prior",
-                    choices=["curve_value_prior", "curve_value_ecr", "curve_value_orderstat"])
+    ap.add_argument("--as-of", default=None,
+                    help="the season this artifact will project. Defaults to the holdout, else the "
+                         "season after the last one in --seasons.")
     ap.add_argument("--quantile-alpha", type=float, default=0.01)
+    ap.add_argument("--alpha-default", type=float, default=1.0,
+                    help="ridge alpha used INSIDE the variant search, where an alpha search per "
+                         "variant would multiply the cost by four and change no ordering")
+    ap.add_argument("--inner-folds", type=int, default=3)
+    ap.add_argument("--fixed-variant", default=None,
+                    help="w,mono,levelWeight,form -- skip the search. For fault injection and for "
+                         "reproducing a recorded run, never for shipping.")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
     lo, hi = parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
-    rows = load_rows(args.db, lo, hi, args.base)
-    rows = [r for r in rows
-            if r["base"] and r["base"] > MIN_BASE
-            and r["prior_pos_rank"] is not None and r["prior_pos_rank"] <= MAX_RANK]
-    # THE HOLDOUT IS REMOVED BEFORE ANYTHING IS MEASURED -- before the bucket means, before the
-    # transform centres, before the alpha search. Removing it only from the final fit would leave the
-    # held-out season inside every hyperparameter the model chose, which is the selection effect this
-    # whole harness exists to keep out of the score.
-    if holdout is not None:
-        rows = [r for r in rows if r["season"] != holdout]
+    all_rows = load_rows(args.db, lo, hi)
+    as_of = int(args.as_of) if args.as_of else (holdout if holdout is not None else hi + 1)
+
+    # THE TRAINING SET IS SEASONS STRICTLY BEFORE `as_of`. Not "every season except the holdout":
+    # the curve is fitted on season pairs, so a training row from a season AFTER the holdout carries
+    # a base built from a window that contains the holdout. Excluding the holdout row while keeping
+    # the rows whose curve saw it is lookahead that no row-level filter can catch.
+    rows = [r for r in all_rows if r["season"] < as_of]
     if not rows:
         sys.exit("train_projection: no training rows -- has `ff build-features` been run?")
+    source = CurveSource(rows)
 
-    bmeans = bucket_means(rows)
-    specs = build_specs(rows, bmeans)
+    fit_rows = [r for r in rows
+                if r["prior_pos_rank"] is not None and 1 <= r["prior_pos_rank"] <= MAX_RANK]
+    bmeans = bucket_means(fit_rows)
+    specs = build_specs(fit_rows, bmeans)
 
-    coef, counts = {}, {}
-    for pos in POS_FITTED:
-        c, n = fit_position(rows, specs, pos, args)
-        counts[pos] = n
-        if c:
-            coef[pos] = c
-    for pos in POS_INTERCEPT_ONLY:
-        c = intercept_only(rows, pos, specs)
-        if c:
-            coef[pos] = c
-            counts[pos] = sum(1 for r in rows if r["pos"] == pos)
+    fixed = None
+    if args.fixed_variant:
+        parts = args.fixed_variant.split(",")
+        fixed = (int(parts[0]), parts[1].lower() in ("1", "true", "on", "mono"), float(parts[2]), parts[3])
+
+    coef, counts, variants, curves, lifts = {}, {}, {}, {}, {}
+    for pos in POS_FITTED + POS_INTERCEPT_ONLY:
+        sub = [r for r in fit_rows if r["pos"] == pos]
+        if len(sub) < 200:
+            continue
+        X = design(sub, specs)
+        if fixed is not None:
+            v, loss = fixed, float("nan")
+        else:
+            v, loss, _table = select_variant(sub, X, specs, source, pos, args)
+        if v is None:
+            continue
+        # The FINAL curve: fitted on every training season, applied to `as_of`. Each training row
+        # still gets a base from the curve as of ITS OWN season, so no row is fitted against a curve
+        # that saw it.
+        per_season = {s: source.build(pos, v, s) for s in sorted({r["season"] for r in sub})}
+        final = source.build(pos, v, as_of)
+        if not final:
+            continue
+        base = bases_for(sub, per_season)
+        ok = np.isfinite(base)
+        if ok.sum() < 200:
+            continue
+        sub_ok = [r for i, r in enumerate(sub) if ok[i]]
+        if pos in POS_INTERCEPT_ONLY:
+            coef[pos] = intercept_only(sub_ok, base[ok], specs, v[3])
+        else:
+            coef[pos] = fit_position(sub_ok, X[ok], specs, pos, base[ok], args, v[3])
+            lift = usage_lift(sub_ok, X[ok], specs, pos, base[ok], args, v[3])
+            if lift is not None:
+                lifts[pos] = lift
+        counts[pos] = int(ok.sum())
+        curves[pos] = [round(x, 4) for x in final]
+        variants[pos] = {"window": v[0], "monotone": bool(v[1]), "levelWeight": v[2],
+                         "form": v[3], "n": int(ok.sum()), "innerPinball": None if loss != loss else round(loss, 4)}
 
     if not coef:
         sys.exit("train_projection: nothing fitted")
 
-    seasons = sorted({r["season"] for r in rows})
+    # ONE form for the artifact. The projector applies a single arithmetic to every position, so a
+    # per-position form would need a per-position evaluator; where the positions disagree the
+    # majority wins by total training rows and the dissenting positions are refitted under it. Which
+    # positions dissented is recorded on the artifact rather than smoothed away.
+    weight = {}
+    for pos, v in variants.items():
+        weight[v["form"]] = weight.get(v["form"], 0) + v["n"]
+    form = max(weight.items(), key=lambda kv: kv[1])[0]
+    for pos, v in list(variants.items()):
+        if v["form"] == form:
+            continue
+        v["formOverriddenFrom"] = v["form"]
+        v["form"] = form
+        sub = [r for r in fit_rows if r["pos"] == pos]
+        X = design(sub, specs)
+        vv = (v["window"], v["monotone"], v["levelWeight"], form)
+        per_season = {s: source.build(pos, vv, s) for s in sorted({r["season"] for r in sub})}
+        base = bases_for(sub, per_season)
+        ok = np.isfinite(base)
+        sub_ok = [r for i, r in enumerate(sub) if ok[i]]
+        coef[pos] = (intercept_only(sub_ok, base[ok], specs, form) if pos in POS_INTERCEPT_ONLY
+                     else fit_position(sub_ok, X[ok], specs, pos, base[ok], args, form))
+
+    seasons = sorted({r["season"] for r in fit_rows})
     artifact = {
         "schema": SCHEMA,
         "kind": "projection",
@@ -397,35 +789,52 @@ def main():
         "fittedAt": date.today().isoformat(),
         "seasons": seasons,
         "holdoutSeason": holdout,
-        "base": args.base,
+        "base": "artifact_curve",
+        "curve": curves,
+        "curveVariant": variants,
         "features": specs,
-        # EMPTY, and that is the point. Age is a fitted feature here, so declaring the age multiplier
-        # as well would apply age twice -- once as a coefficient and once as a factor. The curve-only
-        # artifact declares both because it has no coefficients at all.
+        # EMPTY, and required to be. The stage is retired: age is a fitted feature here and usage is
+        # a ratio to its rank bucket, both inside the fold. See FACTOR_FIELDS in projector.ts.
         "multiplicative": [],
+        "form": form,
         "coef": coef,
         "clamps": {"lo": CLAMP_LO, "hi": CLAMP_HI},
         "notes": (
-            "Ridge on the ratio actual/curve, alpha chosen by season-grouped CV inside the training "
-            "data; p10/p50/p90 by pinball-loss linear quantile regression on ranks 1-"
-            + str(QUANTILE_MAX_RANK) + ". K and DST are intercept-only by MEASUREMENT, not omission "
-            "(nested CV: K -0.0073, DST -0.0041; see EVALUATED_NOT_SHIPPED in src/draft/models.ts)."
+            "Curve construction (window, monotone repair, ECR level weight) and the base form were "
+            "SELECTED PER POSITION by forward-chaining inner cross-validation on pinball loss; the "
+            "training set is seasons strictly before " + str(as_of) + ". Ridge for the mean with "
+            "alpha by season-grouped CV; p10/p50/p90 by pinball-loss linear quantile regression "
+            "over ranks 1-" + str(MAX_RANK) + " with rank in the design. K and DST are "
+            "intercept-only by MEASUREMENT, not omission (nested CV: K -0.0073, DST -0.0041)."
         ),
     }
+    if lifts:
+        artifact["usageLiftRmse"] = {k: round(v, 4) for k, v in lifts.items()}
     artifact["golden"] = golden_rows(artifact)
 
     with open(args.out, "w", encoding="ascii") as fh:
         json.dump(artifact, fh, indent=2)
     if not args.quiet:
         print("wrote " + args.out)
-        print("  seasons " + str(seasons[0]) + "-" + str(seasons[-1]) +
+        print("  train seasons " + str(seasons[0]) + "-" + str(seasons[-1]) +
+              "; as-of " + str(as_of) +
               (" holding out " + str(holdout) if holdout else "") +
-              "; base " + args.base + "; " + str(len(specs)) + " features")
+              "; " + str(len(specs)) + " features; form " + form)
+        print("  pos   n      curve variant                       inner pinball  usage lift (rmse pts)")
+        for pos in sorted(variants):
+            v = variants[pos]
+            print("  " + pos.ljust(4) + " " + str(v["n"]).rjust(5) +
+                  "  window " + str(v["window"]) +
+                  "  monotone " + ("yes" if v["monotone"] else "no ") +
+                  "  level " + format(v["levelWeight"], ".1f") +
+                  "  " + str(v.get("innerPinball")).rjust(8) +
+                  ("  " + format(lifts[pos], "+.3f") if pos in lifts else "") +
+                  ("  (form overridden from " + v["formOverriddenFrom"] + ")" if "formOverriddenFrom" in v else "") +
+                  "  curveLen " + str(len(curves[pos])))
         for pos in sorted(coef):
             m = coef[pos]["mean"]
             terms = ", ".join(k + " " + format(v, ".4f") for k, v in m.items() if k != "intercept" and abs(v) > 1e-9)
-            print("  " + pos.ljust(4) + " n=" + str(counts.get(pos, 0)).rjust(5) +
-                  "  intercept " + format(m["intercept"], ".4f") + "  " + (terms or "(intercept only)"))
+            print("  " + pos.ljust(4) + "  intercept " + format(m["intercept"], ".4f") + "  " + (terms or "(intercept only)"))
         print("  golden rows: " + str(len(artifact["golden"])))
 
 

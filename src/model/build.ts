@@ -37,13 +37,16 @@ function quantile(sorted: number[], q: number): number {
  *  every position in a 16-team league, i.e. the region the board actually prices. */
 export const QUANTILE_MAX_RANK = 36;
 
-export function ratioQuantiles(db: DB, from: number, to: number, holdout?: number | null): Record<string, { p10: number; p50: number; p90: number; n: number }> {
+export function ratioQuantiles(db: DB, from: number, to: number, holdout?: number | null, pointInTime = false): Record<string, { p10: number; p50: number; p90: number; n: number }> {
   const rows = (db.prepare(
     `SELECT season, pos, pts, curve_value_prior FROM feat_player_season
       WHERE season BETWEEN ? AND ? AND pts IS NOT NULL AND curve_value_prior > 20
         AND prior_pos_rank IS NOT NULL AND prior_pos_rank <= ?`,
   ).all(from, to, QUANTILE_MAX_RANK) as { season: number; pos: string; pts: number; curve_value_prior: number }[])
-    .filter((r) => holdout == null || r.season !== holdout);
+    // POINT-IN-TIME means seasons strictly BEFORE the holdout, not merely "not the holdout". The
+    // trainer fits that way, and a baseline fitted on a wider window than the model it is the
+    // baseline for is not a baseline -- it is a different experiment.
+    .filter((r) => holdout == null || (pointInTime ? r.season < holdout : r.season !== holdout));
   const by: Record<string, number[]> = {};
   for (const r of rows) (by[r.pos] ??= []).push(r.pts / r.curve_value_prior);
   const out: Record<string, { p10: number; p50: number; p90: number; n: number }> = {};
@@ -59,6 +62,8 @@ export function buildCurveOnlyArtifact(opts: {
   dbPath?: string; from?: number; to?: number;
   base?: ProjectionArtifact["base"];
   holdoutSeason?: number | null;
+  /** Fit the quantiles on seasons strictly BEFORE the holdout, matching what the trainer does. */
+  pointInTime?: boolean;
 }): { artifact: ProjectionArtifact; quantiles: Record<string, { p10: number; p50: number; p90: number; n: number }> } {
   const db = openDb(opts.dbPath);
   const from = opts.from ?? 1999, to = opts.to ?? 2025;
@@ -66,8 +71,11 @@ export function buildCurveOnlyArtifact(opts: {
   // quantile is a fitted quantity; leaving it in would leak the held-out season into the baseline
   // the trained model is scored against, which flatters exactly the wrong side.
   const seasons: number[] = [];
-  for (let y = from; y <= to; y++) if (y !== opts.holdoutSeason) seasons.push(y);
-  const qh = ratioQuantiles(db, from, to, opts.holdoutSeason);
+  for (let y = from; y <= to; y++) {
+    if (opts.holdoutSeason == null) { seasons.push(y); continue; }
+    if (opts.pointInTime ? y < opts.holdoutSeason : y !== opts.holdoutSeason) seasons.push(y);
+  }
+  const qh = ratioQuantiles(db, from, to, opts.holdoutSeason, opts.pointInTime);
   db.close();
   const artifact = curveOnlyArtifact({
     positions: QUANT_POS.filter((p) => qh[p]), seasons,
@@ -83,13 +91,13 @@ export function buildCurveOnlyArtifact(opts: {
 /** Five fixture rows evaluated through the shipped evaluator, stored on the artifact. */
 export function goldenFor(a: ProjectionArtifact): GoldenRow[] {
   const fixtures: Omit<GoldenRow, "expect">[] = [
-    { pos: "RB", base: 250, rank: 1, f: { age: 24, prior_pts: 300, prior_games: 17, prior_pos_rank: 1 }, factors: { age_factor: 1, opp_factor: 1 } },
-    { pos: "WR", base: 175, rank: 12, f: { age: 29.5, prior_pts: 180, prior_games: 15, prior_pos_rank: 12 }, factors: { age_factor: 0.95, opp_factor: 1.05 } },
-    { pos: "QB", base: 246, rank: 12, f: { age: 33, prior_pts: 240, prior_games: 16, prior_pos_rank: 12 }, factors: { age_factor: 0.9, opp_factor: 1 } },
-    { pos: "TE", base: 101, rank: 24, f: { age: 26, prior_pts: 95, prior_games: 12, prior_pos_rank: 24 }, factors: { age_factor: 1, opp_factor: 0.9 } },
+    { pos: "RB", base: 250, rank: 1, f: { age: 24, prior_pts: 300, prior_games: 17, prior_pos_rank: 1 } },
+    { pos: "WR", base: 175, rank: 12, f: { age: 29.5, prior_pts: 180, prior_games: 15, prior_pos_rank: 12 } },
+    { pos: "QB", base: 246, rank: 12, f: { age: 33, prior_pts: 240, prior_games: 16, prior_pos_rank: 12 } },
+    { pos: "TE", base: 101, rank: 24, f: { age: 26, prior_pts: 95, prior_games: 12, prior_pos_rank: 24 } },
     // A row with EVERY optional input missing. It is the fixture most likely to expose a
     // disagreement, because it is the one where the two sides fall back on their own defaults.
-    { pos: "RB", base: 120, rank: 30, f: {}, factors: {} },
+    { pos: "RB", base: 120, rank: 30, f: {} },
   ];
   const out: GoldenRow[] = [];
   for (const [i, g] of fixtures.entries()) {
@@ -97,8 +105,7 @@ export function goldenFor(a: ProjectionArtifact): GoldenRow[] {
     const r = projectSeason({
       season: 0, asOf: "", artifact: { ...a, golden: [] },
       features: [{
-        player_sk: null, name: `golden-${i}`, pos: g.pos, base: g.base, rank: g.rank ?? null,
-        f: g.f, factors: { age_factor: g.factors?.age_factor ?? 1, opp_factor: g.factors?.opp_factor ?? 1 },
+        player_sk: null, name: `golden-${i}`, pos: g.pos, base: g.base, rank: g.rank ?? null, f: g.f,
       }],
     })[0];
     if (!r) continue;

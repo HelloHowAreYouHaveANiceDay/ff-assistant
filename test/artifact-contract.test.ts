@@ -49,10 +49,31 @@ test("the trained artifact declares an EMPTY multiplicative stage", (t) => {
   const a = raw();
   // Age is a fitted feature in this artifact. Declaring the age multiplier as well would apply age
   // twice -- once as a coefficient, once as a factor -- and the result would be a plausible
-  // projection with no symptom. The curve-only artifact declares both precisely because it has no
-  // coefficients at all.
-  const hasAge = a.features.some((f) => f.name === "age");
-  if (hasAge) assert.deepEqual(a.multiplicative, [], "age is fitted AND multiplied -- that is age applied twice");
+  // projection with no symptom. The stage is retired for every artifact now, so this is a floor.
+  assert.deepEqual(a.multiplicative, [], "the multiplicative stage is retired");
+});
+
+test("the trained artifact CARRIES the curve it was selected with, per position", (t) => {
+  if (!existsSync(FIXTURE)) return t.skip("no trainer fixture");
+  const a = raw();
+  assert.equal(a.base, "artifact_curve",
+    "a trained artifact whose curve construction was selected inside the fold must ship that curve, " +
+    "or the board reads whatever recipe the feature builder happens to hold and the selection " +
+    "changed nothing");
+  assert.ok(a.curve && Object.keys(a.curve).length >= 4);
+  assert.ok(a.curveVariant && Object.keys(a.curveVariant).length >= 4,
+    "which variant each position selected is part of the record, not a detail of the run");
+  for (const [pos, v] of Object.entries(a.curveVariant!)) {
+    assert.ok([0, 1, 2, 3].includes(v.window), `${pos} window ${v.window}`);
+    assert.ok([0, 0.5, 1].includes(v.levelWeight), `${pos} levelWeight ${v.levelWeight}`);
+    assert.ok(a.curve![pos]?.length, `${pos} declares a variant but ships no curve`);
+    // A curve must DESCEND overall. Not monotonically -- the evaluation is allowed to choose an
+    // unrepaired curve -- but a curve whose rank 40 outscores its rank 1 is a broken join, not a
+    // fitted choice, and it would invert the ordering the whole auction book expresses.
+    const c = a.curve![pos];
+    assert.ok(c[0] > c[Math.min(c.length - 1, 39)], `${pos} curve does not fall with rank`);
+  }
+  assert.ok(a.form === "ratio" || a.form === "offset");
 });
 
 test("FAULT: renaming one feature in the artifact makes the loader REFUSE it", (t) => {

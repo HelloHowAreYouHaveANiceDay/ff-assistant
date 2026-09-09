@@ -61,6 +61,19 @@ function addColumns(db: DB): void {
     ["player_value", "player_sk", "INTEGER"],
     // This season's own finish rank, which the following season reads as prior_pos_rank.
     ["feat_player_season", "pos_rank", "INTEGER"],
+    // OWN-SEASON usage, per game. `prior_*` on season Y's row is Y-1 usage; these are Y's own, and
+    // they exist because the backtest's pool is season Y-1's players -- a man who never posts a
+    // season Y row (retired, hurt in camp) had every usage feature NULL, which is defect D3.
+    // Reading HIS Y-1 row's own_* columns is the same quantity the Y row's prior_* would have held.
+    ["feat_player_season", "own_fd", "REAL"],
+    ["feat_player_season", "own_ts", "REAL"],
+    ["feat_player_season", "own_attempts", "REAL"],
+    ["feat_player_season", "own_rush_yards", "REAL"],
+    ["feat_player_season", "own_air_yards_share", "REAL"],
+    ["feat_player_season", "own_wopr", "REAL"],
+    ["feat_player_season", "own_games_usage", "INTEGER"],
+    // A crosswalk key that stands for more than one real person. See player_ids_variant.
+    ["player_ids", "ambiguous", "INTEGER"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];

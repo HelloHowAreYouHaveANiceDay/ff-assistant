@@ -41,7 +41,17 @@ export const PLAYERIDS_URL = "https://github.com/DynastyProcess/data/raw/master/
 /** Columns we carry. The archive has ~20 id systems; these are the ones anything here touches. */
 const ID_COLS = ["gsis_id", "espn_id", "sleeper_id", "yahoo_id", "pfr_id", "fantasypros_id", "mfl_id", "sportradar_id"];
 
-export interface IdIngestResult { read: number; kept: number; withGsis: number; withEspn: number; ambiguous: number }
+export interface IdIngestResult {
+  read: number; kept: number; withGsis: number; withEspn: number; ambiguous: number;
+  /** (name_key, position) keys that stand for more than one real person, distinguished by birthdate. */
+  collided: number;
+  /** Rows written to player_ids_variant -- every side of every collision, kept in full. */
+  variants: number;
+}
+
+/** The fields two rows sharing a key may legitimately disagree about. A disagreement here is the
+ *  signature of two different PEOPLE, not of a stale record. */
+const IDENTITY_FIELDS = ["name", "team", "bd", "gsis", "espn", "sleeper", "yahoo", "pfr", "fp", "mfl", "sr"] as const;
 
 export async function ingestPlayerIds(opts: { dbPath?: string; file?: string; url?: string } = {}): Promise<IdIngestResult> {
   const db: DB = openDb(opts.dbPath);
@@ -50,19 +60,40 @@ export async function ingestPlayerIds(opts: { dbPath?: string; file?: string; ur
     : Readable.fromWeb((await fetch(opts.url ?? PLAYERIDS_URL)).body as never);
   const rl = createInterface({ input: source, crlfDelay: Infinity });
 
+  // NO `DO UPDATE` THAT MERGES IDENTITY FIELDS, and that is the whole fix for D2.
+  //
+  // The previous form took name, team and birthdate from the LAST row seen and COALESCEd the ids
+  // from the FIRST. Applied to Marvin Harrison Sr. and Jr. -- one key, because nameKey strips the
+  // suffix on purpose -- it produced a row carrying the father's name, team and 1973 birthdate with
+  // the son's gsis and espn ids. That row describes neither man, and nothing downstream could
+  // notice, because a merged row is exactly as well-formed as a real one.
+  //
+  // Collisions are now resolved BEFORE the insert, in one pass over the parsed rows, so this
+  // statement never sees two rows for one key at all. `DO UPDATE` remains only for re-running the
+  // ingest over an existing table, where it overwrites the whole row from a single source row.
   const ins = db.prepare(
-    `INSERT INTO player_ids (name_key, name, position, team, birthdate, gsis_id, espn_id, sleeper_id, yahoo_id, pfr_id, fantasypros_id, mfl_id, sportradar_id, updated_at)
-     VALUES (@nk,@name,@pos,@team,@bd,@gsis,@espn,@sleeper,@yahoo,@pfr,@fp,@mfl,@sr,@now)
+    `INSERT INTO player_ids (name_key, name, position, team, birthdate, gsis_id, espn_id, sleeper_id, yahoo_id, pfr_id, fantasypros_id, mfl_id, sportradar_id, ambiguous, updated_at)
+     VALUES (@nk,@name,@pos,@team,@bd,@gsis,@espn,@sleeper,@yahoo,@pfr,@fp,@mfl,@sr,@amb,@now)
      ON CONFLICT(name_key, position) DO UPDATE SET
        name=excluded.name, team=excluded.team, birthdate=excluded.birthdate,
-       gsis_id=COALESCE(excluded.gsis_id, player_ids.gsis_id),
-       espn_id=COALESCE(excluded.espn_id, player_ids.espn_id),
-       sleeper_id=COALESCE(excluded.sleeper_id, player_ids.sleeper_id),
-       updated_at=excluded.updated_at`,
+       gsis_id=excluded.gsis_id, espn_id=excluded.espn_id, sleeper_id=excluded.sleeper_id,
+       yahoo_id=excluded.yahoo_id, pfr_id=excluded.pfr_id, fantasypros_id=excluded.fantasypros_id,
+       mfl_id=excluded.mfl_id, sportradar_id=excluded.sportradar_id,
+       ambiguous=excluded.ambiguous, updated_at=excluded.updated_at`,
+  );
+  const insVar = db.prepare(
+    `INSERT INTO player_ids_variant (name_key, position, birthdate, name, team, gsis_id, espn_id,
+       sleeper_id, yahoo_id, pfr_id, fantasypros_id, mfl_id, sportradar_id, updated_at)
+     VALUES (@nk,@pos,@bd,@name,@team,@gsis,@espn,@sleeper,@yahoo,@pfr,@fp,@mfl,@sr,@now)
+     ON CONFLICT(name_key, position, birthdate) DO UPDATE SET
+       name=excluded.name, team=excluded.team, gsis_id=excluded.gsis_id, espn_id=excluded.espn_id,
+       sleeper_id=excluded.sleeper_id, yahoo_id=excluded.yahoo_id, pfr_id=excluded.pfr_id,
+       fantasypros_id=excluded.fantasypros_id, mfl_id=excluded.mfl_id,
+       sportradar_id=excluded.sportradar_id, updated_at=excluded.updated_at`,
   );
   const now = nowIso();
   let idx: Record<string, number> | null = null;
-  const res: IdIngestResult = { read: 0, kept: 0, withGsis: 0, withEspn: 0, ambiguous: 0 };
+  const res: IdIngestResult = { read: 0, kept: 0, withGsis: 0, withEspn: 0, ambiguous: 0, collided: 0, variants: 0 };
   const rows: Record<string, unknown>[] = [];
 
   for await (const line of rl) {
@@ -90,7 +121,46 @@ export async function ingestPlayerIds(opts: { dbPath?: string; file?: string; ur
     });
     res.kept++;
   }
-  db.transaction(() => { for (const r of rows) ins.run(r); })();
+  // ---- COLLISION RESOLUTION, before anything is written ------------------------------------------
+  //
+  // Two source rows sharing (name_key, position) but carrying DIFFERENT birthdates are two people.
+  // The store has one slot for them, so the slot is filled with what they AGREE on and every field
+  // they disagree about is NULLed and the key flagged `ambiguous`. Both sides are kept in full in
+  // player_ids_variant, so the information is not lost -- only the false certainty is.
+  //
+  // The alternative -- picking one -- is what produced the Harrison row, and it is worse than a NULL
+  // for the same reason stg_player already refuses a disputed gsis id: a wrong value that looks
+  // authoritative is read by everything and questioned by nothing.
+  const byKey = new Map<string, Record<string, unknown>[]>();
+  for (const r of rows) {
+    const k = `${r.nk}|${r.pos}`;
+    (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(r);
+  }
+  const toInsert: Record<string, unknown>[] = [];
+  const variantRows: Record<string, unknown>[] = [];
+  for (const group of byKey.values()) {
+    const births = new Set(group.map((g) => g.bd).filter((b) => b != null && b !== ""));
+    if (group.length === 1 || births.size <= 1) {
+      // One person, possibly listed twice. The LAST row wins, which is the file's own ordering and
+      // was the previous behaviour for a non-colliding key.
+      toInsert.push({ ...group[group.length - 1], amb: 0 });
+      continue;
+    }
+    res.collided++;
+    const merged: Record<string, unknown> = { ...group[0], amb: 1 };
+    for (const f of IDENTITY_FIELDS) {
+      const vals = new Set(group.map((g) => g[f]));
+      if (vals.size > 1) merged[f] = null;           // they disagree -> we do not know
+    }
+    toInsert.push(merged);
+    for (const g of group) if (g.bd) variantRows.push(g);
+  }
+  res.variants = variantRows.length;
+
+  db.transaction(() => {
+    for (const r of toInsert) ins.run(r);
+    for (const r of variantRows) insVar.run(r);
+  })();
 
   // BACKFILL the player table's long-empty crosswalk columns. Matched on (name_key, position) so a
   // shared name cannot pull in the wrong man's ids -- which is the entire point of this exercise.
@@ -107,6 +177,14 @@ export async function ingestPlayerIds(opts: { dbPath?: string; file?: string; ur
   ).get() as { c: number }).c;
   db.close();
   return res;
+}
+
+/** Every recorded side of an ambiguous key. The list a consumer needs to pick the right man ITSELF,
+ *  using something better than a name -- a gsis id, a birthdate, a draft year. */
+export function variantsFor(db: DB, name: string, pos: string): Record<string, string | null>[] {
+  return db.prepare(
+    "SELECT * FROM player_ids_variant WHERE name_key = ? AND position = ? ORDER BY birthdate",
+  ).all(nameKey(name), pos.toUpperCase()) as Record<string, string | null>[];
 }
 
 export interface Ambiguity { name_key: string; names: string; positions: string; n: number }

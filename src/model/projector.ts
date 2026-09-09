@@ -33,11 +33,22 @@ export const FEATURE_FIELDS = [
 ] as const;
 export type FeatureField = typeof FEATURE_FIELDS[number];
 
-/** The multiplicative-stage fields. Kept separate from FEATURE_FIELDS because they are not
- *  regression inputs -- they are already-fitted multipliers, and mixing the two vocabularies is how
- *  a factor ends up applied twice. */
-export const FACTOR_FIELDS = ["age_factor", "opp_factor"] as const;
-export type FactorField = typeof FACTOR_FIELDS[number];
+/**
+ * THE MULTIPLICATIVE STAGE IS RETIRED (Phase 2b), and the empty tuple is load-bearing.
+ *
+ * It named two already-fitted artifacts -- `age-curve.json` and `opportunity-model.json` -- that the
+ * feature loader read off disk and the projector multiplied in. Both are now fitted INSIDE the fold,
+ * as named features of the trainer: age from the identity registry's birth year, usage as a ratio to
+ * its rank bucket's mean over seasons strictly before the holdout. That is what resolves D1 by
+ * construction: the opportunity amplitudes were fitted against a curve that had seen the future, and
+ * no amount of refitting an artifact that lives outside the fold can fix that.
+ *
+ * The list is kept, empty, rather than deleted, so that `loadArtifact` can REFUSE an artifact that
+ * still declares one. Deleting the field would make such an artifact load and silently drop its
+ * multipliers, which is the exact silent degradation this schema exists to prevent.
+ */
+export const FACTOR_FIELDS = [] as const;
+export type FactorField = never;
 
 export interface FeatureRow {
   player_sk: string | null;
@@ -49,7 +60,6 @@ export interface FeatureRow {
   /** The within-position rank the base was read at -- the bucket key for relative features. */
   rank: number | null;
   f: Partial<Record<FeatureField, number | null>>;
-  factors: Record<FactorField, number>;
 }
 
 export type Head = "mean" | "p10" | "p50" | "p90";
@@ -68,11 +78,34 @@ export interface FeatureSpec {
   bucketMeans?: Record<string, Record<string, number>>;
   bucket?: number;
   floor?: number;
+  /** WINSORISE THE RAW INPUT before the transform, at the edge of the range the model was FITTED
+   *  over. Without it a linear coefficient is extrapolated arbitrarily far outside its own training
+   *  range -- and `prior_pos_rank` runs to 225 while nothing past 60 is ever fitted, so 42% of the
+   *  scored rows were being priced by an extrapolation nobody had measured. That is the same "fit on
+   *  one sample, score on another" error as the old rank-36 quantile heads, one column over. */
+  clipLo?: number;
+  clipHi?: number;
   /** The POST-TRANSFORM value used when the input is null. Required, and required to be explicit:
    *  a missing input silently becoming 0 means "this player is two standard deviations young"
    *  wherever the feature is centred, which is a guess wearing the costume of a default. */
   missing: number;
 }
+
+/**
+ * HOW THE LINEAR STAGE MEETS THE CURVE, and it is a fitted choice rather than a convention.
+ *
+ * "ratio"  -- prediction = base * clamp(linear). Every coefficient is a statement about what the
+ *             curve gets WRONG, in proportional terms. It is what Phase 2a shipped.
+ * "offset" -- prediction = clamp(base + linear, base*lo, base*hi). The curve is an offset and the
+ *             coefficients are in POINTS. A player two years past his peak loses the same points at
+ *             every rank rather than the same fraction.
+ *
+ * Neither is obviously right, which is exactly why it is selected inside the fold by pinball loss
+ * rather than argued about here. The clamp is expressed relative to `base` in both forms so the two
+ * are guarded to the same width and a comparison between them is a comparison of the models, not of
+ * two differently-bounded search spaces.
+ */
+export type BaseForm = "ratio" | "offset";
 
 export interface ProjectionArtifact {
   schema: number;
@@ -81,14 +114,23 @@ export interface ProjectionArtifact {
   fittedAt?: string;
   seasons: number[];
   holdoutSeason: number | null;
-  /** Which curve column the feature loader must put in `base`. Recorded on the artifact so the
-   *  loader and the trainer cannot disagree about what the offset was. */
-  base: "curve_value_prior" | "curve_value_ecr" | "curve_value_orderstat";
+  /** Where `base` comes from. The three `curve_value_*` names are COLUMNS of feat_player_season,
+   *  precomputed by `ff build-features`. "artifact_curve" means the curve travels ON the artifact,
+   *  in `curve`, and the loader reads it at the row's rank -- which is what lets the curve's own
+   *  construction (window, monotone repair, level source) be a fitted hyperparameter instead of a
+   *  constant compiled into the feature builder. */
+  base: "curve_value_prior" | "curve_value_ecr" | "curve_value_orderstat" | "artifact_curve";
+  /** pos -> value at rank 1, 2, 3, ... Present iff base is "artifact_curve". Past its end the last
+   *  fitted value is carried, exactly as the column form does. */
+  curve?: Record<string, number[]>;
+  /** How the curve was built -- recorded so a number can be traced to the variant that produced it,
+   *  and so `ff models` can report which variant each position selected. */
+  curveVariant?: Record<string, { window: number; monotone: boolean; levelWeight: number; form: BaseForm; n?: number }>;
   features: FeatureSpec[];
-  /** Factor fields multiplied in AFTER the linear stage, in this order. The curve-only artifact
-   *  declares both, which is exactly what the pre-Phase-2a board did; a trained artifact that
-   *  regresses on age declares neither, because doing both would apply age twice. */
+  /** RETIRED, and required to be empty. See FACTOR_FIELDS. */
   multiplicative: FactorField[];
+  /** Default "ratio", so every Phase 2a artifact keeps meaning exactly what it meant. */
+  form?: BaseForm;
   coef: Record<string, Record<Head, Record<string, number>>>;
   clamps: { lo: number; hi: number };
   golden?: GoldenRow[];
@@ -100,7 +142,6 @@ export interface GoldenRow {
   base: number;
   rank: number | null;
   f: Partial<Record<FeatureField, number | null>>;
-  factors?: Partial<Record<FactorField, number>>;
   expect: Record<Head, number>;
 }
 
@@ -119,8 +160,10 @@ const SCHEMA = 1;
 /** Evaluate one feature spec against one row. Exported so the golden check and the projector cannot
  *  drift into two implementations of the same transform. */
 export function featureValue(spec: FeatureSpec, row: { f: FeatureRow["f"]; pos: string; rank: number | null }): number {
-  const raw = row.f[spec.name];
+  let raw = row.f[spec.name];
   if (raw == null || !Number.isFinite(raw)) return spec.missing;
+  if (spec.clipLo != null) raw = Math.max(spec.clipLo, raw);
+  if (spec.clipHi != null) raw = Math.min(spec.clipHi, raw);
   switch (spec.transform) {
     case "identity": return raw;
     case "indicator": return raw ? 1 : 0;
@@ -155,24 +198,22 @@ export function projectSeason(opts: {
   features: FeatureRow[];
 }): ProjRow[] {
   const { artifact: a, features } = opts;
+  const form: BaseForm = a.form ?? "ratio";
   const out: ProjRow[] = [];
   for (const row of features) {
     if (row.base == null || !Number.isFinite(row.base) || row.base <= 0) continue;
     const byPos = a.coef[row.pos];
     if (!byPos) continue;                       // the artifact has no opinion about this position
     const x = a.features.map((s) => featureValue(s, row));
-    let mult = 1;
-    for (const k of a.multiplicative) {
-      const v = row.factors[k];
-      mult *= Number.isFinite(v) && v > 0 ? v : 1;
-    }
     const head = (h: Head): number => {
       const c = byPos[h];
       if (!c) return NaN;
       let lin = c.intercept ?? 0;
       for (let i = 0; i < a.features.length; i++) lin += (c[a.features[i].name] ?? 0) * x[i];
-      const clamped = Math.min(a.clamps.hi, Math.max(a.clamps.lo, lin));
-      return row.base! * clamped * mult;
+      const b = row.base!;
+      return form === "offset"
+        ? Math.min(b * a.clamps.hi, Math.max(b * a.clamps.lo, b + lin))
+        : b * Math.min(a.clamps.hi, Math.max(a.clamps.lo, lin));
     };
     const mean = head("mean");
     if (!Number.isFinite(mean)) continue;
@@ -198,7 +239,22 @@ export function loadArtifact(json: unknown, opts: { checkGolden?: boolean; tol?:
   if (!a || typeof a !== "object") bad("not an object");
   if (a.kind !== "projection") bad(`kind is ${JSON.stringify(a.kind)}, expected "projection"`);
   if (Number(a.schema) !== SCHEMA) bad(`schema ${a.schema}, this evaluator understands ${SCHEMA}`);
-  if (!["curve_value_prior", "curve_value_ecr", "curve_value_orderstat"].includes(a.base)) bad(`unknown base column ${JSON.stringify(a.base)}`);
+  if (!["curve_value_prior", "curve_value_ecr", "curve_value_orderstat", "artifact_curve"].includes(a.base)) bad(`unknown base column ${JSON.stringify(a.base)}`);
+  if (a.base === "artifact_curve") {
+    if (!a.curve || typeof a.curve !== "object" || !Object.keys(a.curve).length) {
+      bad(`base is "artifact_curve" but the artifact carries no curve -- the loader would then have ` +
+        `nothing to read a base from and every row would silently produce no projection`);
+    }
+    for (const [pos, v] of Object.entries(a.curve as Record<string, number[]>)) {
+      if (!Array.isArray(v) || !v.length || v.some((x) => typeof x !== "number" || !Number.isFinite(x) || x <= 0)) {
+        bad(`curve[${pos}] must be a non-empty array of positive finite numbers`);
+      }
+    }
+  } else if (a.curve) {
+    bad(`the artifact carries a curve but declares base ${JSON.stringify(a.base)} -- one of the two is ` +
+      `a leftover, and shipping both means the curve nobody reads looks exactly like the curve everybody does`);
+  }
+  if (a.form != null && a.form !== "ratio" && a.form !== "offset") bad(`unknown form ${JSON.stringify(a.form)}`);
   if (!Array.isArray(a.features)) bad("features must be an array");
   const known = new Set<string>(FEATURE_FIELDS);
   const seen = new Set<string>();
@@ -216,8 +272,15 @@ export function loadArtifact(json: unknown, opts: { checkGolden?: boolean; tol?:
     if (s.transform === "center" && !(Number(s.scale) > 0)) bad(`feature ${s.name}: 'center' transform needs a positive scale`);
     if (s.transform === "ratio_to_bucket_mean" && (!s.bucketMeans || !(Number(s.bucket) > 0))) bad(`feature ${s.name}: 'ratio_to_bucket_mean' needs bucketMeans and a bucket width`);
   }
-  for (const k of a.multiplicative ?? []) {
-    if (!(FACTOR_FIELDS as readonly string[]).includes(k)) bad(`multiplicative stage names ${JSON.stringify(k)}, which is not a factor field`);
+  // THE MULTIPLICATIVE STAGE IS RETIRED, and an artifact that still declares one is REFUSED rather
+  // than quietly loaded with its multipliers dropped. The loader can no longer apply them -- the
+  // feature loader does not read the two artifacts any more -- so accepting the declaration would
+  // ship a projection that is silently missing a factor it says it has.
+  if (Array.isArray(a.multiplicative) && a.multiplicative.length) {
+    bad(`declares a multiplicative stage [${(a.multiplicative as unknown as string[]).join(", ")}]. ` +
+      `That stage is RETIRED: age and opportunity are now fitted features inside the fold, not ` +
+      `artifacts read off disk and multiplied in afterwards. Rebuild with ` +
+      `\`ff build-artifact --curve-only\` or tools/train_projection.py.`);
   }
   if (!a.coef || typeof a.coef !== "object" || !Object.keys(a.coef).length) bad("no per-position coefficients");
   for (const [pos, heads] of Object.entries(a.coef)) {
@@ -251,12 +314,7 @@ export function checkGolden(a: ProjectionArtifact, tol = 1e-6): void {
     const rows = projectSeason({
       season: 0, asOf: "", artifact: { ...a, golden: [] },
       features: [{
-        player_sk: null, name: `golden-${i}`, pos: g.pos, base: g.base, rank: g.rank ?? null,
-        f: g.f,
-        factors: {
-          age_factor: g.factors?.age_factor ?? 1,
-          opp_factor: g.factors?.opp_factor ?? 1,
-        },
+        player_sk: null, name: `golden-${i}`, pos: g.pos, base: g.base, rank: g.rank ?? null, f: g.f,
       }],
     });
     if (!rows.length) throw new Error(`projection artifact: golden row ${i} (${g.pos}) produced no projection`);
@@ -272,10 +330,15 @@ export function checkGolden(a: ProjectionArtifact, tol = 1e-6): void {
   }
 }
 
-/** The curve-only artifact: every non-intercept coefficient zero, the two shipped multipliers in the
- *  multiplicative stage. It reproduces the pre-Phase-2a board exactly, and it is what the projector
- *  falls back to ON PURPOSE rather than degrading silently -- `project()` refuses to run without an
- *  artifact at all, and this is the honest floor to hand it. */
+/** The curve-only artifact: every non-intercept coefficient zero and NOTHING multiplied in. It is
+ *  the honest floor -- the projection IS the point-in-time curve -- and it is what the projector
+ *  falls back to ON PURPOSE rather than degrading silently; `project()` refuses to run without an
+ *  artifact at all.
+ *
+ *  It no longer carries the age and opportunity multipliers. Those were two artifacts fitted OUTSIDE
+ *  any fold, one of them (opportunity) against a curve that had seen the future, and the floor a
+ *  trained model is measured against must not contain a fitted thing the trained model is not
+ *  allowed to see. Their information is now available to the trainer as named features. */
 export function curveOnlyArtifact(opts: {
   positions: string[]; seasons: number[];
   base?: ProjectionArtifact["base"];
@@ -294,11 +357,11 @@ export function curveOnlyArtifact(opts: {
   return {
     schema: SCHEMA, kind: "projection", fittedFrom: "curveOnlyArtifact (no fitted coefficients)",
     seasons: opts.seasons, holdoutSeason: null, base: opts.base ?? "curve_value_ecr",
-    features: [], multiplicative: ["age_factor", "opp_factor"],
+    features: [], multiplicative: [], form: "ratio",
     coef, clamps: { lo: 0.01, hi: 100 },
-    notes: "curve-only: the projection IS the point-in-time curve, times the shipped age and " +
-      "opportunity multipliers. Quantile intercepts are ratio quantiles of actual/curve where the " +
-      "caller supplied them and 1.0 where it did not, in which case the three quantiles collapse " +
-      "onto the mean and say so rather than inventing a spread.",
+    notes: "curve-only: the projection IS the point-in-time curve, with nothing multiplied in. " +
+      "Quantile intercepts are ratio quantiles of actual/curve where the caller supplied them and " +
+      "1.0 where it did not, in which case the three quantiles collapse onto the mean and say so " +
+      "rather than inventing a spread.",
   };
 }

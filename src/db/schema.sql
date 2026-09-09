@@ -457,11 +457,44 @@ CREATE TABLE IF NOT EXISTS player_ids (
   fantasypros_id TEXT,
   mfl_id         TEXT,
   sportradar_id  TEXT,
+  -- 1 = this (name_key, position) stands for MORE THAN ONE REAL PERSON in the source, distinguished
+  -- only by birthdate. See player_ids_variant. The differing fields on this row are NULLed rather
+  -- than resolved to one of them, on the same principle stg_player already applies to a disputed
+  -- gsis id: a wrong value that looks authoritative is worse than no value.
+  ambiguous      INTEGER,
   updated_at     TEXT,
   PRIMARY KEY (name_key, position)
 );
 CREATE INDEX IF NOT EXISTS idx_pids_gsis ON player_ids (gsis_id);
 CREATE INDEX IF NOT EXISTS idx_pids_espn ON player_ids (espn_id);
+
+-- EVERY variant of an ambiguous crosswalk key, kept in full.
+--
+-- WHY IT EXISTS. db_playerids.csv carries one row per real person, but this store keys players on
+-- (name_key, position) and nameKey strips generational suffixes ON PURPOSE. So Marvin Harrison Sr.
+-- and Marvin Harrison Jr. arrive as two rows and collide on one key, and the upsert that used to
+-- resolve that collision produced a single row carrying the FATHER's name, team and 1973 birthdate
+-- with the SON's gsis and espn ids -- a row that is not either man. Every consumer downstream then
+-- read an identity that never existed, and nothing could report it because the row looked complete.
+--
+-- Keyed by birthdate because birthdate is exactly the field that distinguishes them.
+CREATE TABLE IF NOT EXISTS player_ids_variant (
+  name_key       TEXT,
+  position       TEXT,
+  birthdate      TEXT,
+  name           TEXT,
+  team           TEXT,
+  gsis_id        TEXT,
+  espn_id        TEXT,
+  sleeper_id     TEXT,
+  yahoo_id       TEXT,
+  pfr_id         TEXT,
+  fantasypros_id TEXT,
+  mfl_id         TEXT,
+  sportradar_id  TEXT,
+  updated_at     TEXT,
+  PRIMARY KEY (name_key, position, birthdate)
+);
 
 -- Historical FantasyPros ECR (DynastyProcess db_fpecr archive). Distinct from `ranking`, which
 -- holds ONE row per (player, source, season) and so cannot answer what the market believed in a
@@ -551,6 +584,19 @@ CREATE TABLE IF NOT EXISTS feat_player_season (
   curve_value_prior REAL,
   curve_value_ecr   REAL,
   curve_value_orderstat REAL,        -- the pre-2026-09-08 order statistic, kept for regression only
+  -- OWN-SEASON usage, per game played. Strictly speaking a TARGET-side quantity for THIS row (it is
+  -- not knowable at as_of), and it is here for one reason: season Y+1's projection needs season Y
+  -- usage, and the man who has no Y+1 row at all -- retired, cut, hurt in August -- is exactly the
+  -- one the backtest still has to price, because the backtest's pool is the PRIOR season's players.
+  -- Before these columns he carried NULL for every usage feature (defect D3). A model must not read
+  -- own_* for its own season; `loadFeatureRows` never selects them.
+  own_fd          REAL,
+  own_ts          REAL,
+  own_attempts    REAL,
+  own_rush_yards  REAL,
+  own_air_yards_share REAL,
+  own_wopr        REAL,
+  own_games_usage INTEGER,
   -- ------- TARGETS (never features; a projector must not read these) -------
   pts             REAL,
   games           INTEGER,

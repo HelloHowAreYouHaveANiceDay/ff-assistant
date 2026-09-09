@@ -18,11 +18,7 @@
  * Phase 1's `--projection conditional` arm did, and keeping it that way is what makes the two arms
  * comparable at all.
  */
-import { existsSync, readFileSync } from "node:fs";
 import { openDb, type DB } from "../db/db.js";
-import { dataPath } from "../data/paths.js";
-import { ageFactor, type AgeCurve } from "../draft/age.js";
-import { opportunityFactor, type OpportunityModel } from "../draft/opportunity.js";
 import type { FeatureRow, ProjectionArtifact, ProjRow } from "./projector.js";
 import { projectSeason } from "./projector.js";
 
@@ -31,14 +27,21 @@ export type RankBasis = "ecr" | "prior" | "ecr-else-prior";
 export interface LoadOpts {
   season: number;
   rankBasis: RankBasis;
-  /** Which curve column feeds `base`. Defaults to the artifact's own declaration. */
+  /** Where `base` comes from. Defaults to the artifact's own declaration. */
   base?: ProjectionArtifact["base"];
-  /** Apply the shipped age / opportunity multipliers. Off means every factor is exactly 1, which is
-   *  what a trained artifact that regresses on age wants. */
-  useAge?: boolean;
-  useOpp?: boolean;
+  /** The curve carried ON the artifact, read at the row's rank. Required when base is
+   *  "artifact_curve" and ignored otherwise. */
+  curve?: Record<string, number[]>;
   /** Positions to emit. Defaults to whatever the table holds for the season. */
   positions?: string[];
+}
+
+/** Read a curve at a rank, carrying the last fitted value past its end -- the same rule the
+ *  precomputed `curve_value_*` columns follow, stated once so the two cannot diverge. */
+export function curveAt(curve: Record<string, number[]> | undefined, pos: string, rank: number | null): number | null {
+  const v = curve?.[pos];
+  if (!v || !v.length || rank == null || rank < 1) return null;
+  return v[Math.min(Math.round(rank) - 1, v.length - 1)];
 }
 
 interface Raw {
@@ -52,16 +55,15 @@ interface Raw {
   curve_value_prior: number | null; curve_value_ecr: number | null; curve_value_orderstat: number | null;
 }
 
-export function loadAgeCurve(): AgeCurve | null {
-  const p = dataPath("age-curve.json");
-  if (!existsSync(p)) return null;
-  try { return JSON.parse(readFileSync(p, "utf8")) as AgeCurve; } catch { return null; }
-}
-export function loadOpportunity(): OpportunityModel | null {
-  const p = dataPath("opportunity-model.json");
-  if (!existsSync(p)) return null;
-  try { return JSON.parse(readFileSync(p, "utf8")) as OpportunityModel; } catch { return null; }
-}
+/**
+ * NOTHING HERE READS `age-curve.json` OR `opportunity-model.json` ANY MORE (Phase 2b).
+ *
+ * They were fitted outside every fold, by their own scripts, against their own curves -- and the
+ * opportunity one against a curve that had seen the future, which is defect D1. A projector that
+ * reaches for a fitted file on disk cannot be cross-validated, because the file is the same file in
+ * every fold. Age and usage are now named features of the trainer, fitted inside the fold; the two
+ * files remain on disk for the record and `models.ts` says so.
+ */
 
 /** Feature rows for one season, in projector shape. Reads ONLY point-in-time columns; `pts` and
  *  `games` are targets and are deliberately not selected, so a projector cannot read them by
@@ -75,8 +77,6 @@ export function loadFeatureRows(db: DB, opts: LoadOpts): FeatureRow[] {
        FROM feat_player_season WHERE season = ?`,
   ).all(opts.season) as Raw[];
 
-  const age = opts.useAge === false ? null : loadAgeCurve();
-  const opp = opts.useOpp === false ? null : loadOpportunity();
   const want = opts.positions ? new Set(opts.positions) : null;
   const baseCol = opts.base ?? "curve_value_ecr";
 
@@ -86,10 +86,10 @@ export function loadFeatureRows(db: DB, opts: LoadOpts): FeatureRow[] {
     const rank = opts.rankBasis === "prior" ? r.prior_pos_rank
       : opts.rankBasis === "ecr" ? r.ecr_pos_rank
         : (r.ecr_pos_rank ?? r.prior_pos_rank);
-    const base = baseCol === "curve_value_prior" ? r.curve_value_prior
-      : baseCol === "curve_value_orderstat" ? r.curve_value_orderstat
-        : (opts.rankBasis === "prior" ? r.curve_value_prior : (r.curve_value_ecr ?? r.curve_value_prior));
-    const sk = r.player_sk != null && /^\d+$/.test(r.player_sk) ? Number(r.player_sk) : null;
+    const base = baseCol === "artifact_curve" ? curveAt(opts.curve, r.pos, rank)
+      : baseCol === "curve_value_prior" ? r.curve_value_prior
+        : baseCol === "curve_value_orderstat" ? r.curve_value_orderstat
+          : (opts.rankBasis === "prior" ? r.curve_value_prior : (r.curve_value_ecr ?? r.curve_value_prior));
     out.push({
       player_sk: r.player_sk, name: r.name, pos: r.pos,
       base, rank,
@@ -102,10 +102,6 @@ export function loadFeatureRows(db: DB, opts: LoadOpts): FeatureRow[] {
         draft_age: r.draft_year != null && r.age != null ? r.age - (opts.season - r.draft_year) : null,
         ecr_pos_rank: r.ecr_pos_rank, ecr_sd: r.ecr_sd,
       },
-      factors: {
-        age_factor: ageFactor(age, r.name, r.pos, opts.season, sk),
-        opp_factor: opportunityFactor(opp, r.name, r.pos, rank ?? 999, opts.season, sk),
-      },
     });
   }
   // Deterministic order, so two paths that agree on the numbers also agree byte for byte. Ordered by
@@ -115,12 +111,10 @@ export function loadFeatureRows(db: DB, opts: LoadOpts): FeatureRow[] {
   return out;
 }
 
-/** BOARD path: consensus rank, both shipped multipliers, the ECR curve column. */
+/** BOARD path: consensus rank, the curve the artifact declares. */
 export function boardProjection(db: DB, season: number, artifact: ProjectionArtifact, asOf?: string): ProjRow[] {
   const features = loadFeatureRows(db, {
-    season, rankBasis: "ecr-else-prior", base: artifact.base,
-    useAge: artifact.multiplicative.includes("age_factor"),
-    useOpp: artifact.multiplicative.includes("opp_factor"),
+    season, rankBasis: "ecr-else-prior", base: artifact.base, curve: artifact.curve,
   });
   return projectSeason({ season, asOf: asOf ?? `${season}-09-01`, artifact, features });
 }
@@ -142,16 +136,35 @@ export function boardProjection(db: DB, season: number, artifact: ProjectionArti
  */
 export function backtestFeatureRows(db: DB, season: number, artifact: ProjectionArtifact): FeatureRow[] {
   const kind = artifact.base === "curve_value_orderstat" ? "orderstat" : "conditional";
-  const curve = new Map<string, number[]>();
-  for (const c of db.prepare("SELECT pos, rank, value FROM feat_curve WHERE season = ? AND kind = ? ORDER BY rank")
-    .all(season, kind) as { pos: string; rank: number; value: number }[]) {
-    const a = curve.get(c.pos) ?? curve.set(c.pos, []).get(c.pos)!;
-    a[c.rank - 1] = c.value;
+  let curve: Record<string, number[]>;
+  if (artifact.base === "artifact_curve") {
+    curve = artifact.curve!;
+  } else {
+    curve = {};
+    for (const c of db.prepare("SELECT pos, rank, value FROM feat_curve WHERE season = ? AND kind = ? ORDER BY rank")
+      .all(season, kind) as { pos: string; rank: number; value: number }[]) {
+      (curve[c.pos] ??= [])[c.rank - 1] = c.value;
+    }
   }
+  // THE POOL CARRIES ITS OWN SEASON'S FACTS, which is the fix for defect D3.
+  //
+  // A man in the pool who never posts a season-Y row -- retired, cut, hurt in August -- used to
+  // arrive with every feature NULL, so the trained arm projected him from the intercept alone while
+  // the curve-only arm projected him from his rank. That is not a fair pairing, and it hits exactly
+  // the players whose fate the projection most needs to price. His season Y-1 row holds all of it:
+  // `pts`/`games` are the Y row's `prior_pts`/`prior_games`, and `own_*` is the Y row's `prior_*`.
   const pool = db.prepare(
-    `SELECT feat_key, player_sk, name, pos, pos_rank FROM feat_player_season
+    `SELECT feat_key, player_sk, name, pos, pos_rank, pts, games, age, draft_year, draft_round, draft_pick,
+            own_fd, own_ts, own_attempts, own_rush_yards, own_air_yards_share, own_wopr
+       FROM feat_player_season
       WHERE season = ? AND pts IS NOT NULL AND pos_rank IS NOT NULL`,
-  ).all(season - 1) as { feat_key: string; player_sk: string | null; name: string; pos: string; pos_rank: number }[];
+  ).all(season - 1) as {
+    feat_key: string; player_sk: string | null; name: string; pos: string; pos_rank: number;
+    pts: number; games: number | null; age: number | null;
+    draft_year: number | null; draft_round: number | null; draft_pick: number | null;
+    own_fd: number | null; own_ts: number | null; own_attempts: number | null;
+    own_rush_yards: number | null; own_air_yards_share: number | null; own_wopr: number | null;
+  }[];
 
   const own = new Map<string, Raw>();
   for (const r of db.prepare(
@@ -162,30 +175,34 @@ export function backtestFeatureRows(db: DB, season: number, artifact: Projection
        FROM feat_player_season WHERE season = ?`,
   ).all(season) as (Raw & { feat_key: string })[]) own.set(r.feat_key, r);
 
-  const age = artifact.multiplicative.includes("age_factor") ? loadAgeCurve() : null;
-  const opp = artifact.multiplicative.includes("opp_factor") ? loadOpportunity() : null;
-
   const out: FeatureRow[] = [];
   for (const p of pool) {
-    const v = curve.get(p.pos);
-    const base = v && v.length ? v[Math.min(p.pos_rank - 1, v.length - 1)] : null;
+    const base = curveAt(curve, p.pos, p.pos_rank);
     const r = own.get(p.feat_key);
-    const sk = p.player_sk != null && /^\d+$/.test(p.player_sk) ? Number(p.player_sk) : null;
+    // `??` and not `||`: a genuine 0 (no rushing yards, no target share) is information and must not
+    // fall through to the previous season's number.
+    const age = r?.age ?? (p.age != null ? Math.round((p.age + 1) * 100) / 100 : null);
+    const draftYear = r?.draft_year ?? p.draft_year;
     out.push({
       player_sk: p.player_sk, name: p.name, pos: p.pos, base: base ?? null, rank: p.pos_rank,
       f: {
-        age: r?.age ?? null, prior_pos_rank: p.pos_rank, prior_pts: r?.prior_pts ?? null,
-        prior_games: r?.prior_games ?? null, prior_fd: r?.prior_fd ?? null, prior_ts: r?.prior_ts ?? null,
-        prior_attempts: r?.prior_attempts ?? null, prior_rush_yards: r?.prior_rush_yards ?? null,
-        prior_air_yards_share: r?.prior_air_yards_share ?? null, prior_wopr: r?.prior_wopr ?? null,
-        team_changed: r?.team_changed ?? null, draft_round: r?.draft_round ?? null,
-        draft_pick: r?.draft_pick ?? null,
-        draft_age: r?.draft_year != null && r.age != null ? r.age - (season - r.draft_year) : null,
+        age, prior_pos_rank: p.pos_rank,
+        prior_pts: r?.prior_pts ?? p.pts,
+        prior_games: r?.prior_games ?? p.games ?? null,
+        prior_fd: r?.prior_fd ?? p.own_fd,
+        prior_ts: r?.prior_ts ?? p.own_ts,
+        prior_attempts: r?.prior_attempts ?? p.own_attempts,
+        prior_rush_yards: r?.prior_rush_yards ?? p.own_rush_yards,
+        prior_air_yards_share: r?.prior_air_yards_share ?? p.own_air_yards_share,
+        prior_wopr: r?.prior_wopr ?? p.own_wopr,
+        // Whether he changed team is genuinely unknowable for a man with no season-Y row, so it
+        // stays NULL and the artifact's declared `missing` handles it. Draft capital is a fact about
+        // the past and carries over.
+        team_changed: r?.team_changed ?? null,
+        draft_round: r?.draft_round ?? p.draft_round,
+        draft_pick: r?.draft_pick ?? p.draft_pick,
+        draft_age: draftYear != null && age != null ? age - (season - draftYear) : null,
         ecr_pos_rank: r?.ecr_pos_rank ?? null, ecr_sd: r?.ecr_sd ?? null,
-      },
-      factors: {
-        age_factor: ageFactor(age, p.name, p.pos, season, sk),
-        opp_factor: opportunityFactor(opp, p.name, p.pos, p.pos_rank, season, sk),
       },
     });
   }

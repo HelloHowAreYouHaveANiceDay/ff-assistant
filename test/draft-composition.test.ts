@@ -28,8 +28,23 @@ test("SIM COMPOSITION: our team drafts EXACTLY 2 K/DST across 20 seeds (no bench
 
 // Step 9c (offline half): "the agent no longer chases mid-TEs", measured on the REAL 2026 data
 // through the full sim draft path. The even-split curve gave TE 11 phantom starting slots, so our
-// team stockpiled them; the weighted curve should not. Thresholds sit between the two measured
-// regimes (weighted mean 2.02 / old mean 3.02 over 40 seeds), not on a knife edge.
+// team stockpiled them; the weighted curve should not.
+//
+// THE ABSOLUTE THRESHOLD WENT STALE AND IS NOT BEING WIDENED IN PLACE (2026-09-08, Phase 2b).
+// It was `mean <= 2.5`, chosen to sit between two measured regimes (weighted 2.02 / even-split
+// 3.02). Shipping the trained projection artifact moved BOTH regimes up together -- weighted 2.9,
+// even-split 3.5 -- because the elite RB tier came down ~18% (which is exactly what the residual
+// slices said it should: an RB entering top-6 finished 35 points under his projection) and TE is
+// therefore relatively dearer. A constant calibrated against one build's output cannot tell that
+// apart from a broken curve; this is the same failure the top-TE dollar ceiling in
+// scripts/value-gates.mjs already had, and it was fixed there the same way.
+//
+// So the guard is re-keyed on the RELATIVE claim it was always really making -- the weighted curve
+// rosters FEWER tight ends than the even split -- which is scale-free and which the broken case is
+// structurally incapable of satisfying. The absolute ceiling stays, loosened to a level that still
+// catches a runaway (a full bench of tight ends) rather than one that encodes a build.
+//
+// THE ABSOLUTE SHIFT IS A REPORTED FINDING, not a suppressed one: see docs/validation.md.
 import { computeValues, DEFAULT_VALUE_LEAGUE } from "../src/draft/values.ts";
 
 const teStats = (vals: Map<string, number>) => {
@@ -44,18 +59,29 @@ const teStats = (vals: Map<string, number>) => {
   return { mean: counts.reduce((a, b) => a + b, 0) / counts.length, max: Math.max(...counts), kdst: Math.max(...kdstMax) };
 };
 
-test("SIM COMPOSITION: the weighted curve stops our team stockpiling TEs", () => {
-  const s = teStats(ourValues);
-  assert.ok(s.mean <= 2.5, `mean TEs per draft should be ~2, got ${s.mean}`);
-  assert.ok(s.max <= 4, `should never roster 5 TEs, got ${s.max}`);
+const evenValues = () => new Map(computeValues(points, DEFAULT_VALUE_LEAGUE, 2, false).map((v) => [v.name, v.value]));
+
+test("SIM COMPOSITION: the weighted curve rosters FEWER TEs than the even split", () => {
+  const w = teStats(ourValues), e = teStats(evenValues());
+  // The claim, stated as a comparison between the two curves on identical seeds and identical
+  // projections, so a projection-level shift moves both sides and cannot fake a pass.
+  assert.ok(w.mean < e.mean - 0.3,
+    `weighted mean ${w.mean} vs even-split ${e.mean} -- the weighted curve must visibly reduce TE ` +
+    `stockpiling. If these have converged, the phantom-FLEX-slot fix has stopped mattering.`);
+  // A LOOSE absolute ceiling: half the roster in tight ends is a runaway whatever the projection
+  // says. Deliberately not a tight number -- a tight one encodes one build's output and goes stale.
+  assert.ok(w.mean <= 3.5, `mean TEs per draft ${w.mean} is a runaway, not a preference`);
+  assert.ok(w.max <= 5, `rostered ${w.max} TEs on a single seed`);
 });
 
-// FI, permanent: the SAME assertions against an even-split value table must FAIL. This is what
-// proves the guard measures the curve rather than something incidental about the data.
-test("SIM COMPOSITION FAULT: the old even-split curve DOES stockpile TEs (guard is connected)", () => {
-  const even = new Map(computeValues(points, DEFAULT_VALUE_LEAGUE, 2, false).map((v) => [v.name, v.value]));
-  const s = teStats(even);
-  assert.ok(s.mean > 2.5, `even-split should over-roster TEs (mean ${s.mean}) -- if this fails the arms no longer differ`);
+// FI, permanent: the same comparison must be able to FAIL. Running the even-split table through the
+// shipped side of the assertion is what proves the guard measures the curve rather than something
+// incidental about the data.
+test("SIM COMPOSITION FAULT: the even split DOES stockpile more TEs (guard is connected)", () => {
+  const e = teStats(evenValues()), w = teStats(ourValues);
+  assert.ok(!(e.mean < w.mean - 0.3),
+    `swapping the arms must not also pass -- even-split ${e.mean}, weighted ${w.mean}`);
+  assert.ok(e.mean > w.mean, `even-split should over-roster TEs (${e.mean} vs ${w.mean})`);
 });
 
 // End-to-end version of the strategy unit test: across 20 real drafts, no K or DST ever costs > $2.

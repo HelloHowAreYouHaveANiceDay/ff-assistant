@@ -35,8 +35,13 @@ import { loadArtifact, projectSeason, type ProjectionArtifact, type ProjRow } fr
 import { loadFeatureRows } from "./features.js";
 import { buildCurveOnlyArtifact } from "./build.js";
 
+// THE 60+ BAND IS NOT DECORATION. It holds 42% of the scored rows in this store -- prior-year WRs
+// run to rank 225 -- and it was reported nowhere, so a model that was never fitted out there and
+// projected there anyway looked fine in every band that was printed while losing 7 RMSE points
+// overall. A band nobody prints is a band nobody checks.
 export const RANK_BANDS: [string, number, number][] = [
   ["1-6", 1, 6], ["7-12", 7, 12], ["13-24", 13, 24], ["25-40", 25, 40], ["41-60", 41, 60],
+  ["60+", 61, 9999],
 ];
 export const bandOf = (rank: number): string => RANK_BANDS.find(([, lo, hi]) => rank >= lo && rank <= hi)?.[0] ?? "60+";
 
@@ -138,15 +143,15 @@ function carryQuantiles(db: DB, holdout: number): { p10: number; p50: number; p9
 }
 
 /**
- * The rungs. `bare` exists for ONE reason and it is a methodological one: the feature screen's
- * positive control is "age must show a correlation with the residual, because we know age is real".
- * Once age became a fitted feature of the trained artifact, that control could no longer fire -- the
- * model has already used the signal -- and a control that cannot fire looks exactly like a control
- * that is passing. `bare` is the curve with an EMPTY multiplicative stage: no age, no opportunity.
- * Screening against it restores the control's ability to say something.
+ * The rungs. Phase 2a carried a fourth, `bare` -- the curve with its multiplicative stage emptied --
+ * because the feature screen's positive control ("age must correlate with the residual") could not
+ * fire against a curve that already had the age multiplier applied to it. THE MULTIPLICATIVE STAGE
+ * IS GONE (Phase 2b), so `curve` IS bare: the projection is the point-in-time curve and nothing
+ * else. The rung was removed rather than kept as a synonym, because two names for one thing is how a
+ * comparison between them comes to be reported as a finding.
  */
-export type Rung = "carry" | "bare" | "curve" | "trained";
-export const RUNGS: Rung[] = ["carry", "bare", "curve", "trained"];
+export type Rung = "carry" | "curve" | "trained";
+export const RUNGS: Rung[] = ["carry", "curve", "trained"];
 
 export interface FoldResult {
   season: number;
@@ -170,23 +175,17 @@ export function evaluateProjection(opts: {
       const tgt = targets(db, yr);
       if (!tgt.size) { log(`  ${yr}: no scored rows -- skipped`); continue; }
 
-      // --- rung 2: the curve-only artifact, holding out this season from its quantile fit --------
+      // --- rung 2: the curve-only artifact, fitted on seasons strictly BEFORE this one ----------
+      // Point-in-time, matching the trainer. A baseline fitted on a wider window than the model it
+      // is the baseline for flatters exactly the wrong side of the comparison.
       const { artifact: curveArt } = buildCurveOnlyArtifact({
-        dbPath: opts.dbPath, from: 1999, to: 2025, base: "curve_value_prior", holdoutSeason: yr,
+        dbPath: opts.dbPath, from: 1999, to: 2025, base: "curve_value_prior",
+        holdoutSeason: yr, pointInTime: true,
       });
-      const curveFeat = loadFeatureRows(db, {
-        season: yr, rankBasis: "prior", base: "curve_value_prior",
-        useAge: curveArt.multiplicative.includes("age_factor"),
-        useOpp: curveArt.multiplicative.includes("opp_factor"),
-      });
+      const curveFeat = loadFeatureRows(db, { season: yr, rankBasis: "prior", base: "curve_value_prior" });
       const bases = new Map(curveFeat.map((f) => [`${f.pos}|${f.name}`, f.base]));
       const curveRows = toEvalRows(yr, projectSeason({ season: yr, asOf: `${yr}-09-01`, artifact: curveArt, features: curveFeat }), tgt, bases);
       if (!curveRows.length) { log(`  ${yr}: no curve at any rank -- skipped`); continue; }
-
-      // --- rung 1b: the BARE curve, multiplicative stage emptied -------------------------------
-      const bareArt: ProjectionArtifact = { ...curveArt, multiplicative: [], golden: [] };
-      const bareFeat = loadFeatureRows(db, { season: yr, rankBasis: "prior", base: "curve_value_prior", useAge: false, useOpp: false });
-      const bareRows = toEvalRows(yr, projectSeason({ season: yr, asOf: `${yr}-09-01`, artifact: bareArt, features: bareFeat }), tgt, bases);
 
       // --- rung 3: the TRAINER, as a subprocess, blind to this season ---------------------------
       const artPath = join(dir, `artifact-${yr}.json`);
@@ -196,17 +195,15 @@ export function evaluateProjection(opts: {
         execFileSync("uv", [
           "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_projection.py",
           "--db", opts.dbPath ?? "data/ff.db", "--seasons", opts.trainerSeasons ?? "1999-2025",
-          "--holdout-season", String(yr), "--base", "curve_value_prior", "--out", artPath, "--quiet",
-        ], { stdio: ["ignore", "pipe", "pipe"], timeout: 600000 });
+          "--holdout-season", String(yr), "--out", artPath, "--quiet",
+        ], { stdio: ["ignore", "pipe", "pipe"], timeout: 1800000 });
         if (existsSync(artPath)) trained = loadArtifact(JSON.parse(readFileSync(artPath, "utf8")));
       } catch (e) { note = `trainer failed: ${(e as Error).message.split("\n")[0]}`; }
 
       let trainedRows: EvalRow[] = [];
       if (trained) {
         const f = loadFeatureRows(db, {
-          season: yr, rankBasis: "prior", base: trained.base,
-          useAge: trained.multiplicative.includes("age_factor"),
-          useOpp: trained.multiplicative.includes("opp_factor"),
+          season: yr, rankBasis: "prior", base: trained.base, curve: trained.curve,
         });
         trainedRows = toEvalRows(yr, projectSeason({ season: yr, asOf: `${yr}-09-01`, artifact: trained, features: f }), tgt, bases);
       }
@@ -214,8 +211,12 @@ export function evaluateProjection(opts: {
       // --- rung 1: carry-forward ---------------------------------------------------------------
       const carryRows = toEvalRows(yr, carryForward(db, yr, carryQuantiles(db, yr)), tgt, bases);
 
-      out.push({ season: yr, rows: { carry: carryRows, bare: bareRows, curve: curveRows, trained: trainedRows }, trainerOk: !!trained, note });
-      log(`  ${yr}: carry ${carryRows.length}  bare ${bareRows.length}  curve ${curveRows.length}  trained ${trainedRows.length}` + (note ? `  (${note})` : ""));
+      out.push({ season: yr, rows: { carry: carryRows, curve: curveRows, trained: trainedRows }, trainerOk: !!trained, note });
+      const sel = trained?.curveVariant
+        ? "  variant " + Object.entries(trained.curveVariant)
+          .map(([p, v]) => `${p}:w${v.window}${v.monotone ? "m" : "-"}L${v.levelWeight}/${v.form[0]}`).join(" ")
+        : "";
+      log(`  ${yr}: carry ${carryRows.length}  curve ${curveRows.length}  trained ${trainedRows.length}` + sel + (note ? `  (${note})` : ""));
     }
   } finally {
     db.close();

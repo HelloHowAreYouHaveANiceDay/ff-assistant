@@ -1782,11 +1782,12 @@ async function cmdEvaluateProjection(rest: string[]) {
   const SHOWN = ["carry", "curve", "trained"] as const;
   const dump = valueOf(rest, "--dump-residuals");
   if (dump) {
-    // TWO residuals per row: against the SHIPPED model, and against the BARE curve with no
-    // multipliers at all. The feature screen needs both -- one to ask "is this new", the other to
-    // keep its positive control able to fire now that age is inside the model.
+    // TWO residuals per row: against the SHIPPED model, and against the CURVE. Phase 2b retired the
+    // multiplicative stage, so the curve rung IS the bare curve -- nothing is applied to it -- and
+    // the screen's positive control can fire against it exactly as it did against `bare`. The
+    // COLUMN NAMES are unchanged so scripts/feature-sweep.mjs keeps reading what it always read.
     const shipped = pool(folds, "trained").length ? pool(folds, "trained") : pool(folds, "curve");
-    const bare = new Map(pool(folds, "bare").map((r) => [`${r.season}|${r.pos}|${r.name}`, r]));
+    const bare = new Map(pool(folds, "curve").map((r) => [`${r.season}|${r.pos}|${r.name}`, r]));
     writeFileSync(dump,
       ["season", "name", "pos", "rank", "band", "actual", "mean", "p10", "p50", "p90", "resid", "mean_bare", "resid_bare"].join("\t") + "\n" +
       shipped.map((r) => {
@@ -1823,12 +1824,12 @@ async function cmdEvaluateProjection(rest: string[]) {
     if (!s.n) continue;
     console.log(`  ${k.padEnd(9)}  ${s.cover10.toFixed(3).padStart(9)}   ${s.cover90.toFixed(3).padStart(9)}   ${(s.cover10 + s.cover90 - 1).toFixed(3).padStart(6)}`);
   }
-  // PER BAND, because the pooled figure MIXES two different regions and a single number cannot say
-  // which. Both artifacts fit their quantile heads on ranks 1-36 -- past that the curve has
-  // flattened and actual/curve stops measuring dispersion -- so pooling over 1-60 reports a
-  // calibration that was never attempted out there. Reporting only the pooled number would be
-  // comparing a fit on one sample against a score on another and calling the gap a defect.
-  console.log(`  inside-band by rank, curve / trained (quantile heads are FITTED on ranks 1-36 only):`);
+  // PER BAND, because the pooled figure MIXES regions and a single number cannot say which. Phase 2a
+  // fitted its quantile heads on ranks 1-36 and scored them on everything, so its pooled 0.614 was a
+  // fit on one sample scored on another. Phase 2b fits them over ranks 1-60 with rank in the design,
+  // and clips the rank feature there, so the band table is a calibration report rather than a
+  // measurement of how far past the fit each band sits.
+  console.log(`  inside-band by rank, curve / trained (quantile heads FITTED over ranks 1-60, rank clipped there):`);
   for (const [b] of RANK_BANDS) {
     const cc = score(pool(folds, "curve").filter((r) => r.band === b));
     const tt = score(pool(folds, "trained").filter((r) => r.band === b));
@@ -1837,6 +1838,11 @@ async function cmdEvaluateProjection(rest: string[]) {
   }
 
   // THE GATE. Stated before the numbers were seen, and reported either way.
+  //
+  // PRE-REGISTERED P5 (Phase 2b): the trained artifact beats curve-only on pooled pinball AND RMSE,
+  // AND pooled p10/p90 coverage lands in [0.75, 0.85] WITH EVERY RANK BAND IN [0.70, 0.90]. The
+  // per-band clause is the half Phase 2a did not have, and it is the half that catches a pooled
+  // number averaging a too-wide top against a too-narrow tail.
   const GATE_FROM = 2015;
   const inGate = (r: { season: number }) => r.season >= GATE_FROM;
   const c = score(pool(folds, "curve").filter(inGate));
@@ -1848,13 +1854,24 @@ async function cmdEvaluateProjection(rest: string[]) {
     const beatsRmse = t.rmse < c.rmse, beatsCrps = t.crps < c.crps;
     const cov = t.cover10 + t.cover90 - 1;
     const covOk = cov >= 0.75 && cov <= 0.85;
+    const bands: string[] = [];
+    let bandsOk = true;
+    for (const [b] of RANK_BANDS) {
+      const s = score(pool(folds, "trained").filter((r) => inGate(r) && r.band === b));
+      if (!s.n) continue;
+      const v = s.cover10 + s.cover90 - 1;
+      if (!(v >= 0.70 && v <= 0.90)) bandsOk = false;
+      bands.push(`${b} ${v.toFixed(3)}`);
+    }
     console.log(`    RMSE      trained ${t.rmse.toFixed(2)} vs curve ${c.rmse.toFixed(2)}   ${beatsRmse ? "PASS" : "FAIL"}`);
     console.log(`    pinball   trained ${t.crps.toFixed(2)} vs curve ${c.crps.toFixed(2)}   ${beatsCrps ? "PASS" : "FAIL"}`);
     console.log(`    coverage  trained ${cov.toFixed(3)} in [0.75, 0.85]        ${covOk ? "PASS" : "FAIL"}`);
-    console.log(`    => ${beatsRmse && beatsCrps && covOk
-      ? "the trained artifact may ship as the default."
-      : "SHIP THE CURVE-ONLY ARTIFACT. Do not tune until this passes -- tuning against a gate you " +
-        "have already seen fail is how the gate stops being a measurement."}`);
+    console.log(`    per band  ${bands.join("  ")}`);
+    console.log(`              every band in [0.70, 0.90]                ${bandsOk ? "PASS" : "FAIL"}`);
+    console.log(`    => ${beatsRmse && beatsCrps && covOk && bandsOk
+      ? "P5 HELD -- the trained artifact may ship as the default."
+      : "P5 FAILED. SHIP THE CURVE-ONLY ARTIFACT. Do not tune until this passes -- tuning against a " +
+        "gate you have already seen fail is how the gate stops being a measurement."}`);
   }
 }
 
@@ -1864,7 +1881,7 @@ async function cmdResiduals(rest: string[]) {
   const { evaluateProjection, pool, RANK_BANDS } = await import("./model/evaluate.js");
   const range = (valueOf(rest, "--seasons") ?? "2011-2025").split("-").map(Number);
   const seasons: number[] = []; for (let y = range[0]; y <= (range[1] ?? range[0]); y++) seasons.push(y);
-  const rung = (valueOf(rest, "--rung") ?? "trained") as "carry" | "bare" | "curve" | "trained";
+  const rung = (valueOf(rest, "--rung") ?? "trained") as "carry" | "curve" | "trained";
   const folds = evaluateProjection({ dbPath: valueOf(rest, "--db"), seasons });
   let rows = pool(folds, rung);
   if (!rows.length) { console.log(`no ${rung} rows -- falling back to curve-only`); rows = pool(folds, "curve"); }

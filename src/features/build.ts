@@ -230,9 +230,12 @@ export async function buildFeatures(opts: {
     `INSERT INTO feat_player_season (feat_key, player_sk, season, as_of, name, name_key, pos, team,
       prior_pos_rank, prior_pts, prior_games, age, prior_fd, prior_ts, prior_attempts, prior_rush_yards,
       prior_air_yards_share, prior_wopr, team_changed, draft_year, draft_round, draft_pick,
-      ecr_pos_rank, ecr_sd, curve_value_prior, curve_value_ecr, curve_value_orderstat, pts, games, pos_rank, updated_at)
+      ecr_pos_rank, ecr_sd, curve_value_prior, curve_value_ecr, curve_value_orderstat,
+      own_fd, own_ts, own_attempts, own_rush_yards, own_air_yards_share, own_wopr, own_games_usage,
+      pts, games, pos_rank, updated_at)
      VALUES (@key,@sk,@season,@asOf,@name,@nk,@pos,@team,@priorRank,@priorPts,@priorGames,@age,@fd,@ts,
-             @att,@ry,@ays,@wopr,@changed,@dy,@dr,@dp,@ecr,@ecrSd,@cvPrior,@cvEcr,@cvOs,@pts,@games,@posRank,@now)
+             @att,@ry,@ays,@wopr,@changed,@dy,@dr,@dp,@ecr,@ecrSd,@cvPrior,@cvEcr,@cvOs,
+             @ofd,@ots,@oatt,@ory,@oays,@owopr,@og,@pts,@games,@posRank,@now)
      ON CONFLICT(season, feat_key) DO UPDATE SET
        player_sk=excluded.player_sk, as_of=excluded.as_of, name=excluded.name, pos=excluded.pos,
        team=excluded.team, prior_pos_rank=excluded.prior_pos_rank, prior_pts=excluded.prior_pts,
@@ -243,6 +246,9 @@ export async function buildFeatures(opts: {
        draft_round=excluded.draft_round, draft_pick=excluded.draft_pick, ecr_pos_rank=excluded.ecr_pos_rank,
        ecr_sd=excluded.ecr_sd, curve_value_prior=excluded.curve_value_prior,
        curve_value_ecr=excluded.curve_value_ecr, curve_value_orderstat=excluded.curve_value_orderstat,
+       own_fd=excluded.own_fd, own_ts=excluded.own_ts, own_attempts=excluded.own_attempts,
+       own_rush_yards=excluded.own_rush_yards, own_air_yards_share=excluded.own_air_yards_share,
+       own_wopr=excluded.own_wopr, own_games_usage=excluded.own_games_usage,
        pts=excluded.pts, games=excluded.games, pos_rank=excluded.pos_rank, updated_at=excluded.updated_at`,
   );
   const insCurve = db.prepare(
@@ -334,6 +340,13 @@ export async function buildFeatures(opts: {
         const dc = drafted.get(key);
         const g = pu?.games ?? 0;
         const rank = priorRank.get(key) ?? null;
+        // OWN-season usage. Same aggregation, this season's feed. It is written so that season Y+1
+        // can read season Y usage for a player who has NO season Y+1 row -- the retired, the cut,
+        // the hurt-in-August -- who is nevertheless in the backtest's pool, because the pool is the
+        // PRIOR season's players. That was defect D3: every usage feature NULL for exactly the men
+        // whose fate the projection most needs to price.
+        const cu = curUsage.get(key);
+        const cg = cu?.games ?? 0;
         ins.run({
           key, sk, season: yr, asOf, name, nk: r?.nameKey ?? nameKey(name), pos, team,
           priorRank: rank, priorPts: orNull(pr?.pts ?? null), priorGames: pr ? (pr.games || null) : null,
@@ -346,6 +359,10 @@ export async function buildFeatures(opts: {
           ecr: e?.rank ?? null, ecrSd: e?.sd ?? null,
           cvPrior: orNull(at(condCurve, pos, rank)), cvEcr: orNull(at(condCurve, pos, e?.rank ?? null)),
           cvOs: orNull(at(osCurve, pos, rank)),
+          ofd: cg ? cu!.fd / cg : null, ots: cg ? cu!.ts / cg : null,
+          oatt: cg ? cu!.attempts / cg : null, ory: cg ? cu!.rushYards / cg : null,
+          oays: cg ? cu!.ays / cg : null, owopr: cg ? cu!.wopr / cg : null,
+          og: cg || null,
           pts: r ? r.pts : null, games: r ? r.games : null,
           posRank: ownRank.get(key) ?? null,
           now,
