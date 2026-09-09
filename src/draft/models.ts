@@ -21,6 +21,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dataPath } from "../data/paths.js";
 import { loadArtifact } from "../model/projector.js";
+import { loadWeeklyArtifact } from "../weekly/projector.js";
 import { loadPriceModel } from "../model/price.js";
 
 export interface ModelSpec {
@@ -41,21 +42,31 @@ export interface ModelSpec {
 export const MODELS: ModelSpec[] = [
   {
     key: "projection", file: "projection-artifact.json", required: true,
-    // Measured by `ff evaluate-projection --seasons 2008-2025` (Phase 2b): the SHIPPED projector,
-    // the trainer re-invoked blind to each held-out season and fitted only on seasons BEFORE it,
-    // scored against two baselines computed by the same code path. R-squared of the shipped
-    // (trained) artifact 0.520 against carry-forward's 0.432, pooled over 14 held-out seasons and
-    // 6,805 player-seasons. The curve-only rung sits at 0.497.
-    nestedLift: 0.0880, claimedLift: null,
+    // Measured by `ff evaluate-projection --seasons 2008-2025`: the SHIPPED projector, the trainer
+    // re-invoked blind to each held-out season and fitted only on seasons BEFORE it, scored against
+    // two baselines computed by the same code path, pooled over 14 held-out seasons. R-squared of
+    // the trained artifact 0.542 against carry-forward's 0.432, with curve-only between them at
+    // 0.497. It was 0.520 (lift 0.0880) before Phase 2d admitted `depth_rank_sep1` and
+    // `contract_year`, and the whole of that move is at quarterback: QB R-squared 0.600 against
+    // curve-only's 0.479, an RMSE of 76.8 against 87.9.
+    nestedLift: 0.1100, claimedLift: null,
     what: "the projection ARTIFACT the board and the backtest both evaluate. It carries its OWN " +
       "curve -- window, monotone repair and ECR level weight selected per position by " +
       "forward-chaining inner CV -- plus named features with per-position coefficients and " +
       "p10/p50/p90 heads fitted over ranks 1-60. The TRAINED artifact ships: it passed the " +
-      "pre-registered P5 gate (RMSE 54.17 vs 55.54, pinball 12.31 vs 13.16, coverage 0.759 in " +
-      "[0.75, 0.85] with every rank band in [0.70, 0.90]) on the pooled 2015-2025 holdouts. Those " +
-      "were 54.32 / 12.39 / 0.764 before Phase 2c reconciled the surrogate keys; resolving identity " +
-      "correctly changes which history rows carry an age and which prior season a row joins to, and " +
-      "it moved every one of them in the right direction",
+      "pre-registered P5 gate on the pooled 2015-2025 holdouts at " +
+      "RMSE 52.79 vs curve-only 55.54, pinball 12.02 vs 13.16, coverage 0.760 in [0.75, 0.85] " +
+      "with every rank band in [0.70, 0.90]. THOSE ARE THE PHASE 2D NUMBERS and they are quoted " +
+      "here because two features were admitted in that phase and the registry still carried the " +
+      "figures from before them: `depth_rank_sep1` (the September depth-chart rank, the strongest " +
+      "candidate the screen has ever produced at rho -0.186) took RMSE 54.17 -> 52.79 and pinball " +
+      "12.31 -> 12.03, and `contract_year` took pinball 12.03 -> 12.02 with RMSE unchanged. Almost " +
+      "all of the gain is at QUARTERBACK -- 76.8 against 82.4 -- which is where a September depth " +
+      "chart says the most: a starter is a starter, a backup scores nothing, and a curve indexed on " +
+      "last year's finish cannot see a job change. `contract_year` clears the keep-rule by 0.01 of " +
+      "pinball and is recorded that way rather than dressed up; a rule with no effect-size floor " +
+      "will eventually admit noise. The 54.17 line was itself 54.32 / 12.39 / 0.764 before Phase 2c " +
+      "reconciled the surrogate keys",
     check: (j) => {
       // Loaded through the SHIPPED loader, not re-validated here. A second validator in the registry
       // would be a second opinion about the same contract, and the two would drift -- which is the
@@ -66,6 +77,83 @@ export const MODELS: ModelSpec[] = [
           return "no golden block -- nothing checks that the trainer and this evaluator agree, which " +
             "is the one failure a producer shipping its own validator cannot catch";
         }
+        return null;
+      } catch (e) { return (e as Error).message; }
+    },
+  },
+  // ------------------------------------------------------------------------------------------
+  // THE WEEKLY PAIR. Two artifacts, one shipped and one not, and the registry carries both because
+  // the interesting fact about the weekly track is WHICH ONE SHIPS AND WHY -- and that fact lived
+  // only in docs/validation.md, where nothing checks it against the files on disk.
+  //
+  // Both were put through the same pre-registered gate on the same 14 held-out seasons and 112,782
+  // player-weeks (`ff evaluate-weekly`), whose three clauses are:
+  //   (a) pooled CRPS beats the shipped `week()` baseline;
+  //   (b) coverage CONDITIONAL ON pts > 0 in [0.75, 0.85] pooled and [0.70, 0.90] per position;
+  //   (c) the predicted share of zero weeks is within 0.03 of actual, pooled and per position.
+  // Clause (b) is conditional on a real week because the clamp floor is exactly 0, p10 sits on the
+  // zero atom, an actual of 0 is therefore always inside [0, p90], and 41.9% of scored rows are
+  // zeros -- no improvement can bring unconditional coverage into band, only being worse about
+  // zeros can. The band was corrected BEFORE the run and against the previous run's numbers.
+  // ------------------------------------------------------------------------------------------
+  {
+    key: "weekly", file: "weekly-artifact-lineonly.json", required: true, nestedLift: null, claimedLift: null,
+    what: "THE SHIPPED weekly model, and it is the FLOOR: mean intercept exactly 1.0, so the " +
+      "projection IS the preseason season line per game. Its quantile intercepts are the empirical " +
+      "ratio quantiles on the training seasons -- a measured spread rather than an invented one. " +
+      "`lineupRecommend` and `ff scorecard`'s `weekly` kind both load THIS file, by one constant " +
+      "(SHIPPED_WEEKLY_ARTIFACT); they loaded different files until the final integration, so the " +
+      "season's forward record was accruing for a model nobody was served from. Measured pooled " +
+      "over 2012-2025, 112,782 player-weeks: RMSE 5.928, CRPS 2.671, coverage(>0) 0.825, against " +
+      "the legacy `week()` path's 5.927 / 2.664 / 0.804. It ships not because it is good but " +
+      "because it is what passed: every trained candidate so far has failed clause (c)",
+    check: (j) => {
+      try {
+        // Loaded through the SHIPPED loader, which is what refuses an artifact of the old schema:
+        // a weekly artifact declaring schema 1 stores a different coefficient shape, and scoring it
+        // with this evaluator would silently treat every unknown head as contributing zero.
+        const a = loadWeeklyArtifact(j);
+        if (a.zeroModel && a.zeroModel !== "quantile") {
+          return `zeroModel ${a.zeroModel} -- the SHIPPED slot must hold the floor, and the floor is ` +
+            "a quantile artifact. A two-part model here would put the failed challenger on the lineup path.";
+        }
+        if (!a.golden?.length) return "no golden block -- nothing checks that the trainer and this evaluator agree";
+        return null;
+      } catch (e) { return (e as Error).message; }
+    },
+  },
+  {
+    key: "weekly-challenger", file: "weekly-artifact.json", required: false, nestedLift: null, claimedLift: null,
+    what: "THE CHALLENGER, and it FAILED its gate by five thousandths. Two-part: a per-position " +
+      "logistic on P(pts <= 0) over the whole rostered population, then ridge for E[ratio | played] " +
+      "with pinball quantile heads at seven levels. On the same 14 folds it beats every baseline on " +
+      "every accuracy metric by a wide margin -- RMSE 5.268 against the floor's 5.928, CRPS 2.150 " +
+      "against 2.671, deep-18 lineup 72.31 points against the shipped path's 66.22, which is W4's " +
+      "+6.08 -- and it is not served, because clause (c) is a calibration clause and it misses: " +
+      "predicted zero-week share 0.384 against an actual 0.419, off by 0.035 against a tolerance of " +
+      "0.030, and outside per position at RB (0.031), WR (0.039) and TE (0.074). (a) PASS 2.1500 vs " +
+      "2.6642; (b) PASS 0.798 pooled with every position in band; (c) FAIL. The tolerance was NOT " +
+      "widened to 0.04 -- a tolerance chosen after seeing 0.035 is not a tolerance -- and the miss " +
+      "is a bounded next job: the first stage is a plain logistic and its intercept is the only " +
+      "thing between 0.384 and 0.419. The quantile-head candidate it replaced failed the same clause " +
+      "by 0.287, and for the opposite reason: a model whose p10 sits on the atom claims P(zero) = " +
+      "0.10 and CANNOT SAY MORE. `ff scorecard` snapshots this artifact under its own " +
+      "`weekly_challenger` kind from week 2 of 2026, so the live season accrues out-of-sample " +
+      "evidence for it -- the only evidence left, the historical folds having all been used",
+    check: (j) => {
+      try {
+        const a = loadWeeklyArtifact(j);
+        // Keyed on the THING, not on a name: the challenger slot exists to hold a model the floor is
+        // not. An artifact here with no zero stage is the floor wearing the challenger's filename,
+        // and every scorecard row it produced would duplicate the shipped one while looking like
+        // independent evidence.
+        if (a.zeroModel !== "two-part") {
+          return `zeroModel ${a.zeroModel ?? "quantile"} -- the challenger slot holds the model the ` +
+            "gate refused, and a quantile artifact here would snapshot the floor's own numbers as " +
+            "the challenger's for the rest of the season";
+        }
+        if (!a.quantileGrid?.length) return "a two-part artifact with no quantile grid -- the second stage published no ladder";
+        if (!a.golden?.length) return "no golden block -- nothing checks that the trainer and this evaluator agree";
         return null;
       } catch (e) { return (e as Error).message; }
     },
