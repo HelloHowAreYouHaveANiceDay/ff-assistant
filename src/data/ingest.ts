@@ -193,10 +193,64 @@ export async function ingestAll(dbPath?: string): Promise<void> {
   db.close();
 }
 
+// ==================================================================================================
+// THE RAW-ASSET REGISTRY.
+//
+// Every entry writes exactly ONE raw_* table and nothing else. That is the whole distinction from
+// the switch below: those sources feed the live board, so materializing one has to re-assemble it;
+// these are point-in-time history that models are FITTED on, and the board never reads them.
+//
+// One list, so `ff ingest-source --list` and docs/data-sources.md cannot disagree about what exists.
+// A source that is documented but unregistered reads exactly like one that is registered and broken.
+// ==================================================================================================
+export interface RawAsset {
+  /** The id `ff ingest-source <id>` takes. */
+  id: string;
+  /** The single raw table it writes. */
+  table: string;
+  /** One line: what the source is. Printed by `--list` and quoted in docs/data-sources.md. */
+  what: string;
+  /** Default season range when `--seasons` is omitted, or null for a season-less feed. */
+  defaultSeasons: [number, number] | null;
+  run(dbPath: string | undefined, seasons: number[]): Promise<number>;
+}
+
+export const RAW_ASSETS: RawAsset[] = [
+  {
+    id: "league-history",
+    table: "raw_league_season (+team_season, pick, matchup, division)",
+    what: "this league's own past seasons through the desktop app's ESPN session: format, auction prices, activity, finish, schedule",
+    defaultSeasons: [2018, new Date().getFullYear()],
+    async run(dbPath, seasons) {
+      const { ingestLeagueHistory } = await import("./leagueHistory.js");
+      const r = await ingestLeagueHistory({ dbPath, seasons });
+      return r.counts.picks;
+    },
+  },
+];
+
+const RAW_ONLY_ASSETS = new Set(RAW_ASSETS.map((a) => a.id));
+
+async function ingestRawOnly(dbPath: string | undefined, id: string, opts: { seasons?: number[] }): Promise<{ rows: number }> {
+  const asset = RAW_ASSETS.find((a) => a.id === id)!;
+  let seasons = opts.seasons ?? [];
+  if (!seasons.length && asset.defaultSeasons) {
+    const [lo, hi] = asset.defaultSeasons;
+    for (let y = lo; y <= hi; y++) seasons.push(y);
+  }
+  seasons = seasons.slice().sort((a, b) => a - b);
+  return { rows: await asset.run(dbPath, seasons) };
+}
+
 // Materialize ONE source (asset) + only its affected downstream: ECR feeds the projection curve, so
 // it re-projects then re-assembles; every other source feeds the board directly, so it just
 // re-assembles. This is the per-node "materialize" behind the pipeline DAG view.
-export async function ingestOne(dbPath: string | undefined, id: string): Promise<{ rows: number }> {
+export async function ingestOne(dbPath: string | undefined, id: string, opts: { seasons?: number[] } = {}): Promise<{ rows: number }> {
+  // RAW-ONLY ASSETS return before the shared tail below. They write a raw_* table and feed nothing
+  // the board is assembled from, so re-projecting and re-assembling afterwards would be a five-second
+  // no-op that also rewrites consumer tables for no reason. Registered here rather than in the switch
+  // because that switch's contract is "this source feeds the board".
+  if (RAW_ONLY_ASSETS.has(id)) return ingestRawOnly(dbPath, id, opts);
   const { ingestNews } = await import("./news.js");
   const { ingestAdvanced, ingestTradeValues, ingestWeekly, ingestSleeper, ingestOdds, ingestBorisTiers, ingestAdp, ingestMarketValue } = await import("./advanced.js");
   const { getConfig } = await import("../db/db.js");

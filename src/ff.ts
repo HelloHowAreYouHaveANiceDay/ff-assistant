@@ -90,6 +90,8 @@ async function main() {
       return cmdScrapeLeague(rest);
     case "ingest-source":
       return cmdIngestSource(rest);
+    case "ingest-raw":
+      return cmdIngestRaw(rest);
     case "sync-rosters":
       return cmdSyncRosters(rest);
     case "enter-draft":
@@ -2508,3 +2510,56 @@ main().catch((err) => {
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });
+
+// ==================================================================================================
+// RAW-LAYER INGEST. `ff ingest-raw <id> [--seasons 2018-2026]`, `ff ingest-raw --list`.
+//
+// Separate from `ingest-source` because these assets take a SEASON RANGE and write a raw_* table
+// without touching the board. `ff ingest-source <id>` still reaches them (the app's Data page calls
+// exactly that, with no arguments) and uses the asset's default range.
+// ==================================================================================================
+async function cmdIngestRaw(rest: string[]) {
+  const { RAW_ASSETS, ingestOne } = await import("./data/ingest.js");
+  // Positional scan that SKIPS a flag's value. `find(a => !a.startsWith("--"))` would happily read
+  // "2018-2026" as the asset id when --seasons comes first, and then report "unknown raw asset".
+  let id = "";
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i].startsWith("--")) { if (rest[i] !== "--list") i++; continue; }
+    id = rest[i]; break;
+  }
+  if (rest.includes("--list") || !id) {
+    console.log("raw assets:");
+    for (const a of RAW_ASSETS) {
+      const s = a.defaultSeasons ? `${a.defaultSeasons[0]}-${a.defaultSeasons[1]}` : "n/a";
+      console.log(`  ${a.id.padEnd(18)} -> ${a.table}\n      ${a.what}\n      default seasons: ${s}`);
+    }
+    if (!id) console.log("\nusage: ff ingest-raw <id> [--seasons 2018-2026] [--db path]");
+    return;
+  }
+  if (!RAW_ASSETS.some((a) => a.id === id)) {
+    console.error(`unknown raw asset: ${id} (have: ${RAW_ASSETS.map((a) => a.id).join(", ")})`);
+    process.exit(2);
+  }
+  const seasons: number[] = [];
+  const rangeArg = valueOf(rest, "--seasons");
+  if (rangeArg) {
+    const r = rangeArg.split("-").map(Number);
+    const [lo, hi] = [r[0], r[1] ?? r[0]];
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) { console.error(`bad --seasons ${rangeArg}`); process.exit(2); }
+    for (let y = lo; y <= hi; y++) seasons.push(y);
+  }
+  const t0 = Date.now();
+  const r = await ingestOne(valueOf(rest, "--db"), id, { seasons });
+  console.log(`raw asset ${id}: ${r.rows} rows (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  if (id === "league-history") {
+    const { openDb } = await import("./db/db.js");
+    const { currentLeagueId, readBackLeagueHistory } = await import("./data/leagueHistory.js");
+    const db = openDb(valueOf(rest, "--db"));
+    console.log("  season  avail  teams  picks  total$  games  champion");
+    for (const c of readBackLeagueHistory(db, currentLeagueId(db))) {
+      console.log(`  ${c.season}   ${c.available ? "yes" : "no "}  ${String(c.teams).padStart(5)}  ${String(c.picks).padStart(5)}  ` +
+        `${String(c.total).padStart(6)}  ${String(c.games).padStart(5)}  ${c.champion ?? "-"}`);
+    }
+    db.close();
+  }
+}

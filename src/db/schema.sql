@@ -634,3 +634,38 @@ CREATE TABLE IF NOT EXISTS fact_draft_pick (
 );
 CREATE INDEX IF NOT EXISTS idx_fdp_season ON fact_draft_pick (season);
 CREATE INDEX IF NOT EXISTS idx_fdp_sk ON fact_draft_pick (player_sk);
+
+-- ================= RAW LAYER: this league's own history, as ESPN gave it =================
+--
+-- Exactly what the adaptor returned, keyed by the source's own ids. No identity resolution: a pick
+-- carries the DISPLAY NAME ESPN printed and nothing else, because resolving it here would put the
+-- name-keyed join back into the raw layer, which is where docs/data-layers.md says it must not be.
+--
+-- `available = 0` is a first-class state, not an error. ESPN returns HTTP 404 for every season
+-- before this league existed; recording that fact with its note is what makes the fetch
+-- reproducible, and dropping the row would make a missing season indistinguishable from one nobody
+-- ever asked for.
+--
+-- `pick_no` is the ORDER THE SOURCE RETURNED, 1-based. It is part of the primary key because ESPN's
+-- auction feed has no per-pick id and the same player can legitimately appear twice in a season's
+-- pick list (drafted, dropped, re-drafted after a trade in some formats); keying on the name alone
+-- silently collapses those into one row.
+CREATE TABLE IF NOT EXISTS raw_league_season (
+  league_id TEXT NOT NULL, season INTEGER NOT NULL, available INTEGER NOT NULL, size INTEGER,
+  auction_budget REAL, ppr_points REAL, slot_counts_json TEXT, note TEXT, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (league_id, season));
+CREATE TABLE IF NOT EXISTS raw_league_team_season (
+  league_id TEXT NOT NULL, season INTEGER NOT NULL, team_id TEXT NOT NULL, name TEXT, owner_id TEXT, owner TEXT,
+  acquisitions INTEGER, faab_spent REAL, drops INTEGER, trades INTEGER, lineup_moves INTEGER,
+  acquisitions_by_week_json TEXT, wins INTEGER, losses INTEGER, points_for REAL, final_rank INTEGER, playoff_seed INTEGER,
+  fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, team_id));
+CREATE TABLE IF NOT EXISTS raw_league_pick (
+  league_id TEXT NOT NULL, season INTEGER NOT NULL, pick_no INTEGER NOT NULL, team_id TEXT, name TEXT NOT NULL,
+  pos TEXT, price REAL, owner_id TEXT, owner TEXT, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (league_id, season, pick_no));
+CREATE TABLE IF NOT EXISTS raw_league_matchup (
+  league_id TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL, home_id TEXT NOT NULL, away_id TEXT NOT NULL,
+  fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, week, home_id));
+CREATE TABLE IF NOT EXISTS raw_league_division (
+  league_id TEXT NOT NULL, season INTEGER NOT NULL, division_id TEXT NOT NULL, name TEXT, team_ids_json TEXT,
+  fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, division_id));
