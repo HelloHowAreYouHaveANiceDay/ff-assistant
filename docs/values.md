@@ -32,6 +32,31 @@ ESPN's pre-draft values are consensus, so overriding with OUR values is where an
 Until that exists, the ESPN fallback drafts a legal, competitive team -- it just has no edge and
 cannot target. Building the table is pre-draft prep, not code.
 
+## Dual eligibility (2026-09-09)
+
+`computeValues` takes an optional eligibility map (nameKey -> the positions ESPN says a man may be
+STARTED at, from `src/data/eligibility.ts`). A player named in it has his VOR taken as the
+**maximum over his eligible positions** of `points - that position's baseline`, and the row carries
+`valuePos` saying which one won. Without the map -- and for anyone not named in it -- the expression
+is the old single-position one, character for character.
+
+What eligibility deliberately does **not** do is move a man between the positional pools the
+baselines are read off. Moving him from the RB list to the WR list changes the replacement level of
+every other RB and every other WR, which is a far larger claim than "he may also be started at
+receiver", and nothing in ESPN's `eligibleSlots` supports it. Its one baseline effect is the FLEX
+fill: a dual man counts toward the flex share of the position that **claims** him (the one his value
+was taken at), because that is the slot he would actually occupy.
+
+Measured on the live 2026 pool: **zero** of the 523 players on the board are eligible at two or more
+of QB/RB/WR/TE, so the map is empty and `data/values.csv` is byte-identical. That is an identity by
+construction rather than a coincidence, which is why the tests come in pairs -- see
+`test/values.test.ts`, where marking one fixture receiver WR/TE moves his price and nobody else's
+position. The board carries an `Eligible` column and `player_value_position` records the position
+each value was taken at; both are **blank/absent** when eligibility has never been ingested, because
+a blank and a confident wrong answer look identical downstream and only one says so.
+
+Run `ff ingest-source espn-eligibility` to refresh it (read-only, through the desktop app's session).
+
 ## Note
 
 `readBoard()` already reads ESPN's per-player value off the draft board live (`ff dump-values`

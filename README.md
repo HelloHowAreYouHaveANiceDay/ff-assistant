@@ -169,8 +169,18 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   single-instance lock — two agents in one seat bid against each other.
 - **Raw sources:** `ingest-raw --list` shows every `raw_*` asset (this league's own 15 seasons of
   auction history, nflverse games with the Vegas line and weather, injuries, depth charts, snap
-  counts, the NFL draft, participation, contracts, the FFC ADP archive);
-  `ingest-raw <id> [--seasons 2013-2025]` materializes one. Inventory: `docs/data-sources.md`.
+  counts, the NFL draft, participation, contracts, the FFC ADP archive, ESPN's own per-player
+  eligible slots); `ingest-raw <id> [--seasons 2013-2025]` materializes one. Inventory:
+  `docs/data-sources.md`.
+- **Position eligibility is a SET, not a column** (`espn-eligibility`, `src/data/eligibility.ts`).
+  ESPN answers "which lineup slots may this man be started in" on every player object and the board
+  build used to discard it. It now reaches the value book (a dual-eligible player is worth the better
+  of his baselines, and `player_value_position` records which one), the lineup optimiser (an optimal
+  assignment, not a slot-order fill) and the roster-legality check (a dual man counts toward whichever
+  position is short, once). Measured on the 2026 board: **zero** players are eligible at two or more
+  of QB/RB/WR/TE, so every number is unchanged -- proved rather than asserted (`docs/validation.md`,
+  Track D). Careful with the slot ids: 3 (RB/WR), 5 (WR/TE), 7 (OP) and 23 (FLEX) are COMBO slots
+  every receiver in football carries, and reading one as a position marks the whole board dual.
 - **Feature extensions:** `build-features-ext --seasons 2013-2025` builds `feat_player_week_context`
   (opponent, line, rest, prior snap and route share, the Wednesday and Friday injury reports,
   team-mates out, depth rank) and `feat_player_season_ext` (draft capital, contract year, prior-season
