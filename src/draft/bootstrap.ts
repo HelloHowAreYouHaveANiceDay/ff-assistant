@@ -127,6 +127,42 @@ export function quantile(sorted: number[], u: number): number {
 export interface PoolPlayer { name: string; pos: string; team?: string; rank: number; projPerGame?: number }
 
 /**
+ * How hard the WITHIN-WEEK stage couples, as a multiple of the measured pairwise correlation.
+ *
+ * IT IS ABOVE 1, AND THAT IS NOT AN OVERSHOOT. The copula's parameter is a correlation between
+ * NORMALS, imposed on RANKS; the number being targeted is a PEARSON correlation between weekly
+ * fantasy scores, whose marginal is heavily right-skewed with an atom at exactly zero. Rank
+ * dependence maps to Pearson dependence with severe attenuation across marginals of that shape, so
+ * a copula rho of 0.35 delivers a same-week Pearson of about 0.20. Reading the two as the same
+ * quantity is what would look like a working calibration and be one off by 40%.
+ *
+ * CALIBRATED, not chosen. Swept against `scripts/verify-marginal.mjs`, which measures the same-week
+ * Pearson of the sampler's own output over 20,000 seasons on a stacked QB/WR/TE team and a K/DST
+ * pair, with the season-total correlation and the marginal quantile error captured from the SAME
+ * invocation:
+ *
+ *   multiple   QB-WR same-week   QB-TE   K-DST     (targets 0.35 / 0.22 / 0.22)
+ *   0.5              0.171       0.104   0.083
+ *   1.0              0.238       0.144   0.131
+ *   1.8              0.347       0.210   0.209     <- SHIPPED
+ *   2.0              0.376       0.226   0.229
+ *   3.0              0.435       0.259   0.330
+ *
+ * One scalar lands all three pairs inside their 0.05 tolerance, which is itself evidence that the
+ * attenuation is a property of the mapping rather than of any one pair. Season-total correlations
+ * are untouched by the stage (0.350 / 0.216 / 0.220 against the fitted 0.347 / 0.225 / 0.224) and
+ * the worst marginal quantile error is 0.60%. Re-run the sweep if the correlation model is refitted.
+ */
+export const WEEKLY_COUPLING_DEFAULT = 1.8;
+/** Read at CALL time, not at import time. A module-level constant reading the environment is fixed
+ *  the moment the module is first imported, which in ESM is before any caller own statements have
+ *  run -- so a sweep script setting the variable would sweep one value and report several. */
+export const weeklyCoupling = (): number => {
+  const v = Number(process.env.FF_WEEKLY_COUPLING);
+  return Number.isFinite(v) && v >= 0 ? v : WEEKLY_COUPLING_DEFAULT;
+};
+
+/**
  * How to reconcile the pool's level with our own projection, since the rank join keeps our ORDERING
  * but discards our MAGNITUDES.
  *
@@ -189,17 +225,23 @@ export function prepare(players: PoolPlayer[], outcomes: RankOutcomes, corr: Cor
       .sort((a, b) => a.total - b.total);
     pools.set(p, withTotals);
   }
-  const groups: { members: PoolPlayer[]; L: number[][] }[] = [];
+  const groups: { members: PoolPlayer[]; L: number[][]; Lw: number[][] }[] = [];
   const byTeam = new Map<string, PoolPlayer[]>();
   for (const p of players) {
     if (!p.team) continue;
     if (!byTeam.has(p.team)) byTeam.set(p.team, []);
     byTeam.get(p.team)!.push(p);
   }
+  const wk = weeklyCoupling();
   for (const [, members] of byTeam) {
     if (members.length < 2) continue;
     const M = members.map((a) => members.map((b) => pairCorr(corr, a.pos, b.pos)));
-    groups.push({ members, L: cholesky(M) });
+    // A SECOND factor, for the WITHIN-WEEK stage. Same pairwise structure, scaled: the season-level
+    // copula already delivers part of the same-week co-movement, so imposing the full measured
+    // correlation again inside the season would double-count it. See WEEKLY_COUPLING.
+    const Mw = members.map((a) => members.map((b) =>
+      (a === b ? 1 : pairCorr(corr, a.pos, b.pos) * wk)));
+    groups.push({ members, L: cholesky(M), Lw: cholesky(Mw) });
   }
   return { pools, groups, uncalibrated };
 }
@@ -238,6 +280,7 @@ export function sampleSeason(
   prepared: ReturnType<typeof prepare>,
   gauss: (p: PoolPlayer, i: number) => number,
   unif: (p: PoolPlayer) => number,
+  gaussWeek?: (p: PoolPlayer, week: number, i: number) => number,
 ): Map<PoolPlayer, Trajectory | null> {
   const u = new Map<PoolPlayer, number>();
   const coupled = new Set<PoolPlayer>();
@@ -258,7 +301,74 @@ export function sampleSeason(
     const uu = u.get(p) ?? 0.5;
     out.set(p, pool[Math.min(pool.length - 1, Math.max(0, Math.floor(uu * pool.length)))]);
   }
+  if (gaussWeek) coupleWithinWeek(prepared, out, gaussWeek);
   return out;
+}
+
+/**
+ * STAGE TWO: which WEEK each teammate has his big game in.
+ *
+ * THE GAP THIS CLOSES (defect D4). The +0.348 QB-WR correlation was measured on SAME-WEEK residuals.
+ * Phase 1 moved the draw from the week to the season -- correctly, because drawing weeks
+ * independently understated season-total spread by a factor of two -- and the copula went with it.
+ * So the sampler ended up coupling SEASON QUALITY, and the same-week figure fell from +0.348 to
+ * +0.107. Two teammates shared a good year but not the Sunday it happened on, and a fantasy week is
+ * decided on the Sunday.
+ *
+ * THE MECHANISM IS A PERMUTATION, and that is what makes it free of side effects. Each coupled
+ * player's drawn season is REARRANGED, not resampled: his own weekly scores are dealt out to weeks
+ * in the order of a correlated normal. So
+ *
+ *   - his weekly multiset is EXACTLY unchanged -- every score he had, he still has, once;
+ *   - his season total is EXACTLY unchanged -- it is the same numbers in a different order;
+ *   - his season-total DISTRIBUTION is exactly unchanged, because which season he drew did not move;
+ *
+ * and the only thing that changes is which week each teammate's big game lands in. Resampling from
+ * his own weeks instead -- the obvious alternative -- would preserve the weekly marginal and destroy
+ * the season one, averaging L draws back toward the mean and undoing Phase 1 entirely.
+ *
+ * ZERO WEEKS DO NOT MOVE. A trajectory's zeros are the weeks he did not appear, and their POSITIONS
+ * are the injury: a torn ACL is a run of zeros at the end of a season, not eight zeros scattered
+ * through it. Permuting only the weeks he played keeps that shape intact, and costs nothing in
+ * coupling -- a week he missed does not co-move with his quarterback.
+ */
+export function coupleWithinWeek(
+  prepared: ReturnType<typeof prepare>,
+  drawn: Map<PoolPlayer, Trajectory | null>,
+  gaussWeek: (p: PoolPlayer, week: number, i: number) => number,
+): void {
+  for (const g of prepared.groups) {
+    const trajs = g.members.map((m) => drawn.get(m) ?? null);
+    let L = 0;
+    for (const t of trajs) if (t) L = Math.max(L, t.weeks.length);
+    if (L < 2) continue;
+    // v[i][w] = member i's correlated normal for week w. Keyed per (member, week), never per group:
+    // keying it to the group would make a team's draws depend on that group's membership, so adding
+    // or removing one teammate would re-roll the whole stack and break the pairing.
+    const v: number[][] = g.members.map(() => new Array(L).fill(0));
+    for (let w = 0; w < L; w++) {
+      const z = g.members.map((m, i) => gaussWeek(m, w + 1, i));
+      for (let i = 0; i < g.members.length; i++) {
+        let s = 0;
+        for (let k = 0; k <= i; k++) s += g.Lw[i][k] * z[k];
+        v[i][w] = s;
+      }
+    }
+    for (let i = 0; i < g.members.length; i++) {
+      const t = trajs[i];
+      if (!t) continue;
+      const played: number[] = [];
+      for (let j = 0; j < t.weeks.length; j++) if (t.weeks[j] > 0) played.push(j);
+      if (played.length < 2) continue;
+      const values = played.map((j) => t.weeks[j]).sort((a, b) => b - a);   // his own scores, best first
+      const order = played.slice().sort((a, b) => v[i][b] - v[i][a]);        // his best weeks, by the copula
+      const weeks = t.weeks.slice();
+      for (let k = 0; k < order.length; k++) weeks[order[k]] = values[k];
+      // A NEW object: the pools are shared across trials and across fantasy teams, and mutating a
+      // trajectory in place would rewrite history for every other draw of it.
+      drawn.set(g.members[i], { weeks, total: t.total });
+    }
+  }
 }
 
 /**

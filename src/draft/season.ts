@@ -336,7 +336,11 @@ export function simulateSeasons(
     const seasonDraw = boot
       ? boot.map((b) => bootstrapSeason(b.pp, b.prep,
         (m, i) => drawGauss(seedNum, trial, 0, pid(m.name), PURPOSE.copulaA + i),
-        (m) => unitDraw(seedNum, trial, 0, pid(m.name), PURPOSE.season)))
+        (m) => unitDraw(seedNum, trial, 0, pid(m.name), PURPOSE.season),
+        // STAGE TWO, keyed by (trial, WEEK, player): which Sunday each teammate's big game lands on.
+        // Week 0 is the season draw above, so weeks 1..L cannot collide with it, and the key is per
+        // member rather than per group so a roster change does not re-roll a shared stack.
+        (m, week, i) => drawGauss(seedNum, trial, week, pid(m.name), PURPOSE.copulaB + i)))
       : null;
     // --- play the weeks --------------------------------------------------------------------------
     const wins = new Array(N).fill(0), pts = new Array(N).fill(0);
