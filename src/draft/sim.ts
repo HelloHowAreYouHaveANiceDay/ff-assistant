@@ -269,7 +269,13 @@ export function buildV3Config(
     // League-wide demand, which is what turns the streaming floor into a POSITIONAL REPLACEMENT
     // baseline inside the marginal (P30's defect). Without it V3 prices the first quarterback
     // against the waiver wire.
-    teams: lg.teams,
+    //
+    // THE BASELINE SENSITIVITY ARM, in the same shape as the two shading arms below it and for the
+    // same reason: a result that cannot be attributed to a term is not a result. `FF_V3_BASELINE=off`
+    // withholds league-wide demand, which is exactly the pre-2026-09-09 bidder -- every starting slot
+    // measured against the waiver wire. Running both arms is what separates "the baseline fix moved
+    // it" from "something else did", and it is the only way to say which half of V3 costs what.
+    teams: process.env.FF_V3_BASELINE === "off" ? undefined : lg.teams,
   };
 }
 
