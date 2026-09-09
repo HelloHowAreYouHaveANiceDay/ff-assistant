@@ -21,7 +21,9 @@ import { dataPath } from "../data/paths.js";
 import { nameKey } from "../draft/values.js";
 import type { VarianceModel } from "../draft/season.js";
 import type { DepthEntry } from "./handcuff.js";
-import { normalizeStatus, type AvailabilityMap, type GameRow, type Provenance } from "./copilot.js";
+import { lineupNameKey, normalizeStatus, type AvailabilityMap, type GameRow, type Provenance } from "./copilot.js";
+import { loadWeeklyRows } from "../weekly/features.js";
+import { loadWeeklyArtifact, projectWeekly } from "../weekly/projector.js";
 
 const open = (dbPath?: string) => new Database(dbPath ?? dataPath("ff.db"), { readonly: true });
 
@@ -182,27 +184,113 @@ export function loadFaabBudget(dbPath?: string): number {
 }
 
 /**
- * WHICH WEEK IS IT? -- and the honest answer is that the store usually does not know.
+ * TODAY, as a LOCAL calendar date, `YYYY-MM-DD`.
  *
- * There is no kickoff date anywhere in the schema: `game` carries season/week/team/opponent/lines
- * and no timestamp, and `matchup` (which does carry a week) is only populated once something has
- * fetched the live league. Guessing the week from the wall clock would be a hardcoded NFL calendar
- * wearing a derivation's clothes -- right by coincidence in September and silently wrong after any
- * flex or bye shuffle, which is exactly the defect `playoffTeams: 7` was.
- *
- * So this returns the week WITH ITS SOURCE, and a caller that gets `source: "default"` is being told
- * plainly that nobody knew. `ff copilot lineup` prints it; the MCP tool returns it; the tool
- * description tells the Assistant to pass `week` explicitly. An unknown week is a fine thing to
- * report and a terrible thing to hide.
+ * Deliberately NOT `toISOString().slice(0, 10)`, which is the UTC date. Every kickoff date in
+ * `raw_nfl_game.gameday` is a US calendar date, and this machine runs west of Greenwich: any
+ * evening after 8pm ET, the UTC date is already TOMORROW. That is not a rounding nuisance -- it
+ * moves the answer across the boundary this function exists to find. A Monday-night reader in
+ * week 1 would be told it is week 2 and shown next week's lineup. The weekly track hit the same
+ * bug and it would have skipped week 1 outright.
  */
-export function currentWeek(dbPath?: string): { week: number; source: string } {
+export function localToday(now: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+}
+
+/**
+ * WHICH WEEK IS IT?
+ *
+ * The data track put the answer in the store. `raw_nfl_game` carries a `gameday` per game for every
+ * season including the live one, so the week is now DERIVED rather than defaulted:
+ *
+ *   week w is current from the day AFTER week w-1's last kickoff through week w's last kickoff,
+ *   and before week 1's first kickoff the current week is 1.
+ *
+ * Equivalently: the lowest week whose last kickoff has not yet passed. That rule follows the real
+ * schedule rather than a calendar arithmetic of "season start plus seven days", so a flex, a bye
+ * shuffle, or an international game moving a week's Monday does not silently shift it -- which is
+ * the defect the older note in this spot was rightly afraid of. It is a derivation, not a guess.
+ *
+ * The comparison is on LOCAL dates (see `localToday`). Doing it in UTC moves every evening after
+ * 8pm ET onto the next calendar day, and on the last kickoff day of a week that hands back the
+ * NEXT week -- the single failure this function must not have.
+ *
+ * When `raw_nfl_game` has no rows for the configured season -- a store that has never ingested the
+ * schedule -- the old behaviour is kept exactly: week 1, `source: "default"`, said out loud. An
+ * unknown week is a fine thing to report and a terrible thing to hide.
+ */
+export function currentWeek(dbPath?: string, now: Date = new Date()): { week: number; source: string } {
   const db = open(dbPath);
   try {
     const cfg = configOf(db);
+    const weeks = db.prepare(
+      `SELECT week, max(gameday) last_kick, min(gameday) first_kick
+         FROM raw_nfl_game
+        WHERE season = ? AND game_type = 'REG' AND week IS NOT NULL AND gameday IS NOT NULL
+        GROUP BY week ORDER BY week`,
+    ).all(cfg.season) as { week: number; last_kick: string; first_kick: string }[];
+
+    if (weeks.length) {
+      const today = localToday(now);
+      const cur = weeks.find((w) => today <= w.last_kick) ?? weeks[weeks.length - 1];
+      const done = today > cur.last_kick;
+      return {
+        week: Number(cur.week),
+        source: `schedule -- raw_nfl_game for season ${cfg.season}: today is ${today} (local), and week ${cur.week} runs through its last kickoff on ${cur.last_kick}` +
+          (done ? "; every REG week has been played, so this is the last one" : ""),
+      };
+    }
+
     const row = db.prepare("SELECT max(week) w FROM matchup").get() as { w: number | null } | undefined;
     if (row?.w != null) return { week: Number(row.w), source: "matchup table (last fetched live matchup)" };
-    return { week: 1, source: `default -- nothing in the store records the current week (no kickoff dates in \`game\`, no rows in \`matchup\`); season ${cfg.season}, pass --week to be sure` };
+    return { week: 1, source: `default -- nothing in the store records the current week (no rows in \`raw_nfl_game\` for season ${cfg.season}, no rows in \`matchup\`); pass --week to be sure` };
   } catch {
     return { week: 1, source: "default -- the store could not be read" };
+  } finally { db.close(); }
+}
+
+/**
+ * THE WEEKLY PROJECTION FOR ONE WEEK -- the store side of the lineup seam.
+ *
+ * `lineupRecommend` is pure and will not read a file or a database, so this loads the artifact and
+ * the week's `feat_player_week_model` rows, runs the projector, and hands back a plain map keyed the
+ * way the roster can be looked up.
+ *
+ * THE ARTIFACT IS THE SEASON-LINE-ONLY ONE, on purpose. `docs/weekly.md` records the pre-registered
+ * gate the trained artifact FAILED on coverage (0.868 against a band of [0.75, 0.85]), so the floor
+ * artifact -- every coefficient zero, mean intercept 1.0 -- is what ships. Its projection IS the
+ * season line per game, which is why routing the lineup through this seam changes no number today.
+ * That is the intended state: the seam is live and the model behind it is the honest floor, and the
+ * day a trained artifact passes its gate the lineup improves by swapping one file.
+ *
+ * Returns null when there is nothing to serve -- no artifact on disk, no feature rows for that week.
+ * Null means "fall back to the season line and SAY SO", never "project zero".
+ */
+export function loadWeeklyProjection(
+  season: number, week: number, dbPath?: string, artifactPath?: string,
+): Map<string, number> | null {
+  let artifact;
+  try {
+    const raw = readFileSync(artifactPath ?? dataPath("weekly-artifact-lineonly.json"), "utf8");
+    artifact = loadWeeklyArtifact(JSON.parse(raw));
+  } catch { return null; }
+
+  const db = open(dbPath);
+  try {
+    const rows = loadWeeklyRows(db, season, week);
+    if (!rows.length) return null;
+    const proj = projectWeekly({ artifact, rows });
+    if (!proj.length) return null;
+    const out = new Map<string, number>();
+    // Highest mean wins a name collision: two feature rows can normalize to one key (a father/son
+    // pair, a duplicated board entry), and taking the first would be an arbitrary choice recorded
+    // as a projection.
+    for (const p of proj) {
+      const k = lineupNameKey(p.name);
+      const prev = out.get(k);
+      if (prev == null || p.mean > prev) out.set(k, p.mean);
+    }
+    return out;
   } finally { db.close(); }
 }
