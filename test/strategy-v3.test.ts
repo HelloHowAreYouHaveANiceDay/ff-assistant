@@ -16,6 +16,7 @@ import {
   lineupMarginal, priceFromPath, starterBaselines, type LmOpts, type LmPlayer,
 } from "../src/draft/lineupMarginal.js";
 import { baselines, resolveValueLeague } from "../src/draft/values.js";
+import { ourSdFor, ourSdPrivateFor } from "../src/draft/sim.js";
 import { expectedMaxNormal, makeV3Strategy, openSlotList, probit, shadingFactor } from "../src/draft/strategyV3.js";
 import type { DraftState, PlayerRef } from "../src/draft/strategy.js";
 
@@ -235,6 +236,25 @@ test("shading: zero dispersion is exactly no shading, and both inputs move it th
   assert.ok(shadingFactor(0.5, 0.5, 16) < shadingFactor(0.5, 0.5, 3));
   assert.ok(shadingFactor(0.9, 0.9, 16) < shadingFactor(0.2, 0.2, 16));
   assert.ok(shadingFactor(0.5, 0.5, 16) > 0 && shadingFactor(0.5, 0.5, 16) < 1);
+});
+
+test("only the PRIVATE part of our uncertainty shades, and in this harness that part is zero", () => {
+  // The claim is arithmetic, not a preference: `OUR_SD_BAND` was measured by
+  // `scripts/market-noise.mjs` as the CONSENSUS dispersion, and `--market ecr` hands the room the
+  // same table. Our spread minus the room's shared spread is therefore identically zero, and
+  // combining the two in quadrature counted one quantity twice.
+  for (const rank of [1, 6, 7, 12, 24, 40, 60, 200]) {
+    assert.equal(ourSdPrivateFor(rank), 0, `rank ${rank} produced a private component of ${ourSdPrivateFor(rank)}`);
+    assert.ok(ourSdFor(rank) > 0, `rank ${rank} has no measured uncertainty at all -- the subtraction is vacuous`);
+  }
+  assert.equal(ourSdPrivateFor(null), 0);
+  // FAULT INJECTION, and it is the half that matters: a zero that cannot become non-zero is a dead
+  // lever wearing a measured null's clothes. Diverge the two bands and the term must come alive.
+  const priv = (ours: number, shared: number) => Math.max(0, ours - shared);
+  assert.ok(priv(0.9, 0.5) > 0.39, "the private component cannot rise when our spread exceeds the room's");
+  assert.equal(priv(0.4, 0.9), 0, "a view TIGHTER than the room's carries no curse of its own, and must floor at zero");
+  // And it must reach the shading: a positive private component shades harder than none.
+  assert.ok(shadingFactor(priv(0.9, 0.5), 0.5, 16) < shadingFactor(0, 0.5, 16));
 });
 
 test("probit and E[max] are the standard values, not something that merely increases", () => {
