@@ -1,5 +1,67 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## TRACK B: the in-season decisions against what the room actually did (2026-09-09)
+>
+> Branch `redesign/inseason-backtest` off `redesign/final` (`75da5b0`). The in-season surface had
+> never been scored against anything, because the store held no per-week roster, no lineup and no
+> transaction. It now holds all three, fetched read-only through the app's ESPN session. Full
+> writeup: **`docs/in-season-backtest.md`**.
+>
+> | | prediction | outcome |
+> |---|---|---|
+> | P36 | managers leave >= 8 pts/week on the bench against hindsight | **HELD** -- 12.48 over 1,896 team-weeks, 2018-2025 (started 89.64, hindsight optimum 102.12) |
+> | P37 | our lineup beats the median manager's realised lineup in >= 60% of team-weeks under the challenger | **FAILED** -- 46.8% (floor 42.1%). Our lineup SCORES LESS than the room's: -1.39 pts/wk under the challenger, season bootstrap [-2.29, -0.57]; -4.45 under the floor, [-5.40, -3.78] |
+> | P38 | our recommended adds outscore the room's per FAAB dollar, 2018-2025 | **FAILED** under the floor (18.71 vs 20.61), **HELD** under the challenger (22.43 vs 20.61; 7.17 vs 6.83 realised ROS pts/game; ahead in 7 seasons of 8) |
+> | P39 | a promoted RB backup posts >= 60% of the departed starter's trailing-4 that week | **HELD** -- 159%, he outscores the man he replaced (n=9). Registered direction for WR (41%) and TE (27%) also held |
+>
+> ### P37 is the result, and it is not a measurement defect
+>
+> "The tool is worse than the room" is the shape of claim that usually is one, so the optimiser was
+> given a positive control before the number was written down: our lineup carries the higher
+> PROJECTED total in 88.9% of team-weeks with a further 8.3% exact ties (challenger 80.2% + 17.7%).
+> It is the argmax of exactly that quantity, so ~100% is the only acceptable answer, and the residual
+> is almost entirely the 119 starts where a manager started a man our point-in-time block calls
+> unavailable -- in his total, not in our candidate set. **The rule is connected. The projection is
+> what loses.** The mechanism is visible: our lineups start a player who scores exactly zero 6.4% of
+> the time (challenger 4.4%) against the managers' 3.5%. Real managers avoid non-playing players
+> better than a Wednesday injury block does; that is an information gap, not an optimisation gap. The
+> loss survives dropping every team-week with a missing projection (722 remain, -3.65 / -0.67) and
+> dropping 2025, whose injury block is empty (-4.65 / -1.61).
+>
+> ### The challenger beats the floor on BOTH decisions -- and that is not a licence to ship it
+>
+> The trained weekly artifact halves the lineup deficit and is the only one of the two that beats the
+> room on waivers. That is the first evidence in this repo of it doing useful work. It is still not
+> evidence for shipping it: the gate it failed (`docs/weekly.md`) was about COVERAGE, and these are
+> point estimates on decisions. It argues for re-running that gate, not for skipping it.
+>
+> ### Two wrong numbers, both caught by a rate that was printed rather than assumed
+>
+> The waiver backtest first scored the room's adds against week w's own free-agent pool and matched
+> **3.9%** of them -- a join defect, not a fact about the room: an add executed inside scoring period
+> w is already on that week's roster snapshot. Against week w-1's pool the match rate is 87.3%. The
+> promotion backtest first required exactly one rank-1 depth-chart player and returned **zero wide
+> receivers across seven seasons** -- a property of the filter, since a team fields two or three.
+> Both nulls read exactly like measurements. 34 promotion events became 67 once fixed.
+>
+> ### The handcuff prior was challenged from a new direction and STANDS
+>
+> `handcuff.ts`'s 0.922*backup + 0.402*lead was fitted by inferring "the lead is out" from the lead's
+> missing week. 67 events built instead from the PUBLISHED depth chart (rank 2 -> rank 1 with the
+> displaced starter designated OUT) corroborate the thesis strongly for running backs. The
+> replacement model specified for this track -- starter's trailing-4, backup's prior snap share,
+> team's implied total -- is WORSE nested-by-season out of sample (RMSE 7.30 vs 6.78 pooled; 3.27 vs
+> 1.50 on RB), so nothing changed. The gate is fault-injected in both directions.
+>
+> ### The tripwire, unchanged
+>
+> ```
+> npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
+>   CHAMPIONSHIPS: 38.1%  (random 6.3%)  |  playoffs: 96%
+> ```
+> Per-season identical to the line recorded below, to the percentage point. Nothing in this track
+> touches the draft.
+
 > ## FINAL INTEGRATION: the two siblings merged, the leftovers closed, the new board arbitrated (2026-09-09)
 >
 > `redesign/final` = `redesign/phase-3-decision-layer` + `redesign/phase-2d-weekly-features`, 74
