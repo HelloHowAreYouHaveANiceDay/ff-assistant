@@ -66,7 +66,32 @@ function realWeekScore(roster: { name: string; pos: string; proj: number }[], we
   return total;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14, avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0): BacktestResult {
+/**
+ * THE MARKET ARBITER, as an option rather than an assumption.
+ *
+ * The default market is "our own projection, times one shared lognormal error of sd 0.30" -- a
+ * number that was asserted and never measured, and a SINGLE draw, so every bot in the room holds an
+ * identical view and the auction clears at almost exactly the book. Neither is what a real room
+ * looks like.
+ *
+ * `--market ecr` replaces both halves. `proj` carries the REAL preseason consensus projection --
+ * the point-in-time curve read at each player's actual FantasyPros positional rank, so rookies are
+ * in the pool with a consensus rank instead of being absent for want of a prior season -- and
+ * `sdByName` carries the market's MEASURED error at that player's rank band rather than one
+ * constant (scripts/market-noise.mjs: 0.46 at ranks 1-6 rising to 1.21 past 60). `idioSd` then gives
+ * each bot an independent view on top of the shared one, which is the half no amount of tuning the
+ * shared sd can produce.
+ */
+export interface MarketModel {
+  /** name -> the market's projection. Absent names fall back to our own projection for that player. */
+  proj?: Map<string, number>;
+  /** name -> the SHARED log-sd for that player. Absent names use the scalar marketSd. */
+  sdByName?: Map<string, number>;
+  /** Per-bot, per-player independent log-sd. 0 = the old behaviour, one view for the whole room. */
+  idioSd?: number;
+}
+
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14, avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}): BacktestResult {
   const REG_WEEKS = Array.from({ length: regWeeks }, (_, i) => i + 1); // fantasy regular-season weeks
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
@@ -75,7 +100,18 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   // on OUR projection = truth x (1 + noise, sd ourSd). If ours is tighter we spot mis-priced players
   // and win value. Everyone SCORES by the real weekly truth; lineups are set by the market view (so
   // this isolates the VALUE edge from any lineup-setting skill).
-  const projMarket: PointsRow[] = seasonPoints.map((p) => ({ ...p, points: Math.max(0, p.points * (1 + gauss(rngM) * marketSd)) }));
+  // THE MARKET'S VIEW. Two forms, and the difference is the whole point of `--market ecr`:
+  //   default  our own projection times (1 + e), e ~ N(0, marketSd) -- one shared draw
+  //   ecr      the real consensus projection times exp(e), e ~ N(0, the MEASURED sd at his rank
+  //            band), median-preserving so the market is not biased up or down by its own error
+  const projMarket: PointsRow[] = seasonPoints.map((p) => {
+    const base = market.proj?.get(p.name) ?? p.points;
+    if (!market.proj && !market.sdByName) {
+      return { ...p, points: Math.max(0, p.points * (1 + gauss(rngM) * marketSd)) };
+    }
+    const sd = market.sdByName?.get(p.name) ?? marketSd;
+    return { ...p, points: Math.max(0, base * Math.exp(gauss(rngM) * sd - 0.5 * sd * sd)) };
+  });
   const projUs = new Map(seasonPoints.map((p) => [p.name, Math.max(0, p.points * (1 + gauss(rngU) * us))]));
   const projMap = new Map(projMarket.map((p) => [p.name, p.points]));
   // OUR values. Optional injury lever: discount by prior-season availability (avail = games/regWeeks),
@@ -90,7 +126,7 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
     const a = injuryLever ? (avail.get(v.name) ?? 1) : 1; // unknown players (e.g. rookies) => assume healthy
     return [v.name, Math.max(1, v.value * (1 - injuryLever * (1 - a)))] as [string, number];
   }));
-  const picks = draftField(projMarket, useValues, cfg, seed, lg, { drainNom, greedyNom, botBook, homogeneous });
+  const picks = draftField(projMarket, useValues, cfg, seed, lg, { drainNom, greedyNom, botBook, homogeneous, botIdioSd: market.idioSd });
   const rosters: { name: string; pos: string; proj: number }[][] = Array.from({ length: lg.teams }, () => []);
   for (const p of picks) rosters[p.team].push({ name: p.name, pos: p.pos, proj: projMap.get(p.name) ?? 0 });
 

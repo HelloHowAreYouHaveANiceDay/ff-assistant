@@ -48,6 +48,7 @@ data/mock-*.log
 data/auto-draft.lock
 data/history-*.bak.csv
 data/trials/
+data/trials2b/
 data/managers.*.bak.json
 data/pos-sweep.txt
 

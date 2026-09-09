@@ -46,6 +46,22 @@ export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile
    *  so this is the honest null field, and any conclusion that survives both is not relying on
    *  opponent identities we cannot actually predict. */
   homogeneous?: boolean;
+  /**
+   * PER-BOT INDEPENDENT VIEW, as a log-sd on each bot's own bid.
+   *
+   * Without it every bot in the room prices from ONE book, so the field agrees about every player by
+   * construction and a second-price auction clears within a dollar of the book almost every time.
+   * Real rooms disagree, and the disagreement is what makes a nomination worth timing and a bargain
+   * worth waiting for. Drawn per (bidder, player), median-preserving.
+   *
+   * NOT MEASURED DIRECTLY, and that is stated rather than buried: outcomes can only see the room's
+   * SHARED error, so nothing in the historical record isolates how far two bidders' private views
+   * diverge. It is BOUNDED above by the price model's leave-one-season-out residual dispersion
+   * (0.43-0.61 in log dollars, scripts/price-loso.mjs) and set well below it, because a price
+   * residual also contains roster need, budget state and auction noise -- all of which this
+   * simulator already models separately and would otherwise count twice.
+   */
+  botIdioSd?: number;
 }
 
 /** Steepness of the rank-price curve. CALIBRATED against this room's real drafts rather than
@@ -321,6 +337,13 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
         const base = trueVal.get(name) ?? 1;
         const rank = studRank.get(name) ?? 999;
         max = Math.min(bidders[ti]!(base, pos, rank, t.spentPos, rng), aff); // real-manager bid model
+      }
+      // The bot's OWN view, on top of whichever book it priced from. Applied here rather than inside
+      // each book so the three books are perturbed identically and a comparison between them is a
+      // comparison of the books.
+      if (!t.us && opts.botIdioSd) {
+        const s = opts.botIdioSd;
+        max = Math.min(Math.max(1, Math.round(max * Math.exp(gauss(rng) * s - 0.5 * s * s))), aff);
       }
       if (max > bestMax) { secondMax = bestMax; bestTeam = ti; bestMax = max; }
       else if (max > secondMax) secondMax = max;

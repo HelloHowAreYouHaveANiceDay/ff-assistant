@@ -1642,9 +1642,113 @@ async function cmdBacktest(rest: string[]) {
     console.log(`          so this arm measures the SHAPE half of the conditional curve only.`);
   }
 
+  // ================================================================================================
+  // `--market ecr`: THE MARKET DRAFTS ON THE REAL PRESEASON CONSENSUS.
+  //
+  // Every backtest until now has had the room draft on OUR OWN projection plus one shared error of
+  // an asserted sd 0.30. Three things are wrong with that and all three flatter us:
+  //
+  //   - the market's opinion is our opinion, so our "edge" is an edge over a blurred copy of
+  //     ourselves rather than over a room reading FantasyPros;
+  //   - the pool is last season's players, so a rookie the market ranks RB8 is not in the draft at
+  //     all -- and a rookie the room pays $40 for is exactly the kind of player a value edge is
+  //     supposed to find;
+  //   - one shared draw means every bot holds an identical view, so the auction clears within a
+  //     dollar of the book and there are no bargains to find.
+  //
+  // Under `--market ecr` the market's projection is the point-in-time CURVE read at each player's
+  // real preseason ECR positional rank (`ranking_history`, latest August / first-week-September
+  // scrape), the shared error is the MEASURED dispersion at his rank band rather than one constant,
+  // and each bot draws an independent view on top. Our book is the projector as-of preseason with a
+  // per-season artifact blind to that season.
+  //
+  // IT ONLY RUNS 2020-2025, because that is the whole FantasyPros archive. Five scored seasons is a
+  // short window and it is said plainly rather than left for the reader to work out.
+  // ================================================================================================
+  //
+  // A METHODOLOGICAL WARNING ABOUT THE SHARED SD, stated here because it changes how the headline
+  // should be read. `scripts/market-noise.mjs` measures the CONSENSUS's realised error against
+  // outcomes (log-sd 0.46 at ranks 1-6 rising to 1.21 past 60), and those are the values this arm
+  // uses by default. But the consensus projection ALREADY CONTAINS that error -- it is a projection,
+  // not the truth -- so multiplying it by a fresh draw of the same size gives the market roughly
+  // twice the variance it really has, while our own book carries no added noise at all. That
+  // asymmetry inflates our measured edge, and the size of the inflation is not small.
+  //
+  // `--market-noise 0` is therefore not a degenerate case but the OTHER honest reading: the room
+  // drafts on the consensus as published, and all the disagreement lives in the per-bot term. Both
+  // numbers are reported in docs/validation.md and the truth is between them.
+  const marketMode = valueOf(rest, "--market") === "ecr" ? "ecr" : "actuals";
+  const marketNoiseGiven = valueOf(rest, "--market-noise") != null;
+  const marketProjByYear = new Map<number, Map<string, number>>();   // see the warning above
+  const marketSdByYear = new Map<number, Map<string, number>>();
+  const ourEcrProjByYear = new Map<number, Map<string, { pos: string; points: number }>>();
+  // The MEASURED shared market error, log-sd by ECR rank band -- scripts/market-noise.mjs over
+  // 2020-2025, 2,851 scored player-seasons. These are FLOORS: a ranked player who never posted a
+  // season is dropped rather than scored as a zero, which can only bias the dispersion down.
+  const MARKET_SD_BAND: [number, number][] = [[6, 0.459], [12, 0.448], [24, 0.616], [40, 0.814], [60, 1.045], [Infinity, 1.214]];
+  const bandSd = (rank: number | null) => (rank == null ? 1.214 : (MARKET_SD_BAND.find(([hi]) => rank <= hi) ?? MARKET_SD_BAND[5])[1]);
+  // The per-bot independent view. Bounded above by the price model's LOSO residual sds (0.43-0.61)
+  // and set below them; see DraftFieldOpts.botIdioSd. `--bot-noise` overrides.
+  const botIdioSd = Number(valueOf(rest, "--bot-noise") ?? 0.20);
+  if (marketMode === "ecr") {
+    if (!noLookahead) throw new Error("--market ecr is only meaningful with --no-lookahead");
+    const { loadArtifact } = await import("./model/projector.js");
+    const { buildCurveOnlyArtifact } = await import("./model/build.js");
+    const { loadFeatureRows, boardProjection } = await import("./model/features.js");
+    const { projectSeason } = await import("./model/projector.js");
+    const { readFileSync: rf2, existsSync: ex2 } = await import("node:fs");
+    const artDir2 = valueOf(rest, "--artifact-dir") ?? "data/fold-artifacts-2b";
+    const db3 = openDb(valueOf(rest, "--db"));
+    const skipped: number[] = [];
+    for (const yr of [...pts.keys()].sort()) {
+      const p = `${artDir2}/artifact-${yr}.json`;
+      if (!ex2(p)) { skipped.push(yr); continue; }
+      const ours = loadArtifact(JSON.parse(rf2(p, "utf8")));
+      if (ours.holdoutSeason !== yr) {
+        throw new Error(`${p} declares holdoutSeason ${ours.holdoutSeason} but is being used for ${yr}`);
+      }
+      const nRanked = (db3.prepare("SELECT COUNT(*) c FROM feat_player_season WHERE season = ? AND ecr_pos_rank IS NOT NULL").get(yr) as { c: number }).c;
+      if (nRanked < 100) { skipped.push(yr); continue; }       // no archive for this season
+      // THE MARKET's book: the curve-only artifact, point-in-time, read at the real ECR rank.
+      const { artifact: curveArt } = buildCurveOnlyArtifact({
+        dbPath: valueOf(rest, "--db"), from: 1999, to: 2025, base: "curve_value_ecr",
+        holdoutSeason: yr, pointInTime: true,
+      });
+      const mFeat = loadFeatureRows(db3, { season: yr, rankBasis: "ecr", base: "curve_value_ecr" });
+      const mRows = projectSeason({ season: yr, asOf: `${yr}-09-01`, artifact: curveArt, features: mFeat });
+      marketProjByYear.set(yr, new Map(mRows.map((r) => [r.name, r.mean])));
+      // An explicit --market-noise overrides the measured band table with one scalar for everybody,
+      // which is what makes `--market-noise 0` (the room drafts on the consensus as published) a
+      // reachable arm rather than an argument.
+      if (!marketNoiseGiven) marketSdByYear.set(yr, new Map(mFeat.filter((f) => f.base != null).map((f) => [f.name, bandSd(f.rank)])));
+      // OUR book: the same preseason moment, our artifact, consensus-else-prior rank.
+      ourEcrProjByYear.set(yr, new Map(boardProjection(db3, yr, ours).map((r) => [r.name, { pos: r.pos, points: r.mean }])));
+    }
+    db3.close();
+    console.log(`  --market ecr: the room drafts on the REAL preseason consensus (ranking_history),`);
+    console.log(`    per-player shared error at the MEASURED dispersion for his rank band (0.46 at 1-6`);
+    console.log(`    to 1.21 past 60), plus an independent per-bot view of log-sd ${botIdioSd}.`);
+    console.log(`    our book: per-season artifacts from ${artDir2}, each blind to its own season`);
+    console.log(`    usable in ${marketProjByYear.size}/${pts.size} seasons; skipped ${skipped.join(",") || "none"}`);
+    console.log(`    NOTE: the FantasyPros archive begins in 2020, so this arm can only ever cover`);
+    console.log(`          2020-2025. It is a SHORT WINDOW and every number from it should be read as one.`);
+  }
+
   for (const yr of seasons) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
     let proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
+    if (marketMode === "ecr") {
+      const mp = marketProjByYear.get(yr), op = ourEcrProjByYear.get(yr);
+      if (!mp || !op) continue;                      // no consensus for this season -> not a season this arm can run
+      // THE POOL IS THE UNION of everyone the consensus ranks and everyone who scored last season,
+      // valued by OUR book. Restricting it to last season's players would delete every rookie --
+      // and the rookies are the players the room most often misprices, which is the whole point.
+      const pool = new Map<string, { name: string; pos: string; points: number }>();
+      for (const r of proj) pool.set(r.name, { ...r, points: op.get(r.name)?.points ?? r.points });
+      for (const [name, v] of op) if (!pool.has(name) && v.pos) pool.set(name, { name, pos: v.pos, points: v.points });
+      proj = [...pool.values()];
+      void mp;
+    }
     if (projMode === "artifact") {
       const m = projByYear.get(yr);
       if (!m) continue;                              // no usable curve -> not a season this arm can run
@@ -1681,7 +1785,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever, botBook, homogeneous, divisions); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a
@@ -1692,8 +1796,8 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
-  console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}`);
+  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(measured band sd, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   if (dumpPath) {
     writeDump(dumpPath, ["season", "seed", "champ", "playoffs", "wins", "regPoints"].join("\t") + "\n" + dumpRows.join("\n") + "\n", "utf8");
