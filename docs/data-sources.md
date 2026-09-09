@@ -351,6 +351,11 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
 - **As-of.** `meta.end_date` -- the last day of the draft window the average was taken over. Measured
   examples: PPR 2024 is `2024-08-31..2024-09-01` over 1,371 drafts; PPR 2026 is `2026-09-01..2026-09-08`
   over 5,144. This is a genuine as-of and it is close to, but not the same as, the September 1 anchor.
+- **TWO ARCHIVES ARE BACK-DATED, and using them at their own season's anchor is leakage.** Measured
+  after ingesting all 60 season/format pairs: **`standard` 2008 and `standard` 2009 are both stamped
+  `2010-06-20`** -- a window that closed after both of those seasons had been played. Every other
+  pair is stamped in its own late August or early September. A test asserts exactly those two and no
+  others, so a third appearing is a failure rather than a silent leak.
 - **THE `teams` PARAMETER IS IGNORED. Measured, not assumed.** Requesting `teams=10` and `teams=14`
   for PPR 2024 returns **byte-identical player lists** (205 players, same `adp`, same `times_drafted`
   for every one), and **both responses' own `meta.teams` says `12`**. `teams=16` returns **HTTP 400**.

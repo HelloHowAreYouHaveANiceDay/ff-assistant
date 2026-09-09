@@ -789,3 +789,24 @@ CREATE TABLE IF NOT EXISTS raw_nfl_draft_pick (
   fetched_at TEXT NOT NULL,
   PRIMARY KEY (season, round, pick));
 CREATE INDEX IF NOT EXISTS idx_raw_draft_gsis ON raw_nfl_draft_pick (gsis_id);
+
+-- FantasyFootballCalculator's ADP archive: the real draft market, by format and year.
+--
+-- `as_of` IS `meta.end_date` -- the last day of the draft window the average was taken over, which
+-- is the source's own statement of when this was knowable. Measured examples: PPR 2024 is
+-- 2024-08-31..2024-09-01 over 1,371 drafts; PPR 2026 is 2026-09-01..2026-09-08 over 5,144.
+--
+-- `teams` IS IN THE KEY AND IS ALWAYS 12, and that is a finding rather than a convention. The API
+-- accepts a `teams` parameter and IGNORES it: teams=10 and teams=14 return byte-identical player
+-- lists for PPR 2024 -- same adp and times_drafted for all 205 players -- and both responses' own
+-- meta says teams=12. teams=16 is HTTP 400. So the half-PPR-at-16 ADP this league would want does
+-- not exist at this source, and fetching four team counts would store four copies of one row.
+-- `meta_teams` records what the response claimed, so the day that changes it is visible.
+CREATE TABLE IF NOT EXISTS raw_adp_history (
+  format TEXT NOT NULL, season INTEGER NOT NULL, teams INTEGER NOT NULL, ffc_player_id TEXT NOT NULL,
+  as_of TEXT, window_start TEXT, window_end TEXT, total_drafts INTEGER, rounds INTEGER, meta_teams INTEGER,
+  name TEXT, position TEXT, team TEXT,
+  adp REAL, adp_formatted TEXT, times_drafted INTEGER, high REAL, low REAL, stdev REAL, bye INTEGER,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (format, season, teams, ffc_player_id));
+CREATE INDEX IF NOT EXISTS idx_raw_adp_season ON raw_adp_history (season, format);

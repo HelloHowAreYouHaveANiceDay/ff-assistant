@@ -262,3 +262,50 @@ test("raw_nfl_draft_pick: hand-checked draft sizes, and as_of is the May after t
   assert.equal(by.get(2023)!.r, 7);
   assert.equal(asOf.c, 0, "as_of must be the May after each draft");
 });
+
+// ==================================================================================================
+// raw_adp_history
+// ==================================================================================================
+
+test("raw_adp_history: each format starts where it measurably starts, and `teams` is not a dimension", { skip: !tableHasRows("raw_adp_history") ? "raw_adp_history not built" : false }, () => {
+  const db = open();
+  const rows = db.prepare(
+    "SELECT format, MIN(season) lo, MAX(season) hi, COUNT(DISTINCT season) n FROM raw_adp_history GROUP BY format ORDER BY format",
+  ).all() as { format: string; lo: number; hi: number; n: number }[];
+  const teams = (db.prepare("SELECT DISTINCT meta_teams t FROM raw_adp_history").all() as { t: number }[]).map((r) => r.t);
+  db.close();
+  const by = new Map(rows.map((r) => [r.format, r]));
+  // Measured by sweeping 2007-2026 per format. half-ppr -- the format matching THIS league -- has
+  // the shortest archive of the three, which is a fact a feature has to be built knowing.
+  assert.equal(by.get("standard")!.lo, 2008);
+  assert.equal(by.get("ppr")!.lo, 2010);
+  assert.equal(by.get("half-ppr")!.lo, 2018);
+  // The API accepts `teams` and ignores it: every response's own meta says 12 regardless of what was
+  // asked for, and teams=16 is HTTP 400. If this ever becomes more than one value, the source has
+  // changed and the "one team count" decision has to be revisited.
+  assert.deepEqual(teams, [12]);
+});
+
+test("raw_adp_history: as_of is the archive's own window end, and 2008-2009 are BACK-DATED", { skip: !tableHasRows("raw_adp_history") ? "raw_adp_history not built" : false }, () => {
+  const db = open();
+  const rows = db.prepare(
+    "SELECT format, season, MIN(as_of) a, MIN(window_end) w FROM raw_adp_history GROUP BY format, season",
+  ).all() as { format: string; season: number; a: string; w: string }[];
+  db.close();
+  for (const r of rows) assert.equal(r.a, r.w, `${r.format} ${r.season}: as_of must be the window end`);
+  // THE TRAP, measured: FFC stamps its 2008 AND 2009 standard archives 2010-06-20 -- a date AFTER
+  // both of those seasons were played. Their ADP is therefore NOT knowable at a 2008-09-01 or
+  // 2009-09-01 anchor and using it there is leakage. Every other season/format pair is stamped in
+  // its own late August or early September, as it should be.
+  const backdated = rows.filter((r) => r.a.slice(0, 4) !== String(r.season));
+  assert.deepEqual(
+    backdated.map((r) => `${r.format} ${r.season} -> ${r.a}`).sort(),
+    ["standard 2008 -> 2010-06-20", "standard 2009 -> 2010-06-20"],
+    "only the two known back-dated archives may carry an as_of outside their own season",
+  );
+  // Everything else must be knowable by the September anchor a preseason feature uses.
+  for (const r of rows) {
+    if (backdated.includes(r)) continue;
+    assert.ok(r.a >= `${r.season}-08-01` && r.a <= `${r.season}-10-01`, `${r.format} ${r.season} as_of ${r.a}`);
+  }
+});

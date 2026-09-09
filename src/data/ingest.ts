@@ -285,6 +285,18 @@ export const RAW_ASSETS: RawAsset[] = [
       return r.total;
     },
   },
+  {
+    id: "adp-history",
+    table: "raw_adp_history",
+    what: "FantasyFootballCalculator ADP archive by format and year (standard 2008+, ppr 2010+, half-ppr 2018+; the API ignores `teams`)",
+    defaultSeasons: [2008, new Date().getFullYear()],
+    async run(dbPath, seasons) {
+      const { ingestRawAdpHistory } = await import("./rawSources.js");
+      const r = await ingestRawAdpHistory({ dbPath, seasons });
+      reportSeasons(r);
+      return r.total;
+    },
+  },
 ];
 
 /** Print the per-season landing counts. A raw sweep whose only output is a grand total cannot show

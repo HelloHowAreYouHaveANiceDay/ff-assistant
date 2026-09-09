@@ -449,3 +449,109 @@ export async function ingestRawDraftPicks(opts: { dbPath?: string; seasons?: num
     .map((s) => ({ season: s, ok: true, rows: perSeason.get(s)! }));
   return { table: "raw_nfl_draft_pick", seasons, total: totalOf(seasons) };
 }
+
+// ==================================================================================================
+// raw_adp_history -- the FantasyFootballCalculator ADP archive.
+// ==================================================================================================
+
+/** JSON on disk, gzipped, beside the CSV cache. The FFC archive for a completed season never
+ *  changes, so re-fetching 60 season/format pairs on every rebuild would be pure waste. */
+async function fetchJsonCached(url: string, tag: string, refresh: boolean): Promise<unknown> {
+  const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { gzipSync, gunzipSync } = await import("node:zlib");
+  const { dataPath } = await import("./paths.js");
+  const dir = dataPath("cache");
+  const p = `${dir}/${tag}.json.gz`;
+  if (!refresh && existsSync(p)) return JSON.parse(gunzipSync(readFileSync(p)).toString("utf8"));
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok) throw new Error(`fetch ${url} -> HTTP ${res.status}`);
+  const text = await res.text();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(p, gzipSync(Buffer.from(text)));
+  return JSON.parse(text);
+}
+
+interface FfcResponse {
+  status?: string;
+  meta?: { type?: string; teams?: number; rounds?: number; total_drafts?: number; start_date?: string; end_date?: string };
+  players?: { player_id?: number; name?: string; position?: string; team?: string; adp?: number;
+    adp_formatted?: string; times_drafted?: number; high?: number; low?: number; stdev?: number; bye?: number }[];
+}
+
+/**
+ * The formats worth keeping, with the first season each actually returns players for. MEASURED by
+ * sweeping 2007-2026 for each: `standard` starts in 2008, `ppr` in 2010, `half-ppr` only in 2018.
+ * Our league is half-PPR, so the format that matches it has the shortest archive of the three --
+ * which is exactly the kind of fact that has to be known before a feature is built on it rather
+ * than discovered as a run of nulls afterwards.
+ */
+export const FFC_FORMATS: { format: string; from: number }[] = [
+  { format: "standard", from: 2008 },
+  { format: "ppr", from: 2010 },
+  { format: "half-ppr", from: 2018 },
+];
+
+/**
+ * ONE team count, 12, and the reason is a measurement rather than a preference: the API accepts
+ * `teams` and ignores it. See the schema comment. Fetching 8/10/12/14 would store four copies of
+ * one row and would make `teams` look like a dimension it is not.
+ */
+export const FFC_TEAMS = 12;
+
+export async function ingestRawAdpHistory(opts: { dbPath?: string; seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const ins = db.prepare(
+    `INSERT INTO raw_adp_history (format, season, teams, ffc_player_id, as_of, window_start, window_end,
+       total_drafts, rounds, meta_teams, name, position, team, adp, adp_formatted, times_drafted,
+       high, low, stdev, bye, fetched_at)
+     VALUES (@format,@season,@teams,@pid,@asOf,@start,@end,@drafts,@rounds,@metaTeams,@name,@pos,@team,
+       @adp,@adpF,@td,@high,@low,@sd,@bye,@now)
+     ON CONFLICT(format, season, teams, ffc_player_id) DO UPDATE SET
+       as_of=excluded.as_of, window_start=excluded.window_start, window_end=excluded.window_end,
+       total_drafts=excluded.total_drafts, rounds=excluded.rounds, meta_teams=excluded.meta_teams,
+       name=excluded.name, position=excluded.position, team=excluded.team, adp=excluded.adp,
+       adp_formatted=excluded.adp_formatted, times_drafted=excluded.times_drafted, high=excluded.high,
+       low=excluded.low, stdev=excluded.stdev, bye=excluded.bye, fetched_at=excluded.fetched_at`,
+  );
+
+  const years = seasonRange(opts.seasons, 2008);
+  const perSeason = new Map<number, number>();
+  const notes: string[] = [];
+  for (const { format, from } of FFC_FORMATS) {
+    for (const season of years) {
+      if (season < from) continue;                     // measured, not guessed -- see FFC_FORMATS
+      const url = `https://fantasyfootballcalculator.com/api/v1/adp/${format}?teams=${FFC_TEAMS}&year=${season}&position=all`;
+      let j: FfcResponse;
+      try { j = await fetchJsonCached(url, `ffc-adp-${format}-${season}`, opts.refresh ?? false) as FfcResponse; }
+      catch (e) { notes.push(`${format} ${season}: ${(e as Error).message}`); continue; }
+      const players = j.players ?? [];
+      if (!players.length) { notes.push(`${format} ${season}: 0 players`); continue; }
+      const m = j.meta ?? {};
+      const n = db.transaction(() => {
+        let k = 0;
+        for (const p of players) {
+          const pid = p.player_id != null ? String(p.player_id) : (p.name ?? "");
+          if (!pid) continue;
+          ins.run({
+            format, season, teams: FFC_TEAMS, pid,
+            asOf: m.end_date ?? null, start: m.start_date ?? null, end: m.end_date ?? null,
+            drafts: m.total_drafts ?? null, rounds: m.rounds ?? null, metaTeams: m.teams ?? null,
+            name: p.name ?? null, pos: p.position ?? null, team: p.team ?? null,
+            adp: p.adp ?? null, adpF: p.adp_formatted ?? null, td: p.times_drafted ?? null,
+            high: p.high ?? null, low: p.low ?? null, sd: p.stdev ?? null, bye: p.bye ?? null,
+            now,
+          });
+          k++;
+        }
+        return k;
+      })();
+      perSeason.set(season, (perSeason.get(season) ?? 0) + n);
+    }
+  }
+  db.close();
+  const seasons: SeasonResult[] = [...perSeason.keys()].sort((a, b) => a - b)
+    .map((s) => ({ season: s, ok: true, rows: perSeason.get(s)! }));
+  if (notes.length) seasons.push({ season: 0, ok: true, rows: 0, note: notes.join("; ").slice(0, 400) });
+  return { table: "raw_adp_history", seasons, total: totalOf(seasons) };
+}
