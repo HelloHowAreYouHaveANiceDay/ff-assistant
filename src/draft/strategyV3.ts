@@ -65,6 +65,26 @@ export interface V3Config {
    * P30 named; every caller in this repo passes it.
    */
   teams?: number;
+  /**
+   * OBSERVABILITY, so a harness reads what V3 ACTUALLY computed rather than a reimplementation of it.
+   *
+   * `scripts/marginal-agreement.mjs` needs the analytic marginal in POINTS as well as the price in
+   * DOLLARS, and the only honest way to get the points is from the same call that produced the
+   * dollars. The alternative -- rebuilding `starterBaselines` + `lineupMarginal` in the script -- is
+   * the producer-writes-its-own-validator shape: the harness would drift from the bidder silently and
+   * report the drift as agreement. Absent, this costs nothing and V3 is byte-identical.
+   */
+  onDetail?: (o: { name: string; pos: string; points: number; dollarsRaw: number; dollars: number }) => void;
+  /**
+   * THE CALIBRATED SURROGATE, off unless a caller passes it.
+   *
+   * The analytic marginal is an approximation of the simulated one and `scripts/marginal-agreement.mjs`
+   * measures where it misses. This is the fitted correction applied to the DOLLAR figure, per position
+   * -- `calibrateSurrogateDollars` in `lineupMarginal.ts`. Absent, V3 is byte-identical to the
+   * uncalibrated bidder, which is what keeps the old path reproducible rather than merely recoverable
+   * from git.
+   */
+  calibrate?: (pos: string, dollars: number) => number;
 }
 
 /** E[max of n independent standard normals], Blom's approximation. n <= 0 returns 0 -- there is no
@@ -198,8 +218,14 @@ export function makeV3Strategy(cfg: V3Config): Strategy {
     const roster = state.myRoster.map(lm);
     const lo = lineupFor(state);
     const m = lineupMarginal(roster, lm(p), lo);
-    if (!(m > 0)) return { m: 0, dollars: 0, canFill: true };
-    return { m, dollars: priceFromPath(shadow(state, openSlots, lo), m, Math.max(0, state.myBudget)), canFill: true };
+    if (!(m > 0)) { cfg.onDetail?.({ name: p.name, pos: p.pos, points: 0, dollarsRaw: 0, dollars: 0 }); return { m: 0, dollars: 0, canFill: true }; }
+    const raw = priceFromPath(shadow(state, openSlots, lo), m, Math.max(0, state.myBudget));
+    // THE CALIBRATION IS CLAMPED BY THE BUDGET, exactly as the uncalibrated inversion is. A fitted
+    // map that stretches the top of the book could otherwise return a price larger than every dollar
+    // we hold, which `priceFromPath` is bounded against by construction and this is not.
+    const dollars = cfg.calibrate ? Math.min(Math.max(0, state.myBudget), cfg.calibrate(p.pos, raw)) : raw;
+    cfg.onDetail?.({ name: p.name, pos: p.pos, points: m, dollarsRaw: raw, dollars });
+    return { m, dollars, canFill: true };
   };
   const value = (p: PlayerRef, state: DraftState): number => detail(p, state).dollars;
 

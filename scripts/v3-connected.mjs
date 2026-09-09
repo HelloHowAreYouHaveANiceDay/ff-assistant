@@ -16,6 +16,7 @@
 import { readFileSync } from "node:fs";
 import { makeV3Strategy, shadingFactor, expectedMaxNormal } from "../src/draft/strategyV3.ts";
 import { buildV3Config, SIM_LEAGUE } from "../src/draft/sim.ts";
+import { calibrateSurrogateDollars, SURROGATE_CALIBRATION } from "../src/draft/lineupMarginal.ts";
 
 const readCsv = (p) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
 const points = readCsv("data/points.csv")
@@ -80,6 +81,49 @@ const openQb = { ...state(pool, 200), onBlock: ref(bestQb) };
 const backup = makeV3Strategy(cfg).maxBid({ ...withQb, onBlock: ref(bestQb) }).maxBid;
 const starter = makeV3Strategy(cfg).maxBid(openQb).maxBid;
 check("the same QB is bid far less as a backup than into an open QB slot", starter > backup, `open slot $${starter}, backup $${backup}`);
+
+// ---------------------------------------------------------------------------------------------
+// THE CALIBRATED SURROGATE. Three things have to be true and the third is the one that gets skipped:
+// the flag must CHANGE a bid (it is connected), the flag OFF must leave the bid EXACTLY where it was
+// (it is reversible), and the map must be able to move a price in BOTH directions -- a calibration
+// that can only ever shrink a bid is indistinguishable from a bug that shrinks bids.
+//
+// The map is exercised directly as well as through the flag, because `SURROGATE_CALIBRATION` can be
+// empty (it ships empty until a fit is pasted in) and an empty table is the identity: without the
+// direct arm, "the flag does nothing" and "the table is empty" print the same green line.
+console.log("\nCALIBRATED SURROGATE");
+check("an EMPTY table is exactly the identity", calibrateSurrogateDollars("RB", 57, {}) === 57,
+  `got ${calibrateSurrogateDollars("RB", 57, {})}`);
+check("a position with no entry passes through untouched",
+  calibrateSurrogateDollars("TE", 40, { RB: { a: 0, b: 0.5, n: 99 } }) === 40);
+const shrink = { RB: { a: Math.log(0.5), b: 1, n: 99 } }, grow = { RB: { a: Math.log(2), b: 1, n: 99 } };
+check("the map can move a price DOWN", calibrateSurrogateDollars("RB", 80, shrink) === 40, `got ${calibrateSurrogateDollars("RB", 80, shrink)}`);
+check("the map can move a price UP", calibrateSurrogateDollars("RB", 80, grow) === 160, `got ${calibrateSurrogateDollars("RB", 80, grow)}`);
+const curved = { RB: { a: Math.log(3), b: 0.7, n: 99 } };
+const c10 = calibrateSurrogateDollars("RB", 10, curved), c100 = calibrateSurrogateDollars("RB", 100, curved);
+check("the map is MONOTONE (b > 0 cannot reorder a position's book)", c100 > c10, `$10 -> ${c10.toFixed(1)}, $100 -> ${c100.toFixed(1)}`);
+check("b < 1 COMPRESSES: the top of the book moves proportionally less than the bottom",
+  c100 / 100 < c10 / 10, `x${(c10 / 10).toFixed(2)} at $10 vs x${(c100 / 100).toFixed(2)} at $100`);
+check("a non-positive price is left alone rather than turned into one", calibrateSurrogateDollars("RB", 0, grow) === 0);
+
+// Through the strategy, which is the seam that actually decides a bid.
+const board = byPoints.slice(1, 121);
+const bidWith = (calibrate) => makeV3Strategy({ ...cfg, calibrate }).maxBid(state(board, 200)).maxBid;
+const plain = bidWith(undefined);
+const halved = bidWith((_pos, d) => d * 0.5);
+const doubled = bidWith((_pos, d) => d * 2);
+check("the calibration CHANGES the bid", halved !== plain && doubled !== plain, `off ${plain}, x0.5 ${halved}, x2 ${doubled}`);
+check("and it changes it in the RIGHT DIRECTION", halved < plain && doubled > plain, `x0.5 ${halved} < ${plain} < ${doubled} x2`);
+check("an identity calibration is byte-identical to no calibration", bidWith((_pos, d) => d) === plain,
+  `identity ${bidWith((_pos, d) => d)}, off ${plain}`);
+// FAULT INJECTION on the clamp: a map that returns more than the whole budget must still be legal.
+const absurd = bidWith(() => 1e9);
+check("a runaway calibration cannot bid past the budget", absurd <= 200 && absurd >= 1, `got ${absurd}`);
+
+// The SHIPPED table, whatever it currently is, reported rather than asserted -- so a run of this
+// script says whether V3 has a fit compiled in at all.
+const shipped = Object.keys(SURROGATE_CALIBRATION);
+console.log(`  INFO  shipped SURROGATE_CALIBRATION: ${shipped.length ? shipped.map((p) => `${p} b=${SURROGATE_CALIBRATION[p].b.toFixed(3)}`).join(", ") : "EMPTY (identity; FF_V3_SURROGATE=calibrated is a no-op)"}`);
 
 console.log(`\n${failures ? `${failures} FAILED` : "all connected"}`);
 process.exit(failures ? 1 : 0);

@@ -7,7 +7,7 @@ import { dataPath } from "../data/paths.js";
 import { loadPriceModel, priceFor, type PriceArtifact } from "../model/price.js";
 import { makeV2Strategy, type DraftState, type PlayerRef, type V2Config } from "./strategy.js";
 import { makeV3Strategy, type V3Config } from "./strategyV3.js";
-import { availForRank, availFromVarianceModel } from "./lineupMarginal.js";
+import { availForRank, availFromVarianceModel, calibrateSurrogateDollars, SURROGATE_CALIBRATION } from "./lineupMarginal.js";
 import { computeValues, resolveValueLeague, type PointsRow } from "./values.js";
 import { loadManagers, makeBotBidder, assignSeats, type BotBidder, type ManagerProfile } from "./managers.js";
 import { planDrainNomination, payersFrom } from "./nomination.js";
@@ -323,6 +323,17 @@ export function buildV3Config(
     // measured against the waiver wire. Running both arms is what separates "the baseline fix moved
     // it" from "something else did", and it is the only way to say which half of V3 costs what.
     teams: process.env.FF_V3_BASELINE === "off" ? undefined : lg.teams,
+    // THE CALIBRATED SURROGATE, DEFAULT OFF. `FF_V3_SURROGATE=calibrated` applies the fitted
+    // analytic-to-simulated map (`SURROGATE_CALIBRATION`, lineupMarginal.ts) to V3's dollar figure.
+    //
+    // It is a flag rather than a replacement for the same reason `FF_V3_BASELINE` and `FF_V3_SHADE`
+    // are: the old path has to stay REPRODUCIBLE, not merely recoverable from git, or a difference
+    // between two runs cannot be attributed to the term that was supposed to cause it. And the guard
+    // is on the TABLE as well as the flag -- an empty table is the identity, so a flag typed against
+    // a build with no fit does nothing instead of silently doing nothing while looking connected.
+    calibrate: process.env.FF_V3_SURROGATE === "calibrated" && Object.keys(SURROGATE_CALIBRATION).length
+      ? (pos: string, dollars: number) => calibrateSurrogateDollars(pos, dollars)
+      : undefined,
   };
 }
 
