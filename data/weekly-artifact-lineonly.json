@@ -25,7 +25,8 @@
   "holdoutSeason": null,
   "target": "ratio_to_season_line",
   "population": "rostered",
-  "trainMinLine": 3.0,
+  "trainMinLine": 0.0,
+  "rowFilter": "in_population",
   "features": [],
   "coef": {
     "QB": {
@@ -36,10 +37,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.7149341382592773
+        "intercept": 0.7482800371105865
       },
       "p90": {
-        "intercept": 2.189495490145957
+        "intercept": 2.236368730530954
       }
     },
     "RB": {
@@ -50,10 +51,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.5754635983236951
+        "intercept": 0.6279588956174389
       },
       "p90": {
-        "intercept": 2.504425176255145
+        "intercept": 2.6068740973169913
       }
     },
     "WR": {
@@ -64,10 +65,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.6898743813249664
+        "intercept": 0.7616218203017106
       },
       "p90": {
-        "intercept": 2.4854260696533377
+        "intercept": 2.450726365442831
       }
     },
     "TE": {
@@ -78,10 +79,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.6458285065865191
+        "intercept": 0.6560978365269123
       },
       "p90": {
-        "intercept": 2.4160170331900233
+        "intercept": 2.5085866445096068
       }
     },
     "K": {
@@ -95,7 +96,7 @@
         "intercept": 0.9098253059277266
       },
       "p90": {
-        "intercept": 1.9780776385261576
+        "intercept": 1.9744287866249495
       }
     },
     "DST": {
@@ -117,7 +118,7 @@
     "lo": 0.0,
     "hi": 4.0
   },
-  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 0) are 28.2% of the training rows.",
+  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 0) are 26.6% of the training rows.",
   "golden": [
     {
       "pos": "RB",
@@ -152,8 +153,8 @@
       "expect": {
         "mean": 14.5,
         "p10": 0.0,
-        "p50": 8.344222175693579,
-        "p90": 36.314165055699604
+        "p50": 9.105403986452863,
+        "p90": 37.799674411096376
       }
     },
     {
@@ -189,8 +190,8 @@
       "expect": {
         "mean": 11.0,
         "p10": 0.0,
-        "p50": 7.5886181945746305,
-        "p90": 27.339686766186716
+        "p50": 8.377840023318816,
+        "p90": 26.95799001987114
       }
     },
     {
@@ -225,8 +226,8 @@
       "expect": {
         "mean": 19.5,
         "p10": 0.0,
-        "p50": 13.941215696055908,
-        "p90": 42.69516205784616
+        "p50": 14.591460723656438,
+        "p90": 43.6091902453536
       }
     },
     {
@@ -262,8 +263,8 @@
       "expect": {
         "mean": 7.5,
         "p10": 0.0,
-        "p50": 4.843713799398894,
-        "p90": 18.120127748925174
+        "p50": 4.920733773951842,
+        "p90": 18.81439983382205
       }
     },
     {
@@ -277,8 +278,8 @@
       "expect": {
         "mean": 9.0,
         "p10": 0.0,
-        "p50": 5.179172384913256,
-        "p90": 22.539826586296307
+        "p50": 5.6516300605569505,
+        "p90": 23.46186687585292
       }
     },
     {
@@ -314,8 +315,8 @@
       "expect": {
         "mean": 13.0,
         "p10": 0.0,
-        "p50": 8.968366957224562,
-        "p90": 32.31053890549339
+        "p50": 9.901083663922238,
+        "p90": 31.859442750756806
       }
     }
   ]

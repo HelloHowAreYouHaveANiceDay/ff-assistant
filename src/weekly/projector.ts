@@ -122,8 +122,27 @@ export interface WeeklyArtifact {
    */
   population: "rostered" | "played";
   /** Season lines below this were excluded from TRAINING (the ratio is noise over a small number).
-   *  It is not a serve-time behaviour: a small line still projects, it just projects small. */
+   *  It is not a serve-time behaviour: a small line still projects, it just projects small.
+   *  0 once `rowFilter` is "in_population" -- the line cut is no longer the rule. */
   trainMinLine: number;
+  /**
+   * WHICH ROWS THE TRAINER SELECTED, and it is the SECOND half of the population contract.
+   *
+   * `population` above says whether a did-not-play week counted as a zero. This says WHICH PLAYERS
+   * were in the set at all, and it is recorded because getting it wrong is invisible: an artifact
+   * fitted on `season_line_pg >= 3` and scored on every non-bye row is internally consistent on both
+   * sides and off by 0.11 to 0.21 in zero rate between them, which is what failed clause (c) of the
+   * weekly gate at RB, WR and TE. See src/weekly/population.ts.
+   *
+   *   "season_line_pg"  the old cut: `season_line_pg >= trainMinLine`.
+   *   "in_population"   the decision population -- rostered, or a plausible pickup. The harness
+   *                     filters its scored rows by the SAME flag column, so the two sets are equal
+   *                     by construction rather than by agreement.
+   *
+   * ABSENT on an artifact written before this field existed, and read as "season_line_pg" so an old
+   * file keeps its true meaning rather than silently claiming the new one.
+   */
+  rowFilter?: "season_line_pg" | "in_population";
   features: WeeklyFeatureSpec[];
   /** Per position, per HEAD, per feature. A quantile artifact's heads are exactly WEEKLY_HEADS; a
    *  two-part artifact's are `zero` (a LOGIT), `mean` (E[ratio | played]) and one per grid level. */
@@ -374,6 +393,11 @@ export function loadWeeklyArtifact(json: unknown, opts: { checkGolden?: boolean;
       "quantile heads can reach the zero atom");
   }
   if (!(Number(a.trainMinLine) >= 0)) bad("trainMinLine must be a non-negative number");
+  if (a.rowFilter != null && !["season_line_pg", "in_population"].includes(a.rowFilter)) {
+    bad(`rowFilter is ${JSON.stringify(a.rowFilter)}, expected "season_line_pg" or "in_population". ` +
+      "An artifact that does not say which rows it was fitted on cannot be checked against the rows " +
+      "it is scored on, and that mismatch is exactly what failed the weekly gate's zero-share clause.");
+  }
   if (opts.checkGolden !== false && a.golden?.length) checkWeeklyGolden(a, opts.tol ?? 1e-6);
   return a;
 }

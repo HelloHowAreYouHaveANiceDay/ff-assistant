@@ -1,5 +1,188 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## TRACK F: one population, and the gate applied once (2026-09-09)
+>
+> Branch `redesign/weekly-population`. Integration pass 3 left the weekly two-part model failing
+> clause (c) of its pre-registered gate at RB 0.031, WR 0.039 and TE 0.074 against a 0.030 tolerance,
+> and pass 3's own P48 -- a Platt intercept shift to close it -- measured 0.0005. This track
+> establishes the cause, fixes it, and applies the gate ONCE.
+>
+> **The cause was not the model. The trainer and the harness were scoring DIFFERENT PLAYERS.** The
+> trainer fitted `season_line_pg >= 3` -- a modelling convenience, because the target ratio is noise
+> over a small denominator. The harness scored every non-bye rostered row, deep bench included. Both
+> sides were internally consistent and both were green; nothing either produced could reveal it.
+>
+> | pos | zero rate, trainer's rows | zero rate, harness's rows | gap |
+> |---|---|---|---|
+> | QB | 0.375 | 0.486 | 0.112 |
+> | RB | 0.324 | 0.431 | 0.106 |
+> | WR | 0.283 | 0.441 | 0.158 |
+> | TE | 0.285 | 0.492 | 0.207 |
+> | K | 0.202 | 0.209 | 0.007 |
+> | DST | 0.147 | 0.147 | 0.000 |
+>
+> The gap alone is three to seven times the whole tolerance clause (c) is graded against, so no model
+> fitted on the first set could have passed a clause measured on the second. P48 measured ~0 because
+> an MLE logistic with an intercept is already mean-calibrated on its own training set: there was
+> never anything for a Platt shift to correct.
+>
+> ### The population, defined by the DECISION rather than by a filter
+>
+> `src/weekly/population.ts` is the only place the rule is written. A player-week is in it if a
+> manager in this 16-team league could have had to decide about him that week, which is true in
+> exactly two cases: he was **rostered** (Track B's `fact_roster_week`, 2018-2025 in this store), or
+> he was a **plausible pickup** -- top `POPULATION_DEPTH[pos]` at his position by the PRESEASON line.
+> Before 2018 there is no roster feed and the rank cut stands in for the union; `populationSource()`
+> names which rule produced each season so the era boundary is never silent. A bye week and a row
+> with no season line are never in it: there is no decision to make.
+>
+> `POPULATION_DEPTH` is `ROSTER_DEPTH` plus a stated one-man-per-team margin, and **`ROSTER_DEPTH` is
+> measured, not assumed**: `fact_roster_week` carries 183.2 men a league-week over a mean 14.25 teams
+> -- 12.86 a team, more than the 12 nominal slots because the feed counts men on IR, who are rostered
+> and are exactly the availability cases stage one is about. Scaled to 16 teams: QB 26, RB 55, WR 63,
+> TE 25, K 18, DST 21. `test/weekly-population.test.ts` re-measures all six from the table.
+>
+> The rule is materialised ONCE as `feat_player_week_model.in_population`. `tools/train_weekly.py`
+> and `tools/train_streaming.py` select on that column and REFUSE to run without it;
+> `src/weekly/evaluate.ts` and `streamingEvaluate.ts` filter on the same column and refuse the same
+> way. Nothing is restated in Python. The artifact carries `rowFilter: "in_population"` and the
+> harness refuses an artifact fitted on the old cut. An unbuilt population is a refusal, never a
+> fallback to the wider set -- falling back would score a set different from the one that was fitted
+> while every number still looked plausible, which is the defect verbatim.
+>
+> | | rows |
+> |---|---|
+> | non-bye rows with a line, 2012-2025 -- what the OLD harness scored | 112,782 |
+> | the decision population | **69,500** |
+> | excluded (deep bench nobody would start or claim) | 43,282 (38.4%) |
+>
+> Zero rates AFTER the fix, identical on both sides by construction:
+>
+> | pos | n | zero rate |
+> |---|---|---|
+> | QB | 9,715 | 0.365 |
+> | RB | 16,682 | 0.306 |
+> | WR | 18,664 | 0.243 |
+> | TE | 9,613 | 0.285 |
+> | K | 7,500 | 0.205 |
+> | DST | 7,326 | 0.147 |
+>
+> ### THE PRE-REGISTERED GATE (P50), APPLIED ONCE, PER POSITION
+>
+> Two-part retrained on the single population, nested by season 2012-2025, same features and the same
+> hyperparameters -- **a population fix, not a feature change; no feature was added.** The floor and
+> the streaming models were retrained on the same rows so all six positions are comparable.
+>
+> Clause (a): pooled/positional CRPS beats the floor. (b): coverage given `pts > 0` in [0.75, 0.85]
+> pooled AND [0.70, 0.90] per position. (c): predicted zero share within 0.030 of actual, pooled and
+> per position.
+>
+> | pos | (a) CRPS vs floor | (a) | (b) cov(>0) | (b) | (c) zeroP vs zeroA | (c) | verdict |
+> |---|---|---|---|---|---|---|---|
+> | QB | 3.2403 vs 4.5210 | pass | 0.800 | **FAIL** (pooled 0.852) | 0.365 vs 0.365 (0.001) | pass | FAIL |
+> | RB | 2.7081 vs 3.3475 | pass | 0.844 | **FAIL** (pooled 0.852) | 0.306 vs 0.306 (0.000) | pass | FAIL |
+> | WR | 2.8870 vs 3.3567 | pass | 0.857 | **FAIL** (pooled 0.852) | 0.242 vs 0.243 (0.001) | pass | FAIL |
+> | TE | 2.2335 vs 2.5584 | pass | 0.849 | **FAIL** (pooled 0.852) | 0.284 vs 0.285 (0.001) | pass | FAIL |
+> | K | 2.4642 vs 2.4629 | **FAIL** | 0.880 | **FAIL** (pooled 0.852) | 0.199 vs 0.205 (0.005) | pass | FAIL |
+> | DST | 3.1050 vs 3.1047 | **FAIL** | 0.888 | **FAIL** (pooled 0.852) | 0.153 vs 0.147 (0.008) | pass | FAIL |
+>
+> **(c) -- the clause the whole track targeted -- now passes everywhere.** Pooled 0.267 against an
+> actual 0.267, off by 0.000 where it was off by 0.035. The three positions that failed it are now
+> inside by an order of magnitude. It was a population gap, exactly as measured, and not a model
+> defect. **P50's zero-share prediction (W5) HELD.**
+>
+> **(b) fails, pooled, by 0.002.** Every position is inside its own [0.70, 0.90] band, but the clause
+> carries the pooled condition as well, so every position fails on it. **The band is NOT widened to
+> 0.86 and nothing is tuned until (b) passes.** A band chosen after seeing 0.852 is not a band, for
+> the same reason the 0.030 tolerance was not widened to 0.04 when it missed by 0.005 in pass 3.
+>
+> **Read (b) with its caveat, and this is a job for someone, not an excuse.** The band was registered
+> against the OLD population's numbers. On the decision population every model sits near or above it
+> -- the floor is 0.861 and the shipped `week()` path 0.842 -- so the band is now being applied to a
+> population it was not chosen on. That is an argument for RE-REGISTERING it as its own pre-registered
+> job against whatever baseline ships then. It is not an argument for moving it now.
+>
+> **(a) fails at K and DST by 0.0013 and 0.0003** -- ties that fall the floor's way, as the rule says
+> they must.
+>
+> ### Lineup regret moved the other way, and it is the decision metric
+>
+> 72,900 rosters per scenario, paired against the shipped `week()` path:
+>
+> | scenario | two-part captured | shipped_week captured | gain | win share |
+> |---|---|---|---|---|
+> | standard-15 | 82.12 | 75.11 | **+7.02** | 0.679 |
+> | deep-18 | 87.43 | 78.88 | **+8.54** | 0.701 |
+>
+> W4 held (8.54 >= 5). W2 FAILED in the favourable direction: it predicted a gain under 2 points and
+> the gain is 7.02. W1 held (beaten in all six positions on CRPS); W3 held; W6 failed.
+>
+> **So no position ships the two-part model.** A model that captures seven more points a lineup and
+> is refused on a calibration clause is an uncomfortable result to write down, and writing it down is
+> the point: the gate was registered before the numbers existed and it is applied as written.
+>
+> ### What ships, per position
+>
+> Failures keep what ships today, so the serve table is unchanged in its FILENAMES:
+>
+> | pos | serves | why |
+> |---|---|---|
+> | QB | `streaming-artifact.json` | two-part failed; keeps what shipped |
+> | RB | `weekly-artifact-lineonly.json` | two-part failed; keeps the floor |
+> | WR | `weekly-artifact-lineonly.json` | two-part failed; keeps the floor |
+> | TE | `weekly-artifact-lineonly.json` | two-part failed; keeps the floor |
+> | K | `streaming-artifact.json` | two-part failed; keeps what shipped |
+> | DST | `streaming-artifact.json` | two-part failed; keeps what shipped |
+>
+> **The filenames did not move but the NUMBERS did**, because all three artifacts were refitted on
+> the decision population. That is the switch `WEEKLY_SERVE_SWITCHED_ON = "2026-09-09"` dates.
+>
+> ### A finding NOT acted on, recorded so it is not lost
+>
+> Re-run on the decision population, `ff evaluate-streaming`'s own per-position gate -- a different,
+> pre-existing gate whose (a) clause is against `shipped_week` and which has no pooled coverage
+> clause -- now passes at ALL SIX positions and its verdict line reads "ships the streaming model at
+> QB, RB, WR, TE, K, DST", where on the old population it shipped only QB, K and DST.
+> **`SHIPPED_STREAMING_POSITIONS` was NOT widened on that.** Track F pre-registered a decision rule
+> that routes a failure to "what ships today", and widening RB/WR/TE on the back of a re-run this
+> track did not register is exactly the shape of tuning the gate forbids. It is a real candidate and
+> it needs its own pre-registered job.
+>
+> ### The scorecard: a switch reaches the NEXT unplayed week only
+>
+> `WEEKLY_SERVE` in `src/weekly/streamingServe.ts` is the single table and every consumer resolves
+> through it; `SHIPPED_STREAMING_POSITIONS` is now DERIVED from it rather than kept beside it, because
+> two hand-maintained lists overlap and a position in both is served by whichever list the caller
+> consulted first. The scorecard's `weekly` kind now serves PER POSITION -- it loaded one artifact and
+> projected all six through it, which was correct while one artifact served all six and becomes a
+> silent lie the moment the table has two entries. Each snapshotted `weekly` row carries a `meta`
+> column naming the artifact that produced it and the switch date; baseline rows carry NULL, because
+> stamping the table on a model with no artifact behind it claims a provenance it does not have.
+> `weekly_challenger` deliberately stays whole-field: a challenger that stopped covering the positions
+> it won would leave a record that flatters it by omission.
+>
+> `ff scorecard --season 2026`, read-only, 2026-09-09: imminent week 2, **0 new rows**. Weeks 1 and 2
+> were frozen before the `meta` column existed (every `meta` NULL) and are left exactly as they are;
+> the run says "already snapshotted" rather than reporting a silent no-op. The new mapping and its
+> metadata therefore first reach **week 3**, which is the specified behaviour.
+>
+> ### Fault injections (every new guard, once)
+>
+> | guard | injection | result |
+> |---|---|---|
+> | trainer/harness see the same rows | put the `>= 3` cut back on ONE side | equality fails |
+> | harness filters on the population | drop the filter -- the defect as it shipped | zero rates diverge by more than the whole tolerance |
+> | harness refuses an unbuilt store | unbuilt store | `populationKeys` returns null, harness refuses; positive control: a built store returns a non-empty set |
+> | scorecard write-once | re-snapshot frozen week 2 with an artifact whose intercept is 2.5x | 0 rows written, every stored value byte-identical, note says "already snapshotted"; positive control: the same call writes week 3 |
+> | scorecard serves per position | make `metaFor` stamp the floor everywhere | fires at QB -- "the row says it came from weekly-artifact-lineonly.json but the table says streaming-artifact.json" |
+>
+> ### Known gap
+>
+> `loadWeeklyProjection` in `src/inseason/copilotStore.ts` -- the LINEUP seam -- still loads the floor
+> for all six positions. That predates this track and is unchanged: it is correct at RB/WR/TE, and the
+> lineup path never served the streaming model at QB/K/DST. Routing it through `WEEKLY_SERVE` is real
+> remaining work and was outside this track's file fence.
+
 > ## INTEGRATION PASS 3: five tracks stacked, and the league changed its calendar under us (2026-09-09)
 >
 > `redesign/final-2` = `redesign/final` (`75da5b0`) + Tracks E, D, B, C, A, merged `--no-ff` in that

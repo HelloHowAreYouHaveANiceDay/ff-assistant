@@ -50,6 +50,7 @@ import { openDb, type DB } from "../db/db.js";
 import { makeProjections } from "../projections.js";
 import { loadWeeklyArtifact, projectWeekly, type WeeklyArtifact } from "./projector.js";
 import { loadWeeklyRows, type WeeklyRow } from "./features.js";
+import { populationKeys, POPULATION_COLUMN } from "./population.js";
 import { STREAM_FIELD_NAMES, presentStreamFields } from "./streamingFeatures.js";
 import {
   score, GATE_COV_POS, GATE_ZERO_TOL, type Pred, type Scored,
@@ -167,7 +168,17 @@ interface SeasonRows {
 }
 
 function loadSeason(db: DB, season: number): SeasonRows {
-  const rows = loadWeeklyRows(db, season).filter((r) => STREAM_POS.includes(r.pos));
+  // THE DECISION POPULATION, the same flag the trainer selects on. See src/weekly/population.ts and
+  // the identical refusal in evaluate.ts: six positions are only comparable to each other and to the
+  // floor if all six were fitted and scored on one set.
+  const pop = populationKeys(db, season);
+  if (!pop) {
+    throw new Error(
+      `season ${season} has no decision population built (feat_player_week_model.${POPULATION_COLUMN}). ` +
+      "Run `ff build-weekly-population`.");
+  }
+  const rows = loadWeeklyRows(db, season)
+    .filter((r) => STREAM_POS.includes(r.pos) && pop.has(`${r.feat_key}|${r.week}`));
   const raw = db.prepare(
     "SELECT feat_key, week, pts, is_bye, season_line_pg, pos FROM feat_player_week_model WHERE season = ?",
   ).all(season) as { feat_key: string; week: number; pts: number | null; is_bye: number | null; season_line_pg: number | null; pos: string }[];

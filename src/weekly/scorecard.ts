@@ -32,13 +32,16 @@ import { openDb, nowIso, type DB } from "../db/db.js";
 import { dataPath } from "../data/paths.js";
 import {
   loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact,
-  SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT, type WeeklyArtifact,
+  CHALLENGER_WEEKLY_ARTIFACT, type WeeklyArtifact,
 } from "./projector.js";
 import { loadWeeklyRows, loadSchedule, type ScheduleInfo } from "./features.js";
 import { makeProjections } from "../projections.js";
 import { score, lineupRegret, type Scored1, type Pred } from "./evaluate.js";
 import { fetchEspnWeekly, storeEspnWeekly } from "./espnProjections.js";
-import { projectStreamingWith, topStreamPick } from "./streamingServe.js";
+import {
+  projectStreamingWith, topStreamPick, serveTable,
+  STREAM_SERVE_POS, WEEKLY_SERVE_SWITCHED_ON,
+} from "./streamingServe.js";
 import { POOL_DEPTH } from "./streamingEvaluate.js";
 
 export const SCORECARD_MODELS = ["weekly", "season_line", "shipped_week", "trailing4", "espn"] as const;
@@ -49,11 +52,16 @@ export const SC_BASELINE: ScorecardModel = "shipped_week";
 /**
  * THE DUAL SNAPSHOT, and why there are two kinds rather than a sixth model.
  *
- * `weekly` is the SHIPPED path: every model in it is served from the artifact the lineup is actually
- * served from (`SHIPPED_WEEKLY_ARTIFACT`), so the record accrues for the thing a decision was made
- * on. `weekly_challenger` is the two-part model that FAILED clause (c) of the pre-registered gate by
- * five thousandths -- the same players, the same week, the same frozen `as_of`, projected from
- * `CHALLENGER_WEEKLY_ARTIFACT`.
+ * `weekly` is the SHIPPED path: its `weekly` model is served, PER POSITION, from whatever
+ * `WEEKLY_SERVE` in streamingServe.ts says serves that position -- the same table `lineupRecommend`
+ * and the stream picks read -- so the record accrues for the thing a decision was actually made on.
+ * `weekly_challenger` is the two-part model for EVERY position, snapshotted on the same players, in
+ * the same week, with the same frozen `as_of`, projected from `CHALLENGER_WEEKLY_ARTIFACT`.
+ *
+ * The challenger stays whole-field even where the two-part model now SHIPS at a position. That is
+ * deliberate: an unbroken series is the only thing that lets the two be compared over the season, and
+ * a challenger that quietly stopped covering the positions it won would leave a record that flatters
+ * it by omission.
  *
  * Two kinds, not one kind with an extra model, because they answer different questions and the
  * lineup-regret baseline inside a kind only means something when every model in it was available to
@@ -96,6 +104,26 @@ export const STREAM_SCORECARD_POS = ["QB", "RB", "WR", "TE", "K", "DST"];
  * would already stop a week-1 write today; this is the narrower statement that stays true tomorrow.
  */
 export const CHALLENGER_FIRST_WEEK = 2;
+
+/**
+ * THE SNAPSHOT ROW'S METADATA COLUMN, added by ALTER for the same reason every other late column is:
+ * schema.sql is CREATE TABLE IF NOT EXISTS throughout and only ever reaches a fresh store.
+ *
+ * It carries, on each `weekly`/`weekly` row, the artifact that produced THAT row and the date the
+ * serve table last changed. Without it a series that switches model mid-season shows a step change
+ * in its numbers with nothing in the record saying why, and the explanation would have to be
+ * reconstructed from git history against a table whose whole point is that it cannot be edited.
+ */
+export const SCORECARD_META_COLUMN = "meta";
+
+export function ensureScorecardMetaColumn(db: DB): void {
+  const have = new Set((db.prepare("PRAGMA table_info(scorecard_prediction)").all() as { name: string }[])
+    .map((c) => c.name));
+  if (!have.size) return;                             // table not created yet; schema.sql owns that
+  if (!have.has(SCORECARD_META_COLUMN)) {
+    db.exec(`ALTER TABLE scorecard_prediction ADD COLUMN ${SCORECARD_META_COLUMN} TEXT`);
+  }
+}
 
 export interface ScorecardOpts {
   dbPath?: string;
@@ -157,6 +185,13 @@ export interface ScorecardResult {
   today: string;
   imminentWeek: number | null;
   snapshot: { week: number | null; taken: number; skipped: string | null; byModel: Record<string, number> };
+  /**
+   * pos -> artifact file the `weekly` kind's `weekly` model was served from, for THIS run. It is on
+   * the result and on every snapshotted row's metadata because a per-position ship decision makes
+   * "which model said this" impossible to infer from the number, and a series whose model changes
+   * mid-season has to say WHEN and to WHAT rather than leaving a step change to be explained later.
+   */
+  servedBy?: Record<string, string>;
   /** The `weekly_challenger` kind: the two-part model, same players, same frozen as-of. */
   challenger: { week: number | null; taken: number; skipped: string | null };
   /** The `stream` kind: one pick per position out of the pool, plus the board's pick beside it. */
@@ -243,15 +278,32 @@ function settledWeeks(db: DB, season: number, sched: ScheduleInfo, today: string
 }
 
 /** Every model's prediction for one (season, week), from the feature table. */
-function weeklyPredictions(db: DB, season: number, week: number, artifact: WeeklyArtifact, lineOnly: WeeklyArtifact) {
+function weeklyPredictions(
+  db: DB, season: number, week: number, served: Map<string, WeeklyArtifact>,
+  servedBy: Record<string, string>, lineOnly: WeeklyArtifact,
+) {
   const rows = loadWeeklyRows(db, season, week).filter((r) => r.season_line_pg != null);
   const out = new Map<string, { name: string; pos: string; by: Partial<Record<ScorecardModel, Pred>> }>();
   const put = (k: string, name: string, pos: string, m: ScorecardModel, p: Pred) => {
     const cur = out.get(k) ?? out.set(k, { name, pos, by: {} }).get(k)!;
     cur.by[m] = p;
   };
-  for (const r of projectWeekly({ artifact, rows })) {
-    put(r.feat_key, r.name, r.pos, "weekly", { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90 });
+  // THE `weekly` MODEL IS SERVED PER POSITION, through `WEEKLY_SERVE`. It used to be one artifact
+  // for all six, which was correct while one artifact served all six and becomes a silent lie the
+  // moment the gate is applied per position: the scorecard would freeze the floor's number for a
+  // position `lineupRecommend` serves from the streaming model, and the forward record would accrue
+  // for a model nobody was served from -- the one failure a scorecard cannot survive.
+  // THE MAPPING IS PASSED IN, not recomputed from `artifactForPos`. A caller overriding the whole
+  // table with one fixture file (a test) produces a mapping no serve-table lookup can reproduce, and
+  // recomputing it here silently matched NOTHING and stored an empty snapshot -- which three tests
+  // caught only because they assert a non-empty result rather than a successful run.
+  for (const [file, art] of served) {
+    const serves = new Set(Object.entries(servedBy).filter(([, f]) => f === file).map(([p]) => p));
+    const subset = rows.filter((r) => serves.has(r.pos));
+    if (!subset.length) continue;
+    for (const r of projectWeekly({ artifact: art, rows: subset })) {
+      put(r.feat_key, r.name, r.pos, "weekly", { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90 });
+    }
   }
   for (const r of projectWeekly({ artifact: lineOnly, rows })) {
     put(r.feat_key, r.name, r.pos, "season_line", { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90 });
@@ -446,8 +498,27 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
     const sched = opts.sched ?? await loadSchedule([opts.season]);
     const imm = imminentWeek(sched, opts.season, today);
     res.imminentWeek = imm;
-    // THE SHIPPED ARTIFACT, by the same constant `lineupRecommend` reads. See SHIPPED_WEEKLY_ARTIFACT.
-    const artifact = loadWeeklyArtifact(JSON.parse(readFileSync(opts.artifactPath ?? dataPath(SHIPPED_WEEKLY_ARTIFACT), "utf8")));
+    // WHAT SERVES EACH POSITION, from the one table in streamingServe.ts. `opts.artifactPath`
+    // overrides the lot with a single file, which is how a test drives a fixture -- and it is the
+    // ONLY way to get a one-artifact snapshot, so a production run cannot accidentally take one.
+    const served = new Map<string, WeeklyArtifact>();
+    if (opts.artifactPath) {
+      served.set(opts.artifactPath, loadWeeklyArtifact(JSON.parse(readFileSync(opts.artifactPath, "utf8"))));
+    } else {
+      for (const file of new Set(Object.values(serveTable()))) {
+        try {
+          served.set(file, loadWeeklyArtifact(JSON.parse(readFileSync(dataPath(file), "utf8"))));
+        } catch (e) {
+          // NAMED, never silently skipped: a position whose artifact will not load must not fall
+          // through to another model's numbers under the same `weekly` label.
+          notes.push(`could not load ${file}, so the positions it serves are absent from this ` +
+            `snapshot rather than served by something else (${(e as Error).message})`);
+        }
+      }
+    }
+    res.servedBy = opts.artifactPath
+      ? Object.fromEntries(STREAM_SERVE_POS.map((p) => [p, opts.artifactPath!]))
+      : serveTable();
     const lineOnly = lineOnlyArtifactFor(db, opts.season);
     // The challenger is OPTIONAL on disk. Absent, the kind is skipped and says so -- it must never
     // fall back to the shipped artifact, which would silently record the floor's own numbers as the
@@ -483,13 +554,21 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           res.espn.ok = f.ok; res.espn.reason = f.reason;
           if (f.ok) res.espn.stored = storeEspnWeekly(db, f.rows, asOf);
         }
-        const preds = weeklyPredictions(db, opts.season, week, artifact, lineOnly);
+        const preds = weeklyPredictions(db, opts.season, week, served, res.servedBy ?? serveTable(), lineOnly);
+        ensureScorecardMetaColumn(db);
         const ins = db.prepare(
           `INSERT OR IGNORE INTO scorecard_prediction
-             (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-           VALUES (@season,@week,'weekly',@model,@subject,@name,@pos,@value,@p10,@p90,@asOf,@now)`,
+             (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at, ${SCORECARD_META_COLUMN})
+           VALUES (@season,@week,'weekly',@model,@subject,@name,@pos,@value,@p10,@p90,@asOf,@now,@meta)`,
         );
         const now = nowIso();
+        // WHICH ARTIFACT PRODUCED THIS ROW, plus the date the mapping last changed. Only on the
+        // `weekly` model: the other four are baselines with no artifact behind them, and writing a
+        // serve-table name beside a baseline would claim a provenance it does not have.
+        const metaFor = (model: string, pos: string): string | null =>
+          model === "weekly"
+            ? JSON.stringify({ artifact: res.servedBy?.[pos] ?? null, switchedOn: WEEKLY_SERVE_SWITCHED_ON })
+            : null;
         db.transaction(() => {
           for (const [key, v] of preds) {
             for (const m of SCORECARD_MODELS) {
@@ -498,7 +577,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
               const info = ins.run({
                 season: opts.season, week, model: m, subject: key, name: v.name, pos: v.pos,
                 value: p.mean, p10: Number.isFinite(p.p10) ? p.p10 : null,
-                p90: Number.isFinite(p.p90) ? p.p90 : null, asOf, now,
+                p90: Number.isFinite(p.p90) ? p.p90 : null, asOf, now, meta: metaFor(m, v.pos),
               });
               if (info.changes) { res.snapshot.taken++; res.snapshot.byModel[m] = (res.snapshot.byModel[m] ?? 0) + 1; }
             }
@@ -822,7 +901,11 @@ export function formatScorecard(r: ScorecardResult): string {
     for (const [m, n] of Object.entries(r.snapshot.byModel)) out.push(`    ${pad(m, 14)} ${n}`);
   }
   // The dual snapshot, stated every run rather than inferred from a gap in the table.
-  out.push(`  weekly kind serves ${SHIPPED_WEEKLY_ARTIFACT} -- the SAME artifact lineupRecommend serves from`);
+  if (r.servedBy) {
+    out.push("  weekly kind, per position (the table lineupRecommend and the stream picks read):");
+    for (const [pos, file] of Object.entries(r.servedBy)) out.push(`    ${pad(pos, 5)} ${file}`);
+    out.push(`    mapping in force since ${WEEKLY_SERVE_SWITCHED_ON}`);
+  }
   if (r.challenger.skipped) out.push(`  challenger:  week ${r.challenger.week ?? "-"}: SKIPPED -- ${r.challenger.skipped}`);
   else out.push(`  challenger:  week ${r.challenger.week}: ${r.challenger.taken} rows from ${CHALLENGER_WEEKLY_ARTIFACT} (kind weekly_challenger, model two_part), series starts week ${CHALLENGER_FIRST_WEEK}`);
   // OPTIONAL ACCESS ON PURPOSE. `formatScorecard` is also called on hand-built result objects, and a

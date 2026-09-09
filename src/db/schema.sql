@@ -1356,3 +1356,20 @@ CREATE TABLE IF NOT EXISTS feat_player_week_stream (
   PRIMARY KEY (season, week, feat_key)
 );
 CREATE INDEX IF NOT EXISTS idx_fpws_pos ON feat_player_week_stream (season, week, pos);
+
+-- feat_player_week_model.in_population -- THE DECISION POPULATION, added by ALTER, not here.
+--
+-- It is a column on a table this file only ever reaches when the store is FRESH (every statement is
+-- CREATE ... IF NOT EXISTS), so putting it in the CREATE above would land it on nobody's existing
+-- database. `ensurePopulationColumn` in src/weekly/population.ts adds it idempotently, and
+-- `buildPopulation` fills it as the last step of `ff build-weekly-features`.
+--
+-- WHAT IT MEANS: 1 exactly on the player-weeks a lineup or waiver decision in this league can
+-- involve -- rostered (Track B's fact_roster_week, 2018-2025), or among the top
+-- POPULATION_DEPTH[pos] at the position by preseason line. Non-bye and with a season line, always.
+--
+-- WHY IT IS A COLUMN AND NOT A PREDICATE EACH SIDE WRITES: tools/train_weekly.py fits on it and
+-- src/weekly/evaluate.ts scores on it. When the rule lived in two places it drifted -- the trainer
+-- cut at `season_line_pg >= 3` and the harness kept every non-bye row -- and the resulting 0.11 to
+-- 0.21 difference in zero rate is what failed the weekly gate's zero-share clause at RB, WR and TE.
+-- One column, read by both, makes the two sets equal by construction rather than by agreement.

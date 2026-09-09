@@ -66,6 +66,17 @@ POS_INTERCEPT_ONLY = ["K", "DST"]
 # 12-point week is a ratio of 12, and thirty of those dominate the fit. TRAINING ONLY -- a small line
 # still projects at serve time, it just projects small.
 TRAIN_MIN_LINE = 3.0
+# THE ROW FILTER, AND WHY IT IS NO LONGER THE LINE CUT.
+#
+# `season_line_pg >= TRAIN_MIN_LINE` was a modelling convenience, and the harness scored a different
+# set -- every non-bye rostered row, deep bench included. The two zero rates differ by 0.11 (QB),
+# 0.11 (RB), 0.16 (WR) and 0.21 (TE), three to seven times the weekly gate's 0.030 tolerance, and no
+# intercept fitted on the first can be calibrated for the second. So the population is now defined
+# ONCE, by the DECISION, in src/weekly/population.ts, and materialised as a flag column that both
+# this trainer and the TypeScript harness read. Nothing about the rule is restated in Python: this
+# file reads `in_population`, it does not recompute it.
+POPULATION_COLUMN = "in_population"
+ROW_FILTER = "in_population"
 # The clamp is on the RATIO. lo is 0 and not 0.01, on purpose: the quantile heads have to be able to
 # reach the zero atom, and a small positive floor would quietly convert every projected zero week
 # into a small positive number that no metric flags.
@@ -167,10 +178,31 @@ def load_rows(db_path, lo, hi, population):
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     where = "pts IS NOT NULL" if population == "played" else "COALESCE(is_bye, 0) = 0"
+    # THE DECISION POPULATION, READ AND NOT RECOMPUTED. A missing or unbuilt column is a REFUSAL and
+    # not a fallback to "everything": falling back would silently fit the old, wider set while the
+    # artifact claimed the new one, which is the same class of defect this whole change is about.
+    cols = {r[1] for r in con.execute("PRAGMA table_info(feat_player_week_model)")}
+    if POPULATION_COLUMN not in cols:
+        con.close()
+        sys.exit(
+            "train_weekly: feat_player_week_model has no `" + POPULATION_COLUMN + "` column. It is "
+            "the decision population defined in src/weekly/population.ts and materialised by "
+            "`ff build-weekly-population`; without it this trainer and the harness would select "
+            "different players and the gate's zero-share clause would measure that gap rather than "
+            "the model.")
+    built = con.execute(
+        "SELECT COUNT(*) FROM feat_player_week_model"
+        " WHERE season BETWEEN ? AND ? AND " + POPULATION_COLUMN + " IS NOT NULL", (lo, hi)).fetchone()[0]
+    if not built:
+        con.close()
+        sys.exit(
+            "train_weekly: the `" + POPULATION_COLUMN + "` column exists but no row in " +
+            str(lo) + "-" + str(hi) + " has been built. Run `ff build-weekly-population`.")
     cur = con.execute(
         "SELECT " + ", ".join(SELECT_COLS) + ", COALESCE(pts, 0.0) AS pts"
         " FROM feat_player_week_model"
-        " WHERE season BETWEEN ? AND ? AND " + where + " AND season_line_pg IS NOT NULL",
+        " WHERE season BETWEEN ? AND ? AND " + where + " AND season_line_pg IS NOT NULL"
+        "   AND " + POPULATION_COLUMN + " = 1",
         (lo, hi),
     )
     rows = []
@@ -661,7 +693,9 @@ def main():
     lo, hi = parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
     rows = load_rows(args.db, lo, hi, args.population)
-    rows = [r for r in rows if r["season_line_pg"] and r["season_line_pg"] >= TRAIN_MIN_LINE]
+    # NO SECOND FILTER HERE. `load_rows` selected the decision population in SQL; re-cutting it on
+    # the season line would put a Python-side rule back beside the shared one, which is the drift
+    # this change removed.
     # THE HOLDOUT IS REMOVED BEFORE ANYTHING IS MEASURED -- before the transform centres, before the
     # missing-value defaults, before the alpha search. Removing it only from the final fit would
     # leave the held-out season inside every hyperparameter the model chose, which is the selection
@@ -763,7 +797,9 @@ def main():
         "holdoutSeason": holdout,
         "target": "ratio_to_season_line",
         "population": args.population,
-        "trainMinLine": TRAIN_MIN_LINE,
+        # 0: the line cut is no longer the rule. `rowFilter` says what is.
+        "trainMinLine": 0.0,
+        "rowFilter": ROW_FILTER,
         "features": specs,
         "coef": coef,
         "clamps": {"lo": CLAMP_LO, "hi": CLAMP_HI},
