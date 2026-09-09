@@ -35,8 +35,14 @@
 import { openDb, nowIso, type DB } from "../db/db.js";
 import { normPos } from "./stgPlayer.js";
 
-/** Source id systems we crosswalk, in the order they are trusted for matching. */
-export const ID_SOURCES = ["gsis", "espn", "sleeper", "fantasypros"] as const;
+/** Source id systems we crosswalk, in the order they are trusted for matching.
+ *
+ *  `pfr` was added in Phase 2c. It is the ONLY id the snap-count feed carries, and without it in the
+ *  registry that feed had to be routed through `player_ids` by (name_key, position) in a second
+ *  resolver -- a parallel route that can disagree with this one, which is the shape of every
+ *  identity bug in this store. It sits below sleeper because it is a scraped-site id rather than a
+ *  league one, and above fantasypros for the same reason. */
+export const ID_SOURCES = ["gsis", "espn", "sleeper", "pfr", "fantasypros"] as const;
 export type IdSource = typeof ID_SOURCES[number];
 
 export interface ResolveInput {
@@ -110,7 +116,79 @@ export function linkId(db: DB, sk: number, source: IdSource, id: string | null |
   return null;
 }
 
-export interface IdentityResult { players: number; minted: number; matched: Record<string, number>; conflicts: string[]; disputedIds: number }
+export interface IdentityResult { players: number; minted: number; matched: Record<string, number>; conflicts: string[]; disputedIds: number; fromVariants: number }
+
+/** One crosswalk person, as the registry and staging both need to see him. */
+export interface CrosswalkPerson {
+  name_key: string; position: string; name: string | null; team: string | null; birthdate: string | null;
+  gsis_id: string | null; espn_id: string | null; sleeper_id: string | null; pfr_id: string | null;
+  fantasypros_id: string | null;
+  /** true when this row came from player_ids_variant -- i.e. the source key stands for two people. */
+  variant: boolean;
+}
+
+/**
+ * THE CROSSWALK'S PEOPLE, with the collapsed rows EXPANDED back into the individuals they hide.
+ *
+ * `player_ids` is keyed (name_key, position) and the ingest resolves a key claimed by two men by
+ * NULLing every field they disagree about and flagging it `ambiguous`. That row describes nobody:
+ * Marvin Harrison Sr. and Jr. are both `marvinharrison|WR`, so the stored row is a WR with no
+ * birthdate, no gsis and no espn id. Reading only that table, the registry can mint at most ONE key
+ * for the pair -- which is the merge the whole layer exists to prevent, arrived at from the raw
+ * side rather than the consumer side.
+ *
+ * `player_ids_variant` holds every side of every collision in full, which is precisely the
+ * information needed to separate them. So: where a key has variants, the variants ARE the people and
+ * the collapsed row is dropped; everywhere else the base row stands. Both the registry and staging
+ * read this one function, because two readers of an ambiguous key that disagree about how many
+ * people it is would put the two layers back into different key spaces.
+ */
+export function crosswalkPeople(db: DB): CrosswalkPerson[] {
+  const cols = "name_key, position, name, team, birthdate, gsis_id, espn_id, sleeper_id, pfr_id, fantasypros_id";
+  let variants: CrosswalkPerson[] = [];
+  try {
+    variants = (db.prepare(`SELECT ${cols} FROM player_ids_variant`).all() as Omit<CrosswalkPerson, "variant">[])
+      .map((v) => ({ ...v, variant: true }));
+  } catch { /* a store predating the variant table simply has no collisions recorded */ }
+  const collapsed = new Set(variants.map((v) => `${v.name_key}|${v.position}`));
+  const base = (db.prepare(`SELECT ${cols} FROM player_ids`).all() as Omit<CrosswalkPerson, "variant">[])
+    .filter((r) => !collapsed.has(`${r.name_key}|${r.position}`))
+    .map((r) => ({ ...r, variant: false }));
+  return [...base, ...variants];
+}
+
+/** The id column each crosswalk source is carried in. One list, so the registry and staging cannot
+ *  disagree about which column is which source. */
+export const ID_COLUMN: Record<IdSource, keyof CrosswalkPerson> = {
+  gsis: "gsis_id", espn: "espn_id", sleeper: "sleeper_id", pfr: "pfr_id", fantasypros: "fantasypros_id",
+};
+
+export const idBag = (p: CrosswalkPerson): Partial<Record<IdSource, string | null>> =>
+  Object.fromEntries(ID_SOURCES.map((s) => [s, (p[ID_COLUMN[s]] as string | null) ?? null]));
+
+/**
+ * Every source id claimed by more than one PERSON, computed from the expanded crosswalk before any
+ * matching happens. This has to be known up front: by the time a duplicate link is refused, the
+ * second player has already been matched onto the first one's key.
+ *
+ * A person is (name_key, position, birthdate) here rather than (name_key, position), because the
+ * whole reason variants exist is that one (name_key, position) is two men.
+ */
+export function disputedIds(people: CrosswalkPerson[]): Set<string> {
+  const claims = new Map<string, Set<string>>();
+  for (const p of people) {
+    const who = `${p.name_key}|${p.position}|${p.birthdate ?? ""}`;
+    for (const s of ID_SOURCES) {
+      const v = p[ID_COLUMN[s]] as string | null;
+      if (!v) continue;
+      const k = `${s}:${v}`;
+      (claims.get(k) ?? claims.set(k, new Set()).get(k)!).add(who);
+    }
+  }
+  const out = new Set<string>();
+  for (const [k, who] of claims) if (who.size > 1) out.add(k);
+  return out;
+}
 
 /**
  * Build/refresh the identity registry from the raw crosswalk plus the current board.
@@ -119,31 +197,48 @@ export interface IdentityResult { players: number; minted: number; matched: Reco
  * running this twice changes nothing. That property is the whole point and is asserted in tests --
  * a registry whose keys move on rebuild is not a foundation.
  */
-export function buildIdentity(dbPath?: string): IdentityResult {
+export function buildIdentity(dbPath?: string, opts: { rebuild?: boolean } = {}): IdentityResult {
   const db: DB = openDb(dbPath);
-  const res: IdentityResult = { players: 0, minted: 0, matched: {}, conflicts: [], disputedIds: 0 };
-
-  const rows = db.prepare(
-    "SELECT name_key, position, name, birthdate, gsis_id, espn_id, sleeper_id, fantasypros_id FROM player_ids",
-  ).all() as Record<string, string | null>[];
-
-  // Every source id claimed by more than one real person, computed from the RAW feed before any
-  // matching happens. This has to be known up front: by the time a duplicate link is refused, the
-  // second player has already been matched onto the first one's key.
-  const disputed = new Set<string>();
-  for (const [col, src] of [["gsis_id", "gsis"], ["espn_id", "espn"], ["sleeper_id", "sleeper"], ["fantasypros_id", "fantasypros"]] as const) {
-    for (const r of db.prepare(
-      `SELECT ${col} v FROM player_ids WHERE ${col} IS NOT NULL
-       GROUP BY ${col} HAVING COUNT(DISTINCT name_key || '|' || position) > 1`,
-    ).all() as { v: string }[]) disputed.add(`${src}:${r.v}`);
+  // A FULL REMINT, and the only circumstance that justifies one: the registry itself was built from
+  // corrupt input and cannot be repaired incrementally.
+  //
+  // The registry was minted from `player_ids` BEFORE the ingest learned to expand a collided key, so
+  // Marvin Harrison Jr.'s gsis sits on an identity row carrying his father's birthdate -- one row
+  // standing for two men. Matching the son by gsis and the father by (name, birthdate) then lands
+  // both on that row, so an incremental rebuild REPRODUCES the merge no matter how good the new
+  // evidence is. On top of that, ~10.9k of the 22,814 keys were minted by staging's empty-id-bag
+  // call and stand for nobody the registry can reach.
+  //
+  // Never routine: `identity_rekey` exists precisely so a remint is a recorded migration rather than
+  // a silent renumbering, and every `player_sk`-keyed table must be rebuilt behind it.
+  if (opts.rebuild) {
+    db.pragma("foreign_keys = OFF");
+    db.transaction(() => {
+      // stg_player is deliberately NOT cleared: it still holds the OLD surrogate keys, and
+      // `buildStgPlayer` reads them to write `identity_rekey` before replacing them. Clearing them
+      // here would perform the renumbering and destroy the record of it in the same breath.
+      for (const t of ["player_xref", "player_position", "player_identity"]) db.prepare(`DELETE FROM ${t}`).run();
+      db.prepare("DELETE FROM sqlite_sequence WHERE name = 'player_identity'").run();
+    })();
+    db.pragma("foreign_keys = ON");
   }
+  const res: IdentityResult = { players: 0, minted: 0, matched: {}, conflicts: [], disputedIds: 0, fromVariants: 0 };
+
+  const rows = crosswalkPeople(db);
+  res.fromVariants = rows.filter((r) => r.variant).length;
+
+  // Computed over the EXPANDED people, not over player_ids alone. A variant row carries the id that
+  // the collapsed row had to NULL, so an id present only on variants is invisible to a query over
+  // the base table -- and an id two variants of DIFFERENT keys claim is exactly as disputed as one
+  // two base rows claim.
+  const disputed = disputedIds(rows);
   res.disputedIds = disputed.size;
 
   db.transaction(() => {
     for (const p of rows) {
       const inp: ResolveInput = {
-        name: p.name ?? "", nameKey: p.name_key!, position: p.position!, birthdate: p.birthdate,
-        ids: { gsis: p.gsis_id, espn: p.espn_id, sleeper: p.sleeper_id, fantasypros: p.fantasypros_id },
+        name: p.name ?? "", nameKey: p.name_key, position: p.position, birthdate: p.birthdate,
+        ids: idBag(p),
       };
       const { sk, matchedBy, minted } = resolveOrMint(db, inp, disputed);
       // Position is recorded as ELIGIBILITY, many rows per player, because that is what it is: ESPN
@@ -151,7 +246,7 @@ export function buildIdentity(dbPath?: string): IdentityResult {
       // single position on the identity row is what made those look like different people.
       db.prepare(
         "INSERT INTO player_position (player_sk, position, source) VALUES (?,?,?) ON CONFLICT DO NOTHING",
-      ).run(sk, normPos(p.position!), "playerids");
+      ).run(sk, normPos(p.position), "playerids");
       res.players++;
       if (minted) res.minted++;
       res.matched[matchedBy] = (res.matched[matchedBy] ?? 0) + 1;

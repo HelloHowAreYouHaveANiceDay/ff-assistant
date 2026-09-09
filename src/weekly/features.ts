@@ -395,6 +395,9 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
 
     let withLine = 0, withDvp = 0, withPts = 0, n = 0;
     db.transaction(() => {
+      // REPLACE THE SEASON. The upsert keys on `feat_key`, which IS the surrogate key, so a rebuild
+      // after the keys move cannot reach the old rows and simply doubles the table.
+      db.prepare("DELETE FROM feat_player_week_model WHERE season = ?").run(season);
       for (const r of raw) {
         if (!WEEKLY_POS.includes(r.pos)) continue;
         // as_of: the day before the week's FIRST kickoff, league-wide. Falls back to the season's
@@ -658,6 +661,9 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
 
   let rows = 0, withLine = 0, withLines = 0;
   db.transaction(() => {
+    // REPLACE THE FORWARD SEASON. Same reason as the historical pass: the upsert key contains the
+    // surrogate key, so rows written under keys that have since moved survive a rebuild invisibly.
+    db.prepare("DELETE FROM feat_player_week_model WHERE season = ?").run(season);
     for (const p of board) {
       if (!WEEKLY_POS.includes(p.pos)) continue;
       const hist = played.get(p.feat_key);

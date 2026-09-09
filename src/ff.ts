@@ -848,8 +848,9 @@ async function cmdModels(): Promise<void> {
 async function cmdBuildIdentity(rest: string[]) {
   const { buildIdentity } = await import("./data/identity.js");
   const { openDb } = await import("./db/db.js");
-  const r = buildIdentity(valueOf(rest, "--db"));
+  const r = buildIdentity(valueOf(rest, "--db"), { rebuild: rest.includes("--rebuild") });
   console.log(`identity registry: ${r.players.toLocaleString()} players processed, ${r.minted.toLocaleString()} newly minted`);
+  console.log(`  ${r.fromVariants.toLocaleString()} of them came from player_ids_variant -- keys the raw layer had to collapse`);
   console.log(`  matched by: ${Object.entries(r.matched).map(([k, v]) => `${k} ${v.toLocaleString()}`).join(", ")}`);
   const db = openDb(valueOf(rest, "--db"));
   const sk = db.prepare("SELECT COUNT(*) c FROM player_identity").get() as { c: number };
@@ -878,7 +879,29 @@ async function cmdBuildStaging(rest: string[]) {
   console.log(`  ${r.withGsis.toLocaleString()} carry a trusted gsis_id (the key is player_sk for every row)`);
   console.log(`  ${r.ambiguous.toLocaleString()} flagged ambiguous (name shared with another real player)`);
   console.log(`  ${r.fromBoardOnly} on our board but absent from the crosswalk -- kept, with no ids`);
+  // HOW identity was decided. `minted` is the number the REGISTRY did not already know: it is the
+  // one figure that distinguishes staging READING the registry from staging writing its own keys,
+  // which is what it silently did for a year while every count above looked healthy.
+  console.log(`  identity: ${Object.entries(r.matched).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toLocaleString()}`).join(", ")}`);
+  const k = r.rekey;
+  console.log(k.preserved
+    ? `\n  identity_rekey: this rebuild moved no key (${k.unchanged.toLocaleString()} unchanged), so the existing ${k.rows.toLocaleString()}-row map was KEPT`
+    : `\n  identity_rekey: ${k.rows.toLocaleString()} old keys mapped -- ` +
+      `${k.unchanged.toLocaleString()} unchanged, ${k.moved.toLocaleString()} moved, ` +
+      `${k.merged.toLocaleString()} merged, ${k.split.toLocaleString()} split, ${k.dropped.toLocaleString()} dropped`);
   const db = openDb(valueOf(rest, "--db"));
+  // MIGRATE THE FROZEN TABLE IN THE SAME BREATH. `scorecard_prediction` is write-once and its
+  // `subject` is a player_sk, so a rekey that did not carry it would leave every frozen prediction
+  // pointing at nobody -- silently, because an unjoinable subject renders exactly like a good one.
+  // Run here rather than left to a separate verb: the recurring failure in this repo is fixing two
+  // of three callers, and a migration you have to remember is the third caller.
+  const { migrateScorecardSubjects } = await import("./data/rekey.js");
+  const mig = migrateScorecardSubjects(db);
+  if (mig.rows) {
+    console.log(`  scorecard_prediction subjects: ${mig.rows} surrogate-key rows -- ` +
+      `${mig.migrated} migrated, ${mig.unchanged} already current, ${mig.ambiguous} ambiguous (left alone), ` +
+      `${mig.collided} collided on a merge (left alone), ${mig.unmapped} unmapped`);
+  }
   const cov = db.prepare(
     `SELECT COUNT(*) n, SUM(EXISTS(SELECT 1 FROM stg_player s WHERE s.name_key=b.player_id)) matched
      FROM board b WHERE b.season = (SELECT CAST(json_extract(value,'$.season') AS INTEGER) FROM settings WHERE key='config')`,

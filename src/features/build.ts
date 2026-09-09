@@ -318,6 +318,11 @@ export async function buildFeatures(opts: {
     const asOf = `${yr}-09-01`;
     let withEcr = 0, withUsage = 0, withAge = 0, n = 0, resolved = 0;
     db.transaction(() => {
+      // REPLACE THE SEASON, do not merge into it. `feat_key` is the surrogate key, so the upsert on
+      // (season, feat_key) cannot reach a row whose key MOVED: rebuilding after Phase 2c's rekey
+      // left every old-key row in place and added the new one beside it, doubling the table
+      // (17,189 -> 33,086) with every per-season count still looking exactly right.
+      db.prepare("DELETE FROM feat_player_season WHERE season = ?").run(yr);
       for (const key of keys) {
         const r = rows?.get(key);
         const e = ecr.get(key);
@@ -470,6 +475,7 @@ async function buildWeekFeatures(db: DB, seasons: number[], weeklyPath: string, 
     }
     const maxWeek = Math.max(0, ...[...m.values()].flat().map((r) => r.week));
     db.transaction(() => {
+      db.prepare("DELETE FROM feat_player_week WHERE season = ?").run(yr);   // see the season table
       for (const [key, list] of m) {
         const played = new Map(list.map((r) => [r.week, r]));
         const team = list[list.length - 1].team;

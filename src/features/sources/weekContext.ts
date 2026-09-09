@@ -251,6 +251,10 @@ export function buildWeekContext(opts: { dbPath?: string; seasons: number[] }): 
 
     let n = 0, withSnap = 0, withRoute = 0, withReport = 0, withDepth = 0;
     db.transaction(() => {
+      // REPLACE THE SEASON. See the same note in seasonExt.ts: upserting on a key that CONTAINS the
+      // surrogate key cannot remove a row whose surrogate key moved, so a rekey doubles the table
+      // instead of rewriting it.
+      db.prepare("DELETE FROM feat_player_week_context WHERE season = ?").run(season);
       for (const u of universe) {
         const sk = Number(u.player_sk);
         if (!Number.isInteger(sk)) continue;          // synthetic DST keys are not people

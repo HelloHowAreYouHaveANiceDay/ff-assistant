@@ -292,6 +292,12 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
 
     let n = 0;
     db.transaction(() => {
+      // REPLACE THE SEASON, do not merge into it. The insert upserts on (season, player_sk), so a
+      // rebuild after the surrogate keys MOVE leaves every old-key row in place and adds the new one
+      // beside it -- the table silently DOUBLED (8,021 -> 16,037) the first time Phase 2c rekeyed
+      // staging, and every count and coverage number still looked plausible. A rebuild of a season
+      // is a replacement of that season, so it says so.
+      db.prepare("DELETE FROM feat_player_season_ext WHERE season = ?").run(yr);
       for (const u of universe) {
         // feat_player_season stores player_sk as TEXT (it also holds synthetic DST keys). Only the
         // numeric ones are people, and only people have draft picks, contracts and snap counts.

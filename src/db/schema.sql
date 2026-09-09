@@ -410,6 +410,28 @@ CREATE TABLE IF NOT EXISTS player_xref (
 );
 CREATE INDEX IF NOT EXISTS idx_xref_sk ON player_xref (player_sk);
 
+-- THE REKEY MAP. Staging used to MINT its own surrogate keys (it called resolveOrMint with an empty
+-- id bag), so the store held two disjoint key spaces for the same men: of 7,961 gsis ids present in
+-- both stg_player and player_xref, 7,902 disagreed. Making staging READ the registry moves almost
+-- every key, and a key that moves silently is exactly the failure the surrogate key exists to
+-- prevent -- so the move is RECORDED rather than performed invisibly.
+--
+-- One row per OLD staging key. `reason` is derived from the shape of the mapping, never asserted:
+--   unchanged  the old key and the new key are the same integer
+--   moved      one old key -> one new key
+--   merged     several old keys -> one new key (two rows were the same man)
+--   split      one old key -> several new keys (one row was two men; Marvin Harrison Sr./Jr.)
+--   dropped    the old row has no successor at all (reported, never assumed benign)
+-- Rebuilt in full by `ff build-staging`; a consumer holding an old key migrates through it.
+CREATE TABLE IF NOT EXISTS identity_rekey (
+  old_sk      INTEGER,
+  new_sk      INTEGER,
+  reason      TEXT,
+  rebuilt_at  TEXT,
+  PRIMARY KEY (old_sk, new_sk)
+);
+CREATE INDEX IF NOT EXISTS idx_rekey_new ON identity_rekey (new_sk);
+
 -- ======================= STAGING: conformed, identity decided =======================
 -- The layer this store never had. Raw feeds land keyed by whatever the source used (usually a
 -- name) and every consumer re-solved identity for itself -- which shipped three bugs in one week,
@@ -431,9 +453,10 @@ CREATE TABLE IF NOT EXISTS stg_player (
   gsis_id        TEXT,
   espn_id        TEXT,
   sleeper_id     TEXT,
+  pfr_id         TEXT,               -- the only id the snap-count feed carries
   fantasypros_id TEXT,
   ambiguous      INTEGER,            -- 1 = this name_key stands for more than one real player
-  source         TEXT,               -- playerids | board (board = we lack ids for him)
+  source         TEXT,               -- playerids | playerids-variant | board (board = no ids for him)
   updated_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_stg_namekey ON stg_player (name_key, position);

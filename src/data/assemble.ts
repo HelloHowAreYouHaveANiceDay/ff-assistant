@@ -55,7 +55,7 @@ function fmtHt(h: string): string {
 }
 
 /** One staged identity row: who this name stands for, per the registry. */
-export interface StgIdentity { position: string | null; team: string | null; birthdate: string | null }
+export interface StgIdentity { position: string | null; team: string | null; birthdate: string | null; sk?: number }
 /** The bio columns age/experience were being read from, keyed by NAME ALONE -- which is the defect. */
 export interface BioRow { birth_date?: string | null; exp?: number | null }
 
@@ -168,9 +168,9 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
   // only when that name belongs to exactly one player -- because a consumer that resolved identity by
   // a DIFFERENT rule than the layer above it is the whole failure being retired.
   const stgByName = new Map<string, StgIdentity[]>();
-  for (const r of db.prepare("SELECT name_key, position, birthdate, team FROM stg_player").all() as { name_key: string; position: string; birthdate: string; team: string }[]) {
+  for (const r of db.prepare("SELECT name_key, position, birthdate, team, player_sk FROM stg_player").all() as { name_key: string; position: string; birthdate: string; team: string; player_sk: number }[]) {
     (stgByName.get(r.name_key) ?? stgByName.set(r.name_key, []).get(r.name_key)!)
-      .push({ position: r.position, team: r.team, birthdate: r.birthdate });
+      .push({ position: r.position, team: r.team, birthdate: r.birthdate, sk: r.player_sk });
   }
   const byes = new Map<string, number>();
   for (const t of db.prepare("SELECT team, bye FROM team_bye WHERE season=@s").all({ s: season }) as { team: string; bye: number }[]) byes.set(t.team, t.bye);
@@ -196,9 +196,16 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     const m = ecr.get(k); const b = bio.get(k); const nd = newsByKey.get(k);
     const team = m?.team ?? "";
     const cands = stgByName.get(k) ?? [];
-    const { age, exp } = resolveAgeExp(pickStaged(cands, v.pos, team), b ?? null, cands.length > 1, asof);
+    // ONE identity decision per board row, made HERE, and its answer supplies both the age and the
+    // surrogate key. They used to be decided separately -- `pickStaged` for the age, a (name_key,
+    // position) lookup plus a name-only fallback for the key -- so one board row could be aged as
+    // one man and keyed as another. `pickStaged` is the stricter of the two (it uses TEAM), which is
+    // what lets Marvin Harrison Jr. resolve at all now that his father is also staged.
+    const staged = pickStaged(cands, v.pos, team);
+    const { age, exp } = resolveAgeExp(staged, b ?? null, cands.length > 1, asof);
     const lyRow = ly.get(k); const es = espn.get(k);
     rows.push({
+      player_sk: staged?.sk ?? "",
       player: v.name, pos: v.pos.toUpperCase(), team, bye: byes.get(team) ?? "",
       age, exp, ht: fmtHt(b?.height ?? ""), wt: b?.weight ?? "", forty: b?.forty ?? "",
       our_value: Math.round(v.value), adp: adpMap.get(k) ?? "", mkt_trend: trendMap.get(k) ?? "",
@@ -262,6 +269,10 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
   // 7. write L1 player_value + ESPN ranking + L2 board (full-refresh for the season)
   const HEAD = header(season - 1);
   const now = nowIso();
+  // Board players staging could not identify. COUNTED and named rather than guessed at -- a column
+  // of nulls and a column of confident wrong ids look identical downstream, and only one of them
+  // announces itself.
+  const unresolved: string[] = [];
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM player_value WHERE season=@s").run({ s: season });
     db.prepare("DELETE FROM ranking WHERE source='espn' AND season=@s").run({ s: season });
@@ -269,12 +280,11 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     const upPlayer = db.prepare("INSERT INTO player (player_id, name, position, updated_at) VALUES (?,?,?,?) ON CONFLICT(player_id) DO NOTHING");
     // player_sk comes from STAGING, looked up by (name_key, position). Consumers get the stable id so
     // they can stop joining on names; player_id stays for the callers not yet migrated.
-    const skOf = new Map<string, number>();
-    const byNameOnly = new Map<string, number | null>();   // null = the name is shared, do not guess
-    for (const r of db.prepare("SELECT name_key, position, player_sk FROM stg_player").all() as { name_key: string; position: string; player_sk: number }[]) {
-      skOf.set(r.name_key + "|" + r.position, r.player_sk);
-      byNameOnly.set(r.name_key, byNameOnly.has(r.name_key) ? null : r.player_sk);
-    }
+    // The key was decided ONCE, up in the row loop, by `pickStaged` -- position, then team, then a
+    // unique candidate, and null rather than a guess. The name-only fallback that used to sit here
+    // is gone: the layering rules forbid a consumer deciding identity, and "the name belongs to
+    // exactly one staged player" is a decision -- one that silently reattaches a man his sources
+    // reclassified to whoever else holds his name.
     const upVal = db.prepare("INSERT INTO player_value (player_id, player_sk, season, our_value, our_rank, pos_rank, tier, proj_pts, last_pts, last_gms, updated_at) VALUES (@id,@sk,@s,@v,@rk,@pr,@t,@pp,@lp,@lg,@now)");
     const upRank = db.prepare("INSERT INTO ranking (player_id, source, season, overall_rank, pos_rank, adp, fetched_at) VALUES (@id,'espn',@s,@rank,@pos,@adp,@now) ON CONFLICT(player_id,source,season) DO UPDATE SET overall_rank=excluded.overall_rank, pos_rank=excluded.pos_rank, adp=excluded.adp, fetched_at=excluded.fetched_at");
     const upBoard = db.prepare("INSERT INTO board (player_id, player_sk, season, row_json, updated_at) VALUES (@id,@sk,@s,@json,@now)");
@@ -282,12 +292,13 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     for (const r of rows) {
       const id = nameKey(r.player as string); if (!id) continue;
       upPlayer.run(id, r.player, r.pos, now);
-      // Position first, then NAME ALONE but only when that name belongs to exactly one player.
-      // Sources disagree about positions -- our board has Max Bredeson at RB, the crosswalk at TE --
-      // and requiring agreement left him with no stable id at all. This is the same rule staging used
-      // to decide he was one man rather than two; using a different rule here would let the consumer
-      // and the layer above it disagree about who he is, which is the whole failure being retired.
-      const sk = skOf.get(id + "|" + String(r.pos).toUpperCase()) ?? byNameOnly.get(id) ?? null;
+      // Unresolved is a STATE, not an error: `sk` stays null, the row is counted below, and nothing
+      // is guessed. A board player the crosswalk classifies differently (our board had Max Bredeson
+      // at RB, the crosswalk at TE) reads as unresolved rather than as a confident wrong id -- and
+      // staging already adds a board-sourced row for exactly those men, so the fix belongs there,
+      // in the layer whose job identity is.
+      const sk = typeof r.player_sk === "number" ? r.player_sk : null;
+      if (sk == null) unresolved.push(String(r.player));
       upVal.run({ id, sk, s: season, v: r.our_value, rk: r.rank, pr: r.pos_rank, t: r.tier, pp: numOrNull(r.proj_pts), lp: numOrNull(r.last_pts), lg: numOrNull(r.last_gms), now });
       if (typeof r.espn_rank === "number") upRank.run({ id, s: season, rank: r.espn_rank, pos: r.espn_pos || null, adp: numOrNull(r.espn_adp), now });
       const obj: Record<string, unknown> = {}; COLS.forEach((c, i) => (obj[HEAD[i]] = r[c]));
@@ -295,6 +306,10 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     }
   });
   tx();
+  if (unresolved.length) {
+    console.log(`  player_sk: ${rows.length - unresolved.length}/${rows.length} board rows resolved into staging;` +
+      ` ${unresolved.length} unresolved (kept, with a NULL key): ${unresolved.slice(0, 8).join(", ")}${unresolved.length > 8 ? " ..." : ""}`);
+  }
 
   // player-report.csv for compat/validation (build_app_data no longer needs it; kept during transition)
   const san = (x: unknown) => String(x ?? "").replace(/,/g, " ").replace(/\n/g, " ").trim();

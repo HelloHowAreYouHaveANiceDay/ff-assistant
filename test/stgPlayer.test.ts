@@ -51,18 +51,49 @@ test("a gsis_id shared by different people is never used as a key, and never rec
   db.close();
 });
 
-test("nothing is silently lost: every crosswalk player reaches staging", (t) => {
+test("nothing is silently lost: every crosswalk PERSON reaches staging", (t) => {
   if (!ready) return t.skip("stg_player not built");
   const db = open();
   // Compared in the CONFORMED vocabulary. Checking raw player_ids.position against staged
   // position compares PK to K and reports every kicker as lost -- the test would be measuring the
   // vocabulary gap it exists downstream of, not whether anyone was dropped.
-  const raw = db.prepare("SELECT name_key, position FROM player_ids").all() as { name_key: string; position: string }[];
-  const have = new Set((db.prepare("SELECT name_key, position FROM stg_player").all() as { name_key: string; position: string }[])
-    .map((r) => r.name_key + "|" + r.position));
-  const missing = raw.filter((r) => !have.has(r.name_key + "|" + normPos(r.position)));
+  //
+  // And compared PER PERSON rather than per (name_key, position) ROW, which is not the same thing
+  // and used to be assumed to be. The crosswalk lists Buster Davis at both LB and WR with ONE birth
+  // date: he is one man listed twice, the registry says so, and staging keeps a single row for him.
+  // Requiring a staged row per (name_key, position) called that a lost player -- a test measuring
+  // the source's redundancy and reporting it as data loss. A person is (name_key, birthdate); where
+  // the source gives no birthdate, (name_key, position) is all there is and is used instead.
+  const raw = db.prepare("SELECT name_key, position, birthdate FROM player_ids").all() as { name_key: string; position: string; birthdate: string | null }[];
+  const staged = db.prepare("SELECT name_key, position, birthdate FROM stg_player").all() as { name_key: string; position: string; birthdate: string | null }[];
+  const byNamePos = new Set(staged.map((r) => r.name_key + "|" + r.position));
+  const byNameBirth = new Set(staged.filter((r) => r.birthdate).map((r) => r.name_key + "|" + r.birthdate));
+  const missing = raw.filter((r) => !byNamePos.has(r.name_key + "|" + normPos(r.position))
+    && !(r.birthdate && byNameBirth.has(r.name_key + "|" + r.birthdate)));
   db.close();
   assert.equal(missing.length, 0, `dropped ${missing.length} players, e.g. ${missing.slice(0,3).map((m) => m.name_key + "/" + m.position).join(", ")}`);
+});
+
+// ...AND THE OTHER DIRECTION, which the test above cannot see: an ambiguous crosswalk key stands
+// for SEVERAL people, and staging must hold all of them. `player_ids` collapses such a key into one
+// row with the disagreeing fields NULLed and keeps every side in `player_ids_variant`; a staging
+// layer reading only the collapsed row would hold one Marvin Harrison where there are three, and
+// every count above would still be perfect.
+test("an ambiguous crosswalk key reaches staging as SEVERAL rows, one per recorded person", (t) => {
+  if (!ready) return t.skip("stg_player not built");
+  const db = open();
+  let variants: { name_key: string; position: string; n: number }[] = [];
+  try {
+    variants = db.prepare(
+      "SELECT name_key, position, COUNT(*) n FROM player_ids_variant GROUP BY name_key, position",
+    ).all() as typeof variants;
+  } catch { /* older store */ }
+  if (!variants.length) { db.close(); return t.skip("no collided keys in this crosswalk"); }
+  const cnt = db.prepare("SELECT COUNT(*) c FROM stg_player WHERE name_key = ? AND position = ?");
+  const short = variants.filter((v) => (cnt.get(v.name_key, normPos(v.position)) as { c: number }).c < v.n);
+  db.close();
+  assert.equal(short.length, 0,
+    `${short.length} collided keys lost a person in staging, e.g. ${short.slice(0, 3).map((s) => s.name_key + "/" + s.position).join(", ")}`);
 });
 
 test("every current board player resolves -- staging cannot lose the people we act on", (t) => {

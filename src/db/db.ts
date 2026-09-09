@@ -74,6 +74,9 @@ function addColumns(db: DB): void {
     ["feat_player_season", "own_games_usage", "INTEGER"],
     // A crosswalk key that stands for more than one real person. See player_ids_variant.
     ["player_ids", "ambiguous", "INTEGER"],
+    // The PFR id, carried into staging so the snap-count feed resolves through the SAME map as
+    // everything else instead of a parallel route through player_ids that can disagree with it.
+    ["stg_player", "pfr_id", "TEXT"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];

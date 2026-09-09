@@ -39,20 +39,18 @@ function fixtureDb(): DB {
   const db = new Database(":memory:") as unknown as DB;
   db.exec(`CREATE TABLE stg_player (player_sk INTEGER PRIMARY KEY, name_key TEXT, name TEXT,
     position TEXT, team TEXT, birthdate TEXT, gsis_id TEXT, espn_id TEXT, sleeper_id TEXT,
-    fantasypros_id TEXT);
-    CREATE TABLE player_ids (name_key TEXT, position TEXT, pfr_id TEXT);`);
+    pfr_id TEXT, fantasypros_id TEXT);`);
   const ins = db.prepare(
-    "INSERT INTO stg_player VALUES (@sk,@nk,@n,@p,@t,@b,@g,@e,@s,@f)",
+    "INSERT INTO stg_player VALUES (@sk,@nk,@n,@p,@t,@b,@g,@e,@s,@pf,@f)",
   );
   // TWO JUSTIN JEFFERSONS: a receiver and a linebacker, four years apart. The board once aged the
   // receiver from the linebacker's birth date.
-  ins.run({ sk: 14123, nk: "justinjefferson", n: "Justin Jefferson", p: "WR", t: "MIN", b: "1999-06-16", g: "00-0036322", e: "4262921", s: "6794", f: "17257" });
-  ins.run({ sk: 12087, nk: "justinjefferson", n: "Justin Jefferson", p: "LB", t: "CLE", b: "2003-03-20", g: "00-0041075", e: "4685702", s: "12070", f: null });
+  ins.run({ sk: 14123, nk: "justinjefferson", n: "Justin Jefferson", p: "WR", t: "MIN", b: "1999-06-16", g: "00-0036322", e: "4262921", s: "6794", pf: "JeffJu00", f: "17257" });
+  ins.run({ sk: 12087, nk: "justinjefferson", n: "Justin Jefferson", p: "LB", t: "CLE", b: "2003-03-20", g: "00-0041075", e: "4685702", s: "12070", pf: null, f: null });
   // MARVIN HARRISON SR. AND JR.: both WR, and `nameKey` strips the suffix on purpose, so they share
   // a name key. Only the team (or an id) can separate them.
-  ins.run({ sk: 12622, nk: "marvinharrison", n: "Marvin Harrison", p: "WR", t: "IND", b: "1972-08-25", g: "00-0004666", e: "1428", s: null, f: null });
-  ins.run({ sk: 22001, nk: "marvinharrison", n: "Marvin Harrison Jr.", p: "WR", t: "ARI", b: "2002-08-07", g: "00-0039849", e: "4432708", s: "11624", f: "25802" });
-  db.prepare("INSERT INTO player_ids VALUES (?,?,?)").run("marvinharrison", "WR", "HarrMa00");
+  ins.run({ sk: 12622, nk: "marvinharrison", n: "Marvin Harrison", p: "WR", t: "IND", b: "1972-08-25", g: "00-0004666", e: "1428", s: null, pf: "HarrMa00", f: null });
+  ins.run({ sk: 22001, nk: "marvinharrison", n: "Marvin Harrison Jr.", p: "WR", t: "ARI", b: "2002-08-07", g: "00-0039849", e: "4432708", s: "11624", pf: "HarrMa09", f: "25802" });
   return db;
 }
 
@@ -102,13 +100,28 @@ test("FAULT: without a team, a shared name key resolves to nobody rather than to
   db.close();
 });
 
-test("identity: a PFR id resolves through the crosswalk, which is the snap feed's only route", () => {
+test("identity: a PFR id resolves the exact man -- it is the snap feed's only route", () => {
   const db = fixtureDb();
   const r = buildSourceResolver(db);
-  // HarrMa00 maps to (marvinharrison, WR) -- which two staged players share, so it must REFUSE
-  // rather than pick one. The refusal is the correct answer, and it is why the snap feed's
-  // resolution rate is a number worth reporting rather than an assumption.
-  assert.equal(r.resolve({ pfr: "HarrMa00" }).sk, null);
+  // Until Phase 2c a pfr id was mapped through `player_ids` to (name_key, position) and then into
+  // staging, so `HarrMa00` -- a per-PERSON id -- landed on a pair two men share and had to refuse.
+  // The id now lives on the staged row itself, which is the only route that can tell them apart.
+  assert.equal(r.resolve({ pfr: "HarrMa00" }).sk, 12622, "the father");
+  assert.equal(r.resolve({ pfr: "HarrMa09" }).sk, 22001, "the son");
+  assert.equal(r.resolve({ pfr: "HarrMa00" }).by, "pfr");
+  // A pfr id nobody carries still resolves to nobody. The positive answers above are what make this
+  // a check rather than a rule that can only ever say no.
+  assert.equal(r.resolve({ pfr: "NoSuchPf00" }).sk, null);
+  db.close();
+});
+
+// FAULT INJECTION on the pfr route: an id two staged rows claim must resolve to NOBODY, on the same
+// rule as a disputed gsis. Built by hand here because the live crosswalk may hold no such pair.
+test("FAULT: a PFR id claimed by two staged players resolves to nobody", () => {
+  const db = fixtureDb();
+  db.prepare("UPDATE stg_player SET pfr_id = 'HarrMa00' WHERE player_sk = 22001").run();
+  const r = buildSourceResolver(db);
+  assert.equal(r.resolve({ pfr: "HarrMa00" }).sk, null, "a disputed id must not pick a side");
   db.close();
 });
 
