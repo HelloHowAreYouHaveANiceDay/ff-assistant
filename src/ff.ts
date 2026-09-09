@@ -90,6 +90,10 @@ async function main() {
       return cmdScrapeLeague(rest);
     case "ingest-source":
       return cmdIngestSource(rest);
+    case "ingest-raw":
+      return cmdIngestRaw(rest);
+    case "build-features-ext":
+      return cmdBuildFeaturesExt(rest);
     case "sync-rosters":
       return cmdSyncRosters(rest);
     case "enter-draft":
@@ -2633,3 +2637,100 @@ main().catch((err) => {
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });
+
+// ==================================================================================================
+// RAW-LAYER INGEST. `ff ingest-raw <id> [--seasons 2018-2026]`, `ff ingest-raw --list`.
+//
+// Separate from `ingest-source` because these assets take a SEASON RANGE and write a raw_* table
+// without touching the board. `ff ingest-source <id>` still reaches them (the app's Data page calls
+// exactly that, with no arguments) and uses the asset's default range.
+// ==================================================================================================
+async function cmdIngestRaw(rest: string[]) {
+  const { RAW_ASSETS, ingestOne } = await import("./data/ingest.js");
+  // Positional scan that SKIPS a flag's value. `find(a => !a.startsWith("--"))` would happily read
+  // "2018-2026" as the asset id when --seasons comes first, and then report "unknown raw asset".
+  let id = "";
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i].startsWith("--")) { if (rest[i] !== "--list") i++; continue; }
+    id = rest[i]; break;
+  }
+  if (rest.includes("--list") || !id) {
+    console.log("raw assets:");
+    for (const a of RAW_ASSETS) {
+      const s = a.defaultSeasons ? `${a.defaultSeasons[0]}-${a.defaultSeasons[1]}` : "n/a";
+      console.log(`  ${a.id.padEnd(18)} -> ${a.table}\n      ${a.what}\n      default seasons: ${s}`);
+    }
+    if (!id) console.log("\nusage: ff ingest-raw <id> [--seasons 2018-2026] [--db path]");
+    return;
+  }
+  if (!RAW_ASSETS.some((a) => a.id === id)) {
+    console.error(`unknown raw asset: ${id} (have: ${RAW_ASSETS.map((a) => a.id).join(", ")})`);
+    process.exit(2);
+  }
+  const seasons: number[] = [];
+  const rangeArg = valueOf(rest, "--seasons");
+  if (rangeArg) {
+    const r = rangeArg.split("-").map(Number);
+    const [lo, hi] = [r[0], r[1] ?? r[0]];
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) { console.error(`bad --seasons ${rangeArg}`); process.exit(2); }
+    for (let y = lo; y <= hi; y++) seasons.push(y);
+  }
+  const t0 = Date.now();
+  const r = await ingestOne(valueOf(rest, "--db"), id, { seasons });
+  console.log(`raw asset ${id}: ${r.rows} rows (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  if (id === "league-history") {
+    const { openDb } = await import("./db/db.js");
+    const { currentLeagueId, readBackLeagueHistory } = await import("./data/leagueHistory.js");
+    const db = openDb(valueOf(rest, "--db"));
+    console.log("  season  avail  teams  picks  total$  games  champion");
+    for (const c of readBackLeagueHistory(db, currentLeagueId(db))) {
+      console.log(`  ${c.season}   ${c.available ? "yes" : "no "}  ${String(c.teams).padStart(5)}  ${String(c.picks).padStart(5)}  ` +
+        `${String(c.total).padStart(6)}  ${String(c.games).padStart(5)}  ${c.champion ?? "-"}`);
+    }
+    db.close();
+  }
+}
+
+// ==================================================================================================
+// `ff build-features-ext --seasons 2013-2025` -- the two point-in-time extension tables.
+//
+// Separate verb from `build-features` on purpose: these tables extend those rows sideways on
+// player_sk and never rewrite them, so the two can run in either order and neither can silently
+// change the other's numbers.
+// ==================================================================================================
+async function cmdBuildFeaturesExt(rest: string[]) {
+  const { buildFeaturesExt } = await import("./features/sources/index.js");
+  const range = (valueOf(rest, "--seasons") ?? "2013-2025").split("-").map(Number);
+  const [lo, hi] = [range[0], range[1] ?? range[0]];
+  const seasons: number[] = []; for (let y = lo; y <= hi; y++) seasons.push(y);
+  const t0 = Date.now();
+  const r = await buildFeaturesExt({ dbPath: valueOf(rest, "--db"), seasons, weeks: !rest.includes("--no-weeks") });
+  console.log(`feat_player_season_ext: ${r.season.rows} rows over ${r.season.seasons.length} seasons`);
+  console.log(`feat_player_week_context: ${r.week.rows} rows over ${r.week.seasons.length} seasons`);
+  console.log(`feat_coverage: ${r.coverageRows} column-seasons`);
+  console.log(`\n  season   season_ext   week_ctx   +snap  +route  +report  +depth`);
+  const wk = new Map(r.week.perSeason.map((p) => [p.season, p]));
+  for (const s of r.season.perSeason) {
+    const w = wk.get(s.season);
+    console.log(`  ${s.season}  ${String(s.rows).padStart(10)}  ${String(w?.rows ?? 0).padStart(9)}  ` +
+      `${String(w?.withSnap ?? 0).padStart(6)}  ${String(w?.withRoute ?? 0).padStart(6)}  ` +
+      `${String(w?.withReport ?? 0).padStart(7)}  ${String(w?.withDepth ?? 0).padStart(6)}`);
+  }
+  // RESOLUTION PER SOURCE. A feed that resolves at 4% and a feed with no signal produce the same
+  // column of nulls; this is the only number that tells them apart, so it is printed rather than
+  // left to be inferred from a coverage count.
+  console.log(`\n  identity resolution, per source feed:`);
+  const merged = new Map<string, { rows: number; resolved: number; byRule: Record<string, number> }>();
+  for (const s of [...r.season.resolution, ...r.week.resolution]) {
+    const m = merged.get(s.source) ?? { rows: 0, resolved: 0, byRule: {} };
+    m.rows += s.rows; m.resolved += s.resolved;
+    for (const [k, v] of Object.entries(s.byRule)) m.byRule[k] = (m.byRule[k] ?? 0) + v;
+    merged.set(s.source, m);
+  }
+  for (const [source, m] of [...merged.entries()].sort()) {
+    const pct = ((m.resolved / Math.max(1, m.rows)) * 100).toFixed(1);
+    const rules = Object.entries(m.byRule).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}=${v}`).join(" ");
+    console.log(`    ${source.padEnd(26)} ${String(m.resolved).padStart(8)}/${String(m.rows).padStart(8)} (${pct}%)  ${rules}`);
+  }
+  console.log(`\n  ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+}

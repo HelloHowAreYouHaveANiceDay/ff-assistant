@@ -103,6 +103,39 @@ export const cacheTag = {
 
 export const draftPicksUrl = `${NFLVERSE}/draft_picks/draft_picks.csv`;
 
+// ==================================================================================================
+// PER-SEASON RAW FEEDS.
+//
+// nflverse asset naming is NOT uniform across release tags and guessing costs a 404. Some tags ship
+// one combined file (draft_picks.csv); some ship ONLY per-season files (injuries_2024.csv, with no
+// injuries.csv); some ship both. Every URL below was probed against the GitHub releases API on
+// 2026-09-08 rather than typed from memory -- see docs/data-sources.md, which also records the
+// season each feed actually starts at.
+//
+// The reason this matters more than it looks: every caller in this repo wraps a feed fetch in
+// `try { ... } catch { return empty }`, which is correct behaviour for a season that does not exist
+// and indistinguishable from a typo in the filename. A wrong URL produces an empty feature column,
+// not an error.
+// ==================================================================================================
+export const injuriesUrl = (season: number) => `${NFLVERSE}/injuries/injuries_${season}.csv`;
+export const depthChartsUrl = (season: number) => `${NFLVERSE}/depth_charts/depth_charts_${season}.csv`;
+export const snapCountsUrl = (season: number) => `${NFLVERSE}/snap_counts/snap_counts_${season}.csv`;
+export const participationUrl = (season: number) => `${NFLVERSE}/pbp_participation/pbp_participation_${season}.csv`;
+export const contractsUrl = `${NFLVERSE}/contracts/historical_contracts.csv.gz`;
+/** NGS ships one combined file per phase covering every season, plus per-season copies. The
+ *  combined file is one fetch instead of ten and carries the same rows. */
+export const ngsUrl = (phase: "passing" | "receiving" | "rushing") => `${NFLVERSE}/nextgen_stats/ngs_${phase}.csv.gz`;
+
+/** Cache tags for the per-season raw feeds. Same rule as `cacheTag`: never type a tag twice. */
+export const rawTag = {
+  injuries: (s: number) => `injuries-${s}`,
+  depthCharts: (s: number) => `depth-charts-${s}`,
+  snapCounts: (s: number) => `snap-counts-${s}`,
+  participation: (s: number) => `participation-${s}`,
+  contracts: "contracts",
+  ngs: (phase: string) => `ngs-${phase}`,
+} as const;
+
 export async function fetchCsvCached(url: string, tag: string, refresh = false): Promise<Record<string, string>[]> {
   const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
   const { gzipSync, gunzipSync: gunzip } = await import("node:zlib");
