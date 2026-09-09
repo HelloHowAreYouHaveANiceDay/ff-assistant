@@ -100,6 +100,8 @@ async function main() {
       return cmdIngestRaw(rest);
     case "build-features-ext":
       return cmdBuildFeaturesExt(rest);
+    case "build-waiver-claims":
+      return cmdBuildWaiverClaims(rest);
     case "build-live-context":
       return cmdBuildLiveContext(rest);
     case "build-injury-horizon":
@@ -3208,6 +3210,7 @@ async function cmdInseasonBacktest(rest: string[]) {
     lineup: "scripts/inseason-backtest-lineup.mjs",
     waivers: "scripts/inseason-backtest-waiver.mjs",
     promotion: "scripts/inseason-backtest-promotion.mjs",
+    faab: "scripts/faab-replay.mjs",
   };
   const which = rest.find((r) => !r.startsWith("--"));
   const script = which ? SCRIPTS[which] : undefined;
@@ -3216,6 +3219,7 @@ async function cmdInseasonBacktest(rest: string[]) {
     console.log("  lineup     what the room started vs hindsight vs our lineup rule, on real rosters");
     console.log("  waivers    the room's real claims scored by points per FAAB dollar against our ranking");
     console.log("  promotion  a promoted RB backup against the man he replaced -- the handcuff prior, from a new direction");
+    console.log("  faab       our fitted bid for each of those adds, against the winning bid the log recorded");
     console.log("  full writeup: docs/in-season-backtest.md");
     if (which) process.exitCode = 2;
     return;
@@ -3386,4 +3390,19 @@ async function cmdBuildInjuryHorizon(rest: string[]) {
     console.log(`    ${s.source.padEnd(30)} ${String(s.resolved).padStart(8)}/${String(s.rows).padStart(8)} (${pct}%)`);
   }
   console.log(`\n  ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+}
+
+// ==================================================================================================
+// `ff build-waiver-claims` -- fact_waiver_claim, this league's own FAAB bid history.
+//
+// One row per processed waiver claim, WINNERS AND LOSERS. ESPN publishes the losing bid as
+// FAILED_INVALIDPLAYERSOURCE carrying the amount that lost, which is what makes P(win | bid)
+// fittable here instead of assumable. The read-back prints the property that proves it: across
+// every contested player-week, exactly one claim executed and no loser ever out-bid the winner.
+// ==================================================================================================
+async function cmdBuildWaiverClaims(rest: string[]) {
+  const { spawnSync } = await import("node:child_process");
+  const args = ["--import", "tsx", "scripts/faab-coverage.mjs", "--build", ...rest];
+  const r = spawnSync(process.execPath, args, { stdio: "inherit" });
+  if (r.status) process.exitCode = r.status;
 }

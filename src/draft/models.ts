@@ -342,6 +342,42 @@ export const MODELS: ModelSpec[] = [
         ? null : "bySk map missing or tiny -- the stable-key path is not populated";
     },
   },
+  {
+    key: "faab", file: "faab-model.json", required: false, nestedLift: null, claimedLift: null,
+    what: "WHAT THIS ROOM PAYS ON WAIVERS, fitted on fact_waiver_claim -- 576 winning bids " +
+      "(2018-2025) for the clearing price and 630 win/loss outcomes (2019-2025) for P(win | bid). " +
+      "The second head exists because ESPN publishes the LOSING bid: an outbid claim comes back as " +
+      "FAILED_INVALIDPLAYERSOURCE carrying the amount that lost, so the win probability is measured " +
+      "rather than inferred from a clearing price plus a margin. Leave-one-season-out MAE $7.59 " +
+      "against $7.94 for a per-position median, $8.64 for a flat median and $10.32 for the copilot's " +
+      "rule of thumb HANDED AN ORACLE (its playoff-probability delta cannot be reconstructed for a " +
+      "past season, so it was given the best in-sample constant instead). That is 26.4% better, and " +
+      "the pre-registered P54 asked for 30%, so P54 FAILED and the honest margin is the smaller one. " +
+      "THE CAVEAT ON THE ARTIFACT: resampled over seasons the `log_bid` coefficient's 95% interval " +
+      "crosses zero -- four claims in five here are uncontested, and a big bid is itself a signal " +
+      "that a player was contested. So a recommended bid is a point estimate the data cannot " +
+      "separate from 'the amount matters little', and `bidEffect.note` says so on every row",
+    check: (j) => {
+      const feats = (j.features ?? []) as string[];
+      // Keyed on the CONTRACT the artifact publishes, not on a magnitude: a target column among the
+      // inputs is a leak whatever the coefficients turn out to be on the next refit.
+      for (const bad of ["ros_pts", "ros_games", "won", "competing_bids", "bid_amount"]) {
+        if (feats.includes(bad)) return `${bad} is published as a model input -- that column is a TARGET`;
+      }
+      const g = (j.golden ?? []) as unknown[];
+      if (!g.length) return "no golden block -- nothing checks that the trainer and the TypeScript evaluator agree";
+      const eff = j.bidEffect as { note?: string } | undefined;
+      if (!eff?.note) return "no bidEffect block -- the recommended bid would travel without its interval";
+      const ctl = j.controls as Record<string, number> | undefined;
+      if (!ctl) return "no permuted-target controls -- a fit on noise and a fit on signal both print a number";
+      // The positive control, asserted rather than admired: with the bids shuffled the fit must be
+      // WORSE than the flat median it beats when the bids are real.
+      if (!(ctl.permutedPriceMae > ctl.permutedPriceFlatMae)) {
+        return `the permuted-target control beat its own flat median ($${ctl.permutedPriceMae} vs $${ctl.permutedPriceFlatMae}) -- the fit is finding structure in noise`;
+      }
+      return null;
+    },
+  },
 ];
 
 /**
