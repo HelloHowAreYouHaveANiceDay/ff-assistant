@@ -73,7 +73,8 @@ export interface Scored {
   coverage: number;
   /**
    * The same share over NON-ZERO weeks only. Reported beside `coverage` because the zero atom makes
-   * the pooled number hard to read on its own: about a fifth of rostered non-bye weeks score zero,
+   * the pooled number hard to read on its own: about 40% of the rostered non-bye weeks scored here
+   * land at zero (29.5% of the narrower set the model trains on),
    * the p10 head is clamped at exactly 0 so it can reach the atom, and an actual of 0 is therefore
    * always inside [0, p90]. Those weeks are genuinely covered -- the interval does contain the value
    * -- but they push the pooled figure above nominal for a reason that is a property of the target

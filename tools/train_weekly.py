@@ -21,8 +21,9 @@ weekly model can add.
 
 THE ZERO ATOM.
 
-Weekly fantasy points are zero-inflated even among players who dressed. Two treatments are
-defensible: a two-part model (P(zero week) from availability signals, times the ratio given a real
+Weekly fantasy points are zero-inflated twice over: a rostered man can fail to play at all, and a
+receiver who plays can catch nothing. Measured on 2010-2025 rostered non-bye weeks, 29.5% of the rows
+this script trains on score at or below 1.0 point. Two treatments are defensible: a two-part model (P(zero week) from availability signals, times the ratio given a real
 week), or quantile heads that can reach zero. THIS SCRIPT USES QUANTILE HEADS -- the clamp floor is
 exactly 0, not the season model's 0.01, so p10 is free to sit on the atom and does.
 

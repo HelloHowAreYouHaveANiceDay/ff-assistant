@@ -87,8 +87,10 @@ directly would spend the model's capacity re-learning talent. Predicting the rat
 coefficient a statement about what the August number gets wrong week to week, which is the only thing
 a weekly model can add.
 
-**The zero atom: quantile heads that can reach zero.** Weekly points are zero-inflated even among
-players who dressed. Two treatments are defensible -- a two-part model (P(zero week) from availability
+**The zero atom: quantile heads that can reach zero.** Weekly points are zero-inflated twice over -- a
+rostered man can fail to play at all, and a receiver who plays can catch nothing. Measured on
+2010-2025 rostered non-bye weeks: **29.5%** of the rows the model trains on score at or below one
+point, and about **40%** of everything the harness scores does. Two treatments are defensible -- a two-part model (P(zero week) from availability
 signals, times the ratio given a real week), or quantile heads free to sit on the atom. This artifact
 uses the latter, with the clamp floor at **exactly 0** rather than the season model's 0.01. The reason
 is not elegance: the signals that would drive a two-part first stage -- injury designation as of the

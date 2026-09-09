@@ -15,9 +15,12 @@
  * every coefficient a statement about what the season line gets WRONG week to week, which is the
  * only thing a weekly model can add.
  *
- * THE ZERO ATOM, and the choice, stated out loud. Weekly fantasy points are zero-inflated even
- * among players who dressed: a receiver with no catches scores zero, and about a fifth of played
- * weeks land near it. Two treatments are defensible -- a two-part model (probability of a zero week
+ * THE ZERO ATOM, and the choice, stated out loud. Weekly fantasy points are zero-inflated twice over:
+ * a rostered man can fail to play at all, and a receiver who plays can catch nothing. MEASURED, on
+ * 2010-2025 rostered non-bye weeks: 29.5% of the rows the model trains on score at or below 1.0
+ * point, and about 40% of everything the harness scores does (the difference is the training floor
+ * on the season line, which excludes the deep bench where a zero is near-certain).
+ * Two treatments are defensible -- a two-part model (probability of a zero week
  * from availability signals, times the ratio given a real week), or quantile heads that can reach
  * zero. THIS ARTIFACT USES QUANTILE HEADS, with the clamp floor at exactly 0 rather than the season
  * model's 0.01, so p10 is free to sit on the atom and does. The reason is not elegance: the
