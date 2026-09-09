@@ -117,7 +117,7 @@ async function main() {
     case "rank":
       return cmdRank(rest);
     case "models":
-      return cmdModels();
+      return cmdModels(rest);
     case "build-identity":
       return cmdBuildIdentity(rest);
     case "build-staging":
@@ -175,6 +175,10 @@ async function main() {
     // ---- in-season backtest (src/inseason/backtest/) ----
     case "inseason-backtest":
       return cmdInseasonBacktest(rest);
+    case "lineage":
+      return cmdLineage(rest);
+    case "ledger":
+      return cmdLedger(rest);
     default:
       console.log(
         "commands:\n" +
@@ -295,6 +299,36 @@ async function cmdServe(rest: string[]) {
           }
           const lastIngest = (db.prepare("SELECT value FROM settings WHERE key='last_ingest'").get() as { value: string } | undefined)?.value ?? null;
           result = { lastIngest, tables };
+          break;
+        }
+        // THE DERIVED LINEAGE GRAPH (src/lineage/dag.ts): nodes/edges computed from the ingest
+        // registry (src/data/ingest.ts) and the feature/trainer registry (src/lineage/registry.ts),
+        // not enumerated here. See `ff lineage --json` for the same payload from a shell.
+        case "lineage": {
+          const { computeLineage } = await import("./lineage/dag.js");
+          result = computeLineage(db);
+          break;
+        }
+        // Cheap staleness probes, on the same principle as `board-stamp`: a stamp the app's push
+        // chokepoint (app/main.js) can poll after every engine call without serialising the whole
+        // graph/page. Built from the same freshness/mtime fields the full payloads carry, so a stamp
+        // change and a payload change can never disagree.
+        case "lineage-stamp": {
+          const { computeLineage } = await import("./lineage/dag.js");
+          const g = computeLineage(db);
+          const maxUpdated = g.nodes.reduce((m, n) => (n.updated && n.updated > m ? n.updated : m), "");
+          result = { stamp: `${g.nodes.length}:${g.edges.length}:${maxUpdated}` };
+          break;
+        }
+        case "models-stamp": {
+          const { modelStatus } = await import("./draft/models.js");
+          const rows = modelStatus();
+          result = { stamp: rows.map((r) => `${r.key}:${r.present}:${r.ageDays}:${r.problem ?? ""}`).join("|") };
+          break;
+        }
+        case "model-page": {
+          const { buildModelPage } = await import("./lineage/modelPage.js");
+          result = buildModelPage(db);
           break;
         }
         case "model-graph": {
@@ -843,7 +877,19 @@ async function cmdPreflight(rest: string[]) {
  * getting lost -- what each model is HONESTLY worth under nested cross-validation rather than under
  * the loop that also chose its shape.
  */
-async function cmdModels(): Promise<void> {
+async function cmdModels(rest: string[] = []): Promise<void> {
+  // `--json` serves src/lineage/modelPage.ts's assembly: the same JSON `modelPage`/`model-page` over
+  // `ff serve` returns, added so the Model page's redesign (Step 3) has a shell entry point too. The
+  // flagless path below is unchanged.
+  if (rest.includes("--json")) {
+    const { openDb } = await import("./db/db.js");
+    const { buildModelPage } = await import("./lineage/modelPage.js");
+    const db = openDb(valueOf(rest, "--db"));
+    const page = buildModelPage(db);
+    db.close();
+    console.log(JSON.stringify(page));
+    return;
+  }
   const { modelStatus } = await import("./draft/models.js");
   const rows = modelStatus();
   console.log("FITTED MODELS\n");
@@ -3418,4 +3464,45 @@ async function cmdBuildWaiverClaims(rest: string[]) {
   const args = ["--import", "tsx", "scripts/faab-coverage.mjs", "--build", ...rest];
   const r = spawnSync(process.execPath, args, { stdio: "inherit" });
   if (r.status) process.exitCode = r.status;
+}
+
+/**
+ * `ff lineage [--json]`
+ *
+ * The lineage graph computed by `src/lineage/dag.ts` from the ingest registry (src/data/ingest.ts)
+ * and the feature/trainer registry (src/lineage/registry.ts) -- the same payload the `lineage` method
+ * over `ff serve` returns to the Data page, so a shell and the app can never disagree about it.
+ */
+async function cmdLineage(rest: string[]) {
+  const { openDb } = await import("./db/db.js");
+  const { computeLineage } = await import("./lineage/dag.js");
+  const db = openDb(valueOf(rest, "--db"));
+  const graph = computeLineage(db);
+  db.close();
+  if (rest.includes("--json")) { console.log(JSON.stringify(graph)); return; }
+  console.log(`LINEAGE: ${graph.nodes.length} nodes, ${graph.edges.length} edges, ${graph.producers.length} declared producers`);
+  const byKind = new Map<string, number>();
+  for (const n of graph.nodes) byKind.set(n.kind, (byKind.get(n.kind) ?? 0) + 1);
+  for (const [k, n] of [...byKind.entries()].sort()) console.log(`  ${k.padEnd(10)} ${n}`);
+}
+
+/**
+ * `ff ledger sync [--json]`
+ *
+ * Rebuild `fact_prediction` from the checked-in data/predictions.json (the transcription of every
+ * P<n>/W<n> row in docs/redesign-2026-09.md's prediction tables), then print the ledger summary.
+ */
+async function cmdLedger(rest: string[]) {
+  const sub = rest[0];
+  const { openDb } = await import("./db/db.js");
+  const { syncLedger, ledgerSummary } = await import("./lineage/ledger.js");
+  const db = openDb(valueOf(rest, "--db"));
+  if (sub === "sync") {
+    const { n } = syncLedger(db);
+    console.log(`ledger synced: ${n} predictions`);
+  }
+  const { rows, counts } = ledgerSummary(db);
+  db.close();
+  if (rest.includes("--json")) { console.log(JSON.stringify({ rows, counts })); return; }
+  console.log(`PREDICTION LEDGER: ${rows.length} rows -- held ${counts.held ?? 0}, failed ${counts.failed ?? 0}, split ${counts.split ?? 0}, pending ${counts.pending ?? 0}`);
 }

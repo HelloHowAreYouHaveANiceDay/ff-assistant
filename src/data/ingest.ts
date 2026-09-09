@@ -212,6 +212,13 @@ export interface RawAsset {
   what: string;
   /** Default season range when `--seasons` is omitted, or null for a season-less feed. */
   defaultSeasons: [number, number] | null;
+  /** LINEAGE: external sources / tables this asset reads. Verified against the code, not guessed --
+   *  see `src/lineage/dag.ts` for how this and `writes` become the served graph. External sources use
+   *  the same `src_*` ids the Data page's curated node list already uses (app/renderer/app.js). */
+  reads: string[];
+  /** LINEAGE: the table(s) this asset writes. Usually just `table`, split out where a "(+..." suffix
+   *  on `table` hides a second table so the graph can draw a real edge to it. */
+  writes: string[];
   run(dbPath: string | undefined, seasons: number[]): Promise<number>;
 }
 
@@ -221,6 +228,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_league_season (+team_season, pick, matchup, division)",
     what: "this league's own past seasons through the desktop app's ESPN session: format, auction prices, activity, finish, schedule",
     defaultSeasons: [2018, new Date().getFullYear()],
+    reads: ["src_espn"],
+    writes: ["raw_league_season", "raw_league_team_season", "raw_league_pick", "raw_league_matchup", "raw_league_division"],
     async run(dbPath, seasons) {
       const { ingestLeagueHistory } = await import("./leagueHistory.js");
       const r = await ingestLeagueHistory({ dbPath, seasons });
@@ -232,6 +241,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_nfl_game",
     what: "nflverse schedules: every NFL game 1999-2026 with the closing Vegas line, weather, roof, surface, rest days and starting QBs",
     defaultSeasons: null,
+    reads: ["src_nflverse"],
+    writes: ["raw_nfl_game"],
     async run(dbPath, seasons) {
       const { ingestRawGames } = await import("./rawSources.js");
       const r = await ingestRawGames({ dbPath, seasons });
@@ -243,6 +254,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_injury",
     what: "nflverse official weekly injury and practice reports (2009+; 1999-2008 do not exist in this commons)",
     defaultSeasons: [1999, new Date().getFullYear()],
+    reads: ["src_nflverse"],
+    writes: ["raw_injury"],
     async run(dbPath, seasons) {
       const { ingestRawInjuries } = await import("./rawSources.js");
       const r = await ingestRawInjuries({ dbPath, seasons });
@@ -255,6 +268,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_depth_chart",
     what: "nflverse depth charts -- weekly 2001-2024, a DATED snapshot from 2025 with a different schema entirely",
     defaultSeasons: [1999, new Date().getFullYear()],
+    reads: ["src_nflverse"],
+    writes: ["raw_depth_chart"],
     async run(dbPath, seasons) {
       const { ingestRawDepthCharts } = await import("./rawSources.js");
       const r = await ingestRawDepthCharts({ dbPath, seasons });
@@ -267,6 +282,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_snap_count",
     what: "nflverse/PFR offensive, defensive and special-teams snap counts and shares (2012+, keyed by PFR id)",
     defaultSeasons: [2012, new Date().getFullYear()],
+    reads: ["src_nflverse"],
+    writes: ["raw_snap_count"],
     async run(dbPath, seasons) {
       const { ingestRawSnapCounts } = await import("./rawSources.js");
       const r = await ingestRawSnapCounts({ dbPath, seasons });
@@ -279,6 +296,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_nfl_draft_pick",
     what: "the NFL draft (not our auction): round, pick, team, college, 1980-2026 in one file",
     defaultSeasons: null,
+    reads: ["src_nflverse"],
+    writes: ["raw_nfl_draft_pick"],
     async run(dbPath, seasons) {
       const { ingestRawDraftPicks } = await import("./rawSources.js");
       const r = await ingestRawDraftPicks({ dbPath, seasons });
@@ -290,6 +309,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_contract",
     what: "OverTheCap contracts via nflverse -- year signed, length, value; the source of the contract-year flag",
     defaultSeasons: null,
+    reads: ["src_dproc"],
+    writes: ["raw_contract"],
     async run(dbPath) {
       const { ingestRawContracts } = await import("./rawSources.js");
       const r = await ingestRawContracts({ dbPath });
@@ -301,6 +322,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_participation",
     what: "nflverse play-level participation (2016+), AGGREGATED to player-week: offensive plays, charted pass plays, and the team denominators",
     defaultSeasons: [2016, new Date().getFullYear()],
+    reads: ["src_nflverse"],
+    writes: ["raw_participation"],
     async run(dbPath, seasons) {
       const { ingestRawParticipation } = await import("./rawSources.js");
       const r = await ingestRawParticipation({ dbPath, seasons });
@@ -313,6 +336,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_adp_history",
     what: "FantasyFootballCalculator ADP archive by format and year (standard 2008+, ppr 2010+, half-ppr 2018+; the API ignores `teams`)",
     defaultSeasons: [2008, new Date().getFullYear()],
+    reads: ["src_ffc"],
+    writes: ["raw_adp_history"],
     async run(dbPath, seasons) {
       const { ingestRawAdpHistory } = await import("./rawSources.js");
       const r = await ingestRawAdpHistory({ dbPath, seasons });
@@ -325,6 +350,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_espn_eligibility (+player_eligibility)",
     what: "ESPN's own eligibleSlots per player, read through the desktop app's session -- the only source that says a man is startable at TWO positions",
     defaultSeasons: null,
+    reads: ["src_espn"],
+    writes: ["raw_espn_eligibility", "player_eligibility"],
     async run(dbPath, seasons) {
       const { ingestEligibility } = await import("./eligibility.js");
       const { getConfig } = await import("../db/db.js");
@@ -343,6 +370,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_league_roster_week (+ _status)",
     what: "this league's roster AND starting lineup for every scoring period, through the app's ESPN session (the /seasons/ boxscore view -- leagueHistory+mRoster ignores the week and serves the final roster)",
     defaultSeasons: [2018, new Date().getFullYear()],
+    reads: ["src_espn"],
+    writes: ["raw_league_roster_week", "raw_league_roster_week_status"],
     async run(dbPath, seasons) {
       const { ingestLeagueRosters } = await import("./leagueRosters.js");
       const r = await ingestLeagueRosters({ dbPath, seasons });
@@ -355,6 +384,8 @@ export const RAW_ASSETS: RawAsset[] = [
     table: "raw_league_transaction (+ _status)",
     what: "this league's add/drop/waiver/trade log with FAAB bids, fetched PER SCORING PERIOD (mTransactions2 returns an empty array without scoringPeriodId)",
     defaultSeasons: [2018, new Date().getFullYear()],
+    reads: ["src_espn"],
+    writes: ["raw_league_transaction", "raw_league_transaction_status"],
     async run(dbPath, seasons) {
       const { ingestLeagueTransactions } = await import("./leagueTransactions.js");
       const r = await ingestLeagueTransactions({ dbPath, seasons });
@@ -365,6 +396,28 @@ export const RAW_ASSETS: RawAsset[] = [
       return r.counts.rows;
     },
   },
+];
+
+// ==================================================================================================
+// L1 ASSETS: the sources `ingestOne`'s switch materializes (feed the board directly, or feed the
+// projection curve -> board). Declared here, alongside RAW_ASSETS, so the lineage graph (src/lineage)
+// has one place to read every ingest.ts producer's reads/writes from -- purely additive metadata,
+// verified against the ingest functions above; the switch in `ingestOne` is untouched.
+// ==================================================================================================
+export interface L1Asset { id: string; reads: string[]; writes: string[] }
+export const L1_ASSETS: L1Asset[] = [
+  { id: "ecr", reads: ["src_fp"], writes: ["player", "ranking"] },
+  { id: "bio", reads: ["src_nflverse", "player"], writes: ["player_bio"] },
+  { id: "byes", reads: ["src_nflverse"], writes: ["team_bye", "game"] },
+  { id: "advanced", reads: ["src_nflverse"], writes: ["player_advanced"] },
+  { id: "trade", reads: ["src_dproc"], writes: ["trade_value"] },
+  { id: "weekly", reads: ["src_fp"], writes: ["weekly_rank"] },
+  { id: "status", reads: ["src_sleeper"], writes: ["player_status", "trending"] },
+  { id: "odds", reads: ["src_espn"], writes: ["team_odds"] },
+  { id: "boris", reads: ["src_boris"], writes: ["boris_tier"] },
+  { id: "adp", reads: ["src_ffc"], writes: ["adp"] },
+  { id: "market", reads: ["src_fcalc"], writes: ["market_value"] },
+  { id: "news", reads: ["src_rss", "player"], writes: ["news"] },
 ];
 
 /** Print the per-season landing counts. A raw sweep whose only output is a grand total cannot show

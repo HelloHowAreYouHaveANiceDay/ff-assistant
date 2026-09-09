@@ -1,0 +1,359 @@
+[
+  {
+    "id": "P1",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "championships rise under both opponent books with the conditional curve",
+    "outcome": "held",
+    "measured": "HELD in direction, not significance (+1.00pp)"
+  },
+  {
+    "id": "P2",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the `aggr` optimum moves to >= 0.8 under the conditional curve",
+    "outcome": "failed",
+    "measured": "**FAILED**"
+  },
+  {
+    "id": "P3",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the `multQB 0.7` edge shrinks toward zero",
+    "outcome": "held",
+    "measured": "HELD, and it reversed sign"
+  },
+  {
+    "id": "P4",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the projector arm is within noise of Phase 1's conditional arm",
+    "outcome": "held",
+    "measured": "HELD"
+  },
+  {
+    "id": "P5",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the trained artifact beats curve-only on the nested evaluation",
+    "outcome": "held",
+    "measured": "HELD -- it ships"
+  },
+  {
+    "id": "P6",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the `aggr` optimum is in [0.6, 0.8] under the ECR market",
+    "outcome": "held",
+    "measured": "HELD -- 0.7"
+  },
+  {
+    "id": "P7",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "`maxShare` is a plateau, not a peak",
+    "outcome": "held",
+    "measured": "HELD"
+  },
+  {
+    "id": "P8",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "`multQB` 0.7 does not beat 1.0",
+    "outcome": "held",
+    "measured": "HELD"
+  },
+  {
+    "id": "P9",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "our rate falls by 0.5 to 4 points when the field works the wire",
+    "outcome": "failed",
+    "measured": "**FAILED, by a factor of three**"
+  },
+  {
+    "id": "P10",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "draft-pick and participation resolution each rise 15+ points after the re-key",
+    "outcome": "failed",
+    "measured": "**FAILED** -- a coverage ceiling, not a keying one"
+  },
+  {
+    "id": "P11",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "price LOSO MAE on 2018-2025 at or below $4.32",
+    "outcome": "failed",
+    "measured": "**FAILED** -- $6.38"
+  },
+  {
+    "id": "P12",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "2026 holdout MAE <= $5.00, top-12 bias within +/-$3",
+    "outcome": "failed",
+    "measured": "**FAILED** -- $7.07, +$4.3"
+  },
+  {
+    "id": "P13",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "price beats rank on 2026 by >= $2 of MAE",
+    "outcome": "failed",
+    "measured": "**FAILED** -- it loses by $1.48"
+  },
+  {
+    "id": "P14",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "per-owner profiles still carry no out-of-sample signal",
+    "outcome": "held",
+    "measured": "HELD"
+  },
+  {
+    "id": "P15",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the simulator's playoff Brier beats uniform",
+    "outcome": "held",
+    "measured": "HELD"
+  },
+  {
+    "id": "P16",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "its title Brier beats uniform",
+    "outcome": "failed",
+    "measured": "**FAILED** -- 1.0% worse than uniform"
+  },
+  {
+    "id": "P17",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the simulator is over-confident at the top",
+    "outcome": "held",
+    "measured": "HELD"
+  },
+  {
+    "id": "P18",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "honest-arbiter title rate in [12%, 26%]",
+    "outcome": "held",
+    "measured": "HELD -- 14.5%"
+  },
+  {
+    "id": "P19",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "`aggr` 0.7 beats 1.0 there by >= 4 points",
+    "outcome": "failed",
+    "measured": "**FAILED** -- +1.0pp, CI [-3.7, +5.9]"
+  },
+  {
+    "id": "P20",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "book ordering by our title rate is vor > rank > price",
+    "outcome": "failed",
+    "measured": "**FAILED** -- it is rank > price > vor"
+  },
+  {
+    "id": "P25",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "at least one screen survivor improves pooled CRPS with coverage in band",
+    "outcome": "held",
+    "measured": "HELD -- two do"
+  },
+  {
+    "id": "P26",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "for QB, carries per game beats rushing yards per game",
+    "outcome": "failed",
+    "measured": "**FAILED**"
+  },
+  {
+    "id": "P27",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "ADP relative to ECR does NOT survive -- the same consensus twice",
+    "outcome": "held",
+    "measured": "HELD"
+  },
+  {
+    "id": "P28",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "V3's playoff rate is at least V2's minus 2 points under BOTH arms",
+    "outcome": "failed",
+    "measured": "**FAILED** -- +1.3pp on one arm, **-35.5pp** on the other"
+  },
+  {
+    "id": "P29",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "V3's title rate is within noise of V2's",
+    "outcome": "held",
+    "measured": "HELD on the honest arbiter, not on the long arm"
+  },
+  {
+    "id": "P30",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "V3's QB share of spend is at least 3 points LOWER than V2's",
+    "outcome": "failed",
+    "measured": "**FAILED** -- it is 3 to 14 points HIGHER"
+  },
+  {
+    "id": "P31",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "at least three V2 levers are flat within noise under the honest arbiter",
+    "outcome": "held",
+    "measured": "HELD -- `starterReserve`, `premium`, `maxShare`"
+  },
+  {
+    "id": "P32",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the 2d board's playoff rate is within noise of, or better than, the 2c board's under BOTH books",
+    "outcome": "held",
+    "measured": "HELD -- price -2.50pp CI [-9.33, +2.17]; rank +1.67pp CI [-4.08, +8.08]"
+  },
+  {
+    "id": "P33",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "its title rate is within noise",
+    "outcome": "held",
+    "measured": "HELD -- price -2.75pp CI [-5.25, +0.17]; rank -0.00pp CI [-1.75, +2.08]"
+  },
+  {
+    "id": "P34",
+    "docSection": "Every prediction in programme 2",
+    "claim": "V3's QB share falls toward the room's once the baseline is positional",
+    "outcome": "held",
+    "measured": "**HELD**"
+  },
+  {
+    "id": "P35",
+    "docSection": "Every prediction in programme 2",
+    "claim": "the redundant-lever finding holds for V2: `starterReserve` inert",
+    "outcome": "failed",
+    "measured": "**FAILED in its strong form** -- 4 vs 0 is NOT byte-identical on the long arm (16 of 1,800 trials differ). Weak form holds: -0.17pp, CI [-0.44, 0.00]"
+  },
+  {
+    "id": "P36",
+    "docSection": "Every prediction in programme 2",
+    "claim": "managers leave >= 8 pts/wk on the bench vs hindsight",
+    "outcome": "held",
+    "measured": "**HELD** -- 12.48"
+  },
+  {
+    "id": "P37",
+    "docSection": "Every prediction in programme 2",
+    "claim": "our lineup beats the median manager's realised lineup in >= 60% of team-weeks",
+    "outcome": "failed",
+    "measured": "**FAILED** -- 46.8% (challenger), 42.1% (floor)"
+  },
+  {
+    "id": "P38",
+    "docSection": "Every prediction in programme 2",
+    "claim": "waiver and promotion claims (Track B)",
+    "outcome": "pending",
+    "measured": "recorded in `docs/in-season-backtest.md`"
+  },
+  {
+    "id": "P39",
+    "docSection": "Every prediction in programme 2",
+    "claim": "waiver and promotion claims (Track B)",
+    "outcome": "pending",
+    "measured": "recorded in `docs/in-season-backtest.md`"
+  },
+  {
+    "id": "P40",
+    "docSection": "Every prediction in programme 2",
+    "claim": "QB/K/DST streaming picks beat the board's by >= 1.0 pt/wk",
+    "outcome": "held",
+    "measured": "**HELD** on both pools -- +8.29 / +1.37 / +1.32 on the REAL pool"
+  },
+  {
+    "id": "P41",
+    "docSection": "Every prediction in programme 2",
+    "claim": "the opponent block adds < 0.5 pt/wk at RB/WR/TE",
+    "outcome": "held",
+    "measured": "**HELD**, and negative: -0.15 / -0.46 / -0.17"
+  },
+  {
+    "id": "P42",
+    "docSection": "Every prediction in programme 2",
+    "claim": "DST CRPS improves >= 5% with the opponent block",
+    "outcome": "failed",
+    "measured": "**FAILED** -- 0.1%"
+  },
+  {
+    "id": "P43",
+    "docSection": "Every prediction in programme 2",
+    "claim": "dual eligibility is a no-op for a single-eligible player (Track D)",
+    "outcome": "held",
+    "measured": "**HELD**, with positive controls"
+  },
+  {
+    "id": "P44",
+    "docSection": "Every prediction in programme 2",
+    "claim": "dual eligibility is a no-op for a single-eligible player (Track D)",
+    "outcome": "held",
+    "measured": "**HELD**, with positive controls"
+  },
+  {
+    "id": "P45",
+    "docSection": "Every prediction in programme 2",
+    "claim": "division-winners-first does not worsen the 2025 playoff Brier by > 0.005",
+    "outcome": "held",
+    "measured": "**HELD** -- it improved it by 0.000612"
+  },
+  {
+    "id": "P46",
+    "docSection": "Every prediction in programme 2",
+    "claim": "13 weeks changes the tripwire by < 2 points",
+    "outcome": "held",
+    "measured": "**HELD** -- +1.5pp, CI contains zero"
+  },
+  {
+    "id": "P47",
+    "docSection": "Every prediction in programme 2",
+    "claim": "division seeding changes it by < 1 point",
+    "outcome": "held",
+    "measured": "**HELD** -- +0.7pp"
+  },
+  {
+    "id": "P48",
+    "docSection": "Every prediction in programme 2",
+    "claim": "recalibrating stage one's intercept brings the zero share within 0.030",
+    "outcome": "failed",
+    "measured": "**FAILED** -- the numbers did not move at all (RB 0.031, WR 0.039, TE 0.074), and could not have; see below"
+  },
+  {
+    "id": "P49",
+    "docSection": "Every prediction in programme 2",
+    "claim": "the per-season format improves the playoff Brier over the constant-7 run",
+    "outcome": "held",
+    "measured": "**HELD** -- 0.2408 -> 0.2369, better in 8 seasons of 8"
+  },
+  {
+    "id": "W1",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the weekly model beats the season line in every position",
+    "outcome": "held",
+    "measured": "HELD"
+  },
+  {
+    "id": "W2",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "its lineup regret is under 2 points",
+    "outcome": "failed",
+    "measured": "**FAILED** -- 3.39"
+  },
+  {
+    "id": "W3",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "trailing-4 is worse than the season line",
+    "outcome": "held",
+    "measured": "HELD"
+  },
+  {
+    "id": "W4",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "the two-part model's lineup gain is at least 5 points per lineup",
+    "outcome": "held",
+    "measured": "HELD -- 6.08"
+  },
+  {
+    "id": "W5",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "its predicted zero-week share matches actual within 3 points",
+    "outcome": "failed",
+    "measured": "**FAILED** -- 0.035 pooled"
+  },
+  {
+    "id": "W6",
+    "docSection": "Every recorded prediction, with its outcome",
+    "claim": "`implied_team_total` outweighs `dvp_mult` at every position",
+    "outcome": "failed",
+    "measured": "**FAILED** -- the reverse"
+  }
+]

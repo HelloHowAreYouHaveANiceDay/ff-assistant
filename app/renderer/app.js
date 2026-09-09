@@ -805,144 +805,39 @@ function freshDot(iso) {
   const d = (Date.now() - Date.parse(iso)) / 86400000;
   return d < 2 ? "green" : d < 7 ? "amber" : "red";
 }
-// --- Data-warehouse lineage: external sources -> landing tables -> config/curve -> marts -> view ---
+// --- Data-warehouse lineage: RENDERED FROM THE ENGINE'S OWN COMPUTED GRAPH, NOT A CURATED LIST ---
 //
-// THE NODE LIST IS DERIVED, NOT ENUMERATED, and that is the whole point of this section.
+// Phase 2d made the node LIST derived (from `data-sources`' served table names); this pass finishes
+// the job by making the GRAPH itself -- every node, every edge, every layer grouping, and the
+// click-to-rebuild id on each node -- come from `window.mc.lineage()`, which is
+// `src/lineage/dag.ts`'s `computeLineage()` computed from the ingest registry (src/data/ingest.ts)
+// and the feature/trainer registry (src/lineage/registry.ts). There is no WH_CURATED, WH_DERIVE or
+// WH_EDGES here any more: this file does not know what a table is FOR, only how to lay out and label
+// whatever the engine hands it. Register a producer's reads/writes in one of those two registries and
+// the node, its layer, its freshness, and (for an ingest-source asset) its rebuild button all appear
+// here with no renderer change.
 //
-// It used to be a hand-written array. The engine's `data-sources` method already knew about every
-// table in the warehouse -- it reads a row count and a freshness stamp for each -- and this list had
-// fallen behind it by thirteen tables: the entire RAW layer (raw_nfl_game, raw_injury,
-// raw_depth_chart, raw_snap_count, raw_participation, raw_contract, raw_adp_history, the five
-// raw_league_* archives) and the whole EXTENSION FEATURE layer (feat_player_week_context,
-// feat_player_season_ext, feat_coverage) were being fetched, counted, and then silently dropped on
-// the floor because nobody had typed a node for them. A page whose job is "show me what data exists"
-// was showing a 2024 snapshot of what data exists.
-//
-// That is coverage-by-enumeration, and it rots by construction: the list is a photograph of the day
-// it was written and nothing fails when reality outgrows it. So the curated part below now carries
-// only what cannot be derived -- the external sources, which are not tables at all, the
-// click-to-rebuild `mat` ids, and the human-readable captions -- and every TABLE node comes from the
-// keys the engine actually served. Register a table in `data-sources` and it appears here; there is
-// no second place to remember.
-//
-// `whUnplacedAssets` is the guard, and it is checked in test/dag-derivation.test.ts: an asset the
-// engine serves that this derivation produces no node for is a FAILURE, not a silent omission.
+// `lineageNodes`/`lineageEdges` are pure pass-throughs (with a defensive dangling-edge filter) so
+// test/dag-derivation.test.ts can prove nothing here silently drops what the engine served.
+const LINEAGE_LAYERS = ["external", "raw", "staging", "identity", "feature", "artifact", "table", "consumer", "mart", "scorecard", "model"];
+function lineageLayerRank(kind) { const i = LINEAGE_LAYERS.indexOf(kind); return i < 0 ? LINEAGE_LAYERS.length : i; }
 
-/** The nodes that are not tables, or whose caption/behaviour cannot be inferred from a name. */
-const WH_CURATED = [].concat(
-  [["src_fp", "FantasyPros"], ["src_nflverse", "nflverse"], ["src_espn", "ESPN"], ["src_sleeper", "Sleeper"],
-   ["src_dproc", "DynastyProcess"], ["src_ffc", "FF Calculator"], ["src_fcalc", "FantasyCalc"], ["src_boris", "Boris Chen"], ["src_rss", "RSS feeds"]]
-    .map(([id, name]) => ({ id, name, kind: "source" })),
-  // L1 landing tables: [table, materializing source id]
-  [["player", "ecr"], ["ranking", "ecr"], ["player_bio", "bio"], ["team_bye", "byes"], ["player_advanced", "advanced"],
-   ["trade_value", "trade"], ["weekly_rank", "weekly"], ["player_status", "status"], ["trending", "status"],
-   ["team_odds", "odds"], ["boris_tier", "boris"], ["adp", "adp"], ["market_value", "market"], ["news", "news"], ["league", "league"]]
-    .map(([id, mat]) => ({ id, name: id, kind: "table", table: id, mat })),
-  // RAW archives loaded once rather than per-refresh (ff ingest-ecr / ff ingest-playerids), so they
-  // carry no `mat` id and are not click-to-rebuild.
-  [{ id: "ranking_history", name: "ranking_history", kind: "table", table: "ranking_history", sub: "ECR archive" },
-   { id: "player_ids", name: "player_ids", kind: "table", table: "player_ids", sub: "id crosswalk" },
-   // IDENTITY + STAGING -- the layer that decides who a player is, once, so no consumer has to.
-   { id: "player_identity", name: "player_identity", kind: "identity", table: "player_identity", sub: "surrogate keys" },
-   { id: "player_xref", name: "player_xref", kind: "identity", table: "player_xref", sub: "source ids" },
-   { id: "player_position", name: "player_position", kind: "identity", table: "player_position", sub: "eligibility" },
-   { id: "stg_player", name: "stg_player", kind: "staging", table: "stg_player", sub: "conformed dimension" },
-   { id: "settings", name: "config", kind: "config", sub: "scoring · format" },
-   { id: "points", name: "points.csv", kind: "artifact", sub: "projection curve" },
-   { id: "player_value", name: "player_value", kind: "mart", table: "player_value" },
-   { id: "board", name: "board", kind: "mart", table: "board" },
-   { id: "view", name: "Players view", kind: "output", sub: "board + Assistant" }]
-);
+/** The served nodes, unmodified. A top-level function (not an inline `d.nodes`) so the test can
+ *  assert against it directly and a future change here cannot quietly start filtering. */
+function lineageNodes(graph) { return (graph && graph.nodes) || []; }
 
-/**
- * How a table name that nobody curated is placed on the graph.
- *
- * Prefix rules, in order, first match wins. Deliberately name-shaped: the engine serves a bare table
- * name and a count, and the naming convention (`raw_`, `feat_`, `stg_`) IS the layer in this store.
- * A name that matches nothing still gets a node -- kind "table", no upstream -- rather than being
- * dropped, because the failure this section exists to prevent is an asset going invisible.
- */
-const WH_DERIVE = [
-  { test: (t) => t.startsWith("raw_league_"), kind: "raw", up: "src_espn", sub: "league archive" },
-  { test: (t) => t === "raw_adp_history", kind: "raw", up: "src_ffc", sub: "ADP archive" },
-  { test: (t) => t === "raw_contract", kind: "raw", up: "src_dproc", sub: "contracts" },
-  // ESPN's own weekly projection is a raw table that does NOT come from nflverse. Without this rule
-  // the generic raw_ rule below would place it and draw an edge to the wrong source -- a node in the
-  // right layer attributed to the wrong feed, which is worse than an absent node because it looks
-  // checked.
-  { test: (t) => t === "raw_espn_projection", kind: "raw", up: "src_espn", sub: "ESPN projections" },
-  { test: (t) => t.startsWith("raw_"), kind: "raw", up: "src_nflverse", sub: "nflverse archive" },
-  // The forward record. Not a feature and not a mart: it is what we SAID, frozen before the games,
-  // and what it scored. It hangs off the feature table the predictions are made from.
-  { test: (t) => t.startsWith("scorecard_"), kind: "mart", up: "feat_player_week_model", sub: "forward record" },
-  { test: (t) => t.startsWith("feat_"), kind: "feature", up: null, sub: "feature table" },
-  { test: (t) => t.startsWith("stg_"), kind: "staging", up: "player_identity", sub: "conformed dimension" },
-  { test: (t) => t.startsWith("player_"), kind: "identity", up: null, sub: "identity spine" },
-];
-
-/**
- * THE DERIVATION. `tables` is the map `data-sources` returns, keyed by table name.
- *
- * Returns the curated nodes plus one node per served table that no curated node already covers.
- * Pure, and exported by being a top-level function so test/dag-derivation.test.ts can run the REAL
- * bytes of this file rather than a copy that can drift.
- */
-function whDagNodes(tables) {
-  const nodes = WH_CURATED.slice();
-  const covered = new Set(nodes.filter((n) => n.table).map((n) => n.table));
-  for (const t of Object.keys(tables || {}).sort()) {
-    if (covered.has(t)) continue;
-    const rule = WH_DERIVE.find((r) => r.test(t));
-    nodes.push({
-      id: t, name: t, table: t,
-      kind: rule ? rule.kind : "table",
-      sub: rule ? rule.sub : "",
-      up: rule ? rule.up : null,
-    });
-  }
-  return nodes;
+/** The served edges, dropping only an edge that names a node NOT in `nodes` (defensive against a
+ *  partial/fixture graph) -- never dropping one both of whose endpoints exist. */
+function lineageEdges(graph, nodes) {
+  const ids = new Set((nodes || lineageNodes(graph)).map((n) => n.id));
+  return ((graph && graph.edges) || [])
+    .filter((e) => ids.has(e.from) && ids.has(e.to))
+    .map((e) => [e.from, e.to]);
 }
 
-/** Every table the engine served that the derivation produced NO node for. Must be empty. */
-function whUnplacedAssets(tables, nodes) {
-  const placed = new Set((nodes || []).filter((n) => n.table).map((n) => n.table));
-  return Object.keys(tables || {}).filter((t) => !placed.has(t)).sort();
-}
-
-/** Curated edges plus one per derived node that declared an upstream. */
-function whDagEdges(nodes) {
-  const ids = new Set(nodes.map((n) => n.id));
-  const out = WH_EDGES.filter(([a, b]) => ids.has(a) && ids.has(b));
-  for (const n of nodes) if (n.up && ids.has(n.up)) out.push([n.up, n.id]);
-  // The feature layer is built FROM the raw layer, and drawing that is what makes the page answer
-  // "where did this feature come from". Each feature table hangs off the raw tables that exist.
-  const raws = nodes.filter((n) => n.kind === "raw").map((n) => n.id);
-  for (const n of nodes) {
-    if (n.kind !== "feature") continue;
-    for (const r of raws) out.push([r, n.id]);
-  }
-  return out;
-}
-
-const WH_EDGES = [
-  ["src_fp", "ranking"], ["src_fp", "player"], ["src_fp", "weekly_rank"],
-  ["src_nflverse", "player_bio"], ["src_nflverse", "team_bye"], ["src_nflverse", "player_advanced"], ["src_nflverse", "points"],
-  ["src_espn", "team_odds"], ["src_espn", "league"], ["src_espn", "ranking"],
-  ["src_sleeper", "player_status"], ["src_sleeper", "trending"],
-  ["src_dproc", "trade_value"], ["src_ffc", "adp"], ["src_fcalc", "market_value"], ["src_boris", "boris_tier"], ["src_rss", "news"],
-  ["league", "settings"], ["ranking", "points"], ["settings", "points"], ["points", "player_value"], ["settings", "player_value"],
-  ["board", "view"],
-  // IDENTITY SPINE: raw archives -> registry -> staging -> the marts, which now carry player_sk.
-  // Drawn because it is now a real dependency: board and player_value get their stable id from
-  // stg_player, so a lineage that stopped at the landing tables would be showing the old shape.
-  ["src_dproc", "player_ids"], ["src_fp", "ranking_history"],
-  ["player_ids", "player_identity"], ["player_identity", "player_xref"], ["player_identity", "player_position"],
-  ["player_identity", "stg_player"], ["player_ids", "stg_player"],
-  ["stg_player", "player_value"], ["stg_player", "board"],
-].concat(["player_value", "player_bio", "player_advanced", "trade_value", "weekly_rank", "player_status", "trending", "team_odds", "boris_tier", "adp", "market_value", "news", "ranking", "team_bye"].map(t => [t, "board"]));
 function views_sources() {
   document.getElementById("view").innerHTML = `<div class="settings">
-    <div class="sec"><h2>Data Warehouse</h2><span class="lbl">lineage DAG — click a table to re-materialize it</span></div>
+    <div class="sec"><h2>Data Warehouse</h2><span class="lbl">lineage DAG, computed from the ingest + feature registries — click a table to re-materialize it</span></div>
     <div id="src-banner" class="setupbanner mut">Loading…</div>
     <div class="btnrow"><button class="pbtn primary" id="src-update">Rebuild all</button><span class="mut" id="src-status"></span></div>
     <div id="dag-wrap"><svg id="dag"></svg></div>
@@ -957,35 +852,38 @@ function views_sources() {
 }
 async function loadDag() {
   const banner = document.getElementById("src-banner"), svg = document.getElementById("dag");
-  if (!banner || !window.mc?.dataSources || typeof dagre === "undefined") { if (banner) banner.textContent = "Open inside the app to see the warehouse."; return; }
-  const d = await window.mc.dataSources().catch(() => null);
+  if (!banner || !window.mc?.lineage || typeof dagre === "undefined") { if (banner) banner.textContent = "Open inside the app to see the warehouse."; return; }
+  const d = await window.mc.lineage().catch(() => null);
   if (!d) { banner.textContent = "Could not read the warehouse."; return; }
-  const tbls = d.tables || {};
-  const WH_NODES = whDagNodes(tbls);
-  const unplaced = whUnplacedAssets(tbls, WH_NODES);
-  const nTables = WH_NODES.filter(n => n.table).length;
-  banner.className = unplaced.length ? "setupbanner warn" : "setupbanner ok";
-  banner.innerHTML = `Last full rebuild <b>${relTime(d.lastIngest)}</b> · 9 sources → ${nTables} tables → player_value → board`
-    + (unplaced.length ? ` · <b>${unplaced.length} served asset(s) have no node: ${unplaced.map(esc).join(", ")}</b>` : "");
+  const nodes = lineageNodes(d);
+  const edges = lineageEdges(d, nodes);
+  const nTables = nodes.filter((n) => n.kind !== "external" && n.kind !== "artifact").length;
+  const nSources = nodes.filter((n) => n.kind === "external").length;
+  const maxUpdated = nodes.reduce((m, n) => (n.updated && n.updated > m ? n.updated : m), "");
+  banner.className = "setupbanner ok";
+  banner.innerHTML = `${(d.producers || []).length} declared producers · ${nSources} sources → ${nTables} tables/artifacts → board`
+    + (maxUpdated ? ` · freshest write <b>${relTime(maxUpdated)}</b>` : "");
   const W = 156, H = 42;
   const g = new dagre.graphlib.Graph(); g.setGraph({ rankdir: "LR", nodesep: 10, ranksep: 58, marginx: 10, marginy: 10 }); g.setDefaultEdgeLabel(() => ({}));
-  for (const n of WH_NODES) g.setNode(n.id, { width: W, height: H });
-  for (const [a, b] of whDagEdges(WH_NODES)) g.setEdge(a, b);
+  const ordered = nodes.slice().sort((a, b) => lineageLayerRank(a.kind) - lineageLayerRank(b.kind) || a.id.localeCompare(b.id));
+  for (const n of ordered) g.setNode(n.id, { width: W, height: H });
+  for (const [a, b] of edges) g.setEdge(a, b);
   dagre.layout(g);
   const gw = Math.ceil(g.graph().width), gh = Math.ceil(g.graph().height);
   svg.setAttribute("width", gw); svg.setAttribute("height", gh); svg.setAttribute("viewBox", `0 0 ${gw} ${gh}`);
   let h = "";
   for (const e of g.edges()) h += `<polyline points="${g.edge(e).points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" class="dag-edge"/>`;
-  for (const n of WH_NODES) {
+  for (const n of ordered) {
     const p = g.node(n.id); if (!p) continue;
-    const t = n.table ? tbls[n.table] : null;
-    const hasDot = n.kind === "table" || n.kind === "mart" || n.kind === "raw" || n.kind === "feature";
-    const dot = hasDot ? freshDot(t?.updated) : "";
-    const sub = t ? `${t.rows} rows · ${relTime(t.updated)}` : n.sub;
-    h += `<g class="dag-node ${n.kind}${n.mat ? " clickable" : ""}" data-mat="${n.mat || ""}" data-id="${n.id}" transform="translate(${(p.x - W / 2).toFixed(1)},${(p.y - H / 2).toFixed(1)})">`
+    const hasDot = n.kind !== "external" && n.kind !== "artifact";
+    const dot = hasDot ? freshDot(n.updated) : "";
+    const sub = hasDot
+      ? `${n.rows == null ? "?" : n.rows} rows${n.updated ? ` · ${relTime(n.updated)}` : ""}`
+      : n.kind;
+    h += `<g class="dag-node ${n.kind}${n.materialize ? " clickable" : ""}" data-mat="${n.materialize || ""}" data-id="${n.id}" transform="translate(${(p.x - W / 2).toFixed(1)},${(p.y - H / 2).toFixed(1)})">`
       + `<rect width="${W}" height="${H}" rx="6"/>`
       + (dot ? `<circle cx="12" cy="13" r="3.5" class="dot-${dot}"/>` : "")
-      + `<text x="${dot ? 22 : 11}" y="17" class="dag-name">${esc(n.name)}</text>`
+      + `<text x="${dot ? 22 : 11}" y="17" class="dag-name">${esc(n.id)}</text>`
       + `<text x="11" y="32" class="dag-sub">${esc(String(sub || ""))}</text></g>`;
   }
   svg.innerHTML = h;
@@ -1044,6 +942,12 @@ function views_model() {
     <div class="sec"><h2>Value trace</h2><span class="lbl">the multiplication behind a projection, per player</span></div>
     <div class="btnrow" id="mdl-postabs"></div>
     <div id="mdl-trace"></div>
+    <div class="sec"><h2>What serves each position</h2><span class="lbl">the weekly/streaming split -- which artifact answers a start/sit or stream question</span></div>
+    <div id="mdl-serve"></div>
+    <div class="sec"><h2>Scorecard</h2><span class="lbl">the forward record: predictions frozen before kickoff, and what has been scored so far</span></div>
+    <div id="mdl-scorecard"></div>
+    <div class="sec"><h2>Prediction ledger</h2><span class="lbl">every pre-registered P&lt;n&gt;/W&lt;n&gt; prediction, transcribed from docs/redesign-2026-09.md</span></div>
+    <div id="mdl-ledger"></div>
   </div>`;
   loadModel();
 }
@@ -1073,6 +977,59 @@ async function loadModel() {
   });
   if (!positions.includes(MODEL_POS)) MODEL_POS = positions[0];
   drawTrace(d);
+  loadModelPage();
+}
+
+// --- THE REGISTRY SECTIONS: serve table, scorecard, ledger -- entirely from window.mc.modelPage() ---
+//
+// Written 2026-09-08 as static prose describing "a curve times two multipliers", which fell behind
+// the moment the projection became a trained artifact with five siblings, a per-position serve table,
+// a live scorecard, and a prediction ledger. These three renderers carry NO number of their own: every
+// figure comes from the `page` argument (src/lineage/modelPage.ts's JSON). See test/model-page.test.ts.
+async function loadModelPage() {
+  if (!window.mc?.modelPage) return;
+  const page = await window.mc.modelPage().catch(() => null);
+  if (!page) return;
+  renderWeeklyServe(page);
+  renderScorecardSection(page);
+  renderLedgerSection(page);
+}
+function renderWeeklyServe(page) {
+  const el = document.getElementById("mdl-serve");
+  if (!el) return;
+  const rows = (page.weeklyServe || []).map(r => `<tr class="${r.shipped ? "" : "mut"}">
+      <td><b>${esc(r.pos)}</b></td><td>${esc(r.artifact)}</td>
+      <td>${r.shipped ? "shipped -- passed its gate" : "not shipped -- serves the floor"}</td></tr>`).join("");
+  el.innerHTML = `<table class="tbl"><thead><tr><th>position</th><th>artifact</th><th>status</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <div class="mut" style="margin-top:6px">challenger series starts week ${esc(String(page.challengerFirstWeek ?? "?"))}</div>`;
+}
+function renderScorecardSection(page) {
+  const el = document.getElementById("mdl-scorecard");
+  if (!el) return;
+  const scores = page.scorecardScores || {};
+  const rows = (page.scorecard || []).map(k => {
+    const models = (k.models || []).map(m => {
+      const s = scores[m] || [];
+      const metrics = s.map(x => `${esc(x.kind)}/${esc(x.metric)}=${esc(String(x.value))} (n=${esc(String(x.n))})`).join(", ");
+      return `${esc(m)}${metrics ? ` [${metrics}]` : ""}`;
+    }).join("; ") || '<span class="mut">none frozen</span>';
+    return `<tr><td><b>${esc(k.kind)}</b></td><td>${esc(String(k.weeksFrozen))}</td><td>${esc(String(k.weeksScored))}</td><td>${models}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<table class="tbl"><thead><tr><th>kind</th><th>weeks frozen</th><th>weeks scored</th><th>models &amp; live scores</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+function renderLedgerSection(page) {
+  const el = document.getElementById("mdl-ledger");
+  if (!el) return;
+  const ledger = page.ledger || { rows: [], counts: {} };
+  const counts = ledger.counts || {};
+  const summary = Object.entries(counts).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(" · ");
+  const rows = (ledger.rows || []).map(r => `<tr class="${r.outcome === "failed" ? "bad" : ""}">
+      <td><b>${esc(r.id)}</b></td><td>${esc(r.claim)}</td><td>${esc(r.outcome)}</td><td>${esc(r.measured)}</td></tr>`).join("");
+  el.innerHTML = `<div class="mut" style="margin-bottom:6px">${summary}</div>
+    <table class="tbl"><thead><tr><th>id</th><th>claim</th><th>outcome</th><th>measured</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
 }
 function drawModelDag(d) {
   const svg = document.getElementById("mdl-dag");
@@ -1288,6 +1245,11 @@ async function boot() {
     try { const t = await window.mc.teamGet(); if (Array.isArray(t)) TEAM = t; } catch (e) { /* keep localStorage */ }
   }
   if (window.mc && window.mc.authStatus) { try { MC_AUTH = await window.mc.authStatus(); } catch (e) { /* keep default */ } }
+  // PUSH for the Data/Model pages, same principle as watchForRebuild's board push: refresh the page
+  // in place if it happens to be the one open when the engine's lineage/model stamp moves, rather
+  // than making the user notice it went stale and reload.
+  if (window.mc.onLineageChanged) window.mc.onLineageChanged(() => { if (curPage === "sources") loadDag(); });
+  if (window.mc.onModelsChanged) window.mc.onModelsChanged(() => { if (curPage === "model") loadModel(); });
   wireWebview(); // the persistent ESPN browsing surface (always mounted, always CDP-navigable)
   syncTeam();
   initCopilot();          // the Copilot lives in the left bar now -- always present

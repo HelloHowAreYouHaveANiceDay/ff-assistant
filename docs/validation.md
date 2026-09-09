@@ -1262,6 +1262,77 @@ and the replay says so.
 > for all six positions. That predates this track and is unchanged: it is correct at RB/WR/TE, and the
 > lineup path never served the streaming model at QB/K/DST. Routing it through `WEEKLY_SERVE` is real
 > remaining work and was outside this track's file fence.
+>
+> ---
+
+> ## TRACK K: the Data and Model pages are derived from the engine, not hand-maintained (2026-09-09)
+>
+> Branch `redesign/derived-ui` off `redesign/final-2` (`1b271a6`). The Data page's node/edge list
+> (`WH_CURATED`/`WH_DERIVE`/`WH_EDGES` in `app/renderer/app.js`) and the Model page's prose (written
+> 2026-09-08, describing "a curve times two multipliers") were both hand-maintained documents about a
+> system that had moved on: the RAW and EXTENSION FEATURE layers had already gone invisible on the
+> Data page once (Phase 2d, below), and the projection had become a trained artifact with five sibling
+> artifacts, a per-position serve table, a scorecard, and a prediction ledger that the Model page never
+> grew to show.
+>
+> **What is derived from what.** `src/data/ingest.ts` (`RAW_ASSETS` + new `L1_ASSETS`) and
+> `src/lineage/registry.ts` (`PRODUCERS`: the feature builders, the four python trainers, `assemble`,
+> `scorecard`) each declare `reads`/`writes`, verified against the code by grep, not guessed.
+> `src/lineage/dag.ts`'s `computeLineage()` builds the graph from those two registries plus the model
+> registry (`src/draft/models.ts`) and external `src_*` nodes, served as `lineage` over `ff serve` and
+> `ff lineage --json`. `app/renderer/app.js`'s Data page draws exactly that JSON -- no curated list.
+> `src/lineage/modelPage.ts` assembles the Model page's JSON from `MODELS`/`EVALUATED_NOT_SHIPPED`/
+> `modelStatus()`, `src/weekly/streamingServe.ts` (which artifact serves each position),
+> `src/weekly/scorecard.ts` (frozen/scored counts, live scores), and a new prediction ledger
+> (`fact_prediction`, loaded from the checked-in `data/predictions.json` -- every P<n>/W<n> row in
+> this file's two prediction tables, transcribed exactly, outcome wording included).
+>
+> **The tests that pin it**, each with a fault injection:
+> - `test/dag-lineage.test.ts` -- the graph has no dangling read (a producer reading a table nobody
+>   writes and that is not in the schema), is acyclic, and every touched table is a real schema table.
+>   Fault-injected a made-up table into the graph and confirmed `danglingReads` named it; confirmed
+>   `unplacedServedTables` names a served table the graph drops.
+>   THREE REAL FALSE CYCLES were found and resolved by hand while building this, each documented at
+>   the exclusion: (1) a producer reading back one of its own prior outputs is not a cross-producer
+>   dependency (`build-live-context` reading `feat_player_week_model` only to know the current week's
+>   player universe); (2) `assemble`'s defensive `INSERT INTO player ... ON CONFLICT DO NOTHING`
+>   backstop is not derived from `player_bio`, so it is not declared a write; (3) `assemble` writes a
+>   DIFFERENT partition of `ranking` (`source='espn'`) than `build-features` reads
+>   (`source='fantasypros_ecr'`) -- table-level lineage cannot see a partition, and this is the one
+>   place that limitation had to be resolved by hand rather than by a finer-grained node.
+> - `test/dag-derivation.test.ts` -- `lineageNodes`/`lineageEdges` (app/renderer/app.js) are proven
+>   pass-throughs against the real served graph; fault-injected a dropped edge and a dangling one.
+> - `test/prediction-ledger.test.ts` -- every id in this doc's two prediction tables has a ledger row
+>   and vice versa (table-row scan, not whole-document, so "P21-P24 were never issued" in prose does
+>   not falsely demand rows for them). Fault-injected removing P5 and confirmed the completeness check
+>   names it; fault-injected a stale id and confirmed `syncLedger` drops it on the next sync.
+> - `test/model-page.test.ts` -- `renderWeeklyServe`/`renderScorecardSection`/`renderLedgerSection`
+>   contain no literal percentage or decimal figure (fault-injected one and confirmed the guard fires);
+>   `buildModelPage()` assembles the serve table from `STREAM_SERVE_POS`/`SHIPPED_STREAMING_POSITIONS`
+>   and the ledger from the synced `fact_prediction` table, not a retyped copy.
+> - `test/lineage-notify.test.ts` -- the push-notification wiring (Step 5) is present at both engine
+>   chokepoints and the self-notification exclusion (`SILENT_RPC_METHODS`) names both new probes.
+>
+> **Verification method.** Chose the `ff serve` JSON + unit-render fallback over launching the full
+> Electron app, per this track's own instructions: the desktop app's CDP debug port and the user's
+> live, running app both default to the same port, and the season is live. Ran `ff lineage --json`,
+> `ff models --json` and `ff ledger sync` against this worktree's own copied store (`data/ff.db`,
+> isolated from the main checkout) and confirmed real output (74 nodes / 128 edges / 35 producers; 10
+> models, 6-position serve table, 3 scorecard kinds, 51-row ledger at held 30 / failed 19 / pending 2).
+> Also executed the real `renderWeeklyServe`/`renderScorecardSection`/`renderLedgerSection` function
+> bodies (extracted from `app/renderer/app.js`, the same technique the test files use) against that
+> real JSON with a minimal DOM stub, confirming valid HTML with no throw. This run also caught and
+> fixed a real bug: `tableStats()` tried a bare `count(*)` before any freshness column and always won,
+> so every node's `updated` field came back `null` regardless of the real freshness columns present.
+>
+> **Left undone.** The app was not actually launched and screenshotted (see verification method
+> above). `injury-horizon` and `FAAB` artifacts named in this track's brief were not found as shipped
+> producers in this codebase as of `1b271a6` and so carry no registry entry; if they exist under a
+> different name, `src/lineage/registry.ts` needs it added the same way the other trainers are.
+>
+> Full report: the session that did this work.
+>
+> ---
 
 > ## INTEGRATION PASS 3: five tracks stacked, and the league changed its calendar under us (2026-09-09)
 >

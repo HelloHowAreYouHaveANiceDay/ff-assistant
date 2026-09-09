@@ -209,6 +209,34 @@ points a game -- cannot see a level error. Only the cross-check can.
 which strips commas, so downstream `split(",")` is sound *for files we write*. It is NOT sound for
 nflverse feeds, which contain quoted headshot URLs -- always use `fetchCsv` there.
 
+## The Data and Model pages are views, not documents (Track K, 2026-09-09)
+
+Both app pages used to be hand-maintained: a curated node/edge list for the Data page (`WH_CURATED`/
+`WH_DERIVE`/`WH_EDGES`), and prose on the Model page written 2026-09-08 describing "a curve times two
+multipliers" -- true that day, and stale within the week once the projection became a trained
+artifact with five sibling artifacts, a per-position serve table, a scorecard, and a prediction
+ledger, none of which the page could grow to show without someone editing it by hand.
+
+The fix in both cases is the same shape: put a real assembler between the registry and the renderer,
+and make the renderer a dumb consumer of its JSON.
+
+- **Data page**: `src/lineage/dag.ts` computes the lineage graph from `src/data/ingest.ts` +
+  `src/lineage/registry.ts` (see `docs/data-layers.md`). `app/renderer/app.js` draws exactly the served
+  nodes/edges, grouped by `kind`, wired to rebuild via `node.materialize`.
+- **Model page**: `src/lineage/modelPage.ts` assembles one JSON from `src/draft/models.ts` (`MODELS`,
+  `EVALUATED_NOT_SHIPPED`, `modelStatus()`), `src/weekly/streamingServe.ts` (which artifact serves each
+  position), `src/weekly/scorecard.ts` (frozen/scored counts per kind, live scores), and
+  `src/lineage/ledger.ts` (the `fact_prediction` table). The renderer's new sections
+  (`renderWeeklyServe`, `renderScorecardSection`, `renderLedgerSection`) contain no number of their
+  own -- `test/model-page.test.ts` extracts each function's real source and fault-injects a literal
+  figure to prove the guard would catch one.
+
+Both pages refresh in place on a push from the engine: `ff serve` gained cheap `lineage-stamp` /
+`models-stamp` probes, and the existing board-change chokepoint in `app/main.js` (every `ff`
+invocation passes through `ffRun` or `rpc()`) now also watches them, pushing
+`mc:lineageChanged`/`mc:modelsChanged` on the same principle as the pre-existing `mc:boardChanged` --
+a cheap stamp compared against what was last seen, not a per-command emit list to fall behind.
+
 ## What is explicitly out of scope (v1)
 
 - Multiple leagues per user (design for one; leave room for N).
