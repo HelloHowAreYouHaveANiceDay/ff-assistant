@@ -70,13 +70,24 @@ that -- a call that reaches the same work directly must leave the log empty.
 
 - **No ESPN writes, and no stubs for them.** A stub named `set_lineup` on the tool surface would read
   to a model as a capability.
-- **`lineupRecommend` divides the season projection by 17.** It ranks a roster correctly; it has no
-  matchup, form or weather in it. The weekly projection model is a separate track, and quoting this
-  as though it were that model is the mistake the header note exists to prevent.
-- **The store cannot tell you what week it is.** There are no kickoff dates in `game` and `matchup` is
-  empty until something fetches the live league, so `currentWeek()` returns the week WITH ITS SOURCE
-  and says `default` when nobody knew. Guessing from the wall clock would be a hardcoded NFL calendar
-  wearing a derivation's clothes -- the same defect as the hardcoded `playoffTeams: 7`.
+- **`lineupRecommend` goes through the weekly projector, and the artifact behind it is the floor**
+  (integration pass 2, 2026-09-08). It calls `projectWeekly` (`src/weekly/projector.ts`) with the
+  SHIPPED season-line-only artifact, which projects the season line exactly -- so no number moved
+  when the seam landed, by construction. It still has no matchup, form or weather in it, because the
+  trained artifact failed its pre-registered coverage band (`docs/weekly.md`). What changed is that
+  the day a trained artifact passes, the lineup improves by swapping one file rather than by a
+  rewrite. A roster player the projector has no row for falls back to the season line divided by 17
+  and `assumptions.basisNote` NAMES him; `basis` is `weekly-model` only when every player came from
+  the projector, so a half-weekly, half-flat lineup cannot report itself as one thing.
+- **The store CAN now tell you what week it is** (integration pass 2). The data track's
+  `raw_nfl_game` carries a `gameday` per game for every season including the live one, so
+  `currentWeek()` derives it: week w is current from the day after week w-1's last kickoff through
+  week w's last kickoff, and before week 1's first kickoff the current week is 1. It follows the
+  real schedule rather than "season start plus seven days", so a flex or an international kickoff
+  does not shift it -- a derivation, not the hardcoded NFL calendar the old note was right to fear.
+  The comparison is on the LOCAL date: in UTC every evening after 8pm ET lands on the next calendar
+  day, and on a week's last kickoff day that hands back the NEXT week. A store with no schedule rows
+  still gets the old `default` answer, said out loud.
 - **FAAB guidance is a stated rule of thumb**, not a fitted value: there is no historical bid data in
   this repo to fit it on, so the rule travels with the number.
 - **Per-owner targeting is still not trustworthy** (CLAUDE.md): manager profiles have no

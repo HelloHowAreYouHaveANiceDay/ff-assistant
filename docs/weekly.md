@@ -317,10 +317,26 @@ Face validity of the frozen board, for the record: QB Burrow 16.8 / Herbert 16.7
 RB Gibbs 13.6 / Hampton 12.9 / Taylor 11.8; WR Chase 10.1 / Nacua 9.9 / St. Brown 9.7;
 TE LaPorta 6.9 / Loveland 6.7 / Goedert 6.4.
 
-**The odds kind is EMPTY and says why.** `team_odds` holds a game spread and total, not a playoff or
-title probability. A Brier score accrued against a number we manufactured from the spread would
-measure our own arithmetic. When a real playoff/title probability exists in the store, the kind
-populates and the accrual starts; until then it is zero rows and a sentence.
+**The odds kind was EMPTY, and is now filled from the season simulation** (integration pass 2,
+2026-09-08). `team_odds` holds a game spread and total, not a playoff or title probability, and a
+Brier score accrued against a number manufactured from the spread would measure our own arithmetic
+-- so that refusal stands. What changed is that the copilot track supplies the missing number:
+`runScorecard` takes an `oddsProvider`, and `ff scorecard --odds` supplies one that loads the sim
+context on the league's REAL schedule and runs `seasonOdds` at 3000 trials, seed 7. A GENERATED
+schedule is refused outright, because a playoff probability from a stand-in schedule is not this
+league's and freezing it write-once would put an uninterpretable number into a record nobody can
+rewrite.
+
+Playoff and title are stored as SEPARATE models, two rows per team, because they settle on different
+facts and a Brier score over a mixture of the two has no interpretation.
+
+```
+odds kind:  32 rows -- 16 teams x {playoff, title}, as_of 2026-09-08, 3000 trials, seed 7
+            playoff probabilities sum to 700% (7 berths), title to exactly 100%
+            range: playoff 25.5% (HMLS) to 60.0% (TOTR); title 2.2% to 13.7%
+```
+
+That is the pre-season prediction the Brier accrual scores at season end.
 
 ### Two silent bugs the first live run found
 

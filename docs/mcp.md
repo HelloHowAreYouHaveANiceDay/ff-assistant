@@ -149,11 +149,14 @@ is no path to the answer that skips logging.
 **WHERE THESE ARE WEAK, in the tool descriptions and worth repeating:**
 - the PLAYOFF number is more trustworthy than the TITLE number -- a 7-of-16 threshold is far less
   sensitive to tail assumptions than a single-elimination bracket;
-- `lineup_recommend` divides the season projection by 17. It ranks a roster correctly and has no
-  matchup, form or weather in it; it is not a weekly projection model;
-- the store usually cannot tell you what week it is (no kickoff dates in `game`, no rows in
-  `matchup`), so `lineup_recommend` returns `weekSource` and says `default` when nobody knew. Pass
-  `week` explicitly;
+- `lineup_recommend` runs the weekly projector, but the SHIPPED weekly artifact is the
+  season-line-only floor, whose projection IS the season line per game. So the numbers are still the
+  season projection spread flat: it ranks a roster correctly and has no matchup, form or weather in
+  it. Read `assumptions.basis` -- `weekly-model` means every player came from the projector,
+  `projection` means at least one fell back, and `assumptions.basisNote` names who;
+- `lineup_recommend` returns `weekSource`. It now usually reads `schedule`, derived from
+  `raw_nfl_game` kickoff dates on the LOCAL calendar; `default` means the store has no schedule for
+  the season and nobody knew, in which case pass `week` explicitly;
 - the FAAB figure is a STATED RULE OF THUMB (10% of budget per +1pp of title probability, capped at
   50%), not a fitted value -- nothing in this repo has measured what a point of title probability is
   worth in FAAB dollars;
