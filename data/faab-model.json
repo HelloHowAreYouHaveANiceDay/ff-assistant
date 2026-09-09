@@ -1,0 +1,480 @@
+{
+  "kind": "faab-bid",
+  "version": 1,
+  "builtAt": "2026-09-09",
+  "trainedOn": {
+    "priceSeasons": [
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ],
+    "winSeasons": [
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ],
+    "priceRows": 576,
+    "winRows": 630,
+    "baseWinRate": 0.7714
+  },
+  "features": [
+    "log_rank",
+    "line_pg",
+    "td_ppg",
+    "prior_pts",
+    "week",
+    "team_faab_share",
+    "league_faab_share",
+    "need_share",
+    "pos_QB",
+    "pos_RB",
+    "pos_WR",
+    "pos_TE",
+    "pos_K",
+    "pos_DST"
+  ],
+  "priceFeatures": [
+    {
+      "name": "log_rank",
+      "center": 3.591222,
+      "scale": 1.0771,
+      "missing": 0.0
+    },
+    {
+      "name": "line_pg",
+      "center": 5.936793,
+      "scale": 2.766162,
+      "missing": 0.0
+    },
+    {
+      "name": "td_ppg",
+      "center": 9.6241,
+      "scale": 5.328186,
+      "missing": 0.0
+    },
+    {
+      "name": "prior_pts",
+      "center": 13.337267,
+      "scale": 8.181977,
+      "missing": 0.0
+    },
+    {
+      "name": "week",
+      "center": 7.414931,
+      "scale": 4.016423,
+      "missing": 0.0
+    },
+    {
+      "name": "team_faab_share",
+      "center": 0.693351,
+      "scale": 0.293042,
+      "missing": 0.0
+    },
+    {
+      "name": "league_faab_share",
+      "center": 0.716166,
+      "scale": 0.172523,
+      "missing": 0.0
+    },
+    {
+      "name": "need_share",
+      "center": 0.23422,
+      "scale": 0.2004,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_QB",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_RB",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_WR",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_TE",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_K",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_DST",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    }
+  ],
+  "winFeatures": [
+    {
+      "name": "log_bid",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "log_rank",
+      "center": 3.644011,
+      "scale": 1.056768,
+      "missing": 0.0
+    },
+    {
+      "name": "line_pg",
+      "center": 5.83201,
+      "scale": 2.86581,
+      "missing": 0.0
+    },
+    {
+      "name": "td_ppg",
+      "center": 10.038279,
+      "scale": 5.327071,
+      "missing": 0.0
+    },
+    {
+      "name": "prior_pts",
+      "center": 14.194259,
+      "scale": 8.639851,
+      "missing": 0.0
+    },
+    {
+      "name": "week",
+      "center": 7.307937,
+      "scale": 3.922313,
+      "missing": 0.0
+    },
+    {
+      "name": "team_faab_share",
+      "center": 0.706952,
+      "scale": 0.298199,
+      "missing": 0.0
+    },
+    {
+      "name": "league_faab_share",
+      "center": 0.733376,
+      "scale": 0.16564,
+      "missing": 0.0
+    },
+    {
+      "name": "need_share",
+      "center": 0.2447,
+      "scale": 0.201121,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_QB",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_RB",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_WR",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_TE",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_K",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    },
+    {
+      "name": "pos_DST",
+      "center": 0.0,
+      "scale": 1.0,
+      "missing": 0.0
+    }
+  ],
+  "clamps": {
+    "lo": 1.0,
+    "hi": 100.0
+  },
+  "rankWhenUnranked": 200.0,
+  "price": {
+    "intercept": 1.8651513679050804,
+    "coef": {
+      "log_rank": 0.01613808604711304,
+      "line_pg": 0.03256801464348429,
+      "td_ppg": 0.2094405134266321,
+      "prior_pts": 0.12235076170506787,
+      "week": 0.2692904786358458,
+      "team_faab_share": 0.34584730701779737,
+      "league_faab_share": -0.0370038954108603,
+      "need_share": 0.0740964848471017,
+      "pos_QB": -0.4333025538738951,
+      "pos_RB": 0.6824435373143576,
+      "pos_WR": 0.21392580733691718,
+      "pos_TE": 0.17315147036833087,
+      "pos_K": -0.5480120003152864,
+      "pos_DST": -0.08820626083044099
+    },
+    "smear": 1.3792931407486178
+  },
+  "win": {
+    "intercept": 0.9826697056595248,
+    "coef": {
+      "log_bid": 0.23442913068466673,
+      "log_rank": -0.03308080569898434,
+      "line_pg": -0.061221719450197234,
+      "td_ppg": -0.2474733828274487,
+      "prior_pts": -0.3378150126045445,
+      "week": 0.24380751736090547,
+      "team_faab_share": 0.1346131487938018,
+      "league_faab_share": -0.014657850768389965,
+      "need_share": -0.0701771900563669,
+      "pos_QB": 0.4839957871693177,
+      "pos_RB": -0.802887236337716,
+      "pos_WR": 0.1511618275104611,
+      "pos_TE": -0.23549607077156173,
+      "pos_K": 0.4176746595653785,
+      "pos_DST": -0.008691980124350176
+    }
+  },
+  "loso": {
+    "priceRows": 576,
+    "maeModel": 7.591,
+    "maeFlatMedian": 8.637,
+    "maePositionMedian": 7.942,
+    "maeRuleOfThumb": 10.318,
+    "ruleDeltaPerPointAbovReplacement": 0.23,
+    "beatsRulePct": 26.4,
+    "winRows": 630,
+    "brier": 0.1702,
+    "brierBaseRate": 0.1767
+  },
+  "bootstrap": {
+    "win": {
+      "team_faab_share": {
+        "mean": 0.14092915194300204,
+        "lo": -0.1834638308884711,
+        "hi": 0.4987869351964877,
+        "pctPositive": 78.2,
+        "draws": 2000
+      },
+      "week": {
+        "mean": 0.23034872297109205,
+        "lo": -0.24145544738876532,
+        "hi": 0.6432356579876721,
+        "pctPositive": 86.9,
+        "draws": 2000
+      },
+      "log_bid": {
+        "mean": 0.27647192099476087,
+        "lo": -0.05450431956001564,
+        "hi": 0.6586326248947317,
+        "pctPositive": 94.8,
+        "draws": 2000
+      }
+    },
+    "price": {
+      "team_faab_share": {
+        "mean": 0.3549073350278937,
+        "lo": 0.21940539241658039,
+        "hi": 0.4803170471932297,
+        "pctPositive": 100.0,
+        "draws": 2000
+      },
+      "week": {
+        "mean": 0.29353853947272296,
+        "lo": 0.10902241295700395,
+        "hi": 0.5295259275438172,
+        "pctPositive": 99.7,
+        "draws": 2000
+      }
+    },
+    "draws": 2000,
+    "unit": "season"
+  },
+  "bidEffect": {
+    "coef": 0.23442913068466673,
+    "ci": [
+      -0.05450431956001564,
+      0.6586326248947317
+    ],
+    "significant": false,
+    "note": "the bid's effect on P(win) is NOT separable from zero at the season level -- most claims in this room are uncontested, and a large bid is itself a signal that a player was contested, which biases the observed effect DOWNWARD"
+  },
+  "controls": {
+    "permutedPriceMae": 9.754,
+    "permutedPriceFlatMae": 8.637,
+    "permutedWinBrier": 0.1819,
+    "permutedWinBaseBrier": 0.1771
+  },
+  "golden": [
+    {
+      "pos": "RB",
+      "week": 2,
+      "budget": 100.0,
+      "f": {
+        "log_rank": 3.4011973816621555,
+        "line_pg": 8.0,
+        "td_ppg": 14.0,
+        "prior_pts": 22.0,
+        "week": 2.0,
+        "team_faab_share": 1.0,
+        "league_faab_share": 0.95,
+        "need_share": 0.4,
+        "pos_QB": 0.0,
+        "pos_RB": 1.0,
+        "pos_WR": 0.0,
+        "pos_TE": 0.0,
+        "pos_K": 0.0,
+        "pos_DST": 0.0
+      },
+      "price": 23.20602985415676,
+      "pWinAt": {
+        "1": 0.38777116143052237,
+        "5": 0.45037787783948613,
+        "20": 0.5236174371731124
+      },
+      "bidAt70": 520
+    },
+    {
+      "pos": "DST",
+      "week": 13,
+      "budget": 100.0,
+      "f": {
+        "log_rank": 2.995732273553991,
+        "line_pg": 6.0,
+        "td_ppg": 6.5,
+        "prior_pts": 4.0,
+        "week": 13.0,
+        "team_faab_share": 0.05,
+        "league_faab_share": 0.2,
+        "need_share": 0.1,
+        "pos_QB": 0.0,
+        "pos_RB": 0.0,
+        "pos_WR": 0.0,
+        "pos_TE": 0.0,
+        "pos_K": 0.0,
+        "pos_DST": 1.0
+      },
+      "price": 3.1211522164522623,
+      "pWinAt": {
+        "1": 0.866583616879283,
+        "5": 0.8936549164861768,
+        "20": 0.9185131469869614
+      },
+      "bidAt70": 1.0
+    },
+    {
+      "pos": "WR",
+      "week": 7,
+      "budget": 100.0,
+      "f": {
+        "log_rank": 5.298317366548036,
+        "line_pg": null,
+        "td_ppg": 5.0,
+        "prior_pts": 11.0,
+        "week": 7.0,
+        "team_faab_share": 0.6,
+        "league_faab_share": 0.5,
+        "need_share": 0.3,
+        "pos_QB": 0.0,
+        "pos_RB": 0.0,
+        "pos_WR": 1.0,
+        "pos_TE": 0.0,
+        "pos_K": 0.0,
+        "pos_DST": 0.0
+      },
+      "price": 7.138900973173906,
+      "pWinAt": {
+        "1": 0.8230902005309774,
+        "5": 0.8575358410011072,
+        "20": 0.889795767341464
+      },
+      "bidAt70": 1.0
+    },
+    {
+      "pos": "TE",
+      "week": 5,
+      "budget": 100.0,
+      "f": {
+        "log_rank": 5.298317366548036,
+        "line_pg": null,
+        "td_ppg": null,
+        "prior_pts": null,
+        "week": 5.0,
+        "team_faab_share": null,
+        "league_faab_share": null,
+        "need_share": null,
+        "pos_QB": 0.0,
+        "pos_RB": 0.0,
+        "pos_WR": 0.0,
+        "pos_TE": 1.0,
+        "pos_K": 0.0,
+        "pos_DST": 0.0
+      },
+      "price": 7.860657425451977,
+      "pWinAt": {
+        "1": 0.6713775663879524,
+        "5": 0.7255117715198207,
+        "20": 0.7799977145154853
+      },
+      "bidAt70": 3
+    },
+    {
+      "pos": "QB",
+      "week": 15,
+      "budget": 100.0,
+      "f": {
+        "log_rank": 1.6094379124341003,
+        "line_pg": 18.0,
+        "td_ppg": 20.0,
+        "prior_pts": 28.0,
+        "week": 15.0,
+        "team_faab_share": 1.0,
+        "league_faab_share": 0.35,
+        "need_share": 0.5,
+        "pos_QB": 1.0,
+        "pos_RB": 0.0,
+        "pos_WR": 0.0,
+        "pos_TE": 0.0,
+        "pos_K": 0.0,
+        "pos_DST": 0.0
+      },
+      "price": 33.09269605441828,
+      "pWinAt": {
+        "1": 0.7282162400642136,
+        "5": 0.7761097581484527,
+        "20": 0.8230022836164346
+      },
+      "bidAt70": 1.0
+    }
+  ]
+}
