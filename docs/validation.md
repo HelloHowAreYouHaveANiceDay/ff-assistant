@@ -1,5 +1,60 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## INTEGRATION: Phase 2b + the data track, on one branch (2026-09-08)
+>
+> `redesign/integration` = `redesign/phase-2b-price-model-ecr-arbiter` + a `--no-ff` merge of
+> `redesign/data-track-sources`. **The merge was textually clean** -- git resolved every appended
+> region (the `src/ff.ts` dispatcher, `src/db/schema.sql`, `src/data/ingest.ts`, `README.md`,
+> `docs/data-layers.md`) without a conflict, and the checks below say nothing was lost either way:
+> no duplicate `case` label in the dispatcher and no duplicate `CREATE TABLE` in the schema.
+>
+> **The arbiter is byte-identical across the merge.** `--full --no-lookahead --inflation --seasons
+> 1999-2024 --n 150` reads **38.2% / 96%** before AND after, with the same per-season line
+> (2000:32% 2001:37% 2002:25% 2003:52% 2004:43% 2005:15% 2006:55% 2007:20% 2008:33% 2009:41%
+> 2010:39% 2011:57% 2012:52% 2013:37% 2014:35% 2015:29% 2016:30% 2017:29% 2018:41% 2019:35%
+> 2020:35% 2021:45% 2022:53% 2023:31% 2024:54%), and again after the two fixes below.
+> `ff evaluate-projection --seasons 2008-2025` also reproduces exactly: RMSE **54.32** vs curve
+> 55.55, pinball **12.39** vs 13.17, coverage **0.764**, every band inside [0.70, 0.90] -- so the
+> trained artifact and the projector both survived the merge intact.
+>
+> **Tests: 304 total, 302 pass, 0 fail, 2 skipped** (the two curve-only projection tests that skip
+> because the shipped artifact is trained -- the same two that skip on 2b alone). Before the raw
+> tables were rebuilt, 22 skipped: the data track's 20 table tests correctly refuse to grade an
+> unbuilt table, which is the right shape for that guard. `typecheck` clean throughout.
+> `scripts/lever-connected.mjs maxShare 0.25 0.45` reports CONNECTED after the `ff.ts` merge.
+>
+> **The data track's tables rebuild on the merged store to its exact counts** -- `raw_nfl_game`
+> 7,548; `raw_injury` 90,762; `raw_depth_chart` 1,907,518; `raw_snap_count` 324,611;
+> `raw_nfl_draft_pick` 12,927; `raw_participation` 182,303; `raw_adp_history` 8,750; `raw_contract`
+> 31,893; `raw_league_pick` 1,658; `feat_player_week_context` 131,892; `feat_player_season_ext`
+> 8,021. One number needs reading carefully: `ingest-raw depth-charts` PRINTS 1,921,758 while the
+> table holds 1,907,518. The printed figure counts rows PROCESSED, and the 2025/2026 dated-snapshot
+> schema re-states rows that upsert onto the same key. The table itself matches season by season,
+> all 26 of them, against the data track's own store.
+>
+> **2b's one open item is closed.** `ff assemble` was run (the network-touching step 2b was not
+> permitted), and `values.csv top-12 == player_value top-12` now PASSES. That surfaced the next
+> thing: `value-gates.mjs` now fails **`TE book = $373 (in $380-470)`**. It is INHERITED, not
+> caused by the merge -- `data/values.csv` is byte-identical between 2b and the merge (`git diff`
+> empty), and its TE column sums to $373 on both. The gate's $380 floor was calibrated on an older
+> build; the shipped book is $7 under it. Deciding whether to move the book or the floor is a VALUE
+> change and therefore the arbiter's business, not integration's. Reported, not suppressed.
+> `scripts/sim-vs-mock.mjs` now computes real ESPN-mock rows (9 complete drafts of 23 logs; no NaN):
+> positional-$ distance from the real 2025 room -- price book 224, rank 292, ESPN mock rooms 341,
+> vor 474.
+>
+> **Two data-track notes applied here** (both in files the data track was fenced from):
+> `ff ingest-source <id> --seasons A-B` now FORWARDS the range to `ingestOne` -- proved by fault
+> injection, since dropping the forwarding makes `ingest-source league-history --seasons 2024-2024`
+> return 1,658 rows (the default 2018-2026 range) where the fix returns 182 (2024 alone) -- and the
+> `data-sources` freshness list gained the 13 `raw_*` and 3 `feat_*` nodes, verified over the real
+> `ff serve` RPC, all 16 reporting rows and a fetch time.
+>
+> **Open for the next pass:** `app/renderer/app.js`'s DAG node list still does not draw the new
+> tables (owner-visible, deliberately untouched here); the weekly and copilot branches are not
+> merged; and Phase 2c's identity key-space reconciliation (staging vs registry) is untouched and
+> remains its blocking first step.
+
 > ## PHASE 2b: the curve is chosen by the evaluation, and the arbiter has been scoring us
 > ## against an opponent weaker than the real one (2026-09-08)
 >

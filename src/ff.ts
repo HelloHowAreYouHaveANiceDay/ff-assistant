@@ -234,6 +234,19 @@ async function cmdServe(rest: string[]) {
             ["ranking_history", "fetched_at"], ["player_ids", "updated_at"],
             ["player_identity", "created_at"], ["player_xref", "created_at"], ["player_position", ""],
             ["stg_player", "updated_at"],
+            // RAW LAYER (`ff ingest-raw`): the league's own history plus the nflverse/FFC feeds.
+            // Freshness is the FETCH time, not the as_of stamp -- as_of is a point-in-time property
+            // of the row, and a table full of 2019 as_of values is not stale.
+            ["raw_league_season", "fetched_at"], ["raw_league_team_season", "fetched_at"],
+            ["raw_league_pick", "fetched_at"], ["raw_league_matchup", "fetched_at"],
+            ["raw_league_division", "fetched_at"],
+            ["raw_nfl_game", "fetched_at"], ["raw_injury", "fetched_at"], ["raw_depth_chart", "fetched_at"],
+            ["raw_snap_count", "fetched_at"], ["raw_nfl_draft_pick", "fetched_at"],
+            ["raw_participation", "fetched_at"], ["raw_adp_history", "fetched_at"],
+            ["raw_contract", "fetched_at"],
+            // EXTENSION FEATURES (`ff build-features-ext`).
+            ["feat_player_week_context", "updated_at"], ["feat_player_season_ext", "updated_at"],
+            ["feat_coverage", "updated_at"],
           ];
           const tables: Record<string, { rows: number; updated: string | null }> = {};
           for (const [t, col] of TS) {
@@ -1349,10 +1362,28 @@ async function cmdSyncRosters(rest: string[]) {
 // per-node update.
 async function cmdIngestSource(rest: string[]) {
   const { ingestOne } = await import("./data/ingest.js");
-  const id = rest.find((a) => !a.startsWith("--")) ?? "";
-  if (!id) { console.log("usage: ff ingest-source <id>"); return; }
+  // Positional scan that SKIPS a flag's value -- the same shape `ff ingest-raw` uses. `find(a =>
+  // !a.startsWith("--"))` reads "2018-2026" as the asset id when --seasons comes first.
+  const VALUE_FLAGS = new Set(["--db", "--seasons"]);
+  let id = "";
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i].startsWith("--")) { if (VALUE_FLAGS.has(rest[i])) i++; continue; }
+    id = rest[i]; break;
+  }
+  if (!id) { console.log("usage: ff ingest-source <id> [--seasons 2018-2026]"); return; }
+  // FORWARD --seasons. A raw asset routed through this verb (the app's Data page calls exactly this)
+  // otherwise silently falls back to its default range, so `ff ingest-source league-history
+  // --seasons 2018-2026` would quietly ingest something other than what was asked for.
+  const seasons: number[] = [];
+  const rangeArg = valueOf(rest, "--seasons");
+  if (rangeArg) {
+    const r = rangeArg.split("-").map(Number);
+    const [lo, hi] = [r[0], r[1] ?? r[0]];
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) { console.error(`bad --seasons ${rangeArg}`); process.exit(2); }
+    for (let y = lo; y <= hi; y++) seasons.push(y);
+  }
   const t0 = Date.now();
-  const r = await ingestOne(valueOf(rest, "--db"), id);
+  const r = await ingestOne(valueOf(rest, "--db"), id, { seasons });
   console.log(`materialized ${id}: ${r.rows} rows + rebuilt board (${Date.now() - t0}ms)`);
 }
 
