@@ -258,6 +258,17 @@ async function cmdServe(rest: string[]) {
             // EXTENSION FEATURES (`ff build-features-ext`).
             ["feat_player_week_context", "updated_at"], ["feat_player_season_ext", "updated_at"],
             ["feat_coverage", "updated_at"],
+            // THE FEATURE LAYER PROPER (`ff build-features`, `ff build-weekly-features`) and the
+            // scorecard. These were served by no key at all until the final integration, so the Data
+            // page -- whose job is "show me what data exists" -- was silently omitting the table the
+            // weekly model is fitted on, the table the board is fitted on, and the entire forward
+            // record of what this repo has predicted. The renderer's node list is DERIVED from the
+            // keys served here (app/renderer/app.js, `whDagNodes`), so registering a table is the
+            // whole of making it visible; there is no second list to remember.
+            ["feat_player_season", "updated_at"], ["feat_curve", "updated_at"],
+            ["feat_player_week", "updated_at"], ["feat_player_week_model", "updated_at"],
+            ["raw_espn_projection", "fetched_at"],
+            ["scorecard_prediction", "created_at"], ["scorecard_result", "scored_at"],
           ];
           const tables: Record<string, { rows: number; updated: string | null }> = {};
           for (const [t, col] of TS) {
@@ -2989,6 +3000,7 @@ async function cmdIngestRaw(rest: string[]) {
   }
 }
 
+// ==================================================================================================
 // ==================================================================================================
 // `ff build-features-ext --seasons 2013-2025` -- the two point-in-time extension tables.
 //

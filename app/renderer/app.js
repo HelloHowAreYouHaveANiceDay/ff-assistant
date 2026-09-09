@@ -866,7 +866,15 @@ const WH_DERIVE = [
   { test: (t) => t.startsWith("raw_league_"), kind: "raw", up: "src_espn", sub: "league archive" },
   { test: (t) => t === "raw_adp_history", kind: "raw", up: "src_ffc", sub: "ADP archive" },
   { test: (t) => t === "raw_contract", kind: "raw", up: "src_dproc", sub: "contracts" },
+  // ESPN's own weekly projection is a raw table that does NOT come from nflverse. Without this rule
+  // the generic raw_ rule below would place it and draw an edge to the wrong source -- a node in the
+  // right layer attributed to the wrong feed, which is worse than an absent node because it looks
+  // checked.
+  { test: (t) => t === "raw_espn_projection", kind: "raw", up: "src_espn", sub: "ESPN projections" },
   { test: (t) => t.startsWith("raw_"), kind: "raw", up: "src_nflverse", sub: "nflverse archive" },
+  // The forward record. Not a feature and not a mart: it is what we SAID, frozen before the games,
+  // and what it scored. It hangs off the feature table the predictions are made from.
+  { test: (t) => t.startsWith("scorecard_"), kind: "mart", up: "feat_player_week_model", sub: "forward record" },
   { test: (t) => t.startsWith("feat_"), kind: "feature", up: null, sub: "feature table" },
   { test: (t) => t.startsWith("stg_"), kind: "staging", up: "player_identity", sub: "conformed dimension" },
   { test: (t) => t.startsWith("player_"), kind: "identity", up: null, sub: "identity spine" },
