@@ -369,11 +369,19 @@ export class MarginalBook {
    * circular one: the money is held constant between the arms, the player takes a SLOT, and the
    * price falls out of dividing the gain by what that money buys elsewhere.
    */
-  marginal(player: MarginalPlayer): MarginalResult {
+  marginal(player: MarginalPlayer, excludeOverride?: Set<string>): MarginalResult {
     const budget = this.state.budget;
     // HE IS BARRED FROM HIS OWN BASELINE. The fill is greedy over the same pool he came from, so
     // without this the baseline reaches for exactly him and the marginal is zero by construction.
-    const exclude = this.fillExclude.has(player.name) ? this.fillExclude : new Set([...this.fillExclude, player.name]);
+    //
+    // `excludeOverride` LETS ONE BOOK ANSWER BOTH FRAMINGS FROM ONE SET OF RANDOM NUMBERS, which is
+    // what `scripts/marginal-agreement.mjs` needs and is not a convenience: the SHARED exclusion (the
+    // whole candidate set barred, the nomination-pass premise) and the PER-CANDIDATE one (only this
+    // man barred, the honest single-player question) give materially different levels, and measuring
+    // them in two separate runs of a stochastic simulator would attribute the difference between two
+    // samples to the difference between two framings.
+    const exclude = excludeOverride
+      ?? (this.fillExclude.has(player.name) ? this.fillExclude : new Set([...this.fillExclude, player.name]));
     const base = this.baselineAt(budget, this.trials, exclude);
     // He occupies the best slot he is eligible for; the fill then has one fewer slot to cover.
     const slots = [...this.state.openSlots];
@@ -386,7 +394,11 @@ export class MarginalBook {
     }
     const rest: MarginalState = { ...this.state, openSlots: slots.filter((_, i) => i !== idx) };
     const fill = fillRoster(rest, this.env, budget, new Set(exclude));
-    const after = this.run([...this.state.roster, { ...player }, ...fill], `add:${player.name}@${stateHash(this.state, budget)}`);
+    // THE EXCLUSION IS PART OF THE TAG. The `after` arm's FILL is drawn under the same exclusion as
+    // the baseline, so two framings of the same player are two different rosters; a tag that named
+    // only the player would have served the first framing's answer to the second, silently, the
+    // moment anything asked for both.
+    const after = this.run([...this.state.roster, { ...player }, ...fill], `add:${player.name}@${stateHash(this.state, budget)}@${excludeKey(exclude)}`);
     const playoffsPp = 100 * (after.playoffs - base.playoffs);
     return {
       name: player.name,

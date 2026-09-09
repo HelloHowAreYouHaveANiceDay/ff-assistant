@@ -12,8 +12,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  availForRank, availFromVarianceModel, budgetPath, expectedSeasonPoints, expectedWeekPoints,
-  lineupMarginal, priceFromPath, starterBaselines, type LmOpts, type LmPlayer,
+  availForRank, availFromVarianceModel, budgetPath, calibrateSurrogateDollars, expectedSeasonPoints,
+  expectedWeekPoints, lineupMarginal, priceFromPath, starterBaselines, SURROGATE_CALIBRATION,
+  type LmOpts, type LmPlayer, type SurrogateFit,
 } from "../src/draft/lineupMarginal.js";
 import { baselines, resolveValueLeague } from "../src/draft/values.js";
 import { ourSdFor, ourSdPrivateFor } from "../src/draft/sim.js";
@@ -349,4 +350,102 @@ test("expectedSeasonPoints evaluates bye weeks individually and plain weeks in b
   const fast = expectedSeasonPoints(ROSTER, OPTS);
   const slow = expectedSeasonPoints(ROSTER, OPTS, Array.from({ length: 17 }, (_, i) => i + 1));
   assert.ok(Math.abs(fast - slow) < 1e-6, `bulk ${fast} against week-by-week ${slow} -- the shortcut is not equivalent`);
+});
+
+// =============================================================================================
+// THE CALIBRATED SURROGATE
+// =============================================================================================
+
+test("the greedy slot assignment DOUBLE-COUNTS a spare at a position that feeds several slots", () => {
+  // The module header claimed this error was "slightly conservative" for two weeks. It is the
+  // opposite, and the test is written as the comparison that shows which: a position feeding ONE
+  // slot must be exact, and the same roster shape at a FLEX-eligible position must come out HIGH.
+  //
+  // The exact answer is computed by hand rather than by a second implementation of the greedy pass:
+  // with a starter S and one spare B, both up with probability a, the optimal lineup scores
+  //   QB (one slot):  a*S + (1-a)*a*B
+  //   RB (RB + FLEX): a*S + a*B  when both are up they occupy two different slots
+  const a = 0.85, S = 300 / 17, B = 200 / 17;
+  const one: LmOpts = { ...OPTS, slots: ["QB"], replacement: { QB: 0 }, avail: { QB: a } };
+  const two: LmOpts = { ...OPTS, slots: ["RB", "FLEX"], replacement: { RB: 0 }, avail: { RB: a } };
+  const qb = expectedWeekPoints([P("Qa", "QB", 300), P("Qb", "QB", 200)], 0, one);
+  const rb = expectedWeekPoints([P("Ra", "RB", 300), P("Rb", "RB", 200)], 0, two);
+  const qbExact = a * S + (1 - a) * a * B;
+  const rbExact = a * S + a * B;
+  assert.ok(Math.abs(qb - qbExact) < 1e-9, `single-slot position is not exact: ${qb} against ${qbExact}`);
+  assert.ok(rb > rbExact * 1.02,
+    `the multi-slot position came out at ${rb.toFixed(3)} against an exact ${rbExact.toFixed(3)} -- if this ` +
+    "assertion has started failing the greedy pass has been FIXED, and the calibration fitted around " +
+    "it in docs/validation.md (Track G) must be refitted rather than merely re-run");
+  // And the size of it, so a change in magnitude is visible rather than only a change in sign.
+  assert.ok(rb / rbExact < 1.2, `the over-count has grown to ${(100 * (rb / rbExact - 1)).toFixed(1)}%`);
+});
+
+test("an EMPTY calibration table is exactly the identity, at every position and every price", () => {
+  for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
+    for (const d of [0, 1, 7, 42, 199]) {
+      assert.equal(calibrateSurrogateDollars(pos, d, {}), d, `${pos} $${d} was not passed through`);
+    }
+  }
+});
+
+test("a position with no fitted entry is passed through, never given another position's map", () => {
+  const t: Record<string, SurrogateFit> = { RB: { a: Math.log(0.5), b: 1, n: 99 } };
+  assert.equal(calibrateSurrogateDollars("WR", 80, t), 80);
+  assert.equal(calibrateSurrogateDollars("RB", 80, t), 40);
+});
+
+test("the fitted map is monotone and can move a price in BOTH directions", () => {
+  // A calibration that can only ever shrink a bid is indistinguishable from a bug that shrinks bids,
+  // so the positive direction is asserted as well as the negative one.
+  const down: Record<string, SurrogateFit> = { RB: { a: Math.log(0.4), b: 1, n: 99 } };
+  const up: Record<string, SurrogateFit> = { RB: { a: Math.log(2.5), b: 1, n: 99 } };
+  assert.ok(calibrateSurrogateDollars("RB", 60, down) < 60);
+  assert.ok(calibrateSurrogateDollars("RB", 60, up) > 60);
+  const curved: Record<string, SurrogateFit> = { RB: { a: Math.log(4), b: 0.6, n: 99 } };
+  let prev = -1;
+  for (const d of [1, 5, 20, 50, 100, 180]) {
+    const v = calibrateSurrogateDollars("RB", d, curved);
+    assert.ok(v > prev, `not monotone at $${d}: ${v} after ${prev}`);
+    prev = v;
+  }
+  // b < 1 compresses: the multiplier at the top of the book is smaller than at the bottom, which is
+  // the whole point of the second parameter and is what a pure level shift cannot do.
+  assert.ok(calibrateSurrogateDollars("RB", 100, curved) / 100 < calibrateSurrogateDollars("RB", 10, curved) / 10);
+});
+
+test("a degenerate fit cannot invent a price out of nothing", () => {
+  const bad: Record<string, SurrogateFit> = { RB: { a: 5, b: 0, n: 99 } };
+  assert.equal(calibrateSurrogateDollars("RB", 0, bad), 0, "a $0 marginal was turned into money");
+  assert.equal(calibrateSurrogateDollars("RB", 50, bad), 50, "a non-positive exponent was applied instead of refused");
+});
+
+test("V3 with a calibration bids differently, and with the identity map bids IDENTICALLY", () => {
+  const base = makeV3Strategy({
+    proj: (n) => projOf.get(n) ?? 0, lineup: OPTS,
+    priceOf: (n) => price({ name: n, pos: "RB", proj: projOf.get(n) ?? 0 }),
+    marketSd: () => 0.5, defaultBidders: 8,
+  }).maxBid(mkState()).maxBid;
+  const withCal = (calibrate: (pos: string, d: number) => number) => makeV3Strategy({
+    proj: (n) => projOf.get(n) ?? 0, lineup: OPTS,
+    priceOf: (n) => price({ name: n, pos: "RB", proj: projOf.get(n) ?? 0 }),
+    marketSd: () => 0.5, defaultBidders: 8, calibrate,
+  }).maxBid(mkState()).maxBid;
+  assert.equal(withCal((_p, d) => d), base, "an identity calibration moved the bid");
+  assert.ok(withCal((_p, d) => d * 0.4) < base, "halving the calibrated price did not lower the bid");
+  assert.ok(withCal((_p, d) => d * 2.5) > base, "raising the calibrated price did not raise the bid");
+  // FAULT INJECTION on the clamp the calibration adds: a runaway map must still be legal.
+  const runaway = withCal(() => 1e9);
+  assert.ok(runaway > 0 && runaway <= 200 - 11, `a runaway calibration bid $${runaway}`);
+});
+
+test("the SHIPPED calibration table, whatever it is, is well formed", () => {
+  // Not a check that a fit exists -- it ships empty until one is pasted in, and an empty table is the
+  // identity. A check that if one IS compiled in, it cannot silently reorder a book (b <= 0) or
+  // multiply every price by a number nobody meant to write.
+  for (const [pos, f] of Object.entries(SURROGATE_CALIBRATION)) {
+    assert.ok(f.b > 0.2 && f.b < 3, `${pos}: exponent ${f.b} is outside anything a monotone level fit should produce`);
+    assert.ok(Math.exp(f.a) > 0.05 && Math.exp(f.a) < 20, `${pos}: scale ${Math.exp(f.a)} is outside a plausible range`);
+    assert.ok(f.n >= 20, `${pos}: fitted on only ${f.n} pairs`);
+  }
 });

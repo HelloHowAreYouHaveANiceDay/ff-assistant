@@ -26,11 +26,24 @@
  *
  * THE APPROXIMATION, named rather than buried: slot assignment is done GREEDILY per week -- each
  * slot takes the expectation of the best available man from its queue and then consumes the queue's
- * nominal head -- instead of taking the expectation over the true joint assignment. That is exact
- * for a single slot and slightly conservative for a position feeding several slots, because it
- * commits the top man to the first slot before knowing whether he is available. The direction of the
- * error is the same for every candidate, and `scripts/marginal-agreement.mjs` measures the rank
- * correlation against the simulated marginal, which is the check that matters.
+ * NOMINAL head -- instead of taking the expectation over the true joint assignment.
+ *
+ * IT WAS DESCRIBED HERE AS "slightly conservative" AND IT IS THE OPPOSITE, measured 2026-09-09 by
+ * `scripts/marginal-mechanism.mjs` against an exact enumeration over the availability outcomes. It is
+ * exact where a position feeds ONE slot (QB: ratio 1.0000 at one and two spares) and up to 10.0% too
+ * HIGH where it feeds three (RB/WR/TE through the dedicated slot plus two FLEX: 1.0703 at one spare,
+ * 1.0998 at two). The cause is in the code below and not in the framing: the dedicated slot takes the
+ * expectation over the WHOLE positional queue -- so the spare is already collecting the weeks the
+ * starter is out -- and then only the nominal head is consumed, leaving that same spare at the front
+ * of the FLEX queue, where he is paid for a second time. No exact assignment can start one man in two
+ * slots at once.
+ *
+ * The consequence is not a level error but a POSITIONAL one: the surrogate over-states DEPTH at the
+ * flex-eligible positions, in proportion to how many spares the roster already holds, and not at all
+ * at QB, K or DST. It is left in place and MEASURED rather than patched here, because changing it
+ * changes what V3 bids and that is a question for the championship arbiter, not for a comment.
+ * `scripts/marginal-agreement.mjs` measures the whole disagreement against the simulated marginal,
+ * which is the check that matters.
  */
 
 export interface LmPlayer {
@@ -411,6 +424,67 @@ export function priceFromPath(path: readonly PathPoint[], marginal: number, budg
     }
   }
   return budget;
+}
+
+/**
+ * THE SURROGATE, CALIBRATED TO THE SIMULATOR IT APPROXIMATES.
+ *
+ * Everything above is an approximation of `draft/rosterMarginal.ts`, and until 2026-09-09 nobody had
+ * measured the gap -- the header of this file cited `scripts/marginal-agreement.mjs` for two weeks
+ * while that script did not exist. It exists now, and the gap it measures is not noise: the analytic
+ * price and the simulated one agree about ORDER far better than about LEVEL, and the level error is
+ * POSITIONAL, which is exactly what a bidder cannot afford (it decides how the budget is split).
+ *
+ * So this is a fitted correction, and it is stated as one. Per position, a monotone map
+ *
+ *     simulated$ ~= exp(a) * analytic$^b
+ *
+ * fitted on TRAINING seeds and reported on HELD-OUT seeds by `scripts/v3-calibrate.mjs`.
+ *
+ * IT SHIPPED WITH b = 1 -- ONE PARAMETER, A PURE LEVEL SHIFT -- AND THAT IS A MEASURED CHOICE, not a
+ * simplification. The two-parameter version fitted b near zero at three positions and NEGATIVE at
+ * quarterback, because the analytic dollars carry far less magnitude signal than order signal: with
+ * little to fit, least squares collapses every price toward one number, which minimises MAE (the mean
+ * is the MAE-optimal constant when there is no signal) and produces a book that prices everybody the
+ * same. Held out, it took the rank correlation from 0.518 to 0.508 while "improving" MAE, and a
+ * negative exponent would have INVERTED the quarterback book outright. So the shipped rule is: among
+ * monotone maps, take the best held-out MAE that does not REDUCE held-out rank correlation. The level
+ * fit does not: 0.518 -> 0.531, with the level ratio moving 0.701 -> 0.845 and MAE 29.99 -> 26.13.
+ *
+ * A start-slot/bench-only split of the same fit was tested and REJECTED by that rule (held-out rho
+ * 0.474). It is not in the table.
+ *
+ * `b > 0` is required at read time, so a refit that produced a non-monotone exponent would be refused
+ * rather than silently reordering a position's book.
+ *
+ * NO CHAMPIONSHIP NUMBER WAS USED TO FIT ANY OF IT. The target is the simulated marginal on sampled
+ * roster states; the arbiter is not consulted until P28 is re-run, and it is re-run unchanged.
+ *
+ * AN EMPTY TABLE IS THE IDENTITY, which is what makes the flag reversible: `FF_V3_SURROGATE` unset
+ * leaves V3 byte-identical, and a position with no fitted entry passes through untouched rather than
+ * silently taking another position's correction.
+ */
+export interface SurrogateFit { a: number; b: number; n: number }
+
+/** Fitted by `scripts/v3-calibrate.mjs` on `data/marginal-agreement.json`; pasted here because
+ *  `data/` does not travel between machines and a lever that lives only in a gitignored file is a
+ *  lever that silently reverts. Regenerate with that script and replace this block wholesale. */
+export const SURROGATE_CALIBRATION: Record<string, SurrogateFit> = {
+  QB: { a: 0.454764, b: 1, n: 122 },   // x1.576
+  RB: { a: 0.008366, b: 1, n: 44 },    // x1.008
+  TE: { a: 0.297452, b: 1, n: 58 },    // x1.346
+  WR: { a: 0.160501, b: 1, n: 133 },   // x1.174
+};
+
+/** Apply the fitted map. Unknown position, non-positive dollars, or an empty table: identity. */
+export function calibrateSurrogateDollars(
+  pos: string,
+  dollars: number,
+  table: Record<string, SurrogateFit> = SURROGATE_CALIBRATION,
+): number {
+  const f = table[pos];
+  if (!f || !(dollars > 0) || !(f.b > 0)) return dollars;
+  return Math.max(0, Math.exp(f.a) * Math.pow(dollars, f.b));
 }
 
 /** The same marginal restricted to the fantasy playoff weeks -- the SECONDARY objective. Byes do not
