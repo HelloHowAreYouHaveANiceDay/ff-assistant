@@ -1,5 +1,147 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## TRACK H: the lineup that wins the week, and the replay that says it does not (2026-09-09)
+>
+> **The idea.** A fantasy week is a head-to-head game. A point scored past the opponent's total is
+> worth nothing, so expected points is the right objective only when the game is close: an underdog
+> wants variance, a favourite wants the floor. `src/inseason/winprob.ts` builds the lineup that
+> maximises P(beating THIS week's actual opponent) and `lineupRecommend(ctx, week, { objective })`
+> serves it. **The default is unchanged and stays unchanged: `expected` is what ships.** The replay
+> below is why.
+>
+> ### What the sampler is
+>
+> | piece | what it is | where it comes from |
+> |---|---|---|
+> | marginal | each player's PUBLISHED band (p10/p50/p90, and P(zero week) as an explicit atom) read as a quantile function | `src/weekly/projector.ts` -- nothing is fitted in between, so the sampler's marginal IS the projector's band |
+> | dependence | a Gaussian copula over NFL TEAMMATES | `pairs` in `data/correlation-model.json` (14,021 team-weeks), through `cholesky`/`normalCdf` in `src/draft/bootstrap.ts` |
+> | the one assumption | the tail beyond p90 is extended by one further (p90 - p50) step | capping the ceiling at p90 would bias the search against variance, which is what it is shopping for |
+> | search | steepest-ascent hill-climbing from the EP lineup over every LEGAL single-player substitution, under common random numbers | at most S*B candidates a pass, ~40 here; live it evaluated 13 over 0 passes |
+>
+> **The coupling multiple is measured, not inherited.** The season sampler pays 1.8x for the
+> rank-to-Pearson attenuation; this construction is one stage against a published band rather than
+> two against a bootstrap pool, and it measures a milder one. `scripts/winprob-copula-check.mjs`,
+> 2024 week 8, 124 real teammate pairs, 20,000 sims:
+>
+> | coupling | QB-WR | QB-TE | K-DST | QB-RB |
+> |---|---|---|---|---|
+> | fitted target | 0.3475 | 0.2251 | 0.2241 | 0.0799 |
+> | 0.00 | 0.001 | -0.001 | -0.001 | 0.000 |
+> | 1.00 | 0.307 | 0.194 | 0.207 | 0.070 |
+> | **1.15 (shipped)** | **0.354** | **0.223** | **0.239** | **0.081** |
+> | 1.80 | 0.560 | 0.353 | 0.378 | 0.127 |
+>
+> ### A defect the mean-shaped check could not see, and the check that could
+>
+> The coupling-0 row above is the positive control, and the first version of this module PASSED it at
+> -0.006 while carrying uncoupled player pairs correlated at **0.48** -- sixty-eight sampling errors.
+> The mean over 124 pairs was averaging SIGNED correlations that cancelled. The whole coupling
+> calibration was therefore a fit to a weak hash rather than to the copula, and every number in this
+> section would have inherited it.
+>
+> `scripts/winprob-rng-check.mjs` is the check with teeth: the **worst** uncoupled pair over several
+> seeds, against the sampling error. Before, worst 0.4790 (67.7 SE). After a proper murmur3
+> finalizer, worst 0.0221 (3.1 SE) over 462 pair-seed measurements -- which is what the maximum of
+> that many draws should be. `test/winprob.test.ts` asserts the maximum, not the mean.
+>
+> The same session found a second one of the same family: `pairCorr(model, a, b)` returns **1** when
+> the two position strings are equal, which is right for "a position against itself" and wrong for
+> two DIFFERENT receivers on one NFL team. Taking it would have made a same-position stack a single
+> player at a multiplied projection -- enormous variance, exactly the shape the underdog side of the
+> search reaches for. The correlation model publishes no WR-WR pair, and the honest reading of
+> nothing is zero.
+>
+> ### The replay: 1,876 team-weeks, 2018-2025
+>
+> `node --import tsx scripts/winprob-backtest.mjs --seasons 2018-2025 --sims 4000`. Three lineups on
+> the same roster and the same point-in-time projections, all scored against **the opponent's ACTUAL
+> points that week** -- the real result out of `fact_lineup_week.started_pts`, never a simulated one.
+>
+> | artifact | manager | EP lineup | WINPROB lineup | hindsight | differ | EP cost |
+> |---|---|---|---|---|---|---|
+> | floor (shipped) | 50.0% | 43.58% | 43.52% (**-0.05pp**) | 66.4% | 0.4% | 0.00 pts/wk |
+> | challenger | 50.0% | 48.29% | 47.71% (**-0.59pp**) | 66.4% | 19.9% | 0.27 pts/wk |
+>
+> By |projected margin| bucket, challenger:
+>
+> | bucket | n | EP win% | WP win% | gain | it CLAIMED | differ | EP cost |
+> |---|---|---|---|---|---|---|---|
+> | under 5 | 700 | 46.93 | 47.50 | **+0.57pp** | +0.44pp | 18.6% | 0.26 |
+> | 5 to 15 | 832 | 48.74 | 46.81 | **-1.92pp** | +0.57pp | 21.5% | 0.29 |
+> | over 15 | 344 | 50.00 | 50.29 | **+0.29pp** | +0.45pp | 18.9% | 0.23 |
+>
+> Season-level bootstrap of the PAIRED win difference (the unit is the season, not the team-week --
+> 1,876 team-weeks are eight correlated draws): **-0.586pp, 95% CI [-1.344, +0.054], P(>0) = 0.036.**
+>
+> ### Pre-registered
+>
+> - **P51** -- the winprob lineup wins at least **1.5pp** more team-weeks than the EP lineup over
+>   2018-2025 under the challenger. **FAILED.** -0.586pp [-1.344, +0.054]. Not merely short of the
+>   threshold: the sign is wrong, and the interval barely contains zero.
+> - **P57** -- the gain is concentrated where the projected margin exceeds 15 points. **FAILED.** The
+>   over-15 bucket is +0.29pp, and the whole loss sits in the 5-to-15 bucket at -1.92pp.
+> - **P58** -- in the under-5 bucket the two lineups differ in under 20% of team-weeks. **HELD.**
+>   18.6%. The objective behaves as designed where the theory says it should be inert.
+>
+> **Expected-points cost: 0.27 pts/wk** overall under the challenger, flat across buckets (0.26 /
+> 0.29 / 0.23), and 0.00 under the floor. So the trade is cheap in points; it just does not pay.
+>
+> ### Why it fails, stated as a measurement rather than a story
+>
+> The search **claimed +0.50pp under its own sampler and delivered -0.59pp**. It is solving its
+> stated problem correctly -- the in-sample gain is positive by construction and the fault injection
+> below proves the search is what produces the movement -- against a distribution that is not the real
+> one. The bands come from the challenger artifact, which **failed its own coverage gate** (0.868
+> against a pre-registered [0.75, 0.85], `docs/weekly.md`): they are too wide, so the sampler
+> overstates how much shape there is to trade and buys tails that are not there.
+>
+> Under the shipped floor artifact the objective is **inert by construction**: every coefficient is
+> zero, so every player's p10/p50/p90 are the same multiples of his own season line and there is no
+> relative shape to trade at all. 0.4% of team-weeks differ, and the -0.05pp is those few weeks.
+>
+> ### The guards, and that both can fail
+>
+> - **CONSERVATION.** Both sides of every matchup are rows and every real game has exactly one
+>   winner, so the MANAGERS must win exactly 50% of all team-weeks. Reported at **50.0%**. A run that
+>   said 47% would have mismatched a team to the wrong opponent's realised total, and every other
+>   number on the page would still have looked plausible.
+> - **FAULT INJECTION.** `--no-search` disables the swap search. Under both artifacts the gain is then
+>   **exactly +0.000pp** and the share of team-weeks where the two lineups differ is **exactly 0.0%**.
+>   So the -0.586pp is produced by the search and not by the pipeline. Every unit test that claims the
+>   search MOVES a lineup is likewise re-run with `noSearch` and must fail.
+>
+> ### Live, week 1 of 2026, read-only
+>
+> `node --import tsx scripts/winprob-lineup.mjs --sims 8000`, real schedule through the app bridge.
+> Opponent **COOK** (team 4).
+>
+> | artifact | our projected | his projected (sd) | margin | posture | EP P(win) | WINPROB P(win) | swaps |
+> |---|---|---|---|---|---|---|---|
+> | floor (shipped) | 75.9 | 73.19 (26.19) | +2.69 | EVEN | 58.58% | 58.58% | none |
+> | challenger | 73.2 | 69.32 (23.29) | +3.84 | EVEN | 60.69% | 60.69% | none |
+>
+> Identical lineups under both -- Goff / Hall / St. Brown / Loveland / McConkey / Williams / MIN D/ST
+> / Santos. The search evaluated 13 candidate lineups and declined all of them, which is the predicted
+> behaviour in the under-5 margin bucket rather than an absence of wiring.
+>
+> ### The recommendation
+>
+> **Do not make `winprob` the default.** It is a measured regression of 0.59pp of team-weeks won, its
+> CI does not clear zero on the right side, and P51 failed on sign as well as size. Keep it as an
+> opt-in second opinion, and revisit it the day a weekly artifact PASSES its coverage gate -- the
+> diagnostic says the objective is being taken under the wrong distribution, not that the objective is
+> wrong, and that is a testable claim rather than a hope. Re-run `scripts/winprob-backtest.mjs` then;
+> if the claimed and delivered gains converge, the trade is real.
+>
+> ### Not done
+>
+> `ff copilot lineup --objective winprob` does not exist: the dispatcher
+> (`src/inseason/copilotActions.ts`) and `cmdCopilot` are outside this track's file fence.
+> `scripts/winprob-lineup.mjs` is the caller in the meantime and reaches the identical function
+> through the identical loaders, with the same action-log write. The opponent is also assumed to
+> start his expected-points lineup rather than making the mirror-image trade himself -- a stated
+> simplification, and one that biases against us in exactly the weeks the search is most active.
+
 > ## INTEGRATION PASS 3: five tracks stacked, and the league changed its calendar under us (2026-09-09)
 >
 > `redesign/final-2` = `redesign/final` (`75da5b0`) + Tracks E, D, B, C, A, merged `--no-ff` in that

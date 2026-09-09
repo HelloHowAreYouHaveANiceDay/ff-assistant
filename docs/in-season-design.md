@@ -105,6 +105,30 @@ that -- a call that reaches the same work directly must leave the log empty.
   rewrite. A roster player the projector has no row for falls back to the season line divided by 17
   and `assumptions.basisNote` NAMES him; `basis` is `weekly-model` only when every player came from
   the projector, so a half-weekly, half-flat lineup cannot report itself as one thing.
+- **`lineupRecommend` now takes an OBJECTIVE, and its default did not change** (Track H, 2026-09-09).
+  `{ objective: "expected" }` -- the default, and what every existing caller and MCP consumer still
+  gets -- maximises the sum of projected points over a legal assignment. `{ objective: "winprob" }`
+  maximises the probability of beating THIS week's actual opponent instead, which is a different
+  lineup at the margins: a point scored past the opponent's total is worth nothing, so an underdog
+  wants variance and a favourite wants the floor. `src/inseason/winprob.ts` samples each player's
+  published band (p10/p50/p90 and P(zero week)) as a quantile function, couples NFL teammates through
+  a Gaussian copula at a MEASURED 1.15x the fitted pairwise correlation, and hill-climbs from the
+  expected-points lineup over every legal single-player substitution under common random numbers. It
+  REFUSES a generated schedule rather than inventing an opponent, and returns both lineups with the
+  P(win) of each so the trade is visible rather than described.
+
+  **It is not the default because the replay says it should not be.** 1,876 team-weeks, 2018-2025,
+  scored against the opponent's real points: -0.59pp of team-weeks won under the challenger artifact
+  and -0.05pp under the shipped floor (`docs/validation.md`, Track H; P51 and P57 failed, P58 held).
+  The diagnostic is that the search CLAIMED +0.50pp under its own sampler and delivered -0.59pp -- it
+  is solving its problem correctly against a distribution that is not the real one, because the only
+  artifact with any shape in it is the one that failed its coverage gate. Under the floor artifact
+  every player's band is the same multiple of his own season line, so there is no relative shape to
+  trade and the objective is inert by construction. Revisit the day an artifact PASSES that gate.
+
+  `ff copilot lineup --objective winprob` does not exist yet -- the dispatcher was outside Track H's
+  file fence. `scripts/winprob-lineup.mjs` is the caller, reaching the same function through the same
+  loaders with the same action-log write.
 - **The store CAN now tell you what week it is** (integration pass 2). The data track's
   `raw_nfl_game` carries a `gameday` per game for every season including the live one, so
   `currentWeek()` derives it: week w is current from the day after week w-1's last kickoff through

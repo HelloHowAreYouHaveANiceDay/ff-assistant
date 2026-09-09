@@ -93,7 +93,7 @@ call left a row in `action_log`.
 | `place_bid` | **places a REAL bid** (quick bid, or a guarded jump bid) | **LIVE $** |
 | `nominate_player` | nominate a player in the live room | **LIVE** |
 | `season_odds` | playoff + title odds for all sixteen teams, ours flagged, with conservation checks AND the current objective regime | no |
-| `lineup_recommend` | this week's best legal lineup + who cannot play and why | no |
+| `lineup_recommend` | this week's best legal lineup + who cannot play and why. It maximises EXPECTED POINTS, which is the right objective only when the game is close -- an underdog wants variance and a favourite wants the floor. A second objective that maximises P(beating this week's opponent) exists behind `lineupRecommend`'s `objective` argument and is NOT reachable from this tool, deliberately: it measured -0.59pp of team-weeks won over 2018-2025 (docs/validation.md, Track H) | no |
 | `waiver_targets` | each add+drop scored by the change in OUR PLAYOFF probability, with playoff-week points and title delta beside it, plus FAAB guidance | no |
 | `trade_check` | one named offer scored from BOTH sides | no |
 | `trade_finder` | one-for-ones balanced on consensus value, ranked by the PLAYOFF delta | no |
@@ -334,3 +334,27 @@ uses, and named rather than silently skipped.
 
 A position with no feature rows returns empty lists and says so in `assumptions.basisNote`. "We
 cannot answer" and "do nothing" are different answers and are not allowed to look the same.
+
+## The lineup objective, and why the tool surface only offers one (Track H, 2026-09-09)
+
+`lineup_recommend` answers "the best legal lineup" by maximising the sum of projected points. That
+is the right objective only when the game is close. A fantasy week is head-to-head, and a point
+scored past the opponent's total is worth nothing, so a team trailing on projection should buy
+variance and a team leading should buy floor.
+
+That second objective is built (`src/inseason/winprob.ts`, reached as
+`lineupRecommend(ctx, week, { objective: "winprob" })`) and it is deliberately NOT exposed as an MCP
+tool or as a second verb. The replay decided it: over 1,876 team-weeks of this league's real
+matchups, 2018-2025, scored against the opponent's actual points, it won **0.59 percentage points
+FEWER** team-weeks than the expected-points lineup (95% CI [-1.34, +0.05], season-level bootstrap).
+Pre-registered P51 and P57 both failed; P58 held. `docs/validation.md` has the tables.
+
+A tool an LLM can call is a capability it will use. Exposing an objective that measures as a
+regression, with the caveat living in prose the model may not read, is exactly the failure mode this
+file exists to avoid -- so the caveat is the absence of the tool. `scripts/winprob-lineup.mjs` prints
+both lineups side by side for a human who wants the second opinion, and writes the same `action_log`
+row before returning.
+
+Revisit the day a weekly artifact passes its coverage gate (`docs/weekly.md`). The diagnostic says
+the objective is being taken under the wrong distribution, not that the objective is wrong: the
+search claimed +0.50pp under its own sampler and delivered -0.59pp.
