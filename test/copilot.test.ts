@@ -14,8 +14,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { simulateSeasons, type SeasonTeamInput, type VarianceModel, type SeasonOdds } from "../src/draft/season.js";
-import { buildSchedule } from "../src/draft/schedule.js";
+import type { SeasonOdds } from "../src/draft/season.js";
 import type { SimContext } from "../src/draft/simContext.js";
 import {
   seasonOdds, oddsInvariants, lineupRecommend, assertStartersAvailable, unavailableReason,
@@ -23,72 +22,7 @@ import {
   marketRatings, faabFor, noiseFloorPp, normalizeStatus, defaultProvenance,
   type AvailabilityMap, type GameRow,
 } from "../src/inseason/copilot.js";
-
-const SLOTS = ["QB", "RB", "WR", "TE", "FLEX", "FLEX", "DST", "K", "BE", "BE", "BE", "BE"];
-const FLEX_OK = ["RB", "WR", "TE"];
-const vm: VarianceModel = {
-  tiers: 4,
-  unfitted: ["K", "DST"],
-  pos: Object.fromEntries(["QB", "RB", "WR", "TE", "K", "DST"].map((p) => [p, {
-    cv: [0.6, 0.9, 1.2, 1.3], avail: [0.9, 0.75, 0.5, 0.3], skew: [0.5, 0.8, 1.0, 1.0], fitted: p !== "K" && p !== "DST",
-  }])),
-} as unknown as VarianceModel;
-
-/**
- * FIXTURE NAMES ARE ALPHABETIC ON PURPOSE.
- *
- * `nameKey` strips every character that is not a letter, so a fixture full of names like RB250-3
- * collapses to the single key "rb" and every player in the league resolves to the same man. Not a quirk
- * to work around -- it is the real key the store uses, and a fixture that dodges it would be testing
- * a lookup the product does not have. The first draft of this file used numeric tags and produced
- * four green tests that were all resolving the wrong player.
- */
-const TIER = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet", "Kilo", "Lima"];
-const TEAM_TAG = "ABCDEFGHIJKLMNOP".split("");
-
-/** A 12-man roster in the league's own shape, with a bye on the QB so the availability path has
- *  something real to bite on. `mult` scales the whole roster, which is how a "strong" team is made. */
-function roster(tag: string, mult = 1, qbBye: number | null = 6): SeasonTeamInput["roster"] {
-  const spec: [string, number, number | null][] = [
-    ["QB", 300, qbBye], ["RB", 250, null], ["RB", 200, 9], ["WR", 240, null], ["WR", 210, null],
-    ["WR", 180, 7], ["TE", 150, null], ["K", 120, null], ["DST", 110, null],
-    ["RB", 90, null], ["WR", 85, null], ["TE", 80, null],
-  ];
-  return spec.map(([pos, pts, bye], i) => ({ name: `${pos} ${TIER[i]} ${tag}`, pos, proj: pts * mult, team: `NFL${tag}`, bye }));
-}
-/** The store's key, reproduced here so the fixture's board and ownership are keyed the way
- *  `loadSimContext` keys them -- by player_id, which IS the name key. */
-const key = (s: string): string => s.toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, " ").replace(/\bd\/?st\b/g, " ").replace(/[^a-z]/g, "");
-
-/** A whole fixture league as a SimContext -- the same object `loadSimContext` hands the real callers,
- *  built from the real simulator so nothing here is testing a stand-in. */
-function fixtureCtx(opts: { strong?: number; mult?: number; meIdx?: number; synthetic?: boolean } = {}): SimContext {
-  const meIdx = opts.meIdx ?? 0;
-  const teams: SeasonTeamInput[] = Array.from({ length: 16 }, (_, i) => ({
-    id: String(i), name: `T${TEAM_TAG[i]}`, roster: roster(TEAM_TAG[i], i === opts.strong ? (opts.mult ?? 2) : 1),
-  }));
-  const weeks = buildSchedule(16, 14, 4).weeks as [number, number][][];
-  // A free-agent pool the waiver and depth-risk paths can actually reach: on the board, owned by
-  // nobody. One at each position, plus a genuinely good running back.
-  const board = new Map<string, { name: string; pos: string; proj: number; team: string }>();
-  const ownedIds = new Set<string>();
-  for (const t of teams) for (const p of t.roster) { board.set(key(p.name), { name: p.name, pos: p.pos, proj: p.proj, team: p.team ?? "" }); ownedIds.add(key(p.name)); }
-  for (const [name, pos, proj] of [["Free Runner", "RB", 230], ["Free Receiver", "WR", 95], ["Free Passer", "QB", 140], ["Free Kicker", "K", 100], ["Free Defense", "DST", 95], ["Free Tight", "TE", 70]] as [string, string, number][]) {
-    board.set(key(name), { name, pos, proj, team: "FA" });
-  }
-  const mkOpts = (trials: number, seed: number) => ({
-    weeks: weeks.length, playoffTeams: 7, slots: SLOTS, flexOk: FLEX_OK, projSd: 0.30,
-    replacement: { QB: 8, RB: 5, WR: 5, TE: 4, K: 7, DST: 6 }, trials, seed,
-  });
-  return {
-    teams, weeks, meIdx, season: 2026, syntheticSchedule: opts.synthetic ?? true,
-    board, ownedIds, slots: SLOTS, flexOk: FLEX_OK,
-    replacement: { QB: 8, RB: 5, WR: 5, TE: 4, K: 7, DST: 6 },
-    opts: mkOpts,
-    run: (t, trials, seed) => simulateSeasons(t, weeks, vm, mkOpts(trials, seed)),
-    clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),
-  };
-}
+import { fixtureCtx, vm, key } from "./fixtures/copilot-league.js";
 
 // =============================================================================================
 // SEASON ODDS
