@@ -57,6 +57,15 @@ const JSON_OUT = argv.includes("--json");
 // against a reimplementation of itself would prove nothing, so it is validated against the harness
 // that produced the reference figures in docs/validation.md.
 const EMIT_ODDS = val("--emit-odds", null);
+// `--seeding record|division-winners-first` picks the SEEDING RULE the simulator uses. Default
+// "record", which is what this harness has always done, so the shipped figures are reproducible with
+// no flag. The two rules are indistinguishable on this league's real seeds 2018-2025
+// (scripts/format-seeding.mjs), so the point of running both here is not to identify the rule -- it
+// is to measure whether choosing the one we cannot rule out COSTS anything in calibration.
+const SEEDING = val("--seeding", "record");
+if (SEEDING !== "record" && SEEDING !== "division-winners-first") {
+  throw new Error(`--seeding "${SEEDING}" is not a rule -- use record | division-winners-first.`);
+}
 
 const db = new Database("data/ff.db", { readonly: true });
 const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
@@ -220,7 +229,23 @@ function buildSeason(season) {
 
   const field = playoffFieldFor(teams.length);
 
-  return { season, teams, weeks, slots, reg, field, poolRank, replacement, matched, missed };
+  // DIVISIONS, from the league's own raw rows for THAT season -- not from today's four-division
+  // config. 2018-2024 really did have one division and 2025 four, so a single hardcoded map would be
+  // wrong for seven of the eight seasons while still producing a bracket. A team the rows do not
+  // place gets no division, and the whole season falls back to record seeding rather than being
+  // handed a division to win by accident.
+  let divisionOf;
+  {
+    const divs = db.prepare("SELECT division_id, team_ids_json FROM raw_league_division WHERE season = ? ORDER BY division_id").all(season);
+    if (divs.length > 1) {
+      const dOf = new Map();
+      divs.forEach((d, i) => { for (const id of JSON.parse(d.team_ids_json)) dOf.set(String(id), i); });
+      const mapped = teams.map((t) => dOf.get(String(t.id)));
+      if (mapped.every((d) => d != null)) divisionOf = mapped;
+    }
+  }
+
+  return { season, teams, weeks, slots, reg, field, poolRank, replacement, matched, missed, divisionOf };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -260,7 +285,7 @@ const pf = { playoff: [], title: [] };
 const perSeason = [];
 const bySeed = new Map();
 
-console.log(`SEASON-SIM CALIBRATION -- ${LO}-${HI}, ${TRIALS} trials, seed ${SEED}, per-fold artifacts from ${FOLD_DIR}\n`);
+console.log(`SEASON-SIM CALIBRATION -- ${LO}-${HI}, ${TRIALS} trials, seed ${SEED}, seeding ${SEEDING}, per-fold artifacts from ${FOLD_DIR}\n`);
 console.log(`  season teams  reg  field  roster match   champion (seed)      sim's most likely champion`);
 
 for (const season of seasons) {
@@ -268,6 +293,7 @@ for (const season of seasons) {
   if (s.skip) { console.log(`  ${season}  SKIPPED -- ${s.skip}`); continue; }
   const odds = simulateSeasons(s.teams, s.weeks, vm, {
     weeks: s.weeks.length, playoffTeams: s.field, slots: s.slots, flexOk: ["RB", "WR", "TE"],
+    seeding: SEEDING, divisionOf: s.divisionOf,
     projSd: 0.30, replacement: s.replacement, trials: TRIALS, seed: SEED, poolRank: s.poolRank,
     bootstrap: { outcomes, corr, calibration: "scale" },
     // A REAL POST-DRAFT ROSTER CAN BE SHORT AT A SLOT, and refusing to simulate it would drop the
