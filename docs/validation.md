@@ -1,5 +1,84 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## TRACK D -- dual eligibility, provably a no-op for everyone else (2026-09-09)
+>
+> `redesign/dual-eligibility`, three commits off `redesign/final` (`75da5b0`). Position becomes a
+> SET, from ESPN's own `eligibleSlots` through to valuation, lineup and roster legality. The whole
+> claim is a NEGATIVE one -- that nothing moves for a single-eligible player -- and a negative claim
+> is exactly the kind that passes when the lever is disconnected, so every check below comes with a
+> positive control.
+>
+> | | prediction | outcome |
+> |---|---|---|
+> | P44 | at most 5 players on the 2026 board are eligible at two or more of QB/RB/WR/TE | **HELD** -- the list is EMPTY. 0 of 523 board players, 0 of 1,036 in the whole ESPN pool, 0 of the 192 rostered across the league |
+> | P43 | with the real eligibility map applied, every single-eligible player's dollar value is identical | **HELD** -- `values.csv` byte-identical; 523 of 523 unchanged, 0 rows differing |
+>
+> ### The ESPN slot-id table, which is the whole subtlety
+>
+> `eligibleSlots` mixes three kinds of id, and only the first names a position:
+>
+> | kind | ids | read as a position? |
+> |---|---|---|
+> | dedicated | 0 QB, 2 RB, 4 WR, 6 TE, 16 D/ST, 17 K | yes |
+> | combo | 3 RB/WR, 5 WR/TE, 7 OP, 23 FLEX | **no** |
+> | bench-like / other | 20 BE, 21 IR, 24 ER, and 25 (unnamed; on 89 of 1,036 players) | no |
+>
+> Every wide receiver in the pool carries 3 and 23. Reading a combo id as a position would mark the
+> ENTIRE board dual-eligible -- a feature that looks like it works and measures nothing. Puka Nacua's
+> real slots are `[3,4,5,23,7,20,21]` and he is a receiver, full stop. The only offensive multi-slot
+> player in the 2026 pool is Travis Hunter, whose extras (12 CB, 14 DB, 15 DP) are IDP slots this
+> league does not use; he is still `["WR"]`.
+>
+> ### What each layer does, and what it is not allowed to do
+>
+> - **Ingest** (`src/data/eligibility.ts`, asset `espn-eligibility`): 1,036 players, all 1,036
+>   carrying `eligibleSlots`, 996 staged onto a surrogate key through `player_xref` **by ESPN id**.
+>   The 40 unresolved are D/ST, whose ESPN ids are not in the crosswalk -- reported, never guessed.
+> - **Values**: VOR is the max over eligible positions; `valuePos` records the winner. Eligibility is
+>   NOT allowed to move a man between the positional pools the baselines are read off -- that would
+>   change every other RB's and WR's replacement level, which is a much larger claim than "he may
+>   also be started at receiver". Its one baseline effect is the FLEX fill, where a dual man counts
+>   under the position that claims him.
+> - **Lineup**: the assignment is the matroid greedy with augmenting paths, which is exactly optimal
+>   here because a player's value does not depend on which slot he fills (transversal matroid). Two
+>   tie-breaks reproduce the old slot-order fill for single-eligible rosters: a free slot always beats
+>   displacing an occupant, and slots are tried in template order.
+> - **Legality**: `rosterGaps` places the men with no choice first, then each dual man where the
+>   deficit is largest -- and counts him ONCE, so he cannot cover two holes.
+>
+> ### The evidence, each measurement named
+>
+> | check | result |
+> |---|---|
+> | `values.csv`, real map vs no map, 2026 board | byte-identical; 523/523 dollar values equal |
+> | board rebuild, whole `player-report.csv` diff | exactly one column moved, `ESPN_ADP` (121 rows) -- live market drift from re-fetching ESPN, not this change |
+> | `player_value_position`, 2026 | 523 rows, **0** where `value_pos` differs from `board_pos` |
+> | new optimiser vs a reference of the OLD slot-order fill, 1,000 random single-eligible rosters under this league's template | starters, bench and total identical on all 1,000; 511 of them carry an unfillable slot, so the hard cases are exercised |
+> | `ff copilot lineup`, old optimiser vs new, same store and week | byte-identical: "Week 1: 75.9 projected pts. QB Jared Goff, RB Breece Hall, WR Amon-Ra St. Brown, TE Colston Loveland, FLEX Ladd McConkey, FLEX Jameson Williams, DST MIN D/ST, K Cairo Santos." Case A: zero dual-eligible players on our roster |
+> | flagless tripwire | **38.1% championships / 96% playoffs**, per-season identical -- unchanged |
+> | `npm test` | 480 tests, 478 pass, 0 fail, 2 skipped |
+> | `npm run typecheck` | clean |
+>
+> ### Fault injections -- each guard watched to fail
+>
+> | guard | injection | what happened |
+> |---|---|---|
+> | the ESPN-id join | resolve by NAME instead | the two Justin Jeffersons collapse into ONE staged row and the wide receiver is handed the linebacker's eligibility -- 2 men, 1 row |
+> | P43's identity | mark Ja'Marr Chase WR/TE on the real board | $80 -> $96 at `valuePos` TE, and 15 other players move by $1 as his larger surplus dilutes `rate`. So the lever is connected and P43 is a fact about the LEAGUE, not a dead code path |
+> | the optimal assignment | run the reference slot-order fill on the overlap fixture | it takes the dual man for RB, leaves the receiver slot empty, and loses 18 points (20 vs 38) |
+> | `loadEligibilityMap`'s emptiness | stage a genuine dual | the map goes from 0 entries to 1 -- an empty map is a measurement, not a broken reader |
+> | the fixture's own discriminating power | the combo-slot cases | a mapper that could only ever answer "single" passes the Nacua test; the RB/WR and QB/TE positive controls are what stop it |
+>
+> ### The honest reading
+>
+> This change cannot be arbitrated by the championship backtest, because there is nothing for it to
+> arbitrate: with zero dual-eligible players the shipped book, lineup and legality check are
+> bit-for-bit what they were, and the tripwire reproducing to the season is confirmation of exactly
+> that and of nothing else. What has been bought is that the next Taysom Hill -- ESPN currently lists
+> him `["TE"]`, and it has listed him otherwise before -- is priced and started correctly instead of
+> silently at one position. The per-manager caveat in `CLAUDE.md` applies here too: nothing in this
+> track was validated against outcomes, only against identity.
+
 > ## FINAL INTEGRATION: the two siblings merged, the leftovers closed, the new board arbitrated (2026-09-09)
 >
 > `redesign/final` = `redesign/phase-3-decision-layer` + `redesign/phase-2d-weekly-features`, 74
