@@ -281,6 +281,93 @@ season line exactly, so nothing silently degrades.
 
 ---
 
+## 2.5 The decision population -- one set of players, defined by the decision (Track F, 2026-09-09)
+
+**The seam the golden block does not cover is WHICH ROWS each side selected**, and that is where the
+two sides had drifted. The trainer fitted `season_line_pg >= 3` -- a modelling convenience, because
+the ratio is noise over a small number. The harness scored every non-bye rostered row, deep bench
+included. Both were internally consistent, both were green, and their zero rates differ by:
+
+| pos | zero(trainer's rows) | zero(harness's rows) | gap |
+|---|---|---|---|
+| QB | 0.375 | 0.486 | 0.112 |
+| RB | 0.324 | 0.431 | 0.106 |
+| WR | 0.283 | 0.441 | 0.158 |
+| TE | 0.285 | 0.492 | 0.207 |
+| K | 0.202 | 0.209 | 0.007 |
+| DST | 0.147 | 0.147 | 0.000 |
+
+The weekly gate's clause (c) grades the predicted zero share against a 0.030 tolerance. **The
+population gap alone is three to seven times that**, so no model fitted on the first set could have
+passed a clause measured on the second, and the Platt intercept shift pre-registered to close it
+(P48) measured 0.0005 -- because an MLE logistic with an intercept is already mean-calibrated on its
+own training set. There was never anything there to correct.
+
+### The rule, and it is the DECISION rather than a filter
+
+A player-week is in the population if a manager in this league could have had to decide about him
+that week. That is true in exactly two cases, and `src/weekly/population.ts` is the only place either
+is written down:
+
+1. **He was rostered.** Somebody owned him, so somebody had to choose whether to start him. Read from
+   Track B's `fact_roster_week`, which covers 2018-2025 in this store.
+2. **He was a plausible pickup** -- among the top `POPULATION_DEPTH[pos]` at his position by the
+   PRESEASON line. Nobody claims a waiver on the 200th receiver.
+
+Before 2018 there is no roster feed, so (2)'s rank cut stands in for the union of the two, which is
+approximately what the union is. `populationSource()` names which rule produced any given season, so
+the era boundary is never silent.
+
+**A bye week and a row with no season line are never in it**: there is no decision to make on a bye
+(every model knows about it equally, from the schedule) and the target is a ratio to the line.
+
+`POPULATION_DEPTH` is `ROSTER_DEPTH` plus a stated margin of one extra man per team.
+**`ROSTER_DEPTH` is measured, not assumed:** `fact_roster_week` carries 183.2 men a league-week over a
+mean 14.25 teams -- **12.86 a team**, which is more than the 12 nominal slots because the feed counts
+men parked on IR, who are rostered and are exactly the availability cases stage one is about. Scaled
+to 16 teams and rounded up per position: QB 26, RB 55, WR 63, TE 25, K 18, DST 21.
+`test/weekly-population.test.ts` **re-measures those six numbers from the table** rather than trusting
+the constant, because a hand-typed depth is a snapshot of the day it was typed.
+
+### One rule, materialised, so neither side can restate it
+
+The rule is written once and materialised as `feat_player_week_model.in_population`.
+`tools/train_weekly.py` and `tools/train_streaming.py` add `AND in_population = 1` to their WHERE
+clause and **refuse to run** if the column is missing or unbuilt; `src/weekly/evaluate.ts` and
+`streamingEvaluate.ts` filter their scored rows by the same column and refuse the same way. Nothing
+about the rule is restated in Python -- the trainer reads the flag, it does not recompute it. The
+artifact carries `rowFilter: "in_population"` and the harness refuses an artifact fitted on the old
+cut, because that mismatch is invisible in every number either side produces.
+
+An unbuilt population is a REFUSAL and never a fallback to the old, wider set. Falling back would
+score a different set from the one that was fitted while every number still looked plausible, which
+is the defect verbatim.
+
+### What it excluded, measured
+
+| | rows |
+|---|---|
+| non-bye rows with a line, 2012-2025 -- what the OLD harness scored | 112,782 |
+| the decision population | 69,500 |
+| excluded (the deep bench nobody would start or claim) | **43,282** (38.4%) |
+
+Per position under the single population, and these are now identical on both sides **by
+construction**, which `test/weekly-population.test.ts` asserts and then fault-injects twice --
+reintroduce the `>= 3` cut on one side and the equality fails; drop the population filter from the
+harness (the defect exactly as it shipped) and the zero rates diverge by more than the gate's whole
+tolerance:
+
+| pos | n | zero rate |
+|---|---|---|
+| QB | 9,715 | 0.365 |
+| RB | 16,682 | 0.306 |
+| WR | 18,664 | 0.243 |
+| TE | 9,613 | 0.285 |
+| K | 7,500 | 0.205 |
+| DST | 7,326 | 0.147 |
+
+---
+
 ## 3. Evaluation: RMSE is not the decision
 
 `ff evaluate-weekly --seasons 2012-2025` holds out one season at a time, retrains on the rest, and
@@ -610,7 +697,12 @@ and the gain it found came from in-season form instead. Section 3's W4 is the di
 
 ```
 ff build-weekly-features --seasons 2010-2025 --current-season 2026
-    build feat_player_week_model, print coverage per column per season
+    build feat_player_week_model, print coverage per column per season.
+    It ALSO fills `in_population`, the decision-population flag (section 2.5): the
+    trainer selects on that column and the harness scores on it, and both REFUSE to
+    run against a store where it has not been built. It is filled here, as the last
+    step of the build, rather than in a step somebody has to remember -- it is a
+    column on this table and is derived from the rows this build just wrote.
 
 ff build-live-context [--season 2026] [--now YYYY-MM-DD] [--dry-run] [--json]
     the LIVE season's availability, for the next week that has not kicked off, from

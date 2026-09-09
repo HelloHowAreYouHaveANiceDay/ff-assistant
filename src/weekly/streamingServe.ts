@@ -9,22 +9,70 @@
  * no way to reach a number without the mapping having been consulted, and every result carries the
  * name of the artifact that produced it, per position.
  *
- * SHIPPED_STREAMING_POSITIONS IS A MEASUREMENT, NOT A PREFERENCE. It is set from the run recorded in
- * docs/validation.md and must not be widened without re-running `ff evaluate-streaming` and
- * re-recording it. A position absent from the list serves `SHIPPED_WEEKLY_ARTIFACT` -- the same floor
- * `lineupRecommend` and `ff scorecard` serve from -- which is the honest degradation: a failed model
- * falls back to something STATED rather than to something silently worse.
+ * `WEEKLY_SERVE` IS THAT TABLE, AND IT IS A MEASUREMENT, NOT A PREFERENCE. It is set from the runs
+ * recorded in docs/validation.md and must not be widened without re-running `ff evaluate-weekly` /
+ * `ff evaluate-streaming` and re-recording the verdict. A position whose candidates all failed maps
+ * to `SHIPPED_WEEKLY_ARTIFACT` -- the season-line floor -- which is the honest degradation: a failed
+ * model falls back to something STATED rather than to something silently worse.
+ *
+ * `SHIPPED_STREAMING_POSITIONS` is DERIVED from the table rather than maintained beside it. It used
+ * to be the primary constant, which was fine while the streaming model was the only candidate and
+ * becomes a trap the moment there are two: two hand-kept lists overlap, and a position in both is
+ * served by whichever list the caller happened to consult. One table cannot express that state.
  */
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
 import { loadWeeklyRows } from "./features.js";
 import {
-  loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT, type WeeklyArtifact,
+  loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT,
+  type WeeklyArtifact,
 } from "./projector.js";
 
 /** The full-data streaming artifact, from tools/train_streaming.py. */
 export const STREAMING_ARTIFACT = "streaming-artifact.json";
+/** The full-data two-part weekly artifact, from tools/train_weekly.py --zero-model two-part. Named
+ *  by the same constant the challenger scorecard series uses, so one file has one name. */
+export const TWO_PART_ARTIFACT = CHALLENGER_WEEKLY_ARTIFACT;
+
+/**
+ * WHAT SHIPS, PER POSITION. THE SINGLE TABLE, and every consumer reads it.
+ *
+ * Three artifacts can serve a position and the choice is a MEASUREMENT per position, never a
+ * preference. `SHIPPED_WEEKLY_ARTIFACT` is the season-line floor -- every coefficient zero, mean
+ * intercept 1.0 -- and is what a position falls back to when nothing beat it. `STREAMING_ARTIFACT`
+ * is the two-part model plus the twelve point-in-time opponent columns, with K and DST fitted rather
+ * than intercepts. `TWO_PART_ARTIFACT` is the same two-part structure without those columns.
+ *
+ * The mapping below is set from the gate recorded in docs/validation.md and MUST NOT be widened
+ * without re-running `ff evaluate-weekly` / `ff evaluate-streaming` and re-recording the verdict.
+ * There is no other honest way to add a position.
+ *
+ * WHY THIS IS A TABLE AND NOT A LIST OF "POSITIONS WHERE X SHIPS": with two candidate models the
+ * list form needs two lists whose overlap nobody checks, and a position in both is served by
+ * whichever list is consulted first. The table cannot express that state.
+ */
+export const WEEKLY_SERVE: Record<string, string> = {
+  QB: STREAMING_ARTIFACT,
+  RB: SHIPPED_WEEKLY_ARTIFACT,
+  WR: SHIPPED_WEEKLY_ARTIFACT,
+  TE: SHIPPED_WEEKLY_ARTIFACT,
+  K: STREAMING_ARTIFACT,
+  DST: STREAMING_ARTIFACT,
+};
+
+/**
+ * THE DATE THE TABLE ABOVE WAS LAST CHANGED, LOCAL. It is written into the scorecard snapshot's
+ * metadata so a series that changes model mid-season says WHEN and to WHAT, rather than leaving a
+ * later reader to explain a step change in the numbers.
+ */
+export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-09";
+
+/** Positions the given artifact file serves. Derived from the table so the two can never disagree;
+ *  a hand-maintained second list is the enumeration that rots. */
+export function SERVE_POSITIONS_FOR(file: string): string[] {
+  return Object.entries(WEEKLY_SERVE).filter(([, f]) => f === file).map(([p]) => p);
+}
 
 /**
  * THE POSITIONS AT WHICH THE STREAMING MODEL PASSED ITS PRE-REGISTERED GATE and therefore ships.
@@ -46,14 +94,28 @@ export const STREAMING_ARTIFACT = "streaming-artifact.json";
  * opponent block's own contribution measured ~0, P42 failed saying so, and docs/validation.md
  * records it as a null rather than as a gain.
  */
-export const SHIPPED_STREAMING_POSITIONS: string[] = ["QB", "K", "DST"];
+export const SHIPPED_STREAMING_POSITIONS: string[] = SERVE_POSITIONS_FOR(STREAMING_ARTIFACT);
 
 /** The six positions a streaming decision can be about. */
 export const STREAM_SERVE_POS = ["QB", "RB", "WR", "TE", "K", "DST"];
 
 /** Which artifact FILE serves one position. Named so a report can print it beside every number. */
 export function artifactForPos(pos: string): string {
-  return SHIPPED_STREAMING_POSITIONS.includes(pos) ? STREAMING_ARTIFACT : SHIPPED_WEEKLY_ARTIFACT;
+  return WEEKLY_SERVE[pos] ?? SHIPPED_WEEKLY_ARTIFACT;
+}
+
+/** The serve table as a plain object, for a report or a snapshot row's metadata. A copy, so a
+ *  consumer cannot mutate the decision. */
+export function serveTable(): Record<string, string> {
+  return Object.fromEntries(STREAM_SERVE_POS.map((p) => [p, artifactForPos(p)]));
+}
+
+/** One line per position, for `ff scorecard` and for the `assumptions` block of every result. */
+export function formatServeTable(): string {
+  const t = serveTable();
+  return ["what serves each position (src/weekly/streamingServe.ts WEEKLY_SERVE):",
+    ...STREAM_SERVE_POS.map((p) => `  ${p.padEnd(4)} ${t[p]}`),
+    `  switched to this mapping on ${WEEKLY_SERVE_SWITCHED_ON}`].join("\n");
 }
 
 /** One player's weekly distribution, plus which artifact produced it. */
