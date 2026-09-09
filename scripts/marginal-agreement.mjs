@@ -55,6 +55,9 @@ const CANDS = Number(val("--cands", "60"));
 // Both fill framings now come out of ONE book (see `measure`), so there is no separate control run
 // and no `--control` flag: a flag that selected between them would invite two invocations.
 const OUT = val("--out", "data/marginal-agreement.json");
+// RE-REPORT A SAVED DUMP without re-simulating. The tables below are cheap and the measurement is
+// not, so a mistake in the reporting must not cost another forty minutes of season simulations.
+const FROM = val("--from", null);
 const BOOK_SEED = Number(val("--book-seed", "7"));
 
 const ctx = await loadSimContext({ schedule: "generated" });
@@ -271,7 +274,23 @@ console.log(`  baseline); the shared-exclusion book is carried alongside as the 
 
 const results = [];
 let runs = 0;
-for (const st of states) {
+// THE EMPTY STATE IS THE SAME STATE IN EVERY SEED -- no roster, the whole board, the full $200, and
+// fifteen opponents who have bought nobody. Measuring it once per seed produces ten byte-identical
+// copies, which would weight one state ten times over in the pooled tables and, worse, put the SAME
+// rows on both sides of a train/test split that believes it is splitting by draft. It is measured
+// once and said. Every other phase is genuinely different per seed, because the draft diverged.
+const seen = new Set();
+const distinct = states.filter((st) => {
+  const k = `${st.phase}|${st.buys}|${st.budget}|${st.mine.map((p) => p.name).sort().join(",")}|${st.pool.length}`;
+  if (seen.has(k)) return false;
+  seen.add(k);
+  return true;
+});
+if (distinct.length !== states.length) {
+  console.log(`  ${states.length - distinct.length} duplicate states dropped (the empty state is identical in every seed)
+`);
+}
+for (const st of (FROM ? [] : distinct)) {
   const m = measure(st);
   if (!m) { console.log(`  [skip] seed ${st.seed} ${st.phase}: no open slots or empty pool`); continue; }
   runs += m.runs;
@@ -290,6 +309,15 @@ for (const st of states) {
 }
 // A state whose simulated book cannot separate anybody measures the trial count rather than the
 // surrogate, so it is EXCLUDED and SAID -- never silently dropped, and never averaged in as agreement.
+if (FROM) {
+  const prior = JSON.parse(readFileSync(FROM, "utf8"));
+  const k = (r) => `${r.phase}|${r.buys}|${r.budget}|${r.rows.map((x) => x.name).join(",")}`;
+  const kept = new Set();
+  for (const r of prior.states) { const key = k(r); if (!kept.has(key)) { kept.add(key); results.push(r); } }
+  runs = prior.meta.runs;
+  console.log(`  re-reported from ${FROM}: ${prior.states.length} states in, ${results.length} distinct
+`);
+}
 const dead = results.filter((r) => !r.usable);
 if (dead.length) console.log(`
   ${dead.length} of ${results.length} states excluded as degenerate: ` +

@@ -120,6 +120,31 @@ check("an identity calibration is byte-identical to no calibration", bidWith((_p
 const absurd = bidWith(() => 1e9);
 check("a runaway calibration cannot bid past the budget", absurd <= 200 && absurd >= 1, `got ${absurd}`);
 
+// THE ENV FLAG ITSELF, not just the config field it sets. `FF_V3_SURROGATE=calibrated` is what a
+// backtest arm actually types, and a flag that is read into a variable nothing consumes reads exactly
+// like a flag that does nothing. Both directions, and the OFF arm asserted equal rather than merely
+// "different", because reversibility is the property the arm exists for.
+{
+  const before = process.env.FF_V3_SURROGATE;
+  delete process.env.FF_V3_SURROGATE;
+  const off = buildV3Config(points, SIM_LEAGUE);
+  process.env.FF_V3_SURROGATE = "calibrated";
+  const on = buildV3Config(points, SIM_LEAGUE);
+  process.env.FF_V3_SURROGATE = "nonsense";
+  const junk = buildV3Config(points, SIM_LEAGUE);
+  if (before == null) delete process.env.FF_V3_SURROGATE; else process.env.FF_V3_SURROGATE = before;
+  const hasFit = Object.keys(SURROGATE_CALIBRATION).length > 0;
+  check("FF_V3_SURROGATE unset leaves the calibration hook empty", off.calibrate === undefined);
+  check("an unrecognised value is not treated as 'on'", junk.calibrate === undefined);
+  check(`FF_V3_SURROGATE=calibrated installs the hook${hasFit ? "" : " (no fit compiled in, so it must NOT)"}`,
+    hasFit ? typeof on.calibrate === "function" : on.calibrate === undefined);
+  if (hasFit) {
+    const bOff = makeV3Strategy(off).maxBid(state(board, 200)).maxBid;
+    const bOn = makeV3Strategy(on).maxBid(state(board, 200)).maxBid;
+    check("and the flag CHANGES a real bid through the sim's own config builder", bOn !== bOff, `off ${bOff}, calibrated ${bOn}`);
+  }
+}
+
 // The SHIPPED table, whatever it currently is, reported rather than asserted -- so a run of this
 // script says whether V3 has a fit compiled in at all.
 const shipped = Object.keys(SURROGATE_CALIBRATION);

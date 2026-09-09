@@ -435,14 +435,27 @@ export function priceFromPath(path: readonly PathPoint[], marginal: number, budg
  * price and the simulated one agree about ORDER far better than about LEVEL, and the level error is
  * POSITIONAL, which is exactly what a bidder cannot afford (it decides how the budget is split).
  *
- * So this is a fitted correction, and it is stated as one. Per position, a two-parameter monotone map
+ * So this is a fitted correction, and it is stated as one. Per position, a monotone map
  *
  *     simulated$ ~= exp(a) * analytic$^b
  *
- * fitted by least squares in logs on the agreement data, on TRAINING seeds only, and reported on
- * HELD-OUT seeds. `b < 1` compresses the top of the book toward the middle; `b > 1` stretches it.
- * Monotone by construction for b > 0, so it can never reorder a position's own book -- the surrogate's
- * ranking, which is the part that measured well, is preserved exactly and only the level moves.
+ * fitted on TRAINING seeds and reported on HELD-OUT seeds by `scripts/v3-calibrate.mjs`.
+ *
+ * IT SHIPPED WITH b = 1 -- ONE PARAMETER, A PURE LEVEL SHIFT -- AND THAT IS A MEASURED CHOICE, not a
+ * simplification. The two-parameter version fitted b near zero at three positions and NEGATIVE at
+ * quarterback, because the analytic dollars carry far less magnitude signal than order signal: with
+ * little to fit, least squares collapses every price toward one number, which minimises MAE (the mean
+ * is the MAE-optimal constant when there is no signal) and produces a book that prices everybody the
+ * same. Held out, it took the rank correlation from 0.518 to 0.508 while "improving" MAE, and a
+ * negative exponent would have INVERTED the quarterback book outright. So the shipped rule is: among
+ * monotone maps, take the best held-out MAE that does not REDUCE held-out rank correlation. The level
+ * fit does not: 0.518 -> 0.531, with the level ratio moving 0.701 -> 0.845 and MAE 29.99 -> 26.13.
+ *
+ * A start-slot/bench-only split of the same fit was tested and REJECTED by that rule (held-out rho
+ * 0.474). It is not in the table.
+ *
+ * `b > 0` is required at read time, so a refit that produced a non-monotone exponent would be refused
+ * rather than silently reordering a position's book.
  *
  * NO CHAMPIONSHIP NUMBER WAS USED TO FIT ANY OF IT. The target is the simulated marginal on sampled
  * roster states; the arbiter is not consulted until P28 is re-run, and it is re-run unchanged.
@@ -456,7 +469,12 @@ export interface SurrogateFit { a: number; b: number; n: number }
 /** Fitted by `scripts/v3-calibrate.mjs` on `data/marginal-agreement.json`; pasted here because
  *  `data/` does not travel between machines and a lever that lives only in a gitignored file is a
  *  lever that silently reverts. Regenerate with that script and replace this block wholesale. */
-export const SURROGATE_CALIBRATION: Record<string, SurrogateFit> = {};
+export const SURROGATE_CALIBRATION: Record<string, SurrogateFit> = {
+  QB: { a: 0.454764, b: 1, n: 122 },   // x1.576
+  RB: { a: 0.008366, b: 1, n: 44 },    // x1.008
+  TE: { a: 0.297452, b: 1, n: 58 },    // x1.346
+  WR: { a: 0.160501, b: 1, n: 133 },   // x1.174
+};
 
 /** Apply the fitted map. Unknown position, non-positive dollars, or an empty table: identity. */
 export function calibrateSurrogateDollars(
