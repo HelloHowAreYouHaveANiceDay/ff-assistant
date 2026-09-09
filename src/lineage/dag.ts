@@ -84,7 +84,7 @@ function kindFor(id: string, writtenBy: Set<string>, readBy: Set<string>): Linea
 const FRESH_COLS = ["updated_at", "fetched_at", "scraped", "created_at", "scored_at", "as_of"];
 
 function tableStats(db: DB, table: string): { rows: number; updated: string | null } | null {
-  for (const col of [null, ...FRESH_COLS]) {
+  for (const col of [...FRESH_COLS, null]) {
     try {
       const sql = col
         ? `SELECT count(*) c, max(${col}) u FROM ${table}`
