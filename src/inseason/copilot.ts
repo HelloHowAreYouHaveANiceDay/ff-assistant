@@ -1288,10 +1288,20 @@ export function playoffSos(
   // objective block travels naming the regime, because a reader in the secure regime should be
   // weighting these weeks more heavily and one in the insecure regime should barely be reading them.
   const objective = objectiveFor(o.ourPlayoffPct ?? null, o.secureThresholdPct);
-  const regWeeks = o.regWeeks ?? ctx.weeks.length;
+  // THE BRACKET WEEKS COME FROM THE FORMAT BLOCK, not from `regWeeks + 1 .. 17`.
+  //
+  // That derivation is right only when the bracket happens to run to the end of the NFL season, and
+  // it stopped being right the moment this league went back to 13 regular weeks: it produces FOUR
+  // playoff weeks (14, 15, 16, 17) where ESPN's own settings say three (14/15/16). A fourth week of
+  // opponent strength averaged into a three-week bracket is not a small error -- week 17 is the week
+  // resting starters makes every rating meaningless, and it would have been silently included.
+  //
+  // `o.regWeeks`/`o.nflWeeks` remain, for a caller deliberately asking a hypothetical.
+  const regWeeks = o.regWeeks ?? ctx.format.regWeeks;
   const nflWeeks = o.nflWeeks ?? NFL_WEEKS;
-  const playoffWeeks: number[] = [];
-  for (let w = regWeeks + 1; w <= nflWeeks; w++) playoffWeeks.push(w);
+  const playoffWeeks: number[] = (o.regWeeks == null && o.nflWeeks == null)
+    ? [...ctx.format.playoffWeeks]
+    : (() => { const out: number[] = []; for (let w = regWeeks + 1; w <= nflWeeks; w++) out.push(w); return out; })();
 
   const rating = marketRatings(o.games);
   const teamSos: SosResult["teamSos"] = [];

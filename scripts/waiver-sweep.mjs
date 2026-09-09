@@ -21,6 +21,7 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { loadSimContext } from "../src/draft/simContext.ts";
+import { effectiveFormat } from "../src/league/index.ts";
 import { rosterGaps } from "../src/draft/season.ts";
 
 const TRIALS = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 2500);
@@ -81,7 +82,9 @@ console.log(`  ${TRIALS} trials x ${SEEDS.length} seeds each\n`);
 const db = new Database("data/ff.db", { readonly: true });
 const cfg = JSON.parse(db.prepare("SELECT value FROM settings WHERE key='config'").get().value);
 db.close();
-const cfgPlayoffTeams = cfg.playoffTeams ?? 7;
+// From the format block, never a literal -- see docs/validation.md, Track E.
+const cfgFormat = effectiveFormat(cfg);
+const cfgPlayoffTeams = cfgFormat.playoffTeams;
 const poolRank = new Map();
 {
   const byPosPts = {};

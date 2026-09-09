@@ -33,6 +33,7 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { loadSimContext } from "../src/draft/simContext.ts";
+import { effectiveFormat } from "../src/league/index.ts";
 import { rosterGaps } from "../src/draft/season.ts";
 import { nameKey } from "../src/draft/values.ts";
 
@@ -96,7 +97,8 @@ if (!cand.length) { console.log("  nothing within the value band -- widen it wit
 const { runPool, assertDeterministic } = await import("../src/draft/simPool.ts");
 const poolInit = {
   baseTeams: teams, weeks: ctx.weeks, slots, flexOk, replacement: ctx.replacement,
-  playoffTeams: cfg.playoffTeams ?? 7, projSd: 0.30,
+  playoffTeams: effectiveFormat(cfg).playoffTeams,
+  playoffReseed: effectiveFormat(cfg).playoffReseed, projSd: 0.30,
   poolRank: (() => {
     const byPos = {}, m = new Map();
     for (const line of readFileSync("data/points.csv", "utf8").trim().split(/\r?\n/).slice(1)) {

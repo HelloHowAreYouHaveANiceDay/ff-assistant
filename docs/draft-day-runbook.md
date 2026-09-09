@@ -220,17 +220,20 @@ npm run ff -- format show     # both blocks (ESPN's and the stored one) and whic
 npm run ff -- format sync     # re-read ESPN through the app bridge (read-only; app must be running)
 ```
 
-Check it before draft day, because **this league has changed its calendar twice**: 13 weeks with
-playoffs in 14/15/16 through 2020, 14 weeks with playoffs in 15/16/17 from 2021, and four divisions
-plus a 7-team field from 2025. ESPN's settings for 2026 currently say **14 regular weeks, playoffs
-15/16/17, 7 teams, tiebreak TOTAL_POINTS_SCORED, four divisions**.
+Check it before draft day, because **this league has changed its calendar three times, once
+mid-season**: 13 weeks with playoffs in 14/15/16 through 2020, 14 weeks with playoffs in 15/16/17
+from 2021, four divisions plus a 7-team field from 2025, and **back to 13 weeks on 2026-09-08, after
+week 1 had been played and after the preseason odds had been frozen**. Read live on 2026-09-09,
+ESPN's settings for 2026 say **13 regular weeks, playoffs 14/15/16, 7 teams, `playoffReseed` TRUE,
+tiebreak TOTAL_POINTS_SCORED, four divisions (Class of 2011/2012/2013/2014)**. Track E read the OLD
+settings hours earlier and recorded "ESPN says 14"; that is what a cached calendar is worth.
 
-**If the owner says the league plays 13 weeks with playoffs in 14/15/16, that is an OWNER OVERRIDE
-and must be set explicitly** -- it is a legitimate thing for a league to agree among itself, and
-ESPN's stored settings will not reflect it:
+Nothing here is an owner override today -- ESPN and the owner agree. If they ever disagree, an
+override is a legitimate thing for a league to agree among itself and must be set explicitly:
 
 ```
-npm run ff -- format set --reg-weeks 13 --playoff-weeks 14,15,16 --seeding division-winners-first
+npm run ff -- format set --reg-weeks 13 --playoff-weeks 14,15,16 \
+    --seeding division-winners-first --playoff-reseed true
 ```
 
 The override is stored with `source: "owner-override"` and the date, ESPN's block is kept beside it
@@ -242,10 +245,20 @@ takes a top seed, the rest fill by record). This league's own 2018-2025 seeds ar
 BOTH -- no season can tell them apart -- so `division-winners-first` is used where divisions exist
 on ESPN's documented behaviour, and that is an assumption. See `docs/validation.md`, Track E.
 
+`playoffReseed` is ESPN's own flag and is now stored too. True (this league) means the survivors are
+re-ordered by seed after every round, so the top seed always meets the weakest survivor; false is a
+fixed bracket. Both simulators honour it; the repo reseeded for its whole life having never read it.
+
 The calendar affects the BACKTEST bracket and the season simulator -- never bidding -- so a wrong
 value changes the championship number you validate against, not what the agent does in the draft.
 Measured: 13 weeks moves the tripwire by +1.5pp and division seeding by +0.7pp, neither separable
 from noise at 25 seasons.
+
+**Sweeping the calendar no longer touches the store.** `ff backtest` takes `--reg-weeks`,
+`--playoff-teams`, `--seeding` and `--playoff-reseed`, each defaulted from the block in force, so a
+sensitivity sweep is four flag combinations rather than four config writes and a restore step.
+`scripts/format-sensitivity.mjs` prints them. The `FF_SEEDING` environment variable is GONE and is
+no longer read -- a script still using it sweeps nothing and returns four identical numbers.
 - **Human-only (not auto):** nomination gamesmanship.
 - **Not yet live:** in-season lineup SUBMIT (recommend path works offline: `ff lineup --roster`).
 

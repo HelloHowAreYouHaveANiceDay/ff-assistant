@@ -32,7 +32,14 @@ const rows = [];
 for (const s of snaps) {
   const done = (s.teams ?? []).filter((t) => t.finalRank != null && (t.wins ?? 0) + (t.losses ?? 0) > 0);
   if (!done.length) { console.log(`  ${s.season}: no completed standings -- skipped`); continue; }
-  const playoffTeams = s.playoffTeams ?? 7;
+  // THE SEASON'S OWN FIELD SIZE. `?? 7` was wrong for 2018-2024, when this league ran a SIX-team
+  // field -- so every one of those seasons had its bottom playoff team recorded as a miss and the
+  // outcome table, which is what the calibration is scored against, was wrong about 7 team-seasons.
+  const playoffTeams = s.playoffTeams ?? s.format?.playoffTeams;
+  if (playoffTeams == null) {
+    console.log(`  ${s.season}: no playoff field size in the snapshot -- skipped rather than defaulted`);
+    continue;
+  }
   for (const t of done) {
     rows.push({
       season: s.season,

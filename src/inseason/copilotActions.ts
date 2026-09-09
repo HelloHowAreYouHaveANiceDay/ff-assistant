@@ -186,8 +186,12 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
     case "power_rankings":
       return C.powerRankings(ctx, { ...base, trials: a.trials ?? 2000 });
     case "playoff_sos": {
-      const { games, regWeeks } = S.loadGames(dbPath);
-      return C.playoffSos(ctx, { provenance, games, regWeeks, teamOf: S.loadTeamOf(dbPath) });
+      // `regWeeks` is deliberately NOT passed: playoffSos takes the bracket weeks straight from the
+      // format block unless a caller overrides them, and passing the number here would send it back
+      // down the `regWeeks + 1 .. 17` derivation -- which produces a FOUR-week bracket under this
+      // league's 13-week season and a three-week one under its old 14-week season.
+      const { games } = S.loadGames(dbPath);
+      return C.playoffSos(ctx, { provenance, games, teamOf: S.loadTeamOf(dbPath) });
     }
     case "stream_recommend": {
       const pos = String(a.pos ?? a.positions?.[0] ?? "").toUpperCase();

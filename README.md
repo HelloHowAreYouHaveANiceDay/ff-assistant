@@ -374,20 +374,28 @@ their market models, the open decisions and the one piece of work worth doing ne
 
 ## The league calendar (`ff format`)
 
-The regular-season length, playoff field, bracket weeks, seeding rule and divisions are **read from
-ESPN**, stored as one block with its provenance, and read by every consumer. There is no default --
-a missing field stops the sync rather than being invented.
+The regular-season length, playoff field, bracket weeks, **whether the bracket reseeds**, seeding
+rule and divisions are **read from ESPN**, stored as one block with its provenance, and read by every
+consumer. There is no default -- a missing field stops the sync rather than being invented.
 
 ```
 npm run ff -- format show     # ESPN's block, the stored block, and which is IN FORCE
 npm run ff -- format sync     # re-read ESPN (read-only, through the app bridge)
-npm run ff -- format set --reg-weeks 13 --playoff-weeks 14,15,16 --seeding division-winners-first
+npm run ff -- format set --reg-weeks 13 --playoff-weeks 14,15,16 \
+    --seeding division-winners-first --playoff-reseed true
 ```
 
 The last one is the OWNER OVERRIDE, for when the league has agreed something ESPN's settings do not
-say. Seeding is `record` or `division-winners-first`. See `docs/validation.md` (Track E) for what
-each choice is worth: 13 weeks moves the championship tripwire by +1.5pp and division seeding by
-+0.7pp, neither separable from noise at 25 seasons.
+say. Seeding is `record` or `division-winners-first`.
+
+**Live, 2026-09-09: 13 regular weeks, playoffs 14/15/16, a 7-team field, a RESEEDING bracket, four
+divisions.** The commissioner shortened the season on 2026-09-08, after week 1 and after the
+preseason odds were frozen -- so a block read that morning says 14 weeks and is wrong, which is the
+entire reason the block carries a `fetchedAt`. `ff backtest` takes `--reg-weeks`, `--playoff-teams`,
+`--seeding` and `--playoff-reseed`, each defaulted from the block, so the historical tripwire stays
+reproducible under the calendar it was measured on. See `docs/validation.md` (Track E, and
+integration pass 3) for what each choice is worth: 13 weeks moves the championship tripwire by
++1.5pp and division seeding by +0.7pp, neither separable from noise at 25 seasons.
 
 ## Where planning lives
 
