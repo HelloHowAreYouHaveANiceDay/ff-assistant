@@ -524,31 +524,28 @@ changed nothing they were not meant to. **39.7% is the regression line going for
 
 ---
 
-## The one piece of work worth doing next
+## The one piece of work worth doing next -- DONE, and it was not enough (Track A)
 
-**Price a quarterback against positional replacement in the analytic marginal, then re-run P28.**
+*This section originally recommended pricing a quarterback against positional replacement in V3's
+analytic marginal and re-running P28. Track A did exactly that (`redesign/v3-qb-replacement`,
+`b36c690`), and the outcome is kept here so the recommendation is not repeated.*
 
-P30 is the most useful failure in the programme because it names a bug rather than a limit. V3's
-analytic marginal measures a player against a STREAMING FLOOR, so an elite quarterback is priced by
-how far he beats the waiver wire -- which is a long way. VOR prices him against the seventeenth
-quarterback, which is what a one-QB league actually pays. The evidence that this is the defect and
-not a property of roster-aware valuation is that the SIMULATED roster-aware book gets it right: it
-cuts the QB share of our money to 16.2%, toward the room's own 7.8-11.2%, with no positional term
-anywhere in the module. The analytic surrogate the bidder can afford to run per bid takes it the
-other way, to 31-34%.
+The named defect was real and is fixed: V3's QB share fell from 34.3% to 21.4% (simulated book 15.2%,
+VOR 20.1%), and the shading double-count turned out to be exact -- the "private" part of our
+uncertainty is zero at every rank, because the spread table the bidder used IS the consensus
+dispersion the market is handed. Both fixes together recovered about 6 of the 35 lost points. V3
+still loses the long churn arm by **29pp, worse in 12 of 12 seasons**, and P28 was not re-specified.
 
-So the work is bounded and the test already exists. Change the analytic marginal's baseline at each
-position from the waiver floor to the last starter the league rosters at it, confirm on
-`scripts/roster-book.mjs` that V3's positional shares move toward the simulated book's, and then re-run
-P28 unchanged: `--bot-churn --bot-book price`, 2012-2024, n=150, paired. That arm has a detectable
-effect of 8.5pp and V3 currently loses it by 35.5 points in twelve seasons out of twelve, so it is
-capable of giving a clear answer either way.
+The mechanism is now visible and is not an input: correcting the baseline shrinks every marginal, so
+V3 bids $25-40 less and buys a weaker starting lineup. Right about relative value, wrong about level.
+The residual sits between the cheap analytic surrogate the bidder runs per bid (`lineupMarginal.ts`)
+and the simulated marginal it approximates (`rosterMarginal.ts`, 426 ms per candidate, unaffordable
+live). **V2 stays the live bidder; V3 stays selectable.** The next tool is the analytic-versus-
+simulated rank-correlation harness listed first under "Recommended next work" above, not another
+pass on inputs.
 
-Two things to hold to when doing it. The shading term is ALSO wrong -- our predictive uncertainty is
-largely shared with the room, and combining it in quadrature with the market's private spread
-double-counts -- but it explains only about 7 of the 35 points, so fixing it first would move the
-number without settling anything. And P28's threshold must not be re-specified: a bidder that has to
-be re-measured against a softer rule to pass is a bidder that failed.
+One correction this produced elsewhere: `starterReserve` 4 vs 0 is flat within noise, not
+byte-identical, on the long arm (16 of 1,800 trials differ, -0.17pp, CI [-0.44, 0.00]).
 
 ---
 
@@ -575,7 +572,8 @@ to 2025 have been taken. Three things resolve without anyone doing anything:
   the repo, and it costs nothing but running the command each week. **One caveat that belongs in
   writing now**: 2026 week 1's `weekly` row was frozen under the old arrangement, from the two-part
   artifact, so the shipped series is comparable from week 2 onward and week 1 is not part of it.
-- **Whether 14.5% or 38.1% is closer to the truth**, in the only sample that matters -- one season,
+- **Whether the honest arbiter (11-15% depending on window and format) or the tripwire (38-40%) is
+  closer to the truth**, in the only sample that matters -- one season,
   which is worth almost nothing statistically and everything as a sanity check. If the team misses
   the playoffs, the honest arbiter is not thereby vindicated and the flagless one is not thereby
   refuted; a single draw from either distribution is consistent with both. That is worth writing down
