@@ -18,6 +18,11 @@ app a non-technical friend can run; the engine underneath is deterministic and v
 - **Config-driven.** Everything the ranking depends on — scoring, roster slots, budget, playoff
   format, levers — lives in one per-league `settings.config`. The sim, backtest, and values all read
   it, so the app can be handed to a friend with a different league and it re-tailors itself.
+- **In-season copilot — working, read-only.** Nine decisions (season odds, weekly lineup, waivers,
+  trade check, trade finder, handcuffs, depth risk, power rankings, playoff SOS) as callable
+  functions over one sim context, reached identically from `ff copilot <verb>` and from the
+  Assistant's MCP surface, almost all scored as a change in our championship probability. Verified
+  end to end against the live league. See `docs/in-season-design.md`.
 - **Not yet built:** the in-season lineup *writer* (the recommend path works; the ESPN write tools
   are deferred until after the live draft) and multi-league fan-out (one synced league today).
 
@@ -66,7 +71,14 @@ src/
     managers.ts      #   per-manager bot models           scout.ts    # per-manager tendency mining
     backtest.ts      #   season+playoffs -> title rate    inflation.ts# live value repricing
     nomination.ts / cheatsheet.ts
-  inseason/          # lineup optimizer (built+tested), waiver copilot, team-page scaffold
+  inseason/          # the in-season decision surface
+    copilot.ts       #   the nine decisions as PURE functions over one SimContext, each result
+                     #   carrying its own assumptions (schedule/trials/seeds/data stamp)
+    copilotStore.ts  #   the read-only loading copilot.ts refuses to do (availability, depth, lines)
+    copilotActions.ts#   ONE dispatcher for `ff copilot` and the MCP tools + the D3 action-log write
+    lineup.ts        #   the optimizer                   handcuff.ts   # measured handcuff model
+    rosterValue.ts   #   roster value under availability  waivers.ts   # the points-based scaffold
+    espnTeam.ts      #   team-page scaffold (no writes exposed)
   news.ts            # news CLASSIFIER (category/severity -> draft flag); projections.ts # proj layer
 app/
   main.js            # Electron main: window, IPC handlers (each shells the `ff` engine bundle)
@@ -109,10 +121,35 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
 - **Live draft (add `--app` to drive the desktop app's ESPN webview):** `attach`, `launch-practice`,
   `enter-draft`, `preflight`, `auto-draft`, `roster`, `board`, `read-block`. `auto-draft` holds a
   single-instance lock — two agents in one seat bid against each other.
-- **BYO agent:** `mcp` serves the Assistant's own 16-tool control surface over stdio MCP, so Claude
-  Code (or any MCP client) can drive the draft. `docs/mcp.md`; `claude mcp add ff-draft -- npx tsx
-  <repo>/src/ff.ts mcp`.
-- **In-season:** `lineup --roster <csv>` (optimal-lineup recommendation), `sync-rosters` (ownership)
+- **BYO agent:** `mcp` serves the Assistant's own 34-tool control surface over stdio MCP, so Claude
+  Code (or any MCP client) can drive the draft and the season. `docs/mcp.md`; `claude mcp add
+  ff-draft -- npx tsx <repo>/src/ff.ts mcp`.
+- **In-season copilot (`ff copilot <verb>`)** — the decision surface, READ-ONLY, and the same nine
+  functions the Assistant reaches as MCP tools (`src/inseason/copilot.ts`, one dispatcher in
+  `copilotActions.ts`, so a terminal and the Assistant cannot quote different numbers):
+
+  ```
+  npm run ff -- copilot season-odds --schedule real --trials 3000
+  npm run ff -- copilot lineup --week 5
+  npm run ff -- copilot waivers
+  npm run ff -- copilot trade-check --give "Chris Godwin Jr." --get "Jalen Hurts"
+  npm run ff -- copilot trade-finder
+  npm run ff -- copilot handcuffs --pos RB --free
+  npm run ff -- copilot depth-risk --player "Breece Hall"
+  npm run ff -- copilot power-rankings
+  npm run ff -- copilot playoff-sos
+  ```
+
+  Almost everything is scored in ONE unit — the change in our championship probability, under common
+  random numbers, with the run's own noise floor printed beside the ranking, because points cannot
+  see a mandatory slot going empty or that this league pays on a 7-of-16 threshold. Every result
+  carries an `assumptions` block (REAL vs GENERATED schedule, trials, seeds, data stamp) so a number
+  cannot be quoted without its caveat, and every call is written to `action_log` at status
+  `recommended` BEFORE it is returned (D3) — advice a human acts on is still the agent driving the
+  team. `--schedule real` needs the app running and FAILS rather than silently substituting a
+  generated schedule. `node --import tsx scripts/copilot-crosscheck.mjs --schedule real` checks the
+  conservation laws and the bye/injury path against the live league.
+- **In-season (other):** `lineup --roster <csv>` (offline optimal-lineup from a CSV), `sync-rosters`
 
 ## What the harness decided (docs/edges.md, docs/validation.md)
 
