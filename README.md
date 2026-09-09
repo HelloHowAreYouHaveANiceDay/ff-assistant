@@ -333,3 +333,21 @@ Roadmap, phases, and issue tracking are in the wiki (`wiki/projects/project--ff-
 `roadmap--ff-assistant.md`). Design rationale is `docs/decisions.md` (D0-D10, incl. **D10**: the
 engine is deterministic TS, no LLM in the bid loop). The draft-day procedure is
 `docs/draft-day-runbook.md`.
+
+## Track A (2026-09-09): the derived bidder's named defect, fixed -- and it was not the reason
+
+"A derived bidder was built, measured, and rejected" above still stands; its DIAGNOSIS is superseded.
+V3's analytic marginal no longer prices a starting slot against the waiver wire -- it uses the last
+starter the league rosters at that position, the same quantity `values.ts baselines()` computes,
+recomputed from the remaining board and the room's remaining open slots. Its winner's-curse shading
+now uses only the PRIVATE part of our uncertainty, which in the backtest is exactly zero: the table
+standing in for our predictive interval IS the consensus dispersion the market's own error is
+measured from, so the old term counted one quantity twice.
+
+Both fixes work and neither rescues the bidder. The QB share of an empty-roster book falls from 34.3%
+to 21.4% against a simulated 15.2% (P34 failed by two tenths of a point), and on the long churn arm
+V3 goes from 53.5% to 59.7% playoffs against V2's 88.9% -- still -29.17pp paired, still worse in
+twelve of twelve seasons. **P28 failed again, on both arms, against the threshold as originally
+registered.** V2 remains the default; `DEFAULT_LEVERS`, `values.ts` and `strategy.ts` are untouched.
+What is left is the analytic surrogate itself, not its inputs. `docs/validation.md`, Track A, has
+every table and the paired statistics.
