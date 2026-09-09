@@ -1356,3 +1356,55 @@ CREATE TABLE IF NOT EXISTS feat_player_week_stream (
   PRIMARY KEY (season, week, feat_key)
 );
 CREATE INDEX IF NOT EXISTS idx_fpws_pos ON feat_player_week_stream (season, week, pos);
+
+-- ==================================================================================================
+-- fact_waiver_claim -- EVERY PROCESSED WAIVER CLAIM IN THIS LEAGUE, WITH ITS BID AND WHAT IT BOUGHT.
+--
+-- ONE ROW PER CLAIM (the ADD item of a WAIVER transaction), winners AND losers. ESPN publishes the
+-- LOSING bid: a claim that was outbid comes back as status FAILED_INVALIDPLAYERSOURCE carrying the
+-- amount that lost, inside the same `mTransactions2` view Track B already fetched. That single fact
+-- is what makes P(win | bid) fittable here rather than assumable; without it only the clearing price
+-- is observable. 2018 is the exception -- ESPN retains no resolved failures for it, only PENDING --
+-- so it is a winners-only season, which the coverage read-back states rather than hides.
+--
+-- POINT-IN-TIME, and the columns that are not are named as targets. `team_faab_left`,
+-- `league_faab_left` and `teams_need_pos` are computed from transactions and rosters STRICTLY BEFORE
+-- this claim's own waiver run; `ros_pts`/`ros_games` are the outcome the claim bought and exist to
+-- be predicted, never to predict. `competing_bids` is knowable only after the run and is stored for
+-- reporting, NOT as a model feature.
+CREATE TABLE IF NOT EXISTS fact_waiver_claim (
+  season          INTEGER NOT NULL,
+  week            INTEGER NOT NULL,
+  transaction_id  TEXT NOT NULL,
+  team_id         TEXT NOT NULL,
+  espn_player_id  TEXT NOT NULL,
+  player_sk       TEXT,             -- player_xref for real players, the roster D/ST map for defences
+  name            TEXT,
+  pos             TEXT,
+  bid_amount      REAL,
+  status          TEXT,             -- ESPN's own status, verbatim
+  won             INTEGER,          -- 1 EXECUTED, 0 outbid (FAILED_INVALIDPLAYERSOURCE), NULL other
+  competing_bids  INTEGER,          -- OTHER processed claims on the same player-week. NOT a feature.
+  executed_at     TEXT,             -- LOCAL date-time of the waiver run
+  proposed_at_ms  INTEGER,
+  -- ------- POINT-IN-TIME FEATURES (every one knowable before the run) -------
+  season_line_pg  REAL,             -- preseason projection / games, as of Y-09-01
+  pos_line_rank   INTEGER,          -- rank of season_line_pg inside his position that week (1 = best)
+  td_ppg          REAL,             -- points per game through w-1
+  td_games        INTEGER,
+  t4_mean         REAL,             -- mean of the last <=4 games played before w
+  prior_pts       REAL,             -- his points in week w-1 (NULL in week 1)
+  team_faab_left  REAL,             -- budget minus this team's EXECUTED spend BEFORE this run
+  league_faab_left REAL,            -- the same, summed over every team in the season
+  team_faab_share REAL,             -- team_faab_left / budget
+  league_faab_share REAL,           -- league_faab_left / (teams * budget)
+  teams_need_pos  INTEGER,          -- teams carrying fewer at this position than the league median
+  teams_counted   INTEGER,
+  budget          REAL,             -- the season's FAAB budget per team
+  -- ------- TARGET (the outcome the claim bought; never an input) -------
+  ros_pts         REAL,             -- his points from week w to the end of the season
+  ros_games       INTEGER,
+  built_at        TEXT,
+  PRIMARY KEY (season, transaction_id, espn_player_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fwc_player ON fact_waiver_claim (season, week, player_sk);

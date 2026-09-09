@@ -100,6 +100,8 @@ async function main() {
       return cmdIngestRaw(rest);
     case "build-features-ext":
       return cmdBuildFeaturesExt(rest);
+    case "build-waiver-claims":
+      return cmdBuildWaiverClaims(rest);
     case "build-live-context":
       return cmdBuildLiveContext(rest);
     case "sync-rosters":
@@ -3339,4 +3341,19 @@ function printFormat(
   if (espn && (espn.regWeeks !== eff.regWeeks || espn.playoffWeeks.join() !== eff.playoffWeeks.join() || espn.seeding !== eff.seeding)) {
     console.log(`  IT DISAGREES WITH ESPN, which says weeks 1-${espn.regWeeks}, playoffs ${espn.playoffWeeks.join("/")}, ${espn.seeding}.`);
   }
+}
+
+// ==================================================================================================
+// `ff build-waiver-claims` -- fact_waiver_claim, this league's own FAAB bid history.
+//
+// One row per processed waiver claim, WINNERS AND LOSERS. ESPN publishes the losing bid as
+// FAILED_INVALIDPLAYERSOURCE carrying the amount that lost, which is what makes P(win | bid)
+// fittable here instead of assumable. The read-back prints the property that proves it: across
+// every contested player-week, exactly one claim executed and no loser ever out-bid the winner.
+// ==================================================================================================
+async function cmdBuildWaiverClaims(rest: string[]) {
+  const { spawnSync } = await import("node:child_process");
+  const args = ["--import", "tsx", "scripts/faab-coverage.mjs", "--build", ...rest];
+  const r = spawnSync(process.execPath, args, { stdio: "inherit" });
+  if (r.status) process.exitCode = r.status;
 }
