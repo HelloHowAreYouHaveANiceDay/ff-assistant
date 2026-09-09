@@ -16,7 +16,7 @@
 import Database from "better-sqlite3";
 import { backtestLineups, seasonBootstrap } from "../src/inseason/backtest/lineup.ts";
 import { MODEL_FILES } from "../src/inseason/backtest/context.ts";
-import { formatServeTable } from "../src/weekly/streamingServe.ts";
+import { formatServeTable, WEEKLY_SERVE, STREAM_SERVE_POS, STREAMING_ARTIFACT } from "../src/weekly/streamingServe.ts";
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const [lo, hi] = arg("--seasons", "2018-2025").split("-").map(Number);
@@ -61,5 +61,16 @@ const s = out.served.summary;
 console.log(`\n--- WHAT THE LIVE SEAM SCORES (WEEKLY_SERVE, the mapping loadWeeklyProjection resolves through)`);
 console.log(`    per team-week ${s.meanTool} against the manager's ${s.meanStarted} and hindsight's ${s.meanOptimal}`);
 console.log(`    gain over the manager ${s.meanToolGain}; bootstrap ${out.served.boot.mean} [${out.served.boot.lo}, ${out.served.boot.hi}] over ${out.served.boot.seasons} seasons`);
-console.log(`    it is BETWEEN the two single-artifact arms by construction: RB/WR/TE come from the floor,`);
-console.log(`    QB/K/DST from the streaming artifact, and only the second group differs from the floor arm.`);
+// Read FROM THE TABLE rather than naming positions by hand, so this line does not go stale the next
+// time WEEKLY_SERVE changes -- it already did once, on 2026-09-09, when this said "RB/WR/TE come
+// from the floor" and stopped being true.
+const streamingPos = STREAM_SERVE_POS.filter((p) => WEEKLY_SERVE[p] === STREAMING_ARTIFACT);
+const floorPos = STREAM_SERVE_POS.filter((p) => WEEKLY_SERVE[p] !== STREAMING_ARTIFACT);
+if (floorPos.length) {
+  console.log(`    it is BETWEEN the two single-artifact arms by construction: ${floorPos.join("/")} come from the`);
+  console.log(`    floor, ${streamingPos.join("/")} from the streaming artifact, and only the second group differs from the floor arm.`);
+} else {
+  console.log(`    every position (${streamingPos.join("/")}) now comes from the streaming artifact, so this arm`);
+  console.log(`    should sit close to the challenger arm above -- the streaming artifact is the same two-part`);
+  console.log(`    structure plus an opponent block measured near zero.`);
+}
