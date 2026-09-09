@@ -3208,6 +3208,7 @@ async function cmdInseasonBacktest(rest: string[]) {
     lineup: "scripts/inseason-backtest-lineup.mjs",
     waivers: "scripts/inseason-backtest-waiver.mjs",
     promotion: "scripts/inseason-backtest-promotion.mjs",
+    faab: "scripts/faab-replay.mjs",
   };
   const which = rest.find((r) => !r.startsWith("--"));
   const script = which ? SCRIPTS[which] : undefined;
@@ -3216,6 +3217,7 @@ async function cmdInseasonBacktest(rest: string[]) {
     console.log("  lineup     what the room started vs hindsight vs our lineup rule, on real rosters");
     console.log("  waivers    the room's real claims scored by points per FAAB dollar against our ranking");
     console.log("  promotion  a promoted RB backup against the man he replaced -- the handcuff prior, from a new direction");
+    console.log("  faab       our fitted bid for each of those adds, against the winning bid the log recorded");
     console.log("  full writeup: docs/in-season-backtest.md");
     if (which) process.exitCode = 2;
     return;

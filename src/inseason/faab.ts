@@ -29,6 +29,8 @@
  * contract test recomputes them here at 1e-6.
  */
 import { existsSync, readFileSync } from "node:fs";
+import Database from "better-sqlite3";
+import { nameKey } from "../draft/values.js";
 
 export const FAAB_ARTIFACT_PATH = process.env.FF_FAAB_MODEL ?? "data/faab-model.json";
 
@@ -199,6 +201,119 @@ export function recommendBid(
     bidEffectSignificant: m.bidEffect.significant,
     note: m.bidEffect.note,
   };
+}
+
+// --------------------------------------------------------------------------------------------
+// LIVE STATE -- the columns the model needs that a SimContext does not carry
+// --------------------------------------------------------------------------------------------
+
+export interface FaabLiveState {
+  season: number; week: number; weekSource: string;
+  budget: number; teamsCounted: number;
+  /** OUR remaining FAAB, and the room's, from EXECUTED waiver bids this season. */
+  remaining: number; leagueRemaining: number;
+  teamFaabShare: number; leagueFaabShare: number;
+  /** name_key -> the player's point-in-time columns for this week. */
+  byPlayer: Map<string, {
+    playerSk: string | null; pos: string | null;
+    posLineRank: number | null; seasonLinePg: number | null; tdPpg: number | null; priorPts: number | null;
+  }>;
+  needByPos: Map<string, number>;
+  note: string;
+}
+
+/**
+ * Read the live FAAB state straight from the store.
+ *
+ * `SimContext` carries a board, rosters and a schedule; it carries no week, no budget and no
+ * to-date points, and those are three of the model's inputs. Rather than widen that context -- or
+ * worse, default them to a constant and let a recommendation read as measured when half its inputs
+ * were assumed -- this reads them where they live and REPORTS what it found. Every field is
+ * point-in-time by construction: the remaining budgets come from transactions already executed, and
+ * the player columns come from `feat_player_week_model`, whose whole contract is an as-of the day
+ * before the week's first kickoff.
+ */
+export function liveFaabState(o: {
+  dbPath?: string; season: number; week?: number; teamId: string; fallbackBudget?: number;
+}): FaabLiveState {
+  const db = new Database(o.dbPath ?? (process.env.FF_DB ?? "data/ff.db"), { readonly: true });
+  try {
+    let week = o.week ?? 0, weekSource = "caller";
+    if (!week) {
+      const r = db.prepare(
+        `SELECT MAX(week) w FROM feat_player_week_model WHERE season = ? AND pts IS NOT NULL`).get(o.season) as { w: number | null };
+      week = (r?.w ?? 0) + 1;
+      weekSource = "the week after the last one with settled points";
+      if (week < 1) { week = 1; weekSource = "no settled week in the store -- week 1"; }
+    }
+    const budget = (() => {
+      const r = db.prepare(`SELECT MAX(faab_spent) mx FROM fact_team_season WHERE season = ?`).get(o.season) as { mx: number | null };
+      const fb = o.fallbackBudget ?? 100;
+      return (r?.mx ?? 0) >= fb ? Math.round(r!.mx as number) : fb;
+    })();
+    const teams = (db.prepare(`SELECT COUNT(*) n FROM fact_team_season WHERE season = ?`).get(o.season) as { n: number }).n || 12;
+    const spend = db.prepare(
+      `SELECT COALESCE(SUM(bid_amount),0) tot,
+              COALESCE(SUM(CASE WHEN COALESCE(NULLIF(to_team_id,'-1'), team_id) = ? THEN bid_amount END),0) mine
+         FROM raw_league_transaction
+        WHERE season=? AND type='WAIVER' AND item_type='ADD' AND status='EXECUTED'`)
+      .get(o.teamId, o.season) as { tot: number; mine: number };
+    const remaining = Math.max(0, budget - spend.mine);
+    const leagueRemaining = Math.max(0, teams * budget - spend.tot);
+
+    const byPlayer: FaabLiveState["byPlayer"] = new Map();
+    const rows = db.prepare(
+      `SELECT player_sk, name, pos, season_line_pg, td_ppg FROM feat_player_week_model WHERE season=? AND week=?`)
+      .all(o.season, week) as { player_sk: string | null; name: string | null; pos: string | null; season_line_pg: number | null; td_ppg: number | null }[];
+    const ranked = new Map<string, { sk: string; v: number }[]>();
+    for (const r of rows) {
+      if (!r.player_sk || r.season_line_pg == null || !r.pos) continue;
+      if (!ranked.has(r.pos)) ranked.set(r.pos, []);
+      ranked.get(r.pos)!.push({ sk: r.player_sk, v: r.season_line_pg });
+    }
+    const rankOf = new Map<string, number>();
+    for (const [, b] of ranked) { b.sort((a, c) => c.v - a.v); b.forEach((x, i) => rankOf.set(x.sk, i + 1)); }
+    const prior = new Map<string, number>();
+    if (week > 1) {
+      for (const r of db.prepare(`SELECT player_sk, pts FROM feat_player_week_model WHERE season=? AND week=? AND pts IS NOT NULL`)
+        .all(o.season, week - 1) as { player_sk: string; pts: number }[]) prior.set(r.player_sk, r.pts);
+    }
+    for (const r of rows) {
+      if (!r.name) continue;
+      byPlayer.set(nameKey(r.name), {
+        playerSk: r.player_sk, pos: r.pos,
+        posLineRank: r.player_sk ? rankOf.get(r.player_sk) ?? null : null,
+        seasonLinePg: r.season_line_pg, tdPpg: r.td_ppg,
+        priorPts: r.player_sk ? prior.get(r.player_sk) ?? null : null,
+      });
+    }
+
+    // Teams carrying fewer at a position than the league median, on the week BEFORE -- the same
+    // definition fact_waiver_claim was built with, because a feature computed two ways is two
+    // features with one name.
+    const needByPos = new Map<string, number>();
+    const rw = Math.max(1, week - 1);
+    for (const p of FAAB_POSITIONS) {
+      const c = db.prepare(
+        `SELECT team_id, SUM(CASE WHEN pos = ? THEN 1 ELSE 0 END) n FROM fact_roster_week WHERE season=? AND week=? GROUP BY team_id`)
+        .all(p, o.season, rw) as { team_id: string; n: number }[];
+      if (!c.length) continue;
+      const a = c.map((x) => x.n).sort((x, y) => x - y);
+      const m = a.length % 2 ? a[a.length >> 1] : (a[(a.length >> 1) - 1] + a[a.length >> 1]) / 2;
+      needByPos.set(p, c.filter((x) => x.n < m).length);
+    }
+
+    return {
+      season: o.season, week, weekSource, budget, teamsCounted: teams,
+      remaining, leagueRemaining,
+      teamFaabShare: remaining / budget, leagueFaabShare: leagueRemaining / (teams * budget),
+      byPlayer, needByPos,
+      note: `week ${week} (${weekSource}); $${remaining} of $${budget} left to us, ` +
+        `$${leagueRemaining} of $${teams * budget} left in the room; ` +
+        `${byPlayer.size} players carry point-in-time columns for this week; ` +
+        `${needByPos.size ? `positional need read off the week-${rw} rosters` : "NO roster rows for the prior week, so positional need is unknown and reads as missing"}`,
+    };
+  } finally { db.close(); }
 }
 
 export function loadFaabModel(path: string = FAAB_ARTIFACT_PATH): FaabModel | null {

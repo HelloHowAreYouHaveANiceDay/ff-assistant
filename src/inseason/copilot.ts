@@ -37,6 +37,10 @@ import { optimalLineup } from "./lineup.js";
 import { handcuffBoard, type DepthEntry, type HandcuffRow } from "./handcuff.js";
 import { rosterGaps, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
 import { nameKey } from "../draft/values.js";
+import {
+  loadFaabModel, liveFaabState, featureRow, recommendBid, FAAB_ARTIFACT_PATH,
+  type FaabModel, type FaabLiveState, type FaabRow,
+} from "./faab.js";
 import type { SimContext } from "../draft/simContext.js";
 
 /** NFL weeks a season projection is spread over. Season projections in the board are FULL-SEASON
@@ -696,9 +700,41 @@ export interface WaiverTarget extends ObjectiveDelta {
   afterPlayoffPct: number;
   afterTitlePct: number;
   clearsNoise: boolean;
+  /** WHAT TO BID. Since Track J this is the fitted model's answer for `faabTargetWinPct`, not the
+   *  old rule of thumb; `faabBasis` says which produced it on every row. */
   faab: number; faabRule: string;
+  /** "model" -- data/faab-model.json, fitted on this league's own 794 claims. "rule" -- the stated
+   *  rule of thumb, used only when the artifact or the live state is unavailable, and the row says
+   *  so rather than looking identical to a measured one. */
+  faabBasis: "model" | "rule";
+  /** What this room has PAID for a man like this, in this week, with this much money left. */
+  faabClearing: number | null;
+  /** P(win) at the recommended bid. Not the target when the bid had to be capped. */
+  faabWinPct: number | null;
+  /** P(win) at three bid levels, so the row shows the curve rather than one point on it. */
+  faabCurve: { bid: number; winPct: number }[] | null;
+  /** The unclamped solve. Larger than the budget means the target is UNREACHABLE, not "bid it all". */
+  faabWanted: number | null;
+  /** The target costs more than the budget / more than we have left. Flagged, never silently capped. */
+  faabOverBudget: boolean;
+  faabOverRemaining: boolean;
   drops: WaiverDrop[];
 }
+
+/** What produced the dollar figure, stated once for the whole result rather than per row. */
+export interface FaabAssumption {
+  basis: "model" | "rule";
+  artifact: string | null;
+  builtAt: string | null;
+  targetWinPct: number;
+  remaining: number | null;
+  budget: number;
+  week: number | null;
+  /** The `log_bid` interval crossing zero is the caveat the whole recommendation rests on. */
+  bidEffectSignificant: boolean | null;
+  note: string;
+}
+
 export interface WaiverResult {
   basePlayoffPct: number;
   basePlayoffWeekPts: number;
@@ -708,19 +744,36 @@ export interface WaiverResult {
   refused: WaiverRefusal[];
   faabBudget: number;
   objective: Objective;
-  assumptions: Assumptions;
+  /** The waiver result's assumptions carry ONE extra block, because the bid is now a second model's
+   *  output and a number from a model with no provenance beside it is exactly what this file
+   *  exists to prevent. */
+  assumptions: Assumptions & { faab: FaabAssumption };
 }
 
 /**
- * FAAB GUIDANCE IS A STATED RULE, NOT A MEASUREMENT -- and it is labelled as such on every row.
+ * THE FALLBACK. It used to be the only thing here.
  *
- * Nothing in this repo has measured what a percentage point of championship probability is worth in
- * FAAB dollars; there is no historical bid data to fit it on. Returning a bare number anyway would
- * be exactly the failure this module exists to prevent, so the rule travels with the number: ten
- * percent of the budget per point of title probability, capped at half the budget. It is a way to
- * turn a ranking into a bid, not a valuation.
+ * "Nothing in this repo has measured what a percentage point of probability is worth in FAAB
+ * dollars; there is no historical bid data to fit it on." That was true when it was written and it
+ * is not any more: `fact_waiver_claim` holds 794 of this league's own claims with the bid intact --
+ * including 145 LOSING bids, which ESPN publishes as FAILED_INVALIDPLAYERSOURCE -- and
+ * `tools/train_faab.py` fits both the clearing price and P(win | bid) on them. So the dollar figure
+ * on a waiver row is now a measurement, and THIS rule is what the row falls back to when the
+ * artifact or the live budget state is missing. A row that fell back says `faabBasis: "rule"`,
+ * because a guess and a measurement that print the same number must not look the same.
+ *
+ * Ten percent of the budget per point of PLAYOFF probability, capped at half the budget. Kept
+ * exactly as it was: a fallback that drifted from the thing it is a fallback for would be worse
+ * than none.
  */
 export const FAAB_RULE = "10% of budget per +1pp of PLAYOFF probability, capped at 50% -- a stated rule of thumb, not a fitted value. It was quoted against title probability until Phase 3; the rule is unchanged, the quantity it is applied to is the one the simulator can actually predict.";
+/** What the row says when the FITTED model produced the number. It still names the quantity the
+ *  RANKING prices, because the ranking is unchanged -- only the dollars moved. */
+export const FAAB_MODEL_RULE =
+  "the bid is FITTED on this league's own 794 waiver claims (data/faab-model.json: clearing price " +
+  "plus P(win | bid), the latter measured against ESPN's published LOSING bids), solved for the " +
+  "target win probability. The RANKING is unchanged -- it is still the change in PLAYOFF " +
+  "probability -- and only the dollars are now a measurement rather than a rule of thumb.";
 export function faabFor(deltaPp: number, budget: number): number {
   if (deltaPp <= 0) return 0;
   return Math.max(1, Math.round(Math.min(0.5, deltaPp * 0.10) * budget));
@@ -739,13 +792,51 @@ export function faabFor(deltaPp: number, budget: number): number {
  */
 export function waiverTargets(
   ctx: SimContext,
-  o: BaseOpts & { adds?: number; dropsPerAdd?: number; faabBudget?: number; positions?: string[] } = {},
+  o: BaseOpts & {
+    adds?: number; dropsPerAdd?: number; faabBudget?: number; positions?: string[];
+    /** The win probability the recommended bid is solved for. Exposed because 0.7 is a CHOICE about
+     *  how much of the budget to spend on certainty, not a measured quantity. */
+    faabTargetWinPct?: number;
+    /** Our remaining FAAB. Read from the store when absent; a bid above it is FLAGGED, not capped. */
+    faabRemaining?: number;
+    /** Injection seams, so the replay and the tests can drive the same code path the live tool does
+     *  rather than a reimplementation of it. */
+    faabModel?: FaabModel | null;
+    faabState?: FaabLiveState | null;
+    faabWeek?: number;
+    dbPath?: string;
+  } = {},
 ): WaiverResult {
   const trials = o.trials ?? 800;
   const seeds = o.seeds ?? [7, 101];
   const nAdds = o.adds ?? 5;
   const nDrops = o.dropsPerAdd ?? 4;
-  const budget = o.faabBudget ?? 100;
+  const target = o.faabTargetWinPct ?? 0.7;
+
+  // ---- THE BID MODEL, and everything it needs to be point-in-time ------------------------------
+  //
+  // Both halves can be absent -- no artifact on disk, or a store with no rows for this season -- and
+  // when either is, the row falls back to the rule of thumb AND SAYS SO. A degraded number that
+  // looks identical to a measured one is the failure this whole file is organised against.
+  let model: FaabModel | null = null;
+  let live: FaabLiveState | null = null;
+  let faabNote = "";
+  try {
+    model = o.faabModel !== undefined ? o.faabModel : loadFaabModel();
+    if (!model) faabNote = `no fitted artifact at ${FAAB_ARTIFACT_PATH} -- falling back to the rule of thumb`;
+  } catch (e) { faabNote = `the FAAB artifact would not load (${(e as Error).message}) -- falling back to the rule of thumb`; }
+  if (model) {
+    try {
+      live = o.faabState !== undefined ? o.faabState : liveFaabState({
+        dbPath: o.dbPath, season: ctx.season, week: o.faabWeek,
+        teamId: ctx.teams[ctx.meIdx].id, fallbackBudget: o.faabBudget,
+      });
+    } catch (e) { faabNote = `the live FAAB state is unreadable (${(e as Error).message}) -- falling back to the rule of thumb`; }
+  }
+  const budget = o.faabBudget ?? live?.budget ?? 100;
+  const remaining = o.faabRemaining ?? live?.remaining ?? null;
+  const usingModel = !!(model && live);
+  if (usingModel) faabNote = live!.note;
 
   const free = [...ctx.board.entries()]
     .filter(([id]) => !ctx.ownedIds.has(id))
@@ -762,6 +853,45 @@ export function waiverTargets(
   const mine = ctx.teams[ctx.meIdx].roster;
   const refused: WaiverRefusal[] = [];
   const targets: WaiverTarget[] = [];
+
+  /**
+   * ONE ROW'S DOLLARS, and the eight fields that say where they came from.
+   *
+   * A player the live table has no row for -- a man signed on the Tuesday, a fixture name the
+   * feature build has never seen -- keeps the model's population-level answer rather than being
+   * dropped: the position, the week and both budget shares are still known, and the missing
+   * columns take the artifact's own published defaults, which is what `missing` in a feature spec
+   * IS. That is stated in `assumptions.faab.note` rather than left to be inferred.
+   */
+  const bidFor = (name: string, pos: string, deltaPp: number): Pick<WaiverTarget,
+    "faab" | "faabRule" | "faabBasis" | "faabClearing" | "faabWinPct" | "faabCurve" | "faabWanted"
+    | "faabOverBudget" | "faabOverRemaining"> => {
+    if (!usingModel) {
+      return {
+        faab: faabFor(deltaPp, budget), faabRule: FAAB_RULE, faabBasis: "rule",
+        faabClearing: null, faabWinPct: null, faabCurve: null, faabWanted: null,
+        faabOverBudget: false, faabOverRemaining: false,
+      };
+    }
+    const m = model!, st = live!;
+    const p = st.byPlayer.get(nameKey(name));
+    const row: FaabRow = {
+      budget,
+      f: featureRow(m, {
+        pos, week: st.week,
+        posLineRank: p?.posLineRank ?? null, seasonLinePg: p?.seasonLinePg ?? null,
+        tdPpg: p?.tdPpg ?? null, priorPts: p?.priorPts ?? null,
+        teamFaabShare: st.teamFaabShare, leagueFaabShare: st.leagueFaabShare,
+        teamsNeedPos: st.needByPos.get(pos) ?? null, teamsCounted: st.needByPos.size ? st.teamsCounted : null,
+      }),
+    };
+    const a = recommendBid(m, row, { target, remaining });
+    return {
+      faab: a.bid, faabRule: FAAB_MODEL_RULE, faabBasis: "model",
+      faabClearing: a.clearingPrice, faabWinPct: a.winPctAtBid, faabCurve: a.curve,
+      faabWanted: a.wanted, faabOverBudget: a.overBudget, faabOverRemaining: a.overRemaining,
+    };
+  };
 
   for (const add of free) {
     // Cheapest first: the lowest-projection bodies are the real drop candidates, and evaluating all
@@ -798,7 +928,7 @@ export function waiverTargets(
       // The noise floor is computed for the PRIMARY quantity, always. Comparing a playoff delta
       // against a floor derived from the title rate is comparing two different distributions.
       clearsNoise: best.playoffsPp > floor,
-      faab: faabFor(best.playoffsPp, budget), faabRule: FAAB_RULE,
+      ...bidFor(add.name, add.pos, best.playoffsPp),
       drops,
     });
   }
@@ -812,7 +942,21 @@ export function waiverTargets(
     refused,
     faabBudget: budget,
     objective,
-    assumptions: assumptionsOf(ctx, "simulation", o, trials, seeds, objective),
+    assumptions: {
+      ...assumptionsOf(ctx, "simulation", o, trials, seeds, objective),
+      faab: {
+        basis: usingModel ? "model" : "rule",
+        artifact: usingModel ? FAAB_ARTIFACT_PATH : null,
+        builtAt: model?.builtAt ?? null,
+        targetWinPct: Math.round(target * 1000) / 10,
+        remaining, budget,
+        week: live?.week ?? null,
+        bidEffectSignificant: model ? model.bidEffect.significant : null,
+        note: usingModel
+          ? `${faabNote}. ${model!.bidEffect.note}.`
+          : `${faabNote || "no fitted bid model in play"} -- every dollar figure below is the RULE OF THUMB.`,
+      },
+    },
   };
 }
 
