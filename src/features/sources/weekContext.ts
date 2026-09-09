@@ -21,6 +21,7 @@
  */
 import { openDb, nowIso, type DB } from "../../db/db.js";
 import { normPos } from "../../data/stgPlayer.js";
+import { normalizeStatus } from "../../inseason/copilot.js";
 import { buildSourceResolver, type SourceResolver } from "./resolve.js";
 
 export interface WeekContextResult {
@@ -296,5 +297,255 @@ export function buildWeekContext(opts: { dbPath?: string; seasons: number[] }): 
   }
   res.resolution = resolver.stats();
   db.close();
+  return res;
+}
+
+// ==================================================================================================
+// THE LIVE SEASON.
+//
+// `buildWeekContext` above is a HISTORICAL builder. Its injury columns come from `raw_injury`, whose
+// filings are dated -- and from 2025 the feed stopped publishing a report date, so every undated row
+// is dropped and every 2025 injury column reads NULL. For 2026 the table holds nothing at all: the
+// season has not been archived. The consequence is precise and it is the failure this section
+// exists to remove: the two-part weekly model's first stage is availability, and in the one month
+// availability decides anything it would serve the live season on its declared defaults -- a model
+// that knows about injuries, blind, in September.
+//
+// So the live season's context is assembled from the sources this repo ALREADY refreshes for the
+// copilot's OUT refusal: ESPN's structured `player_status` and high-severity injury rows in `news`.
+// They are the same two the lineup optimizer reads, deliberately, so a man the lineup refuses to
+// start and a man the model prices as unlikely to play cannot be different men.
+//
+// THREE THINGS THIS IS NOT, stated because each is a way the rows could look fine and be worthless:
+//
+//   1. It is NOT a practice report. `player_status` carries a designation, not Wednesday and Friday
+//      participation, so `practice_status_*` stay NULL and `prac_dnp` / `prac_limited` read 0. The
+//      model's largest first-stage coefficients are on `inj_out` and `inj_doubtful`, which this does
+//      carry; `prac_dnp` is third and is simply absent rather than guessed.
+//   2. It is NOT dated per filing. A live status feed publishes a CURRENT state and one timestamp,
+//      so `as_of` is the SNAPSHOT time -- when we read it -- and not when the team filed it. That is
+//      weaker than the historical builder's per-filing dates and it is why the point-in-time rule
+//      below is enforced on the snapshot rather than inferred from the row.
+//   3. It does NOT backfill. Only the target week is written. A status read today says nothing about
+//      who was out three weeks ago, and writing today's designation into a past week would
+//      manufacture exactly the leakage `weekly-leak-audit.mjs` exists to catch.
+//
+// THE POINT-IN-TIME RULE, and it is the whole reason this has a rule rather than a week argument:
+// a snapshot taken AFTER a week's first kickoff belongs to the NEXT week. Once a game has been
+// played, today's injury designations are contaminated by it -- a man carted off on Thursday is
+// "Out" in a feed read on Friday, and writing that into Thursday's week would let the model know an
+// outcome. So the target week is the earliest whose first kickoff is still ahead of the snapshot.
+// ==================================================================================================
+
+export interface LiveWeekContextResult {
+  season: number;
+  /** The week the snapshot was written to, or null when the season has no week still ahead. */
+  week: number | null;
+  /** The snapshot time the rows were stamped with. */
+  asOf: string;
+  rows: number;
+  /** Players carrying a designation, of `rows`. */
+  withStatus: number;
+  withDepth: number;
+  outs: number;
+  /** From the news feed rather than the structured status -- an escalation the status had not caught. */
+  fromNews: number;
+  /** Designations that reached no surrogate key, so no row carries them. A coverage fact, reported
+   *  rather than dropped: it is the difference between "nobody is out" and "we could not tell". */
+  unresolved: number;
+  /** Non-null means NOTHING was written, and says why. */
+  skipped: string | null;
+  /** Every week whose first kickoff is already behind the snapshot, i.e. what the rule excluded. */
+  kickedOff: number[];
+}
+
+export interface LiveWeekContextOpts {
+  dbPath?: string;
+  season: number;
+  /** The snapshot time. Injectable so a test can drive the point-in-time rule without waiting for
+   *  Sunday. Defaults to now. */
+  now?: string;
+  /** Write the rows. False measures what WOULD be written and touches nothing. */
+  write?: boolean;
+}
+
+/** ESPN's designation vocabulary, mapped onto the injury REPORT vocabulary the features speak.
+ *
+ *  IR / PUP / NFI / suspension all become "Out", which is a judgement and is recorded as one: for
+ *  the purpose of "will he play this week" they are indistinguishable from Out, and the model has no
+ *  separate coefficient that could tell them apart. "Doubtful" is kept separate because the model
+ *  DOES have one for it (+2.7 to +4.0 in logit, against +3.4 to +5.2 for Out) and folding it into
+ *  Out would overstate the certainty of a man who sometimes plays. */
+export function espnStatusToReport(raw: string | null | undefined): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  if (s.toUpperCase() === "DOUBTFUL") return "Doubtful";
+  const n = normalizeStatus(s);
+  if (n === "OUT") return "Out";
+  if (n === "QUESTIONABLE") return "Questionable";
+  return null;
+}
+
+/**
+ * Build the CURRENT season's `feat_player_week_context` rows from the live status feeds.
+ *
+ * The universe is `feat_player_week_model` for the target week -- everyone the forward builder has a
+ * row for -- rather than the status feed, because a player with no designation is information (he is
+ * not on the report) and dropping him would leave the model reading NULL for a man who is fine.
+ */
+export function buildLiveWeekContext(opts: LiveWeekContextOpts): LiveWeekContextResult {
+  const db = openDb(opts.dbPath);
+  try { return buildLiveWeekContextInto(db, opts); } finally { db.close(); }
+}
+
+export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): LiveWeekContextResult {
+  const season = opts.season;
+  const asOf = opts.now ?? nowIso();
+  const asOfDay = asOf.slice(0, 10);
+  const res: LiveWeekContextResult = {
+    season, week: null, asOf, rows: 0, withStatus: 0, withDepth: 0, outs: 0, fromNews: 0,
+    unresolved: 0, skipped: null, kickedOff: [],
+  };
+
+  // ---- THE TARGET WEEK, from raw_nfl_game kickoffs. ----
+  const firstKickoff = new Map<number, string>();
+  for (const g of db.prepare(
+    "SELECT week, MIN(gameday) AS d FROM raw_nfl_game WHERE season = ? AND game_type = 'REG' AND gameday IS NOT NULL GROUP BY week",
+  ).all(season) as { week: number; d: string }[]) firstKickoff.set(Number(g.week), String(g.d));
+  if (!firstKickoff.size) {
+    res.skipped = `raw_nfl_game holds no dated ${season} regular-season games -- run \`ff ingest-raw\` first`;
+    return res;
+  }
+  const ordered = [...firstKickoff.entries()].sort((a, b) => a[0] - b[0]);
+  res.kickedOff = ordered.filter(([, d]) => d <= asOfDay).map(([w]) => w);
+  const target = ordered.find(([, d]) => d > asOfDay);
+  if (!target) {
+    res.skipped = `every ${season} regular-season week has kicked off as of ${asOfDay} -- there is no week ahead to write context for`;
+    return res;
+  }
+  res.week = target[0];
+  const week = target[0];
+
+  // ---- WHO IS DESIGNATED, from the two feeds the copilot's OUT refusal reads. ----
+  // Keyed by name_key, which is what `player_status.player_id` and `news.player_id` both are, then
+  // resolved to the surrogate key through stg_player. A designation that cannot be resolved to a
+  // player_sk is COUNTED, not silently dropped: an unresolvable name is a coverage fact.
+  const skOf = new Map<string, number>();
+  for (const r of db.prepare(
+    "SELECT player_sk, name_key, position FROM stg_player WHERE name_key IS NOT NULL AND COALESCE(ambiguous, 0) = 0",
+  ).all() as { player_sk: number; name_key: string; position: string | null }[]) {
+    if (!skOf.has(r.name_key)) skOf.set(r.name_key, r.player_sk);
+  }
+
+  interface Live { report: string | null; depth: number | null; source: string }
+  const live = new Map<number, Live>();
+  let unresolved = 0;
+  for (const r of db.prepare(
+    "SELECT player_id, injury_status, depth_order FROM player_status",
+  ).all() as { player_id: string; injury_status: string | null; depth_order: number | null }[]) {
+    const sk = skOf.get(r.player_id);
+    if (sk == null) { if (r.injury_status) unresolved++; continue; }
+    live.set(sk, { report: espnStatusToReport(r.injury_status), depth: r.depth_order ?? null, source: "player_status" });
+  }
+  // News ESCALATES only, exactly as `loadAvailability` does -- a high-severity injury headline can
+  // rule a man out whose structured status has not refreshed, and must never clear one who already
+  // is. Anything else would make the two surfaces disagree about who can play.
+  for (const r of db.prepare(
+    "SELECT player_id, severity FROM news WHERE category = 'injury'",
+  ).all() as { player_id: string | null; severity: string | null }[]) {
+    if (String(r.severity ?? "").toLowerCase() !== "high" || !r.player_id) continue;
+    const sk = skOf.get(r.player_id);
+    if (sk == null) { unresolved++; continue; }
+    const cur = live.get(sk);
+    if (cur?.report === "Out") continue;
+    live.set(sk, { report: "Out", depth: cur?.depth ?? null, source: "news(injury/high)" });
+    res.fromNews++;
+  }
+
+  // ---- THE UNIVERSE: the forward feature rows for the target week. ----
+  const universe = db.prepare(
+    `SELECT player_sk, pos, team FROM feat_player_week_model
+      WHERE season = ? AND week = ? AND player_sk IS NOT NULL AND COALESCE(is_bye, 0) = 0`,
+  ).all(season, week) as { player_sk: string; pos: string; team: string | null }[];
+  if (!universe.length) {
+    res.skipped = `feat_player_week_model has no ${season} week ${week} rows -- run \`ff build-weekly-features --forward\` first`;
+    return res;
+  }
+
+  // teammates_out: same team, same position, Out, excluding himself. Built from the SAME map the
+  // per-player column comes from, so the count and the status cannot disagree.
+  const outsBy = new Map<string, Set<number>>();
+  for (const u of universe) {
+    const sk = Number(u.player_sk);
+    if (!Number.isInteger(sk) || !u.team) continue;
+    if (live.get(sk)?.report !== "Out") continue;
+    const k = `${u.team}|${normPos(u.pos ?? "")}`;
+    (outsBy.get(k) ?? outsBy.set(k, new Set()).get(k)!).add(sk);
+  }
+
+  const sched = schedule(db, [season]);
+  const now = nowIso();
+  const ins = db.prepare(
+    `INSERT INTO feat_player_week_context (player_sk, season, week, as_of, team, pos, opponent, home,
+       days_rest, roof, spread_line, total_line, implied_team_total, temp_observed, wind_observed,
+       prior_snap_share, prior_route_share, report_status_wed, report_status_fri,
+       practice_status_wed, practice_status_fri, teammates_out, depth_rank, updated_at)
+     VALUES (@sk,@season,@week,@asOf,@team,@pos,@opp,@home,@rest,@roof,@spread,@total,@implied,
+       @temp,@wind,NULL,NULL,NULL,@rsf,NULL,NULL,@out,@depth,@now)
+     ON CONFLICT(season, week, player_sk) DO UPDATE SET
+       as_of=excluded.as_of, team=excluded.team, pos=excluded.pos, opponent=excluded.opponent,
+       home=excluded.home, days_rest=excluded.days_rest, roof=excluded.roof,
+       spread_line=excluded.spread_line, total_line=excluded.total_line,
+       implied_team_total=excluded.implied_team_total, temp_observed=excluded.temp_observed,
+       wind_observed=excluded.wind_observed, report_status_fri=excluded.report_status_fri,
+       teammates_out=excluded.teammates_out, depth_rank=excluded.depth_rank,
+       updated_at=excluded.updated_at`,
+  );
+
+  const apply = () => {
+    for (const u of universe) {
+      const sk = Number(u.player_sk);
+      if (!Number.isInteger(sk)) continue;              // synthetic DST keys are not people
+      const pos = normPos(u.pos ?? "");
+      const l = live.get(sk);
+      const g = u.team ? sched.get(`${season}|${u.team}|${week}`) : undefined;
+      const outSet = u.team ? outsBy.get(`${u.team}|${pos}`) : undefined;
+      const mates = outSet ? outSet.size - (outSet.has(sk) ? 1 : 0) : 0;
+      ins.run({
+        sk, season, week, asOf, team: u.team, pos,
+        opp: g?.opponent ?? null, home: g ? g.home : null, rest: g?.rest ?? null, roof: g?.roof ?? null,
+        spread: g?.spread ?? null, total: g?.total ?? null, implied: g?.implied ?? null,
+        temp: g?.temp ?? null, wind: g?.wind ?? null,
+        rsf: l?.report ?? null, out: mates, depth: l?.depth ?? null, now,
+      });
+      res.rows++;
+      if (l?.report) res.withStatus++;
+      if (l?.report === "Out") res.outs++;
+      if (l?.depth != null) res.withDepth++;
+    }
+  };
+
+  if (opts.write === false) {
+    // Count without writing. The same loop against a throwaway transaction would still hold a write
+    // lock, so the counts are recomputed here instead of the insert being skipped inside `apply`.
+    for (const u of universe) {
+      const sk = Number(u.player_sk);
+      if (!Number.isInteger(sk)) continue;
+      const l = live.get(sk);
+      res.rows++;
+      if (l?.report) res.withStatus++;
+      if (l?.report === "Out") res.outs++;
+      if (l?.depth != null) res.withDepth++;
+    }
+  } else {
+    db.transaction(() => {
+      // ONLY the target week. Not the season: the historical builder owns the finished weeks and
+      // deleting them here would drop every dated filing this store has for the year.
+      db.prepare("DELETE FROM feat_player_week_context WHERE season = ? AND week = ?").run(season, week);
+      apply();
+    })();
+  }
+
+  res.unresolved = unresolved;
   return res;
 }

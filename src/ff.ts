@@ -98,6 +98,8 @@ async function main() {
       return cmdIngestRaw(rest);
     case "build-features-ext":
       return cmdBuildFeaturesExt(rest);
+    case "build-live-context":
+      return cmdBuildLiveContext(rest);
     case "sync-rosters":
       return cmdSyncRosters(rest);
     case "enter-draft":
@@ -3001,6 +3003,44 @@ async function cmdIngestRaw(rest: string[]) {
 }
 
 // ==================================================================================================
+/**
+ * `ff build-live-context [--season Y] [--now YYYY-MM-DD] [--dry-run]`
+ *
+ * The CURRENT season's availability, from the live status feeds, for the next week that has not
+ * kicked off. `build-features-ext` cannot do this: it reads `raw_injury`, which holds nothing for a
+ * season that has not been archived, so the two-part weekly model would serve September on its
+ * declared defaults -- a model whose largest coefficients are injury designations, blind, in the one
+ * month they decide anything.
+ *
+ * A SEPARATE VERB from `build-features-ext` because it obeys a different rule. The historical
+ * builder places each filing by its own date; this one has a feed with a single current state and
+ * one timestamp, so it places the whole snapshot by the point-in-time rule -- after a week's first
+ * kickoff, the snapshot belongs to the NEXT week -- and writes only that week. Folding it into the
+ * historical verb would put two different guarantees behind one command name.
+ */
+async function cmdBuildLiveContext(rest: string[]) {
+  const { buildLiveWeekContext } = await import("./features/sources/weekContext.js");
+  const { openDb, getConfig } = await import("./db/db.js");
+  const dbPath = valueOf(rest, "--db");
+  let season = Number(valueOf(rest, "--season"));
+  if (!Number.isFinite(season)) { const db = openDb(dbPath); season = getConfig(db).season; db.close(); }
+  const r = buildLiveWeekContext({
+    dbPath, season, now: valueOf(rest, "--now"), write: !rest.includes("--dry-run"),
+  });
+  if (rest.includes("--json")) { console.log(JSON.stringify(r, null, 2)); return; }
+  console.log(`LIVE CONTEXT ${r.season} -- snapshot as of ${r.asOf}`);
+  if (r.skipped) { console.log(`  SKIPPED: ${r.skipped}`); return; }
+  console.log(`  target week ${r.week} (weeks already kicked off: ${r.kickedOff.join(", ") || "none"})`);
+  console.log(`  ${r.rows} context rows${rest.includes("--dry-run") ? " WOULD be written (--dry-run)" : " written"}`);
+  console.log(`  ${r.withStatus} carry a designation, of which ${r.outs} are Out (${r.fromNews} escalated by the news feed)`);
+  console.log(`  ${r.withDepth} carry a depth-chart rank`);
+  if (r.unresolved) {
+    console.log(`  ${r.unresolved} designation(s) reached no surrogate key and carry no row -- that is ` +
+      "a coverage fact, not an absence of injuries");
+  }
+  console.log("  practice status is NOT available from this feed: prac_dnp / prac_limited read 0 rather than a guess.");
+}
+
 // ==================================================================================================
 // `ff build-features-ext --seasons 2013-2025` -- the two point-in-time extension tables.
 //
