@@ -38,6 +38,8 @@ import { loadWeeklyRows, loadSchedule, type ScheduleInfo } from "./features.js";
 import { makeProjections } from "../projections.js";
 import { score, lineupRegret, type Scored1, type Pred } from "./evaluate.js";
 import { fetchEspnWeekly, storeEspnWeekly } from "./espnProjections.js";
+import { projectStreamingWith, topStreamPick } from "./streamingServe.js";
+import { POOL_DEPTH } from "./streamingEvaluate.js";
 
 export const SCORECARD_MODELS = ["weekly", "season_line", "shipped_week", "trailing4", "espn"] as const;
 export type ScorecardModel = typeof SCORECARD_MODELS[number];
@@ -58,8 +60,27 @@ export const SC_BASELINE: ScorecardModel = "shipped_week";
  * choose from. Mixing an unshipped model into `weekly` would make its lineup column read as a
  * lineup somebody could have set.
  */
-export const SCORECARD_KINDS = ["weekly", "weekly_challenger"] as const;
+export const SCORECARD_KINDS = ["weekly", "weekly_challenger", "stream"] as const;
 export type ScorecardKind = typeof SCORECARD_KINDS[number];
+
+/**
+ * THE `stream` KIND: ONE PICK PER POSITION PER WEEK, frozen before kickoff.
+ *
+ * The other two kinds freeze a projection for every player. This one freezes a DECISION -- "of the
+ * men nobody rosters, this is who I would start at kicker this week" -- because that is what the
+ * streaming model is for, and a record of its projections would not be a record of its picks. A
+ * model can be better calibrated across five hundred players and pick the wrong defence every week.
+ *
+ * TWO ROWS PER POSITION, and the second is what makes the first mean anything: `<pos>` is the
+ * serving model's pick and `<pos>_line` is the pick a manager makes by reading the preseason board.
+ * Freezing only ours would leave a number with no referent, and adding the comparison in January
+ * would be adding it after the games.
+ *
+ * IT OBEYS THE SAME REFUSAL AS EVERYTHING ELSE HERE. It is written inside the same guarded block, so
+ * a week whose first kickoff has passed is not snapshotted at all -- there is no backfill path, by
+ * construction rather than by discipline.
+ */
+export const STREAM_SCORECARD_POS = ["QB", "RB", "WR", "TE", "K", "DST"];
 
 /**
  * THE FIRST WEEK THE CHALLENGER MAY BE SNAPSHOTTED FOR, and it is 2 for a concrete reason.
@@ -95,6 +116,9 @@ export interface ScorecardOpts {
   /** The challenger, snapshotted under its own kind. Defaults to `CHALLENGER_WEEKLY_ARTIFACT`. */
   challengerArtifactPath?: string;
   rosters?: number;
+  /** The rank past which a man counts as available, per position, for the `stream` kind. Defaults to
+   *  streamingEvaluate's POOL_DEPTH; overridable only so a test can drive a small fixture. */
+  poolDepth?: Record<string, number>;
   /** A pre-loaded schedule, so a test can drive the late-snapshot refusal without a network read. */
   sched?: ScheduleInfo;
   /**
@@ -129,6 +153,8 @@ export interface ScorecardResult {
   snapshot: { week: number | null; taken: number; skipped: string | null; byModel: Record<string, number> };
   /** The `weekly_challenger` kind: the two-part model, same players, same frozen as-of. */
   challenger: { week: number | null; taken: number; skipped: string | null };
+  /** The `stream` kind: one pick per position out of the pool, plus the board's pick beside it. */
+  stream: { week: number | null; taken: number; skipped: string | null; artifactByPos: Record<string, string> };
   espn: { attempted: boolean; ok: boolean; reason: string; stored: number };
   seasonKind: { taken: number; skipped: string | null };
   oddsKind: { taken: number; skipped: string | null };
@@ -389,6 +415,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
     season: opts.season, today, imminentWeek: null,
     snapshot: { week: null, taken: 0, skipped: null, byModel: {} },
     challenger: { week: null, taken: 0, skipped: null },
+    stream: { week: null, taken: 0, skipped: null, artifactByPos: {} },
     espn: { attempted: false, ok: false, reason: "not attempted", stored: 0 },
     seasonKind: { taken: 0, skipped: null },
     oddsKind: { taken: 0, skipped: null },
@@ -494,6 +521,43 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
             notes.push(`week ${week}'s challenger snapshot was already taken -- written once, like every other prediction here.`);
           }
         }
+
+        // ---- the `stream` kind: one pick per position, out of the approximate free-agent pool. ----
+        res.stream.week = week;
+        const proj = projectStreamingWith(db, opts.season, week);
+        if (!proj) {
+          res.stream.skipped = `no weekly feature rows for ${opts.season} week ${week} -- nothing to pick from`;
+        } else {
+          res.stream.artifactByPos = proj.artifactByPos;
+          const picks = topStreamPick(proj.rows, opts.poolDepth ?? POOL_DEPTH);
+          const insP = db.prepare(
+            `INSERT OR IGNORE INTO scorecard_prediction
+               (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+             VALUES (@season,@week,'stream',@model,@subject,@name,@pos,@value,@p10,@p90,@asOf,@now)`,
+          );
+          const nowP = nowIso();
+          db.transaction(() => {
+            for (const pos of STREAM_SCORECARD_POS) {
+              const p = picks[pos];
+              if (!p) continue;
+              for (const [model, r, v] of [
+                [pos, p.model, p.model?.mean],
+                [`${pos}_line`, p.line, p.line?.mean],
+              ] as [string, typeof p.model, number | undefined][]) {
+                if (!r || v == null || !Number.isFinite(v)) continue;
+                const info = insP.run({
+                  season: opts.season, week, model, subject: r.feat_key, name: r.name, pos: r.pos,
+                  value: v, p10: Number.isFinite(r.p10) ? r.p10 : null,
+                  p90: Number.isFinite(r.p90) ? r.p90 : null, asOf, now: nowP,
+                });
+                if (info.changes) res.stream.taken++;
+              }
+            }
+          })();
+          if (!res.stream.taken) {
+            notes.push(`week ${week}'s streaming picks were already frozen -- written once, like every other prediction here.`);
+          }
+        }
       }
 
       // ---- season kind: the preseason season projection, one row per player. ----
@@ -581,6 +645,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         ).all(opts.season, week, kind) as { model: string; subject: string; name: string; pos: string; value: number; p10: number | null; p90: number | null }[];
         if (!frozen.length) {
           if (kind === "weekly") notes.push(`week ${week} is settled but was never snapshotted -- nothing to score`);
+          else if (kind === "stream") notes.push(`week ${week} has no frozen streaming picks -- nothing to score for ${kind}`);
           else if (week >= CHALLENGER_FIRST_WEEK) notes.push(`week ${week} has no challenger snapshot -- nothing to score for ${kind}`);
           continue;
         }
@@ -595,7 +660,12 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         // holds exactly one model. So the shipped kind's frozen rows for the SAME WEEK are loaded
         // alongside it -- read-only, purely as the comparison set. They are not re-scored here (the
         // `weekly` pass above already did that); only this kind's own models are pushed.
-        const companions = kind === "weekly" ? [] : db.prepare(
+        // The `stream` kind gets NO companions. Its rows are one PICK per position -- a different
+        // subject each week -- so joining the weekly kind's per-player projections beside them would
+        // put a projection for a man nobody picked into a table about who was picked, and
+        // lineupRegret would then draw rosters out of six players. The challenger needs them (its
+        // lineup column is scored against SC_BASELINE and it holds exactly one model); this does not.
+        const companions = kind !== "weekly_challenger" ? [] : db.prepare(
           "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE season = ? AND week = ? AND kind = 'weekly'",
         ).all(opts.season, week) as typeof frozen;
         const bySubject = new Map<string, Scored1>();
@@ -722,6 +792,15 @@ export function formatScorecard(r: ScorecardResult): string {
   out.push(`  weekly kind serves ${SHIPPED_WEEKLY_ARTIFACT} -- the SAME artifact lineupRecommend serves from`);
   if (r.challenger.skipped) out.push(`  challenger:  week ${r.challenger.week ?? "-"}: SKIPPED -- ${r.challenger.skipped}`);
   else out.push(`  challenger:  week ${r.challenger.week}: ${r.challenger.taken} rows from ${CHALLENGER_WEEKLY_ARTIFACT} (kind weekly_challenger, model two_part), series starts week ${CHALLENGER_FIRST_WEEK}`);
+  // OPTIONAL ACCESS ON PURPOSE. `formatScorecard` is also called on hand-built result objects, and a
+  // formatter that throws on a field a caller did not supply turns a reporting concern into a crash
+  // at the end of a run that has already written its predictions.
+  if (r.stream?.skipped) out.push(`  stream:      week ${r.stream.week ?? "-"}: SKIPPED -- ${r.stream.skipped}`);
+  else if (r.stream) {
+    out.push(`  stream:      week ${r.stream.week}: ${r.stream.taken} rows (one pick per position, plus the board's pick beside it)`);
+    const served = Object.entries(r.stream.artifactByPos ?? {}).map(([p, a]) => `${p} ${a}`).join(", ");
+    if (served) out.push(`               served by: ${served}`);
+  }
   out.push(`  season kind: ${r.seasonKind.taken} rows${r.seasonKind.skipped ? " -- " + r.seasonKind.skipped : ""}`);
   out.push(`  odds kind:   ${r.oddsKind.taken} rows${r.oddsKind.skipped ? " -- " + r.oddsKind.skipped : ""}`);
   out.push(`  espn:        ${r.espn.attempted ? (r.espn.ok ? `${r.espn.stored} stored` : "not stored") : "not attempted"} -- ${r.espn.reason}`);

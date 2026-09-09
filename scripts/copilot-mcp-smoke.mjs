@@ -1,7 +1,10 @@
 // Smoke-test the IN-SEASON half of the stdio MCP surface the way a real client drives it: spawn
 // `ff mcp`, speak JSON-RPC over stdin/stdout, list the tools, and actually CALL season_odds.
 //
-//   node scripts/copilot-mcp-smoke.mjs
+//   node --import tsx scripts/copilot-mcp-smoke.mjs
+//
+// (`--import tsx` because the verb list is now imported from the TypeScript dispatcher rather than
+// retyped here -- see COPILOT_TOOLS below for why that trade is worth a loader flag.)
 //
 // WHY A SECOND SMOKE SCRIPT. scripts/mcp-smoke.mjs proves the transport by calling read_board, a
 // pure SQLite read. The copilot tools are a different animal: each one builds a full sim context and
@@ -14,10 +17,13 @@
 import { spawn } from "node:child_process";
 import Database from "better-sqlite3";
 
-const COPILOT_TOOLS = [
-  "season_odds", "lineup_recommend", "waiver_targets", "trade_check",
-  "trade_finder", "handcuffs", "depth_risk", "power_rankings", "playoff_sos",
-];
+// DERIVED FROM THE DISPATCHER, never retyped. This was a hand-written list of nine and it silently
+// stopped covering the surface the moment a tenth verb landed: the smoke test kept passing, and it
+// was passing on a subset. Coverage by enumeration is a snapshot of the day it was written -- the
+// same failure shape CLAUDE.md records for a conformance check that named seven drivers against a
+// fleet of fifteen. `COPILOT_VERBS` is the list the dispatcher itself maintains.
+const { COPILOT_VERBS } = await import("../src/inseason/copilotActions.ts");
+const COPILOT_TOOLS = [...COPILOT_VERBS];
 
 const child = spawn("npx", ["tsx", "src/ff.ts", "mcp"], { stdio: ["pipe", "pipe", "pipe"], shell: process.platform === "win32" });
 let buf = "";

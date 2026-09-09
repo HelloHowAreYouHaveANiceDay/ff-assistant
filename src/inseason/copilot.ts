@@ -469,6 +469,167 @@ export function lineupRecommend(
 }
 
 // ---------------------------------------------------------------------------------------------
+// STREAMING -- whom to START or ADD at ONE position, this week.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A DIFFERENT QUESTION FROM `lineupRecommend`, and the difference is the whole verb.
+ *
+ * `lineupRecommend` sets the best legal eleven out of the twelve men we already own. It cannot
+ * answer "my defence is on bye and there are nine defences free -- which one". That decision is
+ * about a POOL rather than a roster, it is made at one position at a time, and the thing that
+ * decides it is almost entirely the matchup: at quarterback, kicker and defence the free option in a
+ * 16-team league is barely worse than a rostered one, which is exactly why `src/draft/season.ts`
+ * models a streamed replacement rather than scoring an unfilled slot as zero.
+ *
+ * THE UNIT IS POINTS AND IT SAYS SO. Everything else in this module is scored as a change in P(playoffs)
+ * because the alternative -- points -- cannot see a mandatory slot going empty or a top-heavy roster.
+ * A one-week start/sit at one position has none of those properties: it is a single slot, this
+ * Sunday, and simulating a season to price it would be answering a question nobody asked with a
+ * number whose noise floor is larger than the effect. So `assumptions.basis` is `weekly-model` and
+ * `objective` travels with the regime UNKNOWN, exactly as `lineupRecommend` does, rather than
+ * dressing a points quantity up as a probability.
+ *
+ * WHICH ARTIFACT SERVED WHICH POSITION IS ON EVERY ROW. The streaming gate is applied per position,
+ * so at some positions this is the streaming model and at others it is the same floor the lineup is
+ * served from. A reader who cannot tell which would read a floor projection as a matchup-aware one.
+ */
+export interface StreamPlayer {
+  name: string;
+  pos: string;
+  team: string | null;
+  /** Projected points for THIS week. */
+  proj: number;
+  p10: number;
+  p90: number;
+  /** P(he scores nothing). Null where the serving artifact does not publish one -- the floor does
+   *  not, and inventing a zero here would let it claim a calibration it has never had. */
+  pZero: number | null;
+  ours: boolean;
+  /** Rostered by anyone in the league. A player who is neither `ours` nor `rostered` is streamable. */
+  rostered: boolean;
+  /** Non-null when he cannot be started this week (bye, or ruled out). */
+  unavailable: string | null;
+  artifact: string;
+}
+
+export interface StreamAdd {
+  add: string;
+  drop: string;
+  dropPos: string;
+  /** Expected points GAINED this week by starting the added man instead of our best legal option. */
+  gainPts: number;
+  legal: boolean;
+  why: string | null;
+}
+
+export interface StreamRecommendResult {
+  week: number;
+  pos: string;
+  /** Our own men at this position, best first. */
+  ours: StreamPlayer[];
+  /** The streamable pool, best first, truncated to `limit`. */
+  pool: StreamPlayer[];
+  /** Whom to START, of the men we already own. Null when we own nobody startable there. */
+  start: StreamPlayer | null;
+  /** Ours who should NOT start, with the reason. */
+  sit: { name: string; reason: string }[];
+  /** The claim worth making, or null when nobody free beats what we have. */
+  add: StreamAdd | null;
+  /** Add/drop pairs REFUSED because they leave a mandatory slot unfillable. Named, never skipped. */
+  refused: { add: string; drop: string; why: string }[];
+  assumptions: Assumptions;
+}
+
+/**
+ * Rank our men and the pool at ONE position by the weekly projection, and say what to do.
+ *
+ * `o.pool` is the caller's -- `copilotActions.ts` loads it from `src/weekly/streamingServe.ts`, so
+ * this function stays pure and testable on a fixture with no store and no league. A position with no
+ * projections at all returns empty lists and an `assumptions.basisNote` that says so, rather than
+ * silently recommending nothing as though nothing were worth doing.
+ */
+export function streamRecommend(
+  ctx: SimContext,
+  week: number,
+  pos: string,
+  o: BaseOpts & {
+    availability?: AvailabilityMap;
+    /** Every candidate at this position the weekly projector could speak to. */
+    pool?: StreamPlayer[];
+    /** How many pool rows to return. The ranking is over all of them; this only truncates output. */
+    limit?: number;
+    /** pos -> artifact filename, for the assumptions block. */
+    artifactByPos?: Record<string, string>;
+  } = {},
+): StreamRecommendResult {
+  const availability = o.availability ?? new Map<string, AvailabilityEntry>();
+  const limit = o.limit ?? 8;
+  const roster = ctx.teams[ctx.meIdx].roster;
+  const byeOf = new Map(roster.map((p) => [nameKey(p.name), p.bye ?? null]));
+
+  const decorate = (p: StreamPlayer): StreamPlayer => ({
+    ...p,
+    unavailable: unavailableReason({ name: p.name, pos: p.pos, bye: byeOf.get(nameKey(p.name)) ?? null }, week, availability),
+  });
+  const all = (o.pool ?? []).filter((p) => p.pos === pos).map(decorate);
+  const ours = all.filter((p) => p.ours).sort((a, b) => b.proj - a.proj);
+  // STREAMABLE means nobody in the league has him. A man on another roster is not a waiver claim,
+  // and listing him as one is how a "recommendation" becomes something the user cannot act on.
+  const pool = all.filter((p) => !p.ours && !p.rostered).sort((a, b) => b.proj - a.proj);
+
+  const start = ours.find((p) => p.unavailable == null) ?? null;
+  const sit = ours.filter((p) => p !== start)
+    .map((p) => ({ name: p.name, reason: p.unavailable ?? `projected ${r2(p.proj)} behind ${start?.name ?? "nobody"}` }));
+
+  // THE ADD. The best free man, against our best LEGAL starter -- not against our best man, because
+  // a starter who is out projects whatever he projects and cannot score it. That distinction is the
+  // most common real streaming situation there is: the bye week.
+  const refused: StreamRecommendResult["refused"] = [];
+  let add: StreamAdd | null = null;
+  const best = pool.find((p) => p.unavailable == null);
+  if (best && (!start || best.proj > start.proj)) {
+    // Cheapest first: the lowest-projection bodies are the real drop candidates. `rosterGaps`
+    // REFUSES a drop that leaves a mandatory slot unfillable -- dropping the only kicker to stream a
+    // defence is not a move anybody makes -- and refusals are named rather than silently skipped.
+    const candidates = [...roster].sort((a, b) => a.proj - b.proj);
+    for (const cand of candidates) {
+      const after = roster.filter((p) => p.name !== cand.name)
+        .concat([{ name: best.name, pos: best.pos, proj: cand.proj, team: best.team ?? undefined, bye: null }]);
+      const gaps = rosterGaps([{ id: "us", name: "us", roster: after }], ctx.slots, ctx.flexOk);
+      if (gaps.length) {
+        refused.push({ add: best.name, drop: cand.name, why: gaps[0].replace(/^[^:]*:\s*/, "") });
+        continue;
+      }
+      add = {
+        add: best.name, drop: cand.name, dropPos: cand.pos,
+        gainPts: r2(best.proj - (start?.proj ?? 0)),
+        legal: true, why: null,
+      };
+      break;
+    }
+    if (!add) {
+      add = {
+        add: best.name, drop: "(none legal)", dropPos: "-",
+        gainPts: r2(best.proj - (start?.proj ?? 0)),
+        legal: false,
+        why: "every drop that would make room leaves a mandatory slot unfillable -- see `refused`",
+      };
+    }
+  }
+
+  const assumptions = assumptionsOf(ctx, "weekly-model", o, null, null, objectiveFor(null));
+  const served = o.artifactByPos?.[pos] ?? all[0]?.artifact ?? "(none)";
+  assumptions.basisNote = !all.length
+    ? `the weekly projector had NO row at ${pos} for week ${week} -- nothing is recommended, which is ` +
+      "different from recommending that nothing be done. Build the weekly and streaming features first."
+    : `${pos} week ${week} projected from ${served}; ${ours.length} of ours and ${pool.length} streamable. ` +
+      "Points are a ONE-WEEK quantity from the weekly projector, not a season simulation: there is no " +
+      "playoff delta here and none is claimed.";
+  return { week, pos, ours, pool: pool.slice(0, limit), start, sit, add, refused, assumptions };
+}
+
+// ---------------------------------------------------------------------------------------------
 // A SHARED SIMULATION HELPER -- every "what does this move do to our title odds" question.
 // ---------------------------------------------------------------------------------------------
 

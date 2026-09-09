@@ -162,6 +162,8 @@ async function main() {
     // ---- streaming track (src/weekly/streaming*.ts) ----
     case "build-streaming-features":
       return cmdBuildStreamingFeatures(rest);
+    case "evaluate-streaming":
+      return cmdEvaluateStreaming(rest);
     case "scorecard":
       return cmdScorecard(rest);
     default:
@@ -2845,6 +2847,27 @@ async function cmdBuildStreamingFeatures(rest: string[]) {
   } finally { db.close(); }
 }
 
+/**
+ * `ff evaluate-streaming` -- the nested-by-season evaluation of the per-position streaming models,
+ * the streaming-regret table, the pre-registered predictions P40-P42 and the per-position gate.
+ *
+ * It trains TWO artifacts per fold -- the streaming model and the same trainer with the twelve
+ * opponent columns removed -- because the control is what makes P41 a measurement rather than a
+ * comparison against a differently-shaped model.
+ */
+async function cmdEvaluateStreaming(rest: string[]) {
+  const { evaluateStreaming, formatStreamingReport } = await import("./weekly/streamingEvaluate.js");
+  const res = await evaluateStreaming({
+    dbPath: valueOf(rest, "--db"),
+    seasons: seasonRange(valueOf(rest, "--seasons"), [2012, 2025]),
+    trainSeasons: seasonRange(valueOf(rest, "--train-seasons"), [2010, 2025]),
+    keepArtifacts: valueOf(rest, "--keep-artifacts"),
+    poolScale: valueOf(rest, "--pool-scale") ? Number(valueOf(rest, "--pool-scale")) : undefined,
+  });
+  if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
+  else console.log(formatStreamingReport(res));
+}
+
 async function cmdScorecard(rest: string[]) {
   const { runScorecard, formatScorecard } = await import("./weekly/scorecard.js");
   const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
@@ -2932,6 +2955,7 @@ async function cmdEvaluateWeekly(rest: string[]) {
  *   depth-risk      what losing one player costs, and who insures him
  *   power-rankings  the league by best starting lineup, with each team's odds beside it
  *   playoff-sos     weeks 15-17 opponent strength, from the posted lines
+ *   stream          whom to START or ADD at ONE position this week, from our men plus the pool
  *
  * Flags: --schedule real|generated|auto (default auto; "real" needs the app running and THROWS
  * rather than silently substituting a generated schedule), --trials, --seed, --week, --player,
@@ -2944,6 +2968,7 @@ async function cmdCopilot(rest: string[]) {
     "season-odds": "season_odds", lineup: "lineup_recommend", waivers: "waiver_targets",
     "trade-check": "trade_check", "trade-finder": "trade_finder", handcuffs: "handcuffs",
     "depth-risk": "depth_risk", "power-rankings": "power_rankings", "playoff-sos": "playoff_sos",
+    stream: "stream_recommend",
   };
   const verb = verbArg ? VERB_OF[verbArg] : undefined;
   if (!verb) {
@@ -2963,6 +2988,10 @@ async function cmdCopilot(rest: string[]) {
     get: list("--get").length ? list("--get") : undefined,
     positions: list("--pos").length ? list("--pos") : undefined,
     limit: num("--limit"), freeOnly: rest.includes("--free"), maxGap: num("--max-gap"),
+    // `stream` is a ONE-position verb, so --pos takes a single value here rather than a list. The
+    // list form still works and its first entry is used, because a caller who types the flag the
+    // way every other verb takes it should get an answer rather than a usage error.
+    pos: (valueOf(rest, "--pos") ?? "").split(",")[0].trim() || undefined,
   };
 
   const run = await runCopilot(verb, args, { dbPath: valueOf(rest, "--db") });

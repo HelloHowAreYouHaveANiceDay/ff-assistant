@@ -541,6 +541,17 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
       { schedule: SCHEDULE },
       call("playoff_sos"),
     ),
+    tool(
+      "stream_recommend",
+      "WHOM TO START OR ADD AT ONE POSITION THIS WEEK, out of my own men AND everyone nobody in the league rosters. This is the question lineup_recommend cannot answer: it sets the best eleven out of the twelve I already own, and cannot say 'your defence is on bye, claim this one'. Returns my players and the streamable pool ranked by the WEEKLY projection with p10/p90 and, where the serving model publishes one, P(he scores nothing) -- plus the start/sit, and the add/drop with the change in EXPECTED POINTS THIS WEEK. THE UNIT IS POINTS AND NOT PLAYOFF PROBABILITY, and say so: a single slot on a single Sunday has no season simulation behind it and the noise floor of one would swamp the effect. Drops that leave a mandatory slot unfillable are REFUSED and named, not scored. READ `artifactByPos` AND QUOTE IT: the streaming gate is applied per position, so at some positions this is the matchup-aware streaming model and at others it is the same season-line floor the lineup is served from, which has no matchup, no form and no weather in it. A position with no rows returns empty lists and says so in assumptions.basisNote -- that is 'we cannot answer', not 'do nothing'.",
+      {
+        pos: z.string().describe("the ONE position to stream: QB, RB, WR, TE, K or DST"),
+        week: z.number().optional().describe("NFL week. Pass it: the store usually cannot determine the current week, and the result says where the week came from."),
+        limit: z.number().optional().describe("how many pool rows to return (default 8); the ranking is over all of them"),
+        schedule: SCHEDULE,
+      },
+      call("stream_recommend"),
+    ),
   ];
 }
 
