@@ -691,6 +691,57 @@ W2's reasoning finally got its actual test. The claim was that availability, not
 large weekly edge; the Phase 2c measurement could not test it because it had no availability column,
 and the gain it found came from in-season form instead. Section 3's W4 is the direct test.
 
+### NEXT WORK, NOT DONE HERE: `feat_injury_horizon` into the weekly first stage
+
+Track I built `feat_injury_horizon` and fitted `P(he misses the next k games)` on it. **The weekly
+trainer does not read the table, and integration pass 4 deliberately did not make it.** That is a
+MODELLING CHANGE -- it moves the two-part model's first stage, which is the stage clause (c) grades
+-- so it belongs behind its own pre-registered gate and not inside an integration pass. Recording it
+here with the join spelled out, so the next session starts from a specification rather than from an
+intention.
+
+**The join.** `feat_injury_horizon` and `feat_player_week_model` share the store's surrogate key and
+the week, so it is a plain left join with no name matching anywhere in it:
+
+```sql
+LEFT JOIN feat_injury_horizon h
+       ON h.player_sk = m.player_sk AND h.season = m.season AND h.week = m.week
+```
+
+Measured on this store: all 21,757 horizon rows join a `feat_player_week_model` row -- **100%, no
+orphans** -- and 13,125 of them are `in_population = 1`. Read the other way, which is the direction
+that matters for a trainer, **11,521 of the 64,154 in-population rows for 2012-2024 carry a horizon
+row (18.0%)**: WR 5,093, RB 3,659, TE 2,251, QB 1,734, K 388, DST 0. A defence never appears, which
+is correct and not a gap -- a team defence does not carry an injury report.
+
+**The three things that will decide whether it helps, and each is a trap:**
+
+1. **A HEALTHY WEEK HAS NO ROW, and that is the table's whole design** -- it answers "given that he
+   is on the report, how long is he out", not "is he injured". So the 82% of rows with no match are
+   *healthy*, and the missing-value default has to encode "not on the report" (miss probability at
+   the position's base rate), never "unknown" and never zero. Feeding NULL through the existing
+   CENTER transform would centre a healthy man on the mean of the INJURED, which is a silent
+   inversion of the signal.
+2. **THE ERA BOUNDARY IS HARD.** The table stops at **2024**: from 2025 the injury feed publishes no
+   report date, so no filing can be placed on either side of a Friday cutoff (item 2 above, which
+   STANDS). A feature that exists for 2010-2024 and is absent for 2025-2026 will look like a strong
+   feature in every historical fold and be dead the day it serves. Either the fold design excludes
+   the seasons it cannot have, or `ff build-live-context`'s live path has to supply an equivalent --
+   and the live path carries no practice report, which Track I measured as the *large* half of the
+   signal (0.021 of the 0.047 gain at k=1, against 0.001-0.002 for the injury type).
+3. **IT MAY BE MEASURING WHAT THE FIRST STAGE ALREADY HAS.** `feat_player_week_model` already
+   carries `inj_out`, `inj_doubtful`, `inj_questionable`, `prac_dnp` and `prac_limited`, and Track I's
+   own ablation says the horizon model's gain over the bare designation is 0.047 at k=1 falling to
+   0.024 at k=4 -- and that most of it is the practice status, which the weekly table ALREADY HAS.
+   So the pre-registered prediction should be stated against the two-part model WITH those columns,
+   not against a designation-only baseline, or the measurement will credit the horizon model with a
+   lift the weekly model was already getting.
+
+**The gate is the existing one, unchanged**, and clause (c) is the one to watch: the two-part model's
+pooled zero share was the clause it passed in Track F and the pooled coverage band was the one it
+failed, so a first-stage change moves exactly the number that is currently 0.002 out of band. Which
+is the point -- and the reason it must not be done as a leftover.
+
 ---
 
 ## Commands
