@@ -122,6 +122,78 @@
 >
 > ---
 
+> ### THE STREAMING GATE QUESTION -- REPORTED, NOT DECIDED, and the answer is not what the question assumed
+>
+> `scripts/streaming-gate-question.mjs`, 2012-2025 nested, trained 2010-2025, decision population,
+> 69,500 scored rows. Both models under the SAME clauses, computed by ONE function
+> (`weeklyGateByPos`) so the two columns cannot differ because two harnesses disagree about
+> arithmetic: **(a)** CRPS beats the floor at this position; **(b)** coverage given `pts > 0` in
+> [0.75, 0.85] **POOLED** and [0.70, 0.90] at the position; **(c)** zero share within 0.030, pooled
+> and at the position.
+>
+> | pos | two-part (a) | (b) | (c) | verdict | streaming (a) | (b) | (c) | verdict |
+> |---|---|---|---|---|---|---|---|---|
+> | QB | pass | **FAIL** | pass | fails | pass | pass | pass | **PASSES** |
+> | RB | pass | **FAIL** | pass | fails | pass | pass | pass | **PASSES** |
+> | WR | pass | **FAIL** | pass | fails | pass | pass | pass | **PASSES** |
+> | TE | pass | **FAIL** | pass | fails | pass | pass | pass | **PASSES** |
+> | K | **FAIL** | **FAIL** | pass | fails | pass | pass | pass | **PASSES** |
+> | DST | **FAIL** | **FAIL** | pass | fails | pass | pass | pass | **PASSES** |
+>
+> **The pooled coverage figure is the entire difference, and it is 0.005 of it:**
+>
+> | model | n | CRPS | floor | coverage given pts>0, POOLED | band | zero pred vs actual |
+> |---|---|---|---|---|---|---|
+> | two-part | 69,500 | 2.7804 | 3.2838 | **0.852** | [0.75, 0.85] | **OUT** | 0.267 vs 0.267 |
+> | streaming | 69,500 | **2.7347** | 3.2928 | **0.847** | [0.75, 0.85] | **IN** | 0.267 vs 0.267 |
+>
+> The evidence at the three positions the question is about:
+>
+> | pos | model | (a) CRPS vs floor | (b) position / pooled | (c) predicted vs actual |
+> |---|---|---|---|---|
+> | RB | two-part | 2.7081 vs 3.3475 | 0.844 / **0.852** | 0.306 vs 0.306 |
+> | RB | streaming | 2.7083 vs 3.3448 | 0.844 / **0.847** | 0.306 vs 0.306 |
+> | WR | two-part | 2.8870 vs 3.3567 | 0.857 / **0.852** | 0.242 vs 0.243 |
+> | WR | streaming | 2.8862 vs 3.3553 | 0.856 / **0.847** | 0.242 vs 0.243 |
+> | TE | two-part | 2.2335 vs 2.5584 | 0.849 / **0.852** | 0.284 vs 0.285 |
+> | TE | streaming | 2.2335 vs 2.5542 | 0.849 / **0.847** | 0.284 vs 0.285 |
+>
+> **THE FINDING, AND IT REFRAMES THE QUESTION THAT WAS ASKED.** The question posed to this pass was
+> "does the pooled band supersede the per-position bands", on the assumption that the pooled band is
+> what stands between the streaming model and the three positions it does not serve. **It is not.**
+> Put through the full weekly gate WITH the pooled condition, on the decision population, the
+> streaming artifact **passes every clause at all six positions**, pooled coverage included, at 0.847
+> inside a [0.75, 0.85] band. It also beats the two-part model on pooled CRPS -- 2.7347 against
+> 2.7804 -- while the two positions where the two-part model outright FAILS clause (a), K and DST,
+> are exactly the two the streaming trainer fits rather than leaving as intercepts.
+>
+> So the two questions separate, and only one of them is about a band:
+>
+> 1. **The two-part model** is blocked by the pooled band, by 0.002. That is the composition question
+>    as originally posed, and it is still open. Nothing here answers it and nothing was widened.
+> 2. **The streaming model at RB, WR and TE is not blocked by any clause.** What holds it is that
+>    `SHIPPED_STREAMING_POSITIONS` was set from a run of the STREAMING gate before the decision
+>    population existed, and neither Track F nor this pass widened it -- Track F because widening a
+>    shipped list on the strength of a model that had only just started passing is tuning, and this
+>    pass because the same objection stands and this is an integration pass.
+>
+> **WHY THIS IS NOT AN ARGUMENT TO WIDEN IT TODAY, and the caution is the same one Track F wrote
+> down.** The coverage band was registered against the OLD population's numbers, and every model on
+> the decision population now sits near or above it -- the floor is 0.861. A band being applied to a
+> population it was not chosen on is a reason to RE-REGISTER it as its own pre-registered job against
+> whatever baseline ships then; it is not a licence to read a pass off it as a verdict. And the gain
+> that would be bought is small and mostly not the opponent block: Track C measured the control (the
+> same trainer with the twelve opponent columns REMOVED) within 0.004 CRPS at every position, and
+> P42 failed saying so. What the streaming model wins at RB/WR/TE is the two-part structure, which is
+> the same thing the two-part model wins -- and that is the model the pooled band is refusing.
+>
+> **WHAT MUST NOT HAPPEN, either way.** Choosing the reading of clause (b) that lets a model through,
+> after seeing which reading that is. Whichever is adopted has to bind the next candidate too.
+> `SHIPPED_STREAMING_POSITIONS` and `WEEKLY_SERVE` are UNCHANGED by this pass; the script that
+> produced the table changes nothing and asserts nothing about what should ship.
+>
+> ---
+
 > ## TRACK G: the surrogate against the simulator -- calibrated, and it was not the level either (2026-09-09)
 >
 > Branch `redesign/v3-marginal-harness` off `redesign/final-2` (`1b271a6`). Track A closed by naming

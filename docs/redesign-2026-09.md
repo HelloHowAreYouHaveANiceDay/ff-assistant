@@ -641,10 +641,23 @@ Whichever reading is adopted must be adopted as the rule for the NEXT candidate 
 reading that lets a model through, after seeing which reading that is, is the failure both gates
 exist to prevent.
 
-**2. Should the streaming model be served at all six positions?** It passes the streaming gate at all
-six on the decision population. Track F did NOT widen `SHIPPED_STREAMING_POSITIONS` on the strength of
-that, and integration pass 4 did not either, because widening a shipped list on a pass the model only
-just started passing is tuning. It waits on question 1.
+**2. Should the streaming model be served at all six positions? -- AND THE MEASUREMENT REFRAMED THIS
+ONE.** The question was posed on the assumption that the pooled band is what stands between the
+streaming model and the three positions it does not serve. **It is not.** Run through the FULL weekly
+gate, pooled condition included, on the decision population, the streaming artifact **passes every
+clause at all six positions**: pooled coverage 0.847 inside [0.75, 0.85], pooled CRPS 2.7347 against
+the two-part model's 2.7804, and clause (a) passing at K and DST where the two-part model outright
+fails it. So the two questions separate, and only the first is about a band. What holds
+`SHIPPED_STREAMING_POSITIONS` at QB/K/DST is that it was set from a streaming-gate run made BEFORE
+the decision population existed, and neither Track F nor this pass widened it -- both for the same
+reason: widening a shipped list on the strength of a model that has only just started passing is
+tuning, and the band it passes was itself registered against the old population's numbers.
+**Recommendation: re-register the coverage band as its own pre-registered job against the baseline
+that ships then, and decide both questions off that -- not off this table.** And read the size of
+what is on offer: Track C's control (the same trainer with the twelve opponent columns REMOVED) is
+within 0.004 CRPS at every position and P42 failed saying so, so what the streaming model would win
+at RB/WR/TE is the two-part structure -- which is the same thing the two-part model wins, and the
+model the pooled band is refusing.
 
 ### The leftovers this pass closed
 
@@ -675,9 +688,13 @@ repeated here, and none of the earlier text was edited.
 - **NEW: the pooled band versus the per-position bands** (gate question 1 above). It decides both
   decision 5 and whether streaming widens past QB/K/DST. **Recommendation: decide it on the RULE,
   before looking again at which model each reading admits.**
-- **NEW: streaming at all six positions** (gate question 2). **Recommendation: hold.** It passes the
-  streaming gate everywhere on the decision population, and widening a shipped list the week a model
-  starts passing is the definition of tuning.
+- **NEW: streaming at all six positions** (gate question 2). It passes not only the streaming gate
+  but the FULL weekly gate -- pooled coverage clause included, 0.847 in band -- at all six positions
+  on the decision population, and beats the two-part model on pooled CRPS. **Recommendation: hold
+  anyway, and re-register the coverage band first.** Widening a shipped list the week a model starts
+  passing is the definition of tuning, the band it passes was chosen on a different population, and
+  Track C already measured the opponent block's own contribution at ~0 (P42 failed) -- so the gain on
+  offer at RB/WR/TE is the two-part structure, not the matchup columns.
 - **Decision 3 (V2 vs V3) is unchanged and is now better evidenced.** Track G calibrated the
   surrogate to the simulated marginal and P28 failed again. **Recommendation: as before -- V3 stays
   selectable and unshipped -- and see next-work item 3: the next attempt should be structural or
