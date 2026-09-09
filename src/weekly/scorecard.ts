@@ -96,7 +96,29 @@ export interface ScorecardResult {
     lineupPts: number; lineupWinShare: number;
   }[];
   seasonScored: { n: number; rmse: number; note: string } | null;
+  /** The `odds` accrual. Null until the season resolves; `skipped` says why when it is. */
+  oddsScored: OddsScored | null;
   notes: string[];
+}
+
+/** One model's score against the outcome it settles on, beside the floor it must beat. */
+export interface OddsModelScore {
+  model: "playoff" | "title";
+  n: number;
+  brier: number;
+  logLoss: number;
+  uniformBrier: number;
+  uniformLogLoss: number;
+  /** 1 - brier/uniformBrier. POSITIVE means the frozen odds beat a flat prior; negative means they
+   *  were worse than knowing nothing, which is a real and reportable outcome. */
+  skill: number;
+  reliability: { lo: number; hi: number; n: number; predicted: number; observed: number }[];
+}
+export interface OddsScored {
+  season: number;
+  teams: number;
+  models: OddsModelScore[];
+  skipped: string | null;
 }
 
 /**
@@ -226,6 +248,98 @@ function lineOnlyArtifactFor(db: DB, season: number): WeeklyArtifact {
   return loadWeeklyArtifact(seasonLineOnlyArtifact({ positions: Object.keys(q), seasons: [season - 1], quantiles: q }));
 }
 
+const BRIER_BINS = [0, 0.05, 0.15, 0.3, 0.5, 0.7, 1.0001];
+
+/**
+ * SCORE THE FROZEN PRESEASON ODDS, once the season has actually resolved.
+ *
+ * WHAT THIS CLOSES. The snapshot path for the `odds` kind shipped in Phase 2c and the SCORING path
+ * did not, so thirty-two write-once rows sat in the store that nothing could ever turn into a
+ * number. A prediction nobody can score is a record, not a prediction, and the difference is
+ * invisible until the season ends -- which is exactly when it is too late to notice.
+ *
+ * TWO MODELS, NEVER MIXED. `playoff` and `title` settle on different facts (a seed, a championship)
+ * and a Brier score over a mixture of the two would be a number with no interpretation. They are
+ * scored separately, each against its own uniform floor: `field/teams` for the berth and `1/teams`
+ * for the title. That floor is not decoration -- Phase 2c measured this simulator BEATING it on the
+ * playoff berth and LOSING to it on the champion over 114 team-seasons, and the accrual exists to
+ * find out whether that holds on a season nobody had seen when the numbers were frozen.
+ *
+ * IT REFUSES ON AN UNSETTLED SEASON. An in-progress season's placeholder `final_rank` looks exactly
+ * like a result, so the gate is the data's own `settled` flag plus the two facts a finished season
+ * must show: every team has a final rank, and exactly one of them won. Scoring early would record a
+ * verdict on a season that has not happened.
+ */
+export function scoreOdds(db: DB, season: number): OddsScored {
+  const rows = db.prepare(
+    "SELECT model, subject, value FROM scorecard_prediction WHERE season = ? AND kind = 'odds'",
+  ).all(season) as { model: string; subject: string; value: number }[];
+  const teamsRows = db.prepare(
+    "SELECT team_id, made_playoffs, champion, playoff_seed, final_rank, settled FROM fact_team_season WHERE season = ?",
+  ).all(season) as { team_id: string; made_playoffs: number | null; champion: number | null; playoff_seed: number | null; final_rank: number | null; settled: number | null }[];
+
+  const empty = (skipped: string): OddsScored => ({ season, teams: teamsRows.length, models: [], skipped });
+  if (!rows.length) return empty(`no frozen 'odds' rows for ${season} -- nothing was ever snapshotted, so there is nothing to score`);
+  if (!teamsRows.length) return empty(`fact_team_season has no rows for ${season} -- run \`ff build-picks\` to derive the league's own outcomes`);
+  const champions = teamsRows.filter((t) => t.champion).length;
+  const ranked = teamsRows.filter((t) => t.final_rank != null).length;
+  const seeded = teamsRows.filter((t) => t.playoff_seed != null).length;
+  if (!teamsRows.every((t) => t.settled) || ranked !== teamsRows.length || champions !== 1 || seeded === 0) {
+    return empty(
+      `${season} has not resolved: ${teamsRows.filter((t) => t.settled).length}/${teamsRows.length} teams settled, ` +
+      `${ranked} with a final rank, ${seeded} with a playoff seed, ${champions} champion(s). ` +
+      "An in-progress season's placeholder rank looks exactly like a result, so the frozen odds are left unscored.",
+    );
+  }
+
+  const field = teamsRows.filter((t) => t.made_playoffs).length || teamsRows.filter((t) => t.playoff_seed != null).length;
+  const n = teamsRows.length;
+  const outcome = new Map(teamsRows.map((t) => [String(t.team_id), { playoff: t.made_playoffs ? 1 : 0, title: t.champion ? 1 : 0 }]));
+
+  const brier = (a: { p: number; y: number }[]) => a.reduce((s, r) => s + (r.p - r.y) ** 2, 0) / a.length;
+  const logLoss = (a: { p: number; y: number }[]) => -a.reduce((s, r) => {
+    const p = Math.min(1 - 1e-6, Math.max(1e-6, r.p));
+    return s + (r.y ? Math.log(p) : Math.log(1 - p));
+  }, 0) / a.length;
+  const reliability = (a: { p: number; y: number }[]) => {
+    const out: OddsModelScore["reliability"] = [];
+    for (let i = 0; i < BRIER_BINS.length - 1; i++) {
+      const b = a.filter((r) => r.p >= BRIER_BINS[i] && r.p < BRIER_BINS[i + 1]);
+      if (!b.length) continue;
+      out.push({
+        lo: BRIER_BINS[i], hi: Math.min(1, BRIER_BINS[i + 1]), n: b.length,
+        predicted: b.reduce((s, r) => s + r.p, 0) / b.length,
+        observed: b.reduce((s, r) => s + r.y, 0) / b.length,
+      });
+    }
+    return out;
+  };
+
+  const models: OddsModelScore[] = [];
+  for (const [model, uniform] of [["playoff", field / n], ["title", 1 / n]] as ["playoff" | "title", number][]) {
+    // Probabilities are stored in PERCENT, matching `seasonOdds`; the actual is 0 or 1. Dividing at
+    // scoring time rather than at snapshot time is deliberate -- the stored row stays the number a
+    // human recognises.
+    const scored = rows.filter((r) => r.model === model)
+      .map((r) => ({ p: Math.min(1, Math.max(0, r.value / 100)), y: outcome.get(String(r.subject))?.[model] ?? null }))
+      .filter((r): r is { p: number; y: number } => r.y != null);
+    if (!scored.length) continue;
+    const uni = scored.map((r) => ({ p: uniform, y: r.y }));
+    const b = brier(scored), ub = brier(uni);
+    models.push({
+      model, n: scored.length,
+      brier: b, logLoss: logLoss(scored),
+      uniformBrier: ub, uniformLogLoss: logLoss(uni),
+      skill: 1 - b / ub,
+      reliability: reliability(scored),
+    });
+  }
+  if (!models.length) {
+    return empty(`the frozen rows for ${season} join no team in fact_team_season -- the subject is a team id and nothing matched`);
+  }
+  return { season, teams: n, models, skipped: null };
+}
+
 export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult> {
   const db = openDb(opts.dbPath);
   const today = opts.today ?? iso(new Date());
@@ -236,7 +350,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
     espn: { attempted: false, ok: false, reason: "not attempted", stored: 0 },
     seasonKind: { taken: 0, skipped: null },
     oddsKind: { taken: 0, skipped: null },
-    scored: [], seasonScored: null, notes,
+    scored: [], seasonScored: null, oddsScored: null, notes,
   };
   try {
     const sched = opts.sched ?? await loadSchedule([opts.season]);
@@ -453,6 +567,31 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           };
         }
       }
+
+      // ---- the odds kind, scored once the season has resolved. ----
+      const od = scoreOdds(db, opts.season);
+      res.oddsScored = od;
+      if (od.skipped) notes.push(`odds accrual: ${od.skipped}`);
+      else {
+        const insO = db.prepare(
+          `INSERT INTO scorecard_result (season, week, kind, model, metric, value, n, scored_at)
+           VALUES (@season,0,'odds',@model,@metric,@value,@n,@now)
+           ON CONFLICT(season, week, kind, model, metric) DO UPDATE SET
+             value=excluded.value, n=excluded.n, scored_at=excluded.scored_at`,
+        );
+        const nowO = nowIso();
+        db.transaction(() => {
+          for (const m of od.models) {
+            for (const [metric, value] of [
+              ["brier", m.brier], ["log_loss", m.logLoss],
+              ["uniform_brier", m.uniformBrier], ["uniform_log_loss", m.uniformLogLoss],
+              ["skill", m.skill],
+            ] as [string, number][]) {
+              if (Number.isFinite(value)) insO.run({ season: opts.season, model: m.model, metric, value, n: m.n, now: nowO });
+            }
+          }
+        })();
+      }
     }
   } finally { db.close(); }
   return res;
@@ -489,6 +628,27 @@ export function formatScorecard(r: ScorecardResult): string {
     out.push("");
     out.push(`SEASON KIND: n=${r.seasonScored.n}, RMSE ${r.seasonScored.rmse.toFixed(2)}`);
     out.push(`  ${r.seasonScored.note}`);
+  }
+  if (r.oddsScored) {
+    out.push("");
+    if (r.oddsScored.skipped) {
+      out.push(`ODDS ACCRUAL: not scored -- ${r.oddsScored.skipped}`);
+    } else {
+      out.push(`ODDS ACCRUAL, ${r.oddsScored.season} (${r.oddsScored.teams} teams)`);
+      out.push("  " + pad("model", 10) + "     n" + "    Brier" + " uniform" + " logLoss" + " uniform" + "    skill");
+      for (const m of r.oddsScored.models) {
+        out.push("  " + pad(m.model, 10) + String(m.n).padStart(6) +
+          num(m.brier, 4).padStart(9) + num(m.uniformBrier, 4).padStart(8) +
+          num(m.logLoss, 4).padStart(8) + num(m.uniformLogLoss, 4).padStart(8) +
+          `${(100 * m.skill).toFixed(1)}%`.padStart(9));
+      }
+      out.push("  skill is 1 - Brier/uniform: POSITIVE beats a flat prior, NEGATIVE is worse than knowing nothing.");
+      for (const m of r.oddsScored.models) {
+        out.push(`  reliability, ${m.model}: ` + m.reliability
+          .map((b) => `${(100 * b.lo).toFixed(0)}-${(100 * b.hi).toFixed(0)}% n=${b.n} pred ${(100 * b.predicted).toFixed(1)}% obs ${(100 * b.observed).toFixed(1)}%`)
+          .join("; "));
+      }
+    }
   }
   if (r.notes.length) {
     out.push("");

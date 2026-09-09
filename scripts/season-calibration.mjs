@@ -36,7 +36,7 @@
 // the simulator; it is declared rather than removed because refitting three models per season is a
 // different piece of work, and every direction it biases is towards the simulator looking BETTER,
 // which makes an over-confidence finding a lower bound rather than an artefact.
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { simulateSeasons } from "../src/draft/season.ts";
 import { loadArtifact } from "../src/model/projector.ts";
@@ -51,6 +51,12 @@ const TRIALS = Number(val("--trials", "3000"));
 const SEED = Number(val("--seed", "7"));
 const FOLD_DIR = val("--artifact-dir", "data/fold-artifacts-2b");
 const JSON_OUT = argv.includes("--json");
+// `--emit-odds <path>` writes one row per team-season: the probabilities this harness produced and
+// the outcome they are scored against. It exists so `scripts/odds-accrual-2025.mjs` can push exactly
+// these numbers through `scorecard.ts`'s odds branch and check the two agree -- a scorer validated
+// against a reimplementation of itself would prove nothing, so it is validated against the harness
+// that produced the reference figures in docs/validation.md.
+const EMIT_ODDS = val("--emit-odds", null);
 
 const db = new Database("data/ff.db", { readonly: true });
 const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
@@ -310,6 +316,29 @@ for (const season of seasons) {
 }
 
 if (!sim.playoff.length) { console.log("\nnothing scored."); process.exit(1); }
+
+// PER-SEASON Brier, and the emitted rows. The aggregate hides which season a number came from, and
+// the accrual scorer is checked against ONE season, so the two have to be comparable.
+{
+  const brier1 = (rows) => rows.reduce((a, r) => a + (r.p - r.y) ** 2, 0) / rows.length;
+  console.log(`\n  PER-SEASON Brier (the figure the accrual scorer is checked against)`);
+  for (const y of [...new Set(sim.playoff.map((r) => r.season))].sort()) {
+    const p = sim.playoff.filter((r) => r.season === y), t = sim.title.filter((r) => r.season === y);
+    console.log(`    ${y}  playoffs ${brier1(p).toFixed(6)}  title ${brier1(t).toFixed(6)}  (n=${p.length})`);
+  }
+  if (EMIT_ODDS) {
+    const byKey = new Map();
+    for (const r of sim.playoff) byKey.set(`${r.season}|${r.team}`, { season: r.season, team: r.team, playoffPct: 100 * r.p, madePlayoffs: r.y });
+    for (const r of sim.title) {
+      const e = byKey.get(`${r.season}|${r.team}`);
+      if (e) { e.titlePct = 100 * r.p; e.champion = r.y; }
+    }
+    const lines = ["season\tteam\tplayoffPct\ttitlePct\tmadePlayoffs\tchampion"];
+    for (const e of byKey.values()) lines.push([e.season, e.team, e.playoffPct, e.titlePct, e.madePlayoffs, e.champion].join("\t"));
+    writeFileSync(EMIT_ODDS, lines.join("\n") + "\n", "utf8");
+    console.log(`\n  wrote ${byKey.size} team-season odds rows -> ${EMIT_ODDS}`);
+  }
+}
 
 const table = (label, rows) => `  ${label.padEnd(24)} ${brier(rows).toFixed(4).padStart(8)}  ${logloss(rows).toFixed(4).padStart(8)}  ${rows.length}`;
 console.log(`\n  ${sim.playoff.length} team-seasons scored\n`);
