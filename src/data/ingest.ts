@@ -253,7 +253,7 @@ export const RAW_ASSETS: RawAsset[] = [
   {
     id: "depth-charts",
     table: "raw_depth_chart",
-    what: "nflverse depth charts -- weekly 1999-2025, a DAILY snapshot from 2026 with a different schema",
+    what: "nflverse depth charts -- weekly 2001-2024, a DATED snapshot from 2025 with a different schema entirely",
     defaultSeasons: [1999, new Date().getFullYear()],
     async run(dbPath, seasons) {
       const { ingestRawDepthCharts } = await import("./rawSources.js");
@@ -277,7 +277,7 @@ export const RAW_ASSETS: RawAsset[] = [
   {
     id: "nfl-draft",
     table: "raw_nfl_draft_pick",
-    what: "the NFL draft (not our auction): round, pick, team, college, 1936-2025 in one file",
+    what: "the NFL draft (not our auction): round, pick, team, college, 1980-2026 in one file",
     defaultSeasons: null,
     async run(dbPath, seasons) {
       const { ingestRawDraftPicks } = await import("./rawSources.js");
