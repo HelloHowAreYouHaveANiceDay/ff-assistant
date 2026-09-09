@@ -13,7 +13,10 @@
 //      change there would mean the routing had picked up a model no gate passed;
 //   3. `lineupRecommend` -- the real consumer, not the loader -- reports a different number for the
 //      fixture QB under the two, which is the only thing that proves the seam reaches a DECISION;
-//   4. FAULT INJECTION: forcing the floor everywhere via `artifactPath` collapses (1) back to
+//   4. `loadWeeklyBands` -- the winprob objective's loader -- returns the SAME means, because a band
+//      that came from a different read of the table than the mean it sits beside is the drift the
+//      one-call design exists to prevent;
+//   5. FAULT INJECTION: forcing the floor everywhere via `artifactPath` collapses (1) back to
 //      equality, which is the old behaviour reproduced on demand.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -22,7 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, type DB } from "../src/db/db.js";
 import { dataPath } from "../src/data/paths.js";
-import { loadWeeklyProjection, weeklyServeAssumption } from "../src/inseason/copilotStore.js";
+import { loadWeeklyProjection, loadWeeklyBands, weeklyServeAssumption } from "../src/inseason/copilotStore.js";
 import { lineupRecommend, lineupNameKey, NFL_WEEKS } from "../src/inseason/copilot.js";
 import { WEEKLY_SERVE, SHIPPED_STREAMING_POSITIONS, STREAM_SERVE_POS } from "../src/weekly/streamingServe.js";
 import { SHIPPED_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
@@ -128,6 +131,26 @@ test("lineupRecommend for the fixture QB differs between the floor and the SERVE
   // not a wholesale change of model.
   for (const p of ctx.teams[ctx.meIdx].roster.filter((r) => ["RB", "WR", "TE"].includes(r.pos))) {
     assert.equal(projOf(a, p.name), projOf(b, p.name), `${p.name} moved, and nothing should have`);
+  }
+});
+
+test("loadWeeklyBands returns the SAME means loadWeeklyProjection does", () => {
+  // `loadWeeklyBands` exists because `objective: "winprob"` needs a p10/p50/p90 and not a mean, and
+  // its comment claims the means it returns ARE the other function's. Two loaders reading the same
+  // table on two calls is how a mean and its own band start coming from different artifacts, so the
+  // claim is asserted here rather than left to the comment.
+  const path = seeded();
+  const means = loadWeeklyProjection(SEASON, WEEK, path)!;
+  const withBands = loadWeeklyBands(SEASON, WEEK, path)!;
+  assert.ok(withBands.weekly.size > 0);
+  assert.deepEqual([...withBands.weekly.entries()].sort(), [...means.entries()].sort());
+  // And every mean has a band whose own mean is the same number -- a band attached to a different
+  // projection than the one the lineup ranks on is the specific drift this shares one call to avoid.
+  for (const [k, m] of withBands.weekly) {
+    const b = withBands.bands.get(k);
+    assert.ok(b, `${k} has a mean and no band`);
+    assert.equal(b!.mean, m);
+    assert.ok(b!.p10 <= b!.p50 && b!.p50 <= b!.p90, `${k}'s band is not ordered`);
   }
 });
 
