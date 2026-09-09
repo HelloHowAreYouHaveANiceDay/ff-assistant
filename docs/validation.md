@@ -1,5 +1,281 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## TRACK G: the surrogate against the simulator -- calibrated, and it was not the level either (2026-09-09)
+>
+> Branch `redesign/v3-marginal-harness` off `redesign/final-2` (`1b271a6`). Track A closed by naming
+> the one remaining candidate: V3's analytic marginal itself, against the SIMULATED marginal that
+> behaves correctly. Track G measured the gap, calibrated the surrogate to it, and re-ran P28
+> unchanged. **The level was not the reason either.** The calibration is CONNECTED -- it changes 627
+> of 1,800 trials on the long arm -- and worth **+0.28pp**, CI [-3.28, +3.56], better in 6 of 12
+> seasons. A clean null.
+>
+> | | prediction | outcome |
+> |---|---|---|
+> | P56 (a) | the analytic surrogate's rank correlation with the simulated marginal is below 0.8 in at least one roster-state phase | **HELD**, and by more than the prediction implies -- the mean per-state correlation is NEGATIVE in two of the five phases (after6 -0.291, after9 -0.509) |
+> | P56 (b) | the level ratio analytic/simulated is below 0.85 at EVERY position (the surrogate under-prices everyone) | **FAILED** -- QB 0.48, RB 0.92, WR 1.20, TE 1.26. The surrogate under-prices quarterbacks by half and OVER-prices receivers and tight ends |
+> | P28 (re-run unchanged) | V3's playoff rate is at least V2's minus 2 points on BOTH arms | **FAILED** -- long churn arm **-26.44pp**; honest arm **+3.08pp** (held on that arm alone) |
+>
+> P56 is recorded as measured. (b) is judged on the statistic the harness reports under that name --
+> the ratio of mean analytic dollars to mean simulated dollars, pooled per position. The MEDIAN of the
+> per-candidate ratios tells a different story at every position (QB 0.29, RB 0.87, WR 0.86, TE 0.85),
+> and both are printed, because they are both true: the surrogate over-prices a handful of men badly
+> enough to carry the mean while under-pricing most of the book. That is not a level error a single
+> multiplier can remove, and it is why the fitted correction below recovers so little.
+>
+> ### The harness (`scripts/marginal-agreement.mjs`)
+>
+> Forty distinct roster states from ten V2 drafts, replayed pick by pick and snapshotted at five
+> phases of our seat -- empty, after 3 buys, after 6, after 9, and `late` (the first moment our budget
+> reaches $20 or one open slot). Everything at that instant is real: our roster, our open slots, our
+> money, the fifteen opponents as they actually stand, the pool as what is actually left. Top 60
+> candidates by VOR at each state, simulated at 300 trials under common random numbers, seed 7,
+> generated schedule. 8,550 `simulateSeasons` calls, 42 minutes.
+>
+> The analytic column is read out of V3 ITSELF through a new `V3Config.onDetail` hook, never
+> reimplemented in the script -- a harness that rebuilds `starterBaselines` + `lineupMarginal` for
+> itself will drift from the bidder and then report the drift as agreement.
+>
+> **Two things had to be got right before any number here means anything, and one of them was a bug.**
+>
+> 1. **The empty state is the SAME state in every seed** -- no roster, the whole board, $200, fifteen
+>    opponents who have bought nobody. Measuring it once per seed produced ten byte-identical copies,
+>    which would have weighted one state ten times over in every pooled table and put the same rows on
+>    both sides of a train/test split that believed it was splitting by draft. Deduplicated: 50
+>    sampled, 40 distinct.
+> 2. **`MarginalBook`'s `add`-arm cache tag did not carry the fill exclusion.** The after-arm's fill is
+>    drawn under the same exclusion as the baseline, so two framings of the same player are two
+>    different rosters -- and the tag named only the player, so the first framing's answer was served
+>    to the second. Fixed, and fault-injected by removing it again: the empty-state correlation falls
+>    from 0.708 to 0.131 and four of five states become degenerate.
+>
+> **The fill framing is a choice and it moves the answer**, so both are measured, from ONE book under
+> ONE budget curve and ONE set of random numbers. PER-CANDIDATE (each man barred only from his own
+> baseline) is the honest single-player question and is the `simulated` column. SHARED (the whole
+> candidate set barred -- the nomination-pass premise `scripts/roster-book.mjs` uses) strips sixty men
+> out of the fill and inflates every marginal. Pooled: per-candidate rho 0.42 / level 1.05 against
+> shared rho 0.35 / level 1.05.
+>
+> **Fourteen of forty states are DEGENERATE and that is itself a finding.** At 300 trials the
+> per-candidate simulated marginal is flat at $0 across the whole candidate set in 14 states -- mostly
+> mid and late, where a single addition moves P(playoffs) by less than the Monte Carlo error. They are
+> excluded and said, never averaged in as agreement. It also bounds the alternative Step 3 was asked
+> to price (below).
+>
+> ### Agreement, by phase (mean of the per-state rank correlations, 26 usable states)
+>
+> | phase | states | mean rho | min rho | top-3 match | mean abs $ gap | level | median ratio |
+> |---|---|---|---|---|---|---|---|
+> | empty | 1 | **0.677** | 0.677 | 0/1 | 28.1 | 1.515 | 1.303 |
+> | after3 | 9 | 0.367 | -0.165 | 0/9 | 36.3 | 1.116 | 0.750 |
+> | after6 | 7 | **-0.291** | -0.591 | 0/7 | 50.9 | 1.454 | 0.868 |
+> | after9 | 7 | **-0.509** | -0.663 | 0/7 | 54.0 | 0.452 | 0.269 |
+> | late | 2 | 0.646 | 0.592 | 0/2 | 9.4 | 1.438 | 1.000 |
+>
+> **The surrogate agrees about ORDER at an empty roster and disagrees -- inverts -- once the roster is
+> half full.** That is the shape of the failure, and it is exactly the region a bidder spends most of
+> a draft in. The analytic top three never matched the simulated top three at any of the 26 states.
+>
+> ### By position and by rank band (pooled over every usable state)
+>
+> | position | n | rho | mean abs $ gap | mean $ gap | mean abs pp gap | level | median ratio |
+> |---|---|---|---|---|---|---|---|
+> | QB | 421 | 0.217 | 49.4 | -34.4 | 1.12 | **0.475** | 0.294 |
+> | WR | 337 | 0.490 | 37.7 | +11.4 | 1.68 | 1.198 | 0.864 |
+> | DST | 288 | 0.132 | 46.5 | +27.4 | 1.47 | 1.940 | 0.731 |
+> | K | 270 | 0.222 | 41.6 | +22.5 | 1.57 | 1.483 | 0.908 |
+> | TE | 179 | 0.489 | 36.7 | +11.4 | 1.37 | 1.259 | 0.853 |
+> | RB | 65 | 0.169 | 27.2 | -7.2 | 2.52 | 0.917 | 0.866 |
+>
+> | VOR rank band | n | rho | mean abs $ gap | level | median ratio |
+> |---|---|---|---|---|---|
+> | 1-12 | 312 | **0.528** | 34.3 | 0.869 | 0.826 |
+> | 13-36 | 624 | 0.421 | 38.0 | 1.208 | 0.835 |
+> | 37-60 | 624 | **-0.095** | 51.4 | 1.049 | 0.678 |
+>
+> The K and DST row counts are not a bug: the candidate set is the top 60 by VOR of the REMAINING
+> pool, and once the skill positions are picked over, a $2 kicker outranks a replacement-level
+> receiver. Read those two rows as "the tail", which is what the 37-60 band says directly: no ordering
+> agreement at all.
+>
+> ### Two mechanisms, measured (`scripts/marginal-mechanism.mjs`), and both come out against the guess
+>
+> **M1 -- V3's budget path can buy the man it is pricing.** `MarginalBook` bars a candidate from his
+> own baseline fill and says why; V3's `budgetPath` is handed `state.board`, which still contains him.
+> The direction is confirmed (5 of 6 price higher when he is barred) and the magnitude settles it:
+> **$1-2 on a book that runs to $100**. Recorded so it is not reached for again to explain a 20-40%
+> level gap.
+>
+> **M2 -- the greedy slot assignment DOUBLE-COUNTS, and this repo's own header said the opposite.**
+> `lineupMarginal.ts` described the approximation as "slightly conservative". Against an exact
+> enumeration over the availability outcomes it is exact where a position feeds ONE slot and up to
+> **10.0% too HIGH** where it feeds three:
+>
+> | position | spares | greedy | exact | ratio |
+> |---|---|---|---|---|
+> | QB | 1 | 9.625 | 9.625 | **1.0000** |
+> | QB | 2 | 9.771 | 9.771 | **1.0000** |
+> | RB/WR/TE | 1 | 17.125 | 16.000 | **1.0703** |
+> | RB/WR/TE | 2 | 24.746 | 22.500 | **1.0998** |
+>
+> The dedicated slot takes the expectation over the WHOLE positional queue -- so the spare is already
+> collecting the weeks the starter is out -- and then consumes only the NOMINAL head, leaving that same
+> spare at the front of the FLEX queue to be paid for a second time. No exact assignment can start one
+> man in two slots at once. The consequence is not a level error but a positional one: the surrogate
+> over-states DEPTH at RB/WR/TE and not at all at QB, in proportion to how many spares the roster
+> already holds. It is left in place and measured rather than patched, because changing it changes
+> what V3 bids and that is the arbiter's question; the header now states the sign and the size, and a
+> test pins both, with a note that fixing the greedy pass invalidates the calibration fitted around it.
+>
+> **A third quantity, needed to read the two above.** The analytic column here is the surrogate's price
+> BEFORE shading. V3's actual bid multiplies it by `shadingFactor`, which at 16 live bidders is
+> **0.35-0.47** across the board (our private uncertainty is exactly zero in this harness, so the whole
+> term is the price model's market spread). That is how a surrogate whose mean level runs 1.05x the
+> simulated marginal still produces a bidder that under-spends: the level and the shading are
+> different terms and only one of them was calibrated.
+>
+> ### The calibration (`scripts/v3-calibrate.mjs`)
+>
+> Per position, a monotone map `simulated$ ~= exp(a) x analytic$^b`, fitted on training seeds 1-6 and
+> reported on held-out seeds 7-10. **The holdout is by SEED, never by row** -- sixty candidates from
+> one state share a budget curve, a baseline and a set of random numbers.
+>
+> **The selection rule was stated before the numbers and it changed the answer:** among monotone maps,
+> take the best held-out MAE that does not REDUCE held-out rank correlation. Without that second
+> clause the fit picks the worst map available.
+>
+> | map | held-out MAE | held-out rho | held-out level | verdict |
+> |---|---|---|---|---|
+> | identity (uncalibrated) | 29.99 | 0.518 | 0.701 | -- |
+> | **level only, one parameter (SHIPPED)** | **26.13** | **0.531** | **0.845** | eligible |
+> | level only + start/bench split | 30.85 | 0.474 | 0.916 | rejected, rho falls 0.044 |
+> | two parameter `x^b` | 27.22 | 0.508 | 0.745 | rejected, **b < 0 at QB** |
+> | two parameter + start/bench | 18.31 | 0.457 | 0.866 | rejected, non-monotone at QB |
+> | isotonic (nonparametric ceiling) | 20.06 | 0.506 | 0.836 | not shippable, and rho falls |
+>
+> The two-parameter fit came out with `b` near 0.2 at three positions and **negative at quarterback**.
+> The analytic dollars carry far more ORDER signal than MAGNITUDE signal, so least squares in logs
+> collapses every price toward one number -- which minimises MAE, because the mean is the MAE-optimal
+> constant when there is no signal, and produces a book that prices everybody the same. At quarterback
+> it would have inverted the book outright. `b > 0` is now required at read time.
+>
+> **SHIPPED:** `QB x1.576  RB x1.008  TE x1.346  WR x1.174`, held out rho 0.518 -> 0.531, level
+> 0.701 -> 0.845, MAE 29.99 -> 26.13. Per position, held out:
+>
+> | position | n | rho before | rho after | level before | level after | MAE before | MAE after |
+> |---|---|---|---|---|---|---|---|
+> | ALL | 306 | 0.518 | 0.531 | 0.701 | 0.845 | 29.99 | 26.13 |
+> | QB | 87 | 0.392 | 0.392 | 0.532 | 0.839 | 41.48 | 36.67 |
+> | RB | 18 | -0.095 | -0.095 | 0.741 | 0.748 | 28.28 | 27.95 |
+> | WR | 80 | 0.656 | 0.656 | 0.757 | 0.889 | 27.40 | 20.43 |
+> | TE | 29 | 0.299 | 0.299 | 0.682 | 0.919 | 33.41 | 26.48 |
+>
+> **Against the SHARED-exclusion framing no map is eligible at all** -- every candidate, including the
+> level fit, loses held-out rank correlation. The calibration exists only against the per-candidate
+> marginal, and that is said rather than hidden by quoting the framing that produced a fit.
+>
+> Wired as `FF_V3_SURROGATE=calibrated`, default off, guarded on the TABLE as well as the flag so an
+> empty table is the identity. `scripts/v3-connected.mjs` drives the flag through `buildV3Config`
+> itself -- unset, `calibrated`, and an unrecognised value -- and asserts the bid moves ($25 -> $39).
+>
+> ### Face validity (`scripts/v3-roster.mjs --seeds 8 --book price --season Y`)
+>
+> | season | V2 spend / QB share / lineup | V3 uncalibrated | V3 calibrated |
+> |---|---|---|---|
+> | 2019 | $45 / 31% / 1378 | $165 / 15% / 1541 | $178 / 28% / 1553 |
+> | 2021 | $82 / 20% / 1472 | $167 / 19% / 1565 | $173 / 30% / 1584 |
+> | 2023 | $110 / 21% / 1528 | $174 / 14% / 1572 | $180 / 29% / 1599 |
+>
+> The calibration spends more, buys a better starting lineup on this proxy than V2 at every season,
+> and pushes the quarterback share back to 28-30% -- the direction Track A spent a whole track pulling
+> down, against a room that pays 8-11%. **A better proxy lineup and a worse championship rate is the
+> whole of Track G in one line**, and it is why `ff sim`-shaped proxies are not the arbiter here.
+>
+> **A REPRODUCTION NOTE that bounds what may be quoted.** V2's face validity reproduces Track A's
+> record exactly ($45 / 31% at 2019). V3's does NOT: Track A recorded $110 spend and an 18% QB share
+> where this branch measures $165 and 15%. V2 reads only the value table; V3 reads the variance model,
+> the streaming floor and the effective format, all of which moved with integration pass 3. The
+> BIDDER reproduces where it counts -- the long-arm backtest gives 62.0% / 10.0% against Track A's
+> 59.7% / 10.2% -- so the drift is in the face-validity board, not in V3. Every number in this section
+> is measured on this branch.
+>
+> ### P28, re-run unchanged
+>
+> Both arms exactly as registered, paired on common random numbers through
+> `scripts/paired-analysis.mjs`. PLAYOFFS is primary; the title is reported alongside.
+>
+> | arm | V2 playoffs | V3 calibrated | paired difference (playoffs) | V2 title | V3 title | paired difference (title) |
+> |---|---|---|---|---|---|---|
+> | long churn, 2012-2024, n=150, 12 seasons | 88.7% | **62.3%** | **-26.44pp**, SD 7.23, SE 2.09, t -12.67, CI [-30.50, -22.78], **0/12 seasons** | 24.3% | 9.4% | -14.94pp, SE 1.79, CI [-18.22, -11.39], 0/12 |
+> | honest, 2020-2024, n=300, 4 seasons | 45.6% | **48.7%** | **+3.08pp**, SD 19.67, SE 9.84, t 0.31, CI [-14.83, +17.25], 3/4 seasons | 11.2% | 9.4% | -1.75pp, SE 6.60, CI [-14.33, +9.25], 2/4 |
+>
+> Long arm = `--bot-churn --bot-book price --full --no-lookahead --inflation --seasons 2012-2024
+> --n 150`; honest arm = the same plus `--market ecr --market-noise 0 --bot-noise 0.20`, 2020-2024,
+> n=300. McNemar on trial-level pairs: long arm chi2(1) 332.78, p < 1e-6 (101 V3-only against 577
+> V2-only of 678 discordant); honest arm chi2(1) 2.60, p 0.107.
+>
+> **P28 FAILED and V3 still does not ship.** The threshold is not re-specified: a playoff rate more
+> than two points below V2 disqualifies it, on BOTH arms, and the long arm loses it by 26. The honest
+> arm's detectable effect at 80% power is 28.5pp on four seasons, so its +3.08pp settles nothing in
+> either direction and is reported as what it is.
+>
+> ### The decomposition, all four cells on the same seeds
+>
+> Long churn arm, 2012-2024, n=150. V2 is 88.7% / 24.3%.
+>
+> | arm | V3 playoffs | V3 title | paired vs V2 (playoffs) |
+> |---|---|---|---|
+> | uncalibrated (Track A's shipped V3) | 62.0% | 10.0% | -26.72pp, CI [-30.78, -23.11], 0/12 |
+> | **calibrated surrogate** | **62.3%** | 9.4% | -26.44pp, CI [-30.50, -22.78], 0/12 |
+> | calibrated, shading off (`FF_V3_SHADE=off`) | 60.8% | 8.8% | -27.94pp, CI [-31.17, -24.67], 0/12 |
+>
+> **The calibration is worth +0.28pp**, SD 6.15, SE 1.78, t 0.16, CI [-3.28, +3.56], better in 6 of 12
+> seasons -- a clean null, and NOT a dead lever: it changes **627 of 1,800 trial pairs** (316 V3-cal
+> only against 311 uncalibrated only). It moves a great many drafts and none of them into the
+> playoffs.
+>
+> **Shading is now neutral too.** Turning it off costs 1.50pp, CI [-4.61, +1.50], better in 5 of 12 --
+> against Track A's finding that shading was worth 11.4pp on the pre-calibration bidder. Both of V3's
+> remaining knobs are now measured null on the arm that rejects it.
+>
+> On the honest arm the calibration is worth more than it is on the long one: uncalibrated V3 is
+> 43.6% / 5.6% (-2.00pp against V2, 2/4 seasons) and calibrated is 48.7% / 9.4% (+3.08pp, 3/4). Four
+> seasons cannot separate those, but they point the same way as the face-validity table.
+>
+> ### What the ideal roster-aware bidder would do -- still not measurable, and now for a second reason
+>
+> Track A priced the substitution at 426 ms per candidate and called it unaffordable. This harness
+> measures it directly: **8,550 `simulateSeasons` calls in 42 minutes, 0.29 s each**. One decision
+> point with 40 candidates under a shared exclusion is 48 calls, about 14 s; a draft is roughly 192
+> nominations, so **45 minutes per draft**; the long arm is 1,950 drafts, so **about 60 days for one
+> arm**, and ONE season at n=150 is still 4.7 days. Unaffordable stands.
+>
+> **The new reason is better than the cost.** At 300 trials the per-candidate simulated marginal was
+> flat at $0 across all 60 candidates in **14 of 40 roster states** -- the signal a bidder would need
+> is below the Monte Carlo floor at any trial count a backtest could pay for. The ideal-bidder arm is
+> not merely expensive; at affordable precision it does not exist. Raising trials raises cost linearly
+> and precision as the square root, so the two constraints multiply rather than trade off.
+>
+> ### Recommendation
+>
+> **V3 does not become the default, and this is the third rejection on the same arm.** More usefully,
+> Track G removes the candidate Track A named. The residual is not the surrogate's LEVEL: the level
+> was measured, corrected, held out, and the correction is worth nothing (+0.28pp). What the agreement
+> tables say instead is that the surrogate's ORDER is wrong in exactly the region a draft is decided
+> in -- rank correlation 0.68 at an empty roster, **-0.29 and -0.51 after six and nine buys**, and
+> -0.10 across the whole 37-60 rank band. A calibration is monotone by construction and can never fix
+> an ordering.
+>
+> If the idea is picked up a fourth time, the work is structural rather than fitted, and Track G names
+> two concrete places to start: the greedy assignment's double-count at flex-eligible positions (M2,
+> up to 10.0%, positional and roster-shape dependent, and fixable exactly), and the fact that the
+> analytic marginal is linear in POINTS while the objective is P(playoffs), which is not -- a marginal
+> point is worth a great deal to a roster on the bubble and almost nothing to one that is safe or
+> lost, and no per-position multiplier can express that. Neither is a tuning question.
+>
+> **Unchanged by this track:** `DEFAULT_LEVERS`, `values.ts`, `strategy.ts` (V2 byte-identical),
+> `docs/decisions.md`, and the default bidder. The flagless tripwire reproduces at
+> **39.7% championships / 96% playoffs**, with the per-season line byte-identical to the record.
+
 > ## INTEGRATION PASS 3: five tracks stacked, and the league changed its calendar under us (2026-09-09)
 >
 > `redesign/final-2` = `redesign/final` (`75da5b0`) + Tracks E, D, B, C, A, merged `--no-ff` in that

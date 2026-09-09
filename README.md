@@ -421,3 +421,36 @@ twelve of twelve seasons. **P28 failed again, on both arms, against the threshol
 registered.** V2 remains the default; `DEFAULT_LEVERS`, `values.ts` and `strategy.ts` are untouched.
 What is left is the analytic surrogate itself, not its inputs. `docs/validation.md`, Track A, has
 every table and the paired statistics.
+
+## Track G (2026-09-09): the surrogate calibrated to the simulator -- and it was not the level either
+
+Track A closed by naming one remaining candidate for V3's failure: the analytic marginal itself,
+against the SIMULATED marginal that behaves correctly. Track G measured the gap on 40 real roster
+states sampled from replayed V2 drafts (`scripts/marginal-agreement.mjs`), fitted a per-position
+monotone calibration held out by seed (`scripts/v3-calibrate.mjs`), and re-ran P28 unchanged.
+
+**The level was not the reason.** The calibration is connected -- it changes 627 of 1,800 trial pairs
+on the long churn arm -- and it is worth **+0.28pp of playoff rate**, CI [-3.28, +3.56], better in 6
+of 12 seasons. V3 calibrated is 62.3% against V2's 88.7%, **-26.44pp paired, worse in twelve of
+twelve**. P28 failed a third time. On the four-season honest arm the calibration is +3.08pp and the
+arm cannot detect anything smaller than 28pp, so it settles nothing.
+
+What the agreement tables say instead is that the surrogate's **ORDER** is wrong exactly where a
+draft is decided: rank correlation with the simulated marginal is 0.68 on an empty roster and
+**-0.29 and -0.51 after six and nine buys**, and -0.10 across the 37-60 rank band. A monotone
+calibration is incapable of fixing an ordering, which is why fixing the level bought nothing.
+
+Two findings worth keeping regardless of V3:
+
+- **`lineupMarginal.ts` described its greedy slot assignment as "slightly conservative" and it is the
+  opposite.** Against an exact enumeration it is exact where a position feeds one slot (QB, 1.0000)
+  and up to **10.0% too high** where it feeds three (RB/WR/TE through the dedicated slot plus two
+  FLEX): the dedicated slot's expectation already pays the spare for the weeks the starter is out,
+  and then only the nominal head is consumed, so the same man is paid for again at FLEX.
+- **`MarginalBook`'s cache tag did not carry the fill exclusion**, so two framings of the same
+  candidate shared one answer. Fault-injected by removing the fix: the empty-state rank correlation
+  falls from 0.708 to 0.131.
+
+`DEFAULT_LEVERS`, `values.ts`, `strategy.ts` and the default bidder are untouched; the flagless
+tripwire reproduces at 39.7% / 96% with the per-season line byte-identical. `docs/validation.md`,
+Track G, has every table and the paired statistics.
