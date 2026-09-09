@@ -2,7 +2,35 @@
 // standard VBD auction formula; see docs/value-methods.md). Pure + unit-testable.
 
 export interface PointsRow { name: string; pos: string; points: number; }
-export interface ValueRow { name: string; pos: string; value: number; }
+export interface ValueRow {
+  name: string;
+  pos: string;
+  value: number;
+  /** Which of his eligible positions the VOR was taken at. Equal to `pos` for everyone who is
+   *  eligible at one position, i.e. for every player in this league today. */
+  valuePos?: string;
+}
+
+/**
+ * ELIGIBILITY, when the caller has it: nameKey -> the positions ESPN says a man may be started at.
+ *
+ * Absent, every function here behaves exactly as it did -- a player is eligible at his own position
+ * and nowhere else. Present, a player named in the map is valued at the BETTER of his baselines.
+ * `src/data/eligibility.ts` builds it, and deliberately omits single-eligible players: a missing
+ * entry means "[his own position]", so an all-single league produces an EMPTY map and the diff is
+ * visible in the map's size rather than hidden in its contents.
+ */
+export type EligibilityMap = Map<string, string[]>;
+
+/** The positions a man may be valued at: his own, plus anything the map adds. Order is stable and
+ *  starts with his own position, which is what makes the tie-break below a no-op for singles. */
+function eligibleFor(p: PointsRow, elig?: EligibilityMap): string[] {
+  const extra = elig?.get(nameKey(p.name));
+  if (!extra || !extra.length) return [p.pos];
+  const out = [p.pos];
+  for (const x of extra) if (x !== p.pos) out.push(x);
+  return out;
+}
 
 /** Canonical name key that survives ESPN-vs-our-CSV spelling drift (finding #5): lowercases, drops
  *  generational suffix tokens (Jr/Sr/II..V), drops a trailing d/st|dst token (so "Broncos D/ST"
@@ -95,12 +123,41 @@ export function resolveValueLeague(cfg: { teams: number; budget: number; slots: 
  *  (`round(flexTotal / 3)`) handed TE ~11 phantom starting slots in this league -- a weighted fill
  *  gives TE ZERO -- which took TE's baseline 11 ranks too deep and inflated every TE's VOR (and
  *  symmetrically starved WR). Measured at 13.6% -> 22.2% championships on the 2015-2024 backtest
- *  (docs/validation.md). `flexWeighted = false` keeps the old behavior for regression tests. */
-export function baselines(points: PointsRow[], lg: ValueLeague, flexWeighted = true): Record<string, number> {
-  const byPos: Record<string, number[]> = {};
-  for (const p of points) (byPos[p.pos] ??= []).push(p.points);
-  for (const k of Object.keys(byPos)) byPos[k].sort((a, b) => b - a);
+ *  (docs/validation.md). `flexWeighted = false` keeps the old behavior for regression tests.
+ *
+ *  `eligibility` changes ONE thing and deliberately not more: which position a dual-eligible player
+ *  is COUNTED UNDER when the FLEX slots are filled. It does NOT move him between the positional
+ *  pools the baselines are read off. That restraint is the point -- moving a man from the RB list
+ *  into the WR list changes the replacement level of every other RB and every other WR, which is a
+ *  far larger claim than "this man may also be started at receiver", and nothing in ESPN's
+ *  eligibleSlots supports it. So with no dual-eligible player in the pool the output is byte-for-byte
+ *  the old one, which is the property test/values.test.ts asserts. */
+export function baselines(
+  points: PointsRow[], lg: ValueLeague, flexWeighted = true, eligibility?: EligibilityMap,
+): Record<string, number> {
+  const byPos: Record<string, { name: string; pts: number }[]> = {};
+  for (const p of points) (byPos[p.pos] ??= []).push({ name: p.name, pts: p.points });
+  for (const k of Object.keys(byPos)) byPos[k].sort((a, b) => b.pts - a.pts);
   const flexTotal = (lg.starters.FLEX ?? 0) * lg.teams;
+
+  // WHICH POSITION CLAIMS A DUAL-ELIGIBLE MAN IN THE FLEX FILL. Decided against the baselines
+  // computed WITHOUT eligibility, because the question "where is he worth most" needs an answer
+  // before the flex fill it feeds into can be run. One pass, not a fixed point: with nobody dual the
+  // recursive call and this one agree exactly, and with a handful of duals a second iteration moves
+  // nothing that the first did not.
+  let claimOf: Map<string, string> | null = null;
+  if (eligibility?.size) {
+    const base0 = baselines(points, lg, flexWeighted);
+    claimOf = new Map<string, string>();
+    for (const p of points) {
+      const cand = eligibleFor(p, eligibility).filter((x) => base0[x] != null);
+      if (cand.length < 2) continue;
+      let best = cand[0];
+      for (const x of cand) if (p.points - base0[x] > p.points - base0[best]) best = x;
+      claimOf.set(p.name, best);
+    }
+  }
+
   let flexCount: Record<string, number> | null = null;
   if (flexWeighted) {
     // Pool = every FLEX-eligible player beyond his position's DEDICATED starters, league-wide.
@@ -108,7 +165,10 @@ export function baselines(points: PointsRow[], lg: ValueLeague, flexWeighted = t
     for (const pos of FLEX_ELIGIBLE) {
       const dedicated = (lg.starters[pos] ?? 0) * lg.teams;
       const arr = byPos[pos] ?? [];
-      for (let i = dedicated; i < arr.length; i++) pool.push({ pos, pts: arr[i] });
+      for (let i = dedicated; i < arr.length; i++) {
+        const claim = claimOf?.get(arr[i].name);
+        pool.push({ pos: claim && FLEX_ELIGIBLE.includes(claim) ? claim : pos, pts: arr[i].pts });
+      }
     }
     pool.sort((a, b) => b.pts - a.pts);
     flexCount = { RB: 0, WR: 0, TE: 0 };
@@ -122,7 +182,7 @@ export function baselines(points: PointsRow[], lg: ValueLeague, flexWeighted = t
       : 0;
     const startable = dedicated + flexShare;
     const arr = byPos[pos];
-    out[pos] = arr[startable] ?? arr[arr.length - 1] ?? 0; // first non-starter's points
+    out[pos] = (arr[startable] ?? arr[arr.length - 1])?.pts ?? 0; // first non-starter's points
   }
   return out;
 }
@@ -131,10 +191,23 @@ export function baselines(points: PointsRow[], lg: ValueLeague, flexWeighted = t
  *  discretionary money (total budget minus $1 per roster spot) across total positive VOR.
  *  K/DST are clamped to `maxKDst` ($2) -- this league streams them at $1-2 (finding #1), so a
  *  nominal points curve must not be allowed to price them like real starters. */
-export function computeValues(points: PointsRow[], lg: ValueLeague = DEFAULT_VALUE_LEAGUE, maxKDst = 2, flexWeighted = true): ValueRow[] {
-  const base = baselines(points, lg, flexWeighted);
+export function computeValues(
+  points: PointsRow[], lg: ValueLeague = DEFAULT_VALUE_LEAGUE, maxKDst = 2, flexWeighted = true,
+  eligibility?: EligibilityMap,
+): ValueRow[] {
+  const base = baselines(points, lg, flexWeighted, eligibility);
   const ptsBy = new Map(points.map((p) => [p.name, p.points])); // for the tail tie-break below
-  const withVor = points.map((p) => ({ ...p, vor: Math.max(0, p.points - (base[p.pos] ?? 0)) }));
+  // A DUAL-ELIGIBLE PLAYER IS WORTH THE BETTER OF HIS BASELINES. VOR is the max over the positions
+  // ESPN says he may be started at, and `valuePos` records which one won -- because "he is worth $34"
+  // and "he is worth $34 AS A TIGHT END" are different facts, and only the second one tells a drafter
+  // which hole the money filled. With no eligibility map every player has exactly one candidate and
+  // this is the old single-position expression, unchanged.
+  const withVor = points.map((p) => {
+    const cand = eligibleFor(p, eligibility).filter((x) => base[x] != null);
+    let bestPos = cand[0] ?? p.pos;
+    for (const x of cand) if ((base[x] ?? 0) < (base[bestPos] ?? 0)) bestPos = x;
+    return { ...p, valuePos: bestPos, vor: Math.max(0, p.points - (base[bestPos] ?? 0)) };
+  });
   const streamed = (pos: string) => pos === "K" || pos === "DST";
 
   // K/DST are EXCLUDED from the VOR pool, not merely clamped after it.
@@ -167,7 +240,7 @@ export function computeValues(points: PointsRow[], lg: ValueLeague = DEFAULT_VAL
     .map((p) => {
       const raw = Math.max(1, Math.round(1 + p.vor * (streamed(p.pos) ? kdstRate : rate)));
       const value = streamed(p.pos) ? Math.min(raw, maxKDst) : raw;
-      return { name: p.name, pos: p.pos, value };
+      return { name: p.name, pos: p.pos, value, valuePos: p.valuePos };
     })
     // Ties break on PROJECTED POINTS, not arbitrarily. Below replacement level VOR is 0 and every
     // player collapses to the $1 floor -- correct as valuation (no surplus over a freely available

@@ -141,3 +141,84 @@ test("computeValues honours the maxKDst it is GIVEN, not the literal default", (
   assert.equal(new Map(computeValues(pts, lg, 2).map((v) => [v.name, v.value])).get("K1"), 2);
   assert.equal(new Map(computeValues(pts, lg, 7).map((v) => [v.name, v.value])).get("K1"), 7);
 });
+
+// --- DUAL ELIGIBILITY -----------------------------------------------------------------------------
+//
+// The claim being tested is a NO-OP claim: for a league in which nobody is eligible at two positions
+// -- which is every player on the 2026 board, measured -- the book must be the one that shipped, to
+// the character. So the tests come in pairs: the identity, and a positive control that shows the
+// machinery can move a number at all. An identity test alone passes just as well when the lever is
+// disconnected.
+
+/** The line `ff values` writes, so "identical" here means identical in the artifact, not in memory. */
+const csvOf = (rows: ReturnType<typeof computeValues>) =>
+  "player,pos,value\n" + rows.map((v) => `${v.name},${v.pos},${v.value}`).join("\n") + "\n";
+
+/**
+ * The same points as `fixture()`, with names that survive `nameKey`.
+ *
+ * This is not cosmetic. `nameKey` strips every non-letter, so the fixture's "WR6" keys as "wr" --
+ * the same key as WR1 through WR12. An eligibility map is keyed by nameKey, so keying one on the old
+ * names would silently mark all twelve receivers dual, and the test would be measuring something
+ * nobody would ever ship. Letters only: Rba..Rbl, Wra..Wrl, Tea..Tel.
+ */
+const LETTER = "abcdefghijkl";
+function eligFixture(): PointsRow[] {
+  const rows: PointsRow[] = [];
+  for (let i = 0; i < 12; i++) rows.push({ name: `Rb${LETTER[i]}`, pos: "RB", points: 300 - i * 10 });
+  for (let i = 0; i < 12; i++) rows.push({ name: `Wr${LETTER[i]}`, pos: "WR", points: 295 - i * 10 });
+  for (let i = 0; i < 12; i++) rows.push({ name: `Te${LETTER[i]}`, pos: "TE", points: i < 4 ? 280 - i * 5 : 100 - i });
+  return rows;
+}
+const WR6 = "Wrf", WR6KEY = "wrf";   // the sixth receiver: past the dedicated four, so he is flex pool
+
+test("no eligibility map, an EMPTY one, and an all-single one all produce the identical book", () => {
+  const pts = eligFixture();
+  const none = csvOf(computeValues(pts, LG, 2, true));
+  const empty = csvOf(computeValues(pts, LG, 2, true, new Map()));
+  // loadEligibilityMap never emits a single-position entry, but a caller could; it must be inert.
+  const single = csvOf(computeValues(pts, LG, 2, true, new Map([["rba", ["RB"]], ["tea", ["TE"]]])));
+  assert.equal(empty, none, "an empty eligibility map changed the book");
+  assert.equal(single, none, "a single-position entry changed the book");
+  // ...and the same for the baselines the book is built on.
+  assert.deepEqual(baselines(pts, LG, true, new Map()), baselines(pts, LG, true));
+});
+
+test("POSITIVE CONTROL: a dual-eligible player is valued at the BETTER of his two baselines", () => {
+  const pts = eligFixture();
+  const base = baselines(pts, LG);
+  // TE's baseline sits far below WR's in this fixture (leftover TEs collapse), so WR-to-TE
+  // eligibility is worth real money -- which is what makes this fixture able to show anything.
+  assert.ok(base.TE < base.WR, "fixture no longer discriminates: TE baseline must be the lower one");
+  const plain = new Map(computeValues(pts, LG).map((v) => [v.name, v]));
+  const dual = new Map(computeValues(pts, LG, 2, true, new Map([[WR6KEY, ["WR", "TE"]]])).map((v) => [v.name, v]));
+  assert.equal(plain.get(WR6)!.valuePos, "WR");
+  assert.equal(dual.get(WR6)!.valuePos, "TE", "the TE baseline is the better one and must be the one used");
+  assert.ok(dual.get(WR6)!.value > plain.get(WR6)!.value,
+    `${WR6} must be worth MORE as a dual: ${plain.get(WR6)!.value} -> ${dual.get(WR6)!.value}`);
+  // He is still reported at his projection's position -- eligibility widens where he can be STARTED,
+  // it does not reclassify him.
+  assert.equal(dual.get(WR6)!.pos, "WR");
+});
+
+test("FAULT INJECTION: marking ONE single-eligible player dual breaks the identity, and for him", () => {
+  const pts = eligFixture();
+  const before = new Map(computeValues(pts, LG).map((v) => [v.name, v.value]));
+  const after = computeValues(pts, LG, 2, true, new Map([[WR6KEY, ["WR", "TE"]]]));
+  const moved = after.filter((v) => before.get(v.name) !== v.value).map((v) => v.name);
+  assert.ok(moved.includes(WR6), "the injected player's value did not move -- the lever is not connected");
+  // Nobody else may CHANGE POSITION. (Others' dollars can still move: a larger surplus dilutes
+  // `rate`, and the claim moves one flex slot. That is a knock-on, not a re-classification.)
+  for (const v of after) if (v.name !== WR6) assert.equal(v.valuePos, v.pos, `${v.name} was re-valued at another position`);
+});
+
+test("a dual-eligible man counts toward the FLEX fill at the position that CLAIMS him", () => {
+  const pts = eligFixture();
+  const plain = baselines(pts, LG);
+  const dual = baselines(pts, LG, true, new Map([[WR6KEY, ["WR", "TE"]]]));
+  assert.notDeepEqual(dual, plain, "the claim did not reach the flex fill");
+  const listOf = (pos: string) => pts.filter((p) => p.pos === pos).map((p) => p.points).sort((a, b) => b - a);
+  assert.equal(listOf("TE").indexOf(dual.TE) - listOf("TE").indexOf(plain.TE), 1, "TE's flex share must rise by exactly one");
+  assert.equal(listOf("WR").indexOf(dual.WR) - listOf("WR").indexOf(plain.WR), -1, "WR's flex share must fall by exactly one");
+  assert.equal(dual.RB, plain.RB, "a WR/TE claim must not touch RB");
+});

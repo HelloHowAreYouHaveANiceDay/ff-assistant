@@ -10,6 +10,7 @@ import { scoreWeek, type ScoringRules } from "../draft/scoring.js";
 import { openDb, getConfig, nowIso } from "../db/db.js";
 import { dataPath } from "./paths.js";
 import { boardSpreads } from "../draft/spread.js";
+import { loadEligibilityMap } from "./eligibility.js";
 
 // last-year (season-1) REG fantasy points + games played under the LEAGUE's scoring, keyed by name_key
 async function lastYear(season: number, scoring: ScoringRules): Promise<Map<string, { pts: number; gms: number }>> {
@@ -123,9 +124,12 @@ export function resolveAgeExp(
 
 type Row = Record<string, string | number>;
 const COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "espn_pos", "tier", "team", "bye", "age", "exp", "ht", "wt", "forty",
-  "our_value", "edge", "adp", "vs_adp", "mkt_trend", "proj_pts", "p10", "p50", "p90", "last_pts", "last_gms", "ecr", "best", "worst", "espn_rank", "espn_adp", "rostered", "buzz", "depth", "news", "news_url"];
+  "our_value", "edge", "adp", "vs_adp", "mkt_trend", "proj_pts", "p10", "p50", "p90", "last_pts", "last_gms", "ecr", "best", "worst", "espn_rank", "espn_adp", "rostered", "buzz", "depth", "news", "news_url",
+  // APPENDED, not inserted. Every existing key keeps its position in the board's row_json, so a
+  // consumer reading by name is unaffected and one reading by index is not silently shifted.
+  "eligible"];
 const header = (lastYr: number) => ["Rank", "Player", "Pos", "Us_Pos", "ECR_Pos", "ESPN_Pos", "Tier", "Team", "Bye", "Age", "Exp", "Ht", "Wt", "40yd",
-  "OurValue$", "vsECR", "ADP", "vsADP", "Mkt30d", "ProjPts", "P10", "P50", "P90", `${lastYr}Pts`, `${lastYr}Gms`, "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "ESPN_ADP", "Rostered%", "SleeperBuzz", "Depth", "Latest News", "NewsURL"];
+  "OurValue$", "vsECR", "ADP", "vsADP", "Mkt30d", "ProjPts", "P10", "P50", "P90", `${lastYr}Pts`, `${lastYr}Gms`, "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "ESPN_ADP", "Rostered%", "SleeperBuzz", "Depth", "Latest News", "NewsURL", "Eligible"];
 
 export async function assemble(dbPath?: string, pointsPath = dataPath("points.csv")): Promise<number> {
   const db = openDb(dbPath);
@@ -139,7 +143,14 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     const [name, pos, pts] = l.split(","); return { name: (name || "").trim(), pos: (pos || "").trim().toUpperCase(), points: Number(pts) };
   }).filter((p) => p.name && Number.isFinite(p.points));
   const projByName = new Map(points.map((p) => [p.name, p.points]));
-  const values = computeValues(points, resolveValueLeague(cfg), cfg.levers.maxKDst);
+  // ESPN'S OWN ELIGIBILITY, when it has been ingested. `loadEligibilityMap` carries only players who
+  // are startable at more than one of QB/RB/WR/TE, so on a board where nobody is -- which is every
+  // player on the 2026 board, measured -- the map is EMPTY and computeValues is byte-for-byte the
+  // function that shipped. `eligKnown` is what separates "measured, and he is single-eligible" from
+  // "never ingested": without it the Eligible column would assert a fact it does not have.
+  const eligKnown = (db.prepare("SELECT COUNT(*) AS n FROM raw_espn_eligibility WHERE season=@s").get({ s: season }) as { n: number }).n > 0;
+  const elig = eligKnown ? loadEligibilityMap(db, season) : new Map<string, string[]>();
+  const values = computeValues(points, resolveValueLeague(cfg), cfg.levers.maxKDst, true, elig);
 
   // 2-4. external fetches (ported): last-year actuals + ESPN ranks
   const [ly, espn] = await Promise.all([lastYear(season, cfg.scoring_rules), espnRanks(season)]);
@@ -214,6 +225,10 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
       ecr: m?.ecr ?? "", ecr_pos: m?.ecr_pos ?? "", best: m?.best ?? "", worst: m?.worst ?? "",
       espn_rank: es?.rank ?? "", espn_adp: es?.adp ?? "", rostered: m?.rostered != null ? Math.round(m.rostered) : "",
       injury: nd?.injury ?? "", depth: nd?.depth ?? "", buzz: nd?.buzz ?? "", news: nd?.news ?? "", news_url: nd?.url ?? "",
+      // ESPN's eligible SET, "RB/WR" style. Blank means never ingested -- not "single-eligible":
+      // a blank and a confident wrong answer look identical downstream and only one says so.
+      eligible: eligKnown ? (elig.get(k) ?? [v.pos.toUpperCase()]).join("/") : "",
+      value_pos: v.valuePos ?? v.pos,
     });
   }
   rows.sort((a, b) => (b.our_value as number) - (a.our_value as number));
@@ -277,6 +292,7 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     db.prepare("DELETE FROM player_value WHERE season=@s").run({ s: season });
     db.prepare("DELETE FROM ranking WHERE source='espn' AND season=@s").run({ s: season });
     db.prepare("DELETE FROM board WHERE season=@s").run({ s: season });
+    db.prepare("DELETE FROM player_value_position WHERE season=@s").run({ s: season });
     const upPlayer = db.prepare("INSERT INTO player (player_id, name, position, updated_at) VALUES (?,?,?,?) ON CONFLICT(player_id) DO NOTHING");
     // player_sk comes from STAGING, looked up by (name_key, position). Consumers get the stable id so
     // they can stop joining on names; player_id stays for the callers not yet migrated.
@@ -288,6 +304,9 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     const upVal = db.prepare("INSERT INTO player_value (player_id, player_sk, season, our_value, our_rank, pos_rank, tier, proj_pts, last_pts, last_gms, updated_at) VALUES (@id,@sk,@s,@v,@rk,@pr,@t,@pp,@lp,@lg,@now)");
     const upRank = db.prepare("INSERT INTO ranking (player_id, source, season, overall_rank, pos_rank, adp, fetched_at) VALUES (@id,'espn',@s,@rank,@pos,@adp,@now) ON CONFLICT(player_id,source,season) DO UPDATE SET overall_rank=excluded.overall_rank, pos_rank=excluded.pos_rank, adp=excluded.adp, fetched_at=excluded.fetched_at");
     const upBoard = db.prepare("INSERT INTO board (player_id, player_sk, season, row_json, updated_at) VALUES (@id,@sk,@s,@json,@now)");
+    // WHICH POSITION THE DOLLAR VALUE WAS TAKEN AT. Written only when eligibility has actually been
+    // ingested, so an empty table means "not measured" rather than "everyone is single-eligible".
+    const upValPos = db.prepare("INSERT INTO player_value_position (player_id, season, board_pos, value_pos, eligible_json, updated_at) VALUES (@id,@s,@bp,@vp,@ej,@now)");
     const numOrNull = (x: unknown) => typeof x === "number" ? x : null;
     for (const r of rows) {
       const id = nameKey(r.player as string); if (!id) continue;
@@ -303,6 +322,10 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
       if (typeof r.espn_rank === "number") upRank.run({ id, s: season, rank: r.espn_rank, pos: r.espn_pos || null, adp: numOrNull(r.espn_adp), now });
       const obj: Record<string, unknown> = {}; COLS.forEach((c, i) => (obj[HEAD[i]] = r[c]));
       upBoard.run({ id, sk, s: season, json: JSON.stringify(obj), now });
+      if (eligKnown) {
+        upValPos.run({ id, s: season, bp: String(r.pos), vp: String(r.value_pos ?? r.pos),
+          ej: JSON.stringify(elig.get(id) ?? [String(r.pos)]), now });
+      }
     }
   });
   tx();
