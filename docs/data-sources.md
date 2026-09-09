@@ -304,6 +304,15 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
   and is one of the tables `docs/data-layers.md` names as the cause of the age-curve bug.
 - **Feeds.** birthdate -> `stg_player` -> `feat_player_season.age`.
 - **Status.** ingested.
+- **THE CROSSWALK IS THE CEILING ON EVERY RESOLUTION RATE, and it is the reason Phase 2c's P10 did
+  not hold.** `player_ids` holds 12,492 people (11,927 keys after collapsing the (name_key, position)
+  collisions, plus 321 variant rows). Measured against the 12,927 NFL draft picks in
+  `raw_nfl_draft_pick`: **5,828 carry a name the crosswalk has never heard of** -- 4,663 of them
+  drafted before 2000 -- and a further **756 have a known name at a position the crosswalk spells
+  differently** (the draft feed says `DB` and `T`; the crosswalk says `CB`/`S` and `OT`). So the 49%
+  resolution rate on that feed is ~45 points of coverage and ~6 of vocabulary, and no amount of
+  re-keying moves it. Raising it needs a bigger crosswalk (nflverse `roster_weekly`, section 1.12
+  above) or a defensive/OL position map -- neither of which is an identity fix.
 - **Unread columns** (13 of 39): `common_first_name`, `nfl_id`, `ngs_position_group`, `ngs_position`,
   `headshot`, `college_conference`, `last_season`, `latest_team`, `ngs_status`,
   `ngs_status_short_description`, `pff_position`, `pff_status`, `draft_team`.
@@ -348,7 +357,15 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
   the same player has a different consensus rank in June and in late August, and using the late one
   for a June decision is lookahead. `features/build.ts` restricts a season's preseason ECR to the
   **latest scrape in August or the first week of September**.
-- **Seasons.** The archive backs the whole backtest range; per-season coverage is in `feat_coverage`.
+- **Seasons.** The archive's PRESEASON scrapes -- the only ones a point-in-time consumer may read --
+  begin in **2020**, not at the start of the backtest range. Measured, in `ranking_history`, for the
+  August/early-September window: 2020 (2,260 rows), 2021 (4,452), 2022 (3,720), 2023 (4,727), 2024
+  (4,862), 2025 (1,364), and NOTHING for 2018, 2019 or the live season. That bound is why
+  `--market ecr` covers only 2020-2024, why `fact_draft_pick` carries a NULL consensus for 2018 and
+  2019, and why the price model is fitted on 2020-2025 -- training it on the two consensus-less
+  seasons takes its leave-one-season-out MAE from $3.72 to $6.38, because `no_consensus` then has to
+  mean both "we do not know this player" and "this is the 2018 RB1". The live season reads `ranking`
+  instead, which is the table the board is priced from. Per-season coverage is in `feat_coverage`.
 - **Feeds.** `feat_player_season.{ecr_pos_rank, ecr_sd}`, `fact_draft_pick.consensus_*`, the
   conditional rank curve, the live board.
 - **Status.** ingested, and heavily used.
@@ -419,8 +436,12 @@ is the credential. Everything below is a GET.
   Per-season auction totals: 2018 $2,757, 2019 $2,789, 2020 $2,769, 2021 $2,772, 2022 $2,796,
   2023 $2,783, 2024 $2,767, 2025 $3,157, 2026 $3,148. The league went 14 -> 16 teams in 2025.
 - **Fetch path and cost.** `ff ingest-raw league-history --seasons 2012-2026`, ~9s for 15 seasons.
-- **Feeds.** `fact_draft_pick` (738 rows) is built from the same adaptor call today; it can now be
-  rebuilt from the raw table instead. The price model and the inflation model are the consumers.
+- **Feeds.** `fact_draft_pick` (**1,658 rows, 2018-2026**), `fact_team_season` (130) and
+  `fact_matchup` (1,050), all built by `ff build-picks` FROM THIS TABLE since Phase 2c -- the picks
+  fact was previously read from `data/recaps.json`, a hand-scraped gitignored file covering four
+  seasons, and its per-season dollar totals are now asserted against the raw table to the dollar.
+  Consumers: the price model, the inflation model, the manager profiles (`ff build-managers`), the
+  derived positional gates, and the season-simulator calibration harness.
 - **Status.** ingested (this branch). Before it, these rows existed only because a scratchpad script
   had been run once by hand -- the store's most league-specific data was not reproducible.
 

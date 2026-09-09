@@ -1,5 +1,433 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## PHASE 2C: one key space, real outcomes, and the honest arbiter (2026-09-09)
+>
+> Eleven pre-registered predictions, P10 to P20. **Seven failed and four held.** The failures carry
+> the content: each one says, in a different place, that a number is only as good as the join, the
+> season range or the opponent behind it. None was re-specified after the fact, and nothing was tuned
+> to make one hold.
+>
+> | | prediction | outcome |
+> |---|---|---|
+> | P10 | draft-pick and participation resolution each rise 15+ points | **FAILED** -- 49.1% -> 48.7% and 75.4% -> 75.4% |
+> | P11 | price LOSO MAE on 2018-2025 at or below $4.32 | **FAILED** -- $6.38 |
+> | P12 | 2026 holdout MAE <= $5.00, top-12 bias within +/-$3 | **FAILED** -- $7.07, +$4.3 |
+> | P13 | price beats rank on 2026 by >= $2 of MAE | **FAILED** -- it LOSES by $1.48 |
+> | P14 | per-owner profiles still carry no out-of-sample signal | HELD |
+> | P15 | the simulator's playoff Brier beats uniform | HELD |
+> | P16 | its title Brier beats uniform | **FAILED** -- 1.0% worse than uniform |
+> | P17 | the simulator is over-confident at the top | HELD |
+> | P18 | honest-arbiter title rate in [12%, 26%] | HELD -- 14.5% |
+> | P19 | aggr 0.7 beats 1.0 there by >= 4 points | **FAILED** -- +1.0pp, CI [-3.7, +5.9] |
+> | P20 | book ordering by our title rate is vor > rank > price | **FAILED** -- it is rank > price > vor |
+>
+> ### Step 0 -- identity reconciliation: the store held two key spaces
+>
+> `stg_player` called `resolveOrMint` with an EMPTY id bag and no birthdate, so every match attempt
+> fell through to the "name + position among rows that also have no birthdate" branch -- which misses
+> every registry row, because registry rows all carry a birthdate. Staging therefore MINTED a key for
+> almost everybody, and anything resolving through `player_xref` joined nothing, silently, while
+> reporting a healthy resolution rate. **A rate measures whether a key was found, never whether it
+> means anything to the table it will be used against.**
+>
+> | | before | after |
+> |---|---|---|
+> | shared gsis ids agreeing on `player_sk` | 59 / 7,961 | **7,939 / 7,939** |
+> | `player_identity` rows | 22,814 | 12,122 |
+> | `stg_player` rows | 11,966 | 12,122 |
+> | keys staging minted for itself | 10,897 | **39** (the board-only players) |
+> | how staging decided identity | `minted` 10,897, `name+pos` 1,232 | gsis 7,940, pfr 1,559, name+birthdate 1,446, name+pos 818, espn 231, sleeper 85, fantasypros 11, minted 39 |
+>
+> Four things had to move together, and three of them are defects in their own right:
+>
+> 1. **The id bag and the birthdate are passed.** The registry decides; it wins every tie-break, per
+>    `docs/data-layers.md`, and the previous staging key is never consulted.
+> 2. **An ambiguous raw key is EXPANDED, not read collapsed.** `player_ids` resolves a
+>    (name_key, position) two men share by NULLing every field they disagree about and keeping both
+>    sides in `player_ids_variant`. Read alone it can produce at most ONE key for the pair -- the merge
+>    the layer exists to prevent, arrived at from the raw side. Marvin Harrison Jr.'s gsis was sitting
+>    on a row carrying his father's 1973 birthdate. `crosswalkPeople()` expands them and is shared by
+>    the registry and staging, because two readers that disagree about how many people a key is are
+>    how the spaces diverged in the first place.
+> 3. **The TEAM vocabulary was never conformed.** The crosswalk writes SFO/NEP/GNB and everything else
+>    writes SF/NE/GB, so every consumer using team as a discriminator silently lost it: `pickStaged`
+>    had no usable staged row for Christian McCaffrey and his age fell back to the name-keyed bio
+>    table -- the exact join this layer removes, defeated by a spelling. `normTeam` now sits beside
+>    `normPos`.
+> 4. **`pfr` joined the crosswalk** and `stg_player.pfr_id` with it, retiring the parallel route that
+>    mapped a per-person id through (name_key, position) and had to refuse for anyone sharing a name.
+>
+> The board's `player_sk` and its AGE now come from the SAME `pickStaged` decision; the name-only
+> fallback is gone and unresolved is a counted, named state (516/523, the seven listed by name).
+>
+> **`identity_rekey`.** 11,966 old keys -> 3 unchanged, 11,946 moved, 14 merged, 3 split, 0 dropped,
+> with the reason DERIVED from the shape of the mapping rather than asserted. Marvin Harrison is three
+> staged rows (the son at 2002 with the son's gsis, the Hall of Famer at 1972-08-25 out of Syracuse,
+> and a third man the crosswalk lists at 315lb out of TCU); both Justin Jeffersons and both Lamar
+> Jacksons are two.
+>
+> **The frozen table was migrated, never regenerated.** `scorecard_prediction` is write-once and its
+> `subject` IS a `player_sk` for the player kinds. Season subjects joining staging went **63/490 ->
+> 490/490** and weekly **308/2,389 -> 2,389/2,389**, with the row count unchanged at 3,077 and
+> `raw_espn_projection` untouched at 577 (it is keyed by ESPN id). Two defects surfaced doing it:
+> migrating the `odds` kind through a player map rewrote TEAM ids and was caught only by a UNIQUE
+> constraint (**a numeric column is not a key space**); and because the old and new spaces OVERLAP,
+> the first cut was order-dependent (five real moves reported as collisions) and not idempotent (a
+> second run walked every row one more step, onto a different man). Both are fault-injected.
+>
+> **And a defect in every feature builder, which the rekey exposed.** They all upsert on a key that
+> CONTAINS the surrogate key, so a rebuild after the keys moved could not reach the old rows and added
+> the new ones beside them: `feat_player_season` 17,189 -> **33,086** and `feat_player_week` 287,632 ->
+> **553,900**, with every per-season count still looking right. Each builder now replaces the season
+> it rebuilds.
+>
+> #### Row counts through the rebuild
+>
+> | table | before | after |
+> |---|---|---|
+> | `stg_player` / `player_identity` | 11,966 / 22,814 | 12,122 / 12,122 |
+> | `player_xref` | 27,301 | 36,618 |
+> | `history-points.csv` (sk resolved) | 41,245 (91.5%) | 41,245 (**91.1%**) |
+> | `history-weekly.csv` (sk resolved) | 422,499 (92.4%) | 422,499 (**92.1%**) |
+> | `feat_player_season` | 17,189 (99.0%) | 17,189 (98.2%) |
+> | `feat_player_week` | 287,632 (98.9%) | 287,887 (98.2%) |
+> | `feat_player_season_ext` / `feat_player_week_context` | 8,021 / 131,892 | 8,021 / 131,892 |
+> | `feat_player_week_model` | 187,447 | 187,566 |
+> | `fact_draft_pick` | 738 | 1,658 (Step 1) |
+> | `board` / `player_value` (sk resolved) | 523 (100%) | 523 (**98.7%**) |
+> | `scorecard_prediction` / `raw_espn_projection` | 3,077 / 577 | 3,077 / 577 |
+>
+> The resolution rates that FELL did so because the layer stopped guessing: a (name_key, position)
+> pair two staged players now share resolves to nobody, which is the correct answer and was previously
+> a coin flip.
+>
+> **P10 FAILED, and the reason is a coverage ceiling rather than a keying one.** Per-source resolution,
+> before -> after: draft picks 49.1 -> 48.7, contracts 49.0 -> 48.6, participation 75.4 -> 75.4,
+> injuries 82.4 -> 82.4, snaps 82.4 -> **82.5**, depth charts 79.2 -> **79.4**, player-week 94.4 ->
+> 94.4, FFC ADP 92.0 -> 90.8. Measured directly against the 12,927 NFL draft picks: **5,828 carry a
+> name the crosswalk has never heard of** (4,663 of them drafted before 2000) and a further **756 have
+> a known name at a position the crosswalk spells differently** -- the draft feed says `DB` and `T`,
+> the crosswalk says `CB`/`S` and `OT`. So that 49% is ~45 points of coverage and ~6 of vocabulary,
+> and re-keying cannot move either. The prediction was about the wrong quantity.
+>
+> **Regression.** The flagless arbiter reproduced **38.2% / 96% and the per-season line exactly**.
+> `ff evaluate-projection --seasons 2008-2025` moved and in the right direction: RMSE 54.32 -> **54.17**,
+> pinball 12.39 -> **12.31**, coverage 0.764 -> **0.759**, curve baseline 55.55 -> 55.54, all gates
+> still PASS. Resolving identity correctly changes which history rows carry an age and which prior
+> season a row joins to; that is the whole delta.
+>
+> **FAULT INJECTION.** Reverting to the empty id bag puts staging back to 11,966 rows and 10,897
+> minted keys and fails the shared-gsis agreement test. Dropping the variant expansion loses 321
+> people and fails both staging-completeness tests.
+>
+> ### Step 1 -- the league's own history as facts
+>
+> `fact_draft_pick` was built from `data/recaps.json`, a hand-scraped gitignored file covering four
+> seasons and 738 picks that could not be rebuilt by re-fetching -- the one property the raw layer
+> guarantees. It now reads `raw_league_pick`: **1,658 picks over 2018-2026**, with totals asserted
+> against that table **to the dollar** in all nine seasons.
+>
+> | season | teams | picks | total | consensus rows | consensus as-of |
+> |---|---|---|---|---|---|
+> | 2018 | 14 | 182 | $2,757 | 0 | none -- the ECR archive does not reach it |
+> | 2019 | 14 | 182 | $2,789 | 0 | none |
+> | 2020 | 14 | 182 | $2,769 | 164 | 2020-09-03 |
+> | 2021 | 14 | 182 | $2,772 | 165 | 2021-09-03 |
+> | 2022 | 14 | 182 | $2,796 | 164 | 2022-09-02 |
+> | 2023 | 14 | 182 | $2,783 | 165 | 2023-09-01 |
+> | 2024 | 14 | 182 | $2,767 | 165 | 2024-09-06 |
+> | 2025 | 16 | 192 | $3,157 | 173 | 2025-08-08 |
+> | 2026 | 16 | 192 | $3,148 | 176 | 2026-09-09 (from `ranking`, the live board's own source) |
+>
+> New columns: `money_remaining`, `slots_remaining` and `season_total_money` replay the auction pick by
+> pick, and `price_share` normalises the 14-team ($2,800) and 16-team ($3,200) eras, which are
+> different currencies rather than different amounts.
+>
+> `fact_team_season` (130 rows) and `fact_matchup` (1,050 games) are new. `champion`, `made_playoffs`
+> and `settled` are derived once, here; `settled` comes from the data -- every team has a final rank
+> and one of them is 1 -- rather than from the calendar, because an in-progress season's placeholder
+> rank looks exactly like a result.
+>
+> **A derivation that does not work, recorded so nobody rebuilds it.** The playoff field looked
+> readable off the finishes ("the teams finishing 1..k are exactly seeds 1..k, for the largest such
+> k") and is not: `k = teams` satisfies it trivially, so the first cut always returned its own
+> fallback -- correct for every real season and structurally unable to return anything else, found
+> only by fault injection. Bounded to a plausible bracket it is still not identifiable: across the six
+> settled 14-team seasons it reads 6, 8, 6, 4, 6, 8, because ESPN's `final_rank` is a
+> consolation-inclusive ordering (in 2021 the 8 seed finished FIFTH and the 6 seed seventh). So the
+> field is a stated constant, 6 below 16 teams and 7 at or above -- what
+> `settings.config.playoffTeams` records -- and `seedsAgreeAtField` reports the check beside it. Seven
+> of the eight settled seasons agree.
+>
+> ### Step 2 -- the price model: more seasons only help if they carry the feature
+>
+> All three predictions failed, for one reason. The ECR archive starts in 2020, so every pick in 2018
+> and 2019 is unranked, and `no_consensus` then has to carry both "we do not know this player" and
+> "this is the 2018 RB1".
+>
+> | leave-one-season-out window | price | rank | vor |
+> |---|---|---|---|
+> | 2022-2025 (the recorded four seasons, rebuilt on the new keys) | **$4.24** | $7.40 | $7.70 |
+> | 2020-2025 (every season with a consensus) | **$3.72** | $7.42 | $7.61 |
+> | 2018-2025 (P11's window) | **$6.38** | $8.29 | $8.53 |
+>
+> So the artifact ships fitted on **2020-2025**, chosen on that rotation and confirmed -- not chosen --
+> on the holdout. Scored on the held-out **2026** draft, every book normalised to the season's own
+> total spend:
+>
+> | book | MAE | within $3 | top-12 | 13-36 | 37-96 | tail |
+> |---|---|---|---|---|---|---|
+> | price (fitted 2020-2025) | **$4.70** | 65.1% | 9.0 / +4.1 | 8.0 / -5.0 | 8.5 / +0.9 | 1.7 / +0.2 |
+> | price (fitted 2018-2025, the pre-registered arm) | $7.07 | 63.0% | 10.6 / +4.3 | 14.1 / -9.7 | 10.4 / -1.0 | 3.6 / +2.1 |
+> | rank | $5.59 | 53.6% | 6.7 / +1.8 | 9.2 / +4.3 | 10.5 / -3.8 | 2.3 / +0.7 |
+> | vor | $7.23 | 56.8% | 23.0 / +23.0 | 13.7 / -11.0 | 12.2 / +1.1 | 1.7 / -0.8 |
+>
+> P12 fails on the top-12 bias either way (+$4.1 on the shipped arm against a predicted +/-$3), and
+> P13 fails outright: the price book beats `rank` by $0.89, not the predicted $2, and the
+> pre-registered arm LOSES to it by $1.48. **The `rank` book is better at the top of the market than
+> the fitted one is**, which is worth remembering the next time an elite-tier conclusion rests on the
+> price book. `vor` -- our own valuation function, the default opponent -- overpays the top twelve by
+> $23 a man.
+>
+> One caveat on the 2026 column: that season's consensus is read from `ranking`, whose scrape is dated
+> 2026-09-08, after the August draft. It is preseason-final rather than pre-draft, and the holdout is
+> mildly flattered by it.
+>
+> **The bot field was rebuilt too.** `ff build-managers` derives `data/managers.json` from
+> `fact_draft_pick` + `fact_team_season` -- 16 real owners, 130 team-seasons, every one of 1,658 picks
+> attributed -- replacing a browser scrape that needed the desktop app open, reached four seasons, and
+> carried two placeholder `member <guid>` profiles standing in for real people. `leagueShare` barely
+> moves (QB .0778 -> .0775, RB .4270 -> .4275), but the seats do, so **the flagless arbiter goes 38.2%
+> -> 38.1% and its per-season line changes**. That is an input change, declared here rather than
+> discovered later.
+>
+> **P14 HELD.** On 112 team-seasons (up from 98), leave-one-season-out, the personalised profiles
+> still do not beat "everyone drafts league-average": **11.51pp against 11.43pp**, winning 56/112.
+> The heterogeneous field remains decoration and per-owner targeting advice remains untrustworthy.
+>
+> **Face validity, re-derived.** `scripts/face-validity.mjs` now takes its target ranges from
+> `fact_draft_pick` 2018-2026 as shares of the room's money, instead of three drafts retyped out of a
+> doc. Nine seasons estimate the range far better than three, so the old "25% of the range OR 25% of
+> the quantity" tolerance became indefensible and is now 10% of the observed range:
+>
+> | book | metrics inside | what is off |
+> |---|---|---|
+> | vor | 6/10 | total spend, top price, RB total, QB total |
+> | rank | 7/10 | total spend, top price, players >$30 |
+> | price | **8/10** | top price ($97 against a real $101-121), TE spend ($308 against $206-283) |
+>
+> ### Step 3 -- the season simulator, scored against eight seasons of real outcomes
+>
+> `seasonOdds` drives trade advice, waiver advice and the frozen preseason scorecard, and had never
+> been scored against anything. Every check on it was INTERNAL -- conservation laws, marginals, the
+> copula's correlations -- and an internal check is structurally incapable of noticing over-confidence,
+> because it compares the system against itself.
+>
+> 114 team-seasons, 2018-2025: post-draft rosters from `fact_draft_pick`, each season projected by ITS
+> OWN per-fold artifact at as-of Sep 1, the league's real schedule from `fact_matchup`, 3,000 trials,
+> seed 7, scored against `fact_team_season`.
+>
+> | | Brier | log loss |
+> |---|---|---|
+> | PLAYOFFS -- simulator | **0.2370** | 0.6624 |
+> | PLAYOFFS -- uniform | 0.2451 | 0.6832 |
+> | PLAYOFFS -- points-for (has SEEN the season) | 0.1378 | 0.4614 |
+> | TITLE -- simulator | **0.0659** | 0.2598 |
+> | TITLE -- uniform | 0.0652 | 0.2540 |
+> | TITLE -- points-for (has SEEN the season) | 0.0636 | 0.2442 |
+>
+> **P15 HELD** (playoff skill +3.3% over uniform). **P16 FAILED**: the title Brier is 1.0% WORSE than
+> a flat 1/n. Eight titles in 114 team-seasons is almost no signal, and the simulator's spread of
+> title probabilities (3% to 20%) buys nothing against it. **P17 HELD**, and it is the largest
+> miscalibration on the page:
+>
+> | predicted playoff band | n | mean predicted | realised | gap |
+> |---|---|---|---|---|
+> | 5-15% | 2 | 8.3% | 0.0% | -8.3 |
+> | 15-30% | 13 | 24.1% | 23.1% | -1.0 |
+> | 30-50% | 71 | 41.3% | 47.9% | **+6.6** |
+> | 50-70% | 26 | 58.0% | 46.2% | **-11.1** |
+> | 70-100% | 1 | 74.4% | 100.0% | +25.6 |
+>
+> The simulator separates the league more than the league separates itself -- which is what you would
+> expect from a model that gives every other team a static roster for fourteen weeks.
+>
+> **Shrinkage does NOT fix it, and that is the reportable result.** Chosen leave-one-season-out, the
+> held-out Brier gets WORSE: 0.2370 -> 0.2385 for playoffs and 0.0659 -> 0.0661 for the title, with the
+> per-fold factor swinging 0.10-0.40 and 0.20-0.70. Eight seasons cannot estimate it. Nothing applies
+> a correction; it is a finding for Phase 3.
+>
+> **P(title | seed)** is flat where it should not be: the 2 seed and the 4 seed each won 25% of the
+> time against a predicted 11.6% and 5.8%, while the 6 and 8 seeds never won. The 2025 champion was
+> the **7 seed at 9-5**, and 2025 is the one season in eight where the simulator's most likely champion
+> WAS the champion.
+>
+> **The control.** Outcomes shuffled within each season -- preserving how many berths and titles there
+> were, destroying only which team got them -- score 0.2587 and 0.0671 against the honest 0.2370 and
+> 0.0659. The join is real; the title arm has a little signal and simply loses to uniform anyway.
+>
+> **The 2026 odds accrual.** The 32 frozen rows read back cleanly: 16 teams with both probabilities,
+> summing to 700% playoff and 100% title, the conservation the simulator imposes. But `scorecard.ts`
+> has no `odds` branch in its SCORING phase, only `weekly` and `season` -- the snapshot path exists and
+> the accrual path does not. Recorded, not fixed.
+>
+> ### Step 4 -- the honest arbiter
+>
+> Phase 2b's harshest arm gave the room the real published consensus but a SINGLE shared view, and
+> left it standing pat all season. Both are now fixed: `--market ecr --market-noise 0` drafts the
+> consensus as published, `--bot-noise 0.20` gives each bot an independent view on top of it (bounded
+> by the price model's own leave-one-season-out residual dispersion, 0.35-0.90 by tier), and
+> `--bot-churn` gives the field the waiver wire at this room's observed rate. Rookies are in the pool
+> at their ECR rank. 2020-2024 -- every season the FantasyPros archive reaches -- n=300, against the
+> rebuilt 16-owner field.
+>
+> | market model | churn | vor book | rank book | price book |
+> |---|---|---|---|---|
+> | our projection x one shared sd 0.30 *(legacy)* | off | 41.5% | 36.2% | 33.9% |
+> | our projection x one shared sd 0.30 *(legacy)* | **on** | 28.3% | 29.4% | 29.3% |
+> | consensus AS PUBLISHED + per-bot 0.20 | off | 23.1% | 23.8% | 16.7% |
+> | consensus AS PUBLISHED + per-bot 0.20 | **on** | **11.9%** | **21.0%** | **14.5%** |
+>
+> Every cell is paired on common random numbers; the season-level bootstrap CIs are over five seasons,
+> and the detectable effect at 80% power with five seasons runs 2-28pp depending on the cell, which is
+> itself worth reading before believing any small difference here.
+>
+> **What CHURN costs, paired:**
+>
+> | market | book | cost | 95% CI over seasons | seasons better |
+> |---|---|---|---|---|
+> | legacy | vor | 13.1pp | [11.5, 15.2] | 5/5 |
+> | legacy | rank | 6.8pp | [3.9, 9.2] | 5/5 |
+> | legacy | price | 4.7pp | [3.5, 5.9] | 5/5 |
+> | ECR | vor | 11.3pp | [6.6, 15.4] | 5/5 |
+> | ECR | rank | 2.8pp | [1.2, 4.4] | 4/5 |
+> | ECR | price | **2.2pp** | **[-0.5, 4.9]** | 4/5 |
+>
+> **The churn penalty is mostly an artefact of the mirror.** Against a field that prices players
+> exactly as we do, giving it the waiver wire costs us 11-13 points; against a field pricing on the
+> published consensus with its own fitted book, it costs 2.2 and the interval contains zero. The 12.8
+> points recorded in Phase 2b was measured in the top-left cell.
+>
+> **What the MARKET MODEL costs, paired:** vor 18.3pp [9.8, 29.5] standing pat and 16.5pp [10.3, 23.6]
+> with churn; price 17.3pp [9.5, 24.0] and 14.8pp [5.2, 23.5]; rank 12.4pp [-6.7, 26.9] and 8.4pp
+> [-8.3, 20.5], both intervals containing zero -- the rank book is by far the least sensitive to which
+> market it faces, which is what you would expect of the one book that was never built from either
+> side's projection.
+>
+> **The long arm, 2012-2024 (13 seasons, legacy market, vor book), n=300:** 38.8% standing pat against
+> **26.2%** with churn -- 12.7pp, CI [11.1, 14.4], worse in 13 of 13 seasons. That is the cleanest
+> churn measurement in the record and it agrees with the 2b figure; it is also the cell whose market
+> model the five-season grid above says is the flattering one.
+>
+> #### P18, P19, P20
+>
+> **P18 HELD.** Under the honest arbiter with the price book -- the cell the prediction named -- our
+> title rate is **14.5%**, inside the pre-registered [12%, 26%].
+>
+> **P19 FAILED, and it is the most consequential number in this phase.** Shading at `aggr 0.7` against
+> `aggr 1.0`, same cell, paired: **14.5% against 13.5%, a difference of +1.0pp, CI [-3.7, +5.9]**,
+> better in 3 of 5 seasons, McNemar p = 0.44. The prediction asked for at least 4 points.
+>
+> **But the control says the arbiter is NOT why**, and running it is the only reason this is a finding
+> rather than a fabrication. `aggr 0.7` is recorded as the biggest single lever, ~+10pp, measured over
+> 25 seasons under the LEGACY arbiter; comparing that to a five-season honest-arbiter number and
+> calling the gap an arbiter effect would be correlating two facts from two different samples. So the
+> same two arms were run on the SAME five seasons and the SAME book, changing only the market and the
+> churn:
+>
+> | arbiter, 2020-2024, price book, n=300 | aggr 0.7 | aggr 1.0 | paired difference |
+> |---|---|---|---|
+> | legacy market, standing pat | 33.9% | 35.5% | **-1.6pp**, CI [-3.5, +0.1], better in 1/5 |
+> | ECR as published + per-bot 0.20 + churn | 14.5% | 13.5% | **+1.0pp**, CI [-3.7, +5.9], better in 3/5 |
+>
+> **Shading does not reproduce as a large lever on these five seasons under EITHER arbiter.** The
+> difference between +10pp and +/-1pp is the SEASON WINDOW, not the opponent. And the honest arbiter
+> can never have more seasons: the FantasyPros archive begins in 2020, so this arm is structurally
+> capped at five or six, and its detectable effect at 80% power is 3-8pp. **A lever worth 10 points on
+> 25 seasons is simply not measurable on five**, and neither of these two rows is evidence against it.
+> Nothing is changed: `aggr` stays at 0.7, and the honest reading is that the honest arbiter cannot
+> currently adjudicate a lever of this size.
+>
+> (The `aggr 0.7` arm reproduced the grid's `ecr-price-churnon` cell to the decimal, 14.5%, which is
+> the positive control that `--aggr` is connected and that 0.7 is what the stored default holds.)
+>
+> **P20 FAILED, and the direction is the finding.** The predicted ordering was vor > rank > price, on
+> the reasoning that `vor` is our own valuation function and a mirror flatters most. Measured, under
+> the honest arbiter with churn: **rank 21.0% > price 14.5% > vor 11.9%** -- very nearly the reverse.
+> Standing pat it is rank 23.8% > vor 23.1% > price 16.7%. A field that prices players exactly as we
+> do makes the same mistakes we do: it does not overpay the studs we are avoiding, and it does not
+> leave the mid-round value we are collecting. **A mirror is not automatically the easy opponent**,
+> and the intuition that it must be is the same self-reference the FLEX bug hid behind.
+>
+> #### The headline paragraph
+>
+> **Our championship rate is 38.1% against a field that drafts on our own projection plus one shared
+> error of an asserted sd 0.30 and never touches its roster, over 25 seasons (1999-2024, n=150, the
+> flagless arbiter). It is 14.5% against a field that drafts the real published FantasyPros consensus
+> with an independent per-bot view of log-sd 0.20, prices with a book fitted on this room's own 1,102
+> picks, and works the waiver wire at this room's observed rate, over the five seasons that consensus
+> exists for (2020-2024, n=300). The same cell reads 21.0% with the rank book and 11.9% with the vor
+> book. Nothing about our strategy differs between those numbers.**
+>
+> **The recommendation, for the owner to take or leave.** Keep the flagless run as the regression
+> tripwire -- it reproduces to the season and that is its job -- and quote
+> `--market ecr --market-noise 0 --bot-noise 0.20 --bot-churn --bot-book price` over 2020-2024 as the
+> rate a plan budgets against, because `price` is the only opponent book fitted on this room and the
+> best-calibrated of the three against nine real drafts (8/10 metrics, against 7 and 6). Then check
+> that the conclusion survives the other two books, per this repo's standing rule. **The default is
+> NOT changed here**: doing so would silently re-baseline every number already recorded, and the
+> season window would drop from 25 to 5 -- which the P19 result shows is not enough seasons to
+> measure a lever with.
+>
+> ### Step 5 -- positional gates, derived instead of typed
+>
+> `scripts/value-gates.mjs` carried `TE book in $380-470` and `WR book >= $1,050`, constants typed in
+> on the day one build produced them; the TE bound had been FAILING against a book at $373 that nothing
+> else said was wrong. **The comparison was also wrong**, and that is most of it: the book prices 523
+> players and the room buys 192, so the full positional total was being compared to the room's spend
+> with a scale error baked in. Against the top-192 slice the book totals $3,190 to the room's $3,200.
+>
+> | pos | book (top-192) | room 2018-2026 | price model | union +/-50% | |
+> |---|---|---|---|---|---|
+> | QB | $556 | $158-359 | $323 | $79-538 | **OUT** |
+> | RB | $1,041 | $1,220-1,497 | $1,126 | $563-2,246 | in |
+> | WR | $1,211 | $1,136-1,488 | $1,286 | $568-2,233 | in |
+> | TE | $308 | $209-285 | $348 | $104-522 | in |
+> | K | $41 | $18-48 | $15 | $8-72 | in |
+> | DST | $33 | $19-53 | $101 | $9-151 | in |
+>
+> The positional bands are REPORTED, not enforced, and that is the point rather than a softening: our
+> book is supposed to disagree with the room, so a bound derived from the room's taste cannot be a
+> build gate without gating against the strategy. What is fatal is structural and cannot be tripped by
+> a real edge -- every position present in the top-192 book, that slice within 10% of the room's money,
+> no position above 60% of it. FAULT INJECTION: dropping every TE makes the first one fire.
+>
+> **The value finding for the owner.** Our book puts **17.4% of the room into QB**; this room has never
+> spent more than 11.2% and the price model says 10.1%. RB is the mirror: 32.6% against a room that has
+> never spent less than 38.1%. TE is mildly above (9.7% against 6.5-8.9%); WR, K and DST are inside.
+> Whether the QB overweight is the edge or a defect is not something a gate can decide, so it is
+> printed where somebody will read it.
+>
+> ### The state at the end of the phase
+>
+> | check | value |
+> |---|---|
+> | `npm run typecheck` | clean |
+> | `npm test` | 395 tests, 393 pass, 2 skip, 0 fail |
+> | `node --import tsx scripts/value-gates.mjs` | ALL GATES PASS (the inherited TE failure is gone) |
+> | flagless arbiter, `--full --no-lookahead --inflation --seasons 1999-2024 --n 150` | **38.1% / 96%** |
+>
+> Per season: `2000:31 2001:32 2002:29 2003:47 2004:41 2005:18 2006:51 2007:21 2008:36 2009:35
+> 2010:35 2011:62 2012:49 2013:41 2014:32 2015:26 2016:41 2017:33 2018:45 2019:38 2020:37 2021:36
+> 2022:61 2023:33 2024:43`.
+>
+> **That line is NOT the Phase 2b line, and the reason is recorded rather than discovered later.** The
+> identity rekey reproduced the old line character-for-character; what moved it was `ff build-managers`
+> rebuilding the bot field from nine seasons of `fact_draft_pick` -- 16 real owners over 130
+> team-seasons, replacing four seasons and two placeholder `member <guid>` profiles. The headline moved
+> 38.2% -> 38.1%; the seats, and therefore every per-season figure, moved more. This is the Phase 2c
+> reference line.
+
 > ## INTEGRATION PASS 2: + the weekly track and the copilot track (2026-09-08/09)
 >
 > `redesign/integration-2` = `redesign/integration` + `--no-ff` merges of `redesign/weekly-track`

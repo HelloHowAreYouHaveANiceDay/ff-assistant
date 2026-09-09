@@ -23,8 +23,17 @@ app a non-technical friend can run; the engine underneath is deterministic and v
   functions over one sim context, reached identically from `ff copilot <verb>` and from the
   Assistant's MCP surface, almost all scored as a change in our championship probability. Verified
   end to end against the live league. See `docs/in-season-design.md`.
+- **Warehouse — one key space, and the league's own history is in it.** Every table keyed on
+  `player_sk` now shares a single surrogate-key space with the identity registry (7,939 of 7,939
+  shared gsis ids agree, against 59 before), and `identity_rekey` records where every moved key went
+  so a write-once table can be migrated rather than regenerated. Nine seasons of this league's real
+  drafts, results and schedule are facts in the store (`fact_draft_pick`, `fact_team_season`,
+  `fact_matchup`), reproducible by re-fetching, and they now feed the price model, the bot field, the
+  positional gates and the season simulator's calibration. `docs/data-layers.md`.
 - **Not yet built:** the in-season lineup *writer* (the recommend path works; the ESPN write tools
-  are deferred until after the live draft) and multi-league fan-out (one synced league today).
+  are deferred until after the live draft), multi-league fan-out (one synced league today), and the
+  SCORING half of the preseason odds accrual — `scorecard` freezes 32 rows of playoff/title
+  probability and has no branch that scores them when the season settles.
 
 ## The three things it is
 
@@ -107,10 +116,17 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
 ### Key commands (`npm run ff -- <cmd>`)
 - **Data/values:** `ingest` (all sources -> store), `ingest-source <id>` (one asset + downstream),
   `values`, `project`, `cheatsheet`, `build-history` (per-league backtest data)
+- **Identity (run in this order after `ingest-playerids`):** `build-identity` (the surrogate-key
+  registry; `--rebuild` re-mints it from scratch and is a recorded migration, not a routine),
+  `build-staging` (`stg_player`, which READS the registry -- it does not decide identity -- and
+  writes `identity_rekey` plus migrates the write-once `scorecard_prediction` subjects through it).
+  Every `player_sk`-keyed table must be rebuilt behind a rekey; `docs/data-layers.md` has the order.
 - **Model pipeline:** `build-features` (the point-in-time `feat_*` tables -- run after
-  `build-history`), `build-picks` (`fact_draft_pick`, one row per real pick with the consensus as it
-  stood), `build-artifact --curve-only` (the projection artifact; `ff projections` REFUSES to run
-  without one rather than falling back to a bare curve)
+  `build-history`), `build-picks` (`fact_draft_pick` + `fact_team_season` + `fact_matchup`: nine
+  seasons of this league's real picks, results and schedule, with the consensus as it stood and the
+  auction state at each pick), `build-managers` (the sim's bot field, rebuilt from those facts
+  instead of a browser scrape), `build-artifact --curve-only` (the projection artifact;
+  `ff projections` REFUSES to run without one rather than falling back to a bare curve)
 - **Validation:** `sim`, `backtest` (championship rate; `--full --no-lookahead` is the trustworthy
   mode), `calibrate`, `evaluate-projection` (nested CV through the SHIPPED projector, with the
   trainer re-invoked blind to each held-out season; `--dump-residuals`, `--keep-artifacts`),
@@ -121,16 +137,23 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
     each bot holding an independent view, instead of on our own projection plus one shared error.
     2020-2024 only (the FantasyPros archive starts in 2020). `--market-noise 0` is the other honest
     calibration of it and the two answers are 26 points apart.
-  - `--bot-book price|rank|vor` -- `price` is fitted on this room's 738 real picks (LOSO MAE $4.32
-    against $7.12 for `rank` and $7.11 for `vor`); `vor` is the default and is our own valuation
-    function, i.e. a mirror.
+  - `--bot-book price|rank|vor` -- `price` is fitted on this room's 1,102 real picks from the six
+    seasons the ECR archive covers (LOSO MAE $3.72 against $7.42 for `rank` and $7.61 for `vor`; on
+    the held-out 2026 draft $4.70 against $5.59 and $7.23); `vor` is the default and is our own
+    valuation function, i.e. a mirror.
   - `--bot-churn` -- the field works the waiver wire at this room's observed rate. Costs us 12.8
     championship points, which is about a third of the headline.
+  - `--bot-noise` -- each bot's INDEPENDENT view, log-sd, default 0.20. With `--market ecr
+    --market-noise 0` this is the whole of the room's disagreement, which is the honest arbiter
+    Phase 2c measured; see docs/validation.md.
 - **Model measurement (offline):** `scripts/price-loso.mjs` (leave-one-season-out price model vs both
   books), `scripts/market-noise.mjs` (the consensus's realised error by rank band),
   `scripts/verify-marginal.mjs` (the copula's marginals and both correlation stages),
-  `scripts/sim-calibration.mjs` (season odds vs outcomes; runs on a fixture until
-  `scripts/fetch-league-outcomes.mjs` has been run once with the app open).
+  `scripts/season-calibration.mjs` (the season simulator's playoff and title probabilities scored
+  against 114 real team-seasons, 2018-2025: real rosters, the real schedule, the real outcomes, plus
+  a shuffled-outcome control. `scripts/sim-calibration.mjs` is superseded and refuses to run --
+  it scored against a generated schedule and, absent a file nobody had, against outcomes drawn from
+  the simulator itself).
 - **Training (Python, off the hot path):**
   `uv run --with scikit-learn --with numpy tools/train_projection.py --db data/ff.db --out
   data/projection-artifact.json` -- the curve's own construction (window, monotone repair, ECR level
@@ -193,12 +216,23 @@ Headline: **38.2% championships / 96% playoffs** (full-system, no-lookahead, 25 
 1999-2024, random = 6.3%). Shipped levers: `aggr 0.7`, `benchDiscount 0.25`, `starterReserve 4`,
 `maxShare 0.25`, `premium 2`, all positional multipliers `1.0`, inflation ON.
 
-**Read that number with its arbiter attached (Phase 2b, 2026-09-08).** It is measured against a field
+**Read that number with its arbiter attached (Phase 2c, 2026-09-09).** It is measured against a field
 that drafts on our own projection plus one shared error of an asserted sd 0.30, and that never
-touches its roster after August. Neither is true of this room. Give the field the waiver wire and it
-falls to 25.4%; have it draft on the real published consensus with no extra noise and it falls
-further still. The direction of every lever below survives those changes; the absolute rate does not.
-docs/validation.md has the tables.
+touches its roster after August. Neither is true of this room. Give the field the REAL published
+consensus with an independent view per bot AND the waiver wire — the honest arbiter — and the same
+strategy wins **12-21%** rather than 33-41%, depending on which book the bots price with. Thirty
+points, none of it a change to our strategy. The direction of every lever below survives; the
+absolute rate is a statement about the opponent as much as about us. docs/validation.md has the grid.
+
+**Recommended default (a recommendation, not applied).** Keep the flagless number as the regression
+tripwire it already is — it reproduces to the season and that is its whole job — and quote
+`--market ecr --market-noise 0 --bot-noise 0.20 --bot-churn --bot-book price` over 2020-2024, which
+is **14.5%**, as the championship rate a plan should budget against. `price` because it is the only
+opponent book FITTED on this room's own 1,102 picks and the best-calibrated of the three against nine
+real drafts (8/10 metrics, against 7 for `rank` and 6 for `vor`). Then check the conclusion survives
+the other two, per this repo's standing rule: the same cell reads 21.0% with `rank` and 11.9% with
+`vor`. The DEFAULT is unchanged, because changing it would silently re-baseline every number already
+recorded here.
 
 - **Shipped (validated):** independent + current values; **bid shading (`aggr` 0.7)** — the biggest
   single lever, a winner's-curse correction worth ~+10pp; **`benchDiscount` 0.25** (a bench-only
@@ -209,9 +243,14 @@ docs/validation.md has the tables.
   baseline, then vanished or reversed), automated waivers, per-position inflation, live
   scarcity/VONA, drain-nomination-as-auto, injury-proneness discount, rookie weighting.
 - **Known model limits (documented, not hidden):** per-manager opponent profiles carry **no
-  out-of-sample signal** (predicting an owner's held-out season from their own history is no better
-  than assuming league-average), so per-owner targeting advice is not trustworthy; and the sim's
-  price curve is least reliable at the very top, which is what `maxShare` governs.
+  out-of-sample signal** — re-measured in Phase 2c on 112 team-seasons from nine real drafts, they
+  are still no better than assuming league-average (11.51pp against 11.43pp, winning 56/112) — so
+  per-owner targeting advice is not trustworthy; the sim's price curve is least reliable at the very
+  top, which is what `maxShare` governs; and the **season simulator is over-confident**, measured
+  against 114 real team-seasons: its playoff Brier beats a uniform baseline (0.2370 against 0.2451)
+  but its TITLE Brier does not (0.0659 against 0.0652), and the 50-70% predicted playoff band
+  realises 46% (`scripts/season-calibration.mjs`). Shrinking toward uniform does not fix it — chosen
+  leave-one-season-out the held-out Brier gets worse — so no correction is applied.
 
 ## Where planning lives
 

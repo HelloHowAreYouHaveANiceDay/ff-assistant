@@ -129,10 +129,43 @@ so it obeys every consumer rule above -- plus one more that only a model needs.
 Current: `feat_player_season` (preseason, one row per scored player-season), `feat_player_week`
 (one row per player-week including byes). Built by `ff build-features`.
 
-`fact_draft_pick` sits beside them: one row per pick this league really made, with the market
-consensus as it stood. It is a FACT table rather than a feature table -- a record of an event, not a
-point-in-time view of an entity -- and it is deliberately not `draft_pick`, which is draft-runtime
-state keyed by a live `draft_id` and empty between drafts. Built by `ff build-picks`.
+### FACT -- `fact_*`
+
+A record of an EVENT, not a point-in-time view of an entity. Rebuildable from raw like any consumer
+table, single-writer like any consumer table, and separated only because "what happened" and "what
+was knowable" are different questions and a table that answers both answers neither.
+
+| table | rows | grain | built by |
+|---|---|---|---|
+| `fact_draft_pick` | 1,658 (2018-2026) | one pick | `ff build-picks` |
+| `fact_team_season` | 130 (2018-2026) | one team-season | `ff build-picks` |
+| `fact_matchup` | 1,050 (2018-2026) | one regular-or-post-season game | `ff build-picks` |
+
+`fact_draft_pick` carries the market consensus as it stood and the auction state at the moment of the
+pick (money and slots remaining, and `price_share`, the share of the room's money it took). It is
+deliberately not `draft_pick`, which is draft-runtime state keyed by a live `draft_id` and empty
+between drafts. Until Phase 2c it was built from `data/recaps.json` -- ESPN recap pages scraped by
+hand into a gitignored file covering four seasons -- which violated the raw layer's own rule that a
+table must be reproducible by re-fetching. It now reads `raw_league_pick`, nine seasons, and its
+totals are asserted against that table **to the dollar** in every season.
+
+Three rules these tables added:
+
+- **A DERIVED FLAG IS DERIVED ONCE, HERE.** `champion`, `made_playoffs` and `settled` live on
+  `fact_team_season` rather than in each consumer, which is the same lesson prior-year finish rank
+  taught when it was re-derived in five scripts. `settled` comes from the DATA -- every team has a
+  final rank and one of them is 1 -- not from the calendar, because an in-progress season's
+  placeholder rank looks exactly like a result.
+- **NORMALISE ACROSS ERAS OR DO NOT COMPARE.** Six of the nine seasons are 14-team ($2,800) rooms and
+  three are 16-team ($3,200). Raw dollars across them are two currencies; `price_share` is the one
+  quantity that means the same thing in both, and it is why the price model, the face-validity ranges
+  and the positional gates all work in shares.
+- **A CONSTANT THAT CANNOT BE DERIVED SAYS SO.** The playoff field looked derivable from the finishes
+  and is not: `k = teams` satisfies the "top k finishers are the top k seeds" property trivially, and
+  bounded to a plausible bracket the six settled 14-team seasons read 6, 8, 6, 4, 6, 8, because
+  ESPN's `final_rank` is a consolation-inclusive ordering. So it is a stated constant (6 below 16
+  teams, 7 at or above, matching `settings.config.playoffTeams`) and `seedsAgreeAtField` reports the
+  check beside it -- seven of eight settled seasons agree, 2021 does not.
 
 ## Why the runtime tables are not one of the three
 
@@ -220,13 +253,74 @@ Two rules they add to the feature-layer list:
   the feed stopped publishing a report date) explicitly, so the day it returns is a failure someone
   reads.
 
-### The identity split this work uncovered
+### The identity split this work uncovered -- and how Phase 2c closed it (2026-09-09)
 
-`player_xref` and `stg_player` hold **different surrogate key spaces for the same men**. Of the 7,961
-gsis ids present in both, **7,902 disagree** on `player_sk`; only 59 agree. `player_identity` has
-22,814 rows against staging's 11,966. `stgPlayer.ts` calls `resolveOrMint` with an EMPTY id bag, so
-staging matches on (name_key, birthdate) and mints fresh keys, while `playerIds.ts` minted its own.
+`player_xref` and `stg_player` held **different surrogate key spaces for the same men**. Of the 7,961
+gsis ids present in both, **7,902 disagreed** on `player_sk`; only 59 agreed. `player_identity` had
+22,814 rows against staging's 11,966. `stgPlayer.ts` called `resolveOrMint` with an EMPTY id bag and
+no birthdate, so every match attempt fell through to the "name_key + position, among rows that also
+have no birthdate" branch -- which misses every registry row, because registry rows all carry a
+birthdate. Staging therefore minted a fresh key for almost everybody.
 
-A consumer resolving through `player_xref` therefore gets keys that join nothing -- not `stg_player`,
-not `feat_player_season`, not `feat_player_week` -- with no error anywhere. `src/features/sources/resolve.ts`
-builds every map from `stg_player` for that reason. **The registry itself is not fixed here.**
+A consumer resolving through `player_xref` got keys that joined nothing -- not `stg_player`, not
+`feat_player_season`, not `feat_player_week` -- with no error anywhere, and a healthy-looking
+resolution rate the whole time. A rate measures whether a key was FOUND, never whether it means
+anything to the table it will be used against.
+
+**After.** 7,939 of 7,939 shared gsis ids agree. `player_identity` and `stg_player` are both 12,122
+rows. Staging mints 39 keys -- the board-only players -- where it used to mint 10,897.
+
+Four things had to move together, and they are the rules the layer now carries:
+
+- **Staging passes the real id bag AND the birthdate**, so the registry actually decides.
+- **THE REGISTRY WINS every tie-break.** It is the foundation and staging is a reader; a reader that
+  overrides its own source of truth is not one. The previous staging key is never consulted -- it
+  appears only in `identity_rekey`, as the old side of the map.
+- **An ambiguous raw key is EXPANDED, not collapsed.** `player_ids` is keyed (name_key, position) and
+  the ingest resolves a key two men share by NULLing every field they disagree about, keeping both
+  sides in `player_ids_variant`. Read alone, that row can only ever produce ONE key for the pair --
+  the merge the layer exists to prevent, arrived at from the raw side. `crosswalkPeople()` expands
+  them and is shared by the registry and staging, because two readers that disagree about how many
+  people a key stands for is how the two spaces diverged in the first place. Marvin Harrison is
+  three staged rows: the son (2002, with the son's gsis), the Hall of Fame receiver (1972-08-25,
+  Syracuse, drafted 1996) and a third man the crosswalk lists at 315lb out of TCU.
+- **The vocabularies are conformed, teams as well as positions.** The crosswalk writes SFO/NEP/GNB
+  and everything else writes SF/NE/GB. Nothing compared them, so every consumer using team as a
+  DISCRIMINATOR silently lost it -- `pickStaged` had no usable staged row for Christian McCaffrey and
+  his age fell back to the name-keyed bio table, which is the exact join this layer removes, defeated
+  by a spelling. `normTeam` sits beside `normPos` for that reason.
+
+`pfr` joined `ID_SOURCES` and `stg_player.pfr_id` with it, retiring the parallel route that mapped a
+per-person id through (name_key, position) and had to refuse for anyone sharing a name.
+
+### `identity_rekey`: a key that moves must say where it went
+
+A surrogate key exists so stored references do not break. Fixing the above moved 11,946 of them, so
+the move is RECORDED rather than performed invisibly. One row per OLD staging key, with the reason
+DERIVED from the shape of the mapping rather than asserted by the writer:
+
+| reason | meaning | count |
+|---|---|---|
+| `unchanged` | the old and new key are the same integer | 3 |
+| `moved` | one old key -> one new key | 11,946 |
+| `merged` | several old keys -> one new key (they were the same man) | 14 |
+| `split` | one old key -> several new keys (it was several men) | 3 |
+| `dropped` | no successor at all | 0 |
+
+**Frozen tables are MIGRATED THROUGH IT, never regenerated.** `scorecard_prediction` is write-once by
+design and its `subject` column IS a `player_sk` for the `season` and `weekly` kinds, so the rekey
+silently unjoined every frozen row: season subjects that resolved to a staged player went from
+63/490 to **490/490** after migration. 2,874 rows moved, 5 were left alone where a merge would have
+collided with an existing row, and the table's own count is unchanged at 3,077. The `odds` kind is
+keyed by TEAM id -- also small integers, also numeric, a different domain entirely -- and migrating
+it through a player map was caught only by a UNIQUE constraint. **A numeric column is not a key
+space.** `raw_espn_projection` is keyed by ESPN player id and needed nothing.
+
+### The rekey exposed a second defect, in every feature builder
+
+Every one of them upserts on a key that CONTAINS the surrogate key -- `(season, feat_key)`,
+`(season, player_sk)`, `(season, week, feat_key)`. After the keys moved, a rebuild could not reach
+the old rows and simply added the new ones beside them: `feat_player_season` went 17,189 ->
+**33,086** and `feat_player_week` 287,632 -> **553,900**, with every per-season count still looking
+exactly right. Each builder now DELETES the season it is about to rebuild. **A rebuild of a season is
+a replacement of that season**, and an upsert cannot express that when the key itself is what moved.

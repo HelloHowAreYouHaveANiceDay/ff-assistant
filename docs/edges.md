@@ -22,10 +22,21 @@ comparison.
 
 ## Edges the harness QUANTIFIES (draft edges)
 
-### 1. Discipline vs an overpaying room -- BIG, proven [~27%, 4.4x random]
-Your league overpays for studs (recap data: studs $80-106, 61% of picks $1-5). Bidding rational
-values and NOT chasing bidding wars wins ~27% of titles even when we share the room's projection.
-This is the floor edge and it is large.
+### 1. Discipline vs an overpaying room -- REAL, and about half the size we thought (rewritten 2026-09-09, Phase 2c)
+
+**The old text said ~27%, 4.4x random. Under an arbiter that gives the field both of the things this
+one was missing -- the real published consensus and the waiver wire -- it is 12-21%, or 1.9x to 3.4x
+random.** Same room, same levers, same discipline; a different opponent.
+
+The room really does overpay for studs (nine real drafts: top price $88-121 in a $3,200 room, 54-61%
+of picks at $1-5) and bidding rational values really does beat it. What changed is that the old
+number was measured against a field drafting on OUR OWN projection plus one shared error we chose,
+and never touching its roster after August. Neither is true of anybody's league. The grid is in
+docs/validation.md; the short version is that the edge survives every cell and shrinks by half.
+
+**What to do with it is unchanged, and that is the point.** Bid your own values, do not chase, keep
+the reserve. The thing to stop doing is quoting a championship percentage as though the arbiter were
+a fact about the world.
 
 ### 2. Your OWN projection (independent of the consensus) -- REAL, BUT MOSTLY A STATEMENT ABOUT HOW MUCH NOISE WE GIVE THE MARKET (rewritten 2026-09-08, Phase 2b)
 
@@ -50,6 +61,30 @@ The middle row is what the instruction asked for and it double-counts (the conse
 already contains its own error -- it is a projection, not the truth -- so multiplying it by a fresh
 draw of the same size gives the market twice the variance it has, while our book carries none). The
 bottom row is the other honest reading. **The truth is between them and nobody knows where.**
+
+**PHASE 2C completed the arbiter (2026-09-09).** Phase 2b's bottom row gave the room a single shared
+view and left it standing pat all season. Both are now fixed: each bot holds an INDEPENDENT view of
+log-sd 0.20 on top of the published consensus (bounded by the price model's own residual dispersion,
+0.35-0.90 by tier), and `--bot-churn` gives the field the waiver wire at this room's observed rate.
+2020-2024, n=300, against the rebuilt 16-owner field:
+
+| what the field drafts on, and whether it works the wire | vor book | rank book | price book |
+|---|---|---|---|
+| our projection + shared sd 0.30, standing pat *(the legacy arbiter)* | 41.5% | 36.2% | 33.9% |
+| our projection + shared sd 0.30, working the wire | 28.3% | 29.4% | 29.3% |
+| the consensus AS PUBLISHED + per-bot 0.20, standing pat | 23.1% | 23.8% | 16.7% |
+| the consensus AS PUBLISHED + per-bot 0.20, working the wire *(**the honest arbiter**)* | **11.9%** | **21.0%** | **14.5%** |
+
+**Thirty points from top-left to bottom-left, none of it a change to our strategy.** And the
+pre-registered guess about which opponent book flatters us most (P20: vor > rank > price, on the
+grounds that `vor` is our own function wearing a costume) was WRONG in the most useful direction: on
+the bottom row `vor` is the HARSHEST book, not the kindest. A field that prices players exactly as we
+do makes the same mistakes we do, so it neither overpays the studs we are avoiding nor leaves the
+mid-round value we are collecting. **The mirror is not automatically the easy opponent.**
+
+What survives is unchanged in kind and smaller in size: do not bid the consensus's own numbers, chase
+measured projection accuracy rather than measured edge, and treat any specific championship
+percentage as a statement about the arbiter as much as about us.
 
 What survives, and it is not nothing:
 
