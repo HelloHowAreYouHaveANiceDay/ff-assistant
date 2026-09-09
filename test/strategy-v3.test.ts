@@ -13,8 +13,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   availForRank, availFromVarianceModel, budgetPath, expectedSeasonPoints, expectedWeekPoints,
-  lineupMarginal, priceFromPath, type LmOpts, type LmPlayer,
+  lineupMarginal, priceFromPath, starterBaselines, type LmOpts, type LmPlayer,
 } from "../src/draft/lineupMarginal.js";
+import { baselines, resolveValueLeague } from "../src/draft/values.js";
+import { ourSdFor, ourSdPrivateFor } from "../src/draft/sim.js";
 import { expectedMaxNormal, makeV3Strategy, openSlotList, probit, shadingFactor } from "../src/draft/strategyV3.js";
 import type { DraftState, PlayerRef } from "../src/draft/strategy.js";
 
@@ -75,6 +77,102 @@ test("an empty slot scores the STREAMING FLOOR, not zero", () => {
   const noFloor = expectedWeekPoints(noK, 0, { ...OPTS, replacement: { ...OPTS.replacement, K: 0 } });
   assert.ok(withFloor > noFloor, "the streaming floor is not reaching the empty slot");
   assert.ok(Math.abs(withFloor - noFloor - (OPTS.replacement!.K)) < 1e-9, "the empty K slot should be worth exactly the K floor");
+});
+
+// =============================================================================================
+// THE POSITIONAL REPLACEMENT BASELINE -- the defect P30 named
+// =============================================================================================
+//
+// V3's marginal used to measure EVERY empty starting slot against the streaming floor, so the first
+// quarterback was priced by how far he beats the waiver wire. In a one-QB, sixteen-team league that
+// is a very long way and nobody ever faces the choice: the alternative to the best quarterback is the
+// seventeenth. The tests below are the two directions that matter -- the baseline must actually bite
+// on the first man at a position, and it must NOT resurrect the backup.
+
+/** A full board with a realistic curve at every position, deep enough that a sixteen-team league's
+ *  starting demand lands well inside it rather than off the end. */
+const BOARD: LmPlayer[] = [
+  ...Array.from({ length: 40 }, (_, i) => P(`BQB${i}`, "QB", 400 - 7 * i)),
+  ...Array.from({ length: 80 }, (_, i) => P(`BRB${i}`, "RB", 320 - 3.4 * i)),
+  ...Array.from({ length: 90 }, (_, i) => P(`BWR${i}`, "WR", 310 - 3.0 * i)),
+  ...Array.from({ length: 40 }, (_, i) => P(`BTE${i}`, "TE", 230 - 4.5 * i)),
+  ...Array.from({ length: 34 }, (_, i) => P(`BK${i}`, "K", 150 - 1.5 * i)),
+  ...Array.from({ length: 34 }, (_, i) => P(`BD${i}`, "DST", 145 - 2.0 * i)),
+];
+const LG = { teams: 16, slots: SLOTS };
+
+test("starterBaselines reproduces values.ts baselines() exactly -- the same quantity, recomputed live", () => {
+  // POSITIVE CONTROL, and it is the load-bearing one: the claim being made is not "some baseline" but
+  // "the SAME baseline the shipped VOR book uses", including the points-weighted FLEX allocation
+  // that gives TE zero flex slots in this league. An even three-way split handed TE eleven phantom
+  // starting slots and cost 8.6pp of championships when it was fixed in values.ts; reproducing the
+  // wrong allocation inside V3 would reintroduce it where no existing test looks.
+  const mine = starterBaselines(BOARD, LG, 1, 17);
+  const theirs = baselines(BOARD.map((p) => ({ name: p.name, pos: p.pos, points: p.proj })),
+    resolveValueLeague({ teams: 16, budget: 200, slots: SLOTS }));
+  for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
+    assert.ok(Math.abs(mine[pos] * 17 - theirs[pos]) < 1e-9,
+      `${pos}: starterBaselines says ${(mine[pos] * 17).toFixed(3)} season points, values.ts says ${theirs[pos].toFixed(3)}`);
+  }
+  // The FLEX cutoff is its OWN number and must sit between the flex-eligible positions' baselines --
+  // it is neither their max nor their min, which is why it is returned separately.
+  assert.ok(mine.FLEX > 0, "no FLEX cutoff was produced");
+  // TE claims no flex slot in this league, which is exactly the case that says the cutoff is its own
+  // number: the sixteenth tight end is WORSE than the man the flex slots stop at, so a flex floor
+  // taken as the max of the positional baselines would price the flex against the wrong man in one
+  // direction and one taken as the min would do it in the other.
+  assert.ok(mine.FLEX > mine.TE, `FLEX cutoff ${mine.FLEX.toFixed(2)} not above the TE baseline ${mine.TE.toFixed(2)}`);
+  assert.ok(mine.FLEX < mine.RB * 1.5 && mine.FLEX > 0.5 * mine.RB, `FLEX cutoff ${mine.FLEX.toFixed(2)} nowhere near the RB baseline ${mine.RB.toFixed(2)}`);
+});
+
+test("the baseline TIGHTENS as the room fills: half the slots open moves it", () => {
+  const full = starterBaselines(BOARD, LG, 1, 17);
+  const half = starterBaselines(BOARD, LG, 0.5, 17);
+  // Half the demand into the same pool reaches a better man, so the baseline RISES.
+  assert.ok(half.QB > full.QB, `full ${full.QB.toFixed(2)}, half ${half.QB.toFixed(2)} -- openFraction is not connected`);
+  // FAULT INJECTION on the other end: with no demand left at all the baseline is the best man on the
+  // board, not something that silently reads zero.
+  const none = starterBaselines(BOARD, LG, 0, 17);
+  assert.ok(Math.abs(none.QB - 400 / 17) < 1e-9, `an empty room should baseline at the best QB, got ${(none.QB * 17).toFixed(1)}`);
+});
+
+test("a QB priced against the WAIVER FLOOR exceeds the same QB priced against QB17, by exactly the gap between the two floors", () => {
+  const base = starterBaselines(BOARD, LG, 1, 17);
+  const withBaseline: LmOpts = { ...OPTS, baseline: base };
+  // The test is vacuous unless the two floors genuinely differ, so that is asserted first rather
+  // than assumed -- a baseline that happened to equal the streaming floor would pass every
+  // inequality below while changing nothing.
+  assert.ok(base.QB > OPTS.replacement!.QB + 1,
+    `QB17 is ${base.QB.toFixed(2)} a week against a streaming floor of ${OPTS.replacement!.QB} -- there is nothing to measure`);
+  const elite = P("Qelite", "QB", 400);
+  const onFloor = lineupMarginal([], elite, OPTS);
+  const onBaseline = lineupMarginal([], elite, withBaseline);
+  assert.ok(onFloor > onBaseline, `floor-priced ${onFloor.toFixed(1)}, baseline-priced ${onBaseline.toFixed(1)}`);
+  // And by exactly the right amount: the floor only scores in the weeks he does not, so the whole
+  // difference is availability times the gap between the floors, times the season.
+  const expectedGap = OPTS.avail.QB * (base.QB - OPTS.replacement!.QB) * OPTS.weeks;
+  assert.ok(Math.abs((onFloor - onBaseline) - expectedGap) < 1e-6,
+    `measured gap ${(onFloor - onBaseline).toFixed(3)}, arithmetic says ${expectedGap.toFixed(3)}`);
+  // FAULT INJECTION: with the baseline REMOVED the two must be identical. This is the control that
+  // separates "the baseline is doing the work" from "something else moved".
+  assert.equal(lineupMarginal([], elite, { ...withBaseline, baseline: undefined }), onFloor);
+  // K AND DST DELIBERATELY KEEP THE STREAMING FLOOR, so a kicker must be unmoved by all of this.
+  const k = P("Kx", "K", 150);
+  assert.equal(lineupMarginal([], k, withBaseline), lineupMarginal([], k, OPTS));
+});
+
+test("under the baseline a THIRD quarterback is worth ~0, and the first is not", () => {
+  const withBaseline: LmOpts = { ...OPTS, baseline: starterBaselines(BOARD, LG, 1, 17) };
+  const q = (n: string, pts: number) => P(n, "QB", pts);
+  // The SAME man in both arms -- an elite quarterback, comfortably above the seventeenth -- so the
+  // difference is the roster he is joining and nothing else.
+  const first = lineupMarginal([], q("Q3", 360), withBaseline);
+  const third = lineupMarginal([q("Q1", 400), q("Q2", 380)], q("Q3", 360), withBaseline);
+  assert.ok(first > 10, `the FIRST quarterback measured ${first.toFixed(2)} points -- the baseline has eaten the position entirely`);
+  assert.ok(third < first / 15, `third QB ${third.toFixed(2)} against a first QB's ${first.toFixed(2)}`);
+  // He is not worth exactly nothing -- he plays in the weeks both men ahead of him are out -- and a
+  // model that said zero would be wrong in the other direction.
+  assert.ok(third > 0, "a third quarterback is worth exactly nothing, which cannot be right either");
 });
 
 test("per-player availability overrides the positional average, and the tier tables differ enormously", () => {
@@ -140,6 +238,25 @@ test("shading: zero dispersion is exactly no shading, and both inputs move it th
   assert.ok(shadingFactor(0.5, 0.5, 16) > 0 && shadingFactor(0.5, 0.5, 16) < 1);
 });
 
+test("only the PRIVATE part of our uncertainty shades, and in this harness that part is zero", () => {
+  // The claim is arithmetic, not a preference: `OUR_SD_BAND` was measured by
+  // `scripts/market-noise.mjs` as the CONSENSUS dispersion, and `--market ecr` hands the room the
+  // same table. Our spread minus the room's shared spread is therefore identically zero, and
+  // combining the two in quadrature counted one quantity twice.
+  for (const rank of [1, 6, 7, 12, 24, 40, 60, 200]) {
+    assert.equal(ourSdPrivateFor(rank), 0, `rank ${rank} produced a private component of ${ourSdPrivateFor(rank)}`);
+    assert.ok(ourSdFor(rank) > 0, `rank ${rank} has no measured uncertainty at all -- the subtraction is vacuous`);
+  }
+  assert.equal(ourSdPrivateFor(null), 0);
+  // FAULT INJECTION, and it is the half that matters: a zero that cannot become non-zero is a dead
+  // lever wearing a measured null's clothes. Diverge the two bands and the term must come alive.
+  const priv = (ours: number, shared: number) => Math.max(0, ours - shared);
+  assert.ok(priv(0.9, 0.5) > 0.39, "the private component cannot rise when our spread exceeds the room's");
+  assert.equal(priv(0.4, 0.9), 0, "a view TIGHTER than the room's carries no curse of its own, and must floor at zero");
+  // And it must reach the shading: a positive private component shades harder than none.
+  assert.ok(shadingFactor(priv(0.9, 0.5), 0.5, 16) < shadingFactor(0, 0.5, 16));
+});
+
 test("probit and E[max] are the standard values, not something that merely increases", () => {
   assert.ok(Math.abs(probit(0.975) - 1.959964) < 1e-4);
   assert.ok(Math.abs(probit(0.5)) < 1e-9);
@@ -189,6 +306,38 @@ test("V3 still bids a DOLLAR for a bench body whose dollar value rounds to zero"
   });
   const d = mkStrategy().maxBid(state);
   assert.ok(d.maxBid >= 1, `V3 refused a bench body it could afford: ${d.reason}`);
+});
+
+test("the baseline REACHES THE BIDDER: with league demand supplied, V3 pays less for the first QB", () => {
+  // The half a derived term fails silently at. `starterBaselines` can be perfectly correct and never
+  // be called, and a bidder that ignores it looks exactly like one that is using it -- there is no
+  // flag anybody has to type. So the strategy is driven twice on the SAME state, differing only in
+  // whether `teams` (the league-wide demand the baseline needs) is supplied.
+  const eliteQb = P("BigQB", "QB", 400);
+  const projs = new Map([...POOL, ...ROSTER, ...BOARD, eliteQb].map((p) => [p.name, p.proj]));
+  const mk = (teams?: number) => makeV3Strategy({
+    proj: (n) => projs.get(n) ?? 0,
+    lineup: OPTS,
+    priceOf: (n) => Math.max(1, Math.round(((projs.get(n) ?? 0) - 100) / 4)),
+    marketSd: () => 0,
+    defaultBidders: 8,
+    teams,
+  });
+  const st: DraftState = {
+    myBudget: 200, mySlots: { QB: 1, RB: 1, WR: 1, TE: 1, FLEX: 2, DST: 1, K: 1, BENCH: 4 },
+    myRoster: [], myPosCounts: {}, onBlock: ref(eliteQb), currentOffer: null, secondsLeft: null,
+    iAmHighBidder: false, board: BOARD.map(ref),
+    teams: Array.from({ length: 16 }, (_, i) => ({ name: String(i), budgetLeft: 200, openSlots: 12 })),
+    leagueOpenSlots: 16 * 12,
+  };
+  const onFloor = mk(undefined).maxBid(st).maxBid;
+  const onBaseline = mk(16).maxBid(st).maxBid;
+  assert.ok(onFloor > 0, `V3 declined the best quarterback on the board even against the waiver floor: ${onFloor}`);
+  assert.ok(onBaseline < onFloor,
+    `waiver-floor bid $${onFloor}, positional-replacement bid $${onBaseline} -- the baseline is computed and then not used`);
+  // It must not have collapsed the position to nothing either: the best quarterback in a one-QB
+  // league is still worth real money, and a term that only ever says "no" is dead code.
+  assert.ok(onBaseline > 0, "the baseline priced the best quarterback in the draft at zero");
 });
 
 test("V3 refuses a man who can fill no slot at all", () => {

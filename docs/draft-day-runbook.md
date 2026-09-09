@@ -144,9 +144,17 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
   with three computed terms -- a roster-aware marginal, a price from inverting the budget path, and a
   winner's-curse shading derived from dispersion and the number of live bidders. It is fully wired,
   connected in both directions (`node --import tsx scripts/v3-connected.mjs`) and backtestable, and
-  the arbiter rejected it: **53.4% playoffs against V2's 88.9% over thirteen seasons, worse in twelve
-  of twelve** (docs/validation.md, Phase 3). It exists so the idea can be picked up again, not so it
-  can be used. `FF_V3_SHADE=off` and `FF_V3_OURSD=0` are its two sensitivity arms.
+  the arbiter rejected it twice. Phase 3: **53.4% playoffs against V2's 88.9% over thirteen seasons,
+  worse in twelve of twelve**. Track A (2026-09-09) fixed the two defects that failure named -- the
+  marginal now prices a starting slot against POSITIONAL REPLACEMENT rather than the waiver wire, and
+  the shading uses only the PRIVATE part of our uncertainty -- and the answer did not change:
+  **59.7% playoffs against V2's 88.9%, -29.17pp paired, still worse in twelve of twelve**
+  (docs/validation.md, Track A). It exists so the idea can be picked up again, not so it can be used;
+  what is left to fix is the analytic surrogate itself, not its inputs.
+  Four sensitivity arms: `FF_V3_SHADE=off` (no shading at all), `FF_V3_OURSD=full` (our whole spread,
+  the pre-2026-09-09 double-count), `FF_V3_OURSD=0` (market spread only, which in this harness is
+  what the shipped private component already computes), and `FF_V3_BASELINE=off` (the waiver-floor
+  marginal, i.e. the pre-2026-09-09 value term).
 - REJECTED by backtest, off by default, don't enable to "win": `--pos-inflation`, `--drain-nom`,
   `--waivers` (all measured neutral-to-negative -- see docs/edges.md). `--scarcity` was removed from
   `auto-draft` entirely (rejected + its live wiring was wrong); it survives only in `backtest`.

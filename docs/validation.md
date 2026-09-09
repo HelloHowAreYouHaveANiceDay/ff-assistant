@@ -1,5 +1,212 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## TRACK A: V3 against positional replacement -- the named defect, fixed, and it was not the reason (2026-09-09)
+>
+> Branch `redesign/v3-qb-replacement` off `redesign/final` (`75da5b0`). Phase 3 closed with one
+> bounded piece of work named: V3's analytic marginal measures a player against the STREAMING FLOOR,
+> so an elite quarterback is priced by how far he beats the waiver wire, and V3 spent 31-34% of its
+> budget at quarterback against a room that spends 7.8-11.2% and a SIMULATED roster-aware book that
+> says 16.2%. That defect is now fixed. **It was not why V3 loses.**
+>
+> | | prediction | outcome |
+> |---|---|---|
+> | P34 | V3's QB share of an empty-roster book lands within 5 points of the simulated book's 16.2% | **FAILED, narrowly** -- 21.4%, a gap of 5.2 points (6.2 against the simulated book re-measured in the same run at 15.2%). It was 34.3% before, so the gap closed from 18.1 to 5.2 and stopped one fifth of a point short |
+> | P28 (re-run unchanged) | V3's playoff rate is at least V2's minus 2 points on BOTH arms | **FAILED on both** -- long churn arm -34.78pp, honest arm -11.08pp |
+> | P35 | the redundant-lever finding still holds for V2: `starterReserve` inert | **FAILED in its strong form** -- 4 vs 0 is NOT byte-identical on the long arm (16 of 1800 trials differ). The weak form holds: -0.17pp, CI [-0.44, 0.00] |
+>
+> ### What changed
+>
+> **The value term.** A dedicated STARTING slot is now measured against the last starter the league
+> rosters at that position -- `starterBaselines` in `src/draft/lineupMarginal.ts`, which reproduces
+> `values.ts baselines()` index for index (points-weighted FLEX allocation included; an even three-way
+> split is the bug that cost 8.6pp of championships when it was fixed in `values.ts`, and reproducing
+> it inside V3 would have hidden it where no existing test looks). It is recomputed from the REMAINING
+> board and the room's REMAINING open slots, so it tightens as the pool empties. K, DST and every
+> bench slot keep the streaming floor, because there the waiver wire really is the alternative.
+>
+> **The shading term.** `ourSdPrivateFor` replaces our full predictive spread with the PRIVATE part --
+> our spread minus the market's shared realised error at the same rank band, floored at zero. In this
+> harness that is **exactly zero at every rank**, and that is the finding rather than a bug: the
+> backtest threads no per-player p10/p90 through the historical points table, so `OUR_SD_BAND` has
+> always been the measured CONSENSUS dispersion, which IS the market's shared error (the same table
+> `--market ecr` hands the room). Combining the two in quadrature counted one quantity twice.
+>
+> ### The book, on the same state, pool and price function (`scripts/roster-book.mjs`)
+>
+> Empty roster, twelve slots open, $200, the fifteen real opponents, the whole board as the pool,
+> generated schedule, 200 trials, seed 7, 40 candidates. The script now prints V3's analytic book
+> beside the simulated one it is trying to approximate -- the only way to say which of the two moved.
+>
+> | pos | simulated roster-aware | V3 analytic BEFORE | V3 analytic AFTER | VOR |
+> |---|---|---|---|---|
+> | QB | 15.2% | 34.3% | **21.4%** | 20.1% |
+> | RB | 39.6% | 30.5% | 34.1% | 35.8% |
+> | WR | 38.3% | 27.8% | 37.3% | 36.8% |
+> | TE | 6.9% | 7.3% | 7.2% | 7.3% |
+>
+> Before the fix the top NINE names in V3's book were quarterbacks. After it, three of the top eight.
+> Top 24 by V3 dollars, against the simulated book and VOR:
+>
+> ```
+>   # SIMULATED (pp / $)                    V3 ANALYTIC ($)          VOR ($)
+>   1 Jahmyr Gibbs        RB  31.50  200    Josh Allen (QB)     101  Bijan Robinson (RB)  91
+>   2 Bijan Robinson      RB  29.00  200    Drake Maye (QB)     100  Jahmyr Gibbs (RB)    86
+>   3 Puka Nacua          WR  27.00  196    Bijan Robinson (RB)  96  Ja'Marr Chase (WR)   80
+>   4 Ja'Marr Chase       WR  25.00  188    Lamar Jackson (QB)   92  Jaxon Smith-Njigba   78
+>   5 Jaxon Smith-Njigba  WR  25.00  188    Jahmyr Gibbs (RB)    91  Christian McCaffrey  77
+>   6 Amon-Ra St. Brown   WR  25.00  188    Ja'Marr Chase (WR)   91  Puka Nacua (WR)      76
+>   7 Christian McCaffrey RB  24.00  184    Jaxon Smith-Njigba   90  Amon-Ra St. Brown    66
+>   8 Jonathan Taylor     RB  24.00  184    Puka Nacua (WR)      88  Jonathan Taylor (RB) 65
+>   9 Drake London        WR  23.00  180    Caleb Williams (QB)  86  Drake London (WR)    64
+>  10 Ashton Jeanty       RB  23.00  180    Joe Burrow (QB)      85  Trey McBride (TE)    64
+>  11 Breece Hall         RB  22.50  178    Jayden Daniels (QB)  83  Josh Allen (QB)      63
+>  12 Omarion Hampton     RB  21.00  172    Christian McCaffrey  83  Omarion Hampton (RB) 63
+>  13 De'Von Achane       RB  20.50  170    Jalen Hurts (QB)     81  Drake Maye (QB)      62
+>  14 CeeDee Lamb         WR  20.50  170    Justin Herbert (QB)  81  De'Von Achane (RB)   60
+>  15 Jeremiyah Love      RB  20.00  168    Trevor Lawrence (QB) 81  Jeremiyah Love (RB)  58
+>  16 George Pickens      WR  20.00  168    Amon-Ra St. Brown    78  CeeDee Lamb (WR)     57
+>  17 Saquon Barkley      RB  20.00  168    Drake London (WR)    77  Brock Bowers (TE)    55
+>  18 Brock Bowers        TE  19.50  150    Jonathan Taylor (RB) 73  Lamar Jackson (QB)   54
+>  19 James Cook III      RB  19.50  150    Omarion Hampton (RB) 72  James Cook III (RB)  52
+>  20 Trey McBride        TE  18.50  128    CeeDee Lamb (WR)     71  Ashton Jeanty (RB)   52
+>  21 Chase Brown         RB  18.50  128    De'Von Achane (RB)   69  Breece Hall (RB)     51
+>  22 Josh Allen          QB  17.00  117    Jeremiyah Love (RB)  68  Justin Jefferson     48
+>  23 Justin Jefferson    WR  17.00  117    Justin Jefferson     64  Caleb Williams (QB)  47
+>  24 Kenneth Walker III  RB  17.00  117    Trey McBride (TE)    64  A.J. Brown (WR)      47
+> ```
+>
+> **A harness bug worth recording, because it manufactured a result.** The first cut of the V3 column
+> barred the forty candidates from V3's board, copying `MarginalBook.fillExclude`. The two modules bar
+> different things: V3 reads the board for its positional baseline as well as for its budget path, so
+> removing the top forty players took the quarterback baseline eleven ranks too deep and re-created the
+> very inflation being measured -- 27.3% QB share instead of 21.4%. The board is the whole pool, which
+> is what `sim.ts` hands V3 in a real auction.
+>
+> ### P28, re-run unchanged
+>
+> Both arms exactly as registered, paired on common random numbers through
+> `scripts/paired-analysis.mjs`. PLAYOFFS is the primary; the title is reported alongside.
+>
+> | arm | V2 playoffs | V3 playoffs | paired difference (playoffs) | V2 title | V3 title | paired difference (title) |
+> |---|---|---|---|---|---|---|
+> | long churn, 2012-2024, n=150, 12 seasons | 88.9% | **54.1%** | **-34.78pp**, SD 11.76, SE 3.39, t -10.25, CI [-41.33, -28.61], **0/12 seasons** | 25.5% | 8.1% | -17.44pp, SE 1.96, CI [-21.17, -13.89], 0/12 |
+> | honest, 2020-2024, n=300, 4 seasons | 45.2% | **34.1%** | -11.08pp, SD 34.10, SE 17.05, t -0.65, CI [-41.75, +19.33], 1/4 seasons | 13.5% | 3.8% | -9.75pp, SE 5.57, CI [-20.67, -3.33], 0/4 |
+>
+> Long arm = `--bot-churn --bot-book price --full --no-lookahead --inflation --seasons 2012-2024
+> --n 150`; honest arm = the same plus `--market ecr --market-noise 0 --bot-noise 0.20`, 2020-2024,
+> n=300. McNemar on trial-level pairs: long arm chi2(1) 475.21, p < 1e-6 (98 V3-only against 724
+> V2-only of 822 discordant); honest arm chi2(1) 36.84, p < 1e-6.
+>
+> **P28 FAILED on both arms and V3 still does not ship.** The rule was fixed before the run and is not
+> re-specified here: a playoff rate more than two points below V2 disqualifies it. The honest arm's
+> detectable effect at 80% power is 49pp on four seasons, so its interval settles nothing either way;
+> the long arm's is 9.8pp on twelve, and V3 loses it by 35.
+>
+> **Two levels drifted from the Phase 3 record and one did not.** The long arm reproduces V2 exactly
+> (88.9% / 25.5%) and reproduces the PRE-FIX V3 exactly (`FF_V3_BASELINE=off`: 53.5% / 7.3% against
+> the recorded 53.4% / 7.3%, and 60.6% / 8.7% with shading off against the recorded 61% / 8.7%). The
+> honest arm reads V2 at 45.2% / 13.5% against the recorded 49.0% / 14.5%, and its pre-fix V3 at 48.6%
+> / 11.5% against 50.3% / 11.8% -- the paired difference reproduces in sign and rough size (+3.42pp
+> here on 3/4 seasons, +1.27pp recorded) while the levels sit ~4 points low. That arm covers four
+> seasons, not the five the Phase 3 table says. Every number in this section is measured on this
+> branch's data and none is quoted from the record.
+>
+> ### Where the remaining gap sits -- the 2x2, all four cells on the same seeds
+>
+> Long churn arm, 2012-2024, n=150. V2 is 88.9% / 25.5%.
+>
+> | value term | shading | V3 playoffs | V3 title |
+> |---|---|---|---|
+> | waiver floor (pre-fix) | full spread (pre-fix) | 53.5% | 7.3% |
+> | waiver floor | none (`FF_V3_SHADE=off`) | 60.6% | 8.7% |
+> | positional replacement | full spread | 54.1% | 8.1% |
+> | positional replacement | private only (SHIPPED on this branch) | **59.7%** | 10.2% |
+> | positional replacement | none | 65.5% | 10.4% |
+>
+> **The two terms interact, which no single arm shows.** The baseline fix is worth **+0.61pp**, CI
+> [-2.78, +3.89], 6/12 seasons -- a clean null -- while the old shading is on, and **+4.94pp**, CI
+> [+1.72, +8.67], 8/12 seasons, t 2.69, once it is off. The old shading was over-aggressive enough to
+> swamp its own value term. Shading costs 7.1pp of playoff rate against the waiver floor and 11.4pp
+> against the positional baseline.
+>
+> **The shading fix, paired against the Step 2 V3 on the same seeds:** +5.61pp of playoffs, SD 7.31,
+> SE 2.11, t 2.66, CI [+1.56, +9.50], better in 8 of 12 seasons; +2.17pp of title, CI [+0.50, +3.89],
+> 9/12 seasons. Against V2 it is
+> still -29.17pp, CI [-33.72, -25.33], 0/12. P28's threshold is not re-run against this number; it is
+> reported as what it is.
+>
+> **The residual is the surrogate, and that is now the only candidate left.** Both inputs the Phase 3
+> writeup named as wrong have been corrected and V3 gained 6.2 points of a 35-point deficit. What
+> remains is the analytic expected-lineup-points calculation itself, against the SIMULATED marginal
+> that behaves correctly. Substituting the simulated marginal for the top 40 candidates was
+> considered and is **not affordable**: `scripts/roster-book.mjs` measures it at **426 ms per
+> candidate** after a 4.2s budget curve, so one decision point is ~21s, one draft is ~200 of them, and
+> the long arm is 1,800 drafts -- roughly 250 days of compute for one arm.
+>
+> ### What the bidder actually buys (`scripts/v3-roster.mjs --seeds 8 --book price --season Y`)
+>
+> The drafts the arbiter really scores, so these are shares of the same auctions, not of a 2026 board.
+>
+> | season | V2 spend / QB share | V3 spend / QB share, waiver floor | V3 spend / QB share, positional baseline | V3 starting-lineup proj, floor -> baseline |
+> |---|---|---|---|---|
+> | 2019 | $45 / 31% | $147 / 34% | $110 / **18%** | 1511 -> 1456 |
+> | 2021 | $82 / 20% | $126 / 34% | $102 / **29%** | 1524 -> 1487 |
+> | 2023 | $110 / 21% | $149 / 31% | $135 / **23%** | 1569 -> 1542 |
+>
+> This is the mechanism of the loss on the honest arm, and it is worth stating plainly: correcting the
+> baseline shrinks every marginal, so V3 bids less, spends $25-40 less of its $200, and buys a
+> measurably weaker starting lineup. The quarterback share moves the way P30 asked for and the roster
+> gets worse. A bidder can be right about relative value and wrong about level.
+>
+> ### P35 -- `starterReserve` on the long arm
+>
+> `--starter-reserve 0` against the shipped 4, V2, long churn arm, 2012-2024, n=150, paired.
+> **NOT byte-identical**: 16 of 1800 trial rows differ, 3 discordant on playoffs, 88.7% against 88.9%,
+> mean -0.17pp, SD 0.41, SE 0.12, CI [-0.44, 0.00], and 25.6% against 25.5% on the title. The flag is
+> connected (the header prints `reserve=0` and the trials move), so this is a real if tiny effect.
+>
+> P31's "provably inert -- byte-identical trials" was measured on the five-season honest arm and does
+> not generalise to thirteen seasons of the legacy market: the soft reserve binds in about 0.9% of
+> trials there. The weaker claim P31 also made -- flat within noise -- holds comfortably. **The
+> recommendation to retire `starterReserve` as a dial is unaffected** (an effect of 0.17pp with an
+> interval touching zero is not a knob worth exposing), but the justification must be "flat", not
+> "provably dead".
+>
+> ### The recommendation
+>
+> **Keep V2 as the bidder. Keep V3 selectable, unshipped, and now with both of its named input defects
+> fixed.** The arbiter has answered the same question twice with the same answer, and the second time
+> it answered a strictly better version of V3. What changed is the diagnosis: it is no longer "the
+> marginal prices quarterbacks wrongly" or "the shading double-counts", because both are fixed and the
+> bidder still loses 29 points of playoff rate in twelve seasons out of twelve. Anyone picking this up
+> should go straight at the analytic surrogate -- the gap between `lineupMarginal` and
+> `rosterMarginal`, visible as the 21.4%-against-15.2% residual in the book above and now printable
+> player by player from `scripts/roster-book.mjs` -- and should not spend another pass on the inputs.
+> (`lineupMarginal.ts`'s header cites a `scripts/marginal-agreement.mjs` that does not exist in this
+> tree; a rank-correlation harness between the two books would be the right first tool and has to be
+> written.)
+>
+> ### Tripwire and gates
+>
+> ```
+> npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
+>   CHAMPIONSHIPS: 38.1%  (random 6.3%)  |  playoffs: 96%
+>   per season: 2000:31% 2001:32% 2002:29% 2003:47% 2004:41% 2005:18% 2006:51% 2007:21% 2008:36%
+>               2009:35% 2010:35% 2011:62% 2012:49% 2013:41% 2014:32% 2015:26% 2016:41% 2017:33%
+>               2018:45% 2019:38% 2020:37% 2021:36% 2022:61% 2023:33% 2024:43%
+> ```
+>
+> Identical to the final-integration line in every season, which is what "V2 is untouched" has to mean
+> -- `values.ts` and `strategy.ts` are not in this branch's diff at all. `npm test` 467 tests, 465
+> pass, 0 fail, 2 skipped; `npm run typecheck` clean; `scripts/v3-connected.mjs` all connected.
+>
+> **Every new guard was fault-injected once.** Disabling the baseline branch in `expectedWeekPoints`
+> fails exactly the two assertions that target it (the QB-against-QB17 gap and the strategy-level
+> "the baseline reaches the bidder") and none of the other seventeen. Dropping the subtracted term
+> from `ourSdPrivateFor` fails exactly the private-component guard. The private-component guard is
+> written as a subtraction rather than a zero and its own fault injection drives it to a POSITIVE
+> value, because a zero that cannot become non-zero is a dead lever wearing a measured null's clothes.
+
 > ## TRACK C: STREAMING MODELS FOR EVERY POSITION -- and the opponent block measured ~0 (2026-09-09)
 >
 > `redesign/streaming-all-positions`, three commits off `redesign/final` (`75da5b0`). The question is

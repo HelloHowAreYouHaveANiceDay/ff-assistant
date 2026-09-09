@@ -188,6 +188,43 @@ export const ourSdFor = (posRank: number | null): number =>
   (posRank == null ? 1.214 : (OUR_SD_BAND.find(([hi]) => posRank <= hi) ?? OUR_SD_BAND[5])[1]);
 
 /**
+ * THE MARKET'S SHARED REALISED ERROR, by the same rank bands.
+ *
+ * It is the SAME ARRAY, deliberately and by reference rather than by a retyped copy, because that is
+ * the fact the shading correction turns on: `OUR_SD_BAND` was built from `scripts/market-noise.mjs`,
+ * which measures the CONSENSUS dispersion over 2020-2025 -- the room's error, not specifically ours.
+ * `--market ecr` reads the identical table for the room (`MARKET_SD_BAND` in ff.ts). A second copy
+ * here would let the two drift apart silently and make the subtraction below look like it measured
+ * something.
+ */
+export const MARKET_SHARED_SD_BAND = OUR_SD_BAND;
+export const marketSharedSdFor = (posRank: number | null): number =>
+  (posRank == null ? 1.214 : (MARKET_SHARED_SD_BAND.find(([hi]) => posRank <= hi) ?? MARKET_SHARED_SD_BAND[5])[1]);
+
+/**
+ * THE PRIVATE PART OF OUR UNCERTAINTY -- the only part that creates a winner's curse.
+ *
+ * A SHARED error moves every bid in the room together, so the winner is not selected on it; only the
+ * component by which OUR view diverges from the consensus decides how far the winner overpaid.
+ * Subtracting the market's shared realised error from our own predictive spread, floored at zero, is
+ * that component.
+ *
+ * AND IT IS EXACTLY ZERO HERE, at every rank, which is a finding rather than a bug. The backtest has
+ * no per-player p10/p90 to thread through the historical points table, so V3's "our uncertainty" has
+ * always been the measured CONSENSUS dispersion standing in for the artifact's interval -- and the
+ * consensus dispersion IS the market's shared error. Our own uncertainty and the room's are the same
+ * number in this harness, so combining them in quadrature was counting one quantity twice and the
+ * honest shading is the price book's private spread alone.
+ *
+ * It is written as the subtraction rather than as a zero so the term stays LIVE: give the two bands
+ * different numbers -- a real artifact interval, a re-fitted consensus table -- and it returns a real
+ * private component with no other edit. A hardcoded zero would be a dead lever that reads exactly
+ * like a measured null.
+ */
+export const ourSdPrivateFor = (posRank: number | null): number =>
+  Math.max(0, ourSdFor(posRank) - marketSharedSdFor(posRank));
+
+/**
  * Build V3's config from the same inputs the auction already has.
  *
  * WHAT IS NOT AVAILABLE HERE, said plainly because it bounds what the arbiter can measure about V3:
@@ -252,20 +289,40 @@ export function buildV3Config(
     // Default market: our own VOR book, which at least has a real $1 tail. The sim overrides it with
     // whichever book the room is actually bidding, which is the honest expectation of what we pay.
     priceOf: o.priceOf ?? ((name) => vorPrice.get(name) ?? 1),
-    // THE SHADING SENSITIVITY ARM. `FF_V3_OURSD=0` drops our own predictive uncertainty from the
-    // curse correction, leaving only the market's measured spread.
+    // OUR SIDE OF THE CURSE IS THE PRIVATE COMPONENT ONLY -- `ourSdPrivateFor`, our predictive
+    // spread minus the market's shared realised error at the same rank band, floored at zero.
     //
-    // The argument for dropping it is not tuning, it is that a SHARED error creates no curse: if the
-    // whole room reads the same projections and the same consensus, an error we all make moves every
-    // bid together and the winner is not selected on it. Only the PRIVATE component -- how far two
-    // bidders' views of the same man diverge, which is what the price model's residual dispersion
-    // measures -- decides how much the winner over-paid. Both arms are run and both are reported,
-    // because which one is right is an empirical question and this is the harness that answers it.
-    // `FF_V3_SHADE=off` removes the correction entirely, which is the arm that separates "the
-    // shading is wrong" from "the value is wrong". Without it a losing result cannot be attributed.
-    ourSd: (process.env.FF_V3_SHADE === "off" || process.env.FF_V3_OURSD === "0") ? () => 0 : (name) => ourSdFor(posRank.get(name) ?? null),
+    // The argument is not tuning, it is that a SHARED error creates no curse: if the whole room reads
+    // the same projections and the same consensus, an error we all make moves every bid together and
+    // the winner is not selected on it. Only the PRIVATE component -- how far two bidders' views of
+    // the same man diverge, which is what the price model's residual dispersion measures -- decides
+    // how much the winner over-paid. Combining our full spread in quadrature with the market's spread
+    // counted the shared half twice, and it cost 12pp of playoff rate on the long churn arm.
+    //
+    // In this harness that private component is exactly zero at every rank, because the table
+    // standing in for our interval IS the consensus dispersion (see `ourSdPrivateFor`). The
+    // subtraction is written out anyway so a real artifact interval would make the term live again.
+    //
+    // `FF_V3_OURSD=full` restores the pre-2026-09-09 behaviour -- our whole spread, shared part
+    // included -- which is the arm that measures what the double-count was worth. `FF_V3_SHADE=off`
+    // removes the correction entirely, separating "the shading is wrong" from "the value is wrong";
+    // without it a losing result cannot be attributed.
+    ourSd: process.env.FF_V3_SHADE === "off" ? () => 0
+      : process.env.FF_V3_OURSD === "full" ? (name) => ourSdFor(posRank.get(name) ?? null)
+      : process.env.FF_V3_OURSD === "0" ? () => 0
+      : (name) => ourSdPrivateFor(posRank.get(name) ?? null),
     marketSd: process.env.FF_V3_SHADE === "off" ? () => 0 : (name) => priceNoiseFor(overallRank.get(name) ?? 9999)[1],
     defaultBidders: Math.max(2, Math.round(lg.teams / 2)),
+    // League-wide demand, which is what turns the streaming floor into a POSITIONAL REPLACEMENT
+    // baseline inside the marginal (P30's defect). Without it V3 prices the first quarterback
+    // against the waiver wire.
+    //
+    // THE BASELINE SENSITIVITY ARM, in the same shape as the two shading arms below it and for the
+    // same reason: a result that cannot be attributed to a term is not a result. `FF_V3_BASELINE=off`
+    // withholds league-wide demand, which is exactly the pre-2026-09-09 bidder -- every starting slot
+    // measured against the waiver wire. Running both arms is what separates "the baseline fix moved
+    // it" from "something else did", and it is the only way to say which half of V3 costs what.
+    teams: process.env.FF_V3_BASELINE === "off" ? undefined : lg.teams,
   };
 }
 
@@ -424,8 +481,12 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
         const posInflation = cfg.posInflation ? positionInflationFactors(picks.map((pk) => ({ pos: pk.pos, price: pk.price, value: trueVal.get(pk.name) ?? 0 }))) : undefined;
         // Room money + unfilled slots, stated explicitly so budgetPressure computes the SAME
         // quantity here and live (ff.ts). Cheap: one pass over teams, only when a term needs it.
+        // V3 needs `leagueOpenSlots` for a SECOND reason: its positional replacement baseline scales
+        // league-wide starting demand by the share of roster slots still open, so without it the
+        // baseline is frozen at the pre-draft board and cannot tighten -- a dead lever wearing the
+        // same flat line as a real null. V2's gate is untouched, so no V2 number moves.
         let leagueDollars: number | undefined, leagueOpenSlots: number | undefined;
-        if (cfg.budgetPressure) {
+        if (cfg.budgetPressure || useV3) {
           leagueDollars = teams.reduce((a, tt) => a + Math.max(0, tt.budget), 0);
           leagueOpenSlots = teams.reduce((a, tt) => a + openCount(tt), 0);
         }
