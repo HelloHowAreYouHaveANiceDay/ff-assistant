@@ -149,6 +149,8 @@ async function main() {
       return cmdBuildWeeklyFeatures(rest);
     case "evaluate-weekly":
       return cmdEvaluateWeekly(rest);
+    case "scorecard":
+      return cmdScorecard(rest);
     default:
       console.log(
         "commands:\n" +
@@ -2543,6 +2545,33 @@ async function cmdBuildWeeklyFeatures(rest: string[]) {
         ["season_line_pg", "td_ppg", "t4_mean", "dvp_mult", "spread_line", "days_rest", "pts"].map(pct).join(""));
     }
   } finally { db.close(); }
+}
+
+async function cmdScorecard(rest: string[]) {
+  const { runScorecard, formatScorecard } = await import("./weekly/scorecard.js");
+  const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
+  // The live season has no played weeks, so its rows come from the schedule and the board rather
+  // than from history. `--no-forward` skips it for a season already in feat_player_week_model.
+  if (!rest.includes("--no-forward")) {
+    const { buildForwardWeeks } = await import("./weekly/features.js");
+    const f = await buildForwardWeeks({
+      dbPath: valueOf(rest, "--db"), season, useTeamOdds: rest.includes("--team-odds"),
+    });
+    console.log(`forward features: ${f.rows} rows, ${f.players} players x ${f.weeks} weeks; ` +
+      `${f.withLine} with a season line, ${f.withLines} with a published spread; ` +
+      `weeks already played: ${f.playedWeeks.join(",") || "(none)"}`);
+  }
+  const res = await runScorecard({
+    dbPath: valueOf(rest, "--db"), season,
+    snapshot: !rest.includes("--score-only"),
+    score: !rest.includes("--snapshot-only"),
+    espn: rest.includes("--espn"),
+    week: valueOf(rest, "--week") ? Number(valueOf(rest, "--week")) : undefined,
+    today: valueOf(rest, "--today"),
+    rosters: valueOf(rest, "--rosters") ? Number(valueOf(rest, "--rosters")) : undefined,
+  });
+  if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
+  else console.log(formatScorecard(res));
 }
 
 async function cmdEvaluateWeekly(rest: string[]) {

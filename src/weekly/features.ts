@@ -538,3 +538,181 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
     },
   }));
 }
+
+// ==================================================================================================
+// THE LIVE SEASON.
+//
+// buildInto above builds from `feat_player_week`, which is built from `history-weekly.csv`, which is
+// built from games that have been PLAYED. In September of a live season that table is empty for the
+// current year, so the weekly model would have nothing to serve from in exactly the month it matters
+// -- the failure mode where a harness is excellent on history and cannot answer a question about
+// this Sunday.
+//
+// So the forward builder assembles the same rows from what DOES exist before kickoff: the published
+// schedule, the board's preseason season line, the prior season's defence, and whatever weeks of the
+// current season have already been played. Every column keeps the as-of rule it has above; nothing
+// new is invented. A week with no line published yet carries NULL, not a mean.
+// ==================================================================================================
+
+export interface ForwardOpts {
+  dbPath?: string;
+  season: number;
+  artifactPath?: string;
+  sched?: ScheduleInfo;
+  /** Read the live spread/total for the imminent week from `team_odds` where the schedules feed has
+   *  not published one. Off by default because team_odds carries ONE week -- whichever was last
+   *  synced -- and applying it to every week would date-stamp the wrong game. */
+  useTeamOdds?: boolean;
+}
+
+export interface ForwardResult {
+  season: number; weeks: number; rows: number; players: number;
+  withLine: number; withLines: number; playedWeeks: number[];
+}
+
+/**
+ * Build `feat_player_week_model` for a season that has not finished (or has not started).
+ *
+ * The universe is the BOARD -- every player the current consensus ranks -- because that is who
+ * exists in September. A completed season's universe is everyone who was scored, and using that
+ * rule here would produce an empty table.
+ */
+export async function buildForwardWeeks(opts: ForwardOpts): Promise<ForwardResult> {
+  const db = openDb(opts.dbPath);
+  try { return await buildForwardInto(db, opts); } finally { db.close(); }
+}
+
+export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<ForwardResult> {
+  const season = opts.season;
+  const artifact = loadWeeklyBaseArtifact(opts.artifactPath);
+  const sched = opts.sched ?? await loadSchedule([season]);
+  const now = nowIso();
+
+  // The board: the season line, from the LIVE path (consensus rank), which is the only source that
+  // knows about a rookie.
+  const line = preseasonLinePerGame(db, season, artifact, sched, season);
+  const board = db.prepare(
+    "SELECT feat_key, player_sk, name, pos, team FROM feat_player_season WHERE season = ? AND pos IS NOT NULL",
+  ).all(season) as { feat_key: string; player_sk: string | null; name: string; pos: string; team: string | null }[];
+
+  // Weeks: every REG week the schedule publishes for this season.
+  const weeks = [...new Set([...sched.weekAsOf.keys()]
+    .filter((k) => k.startsWith(`${season}|`)).map((k) => Number(k.split("|")[1])))].sort((a, b) => a - b);
+
+  // Per-team schedule, from that team's side, straight off the feed.
+  const feed = await fetchCsvCached(URLS.schedules, cacheTag.schedules);
+  const game = new Map<string, { opp: string; home: number; spread: number | null; total: number | null; implied: number | null }>();
+  for (const g of feed) {
+    if (Number(pick(g, "season")) !== season || pick(g, "game_type") !== "REG") continue;
+    const wk = Number(pick(g, "week")); if (!wk) continue;
+    const home = canonTeam(pick(g, "home_team")), away = canonTeam(pick(g, "away_team"));
+    const numOrNull = (v: string) => (v === "" || v == null || v === "NA" || !Number.isFinite(Number(v)) ? null : Number(v));
+    const sp = numOrNull(String(g.spread_line ?? "")), tl = numOrNull(String(g.total_line ?? ""));
+    const half = tl != null ? tl / 2 : null;
+    game.set(`${home}|${wk}`, { opp: away, home: 1, spread: sp, total: tl, implied: half != null && sp != null ? half + sp / 2 : null });
+    game.set(`${away}|${wk}`, { opp: home, home: 0, spread: sp != null ? -sp : null, total: tl, implied: half != null && sp != null ? half - sp / 2 : null });
+  }
+
+  // Live odds, for the ONE week team_odds describes. It is a snapshot of the imminent week and
+  // carries no week number, so it is applied only where the feed has published nothing -- and only
+  // to the earliest week that still has no line, which is the week it can only be about.
+  const odds = new Map<string, { spread: number; total: number; implied: number }>();
+  if (opts.useTeamOdds) {
+    for (const r of db.prepare("SELECT team, spread, total, implied_total FROM team_odds").all() as
+      { team: string; spread: number | null; total: number | null; implied_total: number | null }[]) {
+      if (r.spread != null && r.total != null) {
+        odds.set(canonTeam(r.team), { spread: r.spread, total: r.total, implied: r.implied_total ?? r.total / 2 - r.spread / 2 });
+      }
+    }
+  }
+  const firstUnpriced = weeks.find((w) => board.some((p) => p.team && game.get(`${p.team}|${w}`) && game.get(`${p.team}|${w}`)!.spread == null)) ?? -1;
+
+  // Whatever of this season has already been played, for the to-date and trailing columns.
+  const playedRows = db.prepare(
+    "SELECT feat_key, week, pts, td_games, td_fd, td_ts, td_attempts, td_rush_yards, td_pts FROM feat_player_week WHERE season = ? AND pts IS NOT NULL",
+  ).all(season) as { feat_key: string; week: number; pts: number; td_games: number | null; td_fd: number | null; td_ts: number | null; td_attempts: number | null; td_rush_yards: number | null; td_pts: number | null }[];
+  const played = new Map<string, Map<number, typeof playedRows[number]>>();
+  for (const r of playedRows) (played.get(r.feat_key) ?? played.set(r.feat_key, new Map()).get(r.feat_key)!).set(r.week, r);
+  const playedWeeks = [...new Set(playedRows.map((r) => r.week))].sort((a, b) => a - b);
+
+  const dvp = dvpTable(db, season);
+
+  const ins = db.prepare(
+    `INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, as_of, name, pos, team,
+        opponent, home, is_bye, season_line_pg, td_games, td_ppg, t4_mean, t4_sd, td_fd, td_ts,
+        td_attempts, td_rush_yards, dvp_mult, dvp_n, spread_line, total_line, implied_team_total,
+        days_rest, pts, updated_at)
+      VALUES (@feat_key,@player_sk,@season,@week,@as_of,@name,@pos,@team,@opponent,@home,@is_bye,
+        @season_line_pg,@td_games,@td_ppg,@t4_mean,@t4_sd,@td_fd,@td_ts,@td_attempts,@td_rush_yards,
+        @dvp_mult,@dvp_n,@spread_line,@total_line,@implied_team_total,@days_rest,@pts,@now)
+      ON CONFLICT(season, week, feat_key) DO UPDATE SET
+        player_sk=excluded.player_sk, as_of=excluded.as_of, name=excluded.name, pos=excluded.pos,
+        team=excluded.team, opponent=excluded.opponent, home=excluded.home, is_bye=excluded.is_bye,
+        season_line_pg=excluded.season_line_pg, td_games=excluded.td_games, td_ppg=excluded.td_ppg,
+        t4_mean=excluded.t4_mean, t4_sd=excluded.t4_sd, td_fd=excluded.td_fd, td_ts=excluded.td_ts,
+        td_attempts=excluded.td_attempts, td_rush_yards=excluded.td_rush_yards,
+        dvp_mult=excluded.dvp_mult, dvp_n=excluded.dvp_n, spread_line=excluded.spread_line,
+        total_line=excluded.total_line, implied_team_total=excluded.implied_team_total,
+        days_rest=excluded.days_rest, pts=excluded.pts, updated_at=excluded.updated_at`,
+  );
+
+  let rows = 0, withLine = 0, withLines = 0;
+  db.transaction(() => {
+    for (const p of board) {
+      if (!WEEKLY_POS.includes(p.pos)) continue;
+      const hist = played.get(p.feat_key);
+      for (const week of weeks) {
+        const g = p.team ? game.get(`${p.team}|${week}`) : undefined;
+        const asOf = sched.weekAsOf.get(`${season}|${week}`) ?? `${season}-09-01`;
+        const prior: number[] = [];
+        if (hist) for (let w = week - 1; w >= 1 && prior.length < 4; w--) { const v = hist.get(w); if (v) prior.push(v.pts); }
+        const t4mean = prior.length ? prior.reduce((s, x) => s + x, 0) / prior.length : null;
+        const t4sd = prior.length >= 2 ? Math.sqrt(prior.reduce((s, x) => s + (x - t4mean!) ** 2, 0) / prior.length) : null;
+        // to-date columns come from the LAST played row before this week, which already carries
+        // "through w-1" by construction (src/features/build.ts accumulates after writing).
+        let td: typeof playedRows[number] | undefined;
+        if (hist) for (let w = week - 1; w >= 1 && !td; w--) td = hist.get(w);
+        const games = hist ? [...hist.keys()].filter((w) => w < week).length : 0;
+        const ptsSoFar = hist ? [...hist.entries()].filter(([w]) => w < week).reduce((s, [, v]) => s + v.pts, 0) : 0;
+
+        let daysRest: number | null = null;
+        if (p.team) {
+          const thisDay = sched.teamGameDay.get(`${season}|${p.team}|${week}`);
+          let prevDay: string | undefined;
+          for (let w = week - 1; w >= 1 && !prevDay; w--) prevDay = sched.teamGameDay.get(`${season}|${p.team}|${w}`);
+          if (thisDay && prevDay) {
+            const d = (Date.parse(`${thisDay}T00:00:00Z`) - Date.parse(`${prevDay}T00:00:00Z`)) / 864e5;
+            daysRest = Number.isFinite(d) && d > 0 ? d : null;
+          }
+        }
+
+        const o = week === firstUnpriced && p.team ? odds.get(p.team) : undefined;
+        const spread = g?.spread ?? o?.spread ?? null;
+        const total = g?.total ?? o?.total ?? null;
+        const implied = g?.implied ?? o?.implied ?? null;
+        const d = g?.opp ? dvp.get(week, g.opp, p.pos) : null;
+
+        ins.run({
+          feat_key: p.feat_key, player_sk: p.player_sk, season, week, as_of: asOf,
+          name: p.name, pos: p.pos, team: p.team, opponent: g?.opp ?? null,
+          home: g ? g.home : null, is_bye: g ? 0 : 1,
+          season_line_pg: finite(line.get(p.feat_key) ?? null),
+          td_games: games, td_ppg: games ? ptsSoFar / games : null,
+          t4_mean: finite(t4mean), t4_sd: finite(t4sd),
+          td_fd: finite(td?.td_fd ?? null), td_ts: finite(td?.td_ts ?? null),
+          td_attempts: finite(td?.td_attempts ?? null), td_rush_yards: finite(td?.td_rush_yards ?? null),
+          dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
+          spread_line: spread, total_line: total, implied_team_total: implied,
+          days_rest: daysRest,
+          pts: finite(hist?.get(week)?.pts ?? null),
+          now,
+        });
+        rows++;
+        if (line.get(p.feat_key) != null) withLine++;
+        if (spread != null) withLines++;
+      }
+    }
+  })();
+
+  return { season, weeks: weeks.length, rows, players: board.length, withLine, withLines, playedWeeks };
+}
