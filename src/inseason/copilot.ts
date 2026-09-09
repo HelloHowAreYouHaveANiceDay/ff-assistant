@@ -61,6 +61,95 @@ export interface Provenance {
   projectionArtifact: string | null;
 }
 
+// ---------------------------------------------------------------------------------------------
+// THE OBJECTIVE -- which quantity a recommendation is actually maximising, stated on every result.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * WHY THE UNIT OF MEASURE CHANGED, and it is the central finding of the whole redesign.
+ *
+ * P(title) = P(playoffs) x P(title | playoffs). Phase 2c scored this simulator against 114 real
+ * team-seasons of this league and found it has measurable skill on the FIRST factor -- playoff Brier
+ * 0.2370 against a uniform 0.2451 -- and NONE on the second: title Brier 0.0659 against a uniform
+ * 0.0652, which is WORSE than knowing nothing. Single elimination among seven makes P(title |
+ * playoffs) very nearly a coin flip, and eight titles in 114 team-seasons is almost no signal to fit
+ * against anyway.
+ *
+ * Every recommendation in this module used to be scored as a change in CHAMPIONSHIP probability. That
+ * is the quantity the model cannot predict, and optimising a quantity a model cannot predict is
+ * optimising its noise. So:
+ *
+ *   PRIMARY      the change in P(PLAYOFFS). Ranking, the noise floor and the verdict all use it.
+ *   SECONDARY    expected optimal-lineup points in the three fantasy playoff weeks. It is the
+ *                tie-break, and it becomes the primary once a seed is secure -- see the regime
+ *                switch below.
+ *   ALONGSIDE    the change in P(title), computed and reported on every row and never used alone.
+ *
+ * Nothing here hides the title number. It is the number the owner will ask about, and refusing to
+ * show it would be its own kind of dishonesty; what changes is that it no longer decides.
+ */
+export type Regime = "insecure" | "secure";
+
+/**
+ * WHERE A SEED COUNTS AS SECURE, derived from the calibration rather than chosen.
+ *
+ * `scripts/season-calibration.mjs` bins the simulator's predicted playoff probability against what
+ * actually happened over 114 team-seasons:
+ *
+ *   predicted   n    mean predicted   realised
+ *   5-15%       2          8.3%          0.0%
+ *   15-30%     13         24.1%         23.1%
+ *   30-50%     71         41.3%         47.9%
+ *   50-70%     27         58.0%         40.7%
+ *   70-100%     1         74.4%        100.0%
+ *
+ * The first bin whose REALISED playoff rate exceeds 85% is 70-100%, so the threshold is 70% of
+ * predicted playoff probability. Two things about that number have to be said out loud, because a
+ * threshold quoted without them would be quoting a sample of one:
+ *
+ *   - the 70-100% bin contains ONE team-season. It went to the playoffs. That is the whole evidence.
+ *   - the 50-70% bin is the largest miscalibration on the page -- 58% predicted, 41% realised -- so
+ *     the simulator is OVER-confident just below the threshold, which argues for putting the switch
+ *     ABOVE the miscalibrated band rather than inside it. 70% is where that band ends.
+ *
+ * So it is derived, it is defensible, and it rests on very little. It is exposed on every result
+ * (`seasonOdds().regime`) so a reader can disagree with it explicitly instead of by accident.
+ */
+export const PLAYOFF_SECURE_THRESHOLD_PCT = 70;
+
+export interface Objective {
+  regime: Regime;
+  /** What the recommendation is RANKED on. */
+  primary: "playoffs" | "playoff-week strength";
+  secondary: "playoff-week strength" | "playoffs";
+  alongside: "title";
+  thresholdPct: number;
+  ourPlayoffPct: number | null;
+  note: string;
+}
+
+export function objectiveFor(playoffPct: number | null, thresholdPct = PLAYOFF_SECURE_THRESHOLD_PCT): Objective {
+  const secure = playoffPct != null && playoffPct >= thresholdPct;
+  return {
+    regime: secure ? "secure" : "insecure",
+    primary: secure ? "playoff-week strength" : "playoffs",
+    secondary: secure ? "playoffs" : "playoff-week strength",
+    alongside: "title",
+    thresholdPct,
+    ourPlayoffPct: playoffPct == null ? null : r2(playoffPct),
+    note: secure
+      ? `our simulated playoff probability is ${playoffPct!.toFixed(1)}%, at or above the ${thresholdPct}% ` +
+        "threshold, so the seed is treated as secure and moves are ranked on expected optimal-lineup " +
+        "points in weeks 15-17 -- the only thing left that a bracket can see. The change in P(playoffs) " +
+        "is reported beside it and P(title) alongside both."
+      : `our simulated playoff probability is ${playoffPct == null ? "not computed" : `${playoffPct.toFixed(1)}%`}, ` +
+        `below the ${thresholdPct}% threshold, so moves are ranked on the change in ` +
+        "P(PLAYOFFS) -- the factor this simulator has measured skill on (Brier 0.2370 against a uniform " +
+        "0.2451). Playoff-week strength is the tie-break and P(title) is reported alongside; the " +
+        "simulator has NO measured skill on the title (0.0659 against a uniform 0.0652).",
+  };
+}
+
 export interface Assumptions {
   /** REAL means the league's actual matchups; GENERATED means a deterministic stand-in built
    *  offline, whose playoff seeding is therefore not this league's. */
@@ -78,15 +167,27 @@ export interface Assumptions {
    *  in particular WHICH players fell back to the season line because the weekly projector had no
    *  row for them. A caveat that omits the fallback is a caveat that hides it. */
   basisNote?: string;
+  /** WHICH QUANTITY THIS RESULT IS MAXIMISING. On every result, because a delta with no objective
+   *  attached is the same trap as a probability with no assumptions attached: it reads as a fact. */
+  objective: Objective;
 }
 
 export function defaultProvenance(ctx: SimContext): Provenance {
   return { season: ctx.season, boardRows: ctx.board.size, varianceSeasons: null, sampler: "bootstrap", projectionArtifact: null };
 }
 
-interface BaseOpts { trials?: number; seed?: number; seeds?: number[]; provenance?: Provenance }
+interface BaseOpts {
+  trials?: number; seed?: number; seeds?: number[]; provenance?: Provenance;
+  /** Override the playoff probability at which the objective switches to playoff-week strength.
+   *  Exists so the switch itself can be FAULT-INJECTED: raise it above 100 and the secure regime
+   *  becomes unreachable, and a ranking that does not change was never reading the regime. */
+  secureThresholdPct?: number;
+}
 
-function assumptionsOf(ctx: SimContext, basis: Assumptions["basis"], o: BaseOpts, trials: number | null, seeds: number[] | null): Assumptions {
+function assumptionsOf(
+  ctx: SimContext, basis: Assumptions["basis"], o: BaseOpts,
+  trials: number | null, seeds: number[] | null, objective: Objective,
+): Assumptions {
   return {
     schedule: ctx.syntheticSchedule ? "generated" : "real",
     basis,
@@ -94,8 +195,18 @@ function assumptionsOf(ctx: SimContext, basis: Assumptions["basis"], o: BaseOpts
     seeds,
     artifact: o.provenance ?? defaultProvenance(ctx),
     asOf: new Date().toISOString(),
+    objective,
   };
 }
+
+/** Our three numbers for one hypothetical league state, under one seed, in one simulation. They are
+ *  read from the SAME run so a playoff delta and a playoff-week delta can never come from two
+ *  different samples -- the correlation trap this repo has already paid for once. */
+interface Outcome { playoffPct: number; titlePct: number; poPts: number }
+const outcomeOf = (ctx: SimContext, teams: SeasonTeamInput[], trials: number, seed: number, idx = ctx.meIdx): Outcome => {
+  const r = ctx.run(teams, trials, seed, { playoffWeekStrength: true })[idx];
+  return { playoffPct: 100 * r.playoffs, titlePct: 100 * r.champion, poPts: r.playoffWeekPts };
+};
 
 const mean = (a: number[]): number => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
 const sd = (a: number[]): number => {
@@ -158,6 +269,9 @@ export interface SeasonOddsResult {
   regWeeks: number;
   randomTitlePct: number;
   invariants: Invariant[];
+  /** Which objective the in-season tools are currently ranking on, and the threshold that decided
+   *  it. Exposed HERE because this is the verb that computes the number the switch reads. */
+  objective: Objective;
   assumptions: Assumptions;
 }
 
@@ -166,7 +280,7 @@ export function seasonOdds(ctx: SimContext, o: BaseOpts = {}): SeasonOddsResult 
   const trials = o.trials ?? 4000;
   const seed = o.seed ?? 7;
   const opts = ctx.opts(trials, seed);
-  const raw = ctx.run(ctx.teams, trials, seed);
+  const raw = ctx.run(ctx.teams, trials, seed, { playoffWeekStrength: true });
   const rows: OddsRow[] = raw.map((r, i) => ({ ...r, us: i === ctx.meIdx }));
   const games = ctx.weeks.reduce((a, w) => a + w.length, 0);
   const invariants = oddsInvariants(raw, opts.playoffTeams, games);
@@ -177,7 +291,10 @@ export function seasonOdds(ctx: SimContext, o: BaseOpts = {}): SeasonOddsResult 
       bad.map((c) => `${c.name}: got ${c.got}, want ${c.want} +/- ${c.tol}`).join("\n  "),
     );
   }
-  const sorted = [...rows].sort((a, b) => b.champion - a.champion);
+  // SORTED BY THE PRIMARY OBJECTIVE, not by the title. A table ordered by championship probability
+  // is a table ordered by the quantity this simulator has been measured to know nothing about.
+  const sorted = [...rows].sort((a, b) => b.playoffs - a.playoffs || b.champion - a.champion);
+  const objective = objectiveFor(100 * rows[ctx.meIdx].playoffs, o.secureThresholdPct);
   return {
     teams: sorted,
     us: rows[ctx.meIdx],
@@ -185,7 +302,8 @@ export function seasonOdds(ctx: SimContext, o: BaseOpts = {}): SeasonOddsResult 
     regWeeks: ctx.weeks.length,
     randomTitlePct: r2(100 / ctx.teams.length),
     invariants,
-    assumptions: assumptionsOf(ctx, "simulation", o, trials, [seed]),
+    objective,
+    assumptions: assumptionsOf(ctx, "simulation", o, trials, [seed], objective),
   };
 }
 
@@ -328,7 +446,10 @@ export function lineupRecommend(
   const reasonOf = new Map(players.map((p) => [p.name, p.reason]));
 
   const allWeekly = o.weekly != null && fellBack.length === 0;
-  const assumptions = assumptionsOf(ctx, allWeekly ? "weekly-model" : "projection", o, null, null);
+  // A weekly lineup has no objective to trade off -- you start the best legal eleven, and that is the
+  // same answer whichever regime we are in. The objective block still travels, with the regime
+  // unknown, so a consumer never has to wonder whether it was omitted or forgotten.
+  const assumptions = assumptionsOf(ctx, allWeekly ? "weekly-model" : "projection", o, null, null, objectiveFor(null));
   assumptions.basisNote = o.weekly == null
     ? `no weekly projector was supplied: every point total is the season projection divided by ${perWeek}, which has no matchup, no recent form and no weather in it`
     : allWeekly
@@ -351,9 +472,27 @@ export function lineupRecommend(
 // A SHARED SIMULATION HELPER -- every "what does this move do to our title odds" question.
 // ---------------------------------------------------------------------------------------------
 
-/** Our title probability, in percent, for a hypothetical league state, under one seed. */
-const titlePct = (ctx: SimContext, teams: SeasonTeamInput[], trials: number, seed: number, idx = ctx.meIdx): number =>
-  100 * ctx.run(teams, trials, seed)[idx].champion;
+/**
+ * ALL THREE DELTAS FROM ONE SET OF PAIRED RUNS, plus whichever the regime ranks on.
+ *
+ * The per-seed deltas are averaged rather than the averages differenced -- that is what keeps the
+ * common random numbers doing their job -- and all three come from the SAME simulation of the same
+ * seed, so a playoff delta and a playoff-week delta can never be a comparison across two samples.
+ */
+function deltasOf(after: Outcome[], base: Outcome[], objective: Objective): ObjectiveDelta {
+  const dPlayoffs = after.map((a, i) => a.playoffPct - base[i].playoffPct);
+  const dTitle = after.map((a, i) => a.titlePct - base[i].titlePct);
+  const dPo = after.map((a, i) => a.poPts - base[i].poPts);
+  const p = pairedDelta(dPlayoffs);
+  const po = pairedDelta(dPo);
+  return {
+    playoffsPp: p.delta,
+    playoffWeekPts: po.delta,
+    titlePp: pairedDelta(dTitle).delta,
+    rankValue: objective.primary === "playoffs" ? p.delta : po.delta,
+    se: objective.primary === "playoffs" ? p.se : po.se,
+  };
+}
 
 /**
  * COMMON RANDOM NUMBERS, and why every delta below is measured seed by seed.
@@ -372,23 +511,36 @@ function pairedDelta(perSeed: number[]): { delta: number; se: number } {
 // WAIVERS
 // ---------------------------------------------------------------------------------------------
 
-export interface WaiverDrop { name: string; pos: string; proj: number; deltaPp: number; se: number }
+/** Every scored move carries all three numbers. `playoffsPp` is the PRIMARY, `playoffWeekPts` the
+ *  SECONDARY, `titlePp` the one reported alongside and never used alone. `rankValue` is whichever of
+ *  the first two the ACTIVE REGIME ranks on, so a consumer can sort without knowing the rule. */
+export interface ObjectiveDelta {
+  playoffsPp: number;
+  playoffWeekPts: number;
+  titlePp: number;
+  rankValue: number;
+  se: number;
+}
+export interface WaiverDrop extends ObjectiveDelta { name: string; pos: string; proj: number }
 export interface WaiverRefusal { add: string; drop: string; pos: string; why: string }
-export interface WaiverTarget {
+export interface WaiverTarget extends ObjectiveDelta {
   add: string; pos: string; proj: number;
   drop: string; dropPos: string;
-  deltaPp: number; se: number;
+  afterPlayoffPct: number;
   afterTitlePct: number;
   clearsNoise: boolean;
   faab: number; faabRule: string;
   drops: WaiverDrop[];
 }
 export interface WaiverResult {
+  basePlayoffPct: number;
+  basePlayoffWeekPts: number;
   baseTitlePct: number;
   noiseFloorPp: number;
   targets: WaiverTarget[];
   refused: WaiverRefusal[];
   faabBudget: number;
+  objective: Objective;
   assumptions: Assumptions;
 }
 
@@ -401,7 +553,7 @@ export interface WaiverResult {
  * percent of the budget per point of title probability, capped at half the budget. It is a way to
  * turn a ranking into a bid, not a valuation.
  */
-export const FAAB_RULE = "10% of budget per +1pp of title probability, capped at 50% -- a stated rule of thumb, not a fitted value";
+export const FAAB_RULE = "10% of budget per +1pp of PLAYOFF probability, capped at 50% -- a stated rule of thumb, not a fitted value. It was quoted against title probability until Phase 3; the rule is unchanged, the quantity it is applied to is the one the simulator can actually predict.";
 export function faabFor(deltaPp: number, budget: number): number {
   if (deltaPp <= 0) return 0;
   return Math.max(1, Math.round(Math.min(0.5, deltaPp * 0.10) * budget));
@@ -435,8 +587,11 @@ export function waiverTargets(
     .sort((a, b) => b.proj - a.proj)
     .slice(0, nAdds);
 
-  const baseBySeed = seeds.map((s) => titlePct(ctx, ctx.teams, trials, s));
-  const base = mean(baseBySeed);
+  const baseBySeed = seeds.map((s) => outcomeOf(ctx, ctx.teams, trials, s));
+  const basePlayoff = mean(baseBySeed.map((b) => b.playoffPct));
+  const baseTitle = mean(baseBySeed.map((b) => b.titlePct));
+  const basePoPts = mean(baseBySeed.map((b) => b.poPts));
+  const objective = objectiveFor(basePlayoff, o.secureThresholdPct);
   const mine = ctx.teams[ctx.meIdx].roster;
   const refused: WaiverRefusal[] = [];
   const targets: WaiverTarget[] = [];
@@ -455,36 +610,42 @@ export function waiverTargets(
         refused.push({ add: add.name, drop: cand.name, pos: cand.pos, why: gaps[0].replace(/^[^:]*:\s*/, "") });
         continue;
       }
-      const perSeed = seeds.map((s, i) => {
+      const after = seeds.map((s) => {
         const teams = ctx.clone();
         teams[ctx.meIdx].roster = teams[ctx.meIdx].roster.filter((p) => p.name !== cand.name).concat([{ ...add }]);
-        return titlePct(ctx, teams, trials, s) - baseBySeed[i];
+        return outcomeOf(ctx, teams, trials, s);
       });
-      const { delta, se } = pairedDelta(perSeed);
-      drops.push({ name: cand.name, pos: cand.pos, proj: r2(cand.proj), deltaPp: delta, se });
+      drops.push({ name: cand.name, pos: cand.pos, proj: r2(cand.proj), ...deltasOf(after, baseBySeed, objective) });
     }
     if (!drops.length) continue;
-    drops.sort((a, b) => b.deltaPp - a.deltaPp);
+    drops.sort((a, b) => b.rankValue - a.rankValue);
     const best = drops[0];
-    const floor = noiseFloorPp(base, trials);
+    const floor = noiseFloorPp(basePlayoff, trials);
     targets.push({
       add: add.name, pos: add.pos, proj: r2(add.proj),
       drop: best.name, dropPos: best.pos,
-      deltaPp: best.deltaPp, se: best.se,
-      afterTitlePct: r2(base + best.deltaPp),
-      clearsNoise: best.deltaPp > floor,
-      faab: faabFor(best.deltaPp, budget), faabRule: FAAB_RULE,
+      playoffsPp: best.playoffsPp, playoffWeekPts: best.playoffWeekPts, titlePp: best.titlePp,
+      rankValue: best.rankValue, se: best.se,
+      afterPlayoffPct: r2(basePlayoff + best.playoffsPp),
+      afterTitlePct: r2(baseTitle + best.titlePp),
+      // The noise floor is computed for the PRIMARY quantity, always. Comparing a playoff delta
+      // against a floor derived from the title rate is comparing two different distributions.
+      clearsNoise: best.playoffsPp > floor,
+      faab: faabFor(best.playoffsPp, budget), faabRule: FAAB_RULE,
       drops,
     });
   }
-  targets.sort((a, b) => b.deltaPp - a.deltaPp);
+  targets.sort((a, b) => b.rankValue - a.rankValue);
   return {
-    baseTitlePct: r2(base),
-    noiseFloorPp: noiseFloorPp(base, trials),
+    basePlayoffPct: r2(basePlayoff),
+    basePlayoffWeekPts: r2(basePoPts),
+    baseTitlePct: r2(baseTitle),
+    noiseFloorPp: noiseFloorPp(basePlayoff, trials),
     targets,
     refused,
     faabBudget: budget,
-    assumptions: assumptionsOf(ctx, "simulation", o, trials, seeds),
+    objective,
+    assumptions: assumptionsOf(ctx, "simulation", o, trials, seeds, objective),
   };
 }
 
@@ -493,7 +654,12 @@ export function waiverTargets(
 // ---------------------------------------------------------------------------------------------
 
 export interface TradeOffer { give: string[]; get: string[] }
-export interface TradeSide { teamId: string; teamName: string; baseTitlePct: number; afterTitlePct: number; deltaPp: number; se: number; legal: boolean; illegalWhy: string[] }
+export interface TradeSide extends ObjectiveDelta {
+  teamId: string; teamName: string;
+  basePlayoffPct: number; afterPlayoffPct: number;
+  baseTitlePct: number; afterTitlePct: number;
+  legal: boolean; illegalWhy: string[];
+}
 export interface TradeCheckResult {
   offer: TradeOffer;
   us: TradeSide;
@@ -501,6 +667,7 @@ export interface TradeCheckResult {
   noiseFloorPp: number;
   verdict: "good for us" | "bad for us" | "inside the noise floor";
   mutual: boolean;
+  objective: Objective;
   assumptions: Assumptions;
 }
 
@@ -549,47 +716,62 @@ export function tradeCheck(ctx: SimContext, offer: TradeOffer, o: BaseOpts = {})
   const usGaps = rosterGaps([probe[ctx.meIdx]], ctx.slots, ctx.flexOk);
   const themGaps = rosterGaps([probe[ti]], ctx.slots, ctx.flexOk);
 
-  const baseUs: number[] = [], baseThem: number[] = [], afterUs: number[] = [], afterThem: number[] = [];
+  const baseUs: Outcome[] = [], baseThem: Outcome[] = [], afterUs: Outcome[] = [], afterThem: Outcome[] = [];
   for (const s of seeds) {
-    const b = ctx.run(ctx.teams, trials, s);
-    baseUs.push(100 * b[ctx.meIdx].champion);
-    baseThem.push(100 * b[ti].champion);
+    // ONE simulation per (state, seed), read for both teams. Running it twice would give us and them
+    // numbers from different samples of the same league, which is the correlation trap in miniature.
+    const b = ctx.run(ctx.teams, trials, s, { playoffWeekStrength: true });
+    const pull = (r: SeasonOdds): Outcome => ({ playoffPct: 100 * r.playoffs, titlePct: 100 * r.champion, poPts: r.playoffWeekPts });
+    baseUs.push(pull(b[ctx.meIdx]));
+    baseThem.push(pull(b[ti]));
     const teams = ctx.clone();
     apply(teams);
-    const a = ctx.run(teams, trials, s);
-    afterUs.push(100 * a[ctx.meIdx].champion);
-    afterThem.push(100 * a[ti].champion);
+    const a = ctx.run(teams, trials, s, { playoffWeekStrength: true });
+    afterUs.push(pull(a[ctx.meIdx]));
+    afterThem.push(pull(a[ti]));
   }
-  const dUs = pairedDelta(afterUs.map((v, i) => v - baseUs[i]));
-  const dThem = pairedDelta(afterThem.map((v, i) => v - baseThem[i]));
-  const floor = noiseFloorPp(mean(baseUs), trials);
+  const objective = objectiveFor(mean(baseUs.map((x) => x.playoffPct)), o.secureThresholdPct);
+  const dUs = deltasOf(afterUs, baseUs, objective);
+  const dThem = deltasOf(afterThem, baseThem, objective);
+  const floor = noiseFloorPp(mean(baseUs.map((x) => x.playoffPct)), trials);
+  const side = (id: string, name: string, base: Outcome[], after: Outcome[], d: ObjectiveDelta, gaps: string[]): TradeSide => ({
+    teamId: id, teamName: name,
+    basePlayoffPct: r2(mean(base.map((x) => x.playoffPct))), afterPlayoffPct: r2(mean(after.map((x) => x.playoffPct))),
+    baseTitlePct: r2(mean(base.map((x) => x.titlePct))), afterTitlePct: r2(mean(after.map((x) => x.titlePct))),
+    ...d, legal: !gaps.length, illegalWhy: gaps,
+  });
   return {
     offer,
-    us: { teamId: ctx.teams[ctx.meIdx].id, teamName: ctx.teams[ctx.meIdx].name, baseTitlePct: r2(mean(baseUs)), afterTitlePct: r2(mean(afterUs)), deltaPp: dUs.delta, se: dUs.se, legal: !usGaps.length, illegalWhy: usGaps },
-    them: { teamId: ctx.teams[ti].id, teamName: ctx.teams[ti].name, baseTitlePct: r2(mean(baseThem)), afterTitlePct: r2(mean(afterThem)), deltaPp: dThem.delta, se: dThem.se, legal: !themGaps.length, illegalWhy: themGaps },
+    us: side(ctx.teams[ctx.meIdx].id, ctx.teams[ctx.meIdx].name, baseUs, afterUs, dUs, usGaps),
+    them: side(ctx.teams[ti].id, ctx.teams[ti].name, baseThem, afterThem, dThem, themGaps),
     noiseFloorPp: floor,
-    verdict: dUs.delta > floor ? "good for us" : dUs.delta < -floor ? "bad for us" : "inside the noise floor",
-    mutual: dUs.delta > floor && dThem.delta > floor,
-    assumptions: assumptionsOf(ctx, "simulation", o, trials, seeds),
+    // The verdict is on the PRIMARY quantity. `them.playoffsPp` is what decides whether the other
+    // manager signs, for the same reason: it is the number about his season that is predictable.
+    verdict: dUs.playoffsPp > floor ? "good for us" : dUs.playoffsPp < -floor ? "bad for us" : "inside the noise floor",
+    mutual: dUs.playoffsPp > floor && dThem.playoffsPp > floor,
+    objective,
+    assumptions: assumptionsOf(ctx, "simulation", o, trials, seeds, objective),
   };
 }
 
-export interface TradeIdea {
+export interface TradeIdea extends ObjectiveDelta {
   give: string; givePos: string; giveValue: number;
   get: string; getPos: string; getValue: number;
   partnerId: string; partner: string;
   valueGap: number;
-  deltaPp: number; usAfterTitlePct: number;
-  themDeltaPp: number;
+  usAfterPlayoffPct: number; usAfterTitlePct: number;
+  themPlayoffsPp: number; themTitlePp: number;
   clearsNoise: boolean; mutual: boolean;
 }
 export interface TradeFinderResult {
+  basePlayoffPct: number;
   baseTitlePct: number;
   noiseFloorPp: number;
   maxValueGap: number;
   candidates: number;
   skippedNoValue: number;
   ideas: TradeIdea[];
+  objective: Objective;
   assumptions: Assumptions;
 }
 
@@ -653,34 +835,40 @@ export function tradeFinder(
     .slice(0, limit)
     .map((x) => x.c);
 
-  const baseOdds = ctx.run(ctx.teams, trials, seed);
-  const baseUs = 100 * baseOdds[ctx.meIdx].champion;
-  const floor = noiseFloorPp(baseUs, trials);
+  const baseOdds = ctx.run(ctx.teams, trials, seed, { playoffWeekStrength: true });
+  const pull = (r: SeasonOdds): Outcome => ({ playoffPct: 100 * r.playoffs, titlePct: 100 * r.champion, poPts: r.playoffWeekPts });
+  const baseUs = pull(baseOdds[ctx.meIdx]);
+  const objective = objectiveFor(baseUs.playoffPct, o.secureThresholdPct);
+  const floor = noiseFloorPp(baseUs.playoffPct, trials);
   const ideas: TradeIdea[] = screened.map((c) => {
     const teams = ctx.clone();
     teams[ctx.meIdx].roster = teams[ctx.meIdx].roster.filter((p) => p.name !== c.give.name).concat([{ ...c.get }]);
     teams[c.ti].roster = teams[c.ti].roster.filter((p) => p.name !== c.get.name).concat([{ ...c.give }]);
-    const after = ctx.run(teams, trials, seed);
-    const dUs = 100 * after[ctx.meIdx].champion - baseUs;
-    const dThem = 100 * (after[c.ti].champion - baseOdds[c.ti].champion);
+    const after = ctx.run(teams, trials, seed, { playoffWeekStrength: true });
+    const d = deltasOf([pull(after[ctx.meIdx])], [baseUs], objective);
+    const them = deltasOf([pull(after[c.ti])], [pull(baseOdds[c.ti])], objective);
     return {
       give: c.give.name, givePos: c.give.pos, giveValue: c.gv,
       get: c.get.name, getPos: c.get.pos, getValue: c.tv,
       partnerId: ctx.teams[c.ti].id, partner: ctx.teams[c.ti].name,
       valueGap: r3(c.gap),
-      deltaPp: r2(dUs), usAfterTitlePct: r2(baseUs + dUs), themDeltaPp: r2(dThem),
-      clearsNoise: dUs > floor, mutual: dUs > floor && dThem > floor,
+      ...d,
+      usAfterPlayoffPct: r2(baseUs.playoffPct + d.playoffsPp), usAfterTitlePct: r2(baseUs.titlePct + d.titlePp),
+      themPlayoffsPp: them.playoffsPp, themTitlePp: them.titlePp,
+      clearsNoise: d.playoffsPp > floor, mutual: d.playoffsPp > floor && them.playoffsPp > floor,
     };
-  }).sort((a, b) => b.deltaPp - a.deltaPp);
+  }).sort((a, b) => b.rankValue - a.rankValue);
 
   return {
-    baseTitlePct: r2(baseUs),
+    basePlayoffPct: r2(baseUs.playoffPct),
+    baseTitlePct: r2(baseUs.titlePct),
     noiseFloorPp: floor,
     maxValueGap: maxGap,
     candidates: cand.length,
     skippedNoValue,
     ideas,
-    assumptions: assumptionsOf(ctx, "simulation", { ...o, seeds: [seed] }, trials, [seed]),
+    objective,
+    assumptions: assumptionsOf(ctx, "simulation", { ...o, seeds: [seed] }, trials, [seed], objective),
   };
 }
 
@@ -688,14 +876,14 @@ export function tradeFinder(
 // HANDCUFFS
 // ---------------------------------------------------------------------------------------------
 
-export interface HandcuffResult { rows: (HandcuffRow & { ours: boolean; rostered: boolean })[]; weeks: number; positions: string[]; assumptions: Assumptions }
+export interface HandcuffResult { rows: (HandcuffRow & { ours: boolean; rostered: boolean })[]; weeks: number; positions: string[]; objective: Objective; assumptions: Assumptions }
 
 /** Rank every backup by what he scores IF the man ahead of him misses a week. The model and its
  *  three rejected functional forms are documented in handcuff.ts; this only attaches league context
  *  -- who is already ours, and who is rostered anywhere -- and the assumptions block. */
 export function handcuffs(
   ctx: SimContext,
-  o: BaseOpts & { depth: DepthEntry[]; vm: VarianceModel; weeks?: number; positions?: string[]; poolSize?: Record<string, number>; freeOnly?: boolean } = { depth: [], vm: { pos: {} } as VarianceModel },
+  o: BaseOpts & { depth: DepthEntry[]; vm: VarianceModel; weeks?: number; positions?: string[]; poolSize?: Record<string, number>; freeOnly?: boolean; ourPlayoffPct?: number } = { depth: [], vm: { pos: {} } as VarianceModel },
 ): HandcuffResult {
   const weeks = o.weeks ?? NFL_WEEKS;
   const positions = o.positions ?? ["RB"];
@@ -703,7 +891,12 @@ export function handcuffs(
   let rows = handcuffBoard(o.depth, o.vm, { weeks, positions, poolSize: o.poolSize })
     .map((r) => ({ ...r, ours: ourNames.has(nameKey(r.name)), rostered: ctx.ownedIds.has(nameKey(r.name)) }));
   if (o.freeOnly) rows = rows.filter((r) => !r.rostered);
-  return { rows, weeks, positions, assumptions: assumptionsOf(ctx, "projection", o, null, null) };
+  // HANDCUFFS ARE NOT SCORED IN PROBABILITY AND SAYING SO IS THE POINT. The ranking is a conditional
+  // POINTS payoff -- what this man scores in the weeks the starter ahead of him misses -- and dressing
+  // it up as a playoff delta would be inventing a simulation that was never run. The objective block
+  // travels anyway, naming the regime, so a consumer can see which question the rows do NOT answer.
+  const objective = objectiveFor(o.ourPlayoffPct ?? null, o.secureThresholdPct);
+  return { rows, weeks, positions, objective, assumptions: assumptionsOf(ctx, "projection", o, null, null, objective) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -712,13 +905,22 @@ export function handcuffs(
 
 export interface DepthRiskResult {
   player: { name: string; pos: string; proj: number };
+  basePlayoffPct: number;
+  withoutPlayoffPct: number;
   baseTitlePct: number;
   withoutTitlePct: number;
-  /** POSITIVE = percentage points of title probability we lose if he is gone for the season. */
+  /** POSITIVE = percentage points of PLAYOFF probability we lose if he is gone for the season. This
+   *  was quoted in title probability until Phase 3; the sign convention is unchanged and the
+   *  quantity is now the one the simulator has measured skill on. */
   costPp: number;
+  /** POSITIVE = expected optimal-lineup points we lose in weeks 15-17 without him. */
+  costPlayoffWeekPts: number;
+  /** POSITIVE = percentage points of TITLE probability, reported alongside, never used alone. */
+  costTitlePp: number;
   se: number;
   noiseFloorPp: number;
-  insurance: { name: string; pos: string; proj: number; from: string; free: boolean; recoversPp: number }[];
+  insurance: { name: string; pos: string; proj: number; from: string; free: boolean; recoversPp: number; recoversPlayoffWeekPts: number; recoversTitlePp: number }[];
+  objective: Objective;
   assumptions: Assumptions;
 }
 
@@ -743,17 +945,18 @@ export function depthRisk(
   const at = hit.p;
 
   const withoutOf = (teams: SeasonTeamInput[]) => teams[ctx.meIdx].roster.filter((p) => p.name !== at.name);
-  const baseBySeed: number[] = [], outBySeed: number[] = [];
+  const baseBySeed: Outcome[] = [], outBySeed: Outcome[] = [];
   for (const s of seeds) {
-    baseBySeed.push(titlePct(ctx, ctx.teams, trials, s));
+    baseBySeed.push(outcomeOf(ctx, ctx.teams, trials, s));
     const t = ctx.clone();
     t[ctx.meIdx].roster = withoutOf(t);
-    outBySeed.push(titlePct(ctx, t, trials, s));
+    outBySeed.push(outcomeOf(ctx, t, trials, s));
   }
+  const objective = objectiveFor(mean(baseBySeed.map((x) => x.playoffPct)), o.secureThresholdPct);
   // base MINUS without, so the headline number reads as a COST: positive means we are worse off
   // without him. Reporting the raw delta here has bitten before -- a negative "cost" is read as a
   // benefit by anything skimming the field name.
-  const cost = pairedDelta(baseBySeed.map((v, i) => v - outBySeed[i]));
+  const cost = deltasOf(baseBySeed, outBySeed, objective);
 
   // Everyone at his position who could stand in. FREE AGENTS AND ROSTERED PLAYERS ARE SHORTLISTED
   // SEPARATELY and then merged, rather than ranked together on projection. A pure projection sort
@@ -770,23 +973,33 @@ export function depthRisk(
   const pool = [...freeCands, ...rosteredCands];
 
   const insurance = pool.map((r) => {
-    const perSeed = seeds.map((s, i) => {
+    const after = seeds.map((s) => {
       const t = ctx.clone();
       t[ctx.meIdx].roster = withoutOf(t).concat([{ name: r.name, pos: r.pos, proj: r.proj, team: r.team, bye: null }]);
-      return titlePct(ctx, t, trials, s) - outBySeed[i];
+      return outcomeOf(ctx, t, trials, s);
     });
-    return { name: r.name, pos: r.pos, proj: r2(r.proj), from: r.from, free: r.free, recoversPp: r2(mean(perSeed)) };
-  }).sort((a, b) => b.recoversPp - a.recoversPp);
+    const d = deltasOf(after, outBySeed, objective);
+    return {
+      name: r.name, pos: r.pos, proj: r2(r.proj), from: r.from, free: r.free,
+      recoversPp: d.playoffsPp, recoversPlayoffWeekPts: d.playoffWeekPts, recoversTitlePp: d.titlePp,
+      rankValue: d.rankValue,
+    };
+  }).sort((a, b) => b.rankValue - a.rankValue).map(({ rankValue, ...rest }) => { void rankValue; return rest; });
 
   return {
     player: { name: at.name, pos: at.pos, proj: r2(at.proj) },
-    baseTitlePct: r2(mean(baseBySeed)),
-    withoutTitlePct: r2(mean(outBySeed)),
-    costPp: cost.delta,
+    basePlayoffPct: r2(mean(baseBySeed.map((x) => x.playoffPct))),
+    withoutPlayoffPct: r2(mean(outBySeed.map((x) => x.playoffPct))),
+    baseTitlePct: r2(mean(baseBySeed.map((x) => x.titlePct))),
+    withoutTitlePct: r2(mean(outBySeed.map((x) => x.titlePct))),
+    costPp: cost.playoffsPp,
+    costPlayoffWeekPts: cost.playoffWeekPts,
+    costTitlePp: cost.titlePp,
     se: cost.se,
-    noiseFloorPp: noiseFloorPp(mean(baseBySeed), trials),
+    noiseFloorPp: noiseFloorPp(mean(baseBySeed.map((x) => x.playoffPct)), trials),
     insurance,
-    assumptions: assumptionsOf(ctx, "simulation", o, trials, seeds),
+    objective,
+    assumptions: assumptionsOf(ctx, "simulation", o, trials, seeds, objective),
   };
 }
 
@@ -799,7 +1012,7 @@ export interface PowerRow {
   startPts: number; byPos: Record<string, number>;
   playoffPct: number; titlePct: number;
 }
-export interface PowerResult { rows: PowerRow[]; leagueMeanStartPts: number; ourRank: number; assumptions: Assumptions }
+export interface PowerResult { rows: PowerRow[]; leagueMeanStartPts: number; ourRank: number; objective: Objective; assumptions: Assumptions }
 
 /**
  * Rank the league by best starting lineup on OUR projections, with each team's simulated odds beside
@@ -827,11 +1040,13 @@ export function powerRankings(ctx: SimContext, o: BaseOpts = {}): PowerResult {
     };
   }).sort((a, b) => b.startPts - a.startPts);
   rows.forEach((r, i) => { r.rank = i + 1; });
+  const objective = objectiveFor(100 * odds[ctx.meIdx].playoffs, o.secureThresholdPct);
   return {
     rows,
     leagueMeanStartPts: Math.round(mean(rows.map((r) => r.startPts))),
     ourRank: rows.findIndex((r) => r.us) + 1,
-    assumptions: assumptionsOf(ctx, "simulation", o, trials, [seed]),
+    objective,
+    assumptions: assumptionsOf(ctx, "simulation", o, trials, [seed], objective),
   };
 }
 
@@ -849,6 +1064,7 @@ export interface SosResult {
   pricedPlayoffGames: number;
   playoffGames: number;
   ptsPerSpread: Record<string, number>;
+  objective: Objective;
   assumptions: Assumptions;
 }
 
@@ -899,8 +1115,12 @@ export function marketRatings(games: GameRow[]): Map<string, number> {
  */
 export function playoffSos(
   ctx: SimContext,
-  o: BaseOpts & { games: GameRow[]; regWeeks?: number; nflWeeks?: number; teamOf?: Map<string, string>; players?: { name: string; pos: string; proj: number }[] },
+  o: BaseOpts & { games: GameRow[]; regWeeks?: number; nflWeeks?: number; teamOf?: Map<string, string>; players?: { name: string; pos: string; proj: number }[]; ourPlayoffPct?: number },
 ): SosResult {
+  // Playoff SOS is a MARKET quantity with no simulation behind it, so it has no delta to rank; the
+  // objective block travels naming the regime, because a reader in the secure regime should be
+  // weighting these weeks more heavily and one in the insecure regime should barely be reading them.
+  const objective = objectiveFor(o.ourPlayoffPct ?? null, o.secureThresholdPct);
   const regWeeks = o.regWeeks ?? ctx.weeks.length;
   const nflWeeks = o.nflWeeks ?? NFL_WEEKS;
   const playoffWeeks: number[] = [];
@@ -940,6 +1160,7 @@ export function playoffSos(
     pricedPlayoffGames: o.games.filter((g) => playoffWeeks.includes(g.week) && g.spread_line != null).length,
     playoffGames: o.games.filter((g) => playoffWeeks.includes(g.week)).length,
     ptsPerSpread: PTS_PER_SPREAD,
-    assumptions: assumptionsOf(ctx, "market", o, null, null),
+    objective,
+    assumptions: assumptionsOf(ctx, "market", o, null, null, objective),
   };
 }

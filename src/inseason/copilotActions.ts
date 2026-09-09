@@ -67,6 +67,10 @@ export function caveat(a: C.Assumptions): string {
     a.schedule === "real" ? "REAL schedule" : "GENERATED schedule (not this league's actual matchups)",
     a.basis === "simulation" ? `${a.trials} trials x ${a.seeds?.length ?? 0} seed(s)` : a.basis === "market" ? "solved from posted betting lines" : "point projections, no simulation",
     `board ${a.artifact.season} (${a.artifact.boardRows} rows)`,
+    // WHICH QUANTITY WAS MAXIMISED, in the caveat itself. A delta quoted without its objective is a
+    // number the reader will attach to whichever objective he already had in mind, which for this
+    // league is always the championship -- the one the simulator has no measured skill on.
+    `ranked on ${a.objective.primary} (${a.objective.regime} regime)`,
   ];
   return `[${bits.join("; ")}]`;
 }
@@ -75,8 +79,9 @@ function summarize(verb: CopilotVerb, r: unknown): string {
   switch (verb) {
     case "season_odds": {
       const x = r as C.SeasonOddsResult;
-      const top = x.teams.slice(0, 3).map((t) => `${t.name} ${pct(100 * t.champion)}`).join(", ");
-      return `US: ${pct(100 * x.us.playoffs)} playoffs, ${pct(100 * x.us.champion)} title (random = ${x.randomTitlePct}%). Field leaders: ${top}. ${caveat(x.assumptions)}`;
+      const top = x.teams.slice(0, 3).map((t) => `${t.name} ${pct(100 * t.playoffs)} playoffs`).join(", ");
+      return `US: ${pct(100 * x.us.playoffs)} PLAYOFFS (the primary objective), ${pct(100 * x.us.champion)} title (random = ${x.randomTitlePct}%). ` +
+        `Regime: ${x.objective.regime} (threshold ${x.objective.thresholdPct}% playoff probability). Field leaders: ${top}. ${caveat(x.assumptions)}`;
     }
     case "lineup_recommend": {
       const x = r as C.LineupResultJson;
@@ -87,19 +92,21 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     }
     case "waiver_targets": {
       const x = r as C.WaiverResult;
-      if (!x.targets.length) return `No waiver claim scored. Base ${pct(x.baseTitlePct)} title. ${caveat(x.assumptions)}`;
-      const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}) / DROP ${t.drop}: ${pp(t.deltaPp)}${t.clearsNoise ? "" : " (inside noise)"} , FAAB ~${t.faab}`).join("; ");
-      return `Base ${pct(x.baseTitlePct)} title; noise floor ${x.noiseFloorPp}pp. ${rows}.` +
+      if (!x.targets.length) return `No waiver claim scored. Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title. ${caveat(x.assumptions)}`;
+      const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in wk15-17, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
+      return `Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title; noise floor ${x.noiseFloorPp}pp. ${rows}.` +
         `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""} ${caveat(x.assumptions)}`;
     }
     case "trade_check": {
       const x = r as C.TradeCheckResult;
-      return `${x.offer.give.join(" + ")} -> ${x.offer.get.join(" + ")} with ${x.them.teamName}: us ${pp(x.us.deltaPp)} (+/-${x.us.se}), them ${pp(x.them.deltaPp)}. Verdict: ${x.verdict}${x.mutual ? ", and it helps them too" : ""}. ${caveat(x.assumptions)}`;
+      return `${x.offer.give.join(" + ")} -> ${x.offer.get.join(" + ")} with ${x.them.teamName}: us ${pp(x.us.playoffsPp)} playoffs (+/-${x.us.se}), ` +
+        `${x.us.playoffWeekPts >= 0 ? "+" : ""}${x.us.playoffWeekPts.toFixed(1)} pts in wk15-17, ${pp(x.us.titlePp)} title; them ${pp(x.them.playoffsPp)} playoffs. ` +
+        `Verdict: ${x.verdict}${x.mutual ? ", and it helps them too" : ""}. ${caveat(x.assumptions)}`;
     }
     case "trade_finder": {
       const x = r as C.TradeFinderResult;
       if (!x.ideas.length) return `No balanced one-for-one found within a ${Math.round(100 * x.maxValueGap)}% consensus-value band (${x.candidates} candidates). ${caveat(x.assumptions)}`;
-      return `${x.candidates} balanced candidates; best: ` + x.ideas.slice(0, 4).map((i) => `${i.give} -> ${i.get} (${i.partner}) ${pp(i.deltaPp)}${i.mutual ? " MUTUAL" : i.themDeltaPp < 0 ? " (costs them)" : ""}`).join("; ") + `. Noise floor ${x.noiseFloorPp}pp. ${caveat(x.assumptions)}`;
+      return `${x.candidates} balanced candidates; best: ` + x.ideas.slice(0, 4).map((i) => `${i.give} -> ${i.get} (${i.partner}) ${pp(i.playoffsPp)} playoffs / ${pp(i.titlePp)} title${i.mutual ? " MUTUAL" : i.themPlayoffsPp < 0 ? " (costs them)" : ""}`).join("; ") + `. Noise floor ${x.noiseFloorPp}pp. ${caveat(x.assumptions)}`;
     }
     case "handcuffs": {
       const x = r as C.HandcuffResult;
@@ -107,8 +114,9 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     }
     case "depth_risk": {
       const x = r as C.DepthRiskResult;
-      return `Losing ${x.player.name} costs ${pp(x.costPp)} of title probability (${pct(x.baseTitlePct)} -> ${pct(x.withoutTitlePct)}); noise floor ${x.noiseFloorPp}pp. Best insurance: ` +
-        x.insurance.slice(0, 3).map((i) => `${i.name} (${i.free ? "free agent" : i.from}) recovers ${pp(i.recoversPp)}`).join("; ") + `. ${caveat(x.assumptions)}`;
+      return `Losing ${x.player.name} costs ${pp(x.costPp)} of PLAYOFF probability (${pct(x.basePlayoffPct)} -> ${pct(x.withoutPlayoffPct)}), ` +
+        `${x.costPlayoffWeekPts.toFixed(1)} pts in wk15-17, and ${pp(x.costTitlePp)} of title probability; noise floor ${x.noiseFloorPp}pp. Best insurance: ` +
+        x.insurance.slice(0, 3).map((i) => `${i.name} (${i.free ? "free agent" : i.from}) recovers ${pp(i.recoversPp)} playoffs`).join("; ") + `. ${caveat(x.assumptions)}`;
     }
     case "power_rankings": {
       const x = r as C.PowerResult;

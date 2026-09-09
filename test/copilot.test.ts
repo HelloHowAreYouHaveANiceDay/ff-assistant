@@ -173,7 +173,7 @@ test("waivers: a strong free-agent add scores a POSITIVE title delta -- the leve
   const r = waiverTargets(ctx, { trials: 400, seeds: [7, 101], adds: 1, dropsPerAdd: 3, positions: ["RB"] });
   assert.equal(r.targets.length, 1, JSON.stringify(r));
   assert.equal(r.targets[0].add, "Free Runner");
-  assert.ok(r.targets[0].deltaPp > 0, `a 230-pt back added to a roster of 60-pt backs measured ${r.targets[0].deltaPp}pp`);
+  assert.ok(r.targets[0].playoffsPp > 0, `a 230-pt back added to a roster of 60-pt backs measured ${r.targets[0].playoffsPp}pp`);
 });
 
 test("FAULT: waivers REFUSE a drop that leaves the roster unable to fill a mandatory slot", () => {
@@ -214,8 +214,8 @@ test("trade check: a lopsided deal helps us and hurts them, and both sides are r
   ctx.teams[1].roster = ctx.teams[1].roster.map((p) => p.name === "RB Bravo B" ? { ...p, proj: 600 } : p);
   const r = tradeCheck(ctx, { give: ["WR Kilo A"], get: ["RB Bravo B"] }, { trials: 600, seeds: [7, 101] });
   assert.equal(r.them.teamId, "1");
-  assert.ok(r.us.deltaPp > 0, `robbing team 1 measured ${r.us.deltaPp}pp for us`);
-  assert.ok(r.them.deltaPp < 0, `the victim gained ${r.them.deltaPp}pp`);
+  assert.ok(r.us.playoffsPp > 0, `robbing team 1 measured ${r.us.playoffsPp}pp for us`);
+  assert.ok(r.them.playoffsPp < 0, `the victim gained ${r.them.playoffsPp}pp`);
   assert.equal(r.mutual, false);
   assert.ok(r.us.legal && r.them.legal);
 });
@@ -230,9 +230,9 @@ test("FAULT: the title delta FLIPS SIGN when the same offer is scored from the o
   };
   const ours = tradeCheck(mk(0), { give: ["WR Kilo A"], get: ["RB Bravo B"] }, { trials: 600, seeds: [7, 101] });
   const theirs = tradeCheck(mk(1), { give: ["RB Bravo B"], get: ["WR Kilo A"] }, { trials: 600, seeds: [7, 101] });
-  assert.ok(ours.us.deltaPp > 0, `expected a gain, got ${ours.us.deltaPp}`);
-  assert.ok(theirs.us.deltaPp < 0, `the same deal from the other seat also gained (${theirs.us.deltaPp}) -- the delta is not measuring the trade`);
-  assert.ok(Math.sign(ours.us.deltaPp) !== Math.sign(theirs.us.deltaPp), "the sign did not flip");
+  assert.ok(ours.us.playoffsPp > 0, `expected a gain, got ${ours.us.playoffsPp}`);
+  assert.ok(theirs.us.playoffsPp < 0, `the same deal from the other seat also gained (${theirs.us.playoffsPp}) -- the delta is not measuring the trade`);
+  assert.ok(Math.sign(ours.us.playoffsPp) !== Math.sign(theirs.us.playoffsPp), "the sign did not flip");
 });
 
 test("trade check refuses an offer whose sides are not one roster each, or are ours on both sides", () => {

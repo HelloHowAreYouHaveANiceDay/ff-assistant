@@ -37,7 +37,10 @@ export interface SimContext {
   syntheticSchedule: boolean;
   /** Ready-made options; callers override only `trials` and `seed`. */
   opts: (trials: number, seed: number) => Parameters<typeof simulateSeasons>[3];
-  run: (teams: SeasonTeamInput[], trials: number, seed: number) => SeasonOdds[];
+  /** `extra` overrides individual season options -- in practice only `playoffWeekStrength`, which
+   *  costs three extra scored weeks per team per trial and is therefore asked for rather than always
+   *  paid for. Everything else stays where it belongs: in the shared context. */
+  run: (teams: SeasonTeamInput[], trials: number, seed: number, extra?: Partial<Parameters<typeof simulateSeasons>[3]>) => SeasonOdds[];
   /** Deep copy, so a caller can mutate a roster without touching the shared base. */
   clone: (t?: SeasonTeamInput[]) => SeasonTeamInput[];
   board: Map<string, { name: string; pos: string; proj: number; team: string }>;
@@ -201,7 +204,7 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds,
     slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement,
     opts: mkOpts,
-    run: (t, trials, seed) => simulateSeasons(t, weeks, vm, mkOpts(trials, seed)),
+    run: (t, trials, seed, extra) => simulateSeasons(t, weeks, vm, { ...mkOpts(trials, seed), ...extra }),
     clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),
   };
 }

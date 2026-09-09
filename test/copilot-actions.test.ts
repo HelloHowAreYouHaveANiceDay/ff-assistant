@@ -93,8 +93,8 @@ test("the summary carries the caveat, so the log records what the number was con
 });
 
 test("caveat() names the basis: a projection is not described as a simulation", () => {
-  const sim = caveat({ schedule: "real", basis: "simulation", trials: 100, seeds: [7], artifact: { season: 2026, boardRows: 1, varianceSeasons: null, sampler: "x", projectionArtifact: null }, asOf: "" });
-  const proj = caveat({ schedule: "real", basis: "projection", trials: null, seeds: null, artifact: { season: 2026, boardRows: 1, varianceSeasons: null, sampler: "x", projectionArtifact: null }, asOf: "" });
+  const sim = caveat({ schedule: "real", basis: "simulation", trials: 100, seeds: [7], artifact: { season: 2026, boardRows: 1, varianceSeasons: null, sampler: "x", projectionArtifact: null }, asOf: "", objective: { regime: "insecure", primary: "playoffs", secondary: "playoff-week strength", alongside: "title", thresholdPct: 70, ourPlayoffPct: null, note: "fixture" } });
+  const proj = caveat({ schedule: "real", basis: "projection", trials: null, seeds: null, artifact: { season: 2026, boardRows: 1, varianceSeasons: null, sampler: "x", projectionArtifact: null }, asOf: "", objective: { regime: "insecure", primary: "playoffs", secondary: "playoff-week strength", alongside: "title", thresholdPct: 70, ourPlayoffPct: null, note: "fixture" } });
   assert.match(sim, /100 trials/);
   assert.match(proj, /no simulation/);
   assert.notEqual(sim, proj, "the caveat is the same string regardless of basis -- it reports nothing");

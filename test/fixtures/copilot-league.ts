@@ -69,7 +69,7 @@ export function fixtureCtx(opts: { strong?: number; mult?: number; meIdx?: numbe
     teams, weeks, meIdx, season: 2026, syntheticSchedule: opts.synthetic ?? true,
     board, ownedIds, slots: SLOTS, flexOk: FLEX_OK, replacement,
     opts: mkOpts,
-    run: (t, trials, seed) => simulateSeasons(t, weeks, vm, mkOpts(trials, seed)),
+    run: (t, trials, seed, extra) => simulateSeasons(t, weeks, vm, { ...mkOpts(trials, seed), ...extra }),
     clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),
   };
 }
