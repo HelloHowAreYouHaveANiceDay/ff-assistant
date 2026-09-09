@@ -24,6 +24,13 @@ is recorded.*
 > strategy can put you in the bracket. What happens in the bracket is not an edge anybody here has
 > found.
 
+*Updated by integration pass 3 (2026-09-09).* Under the league's **actual** 13-week calendar the
+first figure is **39.7%**, not separable from 38.1% (paired -1.60pp, CI [-4.59, +1.20]); the second
+re-measured at **11.2% over four seasons**, which is within the ~4-point level drift Track A recorded
+on that arm after the board was rebuilt. The calibration figures re-run per season are 0.2369 against
+0.2451 on the berth and 0.0658 against 0.0652 on the champion -- i.e. **the finding is unchanged**,
+which is the useful thing about having re-measured it. See PROGRAMME 2 below.
+
 What that means in practice, in three sentences. The strategy is good and the size of "good" was
 overstated by an opponent model nobody had checked. The right thing to optimise is the seed, not the
 trophy, and every in-season tool now does. The right thing to distrust is any single percentage,
@@ -383,6 +390,140 @@ line. `docs/decisions.md` is untouched. No ESPN write path was added.
 
 ---
 
+## PROGRAMME 2: five parallel tracks, and the league changing its calendar underneath them
+
+*Added 2026-09-09 by integration pass 3. Programme 1 ended with `redesign/final` at `75da5b0`. Five
+tracks then ran in parallel off it and were stacked onto `redesign/final-2`.*
+
+### The five tracks
+
+| track | branch | commit | what it is | verdict |
+|---|---|---|---|---|
+| A | `redesign/v3-qb-replacement` | `b36c690` | V3's analytic marginal against POSITIONAL baselines (the "one piece of work worth doing next", below), plus private-component shading | The named defect is fixed and **was not the reason**: V3 still loses the long arm by 29pp. It stays selectable, not default. |
+| B | `redesign/inseason-backtest` | `08443a5` | This league's own week-by-week rosters and transaction log, and the lineup / waiver / handcuff decisions scored against them | Our lineup rule scores **LESS** than the room (-1.39 pts/wk under the challenger, -4.45 under the floor). Our waiver ranking beats it (22.4 vs 18.7 pts per FAAB dollar). |
+| C | `redesign/streaming-all-positions` | `9a90640` | A streaming model per position, and a decision metric in the units of the decision | Ships at **QB, K, DST**. The opponent block measures ~0 at RB/WR/TE. |
+| D | `redesign/dual-eligibility` | `235980d` | Position as a SET, from ESPN's `eligibleSlots` through valuation, lineup and roster legality | Provably a no-op today -- zero 2026 players are dual-eligible at QB/RB/WR/TE -- and correct for the next Taysom Hill. |
+| E | `redesign/league-format` | `74d72b1` | The calendar as a fact with a source | Correct, and **immediately superseded by the league itself**. See below. |
+
+### The format finding, which is the story of this pass
+
+Track E read ESPN on the morning of 2026-09-09 and recorded **14 regular weeks, playoffs 15/16/17,
+`playoffReseed` false**, and concluded that the owner's "13 weeks" recollection described the
+2018-2020 league. That was a correct reading. Hours later, a live re-read returned **13 weeks,
+playoffs 14/15/16, `playoffReseed` TRUE** -- the commissioner had shortened the season on 2026-09-08,
+after week 1 had been played and after the preseason odds had been frozen. Track E's cached
+`settings-2026.json` is stale, and so is anything derived from it.
+
+The league's own format history, now read per season from ESPN and stored on `raw_league_season`:
+
+| era | teams | reg weeks | playoffs | field | reseed | divisions |
+|---|---|---|---|---|---|---|
+| 2018-2020 | 14 | 13 | 14/15/16 | 6 | no | 1 |
+| 2021-2024 | 14 | 14 | 15/16/17 | 6 | no | 1 |
+| 2025 | 16 | 14 | 15/16/17 | 7 | no | 4 |
+| 2026 | 16 | 13 | 14/15/16 | 7 | **yes** | 4 |
+
+Two consequences nobody planned for. Re-ingesting the 2026 schedule **accumulated** rather than
+replaced it -- 104 games read back as 166, a team playing twice in week 1, no error anywhere -- and
+the preseason odds now describe a bracket the league will not play. The first is fixed; the second is
+answered with a second VINTAGE of the snapshot rather than a rewrite, because a write-once record
+that can be corrected is not one.
+
+And **`playoffReseed` had never been read at all**. Both simulators reseeded unconditionally for the
+life of the repo: right for 2026, wrong for all eight prior seasons.
+
+### The schedule the orchestrator checked
+
+Re-verified here from the re-ingested schedule (`scripts/schedule-balance.mjs`), because a claim about
+a schedule is exactly the kind that outlives the schedule -- and this one changed twice in a day.
+
+The 2026 schedule is **structurally balanced**: 104 games over 13 weeks of 8, every team playing
+exactly 13, and **no opponent met more than twice**. The division games are the two blocks at the
+ends: **weeks 1-3 and weeks 11-13 are 8-of-8 in-division**, weeks 4-10 are 8-of-8 cross-division.
+So the run-in is entirely against the three teams we have already played once, and a division rival's
+late-season form matters more than raw SOS suggests.
+
+Our division (`Class of 2012`) is the **weakest of the four by projection**: mean rostered projected
+points 1568.1, against 1601.2 / 1755.5 / 1772.9. Under division-winners-first that is worth
+something real, and it is the one place the seeding assumption above actually bites.
+
+### Every prediction in programme 2
+
+| id | claim | outcome |
+|---|---|---|
+| P34 | V3's QB share falls toward the room's once the baseline is positional | **HELD** |
+| P35 | the redundant-lever finding holds for V2: `starterReserve` inert | **FAILED in its strong form** -- 4 vs 0 is NOT byte-identical on the long arm (16 of 1,800 trials differ). Weak form holds: -0.17pp, CI [-0.44, 0.00] |
+| P36 | managers leave >= 8 pts/wk on the bench vs hindsight | **HELD** -- 12.48 |
+| P37 | our lineup beats the median manager's realised lineup in >= 60% of team-weeks | **FAILED** -- 46.8% (challenger), 42.1% (floor) |
+| P38-P39 | waiver and promotion claims (Track B) | recorded in `docs/in-season-backtest.md` |
+| P40 | QB/K/DST streaming picks beat the board's by >= 1.0 pt/wk | **HELD** on both pools -- +8.29 / +1.37 / +1.32 on the REAL pool |
+| P41 | the opponent block adds < 0.5 pt/wk at RB/WR/TE | **HELD**, and negative: -0.15 / -0.46 / -0.17 |
+| P42 | DST CRPS improves >= 5% with the opponent block | **FAILED** -- 0.1% |
+| P43-P44 | dual eligibility is a no-op for a single-eligible player (Track D) | **HELD**, with positive controls |
+| P45 | division-winners-first does not worsen the 2025 playoff Brier by > 0.005 | **HELD** -- it improved it by 0.000612 |
+| P46 | 13 weeks changes the tripwire by < 2 points | **HELD** -- +1.5pp, CI contains zero |
+| P47 | division seeding changes it by < 1 point | **HELD** -- +0.7pp |
+| **P48** | recalibrating stage one's intercept brings the zero share within 0.030 | **FAILED** -- the numbers did not move at all (RB 0.031, WR 0.039, TE 0.074), and could not have; see below |
+| **P49** | the per-season format improves the playoff Brier over the constant-7 run | **HELD** -- 0.2408 -> 0.2369, better in 8 seasons of 8 |
+| W1-W6 | the weekly gate's own series | W1, W3, W4 held; W2, W5, W6 failed (unchanged by P48) |
+
+**P48 is the one worth reading.** The correction was pre-registered as a level fix, and the level was
+never wrong: an MLE logistic with an intercept is already mean-calibrated on its own training set
+(its score equation IS `sum(p) = sum(y)`), so the shifts came out at 0.0005. The real gap is that the
+trainer fits on `season_line_pg >= 3` while the harness scores every non-bye row, and those two
+populations differ in zero rate by **0.106 to 0.207** at QB/RB/WR/TE -- three to seven times the
+tolerance. The residual is therefore how far the FEATURES extrapolate across a population shift, not
+a level: they extrapolate well at QB (0.112 gap collapses to a 0.009 residual and clause (c) passes)
+and badly at TE (0.207 -> 0.074). The fix that WOULD close the clause is choosing the shift on the
+scored rows, which fits the gate and measures nothing.
+
+**P49 is worth reading for the opposite reason.** It held on the Brier and means less than it looks:
+the uniform floor moves with the field too, so the skill score goes 3.5% -> 3.3%. The honest reading
+is that the Phase 2c calibration finding **survives** the correction rather than depending on it.
+
+### The tripwire, before and after
+
+| | calendar | seeding | bracket | championships | playoffs |
+|---|---|---|---|---|---|
+| LEGACY (`--reg-weeks 14 --seeding record`) | 14 wk, 15/16/17 | record | reseeds | **38.1%** | 96% |
+| **EFFECTIVE (the flagless run)** | 13 wk, 14/15/16 | division-first | reseeds | **39.7%** | 96% |
+
+Paired: -1.60pp, bootstrap 95% CI [-4.59, +1.20]pp, McNemar p 0.091, legacy better in 11 of 25
+seasons. Detectable effect at 80% power: 4.63pp. **They are not separable.** The legacy run reproduces
+its recorded per-season line byte for byte, which is how we know five merges and a format rewrite
+changed nothing they were not meant to. **39.7% is the regression line going forward.**
+
+### Owner decisions added by this pass
+
+6. **The seeding rule is an ASSUMPTION, not a reading.** ESPN publishes no flag for it; it is inferred
+   from the league having divisions, and this league's own seeds cannot distinguish the two rules in
+   any season. Worth +0.7pp, inside noise.
+7. **The two-part weekly model does not ship** (P48 failed). RB/WR/TE keep the season-line floor;
+   QB/K/DST keep the streaming models. It goes on accruing out-of-sample evidence as
+   `weekly_challenger` from week 2, which is the only thing that will settle it.
+8. **The odds have been re-snapshotted as vintage 1**, as of 2026-09-09, under the 13-week format.
+   The 2026-09-08 preseason rows are untouched and both series will be scored. Our own number barely
+   moved (54.33% -> 54.00% playoff, 9.17% -> 9.47% title); the FIELD compressed.
+
+### Recommended next work
+
+1. **The analytic-vs-simulated marginal harness for V3** -- the section immediately below, still the
+   most useful open item, and now better posed: Track A fixed the named defect and V3 still lost by
+   29pp, so the next question is which of the two books is wrong and where they diverge, measured
+   directly rather than inferred from a championship rate.
+2. **Win-probability lineups.** Track B's finding is that our lineup rule scores LESS than the room
+   because it starts a player who scores zero 4-6% of the time against their 3.5% -- an information
+   gap. Maximising expected points is also the wrong objective in a head-to-head week: against a
+   strong opponent you want variance and against a weak one you want floor. Both point the same way.
+3. **An injury-duration model.** The weekly model knows a designation and not a horizon, and the
+   population gap that sank P48 is largely the deep bench, where "will he play at all" is the whole
+   question.
+4. **A FAAB bid model on the transaction log now in the store.** 7,480 transactions with their bids
+   are in `raw_league_transaction`; the FAAB guidance the copilot gives today is a STATED RULE OF
+   THUMB priced per point of playoff probability, and it says so. It could be fitted.
+
+---
+
 ## The one piece of work worth doing next
 
 **Price a quarterback against positional replacement in the analytic marginal, then re-run P28.**
@@ -416,7 +557,11 @@ be re-measured against a softer rule to pass is a bidder that failed.
 Nothing in this programme can validate itself further on history; the useful measurements from 1999
 to 2025 have been taken. Three things resolve without anyone doing anything:
 
-- **The 32 frozen preseason odds rows.** Written once, before kickoff, on 2026-09-08, and now
+- **The 64 frozen odds rows, in TWO vintages.** 32 preseason (2026-09-08, 14-week calendar) and 32
+  post-week-1 (2026-09-09, 13-week calendar) -- the second added because the league changed its own
+  format, not because the first was wrong to write. They are scored as separate series against the
+  same outcome, which is the only comparison that can say whether re-forecasting helped. Written once
+  each, before the weeks they speak to, and now
   scoreable: when the season settles, `ff scorecard --season 2026` produces a Brier and a log loss
   for the playoff berth and the title separately, each against its own uniform floor, with a
   reliability table. It is the first forecast this repo has made that it could not have tuned.

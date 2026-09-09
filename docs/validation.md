@@ -1,5 +1,335 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## INTEGRATION PASS 3: five tracks stacked, and the league changed its calendar under us (2026-09-09)
+>
+> `redesign/final-2` = `redesign/final` (`75da5b0`) + Tracks E, D, B, C, A, merged `--no-ff` in that
+> order, then the leftovers. Two pre-registered predictions, **P48 and P49. P49 held; P48 failed, and
+> the reason it failed is worth more than the prediction was.**
+>
+> ### The merge
+>
+> | branch | track | conflicts | resolution |
+> |---|---|---|---|
+> | `redesign/league-format` `74d72b1` | E | none | first onto `redesign/final` |
+> | `redesign/dual-eligibility` `235980d` | D | `docs/validation.md` | prepend order; `espn.ts`/`types.ts`/`simContext.ts`/`season.ts` auto-merged, both features verified present |
+> | `redesign/inseason-backtest` `08443a5` | B | `README.md`, `docs/validation.md`, `src/data/ingest.ts`, `src/db/schema.sql` | ingest: D's `espn-eligibility` entry AND B's two league entries, both kept; schema/README: both blocks kept, one bullet merged |
+> | `redesign/streaming-all-positions` `9a90640` | C | `docs/validation.md` (TWO blocks -- git split C's section around text identical in both), `src/db/schema.sql` | reassembled C's section whole, then B's |
+> | `redesign/v3-qb-replacement` `b36c690` | A | `docs/validation.md` | prepend |
+>
+> `docs/validation.md` reads A, C, B, D, E, newest first, as specified. `merge-sanity` passed after
+> every merge; the final counts are 35 MCP tools, 74 schema tables, 79 `ff.ts` case labels, 36
+> renderer list ids, no duplicates. Tests went 461 -> 474 -> 493 -> 520 -> 538 -> 544 across the five
+> merges with zero failures at any step.
+>
+> The store was assembled from Track C's (newest weekly artifacts and `feat_player_week_stream`) plus
+> read-only table copies from the other tracks. **Every count matched the source track's report
+> exactly:** B 27,055 / 159 / 7,480 / 159 / 24,367 / 64,865 / 1,896; D 1,036 raw and 996 staged
+> (plus 523 `player_value_position`). Track E added no tables, and its format block was NOT copied --
+> it was re-read live, for the reason below.
+>
+> ### THE LEAGUE CHANGED ITS CALENDAR MID-SEASON, AFTER TRACK E READ IT
+>
+> `ff format sync`, run LIVE against ESPN on 2026-09-09:
+>
+> ```
+> regular season   weeks 1-13
+> playoffs         weeks 14/15/16  (7-team field, 1 week per round)
+> seeding          division-winners-first, tiebreak TOTAL_POINTS_SCORED
+> bracket          RESEEDS between rounds
+> divisions        Class of 2013, Class of 2012, Class of 2011, Class of 2014 (4 each)
+> source           espn, read 2026-09-09 10:01
+> ```
+>
+> Track E, hours earlier, read **14 weeks, playoffs 15/16/17, reseed false** and wrote that the
+> owner's "13 weeks" recollection described the 2018-2020 league rather than 2026. That was a correct
+> reading of a payload that has since been superseded. **The cached `settings-2026.json` is stale and
+> so is every conclusion drawn from it.** This is the whole argument for `fetchedAt` on the block, and
+> it is the second time in this programme that a cached artifact outlived its truth.
+>
+> Two things followed that nobody had planned for:
+>
+> - **Re-ingesting `league-history` for 2026 left the OLD schedule behind.** `INSERT OR REPLACE` on
+>   `raw_league_matchup` is keyed on (league, season, week, home, away), so a schedule that CHANGES
+>   accumulates rather than replaces: 104 games read back as **166**, with team 14 playing twice in
+>   week 1 and no error anywhere. The loader deletes the season's schedule before writing it now, and
+>   2026 reads 104 (13 weeks x 8 games), matching ESPN.
+> - **The preseason odds, frozen 2026-09-08, describe a bracket the league will not play.** They are
+>   not rewritten -- see the odds section below.
+>
+> ### `playoffReseed`: a fork in the bracket that had never been read
+>
+> ESPN publishes `playoffReseed` and Track E's reader insisted it be PRESENT while storing nothing.
+> Both simulators reseeded unconditionally -- highest remaining seed plays lowest -- for the life of
+> the repo. That is right for this league in 2026 and, per the per-season history below, WRONG for
+> every season 2018-2025, which ran a fixed bracket.
+>
+> It is on the block now and both simulators honour it. The discriminating test needed a
+> **non-transitive** fixture, and that is the interesting part: under any transitive strength order
+> the strongest team in the field wins under BOTH bracket shapes, because it beats whoever it meets.
+> A fixture built from "seed 1 is best, seed 7 is worst" is therefore guaranteed to agree with itself
+> and can never fail -- the same shape as a guard keyed on a name. With a rock-paper-scissors
+> tournament over seven seeds the two rules crown different teams (reseed 0, fixed 1), and the fault
+> injection reproduces the shipped-forever "always reseed" version and shows it matching one branch
+> and disagreeing with the other.
+>
+> ### The league's format history, read per season from ESPN (P49)
+>
+> `raw_league_season` and `fact_team_season` carry `reg_weeks`, `playoff_teams`,
+> `playoff_round_weeks`, `playoff_reseed`, `seeding_rule` and `division_count`, added by `db.ts`'s
+> ALTER path because `schema.sql` only ever reaches a fresh store. `scripts/format-history.mjs`:
+>
+> | season | teams | reg wks | playoffs | field | reseed | seeding | divs |
+> |---|---|---|---|---|---|---|---|
+> | 2018 | 14 | 13 | 14/15/16 | 6 | no | record | 1 |
+> | 2019 | 14 | 13 | 14/15/16 | 6 | no | record | 1 |
+> | 2020 | 14 | 13 | 14/15/16 | 6 | no | record | 1 |
+> | 2021 | 14 | 14 | 15/16/17 | 6 | no | record | 1 |
+> | 2022 | 14 | 14 | 15/16/17 | 6 | no | record | 1 |
+> | 2023 | 14 | 14 | 15/16/17 | 6 | no | record | 1 |
+> | 2024 | 14 | 14 | 15/16/17 | 6 | no | record | 1 |
+> | 2025 | 16 | 14 | 15/16/17 | 7 | no | division-winners-first | 4 |
+> | 2026 | 16 | 13 | 14/15/16 | 7 | **yes** | division-winners-first | 4 |
+>
+> This confirms the owner's account exactly, and shows **2026 is the first season this league has
+> ever reseeded**.
+>
+> **Phase 2c re-run, 2018-2025, 3,000 trials, seed 7, per-fold artifacts.** Three arms:
+>
+> | arm | playoff Brier | playoff uniform | skill | title Brier | title uniform |
+> |---|---|---|---|---|---|
+> | (a) constant 7-team field, record seeding | 0.2408 | 0.2495 | 3.5% | 0.0657 | 0.0652 |
+> | (b) shipped default (`playoffFieldFor`: 6/7 by team count) | 0.2370 | 0.2451 | 3.3% | 0.0659 | 0.0652 |
+> | (c) **per-season format** (each season's own field, seeding rule and reseed flag) | **0.2369** | 0.2451 | 3.3% | 0.0658 | 0.0652 |
+>
+> Per season, (a) -> (c): 2018 0.2259 -> 0.2194, 2019 0.2479 -> 0.2423, 2020 0.2133 -> 0.2119,
+> 2021 0.2713 -> 0.2660, 2022 0.2673 -> 0.2628, 2023 0.2454 -> 0.2418, 2024 0.2506 -> 0.2459,
+> 2025 0.2096 -> 0.2090.
+>
+> **P49 -- the playoff Brier improves relative to the constant-7 run: HELD.** 0.2408 -> 0.2369, and
+> it improves in **8 seasons of 8**, which is a cleaner result than the pooled number.
+>
+> **And read it honestly, because the pooled number flatters it.** The uniform FLOOR moves with the
+> field (0.2495 -> 0.2451), so the skill score against it goes 3.5% -> 3.3% -- i.e. essentially
+> nothing. Most of the absolute gain is that the constant-7 arm was scoring an event that was easier
+> to be wrong about, not that the simulator got better. The useful reading is the reverse of the
+> prediction: **the Phase 2c finding survives the correction rather than depending on it.**
+>
+> Also corrected while here: `scripts/fetch-league-outcomes.mjs` defaulted the field to 7, which was
+> wrong for 2018-2024's six-team field -- it recorded the seventh-place team as a playoff berth in
+> seven seasons of the outcome table the calibration is scored against.
+>
+> ### THE TWO TRIPWIRES
+>
+> Both `--full --no-lookahead --inflation --seasons 1999-2024 --n 150`, run sequentially, paired via
+> `--dump-trials` + `scripts/paired-analysis.mjs`.
+>
+> **LEGACY** (`--reg-weeks 14 --playoff-teams 7 --seeding record --playoff-reseed true`):
+> **38.1% / 96%**, and the per-season line is **byte-identical** to the recorded one:
+> `2000:31 2001:32 2002:29 2003:47 2004:41 2005:18 2006:51 2007:21 2008:36 2009:35 2010:35 2011:62
+> 2012:49 2013:41 2014:32 2015:26 2016:41 2017:33 2018:45 2019:38 2020:37 2021:36 2022:61 2023:33
+> 2024:43`. That is the check that five merges and a format rewrite changed nothing they were not
+> meant to.
+>
+> **NEW, EFFECTIVE FORMAT** -- and it is now the FLAGLESS run, because the flags default from the
+> block: 13 weeks, playoffs 14/15/16, division-winners-first, reseeding. **39.7% / 96%**, per season
+> `2000:31 2001:29 2002:50 2003:49 2004:29 2005:27 2006:58 2007:27 2008:43 2009:53 2010:33 2011:59
+> 2012:52 2013:38 2014:28 2015:33 2016:29 2017:34 2018:37 2019:42 2020:41 2021:31 2022:56 2023:40
+> 2024:42`. Paired against legacy: **-1.60pp, bootstrap 95% CI [-4.59, +1.20]pp, McNemar p 0.091**,
+> legacy better in 11 seasons of 25. Detectable effect at 80% power: 4.63pp -- so the two are not
+> separable, exactly as Track E's cell (d) found, and this run reproduces that cell to the decimal by
+> a different route (flags rather than config writes).
+>
+> **This is the regression line going forward.** The legacy number is history; a flagless run should
+> now produce 39.7%.
+>
+> `FF_SEEDING` is gone. `scripts/format-sensitivity.mjs` used to print it, and a copy of that script
+> from before this pass sweeps NOTHING -- four identical numbers reading as "the seeding rule does not
+> matter".
+>
+> ### The odds: a second VINTAGE, never a rewrite
+>
+> The preseason odds were frozen on 2026-09-08 under the 14-week calendar. Rewriting them is exactly
+> what a write-once record must not do, so `scorecard_prediction`'s `odds` kind gains a **vintage**
+> (its `week` column) and `scoreOdds` scores each vintage as its own series against the same outcome.
+> Vintage 1, as of 2026-09-09, computed after week 1 under the 13-week format, `--schedule real`,
+> 3,000 trials, seed 7:
+>
+> | team | playoff% pre | playoff% wk1 | delta | title% pre | title% wk1 | delta |
+> |---|---|---|---|---|---|---|
+> | TOTR | 60.03 | 65.63 | +5.60 | 13.73 | 14.87 | +1.13 |
+> | SLOP | 54.67 | 55.73 | +1.07 | 9.90 | 10.60 | +0.70 |
+> | **8==3 (us)** | 54.33 | **54.00** | -0.33 | 9.17 | **9.47** | +0.30 |
+> | SAM | 53.77 | 52.27 | -1.50 | 8.83 | 8.53 | -0.30 |
+> | SST | 51.10 | 47.33 | -3.77 | 7.07 | 6.90 | -0.17 |
+> | MAJO | 50.47 | 45.90 | -4.57 | 7.43 | 6.40 | -1.03 |
+> | NICK | 42.50 | 42.57 | +0.07 | 5.13 | 4.97 | -0.17 |
+> | COOK | 38.97 | 41.80 | +2.83 | 4.97 | 4.83 | -0.13 |
+> | DAN | 40.87 | 39.30 | -1.57 | 4.57 | 5.43 | +0.87 |
+> | HU | 38.23 | 38.80 | +0.57 | 4.90 | 5.30 | +0.40 |
+> | cja | 38.70 | 37.83 | -0.87 | 4.70 | 4.43 | -0.27 |
+> | Bird | 39.73 | 37.53 | -2.20 | 4.87 | 4.77 | -0.10 |
+> | MILE | 42.07 | 37.40 | -4.67 | 4.63 | 4.07 | -0.57 |
+> | ARI | 33.70 | 37.10 | +3.40 | 4.30 | 3.80 | -0.50 |
+> | MOOS | 35.33 | 36.10 | +0.77 | 3.63 | 3.47 | -0.17 |
+> | HMLS | 25.53 | 30.70 | +5.17 | 2.17 | 2.17 | 0.00 |
+>
+> Both vintages conserve (700.0% playoff, 100.0% title). The spread COMPRESSES -- top to bottom goes
+> 60.0-25.5 to 65.6-30.7 at the extremes but the middle bunches -- which is the 13-week variance story
+> Track E measured on the generated schedule, now on the real one. The test asserts the preseason rows
+> are byte-identical after the second write, and that re-running an existing vintage is still a no-op.
+>
+> **The regime threshold, recomputed from the per-season calibration, is UNCHANGED at 70%.** The
+> reliability bins are the same bins (2 / 13 / 71 / 27 / 1) and the 70-100% bin still contains exactly
+> one team-season, which went to the playoffs. The threshold rests on the same very little it always
+> did; what changed is that the Brier figures quoted beside it are now the per-season-format ones
+> (0.2369 against a uniform 0.2451; title 0.0658 against 0.0652).
+>
+> Weeks 14-16 reach every consumer: `ff copilot playoff-sos` prints `[14, 15, 16]`,
+> `scripts/playoff-sos.mjs` prints "weeks 14/15/16 (regular season ends week 13)". One live defect was
+> found doing this: `playoffSos` derived its bracket as `regWeeks + 1 .. 17`, which is FOUR weeks
+> under a 13-week season -- and week 17 is the week resting starters makes every opponent rating
+> meaningless. It reads `format.playoffWeeks` now.
+>
+> ### P48: the weekly gate's clause (c) -- FAILED, and it could not have done otherwise
+>
+> Pre-registered: recalibrate ONLY stage one's logistic intercept per position, Platt-style, on each
+> fold's training rows; the predicted zero share then comes within 0.030 pooled and per position,
+> coverage stays in band, CRPS still beats the floor everywhere.
+>
+> Run once, as registered. Coverage stayed in band (clause (b) pass, every position inside) and CRPS
+> beat the floor at every position (clause (a) pass, 2.1500 vs 2.6642 pooled; W1 held in all six).
+> **The zero share did not move at all:** pooled 0.384 vs 0.419 (off by 0.035), RB 0.031, WR 0.039,
+> TE 0.074 -- the same three numbers, to three decimals, as before the recalibration. **P48 FAILED.**
+>
+> The first thing to check on a null that flat is whether the lever is connected, and it is: the
+> trainer prints its shift and it fired. The shifts are **+0.0009, +0.0003, -0.0005, -0.0005** at
+> QB/RB/WR/TE. They could not have been larger, for two reasons:
+>
+> 1. **An MLE logistic WITH an intercept is already mean-calibrated on its own training set.** The
+>    intercept's score equation is exactly `sum(p_i) = sum(y_i)`. Only the L2 penalty perturbs it --
+>    that is the 0.0005. There was never anything on the training fold for a Platt shift to correct,
+>    and the pre-registration's stated diagnosis ("an L2 penalty shrinks the mean probability") was
+>    simply wrong about where the shrinkage lands.
+> 2. **The trainer and the harness score DIFFERENT POPULATIONS.** The trainer fits on
+>    `season_line_pg >= 3`; the harness scores every non-bye row, including the deep bench where a
+>    zero is near-certain. Measured (`scripts/zero-share-population.mjs`):
+>
+> | pos | scored n | zero(scored) | trained n | zero(trained) | gap |
+> |---|---|---|---|---|---|
+> | QB | 13,313 | 0.486 | 9,837 | 0.375 | 0.112 |
+> | RB | 25,476 | 0.431 | 17,129 | 0.324 | 0.106 |
+> | WR | 37,843 | 0.441 | 22,124 | 0.283 | 0.158 |
+> | TE | 21,256 | 0.492 | 9,361 | 0.285 | 0.207 |
+> | K | 7,568 | 0.209 | 7,483 | 0.202 | 0.007 |
+> | DST | 7,326 | 0.147 | 7,326 | 0.147 | 0.000 |
+>
+> The gap is three to seven times the tolerance at QB/RB/WR/TE. So the residual is not a level an
+> intercept can carry: it is how far the FEATURES extrapolate across a population shift. They
+> extrapolate well at QB (0.112 gap collapses to a 0.009 residual, and clause (c) PASSES there) and
+> badly at TE (0.207 -> 0.074). That is a real, reportable property of the model and a much better
+> answer than the prediction would have been.
+>
+> **The one fix that would close clause (c) is the one that must not be taken:** choosing the shift on
+> the SCORED rows fits the gate directly and makes it unfailable. `--recalibrate-zero` is kept rather
+> than deleted precisely so the honest version stays the easy one to run.
+>
+> **What ships, therefore: nothing new.** The season-line floor remains the shipped weekly artifact
+> for RB, WR and TE; QB, K and DST keep the streaming models (their gates pass on all three clauses).
+> The scorecard's `weekly` kind does NOT switch, and no snapshotted week is touched. The two-part
+> model goes on accruing out-of-sample evidence under `weekly_challenger` from week 2.
+>
+> ### Streaming regret on the REAL free-agent pool -- and a label that was not a measurement
+>
+> `poolSource` reported `fact_fa_pool_week` the moment that table merely EXISTED in the store, while
+> `streamingRegret` filtered by `rank > POOL_DEPTH[pos]` -- the season-line approximation -- in every
+> case. A store carrying Track B's pool therefore printed approximation numbers under the real pool's
+> name, and nothing could have noticed: both pools yield a pick and a plausible mean. Fixed; the real
+> pool is loaded and joined (`feat_key` == `player_sk`, 464/464 on 2019 week 3), a present-but-unjoined
+> table now THROWS, and both tables are printed side by side.
+>
+> Real pool rows scored: QB 4,929, RB 9,129, WR 15,694, TE 9,492, K 2,492, DST 1,652.
+>
+> | pos | model | real pool: meanPts | vs line | rank pool: meanPts | vs line |
+> |---|---|---|---|---|---|
+> | QB | streaming | 13.78 | **+8.29** | 16.16 | +8.05 |
+> | QB | two_part (control) | 13.53 | +8.04 | 16.08 | +7.97 |
+> | RB | streaming | 4.95 | +2.45 | 8.06 | +5.36 |
+> | RB | two_part | 5.10 | **+2.60** | 8.06 | +5.36 |
+> | WR | streaming | 7.08 | +3.72 | 8.27 | +2.90 |
+> | WR | two_part | 7.54 | **+4.18** | 8.42 | +3.05 |
+> | TE | streaming | 5.27 | +2.47 | 6.83 | +3.96 |
+> | TE | two_part | 5.44 | **+2.64** | 6.80 | +3.93 |
+> | K | streaming | 7.56 | **+1.37** | 8.79 | +2.04 |
+> | K | two_part | 7.98 | +1.79 | 8.57 | +1.82 |
+> | DST | streaming | 6.91 | **+1.32** | 8.43 | +2.28 |
+> | DST | two_part | 6.39 | +0.80 | 8.52 | +2.38 |
+>
+> **The conclusions survive the real pool.** P40 (QB/K/DST beat the board's pick by >= 1.0 pt/wk):
+> HELD, +8.29 / +1.37 / +1.32. P41 (the opponent block adds < 0.5 pt/wk at RB/WR/TE): HELD, and
+> still NEGATIVE -- RB -0.15, WR -0.46, TE -0.17. P42 (DST CRPS improves >= 5%): FAILED, 0.1%.
+>
+> **The two tables are not paired and must not be read as such:** the real pool exists only for
+> 2018-2025 (133 scored weeks) while the approximation runs 2012-2025 (243). Every level is lower on
+> the real pool, which is the expected direction -- a real pool is what sixteen managers left, and it
+> is thinner than "everyone outside the top N". The one qualitative change is `trailing4`, which
+> collapses from +6.71 to +2.83 at QB: the approximation leaves hot rostered players in the pool, and
+> the folk model was mostly picking them.
+>
+> ### Leftovers closed
+>
+> - **`SeasonPlayer.eligible` reaches `optimalLineup` inside the season simulator.** NOT a no-op: on a
+>   fixture short at WR and long at TE, a TE/WR swing man is worth 120 season points the broken seam
+>   threw away. The legality check inside `simulateSeasons` is eligibility-aware too, and the test
+>   drives both its refusal (a genuinely short roster) and its acceptance (a roster the swing man
+>   covers) -- a guard that can only ever refuse is not a guard.
+> - **`ff inseason-backtest lineup|waivers|promotion`**, thin wrappers spawning Track B's scripts
+>   unchanged. `lineup` reproduces Track B's numbers exactly (challenger -1.39 vs the room, 43.5%
+>   win rate; P36 held, P37 failed at 46.8%).
+> - **`starterReserve` is FLAT WITHIN NOISE, not byte-identical.** Corrected in `README.md`,
+>   `docs/edges.md` and `docs/redesign-2026-09.md`: 16 of 1,800 trials differ on the long arm,
+>   -0.17pp, CI [-0.44, 0.00].
+> - `CLAUDE.md`: 35 tools, `ff copilot stream` named. `.gitignore`: `tools/__pycache__/`,
+>   `data/projection-artifact.2c.json`.
+>
+> ### Verification, everything re-run on this branch
+>
+> | check | result |
+> |---|---|
+> | `npm run typecheck` | clean |
+> | `npm test` | **554 tests, 552 pass, 0 fail, 2 skipped** |
+> | `scripts/merge-sanity.mjs` | PASS -- 35 tools, 74 tables, 79 case labels, 36 list ids |
+> | LEGACY tripwire | **38.1% / 96%**, per-season line byte-identical to the record |
+> | NEW effective-format tripwire | **39.7% / 96%**, paired -1.60pp, CI [-4.59, +1.20], p 0.091 |
+> | `evaluate-projection` | RMSE **52.79** vs 55.54, pinball **12.02** vs 13.16, coverage **0.760**, every band in band -- P5 held |
+> | `evaluate-weekly --recalibrate-zero` | gate FAILS on (c); (a) 2.1500 vs 2.6642 and (b) 0.798 pass |
+> | odds scorer on 2025, per-season format | playoffs 0.208975 / title 0.052059, **matches the calibration harness to six decimals**; rotated-outcome control 0.258517 |
+> | `copilot-mcp-smoke` | PASS -- **35 tools**, all 10 copilot tools, invariants hold |
+> | `copilot-crosscheck` | ALL CHECKS PASSED, both fault injections fired |
+> | `weekly-leak-audit` | PASSED, and the leaked-bound control fired on every column |
+> | streaming + in-season leakage tests | 34 tests, 34 pass |
+> | `v3-connected` | all connected |
+> | `value-gates` | ALL GATES PASS |
+> | honest arbiter, effective format | **11.2% / 46%** on 4 seasons (2021-2024) |
+>
+> The honest arbiter is quoted beside Phase 2c's **14.5%** with two caveats that between them account
+> for the gap and mean it is not a regression: Track A measured a **~4-point level drift** on this arm
+> after the board was rebuilt, and the arm covers **four seasons**, where the detectable effect is
+> nowhere near 3pp. Per season: 2021 25%, 2022 15%, 2023 3%, 2024 1%.
+>
+> ### Owner decisions
+>
+> 1. **The seeding rule is an ASSUMPTION.** ESPN does not publish "division winners are seeded first"
+>    as a flag; it is inferred from the league having divisions, and this league's own 2018-2025 seeds
+>    are consistent with both rules. It is worth +0.7pp on the tripwire, inside noise.
+> 2. **`playoffReseed` is now read, and 2026 is the first season it is true.** Every historical
+>    number in this repo was computed with a reseeding bracket, including the eight seasons that ran a
+>    fixed one.
+> 3. **The two-part weekly model does NOT ship** (P48 failed). RB/WR/TE keep the floor; QB/K/DST keep
+>    the streaming models.
+> 4. **The odds have been re-snapshotted as vintage 1.** The preseason rows stand, unaltered, and
+>    both series will be scored.
+> 5. `DEFAULT_LEVERS`, `docs/decisions.md` and the default bidder (V2) are **unchanged**.
+
 > ## TRACK A: V3 against positional replacement -- the named defect, fixed, and it was not the reason (2026-09-09)
 >
 > Branch `redesign/v3-qb-replacement` off `redesign/final` (`75da5b0`). Phase 3 closed with one
