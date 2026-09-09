@@ -1850,8 +1850,10 @@ async function cmdBacktest(rest: string[]) {
     }
     db3.close();
     console.log(`  --market ecr: the room drafts on the REAL preseason consensus (ranking_history),`);
-    console.log(`    per-player shared error at the MEASURED dispersion for his rank band (0.46 at 1-6`);
-    console.log(`    to 1.21 past 60), plus an independent per-bot view of log-sd ${botIdioSd}.`);
+    console.log(marketNoiseGiven
+      ? `    shared error set explicitly to ${marketSd} for every player${marketSd === 0 ? " -- the room drafts the consensus AS PUBLISHED" : ""},`
+      : `    per-player shared error at the MEASURED dispersion for his rank band (0.46 at 1-6 to 1.21 past 60),`);
+    console.log(`    plus an independent per-bot view of log-sd ${botIdioSd}.`);
     console.log(`    our book: per-season artifacts from ${artDir2}, each blind to its own season`);
     console.log(`    usable in ${marketProjByYear.size}/${pts.size} seasons; skipped ${skipped.join(",") || "none"}`);
     console.log(`    NOTE: the FantasyPros archive begins in 2020, so this arm can only ever cover`);
@@ -1921,7 +1923,7 @@ async function cmdBacktest(rest: string[]) {
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
   const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
-  console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(measured band sd, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);
+  console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(shared ${marketNoiseGiven ? String(marketSd) : "measured band sd"}, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   if (dumpPath) {
     writeDump(dumpPath, ["season", "seed", "champ", "playoffs", "wins", "regPoints"].join("\t") + "\n" + dumpRows.join("\n") + "\n", "utf8");

@@ -83,7 +83,7 @@ npm run ff -- values 2>&1 | tail -1
 npm run ff -- cheatsheet >/dev/null 2>&1 && echo "cheatsheet written"
 
 say "5. gates -- verify by assertion, never by a success line"
-node scripts/value-gates.mjs || fail "value gates failed: the book is wrong, do not draft on it"
+node --import tsx scripts/value-gates.mjs || fail "value gates failed: the book is wrong, do not draft on it"
 node scripts/scoring-history.mjs || fail "league format/scoring does not match the synced config"
 
 say "6. what the engine will actually use"
