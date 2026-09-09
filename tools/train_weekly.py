@@ -416,25 +416,31 @@ def fit_position_two_part(rows, specs, pos, args):
 
     # ---- OPTIONAL: PLATT-STYLE INTERCEPT RECALIBRATION OF STAGE ONE ----
     #
-    # WHAT FAILED, AND WHY IT IS AN INTERCEPT AND NOT A FEATURE. The weekly gate's clause (c) asks
-    # whether the model's mean predicted P(zero week) matches the actual share, per position, within
-    # 0.030. The two-part model missed at RB (0.031), WR (0.039) and TE (0.074) -- always in the same
-    # direction, always by roughly a constant. That is the signature of a LEVEL error, not a
-    # discrimination error: an L2-regularised logistic shrinks its coefficients toward zero and, on a
-    # class-imbalanced problem, its mean predicted probability with them. Ranking is unaffected;
-    # only the level is wrong.
+    # THE PRE-REGISTERED P48 CORRECTION -- KEPT, AND IT MEASURED ~ZERO. READ THIS BEFORE REUSING IT.
     #
-    # So the correction is the smallest one that can possibly fix it: ONE number per position, added
-    # to the intercept, chosen so the mean predicted probability ON THE TRAINING FOLD equals the
-    # observed zero rate on the same rows. Every coefficient is left exactly as fitted.
+    # The weekly gate's clause (c) asks whether the model's mean predicted P(zero week) matches the
+    # actual share, per position, within 0.030. The two-part model missed at RB (0.031), WR (0.039)
+    # and TE (0.074), always in the same direction -- which looks exactly like a LEVEL error with an
+    # obvious one-number fix. So: ONE number per position, added to the intercept, chosen so the mean
+    # predicted probability ON THE TRAINING FOLD equals the observed zero rate on the same rows.
+    # Every coefficient left as fitted. The solve is a bisection on a strictly increasing function.
     #
-    # ON THE TRAINING FOLD IS THE ENTIRE POINT. `rows` here is what the caller passed, and the
-    # evaluator passes the training seasons with the holdout removed -- so the shift is chosen
-    # without ever seeing the season it will be scored on. Choosing it on the scored rows would make
-    # clause (c) unfailable by construction, which is worse than failing it.
+    # MEASURED, 2026-09-09: the shifts are +0.0009, +0.0003, -0.0005, -0.0005 at QB/RB/WR/TE, and
+    # `ff evaluate-weekly --recalibrate-zero` reproduces the failing numbers to three decimals. P48
+    # FAILED, and it could not have done anything else, for two reasons:
     #
-    # The solve is a bisection on a function that is strictly increasing in the shift (a sum of
-    # logistics), so it has exactly one root and needs no optimiser.
+    #   1. An MLE logistic WITH an intercept is already mean-calibrated on its own training set --
+    #      the intercept's score equation is exactly sum(p_i) = sum(y_i). Only the L2 penalty
+    #      perturbs it, which is the 0.0005. There was never anything here to correct.
+    #   2. The trainer fits on `season_line_pg >= trainMinLine` and the harness scores EVERY non-bye
+    #      row, including the deep bench where a zero is near-certain. Those two populations differ
+    #      in zero rate by 0.11 to 0.21 at QB/RB/WR/TE (`scripts/zero-share-population.mjs`), so no
+    #      intercept chosen on the first can be right for the second.
+    #
+    # ON THE TRAINING FOLD IS STILL THE ENTIRE POINT, and it is why the flag is kept rather than
+    # deleted: choosing the shift on the SCORED rows would close clause (c) by fitting the gate,
+    # which makes the gate unfailable and measures nothing. The flag exists so that the honest
+    # version is the easy one to run and the dishonest one has to be written on purpose.
     if getattr(args, "recalibrate_zero", False):
         z_raw = X @ zm.coef_[0] + zm.intercept_[0]
         target = float(yz.mean())
