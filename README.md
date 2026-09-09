@@ -421,3 +421,35 @@ twelve of twelve seasons. **P28 failed again, on both arms, against the threshol
 registered.** V2 remains the default; `DEFAULT_LEVERS`, `values.ts` and `strategy.ts` are untouched.
 What is left is the analytic surrogate itself, not its inputs. `docs/validation.md`, Track A, has
 every table and the paired statistics.
+
+## Track F (2026-09-09): the trainer and the harness were scoring different players
+
+The weekly two-part model failed clause (c) of its gate at RB 0.031, WR 0.039 and TE 0.074 against a
+0.030 tolerance, and the Platt shift registered to close it measured 0.0005. **The cause was not the
+model.** The trainer fitted `season_line_pg >= 3`; the harness scored every non-bye rostered row,
+deep bench included. The two sets differ in zero rate by 0.106 to 0.207 -- three to seven times the
+whole tolerance -- so no intercept fitted on one could be calibrated for the other, and an MLE
+logistic is already mean-calibrated on its own training set, which is why there was nothing for a
+Platt shift to correct.
+
+`src/weekly/population.ts` now defines ONE population by the DECISION -- rostered, or a plausible
+pickup by preseason line -- materialised as `feat_player_week_model.in_population`, which the trainer
+selects on and the harness filters on, both REFUSING to run without it. 112,782 rows under the old
+harness, 69,500 in the decision population. **Clause (c) now passes everywhere**: pooled 0.267 vs
+0.267, off by 0.000 where it was off by 0.035.
+
+**The gate was then applied ONCE, per position, and no position ships the two-part model.** Clause
+(b) fails pooled by 0.002 (coverage given `pts > 0` is 0.852 against [0.75, 0.85]) even though every
+position is inside its own band; (a) fails at K and DST by ties of 0.0013 and 0.0003. The band is
+NOT widened to 0.86 -- a band chosen after seeing 0.852 is not a band -- though it was registered on
+the old population and re-registering it deserves its own pre-registered job. Lineup regret, the
+decision metric, moved the OTHER way: +7.02 points per lineup on standard-15 and +8.54 on deep-18,
+win share 0.68-0.70. That is written down rather than acted on, which is the point of a gate.
+
+So the serve table keeps its filenames -- QB/K/DST streaming, RB/WR/TE the floor -- but all three
+artifacts were refitted on the decision population, so the numbers a position is served changed.
+`WEEKLY_SERVE` in `src/weekly/streamingServe.ts` is now the single table every consumer resolves
+through, `ff scorecard` prints it per position with the switch date, and each snapshotted `weekly`
+row carries the artifact that produced it. The switch reaches the NEXT unplayed week only; a
+re-snapshot of a frozen week is fault-injected and refuses. `docs/validation.md`, Track F, has the
+clause-by-clause table, the zero-rate tables and every injection.

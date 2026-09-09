@@ -1029,6 +1029,61 @@ its ranking of the pool IS the board's. That is not a bug in the record; it is t
 consequence of those three positions not shipping, and it means their `stream` series will accrue
 zero regret until they do.
 
+## What serves each position, and what happens to the record when that changes (Track F, 2026-09-09)
+
+The gate is applied per position, so **"what ships" is six decisions and not one**. `WEEKLY_SERVE` in
+`src/weekly/streamingServe.ts` is the single table that holds them, and every consumer resolves
+through it -- the scorecard's `weekly` kind, `projectStreamingWith`, `ff copilot stream` and the
+`stream_recommend` MCP tool, whose `assumptions` block carries `artifactByPos` on every result.
+
+| pos | serves | what that is |
+|---|---|---|
+| QB | `streaming-artifact.json` | two-part plus the twelve point-in-time opponent columns |
+| RB | `weekly-artifact-lineonly.json` | the floor: every coefficient zero, mean intercept 1.0 |
+| WR | `weekly-artifact-lineonly.json` | the floor |
+| TE | `weekly-artifact-lineonly.json` | the floor |
+| K | `streaming-artifact.json` | streaming, K fitted rather than an intercept |
+| DST | `streaming-artifact.json` | streaming, DST fitted rather than an intercept |
+
+`SHIPPED_STREAMING_POSITIONS` is **derived** from this table, not maintained beside it. Two
+hand-kept lists overlap, and a position in both is served by whichever list the caller happens to
+consult; one table cannot express that state. `test/weekly-serve-switch.test.ts` asserts the
+derivation rather than re-typing the three positions.
+
+**`ff scorecard` prints the table every run**, per position, plus
+`WEEKLY_SERVE_SWITCHED_ON` -- the date the mapping last changed. Stated rather than inferred from a
+gap in the snapshot table.
+
+### The switch reaches the NEXT unplayed week and no other
+
+`scorecard_prediction` is write-once, so a serve switch can only ever affect weeks not yet frozen.
+Every snapshotted `weekly` row now carries a `meta` column -- `{artifact, switchedOn}` -- naming the
+artifact that produced THAT row. Without it a series that changes model mid-season shows a step
+change with nothing in the record saying why, and the explanation would have to be reconstructed from
+git history against a table whose whole point is that it cannot be edited. **Baseline rows carry
+NULL**: `season_line`, `shipped_week` and `trailing4` have no serving artifact behind them, and
+stamping the serve table on them would claim a provenance they do not have.
+
+`weekly_challenger` stays whole-field even where the two-part model ships at a position. An unbroken
+series is the only thing that lets the two be compared over a season, and a challenger that quietly
+stopped covering the positions it won would leave a record that flatters it by omission.
+
+**Two dangers, both silent, both tested.** (1) A consumer that reads one artifact and serves it
+everywhere: the scorecard did exactly that, correctly, while one artifact served all six -- the
+moment the table has two entries a one-artifact snapshot freezes the floor's number for a position
+the lineup is served a different model at, and the forward record then accrues for a model nobody was
+served from, which is the one failure a scorecard cannot survive. Fault-injected by making the
+metadata stamp the floor everywhere; the assertion fires at QB. (2) A series that changes model with
+nothing in the record: fault-injected by re-snapshotting a frozen week with an artifact whose
+intercept is 2.5x, which would move every value visibly -- 0 rows written, every stored value
+byte-identical, and the positive control writes the next week so the guard refuses a FROZEN week
+rather than refusing everything.
+
+**Known gap.** `loadWeeklyProjection` in `src/inseason/copilotStore.ts` -- the lineup seam -- still
+loads the floor for all six positions. It is correct at RB/WR/TE, and the lineup path never served
+the streaming model at QB/K/DST, so nothing regressed; routing it through `WEEKLY_SERVE` is real
+remaining work.
+
 ## Determinism
 
 The full 14-fold evaluation was run twice, end to end, including re-invoking the Python trainer for
