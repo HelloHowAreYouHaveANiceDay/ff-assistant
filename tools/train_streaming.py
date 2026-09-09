@@ -120,12 +120,29 @@ def load_rows(db_path, lo, hi, population):
     con.row_factory = sqlite3.Row
     where = "m.pts IS NOT NULL" if population == "played" else "COALESCE(m.is_bye, 0) = 0"
     cols = ", ".join("m." + c for c in tw.SELECT_COLS) + ", " + ", ".join("s." + c for c in STREAM_ALL)
+    # THE DECISION POPULATION, the same flag train_weekly.py reads and the same refusal if it is not
+    # there. Six positions have to be comparable to each other and to the floor, which they only are
+    # if all of them were fitted and scored on the same set.
+    have = {r[1] for r in con.execute("PRAGMA table_info(feat_player_week_model)")}
+    if tw.POPULATION_COLUMN not in have:
+        con.close()
+        sys.exit(
+            "train_streaming: feat_player_week_model has no `" + tw.POPULATION_COLUMN + "` column. "
+            "Run `ff build-weekly-population`; see src/weekly/population.ts for the rule.")
+    built = con.execute(
+        "SELECT COUNT(*) FROM feat_player_week_model"
+        " WHERE season BETWEEN ? AND ? AND " + tw.POPULATION_COLUMN + " IS NOT NULL", (lo, hi)).fetchone()[0]
+    if not built:
+        con.close()
+        sys.exit("train_streaming: `" + tw.POPULATION_COLUMN + "` exists but no row in " + str(lo) +
+                 "-" + str(hi) + " has been built. Run `ff build-weekly-population`.")
     cur = con.execute(
         "SELECT " + cols + ", COALESCE(m.pts, 0.0) AS pts"
         " FROM feat_player_week_model m"
         " LEFT JOIN feat_player_week_stream s"
         "        ON s.season = m.season AND s.week = m.week AND s.feat_key = m.feat_key"
-        " WHERE m.season BETWEEN ? AND ? AND " + where + " AND m.season_line_pg IS NOT NULL",
+        " WHERE m.season BETWEEN ? AND ? AND " + where + " AND m.season_line_pg IS NOT NULL"
+        "   AND m." + tw.POPULATION_COLUMN + " = 1",
         (lo, hi),
     )
     rows = []
@@ -262,7 +279,7 @@ def main():
     lo, hi = tw.parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
     rows = load_rows(args.db, lo, hi, args.population)
-    rows = [r for r in rows if r["season_line_pg"] and r["season_line_pg"] >= tw.TRAIN_MIN_LINE]
+    # NO SECOND FILTER. load_rows already selected the decision population in SQL; see train_weekly.
     # THE HOLDOUT IS REMOVED BEFORE ANYTHING IS MEASURED -- before the transform centres, before the
     # missing-value defaults, before the alpha search. Same rule as train_weekly.py and for the same
     # reason: removing it only from the final fit leaves the held-out season inside every
@@ -322,7 +339,8 @@ def main():
         "holdoutSeason": holdout,
         "target": "ratio_to_season_line",
         "population": args.population,
-        "trainMinLine": tw.TRAIN_MIN_LINE,
+        "trainMinLine": 0.0,
+        "rowFilter": tw.ROW_FILTER,
         "features": specs,
         "coef": coef,
         "clamps": {"lo": tw.CLAMP_LO, "hi": tw.CLAMP_HI},

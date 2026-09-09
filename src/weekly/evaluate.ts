@@ -49,6 +49,7 @@ import {
   type WeeklyArtifact, type WeeklyProjRow,
 } from "./projector.js";
 import { loadWeeklyRows, PENDING_DATA_TRACK_FIELDS, type WeeklyRow } from "./features.js";
+import { populationKeys, POPULATION_COLUMN, POPULATION_PREDICATE } from "./population.js";
 
 export const MODELS = ["weekly", "season_line", "shipped_week", "trailing4", "zero"] as const;
 export type ModelName = typeof MODELS[number];
@@ -287,9 +288,25 @@ interface SeasonRows { rows: WeeklyRow[]; actual: Map<string, number>; bye: Set<
 
 /** One season's feature rows plus the actuals, keyed (feat_key|week). A bye row is EXCLUDED from
  *  everything: every model knows about a bye equally, from the schedule, so including them would
- *  inflate every model's apparent skill with the same free lunch. */
+ *  inflate every model's apparent skill with the same free lunch.
+ *
+ *  AND THE ROWS ARE THE DECISION POPULATION, read from the SAME flag column the trainer selects on
+ *  -- see src/weekly/population.ts. This harness used to score every non-bye rostered row while the
+ *  trainer fitted `season_line_pg >= 3`; the two sets differ in zero rate by 0.11 to 0.21 and that
+ *  gap, not the model, is what failed the gate's zero-share clause at RB, WR and TE. An unbuilt
+ *  population is a REFUSAL rather than a fallback to the old wider set: falling back would score a
+ *  different set from the one that was fitted while every number still looked plausible. */
 function loadSeason(db: DB, season: number): SeasonRows {
-  const rows = loadWeeklyRows(db, season).filter((r) => POS_SCORED.includes(r.pos));
+  const pop = populationKeys(db, season);
+  if (!pop) {
+    throw new Error(
+      `season ${season} has no decision population built (feat_player_week_model.${POPULATION_COLUMN}). ` +
+      "Run `ff build-weekly-population`. Scoring every non-bye row instead would put this harness on " +
+      "a different set of players from the one the trainer fits, which is exactly the mismatch " +
+      "src/weekly/population.ts exists to remove.");
+  }
+  const rows = loadWeeklyRows(db, season)
+    .filter((r) => POS_SCORED.includes(r.pos) && pop.has(`${r.feat_key}|${r.week}`));
   const raw = db.prepare(
     "SELECT feat_key, week, pts, is_bye, season_line_pg, pos FROM feat_player_week_model WHERE season = ?",
   ).all(season) as { feat_key: string; week: number; pts: number | null; is_bye: number | null; season_line_pg: number | null; pos: string }[];
@@ -567,7 +584,7 @@ function lineOnlyFor(db: DB, trainSeasons: number[], holdout: number): WeeklyArt
   // measurement rather than in the models.
   const rows = db.prepare(
     `SELECT pos, COALESCE(pts, 0.0) / season_line_pg AS r FROM feat_player_week_model
-      WHERE COALESCE(is_bye, 0) = 0 AND season_line_pg > 0 AND season IN (${ins.map(() => "?").join(",")})`,
+      WHERE ${POPULATION_PREDICATE} AND season_line_pg > 0 AND season IN (${ins.map(() => "?").join(",")})`,
   ).all(...ins) as { pos: string; r: number }[];
   const byPos: Record<string, number[]> = {};
   for (const r of rows) (byPos[r.pos] ??= []).push(r.r);
@@ -625,6 +642,17 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
           `artifact for holdout ${yr} was fitted on population "${art.population}" but this harness ` +
           "scores every non-bye week with a did-not-play week as a zero. Retrain with " +
           "--population rostered, or the bias and coverage below measure the mismatch, not the model.");
+      }
+      // THE ROW FILTER IS THE OTHER HALF OF THE POPULATION CONTRACT. This harness scores the
+      // decision population; an artifact fitted on the old `season_line_pg >= 3` cut is a different
+      // set of players, and the difference shows up as a zero-share miss that reads like a model
+      // defect. Refuse rather than report it as one.
+      if ((art.rowFilter ?? "season_line_pg") !== "in_population") {
+        throw new Error(
+          `artifact for holdout ${yr} was fitted with rowFilter "${art.rowFilter ?? "season_line_pg"}" ` +
+          "but this harness scores the decision population (in_population). Retrain against a store " +
+          "with `ff build-weekly-population` run, or every zero-share number below measures the " +
+          "population gap rather than the model.");
       }
       if (art.seasons.includes(yr)) {
         throw new Error(`artifact for holdout ${yr} lists ${yr} among its training seasons -- the ` +

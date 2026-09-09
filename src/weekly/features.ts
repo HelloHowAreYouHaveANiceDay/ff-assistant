@@ -34,6 +34,7 @@
  */
 import { readFileSync } from "node:fs";
 import { openDb, nowIso, type DB } from "../db/db.js";
+import { buildPopulation } from "./population.js";
 import { dataPath } from "../data/paths.js";
 import { nameKey } from "../draft/values.js";
 import { fetchCsvCached, URLS, cacheTag, canonTeam, pick } from "../data/nflverse.js";
@@ -622,6 +623,11 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
     res.rows += n;
     res.perSeason.push({ season, rows: n, withLine, withDvp, withPts });
   }
+  // THE DECISION POPULATION IS A COLUMN ON THIS TABLE, so it is built HERE rather than in a step
+  // somebody has to remember. It is derived from what was just written (the preseason line ranks)
+  // plus Track B's roster feed, so it can only be correct after the rows exist. Both the Python
+  // trainer and the TypeScript harness select on this flag; see src/weekly/population.ts.
+  buildPopulation(db, opts.seasons);
   return res;
 }
 
