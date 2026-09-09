@@ -733,3 +733,59 @@ CREATE TABLE IF NOT EXISTS raw_injury (
   fetched_at TEXT NOT NULL,
   PRIMARY KEY (season, week, team, player_key, report_date));
 CREATE INDEX IF NOT EXISTS idx_raw_injury_gsis ON raw_injury (gsis_id, season, week);
+
+-- Published depth charts. TWO INCOMPATIBLE SCHEMAS, and this is the one in this file most likely to
+-- fail silently:
+--   'weekly' (1999-2025): one row per player per week per formation. The rank is `depth_team`.
+--   'daily'  (2026-):     a DAILY SNAPSHOT keyed by `dt`, with no week column at all. The rank is
+--                         `pos_rank`, and 2026 alone is 505,423 rows / 48MB.
+-- An ingester that reads `depth_team` writes zero 2026 rows; one that reads `pos_rank` writes zero
+-- rows for every prior season. Both exit cleanly. `source_schema` records which file a row came from
+-- so the normalisation is auditable rather than invisible.
+--
+-- `week = 0` on a daily row is a SENTINEL, not week zero: that feed does not say which week a
+-- snapshot belongs to, and mapping a date to a week needs the schedule, which is a feature-layer
+-- join. `as_of` carries the snapshot date for the daily feed and is NULL for the weekly one, which
+-- publishes no date -- the same rule raw_injury follows.
+CREATE TABLE IF NOT EXISTS raw_depth_chart (
+  season INTEGER NOT NULL, week INTEGER NOT NULL, as_of_key TEXT NOT NULL,
+  team TEXT NOT NULL, player_key TEXT NOT NULL,
+  formation TEXT NOT NULL, position TEXT NOT NULL, depth_position TEXT NOT NULL,
+  as_of TEXT, depth_rank INTEGER,
+  gsis_id TEXT, espn_id TEXT, full_name TEXT, game_type TEXT, jersey_number TEXT,
+  source_schema TEXT NOT NULL, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, week, as_of_key, team, player_key, formation, position, depth_position));
+CREATE INDEX IF NOT EXISTS idx_raw_depth_gsis ON raw_depth_chart (gsis_id, season, week);
+
+-- Snap counts, from PFR by way of nflverse. THE FEED HAS NO GSIS ID -- its player key is
+-- `pfr_player_id` -- and that is preserved rather than resolved, because a resolution here is the
+-- join this layer exists to keep out of raw. The crosswalk (player_xref, source 'pfr') is where the
+-- feature layer picks it up.
+CREATE TABLE IF NOT EXISTS raw_snap_count (
+  season INTEGER NOT NULL, week INTEGER NOT NULL, game_id TEXT NOT NULL, player_key TEXT NOT NULL,
+  as_of TEXT,                      -- the game day, from raw_nfl_game where we have it
+  pfr_player_id TEXT, pfr_game_id TEXT, player TEXT, position TEXT, team TEXT, opponent TEXT,
+  game_type TEXT,
+  offense_snaps REAL, offense_pct REAL, defense_snaps REAL, defense_pct REAL, st_snaps REAL, st_pct REAL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, week, game_id, player_key));
+CREATE INDEX IF NOT EXISTS idx_raw_snap_pfr ON raw_snap_count (pfr_player_id, season, week);
+
+-- The NFL DRAFT (not our auction). One file, 1936-2025.
+--
+-- ONLY season/round/pick/team/position/college ARE POINT-IN-TIME. The career-total columns the feed
+-- also ships (w_av, games, seasons_started, allpro, probowls, and the counting stats) are lifetime
+-- AS OF THE FILE'S BUILD DATE: using them as a feature for a 2015 row leaks that player's 2016-2025
+-- career into it. They are stored because raw stores what the source gave, and named here so nobody
+-- reads them as knowable in the draft year.
+CREATE TABLE IF NOT EXISTS raw_nfl_draft_pick (
+  season INTEGER NOT NULL, round INTEGER NOT NULL, pick INTEGER NOT NULL,
+  as_of TEXT,                      -- <season>-05-01, after that year's draft has finished
+  team TEXT, gsis_id TEXT, pfr_player_id TEXT, cfb_player_id TEXT, pfr_player_name TEXT,
+  position TEXT, category TEXT, side TEXT, college TEXT, age REAL,
+  -- NOT point-in-time. See above.
+  hof INTEGER, w_av REAL, car_av REAL, dr_av REAL, games REAL, seasons_started REAL,
+  allpro REAL, probowls REAL, to_season REAL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, round, pick));
+CREATE INDEX IF NOT EXISTS idx_raw_draft_gsis ON raw_nfl_draft_pick (gsis_id);

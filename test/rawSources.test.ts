@@ -170,3 +170,95 @@ test("raw_injury: report_status uses the source's own vocabulary, unmapped", { s
   // looked at, not silently absorbed.
   assert.deepEqual(vals, ["Doubtful", "Note", "Out", "Probable", "Questionable"]);
 });
+
+// ==================================================================================================
+// raw_depth_chart -- the two-schema feed
+// ==================================================================================================
+
+test("raw_depth_chart: both source schemas land, and the weekly/daily split is read from the file", { skip: !tableHasRows("raw_depth_chart") ? "raw_depth_chart not built" : false }, () => {
+  const db = open();
+  const rows = db.prepare(
+    `SELECT season, COUNT(*) n, GROUP_CONCAT(DISTINCT source_schema) s, COUNT(DISTINCT week) weeks,
+            COUNT(DISTINCT as_of) dates, SUM(depth_rank IS NOT NULL) r
+     FROM raw_depth_chart GROUP BY season ORDER BY season`,
+  ).all() as { season: number; n: number; s: string; weeks: number; dates: number; r: number }[];
+  db.close();
+  const by = new Map(rows.map((r) => [r.season, r]));
+  // Measured: the feed starts in 2001 (1999 and 2000 are HTTP 404).
+  assert.equal(rows[0].season, 2001);
+  // The weekly schema, through 2024: ~28,000-38,000 rows a year over ~21 weeks, no dates at all.
+  for (const y of [2001, 2010, 2020, 2024]) {
+    const r = by.get(y)!;
+    assert.equal(r.s, "weekly", `${y} schema`);
+    assert.ok(r.weeks >= 17, `${y} has only ${r.weeks} distinct weeks`);
+    assert.equal(r.dates, 0, `${y} weekly rows must carry no as_of -- the feed publishes none`);
+  }
+  // The daily schema. MEASURED AND CORRECTED: probing the 2026 file alone suggested the change
+  // began in 2026; ingesting the whole range showed 2025 had already switched, with 219 distinct
+  // snapshot dates. This is why the ingester reads the shape from the file header and not the year.
+  // 2025 must be PRESENT, not merely consistent if present. Reading the daily file with the weekly
+  // column names produces zero rows and a clean exit, so a guard that skips an absent season is a
+  // guard that passes on exactly the failure it exists for.
+  assert.ok(by.has(2025), "2025 depth-chart rows missing entirely");
+  assert.ok(by.get(2025)!.n > 100000, `2025 has only ${by.get(2025)!.n} depth rows`);
+  for (const y of [2025, 2026]) {
+    const r = by.get(y);
+    if (!r) continue;
+    assert.equal(r.s, "daily", `${y} schema`);
+    assert.equal(r.weeks, 1, `${y} daily rows use the week=0 sentinel only`);
+    assert.ok(r.dates > 100, `${y} has only ${r.dates} snapshot dates`);
+  }
+  // The rank is the column the table exists for, in BOTH schemas -- `depth_team` in one and
+  // `pos_rank` in the other. A normalisation that read the wrong name shows up here as a zero.
+  for (const r of rows) assert.equal(r.r, r.n, `${r.season}: depth_rank missing on ${r.n - r.r} rows`);
+});
+
+// ==================================================================================================
+// raw_snap_count
+// ==================================================================================================
+
+test("raw_snap_count: 2013-2025 land, 2012 is a header and nothing else, and as_of comes from the game", { skip: !tableHasRows("raw_snap_count") ? "raw_snap_count not built" : false }, () => {
+  const db = open();
+  const rows = db.prepare(
+    "SELECT season, COUNT(*) n, SUM(pfr_player_id IS NOT NULL) p, SUM(as_of IS NOT NULL) a FROM raw_snap_count GROUP BY season ORDER BY season",
+  ).all() as { season: number; n: number; p: number; a: number }[];
+  const cols = (db.prepare("PRAGMA table_info(raw_snap_count)").all() as { name: string }[]).map((c) => c.name);
+  db.close();
+  // The 2012 ASSET EXISTS AND IS EMPTY -- a header with no rows. It is absent from this table by
+  // design, and the ingest run reports it as a zero-row season with a note rather than as a failure,
+  // because "the feed has no 2012" and "our fetch broke" are different facts.
+  assert.ok(!rows.some((r) => r.season <= 2012), "2012 has no snap rows -- the asset is a bare header");
+  assert.equal(rows[0].season, 2013);
+  for (const r of rows) {
+    assert.ok(r.n > 20000, `${r.season}: ${r.n} snap rows`);
+    // The feed's ONLY player id is the PFR one. If this ever drops, the feature layer's route to
+    // player_sk (player_xref, source 'pfr') is gone and every snap feature silently unresolves.
+    assert.equal(r.p, r.n, `${r.season}: ${r.n - r.p} rows without a pfr id`);
+    // as_of is joined from raw_nfl_game by game_id -- 100% resolved, measured. A drop here means
+    // the two feeds' game ids have diverged, which would be invisible in the snap table alone.
+    assert.equal(r.a, r.n, `${r.season}: ${r.n - r.a} snap rows could not find their game day`);
+  }
+  assert.ok(!cols.includes("player_sk") && !cols.includes("gsis_id"), "the snap feed has no gsis id and raw must not invent one");
+});
+
+// ==================================================================================================
+// raw_nfl_draft_pick
+// ==================================================================================================
+
+test("raw_nfl_draft_pick: hand-checked draft sizes, and as_of is the May after the draft", { skip: !tableHasRows("raw_nfl_draft_pick") ? "raw_nfl_draft_pick not built" : false }, () => {
+  const db = open();
+  const by = new Map((db.prepare(
+    "SELECT season, COUNT(*) n, MAX(round) r FROM raw_nfl_draft_pick GROUP BY season",
+  ).all() as { season: number; n: number; r: number }[]).map((r) => [r.season, r]));
+  const asOf = db.prepare(
+    "SELECT COUNT(*) c FROM raw_nfl_draft_pick WHERE as_of != season || '-05-01'",
+  ).get() as { c: number };
+  db.close();
+  // Hand-checked against the real drafts, not against the file: the 2023 NFL draft made 259
+  // selections and the 2024 draft made 257, both over seven rounds. Compensatory picks are why
+  // neither is a round number.
+  assert.equal(by.get(2023)!.n, 259, "2023 NFL draft selections");
+  assert.equal(by.get(2024)!.n, 257, "2024 NFL draft selections");
+  assert.equal(by.get(2023)!.r, 7);
+  assert.equal(asOf.c, 0, "as_of must be the May after each draft");
+});

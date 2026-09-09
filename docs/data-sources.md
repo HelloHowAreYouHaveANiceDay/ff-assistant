@@ -106,10 +106,12 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
   has no gsis column at all, so it can only reach `player_sk` through `player_xref` (source `pfr`) or
   through (name, position, team).
 - **As-of.** The game; prior-only.
-- **Seasons, measured.** Assets exist for 2012-2025. **The 2012 file is a header and nothing else**
-  (1 line), which is exactly the shape that reads as "no snaps were taken in 2012" if a builder
-  divides by a count it never checks. Real coverage is measured per season in `feat_coverage`.
-  No 2026 asset yet.
+- **Seasons, measured.** Assets exist for 2012-2025 but **the 2012 file is a header and nothing else**
+  -- which is exactly the shape that reads as "no snaps were taken in 2012" if a builder divides by
+  a count it never checks. Real coverage is **2013-2025, 324,611 rows**: 23,799-23,890 a season
+  through 2019, then 24,999 (2020) and 26,381-26,615 from 2021 (the 17-game schedule). No 2026 asset
+  yet. `pfr_player_id` is present on 100% of rows; `as_of` resolves to a game day from
+  `raw_nfl_game` on 100% of rows.
 - **Raw table.** `raw_snap_count` (this branch).
 - **Feeds.** `player_advanced.snap_pct` already ingests the CURRENT season only, name-keyed, via
   `src/data/advanced.ts`. The historical table is new and feeds `feat_player_week_context.prior_snap_share`
@@ -174,16 +176,25 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
 
 - **What.** Where a player sits on his team's published depth chart.
 - **Grain / key.** **Two incompatible schemas, and this is the trap.**
-  - 1999-2025: `(season, club_code, week, game_type, depth_team, gsis_id, position, depth_position, formation)`
-    -- one row per player per week per formation, `depth_team` is the rank (1 = starter).
-  - **2026: a completely different file** -- `(dt, team, player_name, espn_id, gsis_id, pos_grp_id,
-    pos_grp, pos_id, pos_name, pos_abb, pos_slot, pos_rank)`. It is a **daily snapshot** keyed by
-    `dt` (a timestamp), 505,423 rows / 48MB, with no `week` column at all.
-  - An ingester that reads `depth_team` will silently produce zero 2026 rows; one that reads
-    `pos_rank` will silently produce zero rows for every season before 2026.
-- **As-of.** The old schema: the week it describes, knowable before that week's games. The new
-  schema: `dt` is literally the as-of, at daily resolution, which is strictly better.
-- **Seasons.** 2001-2026 probed OK (2001 and 2024 on the old schema, 2026 on the new).
+  - 2001-**2024**: `(season, club_code, week, game_type, depth_team, gsis_id, position,
+    depth_position, formation)` -- one row per player per week per formation, `depth_team` is the
+    rank (1 = starter). ~28,000-38,000 rows a season over 21-22 weeks.
+  - **2025 and 2026: a completely different file** -- `(dt, team, player_name, espn_id, gsis_id,
+    pos_grp_id, pos_grp, pos_id, pos_name, pos_abb, pos_slot, pos_rank)`. It is a **dated snapshot**
+    keyed by `dt` (a timestamp), with no `week` column at all: 553,770 rows for 2025 over 219 dates
+    and 504,563 for 2026 over 170 dates.
+  - An ingester that reads `depth_team` silently produces zero rows for 2025-2026; one that reads
+    `pos_rank` silently produces zero for every season before that. Measured -- an earlier draft of
+    this document said the change began in 2026 because only the 2026 file had been probed.
+  - **`dt` IS A TIMESTAMP AND THE FEED PUBLISHES MORE THAN ONE SNAPSHOT A DAY.** Measured on the
+    2026 file: 505,422 rows, 500,611 distinct (date, team, player, pos_grp, pos_abb, pos_name,
+    pos_slot) tuples, and **not one** of the 4,811 collisions was a byte-identical repeat. Keying on
+    the date rather than the full timestamp therefore discards real, later snapshots in silence.
+- **As-of.** The old schema: the week it describes, knowable before that week's games -- but the feed
+  publishes no date, so `as_of` is NULL and the week anchor has to come from the schedule in the
+  feature layer. The new schema: `dt` is literally the as-of, and `as_of` carries its date while the
+  primary key carries the whole timestamp.
+- **Seasons.** 2001-2026. 1999 and 2000 return HTTP 404.
 - **Raw table.** `raw_depth_chart`, normalised across both schemas with the source schema recorded.
 - **Feeds.** `depth_rank` in both new feature tables. `player_status.depth` already carries a live
   depth value from Sleeper (current season only, name-keyed).
@@ -231,7 +242,9 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
   `allpro`, `probowls`) are **lifetime as of the file's build date and are NOT point-in-time** --
   using them as a feature for a 2015 row leaks the player's 2016-2025 career into it. Only
   `season/round/pick/team/position` are safe.
-- **Seasons.** 1936-2025, 12,928 rows, 1.7MB in one file.
+- **Seasons, measured.** **1980-2026**, 12,927 rows, 1.7MB in one file. Hand-checked against the real
+  drafts: 2023 has 259 selections and 2024 has 257, both over seven rounds (compensatory picks are
+  why neither is round). `gsis_id` is present on 3,071 of the 3,078 picks from 2015 on.
 - **Caveat already handled in `features/build.ts`.** The feed's `gsis_id` is a legacy PFR-style token
   for old drafts and a real gsis for modern ones; only the modern form can match.
 - **Raw table.** `raw_nfl_draft_pick`.

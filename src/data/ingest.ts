@@ -250,6 +250,41 @@ export const RAW_ASSETS: RawAsset[] = [
       return r.total;
     },
   },
+  {
+    id: "depth-charts",
+    table: "raw_depth_chart",
+    what: "nflverse depth charts -- weekly 1999-2025, a DAILY snapshot from 2026 with a different schema",
+    defaultSeasons: [1999, new Date().getFullYear()],
+    async run(dbPath, seasons) {
+      const { ingestRawDepthCharts } = await import("./rawSources.js");
+      const r = await ingestRawDepthCharts({ dbPath, seasons });
+      reportSeasons(r);
+      return r.total;
+    },
+  },
+  {
+    id: "snap-counts",
+    table: "raw_snap_count",
+    what: "nflverse/PFR offensive, defensive and special-teams snap counts and shares (2012+, keyed by PFR id)",
+    defaultSeasons: [2012, new Date().getFullYear()],
+    async run(dbPath, seasons) {
+      const { ingestRawSnapCounts } = await import("./rawSources.js");
+      const r = await ingestRawSnapCounts({ dbPath, seasons });
+      reportSeasons(r);
+      return r.total;
+    },
+  },
+  {
+    id: "nfl-draft",
+    table: "raw_nfl_draft_pick",
+    what: "the NFL draft (not our auction): round, pick, team, college, 1936-2025 in one file",
+    defaultSeasons: null,
+    async run(dbPath, seasons) {
+      const { ingestRawDraftPicks } = await import("./rawSources.js");
+      const r = await ingestRawDraftPicks({ dbPath, seasons });
+      return r.total;
+    },
+  },
 ];
 
 /** Print the per-season landing counts. A raw sweep whose only output is a grand total cannot show

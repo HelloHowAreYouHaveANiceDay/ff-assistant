@@ -28,7 +28,7 @@
 import { openDb, nowIso, type DB } from "../db/db.js";
 import {
   fetchCsvCached, cacheTag, rawTag, URLS, canonTeam, pick,
-  injuriesUrl,
+  injuriesUrl, depthChartsUrl, snapCountsUrl, draftPicksUrl,
 } from "./nflverse.js";
 
 /** One season's outcome. `rows` is what LANDED, not what was parsed -- the two differ when a feed
@@ -250,4 +250,202 @@ export async function ingestRawInjuries(opts: { dbPath?: string; seasons?: numbe
   });
   db.close();
   return { table: "raw_injury", seasons, total: totalOf(seasons) };
+}
+
+// ==================================================================================================
+// raw_depth_chart -- two schemas, normalised, with the source schema recorded.
+// ==================================================================================================
+
+export async function ingestRawDepthCharts(opts: { dbPath?: string; seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const ins = db.prepare(
+    `INSERT INTO raw_depth_chart (season, week, as_of_key, team, player_key, formation, position,
+       depth_position, as_of, depth_rank, gsis_id, espn_id, full_name, game_type, jersey_number,
+       source_schema, fetched_at)
+     VALUES (@season,@week,@asOfKey,@team,@pk,@formation,@position,@depthPos,@asOf,@rank,
+       @gsis,@espn,@name,@gameType,@jersey,@schema,@now)
+     ON CONFLICT(season, week, as_of_key, team, player_key, formation, position, depth_position)
+     DO UPDATE SET as_of=excluded.as_of, depth_rank=excluded.depth_rank, gsis_id=excluded.gsis_id,
+       espn_id=excluded.espn_id, full_name=excluded.full_name, game_type=excluded.game_type,
+       jersey_number=excluded.jersey_number, source_schema=excluded.source_schema,
+       fetched_at=excluded.fetched_at`,
+  );
+
+  const seasons = await perSeasonFeed(db, seasonRange(opts.seasons, 1999), depthChartsUrl, rawTag.depthCharts, opts.refresh ?? false, (season, rows) => {
+    // The shape is read from the FILE, not from the year. `pos_rank` and `dt` only exist in the
+    // daily feed; `depth_team` only in the weekly one.
+    const daily = Object.prototype.hasOwnProperty.call(rows[0], "pos_rank");
+    let n = 0;
+    for (const r of rows) {
+      if (daily) {
+        const dt = str(pick(r, "dt"));
+        const asOf = dt ? dt.slice(0, 10) : null;
+        const team = canonTeam(pick(r, "team"));
+        const gsis = str(pick(r, "gsis_id"));
+        const name = str(pick(r, "player_name"));
+        const pk = gsis ?? name;
+        const position = str(pick(r, "pos_abb")) ?? "";
+        if (!team || !pk || !asOf) continue;
+        ins.run({
+          // The KEY carries the full `dt` TIMESTAMP, not the date. Measured: keying on the date
+          // collapsed 4,811 rows of the 2026 file, and NONE of the collapsed pairs were byte
+          // identical -- the feed publishes MORE THAN ONE SNAPSHOT A DAY and truncating dt threw
+          // the later ones away silently. `as_of` stays the date, which is the resolution a
+          // point-in-time feature actually joins at.
+          season, week: 0, asOfKey: dt, team, pk,
+          // The daily feed has no formation. `pos_grp` (the position GROUP) goes in that key slot
+          // and `pos_slot` in the depth_position one, because both are real source fields and both
+          // are needed to make a row unique: a player can appear twice on the same date under
+          // different slots, and collapsing those silently loses rows. Measured before and after.
+          formation: str(pick(r, "pos_grp")) ?? "", position,
+          depthPos: `${str(pick(r, "pos_name")) ?? ""}|${str(pick(r, "pos_slot")) ?? ""}`,
+          asOf, rank: int(pick(r, "pos_rank")),
+          gsis, espn: str(pick(r, "espn_id")), name, gameType: null, jersey: null,
+          schema: "daily", now,
+        });
+      } else {
+        const week = int(pick(r, "week"));
+        const team = canonTeam(pick(r, "club_code", "team"));
+        const gsis = str(pick(r, "gsis_id"));
+        const name = str(pick(r, "full_name"));
+        const pk = gsis ?? name;
+        const position = str(pick(r, "position")) ?? "";
+        if (week == null || !team || !pk) continue;
+        ins.run({
+          season, week, asOfKey: "", team, pk,
+          formation: str(pick(r, "formation")) ?? "", position,
+          depthPos: str(pick(r, "depth_position")) ?? "",
+          // The weekly feed publishes NO date. as_of stays NULL rather than being filled with a
+          // week anchor derived from the schedule -- that derivation belongs to the feature layer.
+          asOf: null, rank: int(pick(r, "depth_team")),
+          gsis, espn: null, name, gameType: str(pick(r, "game_type")),
+          jersey: str(pick(r, "jersey_number")),
+          schema: "weekly", now,
+        });
+      }
+      n++;
+    }
+    return n;
+  });
+  db.close();
+  return { table: "raw_depth_chart", seasons, total: totalOf(seasons) };
+}
+
+// ==================================================================================================
+// raw_snap_count -- PFR snap counts, keyed by the PFR id the feed actually carries.
+// ==================================================================================================
+
+/**
+ * 2012 onward. The 2012 ASSET IS A HEADER AND NOTHING ELSE -- `perSeasonFeed` reports that as a
+ * zero-row season with a note rather than as a fetch failure, because the two are different facts
+ * and only one of them is about us.
+ *
+ * `as_of` is the game day, looked up from `raw_nfl_game` by `game_id`. That is a join, and it is the
+ * one exception this file makes to "no joins in raw": the snap feed carries no date at all, and a
+ * date that comes from another RAW table is still exactly what a source said. It falls back to NULL
+ * rather than to a guess when the game is not in raw_nfl_game.
+ */
+export async function ingestRawSnapCounts(opts: { dbPath?: string; seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const gameday = new Map<string, string>();
+  for (const g of db.prepare("SELECT game_id, gameday FROM raw_nfl_game WHERE gameday IS NOT NULL").all() as { game_id: string; gameday: string }[]) {
+    gameday.set(g.game_id, g.gameday);
+  }
+  const ins = db.prepare(
+    `INSERT INTO raw_snap_count (season, week, game_id, player_key, as_of, pfr_player_id, pfr_game_id,
+       player, position, team, opponent, game_type, offense_snaps, offense_pct, defense_snaps,
+       defense_pct, st_snaps, st_pct, fetched_at)
+     VALUES (@season,@week,@gameId,@pk,@asOf,@pfrId,@pfrGame,@player,@pos,@team,@opp,@gameType,
+       @offSnaps,@offPct,@defSnaps,@defPct,@stSnaps,@stPct,@now)
+     ON CONFLICT(season, week, game_id, player_key) DO UPDATE SET
+       as_of=excluded.as_of, pfr_player_id=excluded.pfr_player_id, pfr_game_id=excluded.pfr_game_id,
+       player=excluded.player, position=excluded.position, team=excluded.team, opponent=excluded.opponent,
+       game_type=excluded.game_type, offense_snaps=excluded.offense_snaps, offense_pct=excluded.offense_pct,
+       defense_snaps=excluded.defense_snaps, defense_pct=excluded.defense_pct, st_snaps=excluded.st_snaps,
+       st_pct=excluded.st_pct, fetched_at=excluded.fetched_at`,
+  );
+
+  const seasons = await perSeasonFeed(db, seasonRange(opts.seasons, 2012), snapCountsUrl, rawTag.snapCounts, opts.refresh ?? false, (season, rows) => {
+    let n = 0;
+    for (const r of rows) {
+      const week = int(pick(r, "week"));
+      const gameId = str(pick(r, "game_id"));
+      const pfrId = str(pick(r, "pfr_player_id"));
+      const player = str(pick(r, "player"));
+      const pk = pfrId ?? player;
+      if (week == null || !gameId || !pk) continue;
+      ins.run({
+        season, week, gameId, pk, asOf: gameday.get(gameId) ?? null,
+        pfrId, pfrGame: str(pick(r, "pfr_game_id")), player,
+        pos: str(pick(r, "position")), team: canonTeam(pick(r, "team")) || null,
+        opp: canonTeam(pick(r, "opponent")) || null, gameType: str(pick(r, "game_type")),
+        offSnaps: num(pick(r, "offense_snaps")), offPct: num(pick(r, "offense_pct")),
+        defSnaps: num(pick(r, "defense_snaps")), defPct: num(pick(r, "defense_pct")),
+        stSnaps: num(pick(r, "st_snaps")), stPct: num(pick(r, "st_pct")),
+        now,
+      });
+      n++;
+    }
+    return n;
+  });
+  db.close();
+  return { table: "raw_snap_count", seasons, total: totalOf(seasons) };
+}
+
+// ==================================================================================================
+// raw_nfl_draft_pick -- the NFL draft, one file, all years.
+// ==================================================================================================
+
+/** `as_of = <season>-05-01`: the NFL draft finishes in late April, so a pick is knowable by the
+ *  first of May of its own year and for every September anchor after it. */
+export async function ingestRawDraftPicks(opts: { dbPath?: string; seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
+  const rows = await fetchCsvCached(draftPicksUrl, cacheTag.draftPicks, opts.refresh ?? false);
+  const want = opts.seasons?.length ? new Set(opts.seasons) : null;
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const ins = db.prepare(
+    `INSERT INTO raw_nfl_draft_pick (season, round, pick, as_of, team, gsis_id, pfr_player_id,
+       cfb_player_id, pfr_player_name, position, category, side, college, age, hof, w_av, car_av,
+       dr_av, games, seasons_started, allpro, probowls, to_season, fetched_at)
+     VALUES (@season,@round,@pick,@asOf,@team,@gsis,@pfr,@cfb,@name,@pos,@category,@side,@college,
+       @age,@hof,@wav,@carav,@drav,@games,@started,@allpro,@probowls,@to,@now)
+     ON CONFLICT(season, round, pick) DO UPDATE SET
+       as_of=excluded.as_of, team=excluded.team, gsis_id=excluded.gsis_id,
+       pfr_player_id=excluded.pfr_player_id, cfb_player_id=excluded.cfb_player_id,
+       pfr_player_name=excluded.pfr_player_name, position=excluded.position, category=excluded.category,
+       side=excluded.side, college=excluded.college, age=excluded.age, hof=excluded.hof,
+       w_av=excluded.w_av, car_av=excluded.car_av, dr_av=excluded.dr_av, games=excluded.games,
+       seasons_started=excluded.seasons_started, allpro=excluded.allpro, probowls=excluded.probowls,
+       to_season=excluded.to_season, fetched_at=excluded.fetched_at`,
+  );
+  const perSeason = new Map<number, number>();
+  db.transaction(() => {
+    for (const r of rows) {
+      const season = int(pick(r, "season"));
+      const round = int(pick(r, "round"));
+      const pk = int(pick(r, "pick"));
+      if (season == null || round == null || pk == null) continue;
+      if (want && !want.has(season)) continue;
+      ins.run({
+        season, round, pick: pk, asOf: `${season}-05-01`,
+        team: canonTeam(pick(r, "team")) || null, gsis: str(pick(r, "gsis_id")),
+        pfr: str(pick(r, "pfr_player_id")), cfb: str(pick(r, "cfb_player_id")),
+        name: str(pick(r, "pfr_player_name")), pos: str(pick(r, "position")),
+        category: str(pick(r, "category")), side: str(pick(r, "side")),
+        college: str(pick(r, "college")), age: num(pick(r, "age")),
+        hof: int(pick(r, "hof")), wav: num(pick(r, "w_av")), carav: num(pick(r, "car_av")),
+        drav: num(pick(r, "dr_av")), games: num(pick(r, "games")),
+        started: num(pick(r, "seasons_started")), allpro: num(pick(r, "allpro")),
+        probowls: num(pick(r, "probowls")), to: num(pick(r, "to")),
+        now,
+      });
+      perSeason.set(season, (perSeason.get(season) ?? 0) + 1);
+    }
+  })();
+  db.close();
+  const seasons: SeasonResult[] = [...perSeason.keys()].sort((a, b) => a - b)
+    .map((s) => ({ season: s, ok: true, rows: perSeason.get(s)! }));
+  return { table: "raw_nfl_draft_pick", seasons, total: totalOf(seasons) };
 }
