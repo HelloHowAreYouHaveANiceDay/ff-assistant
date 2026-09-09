@@ -47,6 +47,14 @@
  * asked.
  */
 import type { VarianceModel } from "../draft/season.js";
+import { nameKey } from "../draft/values.js";
+import { loadInjuryOutlook, type InjuryOutlook, type InjuryOutlookSet } from "./injuryHorizon.js";
+
+// Re-exported so `copilot.ts` reaches the injury horizon through the module it already imports for
+// the handcuff model. One import line changes there rather than three, which matters only because
+// that file is edited by several tracks at once and every added import is a merge conflict.
+export { loadInjuryOutlook };
+export type { InjuryOutlook, InjuryOutlookSet };
 
 /**
  * CHECKED AGAINST A SECOND, INDEPENDENT DEFINITION OF THE EVENT (2026-09-09), AND IT STANDS.
@@ -88,9 +96,29 @@ export interface HandcuffRow {
   basePerWk: number;          // what he scores now, with the lead playing
   activePerWk: number;        // what he scores in a week the lead misses
   liftPerWk: number;          // the difference -- the thing you are buying
-  missProb: number;           // per-week probability the lead misses, from the fitted availability
-  expectedPts: number;        // lift * missProb * weeks -- the EV, which is NOT the whole story
+  missProb: number;           // per-week probability the lead misses, blended -- see missSource
+  expectedPts: number;        // lift * expected games the lead misses -- the EV, NOT the whole story
   rosteredPct: number | null;
+  /**
+   * WHERE THE LEAD'S MISS RATE CAME FROM, and it is the difference between a guess about his tier
+   * and a reading of his actual injury.
+   *
+   *   "tier"          the variance model's fitted games/17 for his rank bucket, bye divided out.
+   *                   It is what this board used for every lead until Track I, and it is still the
+   *                   right answer for a lead who is not on the injury report.
+   *   "injury-model"  the NEXT FOUR GAMES are priced by data/injury-duration-artifact.json from his
+   *                   designation, practice status and injury; the REST of the horizon stays on the
+   *                   tier rate, because that is the question the tier rate was fitted to answer and
+   *                   the duration model has no opinion past four games.
+   */
+  missSource: "tier" | "injury-model";
+  /** Expected games the lead misses in the NEXT FOUR, where the injury model spoke. Null on tier. */
+  leadGamesOutNext4: number | null;
+  /** What the tier rate alone would have said over the same four games, so the two are printable
+   *  side by side rather than the improvement being asserted. */
+  leadGamesOutNext4Tier: number | null;
+  leadDesignation: string | null;
+  leadInjury: string | null;
   /** The published depth chart calls this man the starter while our projection does not. That is a
    *  TIMESHARE, and it is the most useful row on the page rather than a data error to hide: the two
    *  sources disagreeing is precisely the signature of a backfield with no settled lead, where the
@@ -125,7 +153,7 @@ export function leadMissProb(vm: VarianceModel, pos: string, poolRankFrac: numbe
 export function handcuffBoard(
   players: DepthEntry[],
   vm: VarianceModel,
-  opts: { weeks?: number; positions?: string[]; poolSize?: Record<string, number> } = {},
+  opts: { weeks?: number; positions?: string[]; poolSize?: Record<string, number>; outlook?: InjuryOutlookSet } = {},
 ): HandcuffRow[] {
   const weeks = opts.weeks ?? 17;
   const positions = opts.positions ?? ["RB"];
@@ -159,7 +187,18 @@ export function handcuffBoard(
     const leadPerWk = lead.projPts / weeks;
     const poolSize = opts.poolSize?.[lead.pos] ?? 0;
     const frac = poolSize > 0 && lead.poolRank != null ? lead.poolRank / poolSize : 0;
-    const missProb = leadMissProb(vm, lead.pos, frac);
+    const tierMiss = leadMissProb(vm, lead.pos, frac);
+    // THE SUBSTITUTION. For a lead who is on the injury report, the next four games are priced by
+    // what we know about the injury rather than by his tier; beyond four the tier rate resumes,
+    // because the duration model was fitted to k <= 4 and extending it would be an extrapolation
+    // nobody measured. `expectedMissed` is therefore GAMES, not a rate, which is also the unit the
+    // EV wants -- `lift x rate x weeks` was already computing games the long way round.
+    const ol = opts.outlook?.byName.get(nameKey(lead.name)) ?? null;
+    const horizonGames = Math.min(4, weeks);
+    const expectedMissed = ol
+      ? ol.expectedGamesOut4 * (horizonGames / 4) + tierMiss * Math.max(0, weeks - horizonGames)
+      : tierMiss * weeks;
+    const missProb = weeks > 0 ? expectedMissed / weeks : tierMiss;
     // ONLY THE TOP TWO BACKUPS, because that is the range the model was fitted on: the measurement
     // covers depth-2 (+4.42 pts/wk) and depth-3 (+2.37); it says nothing about a fourth-stringer.
     // Without this cap the board fills with players the fit never saw -- FULLBACKS, in practice:
@@ -179,8 +218,13 @@ export function handcuffBoard(
         activePerWk: Math.round(activePerWk * 100) / 100,
         liftPerWk: Math.round(lift * 100) / 100,
         missProb: Math.round(missProb * 1000) / 1000,
-        expectedPts: Math.round(lift * missProb * weeks * 10) / 10,
+        expectedPts: Math.round(lift * expectedMissed * 10) / 10,
         rosteredPct: b.rosteredPct ?? null,
+        missSource: ol ? "injury-model" : "tier",
+        leadGamesOutNext4: ol ? Math.round(ol.expectedGamesOut4 * 100) / 100 : null,
+        leadGamesOutNext4Tier: ol ? Math.round(tierMiss * 4 * 100) / 100 : null,
+        leadDesignation: ol ? ol.designation || "(on the report, no designation)" : null,
+        leadInjury: ol ? (ol.detail || ol.injuryGroup || null) : null,
         contested: b.depthOrder === 1,
       });
     }

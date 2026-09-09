@@ -1373,3 +1373,79 @@ CREATE INDEX IF NOT EXISTS idx_fpws_pos ON feat_player_week_stream (season, week
 -- cut at `season_line_pg >= 3` and the harness kept every non-bye row -- and the resulting 0.11 to
 -- 0.21 difference in zero rate is what failed the weekly gate's zero-share clause at RB, WR and TE.
 -- One column, read by both, makes the two sets equal by construction rather than by agreement.
+
+-- ================= TRACK I: THE INJURY HORIZON =================
+--
+-- HOW LONG WILL HE BE OUT. The two tables below exist because every availability number this repo
+-- ships is a PER-TIER RATE: `missProb` in rosterValue.ts and `leadMissProb` in handcuff.ts both read
+-- the variance model's fitted games/17 for the player's rank bucket, which knows the man's tier and
+-- nothing about the injury he actually has. A torn Achilles and a Questionable hamstring are the
+-- same number to it. The weekly model does better -- it reads the OUT designation -- but only for
+-- the coming week; it has no notion of a horizon at all.
+--
+-- fact_injury_episode is the EVENT: one row per continuous run of injury-report weeks, with what
+-- happened afterwards (how many games he actually missed, when he returned, on what snap share).
+-- Those outcome columns are the TARGET side and are deliberately NOT features -- nothing point-in-
+-- time may read weeks_missed, returned_week or snap_share_on_return, because all three are dated
+-- after the decision they would inform.
+--
+-- feat_injury_horizon is the POINT-IN-TIME view: one row per (player, season, week) in which the
+-- player carried an injury report at that week's FRIDAY cutoff, holding only what was knowable then
+-- plus the four censored targets. The Friday cutoff is this team's own kickoff minus two days, the
+-- same anchor feat_player_week_context uses, so a Thursday-night player's Friday report is correctly
+-- unavailable rather than quietly borrowed from the Sunday teams.
+CREATE TABLE IF NOT EXISTS fact_injury_episode (
+  player_sk       INTEGER NOT NULL,
+  season          INTEGER NOT NULL,
+  start_week      INTEGER NOT NULL,   -- first week the player carried an injury report at its Friday
+  end_week        INTEGER,            -- last such week in this run
+  weeks_reported  INTEGER,            -- how many weeks of the run carried a report
+  team            TEXT,
+  position        TEXT,
+  injury_primary  TEXT,               -- modal named injury across the run, as reported
+  injury_group    TEXT,               -- the collapsed bucket the model uses (see injuryDuration.ts)
+  injury_secondary TEXT,
+  first_designation TEXT,             -- report_status in start_week ('' where the row is practice-only)
+  designations    TEXT,               -- JSON {"week": "designation"} across the run, in week order
+  -- ---------------- OUTCOME. Not features. ----------------
+  weeks_missed    INTEGER,            -- consecutive games not played from the first missed week
+  returned_week   INTEGER,            -- first week played after that run; NULL where censored
+  censored        INTEGER,            -- 1 = the run reached the last scheduled week with no return
+  snap_share_on_return REAL,          -- offense_pct in returned_week, 2013+ only (PFR feed)
+  as_of           TEXT,               -- as_of of the FIRST report in the run
+  updated_at      TEXT,
+  PRIMARY KEY (player_sk, season, start_week)
+);
+CREATE INDEX IF NOT EXISTS idx_fie_season ON fact_injury_episode (season, injury_group);
+
+-- One row per player-week UNDER AN ACTIVE REPORT. A healthy week has no row: this table answers
+-- "given that he is on the report, how long is he out", not "is he injured".
+CREATE TABLE IF NOT EXISTS feat_injury_horizon (
+  player_sk       INTEGER NOT NULL,
+  season          INTEGER NOT NULL,
+  week            INTEGER NOT NULL,
+  as_of           TEXT,               -- the Friday cutoff this row was read at (team kickoff - 2d)
+  team            TEXT,
+  pos             TEXT,
+  episode_start_week INTEGER,
+  injury_primary  TEXT,               -- as named on THIS week's report, else the latest before it
+  injury_group    TEXT,
+  injury_secondary_present INTEGER,
+  designation     TEXT,               -- report_status at the Friday cutoff; '' where practice-only
+  practice_status TEXT,
+  weeks_in_episode INTEGER,           -- how many report weeks of this episode are already behind him
+  weeks_missed_so_far INTEGER,        -- games in this episode he has already not played, before w
+  prior_episodes_same INTEGER,        -- episodes of the SAME group starting in the last two seasons
+  prior_episodes_any INTEGER,
+  age             REAL,               -- years at this week's kickoff, from player_identity.birthdate
+  -- ---------------- TARGETS. miss_next_k = he missed ALL of the next k GAMES (byes skipped).
+  -- NULL where fewer than k scheduled games remain: censored, not zero.
+  miss_next_1     INTEGER,
+  miss_next_2     INTEGER,
+  miss_next_3     INTEGER,
+  miss_next_4     INTEGER,
+  games_remaining INTEGER,            -- scheduled games from this week on, the censoring bound
+  updated_at      TEXT,
+  PRIMARY KEY (player_sk, season, week)
+);
+CREATE INDEX IF NOT EXISTS idx_fih_season ON feat_injury_horizon (season, week);

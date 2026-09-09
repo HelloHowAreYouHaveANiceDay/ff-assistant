@@ -39,3 +39,46 @@ export function writeCoverage(db: DB, table: string, seasons: number[]): number 
   })();
   return n;
 }
+
+/**
+ * TRACK I: the two injury tables, plus the two facts a per-column non-null count CANNOT express.
+ *
+ * `writeCoverage` answers "is this column populated". For an injury horizon the two questions that
+ * actually decide whether a fit means anything are different in kind:
+ *
+ *   __uncensored_episodes   episodes whose weeks_missed was OBSERVED to end. A censored episode --
+ *                           the man never came back inside the season -- has a weeks_missed that is
+ *                           a LOWER BOUND, and a season where most episodes are censored cannot
+ *                           support a duration claim however full its columns are.
+ *   __horizon_k4_observed   horizon rows with four scheduled games left, i.e. rows where miss_next_4
+ *                           is a real 0/1 rather than NULL. It falls to zero at the end of every
+ *                           season by construction, and a fit that quietly trains on far fewer rows
+ *                           at k=4 than at k=1 should be visible as a row rather than discovered.
+ *
+ * They are written as SYNTHETIC COLUMN NAMES in the same table so one query answers "what did this
+ * season actually support", and the leading double underscore says they are not columns.
+ */
+export function writeInjuryCoverage(db: DB, seasons: number[]): number {
+  let n = writeCoverage(db, "fact_injury_episode", seasons) + writeCoverage(db, "feat_injury_horizon", seasons);
+  const ins = db.prepare(
+    `INSERT INTO feat_coverage (table_name, column_name, season, rows, non_null, updated_at)
+     VALUES (@t,@c,@s,@rows,@nn,@now)
+     ON CONFLICT(table_name, column_name, season) DO UPDATE SET
+       rows=excluded.rows, non_null=excluded.non_null, updated_at=excluded.updated_at`,
+  );
+  const now = nowIso();
+  db.transaction(() => {
+    for (const s of seasons) {
+      const e = db.prepare(
+        "SELECT COUNT(*) rows, SUM(censored = 0) nn FROM fact_injury_episode WHERE season = ?",
+      ).get(s) as { rows: number; nn: number | null };
+      ins.run({ t: "fact_injury_episode", c: "__uncensored_episodes", s, rows: e.rows, nn: e.nn ?? 0, now });
+      const h = db.prepare(
+        "SELECT COUNT(*) rows, SUM(miss_next_4 IS NOT NULL) nn FROM feat_injury_horizon WHERE season = ?",
+      ).get(s) as { rows: number; nn: number | null };
+      ins.run({ t: "feat_injury_horizon", c: "__horizon_k4_observed", s, rows: h.rows, nn: h.nn ?? 0, now });
+      n += 2;
+    }
+  })();
+  return n;
+}

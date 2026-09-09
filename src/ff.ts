@@ -102,6 +102,8 @@ async function main() {
       return cmdBuildFeaturesExt(rest);
     case "build-live-context":
       return cmdBuildLiveContext(rest);
+    case "build-injury-horizon":
+      return cmdBuildInjuryHorizon(rest);
     case "sync-rosters":
       return cmdSyncRosters(rest);
     case "enter-draft":
@@ -3339,4 +3341,49 @@ function printFormat(
   if (espn && (espn.regWeeks !== eff.regWeeks || espn.playoffWeeks.join() !== eff.playoffWeeks.join() || espn.seeding !== eff.seeding)) {
     console.log(`  IT DISAGREES WITH ESPN, which says weeks 1-${espn.regWeeks}, playoffs ${espn.playoffWeeks.join("/")}, ${espn.seeding}.`);
   }
+}
+
+// ==================================================================================================
+// `ff build-injury-horizon --seasons 2010-2024` -- TRACK I. Injury episodes and their point-in-time
+// horizon, plus coverage.
+//
+// A SEPARATE VERB from `build-features-ext` for the same reason `build-live-context` is separate:
+// it obeys a different rule about dates. This builder is only defined where `raw_injury` carries a
+// report date -- 2010-2024 -- because an undated filing cannot be placed on either side of a Friday
+// cutoff, and running it over 2025 would write an empty season that reads like an absence of
+// injuries rather than an absence of dates.
+// ==================================================================================================
+async function cmdBuildInjuryHorizon(rest: string[]) {
+  const { buildInjuryDuration } = await import("./features/sources/injuryDuration.js");
+  const { writeInjuryCoverage } = await import("./features/sources/coverage.js");
+  const { openDb } = await import("./db/db.js");
+  const range = (valueOf(rest, "--seasons") ?? "2010-2024").split("-").map(Number);
+  const [lo, hi] = [range[0], range[1] ?? range[0]];
+  const seasons: number[] = []; for (let y = lo; y <= hi; y++) seasons.push(y);
+  const dbPath = valueOf(rest, "--db");
+  const t0 = Date.now();
+  const r = buildInjuryDuration({ dbPath, seasons });
+  let coverageRows = 0;
+  if (r.seasons.length) { const db = openDb(dbPath); coverageRows = writeInjuryCoverage(db, r.seasons); db.close(); }
+  if (rest.includes("--json")) { console.log(JSON.stringify({ ...r, coverageRows }, null, 2)); return; }
+  console.log(`fact_injury_episode: ${r.episodes} episodes over ${r.seasons.length} seasons`);
+  console.log(`feat_injury_horizon: ${r.horizonRows} player-weeks`);
+  console.log(`feat_coverage: ${coverageRows} column-seasons`);
+  console.log(`\n  season  episodes  horizon  censored  +snap@return   miss_next_1  k=4 observed`);
+  for (const s of r.perSeason) {
+    const cen = s.episodes ? ((s.censoredEpisodes / s.episodes) * 100).toFixed(1) : "0.0";
+    console.log(`  ${s.season}  ${String(s.episodes).padStart(8)}  ${String(s.horizonRows).padStart(7)}  ` +
+      `${String(s.censoredEpisodes).padStart(4)} (${cen.padStart(4)}%)  ${String(s.withSnapOnReturn).padStart(10)}  ` +
+      `${String(s.missNext1).padStart(12)}  ${String(s.missNext4Observed).padStart(12)}`);
+  }
+  console.log(`\n  injury group    episodes   mean weeks missed   censored`);
+  for (const g of r.byGroup) {
+    console.log(`  ${g.group.padEnd(14)}  ${String(g.episodes).padStart(8)}   ${g.meanWeeksMissed.toFixed(2).padStart(17)}   ${(g.censoredPct.toFixed(1) + "%").padStart(8)}`);
+  }
+  console.log(`\n  identity resolution, per source feed:`);
+  for (const s of r.resolution) {
+    const pct = ((s.resolved / Math.max(1, s.rows)) * 100).toFixed(1);
+    console.log(`    ${s.source.padEnd(30)} ${String(s.resolved).padStart(8)}/${String(s.rows).padStart(8)} (${pct}%)`);
+  }
+  console.log(`\n  ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }

@@ -1,0 +1,571 @@
+{
+  "schema": 1,
+  "kind": "injury_duration",
+  "fittedFrom": "tools/train_injury_duration.py",
+  "fittedAt": "2026-09-09",
+  "seasons": [
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "holdoutSeason": null,
+  "horizons": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "features": [
+    {
+      "name": "des_out",
+      "transform": "eq",
+      "field": "designation",
+      "value": "Out"
+    },
+    {
+      "name": "des_doubtful",
+      "transform": "eq",
+      "field": "designation",
+      "value": "Doubtful"
+    },
+    {
+      "name": "des_questionable",
+      "transform": "eq",
+      "field": "designation",
+      "value": "Questionable"
+    },
+    {
+      "name": "des_probable",
+      "transform": "eq",
+      "field": "designation",
+      "value": "Probable"
+    },
+    {
+      "name": "prac_dnp",
+      "transform": "eq",
+      "field": "practice_status",
+      "value": "DNP"
+    },
+    {
+      "name": "prac_limited",
+      "transform": "eq",
+      "field": "practice_status",
+      "value": "Limited"
+    },
+    {
+      "name": "inj_ankle",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "ankle"
+    },
+    {
+      "name": "inj_back",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "back"
+    },
+    {
+      "name": "inj_calf",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "calf"
+    },
+    {
+      "name": "inj_concussion",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "concussion"
+    },
+    {
+      "name": "inj_foot",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "foot"
+    },
+    {
+      "name": "inj_groin",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "groin"
+    },
+    {
+      "name": "inj_hamstring",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "hamstring"
+    },
+    {
+      "name": "inj_hand",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "hand"
+    },
+    {
+      "name": "inj_hip",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "hip"
+    },
+    {
+      "name": "inj_illness",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "illness"
+    },
+    {
+      "name": "inj_knee",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "knee"
+    },
+    {
+      "name": "inj_neck",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "neck"
+    },
+    {
+      "name": "inj_quad",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "quad"
+    },
+    {
+      "name": "inj_ribs",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "ribs"
+    },
+    {
+      "name": "inj_shoulder",
+      "transform": "eq",
+      "field": "injury_group",
+      "value": "shoulder"
+    },
+    {
+      "name": "inj_other",
+      "transform": "not_in",
+      "field": "injury_group",
+      "values": [
+        "ankle",
+        "back",
+        "calf",
+        "concussion",
+        "foot",
+        "groin",
+        "hamstring",
+        "hand",
+        "hip",
+        "illness",
+        "knee",
+        "neck",
+        "quad",
+        "ribs",
+        "shoulder"
+      ]
+    },
+    {
+      "name": "pos_rb",
+      "transform": "eq",
+      "field": "pos",
+      "value": "RB"
+    },
+    {
+      "name": "pos_wr",
+      "transform": "eq",
+      "field": "pos",
+      "value": "WR"
+    },
+    {
+      "name": "pos_te",
+      "transform": "eq",
+      "field": "pos",
+      "value": "TE"
+    },
+    {
+      "name": "weeks_missed_so_far",
+      "transform": "clip",
+      "field": "weeks_missed_so_far",
+      "clipLo": 0,
+      "clipHi": 6,
+      "missing": 0.0
+    },
+    {
+      "name": "weeks_in_episode",
+      "transform": "clip",
+      "field": "weeks_in_episode",
+      "clipLo": 0,
+      "clipHi": 8,
+      "missing": 0.0
+    },
+    {
+      "name": "prior_episodes_same",
+      "transform": "clip",
+      "field": "prior_episodes_same",
+      "clipLo": 0,
+      "clipHi": 3,
+      "missing": 0.0
+    },
+    {
+      "name": "prior_episodes_any",
+      "transform": "clip",
+      "field": "prior_episodes_any",
+      "clipLo": 0,
+      "clipHi": 6,
+      "missing": 0.0
+    },
+    {
+      "name": "age",
+      "transform": "center",
+      "field": "age",
+      "center": 27.0531,
+      "scale": 3.5592,
+      "clipLo": 20.0,
+      "clipHi": 40.0,
+      "missing": 0.0
+    },
+    {
+      "name": "secondary",
+      "transform": "eq",
+      "field": "injury_secondary_present",
+      "value": 1
+    }
+  ],
+  "coef": {
+    "1": {
+      "intercept": -1.217434643381092,
+      "_C": 10.0,
+      "des_out": 7.9536560188950975,
+      "des_doubtful": 5.082117275305533,
+      "des_questionable": 0.9808772956739359,
+      "des_probable": -0.23895458265261316,
+      "prac_dnp": 1.8641654944819062,
+      "prac_limited": 0.3568167806651785,
+      "inj_ankle": -0.10732090809638943,
+      "inj_back": -0.20855454878559493,
+      "inj_calf": -0.13702925945606284,
+      "inj_concussion": 0.13687294801039937,
+      "inj_foot": -0.4268994910550903,
+      "inj_groin": -0.1855011306657344,
+      "inj_hamstring": 0.21400705988668156,
+      "inj_hand": 0.18083775144819825,
+      "inj_hip": -0.436724708157478,
+      "inj_illness": -0.5261989594669056,
+      "inj_knee": -0.09423453034311702,
+      "inj_neck": 0.4698081872756572,
+      "inj_quad": 0.007570950670606439,
+      "inj_ribs": -0.1405966054977711,
+      "inj_shoulder": -0.1395457537665378,
+      "inj_other": 0.21886771809333874,
+      "pos_rb": -0.09462716234389948,
+      "pos_wr": -0.3051581127912479,
+      "pos_te": 0.28727229043065156,
+      "weeks_missed_so_far": 0.7752186426128725,
+      "weeks_in_episode": -0.42130333377842166,
+      "prior_episodes_same": 0.07005743392384116,
+      "prior_episodes_any": -0.1893825610373976,
+      "age": 0.04063200079119308,
+      "secondary": -0.10423695010090399
+    },
+    "2": {
+      "intercept": -1.5586234546412676,
+      "_C": 0.1,
+      "des_out": 1.9175598266879517,
+      "des_doubtful": 1.2718905341531501,
+      "des_questionable": 0.3827377973600832,
+      "des_probable": -0.4254613000858532,
+      "prac_dnp": 1.657598723274243,
+      "prac_limited": 0.42928528609479855,
+      "inj_ankle": -0.06592068015924758,
+      "inj_back": -0.13857926546908014,
+      "inj_calf": -0.15097149727878534,
+      "inj_concussion": -0.402598169741557,
+      "inj_foot": -0.07977632759567062,
+      "inj_groin": -0.11888155035701511,
+      "inj_hamstring": 0.057987364388820156,
+      "inj_hand": 0.15640721222383644,
+      "inj_hip": -0.17283990810251734,
+      "inj_illness": -0.6073825503549477,
+      "inj_knee": 0.023384254266383703,
+      "inj_neck": 0.47613844723036586,
+      "inj_quad": 0.03272695057373412,
+      "inj_ribs": -0.13285191708897007,
+      "inj_shoulder": -0.11695996997924253,
+      "inj_other": 0.23573835984545097,
+      "pos_rb": -0.3211366605995703,
+      "pos_wr": -0.5076294016691176,
+      "pos_te": -0.1233315326724396,
+      "weeks_missed_so_far": 0.5040769348576296,
+      "weeks_in_episode": -0.29308586204682313,
+      "prior_episodes_same": 0.05539077840483111,
+      "prior_episodes_any": -0.14597448847843297,
+      "age": 0.052595795258248465,
+      "secondary": -0.10657419522670893
+    },
+    "3": {
+      "intercept": -1.7971045677698674,
+      "_C": 0.1,
+      "des_out": 1.2329305171242297,
+      "des_doubtful": 0.6294059670400057,
+      "des_questionable": 0.0693593022577879,
+      "des_probable": -0.5845210620261121,
+      "prac_dnp": 1.6570960610282153,
+      "prac_limited": 0.530346745484484,
+      "inj_ankle": -0.11975833281699003,
+      "inj_back": 0.08792212892486724,
+      "inj_calf": -0.24397558046070136,
+      "inj_concussion": -0.28849881766166413,
+      "inj_foot": 0.0663838244859135,
+      "inj_groin": -0.12533498007828445,
+      "inj_hamstring": -0.08091306078709898,
+      "inj_hand": 0.0787725974774389,
+      "inj_hip": -0.22838769732041805,
+      "inj_illness": -0.689528782454829,
+      "inj_knee": -0.03373732693366705,
+      "inj_neck": 0.6479411152600043,
+      "inj_quad": -0.024489444805159823,
+      "inj_ribs": -0.17617757124472022,
+      "inj_shoulder": -0.16631558997399104,
+      "inj_other": 0.21428270985955758,
+      "pos_rb": -0.48223533749186975,
+      "pos_wr": -0.6090469934942822,
+      "pos_te": -0.3010671351595232,
+      "weeks_missed_so_far": 0.3680857300596615,
+      "weeks_in_episode": -0.23229320848914714,
+      "prior_episodes_same": 0.03735608735700424,
+      "prior_episodes_any": -0.1185781524203775,
+      "age": 0.055035097407249066,
+      "secondary": -0.11310106187465592
+    },
+    "4": {
+      "intercept": -2.0653484066305996,
+      "_C": 0.1,
+      "des_out": 0.7954680413344012,
+      "des_doubtful": 0.2143601214202095,
+      "des_questionable": -0.1306676674199288,
+      "des_probable": -0.6225754164529512,
+      "prac_dnp": 1.741094772902163,
+      "prac_limited": 0.6001363186462001,
+      "inj_ankle": -0.17394986732179976,
+      "inj_back": 0.26443322930852076,
+      "inj_calf": -0.20755324724869761,
+      "inj_concussion": -0.1556925292375984,
+      "inj_foot": 0.22767972574570128,
+      "inj_groin": -0.08034035604522932,
+      "inj_hamstring": -0.10357656658120049,
+      "inj_hand": 0.05206425675725989,
+      "inj_hip": -0.19146970909836614,
+      "inj_illness": -0.6748539322237002,
+      "inj_knee": 0.011829207215132233,
+      "inj_neck": 0.7775487422149263,
+      "inj_quad": 0.011463295865807226,
+      "inj_ribs": -0.13879425613584823,
+      "inj_shoulder": -0.019210044457194802,
+      "inj_other": 0.3329948056788372,
+      "pos_rb": -0.5437840943836789,
+      "pos_wr": -0.7124009489359955,
+      "pos_te": -0.38365191355165,
+      "weeks_missed_so_far": 0.3265822477012636,
+      "weeks_in_episode": -0.22132818769828042,
+      "prior_episodes_same": 0.012944344031101186,
+      "prior_episodes_any": -0.10751941476226144,
+      "age": 0.0644508002368048,
+      "secondary": -0.11121386565553376
+    }
+  },
+  "baselineDesignation": {
+    "1": {
+      "intercept": -1.740405603141642,
+      "_C": 10.0,
+      "des_out": 9.393072170804407,
+      "des_doubtful": 6.176192343461899,
+      "des_questionable": 1.4361753889260833,
+      "des_probable": -0.18297492530412432
+    },
+    "2": {
+      "intercept": -2.218256569439277,
+      "_C": 0.3,
+      "des_out": 3.3990149669787204,
+      "des_doubtful": 2.6446385501451783,
+      "des_questionable": 0.9425787526565234,
+      "des_probable": -0.3813412026233889
+    },
+    "3": {
+      "intercept": -2.4366824075403573,
+      "_C": 0.1,
+      "des_out": 2.6331534868939794,
+      "des_doubtful": 1.8663722390468398,
+      "des_questionable": 0.5790018025394135,
+      "des_probable": -0.617653569438398
+    },
+    "4": {
+      "intercept": -2.6479861465941164,
+      "_C": 0.1,
+      "des_out": 2.2300571955827695,
+      "des_doubtful": 1.4686157097398487,
+      "des_questionable": 0.3743509979727493,
+      "des_probable": -0.6949348310554843
+    }
+  },
+  "baselineFeatures": [
+    {
+      "name": "des_out",
+      "transform": "eq",
+      "field": "designation",
+      "value": "Out"
+    },
+    {
+      "name": "des_doubtful",
+      "transform": "eq",
+      "field": "designation",
+      "value": "Doubtful"
+    },
+    {
+      "name": "des_questionable",
+      "transform": "eq",
+      "field": "designation",
+      "value": "Questionable"
+    },
+    {
+      "name": "des_probable",
+      "transform": "eq",
+      "field": "designation",
+      "value": "Probable"
+    }
+  ],
+  "trainRows": {
+    "1": 21757,
+    "2": 20163,
+    "3": 18856,
+    "4": 17415
+  },
+  "notes": "",
+  "golden": [
+    {
+      "f": {
+        "designation": "Out",
+        "practice_status": "DNP",
+        "injury_group": "achilles",
+        "pos": "RB",
+        "weeks_missed_so_far": 2,
+        "weeks_in_episode": 3,
+        "prior_episodes_same": 1,
+        "prior_episodes_any": 2,
+        "age": 28.4,
+        "injury_secondary_present": 0
+      },
+      "expect": {
+        "1": 0.999836383768995,
+        "2": 0.8633477972238764,
+        "3": 0.6649178575117727,
+        "4": 0.5179673942252835
+      }
+    },
+    {
+      "f": {
+        "designation": "Questionable",
+        "practice_status": "Limited",
+        "injury_group": "hamstring",
+        "pos": "WR",
+        "weeks_missed_so_far": 0,
+        "weeks_in_episode": 0,
+        "prior_episodes_same": 0,
+        "prior_episodes_any": 0,
+        "age": 24.0,
+        "injury_secondary_present": 1
+      },
+      "expect": {
+        "1": 0.47253195561930694,
+        "2": 0.2062084170192712,
+        "3": 0.11428812533195157,
+        "4": 0.07054435910334172
+      }
+    },
+    {
+      "f": {
+        "designation": "Out",
+        "practice_status": "DNP",
+        "injury_group": "concussion",
+        "pos": "QB",
+        "weeks_missed_so_far": 1,
+        "weeks_in_episode": 1,
+        "prior_episodes_same": 2,
+        "prior_episodes_any": 3,
+        "age": 33.7,
+        "injury_secondary_present": 0
+      },
+      "expect": {
+        "1": 0.9998398154297584,
+        "2": 0.8314600063323916,
+        "3": 0.6817819248253038,
+        "4": 0.5608149033273085
+      }
+    },
+    {
+      "f": {
+        "designation": "Doubtful",
+        "practice_status": "DNP",
+        "injury_group": "unicorn-horn",
+        "pos": "TE",
+        "weeks_missed_so_far": 0,
+        "weeks_in_episode": 2,
+        "prior_episodes_same": 0,
+        "prior_episodes_any": 1,
+        "age": null,
+        "injury_secondary_present": 0
+      },
+      "expect": {
+        "1": 0.9945300394894927,
+        "2": 0.6794240903316752,
+        "3": 0.4549843382688637,
+        "4": 0.329438349932872
+      }
+    },
+    {
+      "f": {
+        "designation": "",
+        "practice_status": "DNP",
+        "injury_group": "knee",
+        "pos": "RB",
+        "weeks_missed_so_far": 99,
+        "weeks_in_episode": 99,
+        "prior_episodes_same": 99,
+        "prior_episodes_any": 99,
+        "age": 61.0,
+        "injury_secondary_present": 0
+      },
+      "expect": {
+        "1": 0.7232086349431344,
+        "2": 0.49066227722359024,
+        "3": 0.3307005797326267,
+        "4": 0.2613085159760917
+      }
+    },
+    {
+      "f": {
+        "designation": "Probable",
+        "practice_status": "",
+        "injury_group": "",
+        "pos": "WR"
+      },
+      "expect": {
+        "1": 0.17614607435918028,
+        "2": 0.09483524993043846,
+        "3": 0.05861343542041951,
+        "4": 0.044475158418676275
+      }
+    }
+  ]
+}
