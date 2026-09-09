@@ -376,7 +376,7 @@ function buildTools(dbPath: string | undefined, season: number) {
             const j = await espnGet<any>(page, espnLeagueUrl(lg.season, lg.league_id, ["mSettings", "mTeam"]));
             await browser?.close().catch(() => {});
             if (!j) { shut(); return { content: [{ type: "text", text: "could not read league (not logged in, or wrong league id)" }] }; }
-            const s = j.settings ?? {}; const rs = s.rosterSettings ?? {}; const sc = s.scoringSettings ?? {}; const ds = s.draftSettings ?? {}; const sch = s.scheduleSettings ?? {};
+            const s = j.settings ?? {}; const rs = s.rosterSettings ?? {}; const sc = s.scoringSettings ?? {}; const ds = s.draftSettings ?? {};
             const mine = (j.teams ?? []).find((t: any) => (t.owners ?? []).some((o: string) => swid && normSwid(o) === normSwid(swid)));
             const slots = rs.lineupSlotCounts ?? {};
             const slotSummary = Object.entries(slots).filter(([, n]) => Number(n) > 0).map(([id, n]) => `${n}x${ESPN_SLOT[Number(id)] ?? id}`).join(", ");
@@ -396,11 +396,21 @@ function buildTools(dbPath: string | undefined, season: number) {
             const rules: ScoringRules = model.rules;
             db.prepare("UPDATE league SET name=@n, season=@se, scoring_json=@sj, team_id=@tid, last_synced_at=@now WHERE league_id=@lid")
               .run({ n: s.name ?? null, se: lg.season, sj: JSON.stringify({ scoringType: sc.scoringType, ppr: recPts, draftType: ds.type, auctionBudget: ds.auctionBudget, slots, size: s.size, rules, kicker: model.kicker, defense: model.defense }), tid: mine ? String(mine.id) : lg.team_id, now: new Date().toISOString(), lid: lg.league_id });
-            const playoffTeams = Number(sch.playoffTeamCount) || getConfig(db).playoffTeams;
-            const regWeeks = Number(sch.matchupPeriodCount) || getConfig(db).regWeeks;
+            // THE FORMAT BLOCK, built from the SAME payload the rest of this sync reads.
+            //
+            // This used to write only the two flat numbers, each with a `|| <whatever is stored>`
+            // fallback -- so a sync against a league whose settings had changed could leave the
+            // calendar at the old value with nothing to show for it. `formatFromEspnSettings`
+            // refuses to default any field, and it carries the seeding rule, the divisions and the
+            // reseed flag that the flat pair cannot express. The flat keys are still written, but
+            // FROM the block, so the two cannot disagree.
+            const { formatFromEspnSettings } = await import("../league/index.js");
+            const format = formatFromEspnSettings({ settings: s, teams: j.teams ?? [] });
+            const playoffTeams = format.playoffTeams;
+            const regWeeks = format.regWeeks;
             const before = getConfig(db);
             // align the app's format + scoring MODEL to the real league (values recompute on next `ff refresh`)
-            setConfig(db, { scoring, slots: configSlots, budget, teams, scoring_rules: rules, playoffTeams, regWeeks });
+            setConfig(db, { scoring, slots: configSlots, budget, teams, scoring_rules: rules, playoffTeams, regWeeks, format, formatEspn: format } as never);
             const changed = scoring !== before.scoring || budget !== before.budget || teams !== before.teams || JSON.stringify(configSlots) !== JSON.stringify(before.slots) || JSON.stringify(rules) !== JSON.stringify(before.scoring_rules);
             shut();
             return { content: [{ type: "text", text: `synced "${s.name}" (league ${lg.league_id}, ${lg.season}): ${s.size} teams, ${ds.type ?? "?"} draft${ds.auctionBudget ? ` $${ds.auctionBudget}` : ""}, ${sc.scoringType}, ${scoring} scoring. My team: "${mineName ?? "?"}" (id ${mine?.id ?? "?"}). Roster: ${slotSummary}.${changed ? " Config updated to match -- run `ff refresh` to recompute values/tiers for this format." : ""}` }] };
@@ -489,7 +499,7 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
   return [
     tool(
       "season_odds",
-      "PLAYOFF AND CHAMPIONSHIP ODDS for every team in my league from the rosters that actually exist, mine flagged, plus THE CURRENT OBJECTIVE REGIME. Returns each team's playoff%, title%, mean wins, mean points and expected optimal-lineup points in weeks 15-17, with the conservation checks (titles sum to 1, playoff shares sum to the playoff field) -- it REFUSES to return a table that fails one. LEAD WITH THE PLAYOFF NUMBER and say so: scored against 114 real team-seasons this simulator BEATS a uniform baseline on the playoff berth (Brier 0.2370 vs 0.2451) and LOSES to it on the champion (0.0659 vs 0.0652), so the title figure is reported alongside and is not a number to plan on. `objective.regime` says whether the seed is secure (playoff probability at or above the threshold, default 70%, derived from the calibration) -- in the secure regime every other tool ranks moves on weeks 15-17 instead. ALWAYS report assumptions.schedule too: a generated schedule is not this league's seeding.",
+      "PLAYOFF AND CHAMPIONSHIP ODDS for every team in my league from the rosters that actually exist, mine flagged, plus THE CURRENT OBJECTIVE REGIME. Returns each team's playoff%, title%, mean wins, mean points and expected optimal-lineup points in the league PLAYOFF WEEKS (weeks 14-16 under the current format block), with the conservation checks (titles sum to 1, playoff shares sum to the playoff field) -- it REFUSES to return a table that fails one. LEAD WITH THE PLAYOFF NUMBER and say so: scored against 114 real team-seasons this simulator BEATS a uniform baseline on the playoff berth (Brier 0.2370 vs 0.2451) and LOSES to it on the champion (0.0659 vs 0.0652), so the title figure is reported alongside and is not a number to plan on. `objective.regime` says whether the seed is secure (playoff probability at or above the threshold, default 70%, derived from the calibration) -- in the secure regime every other tool ranks moves on the league PLAYOFF WEEKS (weeks 14-16 under the current format block) instead. ALWAYS report assumptions.schedule too: a generated schedule is not this league's seeding.",
       { schedule: SCHEDULE, trials: TRIALS, seed: SEED },
       call("season_odds"),
     ),
@@ -501,7 +511,7 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
     ),
     tool(
       "waiver_targets",
-      "WAIVER CLAIMS SCORED BY THE CHANGE IN MY PLAYOFF PROBABILITY -- every add paired with every legal drop, under common random numbers. Each row carries THREE numbers and you must name which you are quoting: `playoffsPp` is the primary (the factor the simulator has measured skill on), `playoffWeekPts` is expected optimal-lineup points in weeks 15-17, and `titlePp` is reported alongside and never decides. `rankValue` is whichever the current regime ranks on -- see `objective`. A claim is two decisions and the DROP is the one people get wrong, so each add lists its drop options with their own deltas. Drops that would leave a mandatory slot unfillable (dropping the only kicker) are REFUSED and named, not scored. Compare every delta against noiseFloorPp, which is computed for the PRIMARY quantity: a target that does not clear it is not distinguishable from doing nothing. The FAAB figure is a STATED RULE OF THUMB priced per point of PLAYOFF probability, not a fitted value -- say so when you quote it.",
+      "WAIVER CLAIMS SCORED BY THE CHANGE IN MY PLAYOFF PROBABILITY -- every add paired with every legal drop, under common random numbers. Each row carries THREE numbers and you must name which you are quoting: `playoffsPp` is the primary (the factor the simulator has measured skill on), `playoffWeekPts` is expected optimal-lineup points in the league PLAYOFF WEEKS (weeks 14-16 under the current format block), and `titlePp` is reported alongside and never decides. `rankValue` is whichever the current regime ranks on -- see `objective`. A claim is two decisions and the DROP is the one people get wrong, so each add lists its drop options with their own deltas. Drops that would leave a mandatory slot unfillable (dropping the only kicker) are REFUSED and named, not scored. Compare every delta against noiseFloorPp, which is computed for the PRIMARY quantity: a target that does not clear it is not distinguishable from doing nothing. The FAAB figure is a STATED RULE OF THUMB priced per point of PLAYOFF probability, not a fitted value -- say so when you quote it.",
       { schedule: SCHEDULE, trials: TRIALS, seed: SEED, limit: z.number().optional().describe("how many free agents to evaluate (default 4); each costs simulation time"), positions: z.array(z.string()).optional().describe("restrict the add candidates, e.g. [\"RB\"]") },
       call("waiver_targets"),
     ),
@@ -513,7 +523,7 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
     ),
     tool(
       "trade_finder",
-      "FIND ONE-FOR-ONE TRADES WORTH PROPOSING: balanced on CONSENSUS MARKET VALUE first, then ranked by the change in my PLAYOFF probability (or, once the seed is secure, by expected points in weeks 15-17 -- `objective` says which). The value gate is the important half -- filtering on the partner's simulated equity instead once produced 'my WR4 for Christian McCaffrey' as a recommendation, which passes the simulator and no human accepts. `mutual: true` means it clears the noise floor for BOTH teams and is the only kind worth actually sending. Players with no consensus value are SKIPPED and counted, never priced at zero.",
+      "FIND ONE-FOR-ONE TRADES WORTH PROPOSING: balanced on CONSENSUS MARKET VALUE first, then ranked by the change in my PLAYOFF probability (or, once the seed is secure, by expected points in the league PLAYOFF WEEKS (weeks 14-16 under the current format block) -- `objective` says which). The value gate is the important half -- filtering on the partner's simulated equity instead once produced 'my WR4 for Christian McCaffrey' as a recommendation, which passes the simulator and no human accepts. `mutual: true` means it clears the noise floor for BOTH teams and is the only kind worth actually sending. Players with no consensus value are SKIPPED and counted, never priced at zero.",
       { schedule: SCHEDULE, trials: TRIALS, seed: SEED, limit: z.number().optional().describe("how many candidate deals to simulate (default 8)"), maxGap: z.number().optional().describe("consensus-value band, default 0.15 = the two sides within 15% of each other"), positions: z.array(z.string()).optional().describe("restrict what I am shopping FOR") },
       call("trade_finder"),
     ),
@@ -525,7 +535,7 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
     ),
     tool(
       "depth_risk",
-      "WHAT LOSING ONE OF MY PLAYERS WOULD COST, in percentage points of PLAYOFF probability, and who insures him. `costPp` is POSITIVE when we are worse off without him; `costPlayoffWeekPts` and `costTitlePp` are the same loss in weeks 15-17 and in championship probability, reported alongside. The insurance list deliberately mixes free agents with players on other rosters and shortlists them SEPARATELY -- ranking them together on projection fills the list with the fifteen best starters in the league and never shows a claim, which is not an answer to 'my back is hurt'. A trade-finder ranked on points cannot see this: it prices a backup at what he adds to a HEALTHY lineup, which is usually zero.",
+      "WHAT LOSING ONE OF MY PLAYERS WOULD COST, in percentage points of PLAYOFF probability, and who insures him. `costPp` is POSITIVE when we are worse off without him; `costPlayoffWeekPts` and `costTitlePp` are the same loss in the league PLAYOFF WEEKS (weeks 14-16 under the current format block) and in championship probability, reported alongside. The insurance list deliberately mixes free agents with players on other rosters and shortlists them SEPARATELY -- ranking them together on projection fills the list with the fifteen best starters in the league and never shows a claim, which is not an answer to 'my back is hurt'. A trade-finder ranked on points cannot see this: it prices a backup at what he adds to a HEALTHY lineup, which is usually zero.",
       { player: z.string().describe("a player on MY roster"), schedule: SCHEDULE, trials: TRIALS, seed: SEED, limit: z.number().optional().describe("how many insurance candidates (default 4)") },
       call("depth_risk"),
     ),

@@ -92,6 +92,17 @@ export interface LeagueFormat {
   /** The actual bracket weeks, e.g. [15,16,17]. Explicit, not re-derived by each consumer. */
   playoffWeeks: number[];
   seeding: SeedingRule;
+  /**
+   * Does the bracket RE-SEED between rounds? (ESPN's `playoffReseed`.)
+   *
+   * true  -- after each round the highest remaining seed plays the lowest remaining seed.
+   * false -- a fixed bracket: the round-1 pairings determine who can meet whom, so the 2 seed
+   *          cannot meet the 1 seed before the final even if the 1 seed's half is wiped out.
+   *
+   * It is stored rather than assumed because the two differ in who wins the title, and the repo
+   * simulated a fixed bracket for its whole life while this league reseeds.
+   */
+  playoffReseed: boolean;
   /** The tiebreak between equal records, in the platform's own vocabulary. */
   tiebreak: string;
   divisions: LeagueDivision[];

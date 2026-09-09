@@ -22,6 +22,7 @@ import { nameKey } from "../draft/values.js";
 import type { VarianceModel } from "../draft/season.js";
 import type { DepthEntry } from "./handcuff.js";
 import { lineupNameKey, normalizeStatus, type AvailabilityMap, type GameRow, type Provenance } from "./copilot.js";
+import { effectiveFormat } from "../league/index.js";
 import { loadWeeklyRows } from "../weekly/features.js";
 import { loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT } from "../weekly/projector.js";
 
@@ -128,7 +129,9 @@ export function loadGames(dbPath?: string): { games: GameRow[]; season: number; 
   try {
     const cfg = configOf(db);
     const games = db.prepare("SELECT week, team, opponent, home, spread_line FROM game WHERE season=?").all(cfg.season) as GameRow[];
-    return { games, season: cfg.season, regWeeks: cfg.regWeeks ?? 14 };
+    // FROM THE FORMAT BLOCK, not `?? 14`. Playoff SOS is computed off `regWeeks`, so a stale default
+    // would score the wrong three weeks -- silently, and with a plausible-looking answer.
+    return { games, season: cfg.season, regWeeks: effectiveFormat(cfg as never).regWeeks };
   } finally { db.close(); }
 }
 

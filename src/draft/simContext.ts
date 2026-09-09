@@ -221,6 +221,11 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     weeks: weeks.length,
     playoffTeams: format.playoffTeams,       // FROM THE FORMAT BLOCK -- a hardcoded 7 was right by coincidence
     seeding: format.seeding,
+    // ESPN's own bracket rule and its own bracket LENGTH. Both were constants before: the simulator
+    // always reseeded, and always ran three playoff weeks. Both were right for this league and
+    // neither had ever been read.
+    playoffReseed: format.playoffReseed,
+    playoffWeekCount: format.playoffWeeks.length,
     divisionOf,
     slots: cfg.slots,
     // The league's own FLEX eligibility, which was being dropped here. optimalLineup defaults to

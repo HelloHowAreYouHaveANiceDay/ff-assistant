@@ -414,7 +414,7 @@ export function priceFromPath(path: readonly PathPoint[], marginal: number, budg
 }
 
 /** The same marginal restricted to the fantasy playoff weeks -- the SECONDARY objective. Byes do not
- *  fall in weeks 15-17, so this is three plain weeks and reduces to a depth-and-availability
+ *  fall in the league PLAYOFF WEEKS (weeks 14-16 under the current format block), so this is three plain weeks and reduces to a depth-and-availability
  *  question, which is exactly what it should be. */
 export function playoffWeekMarginal(roster: readonly LmPlayer[], add: LmPlayer, o: LmOpts, playoffWeeks: readonly number[]): number {
   const strip = (r: readonly LmPlayer[]) => r.map((p) => ({ ...p, bye: null }));

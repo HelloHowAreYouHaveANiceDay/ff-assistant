@@ -65,6 +65,16 @@ export interface SeasonOpts {
   seeding?: SeedingRule;
   /** team index -> division index, parallel to `teams`. */
   divisionOf?: number[];
+  /**
+   * DOES THE BRACKET RESEED BETWEEN ROUNDS? (ESPN's `playoffReseed`.) Defaults to true, which is
+   * what this simulator has always done -- so an omitted value is byte-identical -- and is also what
+   * this league does. `false` fixes the bracket: survivors keep their tree position instead of being
+   * re-ordered by seed, so a bye team meets the winner of the bottom first-round game rather than
+   * the weakest survivor.
+   */
+  playoffReseed?: boolean;
+  /** How many weeks the bracket runs, i.e. `format.playoffWeeks.length`. Defaults to PLAYOFF_WEEKS. */
+  playoffWeekCount?: number;
   slots: string[];
   /** Lognormal sd of our projection error. 0 = treat the board as truth (overconfident). */
   projSd: number;
@@ -143,8 +153,14 @@ export interface SeasonOdds {
   playoffWeekPts: number;
 }
 
-/** How many weeks the fantasy playoffs run. Three in this league (weeks 15-17 of a 14-week regular
- *  season) and the number every playoff-week quantity below is averaged over. */
+/**
+ * How many weeks the fantasy playoffs run -- the number every playoff-week quantity below is
+ * averaged over. Three in this league, but that is a FACT ABOUT THE LEAGUE, not a constant: it is
+ * `format.playoffWeeks.length`, and a caller with the format block should pass
+ * `opts.playoffWeekCount` rather than inherit this. The constant remains only as the fallback for a
+ * caller that has no block, and it is deliberately the value this league has had throughout, so an
+ * omitted option is byte-identical.
+ */
 export const PLAYOFF_WEEKS = 3;
 
 function gauss(rng: () => number): number {
@@ -187,7 +203,13 @@ function emptySlotPoints(slot: string, opts: SeasonOpts): number {
   return rep[slot] ?? 0;
 }
 
-function playoffWinner(seeds: number[], beat: (a: number, b: number) => number): number {
+/**
+ * `reseed` is ESPN's `playoffReseed`. See the twin in backtest.ts: true re-orders the survivors by
+ * seed each round (highest remaining plays lowest remaining), false keeps a FIXED bracket where a
+ * survivor holds its position in the tree. The only mechanical difference is the sort, which is
+ * exactly why a bracket can be simulated wrong for years without a symptom.
+ */
+export function playoffWinner(seeds: number[], beat: (a: number, b: number) => number, reseed: boolean): number {
   let alive = seeds.map((team, seed) => ({ team, seed }));
   while (alive.length > 1) {
     const byes = 2 ** Math.ceil(Math.log2(alive.length)) - alive.length;
@@ -197,7 +219,8 @@ function playoffWinner(seeds: number[], beat: (a: number, b: number) => number):
       const a = play[i], b = play[play.length - 1 - i];
       winners.push(beat(a.team, b.team) === a.team ? a : b);
     }
-    alive = [...bye, ...winners].sort((x, y) => x.seed - y.seed);
+    alive = [...bye, ...winners];
+    if (reseed) alive.sort((x, y) => x.seed - y.seed);
   }
   return alive[0].team;
 }
@@ -415,7 +438,7 @@ export function simulateSeasons(
     //   `keyWeek`   the RNG key's week coordinate. Usually gameWeek; the bracket keys by round so a
     //               team is not locked to one score all playoffs, and the strength measure keys
     //               above both so it can never collide with either.
-    //   `byes`      whether NFL byes apply. They do not in weeks 15-17.
+    //   `byes`      whether NFL byes apply. They do not in the league PLAYOFF WEEKS (weeks 14-16 under the current format block).
     //   `playoffDraw` a post-season week: byes are off, the RNG purposes are the playoff ones, and
     //               the score is drawn PARAMETRICALLY even in bootstrap mode. That last part is
     //               inherited behaviour, not a choice made here -- the bracket has always sampled
@@ -501,12 +524,12 @@ export function simulateSeasons(
       const sb = draw(b); playoffWeek.set(b, sb);
       return sa >= sb ? a : b;
     };
-    champs[playoffWinner(seeds, beat)]++;
+    champs[playoffWinner(seeds, beat, opts.playoffReseed ?? true)]++;
     // PLAYOFF-WEEK STRENGTH, for every team, bracket or no bracket. Keyed at week 200+j so it can
     // collide with neither the regular season (1..weeks) nor the bracket (100+round).
     if (opts.playoffWeekStrength) {
       for (let t = 0; t < N; t++) {
-        for (let j = 1; j <= PLAYOFF_WEEKS; j++) poPts[t] += scoreTeamWeek(t, opts.weeks + j, 200 + j, false, true);
+        for (let j = 1; j <= (opts.playoffWeekCount ?? PLAYOFF_WEEKS); j++) poPts[t] += scoreTeamWeek(t, opts.weeks + j, 200 + j, false, true);
       }
     }
     for (let t = 0; t < N; t++) { totWins[t] += wins[t]; totPts[t] += pts[t]; }

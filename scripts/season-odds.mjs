@@ -61,7 +61,22 @@ for (let w = 1; w <= lg.regWeeks; w++) {
     .filter(([a, b]) => a != null && b != null);
   if (games.length) weeks.push(games);
 }
-const playoffTeams = 7;
+// THE PLAYOFF FORMAT COMES FROM THE LEAGUE'S OWN BLOCK. `const playoffTeams = 7` used to sit here:
+// right for this league, and unfalsifiable -- the day the field changes, every odds number is quietly
+// computed for a league that does not exist. Seeding, the reseed flag and the divisions come from the
+// same block, so the bracket simulated here is the bracket ESPN will actually run.
+const fmt = lg.format;
+const playoffTeams = fmt.playoffTeams;
+// team index -> division index, matched by the platform's own team ids.
+const divOfTeam = (() => {
+  if (fmt.divisions.length < 2) return undefined;
+  const m = new Map();
+  fmt.divisions.forEach((d, i) => d.teamIds.forEach((id) => m.set(String(id), i)));
+  const out = teams.map((t) => m.get(String(t.id)));
+  const missing = out.filter((d) => d == null).length;
+  if (missing) { console.log(`WARNING: ${missing} team(s) are in no division in the format block -- seeding falls back to record.`); return undefined; }
+  return out;
+})();
 await lg.close();
 
 console.log(`SEASON ODDS -- ${lg.season}, ${teams.length} teams, ${weeks.length} scheduled weeks, ${TRIALS} trials`);
@@ -95,7 +110,9 @@ console.log(`(a 16-team league rosters mostly tier 0 -- if most land in t2/t3 th
 
 console.log(`sampler: ${outcomes ? "BOOTSTRAP (real weeks by preseason rank) + correlated NFL teammates" : "parametric lognormal"}
 `);
-const base = { weeks: weeks.length, playoffTeams, slots: lg.slots, projSd: 0.30, trials: TRIALS, seed: 7, poolRank,
+const base = { weeks: weeks.length, playoffTeams, seeding: fmt.seeding, divisionOf: divOfTeam,
+  playoffReseed: fmt.playoffReseed, playoffWeekCount: fmt.playoffWeeks.length,
+  slots: lg.slots, projSd: 0.30, trials: TRIALS, seed: 7, poolRank,
   ...(outcomes ? { bootstrap: { outcomes, corr: corrModel, calibration: "scale" } } : {}) };
 // Surface what the calibration guard refused to trust. A pool ratio far from 1 is a BROKEN
 // PROJECTION, not a modelling choice, and it must not stay invisible just because the guard handled

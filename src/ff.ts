@@ -1667,6 +1667,26 @@ async function cmdBacktest(rest: string[]) {
   // expected result for replacing an unbiased sampler. `--random-schedule` restores the old
   // pairing for comparison; `--divisions N` overrides the division count.
   const divisions = rest.includes("--random-schedule") ? 0 : Number(valueOf(rest, "--divisions") ?? 4);
+  // THE CALENDAR AND THE BRACKET COME FROM THE LEAGUE'S OWN FORMAT BLOCK, not from a default.
+  // Each is overridable on the command line, because the historical tripwire has to be reproducible
+  // under the calendar it was measured on (14 weeks, playoffs 15/16/17, seeded by record) after the
+  // league's real calendar has moved to 13 weeks and 14/15/16.
+  const { effectiveFormat: effFmt, isSeedingRule: isSeeding } = await import("./league/index.js");
+  const btFormat = effFmt(conf as never);
+  const seedingArg = valueOf(rest, "--seeding");
+  if (seedingArg != null && !isSeeding(seedingArg)) {
+    throw new Error(`--seeding must be record|division-winners-first (got ${JSON.stringify(seedingArg)}).`);
+  }
+  const seeding = (seedingArg ?? btFormat.seeding) as import("./league/types.js").SeedingRule;
+  const btRegWeeks = Number(valueOf(rest, "--reg-weeks") ?? btFormat.regWeeks);
+  const btPlayoffTeams = Number(valueOf(rest, "--playoff-teams") ?? btFormat.playoffTeams);
+  const reseedArg = valueOf(rest, "--playoff-reseed");
+  if (reseedArg != null && reseedArg !== "true" && reseedArg !== "false") {
+    throw new Error(`--playoff-reseed must be true or false (got ${JSON.stringify(reseedArg)}).`);
+  }
+  const btReseed = reseedArg != null ? reseedArg === "true" : btFormat.playoffReseed;
+  if (!Number.isFinite(btRegWeeks) || btRegWeeks <= 0) throw new Error(`--reg-weeks must be a positive number (got ${JSON.stringify(valueOf(rest, "--reg-weeks"))}).`);
+  if (!Number.isFinite(btPlayoffTeams) || btPlayoffTeams <= 0) throw new Error(`--playoff-teams must be a positive number (got ${JSON.stringify(valueOf(rest, "--playoff-teams"))}).`);
   // AGE CURVE ON BY DEFAULT, matching the shipped board. projections.ts applies it, so a backtest
   // that skipped it would be validating a system we do not actually run -- the exact mismatch that
   // let the FLEX-baseline and K/DST bugs survive. `--no-age-curve` is the escape hatch for A/B.
@@ -1933,7 +1953,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a
@@ -1945,7 +1965,9 @@ async function cmdBacktest(rest: string[]) {
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
   const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
-  console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(shared ${marketNoiseGiven ? String(marketSd) : "measured band sd"}, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);
+  console.log(`FORMAT  weeks 1-${btRegWeeks}, ${btPlayoffTeams}-team playoff, seeding ${seeding}, bracket ${btReseed ? "reseeds" : "fixed"}` +
+    `  (from the ${btFormat.source} format block${seedingArg || valueOf(rest, "--reg-weeks") || valueOf(rest, "--playoff-teams") || reseedArg ? ", overridden on the command line" : ""})`);
+  console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${btPlayoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(shared ${marketNoiseGiven ? String(marketSd) : "measured band sd"}, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   if (dumpPath) {
     writeDump(dumpPath, ["season", "seed", "champ", "playoffs", "wins", "regPoints"].join("\t") + "\n" + dumpRows.join("\n") + "\n", "utf8");
@@ -2956,7 +2978,7 @@ async function cmdEvaluateWeekly(rest: string[]) {
  *   handcuffs       what each backup scores if the man ahead of him misses
  *   depth-risk      what losing one player costs, and who insures him
  *   power-rankings  the league by best starting lineup, with each team's odds beside it
- *   playoff-sos     weeks 15-17 opponent strength, from the posted lines
+ *   playoff-sos     the league PLAYOFF WEEKS (weeks 14-16 under the current format block) opponent strength, from the posted lines
  *   stream          whom to START or ADD at ONE position this week, from our men plus the pool
  *
  * Flags: --schedule real|generated|auto (default auto; "real" needs the app running and THROWS
@@ -3223,6 +3245,15 @@ async function cmdFormat(rest: string[]) {
         playoffTeams: Number(valueOf(rest, "--playoff-teams") ?? espn?.playoffTeams ?? NaN),
         playoffRoundWeeks: Number(valueOf(rest, "--playoff-round-weeks") ?? espn?.playoffRoundWeeks ?? 1),
         playoffWeeks, seeding,
+        playoffReseed: (() => {
+          const v = valueOf(rest, "--playoff-reseed");
+          if (v == null) {
+            if (typeof espn?.playoffReseed !== "boolean") throw new Error("ff format set needs --playoff-reseed true|false (no ESPN block on file to inherit it from).");
+            return espn.playoffReseed;
+          }
+          if (v !== "true" && v !== "false") throw new Error(`--playoff-reseed must be true or false, got ${JSON.stringify(v)}.`);
+          return v === "true";
+        })(),
         tiebreak: valueOf(rest, "--tiebreak") ?? espn?.tiebreak ?? "TOTAL_POINTS_SCORED",
         divisions: espn?.divisions ?? [],
         source: "owner-override",
@@ -3241,7 +3272,7 @@ async function cmdFormat(rest: string[]) {
       return;
     }
 
-    console.log("usage: ff format show | sync [--season N] [--from-cache] [--adopt] | set --reg-weeks 13 --playoff-weeks 14,15,16 --seeding division-winners-first");
+    console.log("usage: ff format show | sync [--season N] [--from-cache] [--adopt] | set --reg-weeks 13 --playoff-weeks 14,15,16 --seeding division-winners-first [--playoff-reseed true|false]");
   } finally { db.close(); }
 }
 
@@ -3256,6 +3287,7 @@ function printFormat(
     console.log(`  regular season   weeks 1-${f.regWeeks}`);
     console.log(`  playoffs         weeks ${f.playoffWeeks.join("/")}  (${f.playoffTeams}-team field, ${f.playoffRoundWeeks} week(s) per round)`);
     console.log(`  seeding          ${f.seeding}, tiebreak ${f.tiebreak}`);
+    console.log(`  bracket          ${f.playoffReseed ? "RESEEDS between rounds (top remaining seed plays lowest)" : "fixed (no reseed)"}`);
     console.log(`  divisions        ${f.divisions.length ? f.divisions.map((d) => `${d.name} [${d.teamIds.length}]`).join(", ") : "(none)"}`);
     console.log(`  source           ${f.source}, read ${f.fetchedAt}${f.note ? `\n  note             ${f.note}` : ""}`);
   };

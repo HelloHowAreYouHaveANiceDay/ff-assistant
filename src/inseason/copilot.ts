@@ -140,7 +140,7 @@ export function objectiveFor(playoffPct: number | null, thresholdPct = PLAYOFF_S
     note: secure
       ? `our simulated playoff probability is ${playoffPct!.toFixed(1)}%, at or above the ${thresholdPct}% ` +
         "threshold, so the seed is treated as secure and moves are ranked on expected optimal-lineup " +
-        "points in weeks 15-17 -- the only thing left that a bracket can see. The change in P(playoffs) " +
+        "points in the league PLAYOFF WEEKS (weeks 14-16 under the current format block) -- the only thing left that a bracket can see. The change in P(playoffs) " +
         "is reported beside it and P(title) alongside both."
       : `our simulated playoff probability is ${playoffPct == null ? "not computed" : `${playoffPct.toFixed(1)}%`}, ` +
         `below the ${thresholdPct}% threshold, so moves are ranked on the change in ` +
@@ -1074,7 +1074,7 @@ export interface DepthRiskResult {
    *  was quoted in title probability until Phase 3; the sign convention is unchanged and the
    *  quantity is now the one the simulator has measured skill on. */
   costPp: number;
-  /** POSITIVE = expected optimal-lineup points we lose in weeks 15-17 without him. */
+  /** POSITIVE = expected optimal-lineup points we lose in the league PLAYOFF WEEKS (weeks 14-16 under the current format block) without him. */
   costPlayoffWeekPts: number;
   /** POSITIVE = percentage points of TITLE probability, reported alongside, never used alone. */
   costTitlePp: number;

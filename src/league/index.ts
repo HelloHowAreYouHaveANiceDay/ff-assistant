@@ -88,6 +88,7 @@ export function formatFromEspnSettings(payload: unknown, now: Date = new Date())
     // league HAVING divisions, and its own help text says a division winner is guaranteed a seed.
     // With one division the two rules are the same rule, so "record" is not an assumption there.
     seeding: divisions.length > 1 ? "division-winners-first" : "record",
+    playoffReseed: Boolean(ss.playoffReseed),
     tiebreak: seedingRule,
     divisions,
     source: "espn",
@@ -116,6 +117,9 @@ export function validateFormat(f: unknown, where: string): LeagueFormat {
   }
   if (!Array.isArray(g.playoffWeeks) || !g.playoffWeeks.length) throw new Error(`${where}: format.playoffWeeks is missing or empty.`);
   if (!isSeedingRule(g.seeding)) throw new Error(`${where}: format.seeding must be one of ${SEEDINGS.join(" | ")}, got ${JSON.stringify(g.seeding)}.`);
+  // A missing reseed flag is NOT defaulted to false: false is a real bracket rule, and defaulting to
+  // it is how the repo simulated the wrong bracket for its whole life without a symptom.
+  if (typeof g.playoffReseed !== "boolean") throw new Error(`${where}: format.playoffReseed must be true or false, got ${JSON.stringify(g.playoffReseed)}. Re-read the league (ff format sync) or set it explicitly (ff format set --playoff-reseed true|false).`);
   if (!Array.isArray(g.divisions)) throw new Error(`${where}: format.divisions is missing.`);
   if (g.source !== "espn" && g.source !== "owner-override") throw new Error(`${where}: format.source must be "espn" or "owner-override", got ${JSON.stringify(g.source)}.`);
   if (g.playoffWeeks[0] !== g.regWeeks! + 1) throw new Error(`${where}: format.playoffWeeks starts at ${g.playoffWeeks[0]} but the regular season ends week ${g.regWeeks} -- the calendar contradicts itself.`);
@@ -159,6 +163,9 @@ export interface OpenLeague {
   regWeeks: number;
   nflWeeks: number;
   playoffWeeks: number[];
+  /** The whole format block IN FORCE, so a consumer needs no second source for the field size, the
+   *  seeding rule, the reseed flag or the divisions. Never re-derive any of these from a literal. */
+  format: LeagueFormat;
   teams: LeagueTeam[];
   me: LeagueTeam;
   /** Total projected points of the OPTIMAL starting lineup -- the only roster metric that matters. */
@@ -265,6 +272,7 @@ export async function openLeague(opts: { dbPath?: string; points?: string } = {}
   return {
     provider, db, season: shape.season, slots: shape.slots, teams, me, score,
     regWeeks: shape.regWeeks, nflWeeks: shape.nflWeeks, playoffWeeks: shape.playoffWeeks,
+    format: leagueFormat(db),
     proj: (n) => projOf.get(lookupKey(n)) ?? 0,
     posOf: (n) => posOf.get(lookupKey(n)),
     teamOf: (n) => teamOf.get(lookupKey(n)),

@@ -12,23 +12,22 @@ import type { SeedingRule } from "../league/types.js";
 import type { V2Config } from "./strategy.js";
 
 /**
- * THE SEEDING RULE FOR A BACKTEST RUN.
+ * NO DEFAULT CALENDAR, AND NO DEFAULT BRACKET.
  *
- * It belongs on `ff backtest` as a `--seeding` flag alongside `--divisions`, and that is where it
- * should end up. It is an environment variable for now because the flag would have to be parsed in
- * `cmdBacktest`, which this change is fenced out of; the variable is read ONCE, here, and validated
- * against the two legal names so a typo is a loud failure and not a silent fallback to "record".
- * The default is "record", i.e. the shipped behaviour is byte-identical when the variable is unset.
+ * `playoffTeams = 6` and `regWeeks = 14` used to sit in `runBacktest`'s signature. Both were dead --
+ * the one real caller has always passed the league's own values -- and a dead default that happens
+ * to be plausible is the worst kind: the day a caller stops passing them, the harness silently
+ * simulates a league that does not exist and reports a number with no warning anywhere. So they are
+ * required now. TypeScript cannot express "required after optional" in this positional list, so the
+ * requirement is a throwing sentinel, and `test/format.test.ts` fault-injects it.
+ *
+ * The seeding rule was briefly an `FF_SEEDING` environment variable, because the track that
+ * introduced it was fenced out of `cmdBacktest`. That fence is gone: it is a `--seeding` flag now,
+ * defaulted from the league's own format block, and the env var is no longer read.
  */
-function seedingFromEnv(): SeedingRule {
-  const v = process.env.FF_SEEDING;
-  if (!v) return "record";
-  if (v !== "record" && v !== "division-winners-first") {
-    throw new Error(`FF_SEEDING="${v}" is not a seeding rule -- use "record" or "division-winners-first".`);
-  }
-  return v;
+function required(what: string): never {
+  throw new Error(`runBacktest: ${what} must be passed -- it comes from the league format block (ff format show), not from a default.`);
 }
-const SEEDING_DEFAULT: SeedingRule = seedingFromEnv();
 
 function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 
@@ -36,9 +35,21 @@ export type Weekly = Map<string, Map<number, number>>; // name -> week -> actual
 
 export interface BacktestResult { champ: boolean; madePlayoffs: boolean; wins: number; regPoints: number; }
 
-/** Single-elimination playoff with byes for the top seeds (handles 4/6/7/8...). seeds[0] = best;
- *  each round the top `byes` seeds skip, the rest pair highest-vs-lowest, winners reseed by rank. */
-function playoffWinner(seeds: number[], beat: (a: number, b: number, wk: number) => number, startWeek: number): number {
+/**
+ * Single-elimination playoff with byes for the top seeds (handles 4/6/7/8...). seeds[0] = best.
+ *
+ * `reseed` is ESPN's `playoffReseed`, and it is a real fork, not a formatting choice:
+ *
+ *   true  -- after every round the survivors are re-ordered BY SEED, so the highest remaining seed
+ *            always plays the lowest remaining seed. A bye team's reward is the weakest survivor.
+ *   false -- a FIXED bracket. Survivors keep their position in the tree, so the 7-team bracket's
+ *            top seed meets the winner of 4-v-5 whatever else happened, and the 2 seed cannot meet
+ *            the 1 seed before the final even if every other favourite lost.
+ *
+ * The only mechanical difference is the sort, which is why it is easy to get wrong by omission: the
+ * repo reseeded for its whole life without ever having read the league's setting.
+ */
+export function playoffWinner(seeds: number[], beat: (a: number, b: number, wk: number) => number, startWeek: number, reseed: boolean): number {
   let alive = seeds.map((team, seed) => ({ team, seed }));
   let wk = startWeek;
   while (alive.length > 1) {
@@ -46,7 +57,8 @@ function playoffWinner(seeds: number[], beat: (a: number, b: number, wk: number)
     const bye = alive.slice(0, byes), play = alive.slice(byes);
     const winners: { team: number; seed: number }[] = [];
     for (let i = 0; i < play.length / 2; i++) { const a = play[i], b = play[play.length - 1 - i]; winners.push(beat(a.team, b.team, wk) === a.team ? a : b); }
-    alive = [...bye, ...winners].sort((x, y) => x.seed - y.seed);
+    alive = [...bye, ...winners];
+    if (reseed) alive.sort((x, y) => x.seed - y.seed);
     wk++;
   }
   return alive[0].team;
@@ -111,7 +123,7 @@ export interface MarketModel {
   idioSd?: number;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14, avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false, seeding: SeedingRule = SEEDING_DEFAULT): BacktestResult {
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams: number = required("playoffTeams"), regWeeks: number = required("regWeeks"), avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false, seeding: SeedingRule = required("seeding"), playoffReseed: boolean = required("playoffReseed")): BacktestResult {
   const REG_WEEKS = Array.from({ length: regWeeks }, (_, i) => i + 1); // fantasy regular-season weeks
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
@@ -272,6 +284,6 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   const seeds = seedField(standings, playoffTeams, seeding, divisionOfTeam);
   const madePlayoffs = seeds.includes(0);
   const beat = (a: number, b: number, wk: number) => (wkS(a, wk) >= wkS(b, wk) ? a : b);
-  const champ = playoffWinner(seeds, beat, regWeeks + 1); // playoffs begin the week after the regular season
+  const champ = playoffWinner(seeds, beat, regWeeks + 1, playoffReseed); // playoffs begin the week after the regular season
   return { champ: champ === 0, madePlayoffs, wins: wins[0], regPoints: Math.round(totPts[0]) };
 }

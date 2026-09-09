@@ -66,6 +66,8 @@ export function loadLeagueHistory(
     owner_id=excluded.owner_id,owner=excluded.owner,fetched_at=excluded.fetched_at`);
   const upGame = db.prepare(`INSERT OR REPLACE INTO raw_league_matchup VALUES (@l,@s,@w,@h,@a,@now)`);
   const upDiv = db.prepare(`INSERT OR REPLACE INTO raw_league_division VALUES (@l,@s,@d,@name,@ids,@now)`);
+  const delGames = db.prepare(`DELETE FROM raw_league_matchup WHERE league_id=@l AND season=@s`);
+  const delDivs = db.prepare(`DELETE FROM raw_league_division WHERE league_id=@l AND season=@s`);
 
   const counts: LeagueHistoryCounts = { seasons: 0, available: 0, teams: 0, picks: 0, games: 0, divisions: 0 };
   db.transaction(() => {
@@ -95,6 +97,13 @@ export function loadLeagueHistory(
       });
       const sched = schedules?.[String(s.season)];
       if (sched) {
+        // REPLACE the season's schedule, do not accumulate into it. `INSERT OR REPLACE` is keyed on
+        // (league_id, season, week, home_id, away_id), so a schedule that CHANGES -- which is exactly
+        // what happens when a commissioner shortens the regular season -- leaves every superseded
+        // pairing behind as a ghost row. Re-ingesting 2026 after the 2026-09 change turned 104 games
+        // into 166, with team 14 playing twice in week 1 and no error anywhere.
+        delGames.run({ l: leagueId, s: s.season });
+        delDivs.run({ l: leagueId, s: s.season });
         for (const g of sched.games) { upGame.run({ l: leagueId, s: s.season, w: g.week, h: String(g.homeId), a: String(g.awayId), now: fetchedAt }); counts.games++; }
         for (const d of sched.divisions) { upDiv.run({ l: leagueId, s: s.season, d: String(d.id), name: d.name, ids: JSON.stringify(d.teamIds), now: fetchedAt }); counts.divisions++; }
       }

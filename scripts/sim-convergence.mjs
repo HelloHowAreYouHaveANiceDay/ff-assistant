@@ -29,6 +29,7 @@ import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { nameKey } from "../src/league/index.ts";
 import { simulateSeasons } from "../src/draft/season.ts";
+import { effectiveFormat } from "../src/league/index.ts";
 import { buildSchedule } from "../src/draft/schedule.ts";
 
 const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
@@ -57,7 +58,7 @@ for (const r of db.prepare("SELECT player_id, team_id, team_abbrev, owner FROM o
 }
 const baseTeams = [...byTeam.values()].sort((a, b) => Number(a.id) - Number(b.id));
 const meIdx = baseTeams.findIndex((t) => t.id === String(lgRow.team_id));
-const weeks = buildSchedule(baseTeams.length, cfg.regWeeks ?? 14, 4).weeks;
+const weeks = buildSchedule(baseTeams.length, effectiveFormat(cfg).regWeeks, 4).weeks;
 
 const poolRank = new Map();
 {
@@ -69,7 +70,7 @@ const poolRank = new Map();
   }
   for (const [, l] of Object.entries(byPos)) { l.sort((a, b) => b.pts - a.pts); l.forEach((x, i) => poolRank.set(x.name, { rank: i, of: l.length })); }
 }
-const opts = (trials, seed) => ({ weeks: weeks.length, playoffTeams: 7, slots: cfg.slots, projSd: 0.30, trials, seed, poolRank,
+const opts = (trials, seed) => ({ weeks: weeks.length, playoffTeams: effectiveFormat(cfg).playoffTeams, playoffReseed: effectiveFormat(cfg).playoffReseed, slots: cfg.slots, projSd: 0.30, trials, seed, poolRank,
   bootstrap: { outcomes, corr: corrModel, calibration: "scale" } });
 const clone = (t) => t.map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) }));
 const titleOf = (teams, trials, seed) => 100 * simulateSeasons(teams, weeks, vm, opts(trials, seed))[meIdx].champion;

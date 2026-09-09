@@ -35,7 +35,7 @@
 // luckier season. Without this the ranking is mostly noise and would look perfectly plausible.
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
-import { openLeague, nameKey } from "../src/league/index.ts";
+import { openLeague, nameKey, effectiveFormat } from "../src/league/index.ts";
 import { dstAliasKey } from "../src/draft/values.ts";
 import { rosterGaps } from "../src/draft/season.ts";
 import { simulateSeasons } from "../src/draft/season.ts";
@@ -74,7 +74,10 @@ const cfgAll = JSON.parse(store.prepare("SELECT value FROM settings WHERE key='c
 const cfgFlex = cfgAll.flex_ok;
 // FROM CONFIG. This was a hardcoded 7 in two places -- right for this league by coincidence, and
 // silently wrong for any other. Same class as the flex_ok the simulator was ignoring.
-const PLAYOFF_TEAMS = cfgAll.playoffTeams ?? 7;
+// From the format block, never a literal: see docs/validation.md, Track E.
+const FORMAT = effectiveFormat(cfgAll);
+const PLAYOFF_TEAMS = FORMAT.playoffTeams;
+const PLAYOFF_RESEED = FORMAT.playoffReseed;
 const byeOf = new Map();
 const season = lg ? lg.season : 2026;
 for (const r of store.prepare(
@@ -114,7 +117,7 @@ if (!offline) {
   idx = new Map(baseTeams.map((t, i) => [t.id, i]));
   meIdx = idx.get(String(lgRow.team_id));
   slots = cfgRow.slots;
-  regWeeks = cfgRow.regWeeks ?? 14;
+  regWeeks = effectiveFormat(cfgRow).regWeeks;
   console.log(`  offline rosters: ${baseTeams.length} teams, we are index ${meIdx} (${baseTeams[meIdx]?.name})`);
   if (dropped.length) console.log(`  WARNING: ${dropped.length} rostered players matched no board row: ${dropped.slice(0, 10).join(", ")}`);
 }
@@ -154,7 +157,7 @@ for (const line of readFileSync("data/points.csv", "utf8").trim().split(/\r?\n/)
 }
 if (lg) await lg.close();
 
-const OPTS = { weeks: weeks.length, playoffTeams: PLAYOFF_TEAMS, slots, flexOk: cfgFlex, projSd: 0.30, trials: TRIALS, seed: SEED, poolRank,
+const OPTS = { weeks: weeks.length, playoffTeams: PLAYOFF_TEAMS, playoffReseed: PLAYOFF_RESEED, slots, flexOk: cfgFlex, projSd: 0.30, trials: TRIALS, seed: SEED, poolRank,
   bootstrap: { outcomes, corr: corrModel, calibration: "scale" } };
 
 // ONE simulation returns every team's odds, so read both sides out of the same call. The first
@@ -252,7 +255,7 @@ const baseAll = runAll(baseTeams);
 // BIT-identical before the sweep starts.
 const { runPool, assertDeterministic } = await import("../src/draft/simPool.ts");
 const poolInit = {
-  baseTeams, weeks, slots, flexOk: cfgFlex, playoffTeams: PLAYOFF_TEAMS, projSd: 0.30, poolRank,
+  baseTeams, weeks, slots, flexOk: cfgFlex, playoffTeams: PLAYOFF_TEAMS, playoffReseed: PLAYOFF_RESEED, projSd: 0.30, poolRank,
   varianceModelPath: "data/variance-model.json",
   outcomesPath: "data/rank-outcomes.json",
   corrPath: "data/correlation-model.json",
