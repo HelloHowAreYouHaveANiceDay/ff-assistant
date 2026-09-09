@@ -1,5 +1,112 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## INTEGRATION PASS 2: + the weekly track and the copilot track (2026-09-08/09)
+>
+> `redesign/integration-2` = `redesign/integration` + `--no-ff` merges of `redesign/weekly-track`
+> and `redesign/copilot-track`, then the four merge notes those tracks left, each with a
+> fault-injected test.
+>
+> **Conflicts, and how they were resolved.** Four, all of them two tracks appending to the same tail:
+> `README.md` and `src/db/schema.sql` on the weekly merge, `README.md` and `src/ff.ts` on the
+> copilot merge. Both sides were kept everywhere. The one judgement call was `README.md` on the
+> second merge: the copilot track edited three spots IN PLACE (the Status bullet, the tool count,
+> the layout line) and those are corrections, so its versions won and the superseded `16-tool` and
+> old `In-season:` lines were dropped. `src/ff.ts` needed a brace: both sides ended mid-function and
+> shared one closing `}`.
+>
+> **The checks an auto-merge hides, all run:** no duplicate `CREATE TABLE` or `CREATE INDEX` in
+> `schema.sql`; no new duplicate `case` label in the `ff.ts` dispatch (`app-data` and
+> `my-roster-set` appear once per switch in two different switches and pre-date this work); no
+> duplicate name in `buildTools()` -- `TOOL_NAMES.length` is **34**; no duplicate raw asset id.
+>
+> ### The verification table
+>
+> | check | before (`redesign/integration`) | after |
+> |---|---|---|
+> | `npm run typecheck` | clean | clean |
+> | `npm test` | 304 tests, 302 pass, 2 skip | 372 tests, 370 pass, 2 skip, 0 fail |
+> | arbiter, flagless `--full --no-lookahead --inflation --seasons 1999-2024 --n 150` | 38.2% / 96% | **38.2% / 96%, per-season line character-identical** |
+> | `evaluate-projection --seasons 2008-2025` | RMSE 54.32, pinball 12.39, coverage 0.764 | identical, P5 HELD |
+> | `scripts/copilot-mcp-smoke.mjs` | n/a | PASSED, 34 tools, all 9 copilot tools present |
+> | `scripts/copilot-crosscheck.mjs` | n/a | ALL CHECKS PASSED (real schedule, both fault injections fire) |
+> | `scripts/weekly-leak-audit.mjs` | n/a | 0 mismatches; the leaked-bound control fired on every column |
+> | `scripts/value-gates.mjs` | 1 fail (TE book $373 in $380-470) | the same 1 fail, nothing else. Not adjusted. |
+>
+> ### The one number that MOVED, and why it is not a regression
+>
+> `ff evaluate-weekly --seasons 2012-2025 --train-seasons 2010-2025 --rosters 300`, pooled:
+>
+> | model | weekly track | integration pass 2 |
+> |---|---|---|
+> | trained `weekly` | RMSE 5.493 / CRPS 2.335 | **5.478 / 2.317** |
+> | `season_line` | 6.019 / 2.718 | **5.939 / 2.674** |
+> | gate coverage | 0.868 | **0.876** |
+>
+> **The cause is measured, not guessed: the SEASON LINE changed under the weekly model.** The weekly
+> track branched from `a62d7d6`, before Phase 2b shipped the trained season artifact, so its
+> `data/projection-artifact.json` was `curveOnlyArtifact` -- the floor, no fitted coefficients.
+> Integration ships the TRAINED one. `season_line_pg` is built from that artifact and is the
+> denominator every weekly ratio is fitted against, so the whole target moved. Diffed column by
+> column on 2023: **`season_line_pg` differs on 9,072 of 11,664 rows and `t4_mean`, `dvp_mult` and
+> `pts` differ on zero.** That is the entire delta, and it is the expected direction -- a better
+> season line makes both the baseline and the model better.
+>
+> **Every conclusion survives:** W1 HELD (beaten in all 6 positions), W2 FAILED (3.39 points of
+> lineup regret against a 2-point threshold), W3 HELD (trailing4 6.134 worse than season_line
+> 5.939), and the pre-registered gate **still FAILS on coverage**, so the **season-line-only
+> artifact still ships**. No gate was re-run to change a decision and no band was re-specified.
+>
+> ### The write-once snapshots, carried not regenerated
+>
+> Copied from the weekly track's store with a script that inserts on the same primary keys and
+> refuses to overwrite: `scorecard_prediction` **3,045 rows** (week-1 `weekly` kind at 523 each for
+> `weekly`, `season_line`, `shipped_week`, `trailing4` plus `espn` at 430; `season` kind 523, as-of
+> 2026-09-01) and `raw_espn_projection` **577 rows** -- 0 refused, because the destination was
+> empty. `ff scorecard --season 2026` then reported **0 new rows** and no scored weeks: write-once
+> holds against a re-run. Forward features rebuilt on the merged store: 178,033 rows for 2010-2025
+> and 9,414 for 2026 (523 players x 18 weeks), both exact.
+>
+> **A caveat that belongs on the record.** Those frozen week-1 predictions were produced against the
+> CURVE-ONLY season line, per the section above. They are the weekly track's model as it stood on
+> 2026-09-08, not the integrated one, and week 1 kicked off on 2026-09-09 so they can never be
+> re-taken. That is the correct outcome -- a snapshot re-taken after kickoff would be worthless --
+> but the Brier and RMSE accrual scores the model that was frozen, and this is what it was.
+>
+> ### The four merge notes, each with its fault injection
+>
+> 1. **`CLAUDE.md` said 16 tools.** Now 34, pointing at `TOOL_NAMES.length` as the source rather
+>    than a number to retype, and naming `ff copilot`.
+> 2. **`currentWeek()` returned a default on every call.** It now derives the week from
+>    `raw_nfl_game` kickoff dates -- week w runs from the day after week w-1's last kickoff through
+>    week w's last kickoff -- on the **LOCAL** date. FAULT: at 9pm on 2026-09-14 the UTC date is
+>    already the 15th and the UTC path returns week **2**; the local path returns week **1**. The
+>    old `default` survives verbatim for a store with no schedule rows. Live: week 1 today, week 11
+>    on 2026-11-20.
+> 3. **`lineupRecommend` divided by 17.** It now calls `projectWeekly` with the shipped
+>    season-line-only artifact. Both directions asserted, because the shipped artifact is the
+>    identity and a DEAD seam looks exactly like a working one: deep-equal starters and bench under
+>    the shipped artifact, and a fixture artifact with one non-zero coefficient CHANGES the lineup.
+>    On the real 2026 roster the two paths also agree exactly (76.4 points, no per-starter
+>    difference). A player the projector has no row for falls back and `assumptions.basisNote` names
+>    him.
+> 4. **The scorecard's `odds` kind was permanently empty.** `runScorecard` now takes an
+>    `oddsProvider`; `ff scorecard --odds` runs `seasonOdds` on the league's REAL schedule at 3000
+>    trials, seed 7, and a generated schedule is refused. **16 teams, 32 rows** (playoff and title
+>    stored as separate models -- a Brier score over a mixture of the two has no interpretation),
+>    as-of 2026-09-08, playoff probabilities summing to 700% for 7 berths and title to exactly 100%.
+>    FAULT: no provider writes nothing and says why; a second run handed DIFFERENT probabilities
+>    changes no stored value.
+>
+> ### What Phase 2c inherits
+>
+> - **The identity key-space reconciliation, first.** Untouched here by instruction, and it blocks
+>   the rest.
+> - **The TE-floor gate.** $373 against a $380-470 band, inherited and deliberately not adjusted.
+> - **The DAG node list under `app/`** -- the new tables are not on it. `app/` was out of scope.
+> - **The weekly gate, re-run under a band pre-registered on `cov(>0)`.** Decided BEFORE the run,
+>   not after this one. The trained artifact now reads 0.814 on that statistic against the shipped
+>   baseline's 0.804, and its pooled 0.876 failure is the zero atom sitting on a p10 of exactly 0.
+
 > ## INTEGRATION: Phase 2b + the data track, on one branch (2026-09-08)
 >
 > `redesign/integration` = `redesign/phase-2b-price-model-ecr-arbiter` + a `--no-ff` merge of
