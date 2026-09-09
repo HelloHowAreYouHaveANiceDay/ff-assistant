@@ -141,6 +141,13 @@ export interface WeeklyEvalResult {
   lineup: Record<string, Record<string, { meanCaptured: number; winShare: number; drawnRosters: number }>>;
   predictions: { id: string; claim: string; held: boolean | null; evidence: string }[];
   gate: WeeklyGate;
+  /**
+   * THE SAME THREE CLAUSES, ONE VERDICT PER POSITION -- and this is the one that fills
+   * `WEEKLY_SERVE`. `gate` above is the pooled all-or-nothing form and is kept because it is what
+   * the earlier runs were recorded under; a boolean over six positions cannot say that the model is
+   * well calibrated at QB and badly calibrated at TE, which is the thing actually measured.
+   */
+  gateByPos: WeeklyPosGate[];
 }
 
 /** One clause of the gate, reported whether it passed or not, with the numbers that decided it. */
@@ -177,6 +184,105 @@ export interface WeeklyGate {
 export const GATE_COV_POOLED: [number, number] = [0.75, 0.85];
 export const GATE_COV_POS: [number, number] = [0.70, 0.90];
 export const GATE_ZERO_TOL = 0.03;
+
+/** The FLOOR: the season-line-only artifact, which is what keeps shipping when a clause fails. */
+export const FLOOR: ModelName = "season_line";
+
+export interface WeeklyPosGate {
+  pos: string;
+  clauses: GateClause[];
+  passed: boolean;
+  /** What this position ships as a result. */
+  ships: string;
+}
+
+/**
+ * THE GATE, APPLIED PER POSITION -- the same three clauses, one verdict each.
+ *
+ * The clauses are UNCHANGED from `weeklyGate`; what changes is the unit of the decision. A pooled
+ * all-or-nothing verdict throws away the thing the earlier run actually measured: the two-part model
+ * is well calibrated at QB, K and DST and badly calibrated at TE, and one boolean over all six
+ * cannot say that. `WEEKLY_SERVE` in streamingServe.ts is a per-position table precisely because the
+ * answer is per position, so the gate that fills it has to be too.
+ *
+ *   (a) this position's CRPS beats the FLOOR's at the same position, on the same population;
+ *   (b) coverage conditional on pts > 0 in GATE_COV_POOLED pooled AND GATE_COV_POS at this position;
+ *   (c) |predicted - actual| zero share within GATE_ZERO_TOL pooled AND at this position.
+ *
+ * Clauses (b) and (c) each carry the POOLED condition as well as the per-position one, exactly as
+ * registered: a model that is in band everywhere individually and out of band overall has a
+ * composition problem the per-position view cannot see.
+ *
+ * `shipped_week` is reported beside the floor in (a)'s evidence rather than tested, because the
+ * decision this gate makes is "does the floor keep serving this position", and the floor is the
+ * thing that would keep serving it.
+ */
+export function weeklyGateByPos(
+  pooled: Record<string, Scored>, byPos: Record<string, Record<string, Scored>>,
+  opts: { model?: string; floor?: string; shipsAs?: string; floorShipsAs?: string } = {},
+): WeeklyPosGate[] {
+  const model = opts.model ?? "weekly";
+  const floor = opts.floor ?? FLOOR;
+  const f = (x: number, d = 3) => (Number.isFinite(x) ? x.toFixed(d) : "-");
+  const inBand = (x: number, [lo, hi]: [number, number]) => Number.isFinite(x) && x >= lo && x <= hi;
+  const mp = pooled[model];
+
+  const out: WeeklyPosGate[] = [];
+  for (const pos of POS_SCORED) {
+    const byModel = byPos[pos];
+    if (!byModel?.[model]?.n) continue;
+    const m = byModel[model], fl = byModel[floor], sw = byModel[BASELINE];
+
+    const aOk = Number.isFinite(m.crps) && Number.isFinite(fl?.crps) && m.crps < fl.crps;
+    const a: GateClause = {
+      id: "a", passed: aOk,
+      claim: `CRPS at ${pos} beats the floor (${floor}) on the same population`,
+      evidence: `${f(m.crps, 4)} vs floor ${f(fl?.crps, 4)}` +
+        (sw?.n ? `; shipped_week ${f(sw.crps, 4)} (reported, not tested)` : ""),
+    };
+
+    const bOk = inBand(mp?.coverageNonZero, GATE_COV_POOLED) && inBand(m.coverageNonZero, GATE_COV_POS);
+    const b: GateClause = {
+      id: "b", passed: bOk,
+      claim: `coverage given pts > 0 in [${GATE_COV_POOLED.join(", ")}] pooled and ` +
+        `[${GATE_COV_POS.join(", ")}] at ${pos}`,
+      evidence: `${pos} ${f(m.coverageNonZero)}, pooled ${f(mp?.coverageNonZero)}`,
+    };
+
+    const dPos = Math.abs(m.zeroPred - m.zeroActual);
+    const dPool = Math.abs((mp?.zeroPred ?? NaN) - (mp?.zeroActual ?? NaN));
+    const cOk = Number.isFinite(dPos) && dPos <= GATE_ZERO_TOL &&
+      Number.isFinite(dPool) && dPool <= GATE_ZERO_TOL;
+    const c: GateClause = {
+      id: "c", passed: cOk,
+      claim: `predicted zero share within ${GATE_ZERO_TOL} of actual, pooled and at ${pos}`,
+      evidence: `${pos} predicted ${f(m.zeroPred)} vs actual ${f(m.zeroActual)} (off by ${f(dPos)}); ` +
+        `pooled off by ${f(dPool)}`,
+    };
+
+    const clauses = [a, b, c];
+    const passed = clauses.every((x) => x.passed);
+    out.push({
+      pos, clauses, passed,
+      ships: passed ? (opts.shipsAs ?? model) : (opts.floorShipsAs ?? "season_line_only"),
+    });
+  }
+  return out;
+}
+
+/** One block per position: the verdict, then each clause with its evidence. Printed so a reader can
+ *  see WHICH clause failed and BY HOW MUCH rather than a single boolean. */
+export function formatGateByPos(gates: WeeklyPosGate[], title: string): string {
+  const out = [title];
+  for (const g of gates) {
+    out.push(`  ${g.pos.padEnd(4)} ${g.passed ? "PASS" : "FAIL"} -> ships ${g.ships}`);
+    for (const c of g.clauses) {
+      out.push(`      (${c.id}) ${c.passed ? "pass" : "FAIL"}  ${c.claim}`);
+      out.push(`            ${c.evidence}`);
+    }
+  }
+  return out.join("\n");
+}
 
 export function weeklyGate(
   pooled: Record<string, Scored>, byPos: Record<string, Record<string, Scored>>,
@@ -760,6 +866,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   // clause (b) is conditional on pts > 0. It is applied exactly as registered; a failing clause
   // keeps the season-line-only artifact shipping and says which clause. ----
   const gate = weeklyGate(pooled, byPos);
+  const gateByPos = weeklyGateByPos(pooled, byPos);
 
   return {
     seasons: opts.seasons, trainSeasons: opts.trainSeasons, features,
@@ -768,7 +875,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     // 2d: the columns exist, they are built with a cutoff of kickoff minus four days, and they are
     // empty, because the feed's dated filings land at kickoff minus two or later.
     pendingDataTrack: [...PENDING_DATA_TRACK_FIELDS],
-    pooled, byPos, byBand, bySeason, lineup, predictions, gate,
+    pooled, byPos, byBand, bySeason, lineup, predictions, gate, gateByPos,
   };
 }
 
@@ -825,5 +932,18 @@ export function formatWeeklyReport(r: WeeklyEvalResult): string {
   }
   out.push("");
   out.push(`GATE: ${r.gate.passed ? "PASSED" : "FAILED"} -- ships the ${r.gate.ships} artifact. ${r.gate.reason}`);
+  if (r.gateByPos?.length) {
+    out.push("");
+    out.push(formatGateByPos(r.gateByPos, "GATE, PER POSITION (the same three clauses; this is what fills WEEKLY_SERVE)"));
+    out.push("");
+    const pass = r.gateByPos.filter((g) => g.passed).map((g) => g.pos);
+    const fail = r.gateByPos.filter((g) => !g.passed);
+    out.push(`  SHIPS the two-part model at: ${pass.length ? pass.join(", ") : "(none)"}`);
+    out.push(`  KEEPS the floor at:          ${fail.length ? fail.map((g) => g.pos).join(", ") : "(none)"}`);
+    for (const g of fail) {
+      const why = g.clauses.filter((c) => !c.passed).map((c) => `(${c.id}) ${c.evidence}`).join("; ");
+      out.push(`    ${g.pos}: ${why}`);
+    }
+  }
   return out.join("\n");
 }

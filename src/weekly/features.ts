@@ -911,5 +911,11 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
     }
   })();
 
+  // THE POPULATION IS REBUILT BECAUSE THE ROWS WERE. This path DELETEs the season and rewrites it,
+  // which would otherwise leave `in_population` NULL for the live season -- and a NULL there is
+  // indistinguishable from "never built", which is what the trainer and the harness refuse on. It
+  // matters most for the season a decision is actually being made in.
+  buildPopulation(db, [season]);
+
   return { season, weeks: weeks.length, rows, players: board.length, withLine, withLines, playedWeeks };
 }
