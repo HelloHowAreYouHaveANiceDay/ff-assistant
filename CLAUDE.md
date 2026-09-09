@@ -123,8 +123,10 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   asserts it. The last ten are the in-season copilot's, and the same ten decisions are reachable
   from a terminal as `ff copilot <verb>` through one dispatcher (`src/inseason/copilotActions.ts`),
   so a number printed in a shell and a number the Assistant quotes cannot differ. The tenth is
-  `stream_recommend` / `ff copilot stream`: of the men nobody rosters, who to start this week at QB,
-  K or DST -- the three positions where the streaming model ships (`SHIPPED_STREAMING_POSITIONS`).
+  `stream_recommend` / `ff copilot stream`: of the men nobody rosters, who to start this week -- at
+  any of the six positions, since the 2026-09-09 owner decision widened `SHIPPED_STREAMING_POSITIONS`
+  (`src/weekly/streamingServe.ts`) to all of QB/RB/WR/TE/K/DST on the decision-population measurement
+  in `docs/validation.md`.
 - The in-season decision surface and its limits: `docs/in-season-design.md`; the weekly model and its
   write-once scorecard: `docs/weekly.md`
 - Recorded decisions D0–D10 (do not silently reverse): `docs/decisions.md`

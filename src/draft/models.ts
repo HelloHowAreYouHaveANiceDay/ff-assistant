@@ -233,15 +233,18 @@ export const MODELS: ModelSpec[] = [
     // a stale or missing streaming artifact would have degraded the lineup at three positions in
     // silence, which is precisely the failure the registry's own header describes.
     key: "streaming", file: STREAMING_ARTIFACT, required: false, nestedLift: null, claimedLift: null,
-    what: "THE STREAMING MODEL, and what ships at QB, K and DST. The weekly two-part structure plus " +
-      "the twelve point-in-time opponent-and-environment columns of `feat_player_week_stream`, with " +
-      "K and DST FITTED rather than intercept-only. It passed all three gate clauses at QB, K and " +
-      "DST and failed clause (c) at RB, WR and TE, so `WEEKLY_SERVE` maps exactly those three " +
-      "positions to it and the other three to the floor -- `SHIPPED_STREAMING_POSITIONS` is DERIVED " +
-      "from that table, never maintained beside it. READ THE GAIN WITH ITS SOURCE ATTACHED: the " +
-      "control with the twelve opponent columns REMOVED is within 0.004 CRPS at every position, so " +
-      "what the gate passed on is the two-part structure and K and DST being fitted at all. The " +
-      "opponent block's own contribution measured ~0 and P42 failed saying so",
+    what: "THE STREAMING MODEL, and what ships at ALL SIX POSITIONS as of the 2026-09-09 owner " +
+      "decision. The weekly two-part structure plus the twelve point-in-time opponent-and-" +
+      "environment columns of `feat_player_week_stream`, with K and DST FITTED rather than " +
+      "intercept-only. It originally passed all three gate clauses at QB, K and DST and failed " +
+      "clause (c) at RB, WR and TE on the pre-unification population; re-run on the decision " +
+      "population (docs/validation.md, THE STREAMING GATE QUESTION), it passes all three clauses, " +
+      "pooled coverage included, at all six positions, and `WEEKLY_SERVE` now maps every position " +
+      "to it -- `SHIPPED_STREAMING_POSITIONS` is DERIVED from that table, never maintained beside " +
+      "it. READ THE GAIN WITH ITS SOURCE ATTACHED: the control with the twelve opponent columns " +
+      "REMOVED is within 0.004 CRPS at every position, so what the gate passed on is the two-part " +
+      "structure and, at K and DST, being fitted at all. The opponent block's own contribution " +
+      "measured ~0 and P42 failed saying so",
     check: (j) => {
       try {
         const a = loadWeeklyArtifact(j);

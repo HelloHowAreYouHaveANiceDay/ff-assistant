@@ -1039,12 +1039,19 @@ columns are about the matchup. Nothing here was ever going to fix it, and the te
 tolerance to 0.04 is refused for the same reason it was refused in Phase 2d: a tolerance chosen after
 seeing the number is not a tolerance.
 
-**So the shipped surface is now MIXED, and that is the thing to be careful about.**
-`SHIPPED_STREAMING_POSITIONS = ["QB", "K", "DST"]` in `src/weekly/streamingServe.ts` is the one
-place it is decided; RB, WR and TE serve `weekly-artifact-lineonly.json`, the same floor
-`lineupRecommend` and `ff scorecard`'s `weekly` kind serve. Every result of `stream_recommend`
+**So the shipped surface was MIXED at the time of this pass, and that was the thing to be careful
+about.** `SHIPPED_STREAMING_POSITIONS = ["QB", "K", "DST"]` in `src/weekly/streamingServe.ts` was
+the one place it was decided; RB, WR and TE served `weekly-artifact-lineonly.json`, the same floor
+`lineupRecommend` and `ff scorecard`'s `weekly` kind served. Every result of `stream_recommend`
 carries `artifactByPos`, and `ff scorecard` prints it every run, because "which model said this" is
 the one thing a per-position decision makes impossible to infer from the number.
+
+**2026-09-09 OWNER DECISION: this is superseded -- the streaming model now ships at all six
+positions.** See "What serves each position, and what happens to the record when that changes" below
+for the current table and the measurement it rests on (`docs/validation.md`, "THE STREAMING GATE
+QUESTION -- REPORTED, NOT DECIDED"). The clause-(c) failures at RB/WR/TE recorded in the table above
+were measured on the OLD population, before `src/weekly/population.ts` unified it; re-measured on the
+decision population, all three pass.
 
 ### 6.8 The decision surface, and the forward record
 
@@ -1090,16 +1097,20 @@ through it -- the scorecard's `weekly` kind, `projectStreamingWith`, `ff copilot
 | pos | serves | what that is |
 |---|---|---|
 | QB | `streaming-artifact.json` | two-part plus the twelve point-in-time opponent columns |
-| RB | `weekly-artifact-lineonly.json` | the floor: every coefficient zero, mean intercept 1.0 |
-| WR | `weekly-artifact-lineonly.json` | the floor |
-| TE | `weekly-artifact-lineonly.json` | the floor |
+| RB | `streaming-artifact.json` | two-part plus the twelve point-in-time opponent columns |
+| WR | `streaming-artifact.json` | two-part plus the twelve point-in-time opponent columns |
+| TE | `streaming-artifact.json` | two-part plus the twelve point-in-time opponent columns |
 | K | `streaming-artifact.json` | streaming, K fitted rather than an intercept |
 | DST | `streaming-artifact.json` | streaming, DST fitted rather than an intercept |
+
+(Before the 2026-09-09 owner decision, RB/WR/TE served `weekly-artifact-lineonly.json`, the floor --
+every coefficient zero, mean intercept 1.0. See the addendum at the end of this section.)
 
 `SHIPPED_STREAMING_POSITIONS` is **derived** from this table, not maintained beside it. Two
 hand-kept lists overlap, and a position in both is served by whichever list the caller happens to
 consult; one table cannot express that state. `test/weekly-serve-switch.test.ts` asserts the
-derivation rather than re-typing the three positions.
+derivation, and separately asserts the 2026-09-09 decision BY NAME (all six positions), rather than
+re-typing a subset.
 
 **`ff scorecard` prints the table every run**, per position, plus
 `WEEKLY_SERVE_SWITCHED_ON` -- the date the mapping last changed. Stated rather than inferred from a
@@ -1130,10 +1141,36 @@ intercept is 2.5x, which would move every value visibly -- 0 rows written, every
 byte-identical, and the positive control writes the next week so the guard refuses a FROZEN week
 rather than refusing everything.
 
-**Known gap.** `loadWeeklyProjection` in `src/inseason/copilotStore.ts` -- the lineup seam -- still
-loads the floor for all six positions. It is correct at RB/WR/TE, and the lineup path never served
-the streaming model at QB/K/DST, so nothing regressed; routing it through `WEEKLY_SERVE` is real
-remaining work.
+**Known gap, CLOSED (integration pass 4, then 2026-09-09).** `loadWeeklyProjection` in
+`src/inseason/copilotStore.ts` -- the lineup seam -- used to load the floor for all six positions
+regardless of what `WEEKLY_SERVE` said, so the scorecard could record a quarterback under the
+streaming model while the lineup picked him under the floor. Integration pass 4 routed it through
+`projectStreamingWith`, asserted in `test/weekly-serve-lineup.test.ts`. Then, on 2026-09-09, the
+owner widened `WEEKLY_SERVE` itself to all six positions (see the addendum below), so the seam now
+serves the streaming artifact everywhere.
+
+### Addendum, 2026-09-09: the streaming model now ships at all six positions
+
+**OWNER DECISION**, executed on the measurement in `docs/validation.md` ("THE STREAMING GATE
+QUESTION -- REPORTED, NOT DECIDED"): re-running the SAME three clauses above, including the pooled
+coverage band, on the decision population (69,500 scored rows, the same population section 5
+unified) finds the streaming artifact passes every clause at all six positions -- pooled coverage
+0.847 inside [0.75, 0.85]; RB 2.7083 vs floor 3.3448, WR 2.8862 vs 3.3553, TE 2.2335 vs 2.5542 CRPS;
+zero shares within 0.001 of actual at every position. The clause-(c) failures recorded in section 6.7
+were measured on the pre-unification population; they do not survive re-measurement on the current
+one. `WEEKLY_SERVE` now maps all six positions to `streaming-artifact.json`, switched
+`WEEKLY_SERVE_SWITCHED_ON = "2026-09-09"`. This is a **constant change, not a gate change**: no gate,
+check or clause in `evaluate.ts`/`streamingEvaluate.ts` was widened or altered to reach it.
+
+The lineup replay (`scripts/inseason-backtest-lineup.mjs`, `docs/in-season-backtest.md`) moved with
+it: the `served` arm went from 85.71 to 88.22 points per team-week (floor 85.19, challenger 88.10,
+managers 89.64) -- essentially matching the challenger, which is the expected result since the
+streaming artifact is the same two-part structure plus an opponent block measured near zero (P42).
+`scorecard_prediction`'s `weekly` kind is write-once, so weeks already frozen before this date keep
+whatever they were served at the time; the new mapping reaches only the next unplayed week. As of
+2026-09-09, 2026 weeks 1 and 2 were already frozen (confirmed byte-identical after this change) and
+the imminent week (week 2) had already been snapshotted before kickoff, so no new snapshot was taken
+by this pass -- the mapping will show up starting whichever week is next frozen.
 
 ## Determinism
 

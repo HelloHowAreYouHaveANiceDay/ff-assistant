@@ -254,9 +254,14 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   the same anchor and under the same leakage guard. `evaluate-streaming` is nested by season and its
   decision metric is STREAMING REGRET: take the free-agent pool, ask each model for its one best
   pick, score what that man actually did. The gate is applied PER POSITION, so what ships is a
-  mapping rather than an artifact: **QB, K and DST ship the streaming model; RB, WR and TE failed
-  clause (c) -- the same clause and nearly the same numbers the weekly two-part model failed on --
-  and keep the floor.** `ff copilot stream --pos DST --week 3` and the `stream_recommend` MCP tool
+  mapping rather than an artifact. Originally that mapping was **QB, K and DST ship the streaming
+  model; RB, WR and TE failed clause (c) -- the same clause and nearly the same numbers the weekly
+  two-part model failed on -- and kept the floor.** **2026-09-09 OWNER DECISION: the streaming
+  model now ships at all six positions.** `docs/validation.md` ("THE STREAMING GATE QUESTION --
+  REPORTED, NOT DECIDED") re-ran the same three clauses, including the pooled coverage band, on the
+  decision population and found the streaming artifact passes every clause at all six positions
+  (pooled coverage 0.847 in [0.75, 0.85]; RB 2.7083 vs floor 3.3448, WR 2.8862 vs 3.3553, TE 2.2335
+  vs 2.5542 CRPS). `ff copilot stream --pos DST --week 3` and the `stream_recommend` MCP tool
   serve it, and every result names which artifact served which position.
   **Read the result with its control attached:** the twelve opponent columns are worth under 0.004
   CRPS at every position against the same model without them, and P42 failed saying so. What passed
@@ -531,8 +536,10 @@ the old population and re-registering it deserves its own pre-registered job. Li
 decision metric, moved the OTHER way: +7.02 points per lineup on standard-15 and +8.54 on deep-18,
 win share 0.68-0.70. That is written down rather than acted on, which is the point of a gate.
 
-So the serve table keeps its filenames -- QB/K/DST streaming, RB/WR/TE the floor -- but all three
-artifacts were refitted on the decision population, so the numbers a position is served changed.
+So the serve table keeps its filenames -- QB/K/DST streaming, RB/WR/TE the floor, AS OF THIS PASS --
+but all three artifacts were refitted on the decision population, so the numbers a position is
+served changed. (2026-09-09: the streaming half of this changed -- see the note above; the two-part
+model discussed in this section is unaffected and still ships nowhere.)
 `WEEKLY_SERVE` in `src/weekly/streamingServe.ts` is now the single table every consumer resolves
 through, `ff scorecard` prints it per position with the switch date, and each snapshotted `weekly`
 row carries the artifact that produced it. The switch reaches the NEXT unplayed week only; a

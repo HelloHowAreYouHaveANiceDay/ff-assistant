@@ -690,11 +690,24 @@ repeated here, and none of the earlier text was edited.
   before looking again at which model each reading admits.**
 - **NEW: streaming at all six positions** (gate question 2). It passes not only the streaming gate
   but the FULL weekly gate -- pooled coverage clause included, 0.847 in band -- at all six positions
-  on the decision population, and beats the two-part model on pooled CRPS. **Recommendation: hold
-  anyway, and re-register the coverage band first.** Widening a shipped list the week a model starts
-  passing is the definition of tuning, the band it passes was chosen on a different population, and
-  Track C already measured the opponent block's own contribution at ~0 (P42 failed) -- so the gain on
-  offer at RB/WR/TE is the two-part structure, not the matchup columns.
+  on the decision population, and beats the two-part model on pooled CRPS. **Recommendation (at the
+  time this was written): hold anyway, and re-register the coverage band first.** Widening a shipped
+  list the week a model starts passing is the definition of tuning, the band it passes was chosen on
+  a different population, and Track C already measured the opponent block's own contribution at ~0
+  (P42 failed) -- so the gain on offer at RB/WR/TE is the two-part structure, not the matchup
+  columns.
+
+  **DECIDED, 2026-09-09, by the owner: ship it.** `WEEKLY_SERVE` now maps all six positions to
+  `streaming-artifact.json` (`src/weekly/streamingServe.ts`, `WEEKLY_SERVE_SWITCHED_ON =
+  "2026-09-09"`). This is a constant change, not a widening of any gate, check or clause -- the
+  measurement above is exactly what was recorded here and nothing in it was re-run or loosened to
+  reach the decision. The recommendation to hold pending re-registering the coverage band was heard
+  and overridden, not silently bypassed: the owner judged the reported measurement sufficient. The
+  lineup replay's `served` arm moved from 85.71 to 88.22 points/team-week (floor 85.19, challenger
+  88.10) -- see `docs/weekly.md`'s 2026-09-09 addendum and `docs/validation.md` for the full record.
+  Decision 5 (the two-part model, and the pooled-band question itself) is UNCHANGED by this -- the
+  two-part model still ships nowhere, and the pooled band is still unregistered against the current
+  population.
 - **Decision 3 (V2 vs V3) is unchanged and is now better evidenced.** Track G calibrated the
   surrogate to the simulated marginal and P28 failed again. **Recommendation: as before -- V3 stays
   selectable and unshipped -- and see next-work item 3: the next attempt should be structural or

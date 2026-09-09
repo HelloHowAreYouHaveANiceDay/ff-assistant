@@ -1,5 +1,56 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## OWNER DECISION: streaming ships at all six positions (2026-09-09)
+>
+> Decided by the owner, executed on the measurement recorded just below in "THE STREAMING GATE
+> QUESTION -- REPORTED, NOT DECIDED": under the full corrected weekly gate, including the pooled
+> coverage band, the streaming artifact passes all three clauses at all six positions on the decision
+> population (pooled coverage 0.847 in [0.75, 0.85]; pooled CRPS 2.7347 vs floor 3.2928; RB 2.7083 vs
+> 3.3448, WR 2.8862 vs 3.3553, TE 2.2335 vs 2.5542; zero shares within 0.001 of actual everywhere).
+>
+> **What changed:** `WEEKLY_SERVE` in `src/weekly/streamingServe.ts` now maps QB, RB, WR, TE, K and
+> DST all to `streaming-artifact.json`; `WEEKLY_SERVE_SWITCHED_ON = "2026-09-09"`.
+> `SHIPPED_STREAMING_POSITIONS`, derived from that table, is now all six. This is a CONSTANT change,
+> not a gate change -- no clause, band, tolerance or check in `evaluate.ts` or
+> `streamingEvaluate.ts` was widened, loosened or re-run to reach it; the measurement below already
+> existed and was reported, not decided, by the pass that produced it.
+>
+> **What did not change:** the two-part weekly model (decision 5 in `docs/redesign-2026-09.md`)
+> still ships nowhere -- it remains blocked on the pooled coverage band, which remains unregistered
+> against the current population. Nothing here re-runs or re-scopes that question.
+>
+> **Replay, before -> after** (`scripts/inseason-backtest-lineup.mjs`, 1,896 real team-weeks,
+> 2018-2025, managers started 89.64, hindsight 102.12):
+>
+> | arm | before | after |
+> |---|---|---|
+> | floor | 85.19 | 85.19 (unchanged) |
+> | **served (`WEEKLY_SERVE`)** | **85.71** | **88.22** |
+> | challenger | 88.10 | 88.10 (unchanged) |
+>
+> The served arm now sits essentially on top of the challenger, which is the expected result: the
+> streaming artifact is the same two-part structure as the challenger plus an opponent block whose
+> own contribution measured ~0 (P42, failed). Full detail in the 2026-09-09 addendum to
+> `docs/weekly.md`'s "What serves each position" section.
+>
+> **Scorecard state:** `scorecard_prediction`'s `weekly` kind is write-once. 2026 weeks 1 and 2 were
+> already frozen before this change and are confirmed byte-identical after it (4,614 rows, same
+> SHA-256 hash, before and after). The imminent week (week 2, as of 2026-09-09) had already been
+> snapshotted before kickoff under the prior mapping, so this pass took no new snapshot; the widened
+> mapping will first appear in whichever week is frozen next. Attempting to re-snapshot week 2 under
+> the new mapping was run live and refused ("week 2 was already snapshotted"), matching
+> `test/weekly-serve-switch.test.ts`'s fault-injected guard.
+>
+> Tests: `test/weekly-serve-switch.test.ts` gained an assertion of the decision itself (all six
+> positions map to `STREAMING_ARTIFACT`), fault-injected by reverting one position and confirming the
+> new test names it. `test/weekly-serve-lineup.test.ts` was rewritten from "QB/K/DST move, RB/WR/TE
+> don't" to "every position `SHIPPED_STREAMING_POSITIONS` names moves, read from the table" --
+> `lineupRecommend` now reports a different number for the fixture RB, WR and TE (not just QB)
+> between the floor and the served artifact, and `assumptions.artifactByPos` names the streaming
+> artifact at all six positions. `npm test` (662 tests), `npm run typecheck` and `ff models` all pass.
+>
+> ---
+
 > ## INTEGRATION PASS 4: five more tracks stacked, and a simulator bug the merge itself found (2026-09-09)
 >
 > `redesign/final-3` = `redesign/final-2` (`1b271a6`) + Tracks F, I, J, H, G merged `--no-ff` in that
