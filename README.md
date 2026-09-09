@@ -173,13 +173,26 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   team-mates out, depth rank) and `feat_player_season_ext` (draft capital, contract year, prior-season
   usage, September 1 depth and injury, preseason ADP), plus `feat_coverage`. It never rewrites the
   Phase 2a tables, so it can run before or after `build-features`.
+  Phase 2d measured what is actually IN them: the Wednesday injury pair is empty (11 and 389 values
+  in 133,892 player-weeks -- the feed files at kickoff minus two or later), `injury_status_sep1` is
+  100% NULL, and from 2025 the injury feed publishes no report date at all. Two of the season columns
+  -- `depth_rank_sep1` and `contract_year` -- are now fitted features of the shipped projection
+  artifact; they were the strongest candidates the feature screen has ever produced.
 - **Weekly model (`docs/weekly.md`):** `build-weekly-features` (the point-in-time
   `feat_player_week_model` view, with a leakage guard that is fault-injected against its own
   detector), `evaluate-weekly` (nested by season; the decision metric is LINEUP REGRET, not RMSE),
   `scorecard --season 2026` (freezes predictions before kickoff and scores each settled week; the
   prediction table is write-once so a mid-season model change cannot rewrite its own record).
   Trainer: `uv run --with scikit-learn --with numpy tools/train_weekly.py --db data/ff.db
-  --seasons 2010-2025 --out data/weekly-artifact.json`.
+  --seasons 2010-2025 --zero-model two-part --out data/weekly-artifact.json`.
+  The model is TWO-PART from Phase 2d -- P(zero week) from the Friday injury report, practice status,
+  depth rank and team-mates out, times the ratio given he played -- and it beats the shipped path by
+  6.1 points per lineup on the deep-18 scenario. It nevertheless **failed its pre-registered gate**
+  on zero-share calibration by 0.005, so the season-line-only floor is still what `lineupRecommend`
+  serves. `docs/weekly.md` has the clause-by-clause table.
+  Two more reports: `scripts/weekly-availability-coverage.mjs` (per-column coverage by season, with
+  each column's as-of rule) and `scripts/weekly-artifact-probe.mjs` (load an artifact through the
+  CONSUMER's loader -- "the trainer wrote a file" and "the engine can serve it" are two facts).
 - **BYO agent:** `mcp` serves the Assistant's own 34-tool control surface over stdio MCP, so Claude
   Code (or any MCP client) can drive the draft and the season. `docs/mcp.md`; `claude mcp add
   ff-draft -- npx tsx <repo>/src/ff.ts mcp`.
