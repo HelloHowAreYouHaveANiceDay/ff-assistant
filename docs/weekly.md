@@ -649,7 +649,293 @@ node --import tsx scripts/weekly-leak-audit.mjs <season>
 
 node --import tsx scripts/weekly-espn-probe.mjs 2026 1
     read-only: what stat blocks ESPN actually returns for a week
+
+ff build-streaming-features [--seasons 2010-2026]
+    build feat_player_week_stream, print the team-week feed rows read per season
+    and per-column coverage. The two numbers are printed together on purpose: a
+    season the feed does not cover leaves twelve columns NULL at once, and in the
+    coverage table alone that is indistinguishable from a season with no data.
+
+uv run --with scikit-learn --with numpy tools/train_streaming.py \
+    --db data/ff.db --seasons 2010-2025 --holdout-season none \
+    --out data/streaming-artifact.json
+    --features weekly-only fits the SAME positions with the twelve streaming
+    columns REMOVED: the control the opponent block is measured against, and the
+    only baseline P41 can honestly be read against. The trainer REFUSES to emit a
+    "streaming" artifact whose streaming columns failed their coverage floor.
+
+ff evaluate-streaming --seasons 2012-2025 --train-seasons 2010-2025
+    nested-by-season, TWO artifacts per fold (the model and its control), the
+    streaming-regret table, P40-P42 and the per-position gate. --pool-scale N
+    scales the free-agent pool boundary so its sensitivity can be checked rather
+    than assumed. About 45 minutes: 28 trainer invocations.
 ```
+
+---
+
+## 6. STREAMING: what the opponent allows, and a decision instead of a projection (Track C, 2026-09-09)
+
+Sections 1-5 answer "how many points will this man score". A streaming decision is a different
+question with a different pool: *my defence is on bye and there are nine defences free -- which one*.
+The men it is about are, by definition, on nobody's roster. Three things follow, and each is a
+separate piece of work below: the features have to be about the OPPONENT rather than about the
+player, K and DST have to stop being intercepts, and the metric has to be a PICK rather than an RMSE.
+
+### 6.1 `feat_player_week_stream` -- twelve columns, one anchor, two refusals
+
+Same as-of rule as `feat_player_week_model`: the day before the week's FIRST kickoff, league-wide.
+Every accumulated column is bounded by `week < w` of season Y, blended with all of Y-1 and shrunk
+toward the LEAGUE MEAN over the same window, weights 4 and 6 -- the same shape `dvpTable` uses, and
+the shrink target is a league mean rather than 1.0 because these are absolute units (points, sacks,
+yards) and not ratios.
+
+| column | what it is |
+|---|---|
+| `opp_pa_pos`, `opp_pa_pos_n` | fantasy points the opponent allowed per game **to this player's position**, in POINTS, and the team-games of season-Y evidence behind it |
+| `opp_def_sacks_pg`, `opp_def_takeaways_pg` | the opponent DEFENCE's sacks and takeaways per game |
+| `opp_pass_yds_allowed_pg`, `opp_rush_yds_allowed_pg` | what that defence allows through the air and on the ground |
+| `opp_off_sacks_allowed_pg`, `opp_off_giveaways_pg` | the opponent OFFENCE's sacks suffered and giveaways per game -- **what a DST feeds on** |
+| `opp_implied_total` | `total_line - implied_team_total`, i.e. the market's expected points for the other side, exactly as published |
+| `roof_dome` | 1 where the roof is dome/closed/indoors |
+| `team_fga_pg`, `team_pat_pg` | this player's OWN team's field-goal and extra-point attempts per game |
+
+`opp_pa_pos` is the POINTS version of `dvp_mult`, and the difference is not cosmetic: a multiplier of
+1.15 has to be multiplied back onto a per-player line, and K and DST have no meaningful one -- which
+is exactly why section 3 reports them as two near-ties.
+
+**Temperature and wind are NOT built, and the refusal is asserted rather than explained.**
+`raw_nfl_game` carries `temp` and `wind` and schema.sql says out loud what they are: OBSERVED, "not
+knowable before kickoff at all". This store has no forecast feed, and a forecast is a different
+quantity from an observation. It is the most attractive leak available on this table -- wind is a
+real and large effect on a kicker, the model would find it, and every backtest number would improve
+for a reason that cannot exist on a Saturday. `test/streaming-features.test.ts` asserts the columns'
+absence, and the audit asserts it against the table on disk. `roof` IS built: a stadium's roof is
+knowable when the fixture list is published.
+
+**Red-zone drive rate is not built either, and the substitution is stated.** There is no drive-level
+feed here. A "red-zone rate" assembled from box-score totals would be an invented quantity wearing
+the name of a measured one, so what the kicker's opportunity actually is -- his own team's FG and PAT
+attempts per game -- is built instead.
+
+Coverage, `ff build-streaming-features --seasons 2010-2026`, 187,566 rows:
+
+| | opponent columns | `roof_dome` | `team_fga_pg` / `team_pat_pg` | `opp_implied_total` |
+|---|---|---|---|---|
+| 2010-2020 | 94.1-94.2% | 94.2% | 100% | 94.2% |
+| 2021-2025 | 94.2-94.5% | 94.5% | 100% | 94.5% |
+| 2026 (forward) | 89.4% | 75.3% | 100% | **36.9%** |
+
+The ~94% is the share of player-weeks with an opponent at all -- the other 6% are byes, which carry
+NULL rather than a fabricated matchup. 2026's `opp_implied_total` is thin because most of the season
+has no line published yet, which is a fact about September and is reported rather than filled in.
+
+### 6.2 The guards, and what made them fire
+
+`test/streaming-leakage.test.ts` perturbs week *w*'s own results AND week *w*'s box scores, rebuilds,
+and asserts nothing in week *w* moved. Four controls, because a guard that can only ever say "clean"
+is dead code:
+
+1. **Every column is non-constant** across the snapshot week before anything else is asserted. This
+   fired twice on its first run -- against a fixture whose team stats collided across teams, and
+   against `roof_dome`, which the round-robin made constant in exactly the week the guard snapshots.
+   Both would have made "it did not move" a statement about nothing.
+2. **Week *w*+1 must move.** A perturbation that reaches nothing passes forever.
+3. **`leakOpponentThroughWeek` must fire**, on all ten accumulated columns rather than one.
+4. **The complement**: a change to the PUBLISHED total line MUST move `opp_implied_total` in week
+   *w*, because that is knowable on the Saturday and is the reason the column exists.
+
+`scripts/weekly-leak-audit.mjs` was extended to the table that actually shipped -- an independent
+recomputation straight from `feat_player_week` and the cached nflverse team-week CSV, parameterised
+by the bound so the control is the same code with one number changed:
+
+```
+node --import tsx scripts/weekly-leak-audit.mjs 2023
+streaming -- 3689 rows recomputed independently (every third week of 2023)
+            mismatches vs `week < w`   vs `week <= w` (the leak)
+  opp_pa_pos                    0                   3689
+  opp_def_sacks_pg              0                   3689
+  opp_pass_yds_allowed_pg       0                   3689
+  team_fga_pg                   0                   3689
+  opp_implied_total vs total_line - implied_team_total (must be exact): 0 of 11018
+```
+
+Zero under the honest bound and **every sampled row** under the leaked one, on 2012, 2015, 2023 and
+2025 alike. The audit is honest about how independent it is: the blend arithmetic is shared (a
+differently-written weighted mean would test arithmetic, not time), what is independent is the SOURCE
+and what is under test is the BOUND -- so the discriminating assertion is the ratio, not the count.
+
+### 6.3 The models, and why K and DST stopped being intercepts
+
+`tools/train_streaming.py` is a WRAPPER around `train_weekly.py`, not a copy: everything that decides
+a number is already there and mirrored by `src/weekly/projector.ts`, and a second copy would be a
+third implementation of one contract. It overrides four things -- the source (a LEFT JOIN to the
+streaming table), the feature lists, the position gating, and `POS_FITTED = all six positions`.
+
+That last one is the point of the track. `train_weekly.py` puts K and DST in `POS_INTERCEPT_ONLY`
+with a comment saying why: *this table carries no kicking or defensive usage columns*. Section 3
+records the consequence -- K 2.457 vs 2.468 and DST 3.105 vs 3.115 CRPS against the shipped baseline,
+two near-ties, because two intercepts have nothing to add. The columns now exist.
+
+**Availability is gated OFF for DST**, and it is a finding rather than a gap:
+`feat_player_week_context` holds **0** defensive rows across 2012-2025, so every availability column
+is NULL for a defence and fitting them would fit a constant -- an intercept wearing a feature's name.
+A team defence does not miss a week; its zero weeks are bad games, which is exactly what the opponent
+block is about.
+
+**The golden block had to be overridden too.** The weekly artifact's six fixtures carry no streaming
+column, so every streaming coefficient would have been multiplied by its missing-value default in
+every golden row -- a contract test structurally incapable of catching the disagreement it exists
+for. The eight fixtures here carry real values for all twelve and add a KICKER and a DEFENCE, whose
+heads did not exist before. All eight reproduce through the TypeScript loader to 1e-6.
+
+### 6.4 Results, 14 held-out seasons, 112,782 player-weeks
+
+`ff evaluate-streaming --seasons 2012-2025 --train-seasons 2010-2025`, run 2026-09-09. **`two_part`
+here is the CONTROL** -- the same trainer with `--features weekly-only`, i.e. the same positions, the
+same folds and the twelve opponent columns REMOVED. It is not `weekly-artifact.json`, the weekly
+track's challenger; it exists so the opponent block's own contribution can be isolated from "K and
+DST stopped being intercepts", which is a different change.
+
+| pos | model | RMSE | CRPS | cov(>0) | zeroP | zeroA |
+|---|---|---|---|---|---|---|
+| QB | **streaming** | **6.651** | **2.766** | 0.740 | 0.478 | 0.486 |
+| QB | two_part (control) | 6.658 | 2.767 | 0.739 | 0.477 | 0.486 |
+| QB | shipped `week()` | 8.095 | 4.448 | 0.764 | 0.501 | 0.486 |
+| RB | **streaming** | **5.360** | **2.137** | 0.799 | 0.399 | 0.431 |
+| RB | two_part (control) | 5.360 | 2.137 | 0.799 | 0.399 | 0.431 |
+| RB | shipped `week()` | 6.243 | 2.683 | 0.821 | 0.104 | 0.431 |
+| WR | **streaming** | **5.123** | **2.055** | 0.786 | 0.402 | 0.441 |
+| WR | two_part (control) | 5.125 | 2.055 | 0.787 | 0.402 | 0.441 |
+| WR | shipped `week()` | 5.683 | 2.477 | 0.789 | 0.106 | 0.441 |
+| TE | **streaming** | **3.920** | **1.509** | 0.759 | 0.418 | 0.492 |
+| TE | two_part (control) | 3.920 | 1.510 | 0.759 | 0.418 | 0.492 |
+| TE | shipped `week()` | 4.309 | 1.772 | 0.763 | 0.117 | 0.492 |
+| K | **streaming** | **4.449** | **2.112** | 0.844 | 0.204 | 0.209 |
+| K | two_part (control) | 4.455 | 2.116 | 0.845 | 0.204 | 0.209 |
+| K | shipped `week()` | 5.028 | 2.468 | 0.857 | 0.100 | 0.209 |
+| DST | **streaming** | **6.166** | **3.020** | 0.879 | 0.153 | 0.147 |
+| DST | two_part (control) | 6.179 | 3.023 | 0.882 | 0.156 | 0.147 |
+| DST | shipped `week()` | 6.279 | 3.115 | 0.876 | 0.219 | 0.147 |
+
+**Read the control column first, because it is the finding.** The streaming model beats the shipped
+path everywhere and by a lot -- K CRPS 2.112 against 2.468, DST 3.020 against 3.115, both of which
+were near-ties before this track. But the CONTROL is within **0.004 CRPS** of the streaming model at
+every one of the six positions. What bought the gain at K and DST is that they are FITTED AT ALL --
+two intercepts against a real head -- and not the twelve opponent columns. The opponent block's own
+contribution is approximately zero, and P42 below fails saying so.
+
+### 6.5 Streaming regret -- the decision, in the units of the decision
+
+RMSE is not the decision and neither is a lineup: the men a streaming decision is about are on
+nobody's roster, so they are barely in a drawn roster at all. So for each (season, week, position)
+the harness takes the free-agent POOL, asks each model for its ONE best pick, and scores what that
+man actually did. 243 scored weeks per position.
+
+The pool is approximated as everyone outside the top N at the position by PRESEASON season line
+(N = 24/80/80/32/16/16 for QB/RB/WR/TE/K/DST -- sixteen teams times starters plus typical bench
+depth). It is point-in-time and identical for every model, so it sets how HARD the problem is, not
+who wins it; a real pool is churnier, which understates every model equally. Track B's
+`fact_fa_pool_week` is preferred where it exists and the report names which was used.
+
+| pos | streaming | control | board's pick | trailing-4 | streaming vs board | win share vs board |
+|---|---|---|---|---|---|---|
+| QB | **16.16** | 16.08 | 8.11 | 14.82 | **+8.05** | 0.638 |
+| RB | 8.06 | 8.06 | 2.70 | 7.64 | +5.36 | 0.712 |
+| WR | 8.27 | **8.42** | 5.37 | 8.07 | +2.90 | 0.547 |
+| TE | **6.83** | 6.80 | 2.88 | 5.43 | +3.96 | 0.704 |
+| K | **8.79** | 8.57 | 6.75 | 7.34 | **+2.04** | 0.564 |
+| DST | 8.43 | **8.52** | 6.14 | 6.32 | **+2.28** | 0.551 |
+
+The gap against the board's pick is large at every position and is mostly a statement about the
+board rather than about the model: a preseason line ranks the pool by who was expected to be good in
+August, and by October the useful signal is who is playing. The gap against the CONTROL is +0.08 at
+QB, +0.22 at K, **-0.09 at DST** and -0.15 at WR -- i.e. it changes sign, which over 243 weeks is
+what a null looks like.
+
+### 6.6 The pre-registered predictions
+
+| | claim | outcome | evidence |
+|---|---|---|---|
+| **P40** | for QB, K and DST the streaming pick beats the best-by-season-line pick by at least 1.0 point per week | **HELD** | QB +8.05, K +2.04, DST +2.28 |
+| **P41** | for RB, WR and TE the opponent features add LESS than 0.5 point per week over the same model without them | **HELD** | RB +0.00, WR -0.15, TE +0.03 |
+| **P42** | DST CRPS improves by at least 5% with the opponent's implied total and turnover rates | **FAILED** | 0.1% (3.0195 vs 3.0230) |
+
+**P41 held and P42 failed, and they are the same finding read at two positions.** The record's
+expectation going in was that matchup is small for the skill positions and decisive for a defence.
+The first half is confirmed to three decimal places. The second half is not: the opponent's implied
+total and its giveaway rate move DST CRPS by one tenth of one percent. The DST mean head does load
+on the matchup -- `opp_pa_pos` is its largest non-line term at 0.305, and the model separates week-2
+defences from 3.66 to 8.85 where the floor gives 5.86 to all of them -- so it is not that the model
+ignores the opponent. It is that a defence's week is dominated by variance the opponent's season
+averages do not predict: one returned interception is eight points.
+
+**P40 held by a wide margin and is the weakest of the three.** Beating the preseason board's pick by
+eight points a week at quarterback sounds like a large result and is mostly a statement about how bad
+that baseline is in October. The comparison that matters is the control column, and there it is +0.08.
+
+### 6.7 The gate, per position
+
+The pre-registered weekly gate -- clause (a) CRPS beats the shipped baseline, (b) coverage
+conditional on pts > 0 in [0.70, 0.90], (c) predicted zero-week share within 0.03 of actual --
+applied one position at a time, with its bands and tolerance IMPORTED from `evaluate.ts` rather than
+retyped, so a clause cannot be loosened here while the weekly track's stays put.
+
+| pos | (a) CRPS | (b) cov(>0) | (c) zero share | verdict |
+|---|---|---|---|---|
+| QB | PASS 2.766 vs 4.448 | PASS 0.740 | PASS off by 0.008 | **SHIPS** |
+| RB | PASS 2.137 vs 2.683 | PASS 0.799 | **FAIL off by 0.031** | keeps the floor |
+| WR | PASS 2.055 vs 2.477 | PASS 0.786 | **FAIL off by 0.039** | keeps the floor |
+| TE | PASS 1.509 vs 1.772 | PASS 0.759 | **FAIL off by 0.074** | keeps the floor |
+| K | PASS 2.112 vs 2.468 | PASS 0.844 | PASS off by 0.005 | **SHIPS** |
+| DST | PASS 3.020 vs 3.115 | PASS 0.879 | PASS off by 0.006 | **SHIPS** |
+
+**RB, WR and TE fail on exactly the clause and very nearly the numbers the weekly two-part model
+failed on** (section 3: pooled 0.035, RB 0.031, WR 0.039, TE 0.074). That is the expected result
+rather than a coincidence: clause (c) is about AVAILABILITY -- who does not play -- and these twelve
+columns are about the matchup. Nothing here was ever going to fix it, and the temptation to widen the
+tolerance to 0.04 is refused for the same reason it was refused in Phase 2d: a tolerance chosen after
+seeing the number is not a tolerance.
+
+**So the shipped surface is now MIXED, and that is the thing to be careful about.**
+`SHIPPED_STREAMING_POSITIONS = ["QB", "K", "DST"]` in `src/weekly/streamingServe.ts` is the one
+place it is decided; RB, WR and TE serve `weekly-artifact-lineonly.json`, the same floor
+`lineupRecommend` and `ff scorecard`'s `weekly` kind serve. Every result of `stream_recommend`
+carries `artifactByPos`, and `ff scorecard` prints it every run, because "which model said this" is
+the one thing a per-position decision makes impossible to infer from the number.
+
+### 6.8 The decision surface, and the forward record
+
+`ff copilot stream --pos DST --week 2` / MCP tool `stream_recommend` -- see `docs/mcp.md`. Live and
+read-only through the app bridge, 2026 week 2:
+
+```
+DST  START MIN D/ST (4.82 pts, p10 0, p90 13.7, P(zero) 0.21)
+     ADD SF D/ST / DROP Isaiah Likely: +2.8 pts this week
+     Best free: SF D/ST 7.63, CHI D/ST 6.78, ATL D/ST 5.96
+QB   START Jared Goff (15.55 pts, P(zero) 0.14) -- no free quarterback beats him
+     Best free: Tua Tagovailoa 15.2, Sam Darnold 13.78, Bryce Young 11.45
+K    START Cairo Santos (7.24 pts); ADD Tyler Bass / DROP Isaiah Likely: +0.1 pts
+```
+
+The kicker row is the honest one to read: +0.1 points is not a reason to make a claim, and the tool
+reports it rather than rounding it into a recommendation.
+
+The scorecard's new `stream` kind freezes ONE pick per position per week, plus the pick a manager
+makes by reading the board, side by side -- because freezing only ours would leave a number with no
+referent, and adding the comparison in January would be adding it after the games. Week 2, frozen
+2026-09-09 with `as_of` 2026-09-16:
+
+```
+QB   Tua Tagovailoa 15.20   vs the board's Sam Darnold 13.78
+DST  SF D/ST         7.63   vs the board's DAL D/ST      5.95
+K    Harrison Mevis  8.19   vs the board's Harrison Mevis 8.19  (the same man)
+RB / WR / TE                 the same man in both rows, necessarily
+```
+
+RB, WR and TE name the same man in both rows because the floor's projection IS the season line, so
+its ranking of the pool IS the board's. That is not a bug in the record; it is the visible
+consequence of those three positions not shipping, and it means their `stream` series will accrue
+zero regret until they do.
 
 ## Determinism
 
