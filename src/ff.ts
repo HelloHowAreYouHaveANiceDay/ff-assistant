@@ -1969,10 +1969,11 @@ async function cmdBuildPicks(rest: string[]) {
 
   const f = buildLeagueFacts({ dbPath: valueOf(rest, "--db") });
   console.log(`\nfact_team_season: ${f.teamSeasons} rows   fact_matchup: ${f.matchups} rows`);
-  console.log(`  season  teams  games  playoff field  champion`);
+  console.log(`  season  teams  games  playoff field  top-k seeds agree  champion`);
   for (const s of f.perSeason) {
     console.log(`  ${s.season}  ${String(s.teams).padStart(5)}  ${String(s.games).padStart(5)}  ` +
-      `${String(s.playoffField).padStart(13)}  ${s.settled ? (s.champion ?? "?") : "(season not settled)"}`);
+      `${String(s.playoffField).padStart(13)}  ${String(s.seedsAgree == null ? "-" : s.seedsAgree ? "yes" : "NO").padStart(17)}  ` +
+      `${s.settled ? (s.champion ?? "?") : "(season not settled)"}`);
   }
 }
 

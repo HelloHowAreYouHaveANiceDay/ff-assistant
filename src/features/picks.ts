@@ -225,7 +225,7 @@ function liveConsensus(db: DB, yr: number, out: Map<string, { rank: number; sd: 
 
 export interface LeagueFactsResult {
   teamSeasons: number; matchups: number;
-  perSeason: { season: number; teams: number; games: number; champion: string | null; settled: boolean; playoffField: number }[];
+  perSeason: { season: number; teams: number; games: number; champion: string | null; settled: boolean; playoffField: number; seedsAgree: boolean | null }[];
 }
 
 /**
@@ -284,13 +284,15 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
     db.prepare("DELETE FROM fact_matchup").run();
     for (const [season, list] of [...bySeason.entries()].sort((a, b) => a[0] - b[0])) {
       const settled = list.every((r) => r.final_rank != null) && list.some((r) => Number(r.final_rank) === 1);
-      // THE PLAYOFF FIELD, DERIVED from this season's own seeds and finishes rather than from a
-      // constant. The league grew from 14 teams to 16 and its bracket from 6 to 7 with it, so a
-      // hardcoded number is a guard keyed on a value that has already changed once.
-      const field = derivePlayoffField(list.map((r) => ({
+      // THE PLAYOFF FIELD is a stated constant per era -- see playoffFieldFor for why it cannot be
+      // derived from these columns -- and the top-k agreement check is reported beside it so a
+      // season where the two disagree is visible rather than silently absorbed.
+      const seeded = list.map((r) => ({
         seed: r.playoff_seed == null ? null : Number(r.playoff_seed),
         rank: r.final_rank == null ? null : Number(r.final_rank),
-      })), list.length);
+      }));
+      const field = playoffFieldFor(list.length);
+      const agrees = seedsAgreeAtField(seeded, field);
       let champion: string | null = null;
       for (const r of list) {
         const rank = r.final_rank == null ? null : Number(r.final_rank);
@@ -309,7 +311,7 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
       }
       const g = games.filter((x) => x.season === season);
       for (const x of g) { insM.run({ lg: x.league_id, season, week: x.week, home: x.home_id, away: x.away_id, now }); res.matchups++; }
-      res.perSeason.push({ season, teams: list.length, games: g.length, champion, settled, playoffField: field });
+      res.perSeason.push({ season, teams: list.length, games: g.length, champion, settled, playoffField: field, seedsAgree: agrees });
     }
   })();
   db.close();
@@ -317,27 +319,41 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
 }
 
 /**
- * How many teams made the playoffs, read OFF THE SEASON rather than assumed.
+ * How many teams make the playoffs. A STATED CONSTANT per era, and the attempt to derive it is
+ * recorded here because the attempt failing is the useful part.
  *
- * A single-elimination bracket has a property nothing else in the table does: the teams that finish
- * 1..k are exactly the teams seeded 1..k, for k the size of the field, and for no larger k. In 2024
- * the top six finishers were seeds 3,5,1,2,4,6 -- a permutation of 1..6 -- and the seventh finisher
- * was seed 9, which breaks it. So the field is the LARGEST k for which those two sets agree.
+ * THE DERIVATION THAT DOES NOT WORK. A bracket looks as though it should be readable off the
+ * finishes: the teams that finish 1..k ought to be exactly the teams seeded 1..k, for k the size of
+ * the field. It fails twice over.
  *
- * Falling back to the league size only where the seasons are unsettled: an in-progress season has no
- * finishes to read, and 7-for-16 / 6-for-14 is what every settled season in this store measures to.
+ *   - k = teams satisfies it TRIVIALLY (all n seeds are a permutation of 1..n), so "the largest k
+ *     that satisfies it" is always the whole league. A first cut did exactly that, was always
+ *     rejected as impossible, and always returned its fallback -- right for every real season, and
+ *     structurally incapable of returning anything else. Only a fault injection found it.
+ *   - Bounded to a plausible bracket it is still not identifiable. Across the six settled 14-team
+ *     seasons the largest satisfying k is 6, 8, 6, 4, 6, 8 -- because ESPN's `final_rank` is a
+ *     consolation-inclusive ordering whose relationship to the bracket varies by season. In 2021 the
+ *     8 seed finished FIFTH and the 6 seed seventh, which no six-team bracket can produce.
+ *
+ * So the field is not derived. It is 6 in the 14-team era and 7 in the 16-team one -- the value the
+ * league's own `settings.config.playoffTeams` records for the current era, and the value the top-k
+ * check agrees with in four of the six settled 14-team seasons and in 2025. `seedsAgreeAtField`
+ * exposes that check so the disagreement is a number somebody can look at rather than a silence.
  */
-export function derivePlayoffField(rows: { seed: number | null; rank: number | null }[], teams: number): number {
+export function playoffFieldFor(teams: number): number {
+  return teams >= 16 ? 7 : 6;
+}
+
+/** Do the top `field` finishers form exactly the top `field` seeds? Null when the season has no
+ *  finishes to read. This is EVIDENCE about the field, not the field itself -- see above. */
+export function seedsAgreeAtField(rows: { seed: number | null; rank: number | null }[], field: number): boolean | null {
   const seedOfRank = new Map<number, number>();
   for (const r of rows) if (r.rank != null && r.seed != null) seedOfRank.set(r.rank, r.seed);
-  let best = 0;
-  for (let k = 1; k <= teams; k++) {
-    const seeds = new Set<number>();
-    for (let i = 1; i <= k; i++) { const s = seedOfRank.get(i); if (s != null) seeds.add(s); }
-    if (seeds.size !== k) break;
-    if (Math.max(...seeds) === k) best = k;
+  const seeds = new Set<number>();
+  for (let k = 1; k <= field; k++) {
+    const s = seedOfRank.get(k);
+    if (s == null) return null;
+    seeds.add(s);
   }
-  // A bracket is at least 4 and at most half the room; anything outside that is not a bracket, it
-  // is a season with no finishes yet, and the league's own size is the honest fallback.
-  return best >= 4 && best <= teams / 2 + 1 ? best : (teams >= 16 ? 7 : 6);
+  return seeds.size === field && Math.max(...seeds) === field;
 }
