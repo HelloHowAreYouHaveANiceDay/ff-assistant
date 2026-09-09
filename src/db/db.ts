@@ -74,6 +74,21 @@ function addColumns(db: DB): void {
     ["feat_player_season", "own_games_usage", "INTEGER"],
     // A crosswalk key that stands for more than one real person. See player_ids_variant.
     ["player_ids", "ambiguous", "INTEGER"],
+    // WHERE A CONTEXT ROW CAME FROM, and it is load-bearing rather than descriptive.
+    //
+    // `feat_player_week_context` now has TWO builders under two different guarantees. The historical
+    // one places every injury designation by the date the team FILED it, so a Friday status is
+    // provably backed by a filing dated at or before that Friday -- an invariant a leakage test
+    // asserts. The live one reads a status FEED, which publishes a current state and one timestamp
+    // and files nothing, so its rows cannot satisfy that back-join and never will: `raw_injury`
+    // holds no rows at all for a season nobody has archived.
+    //
+    // Without this column the leakage guard sees the live rows, finds no filing behind them, and
+    // reports a leak that is not one -- and the only ways to quiet it would be to weaken the guard
+    // (which then also absorbs a real leak) or to infer provenance from the SHAPE of `as_of`, which
+    // is an implicit convention two lines of code apart. So the row says which builder wrote it, and
+    // each guarantee is asserted against the rows it actually applies to.
+    ["feat_player_week_context", "source", "TEXT"],
     // The PFR id, carried into staging so the snap-count feed resolves through the SAME map as
     // everything else instead of a parallel route through player_ids that can disagree with it.
     ["stg_player", "pfr_id", "TEXT"],

@@ -21,7 +21,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dataPath } from "../data/paths.js";
 import { loadArtifact } from "../model/projector.js";
-import { loadWeeklyArtifact } from "../weekly/projector.js";
+import { loadWeeklyArtifact, SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT } from "../weekly/projector.js";
 import { loadPriceModel } from "../model/price.js";
 
 export interface ModelSpec {
@@ -97,7 +97,7 @@ export const MODELS: ModelSpec[] = [
   // zeros can. The band was corrected BEFORE the run and against the previous run's numbers.
   // ------------------------------------------------------------------------------------------
   {
-    key: "weekly", file: "weekly-artifact-lineonly.json", required: true, nestedLift: null, claimedLift: null,
+    key: "weekly", file: SHIPPED_WEEKLY_ARTIFACT, required: true, nestedLift: null, claimedLift: null,
     what: "THE SHIPPED weekly model, and it is the FLOOR: mean intercept exactly 1.0, so the " +
       "projection IS the preseason season line per game. Its quantile intercepts are the empirical " +
       "ratio quantiles on the training seasons -- a measured spread rather than an invented one. " +
@@ -123,7 +123,7 @@ export const MODELS: ModelSpec[] = [
     },
   },
   {
-    key: "weekly-challenger", file: "weekly-artifact.json", required: false, nestedLift: null, claimedLift: null,
+    key: "weekly-challenger", file: CHALLENGER_WEEKLY_ARTIFACT, required: false, nestedLift: null, claimedLift: null,
     what: "THE CHALLENGER, and it FAILED its gate by five thousandths. Two-part: a per-position " +
       "logistic on P(pts <= 0) over the whole rostered population, then ridge for E[ratio | played] " +
       "with pinball quantile heads at seven levels. On the same 14 folds it beats every baseline on " +

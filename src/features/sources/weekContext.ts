@@ -210,9 +210,9 @@ export function buildWeekContext(opts: { dbPath?: string; seasons: number[] }): 
     `INSERT INTO feat_player_week_context (player_sk, season, week, as_of, team, pos, opponent, home,
        days_rest, roof, spread_line, total_line, implied_team_total, temp_observed, wind_observed,
        prior_snap_share, prior_route_share, report_status_wed, report_status_fri,
-       practice_status_wed, practice_status_fri, teammates_out, depth_rank, updated_at)
+       practice_status_wed, practice_status_fri, teammates_out, depth_rank, source, updated_at)
      VALUES (@sk,@season,@week,@asOf,@team,@pos,@opp,@home,@rest,@roof,@spread,@total,@implied,
-       @temp,@wind,@snap,@route,@rsw,@rsf,@psw,@psf,@out,@depth,@now)
+       @temp,@wind,@snap,@route,@rsw,@rsf,@psw,@psf,@out,@depth,'archive',@now)
      ON CONFLICT(season, week, player_sk) DO UPDATE SET
        as_of=excluded.as_of, team=excluded.team, pos=excluded.pos, opponent=excluded.opponent,
        home=excluded.home, days_rest=excluded.days_rest, roof=excluded.roof,
@@ -222,7 +222,7 @@ export function buildWeekContext(opts: { dbPath?: string; seasons: number[] }): 
        prior_route_share=excluded.prior_route_share, report_status_wed=excluded.report_status_wed,
        report_status_fri=excluded.report_status_fri, practice_status_wed=excluded.practice_status_wed,
        practice_status_fri=excluded.practice_status_fri, teammates_out=excluded.teammates_out,
-       depth_rank=excluded.depth_rank, updated_at=excluded.updated_at`,
+       depth_rank=excluded.depth_rank, source=excluded.source, updated_at=excluded.updated_at`,
   );
 
   const res: WeekContextResult = { seasons: [], rows: 0, perSeason: [], resolution: [] };
@@ -489,9 +489,9 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
     `INSERT INTO feat_player_week_context (player_sk, season, week, as_of, team, pos, opponent, home,
        days_rest, roof, spread_line, total_line, implied_team_total, temp_observed, wind_observed,
        prior_snap_share, prior_route_share, report_status_wed, report_status_fri,
-       practice_status_wed, practice_status_fri, teammates_out, depth_rank, updated_at)
+       practice_status_wed, practice_status_fri, teammates_out, depth_rank, source, updated_at)
      VALUES (@sk,@season,@week,@asOf,@team,@pos,@opp,@home,@rest,@roof,@spread,@total,@implied,
-       @temp,@wind,NULL,NULL,NULL,@rsf,NULL,NULL,@out,@depth,@now)
+       @temp,@wind,NULL,NULL,NULL,@rsf,NULL,NULL,@out,@depth,'live',@now)
      ON CONFLICT(season, week, player_sk) DO UPDATE SET
        as_of=excluded.as_of, team=excluded.team, pos=excluded.pos, opponent=excluded.opponent,
        home=excluded.home, days_rest=excluded.days_rest, roof=excluded.roof,
@@ -499,7 +499,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
        implied_team_total=excluded.implied_team_total, temp_observed=excluded.temp_observed,
        wind_observed=excluded.wind_observed, report_status_fri=excluded.report_status_fri,
        teammates_out=excluded.teammates_out, depth_rank=excluded.depth_rank,
-       updated_at=excluded.updated_at`,
+       source=excluded.source, updated_at=excluded.updated_at`,
   );
 
   const apply = () => {

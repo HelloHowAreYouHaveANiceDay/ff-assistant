@@ -1024,6 +1024,16 @@ CREATE TABLE IF NOT EXISTS feat_player_week_context (
   practice_status_fri TEXT,
   teammates_out   INTEGER,           -- same team, same position, listed Out on the Friday report
   depth_rank      INTEGER,           -- depth chart as of this week
+  -- WHICH BUILDER WROTE THIS ROW, and therefore which guarantee it carries.
+  --   'archive' -- buildWeekContext, from raw_injury. Every designation is placed by the date the
+  --                team FILED it, so a Friday status is backed by a filing dated at or before that
+  --                Friday. test/featuresExt.test.ts asserts exactly that, per row.
+  --   'live'    -- buildLiveWeekContext, from player_status + high-severity injury news, for a
+  --                season the archive does not cover. A status FEED publishes a current state and
+  --                one timestamp and files nothing, so `as_of` is the SNAPSHOT time and no filing
+  --                exists to back-join to. The point-in-time guarantee is instead that the snapshot
+  --                precedes the week's first kickoff -- weaker, different, and asserted separately.
+  source          TEXT,
   updated_at      TEXT,
   PRIMARY KEY (season, week, player_sk));
 CREATE INDEX IF NOT EXISTS idx_fpwc_sk ON feat_player_week_context (player_sk, season, week);

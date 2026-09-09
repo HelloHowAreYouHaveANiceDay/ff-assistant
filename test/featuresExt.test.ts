@@ -141,18 +141,31 @@ test("feat_player_week_context: as_of is strictly before this team's own kickoff
   assert.equal(bad.c, 0, "a context row dated on or after the game it describes");
 });
 
-test("feat_player_week_context: every Friday injury status is backed by a report filed by then", { skip: skipIf("feat_player_week_context") }, () => {
+test("feat_player_week_context: every ARCHIVE Friday injury status is backed by a report filed by then", { skip: skipIf("feat_player_week_context") }, () => {
   const db = open();
   // THE LEAKAGE GUARD. A status in the Friday column must correspond to a raw_injury row for the
   // same man and week whose report date is at or before that Friday -- i.e. at or before
   // (this team's gameday - 2). A status sourced from a later filing is information from the future
   // wearing a Friday label, and nothing else in the pipeline would notice.
+  //
+  // SCOPED TO source = 'archive', AND THE SCOPE IS THE POINT. The table now has two builders under
+  // two different guarantees. `buildWeekContext` reads `raw_injury` and places each designation by
+  // the date it was FILED, which is what makes this back-join meaningful. `buildLiveWeekContext`
+  // reads a status FEED for a season the archive does not cover -- it publishes a current state and
+  // one timestamp and files nothing, so there is no filing to join to and never will be. Running
+  // this query over those rows reports a leak that does not exist.
+  //
+  // The scope is read off the ROW, not inferred from the season number and not from the shape of
+  // `as_of`: the builder stamps `source`, so a row that claims the archive guarantee is held to it
+  // whatever season it is in. The live rows get their own, different assertion in the next test --
+  // they are not exempted, they are checked against the guarantee they actually carry.
   const bad = db.prepare(
     `SELECT COUNT(*) c FROM feat_player_week_context ctx
      JOIN stg_player s ON s.player_sk = ctx.player_sk
      JOIN raw_nfl_game g ON g.season = ctx.season AND g.week = ctx.week AND g.game_type = 'REG'
        AND (g.home_team = ctx.team OR g.away_team = ctx.team)
      WHERE ctx.report_status_fri IS NOT NULL AND s.gsis_id IS NOT NULL
+       AND COALESCE(ctx.source, 'archive') = 'archive'
        AND NOT EXISTS (
          SELECT 1 FROM raw_injury i
          WHERE i.season = ctx.season AND i.week = ctx.week AND i.gsis_id = s.gsis_id
@@ -169,12 +182,57 @@ test("feat_player_week_context: every Friday injury status is backed by a report
            AND i2.report_status = ctx.report_status_fri
            AND i2.as_of IS NOT NULL AND i2.as_of <= date(g.gameday, '-2 day'))`,
   ).get() as { c: number };
-  const have = db.prepare("SELECT COUNT(*) c FROM feat_player_week_context WHERE report_status_fri IS NOT NULL").get() as { c: number };
+  const have = db.prepare(
+    "SELECT COUNT(*) c FROM feat_player_week_context WHERE report_status_fri IS NOT NULL AND COALESCE(source, 'archive') = 'archive'",
+  ).get() as { c: number };
   db.close();
   // The guard must have something to guard. A zero here would make the assertion below vacuous,
-  // which is the exact failure mode a passing check hides.
-  assert.ok(have.c > 5000, `only ${have.c} rows carry a Friday status -- the guard would be vacuous`);
+  // which is the exact failure mode a passing check hides. Scoping by `source` could have produced
+  // exactly that -- a scope that quietly matches nothing -- so the count is asserted INSIDE the
+  // scope rather than over the whole table.
+  assert.ok(have.c > 5000, `only ${have.c} ARCHIVE rows carry a Friday status -- the guard would be vacuous`);
   assert.equal(bad.c, 0, "a Friday status not backed by a report filed by Friday");
+});
+
+test("feat_player_week_context: every LIVE row precedes its week's first kickoff", { skip: skipIf("feat_player_week_context") }, () => {
+  const db = open();
+  // THE LIVE ROWS' OWN GUARANTEE, and it is a different one. There is no filing behind a live status
+  // to back-join to, so what has to hold instead is the point-in-time rule the live builder places
+  // the whole snapshot by: the snapshot time must be BEFORE the week's first kickoff. A snapshot
+  // taken after it is contaminated by a game already played -- a man carted off on Thursday is "Out"
+  // in a feed read on Friday -- and would be information from the future wearing a week label,
+  // exactly the failure the archive guard catches by a different route.
+  const rows = db.prepare(
+    `SELECT ctx.season, ctx.week, ctx.as_of, k.first_kick FROM feat_player_week_context ctx
+     JOIN (SELECT season, week, MIN(gameday) AS first_kick FROM raw_nfl_game
+            WHERE game_type = 'REG' AND gameday IS NOT NULL GROUP BY season, week) k
+       ON k.season = ctx.season AND k.week = ctx.week
+     WHERE ctx.source = 'live'`,
+  ).all() as { season: number; week: number; as_of: string; first_kick: string }[];
+  db.close();
+  if (!rows.length) {
+    // A store built before the live builder ran has no such rows, and that is not a failure. It IS
+    // reported, because "the check found nothing" and "the check passed" must not read the same.
+    console.log("  (no live-sourced context rows in this store -- nothing to check)");
+    return;
+  }
+  const late = rows.filter((r) => r.as_of.slice(0, 10) >= r.first_kick);
+  assert.deepEqual(late, [],
+    "a live context row was stamped at or after its own week's first kickoff, so its injury " +
+    "designations could already reflect a game that has been played");
+  // And the rows must be for a season the ARCHIVE does not cover, or the archive builder should own
+  // them: two builders writing the same week would leave the surviving guarantee up to run order.
+  const db2 = open();
+  const overlap = db2.prepare(
+    `SELECT COUNT(*) c FROM feat_player_week_context ctx
+      WHERE ctx.source = 'live'
+        AND EXISTS (SELECT 1 FROM raw_injury i WHERE i.season = ctx.season AND i.as_of IS NOT NULL)`,
+  ).get() as { c: number };
+  db2.close();
+  assert.equal(overlap.c, 0,
+    "a live-sourced row exists for a season whose injury archive carries dated filings -- the " +
+    "archive builder owns those weeks, and two builders writing one week leaves which guarantee " +
+    "survives up to run order");
 });
 
 test("feat_player_season_ext: the anchor is September 1 and nothing is stamped later", { skip: skipIf("feat_player_season_ext") }, () => {
