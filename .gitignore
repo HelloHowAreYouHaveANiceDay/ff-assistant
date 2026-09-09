@@ -78,6 +78,15 @@ data/cache/
 # trainer imports another.
 tools/__pycache__/
 
+# Harness OUTPUT, not harness input. Each of these is written by a script in this repo, is
+# reproducible by re-running that script, and carries a machine-specific run: committing one is how
+# a stale table starts being quoted as a measurement.
+#   marginal-agreement.json / ma-dedup.json   scripts/marginal-agreement.mjs (Track G)
+#   injury-duration-nested.json               tools/train_injury_duration.py's nested-CV dump (Track I)
+data/marginal-agreement.json
+data/ma-dedup.json
+data/injury-duration-nested.json
+
 # The Phase 2c projection artifact under its scratch name. The SHIPPED artifact is
 # data/projection-artifact.json, which IS committed; this is the intermediate a re-fit writes
 # beside it, and committing both is how two artifacts start disagreeing about which one ships.
