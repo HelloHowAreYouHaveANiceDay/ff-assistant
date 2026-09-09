@@ -1188,3 +1188,86 @@ CREATE TABLE IF NOT EXISTS scorecard_result (
   scored_at       TEXT,
   PRIMARY KEY (season, week, kind, model, metric)
 );
+
+-- ================= RAW LAYER: this league's week-by-week rosters and transaction log =============
+--
+-- Added by the in-season backtest track. The store already held this league's auction, finish and
+-- schedule; it held nothing about WHO WAS ON A ROSTER IN A GIVEN WEEK or WHO WAS STARTED, which is
+-- every in-season decision the tool makes. See src/data/leagueRosters.ts for which ESPN view these
+-- come from and, more importantly, which plausible-looking view does NOT answer the question:
+-- leagueHistory+mRoster ignores scoringPeriodId entirely and serves the FINAL roster under every
+-- week number, so a backtest built on it would conclude that nobody ever changed their lineup.
+--
+-- `as_of_start` / `as_of_end` are the scoring period's KICKOFF WINDOW from raw_nfl_game, and `as_of`
+-- is as_of_end: a week's lineup is not knowable before its first kickoff and is fully settled at its
+-- last. A point-in-time consumer for week w may read rows whose as_of is strictly before week w's
+-- first kickoff, and no others. Both are NULL where the schedule is not in the store -- "we cannot
+-- date this" rather than a guessed date, which is the rule raw_injury already follows.
+CREATE TABLE IF NOT EXISTS raw_league_roster_week (
+  league_id TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL, team_id TEXT NOT NULL,
+  espn_player_id TEXT NOT NULL, name TEXT, position TEXT,
+  lineup_slot_id INTEGER, is_starter INTEGER, applied_points REAL,
+  acquisition_type TEXT, acquisition_date TEXT,
+  as_of TEXT, as_of_start TEXT, as_of_end TEXT, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (league_id, season, week, team_id, espn_player_id));
+CREATE INDEX IF NOT EXISTS idx_rlrw_wk ON raw_league_roster_week (season, week);
+CREATE INDEX IF NOT EXISTS idx_rlrw_pl ON raw_league_roster_week (espn_player_id, season);
+
+-- One row per SCORING PERIOD ASKED FOR, whether or not it had data. A week ESPN served nothing for
+-- is a fact worth keeping: without it, a season we never fetched and a season ESPN has purged look
+-- identical.
+CREATE TABLE IF NOT EXISTS raw_league_roster_week_status (
+  league_id TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL,
+  available INTEGER NOT NULL, rows INTEGER NOT NULL, note TEXT, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (league_id, season, week));
+
+-- ONE ROW PER TRANSACTION ITEM, not per transaction: a free-agent pickup is one ESPN transaction
+-- containing an ADD item and a DROP item, and a trade contains four. `item_no` is the index in
+-- ESPN's own array, for the same reason raw_league_pick keys on the array index -- the feed
+-- publishes no per-item id. name/position are absent BY THE FEED (an item carries only playerId);
+-- identity is resolved downstream through player_xref, never here.
+CREATE TABLE IF NOT EXISTS raw_league_transaction (
+  league_id TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL,
+  transaction_id TEXT NOT NULL, item_no INTEGER NOT NULL,
+  type TEXT, item_type TEXT, executed_at TEXT, proposed_at_ms INTEGER,
+  team_id TEXT, member_id TEXT, espn_player_id TEXT,
+  from_team_id TEXT, to_team_id TEXT, from_lineup_slot_id INTEGER, to_lineup_slot_id INTEGER,
+  bid_amount REAL, status TEXT, execution_type TEXT, is_pending INTEGER,
+  as_of_start TEXT, as_of_end TEXT, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (league_id, season, transaction_id, item_no));
+CREATE INDEX IF NOT EXISTS idx_rlt_wk ON raw_league_transaction (season, week);
+CREATE INDEX IF NOT EXISTS idx_rlt_pl ON raw_league_transaction (espn_player_id, season);
+
+CREATE TABLE IF NOT EXISTS raw_league_transaction_status (
+  league_id TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL,
+  available INTEGER NOT NULL, rows INTEGER NOT NULL, note TEXT, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (league_id, season, week));
+
+-- ================= FEATURE LAYER: weekly roster state, the free-agent pool, lineup regret ========
+--
+-- Identity RESOLVED (raw_league_roster_week.espn_player_id -> player_xref -> player_sk), which is
+-- what makes these joinable to feat_player_week_model and to the weekly projector's output.
+CREATE TABLE IF NOT EXISTS fact_roster_week (
+  season INTEGER NOT NULL, week INTEGER NOT NULL, team_id TEXT NOT NULL, player_sk TEXT NOT NULL,
+  espn_player_id TEXT, name TEXT, pos TEXT, slot TEXT, lineup_slot_id INTEGER, is_starter INTEGER,
+  actual_pts REAL, as_of TEXT, built_at TEXT,
+  PRIMARY KEY (season, week, team_id, player_sk));
+CREATE INDEX IF NOT EXISTS idx_frw_sk ON fact_roster_week (player_sk, season, week);
+
+-- Every skill/K/DST player with a weekly feature row in that season who was NOT on any roster in
+-- week w. "On nobody's roster" is the definition of a free agent this league actually uses; waiver
+-- status is not distinguishable from the roster feed and is therefore not claimed.
+CREATE TABLE IF NOT EXISTS fact_fa_pool_week (
+  season INTEGER NOT NULL, week INTEGER NOT NULL, player_sk TEXT NOT NULL,
+  pos TEXT, name TEXT, actual_pts REAL, ros_pts REAL, ros_games INTEGER, built_at TEXT,
+  PRIMARY KEY (season, week, player_sk));
+CREATE INDEX IF NOT EXISTS idx_ffpw_pos ON fact_fa_pool_week (season, week, pos);
+
+-- What each team STARTED, what the best legal lineup from that same roster would have scored, and
+-- the difference. `optimal_pts` is HINDSIGHT: it uses the week's realised points, so it is a ceiling
+-- nobody could have hit, not a target. It is the denominator the tool has to be measured against.
+CREATE TABLE IF NOT EXISTS fact_lineup_week (
+  season INTEGER NOT NULL, week INTEGER NOT NULL, team_id TEXT NOT NULL,
+  started_pts REAL, optimal_pts REAL, bench_left REAL,
+  starters INTEGER, roster_n INTEGER, slots_json TEXT, optimal_json TEXT, built_at TEXT,
+  PRIMARY KEY (season, week, team_id));

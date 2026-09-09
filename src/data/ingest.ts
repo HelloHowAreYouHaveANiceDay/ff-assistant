@@ -320,6 +320,33 @@ export const RAW_ASSETS: RawAsset[] = [
       return r.total;
     },
   },
+  {
+    id: "league-rosters",
+    table: "raw_league_roster_week (+ _status)",
+    what: "this league's roster AND starting lineup for every scoring period, through the app's ESPN session (the /seasons/ boxscore view -- leagueHistory+mRoster ignores the week and serves the final roster)",
+    defaultSeasons: [2018, new Date().getFullYear()],
+    async run(dbPath, seasons) {
+      const { ingestLeagueRosters } = await import("./leagueRosters.js");
+      const r = await ingestLeagueRosters({ dbPath, seasons });
+      for (const f of r.findings) console.log(`  raw_league_roster_week ${f.season}: ${f.what} (${f.got} > ${f.limit})`);
+      return r.counts.rows;
+    },
+  },
+  {
+    id: "league-transactions",
+    table: "raw_league_transaction (+ _status)",
+    what: "this league's add/drop/waiver/trade log with FAAB bids, fetched PER SCORING PERIOD (mTransactions2 returns an empty array without scoringPeriodId)",
+    defaultSeasons: [2018, new Date().getFullYear()],
+    async run(dbPath, seasons) {
+      const { ingestLeagueTransactions } = await import("./leagueTransactions.js");
+      const r = await ingestLeagueTransactions({ dbPath, seasons });
+      for (const c of r.checks) {
+        console.log(`  raw_league_transaction ${c.season}: ${c.transactions} transactions, ${c.adds} adds, ${c.waivers} waiver items, ` +
+          `$${c.faab} FAAB, ${c.resolvedPct}% of items resolve to a player_sk`);
+      }
+      return r.counts.rows;
+    },
+  },
 ];
 
 /** Print the per-season landing counts. A raw sweep whose only output is a grand total cannot show
