@@ -27,12 +27,43 @@ Your league overpays for studs (recap data: studs $80-106, 61% of picks $1-5). B
 values and NOT chasing bidding wars wins ~27% of titles even when we share the room's projection.
 This is the floor edge and it is large.
 
-### 2. Your OWN projection (independent of the consensus) -- BIG [~27% -> ~39%]
-The single most striking result: using a projection INDEPENDENT of the source everyone else uses is
-worth ~12 championship points -- even at the SAME accuracy -- because you no longer share the room's
-blind spots (you win the players the consensus misprices instead of mispricing them the same way).
-Practical meaning: do NOT bid ESPN's / the consensus's values (that's what the room uses); use our
-own nflverse-derived values. We already do.
+### 2. Your OWN projection (independent of the consensus) -- REAL, BUT MOSTLY A STATEMENT ABOUT HOW MUCH NOISE WE GIVE THE MARKET (rewritten 2026-09-08, Phase 2b)
+
+**The old text said this was worth ~12 championship points "even at the SAME accuracy". That claim
+could not survive an arbiter that models the market properly, and it did not.**
+
+The measurement it came from had the room draft on OUR OWN projection times one shared lognormal
+error of sd 0.30 -- a number that was asserted and never measured. So "an independent projection"
+was really "a projection with less noise than the number we chose to give the opposition", and the
+size of the edge was a re-statement of that choice. Phase 2b built the honest arbiter (`--market
+ecr`: the room drafts on the REAL preseason consensus, rookies included, with each bot holding an
+independent view) and swept the one parameter the old claim rested on:
+
+| what the market drafts on | rank book | price book |
+|---|---|---|
+| our projection + shared sd 0.30 (the old arbiter) | 36.1% | 34.6% |
+| real consensus + its MEASURED error by rank band | 47.9% | 45.9% |
+| real consensus, published, no extra noise at all | **21.6%** | **14.6%** |
+
+Twenty-six points between the top and bottom rows, from one modelling choice about the opposition.
+The middle row is what the instruction asked for and it double-counts (the consensus projection
+already contains its own error -- it is a projection, not the truth -- so multiplying it by a fresh
+draw of the same size gives the market twice the variance it has, while our book carries none). The
+bottom row is the other honest reading. **The truth is between them and nobody knows where.**
+
+What survives, and it is not nothing:
+
+- **Do not bid the consensus's own numbers.** That much is structural rather than parametric: if your
+  book is the room's book you can only win by outbidding, which is the opposite of the discipline
+  edge. Use our own nflverse-derived values. We already do.
+- **The size of the edge is unknown and smaller than 12 points.** Any plan that budgets a specific
+  number of championship points for "we have our own projection" is budgeting against the old
+  arbiter's assumption, not against the room.
+- **Measured projection accuracy is a better thing to chase than measured edge.** The nested CV
+  (`ff evaluate-projection`) scores the projection against outcomes and cannot be gamed by a choice
+  about the opposition. The trained artifact beats curve-only there -- RMSE 54.32 vs 55.55, pinball
+  12.39 vs 13.17, coverage 0.764 -- and is STILL not a measurable backtest improvement (-1.33pp over
+  13 seasons, CI [-5.85, +3.38]). Those two facts sitting side by side is the honest state of play.
 
 ### 3. A MORE ACCURATE projection -- MEDIUM, and it compounds [~39% -> ~46%]
 Tightening our projection error (sim sigma 0.30 -> 0.05) lifts titles ~39% -> ~46%. Diminishing but
@@ -106,6 +137,16 @@ software agent beats distracted humans:
   `--pos-inflation` stays OFF by default; the per-position capture is kept only as a HUMAN signal in
   the draft log (shows where the room is overpaying), not an automated lever. Same discipline as
   scarcity/waivers/nomination: measured, didn't help, not shipped.
+
+### 5b. THE FIELD ALSO WORKS THE WIRE, and about a third of our headline was it not doing so (2026-09-08)
+Every championship number on this page and in docs/validation.md was measured against a field that
+stood pat from September to January. This room does not: about fifteen adds per team per season,
+roughly one a week. `--bot-churn` gives every bot the same conservative rule our team runs, and the
+paired result is **-12.83pp** (38.2% -> 25.4%, CI [10.27, 15.12], worse in 24 of 25 seasons). It is
+not an asymmetry from giving the field a tool we lack -- with `--waivers` on both sides it is
+-12.96pp. The pre-registered prediction was a fall of 0.5-4 points; it failed by a factor of three.
+Kept behind a flag until the owner decides which arm is the arbiter, but read every absolute number
+on this page in its light.
 
 ### 6. Waiver churn (automated) -- NEGATIVE in a deep league [backtested]
 Surprising, and the backtest earned its keep: automating waiver pickups by recent production LOSES

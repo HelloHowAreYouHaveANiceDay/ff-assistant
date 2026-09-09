@@ -103,9 +103,29 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   mode), `calibrate`, `evaluate-projection` (nested CV through the SHIPPED projector, with the
   trainer re-invoked blind to each held-out season; `--dump-residuals`, `--keep-artifacts`),
   `residuals` (which slices the model is systematically wrong about)
-- **Training (Python, off the hot path):** `uv run --with scikit-learn --with numpy
-  tools/train_projection.py --db data/ff.db --out data/projection-artifact.json`. The artifact
-  carries a golden block the TypeScript loader recomputes; a disagreement over 1e-6 is refused.
+- **Backtest arbiter flags that change what "38.2%" MEANS** (all off by default, all measured in
+  docs/validation.md Phase 2b):
+  - `--market ecr` -- the room drafts on the REAL preseason consensus with rookies in the pool and
+    each bot holding an independent view, instead of on our own projection plus one shared error.
+    2020-2024 only (the FantasyPros archive starts in 2020). `--market-noise 0` is the other honest
+    calibration of it and the two answers are 26 points apart.
+  - `--bot-book price|rank|vor` -- `price` is fitted on this room's 738 real picks (LOSO MAE $4.32
+    against $7.12 for `rank` and $7.11 for `vor`); `vor` is the default and is our own valuation
+    function, i.e. a mirror.
+  - `--bot-churn` -- the field works the waiver wire at this room's observed rate. Costs us 12.8
+    championship points, which is about a third of the headline.
+- **Model measurement (offline):** `scripts/price-loso.mjs` (leave-one-season-out price model vs both
+  books), `scripts/market-noise.mjs` (the consensus's realised error by rank band),
+  `scripts/verify-marginal.mjs` (the copula's marginals and both correlation stages),
+  `scripts/sim-calibration.mjs` (season odds vs outcomes; runs on a fixture until
+  `scripts/fetch-league-outcomes.mjs` has been run once with the app open).
+- **Training (Python, off the hot path):**
+  `uv run --with scikit-learn --with numpy tools/train_projection.py --db data/ff.db --out
+  data/projection-artifact.json` -- the curve's own construction (window, monotone repair, ECR level
+  weight, base form) is selected per position inside the fold, and the selected curve ships ON the
+  artifact. And `tools/train_price.py --db data/ff.db --out data/price-model.json` for the market.
+  Both artifacts carry a golden block the TypeScript loader recomputes; a disagreement over 1e-6 is
+  refused.
 - **Live draft (add `--app` to drive the desktop app's ESPN webview):** `attach`, `launch-practice`,
   `enter-draft`, `preflight`, `auto-draft`, `roster`, `board`, `read-block`. `auto-draft` holds a
   single-instance lock — two agents in one seat bid against each other.
@@ -116,9 +136,16 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
 
 ## What the harness decided (docs/edges.md, docs/validation.md)
 
-Headline: **~33% championships / 94% playoffs** (full-system, no-lookahead, 25 scored seasons
+Headline: **38.2% championships / 96% playoffs** (full-system, no-lookahead, 25 scored seasons
 1999-2024, random = 6.3%). Shipped levers: `aggr 0.7`, `benchDiscount 0.25`, `starterReserve 4`,
 `maxShare 0.25`, `premium 2`, all positional multipliers `1.0`, inflation ON.
+
+**Read that number with its arbiter attached (Phase 2b, 2026-09-08).** It is measured against a field
+that drafts on our own projection plus one shared error of an asserted sd 0.30, and that never
+touches its roster after August. Neither is true of this room. Give the field the waiver wire and it
+falls to 25.4%; have it draft on the real published consensus with no extra noise and it falls
+further still. The direction of every lever below survives those changes; the absolute rate does not.
+docs/validation.md has the tables.
 
 - **Shipped (validated):** independent + current values; **bid shading (`aggr` 0.7)** — the biggest
   single lever, a winner's-curse correction worth ~+10pp; **`benchDiscount` 0.25** (a bench-only

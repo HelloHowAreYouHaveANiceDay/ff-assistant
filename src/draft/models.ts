@@ -21,6 +21,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dataPath } from "../data/paths.js";
 import { loadArtifact } from "../model/projector.js";
+import { loadPriceModel } from "../model/price.js";
 
 export interface ModelSpec {
   key: string;
@@ -67,6 +68,23 @@ export const MODELS: ModelSpec[] = [
     },
   },
   {
+    key: "price", file: "price-model.json", required: false, nestedLift: null, claimedLift: null,
+    what: "what THIS room pays, fitted on the 738 real picks in fact_draft_pick -- a hurdle model " +
+      "(logistic P(price > $1), then the share of the room's money given he clears it) with a " +
+      "monotone per-position rank table. Leave-one-season-out MAE $4.32 against $7.12 for the " +
+      "`rank` book and $7.11 for `vor`, 65% of picks within $3. Selectable as `--bot-book price`; " +
+      "NOT the default, which is still `vor` -- i.e. our own valuation function, which the same " +
+      "measurement shows overpays the top twelve by $21 a man",
+    check: (j) => {
+      try {
+        const a = loadPriceModel(j);
+        if (!a.golden?.length) return "no golden block -- nothing checks that the trainer and this evaluator agree";
+        if (a.seasons.length < 3) return `fitted on ${a.seasons.length} drafts -- a room's price model wants more`;
+        return null;
+      } catch (e) { return (e as Error).message; }
+    },
+  },
+  {
     key: "rank-outcomes", file: "rank-outcomes.json", required: true, nestedLift: null, claimedLift: null,
     what: "real player-SEASON trajectories by preseason positional rank (schema 2) -- the pools the " +
       "simulator draws whole seasons from, so injuries, busts and breakouts persist across weeks",
@@ -105,7 +123,12 @@ export const MODELS: ModelSpec[] = [
   },
   {
     key: "correlation", file: "correlation-model.json", required: true, nestedLift: null, claimedLift: null,
-    what: "same-team teammate correlation, imposed via a Gaussian copula",
+    what: "same-team teammate correlation, imposed via a TWO-LEVEL Gaussian copula since Phase 2b: " +
+      "one draw couples which SEASON each teammate has, a second permutes which WEEK inside it his " +
+      "big games land in. The pairs below were fitted on same-week residuals, and applying them only " +
+      "at the season level (Phase 1) left the same-week figure at +0.107 against a fitted +0.348 " +
+      "-- defect D4. Restored to +0.347 / +0.210 / +0.209 (QB-WR / QB-TE / K-DST) with every " +
+      "marginal and every season total unchanged; see scripts/verify-marginal.mjs",
     check: (j) => {
       const p = (j.pairs ?? {}) as Record<string, number>;
       const qbwr = p["QB-WR"] ?? p["WR-QB"];

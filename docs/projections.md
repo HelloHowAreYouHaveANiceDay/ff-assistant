@@ -30,15 +30,51 @@ They differ by 20-35% at the top, and the error concentrates where a dollar is m
 the #1 player, which is the number the whole auction book is scaled from: QB 169 -> 90, RB 203 -> 135,
 WR 182 -> 101, TE 134 -> 89. See `docs/validation.md` and `scripts/curve-report.mjs`.
 
-The shipped curve takes its **shape** from the prior-year-finish conditional (25 season pairs, n
-50-130 per rank -- stable, but conditioned on the wrong variable) and its **level** from the
-preseason-ECR conditional (the variable the board is actually indexed by, but only six seasons and
-too thin to take a shape from). It is then made monotone non-increasing, because `baselines()` reads
-a replacement level off it and a rising curve would hand a worse player a higher VOR.
+The curve took its **shape** from the prior-year-finish conditional (25 season pairs, n 50-130 per
+rank -- stable, but conditioned on the wrong variable) and its **level** from the preseason-ECR
+conditional (the variable the board is actually indexed by, but only six seasons and too thin to take
+a shape from), then made monotone non-increasing.
 
 Known bias, stated rather than buried: the ECR half can only score players who actually posted a
 season, so a ranked player who never played is a hidden zero that gets dropped. That biases the level
 UP, making the correction conservative.
+
+## THOSE CHOICES ARE NOW SELECTED BY THE EVALUATION, NOT SET HERE (Phase 2b, 2026-09-08)
+
+Everything in the paragraph above -- the window width, the monotone repair, the ECR level rescale,
+and whether the linear stage multiplies the curve or adds to it -- was four hand-made constants
+compiled into the feature builder, where no evaluation could reach them. They are now
+HYPERPARAMETERS of `tools/train_projection.py`, selected PER POSITION by forward-chaining inner
+cross-validation on pinball loss (4 windows x monotone on/off x 3 level weights x ratio/offset).
+
+Forward chaining, not a shuffled k-fold, and it is not fastidiousness: a curve is fitted on season
+pairs, so a random split lets a fold's curve be built from seasons AFTER the one it is scoring --
+lookahead moved one level up, into the model, where no data-level check can see it. For the same
+reason `--holdout-season Y` trains on seasons strictly BEFORE Y rather than "every season except Y".
+
+The selected curve travels ON the artifact (`base: "artifact_curve"`), because a curve chosen inside
+the fold and then not shipped would mean the board reads whatever recipe the feature builder happens
+to hold and the selection changed nothing. `loadArtifact` refuses an artifact that declares one
+without the other.
+
+**THE ECR LEVEL CORRECTION IS NEVER SELECTED** -- not once, at any position, in any of the fourteen
+outer folds. It shipped for six months as half of the conditional curve and, given the choice, the
+evaluation declines it every time. The shipped 2026 artifact is `offset` form with windows QB 2 /
+RB 1 / WR 2 / TE 1 / K 3 / DST 1 and level weight 0 throughout. The windows are NOT stable across
+folds and should not be read as facts about positions; see docs/validation.md.
+
+**The multiplicative stage is retired.** `age-curve.json` and `opportunity-model.json` were fitted
+outside every fold, by their own scripts, against their own curves -- and the opportunity amplitudes
+against a curve that had seen the future (defect D1). A model that reaches for a fitted file on disk
+cannot be cross-validated, because it is the same file in every fold. Age is now a coefficient of the
+trainer and usage is a ratio to its rank bucket's mean over training seasons only; the two files stay
+on disk for the record and NOTHING reads them.
+
+**Quantiles are fitted where they are scored.** Phase 2a fitted p10/p50/p90 on ranks 1-36 and scored
+them on everything, and reported the resulting 0.614 coverage as a property of the model; it was a
+property of the experiment. They are now fitted over ranks 1-60 with rank in the design, and the rank
+feature is winsorised at 60 -- past which 42% of the store's scored rows live, and where an
+unwinsorised coefficient was being extrapolated ten standard deviations beyond anything it saw.
 
 ## The projection is produced by an ARTIFACT, and one projector serves both callers (2026-09-08)
 
