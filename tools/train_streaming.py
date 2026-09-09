@@ -44,6 +44,7 @@ six and a report that averages over the difference is hiding it:
 
 import argparse
 import json
+import sqlite3
 import sys
 from datetime import date
 from pathlib import Path
@@ -279,6 +280,12 @@ def main():
     lo, hi = tw.parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
     rows = load_rows(args.db, lo, hi, args.population)
+    # The identity of the population these rows came from, from the same store in the same run.
+    _con = sqlite3.connect(args.db)
+    try:
+        pop_hash, pop_rows = tw.population_signature(_con)
+    finally:
+        _con.close()
     # NO SECOND FILTER. load_rows already selected the decision population in SQL; see train_weekly.
     # THE HOLDOUT IS REMOVED BEFORE ANYTHING IS MEASURED -- before the transform centres, before the
     # missing-value defaults, before the alpha search. Same rule as train_weekly.py and for the same
@@ -341,6 +348,10 @@ def main():
         "population": args.population,
         "trainMinLine": 0.0,
         "rowFilter": tw.ROW_FILTER,
+        # WHICH population, not just which rule -- the same stamp train_weekly writes, from the same
+        # function, so the two trainers cannot disagree about what the population is.
+        "populationHash": pop_hash,
+        "populationRows": pop_rows,
         "features": specs,
         "coef": coef,
         "clamps": {"lo": tw.CLAMP_LO, "hi": tw.CLAMP_HI},

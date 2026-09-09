@@ -50,6 +50,7 @@ was.
 """
 
 import argparse
+import hashlib
 import json
 import math
 import sqlite3
@@ -77,6 +78,41 @@ TRAIN_MIN_LINE = 3.0
 # file reads `in_population`, it does not recompute it.
 POPULATION_COLUMN = "in_population"
 ROW_FILTER = "in_population"
+
+# MEN CARRIED AT EACH POSITION PLUS THE STATED MARGIN. A COPY, and it is checked rather than trusted:
+# `population_signature` below asserts these against what the store's flags imply, so a change to
+# src/weekly/population.ts that is not mirrored here fails loudly instead of producing a hash that
+# silently disagrees with the one the registry computes.
+POPULATION_DEPTH = {"QB": 42, "RB": 71, "WR": 79, "TE": 41, "K": 34, "DST": 37}
+
+
+def population_signature(con):
+    """THE STORE'S POPULATION, AS A SHORT STRING, byte-identical to `populationSignature` in
+    src/weekly/population.ts.
+
+    WHY THE ARTIFACT CARRIES IT. `rowFilter: "in_population"` says WHICH RULE selected the training
+    rows. It does not say WHICH POPULATION -- rebuild the flags with a different depth or another
+    season of roster feed and an artifact fitted on the old set still declares the same rule, still
+    loads, and models players the store no longer selects. The hash is what makes that visible;
+    `weeklyPopulationProblem` in src/draft/models.ts refuses an artifact whose hash has moved.
+
+    The body must serialise EXACTLY as JSON.stringify does on the TypeScript side: no spaces, keys in
+    insertion order, seasons as [season, count] pairs ascending. A hash that differs only in
+    whitespace is a hash that never matches, which would read as a permanently stale artifact.
+    """
+    rows = con.execute(
+        "SELECT season, COUNT(*) FROM feat_player_week_model"
+        " WHERE " + POPULATION_COLUMN + " = 1 GROUP BY season ORDER BY season").fetchall()
+    if not rows:
+        return None, 0
+    body = json.dumps(
+        {"depth": POPULATION_DEPTH, "seasons": [[int(s), int(n)] for s, n in rows]},
+        separators=(",", ":"),
+    )
+    total = sum(int(n) for _, n in rows)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16], total
+
+
 # The clamp is on the RATIO. lo is 0 and not 0.01, on purpose: the quantile heads have to be able to
 # reach the zero atom, and a small positive floor would quietly convert every projected zero week
 # into a small positive number that no metric flags.
@@ -693,6 +729,13 @@ def main():
     lo, hi = parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
     rows = load_rows(args.db, lo, hi, args.population)
+    # The identity of the population these rows came from, stamped on the artifact. Read from the
+    # SAME store, in the same run, so it cannot describe a different build than the one fitted.
+    _con = sqlite3.connect(args.db)
+    try:
+        pop_hash, pop_rows = population_signature(_con)
+    finally:
+        _con.close()
     # NO SECOND FILTER HERE. `load_rows` selected the decision population in SQL; re-cutting it on
     # the season line would put a Python-side rule back beside the shared one, which is the drift
     # this change removed.
@@ -800,6 +843,9 @@ def main():
         # 0: the line cut is no longer the rule. `rowFilter` says what is.
         "trainMinLine": 0.0,
         "rowFilter": ROW_FILTER,
+        # WHICH population, not just which rule. See `population_signature`.
+        "populationHash": pop_hash,
+        "populationRows": pop_rows,
         "features": specs,
         "coef": coef,
         "clamps": {"lo": CLAMP_LO, "hi": CLAMP_HI},

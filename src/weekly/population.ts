@@ -53,6 +53,7 @@
  * `FA_MARGIN` is the stated margin: one extra man per team at every position. It is the depth past
  * the last rostered man that a waiver claim can plausibly reach.
  */
+import { createHash } from "node:crypto";
 import type { Database as DB } from "better-sqlite3";
 
 /** The league this population is about. Both numbers appear in the depth derivation above. */
@@ -239,4 +240,50 @@ export function populationKeys(db: DB, season: number): Set<string> | null {
     `SELECT feat_key, week FROM feat_player_week_model WHERE season = ? AND ${POPULATION_PREDICATE}`,
   ).all(season) as { feat_key: string; week: number }[];
   return new Set(rows.map((r) => `${r.feat_key}|${r.week}`));
+}
+
+/**
+ * A SIGNATURE FOR THE POPULATION CURRENTLY IN THE STORE.
+ *
+ * WHAT IT IS FOR. An artifact is fitted on one set of rows and scored against another, and the whole
+ * of Track F is the story of what happens when those two sets differ: the trainer cut at
+ * `season_line_pg >= 3`, the harness kept every non-bye row, and the resulting 0.11-0.21 gap in zero
+ * rate failed the gate at three positions for a reason that had nothing to do with the model. The
+ * column fixed that for one build. It does NOT fix the case where the population is REBUILT -- a
+ * different `ROSTER_DEPTH`, another season of roster feed, a re-run of `buildPopulation` -- and an
+ * artifact fitted on the old one is still sitting on disk saying `rowFilter: "in_population"`.
+ *
+ * WHAT IT IS NOT. It is a cheap identity, not a cryptographic one: the count of flagged rows per
+ * season plus the depth cuts the rule was built with. Two genuinely different populations could
+ * collide on a count; the point is to catch a REBUILD, which moves counts, not to resist an
+ * adversary. `depth` is included because a depth change that happened to leave the total unchanged
+ * is exactly the silent case a count alone would miss.
+ */
+export interface PopulationSignature {
+  hash: string;
+  rows: number;
+  perSeason: { season: number; rows: number }[];
+  depth: Record<string, number>;
+}
+
+export function populationSignature(db: DB): PopulationSignature | null {
+  const have = new Set((db.prepare("PRAGMA table_info(feat_player_week_model)").all() as { name: string }[])
+    .map((c) => c.name));
+  if (!have.has(POPULATION_COLUMN)) return null;
+  const perSeason = db.prepare(
+    `SELECT season, COUNT(*) AS n FROM feat_player_week_model
+      WHERE ${POPULATION_PREDICATE} GROUP BY season ORDER BY season`,
+  ).all() as { season: number; n: number }[];
+  if (!perSeason.length) return null;
+  const rows = perSeason.reduce((a, r) => a + r.n, 0);
+  const body = JSON.stringify({
+    depth: POPULATION_DEPTH,
+    seasons: perSeason.map((r) => [r.season, r.n]),
+  });
+  return {
+    hash: createHash("sha256").update(body).digest("hex").slice(0, 16),
+    rows,
+    perSeason: perSeason.map((r) => ({ season: r.season, rows: r.n })),
+    depth: { ...POPULATION_DEPTH },
+  };
 }

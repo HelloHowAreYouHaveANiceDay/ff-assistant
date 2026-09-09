@@ -19,11 +19,77 @@
  * the things that would otherwise fail quietly.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
+import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
+import { POPULATION_COLUMN, populationSignature, type PopulationSignature } from "../weekly/population.js";
 import { loadArtifact } from "../model/projector.js";
 import { loadWeeklyArtifact, SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT } from "../weekly/projector.js";
+import { STREAMING_ARTIFACT } from "../weekly/streamingServe.js";
 import { loadPriceModel } from "../model/price.js";
 import { loadInjuryHorizonArtifact } from "../inseason/injuryHorizon.js";
+
+/**
+ * IS THIS WEEKLY ARTIFACT FITTED ON THE POPULATION THE STORE HOLDS?
+ *
+ * Track F's whole finding was that the trainer and the harness were selecting different rows, and
+ * `in_population` fixed that FOR ONE BUILD. It does not fix the next one: rebuild the population --
+ * a different `ROSTER_DEPTH`, another season of roster feed, any re-run of `buildPopulation` -- and
+ * an artifact fitted on the OLD one is still on disk, still says `rowFilter: "in_population"`, and
+ * still loads. Every number it produces is then a model of a set of players that no longer exists,
+ * and nothing anywhere fails.
+ *
+ * TWO CHECKS, and they are not the same strength:
+ *
+ *   1. `rowFilter` MUST be `in_population`. An artifact from before Track F declares something else
+ *      (or nothing), and that is a hard refusal: it is literally a model of the previous population.
+ *   2. Where the artifact declares a `populationHash`, it must EQUAL the store's. This is the check
+ *      that catches a rebuild, and it is the strong one.
+ *
+ * THE ARTIFACTS ON DISK TODAY CARRY NO HASH, so they get check (1) only. That is stated rather than
+ * papered over: the trainers now emit `populationHash`, so the strong check goes live on the next
+ * refit, and until then a rebuild is caught by the counts `ff build-weekly-features` prints rather
+ * than by this function. Refusing an artifact for not carrying a field that did not exist when it
+ * was fitted would fail every shipped model today, which is a broken gate, not a strict one.
+ *
+ * NO STORE MEANS NO CHECK, not a failure. `ff models` must run on a fresh clone, where there is no
+ * population to compare against; the absence is reported by `modelStatus`'s `present` fields.
+ */
+export function weeklyPopulationProblem(json: Record<string, unknown>): string | null {
+  const filter = typeof json.rowFilter === "string" ? json.rowFilter : null;
+  if (filter !== POPULATION_COLUMN) {
+    return `rowFilter is ${filter == null ? "ABSENT" : `"${filter}"`}, not "${POPULATION_COLUMN}" -- this artifact ` +
+      "was fitted on the PREVIOUS population (the trainer's own `season_line_pg >= 3` cut, or no cut " +
+      "at all). Scoring it against the decision population compares a model of one set of players " +
+      "with the outcomes of another, which is the exact failure Track F traced. Refit: " +
+      "`ff build-weekly-features` then tools/train_weekly.py.";
+  }
+  const declared = typeof json.populationHash === "string" ? json.populationHash : null;
+  if (!declared) return null;                 // fitted before the hash existed; check (1) is all there is
+  const sig = storePopulation();
+  if (!sig) return null;                      // no store here -- nothing to compare against
+  if (declared !== sig.hash) {
+    return `populationHash ${declared} but the store's population is ${sig.hash} ` +
+      `(${sig.rows} flagged rows). The population was REBUILT since this artifact was fitted, so it ` +
+      "is a model of players the store no longer selects. Refit, or rebuild the population back.";
+  }
+  return null;
+}
+
+/** The store's population signature, read once. Failure to open is `null`, never a throw: a registry
+ *  check that crashes on a missing store makes `ff models` unusable on a fresh clone. */
+let SIG_CACHE: PopulationSignature | null | undefined;
+function storePopulation(): PopulationSignature | null {
+  if (SIG_CACHE !== undefined) return SIG_CACHE;
+  SIG_CACHE = null;
+  try {
+    const db = new Database(dataPath("ff.db"), { readonly: true, fileMustExist: true });
+    try { SIG_CACHE = populationSignature(db); } finally { db.close(); }
+  } catch { SIG_CACHE = null; }
+  return SIG_CACHE;
+}
+
+/** For tests: forget the cached signature, so a fixture store can be pointed at. */
+export function resetPopulationCache(): void { SIG_CACHE = undefined; }
 
 export interface ModelSpec {
   key: string;
@@ -119,7 +185,7 @@ export const MODELS: ModelSpec[] = [
             "a quantile artifact. A two-part model here would put the failed challenger on the lineup path.";
         }
         if (!a.golden?.length) return "no golden block -- nothing checks that the trainer and this evaluator agree";
-        return null;
+        return weeklyPopulationProblem(j);
       } catch (e) { return (e as Error).message; }
     },
   },
@@ -155,7 +221,39 @@ export const MODELS: ModelSpec[] = [
         }
         if (!a.quantileGrid?.length) return "a two-part artifact with no quantile grid -- the second stage published no ladder";
         if (!a.golden?.length) return "no golden block -- nothing checks that the trainer and this evaluator agree";
-        return null;
+        return weeklyPopulationProblem(j);
+      } catch (e) { return (e as Error).message; }
+    },
+  },
+  {
+    // THE MODEL THAT ACTUALLY SERVES THREE POSITIONS, and it was not in this registry. `WEEKLY_SERVE`
+    // maps QB, K and DST to it, integration pass 4 routed the LINEUP seam through that table, and the
+    // registry -- the one place that is supposed to know what we have fitted and whether it is still
+    // trustworthy -- had no entry for it. A model absent from the registry gets none of its checks:
+    // a stale or missing streaming artifact would have degraded the lineup at three positions in
+    // silence, which is precisely the failure the registry's own header describes.
+    key: "streaming", file: STREAMING_ARTIFACT, required: false, nestedLift: null, claimedLift: null,
+    what: "THE STREAMING MODEL, and what ships at QB, K and DST. The weekly two-part structure plus " +
+      "the twelve point-in-time opponent-and-environment columns of `feat_player_week_stream`, with " +
+      "K and DST FITTED rather than intercept-only. It passed all three gate clauses at QB, K and " +
+      "DST and failed clause (c) at RB, WR and TE, so `WEEKLY_SERVE` maps exactly those three " +
+      "positions to it and the other three to the floor -- `SHIPPED_STREAMING_POSITIONS` is DERIVED " +
+      "from that table, never maintained beside it. READ THE GAIN WITH ITS SOURCE ATTACHED: the " +
+      "control with the twelve opponent columns REMOVED is within 0.004 CRPS at every position, so " +
+      "what the gate passed on is the two-part structure and K and DST being fitted at all. The " +
+      "opponent block's own contribution measured ~0 and P42 failed saying so",
+    check: (j) => {
+      try {
+        const a = loadWeeklyArtifact(j);
+        // Keyed on the THING: the streaming slot exists to hold the model that carries the opponent
+        // columns. The floor wearing this filename would serve QB, K and DST the season line while
+        // every report said "matchup-aware".
+        if (a.zeroModel !== "two-part") {
+          return `zeroModel ${a.zeroModel ?? "quantile"} -- the streaming slot serves QB, K and DST ` +
+            "through WEEKLY_SERVE, and a quantile artifact here would silently serve them the floor";
+        }
+        if (!a.golden?.length) return "no golden block -- nothing checks that the trainer and this evaluator agree";
+        return weeklyPopulationProblem(j);
       } catch (e) { return (e as Error).message; }
     },
   },
