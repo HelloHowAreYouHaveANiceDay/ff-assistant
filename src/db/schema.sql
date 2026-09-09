@@ -669,3 +669,39 @@ CREATE TABLE IF NOT EXISTS raw_league_matchup (
 CREATE TABLE IF NOT EXISTS raw_league_division (
   league_id TEXT NOT NULL, season INTEGER NOT NULL, division_id TEXT NOT NULL, name TEXT, team_ids_json TEXT,
   fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, division_id));
+
+-- ================= RAW LAYER: nflverse point-in-time feeds =================
+--
+-- One table per source feed, exactly what the feed gave, keyed by the source's own key. No identity
+-- resolution -- the snap-count feed has no gsis id at all and that fact is preserved rather than
+-- papered over, because a pfr id resolved here would be a join this layer is forbidden to make.
+--
+-- Every table carries `as_of`: the date the information was KNOWABLE, not the date we fetched it
+-- (`fetched_at` is that, separately). The two differ by years for a historical row and confusing
+-- them is how lookahead gets into a feature table without anything noticing.
+
+-- The full nflverse schedules feed, not the six-column slice `game` holds. The Vegas line, the
+-- weather, the surface, the rest days and the starting quarterbacks are all here and none of them
+-- had anywhere to land.
+--
+-- AS-OF IS NOT ONE DATE FOR THIS ROW. `gameday`, `weekday`, `away_rest`/`home_rest`, `roof`,
+-- `surface` and the opponent are knowable when the schedule is published, in the spring.
+-- `spread_line`/`total_line` are the CLOSING line, knowable the day of the game. `temp` and `wind`
+-- are OBSERVED and are not knowable before kickoff at all. `result` and the scores are after. So
+-- `as_of` here is `gameday` -- the point by which everything except the result is settled -- and a
+-- consumer that wants a column earlier than that has to say which column and why.
+CREATE TABLE IF NOT EXISTS raw_nfl_game (
+  season INTEGER NOT NULL, game_id TEXT NOT NULL, as_of TEXT,
+  game_type TEXT, week INTEGER, gameday TEXT, weekday TEXT, gametime TEXT,
+  away_team TEXT, home_team TEXT, away_score REAL, home_score REAL,
+  location TEXT, result REAL, total REAL, overtime INTEGER,
+  away_rest INTEGER, home_rest INTEGER,
+  away_moneyline REAL, home_moneyline REAL, spread_line REAL, total_line REAL,
+  away_spread_odds REAL, home_spread_odds REAL, under_odds REAL, over_odds REAL,
+  div_game INTEGER, roof TEXT, surface TEXT, temp REAL, wind REAL,
+  stadium_id TEXT, stadium TEXT, referee TEXT,
+  away_qb_id TEXT, home_qb_id TEXT, away_qb_name TEXT, home_qb_name TEXT,
+  gsis TEXT, pfr TEXT, espn TEXT,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, game_id));
+CREATE INDEX IF NOT EXISTS idx_raw_game_wk ON raw_nfl_game (season, week);

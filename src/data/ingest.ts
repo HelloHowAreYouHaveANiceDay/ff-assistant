@@ -227,6 +227,17 @@ export const RAW_ASSETS: RawAsset[] = [
       return r.counts.picks;
     },
   },
+  {
+    id: "nfl-games",
+    table: "raw_nfl_game",
+    what: "nflverse schedules: every NFL game 1999-2026 with the closing Vegas line, weather, roof, surface, rest days and starting QBs",
+    defaultSeasons: null,
+    async run(dbPath, seasons) {
+      const { ingestRawGames } = await import("./rawSources.js");
+      const r = await ingestRawGames({ dbPath, seasons });
+      return r.total;
+    },
+  },
 ];
 
 const RAW_ONLY_ASSETS = new Set(RAW_ASSETS.map((a) => a.id));
