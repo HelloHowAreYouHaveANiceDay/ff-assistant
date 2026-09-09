@@ -52,8 +52,11 @@ test("FAULT INJECTION: renaming a feature makes the loader refuse", (t) => {
   const old = a.features[0].name;
   const renamed = "t4_mean_v2" as typeof old;
   a.features[0].name = renamed;
+  // Over EVERY head the artifact actually carries, not a hardcoded four. A two-part artifact's heads
+  // are `zero`, `mean` and one per grid level; iterating the quantile model's names against it would
+  // rename nothing and the test would pass for a reason that has nothing to do with the rename.
   for (const pos of Object.keys(a.coef)) {
-    for (const h of ["mean", "p10", "p50", "p90"] as const) {
+    for (const h of Object.keys(a.coef[pos])) {
       a.coef[pos][h][renamed] = a.coef[pos][h][old];
       delete a.coef[pos][h][old];
     }
@@ -70,9 +73,12 @@ test("FAULT INJECTION: a corrupted golden row, a missing head, a missing coeffic
   g.golden![0].expect.mean += 0.5;
   refuses(() => loadWeeklyArtifact(g), "a wrong golden prediction was accepted");
 
+  // Drop ANY head the artifact declares -- whichever the model in the file actually carries.
   const h = clone(base);
-  delete (h.coef[Object.keys(h.coef)[0]] as Partial<typeof h.coef[string]>).p90;
-  refuses(() => loadWeeklyArtifact(h), "an artifact with no p90 head was accepted");
+  const pos0 = Object.keys(h.coef)[0];
+  const dropped = Object.keys(h.coef[pos0]).find((k) => k !== "mean") ?? "mean";
+  delete h.coef[pos0][dropped];
+  refuses(() => loadWeeklyArtifact(h), `an artifact with no '${dropped}' head was accepted`);
 
   const c = clone(base);
   if (c.features.length) {
@@ -117,6 +123,75 @@ test("the season-line-only artifact is producible and projects exactly the seaso
         `${pos}: the floor artifact's mean intercept must be exactly 1.0`);
     }
   }
+});
+
+// ==================================================================================================
+// THE TWO-PART MODEL (Phase 2d). Its arithmetic has a BRANCH in it -- the mixture shift
+// q -> (q - pZero)/(1 - pZero), with the branch where the atom swallows the quantile level entirely
+// -- and a branch is where two implementations of one contract most easily part company. So the
+// golden block carries pZero as well as the four published heads, and one fixture is a man with an
+// OUT designation, which is the row where the branch is actually taken.
+// ==================================================================================================
+test("the two-part artifact: schema 2, a grid on the artifact, and an OUT fixture that collapses onto the atom", (t) => {
+  if (!existsSync(ARTIFACT)) return t.skip("no weekly artifact");
+  const a = load(ARTIFACT);
+  if (a.zeroModel !== "two-part") {
+    return t.skip(`the shipping artifact is a "${a.zeroModel ?? "quantile"}" model, not a two-part one`);
+  }
+  assert.equal(a.schema, 2);
+  assert.ok(Array.isArray(a.quantileGrid) && a.quantileGrid.length >= 3,
+    "a two-part artifact must publish the grid its consumer interpolates on");
+  for (const pos of Object.keys(a.coef)) {
+    assert.ok(a.coef[pos].zero, `${pos} has no zero head`);
+  }
+  // THE OUT ROW. A quantile-head model cannot express this at all: 0.10 is the smallest level it
+  // publishes, so the most it could say about a man ruled out on Friday is "p10 might be 0".
+  const out = (a.golden ?? []).find((g) => (g.f as Record<string, number | null>).inj_out === 1);
+  assert.ok(out, "no golden fixture carries an OUT designation -- the row the two-part model exists " +
+    "for is the one row nothing checks");
+  assert.ok(out!.expect.pZero > 0.8,
+    `a man listed Out projects P(zero) = ${out!.expect.pZero.toFixed(3)}; the first stage is not ` +
+    "reading the injury designation");
+  assert.equal(out!.expect.p50, 0,
+    "with a zero probability above 0.5 the mixture's median must be exactly 0 -- if it is not, the " +
+    "quantile shift is not being applied and the published quantiles are the CONDITIONAL ones");
+  // And the healthy fixture at the same position must NOT collapse, or the model has simply learned
+  // to project zero for everyone.
+  const healthy = (a.golden ?? []).find((g) => g.pos === out!.pos && (g.f as Record<string, number | null>).inj_out === 0);
+  assert.ok(healthy && healthy.expect.mean > 4 * out!.expect.mean,
+    "the healthy fixture projects no better than the one ruled out -- the availability stage is not connected");
+});
+
+test("FAULT INJECTION: the loader refuses the OLD shape, and a two-part artifact missing its grid", (t) => {
+  if (!existsSync(ARTIFACT)) return t.skip("no weekly artifact");
+  const a = load(ARTIFACT);
+  if (a.zeroModel !== "two-part") return t.skip("not a two-part artifact");
+
+  // A schema-1 artifact -- the shape that shipped before Phase 2d. It must be REFUSED rather than
+  // read with whatever fields happen to line up: the mixture arithmetic reads a `zero` head that a
+  // schema-1 artifact does not have, and "no zero head" silently becomes "no projection at all",
+  // which looks exactly like an empty week.
+  const old = clone(a);
+  old.schema = 1;
+  refuses(() => loadWeeklyArtifact(old), "a schema-1 artifact was accepted by a schema-2 evaluator");
+
+  const noGrid = clone(a);
+  delete noGrid.quantileGrid;
+  refuses(() => loadWeeklyArtifact(noGrid),
+    "a two-part artifact with no published grid was accepted -- the consumer would have guessed the " +
+    "levels the trainer used, which is exactly the drift the golden block exists to catch");
+
+  const badGrid = clone(a);
+  badGrid.quantileGrid = [0.5, 0.2, 0.9];
+  refuses(() => loadWeeklyArtifact(badGrid), "a non-ascending quantile grid was accepted");
+
+  const noZero = clone(a);
+  delete noZero.coef[Object.keys(noZero.coef)[0]].zero;
+  refuses(() => loadWeeklyArtifact(noZero), "a two-part artifact with no zero head was accepted");
+
+  // And the POSITIVE side: the untouched artifact still loads, so the four refusals above are the
+  // refusals of a working loader rather than of one that rejects everything.
+  assert.ok(loadWeeklyArtifact(clone(a)), "the unmodified artifact no longer loads");
 });
 
 test("a row with no season line produces NO projection, not a zero", () => {

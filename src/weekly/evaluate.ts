@@ -47,7 +47,7 @@ import {
   loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact,
   type WeeklyArtifact, type WeeklyProjRow,
 } from "./projector.js";
-import { loadWeeklyRows, type WeeklyRow } from "./features.js";
+import { loadWeeklyRows, PENDING_DATA_TRACK_FIELDS, type WeeklyRow } from "./features.js";
 
 export const MODELS = ["weekly", "season_line", "shipped_week", "trailing4", "zero"] as const;
 export type ModelName = typeof MODELS[number];
@@ -404,11 +404,11 @@ function withSpread(
   // a zero week, which is a fabricated number rather than an absent one.
   const trained = new Map<string, Pred>();
   for (const r of projectWeekly({ artifact, rows: season.rows })) {
-    trained.set(`${r.feat_key}|${r.week}`, { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90 });
+    trained.set(`${r.feat_key}|${r.week}`, { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90, pZero: r.pZero });
   }
   const lineQ = new Map<string, Pred>();
   for (const r of projectWeekly({ artifact: lineOnly, rows: season.rows })) {
-    lineQ.set(`${r.feat_key}|${r.week}`, { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90 });
+    lineQ.set(`${r.feat_key}|${r.week}`, { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90, pZero: r.pZero });
   }
   const out: Scored1[] = [];
   for (const r of season.rows) {
@@ -527,13 +527,16 @@ export interface EvalOpts {
 
 /** Train one holdout artifact by shelling out to the Python trainer -- the same binary the shipped
  *  artifact came from, so the thing evaluated is the thing that would ship. */
-function trainHoldout(dbPath: string, trainSeasons: number[], holdout: number, features: string, out: string): WeeklyArtifact | null {
+function trainHoldout(
+  dbPath: string, trainSeasons: number[], holdout: number, features: string, out: string,
+  zeroModel: string,
+): WeeklyArtifact | null {
   const lo = Math.min(...trainSeasons), hi = Math.max(...trainSeasons);
   try {
     execFileSync("uv", [
       "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_weekly.py",
       "--db", dbPath, "--seasons", `${lo}-${hi}`, "--holdout-season", String(holdout),
-      "--features", features, "--out", out, "--quiet",
+      "--features", features, "--zero-model", zeroModel, "--out", out, "--quiet",
     ], { stdio: "pipe" });
   } catch (e) {
     throw new Error(`train_weekly failed for holdout ${holdout}: ${e instanceof Error ? e.message : e}`);
@@ -571,18 +574,30 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   const db = openDb(dbPath);
   const all: Scored1[] = [];
   let featuresUsed: string[] = [];
+  let zeroModel = "quantile";
+  let shipArt: WeeklyArtifact | null = null;
   try {
     // The spread table for the baselines is measured on the TRAINING seasons, once, with the
     // FULL-DATA artifact -- it is a property of each baseline's calibration, not of a fold.
     const fullArt = loadWeeklyArtifact(JSON.parse(readFileSync("data/weekly-artifact.json", "utf8")));
     featuresUsed = fullArt.features.map((f) => f.name);
+    // WHICH MODEL THE FOLDS FIT IS READ OFF THE ARTIFACT THAT WOULD SHIP, not passed in.
+    // The harness's job is to score the thing that would actually ship, and the full-data artifact
+    // is that thing; taking the model kind from a flag instead would let the folds fit a two-part
+    // model while the file on disk was a quantile one, and the report would name neither.
+    zeroModel = fullArt.zeroModel ?? "quantile";
+    shipArt = fullArt;
     const trainOnly = opts.trainSeasons.filter((s) => !opts.seasons.includes(s));
     const spreadSeasons = (trainOnly.length ? trainOnly : opts.trainSeasons.slice(0, 2)).map((s) => loadSeason(db, s));
     const spreadLine = lineOnlyFor(db, opts.trainSeasons, -1);
     const spread = measureSpread(spreadSeasons, spreadSeasons.map((s) => pointPredictions(s, fullArt, spreadLine)));
 
     for (const yr of opts.seasons) {
-      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`));
+      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`), zeroModel);
+      if (art && (art.zeroModel ?? "quantile") !== zeroModel) {
+        throw new Error(`fold ${yr} produced a "${art.zeroModel}" artifact but the shipping artifact ` +
+          `is "${zeroModel}" -- the folds are not measuring the model that would ship`);
+      }
       if (!art) throw new Error(`no artifact produced for holdout ${yr}`);
       // The population is a CONTRACT and this is where it is checked. This harness scores every
       // non-bye week with a did-not-play week as a zero; an artifact fitted on appearances only is
@@ -647,6 +662,55 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     },
   ];
 
+  // ---- PHASE 2d's THREE, about the TWO-PART model. Registered before the run; reported as held or
+  // failed and never restated. They are UNMEASURED against a quantile artifact rather than being
+  // quietly evaluated against the wrong model. ----
+  if (zeroModel === "two-part") {
+    const deep = lineup["deep-18"];
+    const gain18 = deep ? deep.weekly.meanCaptured - deep[BASELINE].meanCaptured : NaN;
+    const zBad = Object.entries(byPos)
+      .filter(([, m]) => m.weekly?.n)
+      .map(([p, m]) => [p, Math.abs(m.weekly.zeroPred - m.weekly.zeroActual)] as const)
+      .filter(([, d]) => !(d <= GATE_ZERO_TOL));
+    const dPooled = Math.abs(pooled.weekly.zeroPred - pooled.weekly.zeroActual);
+    // W6 reads the SHIPPING artifact's mean head. Both features are `center`-transformed on the same
+    // scale (divided by their own training standard deviation), so their coefficients are directly
+    // comparable in units of "a one-sigma move in this column"; comparing raw coefficients on
+    // differently-scaled columns would be comparing units, not effects.
+    const heads = shipArt?.coef ?? {};
+    const w6 = Object.entries(heads)
+      .filter(([, h]) => h.mean && (h.mean.implied_team_total != null || h.mean.dvp_mult != null))
+      .map(([p, h]) => [p, Math.abs(h.mean.implied_team_total ?? 0), Math.abs(h.mean.dvp_mult ?? 0)] as const)
+      .filter(([, , d]) => d > 0 || true);
+    const w6Fails = w6.filter(([, itt, dvp]) => !(itt > dvp));
+    predictions.push(
+      {
+        id: "W4",
+        claim: "the two-part model's lineup-regret gain over the shipped baseline is at least 5 points per lineup on deep-18",
+        held: Number.isFinite(gain18) ? gain18 >= 5 : null,
+        evidence: Number.isFinite(gain18)
+          ? `${gain18.toFixed(2)} points per lineup (deep-18: ${deep.weekly.meanCaptured.toFixed(2)} vs ${deep[BASELINE].meanCaptured.toFixed(2)})`
+          : "no rosters drawn",
+      },
+      {
+        id: "W5",
+        claim: `its predicted zero-week share matches actual within ${GATE_ZERO_TOL} pooled and per position`,
+        held: Number.isFinite(dPooled) ? dPooled <= GATE_ZERO_TOL && zBad.length === 0 : null,
+        evidence: `pooled ${pooled.weekly.zeroPred.toFixed(3)} vs ${pooled.weekly.zeroActual.toFixed(3)} ` +
+          `(off by ${dPooled.toFixed(3)})` +
+          (zBad.length ? `; outside per position: ${zBad.map(([p, d]) => `${p} ${d.toFixed(3)}`).join(", ")}` : "; every position inside"),
+      },
+      {
+        id: "W6",
+        claim: "implied_team_total carries a larger mean-head coefficient than dvp_mult at every position",
+        held: w6.length ? w6Fails.length === 0 : null,
+        evidence: w6.length
+          ? w6.map(([p, itt, dvp]) => `${p} ${itt.toFixed(4)} vs ${dvp.toFixed(4)}`).join("; ")
+          : "no position carries both coefficients",
+      },
+    );
+  }
+
   // ---- THE GATE, as pre-registered for Phase 2d. See weeklyGate() for the clauses and for why
   // clause (b) is conditional on pts > 0. It is applied exactly as registered; a failing clause
   // keeps the season-line-only artifact shipping and says which clause. ----
@@ -655,8 +719,10 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   return {
     seasons: opts.seasons, trainSeasons: opts.trainSeasons, features,
     featuresUsed,
-    pendingDataTrack: ["injury_status_friday", "depth_chart_rank", "teammates_out",
-      "prior_snap_share", "prior_route_share", "vegas_implied_team_total"],
+    // What the data track STILL owes this model. The Wednesday injury pair is the surprise of Phase
+    // 2d: the columns exist, they are built with a cutoff of kickoff minus four days, and they are
+    // empty, because the feed's dated filings land at kickoff minus two or later.
+    pendingDataTrack: [...PENDING_DATA_TRACK_FIELDS],
     pooled, byPos, byBand, bySeason, lineup, predictions, gate,
   };
 }

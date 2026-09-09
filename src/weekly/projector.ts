@@ -56,9 +56,30 @@ export interface WeeklyFeatureSpec {
   missing: number;
 }
 
+/**
+ * WHICH MODEL THE ARTIFACT CARRIES, and it changes the arithmetic below rather than just labelling it.
+ *
+ * "quantile"  -- one set of heads (mean, p10, p50, p90) fitted on the POOLED target, zeros included,
+ *                with the clamp floor at 0 so p10 can sit on the atom. Phase 2c's model.
+ * "two-part"  -- P(zero week) from a logistic stage on availability signals, times the ratio GIVEN
+ *                he played from a second stage fitted on played weeks only. The published quantiles
+ *                are the MIXTURE's, which is what makes p10 exactly 0 whenever the zero probability
+ *                exceeds 0.10 -- a thing a pooled quantile fit cannot say, because 0.10 is the
+ *                smallest level it publishes no matter how certain the zero is.
+ */
+export type WeeklyZeroModel = "quantile" | "two-part";
+
+/** Grid level -> head name. `q05`, `q10`, ..., so a head name cannot be a float that round-trips
+ *  differently through JSON on the two sides of the seam. */
+export const gridHead = (q: number): string => `q${String(Math.round(q * 100)).padStart(2, "0")}`;
+
 export interface WeeklyArtifact {
   schema: number;
   kind: "weekly";
+  /** Absent means "quantile" -- but a schema-2 artifact always states it. */
+  zeroModel?: WeeklyZeroModel;
+  /** The quantile levels the SECOND stage was fitted at, ascending. Two-part artifacts only. */
+  quantileGrid?: number[];
   fittedFrom: string;
   fittedAt?: string;
   seasons: number[];
@@ -83,7 +104,9 @@ export interface WeeklyArtifact {
    *  It is not a serve-time behaviour: a small line still projects, it just projects small. */
   trainMinLine: number;
   features: WeeklyFeatureSpec[];
-  coef: Record<string, Record<WeeklyHead, Record<string, number>>>;
+  /** Per position, per HEAD, per feature. A quantile artifact's heads are exactly WEEKLY_HEADS; a
+   *  two-part artifact's are `zero` (a LOGIT), `mean` (E[ratio | played]) and one per grid level. */
+  coef: Record<string, Record<string, Record<string, number>>>;
   /** [lo, hi] on the RATIO. lo is 0, not a small positive number: the quantile heads must be able
    *  to reach the zero atom, and a floor of 0.01 would quietly turn every zero week into a small
    *  positive projection that no metric would flag. */
@@ -96,7 +119,7 @@ export interface WeeklyGoldenRow {
   pos: string;
   line: number;
   f: Partial<Record<WeeklyFeatureField, number | null>>;
-  expect: Record<WeeklyHead, number>;
+  expect: Record<string, number>;
 }
 
 export interface WeeklyProjRow {
@@ -110,6 +133,10 @@ export interface WeeklyProjRow {
   p10: number;
   p50: number;
   p90: number;
+  /** P(zero week). Present only for a two-part artifact -- the model that has one. A quantile
+   *  artifact does NOT get a fabricated one here; the evaluator reads its ladder instead, which is
+   *  an honest statement of what that model can and cannot claim. */
+  pZero?: number;
 }
 
 export interface WeeklyInputRow {
@@ -123,7 +150,13 @@ export interface WeeklyInputRow {
   f: Partial<Record<WeeklyFeatureField, number | null>>;
 }
 
-const SCHEMA = 1;
+const SCHEMA = 2;
+
+/** The default second-stage grid. Written ON the artifact; this is only the fallback for reading one
+ *  that somehow omits it, and the loader refuses that case rather than using it silently. */
+export const DEFAULT_QUANTILE_GRID = [0.05, 0.10, 0.20, 0.30, 0.50, 0.70, 0.90];
+
+const logistic = (z: number): number => (z >= 0 ? 1 / (1 + Math.exp(-z)) : Math.exp(z) / (1 + Math.exp(z)));
 
 /** Evaluate one spec against one row. Exported so the golden check and the projector cannot drift
  *  into two implementations of the same transform. Mirrored in tools/train_weekly.py. */
@@ -159,6 +192,8 @@ export function weeklyFeatureValue(
  */
 export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInputRow[] }): WeeklyProjRow[] {
   const { artifact: a, rows } = opts;
+  const twoPart = a.zeroModel === "two-part";
+  const grid = a.quantileGrid ?? DEFAULT_QUANTILE_GRID;
   const out: WeeklyProjRow[] = [];
   for (const row of rows) {
     const line = row.season_line_pg;
@@ -166,19 +201,74 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
     const byPos = a.coef[row.pos];
     if (!byPos) continue;
     const x = a.features.map((s) => weeklyFeatureValue(s, row));
-    const head = (h: WeeklyHead): number => {
+    /** The raw linear predictor of one head. NaN when the head is absent, which the caller turns
+     *  into "no projection" rather than into a zero. */
+    const lin = (h: string): number => {
       const c = byPos[h];
       if (!c) return NaN;
-      let lin = c.intercept ?? 0;
-      for (let i = 0; i < a.features.length; i++) lin += (c[a.features[i].name] ?? 0) * x[i];
-      return line * Math.min(a.clamps.hi, Math.max(a.clamps.lo, lin));
+      let v = c.intercept ?? 0;
+      for (let i = 0; i < a.features.length; i++) v += (c[a.features[i].name] ?? 0) * x[i];
+      return v;
     };
-    const mean = head("mean");
+    const clamped = (h: string): number => {
+      const v = lin(h);
+      return Number.isFinite(v) ? Math.min(a.clamps.hi, Math.max(a.clamps.lo, v)) : NaN;
+    };
+
+    if (!twoPart) {
+      const mean = line * clamped("mean");
+      if (!Number.isFinite(mean)) continue;
+      out.push({
+        feat_key: row.feat_key, player_sk: row.player_sk, name: row.name, pos: row.pos,
+        season: row.season, week: row.week,
+        mean, p10: line * clamped("p10"), p50: line * clamped("p50"), p90: line * clamped("p90"),
+      });
+      continue;
+    }
+
+    // ---- THE TWO-PART MIXTURE. F(y) = pZero + (1 - pZero) * F_played(y). ----
+    const z = lin("zero");
+    const ratio = clamped("mean");
+    if (!Number.isFinite(z) || !Number.isFinite(ratio)) continue;
+    const pZero = logistic(z);
+    // E[points] = P(he plays) * E[ratio | he plays] * line. The mean head of a two-part artifact is
+    // the CONDITIONAL mean, so leaving the (1 - pZero) factor off would project every injured
+    // player at his healthy rate -- which is the exact failure the two-part split exists to fix.
+    const mean = line * (1 - pZero) * ratio;
     if (!Number.isFinite(mean)) continue;
+
+    // The grid's values, clamped and made non-decreasing. A quantile crossing is a property of
+    // fitting each level independently, not a statement about the distribution, and a p50 below p10
+    // would silently invert every coverage number downstream.
+    const vals: number[] = [];
+    let prev = a.clamps.lo;
+    for (const g of grid) {
+      const v = clamped(gridHead(g));
+      const m = Number.isFinite(v) ? Math.max(prev, v) : prev;
+      vals.push(m);
+      prev = m;
+    }
+    /** The mixture's q-quantile, in RATIO units. */
+    const mixQ = (q: number): number => {
+      if (pZero >= 1) return 0;
+      const qp = (q - pZero) / (1 - pZero);
+      if (!(qp > 0)) return 0;                       // the atom swallows this quantile level entirely
+      // Anchored at (0, 0): the conditional distribution's floor is the clamp floor, which is 0.
+      if (qp >= grid[grid.length - 1]) return vals[vals.length - 1];
+      let lo = 0, loV = 0;
+      for (let i = 0; i < grid.length; i++) {
+        if (qp <= grid[i]) {
+          const span = grid[i] - lo;
+          return span > 0 ? loV + (vals[i] - loV) * ((qp - lo) / span) : vals[i];
+        }
+        lo = grid[i]; loV = vals[i];
+      }
+      return vals[vals.length - 1];
+    };
     out.push({
       feat_key: row.feat_key, player_sk: row.player_sk, name: row.name, pos: row.pos,
       season: row.season, week: row.week,
-      mean, p10: head("p10"), p50: head("p50"), p90: head("p90"),
+      mean, p10: line * mixQ(0.10), p50: line * mixQ(0.50), p90: line * mixQ(0.90), pZero,
     });
   }
   return out;
@@ -222,11 +312,37 @@ export function loadWeeklyArtifact(json: unknown, opts: { checkGolden?: boolean;
     }
     if (s.transform === "center" && !(Number(s.scale) > 0)) bad(`feature ${s.name}: 'center' needs a positive scale`);
   }
+  // WHICH HEADS THIS ARTIFACT MUST CARRY, decided by the model it says it is. An artifact that
+  // declares two-part and ships pooled quantile heads would otherwise load, project through the
+  // mixture arithmetic with `zero` missing, and produce no rows at all for every player -- a total
+  // failure that looks exactly like an empty week.
+  const twoPart = a.zeroModel === "two-part";
+  if (a.zeroModel != null && !["quantile", "two-part"].includes(a.zeroModel)) {
+    bad(`zeroModel is ${JSON.stringify(a.zeroModel)}, expected "quantile" or "two-part"`);
+  }
+  let grid: number[] = [];
+  if (twoPart) {
+    grid = a.quantileGrid ?? [];
+    if (!Array.isArray(grid) || grid.length < 3) {
+      bad("a two-part artifact must publish its second-stage quantileGrid -- the consumer interpolates " +
+        "the mixture on it, and guessing the levels the trainer used is exactly the drift the golden " +
+        "block exists to catch");
+    }
+    for (let i = 0; i < grid.length; i++) {
+      if (!(grid[i] > 0 && grid[i] < 1)) bad(`quantileGrid[${i}] = ${grid[i]} is not a quantile level in (0, 1)`);
+      if (i && !(grid[i] > grid[i - 1])) bad("quantileGrid must be strictly ascending");
+    }
+  }
+  const requiredHeads = twoPart ? ["zero", "mean", ...grid.map(gridHead)] : (WEEKLY_HEADS as string[]);
+
   if (!a.coef || typeof a.coef !== "object" || !Object.keys(a.coef).length) bad("no per-position coefficients");
   for (const [pos, heads] of Object.entries(a.coef)) {
-    for (const h of WEEKLY_HEADS) {
+    for (const h of requiredHeads) {
       const c = heads?.[h];
-      if (!c || typeof c !== "object") bad(`${pos}: no coefficients for head '${h}' -- every artifact must produce a mean and three quantiles`);
+      if (!c || typeof c !== "object") {
+        bad(`${pos}: no coefficients for head '${h}'. A ${a.zeroModel ?? "quantile"} artifact must ` +
+          `carry every one of: ${requiredHeads.join(", ")}`);
+      }
       if (typeof c.intercept !== "number") bad(`${pos}.${h}: no intercept`);
       for (const s of a.features) if (typeof c[s.name] !== "number") bad(`${pos}.${h}: no coefficient for feature '${s.name}'`);
       for (const k of Object.keys(c)) if (k !== "intercept" && !seen.has(k)) bad(`${pos}.${h}: coefficient '${k}' names no declared feature`);
@@ -252,8 +368,15 @@ export function checkWeeklyGolden(a: WeeklyArtifact, tol = 1e-6): void {
       }],
     });
     if (!rows.length) throw new Error(`weekly artifact: golden row ${i} (${g.pos}) produced no projection`);
-    for (const h of WEEKLY_HEADS) {
-      const got = rows[0][h], want = g.expect[h];
+    // pZero is checked too, and NOT optionally: the two-part model's whole claim lives in that
+    // number, and a consumer that computed it differently while agreeing on the mean and quantiles
+    // to 1e-6 would be a consumer that had reimplemented the mixture backwards and got lucky.
+    const heads: (keyof WeeklyProjRow)[] = [...WEEKLY_HEADS, ...(a.zeroModel === "two-part" ? ["pZero" as const] : [])];
+    for (const h of heads) {
+      const got = rows[0][h] as number, want = g.expect[h];
+      if (want == null) {
+        throw new Error(`weekly artifact: golden row ${i} (${g.pos}) has no expected value for head '${h}'`);
+      }
       if (!(Math.abs(got - want) <= tol)) {
         throw new Error(
           `weekly artifact: golden row ${i} (${g.pos}) head '${h}' -- trainer said ${want}, ` +
@@ -287,7 +410,8 @@ export function seasonLineOnlyArtifact(opts: {
     };
   }
   return {
-    schema: SCHEMA, kind: "weekly", fittedFrom: "seasonLineOnlyArtifact (no fitted coefficients)",
+    schema: SCHEMA, kind: "weekly", zeroModel: "quantile",
+    fittedFrom: "seasonLineOnlyArtifact (no fitted coefficients)",
     seasons: opts.seasons, holdoutSeason: null, target: "ratio_to_season_line",
     population: opts.population ?? "rostered",
     trainMinLine: 0, features: [], coef, clamps: { lo: 0, hi: 100 },

@@ -38,6 +38,44 @@ statement rather than a hope.
 | `days_rest` | days since this team's previous scheduled game. Schedule-derived, so known in August; NULL in a team's first game rather than a made-up 7. |
 | `pts` | **the target.** `loadWeeklyRows` never selects it into a feature row. |
 
+#### The availability block (Phase 2d) -- a DIFFERENT anchor, said out loud
+
+Ten more columns arrived from the data track's `feat_player_week_context`. They are not on the anchor
+above and pretending otherwise would be the quietest possible lie:
+
+| column | as-of rule |
+|---|---|
+| `prior_snap_share` | `offense_pct` in the last week he **played** before *w*, carried forward. |
+| `prior_route_share` | charted pass plays / team pass plays, same rule. The participation feed starts in 2016. |
+| `depth_rank` | the depth chart at **this team's kickoff minus one day**. |
+| `teammates_out` | same team, same position, listed Out at **this team's kickoff minus two days**, excluding himself. |
+| `inj_out`, `inj_doubtful`, `inj_questionable` | the Friday report status at that same cutoff. Probable was retired after 2015 and folded into Questionable, so one coefficient means the same thing across the span. |
+| `prac_dnp`, `prac_limited` | the Friday practice status at that same cutoff. |
+| `inj_feed` | 1 where the injury feed published **any** dated report for this league-week. See below. |
+
+Everything in the first table is keyed to the day before the week's **first** kickoff, league-wide --
+the strictly-safest anchor and the same date for every row in a week. These are keyed **per team**,
+which for a team playing Sunday is up to four days later. That is a real widening, accepted
+deliberately for a reason that is checkable rather than a matter of taste: the later anchor is still
+strictly before *this player's own kickoff*, which is the only thing a lineup decision needs, and a
+Friday injury designation is not derived from any game's result. What it must not admit is week *w*'s
+scoring, and that is what the guard below now asserts against the raw injury rows themselves.
+
+**`inj_feed` exists because the alternative is a fabricated fact.** From 2025 the nflverse injury
+feed stopped publishing a report **date**. An undated filing cannot be placed on either side of a
+cutoff, so `feat_player_week_context` drops all 6,068 of 2025's, and every injury column reads NULL.
+Without a feed indicator a model reads that as *nobody in the league was hurt in 2025*, which is
+worse than missing data because it is confidently wrong. `inj_feed` is 0 for exactly those
+league-weeks, and the five injury indicators are NULL there rather than 0.
+
+**The Wednesday pair is empty, and that is a finding, not an omission.** Phase 2d set out to declare
+`report_status_wed` and `practice_status_wed`. They exist, `buildWeekContext` fills them with a
+cutoff of kickoff minus four days, and they hold **11** and **389** values across 133,892
+player-weeks -- because the feed's dated filings land at kickoff minus two or later. A model
+declaring them would fit an intercept on 0.008% of its rows and the report would say "Wednesday
+practice status did not help", which is a fact about the feed dressed as a fact about football. They
+stay in `PENDING_DATA_TRACK_FIELDS`.
+
 The one thing making DvP a point-in-time quantity is the `week < w` bound, and it is worth saying
 that it does all the work: the same statistic over the whole season -- which is what
 `data/def-ratings.csv` is, and what almost every published DvP table is -- puts week *w*'s own scoring
@@ -63,6 +101,17 @@ is dead code that reads exactly like a passing one, so:
    -- the real leak in its natural habitat -- and `dvp_mult` must then move both under the switch and
    under the perturbation. It does.
 
+Phase 2d added a fourth, and it is the one the availability block needed. Ten columns that are NULL
+everywhere would satisfy "nothing moved" without being wired to anything at all, so the fixture now
+seeds `feat_player_week_context`, asserts the columns are non-constant, and then asserts the
+complement: **a change to week *w*'s own injury report MUST move week *w*'s availability columns**,
+and must not touch week *w+1*. A change to week *w*'s RESULTS still must not move any of them.
+
+That control found a real bug on its first run, in the fixture rather than the builder: the synthetic
+`player_sk` was the string `P0`, the availability block joins on the numeric surrogate key, and every
+one of the ten columns was silently NULL. A join that cannot parse a surrogate key had been passing
+as a join that works.
+
 ### The audit on the table that actually shipped
 
 The guard above proves the BUILDER cannot leak, on a fixture it controls completely. That is a
@@ -86,6 +135,30 @@ on 2015 and 2025. It also asserts `dvp_n <= week - 1` on every row, which is the
 of the same claim. The control matters as much as the pass: a comparison that reports "clean" against
 both bounds is a comparison that is not connected to anything.
 
+**Phase 2d extended it to the availability block**, which is the part most easily leaked: the injury
+feed keeps filing all week, and a Saturday downgrade to Out is a near-perfect predictor of a zero
+week that is not knowable at the Friday cutoff the builder claims. Same method -- an independent
+recomputation straight from `raw_injury` and `raw_nfl_game`, parameterised by the cutoff so the
+control is the same code with one number changed:
+
+```
+availability -- 10457 rows recomputed from raw_injury independently          (season 2023)
+  inj_out  mismatches vs the Friday cutoff: 5   vs a cutoff moved to kickoff (the leak): 30
+  inj_out vs feat_player_week_context (staleness, must be exact): 0 of 10457
+  teammates_out mismatches vs the same recomputation: 82 of 10457 (worst off by 1)
+```
+
+The bound on `inj_out` is 0.5%, not zero, and saying why matters more than the number: this
+recomputation resolves a filing to a player through the gsis crosswalk **alone**, while the builder
+also falls back on name+position+team. That is the point -- an independent implementation that agreed
+to the last row would be the same implementation -- so a handful of rows differ for reasons about
+identity rather than about time. A leak does not look like a handful, which is why the discriminating
+assertion is the **ratio** (5 -> 30) and not the count. The staleness check against the context table
+has no such slack and must be exact; it is 0.
+
+On 2025 the audit says so rather than passing: `inj_feed` is 1 nowhere, so the availability block is
+**not audited**, and the report says that is a coverage fact and not a clean bill.
+
 ### Coverage, per column per season (2010-2025, 178,033 rows)
 
 `ff build-weekly-features --seasons 2010-2025` prints it. Steady across the range:
@@ -101,6 +174,26 @@ both bounds is a comparison that is not connected to anything.
 not a hole: it is the share of rostered player-weeks in which the man actually played, and the other
 42% are byes and did-not-plays, which the next section is about.
 
+**The availability block's coverage is not steady, and three feeds explain it.**
+`node --import tsx scripts/weekly-availability-coverage.mjs` prints the full table:
+
+| season | `prior_snap_share` | `prior_route_share` | `depth_rank` | injury block | `inj_feed` |
+|---|---|---|---|---|---|
+| 2010-2012 | 0% | 0% | 0% | 0% | 0% |
+| 2013-2015 | 73-75% | **0%** | 73-75% | 89% | 89% |
+| 2016-2024 | 72-75% | 71-75% | 64-75% | 89-90% | 89-90% |
+| 2025 | 74% | 74% | 89% | **0%** | 90% |
+| 2026 (forward) | 0% | 0% | 0% | 0% | 0% |
+
+- **2010-2012**: `feat_player_week_context` does not cover them at all; it starts in 2013.
+- **2013-2015**: no participation feed, so route share is absent by construction.
+- **2025**: the injury feed publishes no report date, so every filing is undated -- see `inj_feed`
+  above. Depth and snaps survive because those feeds still carry dates.
+- **2026, the LIVE season**: the forward builder writes rows from the schedule and the board, and the
+  context table has no 2026 rows at all. So the two-part model's first stage serves the live season
+  on its declared missing-value defaults. That is stated, not fixed, and it is the largest open item
+  in section 5.
+
 ---
 
 ## 2. The model, and the two decisions that shaped it
@@ -110,17 +203,47 @@ directly would spend the model's capacity re-learning talent. Predicting the rat
 coefficient a statement about what the August number gets wrong week to week, which is the only thing
 a weekly model can add.
 
-**The zero atom: quantile heads that can reach zero.** Weekly points are zero-inflated twice over -- a
+**The zero atom, and the model it eventually forced.** Weekly points are zero-inflated twice over -- a
 rostered man can fail to play at all, and a receiver who plays can catch nothing. Measured on
 2010-2025 rostered non-bye weeks: **29.5%** of the rows the model trains on score at or below one
-point, and about **40%** of everything the harness scores does. Two treatments are defensible -- a two-part model (P(zero week) from availability
-signals, times the ratio given a real week), or quantile heads free to sit on the atom. This artifact
-uses the latter, with the clamp floor at **exactly 0** rather than the season model's 0.01. The reason
-is not elegance: the signals that would drive a two-part first stage -- injury designation as of the
-Friday report, depth-chart rank, whether the man ahead of him is out -- are the DATA TRACK's columns
-and do not exist yet. Fitting P(zero) on to-date scoring alone fits the *consequence* of an injury
-rather than the injury. `--zero-model two-part` exits with that sentence rather than fitting a stage
-it cannot honestly feed.
+point, and **41.9%** of everything the harness scores is a zero week (`pts <= 0`).
+
+Two treatments were always defensible, and the choice between them was made by the data available:
+
+- **`--zero-model quantile`** (Phase 2c, still the default). One set of heads fitted on the pooled
+  target, zeros included, with the clamp floor at **exactly 0** rather than the season model's 0.01,
+  so p10 is free to sit on the atom and does. Its limitation is structural rather than a calibration
+  failure: **0.10 is the smallest quantile level it publishes, so the largest zero probability it can
+  express is 0.10**, however certain the zero is. Against an actual share of 0.419 that is not a model
+  that is slightly wrong; it is a model that cannot say the thing.
+- **`--zero-model two-part`** (Phase 2d). Stage one is P(zero week), a per-position regularised
+  logistic led by the injury designation, the practice report, depth-chart rank and how many
+  team-mates at his position are Out; its C is chosen by season-grouped CV on log loss. Stage two is
+  the ratio **given he played**, fitted on played weeks only, at a seven-level quantile grid. The
+  published p10/p50/p90 are the **mixture's**: q is shifted to `(q - pZero) / (1 - pZero)` and read off
+  the grid, so p10 is exactly 0 whenever the zero probability exceeds 0.10, and
+  `E[points] = P(he plays) * E[ratio | he plays] * line`.
+
+Until Phase 2d the second one **refused to run**, and the refusal is now conditional rather than
+unconditional: it fires when the availability columns are absent from the fitted feature set, with
+the same sentence as before. Fitting P(zero) on to-date scoring alone fits the *consequence* of an
+injury rather than the injury, and a two-part model without those columns is the same worthless thing
+it always was.
+
+What the first stage learned, on the full-data fit, is the cleanest evidence that it is reading the
+injury and not its shadow -- these are logit coefficients on standardised columns:
+
+| position | `inj_out` | `inj_doubtful` | `prac_dnp` | next largest |
+|---|---|---|---|---|
+| QB | +3.38 | +2.67 | +2.38 | `prac_limited` +1.36 |
+| RB | +4.91 | +3.96 | +1.75 | `td_games` -1.76 |
+| WR | +5.18 | +3.17 | +1.62 | `td_games` -1.42 |
+| TE | +3.95 | +2.85 | +1.88 | `td_games` -1.34 |
+
+The golden block carries `pZero` as well as the four published heads, because the mixture is the one
+part of the arithmetic with a branch in it, and one fixture is a receiver with an OUT designation --
+the row where the branch is actually taken. He projects **P(zero) = 0.967, p10 = p50 = p90 = 0, mean
+0.40**, against **6.21** for the otherwise-identical healthy fixture.
 
 **Population: `rostered`, and it is a contract, not a filter.** This cost a full evaluation pass to
 find. The trainer originally fitted on appearances while the harness scores every non-bye week -- a
@@ -176,84 +299,124 @@ projection, and score the ACTUAL points of the starters chosen. Rosters are comm
 every model sees the same draw -- so `winShare` is a paired statistic, the same discipline CLAUDE.md
 records for the championship backtest.
 
-### Results, 14 held-out seasons, 111,591 player-weeks
+### Results, 14 held-out seasons, 112,782 player-weeks
+
+Two models are reported, on the SAME folds, the same rows and the same baselines. Phase 2c's
+quantile-head model is the "no availability columns" row; Phase 2d's two-part model is the one with
+them.
 
 Pooled:
 
-| model | RMSE | CRPS | coverage | cov(>0) | bias |
-|---|---|---|---|---|---|
-| **weekly** | **5.493** | **2.335** | 0.868 | 0.800 | -0.045 |
-| season line | 6.019 | 2.718 | 0.884 | 0.828 | -0.304 |
-| shipped `week()` | 6.016 | 2.728 | 0.894 | 0.836 | -0.306 |
-| trailing-4 | 6.128 | 2.589 | 0.886 | 0.833 | 1.090 |
-| zero | 8.543 | 5.033 | 0.403 | 0.000 | -4.990 |
+| model | RMSE | CRPS | coverage | cov(>0) | bias | P(zero) predicted | actual |
+|---|---|---|---|---|---|---|---|
+| **weekly, two-part** | **5.268** | **2.150** | 0.853 | 0.798 | -0.085 | 0.384 | 0.419 |
+| weekly, quantile heads | 5.474 | 2.314 | 0.876 | 0.813 | -0.027 | 0.132 | 0.419 |
+| season line | 5.928 | 2.671 | 0.882 | 0.825 | 0.089 | 0.100 | 0.419 |
+| shipped `week()` | 5.927 | 2.664 | 0.875 | 0.804 | 0.087 | 0.161 | 0.419 |
+| trailing-4 | 6.129 | 2.619 | 0.885 | 0.831 | 1.134 | 0.161 | 0.419 |
+| zero | 8.530 | 5.023 | 0.403 | 0.000 | -4.980 | 0.900 | 0.419 |
 
-By position, weekly CRPS against the shipped baseline: QB 3.240 vs 4.592, RB 2.357 vs 2.767, WR 2.225
-vs 2.510, TE 1.622 vs 1.848, K 2.470 vs 2.490, DST 3.111 vs 3.119. The last two are near-ties: this
-table carries no kicking or defensive usage columns, so K and DST are intercept-only and there is
-nothing for the model to add.
+The last two columns are the ones Phase 2d exists for. The quantile-head model claims a 13.2% chance
+of a zero week against an actual 41.9% -- and it is not badly calibrated so much as *structurally
+mute*: 0.10 is the smallest quantile level it publishes. The two-part model says 38.4%. That is the
+whole difference between a model that can express the atom and one that cannot.
 
-By preseason-line rank band, weekly RMSE / shipped RMSE: 1-12 **7.430 / 7.986**, 13-24 **6.664 /
-7.245**, 25-48 **5.799 / 6.432**, 49+ **4.027 / 4.466**. Banding is by the preseason line, not by the
-finish -- stratifying by the outcome would make every band a statement about hindsight.
+By position, two-part CRPS against the shipped baseline: QB **2.766 vs 4.448**, RB **2.137 vs 2.683**,
+WR **2.055 vs 2.477**, TE **1.510 vs 1.772**, K 2.457 vs 2.468, DST 3.105 vs 3.115. The last two are
+near-ties: this table carries no kicking or defensive usage columns, so K and DST are two intercepts
+and there is nothing for the model to add.
 
-Lineup regret:
+By preseason-line rank band, two-part RMSE / shipped RMSE: 1-12 **7.223 / 7.933**, 13-24 **6.388 /
+7.148**, 25-48 **5.562 / 6.394**, 49+ **3.842 / 4.358**. Banding is by the preseason line, not by the
+finish -- stratifying by the outcome would make every band a statement about hindsight. The zero-share
+column is worth reading down the bands too: at 49+ the actual share is 0.588 and the two-part model
+says 0.516, where the quantile model said 0.154.
+
+Lineup regret, 72,900 rosters drawn per scenario:
 
 | scenario | model | captured | winShare vs shipped |
 |---|---|---|---|
-| standard-15 | **weekly** | **65.15** | **0.505** |
-| standard-15 | trailing-4 | 64.16 | 0.499 |
-| standard-15 | season line | 61.49 | 0.117 |
-| standard-15 | shipped `week()` | 61.50 | -- |
-| standard-15 | zero | 47.74 | 0.183 |
-| deep-18 | **weekly** | **70.63** | **0.575** |
-| deep-18 | trailing-4 | 69.25 | 0.548 |
-| deep-18 | shipped `week()` | 65.87 | -- |
+| standard-15 | **two-part** | **66.15** | **0.572** |
+| standard-15 | quantile heads | 65.14 | 0.501 |
+| standard-15 | trailing-4 | 63.97 | 0.486 |
+| standard-15 | season line | 61.72 | 0.130 |
+| standard-15 | shipped `week()` | 61.74 | -- |
+| standard-15 | zero | 47.69 | 0.176 |
+| deep-18 | **two-part** | **72.31** | **0.647** |
+| deep-18 | quantile heads | 70.77 | 0.569 |
+| deep-18 | trailing-4 | 69.08 | 0.533 |
+| deep-18 | shipped `week()` | 66.22 | -- |
 
-72,900 rosters drawn per scenario. Note what `winShare` means and does not: 0.505 is the share of
-rosters where our lineup strictly beat the baseline's, and the large remainder is rosters where the
-two models chose the SAME lineup -- which is most of them, because most roster spots are not close
-calls. The gain is concentrated in the ones that are.
+Note what `winShare` means and does not: 0.572 is the share of rosters where our lineup *strictly*
+beat the baseline's, and the large remainder is rosters where the two chose the SAME lineup -- most
+of them, because most roster spots are not close calls. The gain is concentrated in the ones that are.
 
 ### Pre-registered predictions
 
 | | claim | outcome | evidence |
 |---|---|---|---|
 | **W1** | the trained model beats the shipped `week()` baseline on CRPS in every position | **HELD** | beaten in all 6 |
-| **W2** | its lineup-regret gain is under 2 points per week | **FAILED** | 3.64 points per lineup (standard-15) |
-| **W3** | the trailing-4-week mean is worse than the season line alone on RMSE | **HELD** | 6.128 vs 6.019 |
+| **W2** | its lineup-regret gain is under 2 points per week | **FAILED** | 3.40 (quantile), 4.42 (two-part) per lineup on standard-15 |
+| **W3** | the trailing-4-week mean is worse than the season line alone on RMSE | **HELD** | 6.129 vs 5.928 |
+| **W4** | the two-part model's lineup gain is at least 5 points per lineup on deep-18 | **HELD** | 6.08 (72.31 vs 66.22) |
+| **W5** | its predicted zero-week share matches actual within 3 points, pooled and per position | **FAILED** | pooled off by 0.035; RB 0.031, WR 0.039, TE 0.074 |
+| **W6** | `implied_team_total` carries a larger mean-head coefficient than `dvp_mult` at every position | **FAILED** | QB 0.036 vs 0.061, RB 0.033 vs 0.081, WR 0.032 vs 0.049, TE 0.041 vs 0.049 |
 
-W2 is the interesting one and it failed in the direction of the work being *more* valuable than
-predicted, which is the direction to be most suspicious of. Two readings, and the honest answer is
-that they are not separated by this measurement:
+**W4 held, and it is the one that settles W2's open question.** The Phase 2c reading of W2 was that
+the gain came from in-season form rather than from anything the prediction was about, because the
+table had no availability column to test the availability claim. It does now, and adding those columns
+alone -- same folds, same baseline -- moves the deep-18 lineup from +4.55 to +6.08 over the shipped
+path. Availability is worth roughly **1.5 points per lineup per week** on top of form and matchup.
+That is the largest single effect this track has measured.
 
-- The reasoning behind W2 was that the measured defence-versus-position edge is small (legacy
-  calibration: talent alone 0.717 correlation, +0.013 from DvP) and the large weekly edge is
-  availability, which this table cannot see. That reasoning still looks right: `dvp_mult` carries a
-  small coefficient everywhere (RB 0.065, WR 0.047, TE 0.057).
-- What W2 did not anticipate is that most of the gain comes from **in-season form** -- `t4_mean` and
-  `td_ppg` are the two largest coefficients at every position -- and from the **bias correction** the
-  `rostered` population supplies. Both are things a season line genuinely does not know, and neither
-  is a matchup effect. The prediction was right about matchups and wrong about the size of what else
-  was on the table.
-- Note also that trailing-4 alone captures 64.16 against our 65.15. Most of the lineup gain is
-  available from a folk model, and the trained model's margin over *it* is about one point.
+**W6 failed at every position, and it failed against the record rather than against a guess.** The
+recorded belief was that defence-versus-position is small (legacy calibration: talent alone 0.717
+correlation, +0.013 from DvP) and that the market's implied team total should dominate it. On the
+fitted mean head, with both features centred and scaled by their own training standard deviation so
+the coefficients are comparable, `dvp_mult` is the LARGER of the two at all four fitted positions --
+by 1.7x at QB and 2.5x at RB. Two honest readings, and this measurement does not separate them: DvP as
+built here is a shrunk, prior-blended, point-in-time multiplier rather than the raw season table the
+legacy calibration used, so it may simply be a better-constructed feature than the one that measured
++0.013; or the implied total is largely redundant with `spread_line` and `total_line`, which are in
+the same fit, and the three are splitting one effect. Either way the record's claim, as stated, is not
+what the model does.
+
+**W5 failed, narrowly, and it is the same clause as the gate.** See below.
 
 ### The gate
 
-Pre-registered: ship the trained artifact only if it beats the shipped baseline on pooled CRPS **and**
-coverage is in [0.75, 0.85].
+Pre-registered for Phase 2d, **before** this run, against Phase 2c's numbers:
 
-**FAILED, on coverage: 0.868.** CRPS passes comfortably (2.335 vs 2.728). So the **season-line-only
-artifact is what ships**, and this section says so rather than quietly re-specifying the band.
+> **(a)** pooled CRPS beats the shipped baseline; **(b)** coverage CONDITIONAL ON pts > 0 in
+> [0.75, 0.85] pooled and [0.70, 0.90] per position; **(c)** the predicted share of zero weeks is
+> within 3 points of the actual share, pooled and per position.
 
-Post hoc, and explicitly not part of the gate: over non-zero weeks the same statistic reads **0.800**
--- exactly nominal, and better than the shipped baseline's 0.836. The pooled figure is inflated by the
-zero atom sitting on a p10 of exactly 0; those weeks genuinely are inside the interval. Every baseline
-over-covers too (0.884, 0.894, 0.886), so the trained model is the best-calibrated thing in the table
-on the very statistic that failed it. The gate was written without the atom in mind. It is left as
-written, and a future gate specified on `cov(>0)` -- decided **before** the next run, not after this
-one -- is the honest way to revisit it.
+| clause | quantile heads | two-part |
+|---|---|---|
+| (a) CRPS vs shipped | **PASS** 2.314 vs 2.664 | **PASS** 2.150 vs 2.664 |
+| (b) cov(>0) | **PASS** 0.813 pooled, all positions in band | **PASS** 0.798 pooled, all positions in band |
+| (c) zero-share within 0.03 | **FAIL** off by 0.287 pooled; outside at all 6 positions | **FAIL** off by 0.035 pooled; RB 0.031, WR 0.039, TE 0.074 |
+
+**Both FAILED, on (c). The season-line-only artifact keeps shipping.**
+
+The two results say very different things and the difference is the point of having written the
+clause. The quantile model misses by 0.287 because it *cannot* say the number. The two-part model
+misses pooled by **0.035 against a tolerance of 0.030** -- five thousandths -- and misses at three
+positions, worst at TE by 0.074. It is a model that can express the atom and is not yet calibrated on
+it.
+
+The temptation here is obvious and is refused: the gate is not widened to 0.04, and nothing is tuned
+until (c) passes. A tolerance chosen after seeing 0.035 is not a tolerance. What ships is the floor,
+the same as before Phase 2d, and the two-part artifact sits in `data/weekly-artifact.json` as the
+measured candidate. **Caveat, stated because it is a real inconsistency:** `ff scorecard` reads
+`data/weekly-artifact.json` and will therefore freeze its 2026 predictions with the two-part model,
+while `lineupRecommend` reads the floor. That arrangement predates Phase 2d (2c's trained artifact sat
+in the same file) and is defensible for a measurement surface, but it means the scorecard and the
+lineup are answering with different models and somebody should decide that on purpose.
+
+Calibrating (c) is a bounded, well-posed next job: the first stage is a plain logistic and its
+intercept is the only thing standing between 0.384 and 0.419. It must be pre-registered and re-run
+against the baseline that ships **then**, not this one.
 
 ---
 
@@ -358,18 +521,32 @@ The trainer and the evaluator take a declared feature-column list, so these plug
 the model code. `PENDING_DATA_TRACK_FIELDS` in `src/weekly/features.ts` is the list, and every report
 prints it beside the columns it actually measured with:
 
-`injury_status_friday`, `depth_chart_rank`, `teammates_out`, `prior_snap_share`, `prior_route_share`,
-`vegas_implied_team_total`.
+**Phase 2d cleared most of this list.** Ten of those columns landed and are declared features;
+`PENDING_DATA_TRACK_FIELDS` is now three items, and each is a different kind of gap:
 
-Two things change when `feat_player_week_context` lands:
+- **`report_status_wed`, `practice_status_wed`** -- built, and empty. The feed's dated filings land at
+  kickoff minus two or later, so a Wednesday cutoff catches 11 and 389 rows respectively out of
+  133,892. This is not something the model track can fix; it needs a feed that files earlier.
+- **A live in-week odds feed** (`vegas_implied_team_total_live`). `team_odds` carries one week --
+  whichever was last synced -- and no week number, so the forward builder applies it only to the
+  earliest unpriced week. Everything else comes from the schedules feed's closing lines.
 
-- **The two-part zero model becomes measurable.** Right now it is refused; with a Friday injury
-  designation and a depth-chart rank there is something real to condition P(zero week) on, and the
-  comparison against the quantile-head form is a one-flag experiment.
-- **W2's reasoning gets its actual test.** The claim was that availability, not matchup, is the large
-  weekly edge. This measurement could not test it because it has no availability column. The gain it
-  found came from in-season form instead. Adding the injury columns and re-running the same harness is
-  the direct test, and it should be run against the baseline that ships **then**, not this one.
+**Three open items Phase 2d created rather than closed**, all stated because none is fixed:
+
+1. **The live season has no availability at all.** `feat_player_week_context` holds no 2026 rows, so
+   the two-part first stage serves 2026 on its declared missing-value defaults -- and `inj_feed` is
+   correctly 0, so at least the model knows it is blind rather than believing the league is healthy.
+   Running `ff build-features-ext` for 2026 is the fix, and it is a data-track job.
+2. **From 2025 the injury feed publishes no report date at all.** Even a rebuilt 2026 context table
+   would carry no injury designation unless the reader is taught to place undated filings, which
+   cannot be done safely without a date.
+3. **`feat_player_week_model` is not in the engine's `data-sources` registry**, so it does not appear
+   on the Data page even though the derivation in section 4 of `app/renderer/app.js` would place it
+   the moment it is registered. Registering it is a one-line change inside `cmdServe`.
+
+W2's reasoning finally got its actual test. The claim was that availability, not matchup, is the
+large weekly edge; the Phase 2c measurement could not test it because it had no availability column,
+and the gain it found came from in-season form instead. Section 3's W4 is the direct test.
 
 ---
 
@@ -381,8 +558,19 @@ ff build-weekly-features --seasons 2010-2025 --current-season 2026
 
 uv run --with scikit-learn --with numpy tools/train_weekly.py \
     --db data/ff.db --seasons 2010-2025 --holdout-season none \
-    --features all --out data/weekly-artifact.json
-    add --season-line-only for the floor artifact; --population {rostered,played}
+    --features all --zero-model two-part --out data/weekly-artifact.json
+    add --season-line-only for the floor artifact; --population {rostered,played};
+    --zero-model {quantile,two-part} -- two-part REFUSES unless the availability
+    columns are in the fitted feature set
+
+node --import tsx scripts/weekly-artifact-probe.mjs data/weekly-artifact.json
+    load an artifact through the CONSUMER's loader (full schema check + golden block)
+    and print its golden rows. "the trainer wrote a file" and "the engine can serve
+    that file" are two different facts
+
+node --import tsx scripts/weekly-availability-coverage.mjs
+    per-column coverage of the availability block by season, with each column's as-of
+    rule beside it
 
 ff evaluate-weekly --seasons 2012-2025 --train-seasons 2010-2025 --rosters 300
     nested-by-season evaluation, lineup regret, the pre-registered predictions, the gate
