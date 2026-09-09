@@ -327,6 +327,34 @@ const skill = (a, b) => `${(100 * (1 - brier(a) / brier(b))).toFixed(1)}%`;
 console.log(`\n  Brier skill score against uniform -- playoffs ${skill(sim.playoff, uni.playoff)}, title ${skill(sim.title, uni.title)}`);
 console.log(`  (positive = the simulator beats the floor; negative = it is worse than knowing nothing)`);
 
+// THE POSITIVE CONTROL, and this harness does not get to report a number without it. A Brier score
+// computed against a PERMUTED outcome vector looks exactly like one computed against the right one:
+// same range, same shape, same confident decimal. So the outcomes are shuffled WITHIN each season --
+// preserving how many berths and titles there were, destroying only which team got them -- and the
+// honest arm must beat the shuffled one. If it does not, the harness is measuring nothing, and no
+// amount of the tables above would say so.
+{
+  let s = 1234567;
+  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const shuffleWithinSeason = (rows) => {
+    const out = rows.map((r) => ({ ...r }));
+    for (const season of new Set(out.map((r) => r.season))) {
+      const idx = out.map((r, i) => i).filter((i) => out[i].season === season);
+      const ys = idx.map((i) => out[i].y);
+      for (let i = ys.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [ys[i], ys[j]] = [ys[j], ys[i]]; }
+      idx.forEach((i, k) => { out[i].y = ys[k]; });
+    }
+    return out;
+  };
+  const sp = brier(shuffleWithinSeason(sim.playoff)), st = brier(shuffleWithinSeason(sim.title));
+  console.log(`  CONTROL, outcomes shuffled within each season: playoffs ${sp.toFixed(4)} (honest ${brier(sim.playoff).toFixed(4)}), ` +
+    `title ${st.toFixed(4)} (honest ${brier(sim.title).toFixed(4)})`);
+  const ok = sp > brier(sim.playoff) && st > brier(sim.title);
+  console.log(ok
+    ? `  the honest arm beats the shuffled one on both -- the outcomes really are joined to the right teams.`
+    : `  WARNING: the shuffled arm is NOT worse. Either the join is broken or the model has no signal at all;`);
+}
+
 for (const [what, rows] of [["PLAYOFFS", sim.playoff], ["TITLE", sim.title]]) {
   console.log(`\n  RELIABILITY, ${what} -- what the simulator predicted against what happened`);
   console.log(`    ${"bin".padEnd(14)} ${"n".padStart(4)}  ${"predicted".padStart(10)}  ${"observed".padStart(9)}  ${"gap".padStart(7)}`);

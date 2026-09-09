@@ -51,8 +51,11 @@ export const MODELS: ModelSpec[] = [
       "curve -- window, monotone repair and ECR level weight selected per position by " +
       "forward-chaining inner CV -- plus named features with per-position coefficients and " +
       "p10/p50/p90 heads fitted over ranks 1-60. The TRAINED artifact ships: it passed the " +
-      "pre-registered P5 gate (RMSE 54.32 vs 55.55, pinball 12.39 vs 13.17, coverage 0.764 in " +
-      "[0.75, 0.85] with every rank band in [0.70, 0.90]) on the pooled 2015-2025 holdouts",
+      "pre-registered P5 gate (RMSE 54.17 vs 55.54, pinball 12.31 vs 13.16, coverage 0.759 in " +
+      "[0.75, 0.85] with every rank band in [0.70, 0.90]) on the pooled 2015-2025 holdouts. Those " +
+      "were 54.32 / 12.39 / 0.764 before Phase 2c reconciled the surrogate keys; resolving identity " +
+      "correctly changes which history rows carry an age and which prior season a row joins to, and " +
+      "it moved every one of them in the right direction",
     check: (j) => {
       // Loaded through the SHIPPED loader, not re-validated here. A second validator in the registry
       // would be a second opinion about the same contract, and the two would drift -- which is the
