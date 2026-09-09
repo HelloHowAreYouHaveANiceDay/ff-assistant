@@ -286,6 +286,17 @@ export const RAW_ASSETS: RawAsset[] = [
     },
   },
   {
+    id: "contracts",
+    table: "raw_contract",
+    what: "OverTheCap contracts via nflverse -- year signed, length, value; the source of the contract-year flag",
+    defaultSeasons: null,
+    async run(dbPath) {
+      const { ingestRawContracts } = await import("./rawSources.js");
+      const r = await ingestRawContracts({ dbPath });
+      return r.total;
+    },
+  },
+  {
     id: "participation",
     table: "raw_participation",
     what: "nflverse play-level participation (2016+), AGGREGATED to player-week: offensive plays, charted pass plays, and the team denominators",

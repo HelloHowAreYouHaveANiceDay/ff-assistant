@@ -831,3 +831,30 @@ CREATE TABLE IF NOT EXISTS raw_participation (
   fetched_at TEXT NOT NULL,
   PRIMARY KEY (season, week, gsis_id, team));
 CREATE INDEX IF NOT EXISTS idx_raw_part_gsis ON raw_participation (gsis_id, season, week);
+
+-- OverTheCap contracts by way of nflverse. ONE ROW PER CONTRACT.
+--
+-- THERE IS NO GSIS ID IN THIS FEED. Its identity columns are a display name, `otc_id`,
+-- `date_of_birth`, `college` and the draft coordinates -- which is exactly the (name, birthdate)
+-- pair the identity registry matches on, and the reason `date_of_birth` is kept verbatim.
+--
+-- `contract_no` is the index of this contract among that player's, in file order. The feed has no
+-- per-contract id, and a player signing two deals in the same year with the same team is not
+-- hypothetical (an extension and a restructure), so keying on (player, year_signed) would collapse
+-- them.
+--
+-- POINT-IN-TIME: `year_signed` plus `years` gives the window a contract was in force, and the
+-- CONTRACT-YEAR FLAG a model wants -- is this his last year under contract? -- is a derivation over
+-- those two evaluated at a given season, which is safe. `is_active` and the three `inflated_*`
+-- columns are as of the FILE'S BUILD DATE and are not point-in-time for any historical row.
+CREATE TABLE IF NOT EXISTS raw_contract (
+  player_key TEXT NOT NULL, contract_no INTEGER NOT NULL,
+  as_of TEXT,                      -- <year_signed>-03-01, when the league year opens
+  otc_id TEXT, player TEXT, position TEXT, team TEXT, is_active INTEGER,
+  year_signed INTEGER, years REAL, value REAL, apy REAL, guaranteed REAL, apy_cap_pct REAL,
+  inflated_value REAL, inflated_apy REAL, inflated_guaranteed REAL,
+  date_of_birth TEXT, height TEXT, weight REAL, college TEXT,
+  draft_year INTEGER, draft_round INTEGER, draft_overall INTEGER, draft_team TEXT,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (player_key, contract_no));
+CREATE INDEX IF NOT EXISTS idx_raw_contract_player ON raw_contract (player, date_of_birth);

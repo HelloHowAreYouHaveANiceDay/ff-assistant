@@ -264,6 +264,34 @@ test("raw_nfl_draft_pick: hand-checked draft sizes, and as_of is the May after t
 });
 
 // ==================================================================================================
+// raw_contract
+// ==================================================================================================
+
+test("raw_contract: every contract kept, keyed per player, with the identity columns raw can offer", { skip: !tableHasRows("raw_contract") ? "raw_contract not built" : false }, () => {
+  const db = open();
+  const t = db.prepare(
+    `SELECT COUNT(*) n, SUM(otc_id IS NOT NULL) otc, SUM(date_of_birth IS NOT NULL) dob,
+            SUM(year_signed IS NOT NULL) ys, SUM(years IS NOT NULL) yy FROM raw_contract`,
+  ).get() as { n: number; otc: number; dob: number; ys: number; yy: number };
+  const cols = (db.prepare("PRAGMA table_info(raw_contract)").all() as { name: string }[]).map((c) => c.name);
+  // The multi-contract case is the whole reason contract_no is in the key. If it were absent, every
+  // player would have exactly one row and this would read zero.
+  const multi = db.prepare("SELECT COUNT(*) c FROM (SELECT player_key FROM raw_contract GROUP BY player_key HAVING COUNT(*) > 1)").get() as { c: number };
+  db.close();
+  assert.ok(t.n > 30000, `${t.n} contracts`);
+  // The pair the identity registry matches on. There is NO gsis id in this feed, and raw must not
+  // invent one -- resolution happens in the feature layer through (name, birthdate).
+  assert.ok(!cols.includes("gsis_id") && !cols.includes("player_sk"), "the contract feed has no gsis id");
+  // MEASURED: 19,791 of 31,893 contracts carry a birth date -- 62%. That is the number the feature
+  // layer's (name, birthdate) resolution has to work with, and it is worth knowing before a
+  // contract-year feature is built rather than after it comes back a third empty.
+  assert.ok(t.dob / t.n > 0.55 && t.dob / t.n < 0.75, `date_of_birth on ${t.dob}/${t.n}`);
+  assert.ok(t.ys / t.n > 0.99, `year_signed on only ${t.ys}/${t.n}`);
+  assert.ok(t.yy / t.n > 0.99, `years on only ${t.yy}/${t.n}`);
+  assert.ok(multi.c > 1000, `only ${multi.c} players have more than one contract -- contract_no may not be in the key`);
+});
+
+// ==================================================================================================
 // raw_participation
 // ==================================================================================================
 

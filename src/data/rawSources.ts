@@ -28,7 +28,7 @@
 import { openDb, nowIso, type DB } from "../db/db.js";
 import {
   fetchCsvCached, cacheTag, rawTag, URLS, canonTeam, pick,
-  injuriesUrl, depthChartsUrl, snapCountsUrl, draftPicksUrl, participationUrl,
+  injuriesUrl, depthChartsUrl, snapCountsUrl, draftPicksUrl, participationUrl, contractsUrl,
 } from "./nflverse.js";
 
 /** One season's outcome. `rows` is what LANDED, not what was parsed -- the two differ when a feed
@@ -448,6 +448,63 @@ export async function ingestRawDraftPicks(opts: { dbPath?: string; seasons?: num
   const seasons: SeasonResult[] = [...perSeason.keys()].sort((a, b) => a - b)
     .map((s) => ({ season: s, ok: true, rows: perSeason.get(s)! }));
   return { table: "raw_nfl_draft_pick", seasons, total: totalOf(seasons) };
+}
+
+// ==================================================================================================
+// raw_contract -- OverTheCap contracts. One file, every contract.
+// ==================================================================================================
+
+/** `as_of = <year_signed>-03-01`: the NFL league year opens in mid-March and that is when a signing
+ *  becomes public, so a contract is knowable for every September anchor from its own year on. */
+export async function ingestRawContracts(opts: { dbPath?: string; refresh?: boolean } = {}): Promise<IngestReport> {
+  const rows = await fetchCsvCached(contractsUrl, rawTag.contracts, opts.refresh ?? false);
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const ins = db.prepare(
+    `INSERT INTO raw_contract (player_key, contract_no, as_of, otc_id, player, position, team,
+       is_active, year_signed, years, value, apy, guaranteed, apy_cap_pct, inflated_value,
+       inflated_apy, inflated_guaranteed, date_of_birth, height, weight, college, draft_year,
+       draft_round, draft_overall, draft_team, fetched_at)
+     VALUES (@pk,@no,@asOf,@otc,@player,@pos,@team,@active,@signed,@years,@value,@apy,@guar,@pct,
+       @iv,@ia,@ig,@dob,@ht,@wt,@college,@dy,@dr,@do,@dt,@now)
+     ON CONFLICT(player_key, contract_no) DO UPDATE SET
+       as_of=excluded.as_of, otc_id=excluded.otc_id, player=excluded.player, position=excluded.position,
+       team=excluded.team, is_active=excluded.is_active, year_signed=excluded.year_signed,
+       years=excluded.years, value=excluded.value, apy=excluded.apy, guaranteed=excluded.guaranteed,
+       apy_cap_pct=excluded.apy_cap_pct, inflated_value=excluded.inflated_value,
+       inflated_apy=excluded.inflated_apy, inflated_guaranteed=excluded.inflated_guaranteed,
+       date_of_birth=excluded.date_of_birth, height=excluded.height, weight=excluded.weight,
+       college=excluded.college, draft_year=excluded.draft_year, draft_round=excluded.draft_round,
+       draft_overall=excluded.draft_overall, draft_team=excluded.draft_team, fetched_at=excluded.fetched_at`,
+  );
+  const seen = new Map<string, number>();
+  let n = 0;
+  db.transaction(() => {
+    for (const r of rows) {
+      const otc = str(pick(r, "otc_id"));
+      const player = str(pick(r, "player"));
+      const pk = otc ?? player;
+      if (!pk) continue;
+      const no = (seen.get(pk) ?? 0) + 1;
+      seen.set(pk, no);
+      const signed = int(pick(r, "year_signed"));
+      ins.run({
+        pk, no, asOf: signed == null ? null : `${signed}-03-01`,
+        otc, player, pos: str(pick(r, "position")), team: canonTeam(pick(r, "team")) || null,
+        active: pick(r, "is_active") === "TRUE" ? 1 : (pick(r, "is_active") === "FALSE" ? 0 : null),
+        signed, years: num(pick(r, "years")), value: num(pick(r, "value")), apy: num(pick(r, "apy")),
+        guar: num(pick(r, "guaranteed")), pct: num(pick(r, "apy_cap_pct")),
+        iv: num(pick(r, "inflated_value")), ia: num(pick(r, "inflated_apy")), ig: num(pick(r, "inflated_guaranteed")),
+        dob: str(pick(r, "date_of_birth")), ht: str(pick(r, "height")), wt: num(pick(r, "weight")),
+        college: str(pick(r, "college")), dy: int(pick(r, "draft_year")), dr: int(pick(r, "draft_round")),
+        do: int(pick(r, "draft_overall")), dt: str(pick(r, "draft_team")),
+        now,
+      });
+      n++;
+    }
+  })();
+  db.close();
+  return { table: "raw_contract", seasons: [{ season: 0, ok: true, rows: n }], total: n };
 }
 
 // ==================================================================================================

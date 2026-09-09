@@ -270,9 +270,16 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
   **contract-year flag** a model wants -- "is this his last year under contract?" -- is a derivation
   over (year_signed, years) evaluated at the season in question, and it is point-in-time safe.
   `is_active` and `inflated_*` are NOT: they are as-of the file build.
-- **Seasons.** 31,894 contracts, 1.2MB.
-- **Raw table.** `raw_contract`.
-- **Status.** proposed.
+- **Seasons.** 31,893 contracts, 1.2MB, in one file.
+- **Identity coverage, measured.** `date_of_birth` is present on **19,791 of 31,893 rows (62%)** --
+  so the (name, birthdate) route the identity registry uses is available for under two thirds of
+  contracts and the rest fall back to name plus position plus team.
+- **Raw table.** `raw_contract`, keyed `(player_key, contract_no)` -- the feed has no per-contract id
+  and a player can sign two deals in one year (an extension and a restructure), so `contract_no` is
+  the index among that player's contracts in file order. Measured: more than 1,000 players have more
+  than one.
+- **`as_of` = `<year_signed>-03-01`**, when the NFL league year opens and a signing becomes public.
+- **Status.** ingested (this branch).
 
 ### 1.12 Rosters (weekly) -- `weekly_rosters/roster_weekly_<season>.csv`
 
