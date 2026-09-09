@@ -87,22 +87,27 @@ export function SERVE_POSITIONS_FOR(file: string): string[] {
 /**
  * THE POSITIONS AT WHICH THE STREAMING MODEL PASSED ITS PRE-REGISTERED GATE and therefore ships.
  *
- * Measured by `ff evaluate-streaming --seasons 2012-2025 --train-seasons 2010-2025`, 14 held-out
- * seasons, 112,782 player-weeks, on 2026-09-09. QB, K and DST passed all three clauses. RB, WR and
- * TE passed (a) and (b) and FAILED (c) -- the predicted zero-week share, off by 0.031, 0.039 and
- * 0.074 against a tolerance of 0.030. Those are the SAME three positions and very nearly the same
- * three numbers the weekly two-part model failed on (docs/weekly.md section 3, W5), which is the
- * expected result: the streaming columns are about the matchup and clause (c) is about availability.
+ * Originally measured by `ff evaluate-streaming --seasons 2012-2025 --train-seasons 2010-2025`, 14
+ * held-out seasons, 112,782 player-weeks: QB, K and DST passed all three clauses; RB, WR and TE
+ * passed (a) and (b) and failed (c) by 0.031, 0.039 and 0.074 against a 0.030 tolerance -- run
+ * before the decision population existed.
  *
- * The list is a MEASUREMENT, not a preference. Widening it means re-running the harness and
- * re-recording the verdict; there is no other honest way to add a position.
+ * 2026-09-09: `docs/validation.md` ("THE STREAMING GATE QUESTION -- REPORTED, NOT DECIDED") re-ran
+ * the SAME three clauses, including the pooled coverage band, on the decision population (69,500
+ * scored rows) and found the streaming artifact passes all three clauses at ALL SIX positions,
+ * including RB, WR and TE. The owner then widened `WEEKLY_SERVE` on that measurement -- see the
+ * comment on `WEEKLY_SERVE_SWITCHED_ON` above for the numbers. This list is DERIVED from that table
+ * and is therefore now all six positions.
  *
- * READ THE GAIN WITH ITS SOURCE ATTACHED. At QB, K and DST the streaming model beats the shipped
- * baseline comfortably -- but the CONTROL (the same trainer with the twelve opponent columns
- * removed) is within 0.004 CRPS of it at every position. What the gate is passing on is the
- * two-part structure and the fact that K and DST are FITTED AT ALL rather than two intercepts. The
- * opponent block's own contribution measured ~0, P42 failed saying so, and docs/validation.md
- * records it as a null rather than as a gain.
+ * The list is a MEASUREMENT, not a preference. Narrowing OR widening it again means re-running the
+ * harness and re-recording the verdict; there is no other honest way to change a position.
+ *
+ * READ THE GAIN WITH ITS SOURCE ATTACHED. At every position the streaming model beats the shipped
+ * baseline -- but the CONTROL (the same trainer with the twelve opponent columns removed) is within
+ * 0.004 CRPS of it at every position. What the gate is passing on is the two-part structure and,
+ * at K and DST, the fact that they are FITTED AT ALL rather than two intercepts. The opponent
+ * block's own contribution measured ~0, P42 failed saying so, and docs/validation.md records it as
+ * a null rather than as a gain.
  */
 export const SHIPPED_STREAMING_POSITIONS: string[] = SERVE_POSITIONS_FOR(STREAMING_ARTIFACT);
 
