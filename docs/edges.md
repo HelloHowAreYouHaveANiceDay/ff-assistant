@@ -12,6 +12,23 @@ depend on the bot model, so weigh them as "big / medium / none", not to the deci
 > baselines" in docs/validation.md. The RANKING of the edges below is unaffected (the fix is itself
 > an instance of edge #2: a better independent value table); the absolute numbers are stale.
 
+> **THE OBJECTIVE NOTE (2026-09-09, Phase 3), and it changes how every percentage on this page should
+> be read.** P(title) = P(playoffs) x P(title | playoffs). Scored against 114 real team-seasons of this
+> league, the season simulator BEATS a uniform baseline on the playoff berth (Brier 0.2370 vs 0.2451)
+> and LOSES to it on the champion (0.0659 vs 0.0652). Single elimination among seven makes the second
+> factor nearly a coin flip. **So a "championship edge" on this page is a playoff-seeding edge plus a
+> lottery ticket, and the lottery half is not something any model here can move.** Where a lever's
+> value is quoted in championship points, read it as evidence about the seed. Where two options differ
+> by a couple of championship points and nothing else, the honest answer is that they do not differ.
+> The in-season tools were re-based on P(playoffs) for exactly this reason (docs/in-season-design.md).
+>
+> **THE CHAMPIONSHIP IS NOT PREDICTABLE FROM THE DRAFT, and that is measured rather than argued.**
+> Over eight settled seasons the simulator's spread of title probabilities runs 3% to 20% and buys
+> nothing against a flat 1/n; P(title | seed) is flat where it should not be (the 2 seed and the 4
+> seed each won 25% against a predicted 11.6% and 5.8%, while the 6 and 8 seeds never won); and the
+> 2025 champion was the **7 seed at 9-5**. A draft strategy can put you in the bracket. What happens
+> in the bracket is not an edge anybody in this repo has been able to find.
+
 ### 0. Get the value curve itself right -- BIG, proven [13.6% -> 24.4%, pre-shading]
 Before any strategy dial: the bid table must price positions the way the format actually consumes
 them. Splitting FLEX slots evenly across RB/WR/TE instead of allocating them by projected points
@@ -128,6 +145,38 @@ aggressive-lean 5/0.6 (15.7%) -- a ~8.5-pt swing, measured against the realistic
 **SUPERSEDED 2026-09-05:** the whole sweep above was run at `aggr 1.0`. With shading shipped
 (`aggr 0.7`) the reserve is nearly INERT and `maxShare` is what binds; the shipped posture is
 **reserve 4 / max-share 0.25**, ~33%. Read the numbers above as history, not as a default.
+
+**MEASURED AGAIN UNDER THE HONEST ARBITER (2026-09-09, Phase 3), and "nearly inert" was generous.**
+Swept against the shipped arm on the same seeds, 2020-2024, n=300, paired:
+
+| lever | setting | playoff rate | paired difference | verdict |
+|---|---|---|---|---|
+| `starterReserve` | 4 -> 0 | 49.0% | **0.00pp** | byte-identical trials -- the soft reserve never binds at `aggr 0.7` |
+| `premium` | 2 -> 0 | 49.1% | +0.07pp, CI [-4.5, +6.0] | flat |
+| `maxShare` | 0.25 -> 0.50 | 47.9% | -1.07pp, CI [-3.6, +0.7] | flat |
+| `benchDiscount` | 0.25 -> 1 | 43.4% | -5.60pp, CI [-16.7, +3.5] | the only one still doing work |
+
+Three of the four are indistinguishable from doing nothing on this arm, and `starterReserve` is
+provably inert rather than merely small. Nothing was changed on the strength of it -- five seasons
+cannot adjudicate a lever measured on 25 -- but a plan that treats the reserve as a live dial is
+planning around a knob that is not connected at the shipped aggressiveness.
+
+### 6. A DERIVED bidder instead of tuned levers -- TRIED AND REJECTED (2026-09-09, Phase 3)
+
+The obvious next move after "the levers are corrections for a missing quantity" is to measure the
+quantity: what a player adds to THIS roster, priced by inverting the budget curve, with a
+winner's-curse shading derived from dispersion and the number of live bidders. Built as V3
+(`FF_STRATEGY=v3`), fully connected, every term fault-injected. **It loses to V2 by 35 points of
+playoff rate over thirteen seasons, in twelve seasons out of twelve.**
+
+The reason is worth keeping, because it is not "the idea is wrong". The SIMULATED roster-aware book
+behaves exactly as the theory predicts -- it cuts the QB share of our money from 20.1% to 16.2%,
+toward the room's own 7.8-11.2%, with no positional term anywhere in it. But a simulated marginal per
+bid is ten million season simulations and cannot be backtested, so the bidder uses an ANALYTIC
+surrogate, and the surrogate prices an elite quarterback against a streaming floor rather than
+against the seventeenth quarterback -- so it goes the other way, spending 31-34% of the budget at QB
+where V2 spends 20-31%. **The gap between the book that can be simulated and the book that can be
+bid is where the loss lives.** Anyone picking this up should start there and not with the shading.
 
 ## Edges that are REAL but the bot-sim can't see (agent vs HUMANS)
 

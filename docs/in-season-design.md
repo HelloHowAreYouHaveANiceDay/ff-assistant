@@ -28,11 +28,37 @@ fixes the callers.
 
 **Three properties the module is built around:**
 
-1. **ONE UNIT OF MEASURE.** Every recommendation that can be is scored as a change in OUR
-   championship probability, under common random numbers, with the run's own noise floor stated
-   beside the ranking. Where a title delta is not the honest unit -- a weekly lineup, a playoff
-   schedule -- the result says so in `assumptions.basis` rather than dressing a lineup quantity up as
-   a probability.
+1. **ONE UNIT OF MEASURE, AND IT CHANGED IN PHASE 3 (2026-09-09).** Every recommendation that can be
+   is scored under common random numbers, with the run's own noise floor stated beside the ranking.
+   The unit used to be OUR CHAMPIONSHIP PROBABILITY. It is now **the change in P(PLAYOFFS)**, with
+   expected optimal-lineup points in weeks 15-17 as the secondary and P(title) reported alongside and
+   never used alone. Where no delta is the honest unit -- a weekly lineup, a playoff schedule, a
+   handcuff's conditional payoff -- the result still says so in `assumptions.basis` rather than
+   dressing a points quantity up as a probability.
+
+   **Why, in one paragraph.** P(title) = P(playoffs) x P(title | playoffs). Scored against 114 real
+   team-seasons of this league (docs/validation.md, Phase 2c), this simulator BEATS a uniform
+   baseline on the playoff berth -- Brier 0.2370 against 0.2451 -- and LOSES to it on the champion,
+   0.0659 against 0.0652. Single elimination among seven makes the second factor nearly a coin flip,
+   and eight titles in 114 team-seasons is almost no signal to fit against. Every recommendation this
+   module made was ranked on the one quantity the model had been measured not to know. Optimising a
+   quantity a model cannot predict optimises its noise.
+
+   **THE STATE-DEPENDENT SWITCH.** Above a **70%** simulated playoff probability the primary becomes
+   playoff-week strength. The threshold is derived from the calibration reliability table -- the
+   first bin whose realised playoff rate exceeds 85% -- and the derivation says out loud that the bin
+   holds ONE team-season and that the band below it is the largest miscalibration on the page (58%
+   predicted, 41% realised), which is the argument for putting the switch above that band rather than
+   inside it. It is exposed on `seasonOdds().objective` (regime, primary, threshold, and a sentence
+   of prose) so a reader can disagree with it explicitly. The reason it earns its place: with the seed
+   settled every candidate's playoff delta is 0.00pp, so a tool still ranking on that quantity is
+   ordering a list of zeroes.
+
+   Every scored row carries `playoffsPp`, `playoffWeekPts` and `titlePp`, plus `rankValue` -- whichever
+   of the first two the active regime ranks on -- and all three come from ONE simulation of each
+   state, so two of them can never be correlated across different samples. The noise floor is
+   computed for the PRIMARY. The FAAB rule of thumb is now priced per point of PLAYOFF probability
+   and its own text says the quantity changed.
 2. **ASSUMPTIONS TRAVEL WITH THE NUMBER.** `{schedule, basis, trials, seeds, artifact, asOf}` is on
    every result. An LLM handed a bare "6.5%" quotes it as a fact; handed it with its caveats attached
    it cannot. The tool descriptions repeat it in prose and the one-line summary ends with the caveat

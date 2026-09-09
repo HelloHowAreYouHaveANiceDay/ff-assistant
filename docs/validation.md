@@ -1,5 +1,232 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## PHASE 3: the decision layer under an objective the model can actually see (2026-09-09)
+>
+> Four pre-registered predictions, P28 to P31. **Two held, one held on one arm and failed
+> catastrophically on the other, and one failed outright.** Nothing was re-specified after the fact
+> and nothing was tuned to make one hold. The failure is the finding: a bidder derived from first
+> principles, with every hand-tuned lever removed, loses to the hand-tuned one by 35 points of playoff
+> rate on thirteen seasons.
+>
+> | | prediction | outcome |
+> |---|---|---|
+> | P28 | V3's playoff rate is at least V2's minus 2 points under BOTH arms | **FAILED** -- held on the honest arbiter (+1.3pp), lost by **35.5pp** on the long churn arm |
+> | P29 | V3's title rate is within noise of V2's | HELD at the season level (-2.7pp, CI [-14.7, +7.1], t = -0.43) on the honest arbiter; not on the long arm |
+> | P30 | V3's QB share of spend is at least 3 points LOWER than V2's | **FAILED** -- it is 3 to 14 points HIGHER |
+> | P31 | at least three V2 levers are flat within noise under the honest arbiter | HELD -- `starterReserve`, `premium`, `maxShare` |
+>
+> **THE HEADLINE THIS IS MEASURED AGAINST IS UNCHANGED.** `--full --no-lookahead --inflation
+> --seasons 1999-2024 --n 150` still returns **38.1% / 96%** with the Phase 2c per-season line
+> reproduced to the point. V2 remains the default bidder, `DEFAULT_LEVERS` is untouched, and no
+> recorded decision is reversed.
+>
+> ### The objective, and why it changed
+>
+> P(title) = P(playoffs) x P(title | playoffs). Phase 2c scored this simulator against 114 real
+> team-seasons and found measurable skill on the FIRST factor (Brier 0.2370 against a uniform 0.2451)
+> and none on the second (0.0659 against 0.0652 -- worse than knowing nothing). Single elimination
+> among seven makes the second factor nearly uniform, and eight titles in 114 team-seasons is almost
+> no signal to fit against. **Every in-season recommendation in this repo was ranked on the factor the
+> model cannot predict.** Optimising a quantity a model cannot predict optimises its noise.
+>
+> So the objective is now: **PRIMARY** the change in P(playoffs); **SECONDARY** expected optimal-lineup
+> points in the three fantasy playoff weeks; **ALONGSIDE** the change in P(title), computed and printed
+> on every row and never used alone. Every result carries an `objective` block naming which, and the
+> caveat sentence each summary ends with names it too.
+>
+> ### Step 1 -- roster-aware value
+>
+> `src/draft/rosterMarginal.ts` measures what a player adds to a REAL roster state by simulating with
+> and without him under common random numbers, and converts the marginal to dollars by inverting a
+> measured BUDGET CURVE -- the P(playoffs) the remaining money buys when it fills the remaining slots
+> from the remaining pool. That inversion is the shadow price; live inflation, budget pressure, the
+> starter reserve and the concentration cap are all consequences of it rather than four separate
+> levers.
+>
+> The decision state for the table below: our roster EMPTY with all twelve slots open and $200, the
+> other fifteen teams the league's real 2026 rosters, the pool the whole board, the generated
+> schedule, 40 candidates, 300 trials, seed 7.
+>
+> | # | roster-aware | pos | pp of P(playoffs) | $ | titlePp | wk15-17 pts | VOR book | $ |
+> |---|---|---|---|---|---|---|---|---|
+> | 1 | Jahmyr Gibbs | RB | 27.00 | 194 | 6.00 | 25.8 | Bijan Robinson | 91 |
+> | 2 | Bijan Robinson | RB | 24.67 | 182 | 5.33 | 26.4 | Jahmyr Gibbs | 86 |
+> | 3 | Ja'Marr Chase | WR | 24.00 | 179 | 6.67 | 21.5 | Ja'Marr Chase | 80 |
+> | 4 | Puka Nacua | WR | 22.67 | 172 | 5.33 | 20.7 | Jaxon Smith-Njigba | 78 |
+> | 5 | Amon-Ra St. Brown | WR | 22.33 | 170 | 4.33 | 17.7 | Christian McCaffrey | 77 |
+> | 6 | Jaxon Smith-Njigba | WR | 22.00 | 169 | 4.33 | 21.2 | Puka Nacua | 76 |
+> | 7 | Jonathan Taylor | RB | 21.67 | 167 | 4.00 | 20.8 | Amon-Ra St. Brown | 66 |
+> | 8 | Ashton Jeanty | RB | 19.67 | 136 | 2.00 | 16.6 | Jonathan Taylor | 65 |
+> | 9 | Christian McCaffrey | RB | 19.33 | 131 | 2.00 | 22.2 | Drake London | 64 |
+> | 10 | Drake London | WR | 19.33 | 131 | 5.67 | 18.6 | Trey McBride | 64 |
+> | 11 | Omarion Hampton | RB | 19.00 | 128 | 2.67 | 20.0 | Josh Allen | 63 |
+> | 12 | Brock Bowers | TE | 18.67 | 125 | 5.67 | 16.2 | Omarion Hampton | 63 |
+> | 18 | Lamar Jackson | QB | 16.33 | 102 | 3.67 | 12.1 | Lamar Jackson | 54 |
+> | 21 | Josh Allen | QB | 15.00 | 93 | 3.67 | 15.1 | Breece Hall | 51 |
+>
+> **Positional share of the book, over the same 40 candidates:**
+>
+> | | QB | RB | WR | TE | K | DST |
+> |---|---|---|---|---|---|---|
+> | roster-aware | **16.2%** | 38.4% | 37.8% | 7.6% | 0.0% | 0.0% |
+> | VOR | 20.1% | 35.8% | 36.8% | 7.3% | 0.0% | 0.0% |
+> | the room, historically | 7.8-11.2% | 38.1%+ | -- | -- | -- | -- |
+>
+> The QB share falls by 3.9 points toward the room's and RB rises toward the room's floor. It was not
+> forced -- there is no positional term anywhere in the module.
+>
+> **Cost.** 40 candidates at 200 trials: a one-off budget curve of 4.1s per decision state, then
+> **425 ms per candidate**; at 300 trials, 6.0s and 555 ms. The target was under 400 ms and 200 trials
+> misses it by 25 ms on this machine; 150 trials would meet it at the cost of resolution. Both numbers
+> are the measured wall time of `scripts/roster-book.mjs`, which times the fixed and per-candidate
+> costs separately because they are paid at different moments.
+>
+> **Three defects the tests found, each of which produced a plausible number:**
+>
+> - the baseline fill reached for the CANDIDATE itself (the fill is greedy over the same pool), so
+>   every marginal was zero by construction -- the best QB in the pool priced at 0.00pp filling an
+>   EMPTY quarterback slot while pricing at +7.33pp as a backup;
+> - the dollar conversion linearised a violently convex curve and priced Ja'Marr Chase at **$406 in a
+>   $200 auction**;
+> - the fill rule sorted on raw season points and bought FOUR bench quarterbacks, because no receiver
+>   out-scores a quarterback on the raw curve.
+>
+> ### Step 2 -- the derived bidder
+>
+> V3 (`src/draft/strategyV3.ts`, `FF_STRATEGY=v3`) is three terms and no tuned constants: the
+> roster-aware marginal in expected starting-lineup points (analytic, because a simulated marginal per
+> bid is ten million season simulations and cannot be backtested); a price from inverting the analytic
+> budget path; and a winner's-curse shading derived from dispersion and the number of live bidders.
+> `benchDiscount`, `posMult`, `maxShare`, `starterReserve` and `premium` are NOT applied.
+>
+> | arm | V2 playoffs | V3 playoffs | paired difference | V2 title | V3 title | paired difference |
+> |---|---|---|---|---|---|---|
+> | honest arbiter, 2020-2024, n=300 | 49.0% | **50.3%** | +1.27pp, CI [-24.1, +22.0], 3/5 seasons | 14.5% | 11.8% | -2.67pp, CI [-14.7, +7.1], 2/5 |
+> | long churn arm, 2012-2024, n=150 | 88.9% | **53.4%** | **-35.50pp**, CI [-41.6, -30.8], **0/12 seasons** | 25.5% | 7.3% | -18.22pp, CI [-21.4, -14.8], 0/12 |
+>
+> Honest arbiter = `--market ecr --market-noise 0 --bot-noise 0.20 --bot-churn --bot-book price`; long
+> arm = `--bot-churn --bot-book price`, legacy market. Both with `--full --no-lookahead --inflation`,
+> both paired on common random numbers through `scripts/paired-analysis.mjs`, which now reports
+> PLAYOFFS as well as the title.
+>
+> **P28 FAILED and V3 does not ship.** The rule was decided before the run: a playoff rate more than 2
+> points below V2 disqualifies it. On the five-season honest arbiter V3 is fractionally ahead, and
+> that arm's detectable effect at 80% power is 39pp -- it cannot adjudicate anything of this size. On
+> thirteen seasons, where the detectable effect is 8.5pp, V3 loses in every single season.
+>
+> **Where the loss comes from, measured rather than guessed.** Two sensitivity arms on the long arm:
+>
+> | V3 variant | playoffs | title |
+> |---|---|---|
+> | full shading (uncertainty + market spread) | 53.4% | 7.3% |
+> | market spread only (`FF_V3_OURSD=0`) | 60% | 9.4% |
+> | no shading at all (`FF_V3_SHADE=off`) | 61% | 8.7% |
+> | V2 | 88.9% | 25.5% |
+>
+> Shading explains about 7 of the 35 points; **the value term explains the rest**. The winner's-curse
+> correction is over-aggressive because our predictive uncertainty is largely SHARED with the room --
+> a shared error moves every bid together and the winner is not selected on it -- so combining it in
+> quadrature with the market's private spread double-counts. But fixing that does not rescue V3. An
+> analytic expected-lineup-points marginal, priced against a budget path, simply picks a worse
+> championship roster than a VOR book with a FLEX-weighted baseline, and it does so consistently.
+>
+> **P30 FAILED, in the opposite direction to the prediction.** Our positional spend over the drafts
+> the arbiter actually scores (`scripts/v3-roster.mjs --season Y`, 8 seeds, price book):
+>
+> | season | V2 spend | V2 QB share | V3 spend | V3 QB share |
+> |---|---|---|---|---|
+> | 2019 | $45 | 31% | $147 | 34% |
+> | 2021 | $82 | 20% | $126 | 34% |
+> | 2023 | $110 | 21% | $149 | 31% |
+>
+> The reason is the same one VOR was invented for: an expected-points marginal measured against a
+> STREAMING FLOOR prices an elite quarterback by how many points he beats the waiver wire by, which is
+> large; VOR prices him by how much he beats the seventeenth quarterback, which is what a one-QB
+> league actually pays for. The roster-aware book gets this right when it is computed by SIMULATION
+> (16.2% QB share, Step 1) and wrong when computed by the analytic surrogate the bidder can afford.
+> **That gap between the two, not the arbiter, is the honest reason V3 loses.**
+>
+> **Connectedness, both directions** (`scripts/v3-connected.mjs`): zero uncertainty returns EXACTLY 1
+> shading; 16 bidders shade to 0.292 where 2 bidders shade to 1.000; one bidder carries no curse; the
+> bid moves with the budget ($200 -> $24, $100 -> $25) and never exceeds it; a thin pool bids $58 for
+> the same man a rich pool bids $24 for; the same quarterback is bid $24 into an open slot and $0 as a
+> backup.
+>
+> ### P31 -- which V2 levers are redundant under the honest arbiter
+>
+> Each swept against the shipped V2 arm on the same seeds, 2020-2024, n=300, paired:
+>
+> | lever | setting | playoffs | paired difference | title | verdict |
+> |---|---|---|---|---|---|
+> | `starterReserve` | 4 -> 0 | 49.0% | **0.00pp**, CI [0.00, 0.00] | 14.5% -> 14.5% | **DEAD in this arm** -- byte-identical trials |
+> | `premium` | 2 -> 0 | 49.1% | +0.07pp, CI [-4.5, +6.0] | 14.5% -> 15.0% | flat |
+> | `maxShare` | 0.25 -> 0.50 | 47.9% | -1.07pp, CI [-3.6, +0.7] | 14.5% -> 14.0% | flat |
+> | `benchDiscount` | 0.25 -> 1 (off) | 43.4% | -5.60pp, CI [-16.7, +3.5], 1/5 seasons | 14.5% -> 11.0% | the one that is doing work |
+>
+> **P31 HELD**, and `starterReserve` is the strongest form of it: at `aggr 0.7` the soft reserve never
+> binds in this arm, so the two configurations produce IDENTICAL trials. Three of the five levers V3
+> was built to make unnecessary were already unnecessary. `benchDiscount` is the exception and its
+> interval still contains zero on five seasons -- it was measured on 25.
+>
+> ### Step 3 -- the in-season policy
+>
+> `waiverTargets`, `tradeCheck`, `tradeFinder`, `depthRisk` and `handcuffs` now report all three
+> numbers, rank on the primary, and compute the noise floor for the primary. All three deltas come
+> from ONE simulation of each state, so a playoff delta and a playoff-week delta can never be two
+> samples correlated after the fact -- the trap this repo has already paid for once.
+>
+> **THE REGIME THRESHOLD, derived from the calibration rather than chosen.** The reliability table over
+> 114 team-seasons:
+>
+> | predicted playoff band | n | mean predicted | realised |
+> |---|---|---|---|
+> | 5-15% | 2 | 8.3% | 0.0% |
+> | 15-30% | 13 | 24.1% | 23.1% |
+> | 30-50% | 71 | 41.3% | 47.9% |
+> | 50-70% | 27 | 58.0% | 40.7% |
+> | 70-100% | 1 | 74.4% | 100.0% |
+>
+> The first bin whose realised playoff rate exceeds 85% is 70-100%, so the threshold is **70%**. Two
+> things have to be said with it: **that bin contains one team-season**, and the band below it is the
+> largest miscalibration on the page (58% predicted, 41% realised), which argues for putting the switch
+> above the miscalibrated band rather than inside it. It is exposed on `seasonOdds().objective` so a
+> reader can disagree with it explicitly instead of by accident.
+>
+> Above it the primary becomes playoff-week strength. The fixture test shows why: with the seed
+> settled, every candidate's playoff delta is **0.00pp** -- a tool still ranking on that quantity is
+> ordering a list of zeroes -- while playoff-week points separate the same four candidates by 33.
+>
+> ### Step 4 -- the odds accrual
+>
+> `scorecard.ts` had a snapshot path for the `odds` kind and no scoring path. It has one now, and it
+> is checked against the calibration harness rather than against a reimplementation of itself: handed
+> the exact probabilities `scripts/season-calibration.mjs` produced for 2025, it reproduces that
+> harness's per-season figures to six decimals.
+>
+> | 2025, 16 teams, 7 berths | accrual scorer | calibration harness | uniform floor | skill |
+> |---|---|---|---|---|
+> | playoffs | 0.209587 | 0.209587 | 0.246094 | +14.8% |
+> | title | 0.052147 | 0.052147 | 0.058594 | +11.0% |
+>
+> Control: rotating which team got which outcome scores 0.257045 against the honest 0.209587, so the
+> join is real. **Nothing writes 2025 odds into `scorecard_prediction`** -- those probabilities are
+> computed now, after the season, and recording them would be exactly the thing the write-once rule
+> exists to prevent. The 32 frozen 2026 rows stay unscored and `ff scorecard` says why: *"2026 has not
+> resolved: 0/16 teams settled ... an in-progress season's placeholder rank looks exactly like a
+> result."*
+>
+> ### The recommendation, for the owner to take or leave
+>
+> **Keep V2 as the live bidder.** The derived bidder is a better description of the problem and a
+> worse answer to it, and the arbiter said so in twelve seasons out of twelve.
+>
+> **Change the in-season unit of measure, which this phase already does.** That one is not a close
+> call: the tools were ranking on a quantity measured to be worse than a coin flip.
+>
+> **Consider retiring `starterReserve` and `premium`** as separately tunable levers -- not because V3
+> replaced them, but because P31 measured them flat and `starterReserve` provably inert at the shipped
+> `aggr`. That is a decision for the owner and `DEFAULT_LEVERS` is untouched here.
+>
 > ## PHASE 2C: one key space, real outcomes, and the honest arbiter (2026-09-09)
 >
 > Eleven pre-registered predictions, P10 to P20. **Seven failed and four held.** The failures carry

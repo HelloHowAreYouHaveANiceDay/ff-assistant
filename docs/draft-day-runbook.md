@@ -139,6 +139,14 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
 - An out-of-range lever value is **clamped loudly** (`NOTE: --aggr 9 is outside its allowed range;
   clamped to 2`), so a sweep can never quietly report a number for a config that never ran.
 - `--stall-min N` -- stop after N min of no new league picks (default 10; WARN at ~3 min).
+- **`FF_STRATEGY=v3` selects the DERIVED bidder instead of the shipped one, and you almost certainly
+  do not want it on draft day.** V3 (`src/draft/strategyV3.ts`) replaces the five hand-tuned levers
+  with three computed terms -- a roster-aware marginal, a price from inverting the budget path, and a
+  winner's-curse shading derived from dispersion and the number of live bidders. It is fully wired,
+  connected in both directions (`node --import tsx scripts/v3-connected.mjs`) and backtestable, and
+  the arbiter rejected it: **53.4% playoffs against V2's 88.9% over thirteen seasons, worse in twelve
+  of twelve** (docs/validation.md, Phase 3). It exists so the idea can be picked up again, not so it
+  can be used. `FF_V3_SHADE=off` and `FF_V3_OURSD=0` are its two sensitivity arms.
 - REJECTED by backtest, off by default, don't enable to "win": `--pos-inflation`, `--drain-nom`,
   `--waivers` (all measured neutral-to-negative -- see docs/edges.md). `--scarcity` was removed from
   `auto-draft` entirely (rejected + its live wiring was wrong); it survives only in `backtest`.
@@ -176,7 +184,14 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
   inflation ON, clamped [0.8,1.4] (+4.2pp); `starterReserve` 4 / `maxShare` 0.25; `premium` 2; all
   positional multipliers 1.0. **~33% championships / 94% playoffs** on 25 scored seasons
   (1999-2024), ~5x random, and it replicates on a 1999-2013 holdout no tuning ever saw.
-  docs/validation.md.
+  docs/validation.md. (The flagless arbiter reads 38.1% / 96% since Phase 2c rebuilt the bot field;
+  the posture is the same one.)
+- **Measured FLAT under the honest arbiter (2026-09-09, Phase 3), and it changes what is worth
+  fiddling with on the day:** `starterReserve` 4 vs 0 produces BYTE-IDENTICAL trials -- the soft
+  reserve never binds at `aggr 0.7` -- and `premium` 2 vs 0 and `maxShare` 0.25 vs 0.50 are both
+  inside the noise on five seasons. `benchDiscount` is the one still doing work (-5.6pp when turned
+  off). Nothing was changed on the strength of it: five seasons cannot adjudicate a lever measured on
+  25. But if you are tempted to nudge the reserve mid-draft, it is not connected.
 
 ### The full lever set (what `node scripts/read-config.mjs` should print)
 

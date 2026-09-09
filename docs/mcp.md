@@ -90,11 +90,11 @@ call left a row in `action_log`.
 | `read_draft_roster` | your roster AS ESPN SEES IT in the live room | no |
 | `place_bid` | **places a REAL bid** (quick bid, or a guarded jump bid) | **LIVE $** |
 | `nominate_player` | nominate a player in the live room | **LIVE** |
-| `season_odds` | playoff + title odds for all sixteen teams, ours flagged, with conservation checks | no |
+| `season_odds` | playoff + title odds for all sixteen teams, ours flagged, with conservation checks AND the current objective regime | no |
 | `lineup_recommend` | this week's best legal lineup + who cannot play and why | no |
-| `waiver_targets` | each add+drop scored by the change in OUR title probability, with FAAB guidance | no |
+| `waiver_targets` | each add+drop scored by the change in OUR PLAYOFF probability, with playoff-week points and title delta beside it, plus FAAB guidance | no |
 | `trade_check` | one named offer scored from BOTH sides | no |
-| `trade_finder` | one-for-ones balanced on consensus value, ranked by title delta | no |
+| `trade_finder` | one-for-ones balanced on consensus value, ranked by the PLAYOFF delta | no |
 | `handcuffs` | what each backup scores if the man ahead of him misses | no |
 | `depth_risk` | what losing one player costs, and who insures him | no |
 | `power_rankings` | the league by best starting lineup, with each team's odds beside it | no |
@@ -109,11 +109,22 @@ one, and the same roster returned a base title probability of 4.17%, 4.56% or 5.
 tool you asked. A terminal and the Assistant now cannot disagree, because there is one place the
 number is computed.
 
-**ONE UNIT OF MEASURE.** Everything that can be is scored as a change in OUR championship
-probability, under common random numbers, with the run's own noise floor returned beside the ranking.
-Points cannot see a mandatory slot going empty, cannot see that this league pays on a 7-of-16
-threshold and then top-heavy, and cannot see that a sixth receiver on a roster with five effective
-receiving slots is worth approximately nothing.
+**ONE UNIT OF MEASURE, AND IT CHANGED IN PHASE 3 (2026-09-09).** Everything that can be is scored
+under common random numbers, with the run's own noise floor returned beside the ranking. Points
+cannot see a mandatory slot going empty, cannot see that this league pays on a 7-of-16 threshold and
+then top-heavy, and cannot see that a sixth receiver on a roster with five effective receiving slots
+is worth approximately nothing.
+
+The unit used to be OUR CHAMPIONSHIP PROBABILITY. It is now **the change in P(PLAYOFFS)**, because
+that is the factor the simulator was measured to know something about: scored against 114 real
+team-seasons it beats a uniform baseline on the playoff berth (Brier 0.2370 vs 0.2451) and loses to
+it on the champion (0.0659 vs 0.0652). Every scored row carries `playoffsPp` (primary),
+`playoffWeekPts` (expected optimal-lineup points in weeks 15-17) and `titlePp` (reported alongside,
+never used alone), plus `rankValue` -- whichever the active regime ranks on. Above a 70% playoff
+probability, derived from the calibration reliability table, the primary becomes playoff-week
+strength; `season_odds` returns the regime and the threshold. Every result carries an `objective`
+block naming all of it, and the caveat sentence each summary ends with names the primary quantity, so
+an Assistant cannot quote a delta without saying what it is a delta IN.
 
 **EVERY ANSWER CARRIES ITS ASSUMPTIONS.** Every result has an `assumptions` block:
 
@@ -147,8 +158,10 @@ in the dispatcher rather than in each tool for the D7 reason: a caller cannot fo
 is no path to the answer that skips logging.
 
 **WHERE THESE ARE WEAK, in the tool descriptions and worth repeating:**
-- the PLAYOFF number is more trustworthy than the TITLE number -- a 7-of-16 threshold is far less
-  sensitive to tail assumptions than a single-elimination bracket;
+- the PLAYOFF number is more trustworthy than the TITLE number, and this is now MEASURED rather than
+  argued from the shape of the format: over 114 real team-seasons the simulator beats a uniform
+  baseline on the berth and is WORSE THAN UNIFORM on the champion. Lead with the playoff figure;
+  quote the title figure as context, never as the reason for a decision;
 - `lineup_recommend` runs the weekly projector, but the SHIPPED weekly artifact is the
   season-line-only floor, whose projection IS the season line per game. So the numbers are still the
   season projection spread flat: it ranks a roster correctly and has no matchup, form or weather in
@@ -157,9 +170,10 @@ is no path to the answer that skips logging.
 - `lineup_recommend` returns `weekSource`. It now usually reads `schedule`, derived from
   `raw_nfl_game` kickoff dates on the LOCAL calendar; `default` means the store has no schedule for
   the season and nobody knew, in which case pass `week` explicitly;
-- the FAAB figure is a STATED RULE OF THUMB (10% of budget per +1pp of title probability, capped at
-  50%), not a fitted value -- nothing in this repo has measured what a point of title probability is
-  worth in FAAB dollars;
+- the FAAB figure is a STATED RULE OF THUMB (10% of budget per +1pp of PLAYOFF probability, capped
+  at 50%), not a fitted value -- nothing in this repo has measured what a point of playoff
+  probability is worth in FAAB dollars. The rule is unchanged from Phase 2c; the quantity it is
+  applied to is now the one the simulator can predict, and the rule's own text says so;
 - `power_rankings` ranks teams by the same board we bid from, so it is not an independent grade of
   our own roster. Read the spread between teams, not the absolutes;
 - `playoff_sos`'s `costPerWeek` is under a point a week for a typical starter. It breaks ties; it

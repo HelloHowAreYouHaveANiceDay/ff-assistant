@@ -21,8 +21,10 @@ app a non-technical friend can run; the engine underneath is deterministic and v
 - **In-season copilot — working, read-only.** Nine decisions (season odds, weekly lineup, waivers,
   trade check, trade finder, handcuffs, depth risk, power rankings, playoff SOS) as callable
   functions over one sim context, reached identically from `ff copilot <verb>` and from the
-  Assistant's MCP surface, almost all scored as a change in our championship probability. Verified
-  end to end against the live league. See `docs/in-season-design.md`.
+  Assistant's MCP surface, almost all scored as a change in our PLAYOFF probability -- the factor the
+  simulator has measured skill on -- with playoff-week strength as the secondary and the title
+  reported alongside (Phase 3, 2026-09-09). Verified end to end against the live league. See
+  `docs/in-season-design.md`.
 - **Warehouse — one key space, and the league's own history is in it.** Every table keyed on
   `player_sk` now shares a single surrogate-key space with the identity registry (7,939 of 7,939
   shared gsis ids agree, against 59 before), and `identity_rekey` records where every moved key went
@@ -31,9 +33,10 @@ app a non-technical friend can run; the engine underneath is deterministic and v
   `fact_matchup`), reproducible by re-fetching, and they now feed the price model, the bot field, the
   positional gates and the season simulator's calibration. `docs/data-layers.md`.
 - **Not yet built:** the in-season lineup *writer* (the recommend path works; the ESPN write tools
-  are deferred until after the live draft), multi-league fan-out (one synced league today), and the
-  SCORING half of the preseason odds accrual — `scorecard` freezes 32 rows of playoff/title
-  probability and has no branch that scores them when the season settles.
+  are deferred until after the live draft) and multi-league fan-out (one synced league today). The
+  SCORING half of the preseason odds accrual was the third item here and is now built: `ff scorecard`
+  grades the frozen playoff/title rows with Brier, log loss and a reliability table once a season
+  resolves, and refuses an unsettled one.
 
 ## The three things it is
 
@@ -251,6 +254,43 @@ recorded here.
   but its TITLE Brier does not (0.0659 against 0.0652), and the 50-70% predicted playoff band
   realises 46% (`scripts/season-calibration.mjs`). Shrinking toward uniform does not fix it — chosen
   leave-one-season-out the held-out Brier gets worse — so no correction is applied.
+
+## The decision layer (Phase 3, 2026-09-09)
+
+**The in-season tools no longer rank on championship probability.** P(title) = P(playoffs) x
+P(title | playoffs), and scored against 114 real team-seasons of this league the season simulator
+beats a uniform baseline on the playoff berth (Brier 0.2370 against 0.2451) and *loses* to it on the
+champion (0.0659 against 0.0652) -- single elimination among seven is close to a coin flip. Every
+recommendation was being ranked on the one quantity the model had been measured not to know, so the
+unit of measure is now the change in **P(playoffs)**, with expected optimal-lineup points in weeks
+15-17 as the secondary and P(title) reported alongside and never used alone. Above a 70% playoff
+probability -- derived from the calibration reliability table, and it rests on one team-season, which
+the derivation says out loud -- the primary becomes playoff-week strength. Every result carries an
+`objective` block naming which; `season_odds` returns the regime.
+
+**A derived bidder was built, measured, and rejected.** `FF_STRATEGY=v3` replaces the five hand-tuned
+levers with three computed terms: what a player adds to THIS roster, a price from inverting the
+measured budget curve, and a winner's-curse shading derived from dispersion and the number of live
+bidders. It is fully wired and fault-injected, and the championship arbiter refused it -- 53.4%
+playoffs against V2's 88.9% over thirteen seasons, worse in twelve of twelve. V2 remains the default
+and `DEFAULT_LEVERS` is untouched. The simulated roster-aware book behaves exactly as the theory
+predicts (it cuts the QB share of our money from 20.1% to 16.2%, toward the room's own 7.8-11.2%);
+the analytic surrogate the bidder can afford to run per bid does not, and that gap is where the loss
+lives. `docs/validation.md` and `docs/edges.md` have the numbers.
+
+**The preseason odds now get graded.** `ff scorecard` scores the frozen `odds` rows with Brier, log
+loss and a reliability table once a season resolves, playoff and title separately against their own
+uniform floors. Checked against the calibration harness on 2025 -- it reproduces that harness's
+figures to six decimals (playoffs 0.209587, title 0.052147). The 32 frozen 2026 rows stay unscored
+until the season settles, and the command says why.
+
+**Three shipped levers measured flat.** Under the honest arbiter, `starterReserve` 4 vs 0 produces
+byte-identical trials (the soft reserve never binds at `aggr 0.7`), and `premium` and `maxShare` are
+both inside the noise. `benchDiscount` is the one still doing work. Nothing was changed on the
+strength of five seasons; the finding is recorded for the owner to act on or not.
+
+The whole programme, phase by phase, with the chain of branches to merge and the open decisions:
+`docs/redesign-2026-09.md`.
 
 ## Where planning lives
 
