@@ -1188,3 +1188,46 @@ CREATE TABLE IF NOT EXISTS scorecard_result (
   scored_at       TEXT,
   PRIMARY KEY (season, week, kind, model, metric)
 );
+
+-- raw_espn_eligibility: ESPN's OWN answer to "which lineup slots may this player be started in",
+-- snapshotted read-only through the app bridge. `eligible_positions_json` holds only the DEDICATED
+-- slot ids mapped into our vocabulary; `raw_slots_json` keeps every id ESPN returned, including the
+-- combo slots (3 RB/WR, 5 WR/TE, 7 OP, 23 FLEX) that are deliberately NOT read as positions -- every
+-- receiver in football carries slot 3, so reading it as a position would mark the whole board dual.
+-- See src/data/eligibility.ts for the id table.
+CREATE TABLE IF NOT EXISTS raw_espn_eligibility (
+  season                  INTEGER,
+  espn_player_id          TEXT,
+  name                    TEXT,
+  default_position        TEXT,
+  eligible_positions_json TEXT,
+  raw_slots_json          TEXT,
+  fetched_at              TEXT,
+  PRIMARY KEY (season, espn_player_id)
+);
+
+-- player_eligibility: the STAGED form, on the surrogate key. Resolved through player_xref by ESPN
+-- ID and never by name -- the two Justin Jeffersons share a name_key exactly, so a name join hands
+-- one man the other's eligibility with no symptom.
+CREATE TABLE IF NOT EXISTS player_eligibility (
+  player_sk      INTEGER REFERENCES player_identity(player_sk),
+  season         INTEGER,
+  positions_json TEXT,
+  updated_at     TEXT,
+  PRIMARY KEY (player_sk, season)
+);
+
+-- player_value_position: which of a dual-eligible player's positions his dollar value was taken at.
+-- A SIDECAR rather than a column on player_value because schema.sql only reaches a FRESH store
+-- (every statement is CREATE ... IF NOT EXISTS), so a new column would also need an ALTER in
+-- src/db/db.ts; a new table needs neither and lands on an existing store unchanged. One row per
+-- valued player per season, written by the assembler alongside player_value.
+CREATE TABLE IF NOT EXISTS player_value_position (
+  player_id      TEXT,               -- name_key, the same key player_value uses
+  season         INTEGER,
+  board_pos      TEXT,               -- the position the projection carried
+  value_pos      TEXT,               -- the eligible position the VOR was taken at
+  eligible_json  TEXT,               -- the full eligible set, for audit
+  updated_at     TEXT,
+  PRIMARY KEY (player_id, season)
+);

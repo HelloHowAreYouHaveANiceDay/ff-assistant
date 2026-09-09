@@ -320,6 +320,24 @@ export const RAW_ASSETS: RawAsset[] = [
       return r.total;
     },
   },
+  {
+    id: "espn-eligibility",
+    table: "raw_espn_eligibility (+player_eligibility)",
+    what: "ESPN's own eligibleSlots per player, read through the desktop app's session -- the only source that says a man is startable at TWO positions",
+    defaultSeasons: null,
+    async run(dbPath, seasons) {
+      const { ingestEligibility } = await import("./eligibility.js");
+      const { getConfig } = await import("../db/db.js");
+      const db = openDb(dbPath);
+      const season = seasons[seasons.length - 1] ?? getConfig(db).season;
+      try {
+        const r = await ingestEligibility({ db, season, useCache: process.env.FF_ELIG_CACHE === "1" });
+        console.log(`  raw_espn_eligibility ${season}: ${r.reason}; staged ${r.staged.staged} onto player_sk` +
+          (r.staged.unresolved ? `, ${r.staged.unresolved} unresolved by ESPN id (e.g. ${r.staged.unresolvedNames.slice(0, 4).join(", ")})` : ""));
+        return r.rows;
+      } finally { db.close(); }
+    },
+  },
 ];
 
 /** Print the per-season landing counts. A raw sweep whose only output is a grand total cannot show
