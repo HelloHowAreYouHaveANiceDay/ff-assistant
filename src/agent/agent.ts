@@ -441,6 +441,106 @@ function buildTools(dbPath: string | undefined, season: number) {
           } catch (e) { await browser?.close().catch(() => {}); shut(); return { content: [{ type: "text", text: "read error: " + String(e).slice(0, 140) }] }; }
         },
       ),
+      // --- IN-SEASON COPILOT: the decision surface, READ-ONLY.
+      //
+      // Nine verbs over ONE sim context (src/inseason/copilot.ts), reached through ONE dispatcher
+      // (copilotActions.ts) that `ff copilot` also uses -- so a number the Assistant quotes and a
+      // number a terminal prints are the same computation, and both are written to the action log
+      // BEFORE they are returned (D3), even though this phase makes no ESPN writes at all. The
+      // reason to log advice is that advice a human acts on is still the agent driving the team, and
+      // when the write tools arrive an ESPN move will sit in the same log directly beneath the
+      // recommendation that produced it.
+      //
+      // EVERY DESCRIPTION SAYS WHAT THE NUMBER MEANS AND WHERE IT IS WEAK. A model handed a bare
+      // percentage will quote it as a fact; the returned JSON carries an `assumptions` block (real
+      // vs generated schedule, trials, seeds, data stamp) and these descriptions tell the model to
+      // read it. The pair is deliberate -- a field is only a caveat if the reader knows to look.
+      ...(copilotTools(tool as never, dbPath) as never[]),
+  ];
+}
+
+/**
+ * The in-season tools, built from `COPILOT_VERBS` so this list cannot drift from the dispatcher.
+ *
+ * Split into its own function purely for length; it is spread into buildTools above, so TOOL_NAMES
+ * still derives from the one surface and `test/mcp-surface.test.ts` still guards the whole of it.
+ */
+type ToolFn = (name: string, desc: string, schema: Record<string, z.ZodTypeAny>, handler: (a: Record<string, never>) => Promise<{ content: { type: "text"; text: string }[] }>) => unknown;
+function copilotTools(tool: ToolFn, dbPath: string | undefined) {
+  // One handler shape for all nine. The result is returned as its SUMMARY followed by the full JSON,
+  // in that order: the summary already carries the caveat sentence, so a model that reads only the
+  // first line still cannot quote the headline number naked.
+  const call = (verb: string) => async (args: Record<string, unknown>) => {
+    const { runCopilot } = await import("../inseason/copilotActions.js");
+    try {
+      const run = await runCopilot(verb as never, (args ?? {}) as never, { dbPath });
+      return { content: [{ type: "text" as const, text: `${run.summary}\n\n${JSON.stringify(run.result)}` }] };
+    } catch (e) {
+      // A failure is ALSO logged (runCopilot marks the row `failed` before rethrowing), so a
+      // recommendation that could not be produced is visible in the log rather than absent from it.
+      return { content: [{ type: "text" as const, text: `copilot ${verb} failed: ${String(e instanceof Error ? e.message : e).slice(0, 400)}` }] };
+    }
+  };
+  const SCHEDULE = z.enum(["real", "generated", "auto"]).optional()
+    .describe("REAL uses the league's actual matchups and needs the desktop app running (it FAILS rather than silently substituting); GENERATED is deterministic and offline but its playoff seeding is not this league's; AUTO (default) prefers real and reports which it used in assumptions.schedule.");
+  const TRIALS = z.number().optional().describe("Monte Carlo trials. More trials narrow the noise floor, which is returned with the result -- a difference smaller than the floor is not a difference.");
+  const SEED = z.number().optional().describe("random seed; results are compared under common random numbers, so leave it alone unless re-measuring.");
+
+  return [
+    tool(
+      "season_odds",
+      "PLAYOFF AND CHAMPIONSHIP ODDS for every team in my league from the rosters that actually exist, mine flagged. Returns each team's playoff%, title%, mean wins and mean points, plus the conservation checks (titles sum to 1, playoff shares sum to the playoff field) -- it REFUSES to return a table that fails one. Quote the PLAYOFF number with more confidence than the title number: a 7-of-16 threshold is far less sensitive to tail assumptions than a single-elimination bracket. ALWAYS report assumptions.schedule alongside the number -- a generated schedule is not this league's seeding.",
+      { schedule: SCHEDULE, trials: TRIALS, seed: SEED },
+      call("season_odds"),
+    ),
+    tool(
+      "lineup_recommend",
+      "THIS WEEK'S BEST LEGAL STARTING LINEUP, with everyone who cannot play named and why (bye, or ruled OUT/IR/PUP in the store). QUESTIONABLE players are still started -- they play more often than not. Weekly points are the SEASON projection divided by 17, so this ranks the roster correctly but has no matchup, form or weather in it; do not present it as a matchup-aware weekly projection. It REFUSES to return a lineup that starts a man on a bye or ruled out. If you do not pass `week`, the result says where the week came from -- the store often does not know, and `weekSource: default` means ASK THE USER which week they mean.",
+      { week: z.number().optional().describe("NFL week to set a lineup for. Pass it: the store usually cannot determine the current week."), schedule: SCHEDULE },
+      call("lineup_recommend"),
+    ),
+    tool(
+      "waiver_targets",
+      "WAIVER CLAIMS SCORED BY THE CHANGE IN MY CHAMPIONSHIP PROBABILITY -- every add paired with every legal drop, under common random numbers. A claim is two decisions and the DROP is the one people get wrong, so each add lists its drop options with their own deltas. Drops that would leave a mandatory slot unfillable (dropping the only kicker) are REFUSED and named, not scored. Compare every delta against the returned noiseFloorPp: a target that does not clear it is not distinguishable from doing nothing. The FAAB figure is a STATED RULE OF THUMB, not a fitted value -- say so when you quote it.",
+      { schedule: SCHEDULE, trials: TRIALS, seed: SEED, limit: z.number().optional().describe("how many free agents to evaluate (default 4); each costs simulation time"), positions: z.array(z.string()).optional().describe("restrict the add candidates, e.g. [\"RB\"]") },
+      call("waiver_targets"),
+    ),
+    tool(
+      "trade_check",
+      "SCORE ONE NAMED TRADE OFFER FROM BOTH SIDES, in championship probability. Both sides always, and not out of fairness: a proposal the other manager loses on is simply rejected, so `them.deltaPp` is what separates 'this helps us' from 'this is proposable'. Give and get are player names; every `get` must sit on ONE opponent's roster and every `give` on mine. Reports each side's legality (a trade that leaves either roster unable to field a lineup is flagged) and the noise floor.",
+      { give: z.array(z.string()).describe("players I send"), get: z.array(z.string()).describe("players I receive -- all from the same opponent"), schedule: SCHEDULE, trials: TRIALS, seed: SEED },
+      call("trade_check"),
+    ),
+    tool(
+      "trade_finder",
+      "FIND ONE-FOR-ONE TRADES WORTH PROPOSING: balanced on CONSENSUS MARKET VALUE first, then ranked by the change in my title probability. The value gate is the important half -- filtering on the partner's simulated equity instead once produced 'my WR4 for Christian McCaffrey' as a recommendation, which passes the simulator and no human accepts. `mutual: true` means it clears the noise floor for BOTH teams and is the only kind worth actually sending. Players with no consensus value are SKIPPED and counted, never priced at zero.",
+      { schedule: SCHEDULE, trials: TRIALS, seed: SEED, limit: z.number().optional().describe("how many candidate deals to simulate (default 8)"), maxGap: z.number().optional().describe("consensus-value band, default 0.15 = the two sides within 15% of each other"), positions: z.array(z.string()).optional().describe("restrict what I am shopping FOR") },
+      call("trade_finder"),
+    ),
+    tool(
+      "handcuffs",
+      "WHAT EACH BACKUP SCORES IF THE MAN AHEAD OF HIM MISSES A WEEK -- ranked by that conditional payoff, not by the lift, because ranking on lift is degenerate (its coefficient on the backup's own value is negative, so it returns the worst player behind the best starter). Rows are flagged `ours` and `rostered`. A handcuff is worth about the same once activated whoever he backs up; the reason to prefer an elite team's handcuff is that he is CHEAPER for the same payoff, not that his ceiling is higher. `contested: true` means the published depth chart and our projection disagree, i.e. a genuine timeshare -- often the most useful row on the page.",
+      { positions: z.array(z.string()).optional().describe("positions to scan, default [\"RB\"]"), week: z.number().optional().describe("current week, so the EV is over the REMAINING horizon rather than a full season"), freeOnly: z.boolean().optional().describe("only men nobody in the league rosters"), schedule: SCHEDULE },
+      call("handcuffs"),
+    ),
+    tool(
+      "depth_risk",
+      "WHAT LOSING ONE OF MY PLAYERS WOULD COST, in percentage points of championship probability, and who insures him. `costPp` is POSITIVE when we are worse off without him. The insurance list deliberately mixes free agents with players on other rosters and shortlists them SEPARATELY -- ranking them together on projection fills the list with the fifteen best starters in the league and never shows a claim, which is not an answer to 'my back is hurt'. A trade-finder ranked on points cannot see this: it prices a backup at what he adds to a HEALTHY lineup, which is usually zero.",
+      { player: z.string().describe("a player on MY roster"), schedule: SCHEDULE, trials: TRIALS, seed: SEED, limit: z.number().optional().describe("how many insurance candidates (default 4)") },
+      call("depth_risk"),
+    ),
+    tool(
+      "power_rankings",
+      "THE LEAGUE RANKED BY BEST STARTING LINEUP on OUR projections, with each team's simulated playoff% and title% beside it (the same run season_odds returns, so the two cannot disagree). HONEST LIMIT, state it when you quote this: it ranks teams by the same board we bid from, so it is not an independent grade of our own roster -- if our projection is wrong about a player it is wrong here the same way. Read the SPREAD between teams rather than any single absolute.",
+      { schedule: SCHEDULE, trials: TRIALS, seed: SEED },
+      call("power_rankings"),
+    ),
+    tool(
+      "playoff_sos",
+      "STRENGTH OF SCHEDULE FOR THE FANTASY PLAYOFF WEEKS -- the only weeks that decide a title. Opponent quality is solved from the POSTED BETTING LINES as a simultaneous system (a team's average spread is confounded by whom it played; this is not), because prior-year defense-vs-position was measured and does not carry year to year. NEGATIVE sos = weaker opponents = better. `costPerWeek` is the MEASURED fantasy swing per position and is under a point a week for a typical starter: it breaks ties between comparable players and does NOT overturn a projection gap. Check `pricedPlayoffGames` -- early in the season most playoff-week games have no line yet and the number is the market's current read projected forward.",
+      { schedule: SCHEDULE },
+      call("playoff_sos"),
+    ),
   ];
 }
 
@@ -507,7 +607,11 @@ Answer concisely and specifically: name the players, their $ value, and vsECR/vs
 You can also ACT on my roster: draft_player / drop_player / set_price change my team (every change is recorded in the action log).
 You can read and TUNE the strategy levers: read_levers shows every knob (tier break, K/DST cap, starter/bench reserve, max share, aggressiveness, outbid premium, sleeper cutoff) with its range; set_lever changes one (clamped, logged). Board levers (tierBreak, maxKDst) need a data refresh to show; bidding/UI levers apply immediately. When I ask to be more/less aggressive, value depth over studs, widen tiers, cap kickers, etc., translate that into the right lever(s) and set them. Only act when I clearly ask you to; confirm what you changed. Use read_needs to see open roster slots + max legal bid before recommending or making a pick, and read_actions to review what you've done.
 You can freely BROWSE my ESPN account through my logged-in session: navigate(url) + read_page() drive the app's embedded browser, and discover_leagues finds my real leagues/teams/seasons by reading page links (prefer this over guessing IDs).
-For my REAL league (not the local draft board): discover_leagues -> league_sync reads the actual league rules from my logged-in session (size, scoring incl. PPR/Half/Standard, roster slots, my team) and stores them; read_league shows my live roster, standings, and draft status. Run league_sync before relying on scoring-specific data. Writing to the league (setting lineups, waivers, trades) is NOT yet available -- only reads.`;
+For my REAL league (not the local draft board): discover_leagues -> league_sync reads the actual league rules from my logged-in session (size, scoring incl. PPR/Half/Standard, roster slots, my team) and stores them; read_league shows my live roster, standings, and draft status. Run league_sync before relying on scoring-specific data. Writing to the league (setting lineups, waivers, trades) is NOT yet available -- only reads.
+
+IN-SEASON DECISIONS -- season_odds, lineup_recommend, waiver_targets, trade_check, trade_finder, handcuffs, depth_risk, power_rankings, playoff_sos. Prefer these over reasoning from the board for any in-season question: they run the season simulator over the real sixteen rosters, and almost every one answers in the SAME unit -- the change in MY championship probability. Points cannot see a mandatory slot going empty or that this league pays on a 7-of-16 threshold; these can.
+Three rules when you quote one of them. (1) NEVER quote a number without its caveat: every result carries an "assumptions" block and the tool returns a one-line summary that already ends with it -- say whether the schedule was REAL or GENERATED, and how many trials. A generated schedule is not this league's playoff seeding. (2) NEVER rank two options whose gap is smaller than the returned noiseFloorPp; that is reading noise as a preference, and say so instead of picking. (3) Trust the PLAYOFF number more than the TITLE number.
+These are RECOMMENDATIONS ONLY -- nothing here changes my ESPN team, so present the move and let me make it. Every call is recorded in the action log before you see the answer, so read_actions shows what you have advised as well as what you have done.`;
 
 export async function agentAsk(question: string, opts: { dbPath?: string; season?: number; onEvent: (m: unknown) => void }) {
   const season = opts.season ?? new Date().getFullYear();

@@ -51,10 +51,17 @@ Verify without a client -- this spawns the server, speaks JSON-RPC, lists the to
 CALLS one (listing proves registration, not execution):
 
 ```
-node scripts/mcp-smoke.mjs      # -> MCP STDIO SMOKE PASSED
+node scripts/mcp-smoke.mjs              # -> MCP STDIO SMOKE PASSED       (draft surface)
+node scripts/copilot-mcp-smoke.mjs      # -> COPILOT MCP SMOKE PASSED     (in-season surface)
 ```
 
-## The tools (25)
+The second one exists because the copilot tools are a different animal from `read_board`: each
+builds a full sim context and runs a Monte Carlo, so "the server lists nine new tools" says nothing
+about whether any of them can execute. It calls `season_odds` for real and then asserts the two
+things the descriptions promise -- that the answer carries its `assumptions` block, and that the
+call left a row in `action_log`.
+
+## The tools (34)
 
 | Tool | What it does | Writes? |
 |---|---|---|
@@ -83,6 +90,99 @@ node scripts/mcp-smoke.mjs      # -> MCP STDIO SMOKE PASSED
 | `read_draft_roster` | your roster AS ESPN SEES IT in the live room | no |
 | `place_bid` | **places a REAL bid** (quick bid, or a guarded jump bid) | **LIVE $** |
 | `nominate_player` | nominate a player in the live room | **LIVE** |
+| `season_odds` | playoff + title odds for all sixteen teams, ours flagged, with conservation checks | no |
+| `lineup_recommend` | this week's best legal lineup + who cannot play and why | no |
+| `waiver_targets` | each add+drop scored by the change in OUR title probability, with FAAB guidance | no |
+| `trade_check` | one named offer scored from BOTH sides | no |
+| `trade_finder` | one-for-ones balanced on consensus value, ranked by title delta | no |
+| `handcuffs` | what each backup scores if the man ahead of him misses | no |
+| `depth_risk` | what losing one player costs, and who insures him | no |
+| `power_rankings` | the league by best starting lineup, with each team's odds beside it | no |
+| `playoff_sos` | weeks 15-17 opponent strength, solved from the posted lines | no |
+
+### The in-season tools (the copilot surface)
+
+Nine READ-ONLY verbs over ONE sim context (`src/inseason/copilot.ts`), reached through ONE dispatcher
+(`src/inseason/copilotActions.ts`) that `ff copilot <verb>` also uses. That single path is the point:
+six scripts used to hand-build the same context, three on the real schedule and three on a generated
+one, and the same roster returned a base title probability of 4.17%, 4.56% or 5.1% depending on which
+tool you asked. A terminal and the Assistant now cannot disagree, because there is one place the
+number is computed.
+
+**ONE UNIT OF MEASURE.** Everything that can be is scored as a change in OUR championship
+probability, under common random numbers, with the run's own noise floor returned beside the ranking.
+Points cannot see a mandatory slot going empty, cannot see that this league pays on a 7-of-16
+threshold and then top-heavy, and cannot see that a sixth receiver on a roster with five effective
+receiving slots is worth approximately nothing.
+
+**EVERY ANSWER CARRIES ITS ASSUMPTIONS.** Every result has an `assumptions` block:
+
+| field | what it tells you |
+|---|---|
+| `schedule` | `real` (the league's actual matchups; needs the app) or `generated` (deterministic, offline, and NOT this league's playoff seeding) |
+| `basis` | `simulation` (a Monte Carlo probability), `projection` (a points quantity, no simulation), or `market` (solved from posted betting lines) |
+| `trials`, `seeds` | how much simulation is behind it; `null` when the basis is not a simulation |
+| `artifact` | the data stamp: season, board rows, seasons the variance model was fitted on, sampler, projection artifact |
+| `asOf` | when it was computed |
+
+This is not decoration. A model handed a bare "6.5%" will quote it as a fact; handed the number with
+its caveats attached it cannot. The tool descriptions say the same thing again in prose, and the
+one-line summary each tool returns ahead of the JSON ends with the caveat sentence -- so a model that
+reads only the first line still cannot quote the headline number naked.
+
+**REFUSALS ARE NAMED, NOT SILENT.** `season_odds` refuses to return a table that breaks a
+conservation law (one win per game played, `playoffTeams` berths, exactly one champion).
+`lineup_recommend` refuses a lineup that starts a man on a bye or ruled OUT -- checked against the
+SOURCE rather than the flags the optimizer was handed, which is the only version a disconnected
+availability pipeline cannot satisfy. `waiver_targets` refuses a drop that would leave a mandatory
+slot unfillable and says which, rather than simulating an empty slot nobody would ever field.
+
+**THE ACTION LOG COVERS ADVICE (D3).** No ESPN write exists in this phase, and the instinct is
+therefore that there is nothing to log. That is backwards: what the Assistant DOES here is give
+advice, and advice a human acts on is still the agent driving the team. So every call writes an
+`action_log` row -- verb, arguments, and the summary -- at status `recommended`, BEFORE the answer is
+returned, and a call that throws leaves the row at `failed`. When the write tools arrive, an ESPN
+move will sit in the same log directly beneath the recommendation that produced it. The write lives
+in the dispatcher rather than in each tool for the D7 reason: a caller cannot forget to log if there
+is no path to the answer that skips logging.
+
+**WHERE THESE ARE WEAK, in the tool descriptions and worth repeating:**
+- the PLAYOFF number is more trustworthy than the TITLE number -- a 7-of-16 threshold is far less
+  sensitive to tail assumptions than a single-elimination bracket;
+- `lineup_recommend` divides the season projection by 17. It ranks a roster correctly and has no
+  matchup, form or weather in it; it is not a weekly projection model;
+- the store usually cannot tell you what week it is (no kickoff dates in `game`, no rows in
+  `matchup`), so `lineup_recommend` returns `weekSource` and says `default` when nobody knew. Pass
+  `week` explicitly;
+- the FAAB figure is a STATED RULE OF THUMB (10% of budget per +1pp of title probability, capped at
+  50%), not a fitted value -- nothing in this repo has measured what a point of title probability is
+  worth in FAAB dollars;
+- `power_rankings` ranks teams by the same board we bid from, so it is not an independent grade of
+  our own roster. Read the spread between teams, not the absolutes;
+- `playoff_sos`'s `costPerWeek` is under a point a week for a typical starter. It breaks ties; it
+  does not overturn a projection gap. Check `pricedPlayoffGames` -- early in the season most
+  playoff-week games have no posted line yet.
+
+**Verified against the live league (2026-09-08, read-only, through the app bridge.)** All five
+read-only verbs run end to end on the real sixteen rosters and the REAL schedule; `season_odds`
+returns 49.4% playoffs / 7.1% title for us against a 6.25% random baseline, and every conservation
+law holds on the real data as well as on the fixture.
+
+```
+node --import tsx scripts/copilot-crosscheck.mjs --schedule real --week 1
+```
+
+That script exists because a fixture cannot tell you the REAL bye column arrived populated or that
+the REAL injury table joins on the key the optimizer looks up. Two of its checks are POSITIVE
+CONTROLS -- "no starter is ruled OUT" passes vacuously if the availability map is empty, so it also
+asserts the store carries OUT designations at all (21 of 93 rows) and that our roster is unavailable
+somewhere across weeks 1-18 (7 of 18). And the OUT check is fault-injected in place: the same
+predicate is handed a lineup containing a man the store rules out, and must flag him.
+
+The eleven scripts these absorbed (`scripts/season-odds.mjs`, `trade-odds.mjs`, `trade-check.mjs`,
+`trade-finder.mjs`, `win-win.mjs`, `waiver-check.mjs`, `waiver-targets.mjs`, `depth-risk.mjs`,
+`power-rankings.mjs`, `playoff-sos.mjs`, `season-odds-spread.mjs`) are stamped DEPRECATED and kept,
+because `docs/validation.md` and `docs/edges.md` cite numbers they produced.
 
 ### The live-draft tools
 

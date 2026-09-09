@@ -68,6 +68,8 @@ async function main() {
       return cmdLineup(rest);
     case "handcuffs":
       return cmdHandcuffs(rest);
+    case "copilot":
+      return cmdCopilot(rest);
     case "calibrate":
       return cmdCalibrate(rest);
     case "sim":
@@ -2746,6 +2748,63 @@ async function cmdEvaluateWeekly(rest: string[]) {
   });
   if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
   else console.log(formatWeeklyReport(res));
+}
+
+/**
+ * `ff copilot <verb>` -- the in-season decision surface in a terminal.
+ *
+ * The SAME dispatcher the MCP tools use (src/inseason/copilotActions.ts), so a number printed here
+ * and a number the Assistant quotes cannot differ, and both are written to the action log before
+ * either is returned. Verbs:
+ *
+ *   season-odds     playoff + title odds for all sixteen teams, ours flagged
+ *   lineup          this week's best legal lineup, with who cannot play and why
+ *   waivers         each add+drop scored by the change in OUR title probability, with FAAB guidance
+ *   trade-check     one named offer, scored from BOTH sides
+ *   trade-finder    one-for-ones balanced on consensus value, ranked by title delta
+ *   handcuffs       what each backup scores if the man ahead of him misses
+ *   depth-risk      what losing one player costs, and who insures him
+ *   power-rankings  the league by best starting lineup, with each team's odds beside it
+ *   playoff-sos     weeks 15-17 opponent strength, from the posted lines
+ *
+ * Flags: --schedule real|generated|auto (default auto; "real" needs the app running and THROWS
+ * rather than silently substituting a generated schedule), --trials, --seed, --week, --player,
+ * --give/--get (comma-separated), --pos, --limit, --free, --max-gap, --json.
+ */
+async function cmdCopilot(rest: string[]) {
+  const { runCopilot, COPILOT_VERBS } = await import("./inseason/copilotActions.js");
+  const verbArg = rest.find((r) => !r.startsWith("--"));
+  const VERB_OF: Record<string, (typeof COPILOT_VERBS)[number]> = {
+    "season-odds": "season_odds", lineup: "lineup_recommend", waivers: "waiver_targets",
+    "trade-check": "trade_check", "trade-finder": "trade_finder", handcuffs: "handcuffs",
+    "depth-risk": "depth_risk", "power-rankings": "power_rankings", "playoff-sos": "playoff_sos",
+  };
+  const verb = verbArg ? VERB_OF[verbArg] : undefined;
+  if (!verb) {
+    console.log(`usage: ff copilot <${Object.keys(VERB_OF).join("|")}> [flags]\n` +
+      `  --schedule real|generated|auto   real THROWS if the app is unreachable; auto says which it used\n` +
+      `  --trials N  --seed N  --week N  --player "Name"  --give "A,B"  --get "C"  --pos RB,WR\n` +
+      `  --limit N   --free   --max-gap 0.15   --json`);
+    return;
+  }
+  const list = (flag: string) => (valueOf(rest, flag) ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const num = (flag: string) => { const v = valueOf(rest, flag); return v == null ? undefined : Number(v); };
+  const args = {
+    schedule: (valueOf(rest, "--schedule") as "real" | "generated" | "auto" | undefined) ?? "auto",
+    trials: num("--trials"), seed: num("--seed"), week: num("--week"),
+    player: valueOf(rest, "--player") ?? (verbArg === "depth-risk" ? rest.filter((r) => !r.startsWith("--") && r !== verbArg)[0] : undefined),
+    give: list("--give").length ? list("--give") : undefined,
+    get: list("--get").length ? list("--get") : undefined,
+    positions: list("--pos").length ? list("--pos") : undefined,
+    limit: num("--limit"), freeOnly: rest.includes("--free"), maxGap: num("--max-gap"),
+  };
+
+  const run = await runCopilot(verb, args, { dbPath: valueOf(rest, "--db") });
+  if (rest.includes("--json")) { console.log(JSON.stringify(run.result, null, 2)); return; }
+  console.log(JSON.stringify(run.result, null, 2));
+  console.log(`\n--- ${String(verbArg).toUpperCase()} ---\n${run.summary}`);
+  console.log(`\n(logged to action_log #${run.logId} at status "recommended" -- every recommendation is`);
+  console.log(` recorded before it is returned, D3, even though this phase makes no ESPN writes.)`);
 }
 
 main().catch((err) => {
