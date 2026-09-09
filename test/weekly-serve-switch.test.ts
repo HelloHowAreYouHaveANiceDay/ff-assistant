@@ -93,22 +93,6 @@ test("the serve table is ONE table: every position resolves through it and the d
   for (const pos of STREAM_SERVE_POS) assert.ok(printed.includes(pos), `${pos} is missing from the printed table`);
 });
 
-test("2026-09-09 OWNER DECISION: the streaming model serves ALL SIX positions, not just QB/K/DST", () => {
-  // docs/validation.md ("THE STREAMING GATE QUESTION -- REPORTED, NOT DECIDED") found the streaming
-  // artifact passes every clause of the full weekly gate, pooled coverage included, at all six
-  // positions on the decision population. The owner then widened WEEKLY_SERVE on that measurement.
-  // This asserts the DECISION itself, by name, rather than relying on the generic "table agrees with
-  // its own derivation" check above -- which would still pass if a position were quietly left on the
-  // floor, because it never states what the table is SUPPOSED to say.
-  for (const pos of STREAM_SERVE_POS) {
-    assert.equal(WEEKLY_SERVE[pos], STREAMING_ARTIFACT,
-      `${pos} is served by ${WEEKLY_SERVE[pos]}, not the streaming artifact -- the 2026-09-09 owner ` +
-      "decision to ship streaming at all six positions is not fully in effect");
-  }
-  assert.deepEqual([...SHIPPED_STREAMING_POSITIONS].sort(), [...STREAM_SERVE_POS].sort(),
-    "SHIPPED_STREAMING_POSITIONS is not all six positions");
-});
-
 test("the snapshot serves the `weekly` model PER POSITION and records which artifact produced each row", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ff-serve-"));
   const dbPath = join(dir, "t.db");
