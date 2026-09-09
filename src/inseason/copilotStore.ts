@@ -24,7 +24,8 @@ import type { DepthEntry } from "./handcuff.js";
 import { lineupNameKey, normalizeStatus, type AvailabilityMap, type GameRow, type Provenance } from "./copilot.js";
 import { effectiveFormat } from "../league/index.js";
 import { loadWeeklyRows } from "../weekly/features.js";
-import { loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT } from "../weekly/projector.js";
+import { loadWeeklyArtifact, projectWeekly } from "../weekly/projector.js";
+import { projectStreamingWith, formatServeTable, serveTable, type StreamDb } from "../weekly/streamingServe.js";
 
 const open = (dbPath?: string) => new Database(dbPath ?? dataPath("ff.db"), { readonly: true });
 
@@ -260,12 +261,25 @@ export function currentWeek(dbPath?: string, now: Date = new Date()): { week: nu
  * the week's `feat_player_week_model` rows, runs the projector, and hands back a plain map keyed the
  * way the roster can be looked up.
  *
- * THE ARTIFACT IS THE SEASON-LINE-ONLY ONE, on purpose. `docs/weekly.md` records the pre-registered
- * gate the trained artifact FAILED on coverage (0.868 against a band of [0.75, 0.85]), so the floor
- * artifact -- every coefficient zero, mean intercept 1.0 -- is what ships. Its projection IS the
- * season line per game, which is why routing the lineup through this seam changes no number today.
- * That is the intended state: the seam is live and the model behind it is the honest floor, and the
- * day a trained artifact passes its gate the lineup improves by swapping one file.
+ * IT ROUTES THROUGH `WEEKLY_SERVE`, PER POSITION -- which it did not until integration pass 4.
+ *
+ * Track C shipped the streaming model at QB, K and DST and Track F made `WEEKLY_SERVE` the one table
+ * every consumer resolves through, but this function kept reading `SHIPPED_WEEKLY_ARTIFACT` for all
+ * six positions. So the SCORECARD served QB from the streaming artifact while the LINEUP served the
+ * floor, and the two disagreed about a quarterback's projection with nothing anywhere saying so. It
+ * is exactly the drift `WEEKLY_SERVE` exists to make impossible, one seam short of the table.
+ *
+ * The routing is not reimplemented here: `projectStreamingWith` already groups the week's rows by
+ * position, loads each serving artifact once, and joins the streaming columns. A second
+ * implementation of the same table is how two consumers start disagreeing again.
+ *
+ * `artifactPath` still forces ONE artifact for every position. That is what the before/after
+ * comparison in test/weekly-serve-lineup.test.ts uses, and what a caller asking "what would the
+ * floor have said" needs; it bypasses the table deliberately and only on request.
+ *
+ * At RB, WR and TE the served artifact IS the floor -- every coefficient zero, mean intercept 1.0,
+ * so the projection is the season line per game -- because no candidate passed the gate there. That
+ * is the honest degradation, and it is why this change moves QB, K and DST and nothing else.
  *
  * Returns null when there is nothing to serve -- no artifact on disk, no feature rows for that week.
  * Null means "fall back to the season line and SAY SO", never "project zero".
@@ -273,27 +287,41 @@ export function currentWeek(dbPath?: string, now: Date = new Date()): { week: nu
 export function loadWeeklyProjection(
   season: number, week: number, dbPath?: string, artifactPath?: string,
 ): Map<string, number> | null {
-  let artifact;
-  try {
-    const raw = readFileSync(artifactPath ?? dataPath(SHIPPED_WEEKLY_ARTIFACT), "utf8");
-    artifact = loadWeeklyArtifact(JSON.parse(raw));
-  } catch { return null; }
-
   const db = open(dbPath);
   try {
-    const rows = loadWeeklyRows(db, season, week);
-    if (!rows.length) return null;
-    const proj = projectWeekly({ artifact, rows });
-    if (!proj.length) return null;
-    const out = new Map<string, number>();
     // Highest mean wins a name collision: two feature rows can normalize to one key (a father/son
     // pair, a duplicated board entry), and taking the first would be an arbitrary choice recorded
     // as a projection.
-    for (const p of proj) {
-      const k = lineupNameKey(p.name);
+    const out = new Map<string, number>();
+    const put = (name: string, mean: number) => {
+      const k = lineupNameKey(name);
       const prev = out.get(k);
-      if (prev == null || p.mean > prev) out.set(k, p.mean);
+      if (prev == null || mean > prev) out.set(k, mean);
+    };
+
+    if (artifactPath) {
+      let artifact;
+      try {
+        artifact = loadWeeklyArtifact(JSON.parse(readFileSync(artifactPath, "utf8")));
+      } catch { return null; }
+      const rows = loadWeeklyRows(db as unknown as StreamDb, season, week);
+      if (!rows.length) return null;
+      const proj = projectWeekly({ artifact, rows });
+      if (!proj.length) return null;
+      for (const p of proj) put(p.name, p.mean);
+      return out;
     }
+
+    const projected = projectStreamingWith(db as unknown as StreamDb, season, week);
+    if (!projected?.rows.length) return null;
+    for (const p of projected.rows) put(p.name, p.mean);
     return out;
   } finally { db.close(); }
+}
+
+/** WHICH ARTIFACT SERVED EACH POSITION, for the `assumptions` block of a lineup result. The lineup
+ *  now reads the same table the scorecard does, so it can say so rather than leaving a reader to
+ *  guess which of three models produced a number. */
+export function weeklyServeAssumption(): { table: Record<string, string>; text: string } {
+  return { table: serveTable(), text: formatServeTable() };
 }

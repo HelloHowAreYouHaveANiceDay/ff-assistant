@@ -46,7 +46,7 @@ import { optimalLineup, type RosterPlayer } from "../lineup.js";
 import { loadWeeklyRows } from "../../weekly/features.js";
 import { projectWeekly } from "../../weekly/projector.js";
 import { winProbLineup, opponentStarters, WINPROB_COUPLING_DEFAULT, type WinProbPlayer, type WeeklyBand } from "../winprob.js";
-import { loadWeekContext, loadModel, type ModelName, type WeekContext } from "./context.js";
+import { loadWeekContext, loadModel, requireArtifact, type ModelName, type WeekContext } from "./context.js";
 import type { CorrelationModel } from "../../draft/bootstrap.js";
 import { mean, r2, r3 } from "./lineup.js";
 
@@ -141,7 +141,11 @@ export function positionShapes(proj: { pos: string; mean: number; p10: number; p
 interface Bands { byPlayer: Map<string, WeeklyBand>; teamOf: Map<string, string | null>; shapes: ReturnType<typeof positionShapes> }
 
 /** p10/p50/p90/pZero per player_sk for one week, from the SAME artifact the context used. */
-function loadBands(db: DB, season: number, week: number, artifact: ReturnType<typeof loadModel>): Bands {
+function loadBands(db: DB, season: number, week: number, model: ReturnType<typeof loadModel>): Bands {
+  // The winprob replay needs a BAND, and the served arm's bands would have to come from the same
+  // per-position router. That is real work with its own gate, so it refuses BY NAME rather than
+  // quietly falling back to the floor and reporting a served run's number as if it were one.
+  const artifact = requireArtifact(model, "the winprob lineup replay");
   const rows = loadWeeklyRows(db, season, week);
   const proj = projectWeekly({ artifact, rows });
   const byPlayer = new Map<string, WeeklyBand>();

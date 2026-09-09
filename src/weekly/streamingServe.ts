@@ -121,6 +121,9 @@ export function formatServeTable(): string {
 /** One player's weekly distribution, plus which artifact produced it. */
 export interface StreamProj {
   feat_key: string;
+  /** The store's surrogate key, carried through so a consumer that joins on player_sk -- the
+   *  in-season replay does -- does not have to re-derive it from feat_key. */
+  player_sk: string | null;
   name: string;
   pos: string;
   team: string | null;
@@ -211,7 +214,7 @@ export function projectStreamingWith(db: StreamDb, season: number, week: number)
       if (!subset.length) continue;
       for (const p of projectWeekly({ artifact: art, rows: subset })) {
         out.push({
-          feat_key: p.feat_key, name: p.name, pos: p.pos, team: teamOf.get(p.feat_key) ?? null,
+          feat_key: p.feat_key, player_sk: p.player_sk ?? null, name: p.name, pos: p.pos, team: teamOf.get(p.feat_key) ?? null,
           mean: p.mean, p10: p.p10, p90: p.p90,
           pZero: p.pZero ?? null,
           rank: rank.get(p.feat_key) ?? 9999,

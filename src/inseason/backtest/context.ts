@@ -34,16 +34,41 @@ import {
   loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT,
   type WeeklyArtifact,
 } from "../../weekly/projector.js";
+import { projectStreamingWith } from "../../weekly/streamingServe.js";
 import { asOfRosterState, buildEspnResolver, startingTemplate, type RosterEntry } from "../../features/sources/rosterState.js";
 
-export type ModelName = "floor" | "challenger";
+/**
+ * A THIRD ARM: `served`, the per-position mapping the live system actually uses.
+ *
+ * `floor` and `challenger` are each ONE artifact applied to all six positions, which is the right
+ * shape for asking "is this model better". It is not what anybody is served. `WEEKLY_SERVE` maps QB,
+ * K and DST to the streaming artifact and RB, WR and TE to the floor, and integration pass 4 routed
+ * the lineup seam through it -- so the replay had no arm corresponding to the thing that ships, and
+ * the recorded lineup numbers were about two models the copilot does not use.
+ */
+export type ModelName = "floor" | "challenger" | "served";
+/** The sentinel for the served arm. It is not a file, because the served arm is a TABLE. */
+export const SERVED = "served" as const;
+export type WeekModel = WeeklyArtifact | typeof SERVED;
 export const MODEL_FILES: Record<ModelName, string> = {
   floor: SHIPPED_WEEKLY_ARTIFACT,
   challenger: CHALLENGER_WEEKLY_ARTIFACT,
+  served: "WEEKLY_SERVE (per position)",
 };
 
-export function loadModel(name: ModelName): WeeklyArtifact {
+export function loadModel(name: ModelName): WeekModel {
+  if (name === SERVED) return SERVED;
   return loadWeeklyArtifact(JSON.parse(readFileSync(dataPath(MODEL_FILES[name]), "utf8")));
+}
+
+/** Narrow a model to a single artifact, for the paths that genuinely need one. Throws by NAME rather
+ *  than silently substituting the floor, which would make a served run report a floor number. */
+export function requireArtifact(m: WeekModel, who: string): WeeklyArtifact {
+  if (m === SERVED) {
+    throw new Error(`${who} needs ONE artifact and was handed the per-position serve table. ` +
+      "Run it with --model floor or --model challenger, or teach it the table.");
+  }
+  return m;
 }
 
 export interface PlayerWeek {
@@ -77,15 +102,18 @@ export interface WeekContext {
 }
 
 export function loadWeekContext(
-  db: DB, leagueId: string, season: number, week: number, artifact: WeeklyArtifact,
+  db: DB, leagueId: string, season: number, week: number, artifact: WeekModel,
   cache?: { resolver?: ReturnType<typeof buildEspnResolver>; template?: string[]; injuryEmpty?: boolean },
 ): WeekContext {
   const state = asOfRosterState(db, leagueId, season, week, cache?.resolver);
   const template = cache?.template ?? startingTemplate(db, leagueId, season);
 
-  const rows = loadWeeklyRows(db, season, week);
   const proj = new Map<string, number>();
-  for (const p of projectWeekly({ artifact, rows })) {
+  // The served arm goes through the SAME router the live seam does, not a second copy of the table.
+  const projected = artifact === SERVED
+    ? (projectStreamingWith(db, season, week)?.rows ?? [])
+    : projectWeekly({ artifact, rows: loadWeeklyRows(db, season, week) });
+  for (const p of projected) {
     if (p.player_sk == null) continue;
     const prev = proj.get(p.player_sk);
     if (prev == null || p.mean > prev) proj.set(p.player_sk, p.mean);
