@@ -137,7 +137,11 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       return C.seasonOdds(ctx, { ...base, trials: a.trials ?? 2000 });
     case "lineup_recommend": {
       const wk = a.week ?? S.currentWeek(dbPath).week;
-      return { ...C.lineupRecommend(ctx, wk, { provenance, availability: S.loadAvailability(dbPath) }), weekSource: a.week != null ? "caller" : S.currentWeek(dbPath).source };
+      // The weekly projector, with the shipped season-line-only artifact. `null` when there is no
+      // artifact or no feature row for this week; `lineupRecommend` then falls back to the season
+      // line and says so in `assumptions.basisNote` rather than silently.
+      const weekly = S.loadWeeklyProjection(ctx.season, wk, dbPath) ?? undefined;
+      return { ...C.lineupRecommend(ctx, wk, { provenance, availability: S.loadAvailability(dbPath), weekly }), weekSource: a.week != null ? "caller" : S.currentWeek(dbPath).source };
     }
     case "waiver_targets":
       return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath) });

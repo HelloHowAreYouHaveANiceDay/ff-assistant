@@ -66,12 +66,18 @@ export interface Assumptions {
    *  offline, whose playoff seeding is therefore not this league's. */
   schedule: "real" | "generated";
   /** "simulation" -- a Monte Carlo title/playoff probability. "projection" -- a points quantity from
-   *  the board with no simulation behind it. "market" -- solved from posted betting lines. */
-  basis: "simulation" | "projection" | "market";
+   *  the board with no simulation behind it. "weekly-model" -- a points quantity from the WEEKLY
+   *  projector (`src/weekly/projector.ts`) rather than from the season line spread flat. "market" --
+   *  solved from posted betting lines. */
+  basis: "simulation" | "projection" | "weekly-model" | "market";
   trials: number | null;
   seeds: number[] | null;
   artifact: Provenance;
   asOf: string;
+  /** One sentence naming exactly what produced the number, where the basis alone is not enough --
+   *  in particular WHICH players fell back to the season line because the weekly projector had no
+   *  row for them. A caveat that omits the fallback is a caveat that hides it. */
+  basisNote?: string;
 }
 
 export function defaultProvenance(ctx: SimContext): Provenance {
@@ -266,32 +272,70 @@ export function assertStartersAvailable(
   }
 }
 
+/** The week's projections, keyed the way `lineupRecommend` can look a roster player up: normalized
+ *  name. Built by the caller (which may read the store) and handed in, so this file stays pure. */
+export type WeeklyProjection = Map<string, number>;
+
+/** Loose name key -- lower case, no punctuation, no suffix. The board and the weekly feature table
+ *  spell "Chris Godwin Jr." and "Chris Godwin Jr" differently often enough that an exact match
+ *  would quietly send half a roster down the fallback path and report it as a weekly projection. */
+export const lineupNameKey = (s: string): string =>
+  s.toLowerCase().replace(/[.'`]/g, "").replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+
 /**
  * The best legal starting lineup for one week, with everyone who cannot play named and why.
  *
- * WEEKLY POINTS ARE THE SEASON PROJECTION DIVIDED BY 17 -- stated in `assumptions.basis`, because it
- * is a real limitation and not a detail. It has no matchup, no recent form and no weather in it, so
- * it ranks a roster correctly and cannot tell you that this is the week to sit a boom-bust receiver.
- * A genuine weekly model is a separate piece of work; quoting this one as though it were that model
- * is the mistake this note exists to prevent.
+ * WHERE THE WEEKLY POINTS COME FROM. Preferably from the WEEKLY PROJECTOR: the caller loads the
+ * shipped weekly artifact and this week's `feat_player_week_model` rows, runs `projectWeekly`
+ * (`src/weekly/projector.ts`) and hands the result in as `o.weekly`. A roster player the projector
+ * has no row for -- a fixture with no week context, a just-added man the feature build has not seen
+ * -- falls back EXPLICITLY to the season projection divided by 17, and `assumptions.basisNote`
+ * names how many did and who. Silence there would be the whole bug: a lineup half from a weekly
+ * model and half from a flat season line, reported as though it were one thing.
+ *
+ * The shipped artifact today is the SEASON-LINE-ONLY one (every coefficient zero, mean intercept
+ * 1.0), so its projection IS the season line per game -- which is why swapping this seam in changes
+ * no number yet. That is the point: the seam is proved live by a fixture artifact with a non-zero
+ * coefficient moving the recommendation, not by the shipped one moving it. It still has no matchup,
+ * no recent form and no weather in it until a trained artifact passes its gate.
  */
 export function lineupRecommend(
   ctx: SimContext,
   week: number,
-  o: BaseOpts & { availability?: AvailabilityMap; weeklyPoints?: number } = {},
+  o: BaseOpts & {
+    availability?: AvailabilityMap;
+    weeklyPoints?: number;
+    /** Weekly projections by normalized name, from `projectWeekly`. */
+    weekly?: WeeklyProjection;
+  } = {},
 ): LineupResultJson {
   const availability = o.availability ?? new Map<string, AvailabilityEntry>();
   const perWeek = o.weeklyPoints ?? NFL_WEEKS;
   const roster = ctx.teams[ctx.meIdx].roster;
   const unavailable: LineupResultJson["unavailable"] = [];
+  const fellBack: string[] = [];
+  let fromWeekly = 0;
   const players = roster.map((p) => {
     const why = unavailableReason(p, week, availability);
     if (why) unavailable.push({ name: p.name, pos: p.pos, reason: why });
-    return { name: p.name, pos: p.pos, proj: r2(p.proj / perWeek), available: why == null, reason: why ?? "available" };
+    const wk = o.weekly?.get(lineupNameKey(p.name));
+    if (o.weekly) { if (wk != null && Number.isFinite(wk)) fromWeekly++; else fellBack.push(p.name); }
+    const pts = wk != null && Number.isFinite(wk) ? wk : p.proj / perWeek;
+    return { name: p.name, pos: p.pos, proj: r2(pts), available: why == null, reason: why ?? "available" };
   });
   const res = optimalLineup(players, ctx.slots, ctx.flexOk);
   assertStartersAvailable(res.starters, roster, week, availability);
   const reasonOf = new Map(players.map((p) => [p.name, p.reason]));
+
+  const allWeekly = o.weekly != null && fellBack.length === 0;
+  const assumptions = assumptionsOf(ctx, allWeekly ? "weekly-model" : "projection", o, null, null);
+  assumptions.basisNote = o.weekly == null
+    ? `no weekly projector was supplied: every point total is the season projection divided by ${perWeek}, which has no matchup, no recent form and no weather in it`
+    : allWeekly
+      ? `every point total is from the weekly projector (src/weekly/projector.ts) for week ${week}`
+      : `${fromWeekly} of ${roster.length} point totals are from the weekly projector for week ${week}; ` +
+        `${fellBack.length} fell back to the season projection divided by ${perWeek} because the projector had no row for them: ${fellBack.join(", ")}`;
+
   return {
     week,
     starters: res.starters.map((s) => ({ ...s, proj: r2(s.proj) })),
@@ -299,7 +343,7 @@ export function lineupRecommend(
     unavailable,
     totalProj: r2(res.totalProj),
     flags: res.flags,
-    assumptions: assumptionsOf(ctx, "projection", o, null, null),
+    assumptions,
   };
 }
 
