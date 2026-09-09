@@ -167,6 +167,12 @@ export function evaluateProjection(opts: {
   log?: (s: string) => void;
 }): FoldResult[] {
   const log = opts.log ?? console.log;
+  // Read ONCE and echoed, so every fold in a run fits the same model and the reader is told which.
+  const addFeatures = (process.env.FF_ADD_FEATURES ?? "").trim();
+  log(addFeatures
+    ? `  ADMISSION RUN: the trainer is fitting with --add-features ${addFeatures}. Every number below ` +
+      "is that model's, not the shipped one's."
+    : "  baseline run: no --add-features (set FF_ADD_FEATURES to admit an extension column)");
   const dir = opts.keepArtifacts ?? mkdtempSync(join(tmpdir(), "ff-eval-"));
   const db = openDb(opts.dbPath);
   const out: FoldResult[] = [];
@@ -196,6 +202,12 @@ export function evaluateProjection(opts: {
           "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_projection.py",
           "--db", opts.dbPath ?? "data/ff.db", "--seasons", opts.trainerSeasons ?? "1999-2025",
           "--holdout-season", String(yr), "--out", artPath, "--quiet",
+          // THE ADMISSION LEVER (Phase 2d). One candidate at a time, re-measured under the full
+          // nested evaluation rather than on the residuals it was screened against. It is an
+          // environment variable rather than a flag because the CLI surface is owned elsewhere this
+          // phase; the report header PRINTS it, so a run cannot quietly be a different model from
+          // the one the reader thinks they are looking at -- which is the only property that matters.
+          ...(addFeatures ? ["--add-features", addFeatures] : []),
         ], { stdio: ["ignore", "pipe", "pipe"], timeout: 1800000 });
         if (existsSync(artPath)) trained = loadArtifact(JSON.parse(readFileSync(artPath, "utf8")));
       } catch (e) { note = `trainer failed: ${(e as Error).message.split("\n")[0]}`; }
