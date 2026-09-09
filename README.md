@@ -209,6 +209,18 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   100% NULL, and from 2025 the injury feed publishes no report date at all. Two of the season columns
   -- `depth_rank_sep1` and `contract_year` -- are now fitted features of the shipped projection
   artifact; they were the strongest candidates the feature screen has ever produced.
+- **Injury horizon (Track I):** `build-injury-horizon --seasons 2010-2024` builds
+  `fact_injury_episode` (10,476 continuous runs of injury-report weeks, with how many games were
+  actually missed and when he came back) and `feat_injury_horizon` (21,757 player-weeks, read at each
+  team's own Friday cutoff, with `miss_next_1..4` as censored targets). `tools/train_injury_duration.py`
+  fits four logistics -- P(he misses the next k games) -- and `src/inseason/injuryHorizon.ts` serves
+  them, held together by a golden block at 1e-6. `handcuffs` and `depth-risk` price the next four
+  games from the man's actual injury instead of the variance model's per-tier rate, and print both.
+  Two pre-registered predictions FAILED and the registry says so: the gain over the Friday
+  designation is largest at k=1, not k=4, and the injury TYPE is worth 0.001-0.002 of log loss out of
+  sample while the PRACTICE STATUS is worth 0.021. What a report adds beyond the designation is
+  mostly whether he practised. `scripts/injury-leak-guard.mjs` is the point-in-time guard, and it
+  found a real leak on its first run.
 - **Weekly model (`docs/weekly.md`):** `build-weekly-features` (the point-in-time
   `feat_player_week_model` view, with a leakage guard that is fault-injected against its own
   detector), `evaluate-weekly` (nested by season; the decision metric is LINEUP REGRET, not RMSE),

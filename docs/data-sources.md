@@ -234,10 +234,47 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
   exist in this commons before 2009, so any injury feature is structurally null for 10 of our 27
   backtest seasons.
 - **Raw table.** `raw_injury`.
-- **Feeds.** `feat_player_week_context.{report_status, practice_status, teammates_out}` and
-  `feat_player_season_ext.injury_status`. `player_status` already carries a LIVE injury status from
-  Sleeper for the current season, name-keyed.
+- **Feeds.** `feat_player_week_context.{report_status, practice_status, teammates_out}`,
+  `feat_player_season_ext.injury_status`, and (Track I) `fact_injury_episode` /
+  `feat_injury_horizon`. `player_status` already carries a LIVE injury status from Sleeper for the
+  current season, name-keyed.
 - **Status.** ingested (this branch).
+
+### 1.9a Injury EPISODES and their horizon -- `fact_injury_episode`, `feat_injury_horizon`
+
+- **What.** Derived, not fetched. An EPISODE is a maximal run of consecutive weeks in which a player
+  carried an injury report at that week's Friday cutoff (bridging a bye, which is not evidence that
+  an injury ended), together with what happened next: how many consecutive GAMES he then missed, the
+  week he returned, and his snap share in it. `feat_injury_horizon` is the point-in-time view of the
+  same runs, one row per reported player-week, holding only what was knowable at that Friday plus the
+  four censored targets `miss_next_1..4`.
+- **Grain / key.** `fact_injury_episode` (player_sk, season, start_week); `feat_injury_horizon`
+  (player_sk, season, week).
+- **Sources joined.** `raw_injury` for the filings (resolved by gsis first, `resolve.ts`, 83.1%),
+  `raw_nfl_game` for each team's own kickoff, `feat_player_week` for whether he played,
+  `raw_snap_count` for the snap share on return (2013+ only -- the PFR feed does not exist before
+  it), `player_identity` for age.
+- **The cutoff.** This team's kickoff minus two days, the anchor `feat_player_week_context` already
+  uses. Anchoring on the league's first game would hand a Thursday-night player a Friday report filed
+  after he had already played.
+- **Coverage, measured.** 2010-2024 only: 10,476 episodes, 21,757 horizon rows. **2009 is excluded
+  because 17 of its 4,821 rows carry a date, and 2025-2026 because none do** -- an undated filing
+  cannot be placed on either side of a cutoff, and writing an empty season would read as an absence
+  of injuries rather than an absence of dates. Censoring (he never returned inside the season, so
+  `weeks_missed` is a lower bound) runs 10.3-16.0% a season; `miss_next_4` is NULL for 4,342 of
+  21,757 rows because fewer than four games remained.
+- **A stated limitation.** The universe is `feat_player_week`, i.e. men who appear in our weekly
+  history at least once that season. A player who tore an ACL in August and never played is
+  invisible, which biases the sample AWAY from the longest horizons -- so a fitted P(miss) built on
+  these rows is a floor rather than a middle.
+- **Feeds.** `tools/train_injury_duration.py` -> `data/injury-duration-artifact.json`, served by
+  `src/inseason/injuryHorizon.ts` and consumed by the copilot's `handcuffs` and `depthRisk`. The
+  WEEKLY trainer does not read it yet (Track F owns `tools/train_weekly.py`); the hand-off is a join
+  to `feat_player_week_model` on (player_sk, season, week).
+- **Guard.** `scripts/injury-leak-guard.mjs` -- three checks and its own fault injection. It found a
+  real leak on its first run (the horizon row was falling back to the episode's modal injury, which
+  is computed over future weeks).
+- **Status.** built (`ff build-injury-horizon`).
 
 ### 1.10 NFL draft picks -- `draft_picks/draft_picks.csv`
 

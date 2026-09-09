@@ -254,7 +254,7 @@ export const MODELS: ModelSpec[] = [
       "artifact carries the result rather than a refit: the gain over the designation is LARGEST at " +
       "k=1 (P59 said it would be under 0.02; it is 0.047) and SHRINKS with k (P60 said it would " +
       "exceed 0.05 at k=4; it is 0.024). Ablation says why: the injury TYPE is worth 0.001-0.002 " +
-      "out of sample, while the practice status is worth 0.026 at k=1, so what a Friday report adds " +
+      "out of sample, while the practice status is worth 0.021 at k=1, so what a Friday report adds " +
       "beyond the designation is mostly whether he practised -- not what is wrong with him. " +
       "CONSUMED BY `depthRisk` and `handcuffs`; the weekly trainer does NOT read the table yet",
     check: (j) => {

@@ -296,7 +296,7 @@ export function emptyOutlookSet(tierMissProb: (pos: string, f: number) => number
  *
  * WHAT THE LIVE PATH CANNOT SUPPLY, stated rather than guessed: PRACTICE STATUS. A live status feed
  * publishes a designation, not Wednesday and Friday participation -- and the ablation in
- * docs/validation.md puts practice status at 0.026 of log loss at k=1, the largest single block
+ * docs/validation.md puts practice status at 0.021 of log loss at k=1, the largest single block
  * after the designation itself. So a live outlook is the model running with `practice_status` at its
  * declared missing value, which is materially weaker than an archive one, and `note` says so.
  */
@@ -445,7 +445,7 @@ export function loadInjuryOutlook(opts: {
           `high-severity news), season ${opts.season} week ${week}. feat_injury_horizon has no ` +
           `row for this week: the archive stopped carrying report dates after 2024. PRACTICE STATUS ` +
           `IS NOT AVAILABLE from these feeds and is left at the model's missing value, which is the ` +
-          `largest block the live path gives up (0.026 of log loss at k=1).`
+          `largest block the live path gives up (0.021 of log loss at k=1).`
         : `no injury designations in the live feeds and no archive row for season ${opts.season} ` +
           `week ${week} -- every miss probability below is the per-tier season availability.`,
     };

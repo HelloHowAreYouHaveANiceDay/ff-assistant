@@ -1,5 +1,179 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## TRACK I: THE INJURY HORIZON -- how long is he out, and what a Friday report is actually worth (2026-09-09)
+>
+> Branch `redesign/injury-duration` off `redesign/final-2` (`1b271a6`). Three pre-registered
+> predictions. **P52 held. P59 and P60 both FAILED, and P60's stated mechanism was refuted outright.**
+> The model ships anyway, on P52, and the two failures are the most useful thing on this page.
+>
+> ### The gap
+>
+> Every availability number this repo shipped was a PER-TIER RATE. `missProb` (rosterValue.ts) and
+> `leadMissProb` (handcuff.ts) are the same arithmetic: the variance model's fitted games/17 for the
+> player's rank bucket, with the bye divided back out. That number knows a man's tier and NOTHING
+> about the injury he has -- a torn Achilles and a Questionable hamstring are the same 0.13. The
+> weekly model does better, reading the OUT designation, but only for the coming week; the decisions
+> that hurt (hold the handcuff or drop him, insure the back or don't) are four-week decisions.
+>
+> ### Step 1 -- the rows, and a leak the guard caught on its first run
+>
+> `fact_injury_episode` (10,476 episodes) and `feat_injury_horizon` (21,757 player-weeks), 2010-2024.
+> `ff build-injury-horizon` builds both in 1.1s. The Friday cutoff is **this team's own kickoff minus
+> two days**, the anchor `feat_player_week_context` already uses, so a Thursday-night player's Friday
+> report is correctly unavailable. Undated filings are excluded outright -- from 2025 the feed
+> publishes none -- which is why the table stops at 2024 and says so rather than emitting an empty
+> season that reads as an absence of injuries.
+>
+> "Missed" is `feat_player_week.pts IS NULL AND is_bye = 0`: no scored row in our own weekly history
+> for a week his team played. **A bye is neither missed nor played on either side**, so "the next
+> four weeks" means the next four GAMES; counting a bye as a missed game would make every horizon
+> look longer than it is.
+>
+> `scripts/injury-leak-guard.mjs` runs four builds against a `VACUUM INTO` copy of the store:
+>
+> | check | what it does | result |
+> |---|---|---|
+> | A negative | rewrite every filing after week 8 to Out/DNP/Achilles | **no feature at or before the cut moves** (14 cols x 644 rows) |
+> | B positive | rewrite the play record after week 8 to "did not play" | **92 target cells move, 0 feature cells** |
+> | C fault injection | rebuild with `leakNextWeekDesignation` | **9,501 cells move**, so A can fail |
+>
+> **A failed the first time it ran, and it was right to.** The horizon row fell back to the episode's
+> MODAL injury when a week's own filing named none -- and the modal is computed over the whole run,
+> so a relabel in week 9 rewrote week 6's `injury_group` and, through it, week 6's
+> `prior_episodes_same`. 19 cells. The fallback is now the most recent NAMED injury at or before that
+> week, and the recurrence history is accumulated in-loop labelled by each episode's start week
+> rather than read back from a column that is not knowable until the run ends.
+>
+> Coverage: censoring 10.3-16.0% per season (an episode where he never returned inside the season has
+> a `weeks_missed` that is a LOWER BOUND). By group, and it is face-valid:
+>
+> | group | episodes | mean weeks missed | censored | P(missed >= 4) |
+> |---|---|---|---|---|
+> | achilles | 52 | **3.17** | 32.7% | 30.8% |
+> | neck | 161 | 1.94 | 21.7% | 19.3% |
+> | hamstring | 1043 | 1.77 | 9.8% | 16.5% |
+> | knee | 1461 | 1.62 | 15.0% | 15.2% |
+> | ankle | 1296 | 1.47 | 13.2% | 12.7% |
+> | illness | 1300 | **0.82** | 9.9% | 6.7% |
+>
+> The play signal is cross-checked against the designation, because a broken join between the horizon
+> and our weekly history would read `missed` for everybody and every column would still be populated:
+> P(miss this week) is **99.97% for Out**, 98.9% Doubtful, 42.5% Questionable, 14.9% practice-only,
+> **12.7% Probable**. That ordering is asserted in `test/injury-duration.test.ts`.
+>
+> ### Step 2 -- the model, and the two failures
+>
+> Four separately fitted L2 logistics, one per horizon k = 1..4, over designation, practice status,
+> injury group (collapsed to declared buckets **inside the fold**, threshold 200 training rows),
+> weeks already missed in the episode, weeks the episode has run, prior episodes of the same group in
+> two seasons, position and age. Nested by season: each held-out season is scored by an artifact
+> fitted on seasons **strictly before** it, with the collapse, the age centring and the
+> regularisation search all inside the fold. Pooled over holdouts 2015-2024, **log loss**:
+>
+> | k | n | base rate | model | designation-only | tier rate | gain vs designation |
+> |---|---|---|---|---|---|---|
+> | 1 | 14,888 | 0.391 | **0.35319** | 0.40040 | 0.92427 | +0.04721 |
+> | 2 | 13,814 | 0.250 | **0.38957** | 0.42111 | 0.85083 | +0.03154 |
+> | 3 | 12,898 | 0.173 | **0.35458** | 0.37888 | 1.05991 | +0.02429 |
+> | 4 | 11,889 | 0.127 | **0.30824** | 0.33185 | 1.35478 | +0.02361 |
+>
+> Brier on the same rows: model 0.1136 / 0.1206 / 0.1095 / 0.0926 against designation-only 0.1302 /
+> 0.1291 / 0.1152 / 0.0975.
+>
+> - **P52 -- the duration model beats the designation-only baseline on log loss at every horizon
+>   k = 1..4, pooled 2015-2024: HELD.** Every horizon, on log loss and on Brier.
+> - **P59 -- at k=1 the gain over designation-only is under 0.02, because the Friday designation
+>   already says most of what is knowable about this week: FAILED.** It is 0.047, the LARGEST gain of
+>   the four.
+> - **P60 -- the gain grows with k and at k=4 exceeds 0.05, because injury type carries the horizon:
+>   FAILED on both clauses.** The gain SHRINKS with k (0.047 -> 0.024) and k=4 is 0.024.
+>
+> **P60's mechanism is refuted, not merely its magnitude.** Ablation (`--ablate`, which drops columns
+> from the challenger only so the run stays comparable row for row):
+>
+> | block dropped | k=1 | k=2 | k=3 | k=4 |
+> |---|---|---|---|---|
+> | injury type (`inj_`) | 0.0008 | 0.0013 | 0.0013 | **0.0017** |
+> | practice status (`prac_`) | **0.0211** | 0.0183 | 0.0159 | 0.0147 |
+> | episode history (`weeks_`, `prior_`) | 0.0238 | 0.0110 | 0.0074 | 0.0047 |
+>
+> The injury TYPE is worth one to two thousandths of log loss out of sample. What a Friday report
+> adds beyond the designation is mostly **whether he practised** -- not what is wrong with him. The
+> intuition behind P60 ("a hamstring and a torn ACL both read OUT on Friday") is visibly true in the
+> raw rates -- among the men listed Out, P(miss next 4) runs from 29.2% (calf) to 69.6% (neck) -- and
+> it still does not survive out of sample, because the groups with the longest horizons are the rare
+> ones. Achilles has 52 episodes in fifteen seasons and does not even clear the 200-row threshold for
+> its own indicator; it lands in `inj_other`. The one direction that does corroborate P60 is that the
+> injury type's contribution is the only block that GROWS with k, from 0.0008 to 0.0017.
+>
+> Reliability, model, quintiles of the predicted probability:
+>
+> | k=1 bin | n | predicted | observed | | k=4 bin | n | predicted | observed |
+> |---|---|---|---|---|---|---|---|---|
+> | 0.00-0.09 | 2978 | 0.048 | 0.046 | | 0.00-0.04 | 2378 | 0.029 | 0.019 |
+> | 0.09-0.18 | 2977 | 0.130 | 0.130 | | 0.04-0.06 | 2378 | 0.052 | 0.039 |
+> | 0.18-0.35 | 2978 | 0.252 | 0.254 | | 0.06-0.09 | 2377 | 0.077 | 0.062 |
+> | 0.35-0.98 | 2977 | 0.544 | 0.524 | | 0.09-0.23 | 2378 | 0.140 | 0.139 |
+> | 0.98-1.00 | 2978 | 0.998 | 0.999 | | 0.23-1.00 | 2378 | 0.395 | 0.379 |
+>
+> k=1 is well calibrated across the range. k=4 is **mildly over-confident in the bottom three
+> quintiles** -- it predicts 0.029 where 0.019 happens -- which is worth stating because the
+> consumers turn these into an expected-games-out figure: at long horizons the figure is a little
+> high for men who are nearly fine, and correctly scaled for the ones who are not.
+>
+> **The tier rate is not merely worse, it is worse than a constant** (log loss 0.92 to 1.35 against a
+> base rate implying 0.38 to 0.66). That is not a criticism of the variance model, which was fitted
+> to answer an unconditional season-long question; it is what happens when an unconditional rate is
+> asked a conditional weekly one, and it is the whole reason step 3 exists.
+>
+> ### Step 3 -- the consumers
+>
+> `handcuffs` and `depthRisk` read the injured man's own episode. The lead's next FOUR games are
+> priced by the model; the remainder of the horizon stays on the tier rate, because the fit covers
+> k <= 4 and extending it would be an extrapolation nobody measured. Both numbers travel on every row
+> (`leadGamesOutNext4` against `leadGamesOutNext4Tier`), so the change is visible rather than
+> asserted, and a missing artifact degrades to an EMPTY outlook carrying its own reason -- the
+> opposite of `opportunity-model.json`, whose absence made every factor 1.0 and the board look normal.
+>
+> Live, read-only, generated schedule, 2026 week 2. 88 men on the report from `player_status`;
+> **18 of 66 RB handcuff rows repriced**:
+>
+> | backup | lead | designation | E[games out of 4] model / tier | expectedPts model / tier |
+> |---|---|---|---|---|
+> | Rhamondre Stevenson | TreVeyon Henderson | Out | **1.82 / 0.30** | **7.7 / 3.5** |
+> | Mike Washington Jr. | Ashton Jeanty | Questionable | 0.71 / 0.30 | 6.5 / 4.9 |
+> | Braelon Allen | Breece Hall | Questionable | 0.67 / 0.30 | 6.4 / 4.9 |
+>
+> `ff copilot depth-risk "Breece Hall"` -- Questionable (Thigh), P(miss next k) = 0.370 / 0.163 /
+> 0.085 / 0.054, E[games out of the next 4] **0.67** against **0.30** from the tier rate and **0.87**
+> from the designation alone. Expected cost over those games 2.85 pts against 1.28 on the tier rate.
+> The season-long cost is UNCHANGED (9.67 pp of playoffs, 12.76 playoff-week pts): it prices him
+> GONE, which is the frame the insurance shortlist needs, and the two are reported side by side
+> rather than one replacing the other.
+>
+> **THE LIVE PATH IS WEAKER THAN THE ARCHIVE ONE AND THE ROW SAYS SO.** `player_status` publishes a
+> designation and an `injury_body`, not Wednesday and Friday participation, so a live outlook runs
+> with `practice_status` at its declared missing value -- and the ablation above puts practice status
+> at 0.021 of log loss at k=1, the largest single block after the designation itself. That is stated
+> in `assumptions.basisNote` on every result rather than left to be discovered.
+>
+> ### What this does NOT do
+>
+> - **The weekly trainer does not consume `feat_injury_horizon`.** Track F owns `tools/train_weekly.py`
+>   and `src/weekly/**`, which this branch does not touch. The hand-off is the table plus its
+>   coverage: join `feat_injury_horizon` to `feat_player_week_model` on (player_sk, season, week) and
+>   the four `miss_next_k` columns are ready-made stage-one targets for a horizon the current
+>   first stage does not have. The ablation above is the warning that comes with it: the injury TYPE
+>   carries almost nothing, and a weekly model that adds seventeen injury indicators for 0.002 of log
+>   loss will have bought noise.
+> - **The universe is men who appear in our weekly history at least once that season.** A player who
+>   tore an ACL in August and never played is invisible. That biases the sample AWAY from the longest
+>   horizons, so the fitted P(miss) is a floor rather than a middle.
+> - **Nothing here changes a projection, a price, or the draft.** The flagless tripwire is
+>   **39.7% / 96%**, per-season line unchanged.
+>
+> ---
+
 > ## INTEGRATION PASS 3: five tracks stacked, and the league changed its calendar under us (2026-09-09)
 >
 > `redesign/final-2` = `redesign/final` (`75da5b0`) + Tracks E, D, B, C, A, merged `--no-ff` in that
