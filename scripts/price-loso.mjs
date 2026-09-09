@@ -37,10 +37,28 @@ const val = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] :
 const VARIANTS = val("--variants", "none,inflation,full").split(",");
 const FOLD_DIR = val("--artifact-dir", "data/fold-artifacts-2b");
 const BUDGET = 200;
+// `--seasons 2018-2025` restricts the leave-one-season-out set. `--holdout 2026` instead fits on
+// every OTHER season once and scores only that one -- a true holdout rather than a rotation, which
+// is the right shape when the season in question is the one the model has never been near.
+const SEASON_RANGE = val("--seasons", null);
+const HOLDOUT = val("--holdout", null) === null ? null : Number(val("--holdout", null));
 
 const db = new Database("data/ff.db", { readonly: true });
-const seasons = db.prepare("SELECT DISTINCT season FROM fact_draft_pick ORDER BY season").all().map((r) => r.season);
+let seasons = db.prepare("SELECT DISTINCT season FROM fact_draft_pick ORDER BY season").all().map((r) => r.season);
 if (!seasons.length) { console.log("fact_draft_pick is empty"); process.exit(1); }
+if (SEASON_RANGE) {
+  const [lo, hi] = SEASON_RANGE.split("-").map(Number);
+  seasons = seasons.filter((s) => s >= lo && s <= (hi ?? lo));
+}
+// The pool the price model may train on, passed through to train_price.py. In holdout mode it is
+// everything up to and including the held-out season (which that script then removes); in rotation
+// mode it is exactly the seasons being rotated over.
+let TRAIN_POOL = SEASON_RANGE;
+if (HOLDOUT != null) {
+  TRAIN_POOL = `${Math.min(...seasons)}-${HOLDOUT}`;
+  seasons = [HOLDOUT];
+}
+seasons.sort((a, b) => a - b);
 
 // ---- the picks, with the market state as it stood ------------------------------------------------
 const bySeason = new Map();
@@ -65,16 +83,30 @@ for (const s of seasons) {
   bySeason.set(s, { rows, teams, leagueMoney, n, spent });
 }
 
+// WHICH ARTIFACT PRICES THE BASELINE BOOKS FOR THIS SEASON, and the rule is the same one the script
+// has always enforced: it must be BLIND to the season being scored. The per-fold artifacts are blind
+// by construction. The season AFTER the last fold -- the live one -- has no fold artifact and does
+// not need one: the shipped artifact is fitted on seasons strictly before it, so it is blind to it
+// for exactly the same reason. Any earlier season with no fold artifact is a hard stop, because
+// there the shipped artifact WOULD have seen it.
+function foldArtifact(season) {
+  const p = join(FOLD_DIR, `artifact-${season}.json`);
+  if (existsSync(p)) return p;
+  const shipped = "data/projection-artifact.json";
+  if (existsSync(shipped)) {
+    const a = JSON.parse(readFileSync(shipped, "utf8"));
+    const last = Math.max(...(a.seasons ?? a.trainedSeasons ?? [0]));
+    if (Number.isFinite(last) && last < season) return shipped;
+  }
+  console.error(`missing ${p}. The two baseline books need a board for ${season} built from an ` +
+    `artifact BLIND to ${season}; without it they would be scored on a projection that had seen ` +
+    `the season. Run:  npm run ff -- evaluate-projection --seasons 2008-2025 --keep-artifacts ${FOLD_DIR}`);
+  process.exit(1);
+}
+
 // ---- the two baseline books, from a point-in-time board ------------------------------------------
 function baselineBooks(season, leagueMoney, teams, slotsPerTeam) {
-  const p = join(FOLD_DIR, `artifact-${season}.json`);
-  if (!existsSync(p)) {
-    console.error(`missing ${p}. The two baseline books need a board for ${season} built from an ` +
-      `artifact BLIND to ${season}; without it they would be scored on a projection that had seen ` +
-      `the season. Run:  npm run ff -- evaluate-projection --seasons 2008-2025 --keep-artifacts ${FOLD_DIR}`);
-    process.exit(1);
-  }
-  const art = loadArtifact(JSON.parse(readFileSync(p, "utf8")));
+  const art = loadArtifact(JSON.parse(readFileSync(foldArtifact(season), "utf8")));
   const proj = boardProjection(db, season, art)
     .filter((r) => r.mean > 0)
     .map((r) => ({ name: r.name, pos: r.pos, points: r.mean }));
@@ -107,8 +139,7 @@ function tierOf(overallRank) {
 const TIERS = ["top12", "13-36", "37-96", "tail"];
 
 function overallRanks(season, teams, slotsPerTeam) {
-  const p = join(FOLD_DIR, `artifact-${season}.json`);
-  const art = loadArtifact(JSON.parse(readFileSync(p, "utf8")));
+  const art = loadArtifact(JSON.parse(readFileSync(foldArtifact(season), "utf8")));
   const proj = boardProjection(db, season, art).filter((r) => r.mean > 0).sort((a, b) => b.mean - a.mean);
   const m = new Map();
   proj.forEach((r, i) => m.set(r.name, i + 1));
@@ -120,11 +151,16 @@ function overallRanks(season, teams, slotsPerTeam) {
 const tmp = mkdtempSync(join(tmpdir(), "ff-price-loso-"));
 function fitPrice(variant, holdout) {
   const out = join(tmp, `price-${variant}-${holdout}.json`);
-  execFileSync("uv", [
+  const args = [
     "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_price.py",
     "--db", "data/ff.db", "--out", out, "--holdout-season", String(holdout),
     "--market-state", variant, "--quiet",
-  ], { stdio: ["ignore", "pipe", "pipe"], timeout: 600000 });
+  ];
+  // THE TRAINING POOL IS STATED, not inherited from whatever the store happens to hold. In a
+  // rotation over 2018-2025 a fold must not see 2026; in a genuine holdout of 2026 it must see all
+  // eight earlier seasons. `--seasons` says which, so the two runs cannot silently be the same fit.
+  if (TRAIN_POOL) args.push("--seasons", TRAIN_POOL);
+  execFileSync("uv", args, { stdio: ["ignore", "pipe", "pipe"], timeout: 900000 });
   return loadPriceModel(JSON.parse(readFileSync(out, "utf8")));
 }
 

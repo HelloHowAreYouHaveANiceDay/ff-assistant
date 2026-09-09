@@ -12,52 +12,53 @@
 //
 // If not, the heterogeneous field is decoration and the bots may as well be identical.
 //
+// IT READS THE STORE, NOT THE LIVE LEAGUE. It used to open the ESPN adaptor and fetch history over
+// the network, which meant the answer depended on the desktop app being open and on however many
+// seasons that call happened to return. `fact_draft_pick` + `fact_team_season` hold nine seasons of
+// the same picks with the owner already attached, so the measurement is reproducible offline and
+// covers every season the league has played.
+//
 // Keyed on OWNER, never on team id or team name: both get reused and renamed across seasons, and a
 // profile attached to the wrong human is worse than no profile.
-import { openLeague } from "../src/league/index.ts";
+import Database from "better-sqlite3";
 
 const POS = ["QB", "RB", "WR", "TE"];
+const db = new Database("data/ff.db", { readonly: true });
 
-const lg = await openLeague();
-if (!lg.provider.history) {
-  console.log(`the ${lg.provider.platform} adaptor does not expose league history.`);
-  await lg.close(); process.exit(1);
-}
-const first = Number(process.argv[2] ?? lg.season - 4);
-const last = Number(process.argv[3] ?? lg.season - 1);   // completed seasons only
-const seasons = [];
-for (let y = first; y <= last; y++) seasons.push(y);
+const bounds = db.prepare("SELECT MIN(season) lo, MAX(season) hi FROM fact_draft_pick").get();
+if (!bounds || bounds.lo == null) { console.log("fact_draft_pick is empty -- run `ff build-picks`"); process.exit(1); }
+const first = Number(process.argv[2] ?? bounds.lo);
+const last = Number(process.argv[3] ?? bounds.hi);
 
-console.log(`MANAGER STABILITY -- seasons ${first}-${last}`);
-const snaps = await lg.provider.history(seasons);
-await lg.close();
+console.log(`MANAGER STABILITY -- seasons ${first}-${last}, from fact_draft_pick`);
+
+const picks = db.prepare(
+  `SELECT p.season, p.team_id, p.pos, p.price, t.owner
+     FROM fact_draft_pick p LEFT JOIN fact_team_season t ON t.season = p.season AND t.team_id = p.team_id
+    WHERE p.season BETWEEN ? AND ? ORDER BY p.season, p.pick_order`,
+).all(first, last);
+db.close();
 
 // --- per (owner, season) positional spend shares -------------------------------------------------
-const rows = [];
-for (const s of snaps) {
-  if (!s.available) { console.log(`  ${s.season}: unavailable -- ${s.note ?? "no data"}`); continue; }
-  if (!s.picks.length) { console.log(`  ${s.season}: no draft`); continue; }
-  // Key on the TEAM's primary owner, resolved through teamId -- NOT on the pick's own memberId.
-  // A co-owned team has several memberIds making picks, and keying on those splits ONE draft into
-  // two partial ones, each with a distorted positional share. That is how a 16-team league reported
-  // 29 "owners". The teamId -> primaryOwner map gives exactly one identity per team per season.
-  const ownerOfTeam = new Map(s.teams.map((t) => [t.id, t.owner || t.ownerId || t.id]));
-  const byOwner = new Map();
-  for (const p of s.picks) {
-    if (!POS.includes(p.pos)) continue;
-    const owner = ownerOfTeam.get(p.teamId) ?? p.teamId;
-    if (!byOwner.has(owner)) byOwner.set(owner, { spend: Object.fromEntries(POS.map((k) => [k, 0])), tot: 0 });
-    const e = byOwner.get(owner);
-    const price = p.price || 1;
-    e.spend[p.pos] += price;
-    e.tot += price;
-  }
-  for (const [owner, e] of byOwner) {
-    if (e.tot < 50) continue;   // a partial/abandoned draft is not a tendency
-    rows.push({ owner, season: s.season, share: Object.fromEntries(POS.map((k) => [k, e.spend[k] / e.tot])) });
-  }
-  console.log(`  ${s.season}: ${byOwner.size} owners`);
+const bySeasonOwner = new Map();
+let unattributed = 0;
+for (const p of picks) {
+  if (!POS.includes(p.pos)) continue;
+  if (!p.owner) { unattributed++; continue; }
+  const k = `${p.season}|${p.owner}`;
+  const e = bySeasonOwner.get(k) ?? bySeasonOwner.set(k, { owner: p.owner, season: p.season, spend: Object.fromEntries(POS.map((x) => [x, 0])), tot: 0 }).get(k);
+  const price = p.price || 1;
+  e.spend[p.pos] += price;
+  e.tot += price;
 }
+const rows = [];
+for (const e of bySeasonOwner.values()) {
+  if (e.tot < 50) continue;   // a partial/abandoned draft is not a tendency
+  rows.push({ owner: e.owner, season: e.season, share: Object.fromEntries(POS.map((k) => [k, e.spend[k] / e.tot])) });
+}
+const seasons = [...new Set(rows.map((r) => r.season))].sort((a, b) => a - b);
+for (const s of seasons) console.log(`  ${s}: ${rows.filter((r) => r.season === s).length} owners`);
+if (unattributed) console.log(`  ${unattributed} picks with no owner row -- excluded, never attributed to a placeholder`);
 if (rows.length < 4) { console.log("\nnot enough seasons of draft history to run the test."); process.exit(0); }
 
 // league-average share per season (the naive baseline every owner is compared against)

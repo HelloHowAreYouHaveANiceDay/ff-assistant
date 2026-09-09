@@ -82,6 +82,8 @@ async function main() {
       return cmdBuildFeatures(rest);
     case "build-picks":
       return cmdBuildPicks(rest);
+    case "build-managers":
+      return cmdBuildManagers(rest);
     case "build-artifact":
       return cmdBuildArtifact(rest);
     case "evaluate-projection":
@@ -1451,6 +1453,58 @@ async function cmdBuildHistory(rest: string[]) {
 
 // Build per-manager draft tendencies for MY league from its real auction history (prior seasons),
 // read through the app's logged-in ESPN session. Config-driven: works for any league. Writes
+/**
+ * `ff build-managers [--seasons 2018-2026]`
+ *
+ * The sim's bot field, rebuilt FROM THE STORE rather than from a live browser session.
+ *
+ * `ff scrape-league` needs the desktop app open and its logged-in session, reaches four seasons by
+ * default, and writes the same file. That was the only route to `data/managers.json` -- so the
+ * opponent model in every backtest depended on a scrape nobody could reproduce offline, from a
+ * window that has to be open. `fact_draft_pick` and `fact_team_season` now hold NINE seasons of the
+ * same picks with the owner attached, so this rebuilds the profiles from data that is already in
+ * the store and versioned by the ingest that put it there.
+ *
+ * The output file stays gitignored: it names real league members and characterises how each of them
+ * drafts, which is exactly as personal as its inputs.
+ */
+async function cmdBuildManagers(rest: string[]) {
+  const { openDb } = await import("./db/db.js");
+  const { buildManagerProfiles } = await import("./draft/scout.js");
+  type Recap = import("./draft/scout.js").Recap;
+  const { writeFileSync } = await import("node:fs");
+  const range = (valueOf(rest, "--seasons") ?? "2018-2026").split("-").map(Number);
+  const [lo, hi] = [range[0], range[1] ?? range[0]];
+  const db = openDb(valueOf(rest, "--db"));
+  // Keyed on OWNER through the team-season row, never on team id or team name: both are reused and
+  // renamed across seasons, and a profile attached to the wrong human is worse than no profile.
+  const rows = db.prepare(
+    `SELECT p.season, p.team_id, p.pos, p.price, t.owner, t.team_name
+       FROM fact_draft_pick p LEFT JOIN fact_team_season t ON t.season = p.season AND t.team_id = p.team_id
+      WHERE p.season BETWEEN ? AND ? ORDER BY p.season, p.pick_order`,
+  ).all(lo, hi) as { season: number; team_id: string; pos: string; price: number; owner: string | null; team_name: string | null }[];
+  db.close();
+  if (!rows.length) { console.log(`no picks in ${lo}-${hi} -- run \`ff build-picks\``); return; }
+  const byTeam = new Map<string, Recap>();
+  let noOwner = 0;
+  for (const r of rows) {
+    if (!r.owner) { noOwner++; continue; }        // counted, never attributed to a placeholder
+    const k = `${r.season}|${r.team_id}`;
+    const rec = byTeam.get(k) ?? byTeam.set(k, {
+      season: r.season, owner: r.owner, abbrev: (r.team_name ?? r.owner).slice(0, 4), picks: [],
+    }).get(k)!;
+    rec.picks.push({ pos: r.pos, price: r.price });
+  }
+  const recaps = [...byTeam.values()];
+  const data = buildManagerProfiles(recaps);
+  writeFileSync(dataPath("managers.json"), JSON.stringify(data), "utf8");
+  console.log(`wrote ${data.profiles.length} owner profiles from ${recaps.length} team-seasons ` +
+    `(${rows.length - noOwner}/${rows.length} picks with an owner) -> ${dataPath("managers.json")}`);
+  console.log("  league spend mix: " + Object.entries(data.leagueShare).map(([p, s]) => `${p} ${Math.round(Number(s) * 100)}%`).join(" "));
+  const bySeasons = data.profiles.slice().sort((a, b) => b.seasons.length - a.seasons.length);
+  console.log(`  seasons per owner: ${bySeasons[0].seasons.length} max, ${bySeasons[bySeasons.length - 1].seasons.length} min`);
+}
+
 // managers.json (the sim's bot field). Needs the desktop app open (for the authenticated session).
 async function cmdScrapeLeague(rest: string[]) {
   const { chromium } = await import("playwright-core");

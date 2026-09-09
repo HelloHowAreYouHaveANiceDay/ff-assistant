@@ -69,12 +69,17 @@ export const MODELS: ModelSpec[] = [
   },
   {
     key: "price", file: "price-model.json", required: false, nestedLift: null, claimedLift: null,
-    what: "what THIS room pays, fitted on the 738 real picks in fact_draft_pick -- a hurdle model " +
-      "(logistic P(price > $1), then the share of the room's money given he clears it) with a " +
-      "monotone per-position rank table. Leave-one-season-out MAE $4.32 against $7.12 for the " +
-      "`rank` book and $7.11 for `vor`, 65% of picks within $3. Selectable as `--bot-book price`; " +
-      "NOT the default, which is still `vor` -- i.e. our own valuation function, which the same " +
-      "measurement shows overpays the top twelve by $21 a man",
+    what: "what THIS room pays, fitted on the 1,102 real picks in fact_draft_pick for 2020-2025 -- " +
+      "a hurdle model (logistic P(price > $1), then the share of the room's money given he clears " +
+      "it) with a monotone per-position rank table. Leave-one-season-out MAE $3.72 over those six " +
+      "seasons against $7.42 for the `rank` book and $7.61 for `vor`, 65% of picks within $3. " +
+      "2018 and 2019 are DELIBERATELY EXCLUDED: the ECR archive does not reach them, so every pick " +
+      "in them is unranked and `no_consensus` absorbs 'star' along with 'unknown' -- training on " +
+      "all eight seasons takes the same rotation from $3.72 to $6.38. On the held-out 2026 draft " +
+      "it scores $4.70 against $5.59 for `rank` and $7.23 for `vor`, and it still overpays the top " +
+      "twelve by $4.1. Selectable as `--bot-book price`; NOT the default, which is still `vor` -- " +
+      "i.e. our own valuation function, which the same measurement shows overpays the top twelve " +
+      "by $23 a man",
     check: (j) => {
       try {
         const a = loadPriceModel(j);

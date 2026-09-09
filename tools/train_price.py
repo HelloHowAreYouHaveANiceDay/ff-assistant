@@ -385,6 +385,11 @@ def main():
     ap.add_argument("--db", default="data/ff.db")
     ap.add_argument("--out", default="data/price-model.json")
     ap.add_argument("--holdout-season", default="none")
+    # WHICH SEASONS ARE ELIGIBLE AT ALL, before the holdout is removed. `--holdout-season 2020` on a
+    # store holding 2018-2026 trains on 2026 as well, which is a later season leaking into an
+    # earlier fold -- fine for a genuine holdout, wrong for a leave-one-season-out rotation. So the
+    # rotation passes `--seasons 2018-2025` and the pool is stated rather than inferred.
+    ap.add_argument("--seasons", default=None, help="lo-hi, inclusive; default every season present")
     ap.add_argument("--alpha-hurdle", type=float, default=None)
     ap.add_argument("--alpha-level", type=float, default=None)
     # The DEFAULT is what ships, so the contract test re-running this script reproduces the shipped
@@ -400,6 +405,12 @@ def main():
     if not picks:
         sys.exit("train_price: fact_draft_pick is empty -- run `ff build-picks`")
     rows, meta = build(picks)
+    if args.seasons:
+        parts = [int(x) for x in args.seasons.split("-")]
+        lo, hi = parts[0], (parts[1] if len(parts) > 1 else parts[0])
+        rows = [r for r in rows if lo <= r["season"] <= hi]
+        if not rows:
+            sys.exit("train_price: --seasons " + args.seasons + " selects no picks")
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
     train = [r for r in rows if holdout is None or r["season"] != holdout]
     if not train:

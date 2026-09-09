@@ -12,6 +12,7 @@
 //
 //   node scripts/face-validity.mjs [--bot-book rank]
 import { readFileSync } from "node:fs";
+import Database from "better-sqlite3";
 import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
 
 const botBook = process.argv.includes("rank") ? "rank" : process.argv.includes("price") ? "price" : "vor";
@@ -36,19 +37,58 @@ for (let s = 1; s <= N; s++) {
 }
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 
-// [lo, hi] observed across the three real drafts.
-const REAL = {
-  "total $":      [2767, 3157],
-  "median price": [2, 2],
-  "% picks $1-5": [61, 61],
-  "top price":    [88, 106],
-  "players >$50": [22, 25],
-  "players >$30": [36, 43],
-  "RB total":     [1055, 1292],
-  "WR total":     [1126, 1291],
-  "QB total":     [192, 328],
-  "TE total":     [199, 215],
-};
+// [lo, hi] observed across the room's REAL drafts -- DERIVED from fact_draft_pick rather than
+// retyped. The hardcoded table this replaces was three drafts (2023-2025) copied out of
+// docs/league-tendencies.md, and a hand-copied range is a snapshot of the day it was written: the
+// store now holds NINE seasons, 2018-2026, through a reproducible ingest.
+//
+// EVERY DOLLAR FIGURE IS A SHARE OF THE ROOM'S MONEY, scaled to the simulated room. Six of the nine
+// seasons are 14-team ($2,800) and three are 16-team ($3,200); comparing raw dollars across them
+// compares two currencies, and the same is true of a count like "players >$50" -- $50 is 1.79% of a
+// 14-team room and 1.56% of a 16-team one. The thresholds are converted to shares of the SIM room
+// and applied to each season's own share distribution.
+//
+// The old hardcoded ranges are kept in the comment as a cross-check, not as an input:
+//   median $2 | 61% $1-5 | top $88-106 | >$50: 22-25 | >$30: 36-43
+//   RB 1055-1292 | WR 1126-1291 | QB 192-328 | TE 199-215
+const REAL = (() => {
+  const db = new Database("data/ff.db", { readonly: true });
+  let picks;
+  try {
+    picks = db.prepare(
+      "SELECT season, pos, price, season_total_money FROM fact_draft_pick WHERE season_total_money > 0",
+    ).all();
+  } catch { picks = []; } finally { db.close(); }
+  if (!picks.length) {
+    console.error("face-validity: fact_draft_pick has no season_total_money -- run `ff build-picks`");
+    process.exit(1);
+  }
+  const SIM_MONEY = SIM_LEAGUE.teams * SIM_LEAGUE.budget;
+  const bySeason = new Map();
+  for (const p of picks) {
+    const s = bySeason.get(p.season) ?? { shares: [], pos: {}, money: p.season_total_money };
+    s.shares.push(p.price / p.season_total_money);
+    s.pos[p.pos] = (s.pos[p.pos] ?? 0) + p.price / p.season_total_money;
+    bySeason.set(p.season, s);
+  }
+  const per = { "total $": [], "median price": [], "% picks $1-5": [], "top price": [], "players >$50": [], "players >$30": [], "RB total": [], "WR total": [], "QB total": [], "TE total": [] };
+  for (const s of bySeason.values()) {
+    const sh = s.shares.slice().sort((a, b) => a - b);
+    const money = s.money;
+    per["total $"].push(sh.reduce((a, b) => a + b, 0) * SIM_MONEY);
+    per["median price"].push(sh[Math.floor(sh.length / 2)] * SIM_MONEY);
+    // "$1-5" is a DOLLAR band in the room it was observed in, so it converts through that room's
+    // own money, not through the sim's.
+    per["% picks $1-5"].push(100 * sh.filter((x) => x * money >= 1 && x * money <= 5).length / sh.length);
+    per["top price"].push(sh.at(-1) * SIM_MONEY);
+    per["players >$50"].push(sh.filter((x) => x > 50 / SIM_MONEY).length);
+    per["players >$30"].push(sh.filter((x) => x > 30 / SIM_MONEY).length);
+    for (const p of ["RB", "WR", "QB", "TE"]) per[`${p} total`].push((s.pos[p] ?? 0) * SIM_MONEY);
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(per)) out[k] = [Math.min(...v), Math.max(...v)];
+  return out;
+})();
 const simv = {
   "total $": agg.total / N,
   "median price": mean(agg.med),
@@ -67,12 +107,16 @@ console.log("  metric           sim      real range      verdict");
 let pass = 0, fail = 0;
 for (const [k, [lo, hi]] of Object.entries(REAL)) {
   const v = simv[k];
-  // Allow 25% outside the observed range: three drafts do not define the true range, and a metric
-  // that lands just outside is a wide prior, not a broken model.
-  const tol = Math.max(1, (hi - lo) * 0.25, Math.abs(hi) * 0.25);
+  // THE PAD SHRANK WITH THE EVIDENCE. It used to be 25% of the range OR 25% of the upper bound,
+  // whichever was larger -- and that second term dominated, because three drafts give a narrow
+  // observed range and a wide true one. Nine seasons estimate the range far better, so the pad is
+  // now 10% of the observed range and nothing else: a check whose tolerance is a quarter of the
+  // quantity being checked cannot fail for any reason a reader would care about.
+  const tol = Math.max(1, (hi - lo) * 0.1);
   const ok = v >= lo - tol && v <= hi + tol;
   if (ok) pass++; else fail++;
-  console.log(`  ${k.padEnd(15)} ${v.toFixed(1).padStart(7)}   ${String(lo + "-" + hi).padStart(11)}      ${ok ? "ok" : "OFF"}`);
+  const range = `${lo.toFixed(0)}-${hi.toFixed(0)}`;
+  console.log(`  ${k.padEnd(15)} ${v.toFixed(1).padStart(7)}   ${range.padStart(11)}      ${ok ? "ok" : "OFF"}`);
 }
 console.log(`\n  ${pass} of ${pass + fail} metrics within tolerance of the real drafts`);
 console.log(fail === 0
