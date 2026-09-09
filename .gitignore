@@ -73,3 +73,12 @@ data/*.prev.csv
 # re-fetching ~300MB. Pure cache: every file is reproducible with --refresh, and nothing
 # reads it that cannot rebuild it.
 data/cache/
+
+# Python bytecode from the trainers. Never useful to anybody, and it appears the moment one
+# trainer imports another.
+tools/__pycache__/
+
+# The Phase 2c projection artifact under its scratch name. The SHIPPED artifact is
+# data/projection-artifact.json, which IS committed; this is the intermediate a re-fit writes
+# beside it, and committing both is how two artifacts start disagreeing about which one ships.
+data/projection-artifact.2c.json

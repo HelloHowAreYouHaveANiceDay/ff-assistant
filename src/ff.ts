@@ -168,6 +168,9 @@ async function main() {
       return cmdEvaluateStreaming(rest);
     case "scorecard":
       return cmdScorecard(rest);
+    // ---- in-season backtest (src/inseason/backtest/) ----
+    case "inseason-backtest":
+      return cmdInseasonBacktest(rest);
     default:
       console.log(
         "commands:\n" +
@@ -2959,6 +2962,10 @@ async function cmdEvaluateWeekly(rest: string[]) {
     rosters: Number(valueOf(rest, "--rosters") ?? 300),
     features: valueOf(rest, "--features") ?? "all",
     keepArtifacts: valueOf(rest, "--keep-artifacts"),
+    // `--recalibrate-zero`: the pre-registered P48 correction. One number per position, chosen on
+    // each fold's own TRAINING rows, added to the stage-one logistic intercept. No coefficient and
+    // no feature moves, so this cannot be a way to fit the gate.
+    recalibrateZero: rest.includes("--recalibrate-zero"),
   });
   if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
   else console.log(formatWeeklyReport(res));
@@ -3185,6 +3192,38 @@ async function cmdBuildFeaturesExt(rest: string[]) {
 // `sync --from-cache` reads data/cache/espn/settings-<season>.json instead of the network, so the
 // block can be rebuilt, and the tests can run, with no app and no session.
 // ==================================================================================================
+/**
+ * THE IN-SEASON BACKTESTS, as verbs rather than as three scripts nobody can find.
+ *
+ * Track B built them as `scripts/inseason-backtest-{lineup,waiver,promotion}.mjs`, which is where
+ * work of this shape starts and is not where it should stay: a measurement reachable only by knowing
+ * a filename is a measurement that stops being re-run. These are THIN WRAPPERS -- the scripts remain
+ * the implementation and are spawned unchanged, so there is exactly one copy of each harness and no
+ * possibility of the verb and the script disagreeing about a number.
+ */
+async function cmdInseasonBacktest(rest: string[]) {
+  const SCRIPTS: Record<string, string> = {
+    lineup: "scripts/inseason-backtest-lineup.mjs",
+    waivers: "scripts/inseason-backtest-waiver.mjs",
+    promotion: "scripts/inseason-backtest-promotion.mjs",
+  };
+  const which = rest.find((r) => !r.startsWith("--"));
+  const script = which ? SCRIPTS[which] : undefined;
+  if (!script) {
+    console.log(`usage: ff inseason-backtest <${Object.keys(SCRIPTS).join("|")}> [--seasons 2018-2025]`);
+    console.log("  lineup     what the room started vs hindsight vs our lineup rule, on real rosters");
+    console.log("  waivers    the room's real claims scored by points per FAAB dollar against our ranking");
+    console.log("  promotion  a promoted RB backup against the man he replaced -- the handcuff prior, from a new direction");
+    console.log("  full writeup: docs/in-season-backtest.md");
+    if (which) process.exitCode = 2;
+    return;
+  }
+  const { spawnSync } = await import("node:child_process");
+  const args = rest.filter((r) => r !== which);
+  const r = spawnSync(process.execPath, ["--import", "tsx", script, ...args], { stdio: "inherit" });
+  if (r.status) process.exitCode = r.status;
+}
+
 async function cmdFormat(rest: string[]) {
   const { openDb, getConfig, setConfig } = await import("./db/db.js");
   const { formatFromEspnSettings, effectiveFormat, localStamp, isSeedingRule, validateFormat } = await import("./league/index.js");

@@ -52,7 +52,22 @@ export interface VarianceModel {
 
 /** `team` is the NFL team, required only in bootstrap mode: it is what identifies teammates to
  *  correlate. Absent, a player is simply drawn independently. */
-export interface SeasonPlayer { name: string; pos: string; proj: number; bye?: number | null; team?: string }
+export interface SeasonPlayer {
+  name: string; pos: string; proj: number; bye?: number | null; team?: string;
+  /**
+   * ELIGIBILITY AS A SET, straight through to `optimalLineup`.
+   *
+   * Track D made position a set everywhere the BOARD touches -- valuation, the live lineup, the
+   * roster-legality check -- and stopped at this seam, so the season simulator went on slotting a
+   * dual-eligible man at one position only. That is not a harmless simplification: the simulator's
+   * whole job is to say what a roster is worth, and a roster whose swing man cannot cover the slot
+   * that is actually short is worth less than the real one.
+   *
+   * Optional, and absent it defaults to `[pos]` inside `optimalLineup` -- which is what every player
+   * on the 2026 board is, so a caller that does not carry it is byte-identical.
+   */
+  eligible?: string[];
+}
 export interface SeasonTeamInput { id: string; name: string; roster: SeasonPlayer[] }
 export interface SeasonOpts {
   weeks: number;
@@ -449,7 +464,7 @@ export function simulateSeasons(
     //               scores rather than with a second model of the same weeks.
     const scoreTeamWeek = (ti: number, gameWeek: number, keyWeek: number, byes: boolean, playoffDraw: boolean): number => {
       const tm = teams[ti];
-      let players: { name: string; pos: string; proj: number; available: boolean; actual: number | null }[];
+      let players: { name: string; pos: string; proj: number; available: boolean; actual: number | null; eligible?: string[] }[];
       if (boot && !playoffDraw) {
         const b = boot[ti];
         const drawn = seasonDraw![ti];
@@ -457,7 +472,10 @@ export function simulateSeasons(
           const onBye = byes && p.bye === gameWeek;
           const pp = b.byName.get(p.name);
           const actual = onBye || !pp ? null : weekOf(drawn.get(pp), gameWeek);
-          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
+          // `eligible` rides along verbatim -- see SeasonPlayer. Track D made position a set
+          // everywhere the board touches and stopped at THIS seam, so a dual-eligible man could not
+          // cover the slot the simulated roster was actually short at.
+          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual, ...(p.eligible ? { eligible: p.eligible } : {}) };
         });
       } else {
         players = tm.roster.map((p) => {
@@ -474,7 +492,10 @@ export function simulateSeasons(
           const actual = (onBye || !healthy)
             ? null
             : sampleWeek(trueMean.get(p) ?? 0, cv, () => unitDraw(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffPerf : PURPOSE.perf));
-          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual };
+          // `eligible` rides along verbatim -- see SeasonPlayer. Track D made position a set
+          // everywhere the board touches and stopped at THIS seam, so a dual-eligible man could not
+          // cover the slot the simulated roster was actually short at.
+          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual, ...(p.eligible ? { eligible: p.eligible } : {}) };
         });
       }
       // Lineup is set on the TRUE mean (what a competent manager approximates), scored on the

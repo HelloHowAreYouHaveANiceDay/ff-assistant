@@ -118,11 +118,13 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
 - Strategy/levers: `src/draft/{strategy,levers,values,sim,backtest}.ts`
 - Findings + every rejected idea with its number: `docs/validation.md`, `docs/edges.md`
 - Draft-day procedure and machine setup: `docs/draft-day-runbook.md`
-- The MCP control surface (34 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is
+- The MCP control surface (35 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is
   `TOOL_NAMES.length` in `src/agent/agent.ts`, not a number to retype -- `scripts/copilot-mcp-smoke.mjs`
-  asserts it. The last nine are the in-season copilot's, and the same nine decisions are reachable
+  asserts it. The last ten are the in-season copilot's, and the same ten decisions are reachable
   from a terminal as `ff copilot <verb>` through one dispatcher (`src/inseason/copilotActions.ts`),
-  so a number printed in a shell and a number the Assistant quotes cannot differ.
+  so a number printed in a shell and a number the Assistant quotes cannot differ. The tenth is
+  `stream_recommend` / `ff copilot stream`: of the men nobody rosters, who to start this week at QB,
+  K or DST -- the three positions where the streaming model ships (`SHIPPED_STREAMING_POSITIONS`).
 - The in-season decision surface and its limits: `docs/in-season-design.md`; the weekly model and its
   write-once scorecard: `docs/weekly.md`
 - Recorded decisions D0–D10 (do not silently reverse): `docs/decisions.md`

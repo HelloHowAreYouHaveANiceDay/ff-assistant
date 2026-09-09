@@ -524,13 +524,23 @@ export interface EvalOpts {
   features?: string;
   json?: boolean;
   keepArtifacts?: string;
+  /**
+   * RE-FIT NOTHING; SHIFT ONE NUMBER PER POSITION.
+   *
+   * Passes `--recalibrate-zero` to the trainer in every fold, which moves each position's stage-one
+   * logistic INTERCEPT so its mean predicted P(zero week) on the TRAINING rows matches the observed
+   * rate there. It is the pre-registered P48 correction: clause (c) of the gate is a LEVEL test, and
+   * the level is exactly what an L2 penalty on an imbalanced logistic shrinks. Every coefficient is
+   * left as trained, so nothing about the model's ranking of players can move.
+   */
+  recalibrateZero?: boolean;
 }
 
 /** Train one holdout artifact by shelling out to the Python trainer -- the same binary the shipped
  *  artifact came from, so the thing evaluated is the thing that would ship. */
 function trainHoldout(
   dbPath: string, trainSeasons: number[], holdout: number, features: string, out: string,
-  zeroModel: string,
+  zeroModel: string, recalibrateZero: boolean,
 ): WeeklyArtifact | null {
   const lo = Math.min(...trainSeasons), hi = Math.max(...trainSeasons);
   try {
@@ -538,6 +548,7 @@ function trainHoldout(
       "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_weekly.py",
       "--db", dbPath, "--seasons", `${lo}-${hi}`, "--holdout-season", String(holdout),
       "--features", features, "--zero-model", zeroModel, "--out", out, "--quiet",
+      ...(recalibrateZero ? ["--recalibrate-zero"] : []),
     ], { stdio: "pipe" });
   } catch (e) {
     throw new Error(`train_weekly failed for holdout ${holdout}: ${e instanceof Error ? e.message : e}`);
@@ -597,7 +608,9 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     const spread = measureSpread(spreadSeasons, spreadSeasons.map((s) => pointPredictions(s, fullArt, spreadLine)));
 
     for (const yr of opts.seasons) {
-      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`), zeroModel);
+      // The recalibration is chosen INSIDE the fold, by the trainer, on the rows the trainer sees --
+      // which are the training seasons with `yr` removed. It never touches the season being scored.
+      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`), zeroModel, !!opts.recalibrateZero);
       if (art && (art.zeroModel ?? "quantile") !== zeroModel) {
         throw new Error(`fold ${yr} produced a "${art.zeroModel}" artifact but the shipping artifact ` +
           `is "${zeroModel}" -- the folds are not measuring the model that would ship`);

@@ -340,9 +340,11 @@ uniform floors. Checked against the calibration harness on 2025 -- it reproduces
 figures to six decimals (playoffs 0.209587, title 0.052147). The 32 frozen 2026 rows stay unscored
 until the season settles, and the command says why.
 
-**Three shipped levers measured flat.** Under the honest arbiter, `starterReserve` 4 vs 0 produces
-byte-identical trials (the soft reserve never binds at `aggr 0.7`), and `premium` and `maxShare` are
-both inside the noise. `benchDiscount` is the one still doing work. Nothing was changed on the
+**Three shipped levers measured flat.** Under the honest arbiter, `starterReserve` 4 vs 0, `premium`
+and `maxShare` are all inside the noise. `starterReserve` was recorded here as producing
+BYTE-IDENTICAL trials; Track A re-ran it on the long arm (1,800 trials) and 16 of them differ, so the
+honest statement is **flat within noise, not byte-identical** -- -0.17pp, CI [-0.44, 0.00]. The soft
+reserve almost never binds at `aggr 0.7`; almost is the correction. `benchDiscount` is the one still doing work. Nothing was changed on the
 strength of five seasons; the finding is recorded for the owner to act on or not.
 
 **The scorecard grades two weekly models from week 2.** `lineupRecommend` and `ff scorecard` were

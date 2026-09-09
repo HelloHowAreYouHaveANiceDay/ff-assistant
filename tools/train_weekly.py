@@ -414,6 +414,53 @@ def fit_position_two_part(rows, specs, pos, args):
     zm = LogisticRegression(C=bestC, max_iter=2000).fit(X, yz)
     coef = {"zero": head_from(zm.coef_[0], zm.intercept_[0], specs, keep)}
 
+    # ---- OPTIONAL: PLATT-STYLE INTERCEPT RECALIBRATION OF STAGE ONE ----
+    #
+    # WHAT FAILED, AND WHY IT IS AN INTERCEPT AND NOT A FEATURE. The weekly gate's clause (c) asks
+    # whether the model's mean predicted P(zero week) matches the actual share, per position, within
+    # 0.030. The two-part model missed at RB (0.031), WR (0.039) and TE (0.074) -- always in the same
+    # direction, always by roughly a constant. That is the signature of a LEVEL error, not a
+    # discrimination error: an L2-regularised logistic shrinks its coefficients toward zero and, on a
+    # class-imbalanced problem, its mean predicted probability with them. Ranking is unaffected;
+    # only the level is wrong.
+    #
+    # So the correction is the smallest one that can possibly fix it: ONE number per position, added
+    # to the intercept, chosen so the mean predicted probability ON THE TRAINING FOLD equals the
+    # observed zero rate on the same rows. Every coefficient is left exactly as fitted.
+    #
+    # ON THE TRAINING FOLD IS THE ENTIRE POINT. `rows` here is what the caller passed, and the
+    # evaluator passes the training seasons with the holdout removed -- so the shift is chosen
+    # without ever seeing the season it will be scored on. Choosing it on the scored rows would make
+    # clause (c) unfailable by construction, which is worse than failing it.
+    #
+    # The solve is a bisection on a function that is strictly increasing in the shift (a sum of
+    # logistics), so it has exactly one root and needs no optimiser.
+    if getattr(args, "recalibrate_zero", False):
+        z_raw = X @ zm.coef_[0] + zm.intercept_[0]
+        target = float(yz.mean())
+
+        def mean_p(shift):
+            return float(np.mean(1.0 / (1.0 + np.exp(-(z_raw + shift)))))
+
+        lo, hi = -10.0, 10.0
+        # A guard, not a formality: if the target is outside what any shift can reach (it cannot be,
+        # for a target strictly inside (0,1), but a degenerate fold could make it so) the bisection
+        # would silently return a bound.
+        if mean_p(lo) <= target <= mean_p(hi):
+            for _ in range(80):
+                mid = 0.5 * (lo + hi)
+                if mean_p(mid) < target:
+                    lo = mid
+                else:
+                    hi = mid
+            shift = 0.5 * (lo + hi)
+            coef["zero"]["intercept"] = float(coef["zero"]["intercept"] + shift)
+            print(f"  {pos}: stage-one intercept recalibrated by {shift:+.4f} "
+                  f"(train mean P(zero) {mean_p(0.0):.4f} -> {mean_p(shift):.4f}, actual {target:.4f})")
+        else:
+            print(f"  {pos}: stage-one recalibration SKIPPED -- target {target:.4f} is outside "
+                  f"[{mean_p(lo):.4f}, {mean_p(hi):.4f}], which no intercept shift can reach")
+
     # ---- stage two, on played weeks only ----
     played = yz == 0
     if int(played.sum()) < 500:
@@ -595,6 +642,13 @@ def main():
                     help="emit the floor artifact: every coefficient zero, mean intercept 1.0")
     ap.add_argument("--quantile-alpha", type=float, default=0.01)
     ap.add_argument("--quantile-max-rows", type=int, default=20000)
+    ap.add_argument("--recalibrate-zero", action="store_true",
+                    help="two-part only: after fitting stage one, shift each position's LOGISTIC "
+                         "INTERCEPT so the mean predicted P(zero week) on the TRAINING rows equals "
+                         "the observed zero rate. Coefficients are untouched -- this corrects the "
+                         "level, which is what the weekly gate's clause (c) measures, and cannot "
+                         "change the model's ranking of players. K and DST already use the empirical "
+                         "rate and are unaffected.")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 

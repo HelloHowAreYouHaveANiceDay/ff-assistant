@@ -151,7 +151,7 @@ Swept against the shipped arm on the same seeds, 2020-2024, n=300, paired:
 
 | lever | setting | playoff rate | paired difference | verdict |
 |---|---|---|---|---|
-| `starterReserve` | 4 -> 0 | 49.0% | **0.00pp** | byte-identical trials -- the soft reserve never binds at `aggr 0.7` |
+| `starterReserve` | 4 -> 0 | 49.0% | **0.00pp** on this arm | flat. Recorded as yte-identical and that is TOO STRONG: on Track A's long arm 16 of 1,800 trials differ (-0.17pp, CI [-0.44, 0.00]). The soft reserve almost never binds at `aggr 0.7` |
 | `premium` | 2 -> 0 | 49.1% | +0.07pp, CI [-4.5, +6.0] | flat |
 | `maxShare` | 0.25 -> 0.50 | 47.9% | -1.07pp, CI [-3.6, +0.7] | flat |
 | `benchDiscount` | 0.25 -> 1 | 43.4% | -5.60pp, CI [-16.7, +3.5] | the only one still doing work |

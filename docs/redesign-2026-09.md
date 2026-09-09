@@ -330,8 +330,10 @@ line. `docs/decisions.md` is untouched. No ESPN write path was added.
 
 ## Open decisions, for the owner
 
-1. **`DEFAULT_LEVERS`.** P31 measured `starterReserve` provably inert at the shipped `aggr` (4 vs 0
-   produces byte-identical trials), and `premium` and `maxShare` flat within noise on five seasons.
+1. **`DEFAULT_LEVERS`.** P31 measured `starterReserve` inert at the shipped `aggr` and recorded it as
+   producing byte-identical trials. **Corrected by Track A (P35):** on the long arm 16 of 1,800
+   trials differ, so it is FLAT WITHIN NOISE, not byte-identical -- -0.17pp, CI [-0.44, 0.00].
+   `premium` and `maxShare` flat within noise on five seasons.
    Retiring the first as a tunable lever costs nothing and removes a knob that reads as live. The
    other two were measured on 25 seasons where they did move; five seasons is not enough to overturn
    that. **Recommendation: retire `starterReserve` as a UI/CLI dial, keep the rest.**
