@@ -23,7 +23,7 @@ import type { VarianceModel } from "../draft/season.js";
 import type { DepthEntry } from "./handcuff.js";
 import { lineupNameKey, normalizeStatus, type AvailabilityMap, type GameRow, type Provenance } from "./copilot.js";
 import { loadWeeklyRows } from "../weekly/features.js";
-import { loadWeeklyArtifact, projectWeekly } from "../weekly/projector.js";
+import { loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT } from "../weekly/projector.js";
 
 const open = (dbPath?: string) => new Database(dbPath ?? dataPath("ff.db"), { readonly: true });
 
@@ -272,7 +272,7 @@ export function loadWeeklyProjection(
 ): Map<string, number> | null {
   let artifact;
   try {
-    const raw = readFileSync(artifactPath ?? dataPath("weekly-artifact-lineonly.json"), "utf8");
+    const raw = readFileSync(artifactPath ?? dataPath(SHIPPED_WEEKLY_ARTIFACT), "utf8");
     artifact = loadWeeklyArtifact(JSON.parse(raw));
   } catch { return null; }
 

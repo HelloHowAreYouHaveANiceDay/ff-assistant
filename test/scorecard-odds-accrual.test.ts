@@ -138,6 +138,7 @@ test("the 2026 rows stay unscored until the season resolves, and the report says
   const rendered = formatScorecard({
     season: SEASON, today: "2026-09-09", imminentWeek: 1,
     snapshot: { week: null, taken: 0, skipped: "x", byModel: {} },
+    challenger: { week: null, taken: 0, skipped: "x" },
     espn: { attempted: false, ok: false, reason: "n", stored: 0 },
     seasonKind: { taken: 0, skipped: null }, oddsKind: { taken: 32, skipped: null },
     scored: [], seasonScored: null, oddsScored: r, notes: [],
@@ -150,6 +151,7 @@ test("the report renders the scored block with both models and their floors", ()
   const rendered = formatScorecard({
     season: SEASON, today: "2092-01-10", imminentWeek: null,
     snapshot: { week: null, taken: 0, skipped: "x", byModel: {} },
+    challenger: { week: null, taken: 0, skipped: "x" },
     espn: { attempted: false, ok: false, reason: "n", stored: 0 },
     seasonKind: { taken: 0, skipped: null }, oddsKind: { taken: 32, skipped: null },
     scored: [], seasonScored: null, oddsScored: r, notes: [],

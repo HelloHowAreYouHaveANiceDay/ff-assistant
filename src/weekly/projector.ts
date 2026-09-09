@@ -34,6 +34,27 @@
  */
 import { WEEKLY_FEATURE_FIELDS, type WeeklyFeatureField } from "./features.js";
 
+/**
+ * WHICH WEEKLY ARTIFACT IS THE SHIPPED ONE, in ONE place because it was in two and they disagreed.
+ *
+ * Until the final integration `lineupRecommend` loaded `weekly-artifact-lineonly.json` (the floor)
+ * and `ff scorecard` loaded `weekly-artifact.json` (the two-part challenger), each with the filename
+ * typed inline. So the model the season's forward record was accruing for was NOT the model the
+ * lineup was served from, and nothing said so: both files load through the same loader, both
+ * validate, and both produce plausible numbers. The scorecard's whole purpose is to be the one
+ * measurement that cannot be gamed after the fact, and it was measuring a model nobody used.
+ *
+ * The floor ships because it is what passed. Phase 2d re-ran the corrected weekly gate on both
+ * candidates and BOTH failed clause (c) -- see `MODELS` in src/draft/models.ts for the measured
+ * numbers -- so the season-line-only artifact remains the shipped one, exactly as before.
+ *
+ * The challenger is not thrown away. `ff scorecard` snapshots it under its own kind so the live
+ * season accrues out-of-sample evidence for it, which is the only kind of evidence left: the
+ * historical folds have all been used.
+ */
+export const SHIPPED_WEEKLY_ARTIFACT = "weekly-artifact-lineonly.json";
+export const CHALLENGER_WEEKLY_ARTIFACT = "weekly-artifact.json";
+
 export type WeeklyHead = "mean" | "p10" | "p50" | "p90";
 export const WEEKLY_HEADS: WeeklyHead[] = ["mean", "p10", "p50", "p90"];
 

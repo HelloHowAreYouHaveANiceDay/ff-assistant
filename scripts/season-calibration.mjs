@@ -454,11 +454,15 @@ for (const [what, s, u] of [["playoffs", sim.playoff, uni.playoff], ["title", si
     `${complete.length} with BOTH a playoff and a title probability, as of ${complete[0]?.asOf ?? "?"}`);
   console.log(`    they sum to ${sumP.toFixed(1)}% playoff and ${sumT.toFixed(1)}% title -- the conservation the simulator imposes,`);
   console.log(`    so the rows are readable and self-consistent and are waiting only for the season to settle.`);
-  // AND THE GAP, stated plainly: the SNAPSHOT path exists, the SCORING path does not.
-  // src/weekly/scorecard.ts scores the `weekly` and `season` kinds and has no branch for `odds`, so
-  // when 2026 finishes nothing will turn these 32 rows into a Brier score without new code.
-  console.log(`    NOTE: scorecard.ts writes this kind but does NOT score it -- there is no 'odds' branch in the`);
-  console.log(`    scoring phase, only 'weekly' and 'season'. The accrual is a Phase 3 gap, not a data problem.`);
+  // THE GAP THIS USED TO REPORT IS CLOSED. Until Phase 3 the SNAPSHOT path existed and the SCORING
+  // path did not, so these 32 rows could never have become a Brier score without new code, and this
+  // line said so. `src/weekly/scorecard.ts` now carries the `odds` branch and
+  // `scripts/odds-accrual-2025.mjs` proves it reproduces THIS harness's 2025 Brier to six decimals
+  // (playoffs 0.209587, title 0.052147). The message is corrected rather than deleted: a script that
+  // keeps printing a resolved gap is how a stale claim outlives the thing it described.
+  console.log(`    scorecard.ts now SCORES this kind too (Phase 3): \`ff scorecard --season 2026\` produces a`);
+  console.log(`    Brier and a log loss per model against its own uniform floor once the season settles.`);
+  console.log(`    scripts/odds-accrual-2025.mjs checks that scorer against THIS harness on 2025, to six decimals.`);
 }
 
 if (JSON_OUT) {

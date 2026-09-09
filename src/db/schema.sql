@@ -1147,8 +1147,13 @@ CREATE TABLE IF NOT EXISTS raw_espn_projection (
 CREATE TABLE IF NOT EXISTS scorecard_prediction (
   season          INTEGER,
   week            INTEGER,           -- 0 for season-long kinds
-  kind            TEXT,              -- 'weekly' | 'season' | 'odds'
-  model           TEXT,              -- 'weekly' | 'season_line' | 'shipped_week' | 'trailing4' | 'espn'
+  kind            TEXT,              -- 'weekly' | 'weekly_challenger' | 'season' | 'odds'
+  -- 'weekly'            -> weekly | season_line | shipped_week | trailing4 | espn, all served from
+  --                        the SHIPPED artifact, i.e. the one the lineup is served from.
+  -- 'weekly_challenger' -> two_part: the model that failed clause (c) of the weekly gate by five
+  --                        thousandths, snapshotted on the same players and the same as_of so the
+  --                        live season accrues out-of-sample evidence for it. Starts at week 2.
+  model           TEXT,
   subject         TEXT,              -- feat_key for player kinds, team/owner id for odds
   name            TEXT,
   pos             TEXT,

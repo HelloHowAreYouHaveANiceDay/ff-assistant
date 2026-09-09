@@ -40,11 +40,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, type DB } from "../db/db.js";
+import { dataPath } from "../data/paths.js";
 import { makeProjections } from "../projections.js";
 import { optimalLineup, type RosterPlayer } from "../inseason/lineup.js";
 import { mulberry32 } from "../draft/sim.js";
 import {
-  loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact,
+  loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact, CHALLENGER_WEEKLY_ARTIFACT,
   type WeeklyArtifact, type WeeklyProjRow,
 } from "./projector.js";
 import { loadWeeklyRows, PENDING_DATA_TRACK_FIELDS, type WeeklyRow } from "./features.js";
@@ -579,7 +580,10 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   try {
     // The spread table for the baselines is measured on the TRAINING seasons, once, with the
     // FULL-DATA artifact -- it is a property of each baseline's calibration, not of a fold.
-    const fullArt = loadWeeklyArtifact(JSON.parse(readFileSync("data/weekly-artifact.json", "utf8")));
+    // The CANDIDATE artifact, not the shipped one: this harness exists to decide whether the
+    // candidate may ship, so it reads what the trainer last produced. Named by the constant so the
+    // filename lives in one place -- see SHIPPED_WEEKLY_ARTIFACT for what that cost when it did not.
+    const fullArt = loadWeeklyArtifact(JSON.parse(readFileSync(dataPath(CHALLENGER_WEEKLY_ARTIFACT), "utf8")));
     featuresUsed = fullArt.features.map((f) => f.name);
     // WHICH MODEL THE FOLDS FIT IS READ OFF THE ARTIFACT THAT WOULD SHIP, not passed in.
     // The harness's job is to score the thing that would actually ship, and the full-data artifact

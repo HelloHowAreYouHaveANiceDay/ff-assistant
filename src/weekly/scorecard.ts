@@ -30,7 +30,10 @@
 import { readFileSync } from "node:fs";
 import { openDb, nowIso, type DB } from "../db/db.js";
 import { dataPath } from "../data/paths.js";
-import { loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact, type WeeklyArtifact } from "./projector.js";
+import {
+  loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact,
+  SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT, type WeeklyArtifact,
+} from "./projector.js";
 import { loadWeeklyRows, loadSchedule, type ScheduleInfo } from "./features.js";
 import { makeProjections } from "../projections.js";
 import { score, lineupRegret, type Scored1, type Pred } from "./evaluate.js";
@@ -40,6 +43,38 @@ export const SCORECARD_MODELS = ["weekly", "season_line", "shipped_week", "trail
 export type ScorecardModel = typeof SCORECARD_MODELS[number];
 /** The model the weekly gains are quoted against, matching src/weekly/evaluate.ts. */
 export const SC_BASELINE: ScorecardModel = "shipped_week";
+
+/**
+ * THE DUAL SNAPSHOT, and why there are two kinds rather than a sixth model.
+ *
+ * `weekly` is the SHIPPED path: every model in it is served from the artifact the lineup is actually
+ * served from (`SHIPPED_WEEKLY_ARTIFACT`), so the record accrues for the thing a decision was made
+ * on. `weekly_challenger` is the two-part model that FAILED clause (c) of the pre-registered gate by
+ * five thousandths -- the same players, the same week, the same frozen `as_of`, projected from
+ * `CHALLENGER_WEEKLY_ARTIFACT`.
+ *
+ * Two kinds, not one kind with an extra model, because they answer different questions and the
+ * lineup-regret baseline inside a kind only means something when every model in it was available to
+ * choose from. Mixing an unshipped model into `weekly` would make its lineup column read as a
+ * lineup somebody could have set.
+ */
+export const SCORECARD_KINDS = ["weekly", "weekly_challenger"] as const;
+export type ScorecardKind = typeof SCORECARD_KINDS[number];
+
+/**
+ * THE FIRST WEEK THE CHALLENGER MAY BE SNAPSHOTTED FOR, and it is 2 for a concrete reason.
+ *
+ * 2026 week 1 was snapshotted on 2026-09-08, before the split existed, when `ff scorecard` loaded
+ * the two-part artifact for the model it called `weekly`. Predictions are written once and never
+ * updated, so that row stands and cannot be corrected -- writing a week-1 challenger row now, after
+ * Thursday's kickoff, would be exactly the after-the-fact prediction this file exists to refuse, and
+ * back-filling a floor row for week 1 would be worse still.
+ *
+ * So the clean dual series starts at week 2, and `formatScorecard` says so rather than leaving a
+ * reader to infer from a gap that week 1 is missing by accident. The general late-snapshot refusal
+ * would already stop a week-1 write today; this is the narrower statement that stays true tomorrow.
+ */
+export const CHALLENGER_FIRST_WEEK = 2;
 
 export interface ScorecardOpts {
   dbPath?: string;
@@ -54,7 +89,11 @@ export interface ScorecardOpts {
   week?: number;
   /** The date the run is anchored to. Injectable so a test can drive the refusal path. */
   today?: string;
+  /** The SHIPPED weekly artifact, the one `lineupRecommend` serves from. Defaults to
+   *  `SHIPPED_WEEKLY_ARTIFACT`; overridable only so a test can drive a fixture. */
   artifactPath?: string;
+  /** The challenger, snapshotted under its own kind. Defaults to `CHALLENGER_WEEKLY_ARTIFACT`. */
+  challengerArtifactPath?: string;
   rosters?: number;
   /** A pre-loaded schedule, so a test can drive the late-snapshot refusal without a network read. */
   sched?: ScheduleInfo;
@@ -88,11 +127,13 @@ export interface ScorecardResult {
   today: string;
   imminentWeek: number | null;
   snapshot: { week: number | null; taken: number; skipped: string | null; byModel: Record<string, number> };
+  /** The `weekly_challenger` kind: the two-part model, same players, same frozen as-of. */
+  challenger: { week: number | null; taken: number; skipped: string | null };
   espn: { attempted: boolean; ok: boolean; reason: string; stored: number };
   seasonKind: { taken: number; skipped: string | null };
   oddsKind: { taken: number; skipped: string | null };
   scored: {
-    week: number; model: string; n: number; rmse: number; crps: number; coverage: number;
+    week: number; kind: ScorecardKind; model: string; n: number; rmse: number; crps: number; coverage: number;
     lineupPts: number; lineupWinShare: number;
   }[];
   seasonScored: { n: number; rmse: number; note: string } | null;
@@ -347,6 +388,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
   const res: ScorecardResult = {
     season: opts.season, today, imminentWeek: null,
     snapshot: { week: null, taken: 0, skipped: null, byModel: {} },
+    challenger: { week: null, taken: 0, skipped: null },
     espn: { attempted: false, ok: false, reason: "not attempted", stored: 0 },
     seasonKind: { taken: 0, skipped: null },
     oddsKind: { taken: 0, skipped: null },
@@ -356,8 +398,19 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
     const sched = opts.sched ?? await loadSchedule([opts.season]);
     const imm = imminentWeek(sched, opts.season, today);
     res.imminentWeek = imm;
-    const artifact = loadWeeklyArtifact(JSON.parse(readFileSync(opts.artifactPath ?? dataPath("weekly-artifact.json"), "utf8")));
+    // THE SHIPPED ARTIFACT, by the same constant `lineupRecommend` reads. See SHIPPED_WEEKLY_ARTIFACT.
+    const artifact = loadWeeklyArtifact(JSON.parse(readFileSync(opts.artifactPath ?? dataPath(SHIPPED_WEEKLY_ARTIFACT), "utf8")));
     const lineOnly = lineOnlyArtifactFor(db, opts.season);
+    // The challenger is OPTIONAL on disk. Absent, the kind is skipped and says so -- it must never
+    // fall back to the shipped artifact, which would silently record the floor's own numbers as the
+    // challenger's and make the two look identical for the rest of the season.
+    let challenger: WeeklyArtifact | null = null;
+    let challengerWhy: string | null = null;
+    try {
+      challenger = loadWeeklyArtifact(JSON.parse(readFileSync(opts.challengerArtifactPath ?? dataPath(CHALLENGER_WEEKLY_ARTIFACT), "utf8")));
+    } catch (e) {
+      challengerWhy = `no challenger artifact to snapshot (${(e as Error).message})`;
+    }
 
     // ---------------- SNAPSHOT ----------------
     if (opts.snapshot !== false) {
@@ -406,6 +459,40 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         if (!res.snapshot.taken) {
           notes.push(`week ${week} was already snapshotted -- predictions are written once and never ` +
             "updated, so a re-run is a no-op rather than a rewrite.");
+        }
+
+        // ---- weekly_challenger: the two-part model, same players, same as_of, its own kind. ----
+        res.challenger.week = week;
+        if (!challenger) {
+          res.challenger.skipped = challengerWhy;
+        } else if (week < CHALLENGER_FIRST_WEEK) {
+          res.challenger.skipped =
+            `the challenger series starts at week ${CHALLENGER_FIRST_WEEK}. Week ${week} of ${opts.season} ` +
+            "was snapshotted before the shipped/challenger split existed, when this command loaded the " +
+            "two-part artifact for the model it called `weekly`; that row is frozen and writing a " +
+            "challenger row for the same week now would be a prediction made after kickoff.";
+        } else {
+          const insC = db.prepare(
+            `INSERT OR IGNORE INTO scorecard_prediction
+               (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+             VALUES (@season,@week,'weekly_challenger','two_part',@subject,@name,@pos,@value,@p10,@p90,@asOf,@now)`,
+          );
+          const nowC = nowIso();
+          const rowsC = loadWeeklyRows(db, opts.season, week).filter((r) => r.season_line_pg != null);
+          db.transaction(() => {
+            for (const p of projectWeekly({ artifact: challenger!, rows: rowsC })) {
+              if (!Number.isFinite(p.mean)) continue;
+              const info = insC.run({
+                season: opts.season, week, subject: p.feat_key, name: p.name, pos: p.pos,
+                value: p.mean, p10: Number.isFinite(p.p10) ? p.p10 : null,
+                p90: Number.isFinite(p.p90) ? p.p90 : null, asOf, now: nowC,
+              });
+              if (info.changes) res.challenger.taken++;
+            }
+          })();
+          if (!res.challenger.taken) {
+            notes.push(`week ${week}'s challenger snapshot was already taken -- written once, like every other prediction here.`);
+          }
         }
       }
 
@@ -484,19 +571,35 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
       const weeks = settledWeeks(db, opts.season, sched, today);
       if (!weeks.length) notes.push(`no settled weeks of ${opts.season} to score as of ${today}`);
       const all: Scored1[] = [];
-      for (const week of weeks) {
+      // Both kinds are scored, each against its own frozen rows. The challenger is scored SEPARATELY
+      // rather than joined into the weekly table: its lineup column is what a lineup would have been
+      // worth had it been served, which is a counterfactual, and putting it in the same table as the
+      // shipped models would read as a lineup somebody could have set.
+      for (const [week, kind] of weeks.flatMap((w) => SCORECARD_KINDS.map((k) => [w, k] as [number, ScorecardKind]))) {
         const frozen = db.prepare(
-          "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE season = ? AND week = ? AND kind = 'weekly'",
-        ).all(opts.season, week) as { model: string; subject: string; name: string; pos: string; value: number; p10: number | null; p90: number | null }[];
-        if (!frozen.length) { notes.push(`week ${week} is settled but was never snapshotted -- nothing to score`); continue; }
+          "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE season = ? AND week = ? AND kind = ?",
+        ).all(opts.season, week, kind) as { model: string; subject: string; name: string; pos: string; value: number; p10: number | null; p90: number | null }[];
+        if (!frozen.length) {
+          if (kind === "weekly") notes.push(`week ${week} is settled but was never snapshotted -- nothing to score`);
+          else if (week >= CHALLENGER_FIRST_WEEK) notes.push(`week ${week} has no challenger snapshot -- nothing to score for ${kind}`);
+          continue;
+        }
         const actual = new Map<string, number>();
         for (const r of db.prepare(
           "SELECT feat_key, pts, is_bye FROM feat_player_week_model WHERE season = ? AND week = ?",
         ).all(opts.season, week) as { feat_key: string; pts: number | null; is_bye: number | null }[]) {
           if (!r.is_bye) actual.set(r.feat_key, r.pts ?? 0);
         }
+        // THE CHALLENGER NEEDS A BASELINE IN THE SAME ROW SET, or its lineup column is unscoreable:
+        // `lineupRegret` measures points captured against `SC_BASELINE`, and the challenger kind
+        // holds exactly one model. So the shipped kind's frozen rows for the SAME WEEK are loaded
+        // alongside it -- read-only, purely as the comparison set. They are not re-scored here (the
+        // `weekly` pass above already did that); only this kind's own models are pushed.
+        const companions = kind === "weekly" ? [] : db.prepare(
+          "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE season = ? AND week = ? AND kind = 'weekly'",
+        ).all(opts.season, week) as typeof frozen;
         const bySubject = new Map<string, Scored1>();
-        for (const f of frozen) {
+        for (const f of [...frozen, ...companions]) {
           const y = actual.get(f.subject);
           if (y == null) continue;
           const s = bySubject.get(f.subject) ?? bySubject.set(f.subject, {
@@ -509,20 +612,25 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
             p10: f.p10 ?? NaN, p50: f.value, p90: f.p90 ?? NaN,
           };
         }
-        all.push(...bySubject.values());
+        if (kind === "weekly") all.push(...bySubject.values());
 
         const models = [...new Set(frozen.map((f) => f.model))].sort();
-        const lr = lineupRegret([...bySubject.values()], opts.rosters ?? 200, { models, baseline: SC_BASELINE });
+        const lrModels = [...new Set([...models, ...companions.map((f) => f.model)])].sort();
+        // Without the baseline present, lineup regret has nothing to be regret AGAINST. Reporting
+        // whatever it returns in that state would be a number with no referent, so the columns are
+        // left NaN and say nothing rather than saying something unfounded.
+        const canLineup = lrModels.includes(SC_BASELINE);
+        const lr = canLineup ? lineupRegret([...bySubject.values()], opts.rosters ?? 200, { models: lrModels, baseline: SC_BASELINE }) : {};
         const sc = Object.keys(lr)[0];
         for (const m of models) {
           const rows = [...bySubject.values()].filter((r) => r.by[m]).map((r) => ({ actual: r.actual, p: r.by[m] }));
           const hasBand = rows.length > 0 && rows.every((r) => Number.isFinite(r.p.p10) && Number.isFinite(r.p.p90));
           const s = score(rows);
           res.scored.push({
-            week, model: m, n: s.n, rmse: s.rmse,
+            week, kind, model: m, n: s.n, rmse: s.rmse,
             crps: hasBand ? s.crps : NaN, coverage: hasBand ? s.coverage : NaN,
-            lineupPts: lr[sc]?.[m]?.meanCaptured ?? NaN,
-            lineupWinShare: lr[sc]?.[m]?.winShare ?? NaN,
+            lineupPts: (sc ? lr[sc]?.[m]?.meanCaptured : undefined) ?? NaN,
+            lineupWinShare: (sc ? lr[sc]?.[m]?.winShare : undefined) ?? NaN,
           });
         }
       }
@@ -530,7 +638,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
       // Persist the scored rows. Rebuildable BY DESIGN, unlike the predictions.
       const insR = db.prepare(
         `INSERT INTO scorecard_result (season, week, kind, model, metric, value, n, scored_at)
-         VALUES (@season,@week,'weekly',@model,@metric,@value,@n,@now)
+         VALUES (@season,@week,@kind,@model,@metric,@value,@n,@now)
          ON CONFLICT(season, week, kind, model, metric) DO UPDATE SET
            value=excluded.value, n=excluded.n, scored_at=excluded.scored_at`,
       );
@@ -539,7 +647,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         for (const r of res.scored) {
           for (const [metric, value] of [["rmse", r.rmse], ["crps", r.crps], ["coverage", r.coverage],
             ["lineup_pts", r.lineupPts], ["lineup_win_share", r.lineupWinShare]] as [string, number][]) {
-            if (Number.isFinite(value)) insR.run({ season: opts.season, week: r.week, model: r.model, metric, value, n: r.n, now });
+            if (Number.isFinite(value)) insR.run({ season: opts.season, week: r.week, kind: r.kind, model: r.model, metric, value, n: r.n, now });
           }
         }
       })();
@@ -610,6 +718,10 @@ export function formatScorecard(r: ScorecardResult): string {
     out.push(`  week ${r.snapshot.week}: ${r.snapshot.taken} new prediction rows`);
     for (const [m, n] of Object.entries(r.snapshot.byModel)) out.push(`    ${pad(m, 14)} ${n}`);
   }
+  // The dual snapshot, stated every run rather than inferred from a gap in the table.
+  out.push(`  weekly kind serves ${SHIPPED_WEEKLY_ARTIFACT} -- the SAME artifact lineupRecommend serves from`);
+  if (r.challenger.skipped) out.push(`  challenger:  week ${r.challenger.week ?? "-"}: SKIPPED -- ${r.challenger.skipped}`);
+  else out.push(`  challenger:  week ${r.challenger.week}: ${r.challenger.taken} rows from ${CHALLENGER_WEEKLY_ARTIFACT} (kind weekly_challenger, model two_part), series starts week ${CHALLENGER_FIRST_WEEK}`);
   out.push(`  season kind: ${r.seasonKind.taken} rows${r.seasonKind.skipped ? " -- " + r.seasonKind.skipped : ""}`);
   out.push(`  odds kind:   ${r.oddsKind.taken} rows${r.oddsKind.skipped ? " -- " + r.oddsKind.skipped : ""}`);
   out.push(`  espn:        ${r.espn.attempted ? (r.espn.ok ? `${r.espn.stored} stored` : "not stored") : "not attempted"} -- ${r.espn.reason}`);
@@ -617,9 +729,9 @@ export function formatScorecard(r: ScorecardResult): string {
   out.push("SCORED WEEKS");
   if (!r.scored.length) out.push("  (nothing settled yet)");
   else {
-    out.push("  " + pad("week", 6) + pad("model", 14) + "      n     RMSE     CRPS    cover   lineup  winShare");
+    out.push("  " + pad("week", 6) + pad("kind", 20) + pad("model", 14) + "      n     RMSE     CRPS    cover   lineup  winShare");
     for (const s of r.scored) {
-      out.push("  " + pad(String(s.week), 6) + pad(s.model, 14) + String(s.n).padStart(7) +
+      out.push("  " + pad(String(s.week), 6) + pad(s.kind, 20) + pad(s.model, 14) + String(s.n).padStart(7) +
         num(s.rmse).padStart(9) + num(s.crps).padStart(9) + num(s.coverage).padStart(9) +
         num(s.lineupPts, 2).padStart(9) + num(s.lineupWinShare).padStart(10));
     }
