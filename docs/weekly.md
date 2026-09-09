@@ -280,6 +280,20 @@ outright. The join to our board is by name+position, because `raw_espn_projectio
 id and nothing in the identity registry maps it -- 430 of 523 board players matched, and inventing a
 mapping to close that gap would silently attach one man's projection to another.
 
+**Read the ESPN comparison with the population in mind.** On the 430 players where both have a
+week-1 number, our mean is **5.22** and ESPN's is **5.95** -- ours systematically ~12% lower. That is
+almost certainly not an accuracy difference: our model is fitted on the `rostered` population, so it
+prices in the chance the man does not play, while ESPN's published number reads like a projection
+conditioned on playing. It is the same mismatch that cost this track an evaluation pass on its own
+model (section 2), now sitting on the other side of the comparison. When week 1 is scored, ESPN will
+look biased high against rostered actuals, and that will be a difference in the question being
+answered, not a defect. The right reading is the ordering-sensitive one -- CRPS, and lineup regret --
+not the bias column.
+
+Face validity of the frozen board, for the record: QB Burrow 16.8 / Herbert 16.7 / Jackson 15.6;
+RB Gibbs 13.6 / Hampton 12.9 / Taylor 11.8; WR Chase 10.1 / Nacua 9.9 / St. Brown 9.7;
+TE LaPorta 6.9 / Loveland 6.7 / Goedert 6.4.
+
 **The odds kind is EMPTY and says why.** `team_odds` holds a game spread and total, not a playoff or
 title probability. A Brier score accrued against a number we manufactured from the spread would
 measure our own arithmetic. When a real playoff/title probability exists in the store, the kind

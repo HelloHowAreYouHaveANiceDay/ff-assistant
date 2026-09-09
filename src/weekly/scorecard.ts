@@ -146,10 +146,18 @@ function weeklyPredictions(db: DB, season: number, week: number, artifact: Weekl
     const t4 = r.f.t4_mean ?? r.f.td_ppg ?? r.season_line_pg!;
     put(r.feat_key, r.name, r.pos, "trailing4", { mean: t4, p10: NaN, p50: NaN, p90: NaN });
   }
-  // ESPN, joined by name+position. Not by surrogate key: raw_espn_projection carries ESPN's own id,
-  // which nothing in the identity registry maps yet, and inventing a mapping here would silently
+  // ESPN. TWO THINGS TO KNOW BEFORE READING ITS SCORE.
+  //
+  // (1) POPULATION. Our weekly model is fitted on `rostered` weeks, so it prices in the chance the
+  // man does not play; ESPN's published number reads like a projection conditioned on playing. On
+  // 2026 week 1, over the 430 players both cover, our mean is 5.22 and ESPN's 5.95. When the week is
+  // scored, ESPN will look biased high against rostered actuals, and that is a difference in the
+  // question being answered, not a defect. Read CRPS and lineup regret, not the bias column.
+  //
+  // (2) THE JOIN is by name+position, not by surrogate key: raw_espn_projection carries ESPN's own
+  // id, which nothing in the identity registry maps yet, and inventing a mapping here would silently
   // attach one man's projection to another. A name+pos join misses the collisions Phase 1 fixed on
-  // the board and that is stated rather than hidden -- the row count is reported.
+  // the board and that is stated rather than hidden -- the row count is reported (430 of 523).
   const espn = db.prepare(
     "SELECT name, pos, proj_pts FROM raw_espn_projection WHERE season = ? AND week = ?",
   ).all(season, week) as { name: string; pos: string; proj_pts: number }[];
