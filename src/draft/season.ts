@@ -213,7 +213,8 @@ function playoffWinner(seeds: number[], beat: (a: number, b: number) => number):
  * impossible to simulate by accident; it takes the explicitly-named opt-out below.
  */
 export function assertRostersCanFillLineup(
-  teams: SeasonTeamInput[],
+  // Same structural widening as rosterGaps below: eligibility rides along when a caller has it.
+  teams: { id: string; name?: string; roster: { pos: string; eligible?: string[] }[] }[],
   slots: string[],
   flexOk?: Iterable<string>,
   replacement?: Record<string, number>,
@@ -267,7 +268,10 @@ export function assertRostersCanFillLineup(
  * when every team is legal.
  */
 export function rosterGaps(
-  teams: SeasonTeamInput[],
+  // Structurally typed rather than `SeasonTeamInput[]`, so a caller that carries ESPN's eligibility
+  // set on a roster player can pass it straight through without SeasonPlayer having to know about
+  // it. A roster without the field is assignable unchanged, which is the whole point.
+  teams: { id: string; name?: string; roster: { pos: string; eligible?: string[] }[] }[],
   slots: string[],
   flexOk?: Iterable<string>,
 ): string[] {
@@ -280,7 +284,27 @@ export function rosterGaps(
   const problems: string[] = [];
   for (const t of teams) {
     const have: Record<string, number> = {};
-    for (const p of t.roster) have[p.pos] = (have[p.pos] ?? 0) + 1;
+    // SINGLE-ELIGIBLE PLAYERS FIRST, then the dual ones are placed where they are actually needed.
+    // Counting a dual man under his projection's position and stopping there would report a hole at
+    // the very slot he exists to cover -- and `assertRostersCanFillLineup` would then REFUSE to
+    // simulate a legal roster. Two passes, not one, because "where is he needed" is only answerable
+    // once the men who have no choice have been counted.
+    const duals: string[][] = [];
+    for (const p of t.roster) {
+      const elig = (p.eligible && p.eligible.length ? p.eligible : [p.pos]).filter((x) => need[x] != null || flex.has(x));
+      if (elig.length > 1) duals.push(elig);
+      else { const only = elig[0] ?? p.pos; have[only] = (have[only] ?? 0) + 1; }
+    }
+    for (const elig of duals) {
+      // The neediest eligible position wins, largest deficit first; ties fall to the order the
+      // positions appear in his eligible set, so the result does not depend on object key order.
+      let best = elig[0], bestDeficit = -Infinity;
+      for (const pos of elig) {
+        const deficit = (need[pos] ?? 0) - (have[pos] ?? 0);
+        if (deficit > bestDeficit) { bestDeficit = deficit; best = pos; }
+      }
+      have[best] = (have[best] ?? 0) + 1;
+    }
     for (const [pos, n] of Object.entries(need)) {
       if ((have[pos] ?? 0) < n) problems.push(`${t.name || t.id}: has ${have[pos] ?? 0} ${pos} but the lineup starts ${n}`);
     }

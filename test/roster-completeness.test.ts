@@ -23,8 +23,9 @@ import { dstAliasKey, nameKey } from "../src/draft/values.js";
 // Both directions are asserted. A guard that can only ever REFUSE is dead code that reads exactly
 // like a guard that is working, and the negative path is the one that was already correct here.
 const SLOTS = ["QB", "RB", "WR", "TE", "FLEX", "FLEX", "DST", "K", "BE", "BE"];
-const roster = (spec: [string, number][]) =>
-  spec.flatMap(([pos, n]) => Array.from({ length: n }, (_, i) => ({ name: `${pos}${i}`, pos, proj: 100, bye: null })));
+type FixturePlayer = { name: string; pos: string; proj: number; bye: number | null; eligible?: string[] };
+const roster = (spec: [string, number][]): FixturePlayer[] =>
+  spec.flatMap(([pos, n]) => Array.from({ length: n }, (_, i): FixturePlayer => ({ name: `${pos}${i}`, pos, proj: 100, bye: null })));
 const team = (spec: [string, number][]) => [{ id: "1", name: "T1", roster: roster(spec) }];
 const COMPLETE: [string, number][] = [["QB", 1], ["RB", 3], ["WR", 3], ["TE", 1], ["K", 1], ["DST", 1]];
 
@@ -95,6 +96,42 @@ test("flexOk is honoured -- a superflex league can fill FLEX with the spare QB",
   const spec: [string, number][] = [["QB", 3], ["RB", 1], ["WR", 1], ["TE", 1], ["K", 1], ["DST", 1]];
   assert.throws(() => assertRostersCanFillLineup(team(spec), SLOTS));
   assert.doesNotThrow(() => assertRostersCanFillLineup(team(spec), SLOTS, ["QB", "RB", "WR", "TE"]));
+});
+
+// --- DUAL ELIGIBILITY -----------------------------------------------------------------------------
+// A man ESPN qualifies at two positions must be counted toward whichever one is SHORT. Counting him
+// under his projection's position and stopping there reports a hole at the very slot he exists to
+// cover, and this function's caller then REFUSES to simulate a perfectly legal roster.
+
+test("a dual-eligible player is counted toward the position that is SHORT", () => {
+  // No tight end on the roster at all -- except a receiver ESPN also qualifies at TE.
+  const spec: [string, number][] = [["QB", 1], ["RB", 3], ["WR", 3], ["K", 1], ["DST", 1]];
+  const plain = team(spec);
+  assert.throws(() => assertRostersCanFillLineup(plain, SLOTS), /0 TE.*starts 1/s,
+    "the fixture must be short at TE, or the next assertion proves nothing");
+
+  const dual = team(spec);
+  dual[0].roster.find((p) => p.name === "WR2")!.eligible = ["WR", "TE"];
+  assert.doesNotThrow(() => assertRostersCanFillLineup(dual, SLOTS),
+    "the dual man covers the TE slot and the roster is legal");
+});
+
+test("a dual-eligible player is counted ONCE -- he cannot cover two holes at the same time", () => {
+  // Short at both TE and WR. One man eligible at both can only fill one of them.
+  const spec: [string, number][] = [["QB", 1], ["RB", 4], ["K", 1], ["DST", 1]];
+  const t2 = team(spec);
+  t2[0].roster.push({ name: "Swiss", pos: "WR", proj: 100, bye: null, eligible: ["WR", "TE"] });
+  assert.throws(() => assertRostersCanFillLineup(t2, SLOTS), /(0 TE|0 WR)/,
+    "one body was made to fill two mandatory slots");
+});
+
+test("eligibility is inert for a single-eligible roster -- same answer with the field present", () => {
+  const withField = team(COMPLETE);
+  for (const p of withField[0].roster) p.eligible = [p.pos];
+  assert.doesNotThrow(() => assertRostersCanFillLineup(withField, SLOTS));
+  const noDst = team(COMPLETE.filter(([p]) => p !== "DST"));
+  for (const p of noDst[0].roster) p.eligible = [p.pos];
+  assert.throws(() => assertRostersCanFillLineup(noDst, SLOTS), /0 DST.*starts 1/s);
 });
 
 test("every rostered player resolves onto the board", async (t) => {

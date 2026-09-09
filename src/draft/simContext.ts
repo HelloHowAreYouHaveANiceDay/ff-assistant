@@ -27,6 +27,7 @@ import { simulateSeasons, type SeasonTeamInput, type SeasonOdds, type VarianceMo
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
 import { dataPath } from "../data/paths.js";
+import { loadEligibilityMap } from "../data/eligibility.js";
 
 export interface SimContext {
   teams: SeasonTeamInput[];
@@ -43,7 +44,10 @@ export interface SimContext {
   run: (teams: SeasonTeamInput[], trials: number, seed: number, extra?: Partial<Parameters<typeof simulateSeasons>[3]>) => SeasonOdds[];
   /** Deep copy, so a caller can mutate a roster without touching the shared base. */
   clone: (t?: SeasonTeamInput[]) => SeasonTeamInput[];
-  board: Map<string, { name: string; pos: string; proj: number; team: string }>;
+  /** `eligible` is ESPN's own eligible-position SET, present only for a player who is startable at
+   *  more than one of QB/RB/WR/TE. Absent means "[his own position]", which is every player on the
+   *  2026 board -- so a consumer that ignores the field behaves exactly as it did. */
+  board: Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[] }>;
   ownedIds: Set<string>;
   /** The league's starting template and FLEX eligibility, so a caller building a hypothetical roster
    *  can ask whether it is legal (rosterGaps) instead of finding out when the simulator refuses. */
@@ -78,10 +82,14 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     "SELECT p.name, r.bye FROM player p JOIN ranking r ON r.player_id=p.player_id AND r.source='fantasypros_ecr' AND r.season=?",
   ).all(cfg.season) as { name: string; bye: number }[]) byeOf.set(nameKey(r.name), r.bye);
 
-  const board = new Map<string, { name: string; pos: string; proj: number; team: string }>();
+  // ESPN's eligibility, read from the STAGED table rather than re-derived from the board's Eligible
+  // string: the board column is a display of this, and two readings of one fact is how they drift.
+  const eligByKey = loadEligibilityMap(db, cfg.season);
+  const board = new Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[] }>();
   for (const r of db.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(cfg.season) as { player_id: string; row_json: string }[]) {
     const j = JSON.parse(r.row_json) as Record<string, unknown>;
-    board.set(r.player_id, { name: String(j.Player), pos: String(j.Pos), proj: Number(j.ProjPts) || 0, team: String(j.Team ?? "") });
+    const eligible = eligByKey.get(r.player_id);
+    board.set(r.player_id, { name: String(j.Player), pos: String(j.Pos), proj: Number(j.ProjPts) || 0, team: String(j.Team ?? ""), ...(eligible ? { eligible } : {}) });
   }
   const ownedIds = new Set<string>();
   const byTeam = new Map<string, SeasonTeamInput>();
