@@ -71,9 +71,40 @@ export function assertTrajectorySchema(o: RankOutcomes): void {
   );
 }
 
-/** Correlation between two positions on the same NFL team; 0 when unmeasured or below noise. */
+/**
+ * Correlation between two POSITIONS on the same NFL team; 0 when unmeasured or below noise.
+ *
+ * A position with ITSELF is 1 -- that is a true statement about a position, and it is what the
+ * diagonal of a correlation matrix needs. IT IS NOT THE RIGHT ANSWER FOR TWO DIFFERENT MEN who
+ * happen to play the same position: use `teammateCorr` for that. See its comment for what went
+ * wrong when the two questions shared one function.
+ */
 export function pairCorr(model: CorrelationModel, a: string, b: string): number {
   if (a === b) return 1;
+  return model.pairs[`${a}-${b}`] ?? model.pairs[`${b}-${a}`] ?? 0;
+}
+
+/**
+ * Correlation between TWO DIFFERENT ROSTERED MEN on the same NFL team, by their positions.
+ *
+ * THE BUG THIS EXISTS TO REMOVE. `prepare()` built each NFL team's correlation matrix with
+ * `pairCorr(corr, a.pos, b.pos)`, which returns 1 whenever the two position STRINGS match. Two
+ * receivers on one team therefore entered the copula as the SAME MAN -- a singular matrix, so the
+ * Cholesky shrinkage repair fired and damped that team's OTHER correlations (its real QB-WR coupling
+ * among them) on the way to something decomposable. Nothing failed; the repair is designed to
+ * degrade quietly, which is exactly why this survived.
+ *
+ * It was never a modelling choice. `scripts/fit-correlation.mjs` took only the TOP scorer per
+ * position per team-week, so a same-position pair was never in the fit at all, and the model had no
+ * `WR-WR` key for `pairCorr` to find. The measurement now exists: WR1-WR2 +0.013 (SE 0.009,
+ * n=13,806), RB1-RB2 -0.013 (SE 0.009), TE1-TE2 -0.020 (SE 0.011), each within 2 SE of zero and
+ * written as 0. Both mechanisms are real and they very nearly cancel -- shared game script couples
+ * two receivers positively, competition for one ball couples them negatively.
+ *
+ * NO FALLBACK TO 1. An unmeasured same-position pair reads 0, not 1: the honest reading of "we never
+ * measured this" is no coupling, and 1 is the specific wrong answer that caused the defect.
+ */
+export function teammateCorr(model: CorrelationModel, a: string, b: string): number {
   return model.pairs[`${a}-${b}`] ?? model.pairs[`${b}-${a}`] ?? 0;
 }
 
@@ -235,12 +266,14 @@ export function prepare(players: PoolPlayer[], outcomes: RankOutcomes, corr: Cor
   const wk = weeklyCoupling();
   for (const [, members] of byTeam) {
     if (members.length < 2) continue;
-    const M = members.map((a) => members.map((b) => pairCorr(corr, a.pos, b.pos)));
+    // `a === b` is IDENTITY, not position equality: the diagonal is the man with himself. Every
+    // off-diagonal goes through `teammateCorr`, which never returns 1 for two different men.
+    const M = members.map((a) => members.map((b) => (a === b ? 1 : teammateCorr(corr, a.pos, b.pos))));
     // A SECOND factor, for the WITHIN-WEEK stage. Same pairwise structure, scaled: the season-level
     // copula already delivers part of the same-week co-movement, so imposing the full measured
     // correlation again inside the season would double-count it. See WEEKLY_COUPLING.
     const Mw = members.map((a) => members.map((b) =>
-      (a === b ? 1 : pairCorr(corr, a.pos, b.pos) * wk)));
+      (a === b ? 1 : teammateCorr(corr, a.pos, b.pos) * wk)));
     groups.push({ members, L: cholesky(M), Lw: cholesky(Mw) });
   }
   return { pools, groups, uncalibrated };

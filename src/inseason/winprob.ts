@@ -47,7 +47,7 @@
  * one-week question it is given and says so.
  */
 import { optimalLineup, type RosterPlayer } from "./lineup.js";
-import { cholesky, normalCdf, type CorrelationModel } from "../draft/bootstrap.js";
+import { cholesky, normalCdf, teammateCorr, type CorrelationModel } from "../draft/bootstrap.js";
 
 // ---------------------------------------------------------------------------------------------
 // THE MARGINAL: a published band, read as a quantile function.
@@ -257,22 +257,24 @@ export function sampleWeek(
     byTeam.get(t)!.push(i);
   }
   /**
-   * THE OFF-DIAGONAL, and why `pairCorr` is not called for it directly.
+   * THE OFF-DIAGONAL, and why `pairCorr` is not called for it.
    *
    * `pairCorr(model, a, b)` returns 1 when the two position strings are EQUAL -- which is right when
    * the question is "how correlated is a position with itself", and wrong here, where the two
    * arguments are two DIFFERENT men who happen to play the same position. Two receivers on one NFL
    * team are not the same player; they share a quarterback and split his targets, which is if
-   * anything a negative dependence. The correlation model has no WR-WR pair fitted, so the honest
-   * value is the one it publishes -- nothing -- and the honest reading of nothing is ZERO, not one.
-   * Taking the shortcut would have made a stack of same-position teammates a single player with a
-   * multiplied projection, which inflates the lineup's variance enormously and is exactly the shape
-   * the underdog side of the search reaches for.
+   * anything a negative dependence. Taking the shortcut would have made a stack of same-position
+   * teammates a single player with a multiplied projection, which inflates the lineup's variance
+   * enormously and is exactly the shape the underdog side of the search reaches for.
+   *
+   * This track worked around it with a local lookup that read 0 for an absent key. `teammateCorr` in
+   * bootstrap.ts is now that function, shared -- because the SEASON simulator had the bug this note
+   * describes (`prepare()` really was coupling two receivers at 1) and a workaround living in one
+   * file could not fix it there. The keys now exist and are measured: WR-WR, RB-RB and TE-TE all
+   * within 2 SE of zero, so this file's number is unchanged and is now a measurement rather than an
+   * assumption.
    */
-  const pairOf = (a: number, b: number): number => {
-    const pa = players[a].pos, pb = players[b].pos;
-    return corr.pairs[`${pa}-${pb}`] ?? corr.pairs[`${pb}-${pa}`] ?? 0;
-  };
+  const pairOf = (a: number, b: number): number => teammateCorr(corr, players[a].pos, players[b].pos);
   const groups: { idx: number[]; L: number[][] }[] = [];
   let coupledPlayers = 0;
   for (const [, idx] of [...byTeam.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {

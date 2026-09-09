@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { prepare, sampleSeason, weekOf, cholesky, normalCdf, quantile, pairCorr, type RankOutcomes, type CorrelationModel } from "../src/draft/bootstrap.js";
+import { prepare, sampleSeason, weekOf, cholesky, normalCdf, quantile, pairCorr, teammateCorr, type RankOutcomes, type CorrelationModel } from "../src/draft/bootstrap.js";
 import { mulberry32 } from "../src/draft/sim.js";
 
 // The two properties that make a copula the right tool, and one that makes it safe:
@@ -116,6 +116,65 @@ test("pairCorr is symmetric, self-correlation is 1, unknown pairs are 0", () => 
   assert.equal(pairCorr(corr, "WR", "QB"), 0.348);
   assert.equal(pairCorr(corr, "QB", "QB"), 1);
   assert.equal(pairCorr(corr, "K", "DST"), 0);
+});
+
+// ==================================================================================================
+// SAME-POSITION TEAMMATES. Two receivers on one NFL team are two men, not one man twice.
+//
+// `prepare()` built the off-diagonal with `pairCorr(corr, a.pos, b.pos)`, which returns 1 when the
+// two POSITION STRINGS match. So a roster holding two Lions receivers handed the copula a singular
+// matrix; the Cholesky shrinkage repair fired and quietly damped that team's REAL couplings on the
+// way to something decomposable, and nothing anywhere failed. The measurement that should have
+// settled it never existed, because `scripts/fit-correlation.mjs` kept only the top scorer per
+// position per team-week. It exists now: WR1-WR2 +0.013 (SE 0.009), RB1-RB2 -0.013, TE1-TE2 -0.020,
+// every one inside 2 SE of zero.
+// ==================================================================================================
+test("teammateCorr never returns 1 for two DIFFERENT men at the same position", () => {
+  // The measured keys are read...
+  assert.equal(teammateCorr({ pairs: { "WR-WR": 0.013 } }, "WR", "WR"), 0.013);
+  // ...and an UNMEASURED same-position pair reads 0, never 1. This is the whole defect in one line.
+  assert.equal(teammateCorr({ pairs: {} }, "WR", "WR"), 0);
+  assert.equal(teammateCorr(corr, "QB", "WR"), 0.348);
+  assert.equal(teammateCorr(corr, "WR", "QB"), 0.348);
+  // `pairCorr` keeps its own meaning -- a POSITION with itself is 1 -- so the two questions stay
+  // separate rather than one function answering both and getting one of them wrong.
+  assert.equal(pairCorr(corr, "WR", "WR"), 1);
+});
+
+test("two same-team RECEIVERS are NOT perfectly coupled", () => {
+  const s = run([
+    { name: "wr1", pos: "WR", team: "DET", rank: 1 },
+    { name: "wr2", pos: "WR", team: "DET", rank: 1 },
+  ]);
+  const r = pearson(s.get("wr1")!, s.get("wr2")!);
+  // The measured WR-WR is inside 2 SE of zero and is written as 0, so the sampler must produce ~0.
+  // The assertion that matters is the UPPER one: 1 was the shipped answer.
+  assert.ok(Math.abs(r) < 0.10, `two same-team receivers came out at r=${r.toFixed(3)}, want ~0`);
+  // And they must be two DIFFERENT draws, not one value twice -- r < 1 could also be reached by a
+  // broken sampler that returns the same number with noise, so check the series genuinely differ.
+  const identical = s.get("wr1")!.every((v, i) => v === s.get("wr2")![i]);
+  assert.ok(!identical, "the two receivers drew IDENTICAL season series -- they are one man");
+});
+
+test("FAULT INJECTION: restoring the old same-position=1 rule couples the two receivers at ~1", () => {
+  // The old behaviour, reproduced exactly: `WR-WR` set to 1 in the model is what `pairCorr`'s
+  // `a === b -> 1` branch fed the matrix. If this does NOT come out near 1, the test above is not
+  // measuring what it claims and the fix is not connected.
+  const rng = mulberry32(99), g = gaussFrom(rng);
+  const players = [
+    { name: "wr1", pos: "WR", team: "DET", rank: 1 },
+    { name: "wr2", pos: "WR", team: "DET", rank: 1 },
+  ];
+  const prep = prepare(players, outcomes, { pairs: { ...corr.pairs, "WR-WR": 1 } });
+  const a: number[] = [], b: number[] = [];
+  for (let i = 0; i < 4000; i++) {
+    const drawn = sampleSeason(players, prep, g, rng);
+    a.push(weekOf(drawn.get(players[0]), 1));
+    b.push(weekOf(drawn.get(players[1]), 1));
+  }
+  const r = pearson(a, b);
+  assert.ok(r > 0.7, `the injected old rule should couple the pair near 1, got ${r.toFixed(3)} -- ` +
+    "the guard above is not connected to the behaviour it claims to test");
 });
 
 test("FAULT INJECTION: zeroing the correlation model removes the coupling", () => {

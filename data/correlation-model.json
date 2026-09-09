@@ -10,6 +10,46 @@
     "RB-TE": 0.0115,
     "QB-DST": 0.0043,
     "QB-K": 0.1372,
-    "K-DST": 0.2241
+    "K-DST": 0.2241,
+    "WR-WR": 0,
+    "RB-RB": 0,
+    "TE-TE": 0
+  },
+  "samePosition": {
+    "WR1-WR2": {
+      "n": 13806,
+      "r": 0.013,
+      "se": 0.0085,
+      "shrunkToZero": true,
+      "key": "WR-WR"
+    },
+    "RB1-RB2": {
+      "n": 12340,
+      "r": -0.0129,
+      "se": 0.009,
+      "shrunkToZero": true,
+      "key": "RB-RB"
+    },
+    "TE1-TE2": {
+      "n": 8626,
+      "r": -0.0201,
+      "se": 0.0108,
+      "shrunkToZero": true,
+      "key": "TE-TE"
+    },
+    "QB1-QB2": {
+      "n": 957,
+      "r": -0.1908,
+      "se": 0.0323,
+      "shrunkToZero": false,
+      "key": null
+    },
+    "WR1-WR3": {
+      "n": 12634,
+      "r": 0.0047,
+      "se": 0.0089,
+      "shrunkToZero": true,
+      "key": null
+    }
   }
 }
