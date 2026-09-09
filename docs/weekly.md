@@ -63,6 +63,29 @@ is dead code that reads exactly like a passing one, so:
    -- the real leak in its natural habitat -- and `dvp_mult` must then move both under the switch and
    under the perturbation. It does.
 
+### The audit on the table that actually shipped
+
+The guard above proves the BUILDER cannot leak, on a fixture it controls completely. That is a
+different question from whether the table on disk leaks -- a builder can be correct and the table
+still be stale, half-built, or written by an older version of the code. So
+`scripts/weekly-leak-audit.mjs` recomputes `td_games`, `td_ppg` and `t4_mean` from the raw weekly
+facts with an **independent implementation** and an explicit `week < w` bound, and compares. Not by
+re-running the builder and diffing, which would compare the code against itself.
+
+```
+node --import tsx scripts/weekly-leak-audit.mjs 2023
+            mismatches vs `week < w`   vs `week <= w` (the leak)
+  games               0                   6888
+  ppg                 0                   6696
+  t4                  0                   6504
+AUDIT PASSED -- and the leaked-bound control fired on every column.
+```
+
+Zero mismatches under the honest bound; thousands the moment the bound moves by one week. Same result
+on 2015 and 2025. It also asserts `dvp_n <= week - 1` on every row, which is the defence-side version
+of the same claim. The control matters as much as the pass: a comparison that reports "clean" against
+both bounds is a comparison that is not connected to anything.
+
 ### Coverage, per column per season (2010-2025, 178,033 rows)
 
 `ff build-weekly-features --seasons 2010-2025` prints it. Steady across the range:
@@ -352,6 +375,18 @@ ff scorecard --season 2026 --team-odds --espn
     build forward features, snapshot the imminent week, score every settled week
     --snapshot-only / --score-only / --week N / --today YYYY-MM-DD / --json
 
+node --import tsx scripts/weekly-leak-audit.mjs <season>
+    recompute the to-date columns independently and check the `week < w` bound on the
+    table as it stands; exits non-zero if it mismatches OR if the leaked-bound control
+    fails to fire
+
 node --import tsx scripts/weekly-espn-probe.mjs 2026 1
     read-only: what stat blocks ESPN actually returns for a week
 ```
+
+## Determinism
+
+The full 14-fold evaluation was run twice, end to end, including re-invoking the Python trainer for
+every fold. Every number in section 3 is byte-identical across the two runs -- alpha search, quantile
+subsample (seeded `default_rng(7)`), roster draws and all. A harness whose numbers move between runs
+cannot tell a real gain from a re-draw, so this is checked rather than assumed.
