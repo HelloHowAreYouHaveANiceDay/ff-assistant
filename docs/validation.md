@@ -1,5 +1,141 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## TRACK E, LEAGUE FORMAT: the calendar is a fact with a source (2026-09-09)
+>
+> Branch `redesign/league-format`, off `redesign/final` (`75da5b0`). Three pre-registered
+> predictions, P45-P47. **All three held.**
+>
+> ### The defect: a default that is RIGHT
+>
+> The league's calendar had never been read from anywhere. `src/league/espn.ts` computed
+> `this.cfg.regWeeks ?? 14`; `simContext.ts` used `cfg.playoffTeams ?? 7` (and its own header
+> already said the 7 was "right by coincidence"); six scripts repeated the same two literals; and
+> "seed by record" was written into both simulators. Every one of those is correct for this league
+> today. That is what makes it a defect rather than a bug: a default that is right is
+> indistinguishable from a value that was read, so nothing fails, nothing warns, and the first
+> season the league moves its calendar every downstream number is computed for a league that does
+> not exist.
+>
+> ### The format ESPN actually publishes
+>
+> Read through the app bridge, read-only, and cached under `data/cache/espn/settings-<season>.json`
+> by `scripts/format-fetch.mjs`. For **2026**:
+>
+> ```
+> regWeeks          14                          matchupPeriodCount
+> playoffTeams      7                           playoffTeamCount
+> playoffRoundWeeks 1                           playoffMatchupPeriodLength
+> playoffWeeks      15, 16, 17                  derived: ceil(log2(7)) = 3 rounds x 1 week
+> seeding           division-winners-first      implied by having 4 divisions (see below)
+> tiebreak          TOTAL_POINTS_SCORED         playoffSeedingRule
+> divisions         Be Someone / Room 214 iirc / 7th Floor OGs / Probably Adulting, 4 teams each
+> source            espn
+> ```
+>
+> **The league HAS changed its calendar, and recently.** 2018-2020 were 13 regular weeks with the
+> bracket in 14/15/16, 14 teams, a 6-team field, one division. 2021-2024 moved to 14 weeks and
+> 15/16/17. 2025 went to 16 teams, four divisions and a 7-team field. So
+> the owner's recollection of "13 weeks, playoffs 14/15/16" is an accurate description of the
+> league -- of the 2018-2020 league. ESPN's stored settings for 2026 say 14 and 15/16/17. **Which
+> is true for 2026 is the owner's call and has not been made**; both are built and the choice is a
+> config value carrying its own provenance.
+>
+> ### Which seeding rule does ESPN use? The data cannot say.
+>
+> `scripts/format-seeding.mjs` applies both candidate rules to this league's real records,
+> points-for and divisions for 2018-2025 and compares against the `playoffSeed` ESPN actually
+> assigned. **Both rules reproduce every seed in all eight seasons, and there is no decisive
+> season:**
+>
+> - 2018-2024 have a SINGLE division, where the two rules are provably the same rule.
+> - 2025 has four, but its four division winners (11-3; 10-4 on 1437 PF; 10-4 on 1358; 10-4 on
+>   1348) were already the four best teams outright, so the division guarantee never bound. A
+>   fifth 10-4 team took seed 5 and two 9-5 teams seeds 6 and 7 -- exactly what record seeding
+>   gives. (The champion was seed 7.)
+>
+> So the effective rule defaults to `division-winners-first` wherever divisions exist, on ESPN's
+> documented behaviour that a division winner is guaranteed a seed. **That is an assumption, not a
+> measurement**, and it is recorded as one.
+>
+> ### Calibration under both rules (Phase 2c harness, 3000 trials, seed 7)
+>
+> | season | divisions | playoff Brier, record | playoff Brier, division-first | title, record | title, division-first |
+> |---|---|---|---|---|---|
+> | 2018-2024 | 1 | 0.219371 / 0.242336 / 0.211901 / 0.266034 / 0.262761 / 0.241793 / 0.245863 | **bit-identical** | -- | **bit-identical** |
+> | 2025 | 4 | 0.209587 | 0.208975 | 0.052147 | 0.052397 |
+>
+> The seven single-division seasons coming back bit-identical is the CONTROL: with one division the
+> rule is structurally incapable of producing a difference, so a change there would have meant the
+> lever was wired to something else. Only 2025 moves, which is also the proof the lever is
+> connected at all.
+>
+> **P45** -- division-winners-first does not worsen the 2025 playoff Brier by more than 0.005:
+> **HELD**. It improved it by 0.000612 (0.209587 -> 0.208975). Playoff Brier skill against uniform
+> went 14.8% -> 15.1%; title Brier worsened by 0.00025, and the title figure is the one this
+> simulator has no measured skill on anyway.
+>
+> ### Sensitivity of the tripwire to the calendar
+>
+> Flagless tripwire, `--full --no-lookahead --inflation --seasons 1999-2024 --n 150`, run
+> sequentially, paired against (a) via `--dump-trials` + `scripts/paired-analysis.mjs`.
+> `scripts/format-sensitivity.mjs` prints the exact sequence including the restore.
+>
+> | cell | calendar | seeding | championships | paired mean (a - x) | bootstrap 95% CI | McNemar p |
+> |---|---|---|---|---|---|---|
+> | (a) | 14 wk, playoffs 15/16/17 | record | **38.1%** | -- | -- | -- |
+> | (b) | 13 wk, playoffs 14/15/16 | record | 39.6% | -1.55pp | [-4.64, +1.44]pp | 0.101 |
+> | (c) | 14 wk, playoffs 15/16/17 | division-first | 38.8% | -0.77pp | [-1.63, +0.19]pp | 0.129 |
+> | (d) | 13 wk, playoffs 14/15/16 | division-first | 39.7% | -1.60pp | [-4.59, +1.20]pp | 0.091 |
+>
+> Cell (a) reproduces 38.1% and the Phase 2c per-season line EXACTLY, which is the check that this
+> work changed nothing it was not meant to.
+>
+> **P46** -- 13 weeks changes the tripwire by less than 2 points: **HELD**, +1.5pp, and the
+> season-level CI contains zero.
+> **P47** -- division seeding changes it by less than 1 point: **HELD**, +0.7pp.
+>
+> Read the direction honestly rather than as a gain. A shorter regular season is NOISIER, and here
+> more noise HELPS our title rate, because the field is 7 of 16: making the playoffs is close to
+> assured either way (96% in every cell), so the extra variance is spent in the bracket where our
+> roster is the favourite. And neither cell is separable from (a) at 25 seasons -- the detectable
+> effect at 80% power is 4.8pp for the 13-week cells and 1.4pp for (c). **These are sensitivity
+> measurements, not a case for a 13-week season.**
+>
+> Season odds, generated schedule, 3000 trials, seed 7: (a) playoff spread 62.7%..27.1%, title
+> 14.3%..2.3%; (d) 62.6%..28.5%, title 13.9%..2.5%. The 13-week calendar COMPRESSES the spread --
+> the same variance story on a different instrument. Conservation held in both (7.000 playoff
+> shares, 1.000 title). The copilot's own `seasonOdds` regime threshold lives in
+> `src/inseason/copilot.ts`, which this track is fenced out of, and was not recomputed.
+>
+> ### Hardcoded calendar values, before and after
+>
+> Removed (now read from the format block): `src/league/espn.ts` `shape()`'s `regWeeks ?? 14` and
+> its `regWeeks+1..17` playoff-week loop; `src/league/index.ts` `leagueCalendar`'s `regWeeks ?? 14`;
+> `src/draft/simContext.ts` `regWeeks ?? 14`, `playoffTeams ?? 7` and the literal `4` divisions;
+> `src/draft/backtest.ts` and `src/draft/season.ts` seeding-by-record written inline.
+>
+> **Still hardcoded, and outside this track's file fence** -- all currently correct only because
+> `config.regWeeks` / `config.playoffTeams` are now written as MIRRORS of the block:
+> `src/agent/agent.ts:399-400` (the MCP `league_sync`, `|| getConfig(db).playoffTeams`),
+> `src/inseason/copilotStore.ts:131` (`cfg.regWeeks ?? 14`), `src/inseason/copilot.ts:1124-1127`
+> (re-derives playoff weeks as `regWeeks+1 .. 17` instead of reading `format.playoffWeeks`),
+> `scripts/season-odds.mjs:64` (`const playoffTeams = 7`), `scripts/sim-convergence.mjs:60,72`,
+> `scripts/trade-odds.mjs:77,117`, `scripts/waiver-sweep.mjs:84`, `scripts/win-win.mjs:99`,
+> `scripts/fetch-league-outcomes.mjs:35`. `runBacktest`'s own `playoffTeams = 6, regWeeks = 14`
+> parameter defaults are dead -- its single caller always passes both from config -- but a future
+> caller that omitted them would silently simulate a 6-team bracket.
+>
+> ### What the owner must set, once they answer
+>
+> ```
+> # if the league really plays 13 regular weeks with playoffs in 14/15/16:
+> npm run ff -- format set --reg-weeks 13 --playoff-weeks 14,15,16 --seeding division-winners-first
+>
+> # if ESPN's stored settings are right (14 weeks, playoffs 15/16/17), nothing to do -- but confirm:
+> npm run ff -- format sync
+> npm run ff -- format show      # prints BOTH blocks and says which is in force
+> ```
+>
 > ## FINAL INTEGRATION: the two siblings merged, the leftovers closed, the new board arbitrated (2026-09-09)
 >
 > `redesign/final` = `redesign/phase-3-decision-layer` + `redesign/phase-2d-weekly-features`, 74

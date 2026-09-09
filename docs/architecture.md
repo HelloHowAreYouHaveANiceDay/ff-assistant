@@ -63,6 +63,35 @@ and run unattended (full-auto) on the user's own Claude subscription.
 | Actions ("plays") | bro-style persistent CDP browser (Yahoo / ESPN) | `spec-browser-automation.md` |
 | Scheduling | node-cron in the shell | `spec-agent.md` |
 
+## The league calendar is an INPUT, not a constant
+
+Everything that produces a season-shaped number -- the backtest bracket, the season simulator, the
+copilot's playoff-week reasoning, playoff strength of schedule -- needs to know how long the regular
+season is, how many teams make the playoffs, which weeks the bracket runs in, and how the field is
+seeded. None of that is a property of the software; all of it is a property of one league in one
+year, and this league has changed it twice (13 weeks / 6 teams / one division through 2020; 14 weeks
+from 2021; 16 teams / four divisions / 7-team field from 2025).
+
+So it is modelled as a single `LeagueFormat` block (`src/league/types.ts`) with a **source**:
+
+```
+config.format       the block IN FORCE      source "espn" | "owner-override"
+config.formatEspn   what ESPN last said, kept even while an override is in force
+config.regWeeks     \  MIRRORS of the block, for readers that predate it.
+config.playoffTeams /  Written FROM it, never independently.
+```
+
+`formatFromEspnSettings()` in `src/league/index.ts` is the only place ESPN's `scheduleSettings` is
+interpreted, and **a missing field throws instead of defaulting** -- the whole point, because the
+previous `regWeeks ?? 14` gave the right answer for this league while never reading anything, so a
+code path that had lost its input looked exactly like one that had it. `effectiveFormat()` is how
+every consumer asks, and it refuses a block that is absent, half-written, or self-contradictory (13
+regular weeks with the bracket starting in week 15). `ff format show | sync | set` is the surface.
+
+Seeding is part of the format, not a constant in the simulators: `seedField()` in
+`src/draft/schedule.ts` is the one implementation of both `record` and `division-winners-first`, and
+`backtest.ts` and `season.ts` both call it.
+
 ## The core thesis: the copresent design (D0)
 
 The agent works **inside the user's own live, logged-in browser session**. It sees the league
