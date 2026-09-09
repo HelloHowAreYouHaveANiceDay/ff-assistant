@@ -2,6 +2,9 @@
 // stud-overpaying bot field) and returns every team's roster -- reused by runSim (season points)
 // AND by backtest.ts (real weekly schedule + playoffs -> championship rate). See docs/validation.md.
 
+import { existsSync, readFileSync } from "node:fs";
+import { dataPath } from "../data/paths.js";
+import { loadPriceModel, priceFor, type PriceArtifact } from "../model/price.js";
 import { makeV2Strategy, type DraftState, type V2Config } from "./strategy.js";
 import { computeValues, resolveValueLeague, type PointsRow } from "./values.js";
 import { loadManagers, makeBotBidder, assignSeats, type BotBidder, type ManagerProfile } from "./managers.js";
@@ -36,7 +39,7 @@ export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile
    *  might be an edge against ourselves. "rank" gives them a structurally INDEPENDENT book: a
    *  rank-decay curve fitted to how auction prices actually fall off, sharing no code path with
    *  computeValues beyond the raw projection everyone can see. */
-  botBook?: "vor" | "rank";
+  botBook?: "vor" | "rank" | "price";
   /** Replace every bot with ONE league-average manager. Per-owner profiles were shown (2026-09-05,
    *  scripts/manager-stability.mjs) to carry NO out-of-sample signal -- predicting an owner's
    *  held-out season from their own history is 18% WORSE than assuming they draft league-average --
@@ -60,6 +63,60 @@ export const RANK_DECAY = Number(process.env.FF_RANK_DECAY ?? 5);
 // KNOWN RESIDUAL: top price $148 vs a real $88-106. Our bots are not budget-anxious at the very top,
 // so the stud market is modelled hotter than reality -- treat conclusions about the most expensive
 // handful of players (maxShare especially) as the least trustworthy part of the model.
+
+/**
+ * THE THIRD BOOK: the price model fitted on this room's own 738 picks (src/model/price.ts).
+ *
+ * `vor` is our own valuation function, so the field is a noisy copy of us. `rank` is structurally
+ * independent but its shape was TUNED until the simulated price distribution looked like the real
+ * one. `price` is the only one FITTED on what the room actually paid, and it is the only one whose
+ * error has been measured out of sample -- leave-one-season-out MAE $4.32 against $7.12 for `rank`
+ * and $7.11 for `vor` (scripts/price-loso.mjs).
+ *
+ * EACH BOT DRAWS ITS OWN NOISE, which is the second half of the change and arguably the bigger one.
+ * The other two books hand every bot the same number and let a small jitter separate them, so the
+ * field agrees about every player by construction and a second-price auction clears at almost
+ * exactly the book. Real rooms disagree. Here each bot's bid is the model's prediction times a draw
+ * from the model's OWN MEASURED RESIDUAL DISTRIBUTION -- lognormal, per tier, mean and sd both taken
+ * from the leave-one-season-out residuals rather than assumed:
+ *
+ *   tier      mean log(actual/pred)   sd
+ *   top12            -0.18          0.538
+ *   13-36            -0.10          0.429
+ *   37-96            -0.04          0.530
+ *   tail             -0.27          0.610
+ *
+ * The MEAN is carried, not discarded. It is the model's measured bias, and a noise term centred on 1
+ * would re-introduce exactly the over-prediction the holdout measured. Re-run scripts/price-loso.mjs
+ * if the model is refitted.
+ */
+export const PRICE_BOOK_NOISE: [number, number, number][] = [
+  // [max overall rank, mean of log residual, sd of log residual]
+  [12, -0.18, 0.538],
+  [36, -0.10, 0.429],
+  [96, -0.04, 0.530],
+  [Infinity, -0.27, 0.610],
+];
+export const priceNoiseFor = (overallRank: number): [number, number] => {
+  const t = PRICE_BOOK_NOISE.find(([hi]) => overallRank <= hi) ?? PRICE_BOOK_NOISE[PRICE_BOOK_NOISE.length - 1];
+  return [t[1], t[2]];
+};
+
+let _priceModel: PriceArtifact | null | undefined;
+/** Lazy, and it FAILS LOUDLY rather than falling back to another book. A `--bot-book price` run that
+ *  quietly became a `vor` run would report a number for an opponent that was never used. */
+export function loadPriceBook(): PriceArtifact {
+  if (_priceModel === undefined) {
+    const p = dataPath("price-model.json");
+    _priceModel = existsSync(p) ? loadPriceModel(JSON.parse(readFileSync(p, "utf8"))) : null;
+  }
+  if (!_priceModel) {
+    throw new Error(
+      `--bot-book price needs ${dataPath("price-model.json")}, which is missing. Fit it with:\n` +
+      `  uv run --with scikit-learn --with numpy tools/train_price.py --db data/ff.db --market-state quad`);
+  }
+  return _priceModel;
+}
 
 /** An independent market book: price decays with a position's DRAFT RANK rather than with value over
  *  replacement. Real auction prices follow roughly this shape, and critically it is not our formula,
@@ -101,9 +158,36 @@ export function draftField(points: PointsRow[], ourValues: Map<string, number>, 
 export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, opts: DraftFieldOpts = {}): { picks: Pick[]; seatProfiles: (ManagerProfile | null)[] } {
   const rng = mulberry32(seed);
   const posMap = new Map(points.map((p) => [p.name, p.pos]));
+
+  // THE MARKET'S OWN ORDERING, from the projections everyone can see. `--bot-book price` is indexed
+  // by CONSENSUS POSITIONAL RANK, which is what the model was fitted on, so it has to come from the
+  // projection list rather than from a value book -- deriving it from `trueVal` would make the price
+  // model a function of whichever book happened to be selected.
+  const leagueMoney = lg.teams * lg.budget;
+  const totalSlots = lg.teams * lg.slots.length;
+  const priceModel = opts.botBook === "price" ? loadPriceBook() : null;
+  const posRank = new Map<string, number>();
+  const overallRank = new Map<string, number>();
+  if (priceModel) {
+    const sorted = [...points].sort((a, b) => b.points - a.points);
+    const seen: Record<string, number> = {};
+    sorted.forEach((p, i) => {
+      seen[p.pos] = (seen[p.pos] ?? 0) + 1;
+      posRank.set(p.name, seen[p.pos]);
+      overallRank.set(p.name, i + 1);
+    });
+  }
+  // The nomination book. For `price` it is the model evaluated at the START of the draft (inflation
+  // exactly 1 by construction), so the order players come up in is stable and does not depend on the
+  // state of a draft that has not happened yet.
   const trueVal = opts.botBook === "rank"
     ? rankBook(points, lg)
-    : new Map(computeValues(points, resolveValueLeague(lg), cfg.maxKDst ?? 2).map((v) => [v.name, v.value]));
+    : priceModel
+      ? new Map(points.map((p) => [p.name, priceFor(priceModel, p.pos, {
+        ecrPosRank: posRank.get(p.name) ?? null, ecrSd: null,
+        moneyLeft: 1, slotsLeft: 1, pickShare: 0, leagueMoney,
+      })]))
+      : new Map(computeValues(points, resolveValueLeague(lg), cfg.maxKDst ?? 2).map((v) => [v.name, v.value]));
   const studRank = new Map([...trueVal.entries()].sort((a, b) => b[1] - a[1]).map(([n], i) => [n, i]));
   const { leagueShare } = loadManagers();
 
@@ -179,6 +263,14 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
       name = cand.name; pos = cand.pos;
     }
 
+    // The room's state at THIS nomination, computed once rather than per bidder. Both quantities are
+    // shares of their totals, so `infl` -- their ratio -- is exactly 1 at the first pick, which is
+    // what makes it a market-state signal rather than a proxy for how far into the draft we are.
+    let roomMoneyLeft = 0, roomSlotsLeft = 0;
+    if (priceModel) {
+      for (const tt of teams) { roomMoneyLeft += Math.max(0, tt.budget); roomSlotsLeft += openCount(tt); }
+    }
+
     let bestTeam = -1, bestMax = 0, secondMax = 0;
     for (let ti = 0; ti < lg.teams; ti++) {
       const t = teams[ti];
@@ -207,6 +299,24 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
         for (const nm of t.slots) if (nm) { const pp = posMap.get(nm); if (pp) myPosCounts[pp] = (myPosCounts[pp] ?? 0) + 1; }
         const state: DraftState = { myBudget: t.budget, mySlots: slotsOpenByKey(t), myRoster: [], myPosCounts, onBlock: { name, pos: pos as never, team: "", espnPreDraftVal: ourValues.get(name) ?? null }, currentOffer: null, secondsLeft: null, iAmHighBidder: false, board, teams: allTeams, posInflation, leagueDollars, leagueOpenSlots };
         max = Math.min(ourStrat.maxBid(state).maxBid, aff);
+      } else if (priceModel) {
+        // THE PRICE BOOK. Each bot prices the player with the fitted model at the CURRENT market
+        // state, then draws its OWN residual from the model's measured error distribution -- so the
+        // field genuinely disagrees rather than sharing one number with a jitter on top. Budget
+        // anxiety survives: `maxBuy` is the same soft cap the other books apply, and it is what
+        // keeps the top of the market from clearing at a price nobody in this room has ever paid.
+        const st = {
+          ecrPosRank: posRank.get(name) ?? null, ecrSd: null,
+          moneyLeft: Math.max(0, roomMoneyLeft / leagueMoney),
+          slotsLeft: Math.max(1e-9, roomSlotsLeft / totalSlots),
+          pickShare: picks.length / totalSlots,
+          leagueMoney,
+        };
+        const [mu, sd] = priceNoiseFor(overallRank.get(name) ?? 9999);
+        let bid = priceFor(priceModel, pos, st) * Math.exp(mu + gauss(rng) * sd);
+        const prof = seatProfiles[ti];
+        if (prof && prof.maxBuy > 0) bid = Math.min(bid, prof.maxBuy * (0.95 + rng() * 0.35));
+        max = Math.min(Math.max(1, Math.round(bid)), aff);
       } else {
         const base = trueVal.get(name) ?? 1;
         const rank = studRank.get(name) ?? 999;

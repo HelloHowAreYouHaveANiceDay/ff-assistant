@@ -64,6 +64,10 @@ const simRuns = (book) => {
   return out;
 };
 const simVor = simRuns("vor"), simRank = simRuns("rank");
+// The price book is only runnable where data/price-model.json exists; without it the script still
+// reports the two books it has rather than failing, and says which one is missing.
+let simPrice = null;
+try { simPrice = simRuns("price"); } catch (e) { console.log("  (no price book: " + String(e.message).slice(0, 90) + ")"); }
 
 const REAL = { picks: 192, total: 3157, median: 2, pct15: 61, top: 103, over50: 25, over30: 43,
   pos: { RB: 1292, WR: 1291, QB: 328, TE: 206 } };
@@ -77,6 +81,7 @@ console.log("  market                picks   total  median  %$1-5    top   >$50 
 row("ESPN mock (live)", (f) => avg(mocks, f));
 row("SIM vor book", (f) => avg(simVor, f));
 row("SIM rank book", (f) => avg(simRank, f));
+if (simPrice) row("SIM price book", (f) => avg(simPrice, f));
 console.log("  (REAL league row omitted: we only have its FULL-draft totals, not a 90-pick prefix)");
 
 console.log("\n  positional $ (RB / WR / QB / TE)");
@@ -84,6 +89,7 @@ const pr = (label, rb, wr, qb, te) => console.log(`  ${label.padEnd(20)} ${rb.to
 pr("ESPN mock (live)", avgPos(mocks, "RB"), avgPos(mocks, "WR"), avgPos(mocks, "QB"), avgPos(mocks, "TE"));
 pr("SIM vor book", avgPos(simVor, "RB"), avgPos(simVor, "WR"), avgPos(simVor, "QB"), avgPos(simVor, "TE"));
 pr("SIM rank book", avgPos(simRank, "RB"), avgPos(simRank, "WR"), avgPos(simRank, "QB"), avgPos(simRank, "TE"));
+if (simPrice) pr("SIM price book", avgPos(simPrice, "RB"), avgPos(simPrice, "WR"), avgPos(simPrice, "QB"), avgPos(simPrice, "TE"));
 pr("REAL league 2025", REAL.pos.RB, REAL.pos.WR, REAL.pos.QB, REAL.pos.TE);
 
 // Which simulated market is closer to YOUR room? That is the one whose strategy advice transfers.
@@ -93,3 +99,4 @@ console.log(`\n  total positional $ distance from YOUR league's 2025 draft (lowe
 console.log(`    ESPN mock rooms  ${mockDist.toFixed(0)}`);
 console.log(`    SIM vor book     ${dist(simVor).toFixed(0)}`);
 console.log(`    SIM rank book    ${dist(simRank).toFixed(0)}`);
+if (simPrice) console.log(`    SIM price book   ${dist(simPrice).toFixed(0)}`);

@@ -58,7 +58,9 @@ data/app-bridge.json
 # dump the feature screen reads. Both are rebuilt by `ff evaluate-projection` in about 20 seconds
 # and both are league-scored, so they belong with history-*.csv rather than in the repo.
 data/fold-artifacts/
+data/fold-artifacts-*/
 data/residuals.tsv
+data/residuals-*.tsv
 
 # Backups taken before a rebuild, for the "did any NUMBER change?" comparison. Local by definition.
 data/*.prev.csv

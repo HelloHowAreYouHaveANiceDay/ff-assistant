@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
 
-const botBook = process.argv.includes("rank") ? "rank" : "vor";
+const botBook = process.argv.includes("rank") ? "rank" : process.argv.includes("price") ? "price" : "vor";
 const readCsv = (p) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
 const points = readCsv("data/points.csv").map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
 const ourValues = new Map();

@@ -1512,7 +1512,8 @@ async function cmdBacktest(rest: string[]) {
   // Whose book do the BOTS bid? Default "vor" reuses computeValues -- our own function -- so the
   // field is a noisy mirror of us. "rank" gives them an independent curve; if an edge survives that,
   // it is not an artifact of self-reference.
-  const botBook = (valueOf(rest, "--bot-book") === "rank" ? "rank" : "vor") as "vor" | "rank";
+  const bb = valueOf(rest, "--bot-book");
+  const botBook = (bb === "rank" || bb === "price" ? bb : "vor") as "vor" | "rank" | "price";
   const homogeneous = rest.includes("--homogeneous"); // all bots = one league-average manager
   // SCHEDULE. A real schedule is the default: standard divisional play (6 in-division + 8 cross)
   // for a 16/4 league, and a plain round-robin otherwise -- both strictly more faithful than the
