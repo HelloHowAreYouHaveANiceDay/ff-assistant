@@ -70,8 +70,14 @@ export interface Provenance {
  *
  * P(title) = P(playoffs) x P(title | playoffs). Phase 2c scored this simulator against 114 real
  * team-seasons of this league and found it has measurable skill on the FIRST factor -- playoff Brier
- * 0.2370 against a uniform 0.2451 -- and NONE on the second: title Brier 0.0659 against a uniform
- * 0.0652, which is WORSE than knowing nothing. Single elimination among seven makes P(title |
+ * 0.2369 against a uniform 0.2451 -- and NONE on the second: title Brier 0.0658 against a uniform
+ * 0.0652, which is WORSE than knowing nothing.
+ *
+ * Those are the figures from the PER-SEASON-FORMAT re-run (integration pass 3): each season scored
+ * against its own field size, seeding rule and bracket rule instead of one format for all eight. It
+ * moves the playoff Brier by a thousandth from the constant-field run and the skill score not at
+ * all, which is the useful result -- the finding survives the correction rather than depending on it.
+ * Single elimination among seven makes P(title |
  * playoffs) very nearly a coin flip, and eight titles in 114 team-seasons is almost no signal to fit
  * against anyway.
  *
@@ -144,9 +150,9 @@ export function objectiveFor(playoffPct: number | null, thresholdPct = PLAYOFF_S
         "is reported beside it and P(title) alongside both."
       : `our simulated playoff probability is ${playoffPct == null ? "not computed" : `${playoffPct.toFixed(1)}%`}, ` +
         `below the ${thresholdPct}% threshold, so moves are ranked on the change in ` +
-        "P(PLAYOFFS) -- the factor this simulator has measured skill on (Brier 0.2370 against a uniform " +
-        "0.2451). Playoff-week strength is the tie-break and P(title) is reported alongside; the " +
-        "simulator has NO measured skill on the title (0.0659 against a uniform 0.0652).",
+        "P(PLAYOFFS) -- the factor this simulator has measured skill on (Brier 0.2369 against a uniform " +
+        "0.2451, per-season format, 2018-2025). Playoff-week strength is the tie-break and P(title) is reported alongside; the " +
+        "simulator has NO measured skill on the title (0.0658 against a uniform 0.0652).",
   };
 }
 

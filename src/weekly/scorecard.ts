@@ -115,6 +115,12 @@ export interface ScorecardOpts {
   artifactPath?: string;
   /** The challenger, snapshotted under its own kind. Defaults to `CHALLENGER_WEEKLY_ARTIFACT`. */
   challengerArtifactPath?: string;
+  /**
+   * WHICH FREEZE OF THE ODDS THIS IS. 0 (the default) is the preseason snapshot. A later number
+   * writes a SECOND series rather than touching the first, which is the only honest way to record
+   * that the league changed its own format after the preseason rows were frozen.
+   */
+  oddsVintage?: number;
   rosters?: number;
   /** The rank past which a man counts as available, per position, for the `stream` kind. Defaults to
    *  streamingEvaluate's POOL_DEPTH; overridable only so a test can drive a small fixture. */
@@ -157,7 +163,7 @@ export interface ScorecardResult {
   stream: { week: number | null; taken: number; skipped: string | null; artifactByPos: Record<string, string> };
   espn: { attempted: boolean; ok: boolean; reason: string; stored: number };
   seasonKind: { taken: number; skipped: string | null };
-  oddsKind: { taken: number; skipped: string | null };
+  oddsKind: { taken: number; skipped: string | null; vintage?: number };
   scored: {
     week: number; kind: ScorecardKind; model: string; n: number; rmse: number; crps: number; coverage: number;
     lineupPts: number; lineupWinShare: number;
@@ -171,6 +177,15 @@ export interface ScorecardResult {
 /** One model's score against the outcome it settles on, beside the floor it must beat. */
 export interface OddsModelScore {
   model: "playoff" | "title";
+  /**
+   * WHICH SNAPSHOT THIS IS. The odds are frozen more than once in a season: preseason (`week` 0),
+   * and again after the format changed under us in September 2026 (`week` 1). Both are scored, and
+   * they are scored SEPARATELY -- pooling a preseason forecast with a post-week-1 one produces a
+   * Brier that belongs to neither, and the whole point of a second vintage is to see whether the
+   * later one is better.
+   */
+  vintageWeek: number;
+  asOf: string | null;
   n: number;
   brier: number;
   logLoss: number;
@@ -339,8 +354,8 @@ const BRIER_BINS = [0, 0.05, 0.15, 0.3, 0.5, 0.7, 1.0001];
  */
 export function scoreOdds(db: DB, season: number): OddsScored {
   const rows = db.prepare(
-    "SELECT model, subject, value FROM scorecard_prediction WHERE season = ? AND kind = 'odds'",
-  ).all(season) as { model: string; subject: string; value: number }[];
+    "SELECT model, subject, value, week, as_of FROM scorecard_prediction WHERE season = ? AND kind = 'odds'",
+  ).all(season) as { model: string; subject: string; value: number; week: number; as_of: string | null }[];
   const teamsRows = db.prepare(
     "SELECT team_id, made_playoffs, champion, playoff_seed, final_rank, settled FROM fact_team_season WHERE season = ?",
   ).all(season) as { team_id: string; made_playoffs: number | null; champion: number | null; playoff_seed: number | null; final_rank: number | null; settled: number | null }[];
@@ -383,23 +398,29 @@ export function scoreOdds(db: DB, season: number): OddsScored {
   };
 
   const models: OddsModelScore[] = [];
-  for (const [model, uniform] of [["playoff", field / n], ["title", 1 / n]] as ["playoff" | "title", number][]) {
-    // Probabilities are stored in PERCENT, matching `seasonOdds`; the actual is 0 or 1. Dividing at
-    // scoring time rather than at snapshot time is deliberate -- the stored row stays the number a
-    // human recognises.
-    const scored = rows.filter((r) => r.model === model)
-      .map((r) => ({ p: Math.min(1, Math.max(0, r.value / 100)), y: outcome.get(String(r.subject))?.[model] ?? null }))
-      .filter((r): r is { p: number; y: number } => r.y != null);
-    if (!scored.length) continue;
-    const uni = scored.map((r) => ({ p: uniform, y: r.y }));
-    const b = brier(scored), ub = brier(uni);
-    models.push({
-      model, n: scored.length,
-      brier: b, logLoss: logLoss(scored),
-      uniformBrier: ub, uniformLogLoss: logLoss(uni),
-      skill: 1 - b / ub,
-      reliability: reliability(scored),
-    });
+  // Every VINTAGE of the snapshot, oldest first. `week` is the snapshot's own key, so a season with
+  // one preseason freeze behaves exactly as before and a season with two produces two scored series.
+  const vintages = [...new Set(rows.map((r) => r.week))].sort((a, b) => a - b);
+  for (const vw of vintages) {
+    for (const [model, uniform] of [["playoff", field / n], ["title", 1 / n]] as ["playoff" | "title", number][]) {
+      // Probabilities are stored in PERCENT, matching `seasonOdds`; the actual is 0 or 1. Dividing at
+      // scoring time rather than at snapshot time is deliberate -- the stored row stays the number a
+      // human recognises.
+      const mine = rows.filter((r) => r.model === model && r.week === vw);
+      const scored = mine
+        .map((r) => ({ p: Math.min(1, Math.max(0, r.value / 100)), y: outcome.get(String(r.subject))?.[model] ?? null }))
+        .filter((r): r is { p: number; y: number } => r.y != null);
+      if (!scored.length) continue;
+      const uni = scored.map((r) => ({ p: uniform, y: r.y }));
+      const b = brier(scored), ub = brier(uni);
+      models.push({
+        model, vintageWeek: vw, asOf: mine[0]?.as_of ?? null, n: scored.length,
+        brier: b, logLoss: logLoss(scored),
+        uniformBrier: ub, uniformLogLoss: logLoss(uni),
+        skill: 1 - b / ub,
+        reliability: reliability(scored),
+      });
+    }
   }
   if (!models.length) {
     return empty(`the frozen rows for ${season} join no team in fact_team_season -- the subject is a team id and nothing matched`);
@@ -608,23 +629,35 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         if (!rows.length) {
           res.oddsKind.skipped = "the odds provider returned no teams -- nothing was written, rather than a snapshot of nothing";
         } else {
+          // THE SNAPSHOT'S VINTAGE. `week` on an odds row is not a game week, it is which FREEZE
+          // this is: 0 is the preseason one, and a later number is a re-snapshot taken after
+          // something changed that the preseason rows could not have known. It exists because the
+          // commissioner shortened the 2026 regular season AFTER the preseason odds were frozen, so
+          // those rows describe a bracket the league will not play -- and rewriting them is exactly
+          // what a write-once record must never do. `--odds-vintage N` writes a second series
+          // instead, scored separately against the same outcome.
+          //
+          // A vintage that already exists is a NO-OP, not an overwrite: INSERT OR IGNORE plus a
+          // primary key that includes `week`.
+          const vintage = opts.oddsVintage ?? 0;
           const insO = db.prepare(
             `INSERT OR IGNORE INTO scorecard_prediction
                (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-             VALUES (@season,0,'odds',@model,@subject,@name,NULL,@value,NULL,NULL,@asOf,@now)`,
+             VALUES (@season,@vintage,'odds',@model,@subject,@name,NULL,@value,NULL,NULL,@asOf,@now)`,
           );
           const now = nowIso();
           db.transaction(() => {
             for (const r of rows) {
               for (const [model, value] of [["playoff", r.playoffPct], ["title", r.titlePct]] as [string, number][]) {
                 if (!Number.isFinite(value)) continue;
-                const info = insO.run({ season: opts.season, model, subject: r.subject, name: r.name, value, asOf: today, now });
+                const info = insO.run({ season: opts.season, vintage, model, subject: r.subject, name: r.name, value, asOf: today, now });
                 if (info.changes) res.oddsKind.taken++;
               }
             }
           })();
+          res.oddsKind.vintage = vintage;
           if (!res.oddsKind.taken) {
-            notes.push("the odds kind was already snapshotted -- it is written once, so a re-run is a no-op rather than a rewrite.");
+            notes.push(`the odds kind was already snapshotted at vintage ${vintage} -- it is written once, so a re-run is a no-op rather than a rewrite.`);
           }
         }
       }
@@ -802,7 +835,7 @@ export function formatScorecard(r: ScorecardResult): string {
     if (served) out.push(`               served by: ${served}`);
   }
   out.push(`  season kind: ${r.seasonKind.taken} rows${r.seasonKind.skipped ? " -- " + r.seasonKind.skipped : ""}`);
-  out.push(`  odds kind:   ${r.oddsKind.taken} rows${r.oddsKind.skipped ? " -- " + r.oddsKind.skipped : ""}`);
+  out.push(`  odds kind:   ${r.oddsKind.taken} rows${r.oddsKind.vintage != null ? ` at vintage ${r.oddsKind.vintage}` : ""}${r.oddsKind.skipped ? " -- " + r.oddsKind.skipped : ""}`);
   out.push(`  espn:        ${r.espn.attempted ? (r.espn.ok ? `${r.espn.stored} stored` : "not stored") : "not attempted"} -- ${r.espn.reason}`);
   out.push("");
   out.push("SCORED WEEKS");

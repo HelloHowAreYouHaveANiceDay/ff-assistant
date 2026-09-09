@@ -70,15 +70,15 @@ const teams = (shift = 0): OddsSnapshotRow[] =>
 const oddsRows = (dbPath: string) => {
   const db = openDb(dbPath);
   const rows = db.prepare(
-    "SELECT subject, model, name, value, as_of FROM scorecard_prediction WHERE kind='odds' ORDER BY CAST(subject AS INTEGER), model",
-  ).all() as { subject: string; model: string; name: string; value: number; as_of: string }[];
+    "SELECT subject, model, name, value, as_of, week FROM scorecard_prediction WHERE kind='odds' ORDER BY week, CAST(subject AS INTEGER), model",
+  ).all() as { subject: string; model: string; name: string; value: number; as_of: string; week: number }[];
   db.close();
   return rows;
 };
 
-const RUN = (dbPath: string, artifactPath: string, oddsProvider?: () => OddsSnapshotRow[]) => runScorecard({
-  dbPath, season: SEASON, week: 1, today: `${SEASON}-09-07`, sched: sched(),
-  artifactPath, score: false, oddsProvider,
+const RUN = (dbPath: string, artifactPath: string, oddsProvider?: () => OddsSnapshotRow[], oddsVintage?: number, today = `${SEASON}-09-07`) => runScorecard({
+  dbPath, season: SEASON, week: 1, today, sched: sched(),
+  artifactPath, score: false, oddsProvider, oddsVintage,
 });
 
 test("a provider writes TWO rows per team -- playoff and title, as separate models", async () => {
@@ -127,6 +127,39 @@ test("FAULT: with NO provider nothing is written, and the skip says why", async 
   // The refusal to derive a probability from a spread is the point, and it is stated.
   assert.match(String(res.oddsKind.skipped), /team_odds/);
   assert.match(String(res.oddsKind.skipped), /our own arithmetic/);
+});
+
+/**
+ * A SECOND VINTAGE. The league changed its own format in September 2026, after the preseason odds
+ * were frozen, so those rows describe a bracket nobody will play. The write-once rule is not
+ * negotiable, so the answer is a SECOND series under its own vintage -- and the property that makes
+ * that honest rather than a loophole is that the FIRST series is still byte-for-byte intact.
+ */
+test("a LATER VINTAGE writes a second series and leaves the preseason one untouched", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ff-odds-vintage-"));
+  const { dbPath, artifactPath } = fixture(dir);
+
+  const first = await RUN(dbPath, artifactPath, () => teams());
+  assert.equal(first.oddsKind.taken, 32);
+  assert.equal(first.oddsKind.vintage, 0, "the default vintage is the preseason one");
+  const before = oddsRows(dbPath).filter((r) => r.week === 0);
+
+  const second = await RUN(dbPath, artifactPath, () => teams(20), 1, `${SEASON}-09-09`);
+  assert.equal(second.oddsKind.taken, 32, "vintage 1 must be writable -- it collides with nothing");
+  assert.equal(second.oddsKind.vintage, 1);
+
+  const all = oddsRows(dbPath);
+  assert.equal(all.length, 64, "both vintages must be present");
+  assert.deepEqual(all.filter((r) => r.week === 0), before, "the PRESEASON rows changed -- the record was rewritten");
+  const v1 = all.filter((r) => r.week === 1 && r.subject === "0" && r.model === "playoff")[0];
+  assert.equal(v1.value, 63.75, "vintage 1 must hold the NEW number, not the old one");
+  assert.equal(v1.as_of, `${SEASON}-09-09`, "each vintage carries its own as_of");
+
+  // FAULT INJECTION: re-running the SAME vintage is still a no-op. Without this the vintage field
+  // would be a way to overwrite a record by choosing a number, which is worse than no vintage at all.
+  const again = await RUN(dbPath, artifactPath, () => teams(40), 1, `${SEASON}-09-10`);
+  assert.equal(again.oddsKind.taken, 0, "a repeat of an existing vintage wrote rows");
+  assert.deepEqual(oddsRows(dbPath), all, "a repeat of an existing vintage changed a stored value");
 });
 
 test("a provider that returns NO teams is recorded as a skip, not as a snapshot of nothing", async () => {

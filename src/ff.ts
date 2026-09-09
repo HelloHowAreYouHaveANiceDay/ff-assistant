@@ -2941,6 +2941,7 @@ async function cmdScorecard(rest: string[]) {
     score: !rest.includes("--snapshot-only"),
     espn: rest.includes("--espn"),
     oddsProvider,
+    oddsVintage: valueOf(rest, "--odds-vintage") ? Number(valueOf(rest, "--odds-vintage")) : undefined,
     week: valueOf(rest, "--week") ? Number(valueOf(rest, "--week")) : undefined,
     today: valueOf(rest, "--today"),
     rosters: valueOf(rest, "--rosters") ? Number(valueOf(rest, "--rosters")) : undefined,
