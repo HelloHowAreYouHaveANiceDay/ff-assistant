@@ -1,5 +1,157 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## FINAL INTEGRATION: the two siblings merged, the leftovers closed, the new board arbitrated (2026-09-09)
+>
+> `redesign/final` = `redesign/phase-3-decision-layer` + `redesign/phase-2d-weekly-features`, 74
+> commits off `main`. Two pre-registered predictions, P32 and P33. **Both held, and the honest
+> reading is that the arm could not have failed them for anything under ten points.**
+>
+> | | prediction | outcome |
+> |---|---|---|
+> | P32 | the 2d board's playoff rate is within noise of, or better than, the 2c board's under BOTH opponent books | **HELD** -- `price` -2.50pp CI [-9.33, +2.17], 2/4 seasons; `rank` +1.67pp CI [-4.08, +8.08], 2/4 |
+> | P33 | its title rate is within noise | **HELD** -- `price` -2.75pp CI [-5.25, +0.17]; `rank` -0.00pp CI [-1.75, +2.08] |
+>
+> ### The tripwire, and everything it reproduced
+>
+> ```
+> npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
+>   CHAMPIONSHIPS: 38.1%  (random 6.3%)  |  playoffs: 96%
+>   per season: 2000:31% 2001:32% 2002:29% 2003:47% 2004:41% 2005:18% 2006:51% 2007:21% 2008:36%
+>               2009:35% 2010:35% 2011:62% 2012:49% 2013:41% 2014:32% 2015:26% 2016:41% 2017:33%
+>               2018:45% 2019:38% 2020:37% 2021:36% 2022:61% 2023:33% 2024:43%
+> ```
+>
+> Identical to Phase 2c to the point in every season. Everything else on the merge, each re-run here
+> rather than quoted from the branch it was measured on:
+>
+> | check | reproduced |
+> |---|---|
+> | `ff evaluate-projection --seasons 2008-2025` | RMSE **52.79** / pinball **12.02** / coverage **0.760**, P5 PASS; R-squared 0.542 vs carry-forward 0.432 |
+> | `ff evaluate-weekly`, two-part | RMSE **5.268** / CRPS **2.150**, gate (a) PASS 2.1500 vs 2.6642, (b) PASS 0.798, (c) **FAIL** 0.384 vs 0.419 |
+> | `ff evaluate-weekly`, the floor / baseline | season_line **5.928** / 2.671; shipped `week()` **5.927** / **2.664** |
+> | odds accrual vs the calibration harness, 2025 | playoffs **0.209587**, title **0.052147**, both MATCH to six decimals |
+> | `npm test` | 461 tests, 459 pass, 0 fail, 2 skipped (both conditional on a curve-only artifact; the shipped one is trained) |
+> | `npm run typecheck` | clean |
+> | `scripts/merge-sanity.mjs` | 34 MCP tools, 63 schema tables, no duplicate in any scope; `--self-test` fires all four checks |
+> | `copilot-mcp-smoke`, `copilot-crosscheck`, `weekly-leak-audit`, `v3-connected`, `value-gates` | all pass |
+>
+> ### P32/P33 -- arbitrating a board the arbiter had never seen
+>
+> The flagless tripwire projects from ACTUALS (`projMode = "actuals"`) and never opens
+> `data/projection-artifact.json`. So Phase 2d's feature admission, and the WR 37.9% -> 41.0% / RB
+> 32.5% -> 29.3% dollar reallocation it caused, had reached the shipping default with no arbiter
+> having an opinion about it -- which is exactly the kind of change this repo's one rule exists to
+> adjudicate.
+>
+> Both boards, market unchanged, only OUR book swapped:
+>
+> ```
+> backtest --projection artifact --artifact <board> --market ecr --market-noise 0 --bot-noise 0.20
+>          --bot-churn --bot-book {price|rank} --full --no-lookahead --inflation
+>          --seasons 2020-2024 --n 300 --dump-trials <path>
+> ```
+>
+> **The lever is connected and the run says so in its own banner**: the 2c arm prints `9 fitted
+> features` and the 2d arm `11`. That check is not decoration -- a `--artifact` flag silently ignored
+> under `--market ecr` (which builds OUR book from `--artifact-dir` per-season files) would have
+> produced two identical arms and a clean, meaningless null.
+>
+> | book | board | playoffs | title | paired (2d - 2c), playoffs | paired, title |
+> |---|---|---|---|---|---|
+> | `price` | 2c | **79.8%** | **21.1%** | -2.50pp, CI [-9.33, +2.17], t -0.71, 2/4 | -2.75pp, CI [-5.25, +0.17], t -1.81, 1/4 |
+> | `price` | 2d | 77.3% | 18.3% | | |
+> | `rank` | 2c | 70.5% | 13.0% | +1.67pp, CI [-4.08, +8.08], t +0.46, 2/4 | -0.00pp, CI [-1.75, +2.08], 1/4 |
+> | `rank` | 2d | **72.2%** | 13.0% | | |
+>
+> Detectable effect at 80% power with four seasons: **10.2pp** of playoff rate, 4.4pp of title rate.
+> Both intervals contain zero under both books and the two books disagree about the sign on playoffs,
+> so P32 and P33 held in the only sense this arm can deliver: **not adjudicated.**
+>
+> Three caveats, all of which make the numbers weaker than they look:
+>
+> 1. **The point estimate goes the WRONG WAY on the price book** -- 2d trails by 2.5pp of playoffs and
+>    2.8pp of title, worst in 2024 (-13pp). The trial-level McNemar on playoffs is nominally
+>    significant there (chi2 4.62, p = 0.032), and reading that as the answer is precisely the mistake
+>    `scripts/paired-analysis.mjs` exists to prevent: n = 300 x 4 seasons is 300 noise re-draws over
+>    four seasons, and the unit of generalisation is the SEASON. The season-level interval contains
+>    zero comfortably.
+> 2. **Four seasons is all this arm can ever have.** `--seasons 2020-2024` under `--no-lookahead`
+>    drops 2020 (no prior year inside the window), and the FantasyPros archive begins in 2020.
+> 3. **Both arms carry the SAME lookahead.** Each board is one full-data artifact fitted on 1999-2025,
+>    so both have seen the seasons being replayed. The contamination is identical, which makes the
+>    COMPARISON fair and the LEVELS optimistic in both arms -- 79.8% playoffs here against V2's 49.0%
+>    on the same arm with `--projection actuals` is that gap, not a finding. The unbiased version
+>    needs per-fold artifacts for BOTH boards (`ff evaluate-projection --keep-artifacts <dir>` twice,
+>    then `backtest --artifact-dir`) and has not been run.
+>
+> **Nothing was reverted.** The features were admitted on a projection-accuracy gate they passed
+> cleanly and the championship arbiter cannot separate the boards; reverting on an underpowered null
+> is the same error as shipping on one. It is recorded as an owner decision, not taken here.
+>
+> ### The four fenced leftovers, closed
+>
+> - **The lineup and the scorecard were serving DIFFERENT weekly models.** `lineupRecommend` loaded
+>   `weekly-artifact-lineonly.json` and `ff scorecard` loaded `weekly-artifact.json`, each filename
+>   typed inline. Both load through the same loader, both validate, both produce plausible numbers --
+>   so the season's forward record was accruing for a model nobody was served from, which is the one
+>   failure a scorecard cannot survive. One constant now; the challenger gets its own
+>   `weekly_challenger` kind from week 2 (week 1 is frozen under the old arrangement and predictions
+>   are written once). The guard requires the two kinds to DISAGREE -- asserting each equals its own
+>   artifact would also pass an implementation that read one file for both -- and a "no filename
+>   outside projector.ts" scan, fault-injected, found a THIRD inline reference in
+>   `src/weekly/evaluate.ts`.
+> - **The live season was blind.** `feat_player_week_context` held 0 rows for 2026, so the two-part
+>   model's first stage would have served September on defaults meaning "everybody is healthy".
+>   `ff build-live-context` writes 462 rows for week 2 from `player_status` and high-severity injury
+>   `news` -- the same two feeds the copilot's OUT refusal reads -- 19 Out, 56 Questionable, 66 with a
+>   positional team-mate out, `inj_feed` 1 on every row. The point-in-time rule is fault-injected in
+>   both directions: a snapshot at or after a week's first kickoff belongs to the NEXT week, and week
+>   1 must be empty in the TABLE, not merely in a returned count. Week 3 is correctly still blind.
+>   The payoff is visible in the first dual snapshot: the three largest shipped-vs-challenger
+>   divergences are men the challenger prices near zero (9.18 vs 0.61, 8.12 vs 0.26, 7.84 vs 0.03).
+> - **`src/draft/models.ts`** re-quotes the season artifact (52.79 / 12.02 / 0.760, nestedLift 0.0880
+>   -> 0.1100, both admitted features named with what each bought) and gains BOTH weekly artifacts
+>   with their gate verdicts. Checks keyed on the thing, not the name: the required slot refuses a
+>   two-part artifact, the challenger slot refuses a quantile one, and `validateModels` refuses a
+>   weekly artifact of the old schema. Tested with a positive control first, then two injections.
+> - **Seven tables were served by no `data-sources` key** -- `feat_player_week_model`,
+>   `feat_player_season`, `feat_curve`, `feat_player_week`, `raw_espn_projection` and both scorecard
+>   tables. Registering them is the whole fix, because Phase 2d had already made the renderer's node
+>   list derived; verified through `ff serve` with live row counts.
+>
+> ### A passing guard failed, and it was right to
+>
+> The live builder made `test/featuresExt.test.ts`'s leakage guard fail on its first full run. That
+> guard asserts every Friday injury status in `feat_player_week_context` is backed by a `raw_injury`
+> filing dated at or before that Friday -- and the live rows have no filing behind them by
+> construction, because a status FEED publishes a current state and one timestamp and files nothing.
+>
+> The two easy ways to quiet it are both worse than the fix. A threshold would also absorb a real
+> leak, which is the thing the guard exists to catch. Inferring provenance from the SHAPE of `as_of`
+> -- the archive writes a date, the live builder a timestamp -- makes a load-bearing distinction into
+> an implicit convention held between two files.
+>
+> So `feat_player_week_context` gained a **`source`** column ('archive' | 'live'), and each guarantee
+> is asserted against the rows that actually carry it. The archive guard keeps its back-join, scoped
+> by `source`, with its NON-VACUITY count asserted inside the scope -- a scope that quietly matches
+> nothing is exactly the failure a green check hides. A second test asserts the live rows' own rule:
+> the snapshot must precede the week's first kickoff, and no live row may exist for a season whose
+> archive carries dated filings (two builders writing one week would leave which guarantee survives
+> up to run order).
+>
+> **Both fault-injected against the real store**, inside a rolled-back transaction: relabelling one
+> live row 'archive' takes the archive guard 0 -> 1; moving one live snapshot past its kickoff takes
+> the live guard 0 -> 1; both return to 0 on rollback.
+>
+> ### One stale claim corrected
+>
+> `scripts/season-calibration.mjs` was still printing "scorecard.ts writes this kind but does NOT
+> score it -- the accrual is a Phase 3 gap". Phase 3 closed that gap in the same session the line was
+> written. A script that keeps printing a resolved gap is how a stale claim outlives the thing it
+> described.
+>
+> ---
+
 > ## PHASE 3: the decision layer under an objective the model can actually see (2026-09-09)
 >
 > Four pre-registered predictions, P28 to P31. **Two held, one held on one arm and failed

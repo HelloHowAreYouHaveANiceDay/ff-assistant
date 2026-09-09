@@ -189,10 +189,13 @@ not a hole: it is the share of rostered player-weeks in which the man actually p
 - **2013-2015**: no participation feed, so route share is absent by construction.
 - **2025**: the injury feed publishes no report date, so every filing is undated -- see `inj_feed`
   above. Depth and snaps survive because those feeds still carry dates.
-- **2026, the LIVE season**: the forward builder writes rows from the schedule and the board, and the
-  context table has no 2026 rows at all. So the two-part model's first stage serves the live season
-  on its declared missing-value defaults. That is stated, not fixed, and it is the largest open item
-  in section 5.
+- **2026, the LIVE season**: the forward builder writes rows from the schedule and the board. The
+  context table held no 2026 rows at all -- the historical builder reads `raw_injury`, which has none
+  for an unarchived season -- so the two-part first stage would have served the live season on its
+  declared missing-value defaults, which say everybody is healthy. **`ff build-live-context` fixes
+  it** (see section 5), from the live status feeds rather than the archive, one unplayed week at a
+  time. The row is filled for the next unplayed week only; every week after it is still blind, and
+  correctly reports itself so through `inj_feed`.
 
 ---
 
@@ -408,11 +411,29 @@ it.
 The temptation here is obvious and is refused: the gate is not widened to 0.04, and nothing is tuned
 until (c) passes. A tolerance chosen after seeing 0.035 is not a tolerance. What ships is the floor,
 the same as before Phase 2d, and the two-part artifact sits in `data/weekly-artifact.json` as the
-measured candidate. **Caveat, stated because it is a real inconsistency:** `ff scorecard` reads
-`data/weekly-artifact.json` and will therefore freeze its 2026 predictions with the two-part model,
-while `lineupRecommend` reads the floor. That arrangement predates Phase 2d (2c's trained artifact sat
-in the same file) and is defensible for a measurement surface, but it means the scorecard and the
-lineup are answering with different models and somebody should decide that on purpose.
+measured candidate.
+
+**That inconsistency is now decided, and the decision went the other way from the arrangement.**
+Phase 2d recorded it as a caveat: `ff scorecard` read `data/weekly-artifact.json` and would have
+frozen 2026's predictions with the two-part model while `lineupRecommend` read the floor, so the
+season's forward record would have accrued for a model nobody was served from -- the one failure a
+scorecard cannot survive, since its entire claim is that it measures the thing a decision was made
+on. The final integration pass gave both surfaces ONE constant,
+`SHIPPED_WEEKLY_ARTIFACT` in `src/weekly/projector.ts`, pointing at the floor.
+
+The challenger is not thrown away, because doing so would waste the only evidence left: the
+historical folds have all been used. `ff scorecard` snapshots it under its own kind --
+`weekly_challenger`, model `two_part` -- on the same players, in the same week, with the same frozen
+`as_of`. So the live season grades both models side by side on predictions nobody can tune, which is
+exactly the experiment the gate could not settle. Two kinds rather than a sixth model in `weekly`,
+because lineup regret inside a kind only means something when every model in it was one somebody
+could have chosen.
+
+**The series starts at week 2.** 2026 week 1 was snapshotted on 2026-09-08 under the old
+arrangement, so its `weekly` row carries the two-part number; predictions are written once, and
+back-filling a challenger row after Thursday's kickoff would be precisely the after-the-fact
+prediction this whole surface exists to refuse. `CHALLENGER_FIRST_WEEK` states it and the command
+prints it every run, so the gap is a stated fact rather than something a reader has to infer.
 
 Calibrating (c) is a bounded, well-posed next job: the first stage is a plain logistic and its
 intercept is the only thing standing between 0.384 and 0.419. It must be pre-registered and re-run
@@ -456,6 +477,25 @@ SCORECARD 2026 -- as of 2026-09-08; imminent week 1
 **There is nothing to score, and that is the correct state.** The 2026 season has not started. What
 this run bought is the thing that cannot be bought later: 2,092 week-1 predictions and 523 season
 projections, frozen the day before the opener, with an `as_of` that is a fact rather than a claim.
+
+**Week 2, run 2026-09-09 after the final integration**, is the first under the shipped/challenger
+split and the first with the live availability columns behind it:
+
+```
+SCORECARD 2026 -- as of 2026-09-09; imminent week 2
+  week 2 snapshot:  weekly 523, season_line 523, shipped_week 523, trailing4 523
+  weekly kind serves weekly-artifact-lineonly.json -- the SAME artifact lineupRecommend serves from
+  challenger:       week 2: 523 rows from weekly-artifact.json (kind weekly_challenger,
+                    model two_part), series starts week 2
+```
+
+All 523 paired rows differ between the two kinds, which is the property the guard requires: if they
+agreed, one artifact would be being read for both. The three largest divergences are men the
+challenger prices near zero because it can see they are Out -- 9.18 against 0.61, 8.12 against 0.26,
+7.84 against 0.03 -- where the floor prices them at their season line. That is the two-part model's
+first stage doing the only thing it was built to do, on live data, with the outcome not yet known.
+`espn` is absent from this run because it was taken without `--espn` (the bridge read is a separate,
+authenticated call).
 
 **ESPN's own number is the third baseline** and the only one that measures this work against the room
 rather than against itself. Read-only through the app bridge, never a write. Getting it took a probe,
@@ -531,18 +571,34 @@ prints it beside the columns it actually measured with:
   whichever was last synced -- and no week number, so the forward builder applies it only to the
   earliest unpriced week. Everything else comes from the schedules feed's closing lines.
 
-**Three open items Phase 2d created rather than closed**, all stated because none is fixed:
+**Three open items Phase 2d created rather than closed. Two were closed by the final integration
+pass; the middle one is a property of the feed and stands.**
 
-1. **The live season has no availability at all.** `feat_player_week_context` holds no 2026 rows, so
-   the two-part first stage serves 2026 on its declared missing-value defaults -- and `inj_feed` is
-   correctly 0, so at least the model knows it is blind rather than believing the league is healthy.
-   Running `ff build-features-ext` for 2026 is the fix, and it is a data-track job.
-2. **From 2025 the injury feed publishes no report date at all.** Even a rebuilt 2026 context table
-   would carry no injury designation unless the reader is taught to place undated filings, which
-   cannot be done safely without a date.
-3. **`feat_player_week_model` is not in the engine's `data-sources` registry**, so it does not appear
-   on the Data page even though the derivation in section 4 of `app/renderer/app.js` would place it
-   the moment it is registered. Registering it is a one-line change inside `cmdServe`.
+1. **CLOSED. The live season had no availability at all.** `feat_player_week_context` held no 2026
+   rows, so the two-part first stage served 2026 on its declared missing-value defaults -- `inj_feed`
+   correctly 0, so the model at least knew it was blind rather than believing the league healthy.
+   `ff build-features-ext` was NOT the fix: it reads `raw_injury`, which holds nothing for a season
+   nobody has archived, so re-running it for 2026 would have produced the same nothing more slowly.
+   **`ff build-live-context`** is, and it is a separate verb because it obeys a different rule. The
+   historical builder places each filing by its own date; a live feed publishes one current state and
+   one timestamp, so the whole snapshot is placed by the point-in-time rule -- **after a week's first
+   kickoff, the snapshot belongs to the NEXT week** -- and only that week is written, never
+   backfilled. Its sources are ESPN's structured `player_status` and high-severity injury `news`, the
+   same two the copilot's OUT refusal reads, deliberately: a man the lineup refuses to start and a
+   man the model prices as unlikely to play must not be different men. It carries no practice report
+   (`prac_dnp` / `prac_limited` read 0 rather than a guess) and IR / PUP / NFI / suspension all map to
+   "Out", which is a judgement recorded as one; Doubtful stays its own indicator because the model has
+   a separate coefficient for it. First run on the live store: 462 rows for 2026 week 2, 19 Out, 56
+   Questionable, 66 with a positional team-mate out.
+2. **STANDS. From 2025 the injury feed publishes no report date at all.** Nothing above changes this:
+   the live builder sidesteps it by using a different source, not by learning to place an undated
+   filing, which cannot be done safely. Every archived 2025 injury column is still NULL and
+   `inj_feed` still says so.
+3. **CLOSED. `feat_player_week_model` is now in the engine's `data-sources` registry**, along with
+   six other tables that were being served by no key at all -- `feat_player_season`, `feat_curve`,
+   `feat_player_week`, `raw_espn_projection`, `scorecard_prediction` and `scorecard_result`. As
+   predicted, registering them was the whole of it: the derivation in section 4 of
+   `app/renderer/app.js` placed every one without an edit to the node list.
 
 W2's reasoning finally got its actual test. The claim was that availability, not matchup, is the
 large weekly edge; the Phase 2c measurement could not test it because it had no availability column,
@@ -555,6 +611,13 @@ and the gain it found came from in-season form instead. Section 3's W4 is the di
 ```
 ff build-weekly-features --seasons 2010-2025 --current-season 2026
     build feat_player_week_model, print coverage per column per season
+
+ff build-live-context [--season 2026] [--now YYYY-MM-DD] [--dry-run] [--json]
+    the LIVE season's availability, for the next week that has not kicked off, from
+    player_status + high-severity injury news. --now drives the point-in-time rule
+    without waiting for Sunday; --dry-run reports what WOULD be written. Run it
+    BEFORE the weekly feature build (or before `ff scorecard`, which rebuilds the
+    forward weeks itself) so the columns reach feat_player_week_model.
 
 uv run --with scikit-learn --with numpy tools/train_weekly.py \
     --db data/ff.db --seasons 2010-2025 --holdout-season none \

@@ -302,7 +302,29 @@ byte-identical trials (the soft reserve never binds at `aggr 0.7`), and `premium
 both inside the noise. `benchDiscount` is the one still doing work. Nothing was changed on the
 strength of five seasons; the finding is recorded for the owner to act on or not.
 
-The whole programme, phase by phase, with the chain of branches to merge and the open decisions:
+**The scorecard grades two weekly models from week 2.** `lineupRecommend` and `ff scorecard` were
+serving different weekly artifacts -- the lineup got the floor that passed its gate, the record
+accrued for the two-part challenger that failed it -- so the season's forward record was measuring a
+model nobody was served from. They read one constant now, and the challenger keeps its own
+`weekly_challenger` kind on the same players in the same frozen moment, so the live season produces
+out-of-sample evidence nobody can tune. The historical folds have all been used; this is the only
+evidence left.
+
+**The live season can see injuries again.** `feat_player_week_context` was empty for 2026 (the injury
+feed stopped publishing report dates in 2025), so the availability stage would have served September
+on defaults meaning "everybody is healthy". `ff build-live-context` fills the next unplayed week from
+`player_status` and high-severity injury news -- the same two feeds the lineup's OUT refusal reads --
+under the rule that a snapshot taken after a week's first kickoff belongs to the NEXT week.
+
+**The new board was arbitrated, and the arbiter could not tell.** Phase 2d's admitted features moved
+the value book WR 37.9% -> 41.0% and RB 32.5% -> 29.3%, and the flagless backtest never reads the
+projection artifact, so nothing had adjudicated that. Run through the honest arbiter with only our
+book swapped, the 2d board is -2.5pp of playoff rate under the `price` book and +1.7pp under `rank`,
+both intervals containing zero against a detectable effect of ~10pp on four seasons. Nothing was
+reverted; it is recorded as an owner decision.
+
+The whole programme, phase by phase, with the chain of branches, the two numbers named in full with
+their market models, the open decisions and the one piece of work worth doing next:
 `docs/redesign-2026-09.md`.
 
 ## Where planning lives
