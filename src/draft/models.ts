@@ -23,6 +23,7 @@ import { dataPath } from "../data/paths.js";
 import { loadArtifact } from "../model/projector.js";
 import { loadWeeklyArtifact, SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT } from "../weekly/projector.js";
 import { loadPriceModel } from "../model/price.js";
+import { loadInjuryHorizonArtifact } from "../inseason/injuryHorizon.js";
 
 export interface ModelSpec {
   key: string;
@@ -234,6 +235,45 @@ export const MODELS: ModelSpec[] = [
   {
     key: "opponent-correlation", file: "opponent-correlation.json", required: false, nestedLift: null, claimedLift: null,
     what: "cross-team correlation in the same NFL game -- MEASURED BUT NOT YET WIRED INTO THE SIMULATOR",
+  },
+  {
+    key: "injury-duration", file: "injury-duration-artifact.json", required: false,
+    // The lift is a LOG-LOSS REDUCTION, not an R-squared, and it is the mean of the four horizons'
+    // reductions against the DESIGNATION-ONLY baseline: 0.0472 / 0.0315 / 0.0243 / 0.0236 at
+    // k = 1/2/3/4, pooled over held-out seasons 2015-2024, each fitted on seasons strictly before
+    // its own. Against the tier rate the copilot used before it -- 1 - (1-missProb)^k -- the
+    // reductions are 0.571 / 0.461 / 0.705 / 1.047, which says less about this model than about
+    // asking an unconditional season-long availability rate a conditional weekly question.
+    nestedLift: 0.0317, claimedLift: null,
+    what: "P(he misses the next k games), k = 1..4, given Friday's designation, practice status, " +
+      "injury type, how long the episode has already run and his position and age. Four separately " +
+      "fitted L2 logistics over 21,757 point-in-time player-weeks (feat_injury_horizon, 2010-2024), " +
+      "with the injury type collapsed into declared buckets INSIDE the fold. Fitted by " +
+      "tools/train_injury_duration.py, evaluated by src/inseason/injuryHorizon.ts, and the two are " +
+      "held together by a golden block at 1e-6. TWO PRE-REGISTERED PREDICTIONS FAILED and the " +
+      "artifact carries the result rather than a refit: the gain over the designation is LARGEST at " +
+      "k=1 (P59 said it would be under 0.02; it is 0.047) and SHRINKS with k (P60 said it would " +
+      "exceed 0.05 at k=4; it is 0.024). Ablation says why: the injury TYPE is worth 0.001-0.002 " +
+      "out of sample, while the practice status is worth 0.026 at k=1, so what a Friday report adds " +
+      "beyond the designation is mostly whether he practised -- not what is wrong with him. " +
+      "CONSUMED BY `depthRisk` and `handcuffs`; the weekly trainer does NOT read the table yet",
+    check: (j) => {
+      // Loaded through the SHIPPED loader for the reason the projection entry gives: a second
+      // validator here would be a second opinion about the same contract and the two would drift.
+      try {
+        const a = loadInjuryHorizonArtifact(j);
+        if (!a.golden?.length) {
+          return "no golden block -- nothing checks that tools/train_injury_duration.py and " +
+            "src/inseason/injuryHorizon.ts agree, which is the one failure a producer shipping its " +
+            "own validator cannot catch";
+        }
+        if (!a.baselineDesignation) {
+          return "no designation-only baseline on the artifact -- the consumer would then have " +
+            "nothing to compare its own numbers against except a baseline refitted somewhere else";
+        }
+        return null;
+      } catch (e) { return (e as Error).message; }
+    },
   },
   // ------------------------------------------------------------------------------------------
   // RETIRED FROM THE PROJECTOR PATH (Phase 2b). Both files remain on disk and both still validate,
