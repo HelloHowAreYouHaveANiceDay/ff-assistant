@@ -108,7 +108,14 @@ export interface StreamingEvalResult {
   streamColumns: string[];
   pooled: Record<string, Scored>;
   byPos: Record<string, Record<string, Scored>>;
+  /** The decision metric on the pool named by `poolSource`. */
   regret: Record<string, StreamPick[]>;
+  /** The SAME metric on the season-line approximation, reported BESIDE the real one whenever the
+   *  real pool was available. Two pools, side by side, is the only way to see whether a conclusion
+   *  drawn on the stand-in survives the thing it stood in for. Null when only one pool exists. */
+  regretRankPool: Record<string, StreamPick[]> | null;
+  /** Rows in the real pool, per position, so an empty table cannot read as an empty pool. */
+  realPoolRows: Record<string, number> | null;
   predictions: { id: string; claim: string; held: boolean | null; evidence: string }[];
   gates: StreamGate[];
   ships: string[];
@@ -257,6 +264,9 @@ function measureSpread(seasons: SeasonRows[]): SpreadTable {
 interface Row1 {
   key: string; pos: string; season: number; week: number; actual: number;
   line: number; rank: number; t4: number;
+  /** True when Track B's `fact_fa_pool_week` lists this man as unrostered in this week. Undefined
+   *  when the store has no such table -- see `inRealPool` for why that is not the same as false. */
+  realFa?: boolean;
   by: Record<string, Pred>;
 }
 
@@ -276,6 +286,32 @@ export function faPoolTable(db: DB): boolean {
 }
 
 /**
+ * THE REAL POOL, as a membership set keyed `season|week|player_sk`.
+ *
+ * A LABEL IS NOT A MEASUREMENT, and this function exists because for a while it was one. The report
+ * printed `poolSource: fact_fa_pool_week` whenever the table merely EXISTED, while `streamingRegret`
+ * went on filtering by `rank > POOL_DEPTH[pos]` -- the season-line approximation -- in every case.
+ * A store with Track B's table therefore produced approximation numbers under the real pool's name,
+ * and nothing anywhere could have noticed: both pools are plausible, both produce a pick, and the
+ * only difference is which men were eligible to be picked.
+ *
+ * The set is empty (and the caller falls back, saying so) when the table is absent. It is NOT
+ * silently treated as "nobody is a free agent", which would leave every pool empty and every metric
+ * reading zero -- a null that looks exactly like a measurement.
+ */
+export function realFaPool(db: DB, seasons: number[]): Map<string, true> | null {
+  if (!faPoolTable(db)) return null;
+  const rows = db.prepare(
+    `SELECT season, week, player_sk FROM fact_fa_pool_week
+      WHERE season IN (${seasons.map(() => "?").join(",")})`,
+  ).all(...seasons) as { season: number; week: number; player_sk: string }[];
+  if (!rows.length) return null;
+  const out = new Map<string, true>();
+  for (const r of rows) out.set(`${r.season}|${r.week}|${r.player_sk}`, true);
+  return out;
+}
+
+/**
  * THE DECISION METRIC. One pick per (season, week, position), scored by what the man actually did.
  *
  * `winShareVsLine` is a PAIRED statistic: both models pick from the same pool in the same week, so it
@@ -286,11 +322,16 @@ export function faPoolTable(db: DB): boolean {
  */
 export function streamingRegret(
   rows: Row1[], poolDepth: Record<string, number>, models: string[],
+  // WHICH POOL. "rank" is the season-line approximation (everyone outside the top N at the
+  // position); "real" is Track B's fact_fa_pool_week, i.e. who sixteen managers ACTUALLY left
+  // unrostered that week. The caller decides and the report names it -- it used to name the real
+  // one while always using the approximation.
+  pool_: "rank" | "real" = "rank",
 ): Record<string, StreamPick[]> {
   const byPos: Record<string, StreamPick[]> = {};
   for (const pos of STREAM_POS) {
     const depth = poolDepth[pos] ?? 0;
-    const pool = rows.filter((r) => r.pos === pos && r.rank > depth);
+    const pool = rows.filter((r) => r.pos === pos && (pool_ === "real" ? r.realFa === true : r.rank > depth));
     if (!pool.length) continue;
     const byWeek = new Map<string, Row1[]>();
     for (const r of pool) (byWeek.get(`${r.season}|${r.week}`) ?? byWeek.set(`${r.season}|${r.week}`, []).get(`${r.season}|${r.week}`)!).push(r);
@@ -395,6 +436,7 @@ export async function evaluateStreaming(opts: StreamingEvalOpts): Promise<Stream
   const all: Row1[] = [];
   let poolSource: StreamingEvalResult["poolSource"] = "season-line approximation";
   let streamColumns: string[] = [];
+  let realPool: Map<string, true> | null = null;
   try {
     streamColumns = presentStreamFields(db);
     if (streamColumns.length !== STREAM_FIELD_NAMES.length) {
@@ -403,7 +445,10 @@ export async function evaluateStreaming(opts: StreamingEvalOpts): Promise<Stream
         "columns. Run `ff build-streaming-features` -- an evaluation of a streaming model on a " +
         "store without the streaming columns measures the weekly model and reports it as this one.");
     }
-    poolSource = faPoolTable(db) ? "fact_fa_pool_week" : "season-line approximation";
+    // THE REAL POOL, actually loaded rather than merely detected. `poolSource` used to be set from
+    // the table's EXISTENCE while the metric went on using the rank approximation regardless.
+    realPool = realFaPool(db, opts.seasons);
+    poolSource = realPool ? "fact_fa_pool_week" : "season-line approximation";
 
     const trainOnly = opts.trainSeasons.filter((s) => !opts.seasons.includes(s));
     const spreadSeasons = (trainOnly.length ? trainOnly : opts.trainSeasons.slice(0, 2)).map((s) => loadSeason(db, s));
@@ -454,6 +499,9 @@ export async function evaluateStreaming(opts: StreamingEvalOpts): Promise<Stream
         all.push({
           key: r.feat_key, pos: r.pos, season: r.season, week: r.week, actual: y,
           line: r.season_line_pg, rank: s.rank.get(r.feat_key) ?? 9999,
+          // The membership question, asked of the REAL pool. `feat_key` and `player_sk` are the
+          // same string in this table -- verified on 2019 week 3, where all 464 pool rows join.
+          ...(realPool ? { realFa: realPool.has(r.season + "|" + r.week + "|" + r.feat_key) } : {}),
           t4: r.f.t4_mean ?? r.f.td_ppg ?? r.season_line_pg,
           by,
         });
@@ -472,7 +520,26 @@ export async function evaluateStreaming(opts: StreamingEvalOpts): Promise<Stream
 
   const scale = opts.poolScale ?? 1;
   const depth = Object.fromEntries(Object.entries(POOL_DEPTH).map(([k, v]) => [k, Math.max(1, Math.round(v * scale))]));
-  const regret = streamingRegret(all, depth, ["streaming", STREAM_CONTROL, "shipped_week", "trailing4"]);
+  const REGRET_MODELS = ["streaming", STREAM_CONTROL, "shipped_week", "trailing4"];
+  // BOTH POOLS, ALWAYS, when both are available. The real one is the headline; the approximation is
+  // reported beside it, because a conclusion that only holds on the stand-in is a conclusion about
+  // the stand-in. Where the real table is absent there is one table and the report says which.
+  const rankRegret = streamingRegret(all, depth, REGRET_MODELS, "rank");
+  const realRegret = realPool ? streamingRegret(all, depth, REGRET_MODELS, "real") : null;
+  const regret = realRegret ?? rankRegret;
+  const regretRankPool = realRegret ? rankRegret : null;
+  // A COUNT, so an empty real pool cannot read as a measurement. A join that silently matched
+  // nothing would produce a pool of size zero at every position, every week would be skipped, and
+  // the metric would come back as "no weeks" -- which looks like a small table, not like a defect.
+  const realPoolRows: Record<string, number> | null = realPool
+    ? Object.fromEntries(STREAM_POS.map((p) => [p, all.filter((r) => r.pos === p && r.realFa).length]))
+    : null;
+  if (realPoolRows && !Object.values(realPoolRows).some((n) => n > 0)) {
+    throw new Error(
+      "fact_fa_pool_week is present but NOT ONE scored row joins it -- the pool would be empty at " +
+      "every position and every streaming number would be computed on nothing. That is a join " +
+      "failure (feat_key vs player_sk), not an empty league.");
+  }
 
   // ---- THE PRE-REGISTERED PREDICTIONS. Recorded as held or failed, never quietly re-stated. ----
   const pick = (pos: string, m: string) => regret[pos]?.find((x) => x.model === m);
@@ -518,7 +585,7 @@ export async function evaluateStreaming(opts: StreamingEvalOpts): Promise<Stream
   return {
     seasons: opts.seasons, trainSeasons: opts.trainSeasons,
     poolSource, poolDepth: depth, streamColumns,
-    pooled, byPos, regret, predictions, gates,
+    pooled, byPos, regret, regretRankPool, realPoolRows, predictions, gates,
     ships: gates.filter((g) => g.passed).map((g) => g.pos),
   };
 }
@@ -550,18 +617,32 @@ export function formatStreamingReport(r: StreamingEvalResult): string {
   table("POOLED", { all: r.pooled });
   out.push("");
   table("BY POSITION", r.byPos);
-  out.push("");
-  out.push("STREAMING REGRET (actual points of the ONE man each model picked out of the pool)");
-  out.push("  " + pad("pos", 5) + pad("model", 18) + "  meanPts   vs line   winVsLine  winVsCtrl    weeks");
-  for (const [pos, list] of Object.entries(r.regret)) {
-    const line = list.find((x) => x.model === "season_line_pick");
-    for (const p of list) {
-      const d = line ? p.meanActual - line.meanActual : NaN;
-      out.push("  " + pad(pos, 5) + pad(p.model, 18) + num(p.meanActual, 2).padStart(9) +
-        (Number.isFinite(d) ? (d >= 0 ? "+" : "") + d.toFixed(2) : "-").padStart(10) +
-        num(p.winShareVsLine, 3).padStart(12) + num(p.winShareVsControl, 3).padStart(11) +
-        String(p.weeks).padStart(9));
+  const regretTable = (title: string, table: Record<string, StreamPick[]>) => {
+    out.push("");
+    out.push(title);
+    out.push("  " + pad("pos", 5) + pad("model", 18) + "  meanPts   vs line   winVsLine  winVsCtrl    weeks");
+    for (const [pos, list] of Object.entries(table)) {
+      const line = list.find((x) => x.model === "season_line_pick");
+      for (const p of list) {
+        const d = line ? p.meanActual - line.meanActual : NaN;
+        out.push("  " + pad(pos, 5) + pad(p.model, 18) + num(p.meanActual, 2).padStart(9) +
+          (Number.isFinite(d) ? (d >= 0 ? "+" : "") + d.toFixed(2) : "-").padStart(10) +
+          num(p.winShareVsLine, 3).padStart(12) + num(p.winShareVsControl, 3).padStart(11) +
+          String(p.weeks).padStart(9));
+      }
     }
+  };
+  if (r.realPoolRows) {
+    out.push("");
+    out.push("  real free-agent pool rows scored: " +
+      Object.entries(r.realPoolRows).map(([k, v]) => k + " " + v).join(", "));
+  }
+  regretTable(
+    "STREAMING REGRET on the " + r.poolSource +
+      " (actual points of the ONE man each model picked out of the pool)",
+    r.regret);
+  if (r.regretRankPool) {
+    regretTable("THE SAME METRIC on the season-line APPROXIMATION, for comparison", r.regretRankPool);
   }
   out.push("");
   out.push("PRE-REGISTERED PREDICTIONS");
