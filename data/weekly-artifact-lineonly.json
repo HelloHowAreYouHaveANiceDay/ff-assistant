@@ -23,6 +23,7 @@
   ],
   "holdoutSeason": null,
   "target": "ratio_to_season_line",
+  "population": "rostered",
   "trainMinLine": 3.0,
   "features": [],
   "coef": {
@@ -31,13 +32,13 @@
         "intercept": 1.0
       },
       "p10": {
-        "intercept": 0.43626035154005155
+        "intercept": 0.0
       },
       "p50": {
-        "intercept": 1.497720786769286
+        "intercept": 0.9257808350061796
       },
       "p90": {
-        "intercept": 3.2131883078162065
+        "intercept": 2.726299932947121
       }
     },
     "RB": {
@@ -45,13 +46,13 @@
         "intercept": 1.0
       },
       "p10": {
-        "intercept": 0.17337194610410522
+        "intercept": 0.0
       },
       "p50": {
-        "intercept": 1.0507950165254092
+        "intercept": 0.6744547973167399
       },
       "p90": {
-        "intercept": 2.893144727876389
+        "intercept": 2.5643340100594982
       }
     },
     "WR": {
@@ -59,13 +60,13 @@
         "intercept": 1.0
       },
       "p10": {
-        "intercept": 0.16616467888871023
+        "intercept": 0.0
       },
       "p50": {
-        "intercept": 1.0282586359667203
+        "intercept": 0.7201052230849212
       },
       "p90": {
-        "intercept": 2.729615537291628
+        "intercept": 2.503663164093361
       }
     },
     "TE": {
@@ -73,13 +74,13 @@
         "intercept": 1.0
       },
       "p10": {
-        "intercept": 0.20824788449247422
+        "intercept": 0.0
       },
       "p50": {
-        "intercept": 1.0766616628607024
+        "intercept": 0.7570941828076
       },
       "p90": {
-        "intercept": 2.9380714567078443
+        "intercept": 2.656780228768374
       }
     },
     "K": {
@@ -87,13 +88,13 @@
         "intercept": 1.0
       },
       "p10": {
-        "intercept": 0.3338905916225505
+        "intercept": 0.0
       },
       "p50": {
-        "intercept": 1.212680675330985
+        "intercept": 1.0262806236080178
       },
       "p90": {
-        "intercept": 2.2888694025189387
+        "intercept": 2.1900710877289806
       }
     },
     "DST": {
@@ -115,7 +116,7 @@
     "lo": 0.0,
     "hi": 4.0
   },
-  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 1.0) are 11.0% of the training rows.",
+  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 1.0) are 29.5% of the training rows.",
   "golden": [
     {
       "pos": "RB",
@@ -139,9 +140,9 @@
       },
       "expect": {
         "mean": 14.5,
-        "p10": 2.5138932185095255,
-        "p50": 15.236527739618433,
-        "p90": 41.95059855420764
+        "p10": 0.0,
+        "p50": 9.779594561092727,
+        "p90": 37.182843145862726
       }
     },
     {
@@ -166,9 +167,9 @@
       },
       "expect": {
         "mean": 11.0,
-        "p10": 1.8278114677758124,
-        "p50": 11.310844995633923,
-        "p90": 30.025770910207907
+        "p10": 0.0,
+        "p50": 7.921157453934133,
+        "p90": 27.54029480502697
       }
     },
     {
@@ -193,9 +194,9 @@
       },
       "expect": {
         "mean": 19.5,
-        "p10": 8.507076855031006,
-        "p50": 29.20555534200108,
-        "p90": 62.657172002416026
+        "p10": 0.0,
+        "p50": 18.0527262826205,
+        "p90": 53.162848692468856
       }
     },
     {
@@ -220,9 +221,9 @@
       },
       "expect": {
         "mean": 7.5,
-        "p10": 1.5618591336935568,
-        "p50": 8.074962471455269,
-        "p90": 22.03553592530883
+        "p10": 0.0,
+        "p50": 5.678206371057,
+        "p90": 19.925851715762803
       }
     },
     {
@@ -235,9 +236,9 @@
       },
       "expect": {
         "mean": 9.0,
-        "p10": 1.560347514936947,
-        "p50": 9.457155148728683,
-        "p90": 26.0383025508875
+        "p10": 0.0,
+        "p50": 6.070093175850658,
+        "p90": 23.079006090535483
       }
     }
   ]

@@ -63,6 +63,19 @@ export interface WeeklyArtifact {
   /** The denominator. Recorded so the loader and the trainer cannot disagree about what the ratio
    *  was a ratio TO. */
   target: "ratio_to_season_line";
+  /**
+   * WHICH WEEKS THE MODEL WAS FITTED ON, and it is a contract, not a note.
+   *
+   * "rostered" is every non-bye week, with a week the man did not play scored as the ZERO it is for
+   * the manager who started him. "played" is appearances only, which makes the model an estimator of
+   * E[points | he plays] -- systematically too high for exactly the players a lineup should be
+   * benching. The first evaluation pass measured that mismatch as a +0.8 to +1.7 point bias and 0.57
+   * coverage against a nominal 0.80, with nothing wrong on either side: the two were answering
+   * different questions and both were internally consistent. So the population is recorded on the
+   * artifact and a consumer that scores a different one refuses it rather than reporting the gap as
+   * a model defect.
+   */
+  population: "rostered" | "played";
   /** Season lines below this were excluded from TRAINING (the ratio is noise over a small number).
    *  It is not a serve-time behaviour: a small line still projects, it just projects small. */
   trainMinLine: number;
@@ -182,6 +195,10 @@ export function loadWeeklyArtifact(json: unknown, opts: { checkGolden?: boolean;
   if (a.kind !== "weekly") bad(`kind is ${JSON.stringify(a.kind)}, expected "weekly"`);
   if (Number(a.schema) !== SCHEMA) bad(`schema ${a.schema}, this evaluator understands ${SCHEMA}`);
   if (a.target !== "ratio_to_season_line") bad(`unknown target ${JSON.stringify(a.target)}`);
+  if (!["rostered", "played"].includes(a.population)) {
+    bad(`population is ${JSON.stringify(a.population)}, expected "rostered" or "played". An artifact ` +
+      "that does not say which weeks it was fitted on cannot be checked against the weeks it is scored on.");
+  }
   if (!Array.isArray(a.features)) bad("features must be an array");
   const known = new Set<string>(WEEKLY_FEATURE_FIELDS);
   const seen = new Set<string>();
@@ -255,6 +272,7 @@ export function checkWeeklyGolden(a: WeeklyArtifact, tol = 1e-6): void {
  */
 export function seasonLineOnlyArtifact(opts: {
   positions: string[]; seasons: number[];
+  population?: "rostered" | "played";
   quantiles?: Record<string, { p10: number; p50: number; p90: number }>;
 }): WeeklyArtifact {
   const coef: WeeklyArtifact["coef"] = {};
@@ -268,6 +286,7 @@ export function seasonLineOnlyArtifact(opts: {
   return {
     schema: SCHEMA, kind: "weekly", fittedFrom: "seasonLineOnlyArtifact (no fitted coefficients)",
     seasons: opts.seasons, holdoutSeason: null, target: "ratio_to_season_line",
+    population: opts.population ?? "rostered",
     trainMinLine: 0, features: [], coef, clamps: { lo: 0, hi: 100 },
     notes: "season-line-only: the weekly projection IS the preseason season line per game. The " +
       "floor that ships when a trained artifact fails its gate, so a failed model degrades to " +

@@ -92,15 +92,32 @@ def parse_seasons(s):
     return lo, hi
 
 
-def load_rows(db_path, lo, hi):
+def load_rows(db_path, lo, hi, population):
+    """THE TRAINING POPULATION, and it is a train-serve contract, not a filter.
+
+    `played` is every week the man actually appeared. `rostered` -- the DEFAULT -- is every non-bye
+    week, with a week he did not play scored as the ZERO it is for the manager who started him.
+
+    This distinction was not obvious and cost a full evaluation pass to find. Fitting on `played` and
+    then serving every rostered week makes the model an estimator of E[points | he plays], which is
+    systematically too high for exactly the players a lineup should be benching: the first evaluation
+    run showed the trained model biased +0.8 to +1.7 points against every baseline's roughly -0.4,
+    and coverage at 0.57 against a nominal 0.80. Nothing in the fit or the artifact was wrong; the
+    two sides were answering different questions and both were internally consistent.
+
+    A bye is excluded from BOTH populations. Every model knows about a bye equally, from the
+    schedule, so scoring it would hand every model the same free lunch and flatter all of them.
+    """
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
+    where = "pts IS NOT NULL" if population == "played" else "COALESCE(is_bye, 0) = 0"
     cur = con.execute(
         "SELECT feat_key, player_sk, season, week, name, pos, season_line_pg,"
         " td_games, td_ppg, t4_mean, t4_sd, td_fd, td_ts, td_attempts, td_rush_yards,"
-        " dvp_mult, dvp_n, home, spread_line, total_line, implied_team_total, days_rest, pts"
+        " dvp_mult, dvp_n, home, spread_line, total_line, implied_team_total, days_rest,"
+        " COALESCE(pts, 0.0) AS pts"
         " FROM feat_player_week_model"
-        " WHERE season BETWEEN ? AND ? AND pts IS NOT NULL AND season_line_pg IS NOT NULL",
+        " WHERE season BETWEEN ? AND ? AND " + where + " AND season_line_pg IS NOT NULL",
         (lo, hi),
     )
     rows = []
@@ -344,6 +361,11 @@ def main():
     ap.add_argument("--features", default="all",
                     help="comma list of feature columns, or 'all'. The report says which it used.")
     ap.add_argument("--out", default="data/weekly-artifact.json")
+    ap.add_argument("--population", default="rostered", choices=["rostered", "played"],
+                    help="rostered (default) = every non-bye week, a did-not-play week scored as the "
+                         "zero it is for the manager who started him; played = appearances only. "
+                         "MUST match what the evaluator scores, or the model answers a different "
+                         "question from the one asked.")
     ap.add_argument("--zero-model", default="quantile", choices=["quantile", "two-part"])
     ap.add_argument("--season-line-only", action="store_true",
                     help="emit the floor artifact: every coefficient zero, mean intercept 1.0")
@@ -362,7 +384,7 @@ def main():
 
     lo, hi = parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
-    rows = load_rows(args.db, lo, hi)
+    rows = load_rows(args.db, lo, hi, args.population)
     rows = [r for r in rows if r["season_line_pg"] and r["season_line_pg"] >= TRAIN_MIN_LINE]
     # THE HOLDOUT IS REMOVED BEFORE ANYTHING IS MEASURED -- before the transform centres, before the
     # missing-value defaults, before the alpha search. Removing it only from the final fit would
@@ -434,6 +456,7 @@ def main():
         "seasons": seasons,
         "holdoutSeason": holdout,
         "target": "ratio_to_season_line",
+        "population": args.population,
         "trainMinLine": TRAIN_MIN_LINE,
         "features": specs,
         "coef": coef,
@@ -449,7 +472,8 @@ def main():
         print("wrote " + args.out)
         print("  seasons " + str(seasons[0]) + "-" + str(seasons[-1]) +
               (" holding out " + str(holdout) if holdout else "") +
-              "; " + str(len(rows)) + " player-weeks; " + str(len(specs)) + " features")
+              "; " + str(len(rows)) + " player-weeks (" + args.population + "); " +
+              str(len(specs)) + " features")
         print("  features used: " + (", ".join(s["name"] for s in specs) or "(none)"))
         print("  waiting on the data track: injury_status_friday, depth_chart_rank, teammates_out, "
               "prior_snap_share, prior_route_share, vegas_implied_team_total")

@@ -147,6 +147,8 @@ async function main() {
     // ---- weekly track (src/weekly/) ----
     case "build-weekly-features":
       return cmdBuildWeeklyFeatures(rest);
+    case "evaluate-weekly":
+      return cmdEvaluateWeekly(rest);
     default:
       console.log(
         "commands:\n" +
@@ -2541,6 +2543,20 @@ async function cmdBuildWeeklyFeatures(rest: string[]) {
         ["season_line_pg", "td_ppg", "t4_mean", "dvp_mult", "spread_line", "days_rest", "pts"].map(pct).join(""));
     }
   } finally { db.close(); }
+}
+
+async function cmdEvaluateWeekly(rest: string[]) {
+  const { evaluateWeekly, formatWeeklyReport } = await import("./weekly/evaluate.js");
+  const res = await evaluateWeekly({
+    dbPath: valueOf(rest, "--db"),
+    seasons: seasonRange(valueOf(rest, "--seasons"), [2012, 2025]),
+    trainSeasons: seasonRange(valueOf(rest, "--train-seasons"), [2010, 2025]),
+    rosters: Number(valueOf(rest, "--rosters") ?? 300),
+    features: valueOf(rest, "--features") ?? "all",
+    keepArtifacts: valueOf(rest, "--keep-artifacts"),
+  });
+  if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
+  else console.log(formatWeeklyReport(res));
 }
 
 main().catch((err) => {
