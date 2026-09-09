@@ -58,6 +58,29 @@ export interface ScorecardOpts {
   rosters?: number;
   /** A pre-loaded schedule, so a test can drive the late-snapshot refusal without a network read. */
   sched?: ScheduleInfo;
+  /**
+   * THE PRE-SEASON ODDS, supplied by the caller rather than computed here.
+   *
+   * The `odds` kind is one playoff and one title probability per team, frozen once before kickoff
+   * and scored by Brier at season end. Producing it means running the season simulation against the
+   * league's REAL schedule, which needs the app bridge -- exactly the kind of live, authenticated
+   * read this file has no business doing, and exactly the kind of thing a test must be able to
+   * replace with a fixture. So the scorecard takes a provider and writes what it returns.
+   *
+   * Omitted, the kind is skipped and says so. Returning an empty array is also honest and is
+   * recorded as a skip, never as a snapshot of nothing.
+   */
+  oddsProvider?: () => Promise<OddsSnapshotRow[]> | OddsSnapshotRow[];
+}
+
+/** One team's pre-season odds. Probabilities are in PERCENT, matching `seasonOdds`; the Brier
+ *  scorer divides by 100 at scoring time, where the actual is 0 or 1. */
+export interface OddsSnapshotRow {
+  /** Stable per-team id -- the league's team id, not a display name, which owners change. */
+  subject: string;
+  name: string;
+  playoffPct: number;
+  titlePct: number;
 }
 
 export interface ScorecardResult {
@@ -297,18 +320,47 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         })();
       }
 
-      // ---- odds kind. Written only where the store HOLDS a playoff/title probability. ----
-      const hasOdds = db.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name='team_odds'").get() as { c: number };
-      if (!hasOdds.c) {
-        res.oddsKind.skipped = "no odds table in this store";
+      // ---- odds kind: playoff and title probability per team, once, before kickoff. ----
+      //
+      // What is NOT done here is as important as what is. `team_odds` carries a game spread and a
+      // total, not a playoff or title probability, and manufacturing one from the spread would give
+      // the Brier accrual a number we invented to measure -- our own arithmetic, scored as though it
+      // were a forecast. So the probabilities come from the season simulation via `oddsProvider`,
+      // or the kind stays empty and says why.
+      //
+      // Two rows per team, `playoff` and `title`, as separate models: they settle on different
+      // facts (a seed, a championship) and a Brier score over a mixture of the two would be a
+      // number with no interpretation.
+      if (!opts.oddsProvider) {
+        res.oddsKind.skipped =
+          "no odds provider was supplied. The 'odds' kind needs a playoff and title probability per " +
+          "team, which comes from the season simulation against the league's REAL schedule (the app " +
+          "bridge) -- pass --odds. It is left EMPTY rather than derived from team_odds, which carries " +
+          "a game spread and total: a Brier score accrued against a number we invented would measure " +
+          "our own arithmetic.";
       } else {
-        const cols = db.prepare("PRAGMA table_info(team_odds)").all() as { name: string }[];
-        const names = new Set(cols.map((c) => c.name));
-        if (!names.has("playoff_prob") && !names.has("title_prob")) {
-          res.oddsKind.skipped =
-            "team_odds carries a game spread and total, not a playoff or title probability. The " +
-            "'odds' kind is left EMPTY rather than manufacturing one from the spread -- a Brier " +
-            "score accrued against a number we invented would measure our own arithmetic.";
+        const rows = await opts.oddsProvider();
+        if (!rows.length) {
+          res.oddsKind.skipped = "the odds provider returned no teams -- nothing was written, rather than a snapshot of nothing";
+        } else {
+          const insO = db.prepare(
+            `INSERT OR IGNORE INTO scorecard_prediction
+               (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+             VALUES (@season,0,'odds',@model,@subject,@name,NULL,@value,NULL,NULL,@asOf,@now)`,
+          );
+          const now = nowIso();
+          db.transaction(() => {
+            for (const r of rows) {
+              for (const [model, value] of [["playoff", r.playoffPct], ["title", r.titlePct]] as [string, number][]) {
+                if (!Number.isFinite(value)) continue;
+                const info = insO.run({ season: opts.season, model, subject: r.subject, name: r.name, value, asOf: today, now });
+                if (info.changes) res.oddsKind.taken++;
+              }
+            }
+          })();
+          if (!res.oddsKind.taken) {
+            notes.push("the odds kind was already snapshotted -- it is written once, so a re-run is a no-op rather than a rewrite.");
+          }
         }
       }
     }

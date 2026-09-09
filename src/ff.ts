@@ -2723,11 +2723,41 @@ async function cmdScorecard(rest: string[]) {
       `${f.withLine} with a season line, ${f.withLines} with a published spread; ` +
       `weeks already played: ${f.playedWeeks.join(",") || "(none)"}`);
   }
+  // `--odds`: the pre-season playoff and title probability per team, frozen once. It is the one
+  // prediction on the scorecard that is about the LEAGUE rather than about a player, and it needs
+  // the season simulation on the league's REAL schedule -- so the CLI supplies it and the scorecard
+  // just writes it. Trials and seed are fixed and printed, because a Brier accrual has to name the
+  // run that produced the number it will be scored against.
+  const oddsTrials = Number(valueOf(rest, "--odds-trials") ?? 3000);
+  const oddsSeed = Number(valueOf(rest, "--odds-seed") ?? 7);
+  const oddsProvider = rest.includes("--odds")
+    ? async () => {
+      const { loadSimContext } = await import("./draft/simContext.js");
+      const { seasonOdds } = await import("./inseason/copilot.js");
+      const ctx = await loadSimContext({ schedule: "real" });
+      if (ctx.syntheticSchedule) {
+        throw new Error(
+          "scorecard --odds refuses a GENERATED schedule: a playoff probability from a stand-in " +
+          "schedule is not this league's, and freezing it write-once would put a number nobody can " +
+          "interpret into a record that cannot be rewritten. Start the app so the bridge is up.",
+        );
+      }
+      const r = seasonOdds(ctx, { trials: oddsTrials, seed: oddsSeed });
+      console.log(`odds: ${r.teams.length} teams, ${oddsTrials} trials, seed ${oddsSeed}, REAL schedule, ` +
+        `${r.invariants.filter((i) => i.ok).length}/${r.invariants.length} conservation laws hold`);
+      return r.teams.map((t) => ({
+        subject: t.id, name: t.name,
+        playoffPct: 100 * t.playoffs, titlePct: 100 * t.champion,
+      }));
+    }
+    : undefined;
+
   const res = await runScorecard({
     dbPath: valueOf(rest, "--db"), season,
     snapshot: !rest.includes("--score-only"),
     score: !rest.includes("--snapshot-only"),
     espn: rest.includes("--espn"),
+    oddsProvider,
     week: valueOf(rest, "--week") ? Number(valueOf(rest, "--week")) : undefined,
     today: valueOf(rest, "--today"),
     rosters: valueOf(rest, "--rosters") ? Number(valueOf(rest, "--rosters")) : undefined,
