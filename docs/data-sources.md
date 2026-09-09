@@ -445,6 +445,58 @@ is the credential. Everything below is a GET.
 - **Status.** ingested (this branch). Before it, these rows existed only because a scratchpad script
   had been run once by hand -- the store's most league-specific data was not reproducible.
 
+### 5.1a Weekly rosters and lineups -- `raw_league_roster_week`, `raw_league_roster_week_status`
+
+- **What.** Every team's roster AND its lineup slot for every scoring period: ESPN player id, name,
+  position, `lineup_slot_id`, whether that slot is a start, and the week's applied points.
+- **Grain / key.** `(league_id, season, week, team_id, espn_player_id)`. A per-week status row
+  records every scoring period ASKED FOR, so a week ESPN served nothing for is distinguishable from
+  a week nobody fetched.
+- **As-of.** `as_of_start` / `as_of_end` are the scoring period's kickoff window from
+  `raw_nfl_game`; `as_of` is `as_of_end`. Roster membership and slots are set BEFORE the first
+  kickoff and the points are settled at the last, so a point-in-time consumer for week *w* reads
+  rows whose `as_of` is strictly before week *w*'s first kickoff, plus week *w*'s own membership --
+  never its points. NULL where the schedule is not in the store.
+- **THE ENDPOINT MATTERS MORE THAN USUAL.** `leagueHistory/{id}?...&view=mRoster&scoringPeriodId=w`
+  **ignores the week** and serves the season's FINAL roster under every week number -- weeks 1, 3, 8
+  and 14 of 2020 come back with identical rosters and identical starters. The working request is
+  `seasons/{Y}/segments/0/leagues/{id}?scoringPeriodId=w&view=mBoxscore`, which serves past seasons
+  as well as the current one. `leagueHistory` + `mBoxscore` returns an empty
+  `rosterForCurrentScoringPeriod`. Probes: `scripts/inseason-probe*.mjs`.
+- **Seasons, measured.** 147 of 159 scoring periods available, **27,055 rows**, 2018-2026. Rosters
+  of 13 with 8 starters through 2024, 12 with 8 from 2025 (the league went 14 -> 16 teams). The 12
+  unavailable periods are weeks past each season's last game.
+- **Fetch path and cost.** `ff ingest-raw league-rosters --seasons 2018-2026`. One request per
+  season-week, ~1.1MB each, gzipped into `data/cache/espn/`; a re-run is free.
+- **Feeds.** `fact_roster_week`, `fact_fa_pool_week`, `fact_lineup_week`
+  (`src/features/sources/rosterState.ts`), and through them the three in-season backtests.
+- **Status.** ingested. See `docs/in-season-backtest.md`.
+
+### 5.1b Transaction log -- `raw_league_transaction`, `raw_league_transaction_status`
+
+- **What.** Every add, drop, waiver claim and trade item, with the FAAB bid, the executing team and
+  member, the slots moved from and to, and ESPN's own status.
+- **Grain / key.** `(league_id, season, transaction_id, item_no)` -- ONE ROW PER ITEM. A free-agent
+  pickup is one ESPN transaction containing an ADD and a DROP; a trade contains four. `item_no` is
+  the index in ESPN's array, because the feed publishes no per-item id.
+- **As-of.** `executed_at` is ESPN's `proposedDate`, rendered LOCAL. The kickoff window of the
+  scoring period is carried alongside.
+- **THE QUERY PARAMETER IS THE WHOLE THING.** `view=mTransactions2` returns an EMPTY ARRAY on every
+  path -- `leagueHistory`, `/seasons/`, with or without an `x-fantasy-filter` (which 400s) -- unless
+  the request carries `scoringPeriodId`. With it, 2024 week 5 returns 21 transactions. So the log is
+  fetched per scoring period, and "ESPN has purged the old log" was, for three probes, a statement
+  about a missing parameter.
+- **Seasons, measured.** **4,569 transactions / 11,169 items**, 2018-2026. Per season the log
+  carries the auction (182-192 DRAFT rows) plus 68-329 waiver claims and 138-230 free-agent pickups.
+  FAAB spend: 2018 $2,985, 2019 $1,200, 2020 $1,407, 2021 $1,160, 2022 $936, 2023 $1,211, 2024 $954,
+  2025 $1,642. 84-93% of items resolve to a `player_sk` by ESPN id; the unresolved are mostly team
+  defences, which ESPN keys under negative ids and which `rosterState.ts` decodes.
+- **No player name or position.** A transaction item carries only `playerId`, and that absence is
+  preserved rather than back-filled from the roster table -- a name filled in here would be a join
+  in the raw layer wearing a published column's clothes.
+- **Fetch path and cost.** `ff ingest-raw league-transactions --seasons 2018-2026`. Small payloads.
+- **Status.** ingested. See `docs/in-season-backtest.md`.
+
 ### 5.2 Projections, ownership, ADP, draft ranks
 
 - **What.** ESPN's own projections and `percentOwned`, plus its draft rank and ADP, read from

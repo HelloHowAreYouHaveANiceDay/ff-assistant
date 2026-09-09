@@ -172,6 +172,23 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   counts, the NFL draft, participation, contracts, the FFC ADP archive, ESPN's own per-player
   eligible slots); `ingest-raw <id> [--seasons 2013-2025]` materializes one. Inventory:
   `docs/data-sources.md`.
+  Two of them are this league's own in-season record: `league-rosters` (every team's roster AND
+  lineup slot for 147 scoring periods, 27,055 rows) and `league-transactions` (4,569 adds, drops,
+  waiver claims and trades with their FAAB bids). Both come from ESPN endpoints whose obvious form
+  silently answers a different question -- `leagueHistory` + `mRoster` ignores `scoringPeriodId` and
+  serves the FINAL roster under every week number, and `mTransactions2` returns an empty array
+  unless the request carries `scoringPeriodId`. `docs/data-sources.md` 5.1a/5.1b has both.
+- **In-season backtest (`docs/in-season-backtest.md`):** the lineup, waiver and handcuff decisions
+  scored against 1,896 real team-weeks and 1,878 real waiver claims, 2018-2025. Managers leave 12.5
+  points a week on the bench against hindsight -- and **our lineup rule scores LESS than they do**
+  (-1.4 pts/wk under the trained weekly challenger, -4.5 under the shipped floor), because it starts
+  a player who scores zero 4-6% of the time against their 3.5%: an information gap, not an
+  optimisation gap, and the optimiser's positive control proves it. Our waiver ranking does beat the
+  room, but only under the challenger (+8.8% per FAAB dollar, ahead in 7 seasons of 8). A promoted
+  RB backup outscores the man he replaced (159% of his trailing-4), which corroborates the handcuff
+  board from a new direction without moving its prior.
+  `ff inseason-backtest lineup|waivers|promotion`, over
+  `scripts/inseason-backtest-{lineup,waiver,promotion}.mjs`.
 - **Position eligibility is a SET, not a column** (`espn-eligibility`, `src/data/eligibility.ts`).
   ESPN answers "which lineup slots may this man be started in" on every player object and the board
   build used to discard it. It now reaches the value book (a dual-eligible player is worth the better

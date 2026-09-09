@@ -48,6 +48,35 @@
  */
 import type { VarianceModel } from "../draft/season.js";
 
+/**
+ * CHECKED AGAINST A SECOND, INDEPENDENT DEFINITION OF THE EVENT (2026-09-09), AND IT STANDS.
+ *
+ * The fit above infers "the lead is out" from the lead's own missing week, with the lead identified
+ * by weeks 1-4 production. `src/inseason/backtest/promotion.ts` builds the event from evidence that
+ * design never used: the PUBLISHED DEPTH CHART moving a man from rank 2 to rank 1 in week w, with a
+ * displaced week w-1 starter carrying an OUT designation that week -- a strictly pre-kickoff signal
+ * a manager could have acted on. 67 events, 2018-2024:
+ *
+ *   pos   n    starter t4   backup pts, week   next-4   snap% before -> that week   share of starter
+ *   RB    9         8.67              13.76      9.72          0.45 -> 0.61                    1.586
+ *   QB   14        10.17               8.34      5.08          0.70 -> 0.90                    0.820
+ *   WR   30         7.75               3.14      2.84          0.49 -> 0.61                    0.405
+ *   TE   14         6.34               1.69      3.02          0.49 -> 0.60                    0.266
+ *
+ * A promoted running back outscores the man he replaced -- 158% of the departed starter's trailing
+ * four-game average -- which corroborates the whole handcuff thesis from a direction the original
+ * design could not see. The receiver and tight-end numbers are far lower, which is why this board
+ * defaults to RB and why extending it to WR/TE on intuition would be a mistake.
+ *
+ * THE PRIOR WAS NOT REPLACED, AND THE GATE IS WHY. A regression of the backup's week-w points on
+ * (the starter's trailing-4, the backup's prior snap share, the team's implied total), cross
+ * validated NESTED BY SEASON against this same prior, is WORSE out of sample: RMSE 7.30 against the
+ * prior's 6.78 pooled, and 3.27 against 1.50 on the nine running-back events. Adding the backup's
+ * own trailing-4 -- the column the prior leans on -- brings the challenger to 6.59 against 6.78,
+ * a 2.7% improvement on 66 events over seven folds, which is well inside the selection noise this
+ * repo has been burned by before and fails outright on the position the board is actually for. So
+ * the coefficients below are unchanged. `scripts/inseason-backtest-promotion.mjs` reruns it.
+ */
 /** Fitted on 27 seasons, out-of-sample selected. See the header. */
 export const HANDCUFF_MODEL = { backup: 0.922, lead: 0.402, fittedFrom: "handcuff-form.mjs", cases: 307 } as const;
 
