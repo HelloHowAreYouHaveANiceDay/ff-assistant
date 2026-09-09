@@ -5,7 +5,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dataPath } from "../data/paths.js";
 import { loadPriceModel, priceFor, type PriceArtifact } from "../model/price.js";
-import { makeV2Strategy, type DraftState, type V2Config } from "./strategy.js";
+import { makeV2Strategy, type DraftState, type PlayerRef, type V2Config } from "./strategy.js";
+import { makeV3Strategy, type V3Config } from "./strategyV3.js";
+import { availForRank, availFromVarianceModel } from "./lineupMarginal.js";
 import { computeValues, resolveValueLeague, type PointsRow } from "./values.js";
 import { loadManagers, makeBotBidder, assignSeats, type BotBidder, type ManagerProfile } from "./managers.js";
 import { planDrainNomination, payersFrom } from "./nomination.js";
@@ -63,6 +65,15 @@ export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile
    * simulator already models separately and would otherwise count twice.
    */
   botIdioSd?: number;
+  /**
+   * WHICH BIDDER SITS IN OUR SEAT. "v2" (default) is the shipped, hand-tuned one; "v3" is the
+   * derived one in strategyV3.ts.
+   *
+   * It is also readable from `FF_STRATEGY`, the same way `FF_RANK_DECAY` overrides the rank book, so
+   * a sweep can select it without every caller in the chain growing a parameter. An explicit option
+   * always wins over the environment.
+   */
+  strategy?: "v2" | "v3";
 }
 
 /** Steepness of the rank-price curve. CALIBRATED against this room's real drafts rather than
@@ -162,6 +173,102 @@ export function rankBook(points: PointsRow[], lg: SimLeague, decay = RANK_DECAY)
   return out;
 }
 
+/**
+ * OUR PREDICTIVE UNCERTAINTY, by within-position consensus rank, as a log-sd.
+ *
+ * These are the MEASURED consensus dispersions from `scripts/market-noise.mjs` (2020-2025, 2,851
+ * scored player-seasons) -- the same table `--market ecr` uses for the room's shared error. They
+ * stand in for the projection artifact's own p10/p90 inside the backtest, where no per-player
+ * interval is threaded through the points table, and the substitution is stated rather than hidden:
+ * it is the right ORDER of magnitude and the right SHAPE (a top-six player is far more predictable
+ * than a 60th), and it is the market's error rather than specifically ours.
+ */
+export const OUR_SD_BAND: [number, number][] = [[6, 0.459], [12, 0.448], [24, 0.616], [40, 0.814], [60, 1.045], [Infinity, 1.214]];
+export const ourSdFor = (posRank: number | null): number =>
+  (posRank == null ? 1.214 : (OUR_SD_BAND.find(([hi]) => posRank <= hi) ?? OUR_SD_BAND[5])[1]);
+
+/**
+ * Build V3's config from the same inputs the auction already has.
+ *
+ * WHAT IS NOT AVAILABLE HERE, said plainly because it bounds what the arbiter can measure about V3:
+ * the historical points table carries no BYE WEEK, so the bye-collision term of the roster-aware
+ * marginal is inert in the backtest. It is live for the live path and for `scripts/roster-book.mjs`,
+ * both of which have byes. V3 is therefore being measured with one of its four advantages switched
+ * off, which can only understate it.
+ */
+export function buildV3Config(
+  points: PointsRow[],
+  lg: SimLeague,
+  o: { byeOf?: (n: string) => number | null; priceOf?: (n: string, pos: string) => number } = {},
+): V3Config {
+  const projMap = new Map(points.map((p) => [p.name, p.points]));
+  const posRank = new Map<string, number>(), overallRank = new Map<string, number>();
+  {
+    const seen: Record<string, number> = {};
+    [...points].sort((a, b) => b.points - a.points).forEach((p, i) => {
+      seen[p.pos] = (seen[p.pos] ?? 0) + 1;
+      posRank.set(p.name, seen[p.pos]);
+      overallRank.set(p.name, i + 1);
+    });
+  }
+  // Availability, from the fitted variance model where it is on disk -- PER PLAYER, tiered by his
+  // rank in the positional pool exactly as `simulateSeasons` tiers him, with the positional average
+  // over the top two tiers as the fallback.
+  let avail: Record<string, number> = { QB: 0.90, RB: 0.82, WR: 0.85, TE: 0.85, K: 0.95, DST: 1.0 };
+  let availOf: ((name: string, pos: string) => number | undefined) | undefined;
+  {
+    const p = dataPath("variance-model.json");
+    if (existsSync(p)) {
+      const vm = JSON.parse(readFileSync(p, "utf8"));
+      avail = { ...avail, ...availFromVarianceModel(vm) };
+      const poolOf: Record<string, number> = {};
+      for (const r of points) poolOf[r.pos] = (poolOf[r.pos] ?? 0) + 1;
+      availOf = (name, pos) => availForRank(vm, pos, (posRank.get(name) ?? 1) - 1, poolOf[pos] ?? 1);
+    }
+  }
+  // THE STREAMING FLOOR, per week, derived the same way `simContext.ts` derives it: the body you can
+  // actually add off waivers. League-wide starting demand plus one spare per team is the rank where
+  // the free-agent pool begins, so the man at that rank is what an empty slot really scores.
+  const NFL_WEEKS = 17;
+  const replacement: Record<string, number> = {};
+  {
+    const byPos = new Map<string, number[]>();
+    for (const p of points) (byPos.get(p.pos) ?? byPos.set(p.pos, []).get(p.pos)!).push(p.points);
+    for (const [pos, list] of byPos) {
+      list.sort((a, b) => b - a);
+      const dedicated = lg.slots.filter((s) => s === pos).length;
+      const flexShare = ["RB", "WR", "TE"].includes(pos) ? lg.slots.filter((s) => s === "FLEX").length / 3 : 0;
+      const idx = Math.min(list.length - 1, Math.round((dedicated + flexShare + 1) * lg.teams));
+      replacement[pos] = Math.max(0, (list[idx] ?? 0) / NFL_WEEKS);
+    }
+  }
+  const vorPrice = o.priceOf ? new Map<string, number>() :
+    new Map(computeValues(points, resolveValueLeague(lg), 2).map((v) => [v.name, v.value]));
+  return {
+    proj: (name) => projMap.get(name) ?? 0,
+    byeOf: o.byeOf,
+    lineup: { slots: lg.slots, flexOk: [...FLEX_OK], weeks: NFL_WEEKS, avail, replacement },
+    availOf,
+    // Default market: our own VOR book, which at least has a real $1 tail. The sim overrides it with
+    // whichever book the room is actually bidding, which is the honest expectation of what we pay.
+    priceOf: o.priceOf ?? ((name) => vorPrice.get(name) ?? 1),
+    // THE SHADING SENSITIVITY ARM. `FF_V3_OURSD=0` drops our own predictive uncertainty from the
+    // curse correction, leaving only the market's measured spread.
+    //
+    // The argument for dropping it is not tuning, it is that a SHARED error creates no curse: if the
+    // whole room reads the same projections and the same consensus, an error we all make moves every
+    // bid together and the winner is not selected on it. Only the PRIVATE component -- how far two
+    // bidders' views of the same man diverge, which is what the price model's residual dispersion
+    // measures -- decides how much the winner over-paid. Both arms are run and both are reported,
+    // because which one is right is an empirical question and this is the harness that answers it.
+    // `FF_V3_SHADE=off` removes the correction entirely, which is the arm that separates "the
+    // shading is wrong" from "the value is wrong". Without it a losing result cannot be attributed.
+    ourSd: (process.env.FF_V3_SHADE === "off" || process.env.FF_V3_OURSD === "0") ? () => 0 : (name) => ourSdFor(posRank.get(name) ?? null),
+    marketSd: process.env.FF_V3_SHADE === "off" ? () => 0 : (name) => priceNoiseFor(overallRank.get(name) ?? 9999)[1],
+    defaultBidders: Math.max(2, Math.round(lg.teams / 2)),
+  };
+}
+
 /** Run the auction. Seat 0 is US (real makeV2Strategy) unless includeUs=false; every other seat is a
  *  real MANAGER BOT modelled on this league's history (src/draft/managers.ts): each reproduces that
  *  owner's positional appetite + concentration, so the field is heterogeneous (QB-payers, RB-first,
@@ -247,7 +354,15 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
     return out;
   };
 
-  const ourStrat = makeV2Strategy(cfg);
+  // WHICH BIDDER SITS IN OUR SEAT. Explicit option first, environment second, V2 by default -- so
+  // nothing about the shipped arbiter changes unless somebody asks for it.
+  const useV3 = opts.strategy === "v3" || (opts.strategy == null && process.env.FF_STRATEGY === "v3");
+  // V3's budget path is a PLAN and a plan needs prices, so it is handed the same book the room is
+  // bidding from -- which is what we should honestly expect to pay, and keeps the plan from being
+  // priced off our own valuation (the self-reference that hid the FLEX bug for months).
+  const ourStrat = useV3
+    ? makeV3Strategy(buildV3Config(points, lg, { priceOf: (name) => trueVal.get(name) ?? 1 }))
+    : makeV2Strategy(cfg);
   const available = new Set(points.map((p) => p.name));
   let nom = 0, guard = 0;
   while (teams.some((t) => openCount(t) > 0) && available.size > 0 && guard++ < 6000) {
@@ -298,7 +413,10 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
       if (t.us) {
         // Populate the live board + all-team budgets ONLY when repricing is on (per-bid O(available)).
         let board: DraftState["board"] = [], allTeams: DraftState["teams"] = [];
-        if (cfg.inflation || cfg.scarcity) {
+        // V3 reads the board (its shadow price is the value still available to us) and the seats
+        // (its shading counts live bidders), so both are populated for it regardless of the V2
+        // repricing flags. Neither costs anything when V3 is not in the seat.
+        if (cfg.inflation || cfg.scarcity || useV3) {
           board = [...available].map((nm) => ({ name: nm, pos: (posMap.get(nm) ?? "") as never, team: "", espnPreDraftVal: ourValues.get(nm) ?? trueVal.get(nm) ?? null }));
           allTeams = teams.map((tt, k) => ({ name: String(k), budgetLeft: tt.budget, openSlots: openCount(tt) }));
         }
@@ -314,7 +432,12 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
         // What we have already WON, by position -- feeds maxAtPos. Cheap: our own filled slots.
         const myPosCounts: Record<string, number> = {};
         for (const nm of t.slots) if (nm) { const pp = posMap.get(nm); if (pp) myPosCounts[pp] = (myPosCounts[pp] ?? 0) + 1; }
-        const state: DraftState = { myBudget: t.budget, mySlots: slotsOpenByKey(t), myRoster: [], myPosCounts, onBlock: { name, pos: pos as never, team: "", espnPreDraftVal: ourValues.get(name) ?? null }, currentOffer: null, secondsLeft: null, iAmHighBidder: false, board, teams: allTeams, posInflation, leagueDollars, leagueOpenSlots };
+        // OUR ROSTER, POPULATED. It was passed empty by both callers, which made anything keyed off
+        // it a dead lever -- and V3's whole valuation is keyed off it, so it has to be real. V2 reads
+        // it only in `nominate`, which the sim never calls, so filling it moves no V2 number.
+        const myRoster: PlayerRef[] = [];
+        for (const nm of t.slots) if (nm) myRoster.push({ name: nm, pos: (posMap.get(nm) ?? "") as never, team: "", espnPreDraftVal: null });
+        const state: DraftState = { myBudget: t.budget, mySlots: slotsOpenByKey(t), myRoster, myPosCounts, onBlock: { name, pos: pos as never, team: "", espnPreDraftVal: ourValues.get(name) ?? null }, currentOffer: null, secondsLeft: null, iAmHighBidder: false, board, teams: allTeams, posInflation, leagueDollars, leagueOpenSlots };
         max = Math.min(ourStrat.maxBid(state).maxBid, aff);
       } else if (priceModel) {
         // THE PRICE BOOK. Each bot prices the player with the fitted model at the CURRENT market
