@@ -194,6 +194,109 @@
 >
 > ---
 
+> ### THE LEFTOVERS THIS PASS CLOSED
+>
+> - **`copilotStore.loadWeeklyProjection` routes through `WEEKLY_SERVE`.** It served the floor at all
+>   six positions, so the SCORECARD recorded a quarterback under the streaming artifact while the
+>   LINEUP picked him under the floor -- the exact drift the table exists to prevent, one seam short
+>   of the table. It calls `projectStreamingWith` rather than reimplementing the routing. Asserted in
+>   three directions because no one of them is worth anything alone: QB/K/DST MUST differ from the
+>   floor (without that positive control, "rewired" and "still hardcoded" look identical), RB/WR/TE
+>   must be equal to the last bit, and `lineupRecommend` itself -- the decision, not the loader --
+>   must report a different number for the fixture QB. Fault-injected by forcing the floor everywhere
+>   and watching the difference collapse.
+> - **Track B's lineup replay gained a third arm**, because until this pass there was no arm
+>   corresponding to what anybody is served -- `floor` and `challenger` are each ONE artifact over six
+>   positions. Over the same 1,896 real team-weeks, 2018-2025:
+>
+>   | arm | scored | gain vs manager | beats own manager | beats league median |
+>   |---|---|---|---|---|
+>   | floor | 85.19 | -4.45 | 36.5% | 42.1% |
+>   | **served (`WEEKLY_SERVE`)** | **85.71** | **-3.93** | **37.3%** | **42.6%** |
+>   | challenger | 88.10 | -1.55 | 43.9% | 46.9% |
+>
+>   (managers started 89.64, hindsight optimum 102.12.) The served mapping is between the two by
+>   construction -- only QB, K and DST differ from the floor arm -- and the ordering is the useful
+>   part: what ships is half a point per team-week better than the floor and two and a half short of
+>   the challenger, which is the price of the challenger having failed its gate. P36 still HELD
+>   (12.48), P37 still FAILED on every arm. `requireArtifact` makes the winprob replay refuse the
+>   served arm BY NAME rather than silently substituting the floor.
+> - **`--objective expected|winprob`** now reaches `ff copilot lineup`, `copilotActions` and the
+>   `lineup_recommend` MCP input schema. Default `expected`. `loadWeeklyBands` returns the means AND
+>   the bands from ONE call, so a mean and its own p10/p90 cannot come from two reads of the table --
+>   asserted entry for entry rather than claimed in a comment. Both refusals are by name: an unknown
+>   objective names the bad value, and `winprob` on a generated schedule returns Track H's own
+>   message. `copilot-mcp-smoke` still passes with 35 tools. Fault-injected: renaming the field in the
+>   tool definition fails the schema test and only that test.
+> - **The registry refuses a weekly artifact of the previous population.** `rowFilter` must be
+>   `in_population` (a hard refusal -- that is literally a pre-Track-F artifact) and, where the
+>   artifact declares a `populationHash`, it must equal the store's. Today's artifacts carry no hash
+>   and get the first check only, which is stated rather than papered over; both trainers now emit
+>   one, and `populationSignature` (TypeScript) and `population_signature` (Python) were verified to
+>   produce the same 16 characters on this store -- `c44627c634ae795d`, 84,054 flagged rows -- from
+>   both languages. Both trainers were run to a scratch path to prove they emit it; **no shipped
+>   artifact was refitted.** Fault-injected on both arms PLUS the positive control: the store's own
+>   hash must be ACCEPTED, which is the only thing separating this from a guard that can only say no.
+> - **The streaming artifact was not in the registry at all** -- the model serving three positions,
+>   and since this pass the lineup seam too, had none of the registry's checks. It has an entry now,
+>   keyed on the THING (`zeroModel` must be `two-part`) rather than on the filename.
+> - **`.gitignore`**: `data/marginal-agreement.json`, `data/ma-dedup.json`,
+>   `data/injury-duration-nested.json` (`tools/__pycache__/` was already there).
+> - **NOT DONE, and deliberately**: `feat_injury_horizon` into the weekly first stage. It moves the
+>   stage clause (c) grades, so it needs its own pre-registered gate. Specified in `docs/weekly.md`
+>   section 5 with the join, the measured coverage and the three traps.
+>
+> ### Verification, everything re-run on this branch
+>
+> | check | result |
+> |---|---|
+> | `npm run typecheck` | clean |
+> | `npm test` | **661 tests, 659 pass, 0 fail, 2 skipped** (554 on `final-2`) |
+> | `scripts/merge-sanity.mjs` | PASS -- 35 tools, 77 tables, 81 case labels, 36 list ids |
+> | LEGACY tripwire | **38.1% / 96%**, per-season line byte-identical to its record |
+> | EFFECTIVE tripwire, BEFORE the correlation fix | **39.7% / 96%** |
+> | EFFECTIVE tripwire, AFTER | **39.7% / 96%**, paired: **0 discordant of 3,750**, CI [0.00, 0.00] |
+> | `evaluate-projection --seasons 2008-2025` | RMSE **52.79** vs curve 55.54, pinball **12.02** vs 13.16, coverage **0.760**, every band in band -- P5 held |
+> | `evaluate-weekly` per position, decision population | reproduces Track F exactly: (c) passes everywhere, (b) fails POOLED at 0.852, (a) fails at K and DST |
+> | streaming gate question | streaming PASSES all three clauses at all six positions, pooled coverage 0.847 |
+> | odds scorer on 2025, per-season format | playoffs 0.208975 / title 0.052059, **matches the calibration harness to six decimals**; rotated-outcome control 0.258517 |
+> | season calibration 2018-2025, per-season format | playoff Brier 0.2368 (uniform 0.2451), title 0.0659 (uniform 0.0652) |
+> | `copilot-mcp-smoke` | PASS -- 35 tools, all 10 copilot tools, invariants hold |
+> | `copilot-crosscheck` | ALL CHECKS PASSED, both fault injections fired |
+> | `weekly-leak-audit` | PASSED, and the leaked-bound control fired on every column |
+> | streaming / in-season / injury / FAAB leakage + population + serve tests | **92 tests, 92 pass** |
+> | `v3-connected` | all connected; the calibration changes a real bid (off 25, calibrated 39) |
+> | `value-gates` | ALL GATES PASS |
+> | `faab-coverage` | 794 claims, per-position table printed |
+> | `faab-leakage` | 7/7 guards pass |
+> | `injury-leak-guard` | HELD -- features blind after the cut, targets are not, and the guard can fail |
+>
+> ### Live, read-only through the app bridge, 2026 week 1
+>
+> Nothing wrote to ESPN; every call is a read plus an `action_log` row written BEFORE the answer.
+>
+> - `season-odds --schedule real`: **us 53.40% playoffs, 10.05% title** (random 6.25%), regime
+>   insecure. Field leaders TOTR 65.65%, SLOP 54.80%, us 53.40%.
+> - `lineup` (default `expected`): 79.6 projected. QB Goff, RB Hall, WR St. Brown, TE Loveland,
+>   FLEX McConkey, FLEX Williams, DST MIN, K Santos.
+> - `lineup --objective winprob`: opponent **COOK**, our 79.62 against his 75.91 (sd 27.16), margin
+>   +3.71, posture EVEN. **P(win) 57.35% under both objectives -- 13 candidate lineups evaluated,
+>   8,000 sims, NO SWAP improved it.** The two lineups are identical, which is P58's regime.
+> - `waivers`: base 55.80% playoffs, noise floor 3.11pp; every candidate inside it. The FAAB figure
+>   is `faabBasis: "model"` from `data/faab-model.json` with a predicted clearing price of $3.90, and
+>   `bidEffectSignificant: false` is on the row -- the artifact says its own bid coefficient is not
+>   separable from zero.
+> - `depth-risk --player "Breece Hall"` (our most injured starter, QUESTIONABLE/Thigh): losing him
+>   costs **+11.15pp of playoff probability**, 12.9 points in weeks 15-17. And Track I is visibly
+>   live: *"the injury model expects 0.67 of the next four games missed against 0.3 from the per-tier
+>   rate this repo used before Track I and 0.87 from the designation alone"* -- with the live path's
+>   own limitation named on the same line, that practice status is unavailable from the live feeds
+>   and is the largest block it gives up.
+> - `stream --pos DST`: START MIN D/ST (5.97, p10 0, p90 14.39, **P(zero) 0.14** -- a two-part
+>   number the floor cannot publish); best free TEN 7.32.
+>
+> ---
+
 > ## TRACK G: the surrogate against the simulator -- calibrated, and it was not the level either (2026-09-09)
 >
 > Branch `redesign/v3-marginal-harness` off `redesign/final-2` (`1b271a6`). Track A closed by naming
