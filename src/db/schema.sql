@@ -1356,3 +1356,20 @@ CREATE TABLE IF NOT EXISTS feat_player_week_stream (
   PRIMARY KEY (season, week, feat_key)
 );
 CREATE INDEX IF NOT EXISTS idx_fpws_pos ON feat_player_week_stream (season, week, pos);
+
+-- fact_prediction: THE PREGISTERED-PREDICTION LEDGER, machine-readable. Every P<n>/W<n> id in
+-- docs/redesign-2026-09.md's prediction tables, transcribed exactly (outcome wording included -- see
+-- data/predictions.json, the checked-in source `ff ledger sync` rebuilds this table from). A
+-- programme where the ledger and the doc can drift is a programme where "held" quietly comes to mean
+-- "nobody re-checked the doc"; this table exists so the Model page can show the ledger, and the id
+-- completeness test (test/prediction-ledger.test.ts) can prove every id in the doc has a row and
+-- every row's id is still in the doc.
+CREATE TABLE IF NOT EXISTS fact_prediction (
+  id          TEXT PRIMARY KEY,   -- 'P12', 'W3'
+  doc_section TEXT,               -- the docs/redesign-2026-09.md heading the row lives under
+  claim       TEXT,               -- the prediction, verbatim
+  outcome     TEXT,               -- 'held' | 'failed' | 'split' | 'pending' -- mechanically extracted
+                                   -- from the doc's own HELD/FAILED markers, not re-judged here
+  measured    TEXT,               -- the doc's outcome cell, verbatim (the measured value, in prose)
+  synced_at   TEXT
+);
