@@ -942,6 +942,12 @@ function views_model() {
     <div class="sec"><h2>Value trace</h2><span class="lbl">the multiplication behind a projection, per player</span></div>
     <div class="btnrow" id="mdl-postabs"></div>
     <div id="mdl-trace"></div>
+    <div class="sec"><h2>What serves each position</h2><span class="lbl">the weekly/streaming split -- which artifact answers a start/sit or stream question</span></div>
+    <div id="mdl-serve"></div>
+    <div class="sec"><h2>Scorecard</h2><span class="lbl">the forward record: predictions frozen before kickoff, and what has been scored so far</span></div>
+    <div id="mdl-scorecard"></div>
+    <div class="sec"><h2>Prediction ledger</h2><span class="lbl">every pre-registered P&lt;n&gt;/W&lt;n&gt; prediction, transcribed from docs/redesign-2026-09.md</span></div>
+    <div id="mdl-ledger"></div>
   </div>`;
   loadModel();
 }
@@ -971,6 +977,59 @@ async function loadModel() {
   });
   if (!positions.includes(MODEL_POS)) MODEL_POS = positions[0];
   drawTrace(d);
+  loadModelPage();
+}
+
+// --- THE REGISTRY SECTIONS: serve table, scorecard, ledger -- entirely from window.mc.modelPage() ---
+//
+// Written 2026-09-08 as static prose describing "a curve times two multipliers", which fell behind
+// the moment the projection became a trained artifact with five siblings, a per-position serve table,
+// a live scorecard, and a prediction ledger. These three renderers carry NO number of their own: every
+// figure comes from the `page` argument (src/lineage/modelPage.ts's JSON). See test/model-page.test.ts.
+async function loadModelPage() {
+  if (!window.mc?.modelPage) return;
+  const page = await window.mc.modelPage().catch(() => null);
+  if (!page) return;
+  renderWeeklyServe(page);
+  renderScorecardSection(page);
+  renderLedgerSection(page);
+}
+function renderWeeklyServe(page) {
+  const el = document.getElementById("mdl-serve");
+  if (!el) return;
+  const rows = (page.weeklyServe || []).map(r => `<tr class="${r.shipped ? "" : "mut"}">
+      <td><b>${esc(r.pos)}</b></td><td>${esc(r.artifact)}</td>
+      <td>${r.shipped ? "shipped -- passed its gate" : "not shipped -- serves the floor"}</td></tr>`).join("");
+  el.innerHTML = `<table class="tbl"><thead><tr><th>position</th><th>artifact</th><th>status</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <div class="mut" style="margin-top:6px">challenger series starts week ${esc(String(page.challengerFirstWeek ?? "?"))}</div>`;
+}
+function renderScorecardSection(page) {
+  const el = document.getElementById("mdl-scorecard");
+  if (!el) return;
+  const scores = page.scorecardScores || {};
+  const rows = (page.scorecard || []).map(k => {
+    const models = (k.models || []).map(m => {
+      const s = scores[m] || [];
+      const metrics = s.map(x => `${esc(x.kind)}/${esc(x.metric)}=${esc(String(x.value))} (n=${esc(String(x.n))})`).join(", ");
+      return `${esc(m)}${metrics ? ` [${metrics}]` : ""}`;
+    }).join("; ") || '<span class="mut">none frozen</span>';
+    return `<tr><td><b>${esc(k.kind)}</b></td><td>${esc(String(k.weeksFrozen))}</td><td>${esc(String(k.weeksScored))}</td><td>${models}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<table class="tbl"><thead><tr><th>kind</th><th>weeks frozen</th><th>weeks scored</th><th>models &amp; live scores</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+function renderLedgerSection(page) {
+  const el = document.getElementById("mdl-ledger");
+  if (!el) return;
+  const ledger = page.ledger || { rows: [], counts: {} };
+  const counts = ledger.counts || {};
+  const summary = Object.entries(counts).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(" · ");
+  const rows = (ledger.rows || []).map(r => `<tr class="${r.outcome === "failed" ? "bad" : ""}">
+      <td><b>${esc(r.id)}</b></td><td>${esc(r.claim)}</td><td>${esc(r.outcome)}</td><td>${esc(r.measured)}</td></tr>`).join("");
+  el.innerHTML = `<div class="mut" style="margin-bottom:6px">${summary}</div>
+    <table class="tbl"><thead><tr><th>id</th><th>claim</th><th>outcome</th><th>measured</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
 }
 function drawModelDag(d) {
   const svg = document.getElementById("mdl-dag");
@@ -1186,6 +1245,11 @@ async function boot() {
     try { const t = await window.mc.teamGet(); if (Array.isArray(t)) TEAM = t; } catch (e) { /* keep localStorage */ }
   }
   if (window.mc && window.mc.authStatus) { try { MC_AUTH = await window.mc.authStatus(); } catch (e) { /* keep default */ } }
+  // PUSH for the Data/Model pages, same principle as watchForRebuild's board push: refresh the page
+  // in place if it happens to be the one open when the engine's lineage/model stamp moves, rather
+  // than making the user notice it went stale and reload.
+  if (window.mc.onLineageChanged) window.mc.onLineageChanged(() => { if (curPage === "sources") loadDag(); });
+  if (window.mc.onModelsChanged) window.mc.onModelsChanged(() => { if (curPage === "model") loadModel(); });
   wireWebview(); // the persistent ESPN browsing surface (always mounted, always CDP-navigable)
   syncTeam();
   initCopilot();          // the Copilot lives in the left bar now -- always present
