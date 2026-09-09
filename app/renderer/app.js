@@ -806,7 +806,30 @@ function freshDot(iso) {
   return d < 2 ? "green" : d < 7 ? "amber" : "red";
 }
 // --- Data-warehouse lineage: external sources -> landing tables -> config/curve -> marts -> view ---
-const WH_NODES = [].concat(
+//
+// THE NODE LIST IS DERIVED, NOT ENUMERATED, and that is the whole point of this section.
+//
+// It used to be a hand-written array. The engine's `data-sources` method already knew about every
+// table in the warehouse -- it reads a row count and a freshness stamp for each -- and this list had
+// fallen behind it by thirteen tables: the entire RAW layer (raw_nfl_game, raw_injury,
+// raw_depth_chart, raw_snap_count, raw_participation, raw_contract, raw_adp_history, the five
+// raw_league_* archives) and the whole EXTENSION FEATURE layer (feat_player_week_context,
+// feat_player_season_ext, feat_coverage) were being fetched, counted, and then silently dropped on
+// the floor because nobody had typed a node for them. A page whose job is "show me what data exists"
+// was showing a 2024 snapshot of what data exists.
+//
+// That is coverage-by-enumeration, and it rots by construction: the list is a photograph of the day
+// it was written and nothing fails when reality outgrows it. So the curated part below now carries
+// only what cannot be derived -- the external sources, which are not tables at all, the
+// click-to-rebuild `mat` ids, and the human-readable captions -- and every TABLE node comes from the
+// keys the engine actually served. Register a table in `data-sources` and it appears here; there is
+// no second place to remember.
+//
+// `whUnplacedAssets` is the guard, and it is checked in test/dag-derivation.test.ts: an asset the
+// engine serves that this derivation produces no node for is a FAILURE, not a silent omission.
+
+/** The nodes that are not tables, or whose caption/behaviour cannot be inferred from a name. */
+const WH_CURATED = [].concat(
   [["src_fp", "FantasyPros"], ["src_nflverse", "nflverse"], ["src_espn", "ESPN"], ["src_sleeper", "Sleeper"],
    ["src_dproc", "DynastyProcess"], ["src_ffc", "FF Calculator"], ["src_fcalc", "FantasyCalc"], ["src_boris", "Boris Chen"], ["src_rss", "RSS feeds"]]
     .map(([id, name]) => ({ id, name, kind: "source" })),
@@ -830,6 +853,69 @@ const WH_NODES = [].concat(
    { id: "board", name: "board", kind: "mart", table: "board" },
    { id: "view", name: "Players view", kind: "output", sub: "board + Assistant" }]
 );
+
+/**
+ * How a table name that nobody curated is placed on the graph.
+ *
+ * Prefix rules, in order, first match wins. Deliberately name-shaped: the engine serves a bare table
+ * name and a count, and the naming convention (`raw_`, `feat_`, `stg_`) IS the layer in this store.
+ * A name that matches nothing still gets a node -- kind "table", no upstream -- rather than being
+ * dropped, because the failure this section exists to prevent is an asset going invisible.
+ */
+const WH_DERIVE = [
+  { test: (t) => t.startsWith("raw_league_"), kind: "raw", up: "src_espn", sub: "league archive" },
+  { test: (t) => t === "raw_adp_history", kind: "raw", up: "src_ffc", sub: "ADP archive" },
+  { test: (t) => t === "raw_contract", kind: "raw", up: "src_dproc", sub: "contracts" },
+  { test: (t) => t.startsWith("raw_"), kind: "raw", up: "src_nflverse", sub: "nflverse archive" },
+  { test: (t) => t.startsWith("feat_"), kind: "feature", up: null, sub: "feature table" },
+  { test: (t) => t.startsWith("stg_"), kind: "staging", up: "player_identity", sub: "conformed dimension" },
+  { test: (t) => t.startsWith("player_"), kind: "identity", up: null, sub: "identity spine" },
+];
+
+/**
+ * THE DERIVATION. `tables` is the map `data-sources` returns, keyed by table name.
+ *
+ * Returns the curated nodes plus one node per served table that no curated node already covers.
+ * Pure, and exported by being a top-level function so test/dag-derivation.test.ts can run the REAL
+ * bytes of this file rather than a copy that can drift.
+ */
+function whDagNodes(tables) {
+  const nodes = WH_CURATED.slice();
+  const covered = new Set(nodes.filter((n) => n.table).map((n) => n.table));
+  for (const t of Object.keys(tables || {}).sort()) {
+    if (covered.has(t)) continue;
+    const rule = WH_DERIVE.find((r) => r.test(t));
+    nodes.push({
+      id: t, name: t, table: t,
+      kind: rule ? rule.kind : "table",
+      sub: rule ? rule.sub : "",
+      up: rule ? rule.up : null,
+    });
+  }
+  return nodes;
+}
+
+/** Every table the engine served that the derivation produced NO node for. Must be empty. */
+function whUnplacedAssets(tables, nodes) {
+  const placed = new Set((nodes || []).filter((n) => n.table).map((n) => n.table));
+  return Object.keys(tables || {}).filter((t) => !placed.has(t)).sort();
+}
+
+/** Curated edges plus one per derived node that declared an upstream. */
+function whDagEdges(nodes) {
+  const ids = new Set(nodes.map((n) => n.id));
+  const out = WH_EDGES.filter(([a, b]) => ids.has(a) && ids.has(b));
+  for (const n of nodes) if (n.up && ids.has(n.up)) out.push([n.up, n.id]);
+  // The feature layer is built FROM the raw layer, and drawing that is what makes the page answer
+  // "where did this feature come from". Each feature table hangs off the raw tables that exist.
+  const raws = nodes.filter((n) => n.kind === "raw").map((n) => n.id);
+  for (const n of nodes) {
+    if (n.kind !== "feature") continue;
+    for (const r of raws) out.push([r, n.id]);
+  }
+  return out;
+}
+
 const WH_EDGES = [
   ["src_fp", "ranking"], ["src_fp", "player"], ["src_fp", "weekly_rank"],
   ["src_nflverse", "player_bio"], ["src_nflverse", "team_bye"], ["src_nflverse", "player_advanced"], ["src_nflverse", "points"],
@@ -867,13 +953,16 @@ async function loadDag() {
   const d = await window.mc.dataSources().catch(() => null);
   if (!d) { banner.textContent = "Could not read the warehouse."; return; }
   const tbls = d.tables || {};
-  const nTables = WH_NODES.filter(n => n.kind === "table").length;
-  banner.className = "setupbanner ok";
-  banner.innerHTML = `Last full rebuild <b>${relTime(d.lastIngest)}</b> · 9 sources → ${nTables} tables → player_value → board`;
+  const WH_NODES = whDagNodes(tbls);
+  const unplaced = whUnplacedAssets(tbls, WH_NODES);
+  const nTables = WH_NODES.filter(n => n.table).length;
+  banner.className = unplaced.length ? "setupbanner warn" : "setupbanner ok";
+  banner.innerHTML = `Last full rebuild <b>${relTime(d.lastIngest)}</b> · 9 sources → ${nTables} tables → player_value → board`
+    + (unplaced.length ? ` · <b>${unplaced.length} served asset(s) have no node: ${unplaced.map(esc).join(", ")}</b>` : "");
   const W = 156, H = 42;
   const g = new dagre.graphlib.Graph(); g.setGraph({ rankdir: "LR", nodesep: 10, ranksep: 58, marginx: 10, marginy: 10 }); g.setDefaultEdgeLabel(() => ({}));
   for (const n of WH_NODES) g.setNode(n.id, { width: W, height: H });
-  for (const [a, b] of WH_EDGES) g.setEdge(a, b);
+  for (const [a, b] of whDagEdges(WH_NODES)) g.setEdge(a, b);
   dagre.layout(g);
   const gw = Math.ceil(g.graph().width), gh = Math.ceil(g.graph().height);
   svg.setAttribute("width", gw); svg.setAttribute("height", gh); svg.setAttribute("viewBox", `0 0 ${gw} ${gh}`);
@@ -882,7 +971,7 @@ async function loadDag() {
   for (const n of WH_NODES) {
     const p = g.node(n.id); if (!p) continue;
     const t = n.table ? tbls[n.table] : null;
-    const hasDot = n.kind === "table" || n.kind === "mart";
+    const hasDot = n.kind === "table" || n.kind === "mart" || n.kind === "raw" || n.kind === "feature";
     const dot = hasDot ? freshDot(t?.updated) : "";
     const sub = t ? `${t.rows} rows · ${relTime(t.updated)}` : n.sub;
     h += `<g class="dag-node ${n.kind}${n.mat ? " clickable" : ""}" data-mat="${n.mat || ""}" data-id="${n.id}" transform="translate(${(p.x - W / 2).toFixed(1)},${(p.y - H / 2).toFixed(1)})">`
