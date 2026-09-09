@@ -113,6 +113,15 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   Code (or any MCP client) can drive the draft. `docs/mcp.md`; `claude mcp add ff-draft -- npx tsx
   <repo>/src/ff.ts mcp`.
 - **In-season:** `lineup --roster <csv>` (optimal-lineup recommendation), `sync-rosters` (ownership)
+- **Raw sources:** `ingest-raw --list` shows every `raw_*` asset (this league's own 15 seasons of
+  auction history, nflverse games with the Vegas line and weather, injuries, depth charts, snap
+  counts, the NFL draft, participation, contracts, the FFC ADP archive);
+  `ingest-raw <id> [--seasons 2013-2025]` materializes one. Inventory: `docs/data-sources.md`.
+- **Feature extensions:** `build-features-ext --seasons 2013-2025` builds `feat_player_week_context`
+  (opponent, line, rest, prior snap and route share, the Wednesday and Friday injury reports,
+  team-mates out, depth rank) and `feat_player_season_ext` (draft capital, contract year, prior-season
+  usage, September 1 depth and injury, preseason ADP), plus `feat_coverage`. It never rewrites the
+  Phase 2a tables, so it can run before or after `build-features`.
 
 ## What the harness decided (docs/edges.md, docs/validation.md)
 

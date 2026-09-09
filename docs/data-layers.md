@@ -155,3 +155,78 @@ The order that actually buys something:
    burned: the age curve, the opportunity model, the ECR joins.
 3. **Rename raw tables to `raw_*`** last, when the boundary is real rather than aspirational. A
    prefix on a table nobody treats as raw is decoration.
+
+## The data-track tables (2026-09-08)
+
+Thirteen new `raw_*` tables and two `feat_*` extension tables. The full source inventory -- grain,
+key, as-of semantics, measured season coverage, fetch cost and consumer, for every source whether
+ingested or not -- is `docs/data-sources.md`. This section is only what the LAYER MODEL gained.
+
+### Raw
+
+| table | rows | grain / key | as-of | verb |
+|---|---|---|---|---|
+| `raw_league_season` | 15 | (league, season) | the season | `ff ingest-raw league-history` |
+| `raw_league_team_season` | 130 | (league, season, team) | mixed: prices in August, `final_rank` after the playoffs | same |
+| `raw_league_pick` | 1,658 | (league, season, pick_no) | the auction | same |
+| `raw_league_matchup` | 1,050 | (league, season, week, home) | the schedule | same |
+| `raw_league_division` | 15 | (league, season, division) | the season | same |
+| `raw_nfl_game` | 7,548 | (season, game_id) | `gameday` | `ff ingest-raw nfl-games` |
+| `raw_injury` | 90,762 | (season, week, team, player, report_date) | `date_modified`, NULL from 2025 | `ff ingest-raw injuries` |
+| `raw_depth_chart` | 1,907,518 | (season, week, as_of_key, team, player, formation, position, depth_position) | `dt` for 2025+, NULL before | `ff ingest-raw depth-charts` |
+| `raw_snap_count` | 324,611 | (season, week, game_id, pfr id) | the game day | `ff ingest-raw snap-counts` |
+| `raw_nfl_draft_pick` | 12,927 | (season, round, pick) | `<season>-05-01` | `ff ingest-raw nfl-draft` |
+| `raw_participation` | 182,303 | (season, week, gsis, team) -- AGGREGATED from the play grain | the game day | `ff ingest-raw participation` |
+| `raw_adp_history` | 8,750 | (format, season, teams, ffc id) | the archive's window end | `ff ingest-raw adp-history` |
+| `raw_contract` | 31,893 | (player_key, contract_no) | `<year_signed>-03-01` | `ff ingest-raw contracts` |
+
+`ff ingest-raw --list` prints the registry; `ff ingest-source <id>` reaches the same assets with
+their default season ranges, which is what the app's Data page calls.
+
+Three rules these tables made concrete, all of them learned the expensive way in one afternoon:
+
+- **The raw layer must be reproducible by re-fetching, and the league's own history was not.**
+  Fifteen seasons of auction prices reached the store once, by a hand-run script in a scratchpad
+  directory. Deleting `data/ff.db` would have destroyed the most league-specific data we own with no
+  verb that rebuilt it. That is now `src/data/leagueHistory.ts` and an asset.
+- **A source's schema changes underneath a season range, and the branch must be read from the FILE.**
+  nflverse injuries dropped `date_modified` in 2025; depth charts became a dated snapshot with
+  different column names in the same year. Keying either on the season number is a guard keyed on a
+  name: it keeps passing after the thing it guards moves. Both ingesters read the header.
+- **`as_of` and `fetched_at` are different columns and the difference is the whole point.** For a
+  2014 row they are twelve years apart. Where a feed publishes no date, `as_of` is NULL and the
+  derivation is pushed to the feature layer, which knows the schedule -- a computed date sitting in
+  a raw column is indistinguishable from a published one.
+
+### Feature extension
+
+`feat_player_week_context` (131,892 rows, 2013-2025, keyed `(season, week, player_sk)`) and
+`feat_player_season_ext` (8,021 rows, keyed `(season, player_sk)`, anchored `<season>-09-01`) extend
+the Phase 2a feature rows SIDEWAYS. They never rewrite `feat_player_season` or `feat_player_week`,
+and `src/features/build.ts` is untouched, so `ff build-features` and `ff build-features-ext` may run
+in either order. Built by `ff build-features-ext --seasons 2013-2025`.
+
+Two rules they add to the feature-layer list:
+
+- **A column that CANNOT satisfy the point-in-time rule says so in its own name.** `temp_observed`
+  and `wind_observed` are measured at the game, not knowable before it. They are here for asking how
+  much wind costs a passing game, never for projecting one, and a query using them is visible as
+  such rather than hidden behind a column called `temp`.
+- **Coverage is DATA.** `feat_coverage` holds rows, non-nulls, per column, per season, written by
+  the same run that builds the tables, and generated from `PRAGMA table_info` rather than from a
+  hand-written column list -- an enumerated list rots the moment a column is added, in exactly the
+  way that makes the new column the one nobody watches. A test asserts no column drops to zero in a
+  season it should cover, and asserts the one legitimate zero (`report_status_fri` from 2025, where
+  the feed stopped publishing a report date) explicitly, so the day it returns is a failure someone
+  reads.
+
+### The identity split this work uncovered
+
+`player_xref` and `stg_player` hold **different surrogate key spaces for the same men**. Of the 7,961
+gsis ids present in both, **7,902 disagree** on `player_sk`; only 59 agree. `player_identity` has
+22,814 rows against staging's 11,966. `stgPlayer.ts` calls `resolveOrMint` with an EMPTY id bag, so
+staging matches on (name_key, birthdate) and mints fresh keys, while `playerIds.ts` minted its own.
+
+A consumer resolving through `player_xref` therefore gets keys that join nothing -- not `stg_player`,
+not `feat_player_season`, not `feat_player_week` -- with no error anywhere. `src/features/sources/resolve.ts`
+builds every map from `stg_player` for that reason. **The registry itself is not fixed here.**
