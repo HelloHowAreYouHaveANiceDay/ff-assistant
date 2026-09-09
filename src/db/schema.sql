@@ -705,3 +705,31 @@ CREATE TABLE IF NOT EXISTS raw_nfl_game (
   fetched_at TEXT NOT NULL,
   PRIMARY KEY (season, game_id));
 CREATE INDEX IF NOT EXISTS idx_raw_game_wk ON raw_nfl_game (season, week);
+
+-- The official weekly injury report. `date_modified` is the source's own as-of and is what makes
+-- this feed usable point-in-time at all: a Wednesday practice report and a Friday game-status report
+-- are different information about the same week.
+--
+-- TWO SCHEMAS, and the second one is why `source_schema` is a column. 2009-2025 ship 16 fields
+-- including date_modified and the four injury-description fields. The 2026 file ships 13 DIFFERENT
+-- fields: it adds `season_type` and has NO date_modified, no report_primary_injury, no
+-- report_secondary_injury and no practice_secondary_injury. An ingester that reads the old names
+-- against 2026 writes rows full of nulls and reports success.
+--
+-- `as_of` IS `date_modified` AND IS NULL WHERE THE FEED HAS NONE. It is deliberately not backfilled
+-- with a derived week anchor: that derivation belongs to the feature layer, which knows the
+-- schedule, and inventing it here would put a computed date in a raw column where nothing could tell
+-- it from a published one. A NULL as_of says "this feed did not tell us when", which is true.
+CREATE TABLE IF NOT EXISTS raw_injury (
+  season INTEGER NOT NULL, week INTEGER NOT NULL, team TEXT NOT NULL,
+  player_key TEXT NOT NULL,        -- the source's gsis_id, else its full_name. NOT resolved.
+  report_date TEXT NOT NULL,       -- date_modified, else '' -- part of the key, never NULL
+  as_of TEXT,                      -- = date_modified; NULL where the feed publishes none
+  gsis_id TEXT, full_name TEXT, position TEXT, game_type TEXT, season_type TEXT,
+  report_primary_injury TEXT, report_secondary_injury TEXT, report_status TEXT,
+  practice_primary_injury TEXT, practice_secondary_injury TEXT, practice_status TEXT,
+  date_modified TEXT,
+  source_schema TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, week, team, player_key, report_date));
+CREATE INDEX IF NOT EXISTS idx_raw_injury_gsis ON raw_injury (gsis_id, season, week);

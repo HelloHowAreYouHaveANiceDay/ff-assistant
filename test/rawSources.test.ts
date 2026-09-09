@@ -100,3 +100,73 @@ test("raw_nfl_game: as_of is the gameday, never the fetch date", { skip: !tableH
   assert.equal(late.c, 0, "as_of must not predate its own season");
   assert.equal(fetchDated.c, 0, "a pre-2020 row stamped with this year is as_of taken from the fetch clock");
 });
+
+// ==================================================================================================
+// raw_injury
+// ==================================================================================================
+
+test("raw_injury: the feed starts in 2009 and every season from there has rows", { skip: !tableHasRows("raw_injury") ? "raw_injury not built" : false }, () => {
+  const db = open();
+  const rows = db.prepare("SELECT season, COUNT(*) n FROM raw_injury GROUP BY season ORDER BY season").all() as { season: number; n: number }[];
+  db.close();
+  const years = rows.map((r) => r.season);
+  // 1999-2008 return HTTP 404 from nflverse. That is a fact about the commons, and it means an
+  // injury feature is structurally null for ten of the twenty-seven backtest seasons -- which a
+  // model must be told rather than fed zeros for.
+  assert.ok(!years.some((y) => y < 2009), `injury rows before 2009: ${years.filter((y) => y < 2009)}`);
+  assert.equal(years[0], 2009);
+  // Every completed season since must be present and substantial. ~5,000-6,000 rows a year is one
+  // report row per listed player per week; a season that drops to a handful is a broken fetch.
+  for (let y = 2009; y <= 2024; y++) {
+    const r = rows.find((x) => x.season === y);
+    assert.ok(r && r.n > 3000, `${y}: ${r?.n ?? 0} injury rows`);
+  }
+});
+
+test("raw_injury: identity is the source's gsis id, present on every row, and never resolved here", { skip: !tableHasRows("raw_injury") ? "raw_injury not built" : false }, () => {
+  const db = open();
+  const r = db.prepare("SELECT COUNT(*) n, SUM(gsis_id IS NOT NULL) g FROM raw_injury").get() as { n: number; g: number };
+  const cols = (db.prepare("PRAGMA table_info(raw_injury)").all() as { name: string }[]).map((c) => c.name);
+  db.close();
+  assert.equal(r.g, r.n, `${r.n - r.g} injury rows without a gsis id`);
+  // A raw table that carried player_sk would mean identity had been resolved one layer too early.
+  assert.ok(!cols.includes("player_sk"), "raw_injury must not carry a surrogate key");
+});
+
+test("raw_injury: as_of, where the feed publishes one, lies inside its own season", { skip: !tableHasRows("raw_injury") ? "raw_injury not built" : false }, () => {
+  const db = open();
+  // The point-in-time guard. A report for the 2014 season cannot be dated 2026, and the one way it
+  // silently would be is as_of taken from the fetch clock.
+  const bad = db.prepare(
+    `SELECT COUNT(*) c FROM raw_injury WHERE as_of IS NOT NULL
+       AND (as_of < season || '-06-01' OR as_of > (season + 1) || '-04-01')`,
+  ).get() as { c: number };
+  const perSeason = db.prepare(
+    "SELECT season, COUNT(*) n, SUM(as_of IS NOT NULL) a, GROUP_CONCAT(DISTINCT source_schema) s FROM raw_injury GROUP BY season ORDER BY season",
+  ).all() as { season: number; n: number; a: number; s: string }[];
+  db.close();
+  assert.equal(bad.c, 0, "an injury report dated outside its own season");
+  // MEASURED, and recorded because it changes what a weekly feature can do:
+  //   2009      -- 17 of 4,821 rows carry date_modified. The as-of is effectively absent.
+  //   2010-2024 -- essentially complete.
+  //   2025-2026 -- the feed dropped date_modified entirely (source_schema 'no-date-modified'), so
+  //                the week anchor has to come from the schedule, in the feature layer.
+  const s2024 = perSeason.find((p) => p.season === 2024)!;
+  assert.equal(s2024.a, s2024.n, "2024 should carry a report date on every row");
+  assert.equal(s2024.s, "classic");
+  const late = perSeason.filter((p) => p.season >= 2025);
+  for (const p of late) {
+    assert.equal(p.s, "no-date-modified", `${p.season} schema`);
+    assert.equal(p.a, 0, `${p.season} should have no report date -- the feed stopped publishing one`);
+  }
+});
+
+test("raw_injury: report_status uses the source's own vocabulary, unmapped", { skip: !tableHasRows("raw_injury") ? "raw_injury not built" : false }, () => {
+  const db = open();
+  const vals = (db.prepare("SELECT DISTINCT report_status v FROM raw_injury WHERE report_status IS NOT NULL").all() as { v: string }[]).map((r) => r.v).sort();
+  db.close();
+  // Exactly what the NFL publishes, including "Probable", which the league DISCONTINUED after 2015 --
+  // a staging layer may map it, raw may not. A new value appearing here should fail this test and be
+  // looked at, not silently absorbed.
+  assert.deepEqual(vals, ["Doubtful", "Note", "Out", "Probable", "Questionable"]);
+});

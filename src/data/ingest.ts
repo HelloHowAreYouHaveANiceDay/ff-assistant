@@ -238,7 +238,28 @@ export const RAW_ASSETS: RawAsset[] = [
       return r.total;
     },
   },
+  {
+    id: "injuries",
+    table: "raw_injury",
+    what: "nflverse official weekly injury and practice reports (2009+; 1999-2008 do not exist in this commons)",
+    defaultSeasons: [1999, new Date().getFullYear()],
+    async run(dbPath, seasons) {
+      const { ingestRawInjuries } = await import("./rawSources.js");
+      const r = await ingestRawInjuries({ dbPath, seasons });
+      reportSeasons(r);
+      return r.total;
+    },
+  },
 ];
+
+/** Print the per-season landing counts. A raw sweep whose only output is a grand total cannot show
+ *  a season that quietly returned nothing, which is the exact failure a wrapped fetch produces. */
+function reportSeasons(r: { table: string; seasons: { season: number; ok: boolean; rows: number; note?: string }[] }): void {
+  for (const s of r.seasons) {
+    if (s.ok && s.rows > 0) continue;
+    console.log(`  ${r.table} ${s.season}: ${s.ok ? `${s.rows} rows` : "unavailable"}${s.note ? ` -- ${s.note}` : ""}`);
+  }
+}
 
 const RAW_ONLY_ASSETS = new Set(RAW_ASSETS.map((a) => a.id));
 

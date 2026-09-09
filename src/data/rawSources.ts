@@ -26,7 +26,10 @@
  * inferred from silence.
  */
 import { openDb, nowIso, type DB } from "../db/db.js";
-import { fetchCsvCached, cacheTag, URLS, canonTeam, pick } from "./nflverse.js";
+import {
+  fetchCsvCached, cacheTag, rawTag, URLS, canonTeam, pick,
+  injuriesUrl,
+} from "./nflverse.js";
 
 /** One season's outcome. `rows` is what LANDED, not what was parsed -- the two differ when a feed
  *  carries rows we cannot key, and only the first number means anything to a coverage check. */
@@ -167,4 +170,84 @@ export async function perSeasonFeed(
     out.push({ season, ok: true, rows: n });
   }
   return out;
+}
+
+/** The default sweep for a per-season feed: every season the caller asked for, or 1999-now. */
+export function seasonRange(seasons: number[] | undefined, lo = 1999): number[] {
+  if (seasons?.length) return seasons.slice().sort((a, b) => a - b);
+  const out: number[] = [];
+  for (let y = lo; y <= new Date().getFullYear(); y++) out.push(y);
+  return out;
+}
+
+// ==================================================================================================
+// raw_injury -- the official weekly injury and practice report.
+// ==================================================================================================
+
+/**
+ * 2009 onward. 1999-2008 return HTTP 404 and are recorded as such: injury reports do not exist in
+ * this commons before 2009, so any injury feature is structurally null for ten of our twenty-seven
+ * backtest seasons and a model must be told that rather than fed zeros.
+ *
+ * SCHEMA DRIFT IS DETECTED FROM THE HEADER, NOT ASSUMED FROM THE YEAR. The 2026 file dropped
+ * `date_modified` and three of the four injury-description fields and added `season_type`. Keying
+ * the branch on the season number would be a guard keyed on a NAME -- it keeps passing when the feed
+ * changes again in a different year. `pick()` already falls through missing columns, so the only
+ * thing that must be decided per file is whether a report date exists at all, and that is read from
+ * the parsed row.
+ */
+export async function ingestRawInjuries(opts: { dbPath?: string; seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const ins = db.prepare(
+    `INSERT INTO raw_injury (season, week, team, player_key, report_date, as_of, gsis_id, full_name,
+       position, game_type, season_type, report_primary_injury, report_secondary_injury, report_status,
+       practice_primary_injury, practice_secondary_injury, practice_status, date_modified,
+       source_schema, fetched_at)
+     VALUES (@season,@week,@team,@pk,@reportDate,@asOf,@gsis,@name,@pos,@gameType,@seasonType,
+       @rp,@rs,@status,@pp,@ps,@practice,@modified,@schema,@now)
+     ON CONFLICT(season, week, team, player_key, report_date) DO UPDATE SET
+       as_of=excluded.as_of, gsis_id=excluded.gsis_id, full_name=excluded.full_name,
+       position=excluded.position, game_type=excluded.game_type, season_type=excluded.season_type,
+       report_primary_injury=excluded.report_primary_injury,
+       report_secondary_injury=excluded.report_secondary_injury, report_status=excluded.report_status,
+       practice_primary_injury=excluded.practice_primary_injury,
+       practice_secondary_injury=excluded.practice_secondary_injury,
+       practice_status=excluded.practice_status, date_modified=excluded.date_modified,
+       source_schema=excluded.source_schema, fetched_at=excluded.fetched_at`,
+  );
+
+  const seasons = await perSeasonFeed(db, seasonRange(opts.seasons, 1999), injuriesUrl, rawTag.injuries, opts.refresh ?? false, (season, rows) => {
+    let n = 0;
+    // Read the SHAPE from the file, per file, rather than from the season number.
+    const hasModified = Object.prototype.hasOwnProperty.call(rows[0], "date_modified");
+    const schema = hasModified ? "classic" : "no-date-modified";
+    for (const r of rows) {
+      const week = int(pick(r, "week"));
+      const team = canonTeam(pick(r, "team"));
+      const gsis = str(pick(r, "gsis_id"));
+      const name = str(pick(r, "full_name"));
+      const pk = gsis ?? name;
+      if (week == null || !team || !pk) continue;
+      // date_modified is an ISO timestamp; the DATE is the as-of. Keeping the timestamp too, in
+      // date_modified, because the raw rule is "what the source gave" and the time of day is what
+      // separates a Wednesday practice report from a Friday status update on the same feed.
+      const modified = str(pick(r, "date_modified"));
+      const asOf = modified ? modified.slice(0, 10) : null;
+      ins.run({
+        season, week, team, pk, reportDate: asOf ?? "", asOf,
+        gsis, name, pos: str(pick(r, "position")),
+        gameType: str(pick(r, "game_type")), seasonType: str(pick(r, "season_type")),
+        rp: str(pick(r, "report_primary_injury")), rs: str(pick(r, "report_secondary_injury")),
+        status: str(pick(r, "report_status")),
+        pp: str(pick(r, "practice_primary_injury")), ps: str(pick(r, "practice_secondary_injury")),
+        practice: str(pick(r, "practice_status")), modified,
+        schema, now,
+      });
+      n++;
+    }
+    return n;
+  });
+  db.close();
+  return { table: "raw_injury", seasons, total: totalOf(seasons) };
 }

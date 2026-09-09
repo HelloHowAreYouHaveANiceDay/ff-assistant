@@ -196,14 +196,26 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
 - **Grain / key.** (season, week, team, gsis_id, game_type) plus the report date. **`date_modified`
   is the as-of**, and it is what makes this feed usable point-in-time at all: a Wednesday practice
   report and a Friday game-status report are different information about the same week.
-- **Schema drift, measured.** 2009-2025 carry 16 columns including `report_primary_injury`,
-  `report_secondary_injury`, `practice_primary_injury`, `practice_secondary_injury` and
-  `date_modified`. **The 2026 file carries 13 different columns**: it adds `season_type`, and it has
-  **no `date_modified`, no `report_primary_injury`, no `report_secondary_injury` and no
-  `practice_secondary_injury`**. So for the live season there is no report date in the feed and the
-  as-of must be derived from the week (see the ingester).
-- **Seasons, measured.** 2009-2026. 1999-2008 return HTTP 404 -- injury reports do not exist in this
-  commons before 2009, so any injury feature is null for 10 of our 27 backtest seasons.
+- **Schema drift, measured after ingesting all 18 seasons.** 2009-**2024** carry 16 columns including
+  `report_primary_injury`, `report_secondary_injury`, `practice_primary_injury`,
+  `practice_secondary_injury` and `date_modified`. **2025 AND 2026 carry 13 different columns**: they
+  add `season_type` and have **no `date_modified`, no `report_primary_injury`, no
+  `report_secondary_injury` and no `practice_secondary_injury`**. (An earlier draft of this document
+  said the change began in 2026, from probing the 2026 file alone; ingesting the whole range showed
+  2025 had already switched. The ingester therefore reads the shape from each FILE's header rather
+  than from the season number -- a guard keyed on the year is a guard keyed on a name, and it keeps
+  passing after the thing it guards moves.) So for 2025 onward there is no report date in the feed
+  and the as-of must be derived from the schedule, in the feature layer.
+- **`as_of` coverage, measured.** 2009: **17 of 4,821 rows** carry `date_modified` -- the as-of is
+  effectively absent for that season. 2010-2024: complete. 2025-2026: zero, by the drift above.
+- **`report_status` is roughly half-populated from 2016 on** (2,430-2,828 of ~5,100-6,200 rows a
+  year, against 4,200-5,300 of ~4,500-5,500 in 2010-2015). Most rows are practice reports with no
+  game-status designation. Its vocabulary is `Out`, `Doubtful`, `Questionable`, `Probable`, `Note` --
+  and **`Probable` was discontinued by the league after 2015**, so the vocabulary is not stable
+  across the range either.
+- **Seasons, measured.** 2009-2026, 90,763 rows. 1999-2008 return HTTP 404 -- injury reports do not
+  exist in this commons before 2009, so any injury feature is structurally null for 10 of our 27
+  backtest seasons.
 - **Raw table.** `raw_injury`.
 - **Feeds.** `feat_player_week_context.{report_status, practice_status, teammates_out}` and
   `feat_player_season_ext.injury_status`. `player_status` already carries a LIVE injury status from
