@@ -447,6 +447,33 @@ registered.** V2 remains the default; `DEFAULT_LEVERS`, `values.ts` and `strateg
 What is left is the analytic surrogate itself, not its inputs. `docs/validation.md`, Track A, has
 every table and the paired statistics.
 
+## The lineup objective: expected points, and the one that measured worse (Track H, 2026-09-09)
+
+A fantasy week is head-to-head, and a point scored past the opponent's total is worth nothing, so
+expected points is the right objective only when the game is close: an underdog wants variance and a
+favourite wants the floor. `src/inseason/winprob.ts` builds the lineup that maximises P(beating THIS
+week's actual opponent) -- each player's published band (p10/p50/p90 and P(zero week)) read as a
+quantile function, NFL teammates coupled through a Gaussian copula at a measured 1.15x the fitted
+pairwise correlation, and a hill-climb from the expected-points lineup over every legal
+single-player substitution under common random numbers. `lineupRecommend(ctx, week, { objective })`
+serves it and REFUSES a generated schedule rather than inventing an opponent.
+
+**The default did not change, and should not.** Replayed against 1,876 of this league's real
+team-weeks (2018-2025), scored against the opponent's actual points, it wins **0.59 percentage
+points FEWER** team-weeks than the expected-points lineup under the challenger artifact and 0.05pp
+fewer under the shipped floor. Pre-registered P51 and P57 failed; P58 held. The search claimed
++0.50pp under its own sampler and delivered -0.59pp -- it is solving its problem correctly against a
+distribution that is not the real one, because the only artifact with any relative shape in it is
+the one that failed its coverage gate. Revisit when one passes.
+
+```
+node --import tsx scripts/winprob-backtest.mjs --seasons 2018-2025 --sims 4000   # the replay
+node --import tsx scripts/winprob-backtest.mjs --sims 4000 --no-search           # its fault injection
+node --import tsx scripts/winprob-lineup.mjs                                     # this week, both objectives, read-only
+node --import tsx scripts/winprob-copula-check.mjs                               # the coupling calibration
+node --import tsx scripts/winprob-rng-check.mjs                                  # the WORST uncoupled pair, not the mean
+```
+
 ## Track F (2026-09-09): the trainer and the harness were scoring different players
 
 The weekly two-part model failed clause (c) of its gate at RB 0.031, WR 0.039 and TE 0.074 against a

@@ -34,6 +34,10 @@
  * the black-box recorder sees every piece of advice given even though no roster move follows it.
  */
 import { optimalLineup } from "./lineup.js";
+// Track H. The one-week HEAD-TO-HEAD objective. Imported rather than inlined because the sampler,
+// the copula call and the swap search are a module's worth of decisions with their own tests; this
+// file's job is to hand it the roster, the opponent and the week and to report what it said.
+import { winProbLineup, opponentStarters, type WeeklyBand, type WinProbOpts, type WinProbResult, type WinProbPlayer } from "./winprob.js";
 import { handcuffBoard, loadInjuryOutlook, type DepthEntry, type HandcuffRow, type InjuryOutlookSet } from "./handcuff.js";
 import { rosterGaps, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
 import { nameKey } from "../draft/values.js";
@@ -339,6 +343,13 @@ export function normalizeStatus(raw: string | null | undefined): AvailabilitySta
 }
 
 export interface LineupPlayer { slot?: string; name: string; pos: string; proj: number; available: boolean; reason: string }
+
+/** WHICH QUESTION THE LINEUP ANSWERS. `expected` maximises the sum of projected points over a legal
+ *  assignment -- what has always shipped. `winprob` maximises the probability of beating THIS week's
+ *  actual opponent (src/inseason/winprob.ts). They are the same lineup in a close game and different
+ *  ones at the margins, which is the whole content of the second option. */
+export type LineupObjective = "expected" | "winprob";
+
 export interface LineupResultJson {
   week: number;
   starters: { slot: string; name: string; pos: string; proj: number }[];
@@ -347,6 +358,12 @@ export interface LineupResultJson {
   totalProj: number;
   flags: string[];
   assumptions: Assumptions;
+  /** Which objective produced `starters`. Always present, so a consumer never has to infer it from
+   *  whether `winprob` happens to be set. */
+  objective: LineupObjective;
+  /** Present only under `objective: "winprob"`: BOTH lineups, the P(win) of each, the swaps taken
+   *  and why, and the expected points given up to buy them. */
+  winprob?: WinProbResult & { opponent: string; opponentTeamId: string };
 }
 
 /**
@@ -435,6 +452,19 @@ export function lineupRecommend(
     weeklyPoints?: number;
     /** Weekly projections by normalized name, from `projectWeekly`. */
     weekly?: WeeklyProjection;
+    /**
+     * WHICH QUESTION TO ANSWER. Defaults to `expected`, so nothing ships changed: every existing
+     * caller gets bit-for-bit the lineup it got before, and `winprob` is reached only by asking for
+     * it. That default is a decision, not an oversight -- the replay in docs/validation.md is what
+     * would change it, and until the owner reads that it stays where it is.
+     */
+    objective?: LineupObjective;
+    /** The SHAPE of each weekly projection -- p10/p50/p90 and P(zero week) -- by normalized name,
+     *  from the same `projectWeekly` call that produced `weekly`. Required by `winprob`: without a
+     *  band there is no distribution to take a probability under, only a mean. */
+    bands?: Map<string, WeeklyBand>;
+    /** Sampler and search knobs, including `noSearch` -- the fault-injection handle. */
+    winprob?: WinProbOpts;
   } = {},
 ): LineupResultJson {
   const availability = o.availability ?? new Map<string, AvailabilityEntry>();
@@ -455,11 +485,69 @@ export function lineupRecommend(
   assertStartersAvailable(res.starters, roster, week, availability);
   const reasonOf = new Map(players.map((p) => [p.name, p.reason]));
 
+  // -------------------------------------------------------------------------------------------
+  // THE HEAD-TO-HEAD OBJECTIVE. Everything above is unchanged and runs for both objectives, so the
+  // expected-points lineup is computed either way and the two are always comparable.
+  // -------------------------------------------------------------------------------------------
+  const objective: LineupObjective = o.objective ?? "expected";
+  let wp: (WinProbResult & { opponent: string; opponentTeamId: string }) | undefined;
+  if (objective === "winprob") {
+    // THE OPPONENT IS NOT OPTIONAL AND IS NOT INVENTED. A win probability against a generated
+    // schedule's stand-in opponent would be a number about a league that does not exist, and it
+    // would look exactly like a real one. So this REFUSES rather than substituting -- the same rule
+    // `--schedule real` follows one level up.
+    if (ctx.syntheticSchedule) {
+      throw new Error(
+        "objective \"winprob\" needs the REAL schedule: it is a probability of beating a NAMED opponent, " +
+        "and this context is on a GENERATED schedule, whose week-" + week + " pairing is not this league's. " +
+        "Re-load the context with schedule \"real\".",
+      );
+    }
+    const games = ctx.weeks[week - 1];
+    if (!games) throw new Error(`objective "winprob": the schedule has no week ${week} (it runs 1-${ctx.weeks.length})`);
+    const pair = games.find(([a, b]) => a === ctx.meIdx || b === ctx.meIdx);
+    if (!pair) throw new Error(`objective "winprob": we are not scheduled in week ${week}`);
+    const oppIdx = pair[0] === ctx.meIdx ? pair[1] : pair[0];
+    const opp = ctx.teams[oppIdx];
+
+    /** One roster into the sampler's shape: the mean the EP lineup uses, the band the probability
+     *  needs, the NFL team the copula couples on, and the SAME availability rule as above. */
+    const toWp = (rs: typeof roster): WinProbPlayer[] => rs.map((p) => {
+      const k = lineupNameKey(p.name);
+      const wk = o.weekly?.get(k);
+      const pts = wk != null && Number.isFinite(wk) ? wk : p.proj / perWeek;
+      return {
+        name: p.name, pos: p.pos, ...(p.eligible ? { eligible: p.eligible } : {}),
+        available: unavailableReason(p, week, availability) == null,
+        team: p.team ?? null,
+        proj: r2(pts),
+        band: o.bands?.get(k) ?? null,
+      };
+    });
+    const oursWp = toWp(roster);
+    const theirsWp = toWp(opp.roster).filter((p) => p.available);
+    const r = winProbLineup(oursWp, opponentStarters(theirsWp, ctx.slots, ctx.flexOk), ctx.slots, ctx.flexOk, o.winprob);
+    wp = { ...r, opponent: opp.name, opponentTeamId: opp.id };
+    assertStartersAvailable(r.starters, roster, week, availability);
+  }
+
   const allWeekly = o.weekly != null && fellBack.length === 0;
-  // A weekly lineup has no objective to trade off -- you start the best legal eleven, and that is the
-  // same answer whichever regime we are in. The objective block still travels, with the regime
+  // A weekly lineup has no SEASON objective to trade off -- you start the best legal eleven, and that
+  // is the same answer whichever regime we are in. The objective block still travels, with the regime
   // unknown, so a consumer never has to wonder whether it was omitted or forgotten.
   const assumptions = assumptionsOf(ctx, allWeekly ? "weekly-model" : "projection", o, null, null, objectiveFor(null));
+  // WHICH LINEUP QUESTION WAS ASKED, written into the objective block that already travels on every
+  // result. A consumer that quotes `assumptions.objective` and nothing else must not be able to
+  // mistake a win-probability lineup for the expected-points one it has always been handed.
+  assumptions.objective = {
+    ...assumptions.objective,
+    note: objective === "winprob"
+      ? `LINEUP OBJECTIVE: winprob -- the starters maximise P(beating ${wp!.opponent} in week ${week}), ` +
+        `not expected points. P(win) ${wp!.winPct}% against ${wp!.epWinPct}% for the expected-points lineup, ` +
+        `bought for ${wp!.epCostPts} projected points. ` + assumptions.objective.note
+      : `LINEUP OBJECTIVE: expected -- the starters maximise the sum of projected points over a legal ` +
+        `assignment, which is the right objective only when the game is close. ` + assumptions.objective.note,
+  };
   assumptions.basisNote = o.weekly == null
     ? `no weekly projector was supplied: every point total is the season projection divided by ${perWeek}, which has no matchup, no recent form and no weather in it`
     : allWeekly
@@ -467,14 +555,27 @@ export function lineupRecommend(
       : `${fromWeekly} of ${roster.length} point totals are from the weekly projector for week ${week}; ` +
         `${fellBack.length} fell back to the season projection divided by ${perWeek} because the projector had no row for them: ${fellBack.join(", ")}`;
 
+  // Under `winprob` the STARTERS are the win-probability lineup and the bench is its complement --
+  // the answer to the question that was asked. The expected-points lineup is not discarded: it is on
+  // `winprob.epStarters` with its own P(win), so the two are always side by side and the reader can
+  // see the trade rather than being told about it.
+  const starters = wp ? wp.starters : res.starters.map((s) => ({ ...s, proj: r2(s.proj) }));
+  const startingNames = new Set(starters.map((s) => s.name));
+  const bench = wp
+    ? players.filter((p) => !startingNames.has(p.name)).sort((a, b) => b.proj - a.proj)
+        .map((p) => ({ name: p.name, pos: p.pos, proj: r2(p.proj), available: p.available, reason: p.reason }))
+    : res.bench.map((b) => ({ ...b, proj: r2(b.proj), reason: reasonOf.get(b.name) ?? "available" }));
+
   return {
     week,
-    starters: res.starters.map((s) => ({ ...s, proj: r2(s.proj) })),
-    bench: res.bench.map((b) => ({ ...b, proj: r2(b.proj), reason: reasonOf.get(b.name) ?? "available" })),
+    starters,
+    bench,
     unavailable,
-    totalProj: r2(res.totalProj),
+    totalProj: wp ? wp.totalProj : r2(res.totalProj),
     flags: res.flags,
     assumptions,
+    objective,
+    ...(wp ? { winprob: wp } : {}),
   };
 }
 
