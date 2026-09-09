@@ -524,6 +524,197 @@ changed nothing they were not meant to. **39.7% is the regression line going for
 
 ---
 
+---
+
+## PROGRAMME 3: five more parallel tracks, and a simulator bug one of them found in another
+
+*Added 2026-09-09 by integration pass 4. Programme 2 ended with `redesign/final-2` at `1b271a6`.
+Five tracks ran in parallel off it and were stacked onto `redesign/final-3`.*
+
+### The five tracks
+
+| track | branch | commit | what it is | verdict |
+|---|---|---|---|---|
+| F | `redesign/weekly-population` | `e264c13` | ONE population, defined by the DECISION, materialised as `feat_player_week_model.in_population` and read by both the trainer and the harness | The cause of pass 3's clause-(c) failure was **the trainer and the harness scoring different players**, not the model. Clause (c) now passes everywhere. **Nothing new ships**: clause (b) fails POOLED by 0.002. |
+| I | `redesign/injury-duration` | `87b1049` | `fact_injury_episode`, `feat_injury_horizon`, and P(he misses the next k games) from a Friday report | **Ships** into `depthRisk` and `handcuffs`. P52 held; **P59 and P60 both failed**, and P60's stated mechanism was refuted: the injury TYPE is worth 0.001-0.002 out of sample, the PRACTICE STATUS 0.021. |
+| J | `redesign/faab-model` | `7559843` | `fact_waiver_claim` -- every processed claim WITH ITS BID, winners and losers -- and a fitted clearing price plus P(win \| bid) | **Ships** into `waiverTargets`. P54 failed (26.4% better than the rule of thumb, not the 30% predicted) and the honest smaller margin is what is recorded. |
+| H | `redesign/winprob-lineups` | `47f8476` | the lineup that maximises P(beating THIS week's actual opponent), and a replay of it against 1,876 real team-weeks | **Does not become the default**: a measured **-0.59pp** of team-weeks won. P51 and P57 failed, P58 held. Selectable, and it found the simulator bug below. |
+| G | `redesign/v3-marginal-harness` | `563f7b1` | where V3's analytic surrogate and the simulated marginal disagree, and a fitted correction | **The level was not the reason either.** The calibration is connected (627 of 1,800 trials change) and worth **+0.28pp**, CI [-3.28, +3.56]. A clean null. V3 stays unshipped. |
+
+The merge order was F, I, J, H, G. Every `docs/validation.md` conflict was a prepend and kept both
+sides; `src/db/schema.sql` and `src/ff.ts` conflicted where two tracks appended at the same tail and
+kept both; `src/inseason/copilot.ts` conflicted on one import line that two tracks had each widened,
+and kept both widenings. Tests went 554 -> 566 -> 588 -> 609 -> 638 -> 645 across the five merges,
+0 failures throughout, and 660 after the leftovers.
+
+### Every prediction of this programme, with its outcome
+
+**P50-P63 are the five tracks' own; P64-P69 are the integration pass's.** Sixteen recorded,
+**nine held and seven failed** -- and as in Programme 2, the failures are where the information is.
+
+| | prediction | outcome |
+|---|---|---|
+| P50 (W5) | on one population the two-part model's predicted zero share matches actual within 0.03 | **HELD** -- pooled 0.267 vs 0.267, off by 0.000 where it was off by 0.035 |
+| P51 | the winprob lineup wins at least 1.5pp more team-weeks than the EP lineup | **FAILED**, on sign as well as size -- **-0.59pp** |
+| P52 | the duration model beats designation-only on log loss at every horizon k=1..4 | **HELD** -- it ships on this |
+| P54 | the FAAB model's LOSO MAE beats the rule of thumb by at least 30% | **FAILED** -- 26.4% |
+| P56 (a) | the analytic surrogate's rank correlation with the simulated marginal is below 0.8 in at least one roster-state phase | **HELD**, and harder than predicted -- NEGATIVE in two of five phases |
+| P56 (b) | the level ratio analytic/simulated is below 0.85 at EVERY position | **FAILED** -- QB 0.48 but WR 1.20 and TE 1.26; it over-prices as well as under-prices |
+| P57 | the winprob gain is concentrated where the projected margin exceeds 15 points | **FAILED** |
+| P58 | in the under-5-point bucket the two lineups differ in under 20% of team-weeks | **HELD** |
+| P59 | at k=1 the gain over designation-only is under 0.02 | **FAILED** -- 0.047 |
+| P60 | the gain GROWS with k and exceeds 0.05 at k=4, because injury type carries the horizon | **FAILED**, and the mechanism refuted -- it SHRINKS to 0.024, and the type is worth ~0.0015 |
+| P61 | the claiming team's remaining-FAAB share is a significant positive feature | **SPLIT** |
+| P62 | the week-of-season effect on the clearing price is negative | **FAILED**, sign reversed |
+| P63 | at a 0.7 win target the realised win rate is within 10 points of 70% | **FAILED** -- 94.4%, and the prediction was mis-specified (the recommended bid is the SMALLEST bid that REACHES the target) |
+| P28 (re-run under G's calibration) | V3's playoff rate is at least V2's minus 2 points on BOTH arms | **FAILED** -- long arm -26.44pp |
+| **P64** | **same-team WR1-WR2 correlation lies in [-0.10, +0.05]** | **HELD** -- **+0.0130** (SE 0.0085, n 13,806) |
+| **P65** | **same-team RB1-RB2 lies in [-0.20, 0.00]** | **HELD** -- **-0.0129** (SE 0.0090, n 12,340) |
+| **P66** | **same-team TE1-TE2 is within 2 SE of zero** | **HELD** -- **-0.0201** against 2 SE = 0.0216 (n 8,626) |
+| **P67** | **the correlation fix moves the playoff Brier by less than 0.002** | **HELD** -- 0.2369 -> 0.2368 |
+| **P68** | **it moves OUR playoff and title odds by less than 1 point** | **HELD** -- title 9.61 -> 9.48, playoff 52.8 -> 53.0, both inside the seed-only noise floor |
+| **P69** | **it moves the effective tripwire within noise (CI contains zero)** | **HELD**, and for a reason worth more than the prediction -- see below |
+
+The **W-series** was not extended by this programme; W1-W6 stand as recorded in Programme 1, and
+Track F's clause-(c) result is registered above as **P50 (W5)** because it is the same claim
+re-measured on the corrected population.
+
+### The same-position correlation, and the simulator fix
+
+Track H, building the win-probability lineup, needed the correlation between two receivers on one NFL
+team and found that `pairCorr` returns **1** whenever the two POSITION STRINGS match. It worked
+around that locally. The season simulator did not: `prepare()` in `src/draft/bootstrap.ts` built every
+NFL team's correlation matrix with `pairCorr(corr, a.pos, b.pos)`, so **two different men at the same
+position on the same team entered the copula as one man**. The matrix is singular, the Cholesky
+shrinkage repair fired, and that team's REAL couplings were damped on the way to something
+decomposable -- silently, because the repair is designed to degrade quietly.
+
+It was never a modelling choice. `scripts/fit-correlation.mjs` kept only the TOP scorer per position
+per team-week, so a same-position pair was never measured and the model had no key for `pairCorr` to
+find. The owner asked whether same-position teammates correlate positively or negatively; the answer
+is that **both mechanisms are real and they very nearly cancel** -- shared game script couples two
+receivers positively, competition for one ball couples them negatively -- and on 13,806 WR pairs,
+12,340 RB pairs and 8,626 TE pairs the residual is inside 2 SE of zero in every case (P64-P66). Each
+is written as 0 under the shrink rule, with the raw r kept beside it so shrinking to zero cannot be
+misread as measuring zero. QB1-QB2 measures -0.19 and is deliberately NOT written: two quarterbacks
+who both clear the six-game filter is a team that changed quarterbacks, which is the filter and not
+football.
+
+`teammateCorr` is now the two-different-men question and never returns 1; `prepare()` builds its
+diagonal from IDENTITY rather than position equality; `winprob.ts` calls the shared function so the
+two cannot drift. Two same-team receivers, week-1 correlation over 20,000 drawn seasons: **0.8932
+before, 0.0077 after.**
+
+**P69 held because the draft tripwire cannot see this change at all.** The paired analysis found ZERO
+discordant trials in 3,750 -- bit-identical -- and `src/draft/backtest.ts` does not import the copula:
+its consumers are `season.ts`, `spread.ts` and `winprob.ts`. That is recorded as a connectivity fact,
+not as a null. Where the lever does live it is proven connected, by a unit fault injection and by the
+odds table moving. But the odds table's moves are **not separable from noise**: the largest title
+delta was 0.41 points at a roster that holds a same-position pair, and re-running with two other seed
+triples and no code change at all swings title by up to 0.72 and playoff by up to 1.15.
+
+### What ships, per position, after this programme
+
+| | draft board | season odds / trades / waivers | weekly lineup | streaming | injury horizon | FAAB |
+|---|---|---|---|---|---|---|
+| QB | V2 bidder, 2d board | simulator, real schedule | **streaming artifact** | ships | ships | ships |
+| RB | " | " | floor (season line / game) | not served | ships | ships |
+| WR | " | " | floor | not served | ships | ships |
+| TE | " | " | floor | not served | ships | ships |
+| K | " | " | **streaming artifact** | ships | ships (no episodes) | ships |
+| DST | " | " | **streaming artifact** | ships | n/a -- a defence carries no injury report | ships |
+
+The lineup row is what integration pass 4 changed: `copilotStore.loadWeeklyProjection` served the
+floor at all six positions until this pass routed it through `WEEKLY_SERVE`.
+
+### The two open gate questions
+
+**1. Does the POOLED coverage band supersede the PER-POSITION bands, or the other way round?** This is
+the whole of the disagreement between the weekly gate and the streaming gate, and it decides whether
+RB, WR and TE keep being served the floor. Track F's two-part model passes clause (c) everywhere and
+every per-position coverage band and fails the POOLED band by **0.002** (0.852 against a ceiling of
+0.85). The streaming gate has no pooled coverage condition -- deliberately, because it is applied one
+position at a time and a position IS its own population -- and on the decision population it now
+passes at all six. `scripts/streaming-gate-question.mjs` prints both models under the SAME corrected
+clauses so the decision has both sets of numbers. **Nothing was decided and nothing was widened.**
+Whichever reading is adopted must be adopted as the rule for the NEXT candidate too; choosing the
+reading that lets a model through, after seeing which reading that is, is the failure both gates
+exist to prevent.
+
+**2. Should the streaming model be served at all six positions?** It passes the streaming gate at all
+six on the decision population. Track F did NOT widen `SHIPPED_STREAMING_POSITIONS` on the strength of
+that, and integration pass 4 did not either, because widening a shipped list on a pass the model only
+just started passing is tuning. It waits on question 1.
+
+### The leftovers this pass closed
+
+- **The lineup seam now serves what the table says.** `loadWeeklyProjection` routes through
+  `WEEKLY_SERVE`, so the scorecard and the lineup can no longer disagree about a quarterback's
+  projection. Track B's replay gained a third arm for it: over 1,896 real team-weeks the SERVED
+  mapping scores 85.71 against the floor's 85.19 and the challenger's 88.10.
+- **`--objective expected|winprob`** reaches `ff copilot lineup`, the dispatcher and the
+  `lineup_recommend` MCP tool. Default `expected`, because the alternative is a measured -0.59pp.
+- **The registry refuses a stale weekly artifact.** `rowFilter` must be `in_population`, and where an
+  artifact carries a `populationHash` it must equal the store's; both trainers now emit one.
+- **The streaming artifact is in the registry at all**, which it was not -- the model serving three
+  positions had none of the registry's checks.
+- **`.gitignore`** for the four generated files three tracks left untracked.
+
+### The owner decision list, updated
+
+Read against **"Open decisions, for the owner"** above; only the entries this programme moved are
+repeated here, and none of the earlier text was edited.
+
+- **Decision 5 (ship the two-part weekly challenger, or keep the floor) has CHANGED SHAPE and is not
+  yet answerable.** It was "it failed one calibration clause by 0.005". Track F showed that 0.005 was
+  the trainer and the harness scoring different players; on one population the clause passes
+  everywhere. What now blocks it is a DIFFERENT clause -- the pooled coverage band, by 0.002 -- and
+  that is not a model question but the gate question above. **Recommendation: answer the pooled-band
+  question first, as its own pre-registered decision, and let the live scorecard keep accruing
+  meanwhile.** The 2026 forward record is unaffected and is still the cleanest evidence available.
+- **NEW: the pooled band versus the per-position bands** (gate question 1 above). It decides both
+  decision 5 and whether streaming widens past QB/K/DST. **Recommendation: decide it on the RULE,
+  before looking again at which model each reading admits.**
+- **NEW: streaming at all six positions** (gate question 2). **Recommendation: hold.** It passes the
+  streaming gate everywhere on the decision population, and widening a shipped list the week a model
+  starts passing is the definition of tuning.
+- **Decision 3 (V2 vs V3) is unchanged and is now better evidenced.** Track G calibrated the
+  surrogate to the simulated marginal and P28 failed again. **Recommendation: as before -- V3 stays
+  selectable and unshipped -- and see next-work item 3: the next attempt should be structural or
+  none.**
+- **NEW: the lineup objective.** `--objective winprob` is now reachable from the CLI and the MCP tool
+  and is NOT the default, on a measured -0.59pp. **Recommendation: leave the default alone until a
+  weekly artifact ships with a band that passed a coverage clause; the replay is a measurement of the
+  bands, not of the objective.**
+- **Decision 4 (the merge to `main`) stands and now names a different branch.** `redesign/final-3` is
+  the chain; the flagless tripwire on it reads **39.7% / 96%** with the per-season line in
+  `docs/validation.md`, the legacy cell reads 38.1% / 96% byte-identical to its record, and 660 tests
+  pass. **Nothing here pushes or merges to `main`; that is still the owner's commit to make.**
+
+### Recommended next work
+
+1. **`feat_injury_horizon` into the weekly first stage.** Specified, not done -- the join, the
+   coverage and the three traps are written out in `docs/weekly.md` section 5. It moves the stage
+   clause (c) grades, so it needs its own pre-registered gate, and the prediction must be registered
+   against the two-part model WITH the practice columns it already has.
+2. **M2, the greedy double-count in `lineupMarginal.ts`** -- measured by Track G at up to 10% too high
+   at flex-eligible positions, pinned and NOT fixed. It is a V3 input, so fixing it belongs under its
+   own gate with P28 re-run unchanged, exactly as Track A's and Track G's fixes were.
+3. **A STRUCTURAL V3 attempt, not another input pass.** Two passes have now fixed a named defect in
+   V3's marginal (Track A: positional replacement; Track G: the level calibration) and both left the
+   29pp gap. The surrogate's disagreement with the simulated marginal is not a level error -- P56(b)
+   showed it under-prices quarterbacks by half while over-pricing receivers and tight ends -- so the
+   next attempt should change the surrogate's FORM, or stop.
+4. **Re-run the winprob replay when a weekly artifact ships with a calibrated band.** Track H's own
+   diagnosis is that the search solves its problem correctly against a distribution that is not the
+   real one: the only artifact with relative shape in it is the one that failed its coverage gate.
+   The -0.59pp is a measurement of the bands, not of the objective.
+5. **The FAAB responding-field question.** P61 split and the `log_bid` coefficient's interval crosses
+   zero because four claims in five in this room are uncontested -- so a big bid is itself a signal
+   that a player was contested, which biases the measured effect downward. Whether the bid AMOUNT
+   moves P(win) is not answerable from 794 claims of which 630 have an outcome; it needs either more
+   seasons or a design that conditions on contest.
+
 ## The one piece of work worth doing next -- DONE, and it was not enough (Track A)
 
 *This section originally recommended pricing a quarterback against positional replacement in V3's

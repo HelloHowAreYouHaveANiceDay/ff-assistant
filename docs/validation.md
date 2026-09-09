@@ -1,5 +1,127 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## INTEGRATION PASS 4: five more tracks stacked, and a simulator bug the merge itself found (2026-09-09)
+>
+> `redesign/final-3` = `redesign/final-2` (`1b271a6`) + Tracks F, I, J, H, G merged `--no-ff` in that
+> order, then the correlation fix and the leftovers. **Six pre-registered predictions, P64-P69. All
+> six held** -- which is a weaker statement than it looks, and P69's reason is the interesting one:
+> it held because the lever is not connected to the measurement, not because the effect is small.
+>
+> ### The merge
+>
+> | # | track | branch | commit | conflicts | resolution |
+> |---|---|---|---|---|---|
+> | 1 | F | `redesign/weekly-population` | `e264c13` | none | clean |
+> | 2 | I | `redesign/injury-duration` | `87b1049` | `src/db/schema.sql`, `docs/validation.md` | both sides appended at the same tail -- kept both, F's `in_population` note then I's two injury tables |
+> | 3 | J | `redesign/faab-model` | `7559843` | `src/db/schema.sql`, `src/ff.ts`, `docs/validation.md` | two new command FUNCTIONS landed at the same offset in `ff.ts` -- kept both, each with its own brace; schema tail kept both |
+> | 4 | H | `redesign/winprob-lineups` | `47f8476` | `src/inseason/copilot.ts`, `docs/mcp.md`, `README.md`, `docs/validation.md` | I widened the handcuff import and H added winprob -- kept both; the two `docs/mcp.md` rows folded into one, keeping J's fuller FAAB text and H's objective note |
+> | 5 | G | `redesign/v3-marginal-harness` | `563f7b1` | `README.md`, `docs/validation.md` | prepends only |
+>
+> Every `docs/validation.md` conflict was a prepend and every one kept both sides, so the five
+> sections read newest-first **G, H, J, I, F**. Nothing was dropped and nothing was reconciled: two
+> tracks that measured the same thing differently both stand, which is the point of the record.
+>
+> Tests, after each merge: **554** (`final-2`) -> 566 -> 588 -> 609 -> 638 -> **645**, 0 failures
+> throughout. `merge-sanity` PASS after each: 35 MCP tools, 74 -> 77 schema tables, 79 -> 81 `ff.ts`
+> case labels, 36 renderer list ids.
+>
+> Three tables were copied in from the tracks that built them, through a second READ-ONLY connection
+> per source store (never `ATTACH`), and the count asserted against the source on each:
+> `fact_injury_episode` **10,476** and `feat_injury_horizon` **21,757** from Track I,
+> `fact_waiver_claim` **794** from Track J. The store itself is Track F's, so `in_population` is the
+> one this pass measures on: 84,054 flagged rows of 187,566.
+>
+> ---
+>
+> ### SAME-POSITION TEAMMATES: the simulator was coupling two receivers at 1
+>
+> **Track H found it while working around it.** `pairCorr` in `src/draft/bootstrap.ts` returns 1
+> whenever the two POSITION STRINGS match, and `prepare()` built each NFL team's correlation matrix
+> with `pairCorr(corr, a.pos, b.pos)`. So two Lions receivers on one fantasy roster entered the copula
+> as THE SAME MAN. The matrix is singular, so the Cholesky shrinkage repair fired and damped that
+> team's OTHER couplings -- its real QB-WR among them -- on the way to something decomposable.
+> Nothing failed, because the repair is designed to degrade quietly. That is the whole shape of it:
+> a guard that cannot fail, protecting a bug.
+>
+> **It was never a modelling choice.** `scripts/fit-correlation.mjs` reduced each team-week to the TOP
+> scorer per position, so a same-position pair was never in the fit at all and the model had no
+> `WR-WR` key for `pairCorr` to find; 1 is simply what an unmeasured self-pair defaulted to. The
+> -0.0023 in the shipped model is WR-TE, not WR-WR.
+>
+> **The owner's question -- do same-position teammates correlate positively or negatively? -- is
+> empirical, and both mechanisms are real.** Shared game script pushes it POSITIVE: a shootout gives
+> both receivers volume, a blowout gives both backs carries. Competition for one ball pushes it
+> NEGATIVE: a 12-target day for one man is usually a 4-target day for the other. So it was measured,
+> on exactly the basis the cross-position pairs use -- residual = week / that player's own season
+> mean, the same 14,021 team-weeks, ranked within the team-week by SEASON mean so that "WR1" is not
+> "whoever went off".
+>
+> | pair | n | r | SE | 2 SE | written |
+> |---|---|---|---|---|---|
+> | WR1-WR2 | 13,806 | **+0.0130** | 0.0085 | 0.0170 | 0 |
+> | RB1-RB2 | 12,340 | **-0.0129** | 0.0090 | 0.0180 | 0 |
+> | TE1-TE2 | 8,626 | **-0.0201** | 0.0108 | 0.0216 | 0 |
+> | QB1-QB2 | 957 | -0.1908 | 0.0323 | 0.0646 | *reported only* |
+> | WR1-WR3 | 12,634 | +0.0047 | 0.0089 | 0.0178 | *reported only* |
+>
+> - **P64 -- WR-WR lies in [-0.10, +0.05]: HELD**, +0.013.
+> - **P65 -- RB-RB lies in [-0.20, 0.00]: HELD**, -0.013.
+> - **P66 -- TE-TE is within 2 SE of zero: HELD**, -0.020 against 2 SE = 0.022.
+>
+> **The answer is that the two mechanisms very nearly cancel.** Every one of the three is inside 2 SE
+> of zero on more than eight thousand pairs, so each is written as 0 under the shrink rule this script
+> has always PRINTED for the cross-position pairs and now applies for real to the new keys. The raw r
+> is kept beside it in a `samePosition` block, so shrinking to zero cannot later be misread as
+> measuring zero.
+>
+> **QB1-QB2 at -0.19 is NOT written**, and the reason is a selection effect rather than football: two
+> quarterbacks on one team who both clear the six-game filter is a team that CHANGED quarterbacks, so
+> one man playing is the other man not playing. Writing it would import the filter into the simulator.
+>
+> #### The fix, and what it moved
+>
+> `teammateCorr` is the two-different-men question and has no fallback to 1 -- an unmeasured
+> same-position pair reads 0, because the honest reading of "we never measured this" is no coupling.
+> `pairCorr` keeps its own meaning (a POSITION with itself is 1, which is what a diagonal needs) and
+> now says in its comment which question it does not answer. `prepare()` builds the diagonal from
+> IDENTITY (`a === b`), not from position equality. `src/inseason/winprob.ts` had worked around the
+> same trap with a local lookup that read 0 for an absent key; it now calls the shared function, so
+> the two cannot drift and its assumed 0 is a measurement.
+>
+> Two same-team receivers, 20,000 drawn seasons, week-1 correlation: **0.8932 before, 0.0077 after.**
+> (0.89 and not 1.00 because the shrinkage repair was already damping it.) The fault injection is a
+> test and not a note: put `WR-WR: 1` back in the model and the pair recouples above 0.7, which is the
+> only thing that separates the new guard from one that cannot fail.
+>
+> | measurement | before | after | verdict |
+> |---|---|---|---|
+> | `scripts/verify-marginal.mjs` | -- | **identical to four decimals** | its fixture holds no same-position pair, so this is the right answer AND a check that the fix touches nothing it should not |
+> | season calibration 2018-2025, per-season format, real schedules -- playoff Brier | 0.2369 | **0.2368** | **P67 HELD** (moves by less than 0.002) |
+> | the same, title Brier | 0.0658 | 0.0659 | reported |
+> | season odds, generated schedule, 4000 x 3 seeds -- OUR title% | 9.61 | 9.48 | **P68 HELD** |
+> | the same, OUR playoff% | 52.8 | 53.0 | **P68 HELD** |
+> | EFFECTIVE tripwire | 39.7% / 96% | **39.7% / 96%** | **P69 HELD** -- see below |
+>
+> **WHICH TEAMS MOVED, AND WHY THE ANSWER IS "NONE OF THEM, MEASURABLY".** Five of the sixteen rosters
+> actually hold a same-team same-position pair: HMLS (SF WR: Deebo Samuel Sr. + Mike Evans), MOOS
+> (KC RB), ARI (LAC RB), ours (DET WR: Amon-Ra St. Brown + Jameson Williams) and MILE (JAC WR). The
+> largest title moves were MILE -0.41, TOTR -0.39 and NICK +0.38 -- and TOTR and NICK hold no pair at
+> all, which is the tell. Re-running the same odds table with two OTHER seed triples and no code
+> change at all swings title by up to **0.72** points and playoff by up to **1.15**, larger than every
+> before/after delta above. Title% is renormalised to 100 across teams, so a real move at one roster
+> moves all sixteen. **The honest statement is that the fix does not move this league's odds table
+> detectably at 4,000 x 3 trials**, and the deltas above are noise being reported rather than a
+> finding.
+>
+> **P69 held, and NOT because the effect is small.** The paired analysis over 3,750 trials found
+> **zero discordant trials** -- bit-identical, CI [0.00, 0.00]. `src/draft/backtest.ts` does not import
+> the copula at all: its consumers are `season.ts`, `spread.ts` and `winprob.ts`. The draft tripwire
+> is structurally incapable of seeing this change, and that is recorded as a CONNECTIVITY fact rather
+> than dressed up as a null. The lever is proven connected where it does live -- by the unit fault
+> injection above and by the odds table moving at all.
+>
+> ---
+
 > ## TRACK G: the surrogate against the simulator -- calibrated, and it was not the level either (2026-09-09)
 >
 > Branch `redesign/v3-marginal-harness` off `redesign/final-2` (`1b271a6`). Track A closed by naming
