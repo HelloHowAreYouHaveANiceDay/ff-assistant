@@ -25,6 +25,9 @@ app/runtime/
 data/managers.json
 data/owners.json
 data/recaps.json
+# Final standings and champions, fetched once by scripts/fetch-league-outcomes.mjs. Same bucket:
+# it names real teams and what happened to them.
+data/league-outcomes.json
 # The human-readable scouting report DERIVED from those three. It names real league members and
 # characterises how each of them drafts, so it is exactly as personal as its inputs and belongs in
 # the same bucket -- per install, never committed. It lived in docs/ until 2026-09-05 and was purged
