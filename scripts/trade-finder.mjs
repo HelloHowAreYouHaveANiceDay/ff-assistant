@@ -1,3 +1,13 @@
+// DEPRECATED (copilot track, 2026-09-08). Superseded by:  ff copilot trade-finder
+//   -- src/inseason/copilot.ts :: tradeFinder, also served as an MCP tool (docs/mcp.md).
+//
+// The computation moved into a callable FUNCTION rather than a program that prints and exits, so
+// the desktop Assistant and any MCP client reach the same number this script prints -- which they
+// could not do while it lived in a script. Every result now carries its assumptions (real vs
+// generated schedule, trials, seeds, data stamp) in the returned JSON.
+//
+// KEPT, NOT DELETED: docs/validation.md and docs/edges.md cite figures this script produced, and a
+// deleted script makes those citations unverifiable. Do not build anything new on it.
 // WHICH 1-FOR-1 TRADES MAKE BOTH TEAMS BETTER?
 //
 //   node --import tsx scripts/trade-finder.mjs [ourTeamId]
