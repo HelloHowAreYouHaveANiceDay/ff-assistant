@@ -1,5 +1,146 @@
 # Validation harness (how we know a change is better, not a regression)
 
+## TRACK J: FAAB is a measurement (2026-09-09)
+
+The copilot has priced a waiver claim since Phase 3 with a sentence that said what it was:
+*"10% of budget per +1pp of PLAYOFF probability, capped at 50% -- a stated rule of thumb, not a
+fitted value"*, because *"there is no historical bid data to fit it on."* There is. This track found
+it, fitted it, wired it, replayed it, and **failed three of its four pre-registered predictions.**
+The failures are the most useful thing here, so they lead.
+
+### Losing bids exist, and that is the finding the rest of the track rests on
+
+`raw_league_transaction` holds 7,480 items over 2018-2026. The open question was whether ESPN retains
+**losing** claims. It does: an outbid claim comes back with status `FAILED_INVALIDPLAYERSOURCE`
+**carrying the amount that lost**, in the same `mTransactions2` view Track B already fetched. No new
+endpoint, no new probe. 145 of them, 2019-2025.
+
+The evidence they really are losing bids rather than some other refusal wearing the same status:
+across **all 104 contested player-weeks, exactly one claim executed, and no `FAILED` bid ever
+exceeded the executed one. Zero violations.** That is a property an unrelated failure mode has no
+reason to satisfy. `scripts/faab-coverage.mjs` re-runs it.
+
+So `P(win | bid)` is **measured**, not inferred from a clearing price plus a margin.
+
+### The bug that made 2018 look thin rather than wrong
+
+ESPN publishes `teamId = -2147483648` -- Integer.MIN_VALUE, its null sentinel -- on **all 92 of
+2018's EXECUTED waivers**. Reading the claimant off `team_id` dropped every 2018 winner: the season
+came back 39 rows, all of them rule-failures, and nothing failed. The ADD item's `toTeamId` is the
+acquiring team and is populated on every row; where `team_id` is real the two agree on **702 of 702**,
+so the fallback was checked against the column it replaces rather than assumed equivalent.
+
+### `fact_waiver_claim` -- 794 claims, point-in-time, guarded
+
+| season | claims | won | lost | unscored | id% | feature% |
+|---|---|---|---|---|---|---|
+| 2018 | 131 | 92 | 0 | 39 | 100 | 97.7 |
+| 2019 | 121 | 86 | 30 | 5 | 100 | 96.7 |
+| 2020 | 129 | 89 | 31 | 9 | 100 | 99.2 |
+| 2021 | 101 | 76 | 21 | 4 | 100 | 98.0 |
+| 2022 | 89 | 70 | 18 | 1 | 100 | 98.9 |
+| 2023 | 83 | 65 | 14 | 4 | 100 | 98.8 |
+| 2024 | 52 | 40 | 9 | 3 | 100 | 100 |
+| 2025 | 88 | 61 | 22 | 5 | 100 | 100 |
+
+2018 is winners-only: ESPN retains no resolved failures for it, so its claims are real prices and its
+win RATE would read 100% purely because the losers were never recorded. It is in the price fit and
+out of the win fit.
+
+**The budget steps once per waiver RUN, not once per claim.** Every bid in a run was placed blind to
+the others, so charging them in sequence would be a leak that looks like careful bookkeeping. Only
+EXECUTED dollars leave a budget.
+
+`scripts/faab-leakage.mjs` recomputes each column by a **second path** and carries five mutations
+that must break it -- `faab-includes-self`, `prior-is-current`, `need-current-week`,
+`rank-from-outcome`, `leak-feature`. Each is caught by its own guard and only its own guard.
+
+### The model, and the interval that matters more than the coefficients
+
+`tools/train_faab.py`, leave-one-**season**-out (claims inside a season share a room, a budget cycle
+and a set of managers).
+
+| | LOSO MAE on 576 winning bids |
+|---|---|
+| the model | **$7.59** |
+| per-position median | $7.94 |
+| flat league median | $8.64 |
+| the rule of thumb, **handed an oracle** | $10.32 |
+
+`faabFor` prices a playoff-probability delta, and Track B established such a delta cannot be
+reconstructed for a past season. Rather than invent one, the rule was given the **best delta it could
+have had** -- proportional to points above replacement, with the constant grid-searched to minimise
+**the rule's own MAE over every claim in every season, in sample, no holdout**. Any margin over it is
+a lower bound.
+
+> **P54 -- the model's LOSO MAE beats the rule of thumb by at least 30%. FAILED: 26.4%.**
+> Not underfitting: sweeping the ridge alpha from 0.01 to 100 moves the LOSO MAE between $7.59 and
+> $7.92. The ceiling is the data's.
+
+> **P61 -- the claiming team's remaining-FAAB share is a significant positive feature. SPLIT.**
+> Price head +0.355, 95% CI [+0.219, +0.480] -- **HELD**. Win head +0.141, CI [-0.184, +0.499] --
+> **FAILED**. So hoarders **pay** more and are **not** measurably more likely to win.
+
+> **P62 -- the week-of-season effect is negative. FAILED, with the sign reversed.**
+> Price head +0.294, CI [+0.109, +0.530]. Conditional on the player and on money remaining, bids
+> **rise** as the season ages. The raw per-week means fall, which is the budget draining, not the
+> room getting thriftier -- two different statements that the unconditional average conflates.
+
+**And the one nobody pre-registered.** `log_bid` -- the coefficient the whole recommender rests on --
+has a season-resampled 95% interval of **[-0.055, +0.659]. It crosses zero.** Four claims in five in
+this room are uncontested, so most wins cost a dollar and say nothing about what money buys; and a
+manager who bids big already knew the player was contested, which biases the observed effect
+**downward**. A recommended bid is therefore a point estimate the data cannot cleanly separate from
+"the amount matters little". That is carried on the artifact as `bidEffect` -- a field, not a comment
+-- and printed in `assumptions.faab` on every waiver result.
+
+**Positive controls**, because a fit on noise and a fit on signal both print a number. With the
+target permuted inside the panel the price model's LOSO MAE goes to **$9.75, worse than the flat
+median** it beats at $7.59 vs $8.64; the win Brier goes to 0.1819 against a base of 0.1771. Both
+fits are connected and both carry real signal.
+
+### The replay, and a prediction that was mis-specified
+
+`ff inseason-backtest faab` prices all 1,883 adds Track B's ranking recommended over 2018-2025 and
+adjudicates each against **the log**: a win means nobody claimed him that week, or our bid strictly
+exceeds the winning bid recorded. **A tie is a loss** -- ESPN breaks ties on waiver priority, which
+cannot be reconstructed, and scoring an unknown as a win would inflate the very number being
+measured. Ten are ties.
+
+> **P63 -- at a 0.7 target the realised win rate is within 10 points of 70%. FAILED: 94.4%.**
+
+Two reasons, and the second is an error in the prediction itself:
+
+1. **1,732 of the 1,883 adds are uncontested.** We win those by default, so the headline rate is
+   mostly a fact about how often anybody else wants the man. On the 151 **contested** rows we win
+   **30.5%**.
+2. **P63 was mis-specified.** The recommended bid is the *smallest* bid that *reaches* the target, so
+   wherever P(win) at a dollar already clears 0.7 the constraint does not bind and the realised rate
+   **must** come in above 70%. 83.3% of asks sit at the $1 floor. A target win probability is only
+   testable where money is what gets you there.
+
+The question P63 should have asked is **calibration**, and it is reported beside it: mean predicted
+P(win) at the bids we would have made **79.0%** against a realised **94.4%** -- the model
+under-predicts on this population, which is more obscure than the population of claims it was fitted
+on.
+
+**Dollars saved against the rule of thumb: minus $2,707.** At a 0.7 target the model spends *more*.
+The ask is bimodal -- $1 almost everywhere, then above the whole budget on the handful it thinks are
+contested -- which is the weak `log_bid` coefficient showing up as behaviour instead of as an
+interval. Two limits the replay cannot escape and states rather than hides: **the field does not
+respond** (a world in which we bid $30 is a world in which somebody may have bid $31), and the model
+**saw these seasons**, which is why the headline is the log-adjudicated win rate and not the price
+error.
+
+### What ships, and what it is honest to claim
+
+The bid on a waiver row is now a **measurement with a stated interval and a fallback that labels
+itself**, replacing a rule of thumb that had no interval because it was never fitted on anything.
+That is the whole claim. It is **not** established that following it wins more claims per dollar: the
+one comparison that could establish it -- our bids against a responding field -- is not available,
+and the replay says so.
+
+
 > ## INTEGRATION PASS 3: five tracks stacked, and the league changed its calendar under us (2026-09-09)
 >
 > `redesign/final-2` = `redesign/final` (`75da5b0`) + Tracks E, D, B, C, A, merged `--no-ff` in that

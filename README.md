@@ -190,6 +190,19 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
   board from a new direction without moving its prior.
   `ff inseason-backtest lineup|waivers|promotion`, over
   `scripts/inseason-backtest-{lineup,waiver,promotion}.mjs`.
+- **The FAAB bid is a measurement now, not a rule of thumb (Track J).** ESPN publishes the LOSING
+  bid -- an outbid claim comes back as `FAILED_INVALIDPLAYERSOURCE` carrying the amount that lost,
+  in a view we already fetched -- so `fact_waiver_claim` holds 794 of this league's own claims with
+  145 losses among them, and `tools/train_faab.py` fits both the clearing price and `P(win | bid)`.
+  Leave-one-season-out MAE **$7.59** against **$10.32** for the old rule handed an oracle;
+  `ff copilot waivers` now returns the dollars for a target win probability, the predicted clearing
+  price and the P(win) curve, and flags a bid it cannot afford rather than capping it in silence.
+  **Three of the four pre-registered predictions failed** and the reasons are worth more than the
+  predictions: the room's bids are only 26.4% better explained (P54 wanted 30%), bids **rise** later
+  in the season rather than falling (P62, sign reversed), and the realised win rate is 94.4% rather
+  than 70% (P63) because four claims in five are uncontested -- on the contested ones we win 30.5%.
+  The `log_bid` coefficient's season-resampled interval crosses zero, and the artifact says so on
+  every row. `ff build-waiver-claims`, `ff inseason-backtest faab`, `docs/validation.md`.
 - **Position eligibility is a SET, not a column** (`espn-eligibility`, `src/data/eligibility.ts`).
   ESPN answers "which lineup slots may this man be started in" on every player object and the board
   build used to discard it. It now reaches the value book (a dual-eligible player is worth the better

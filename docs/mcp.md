@@ -94,7 +94,7 @@ call left a row in `action_log`.
 | `nominate_player` | nominate a player in the live room | **LIVE** |
 | `season_odds` | playoff + title odds for all sixteen teams, ours flagged, with conservation checks AND the current objective regime | no |
 | `lineup_recommend` | this week's best legal lineup + who cannot play and why | no |
-| `waiver_targets` | each add+drop scored by the change in OUR PLAYOFF probability, with playoff-week points and title delta beside it, plus FAAB guidance | no |
+| `waiver_targets` | each add+drop scored by the change in OUR PLAYOFF probability, with playoff-week points and title delta beside it, and a FITTED bid: the dollars needed for a target win probability (0.7, exposed), the predicted clearing price, and P(win) at three levels. Since Track J the dollar figure comes from `data/faab-model.json`, fitted on this league's own 794 waiver claims *including the 145 losing bids ESPN publishes*; `faabBasis` reads `"model"` or `"rule"` so a fallback to the old rule of thumb cannot be mistaken for a measurement, and `assumptions.faab` carries the artifact, the target, our remaining FAAB and the caveat that the bid's effect on P(win) is not separable from zero at the season level. A bid above the budget is FLAGGED (`faabOverBudget`/`faabOverRemaining`), never silently capped | no |
 | `trade_check` | one named offer scored from BOTH sides | no |
 | `trade_finder` | one-for-ones balanced on consensus value, ranked by the PLAYOFF delta | no |
 | `handcuffs` | what each backup scores if the man ahead of him misses | no |

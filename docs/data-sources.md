@@ -512,6 +512,36 @@ is the credential. Everything below is a GET.
 - **As-of.** Now.
 - **Status.** ingested into operational state (`roster`, `matchup`), not into the pipeline.
 
+### 5.x The waiver bid history -- `fact_waiver_claim` (Track J)
+
+- **What.** Every processed waiver claim this league has made, **winners and losers**, with the bid,
+  the state of the world before its own waiver run, and what the claim went on to be worth.
+- **Where it comes from.** No new fetch. `raw_league_transaction`, already ingested per scoring
+  period through `view=mTransactions2`, **already carries the losing bids** -- an outbid claim comes
+  back with status `FAILED_INVALIDPLAYERSOURCE` and the amount that lost. That was the open question
+  of the track and the answer is yes.
+- **Why it is credible.** Across all 104 contested player-weeks, exactly one claim executed and no
+  `FAILED` bid ever exceeded the executed one -- zero violations, a property an unrelated failure
+  mode has no reason to satisfy. `scripts/faab-coverage.mjs` re-runs it as a positive control.
+- **Grain / key.** `(season, transaction_id, espn_player_id)`. 794 rows, 2018-2025: 579 winners,
+  145 losers, 70 rule-failures (roster limit, acquisition limit, budget exceeded) kept with
+  `won = NULL`, because they were real bids that did **not** lose an auction.
+- **Excluded.** `PENDING` (a bid ESPN never resolved -- counting it either way would invent 1,027
+  outcomes) and `CANCELED` (withdrawn, bid 0 by construction).
+- **The claimant is `to_team_id`, not `team_id`.** ESPN publishes `teamId = -2147483648`
+  (Integer.MIN_VALUE) on all 92 of 2018's EXECUTED waivers; where `team_id` is real the two columns
+  agree on 702 of 702.
+- **As-of.** Every feature column is state **strictly before this claim's own waiver run** -- and
+  before the *run*, not the *row*, because a run prices a whole batch at one timestamp and every bid
+  in it was placed blind to the others. `ros_pts`/`ros_games` are targets; `competing_bids` is
+  knowable only afterwards and is stored for reporting, never as a feature.
+- **Identity.** 100% resolve to a `player_sk` -- `player_xref` for real players, plus the roster
+  table's `DST:XX` map for defences, whose ESPN ids are negative and absent from the cross-source
+  file.
+- **Fetch path and cost.** `ff build-waiver-claims`, 0.2s, no network.
+- **Feeds.** `tools/train_faab.py` -> `data/faab-model.json` -> `waiver_targets` / `ff copilot
+  waivers`. Guarded by `scripts/faab-leakage.mjs`, which fault-injects five leaks.
+
 ## 6. Other ingested sources
 
 | source | raw table | rows | grain | as-of | status |
