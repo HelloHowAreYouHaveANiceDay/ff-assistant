@@ -77,6 +77,15 @@ function addColumns(db: DB): void {
     // The PFR id, carried into staging so the snap-count feed resolves through the SAME map as
     // everything else instead of a parallel route through player_ids that can disagree with it.
     ["stg_player", "pfr_id", "TEXT"],
+    // AUCTION STATE AT THE MOMENT OF THE PICK. A price means one thing with $180 and 15 slots left
+    // and another with $12 and 2, and a price model that cannot see the difference is fitting the
+    // average of two different games.
+    ["fact_draft_pick", "money_remaining", "INTEGER"],
+    ["fact_draft_pick", "slots_remaining", "INTEGER"],
+    ["fact_draft_pick", "season_total_money", "INTEGER"],
+    // The share of the ROOM'S money this pick took. 14-team and 16-team seasons are $2,800 and
+    // $3,200 rooms, and comparing raw dollars across them compares two different currencies.
+    ["fact_draft_pick", "price_share", "REAL"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];

@@ -704,6 +704,54 @@ CREATE TABLE IF NOT EXISTS fact_draft_pick (
 CREATE INDEX IF NOT EXISTS idx_fdp_season ON fact_draft_pick (season);
 CREATE INDEX IF NOT EXISTS idx_fdp_sk ON fact_draft_pick (player_sk);
 
+-- One row per team-season this league has played. It is a FACT table, not a feature table: it
+-- records what happened, and every column comes straight from `raw_league_team_season` with the
+-- single derivation `champion = (final_rank = 1)`.
+--
+-- WHY IT IS SEPARATE FROM THE RAW TABLE. The raw row is what ESPN returned, including the season in
+-- progress, where `final_rank` is a placeholder rather than a result. A consumer scoring a
+-- simulation against outcomes needs to know which seasons ARE settled, and `settled` says so on the
+-- row rather than leaving every consumer to re-derive it from a season number and today's date --
+-- which is exactly the kind of re-derivation that ends up meaning three different things.
+CREATE TABLE IF NOT EXISTS fact_team_season (
+  league_id     TEXT,
+  season        INTEGER,
+  team_id       TEXT,
+  team_name     TEXT,
+  owner_id      TEXT,
+  owner         TEXT,
+  wins          INTEGER,
+  losses        INTEGER,
+  points_for    REAL,
+  playoff_seed  INTEGER,
+  final_rank    INTEGER,
+  champion      INTEGER,            -- 1 = won the title. Derived from final_rank, never asserted.
+  made_playoffs INTEGER,            -- 1 = playoff_seed within the league's playoff field
+  settled       INTEGER,            -- 1 = the season finished and its outcomes are real
+  acquisitions  INTEGER,
+  faab_spent    REAL,
+  drops         INTEGER,
+  trades        INTEGER,
+  lineup_moves  INTEGER,
+  updated_at    TEXT,
+  PRIMARY KEY (season, team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fts_season ON fact_team_season (season);
+
+-- One row per regular-season game this league played. The schedule a season simulation has to run
+-- on: who played whom, in which week. Straight from `raw_league_matchup`, one row per game (the raw
+-- table is already keyed by the home side, so there is no doubling to undo).
+CREATE TABLE IF NOT EXISTS fact_matchup (
+  league_id  TEXT,
+  season     INTEGER,
+  week       INTEGER,
+  home_id    TEXT,
+  away_id    TEXT,
+  updated_at TEXT,
+  PRIMARY KEY (season, week, home_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fm_season ON fact_matchup (season);
+
 -- ================= RAW LAYER: this league's own history, as ESPN gave it =================
 --
 -- Exactly what the adaptor returned, keyed by the source's own ids. No identity resolution: a pick

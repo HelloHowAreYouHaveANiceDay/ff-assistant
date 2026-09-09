@@ -1898,16 +1898,28 @@ async function cmdBuildFeatures(rest: string[]) {
 
 // One row per real draft pick this league made, with the consensus as it stood. See features/picks.ts.
 async function cmdBuildPicks(rest: string[]) {
-  const { buildDraftPicks } = await import("./features/picks.js");
+  const { buildDraftPicks, buildLeagueFacts } = await import("./features/picks.js");
   const r = buildDraftPicks({ dbPath: valueOf(rest, "--db"), recapPath: valueOf(rest, "--recap") });
-  console.log(`fact_draft_pick: ${r.rows} rows`);
-  console.log(`  season  picks  total$   sk%   consensus  as-of`);
+  console.log(`fact_draft_pick: ${r.rows} rows, from ${r.source}`);
+  console.log(`  season  teams  picks  total$   raw$   sk%   consensus  as-of`);
   for (const s of r.perSeason) {
-    console.log(`  ${s.season}  ${String(s.picks).padStart(5)}  ${String(s.total).padStart(6)}  ` +
-      `${((s.resolved / Math.max(1, s.picks)) * 100).toFixed(0).padStart(3)}%  ` +
-      `${String(s.withConsensus).padStart(9)}  ${s.asOf ?? "(none)"}`);
+    console.log(`  ${s.season}  ${String(s.teams).padStart(5)}  ${String(s.picks).padStart(5)}  ${String(s.total).padStart(6)}  ` +
+      `${String(s.rawTotal).padStart(6)}  ${((s.resolved / Math.max(1, s.picks)) * 100).toFixed(0).padStart(3)}%  ` +
+      `${String(s.withConsensus).padStart(9)}  ${s.asOf ?? "(none -- the ECR archive does not reach this season)"}`);
   }
-  if (r.absent.length) console.log(`  seasons ABSENT from the store: ${r.absent.join(", ")}`);
+  // TO THE DOLLAR, against the raw table it was built from. A fact table 3% light looks exactly like
+  // one that is right, so the comparison is made here and printed rather than assumed.
+  console.log(r.mismatched.length
+    ? `  TOTALS DISAGREE with raw_league_pick in: ${r.mismatched.join(", ")}`
+    : `  totals match raw_league_pick to the dollar in all ${r.perSeason.length} seasons`);
+
+  const f = buildLeagueFacts({ dbPath: valueOf(rest, "--db") });
+  console.log(`\nfact_team_season: ${f.teamSeasons} rows   fact_matchup: ${f.matchups} rows`);
+  console.log(`  season  teams  games  playoff field  champion`);
+  for (const s of f.perSeason) {
+    console.log(`  ${s.season}  ${String(s.teams).padStart(5)}  ${String(s.games).padStart(5)}  ` +
+      `${String(s.playoffField).padStart(13)}  ${s.settled ? (s.champion ?? "?") : "(season not settled)"}`);
+  }
 }
 
 // The honest floor: a projection artifact that IS the point-in-time curve, with the two shipped
