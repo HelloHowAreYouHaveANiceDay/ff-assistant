@@ -91,7 +91,7 @@ export interface MarketModel {
   idioSd?: number;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14, avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}): BacktestResult {
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14, avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false): BacktestResult {
   const REG_WEEKS = Array.from({ length: regWeeks }, (_, i) => i + 1); // fantasy regular-season weeks
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
@@ -151,7 +151,13 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   // is the roster-churn edge -- a manager who works the wire upgrades over a stand-pat field.
   const posOf = new Map(projMarket.map((p) => [p.name, p.pos]));
   const drafted = new Set(picks.map((p) => p.name));
-  const freeAgents = ourWaivers ? [...weekly.keys()].filter((n) => !drafted.has(n) && posOf.has(n)) : [];
+  const freeAgents = (ourWaivers || botChurn) ? [...weekly.keys()].filter((n) => !drafted.has(n) && posOf.has(n)) : [];
+  // The minimum bodies a roster needs at each position to fill its mandatory starting slots. A
+  // waiver rule that ignores this will happily drop a team's only quarterback for a fourth receiver
+  // -- which no manager does, and which would make bot churn look worse than it is by breaking the
+  // bots rather than by testing them.
+  const MIN_AT_POS: Record<string, number> = {};
+  for (const s of lg.slots) if (s !== "BE" && s !== "FLEX") MIN_AT_POS[s] = (MIN_AT_POS[s] ?? 0) + 1;
   const trailAvg = (name: string, uptoWk: number): { avg: number; g: number } => {
     let s = 0, g = 0; for (let w = 1; w < uptoWk; w++) { const p = weekly.get(name)?.get(w); if (p != null) { s += p; g++; } }
     return { avg: g ? s / g : 0, g };
@@ -166,14 +172,43 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
     const w = Math.min(1, (wk - 1) / 9); // weight on actuals ramps to 1 by ~week 10
     return (1 - w) * pre + w * avg;
   };
+  /**
+   * ONE waiver attempt for ONE team. The rule is the conservative one our own team runs -- swap the
+   * weakest rostered player for the best-producing free agent whose rest-of-season estimate CLEARLY
+   * beats him -- with a legality guard the single-team version never needed.
+   *
+   * `--bot-churn` gives every bot the same rule, at the league's observed rate of about one add per
+   * team per week. Until now the field stood pat all season while our team worked the wire, which
+   * flatters us twice: we gain from churn and they never do. A standing-pat field is not a
+   * conservative assumption, it is a wrong one -- this room averages ~15 adds per team per season.
+   */
+  const attemptWaiver = (team: number, wk: number) => {
+    const posCount: Record<string, number> = {};
+    for (const p of rosters[team]) posCount[p.pos] = (posCount[p.pos] ?? 0) + 1;
+    const droppable = rosters[team].filter((p) => (posCount[p.pos] ?? 0) > (MIN_AT_POS[p.pos] ?? 0));
+    if (!droppable.length) return;
+    const weakest = droppable.map((p) => ({ p, ros: rosPerGame(p.name, wk) })).sort((a, b) => a.ros - b.ros)[0];
+    if (!weakest) return;
+    const fa = freeAgents.map((n) => ({ n, ros: rosPerGame(n, wk), g: trailAvg(n, wk).g }))
+      .filter((x) => x.g >= 2).sort((a, b) => b.ros - a.ros)[0];
+    if (!fa || !(fa.ros > weakest.ros + 3)) return;      // only a CLEAR rest-of-season upgrade
+    rosters[team] = rosters[team].filter((p) => p !== weakest.p)
+      .concat([{ name: fa.n, pos: posOf.get(fa.n)!, proj: projMap.get(fa.n) ?? fa.ros * 17 }]);
+    freeAgents.splice(freeAgents.indexOf(fa.n), 1);
+    freeAgents.push(weakest.p.name);
+  };
   const runWaiver = (wk: number) => {
-    if (!ourWaivers || wk < 3) return;
-    const fa = freeAgents.map((n) => ({ n, ros: rosPerGame(n, wk), g: trailAvg(n, wk).g })).filter((x) => x.g >= 2).sort((a, b) => b.ros - a.ros)[0];
-    if (!fa) return;
-    const weakest = rosters[0].map((p) => ({ p, ros: rosPerGame(p.name, wk) })).sort((a, b) => a.ros - b.ros)[0];
-    if (weakest && fa.ros > weakest.ros + 3) { // only a CLEAR rest-of-season upgrade
-      rosters[0] = rosters[0].filter((p) => p !== weakest.p).concat([{ name: fa.n, pos: posOf.get(fa.n)!, proj: projMap.get(fa.n) ?? fa.ros * 17 }]);
-      freeAgents.splice(freeAgents.indexOf(fa.n), 1); freeAgents.push(weakest.p.name);
+    if (wk < 3) return;
+    if (ourWaivers) attemptWaiver(0, wk);
+    if (!botChurn) return;
+    // WAIVER PRIORITY ROTATES. Processing the teams in a fixed order would hand seat 1 the best free
+    // agent every single week for twenty-five seasons, which is not a league rule anywhere and would
+    // make one bot systematically strong. The rotation is deterministic in the week, so the pairing
+    // with an arm that has churn off is preserved.
+    for (let i = 0; i < lg.teams; i++) {
+      const t = (i + wk) % lg.teams;
+      if (t === 0) continue;                             // our team is handled by --waivers, above
+      attemptWaiver(t, wk);
     }
   };
 

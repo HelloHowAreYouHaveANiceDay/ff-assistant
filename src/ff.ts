@@ -1503,6 +1503,9 @@ async function cmdBacktest(rest: string[]) {
   const full = rest.includes("--full"); // run the REAL lineup optimizer (inseason/lineup.ts) for our team
   const noLookahead = rest.includes("--no-lookahead"); // draft/lineup on LAST season, score by THIS season
   const waivers = rest.includes("--waivers"); // our team works the waiver wire (trailing-avg, no lookahead)
+  // THE FIELD works it too. Off by default until the paired result says otherwise: it moves the
+  // arbiter's headline, and a headline that moves for an unmeasured reason is worse than a wrong one.
+  const botChurn = rest.includes("--bot-churn");
   const drainNom = rest.includes("--drain-nom"); // our team drain-nominates the known position-payers
   const greedyNom = rest.includes("--greedy-nom"); // our team nominates the best player we don't want
   const injuryLever = valueOf(rest, "--injury-lever") != null ? Number(valueOf(rest, "--injury-lever")) : 0; // discount OUR values by prior-yr availability
@@ -1785,7 +1788,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, conf.playoffTeams, conf.regWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a
@@ -1796,7 +1799,7 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${conf.playoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(measured band sd, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
   if (dumpPath) {
