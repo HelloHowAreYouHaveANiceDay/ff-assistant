@@ -41,6 +41,8 @@ import { optimalLineup } from "../inseason/lineup.js";
 // would shadow it, and the shadowed call type-checked as a wrong-arity error only by luck.
 import { draw as unitDraw, drawGauss, PURPOSE, PlayerIds } from "./rng.js";
 import { prepare as prepBootstrap, sampleSeason as bootstrapSeason, weekOf, type RankOutcomes, type CorrelationModel, type PoolPlayer } from "./bootstrap.js";
+import { seedField } from "./schedule.js";
+import type { SeedingRule } from "../league/types.js";
 
 export interface VarianceModel {
   tiers: number;
@@ -55,6 +57,14 @@ export interface SeasonTeamInput { id: string; name: string; roster: SeasonPlaye
 export interface SeasonOpts {
   weeks: number;
   playoffTeams: number;
+  /**
+   * HOW THE FIELD IS SEEDED. Defaults to "record", the rule this simulator has always used, so an
+   * omitted value changes nothing. "division-winners-first" needs `divisionOf` as well -- without it
+   * there are no divisions to win and the rule degrades to record rather than inventing one.
+   */
+  seeding?: SeedingRule;
+  /** team index -> division index, parallel to `teams`. */
+  divisionOf?: number[];
   slots: string[];
   /** Lognormal sd of our projection error. 0 = treat the board as truth (overconfident). */
   projSd: number;
@@ -442,9 +452,13 @@ export function simulateSeasons(
         if (scores[a] >= scores[b]) wins[a]++; else wins[b]++;
       }
     }
-    // --- seed by record, points-for as tiebreak (verified against this league) --------------------
-    const order = [...Array(N).keys()].sort((x, y) => wins[y] - wins[x] || pts[y] - pts[x]);
-    const seeds = order.slice(0, opts.playoffTeams);
+    // --- seed the field ---------------------------------------------------------------------------
+    // Wins, then points-for as the tiebreak (verified against this league: zero rank-vs-record
+    // inversions 2018-2025). With `seeding: "division-winners-first"` each division's best team is
+    // guaranteed a top seed first -- see seedField() in schedule.ts for why that is not the same
+    // rule and why 2025 cannot tell the two apart.
+    const seeds = seedField([...Array(N).keys()].map((t) => ({ wins: wins[t], pts: pts[t] })),
+      opts.playoffTeams, opts.seeding ?? "record", opts.divisionOf);
     for (const s of seeds) playoffs[s]++;
     // playoff weeks: a fresh sampled week per matchup, same generative model
     const playoffWeek = new Map<number, number>();

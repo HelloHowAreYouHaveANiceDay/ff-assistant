@@ -133,8 +133,19 @@ export const DEFAULT_CONFIG = {
   season: 2026, budget: 200, teams: 16,
   slots: ["QB", "RB", "WR", "TE", "FLEX", "FLEX", "DST", "K", "BE", "BE", "BE", "BE"],
   flex_ok: ["RB", "WR", "TE"],
-  playoffTeams: 6,   // seeds into the backtest bracket (league_sync sets the real count)
-  regWeeks: 14,      // fantasy regular-season length before playoffs
+  // THE CALENDAR IS NOT A DEFAULT. `format` is null on a fresh store and is written by
+  // `ff format sync` (read from ESPN) or `ff format set` (owner override); every consumer reads it
+  // through effectiveFormat(), which THROWS when it is absent rather than substituting 14/7/record.
+  //
+  // playoffTeams/regWeeks remain as MIRRORS of the block, for the readers that predate it (the MCP
+  // league_sync tool, scripts/read-config.mjs). They are written from `format` and must never be
+  // written independently of it -- two numbers for one fact is how the fact stops being one.
+  format: null as unknown as import("../league/types.js").LeagueFormat | null,
+  // What ESPN said, KEPT even while an owner override is in force -- so `ff format show` can print
+  // both blocks and say which one is being used, instead of the override erasing its own evidence.
+  formatEspn: null as unknown as import("../league/types.js").LeagueFormat | null,
+  playoffTeams: 6,   // MIRROR of format.playoffTeams
+  regWeeks: 14,      // MIRROR of format.regWeeks
   scoring: "HALF", // STD | HALF | PPR -- selects the Boris/ADP/market consensus VARIANT
   // the actual per-stat scoring model that tailors OUR points/values (populated by league_sync)
   scoring_rules: DEFAULT_SCORING as ScoringRules,

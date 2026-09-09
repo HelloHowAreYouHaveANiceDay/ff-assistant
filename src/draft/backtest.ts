@@ -7,8 +7,28 @@
 import { draftField, mulberry32, SIM_LEAGUE, type SimLeague } from "./sim.js";
 import { computeValues, resolveValueLeague, type PointsRow } from "./values.js";
 import { optimalLineup } from "../inseason/lineup.js";
-import { buildSchedule } from "./schedule.js";
+import { buildSchedule, seedField } from "./schedule.js";
+import type { SeedingRule } from "../league/types.js";
 import type { V2Config } from "./strategy.js";
+
+/**
+ * THE SEEDING RULE FOR A BACKTEST RUN.
+ *
+ * It belongs on `ff backtest` as a `--seeding` flag alongside `--divisions`, and that is where it
+ * should end up. It is an environment variable for now because the flag would have to be parsed in
+ * `cmdBacktest`, which this change is fenced out of; the variable is read ONCE, here, and validated
+ * against the two legal names so a typo is a loud failure and not a silent fallback to "record".
+ * The default is "record", i.e. the shipped behaviour is byte-identical when the variable is unset.
+ */
+function seedingFromEnv(): SeedingRule {
+  const v = process.env.FF_SEEDING;
+  if (!v) return "record";
+  if (v !== "record" && v !== "division-winners-first") {
+    throw new Error(`FF_SEEDING="${v}" is not a seeding rule -- use "record" or "division-winners-first".`);
+  }
+  return v;
+}
+const SEEDING_DEFAULT: SeedingRule = seedingFromEnv();
 
 function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 
@@ -91,7 +111,7 @@ export interface MarketModel {
   idioSd?: number;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14, avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false): BacktestResult {
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams = 6, regWeeks = 14, avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false, seeding: SeedingRule = SEEDING_DEFAULT): BacktestResult {
   const REG_WEEKS = Array.from({ length: regWeeks }, (_, i) => i + 1); // fantasy regular-season weeks
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
@@ -243,7 +263,13 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
       if (scores[a] >= scores[b]) wins[a]++; else wins[b]++;
     }
   }
-  const seeds = [...Array(lg.teams).keys()].sort((x, y) => wins[y] - wins[x] || totPts[y] - totPts[x]).slice(0, playoffTeams);
+  // SEEDING. `sched.divisionOf` is indexed by SCHEDULE SLOT, and seats are shuffled into slots above
+  // so our team is not permanently in the same division -- so the map has to be inverted before it
+  // can be read as "team t's division". Getting that backwards would put every team in the wrong
+  // division while still producing a plausible bracket, which is the kind of wrong that never fails.
+  const divisionOfTeam = sched ? (() => { const m = new Array(lg.teams).fill(0); seat.forEach((team, slot) => { m[team] = sched.divisionOf[slot]; }); return m; })() : undefined;
+  const standings = [...Array(lg.teams).keys()].map((t) => ({ wins: wins[t], pts: totPts[t] }));
+  const seeds = seedField(standings, playoffTeams, seeding, divisionOfTeam);
   const madePlayoffs = seeds.includes(0);
   const beat = (a: number, b: number, wk: number) => (wkS(a, wk) >= wkS(b, wk) ? a : b);
   const champ = playoffWinner(seeds, beat, regWeeks + 1); // playoffs begin the week after the regular season

@@ -50,6 +50,59 @@ export interface LeagueShape {
 }
 
 /**
+ * HOW THE PLAYOFF FIELD IS SEEDED.
+ *
+ *   "record"                    wins, then the tiebreak, across the whole league. What this repo has
+ *                               always done, and what a single-division league means.
+ *   "division-winners-first"    each division's best team takes a top seed (ordered among themselves
+ *                               by record), and everyone else fills the remaining seeds by record.
+ *                               The NFL's rule, and ESPN's documented behaviour when a league has
+ *                               divisions -- a division winner is GUARANTEED a seed even with a
+ *                               worse record than a team left out.
+ *
+ * The two coincide exactly whenever the division winners happen to be the best D teams outright,
+ * which is why a season can agree with both and prove neither.
+ */
+export type SeedingRule = "record" | "division-winners-first";
+
+/** One division and the teams in it, by the platform's team ids. */
+export interface LeagueDivision { id: string; name: string; teamIds: string[] }
+
+/**
+ * THE LEAGUE'S CALENDAR AND PLAYOFF FORMAT, as a FACT WITH A SOURCE.
+ *
+ * Every field here used to be a default sitting in code (`regWeeks ?? 14`, `playoffTeams ?? 7`,
+ * "seed by record"), and every one of them was right for this league by coincidence. A default that
+ * is right is indistinguishable from a value that was read, which is the whole problem: nothing
+ * fails, nothing warns, and the first season the league changes its calendar every downstream number
+ * is quietly computed for a league that does not exist.
+ *
+ * `source` is not decoration. The owner can legitimately overrule ESPN -- ESPN's stored settings
+ * describe how ESPN will run the bracket, and a league that has agreed among itself to end the
+ * regular season a week earlier is not a bug in anything. So both blocks are kept, both are printed,
+ * and exactly one is in force.
+ */
+export interface LeagueFormat {
+  /** Last week of the fantasy regular season. */
+  regWeeks: number;
+  /** Size of the playoff field. */
+  playoffTeams: number;
+  /** NFL weeks per playoff ROUND (ESPN's playoffMatchupPeriodLength). 1 = one week per round. */
+  playoffRoundWeeks: number;
+  /** The actual bracket weeks, e.g. [15,16,17]. Explicit, not re-derived by each consumer. */
+  playoffWeeks: number[];
+  seeding: SeedingRule;
+  /** The tiebreak between equal records, in the platform's own vocabulary. */
+  tiebreak: string;
+  divisions: LeagueDivision[];
+  source: "espn" | "owner-override";
+  /** LOCAL date-time the block was written, so a stale block is visible rather than plausible. */
+  fetchedAt: string;
+  /** Present on an owner override: what ESPN said at the time, for the diff `ff format show` prints. */
+  note?: string;
+}
+
+/**
  * What every platform adaptor must provide. Deliberately small: these five calls are the complete
  * set the current analysis layer uses, and a new platform is done when they work.
  *

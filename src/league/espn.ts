@@ -13,7 +13,10 @@ import type { Database as DB } from "better-sqlite3";
 import { attachWebview } from "../browser/webviewPage.js";
 import type { WebviewPage } from "../browser/webviewPage.js";
 import type { Browser } from "playwright-core";
-import type { AcquisitionRules, DraftPick, FreeAgent, LeagueProvider, LeagueSchedule, LeagueShape, LeagueTeam, SeasonSnapshot } from "./types.js";
+import type { AcquisitionRules, DraftPick, FreeAgent, LeagueFormat, LeagueProvider, LeagueSchedule, LeagueShape, LeagueTeam, SeasonSnapshot } from "./types.js";
+// The calendar is a fact with a source; these two functions are where it is read and validated.
+// (index.ts imports this adaptor DYNAMICALLY, so this static edge does not close a cycle.)
+import { effectiveFormat, formatFromEspnSettings } from "./index.js";
 
 const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
 /** lineupSlotId -> position, the fallback when a drafted player is missing from the public pool. */
@@ -33,7 +36,7 @@ interface EspnEntry { playerPoolEntry?: { player?: EspnPlayer }; player?: EspnPl
 interface EspnTeam { id: number; name?: string; location?: string; nickname?: string; roster?: { entries?: EspnEntry[] } }
 
 /** The synced league config as the app stores it in settings.'config'. */
-interface EspnConfig { season: number; slots: string[]; teams?: number; scoring?: string; regWeeks?: number }
+interface EspnConfig { season: number; slots: string[]; teams?: number; scoring?: string; format?: unknown }
 
 const NFL_WEEKS = 17;
 
@@ -70,14 +73,22 @@ export class EspnLeague implements LeagueProvider {
     return new EspnLeague(browser, wv, row.league_id, String(row.team_id), cfg);
   }
 
+  /** The shape, with the calendar taken from the stored FORMAT BLOCK rather than a literal 14.
+   *  `regWeeks ?? 14` used to live here; it was right for this league and unfalsifiable, because a
+   *  league whose settings had never been read looked exactly like one that had. */
   async shape(): Promise<LeagueShape> {
-    const regWeeks = this.cfg.regWeeks ?? 14;
-    const playoffWeeks: number[] = [];
-    for (let w = regWeeks + 1; w <= NFL_WEEKS; w++) playoffWeeks.push(w);
+    const fmt = effectiveFormat(this.cfg);
     return {
       season: this.cfg.season, size: this.cfg.teams ?? 0, slots: this.cfg.slots,
-      scoring: this.cfg.scoring ?? "STANDARD", regWeeks, nflWeeks: NFL_WEEKS, playoffWeeks,
+      scoring: this.cfg.scoring ?? "STANDARD",
+      regWeeks: fmt.regWeeks, nflWeeks: NFL_WEEKS, playoffWeeks: fmt.playoffWeeks,
     };
+  }
+
+  /** THE FORMAT, read from ESPN. Read-only, and the only place the settings view is interpreted. */
+  async formatBlock(season = this.cfg.season): Promise<LeagueFormat> {
+    const url = `${HOST}/seasons/${season}/segments/0/leagues/${this.leagueId}?view=mSettings&view=mTeam`;
+    return formatFromEspnSettings(await this.wv.fetchJson<unknown>(url));
   }
 
   async teams(): Promise<LeagueTeam[]> {
