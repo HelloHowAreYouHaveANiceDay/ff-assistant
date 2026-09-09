@@ -159,6 +159,9 @@ async function main() {
       return cmdBuildWeeklyFeatures(rest);
     case "evaluate-weekly":
       return cmdEvaluateWeekly(rest);
+    // ---- streaming track (src/weekly/streaming*.ts) ----
+    case "build-streaming-features":
+      return cmdBuildStreamingFeatures(rest);
     case "scorecard":
       return cmdScorecard(rest);
     default:
@@ -2812,6 +2815,32 @@ async function cmdBuildWeeklyFeatures(rest: string[]) {
       const pct = (k: string) => (c.rows ? ((100 * c.cols[k]) / c.rows).toFixed(1) + "%" : "-").padStart(15);
       console.log(`${c.season}  ${String(c.rows).padStart(5)}   ` +
         ["season_line_pg", "td_ppg", "t4_mean", "dvp_mult", "spread_line", "days_rest", "pts"].map(pct).join(""));
+    }
+  } finally { db.close(); }
+}
+
+/**
+ * `ff build-streaming-features` -- the opponent-and-environment table, with its coverage.
+ *
+ * COVERAGE IS PRINTED PER COLUMN PER SEASON and it is not decoration: the team-week feed is fetched
+ * per season and a season the feed does not cover leaves twelve columns NULL at once, which is
+ * indistinguishable in the table from a season where every team happened to have no data. The row
+ * count read from the feed is printed beside the coverage so the two cases can be told apart.
+ */
+async function cmdBuildStreamingFeatures(rest: string[]) {
+  const { buildStreamFeatures, streamCoverage, STREAM_FIELD_NAMES } = await import("./weekly/streamingFeatures.js");
+  const seasons = seasonRange(valueOf(rest, "--seasons"), [2010, 2026]);
+  const res = await buildStreamFeatures({ dbPath: valueOf(rest, "--db"), seasons });
+  console.log(`feat_player_week_stream: ${res.rows} rows over ${seasons.length} seasons`);
+  console.log("team-week feed rows read: " +
+    [...res.teamWeekRows.entries()].sort((a, b) => a[0] - b[0]).map(([s, n]) => `${s}:${n}`).join(" "));
+  const show = STREAM_FIELD_NAMES.filter((n) => n !== "opp_pa_pos_n");
+  const db = openDb(valueOf(rest, "--db"));
+  try {
+    console.log("season  rows   " + show.map((c) => c.slice(0, 12).padStart(13)).join(""));
+    for (const c of streamCoverage(db, seasons)) {
+      const pct = (k: string) => (c.rows ? ((100 * c.cols[k]) / c.rows).toFixed(1) + "%" : "-").padStart(13);
+      console.log(`${c.season}  ${String(c.rows).padStart(5)}   ` + show.map(pct).join(""));
     }
   } finally { db.close(); }
 }

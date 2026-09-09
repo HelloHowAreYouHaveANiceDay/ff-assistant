@@ -39,6 +39,7 @@ import { nameKey } from "../draft/values.js";
 import { fetchCsvCached, URLS, cacheTag, canonTeam, pick } from "../data/nflverse.js";
 import { loadArtifact, type ProjectionArtifact } from "../model/projector.js";
 import { backtestProjection, boardProjection } from "../model/features.js";
+import { STREAM_FIELD_NAMES, presentStreamFields } from "./streamingFields.js";
 
 /** The positions a weekly model has an opinion about. Same list src/features/build.ts uses. */
 export const WEEKLY_POS = ["QB", "RB", "WR", "TE", "K", "DST"];
@@ -60,6 +61,15 @@ export const WEEKLY_FEATURE_FIELDS = [
   // that difference is stated rather than buried.
   "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
   "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",
+  // ---- THE STREAMING BLOCK, from feat_player_week_stream (src/weekly/streamingFeatures.ts). What
+  // the OPPONENT allows and what the stadium is, as of the day before the week's first kickoff. The
+  // names are written out here as literals rather than spread from STREAM_FIELD_NAMES because this
+  // array is `as const` and drives a union type; `test/streaming-features.test.ts` asserts the two
+  // lists agree, which is the check a spread would have made unnecessary and a typo makes essential.
+  "opp_pa_pos", "opp_pa_pos_n", "opp_def_sacks_pg", "opp_def_takeaways_pg",
+  "opp_pass_yds_allowed_pg", "opp_rush_yds_allowed_pg",
+  "opp_off_sacks_allowed_pg", "opp_off_giveaways_pg",
+  "opp_implied_total", "roof_dome", "team_fga_pg", "team_pat_pg",
 ] as const;
 export type WeeklyFeatureField = typeof WEEKLY_FEATURE_FIELDS[number];
 
@@ -666,17 +676,35 @@ export function presentContextFields(db: DB): typeof CONTEXT_FIELDS {
   return CONTEXT_FIELDS.filter((c) => have.has(c.name));
 }
 
-/** Load feature rows for one (season, week) -- or a whole season when `week` is omitted. */
+/**
+ * Load feature rows for one (season, week) -- or a whole season when `week` is omitted.
+ *
+ * THE STREAMING BLOCK IS JOINED HERE, NOT AT THE CALL SITE, and that is the difference between a
+ * serving path that works and one that silently degrades. Every declared feature the loader does not
+ * supply falls back on its artifact-declared `missing` default, which for a centred column is "exactly
+ * league average" -- so a streaming artifact served through a loader that forgot the join would
+ * produce a plausible number for every player and no error anywhere. One join, in the one function
+ * both the projector and the evaluator read through.
+ *
+ * A store WITHOUT the streaming table reads every streaming column as NULL, which is the same
+ * statement a store that has the table and no value makes. `streamCoverage` is what separates them.
+ */
 export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow[] {
   const present = presentContextFields(db);
+  const stream = presentStreamFields(db);
   const rows = db.prepare(
-    `SELECT feat_key, player_sk, season, week, name, pos, team, opponent, home, season_line_pg,
-            td_games, td_ppg, t4_mean, t4_sd, td_fd, td_ts, td_attempts, td_rush_yards,
-            dvp_mult, dvp_n, spread_line, total_line, implied_team_total, days_rest
-            ${present.length ? ", " + present.map((c) => c.name).join(", ") : ""}
-       FROM feat_player_week_model
-      WHERE season = ?${week == null ? "" : " AND week = ?"}
-      ORDER BY week, pos, name`,
+    `SELECT m.feat_key, m.player_sk, m.season, m.week, m.name, m.pos, m.team, m.opponent, m.home,
+            m.season_line_pg, m.td_games, m.td_ppg, m.t4_mean, m.t4_sd, m.td_fd, m.td_ts,
+            m.td_attempts, m.td_rush_yards, m.dvp_mult, m.dvp_n, m.spread_line, m.total_line,
+            m.implied_team_total, m.days_rest
+            ${present.length ? ", " + present.map((c) => `m.${c.name}`).join(", ") : ""}
+            ${stream.length ? ", " + stream.map((c) => `s.${c}`).join(", ") : ""}
+       FROM feat_player_week_model m
+       ${stream.length
+      ? "LEFT JOIN feat_player_week_stream s ON s.season = m.season AND s.week = m.week AND s.feat_key = m.feat_key"
+      : ""}
+      WHERE m.season = ?${week == null ? "" : " AND m.week = ?"}
+      ORDER BY m.week, m.pos, m.name`,
   ).all(...(week == null ? [season] : [season, week])) as Record<string, unknown>[];
   return rows.map((r) => ({
     feat_key: String(r.feat_key), player_sk: (r.player_sk as string | null) ?? null,
@@ -704,6 +732,8 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
       week_no: Number(r.week),
       ...Object.fromEntries(CONTEXT_FIELDS.map((c) =>
         [c.name, r[c.name] == null ? null : Number(r[c.name])])),
+      ...Object.fromEntries(STREAM_FIELD_NAMES.map((c) =>
+        [c, r[c] == null ? null : Number(r[c])])),
       // (the map above covers every declared field; the ones this store lacks were never selected
       // and land as null, which is the same statement a NULL cell makes)
     },

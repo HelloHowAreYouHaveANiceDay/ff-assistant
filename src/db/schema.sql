@@ -1188,3 +1188,47 @@ CREATE TABLE IF NOT EXISTS scorecard_result (
   scored_at       TEXT,
   PRIMARY KEY (season, week, kind, model, metric)
 );
+
+-- feat_player_week_stream: WHAT THE OPPONENT ALLOWS, AS OF THE WEEK. The streaming half of the
+-- weekly feature view; src/weekly/streamingFeatures.ts owns it and states each column's as-of rule.
+--
+-- SAME INVARIANT AS feat_player_week_model: a row for (season Y, week w) may contain nothing dated on
+-- or after that as_of. Every accumulated column is bounded by `week < w` of Y, blended with all of
+-- Y-1 and shrunk toward the league mean over the same window. test/streaming-leakage.test.ts perturbs
+-- week w's own source rows and asserts nothing here moved; scripts/streaming-leak-audit.mjs
+-- recomputes the columns independently on the table that actually shipped and moves the bound to
+-- `<= w` as the positive control.
+--
+-- TEMPERATURE AND WIND ARE ABSENT ON PURPOSE. raw_nfl_game carries them and says out loud that they
+-- are OBSERVED -- not knowable before kickoff. This store holds no forecast feed, and a forecast is a
+-- different quantity from an observation, so the columns are not built. `roof` IS built: a stadium's
+-- roof is knowable when the schedule is published.
+--
+-- KEYED (season, week, feat_key), matching feat_player_week_model, NOT (player_sk, season, week): a
+-- small number of player-weeks carry a NULL surrogate key, and a NULL inside a SQLite primary key
+-- does not conflict with another NULL, so keying on it would let one man write two rows.
+CREATE TABLE IF NOT EXISTS feat_player_week_stream (
+  feat_key                 TEXT,
+  player_sk                TEXT,
+  season                   INTEGER,
+  week                     INTEGER,
+  as_of                    TEXT,     -- day before the week's FIRST kickoff, league-wide
+  pos                      TEXT,
+  team                     TEXT,
+  opponent                 TEXT,
+  opp_pa_pos               REAL,     -- fantasy pts the opponent allowed per game to THIS position
+  opp_pa_pos_n             INTEGER,  -- team-games of season-Y evidence behind it; <= w-1 always
+  opp_def_sacks_pg         REAL,     -- opponent DEFENCE: sacks made per game
+  opp_def_takeaways_pg     REAL,     -- opponent DEFENCE: interceptions + opponent fumbles recovered
+  opp_pass_yds_allowed_pg  REAL,
+  opp_rush_yds_allowed_pg  REAL,
+  opp_off_sacks_allowed_pg REAL,     -- opponent OFFENCE: sacks suffered per game (what a DST eats)
+  opp_off_giveaways_pg     REAL,     -- opponent OFFENCE: interceptions thrown + fumbles lost
+  opp_implied_total        REAL,     -- total_line - implied_team_total, as published pre-kickoff
+  roof_dome                INTEGER,  -- 1 where roof is dome/closed/indoors. NOT temp, NOT wind.
+  team_fga_pg              REAL,     -- this player's OWN team: field goals attempted per game
+  team_pat_pg              REAL,     -- this player's OWN team: extra points attempted per game
+  updated_at               TEXT,
+  PRIMARY KEY (season, week, feat_key)
+);
+CREATE INDEX IF NOT EXISTS idx_fpws_pos ON feat_player_week_stream (season, week, pos);
