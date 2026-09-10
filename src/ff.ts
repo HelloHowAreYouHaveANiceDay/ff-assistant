@@ -110,6 +110,8 @@ async function main() {
       return cmdBuildInjuryHorizon(rest);
     case "sync-rosters":
       return cmdSyncRosters(rest);
+    case "sync-settings":
+      return cmdSyncSettings(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -1416,6 +1418,89 @@ async function cmdSim(rest: string[]) {
   console.log(`SIM (${n} drafts) ${lg.teams}-team $${lg.budget} ${conf.scoring} | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare} premium=${cfg.premium}`);
   console.log(`  our starting pts: ${(sumPts / n).toFixed(0)}  |  field avg: ${(sumField / n).toFixed(0)}  |  edge: ${((sumPts / n) - (sumField / n)).toFixed(0)}`);
   console.log(`  avg finish: ${(sumRank / n).toFixed(2)} of ${lg.teams}  |  1st: ${((top1 / n) * 100).toFixed(0)}%  |  top-3: ${((top3 / n) * 100).toFixed(0)}%  |  $ on top3 players: ${(sumTop3Spend / n).toFixed(0)}`);
+}
+
+/**
+ * `ff sync-settings` -- the league rules that exist ONLY in the rendered settings page.
+ *
+ * WHY A SECOND SYNC RATHER THAN MORE OF `league_sync`. `league_sync` reads the mSettings API, which
+ * is the right source for everything it carries and is far more robust than scraping. Two things are
+ * simply not in it: per-position ROSTER MAXIMUMS, and the tier BOUNDARIES of the points-allowed
+ * ladder. Both are rendered on the settings page. Keeping them in a separate verb keeps the API
+ * path -- the one that must never break -- free of DOM selectors that ESPN can rename any week.
+ *
+ * WHY IT USES THE WEBVIEW AND NOT `bridgeRead`. `bridgeRead` opens a BrowserWindow on the
+ * `research-ephemeral` partition, which is NOT logged in; against a league settings page it returns
+ * a 948-byte shell and no error. The authenticated session lives in the app's `#espnview`, which is
+ * what `cmdSyncRosters` already drives, so this drives the same thing.
+ *
+ * WHAT IT REFUSES TO DO. If the page yields no rows, or rows with no position maximums in them, it
+ * writes NOTHING and says so. An empty parse and a league with genuinely no limits look identical
+ * downstream, and silently storing `{}` would turn a broken selector into "this league has no
+ * maximums" -- which is exactly the failure this file has paid for elsewhere.
+ */
+async function cmdSyncSettings(rest: string[]) {
+  const { chromium } = await import("playwright-core");
+  const { openDb, getConfig, setConfig } = await import("./db/db.js");
+  const { parseSettingsRows, SETTINGS_ROWS_JS } = await import("./league/settingsDom.js");
+  const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
+  const waitMs = Number(valueOf(rest, "--wait") ?? 6000);
+  const db = openDb(valueOf(rest, "--db"));
+  const lg = db.prepare("SELECT league_id, season FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; season: number } | undefined;
+  if (!lg) { db.close(); console.log("no league synced -- run league_sync first"); return; }
+
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
+  if (!browser) { db.close(); console.log("app not running -- open the desktop app (its logged-in session is needed)"); return; }
+  const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://"));
+  if (!page) { db.close(); await browser.close(); console.log("app renderer not found"); return; }
+
+  const url = `https://fantasy.espn.com/football/league/settings?leagueId=${lg.league_id}&seasonId=${lg.season}`;
+  await page.evaluate((u) => { const wv = document.getElementById("espnview") as { loadURL?: (s: string) => void } | null; wv?.loadURL?.(u); }, url);
+  await page.waitForTimeout(waitMs);
+  const raw = await page.evaluate(async (code) => {
+    const wv = document.getElementById("espnview") as { executeJavaScript?: (s: string) => Promise<unknown> } | null;
+    if (!wv?.executeJavaScript) return "[]";
+    try { return JSON.stringify(await wv.executeJavaScript(code)); } catch (e) { return "ERR:" + String((e as Error)?.message ?? e); }
+  }, SETTINGS_ROWS_JS);
+  await browser.close();
+
+  let rows: string[] = [];
+  try { rows = JSON.parse(raw) as string[]; } catch { db.close(); console.log(`could not read the settings page: ${raw?.slice(0, 80)}`); return; }
+  const s = parseSettingsRows(rows);
+  const nMax = Object.keys(s.posMax).length;
+  if (!rows.length || !nMax) {
+    db.close();
+    console.log(`read ${rows.length} rows but found NO position maximums -- storing nothing.`);
+    console.log(`  Either the page had not rendered (raise --wait, currently ${waitMs}ms) or ESPN changed the markup.`);
+    console.log(`  An empty parse is NOT written, because "no maximums" and "unlimited" must not look the same.`);
+    return;
+  }
+
+  const before = getConfig(db) as Record<string, unknown>;
+  const patch: Record<string, unknown> = { posMax: s.posMax, rosterSettings: s.misc };
+  // The ladder is stored only when the page actually carried tiers, so a page that renders the
+  // roster table but not the scoring table cannot blank a good ladder.
+  if (s.paLadder.length) patch.defense = { ...(before.defense as object ?? {}), paLadder: s.paLadder };
+  setConfig(db, patch as never);
+
+  console.log(`settings synced from the rendered page (league ${lg.league_id}, ${lg.season}):`);
+  console.log(`  position maximums: ${Object.entries(s.posMax).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  console.log(`  starters: ${Object.entries(s.starters).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  if (s.paLadder.length) {
+    console.log(`  points-allowed ladder: ${s.paLadder.map(([m, p]) => `${m ?? "46+"}:${p}`).join("  ")}`);
+    // CROSS-CHECK against the derived default rather than just overwriting it. They have agreed for
+    // this league since the default was fitted from 175 scored DST weeks; the day they stop is the
+    // day the default silently became wrong for somebody, and that should be visible, not quiet.
+    const { DEFAULT_DEFENSE } = await import("./draft/scoring.js");
+    const norm = (l: readonly (readonly [number | null, number])[]) => JSON.stringify(l.map(([a, b]) => [a === Infinity ? null : a, b]));
+    console.log(norm(s.paLadder) === norm(DEFAULT_DEFENSE.paLadder as [number | null, number][])
+      ? `  (matches the derived default exactly)`
+      : `  DIFFERS from the derived default ${norm(DEFAULT_DEFENSE.paLadder as [number | null, number][])} -- the PAGE wins, and history needs rebuilding`);
+  } else {
+    console.log(`  no points-allowed tiers on this page -- the stored ladder was left alone`);
+  }
+  console.log(`  ${Object.keys(s.scoring).length} scoring codes also read, for cross-checking the API`);
+  db.close();
 }
 
 // Sync all teams' rosters for the active league -> ownership overlay (who owns each player). Read
