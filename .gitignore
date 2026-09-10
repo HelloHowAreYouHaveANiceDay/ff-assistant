@@ -91,3 +91,10 @@ data/injury-duration-nested.json
 # data/projection-artifact.json, which IS committed; this is the intermediate a re-fit writes
 # beside it, and committing both is how two artifacts start disagreeing about which one ships.
 data/projection-artifact.2c.json
+
+# Claude Code's per-session scratch: agent worktrees, transcripts and settings. Worktrees under here
+# each carry their own node_modules, so the directory reached 33.5 GB across 27 stale checkouts
+# before it was first cleaned out. Nothing in it is an input to a build -- a worktree is a checkout
+# of a branch that already exists in this repo -- and it appeared as an untracked entry in every
+# `git status`, which is how a real untracked file gets missed.
+.claude/
