@@ -1518,3 +1518,21 @@ CREATE TABLE IF NOT EXISTS fact_prediction (
   measured    TEXT,               -- the doc's outcome cell, verbatim (the measured value, in prose)
   synced_at   TEXT
 );
+
+-- THE INGEST AUDIT: one row per validated pull->write->readback, so "we checked the write landed" is
+-- durable state in the store rather than a log line that scrolled away. Every external source (ESPN,
+-- nflverse, ECR, ...) writes one row here after it writes its data; `ok = 0` records a sync that
+-- wrote nothing or collapsed against its own history. The Model/Data pages and the sync orchestrator
+-- read the latest row per source to answer "is this source fresh, and did its last pull actually
+-- land?". See src/data/validatedIngest.ts.
+CREATE TABLE IF NOT EXISTS ingest_audit (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  source        TEXT,               -- the datasource id (a RAW_ASSETS id, an L1 id, or a sync verb)
+  season        INTEGER,            -- the season touched, or NULL for a season-less feed
+  ran_at        TEXT,               -- ISO-8601 UTC
+  rows_written  INTEGER,            -- what the writer MEANT to write (its own returned count)
+  rows_readback INTEGER,            -- what a re-query found actually present after the write
+  ok            INTEGER,            -- 1 = validation passed, 0 = degenerate write (empty / collapsed)
+  note          TEXT                -- the verdict reason, verbatim
+);
+CREATE INDEX IF NOT EXISTS ix_ingest_audit_source ON ingest_audit (source, id);
