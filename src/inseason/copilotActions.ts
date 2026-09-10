@@ -77,6 +77,19 @@ export interface CopilotRun<T = unknown> {
 const pct = (n: number) => `${n.toFixed(2)}%`;
 const pp = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}pp`;
 
+/** LABEL A PLAYOFF-WEEK QUANTITY FROM THE LEAGUE'S OWN WEEKS, never from a literal. Three summaries
+ *  below used to print "wk15-17" no matter what the format block said; this league's playoff weeks
+ *  are 14/15/16, so every trade, waiver and depth number was tagged with weeks it was not measured
+ *  over. `playoffSos` (below) already derived its label this way -- these three simply did not.
+ *  Contiguous runs render as "wk14-16", anything else as "wk14/16/17", and an empty format block as
+ *  a name rather than an invented range. */
+const poWks = (a: C.Assumptions): string => {
+  const w = [...(a.playoffWeeks ?? [])].sort((x, y) => x - y);
+  if (!w.length) return "the playoff weeks";
+  const contiguous = w.every((n, i) => i === 0 || n === w[i - 1] + 1);
+  return w.length > 1 && contiguous ? `wk${w[0]}-${w[w.length - 1]}` : `wk${w.join("/")}`;
+};
+
 /** The caveat sentence every summary ends with. An Assistant that quotes the headline number and
  *  drops this is quoting a number without its assumptions, which is the whole failure mode. */
 export function caveat(a: C.Assumptions): string {
@@ -110,14 +123,14 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     case "waiver_targets": {
       const x = r as C.WaiverResult;
       if (!x.targets.length) return `No waiver claim scored. Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title. ${caveat(x.assumptions)}`;
-      const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in wk15-17, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
+      const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
       return `Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title; noise floor ${x.noiseFloorPp}pp. ${rows}.` +
         `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""} ${caveat(x.assumptions)}`;
     }
     case "trade_check": {
       const x = r as C.TradeCheckResult;
       return `${x.offer.give.join(" + ")} -> ${x.offer.get.join(" + ")} with ${x.them.teamName}: us ${pp(x.us.playoffsPp)} playoffs (+/-${x.us.se}), ` +
-        `${x.us.playoffWeekPts >= 0 ? "+" : ""}${x.us.playoffWeekPts.toFixed(1)} pts in wk15-17, ${pp(x.us.titlePp)} title; them ${pp(x.them.playoffsPp)} playoffs. ` +
+        `${x.us.playoffWeekPts >= 0 ? "+" : ""}${x.us.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(x.us.titlePp)} title; them ${pp(x.them.playoffsPp)} playoffs. ` +
         `Verdict: ${x.verdict}${x.mutual ? ", and it helps them too" : ""}. ${caveat(x.assumptions)}`;
     }
     case "trade_finder": {
@@ -132,7 +145,7 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     case "depth_risk": {
       const x = r as C.DepthRiskResult;
       return `Losing ${x.player.name} costs ${pp(x.costPp)} of PLAYOFF probability (${pct(x.basePlayoffPct)} -> ${pct(x.withoutPlayoffPct)}), ` +
-        `${x.costPlayoffWeekPts.toFixed(1)} pts in wk15-17, and ${pp(x.costTitlePp)} of title probability; noise floor ${x.noiseFloorPp}pp. Best insurance: ` +
+        `${x.costPlayoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, and ${pp(x.costTitlePp)} of title probability; noise floor ${x.noiseFloorPp}pp. Best insurance: ` +
         x.insurance.slice(0, 3).map((i) => `${i.name} (${i.free ? "free agent" : i.from}) recovers ${pp(i.recoversPp)} playoffs`).join("; ") + `. ${caveat(x.assumptions)}`;
     }
     case "power_rankings": {

@@ -184,6 +184,13 @@ export interface Assumptions {
   /** WHICH QUANTITY THIS RESULT IS MAXIMISING. On every result, because a delta with no objective
    *  attached is the same trap as a probability with no assumptions attached: it reads as a fact. */
   objective: Objective;
+  /** THE LEAGUE'S ACTUAL PLAYOFF WEEKS, carried so a caller can LABEL a playoff-week quantity
+   *  instead of hardcoding one. Three summaries in `copilotActions.ts` printed the literal
+   *  "wk15-17" while `format.playoffWeeks` read [14,15,16] for this league -- the arithmetic was
+   *  right and the label was wrong, which is the worse failure of the two because it is invisible
+   *  to every test that checks the number. A label derived from the same field the maths uses
+   *  cannot drift from it. */
+  playoffWeeks: number[];
 }
 
 export function defaultProvenance(ctx: SimContext): Provenance {
@@ -210,6 +217,7 @@ function assumptionsOf(
     artifact: o.provenance ?? defaultProvenance(ctx),
     asOf: new Date().toISOString(),
     objective,
+    playoffWeeks: [...(ctx.format?.playoffWeeks ?? [])],
   };
 }
 
