@@ -354,6 +354,7 @@ async function cmdServe(rest: string[]) {
           const { readFileSync } = await import("node:fs");
           const { dataPath } = await import("./data/paths.js");
           const { modelStatus, EVALUATED_NOT_SHIPPED } = await import("./draft/models.js");
+          const { computeModelGraph } = await import("./lineage/modelGraph.js");
           const { ageFactor } = await import("./draft/age.js");
           const { opportunityFactor } = await import("./draft/opportunity.js");
           const cfgRow = db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string } | undefined;
@@ -396,6 +397,9 @@ async function cmdServe(rest: string[]) {
             season,
             models: modelStatus(),
             rejected: EVALUATED_NOT_SHIPPED,
+            // The DAG topology, derived from the registry so it cannot fall behind the model list the
+            // way the old hardcoded MODEL_NODES/MODEL_EDGES did. The renderer is a pass-through.
+            graph: computeModelGraph(),
             trace,
             sim: {
               slots: cfg.slots ?? [], flexOk: cfg.flex_ok ?? [],
@@ -3243,6 +3247,12 @@ async function cmdEvaluateWeekly(rest: string[]) {
     rosters: Number(valueOf(rest, "--rosters") ?? 300),
     features: valueOf(rest, "--features") ?? "all",
     keepArtifacts: valueOf(rest, "--keep-artifacts"),
+    // `--roster-convergence 150,300,600,1200,2400`: recompute the lineup-regret decision metric at
+    // each roster count from the one trained set of scored rows, to check whether the default (300)
+    // is Monte-Carlo-converged. Costs no extra training.
+    rosterConvergence: valueOf(rest, "--roster-convergence")
+      ? valueOf(rest, "--roster-convergence")!.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0)
+      : undefined,
     // `--recalibrate-zero`: the pre-registered P48 correction. One number per position, chosen on
     // each fold's own TRAINING rows, added to the stage-one logistic intercept. No coefficient and
     // no feature moves, so this cannot be a way to fit the gate.

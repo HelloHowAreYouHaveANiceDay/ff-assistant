@@ -97,6 +97,14 @@ export interface ModelSpec {
   what: string;
   /** Required: the system cannot produce a number without it. */
   required: boolean;
+  /** Lifecycle, for anything that draws the model graph. Omitted == "shipped" (a live producer of a
+   *  number). "retired" == folded into another artifact and no longer read (age-curve, opportunity);
+   *  "unused" == measured but not yet wired into a consumer (opponent-correlation). This is a fact
+   *  ABOUT the model, so it lives on the registry -- the Model page's graph derives a node's status
+   *  from here rather than carrying its own second list that goes stale (which is exactly what the
+   *  hardcoded MODEL_NODES did: it drew age-curve and opportunity as live feeders of the projection
+   *  for months after Phase 2b retired them). */
+  status?: "retired" | "unused";
   /** Out-of-sample lift, measured under NESTED cross-validation where one exists. Null = not a
    *  predictive model (a sampler or a variance fit), so a lift figure would be meaningless. */
   nestedLift: number | null;
@@ -335,6 +343,7 @@ export const MODELS: ModelSpec[] = [
   },
   {
     key: "opponent-correlation", file: "opponent-correlation.json", required: false, nestedLift: null, claimedLift: null,
+    status: "unused",
     what: "cross-team correlation in the same NFL game -- MEASURED BUT NOT YET WIRED INTO THE SIMULATOR",
   },
   {
@@ -394,6 +403,7 @@ export const MODELS: ModelSpec[] = [
   // ------------------------------------------------------------------------------------------
   {
     key: "age-curve", file: "age-curve.json", required: false, nestedLift: 0.0069, claimedLift: 0.0154,
+    status: "retired",
     what: "RETIRED (Phase 2b) -- points relative to prior-year rank, by age. Kept for the record; " +
       "age is now a fitted feature of the projection artifact and nothing reads this file",
     check: (j) => {
@@ -412,6 +422,7 @@ export const MODELS: ModelSpec[] = [
   },
   {
     key: "opportunity", file: "opportunity-model.json", required: false, nestedLift: 0.0095, claimedLift: 0.0186,
+    status: "retired",
     what: "RETIRED (Phase 2b, and it is defect D1's resolution) -- prior-season usage relative to " +
       "rank. Its amplitudes were fitted against a curve that had seen the future; usage is now a " +
       "point-in-time ratio-to-bucket-mean feature of the projection artifact and nothing reads this file",
@@ -513,6 +524,7 @@ export const EVALUATED_NOT_SHIPPED = [
 
 export interface ModelStatus {
   key: string; file: string; what: string; required: boolean;
+  status?: "retired" | "unused";
   present: boolean; ageDays: number | null; sizeKb: number | null;
   fittedFrom: string | null; seasons: string | null;
   nestedLift: number | null; claimedLift: number | null;

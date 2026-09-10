@@ -901,36 +901,23 @@ async function loadDag() {
 // nickname-vs-abbreviation join. An unfillable slot scored zero, charging a penalty nobody pays.
 // Each was invisible on every screen this app had. That is the argument for the page: a model you
 // cannot see is a model nobody checks.
-const MODEL_NODES = [
-  { id: "hist", name: "history-weekly.csv", kind: "source", sub: "27 seasons of real weeks" },
-  { id: "nflv", name: "nflverse", kind: "source", sub: "usage · bio · schedule" },
-  { id: "boardn", name: "board", kind: "source", sub: "consensus rank + ECR" },
+// THE GRAPH IS SERVED, NOT HARDCODED HERE. The engine's src/lineage/modelGraph.ts derives the node
+// list from the model registry (so a new model gets a box with no renderer change) and carries the
+// curated edges; these two functions are pure pass-throughs, the same contract the Data page's
+// lineageNodes/lineageEdges hold. The previous hardcoded MODEL_NODES/MODEL_EDGES drew the pre-Phase-2b
+// topology -- age-curve and opportunity feeding a `proj` box labelled "curve x age x opportunity",
+// with no node for the trained projection or any weekly/pricing model -- and stayed that way because
+// nothing tied it to the registry. See test/model-graph-derivation.test.ts.
+function modelGraphNodes(d) { return (d && d.graph && d.graph.nodes) || []; }
 
-  { id: "rank-outcomes", name: "rank-outcomes", kind: "model", sub: "bootstrap pools" },
-  { id: "variance-model", name: "variance-model", kind: "model", sub: "weekly CV · availability" },
-  { id: "correlation", name: "correlation", kind: "model", sub: "teammate copula" },
-  { id: "age-curve", name: "age-curve", kind: "model", sub: "points vs age" },
-  { id: "opportunity", name: "opportunity", kind: "model", sub: "prior-season usage" },
-  { id: "opponent-correlation", name: "opponent-corr", kind: "unused", sub: "measured, NOT wired in" },
-  { id: "kdst", name: "K / DST factors", kind: "rejected", sub: "measured, did not survive" },
-
-  { id: "curve", name: "rank curve", kind: "calc", sub: "mean points by rank" },
-  { id: "proj", name: "projection", kind: "calc", sub: "curve x age x opportunity" },
-  { id: "replacement", name: "streaming floor", kind: "calc", sub: "replacement level" },
-  { id: "sim", name: "season simulator", kind: "calc", sub: "Monte Carlo x 14 weeks" },
-
-  { id: "title", name: "title odds", kind: "output", sub: "the number decisions use" },
-  { id: "trades", name: "trades · waivers", kind: "output", sub: "delta vs base" },
-];
-const MODEL_EDGES = [
-  ["hist", "rank-outcomes"], ["hist", "variance-model"], ["hist", "correlation"], ["hist", "curve"],
-  ["hist", "age-curve"], ["nflv", "age-curve"], ["nflv", "opportunity"], ["hist", "opportunity"],
-  ["nflv", "opponent-correlation"], ["nflv", "kdst"],
-  ["boardn", "curve"], ["curve", "proj"], ["age-curve", "proj"], ["opportunity", "proj"],
-  ["boardn", "replacement"],
-  ["proj", "sim"], ["rank-outcomes", "sim"], ["variance-model", "sim"], ["correlation", "sim"], ["replacement", "sim"],
-  ["sim", "title"], ["title", "trades"],
-];
+/** The served edges, dropping only an edge naming a node NOT in `nodes` (defensive against a
+ *  partial/fixture graph) -- never one both of whose endpoints exist. Edges arrive as [from, to]. */
+function modelGraphEdges(d, nodes) {
+  const ids = new Set((nodes || modelGraphNodes(d)).map((n) => n.id));
+  return ((d && d.graph && d.graph.edges) || [])
+    .filter((e) => ids.has(e[0]) && ids.has(e[1]))
+    .map((e) => [e[0], e[1]]);
+}
 
 function views_model() {
   document.getElementById("view").innerHTML = `<div class="settings">
@@ -999,9 +986,9 @@ function renderWeeklyServe(page) {
   if (!el) return;
   const rows = (page.weeklyServe || []).map(r => `<tr class="${r.shipped ? "" : "mut"}">
       <td><b>${esc(r.pos)}</b></td><td>${esc(r.artifact)}</td>
-      <td>${r.shipped ? "shipped -- passed its gate" : "not shipped -- serves the floor"}</td></tr>`).join("");
-  el.innerHTML = `<table class="tbl"><thead><tr><th>position</th><th>artifact</th><th>status</th></tr></thead>
-    <tbody>${rows}</tbody></table>
+      <td class="prose">${r.shipped ? "shipped -- passed its gate" : "not shipped -- serves the floor"}</td></tr>`).join("");
+  el.innerHTML = `<div class="mdl-scroll"><table class="tbl"><thead><tr><th>position</th><th>artifact</th><th>status</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
     <div class="mut" style="margin-top:6px">challenger series starts week ${esc(String(page.challengerFirstWeek ?? "?"))}</div>`;
 }
 function renderScorecardSection(page) {
@@ -1014,10 +1001,10 @@ function renderScorecardSection(page) {
       const metrics = s.map(x => `${esc(x.kind)}/${esc(x.metric)}=${esc(String(x.value))} (n=${esc(String(x.n))})`).join(", ");
       return `${esc(m)}${metrics ? ` [${metrics}]` : ""}`;
     }).join("; ") || '<span class="mut">none frozen</span>';
-    return `<tr><td><b>${esc(k.kind)}</b></td><td>${esc(String(k.weeksFrozen))}</td><td>${esc(String(k.weeksScored))}</td><td>${models}</td></tr>`;
+    return `<tr><td><b>${esc(k.kind)}</b></td><td class="num">${esc(String(k.weeksFrozen))}</td><td class="num">${esc(String(k.weeksScored))}</td><td class="prose">${models}</td></tr>`;
   }).join("");
-  el.innerHTML = `<table class="tbl"><thead><tr><th>kind</th><th>weeks frozen</th><th>weeks scored</th><th>models &amp; live scores</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
+  el.innerHTML = `<div class="mdl-scroll"><table class="tbl"><thead><tr><th>kind</th><th class="num">weeks frozen</th><th class="num">weeks scored</th><th>models &amp; live scores</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
 }
 function renderLedgerSection(page) {
   const el = document.getElementById("mdl-ledger");
@@ -1026,27 +1013,36 @@ function renderLedgerSection(page) {
   const counts = ledger.counts || {};
   const summary = Object.entries(counts).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(" · ");
   const rows = (ledger.rows || []).map(r => `<tr class="${r.outcome === "failed" ? "bad" : ""}">
-      <td><b>${esc(r.id)}</b></td><td>${esc(r.claim)}</td><td>${esc(r.outcome)}</td><td>${esc(r.measured)}</td></tr>`).join("");
+      <td><b>${esc(r.id)}</b></td><td class="prose">${esc(r.claim)}</td><td>${esc(r.outcome)}</td><td class="prose">${esc(r.measured)}</td></tr>`).join("");
   el.innerHTML = `<div class="mut" style="margin-bottom:6px">${summary}</div>
-    <table class="tbl"><thead><tr><th>id</th><th>claim</th><th>outcome</th><th>measured</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
+    <div class="mdl-scroll"><table class="tbl"><thead><tr><th>id</th><th>claim</th><th>outcome</th><th>measured</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
 }
 function drawModelDag(d) {
   const svg = document.getElementById("mdl-dag");
   if (typeof dagre === "undefined") { svg.outerHTML = '<div class="mut">Graph library unavailable.</div>'; return; }
+  const nodes = modelGraphNodes(d);
+  const edges = modelGraphEdges(d, nodes);
+  // An EMPTY graph is not a blank canvas -- it means the engine served no topology (an older `ff
+  // serve` process still running from before the graph was added, most often). Say so, rather than
+  // painting nothing and leaving the reader to guess whether the page or the model is broken.
+  if (!nodes.length) {
+    svg.outerHTML = '<div class="mut" id="mdl-dag">The engine returned no model graph. If you just updated, fully restart the app (a reload keeps the old engine process).</div>';
+    return;
+  }
   const byKey = Object.fromEntries((d.models || []).map(m => [m.key, m]));
   const W = 158, H = 44;
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: "LR", nodesep: 12, ranksep: 62, marginx: 10, marginy: 10 });
   g.setDefaultEdgeLabel(() => ({}));
-  for (const n of MODEL_NODES) g.setNode(n.id, { width: W, height: H });
-  for (const [a, b] of MODEL_EDGES) g.setEdge(a, b);
+  for (const n of nodes) g.setNode(n.id, { width: W, height: H });
+  for (const [a, b] of edges) g.setEdge(a, b);
   dagre.layout(g);
   const gw = Math.ceil(g.graph().width), gh = Math.ceil(g.graph().height);
   svg.setAttribute("width", gw); svg.setAttribute("height", gh); svg.setAttribute("viewBox", `0 0 ${gw} ${gh}`);
   let h = "";
   for (const e of g.edges()) h += `<polyline points="${g.edge(e).points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" class="dag-edge"/>`;
-  for (const n of MODEL_NODES) {
+  for (const n of nodes) {
     const p = g.node(n.id); if (!p) continue;
     const m = byKey[n.id];
     // A model node shows its OWN measured lift, so the graph cannot show a confident box for a
@@ -1070,35 +1066,35 @@ function drawModelTable(d) {
       : `<span class="mut">n/a — not a predictive model</span>`;
     return `<tr class="${m.problem ? "bad" : ""}">
       <td><b>${esc(m.key)}</b>${m.required ? "" : ' <span class="mut">optional</span>'}</td>
-      <td>${esc(m.what)}</td>
-      <td>${lift}</td>
-      <td>${m.present ? `${m.sizeKb}kb · ${m.ageDays}d old${m.seasons ? ` · ${esc(m.seasons)}` : ""}` : '<span class="mut">missing</span>'}</td>
+      <td class="prose">${esc(m.what)}</td>
+      <td class="num">${lift}</td>
+      <td class="num">${m.present ? `${m.sizeKb}kb · ${m.ageDays}d old${m.seasons ? ` · ${esc(m.seasons)}` : ""}` : '<span class="mut">missing</span>'}</td>
       <td>${m.problem ? `<b>${esc(m.problem)}</b>` : "ok"}</td></tr>`;
   }).join("");
   // Negative results belong on the page too. Without them "K and DST are unfitted" reads as an
   // unfinished task, and the next person spends the same week finding the same nothing.
   const rej = (d.rejected || []).map(r => `<tr class="mut">
       <td><b>${esc(r.key)}</b> <span class="mut">not shipped</span></td>
-      <td>${esc(r.positions.join(" · "))} — screened, fitted, rejected</td>
-      <td>${Object.entries(r.nestedLift).map(([k, v]) => `${esc(k)} ${v > 0 ? "+" : ""}${v.toFixed(4)}`).join(" · ")}</td>
-      <td>${esc(r.date)}</td>
-      <td>${esc(r.why.slice(0, 130))}…</td></tr>`).join("");
+      <td class="prose">${esc(r.positions.join(" · "))} — screened, fitted, rejected. ${esc(r.why.slice(0, 160))}…</td>
+      <td class="num">${Object.entries(r.nestedLift).map(([k, v]) => `${esc(k)} ${v > 0 ? "+" : ""}${v.toFixed(4)}`).join(" · ")}</td>
+      <td class="num">${esc(r.date)}</td>
+      <td>—</td></tr>`).join("");
   document.getElementById("mdl-table").innerHTML =
-    `<table class="tbl"><thead><tr><th>model</th><th>what it measures</th><th>nested lift</th><th>artifact</th><th>check</th></tr></thead>
-     <tbody>${rows}${rej}</tbody></table>`;
+    `<div class="mdl-scroll"><table class="tbl"><thead><tr><th>model</th><th>what it measures</th><th class="num">nested lift</th><th class="num">artifact</th><th>check</th></tr></thead>
+     <tbody>${rows}${rej}</tbody></table></div>`;
 }
 function drawTrace(d) {
   const t = (d.trace || []).filter(x => x.pos === MODEL_POS);
   if (!t.length) { document.getElementById("mdl-trace").innerHTML = '<div class="mut">No trace for this position.</div>'; return; }
   const pct = (f) => `${f >= 1 ? "+" : ""}${((f - 1) * 100).toFixed(1)}%`;
-  const cell = (f) => `<td class="${Math.abs(f - 1) < 0.0005 ? "mut" : f > 1 ? "up" : "down"}">${f.toFixed(3)} <span class="mut">${pct(f)}</span></td>`;
+  const cell = (f) => `<td class="num ${Math.abs(f - 1) < 0.0005 ? "mut" : f > 1 ? "up" : "down"}">${f.toFixed(3)} <span class="mut">${pct(f)}</span></td>`;
   document.getElementById("mdl-trace").innerHTML =
-    `<table class="tbl"><thead><tr><th>#</th><th>player</th><th>rank curve</th><th>age</th><th>opportunity</th><th>projection</th><th>net</th></tr></thead><tbody>` +
-    t.map(x => `<tr><td class="mut">${x.rank}</td><td><b>${esc(x.name)}</b></td>
-      <td>${x.base.toFixed(1)}</td>${cell(x.age)}${cell(x.opp)}
-      <td><b>${x.final.toFixed(1)}</b></td>
-      <td class="${x.final >= x.base ? "up" : "down"}">${(x.final - x.base >= 0 ? "+" : "")}${(x.final - x.base).toFixed(1)}</td></tr>`).join("") +
-    `</tbody></table>
+    `<div class="mdl-scroll"><table class="tbl"><thead><tr><th class="num">#</th><th>player</th><th class="num">rank curve</th><th class="num">age</th><th class="num">opportunity</th><th class="num">projection</th><th class="num">net</th></tr></thead><tbody>` +
+    t.map(x => `<tr><td class="num mut">${x.rank}</td><td><b>${esc(x.name)}</b></td>
+      <td class="num">${x.base.toFixed(1)}</td>${cell(x.age)}${cell(x.opp)}
+      <td class="num"><b>${x.final.toFixed(1)}</b></td>
+      <td class="num ${x.final >= x.base ? "up" : "down"}">${(x.final - x.base >= 0 ? "+" : "")}${(x.final - x.base).toFixed(1)}</td></tr>`).join("") +
+    `</tbody></table></div>
      <div class="mut" style="margin-top:8px">
        A factor of exactly 1.000 means the model had no opinion — an unknown birth date, a rookie with
        no prior usage, or a position it measured no signal for. That is deliberate: a missing input

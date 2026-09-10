@@ -139,6 +139,16 @@ export interface WeeklyEvalResult {
   byBand: Record<string, Record<string, Scored>>;
   bySeason: Record<string, Record<string, Scored>>;
   lineup: Record<string, Record<string, { meanCaptured: number; winShare: number; drawnRosters: number }>>;
+  /**
+   * MONTE-CARLO CONVERGENCE OF THE DECISION METRIC. Present only when `rosterConvergence` was asked
+   * for. The lineup-regret gain is an average over RANDOM rosters, so part of its wiggle is simulation
+   * noise rather than a real difference between the models; this recomputes the decision numbers at a
+   * ladder of roster counts FROM THE SAME trained scored rows, so a reader can see whether the default
+   * (300) has converged or is still moving. It says nothing about SEASON-level uncertainty -- that is
+   * bounded by the ~14 held-out seasons no matter how many rosters are drawn, and drawing more cannot
+   * buy statistical power there (CLAUDE.md). It only isolates the sim-noise component.
+   */
+  rosterConvergence?: { rosters: number; std15Gain: number; deep18Gain: number; std15WinShare: number; deep18WinShare: number }[];
   predictions: { id: string; claim: string; held: boolean | null; evidence: string }[];
   gate: WeeklyGate;
   /**
@@ -657,6 +667,10 @@ export interface EvalOpts {
    * left as trained, so nothing about the model's ranking of players can move.
    */
   recalibrateZero?: boolean;
+  /** A ladder of roster counts to recompute the lineup-regret decision metric at, for a Monte-Carlo
+   *  convergence check. Cheap: it reuses the one trained set of scored rows and only re-draws rosters,
+   *  so it costs no extra training. `undefined` omits the diagnostic entirely. */
+  rosterConvergence?: number[];
 }
 
 /** Train one holdout artifact by shelling out to the Python trainer -- the same binary the shipped
@@ -786,6 +800,24 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   for (const yr of opts.seasons) { const r = all.filter((x) => x.season === yr); if (r.length) bySeason[String(yr)] = cut(r); }
   const lineup = lineupRegret(all, rosters);
 
+  // ---- MONTE-CARLO CONVERGENCE. Recompute the decision metric at a ladder of roster counts from the
+  // SAME scored rows -- no extra training -- so the sim-noise component of the gain is visible. ----
+  let rosterConvergence: WeeklyEvalResult["rosterConvergence"];
+  if (opts.rosterConvergence?.length) {
+    const gainOf = (lr: ReturnType<typeof lineupRegret>, scen: string) => {
+      const s = lr[scen];
+      return {
+        gain: s ? s.weekly.meanCaptured - s[BASELINE].meanCaptured : NaN,
+        winShare: s ? s.weekly.winShare : NaN,
+      };
+    };
+    rosterConvergence = opts.rosterConvergence.map((r) => {
+      const lr = lineupRegret(all, r);
+      const s15 = gainOf(lr, "standard-15"), d18 = gainOf(lr, "deep-18");
+      return { rosters: r, std15Gain: s15.gain, deep18Gain: d18.gain, std15WinShare: s15.winShare, deep18WinShare: d18.winShare };
+    });
+  }
+
   // ---- PRE-REGISTERED PREDICTIONS. Recorded as held or failed, not quietly re-stated. ----
   const w1Fails = POS_SCORED.filter((p) => byPos[p] && !(byPos[p].weekly.crps < byPos[p][BASELINE].crps));
   const std = lineup["standard-15"];
@@ -875,7 +907,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     // 2d: the columns exist, they are built with a cutoff of kickoff minus four days, and they are
     // empty, because the feed's dated filings land at kickoff minus two or later.
     pendingDataTrack: [...PENDING_DATA_TRACK_FIELDS],
-    pooled, byPos, byBand, bySeason, lineup, predictions, gate, gateByPos,
+    pooled, byPos, byBand, bySeason, lineup, rosterConvergence, predictions, gate, gateByPos,
   };
 }
 
@@ -916,6 +948,15 @@ export function formatWeeklyReport(r: WeeklyEvalResult): string {
       const s = byModel[m]; if (!s || !Number.isFinite(s.meanCaptured)) continue;
       out.push("  " + pad(sc, 14) + pad(m, 14) + num(s.meanCaptured, 2).padStart(10) +
         num(s.winShare, 3).padStart(11) + String(s.drawnRosters).padStart(10));
+    }
+  }
+  if (r.rosterConvergence?.length) {
+    out.push("");
+    out.push("MC CONVERGENCE (decision metric vs roster count, from ONE trained set -- is 300 enough?)");
+    out.push("  " + pad("rosters", 10) + "std15Gain  std15Win   deep18Gain deep18Win");
+    for (const c of r.rosterConvergence) {
+      out.push("  " + pad(String(c.rosters), 10) + num(c.std15Gain, 3).padStart(9) + num(c.std15WinShare, 3).padStart(11) +
+        num(c.deep18Gain, 3).padStart(11) + num(c.deep18WinShare, 3).padStart(10));
     }
   }
   out.push("");
