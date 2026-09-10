@@ -3575,6 +3575,7 @@ async function cmdInseasonBacktest(rest: string[]) {
     faab: "scripts/faab-replay.mjs",
     drop: "scripts/inseason-backtest-drop.mjs",
     "waiver-value": "scripts/inseason-backtest-waiver-value.mjs",
+    stream: "scripts/inseason-backtest-stream.mjs",
   };
   const which = rest.find((r) => !r.startsWith("--"));
   const script = which ? SCRIPTS[which] : undefined;
