@@ -178,6 +178,8 @@ async function main() {
       return cmdEvaluateStreaming(rest);
     case "scorecard":
       return cmdScorecard(rest);
+    case "store":
+      return cmdStore(rest);
     // ---- in-season backtest (src/inseason/backtest/) ----
     case "inseason-backtest":
       return cmdInseasonBacktest(rest);
@@ -1437,6 +1439,39 @@ async function cmdSim(rest: string[]) {
 function failStep(msg: string): void {
   console.log(msg);
   process.exitCode = 1;
+}
+
+/**
+ * `ff store` -- WHICH database am I on, is its data root consistent, and did every source's last pull
+ * actually land? The answer to the "which store is authoritative / why is the scorecard empty on this
+ * clone" confusion: it names the resolved DB path, warns if the DB and FF_DATA are split, and prints
+ * the latest ingest_audit verdict per source so a stale or failed pull is visible at a glance rather
+ * than discovered when a downstream number looks wrong.
+ */
+async function cmdStore(rest: string[]) {
+  const { openDb, storeInfo } = await import("./db/db.js");
+  const { lastAudits } = await import("./data/validatedIngest.js");
+  const dbPath = valueOf(rest, "--db");
+  const info = storeInfo(dbPath);
+  console.log(`store: ${info.dbPath}`);
+  console.log(`data root (FF_DATA): ${info.dataRoot}${info.split ? "  <-- SPLIT from the DB folder; sidecars will not sit beside the store" : "  (consistent)"}`);
+  const db = openDb(dbPath);
+  try {
+    const audits = lastAudits(db);
+    if (!audits.length) {
+      console.log("\ningest audit: no sources have been validated on this store yet.");
+    } else {
+      console.log("\nlast validated pull per source (from ingest_audit):");
+      console.log("  " + "source".padEnd(26) + "season  rows   status  when");
+      for (const a of audits) {
+        console.log("  " + a.source.padEnd(26) + String(a.season ?? "-").padStart(6) + "  " +
+          String(a.rowsReadback).padStart(5) + "  " + (a.ok ? "ok    " : "FAILED") + "  " + a.ranAt.slice(0, 19) +
+          (a.ok ? "" : `  (${a.reason})`));
+      }
+      const failed = audits.filter((a) => !a.ok);
+      if (failed.length) { console.log(`\n${failed.length} source(s) FAILED their last validation: ${failed.map((a) => a.source).join(", ")}`); process.exitCode = 1; }
+    }
+  } finally { db.close(); }
 }
 
 /**

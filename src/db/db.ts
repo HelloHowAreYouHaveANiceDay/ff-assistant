@@ -3,7 +3,7 @@
 // The agent reaches it through a SQLite MCP server (later); everyone else opens directly.
 import Database from "better-sqlite3";
 import { readFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nameKey } from "../draft/values.js";
 import { DEFAULT_SCORING, type ScoringRules } from "../draft/scoring.js";
@@ -14,8 +14,39 @@ export const DEFAULT_DB_PATH = process.env.FF_DB ?? "data/ff.db";
 
 export type DB = Database.Database;
 
+/**
+ * WHICH STORE ARE WE ACTUALLY ON, and does its data root agree with it?
+ *
+ * There are two ways to run: dev opens `data/ff.db` with sidecars in `data/`; a packaged install
+ * redirects BOTH the DB (`FF_DB`) and the data root (`FF_DATA`) into a writable userData dir. They
+ * agree only because the app injects both together. A CLI run by hand with `FF_DB` set but `FF_DATA`
+ * unset (or vice versa) splits them: the DB lands in one place and its points.csv / cache /
+ * live-state.json in another, and nothing said so. This surfaces the split rather than letting it be
+ * discovered as "the scorecard is empty on this clone". `split` is true when the DB's directory and
+ * the resolved data root are not the same folder.
+ */
+export function storeInfo(path: string = DEFAULT_DB_PATH): { dbPath: string; dbDir: string; dataRoot: string; split: boolean } {
+  const dbDir = resolve(dirname(path));
+  const dataRoot = resolve(process.env.FF_DATA ?? "data");
+  return { dbPath: resolve(path), dbDir, dataRoot, split: dbDir !== dataRoot };
+}
+
+let WARNED_SPLIT = false;
+function warnStoreSplitOnce(path: string): void {
+  if (WARNED_SPLIT) return;
+  const s = storeInfo(path);
+  if (!s.split) return;
+  WARNED_SPLIT = true;
+  console.error(
+    `WARNING: the store and its data root are in DIFFERENT folders -- DB ${s.dbPath} but FF_DATA ` +
+    `${s.dataRoot}. Sidecars (points.csv, data/cache, live-state.json) will not sit beside the DB, ` +
+    "which is how a clone ends up looking empty. Set FF_DB and FF_DATA to the same root, or unset both.",
+  );
+}
+
 /** Open (creating if needed) the store, set WAL, and apply the idempotent schema. */
 export function openDb(path: string = DEFAULT_DB_PATH): DB {
+  warnStoreSplitOnce(path);
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
   db.pragma("journal_mode = WAL");

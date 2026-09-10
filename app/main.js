@@ -20,6 +20,10 @@ if (CDP_PORT) app.commandLine.appendSwitch("remote-debugging-port", CDP_PORT);
 const NODE_BIN = path.join(process.resourcesPath || "", "runtime", "node.exe");
 const ENGINE_JS = path.join(process.resourcesPath || "", "engine", "ff.cjs");
 const DB_PATH = app.isPackaged ? path.join(app.getPath("userData"), "ff.db") : path.join(REPO, "data", "ff.db");
+// Announce WHICH store this window is on. The dev/packaged split (repo data/ vs userData) is exactly
+// what made "the scorecard is empty on this clone" hard to diagnose; naming it on boot -- and passing
+// the same root as FF_DB and FF_DATA below -- keeps the DB and its sidecars together and visible.
+console.log(`[ff] store: ${DB_PATH}  (packaged=${app.isPackaged})`);
 // Where the engine writes its runtime files (live-state.json, draft-log-*, PAUSE). Matches FF_DATA
 // passed to the engine (userData when packaged -- the install dir isn't writable; REPO/data in dev).
 const DATA_DIR = app.isPackaged ? app.getPath("userData") : path.join(REPO, "data");
