@@ -410,7 +410,22 @@ function buildTools(dbPath: string | undefined, season: number) {
             const regWeeks = format.regWeeks;
             const before = getConfig(db);
             // align the app's format + scoring MODEL to the real league (values recompute on next `ff refresh`)
-            setConfig(db, { scoring, slots: configSlots, budget, teams, scoring_rules: rules, playoffTeams, regWeeks, format, formatEspn: format } as never);
+            //
+            // KICKER AND DEFENCE GO IN TOO, and leaving them out was the whole bug this line already
+            // describes one comment above. `scoringFromEspn` builds the WHOLE model, the league row
+            // stores the whole model -- and this call propagated only `rules`, the offensive third,
+            // into `settings.config`. `ff build-history` reads CONFIG, not the league row, so it
+            // scored every kicker and defence in 27 seasons of history under OUR defaults while
+            // announcing "DEFAULTS (league has not synced K/DST scoring)" to a log nobody reads.
+            // That history is what `fit-bootstrap` turns into the rank pools the season simulator
+            // resamples every week from, and this league starts a K and a DST every week -- two of
+            // its eight starting slots -- with a defensive TD worth 8 rather than the usual 6.
+            //
+            // Fixing the league row and not this call is the same half-fix the comment above warns
+            // about, one layer down.
+            setConfig(db, { scoring, slots: configSlots, budget, teams, scoring_rules: rules,
+              kicker: model.kicker, defense: model.defense,
+              playoffTeams, regWeeks, format, formatEspn: format } as never);
             const changed = scoring !== before.scoring || budget !== before.budget || teams !== before.teams || JSON.stringify(configSlots) !== JSON.stringify(before.slots) || JSON.stringify(rules) !== JSON.stringify(before.scoring_rules);
             shut();
             return { content: [{ type: "text", text: `synced "${s.name}" (league ${lg.league_id}, ${lg.season}): ${s.size} teams, ${ds.type ?? "?"} draft${ds.auctionBudget ? ` $${ds.auctionBudget}` : ""}, ${sc.scoringType}, ${scoring} scoring. My team: "${mineName ?? "?"}" (id ${mine?.id ?? "?"}). Roster: ${slotSummary}.${changed ? " Config updated to match -- run `ff refresh` to recompute values/tiers for this format." : ""}` }] };
