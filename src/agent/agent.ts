@@ -423,9 +423,21 @@ function buildTools(dbPath: string | undefined, season: number) {
             //
             // Fixing the league row and not this call is the same half-fix the comment above warns
             // about, one layer down.
+            // REFUSE A DEGENERATE CONFIG. formatFromEspnSettings already throws on a missing format
+            // field, but a settings pull that parsed to empty LINEUP SLOTS or no scoring rules would
+            // overwrite the working config with a hollow one and read as a successful sync. Guard
+            // before the write; the existing config is kept if the pull came back degenerate.
+            if (!configSlots.length || !(teams > 0) || !Object.keys(rules).length) {
+              shut();
+              return { content: [{ type: "text", text: `league_sync REFUSED: the settings pull was degenerate (${configSlots.length} lineup slots, ${teams} teams, ${Object.keys(rules).length} scoring rules) -- not overwriting the working config with an empty read. Re-run once the app's ESPN session is live.` }] };
+            }
             setConfig(db, { scoring, slots: configSlots, budget, teams, scoring_rules: rules,
               kicker: model.kicker, defense: model.defense,
               playoffTeams, regWeeks, format, formatEspn: format } as never);
+            // Record the write, reading back the config that landed (proves setConfig persisted a
+            // non-degenerate slot list rather than trusting the call returned).
+            const { auditIngest } = await import("../data/validatedIngest.js");
+            auditIngest(db, { source: "league-sync-config", season: lg.season, rowsWritten: configSlots.length, readback: () => getConfig(db).slots.length });
             const changed = scoring !== before.scoring || budget !== before.budget || teams !== before.teams || JSON.stringify(configSlots) !== JSON.stringify(before.slots) || JSON.stringify(rules) !== JSON.stringify(before.scoring_rules);
             shut();
             return { content: [{ type: "text", text: `synced "${s.name}" (league ${lg.league_id}, ${lg.season}): ${s.size} teams, ${ds.type ?? "?"} draft${ds.auctionBudget ? ` $${ds.auctionBudget}` : ""}, ${sc.scoringType}, ${scoring} scoring. My team: "${mineName ?? "?"}" (id ${mine?.id ?? "?"}). Roster: ${slotSummary}.${changed ? " Config updated to match -- run `ff refresh` to recompute values/tiers for this format." : ""}` }] };

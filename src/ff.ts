@@ -1633,6 +1633,29 @@ async function cmdSyncRosters(rest: string[]) {
   await browser.close();
   let j: any; try { j = JSON.parse(raw); } catch { db.close(); return failStep(`could not read rosters: ${raw?.slice(0, 60)}`); }
   const memberName = new Map<string, string>((j.members ?? []).map((m: any) => [m.id, m.displayName || m.firstName || m.id]));
+  // REFUSE TO WIPE REAL ROWS ON AN EMPTY PULL. This verb deletes the league's ownership then
+  // re-inserts; if the ESPN read came back with no rostered players (session expired, a shape change),
+  // the old code deleted everything, inserted nothing, and printed "0 players across 0 teams" at exit
+  // 0 -- silent data-loss. Count the pull BEFORE touching the table. An empty pull is only a FAILURE
+  // when there are rows to lose: pre-draft, an empty roster is genuine and wiping an already-empty
+  // table is a harmless no-op, so that case succeeds quietly rather than blocking the pre-draft flow.
+  const pulledEntries = (j.teams ?? []).reduce((s: number, t: any) => s + (t.roster?.entries?.length ?? 0), 0);
+  const { refreshDecision, auditIngest } = await import("./data/validatedIngest.js");
+  const existing = (db.prepare("SELECT count(*) AS c FROM ownership WHERE league_id=?").get(lg.league_id) as { c: number }).c;
+  const decision = refreshDecision(pulledEntries, existing);
+  if (decision === "refuse-empty-wipe") {
+    db.close();
+    return failStep(
+      `ownership pull returned 0 rostered players across ${(j.teams ?? []).length} teams, but ${existing} ` +
+      "are already stored -- refusing to WIPE them with an empty read. The app's ESPN session likely " +
+      "expired; the existing rows are kept. Re-run once it is live.",
+    );
+  }
+  if (decision === "noop-empty") {
+    db.close();
+    console.log("ownership: 0 rostered players (pre-draft or empty league) -- nothing to sync.");
+    return;
+  }
   const up = db.prepare("INSERT OR REPLACE INTO ownership (league_id, player_id, owner, team_abbrev, slot, team_id, updated_at) VALUES (@lid,@pid,@own,@abr,@slot,@tid,@now)");
   const now = nowIso(); let n = 0, teams = 0;
   db.transaction(() => {
@@ -1655,7 +1678,14 @@ async function cmdSyncRosters(rest: string[]) {
       }
     }
   })();
+  // VALIDATE THE WRITE LANDED, league-scoped, and record it. n>0 is guaranteed by the pre-write guard
+  // above, but the read-back proves the rows actually persisted (a rolled-back transaction would not).
+  const v = auditIngest(db, {
+    source: "ownership", season: lg.season, rowsWritten: n,
+    readback: () => (db.prepare("SELECT count(*) AS c FROM ownership WHERE league_id=?").get(lg.league_id) as { c: number }).c,
+  });
   db.close();
+  if (!v.ok) return failStep(`ownership sync validation FAILED -- ${v.reason}`);
   console.log(`ownership synced: ${n} rostered players across ${teams} teams (league ${lg.league_id})`);
 }
 

@@ -552,7 +552,18 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           const lg = (db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id?: string } | undefined)?.league_id;
           const f = await fetchEspnWeekly({ season: opts.season, week, leagueId: lg });
           res.espn.ok = f.ok; res.espn.reason = f.reason;
-          if (f.ok) res.espn.stored = storeEspnWeekly(db, f.rows, asOf);
+          if (f.ok) {
+            res.espn.stored = storeEspnWeekly(db, f.rows, asOf);
+            // Record the write, and flag a COLLAPSE against a prior good pull. Not fatal: the ESPN
+            // baseline is optional (the bridge is often down), so a skip is a recorded skip, not a
+            // failed scorecard -- but a pull that silently drops from 500 rows to 5 is worth a mark.
+            const { auditIngest } = await import("../data/validatedIngest.js");
+            auditIngest(db, {
+              source: "espn-weekly-projection", season: opts.season, rowsWritten: res.espn.stored,
+              readback: () => (db.prepare("SELECT count(*) AS c FROM raw_espn_projection WHERE season=? AND week=?").get(opts.season, week) as { c: number }).c,
+              policy: { minFractionOfPrev: 0.5 },
+            });
+          }
         }
         const preds = weeklyPredictions(db, opts.season, week, served, res.servedBy ?? serveTable(), lineOnly);
         ensureScorecardMetaColumn(db);

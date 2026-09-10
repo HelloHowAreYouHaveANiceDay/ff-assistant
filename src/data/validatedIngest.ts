@@ -54,6 +54,20 @@ export function assertPulled(count: number, source: string): void {
   );
 }
 
+/**
+ * THE FULL-REFRESH DECISION for a delete-then-replace sync (ownership, and any other wipe-and-insert
+ * writer). When the pull is empty, wiping is only safe if there is nothing to lose:
+ *   - `replace`               -- the pull has rows; do the normal delete + insert.
+ *   - `refuse-empty-wipe`     -- the pull is empty but rows exist; an empty pull is a session/endpoint
+ *                                failure, NOT "the data is now empty", so keep the existing rows.
+ *   - `noop-empty`            -- the pull is empty and nothing is stored (e.g. pre-draft); a harmless
+ *                                no-op, not a failure.
+ */
+export function refreshDecision(pulledRows: number, existingRows: number): "replace" | "refuse-empty-wipe" | "noop-empty" {
+  if (pulledRows > 0) return "replace";
+  return existingRows > 0 ? "refuse-empty-wipe" : "noop-empty";
+}
+
 /** Count a table's rows, filtered by season when the table has a `season` column and a season is
  *  given. Table names come from the ingest registry (trusted), never user input. */
 export function countTable(db: DB, table: string, season?: number | null): number {

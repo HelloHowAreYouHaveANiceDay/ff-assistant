@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import { migrate } from "../src/db/db.js";
-import { assertPulled, auditIngest, auditTable, countTable, lastAudits } from "../src/data/validatedIngest.js";
+import { assertPulled, auditIngest, auditTable, countTable, lastAudits, refreshDecision } from "../src/data/validatedIngest.js";
 
 function db(): Database.Database {
   const d = new Database(":memory:");
@@ -70,6 +70,14 @@ test("auditIngest: minFractionOfPrev catches a COLLAPSE against the last good sy
   // A healthy follow-up (150) passes the same policy.
   const healthy = auditIngest(d, { source: "espn_proj", season: 2026, rowsWritten: 150, readback: () => 150, policy: { minFractionOfPrev: 0.5 } });
   assert.equal(healthy.ok, true);
+});
+
+test("refreshDecision: an empty pull wipes nothing that exists, replaces when it has rows, no-ops when empty-on-empty", () => {
+  // The ownership sync's core: full-refresh delete-then-insert must not lose data on an empty read.
+  assert.equal(refreshDecision(150, 150), "replace", "a real pull does the normal wipe+replace");
+  assert.equal(refreshDecision(0, 150), "refuse-empty-wipe", "an empty pull with 150 stored must NOT wipe them");
+  assert.equal(refreshDecision(0, 0), "noop-empty", "empty pull on an empty table (pre-draft) is a harmless no-op, not a failure");
+  assert.equal(refreshDecision(1, 0), "replace", "a first, non-empty pull replaces");
 });
 
 test("auditTable throwOnFail: a degenerate write is fatal for a sync verb, silent for a best-effort refresh", () => {
