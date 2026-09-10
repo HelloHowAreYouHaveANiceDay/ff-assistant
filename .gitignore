@@ -98,3 +98,12 @@ data/projection-artifact.2c.json
 # of a branch that already exists in this repo -- and it appeared as an untracked entry in every
 # `git status`, which is how a real untracked file gets missed.
 .claude/
+
+# Fitted from data/history-weekly.csv, which is gitignored one section above for the stated reason
+# that committing it would ship ONE league's scoring to everyone. This artifact is that same file
+# reduced to per-position CV/availability/skew, so committing it ships the same thing one layer down
+# -- and it did: the checked-in copy carried a defensive tier CV of 1.4413 fitted under some other
+# league's rules, against 1.3659 under ours. `scripts/bootstrap-machine.sh` already refits it (and
+# rank-outcomes.json, which was gitignored here all along) on every new machine, so tracking it
+# bought nothing that the setup script does not already do.
+data/variance-model.json
