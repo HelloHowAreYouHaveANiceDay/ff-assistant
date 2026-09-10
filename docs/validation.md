@@ -1,5 +1,110 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## INTEGRATION PASS 5: the derived Data and Model pages, on the integrated branch (2026-09-09)
+>
+> `redesign/final-4` = `redesign/final-3` (`18cdd08`) + `redesign/derived-ui` (`17f93c0`, Track K),
+> merged `--no-ff`, then re-derivation and the ledger's Programme 3 rows.
+>
+> ### The merge
+>
+> | # | branch | commit | conflicts | resolution |
+> |---|---|---|---|---|
+> | 1 | `redesign/derived-ui` | `17f93c0` | `src/db/schema.sql`, `src/ff.ts`, `docs/validation.md` | schema and `ff.ts`: both sides had appended at the same tail/offset -- kept both (schema: `fact_waiver_claim` then `fact_prediction`; `ff.ts`: restored `cmdBuildWaiverClaims`'s closing brace, which the conflict had absorbed, then kept `cmdLineage`/`cmdLedger` following it). `docs/validation.md`: both sides prepended a section -- kept `final-3`'s OWNER DECISION section first (newest), Track K's own section below it, unedited. |
+>
+> `merge-sanity`: PASS throughout (35 MCP tools, 78 schema tables, 87 `ff.ts` case labels, 25 renderer
+> list ids -- no duplicates). `npm run typecheck`: clean throughout.
+>
+> Tests: 683 total. Immediately after the merge, 678 pass / 3 fail / 2 skipped -- the three failures
+> were the expected seam between the two branches (Track K predates the 2026-09-09 owner decision and
+> Programme 3's P50-P69), not a merge defect, and both are closed below. After re-derivation and the
+> ledger update: **683 pass, 0 fail, 2 skipped.**
+>
+> ### Re-derivation: the producers Programme 3 added that Track K's base did not have
+>
+> Track K's registry (`src/lineage/registry.ts`) was cut from `redesign/final-2`, before Tracks I, J
+> and the in-season backtest state landed. Six producers were added, each verified by grepping the
+> named module for the tables it actually opens, the same standard the rest of the file holds itself
+> to:
+>
+> | producer | reads | writes |
+> |---|---|---|
+> | `build-injury-horizon` | `raw_injury`, `feat_player_week`, `raw_nfl_game`, `raw_snap_count`, `player_identity` | `fact_injury_episode`, `feat_injury_horizon` |
+> | `build-waiver-claims` | `player_xref`, `fact_roster_week`, `fact_team_season`, `raw_league_transaction`, `feat_player_week_model` | `fact_waiver_claim` |
+> | `build-roster-state` | `raw_league_roster_week`, `feat_player_week_model`, `raw_nfl_game` | `fact_roster_week`, `fact_fa_pool_week`, `fact_lineup_week` |
+> | `build-streaming-features` | `feat_player_week_model`, `feat_player_week`, `raw_nfl_game` | `feat_player_week_stream` |
+> | `train_injury_duration` | `feat_injury_horizon`, `feat_player_week_model` | `injury-duration-artifact.json` |
+> | `train_faab` | `fact_waiver_claim` | `faab-model.json` |
+> | `ledger sync` | `predictions.json` | `fact_prediction` |
+>
+> `train_streaming` was already declared on Track K's base (Track F landed before Track K branched)
+> and needed no change. `raw_league_roster_week`/`raw_league_transaction`/`raw_espn_eligibility`/
+> `player_eligibility`/`player_value_position` were already declared through `src/data/ingest.ts` and
+> `assemble` respectively -- no gap there.
+>
+> **The dag test that finds a gap like this was written this pass**, because none of the checked-in
+> tests actually asked "does every real schema table have a producer": `test/dag-lineage.test.ts`
+> gained `unplacedServedTables` fed the full `schemaTables()` list minus a frozen, sixteen-table
+> exclusion list of genuinely out-of-scope operational state (draft/roster/matchup/ownership, identity
+> caches, action/usage logs -- none of it a feature/model producer's input or output). Fault-injected:
+> removing `roster` from the exclusion list must surface it as missing a producer, proving the
+> exclusion list is load-bearing rather than a no-op beside an already-clean result.
+>
+> Before re-derivation: 76 graph nodes (of 78 schema tables). After: 86 nodes, 159 edges, 42 producers.
+> `ff lineage --json` on the merged store confirms `fact_injury_episode`, `feat_injury_horizon`,
+> `fact_waiver_claim`, `injury-duration-artifact.json`, `faab-model.json`, `streaming-artifact.json`,
+> `fact_roster_week`, `fact_fa_pool_week`, `fact_lineup_week`, `feat_player_week_stream` and
+> `fact_prediction` are all present as nodes. `ff models --json` lists `injury-duration` and `faab`
+> among the fitted models and shows the `weeklyServe` table as `{QB,RB,WR,TE,K,DST}` all mapped to
+> `streaming-artifact.json`, `shipped: true` -- Track K's own code (`buildModelPage`) was already fully
+> derived from `src/weekly/streamingServe.ts`'s constants, so no code change was needed there; only
+> `test/model-page.test.ts`'s stale expectation (QB/K/DST only, pre-dating the owner decision) needed
+> updating to the merged truth.
+>
+> ### The ledger: Programme 3's rows
+>
+> `data/predictions.json` gained 16 rows -- every id `test/prediction-ledger.test.ts`'s
+> `docPredictionIds()` scrape of `docs/redesign-2026-09.md`'s Programme 3 table names that Track K's
+> file did not yet have: P51, P52, P54, P57, P58, P59, P60, P61, P62, P63, P64, P65, P66, P67, P68,
+> P69, transcribed exactly (outcome wording included). `P50 (W5)`, `P56 (a)`/`P56 (b)` and
+> `P28 (re-run under G's calibration)` are deliberately NOT separate ledger ids -- their id cells carry
+> a parenthetical the doc-scrape's own id-cell pattern does not match (by design: it is restricted to
+> a bare or bolded `P<n>`/`W<n>` token), so the completeness test does not demand rows for them, and
+> P28 already has one from the original table.
+>
+> The owner's streaming decision is recorded in prose in this file's OWNER DECISION section above and
+> in `docs/redesign-2026-09.md`'s owner-decision list, not as a `fact_prediction` row: the ledger's
+> `outcome` column is a TypeScript union of `held`/`failed`/`split`/`pending` with no `decision` member,
+> and widening it to add one is a real schema/type change this pass's file fence does not need to make
+> for one row when the prose record already exists and is cross-referenced.
+>
+> `ff ledger sync` on the merged store: **67 rows** (51 Track K + 16 Programme 3), held **38**, failed
+> **26**, split **1**, pending **2**. `test/prediction-ledger.test.ts`'s completeness test passes both
+> ways -- fault-injected (removing P5) still names exactly `["P5"]`.
+>
+> ### The revert-and-redo pair in `redesign/final-3`'s history
+>
+> `redesign/final-3`'s log contains `f070a81`/`5f49c22`/`fda0e5a`, then a revert `b6bc601`, then a redo
+> `bdc08a9`/`962018a`/`8e56b03`, all around the 2026-09-09 streaming decision. This was two agents the
+> orchestrator launched working in the same worktree, not tampering: the earlier one had been paused
+> rather than finished, and when it resumed it found the streaming-decision commits already present,
+> read them as unauthorised, and reverted them; the later agent -- the one actually carrying the
+> owner's authorised decision -- then re-applied its own change on top of the revert. The content of
+> `HEAD` is the owner's decision as intended (`WEEKLY_SERVE` maps all six positions, confirmed above and
+> in the OWNER DECISION section), and the history is left exactly as it happened rather than rewritten,
+> because it is a true record of how two concurrent agents collided, not an error to hide.
+>
+> ### Verification
+>
+> `npm run typecheck`: clean. `npm test`: 683 pass, 0 fail, 2 skipped. `merge-sanity`: PASS.
+> `scripts/copilot-mcp-smoke.mjs`: 35 tools. `scripts/copilot-crosscheck.mjs`,
+> `scripts/weekly-leak-audit.mjs`, `node --import tsx scripts/value-gates.mjs`: all pass, unchanged from
+> `final-3` (this pass touches no draft/value/weekly-model code). Effective tripwire
+> (`npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150`): **39.7% /
+> 96%**, byte-identical to the Integration pass 4 record below -- expected, since this merge touches no
+> draft code at all.
+>
+> ---
+
 > ## OWNER DECISION: streaming ships at all six positions (2026-09-09)
 >
 > Decided by the owner, executed on the measurement recorded just below in "THE STREAMING GATE

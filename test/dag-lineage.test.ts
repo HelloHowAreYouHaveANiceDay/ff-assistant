@@ -53,3 +53,35 @@ test("allProducers returns both registries' declarations, non-empty on each side
   assert.ok(ids.some((i) => i.startsWith("ingest-source")), "no ingest.ts producers made it into the graph");
   assert.ok(ids.includes("assemble"), "no src/lineage/registry.ts producers made it into the graph");
 });
+
+// The frozen list of real schema tables this pipeline deliberately does NOT describe: live league
+// state (draft/roster/matchup/ownership), identity-resolution caches, and operational logs. None of
+// these is a feature/model producer's input or output -- they are written by draft-day/live-league
+// code paths this Data page was never meant to draw. Every entry here was checked by hand (Integration
+// pass 5) against `git grep 'INSERT INTO <table>'` to confirm it really is one of those, not a
+// Programme-3 table someone forgot to register.
+const OUT_OF_SCOPE_TABLES = new Set([
+  "action_log", "draft", "draft_pick", "draft_state", "fact_matchup", "identity_rekey",
+  "matchup", "my_roster", "ownership", "player_ids", "player_ids_variant", "player_position",
+  "projection", "roster", "settings", "usage_log",
+]);
+
+test("every served table has a producer or is external -- every real schema table not on the frozen out-of-scope list is a node the graph produces", () => {
+  const graph = computeLineage();
+  const known = schemaTables();
+  const missing = unplacedServedTables([...known].filter((t) => !OUT_OF_SCOPE_TABLES.has(t)), graph);
+  assert.deepEqual(missing, [],
+    `schema table(s) with no declared producer and not on the out-of-scope list -- declare a ` +
+    `producer for these (never widen the exclusion list to silence this): ${missing.join(", ")}`);
+});
+
+test("FAULT INJECTION: the out-of-scope list is doing real work, not silencing a clean check by accident", () => {
+  const graph = computeLineage();
+  const known = schemaTables();
+  // Remove one real exclusion (`roster`) and confirm the guard actually names it -- proving the
+  // exclusion list is load-bearing, not a no-op next to an already-empty result.
+  const withoutOneExclusion = new Set(OUT_OF_SCOPE_TABLES);
+  withoutOneExclusion.delete("roster");
+  const missing = unplacedServedTables([...known].filter((t) => !withoutOneExclusion.has(t)), graph);
+  assert.ok(missing.includes("roster"), "removing 'roster' from the exclusion list did not surface it as missing a producer");
+});

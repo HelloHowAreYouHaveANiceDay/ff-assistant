@@ -125,4 +125,68 @@ export const PRODUCERS: Producer[] = [
     reads: ["feat_player_week_model", "raw_espn_projection", "league", "fact_team_season", "scorecard_prediction"],
     writes: ["scorecard_prediction", "scorecard_result"],
   },
+  // ================= PROGRAMME 3 PRODUCERS, ADDED ON THE MERGED TREE (INTEGRATION PASS 5) =================
+  // Every entry below existed as an `ff` verb or python trainer before this merge but had no lineage
+  // declaration, because Track K (the branch that built this registry) was cut before Programme 3
+  // landed. Verified the same way as the rest of this file: grepped the named module for the tables
+  // it actually opens.
+  {
+    id: "build-injury-horizon",
+    what: "Track I: injury episodes (fact_injury_episode) and their point-in-time horizon (feat_injury_horizon)",
+    // verified: src/features/sources/injuryDuration.ts -- `FROM raw_injury`, `FROM feat_player_week`,
+    // `FROM raw_nfl_game`, `FROM raw_snap_count`; `INSERT INTO fact_injury_episode`,
+    // `INSERT INTO feat_injury_horizon`. Also reads player_identity (birthdate) -- a real schema
+    // table with no producer of its own here (identity resolution, out of this pipeline's scope).
+    reads: ["raw_injury", "feat_player_week", "raw_nfl_game", "raw_snap_count", "player_identity"],
+    writes: ["fact_injury_episode", "feat_injury_horizon"],
+  },
+  {
+    id: "build-waiver-claims",
+    what: "Track J: this league's own FAAB bid history, winners and losers, as a fact table",
+    // verified: src/features/sources/faab.ts -- `FROM player_xref`, `FROM fact_roster_week`,
+    // `FROM fact_team_season`, `FROM raw_league_transaction`, `FROM feat_player_week_model`;
+    // `INSERT INTO fact_waiver_claim`. Run through `ff build-waiver-claims` -> scripts/faab-coverage.mjs.
+    reads: ["player_xref", "fact_roster_week", "fact_team_season", "raw_league_transaction", "feat_player_week_model"],
+    writes: ["fact_waiver_claim"],
+  },
+  {
+    id: "build-roster-state",
+    what: "who was on which roster each week, the free-agent pool, and what each lineup left on the bench",
+    // verified: src/features/sources/rosterState.ts `buildRosterState`/`buildRosterStateInto` --
+    // `FROM raw_league_roster_week`, `FROM feat_player_week_model`, `FROM raw_nfl_game`;
+    // `INSERT INTO fact_roster_week`, `fact_fa_pool_week`, `fact_lineup_week`. Invoked directly (no
+    // `ff` verb of its own -- see docs/in-season-backtest.md), not through the CLI dispatcher.
+    reads: ["raw_league_roster_week", "feat_player_week_model", "raw_nfl_game"],
+    writes: ["fact_roster_week", "fact_fa_pool_week", "fact_lineup_week"],
+  },
+  {
+    id: "build-streaming-features",
+    what: "the opponent-and-environment feature table the streaming trainer fits on",
+    // verified: src/weekly/streamingFeatures.ts `buildStreamFeatures` -- `FROM feat_player_week_model`,
+    // `FROM feat_player_week`, `FROM raw_nfl_game`; `INSERT INTO feat_player_week_stream`.
+    reads: ["feat_player_week_model", "feat_player_week", "raw_nfl_game"],
+    writes: ["feat_player_week_stream"],
+  },
+  {
+    id: "train_injury_duration",
+    what: "python trainer: fits the injury-duration artifact (P(miss next k games) given an active report)",
+    // verified: tools/train_injury_duration.py -- `FROM feat_injury_horizon`, `FROM feat_player_week_model`
+    reads: ["feat_injury_horizon", "feat_player_week_model"],
+    writes: ["injury-duration-artifact.json"],
+  },
+  {
+    id: "train_faab",
+    what: "python trainer: fits the clearing-price and P(win | bid) FAAB models from this league's own claims",
+    // verified: tools/train_faab.py -- `FROM fact_waiver_claim`
+    reads: ["fact_waiver_claim"],
+    writes: ["faab-model.json"],
+  },
+  {
+    id: "ledger sync",
+    what: "Track K: rebuilds fact_prediction from the checked-in prediction-ledger transcription",
+    // verified: src/lineage/ledger.ts `syncLedger` -- reads data/predictions.json,
+    // `INSERT INTO fact_prediction` (then deletes any row whose id fell out of the file)
+    reads: ["predictions.json"],
+    writes: ["fact_prediction"],
+  },
 ];

@@ -672,6 +672,15 @@ model the pooled band is refusing.
 - **The streaming artifact is in the registry at all**, which it was not -- the model serving three
   positions had none of the registry's checks.
 - **`.gitignore`** for the four generated files three tracks left untracked.
+- **Derived UI (integration pass 5, merging Track K).** `redesign/derived-ui` (the Data and Model pages,
+  built from `src/lineage/{dag,registry,ledger,modelPage}.ts` rather than hand-maintained) was cut
+  before this programme landed, so its registry had no entry for the injury-horizon, FAAB or in-season
+  backtest-state producers, and its prediction ledger had no rows for P50-P69. Both were closed on the
+  merged branch (`redesign/final-4`): six new producer declarations, and 16 new ledger rows. The Data
+  page's node/edge count moved from 76 to 86 as a result, and the Model page's serve table now shows
+  the streaming artifact at all six positions with no code change (it was already reading
+  `SHIPPED_STREAMING_POSITIONS` directly) -- only a stale test expectation needed updating. Full detail
+  in `docs/validation.md`'s Integration pass 5 section.
 
 ### The owner decision list, updated
 
@@ -720,6 +729,14 @@ repeated here, and none of the earlier text was edited.
   the chain; the flagless tripwire on it reads **39.7% / 96%** with the per-season line in
   `docs/validation.md`, the legacy cell reads 38.1% / 96% byte-identical to its record, and 660 tests
   pass. **Nothing here pushes or merges to `main`; that is still the owner's commit to make.**
+- **NEW: the derived Data and Model pages (Track K) are merged, on `redesign/final-4`.** Streaming is
+  decided (above); the pooled-band question for the two-part model is still open; V2 stays over V3
+  (decision 3, unchanged); the merge to `main` is still the owner's commit to make (decision 4,
+  unchanged). What is new here: `ff lineage`/`ff models` now serve the graph and the ledger a shell or
+  the app's Data/Model pages can both read, so a live check of those two pages against a running app
+  is now possible and is left **owner-visible**, not run by this pass (the desktop app's CDP port and
+  the user's live running app both default to the same port, and the season is live -- see Track K's
+  own note on why it verified through `ff lineage --json`/`ff models --json` instead).
 
 ### Recommended next work
 

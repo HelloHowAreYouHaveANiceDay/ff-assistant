@@ -55,7 +55,9 @@ test("buildModelPage assembles weeklyServe from STREAM_SERVE_POS/SHIPPED_STREAMI
   const positions = page.weeklyServe.map((r) => r.pos);
   assert.deepEqual(positions, ["QB", "RB", "WR", "TE", "K", "DST"]);
   const shipped = page.weeklyServe.filter((r) => r.shipped).map((r) => r.pos).sort();
-  assert.deepEqual(shipped, ["DST", "K", "QB"]);
+  // 2026-09-09 owner decision (docs/validation.md) widened SHIPPED_STREAMING_POSITIONS to all six --
+  // this test predates that decision and is updated here to match the merged truth, not re-decided.
+  assert.deepEqual(shipped, ["DST", "K", "QB", "RB", "TE", "WR"]);
   db.close();
 });
 

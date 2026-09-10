@@ -355,5 +355,117 @@
     "claim": "`implied_team_total` outweighs `dvp_mult` at every position",
     "outcome": "failed",
     "measured": "**FAILED** -- the reverse"
+  },
+  {
+    "id": "P51",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "the winprob lineup wins at least 1.5pp more team-weeks than the EP lineup",
+    "outcome": "failed",
+    "measured": "**FAILED**, on sign as well as size -- **-0.59pp**"
+  },
+  {
+    "id": "P52",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "the duration model beats designation-only on log loss at every horizon k=1..4",
+    "outcome": "held",
+    "measured": "**HELD** -- it ships on this"
+  },
+  {
+    "id": "P54",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "the FAAB model's LOSO MAE beats the rule of thumb by at least 30%",
+    "outcome": "failed",
+    "measured": "**FAILED** -- 26.4%"
+  },
+  {
+    "id": "P57",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "the winprob gain is concentrated where the projected margin exceeds 15 points",
+    "outcome": "failed",
+    "measured": "**FAILED**"
+  },
+  {
+    "id": "P58",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "in the under-5-point bucket the two lineups differ in under 20% of team-weeks",
+    "outcome": "held",
+    "measured": "**HELD**"
+  },
+  {
+    "id": "P59",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "at k=1 the gain over designation-only is under 0.02",
+    "outcome": "failed",
+    "measured": "**FAILED** -- 0.047"
+  },
+  {
+    "id": "P60",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "the gain GROWS with k and exceeds 0.05 at k=4, because injury type carries the horizon",
+    "outcome": "failed",
+    "measured": "**FAILED**, and the mechanism refuted -- it SHRINKS to 0.024, and the type is worth ~0.0015"
+  },
+  {
+    "id": "P61",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "the claiming team's remaining-FAAB share is a significant positive feature",
+    "outcome": "split",
+    "measured": "**SPLIT**"
+  },
+  {
+    "id": "P62",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "the week-of-season effect on the clearing price is negative",
+    "outcome": "failed",
+    "measured": "**FAILED**, sign reversed"
+  },
+  {
+    "id": "P63",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "at a 0.7 win target the realised win rate is within 10 points of 70%",
+    "outcome": "failed",
+    "measured": "**FAILED** -- 94.4%, and the prediction was mis-specified (the recommended bid is the SMALLEST bid that REACHES the target)"
+  },
+  {
+    "id": "P64",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "same-team WR1-WR2 correlation lies in [-0.10, +0.05]",
+    "outcome": "held",
+    "measured": "**HELD** -- **+0.0130** (SE 0.0085, n 13,806)"
+  },
+  {
+    "id": "P65",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "same-team RB1-RB2 lies in [-0.20, 0.00]",
+    "outcome": "held",
+    "measured": "**HELD** -- **-0.0129** (SE 0.0090, n 12,340)"
+  },
+  {
+    "id": "P66",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "same-team TE1-TE2 is within 2 SE of zero",
+    "outcome": "held",
+    "measured": "**HELD** -- **-0.0201** against 2 SE = 0.0216 (n 8,626)"
+  },
+  {
+    "id": "P67",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "the correlation fix moves the playoff Brier by less than 0.002",
+    "outcome": "held",
+    "measured": "**HELD** -- 0.2369 -> 0.2368"
+  },
+  {
+    "id": "P68",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "it moves OUR playoff and title odds by less than 1 point",
+    "outcome": "held",
+    "measured": "**HELD** -- title 9.61 -> 9.48, playoff 52.8 -> 53.0, both inside the seed-only noise floor"
+  },
+  {
+    "id": "P69",
+    "docSection": "Every prediction of this programme, with its outcome",
+    "claim": "it moves the effective tripwire within noise (CI contains zero)",
+    "outcome": "held",
+    "measured": "**HELD**, and for a reason worth more than the prediction -- see below"
   }
 ]
