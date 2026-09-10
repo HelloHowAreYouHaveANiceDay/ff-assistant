@@ -112,6 +112,8 @@ async function main() {
       return cmdSyncRosters(rest);
     case "sync-settings":
       return cmdSyncSettings(rest);
+    case "sync-league":
+      return cmdSyncLeague(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -1421,6 +1423,107 @@ async function cmdSim(rest: string[]) {
 }
 
 /**
+ * A sync step that could not do its job. Says so AND exits non-zero.
+ *
+ * These verbs used to `console.log` a reason and return, which exits 0. `ff sync-league` reads exit
+ * codes, so a sweep run against a closed app reported "3/3 steps ok" having synced nothing -- the
+ * poller's own health signal saying everything was fine because nothing had thrown. A message a
+ * human would read is not a status a machine can read.
+ */
+function failStep(msg: string): void {
+  console.log(msg);
+  process.exitCode = 1;
+}
+
+/**
+ * `ff sync-league [--tier fast|daily|weekly]` -- ONE entry point for pulling this league's latest,
+ * grouped by how often the underlying thing actually changes.
+ *
+ * THE TIERS ARE READ OFF THE LEAGUE'S OWN SETTINGS, not chosen by feel. `ff sync-settings` stores
+ * them under `config.rosterSettings`, and three of them decide the cadence:
+ *
+ *   "Lineup Changes: Lock individually at Scheduled Gametime"  -- a roster is not frozen at 1pm on
+ *       Sunday. Each player locks at HIS OWN kickoff, so what is startable changes through the day
+ *       and a stale roster read on a Sunday afternoon is wrong about who can still be moved.
+ *   "Waiver Period: 1 Day"                                     -- claims settle daily, so a daily
+ *       transaction pull is enough to see every claim and its FAAB bid.
+ *   "Trade Review Period: 1 Day" / "Votes Required to Veto: 7" -- an accepted trade is not final for
+ *       a day, so roster state can change without any new transaction being proposed.
+ *
+ * WHAT EACH TIER DOES NOT DO IS AS IMPORTANT. `fast` deliberately skips the settings scrape and the
+ * nflverse feeds: league RULES do not change during a Sunday, and re-scraping a page on a timer is
+ * how a selector break turns into a stream of empty writes. Rules move to the weekly tier, where a
+ * failure is visible and cheap.
+ *
+ * Every step reports rows and duration, and a failing step does NOT stop the others -- a poller that
+ * aborts the whole sweep because one feed 404'd is a poller that silently stops updating everything.
+ */
+async function cmdSyncLeague(rest: string[]) {
+  const tier = (valueOf(rest, "--tier") ?? "daily").toLowerCase();
+  const TIERS: Record<string, { what: string; steps: [string, string[]][] }> = {
+    // Gameday. Roster state and in-flight transactions only -- the two things that move hour to hour.
+    fast: { what: "gameday: roster state + transactions", steps: [
+      ["ingest-raw", ["league-rosters"]],
+      ["ingest-raw", ["league-transactions"]],
+      ["sync-rosters", []],
+    ] },
+    // Between gamedays. Adds standings/results, which settle after the last game of a week.
+    daily: { what: "between gamedays: + standings and results", steps: [
+      ["ingest-raw", ["league-rosters"]],
+      ["ingest-raw", ["league-transactions"]],
+      ["ingest-raw", ["league-history"]],
+      ["sync-rosters", []],
+    ] },
+    // Rules, the injury/usage feeds, and the derived layer. Everything whose source updates slowly.
+    weekly: { what: "rules + external feeds + derived tables", steps: [
+      ["sync-settings", []],
+      ["ingest-raw", ["league-rosters"]],
+      ["ingest-raw", ["league-transactions"]],
+      ["ingest-raw", ["league-history"]],
+      ["ingest-raw", ["injuries"]],
+      ["ingest-raw", ["depth-charts"]],
+      ["ingest-raw", ["snap-counts"]],
+      ["ingest-raw", ["participation"]],
+      ["ingest-raw", ["nfl-games"]],
+      ["sync-rosters", []],
+      ["build-roster-state", []],
+      ["build-picks", []],
+    ] },
+  };
+  const plan = TIERS[tier];
+  if (!plan) { console.log(`usage: ff sync-league --tier ${Object.keys(TIERS).join("|")}\n` + Object.entries(TIERS).map(([k, v]) => `  ${k.padEnd(7)} ${v.what}`).join("\n")); return; }
+
+  console.log(`sync-league --tier ${tier}  (${plan.what})`);
+  const { spawnSync } = await import("node:child_process");
+  // Each step runs as its own process, the way cmdBuildWaiverClaims already does. That is not
+  // ceremony: these verbs open the store, attach to the app over CDP and exit, and running them
+  // in-process would share one connection and one exit code across the sweep. Separate processes
+  // mean one step's crash is one step's crash.
+  // Forward every flag EXCEPT --tier, which is this verb's own. Forwarding only --db meant a sweep
+  // run against a non-default CDP port silently used the default one instead -- and then reported
+  // the steps as ok, because they really had succeeded, just not against the port that was asked
+  // for. A pass-through that drops the caller's flags answers a question nobody asked.
+  const passThrough: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--tier") { i++; continue; }
+    if (rest[i].startsWith("--")) { passThrough.push(rest[i]); if (rest[i + 1] && !rest[i + 1].startsWith("--")) passThrough.push(rest[++i]); }
+  }
+  const t0 = Date.now();
+  const failures: string[] = [];
+  for (const [verb, args] of plan.steps) {
+    const s = Date.now();
+    const label = [verb, ...args].join(" ");
+    const r = spawnSync(process.execPath, ["--import", "tsx", "src/ff.ts", verb, ...args, ...passThrough], { stdio: "inherit" });
+    const secs = ((Date.now() - s) / 1000).toFixed(1);
+    if (r.status === 0) console.log(`  ok   ${label.padEnd(34)} ${secs}s`);
+    else { failures.push(`${label} exited ${r.status ?? "signal " + r.signal}`); console.log(`  FAIL ${label.padEnd(34)} ${secs}s`); }
+  }
+  console.log(`\n${plan.steps.length - failures.length}/${plan.steps.length} steps ok in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  for (const f of failures) console.log(`  FAILED  ${f}`);
+  if (failures.length) process.exitCode = 1;   // so a poller can see it without parsing stdout
+}
+
+/**
  * `ff sync-settings` -- the league rules that exist ONLY in the rendered settings page.
  *
  * WHY A SECOND SYNC RATHER THAN MORE OF `league_sync`. `league_sync` reads the mSettings API, which
@@ -1447,12 +1550,12 @@ async function cmdSyncSettings(rest: string[]) {
   const waitMs = Number(valueOf(rest, "--wait") ?? 6000);
   const db = openDb(valueOf(rest, "--db"));
   const lg = db.prepare("SELECT league_id, season FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; season: number } | undefined;
-  if (!lg) { db.close(); console.log("no league synced -- run league_sync first"); return; }
+  if (!lg) { db.close(); return failStep("no league synced -- run league_sync first"); }
 
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
-  if (!browser) { db.close(); console.log("app not running -- open the desktop app (its logged-in session is needed)"); return; }
+  if (!browser) { db.close(); return failStep("app not running -- open the desktop app (its logged-in session is needed)"); }
   const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://"));
-  if (!page) { db.close(); await browser.close(); console.log("app renderer not found"); return; }
+  if (!page) { db.close(); await browser.close(); return failStep("app renderer not found"); }
 
   const url = `https://fantasy.espn.com/football/league/settings?leagueId=${lg.league_id}&seasonId=${lg.season}`;
   await page.evaluate((u) => { const wv = document.getElementById("espnview") as { loadURL?: (s: string) => void } | null; wv?.loadURL?.(u); }, url);
@@ -1465,12 +1568,12 @@ async function cmdSyncSettings(rest: string[]) {
   await browser.close();
 
   let rows: string[] = [];
-  try { rows = JSON.parse(raw) as string[]; } catch { db.close(); console.log(`could not read the settings page: ${raw?.slice(0, 80)}`); return; }
+  try { rows = JSON.parse(raw) as string[]; } catch { db.close(); return failStep(`could not read the settings page: ${raw?.slice(0, 80)}`); }
   const s = parseSettingsRows(rows);
   const nMax = Object.keys(s.posMax).length;
   if (!rows.length || !nMax) {
     db.close();
-    console.log(`read ${rows.length} rows but found NO position maximums -- storing nothing.`);
+    failStep(`read ${rows.length} rows but found NO position maximums -- storing nothing.`);
     console.log(`  Either the page had not rendered (raise --wait, currently ${waitMs}ms) or ESPN changed the markup.`);
     console.log(`  An empty parse is NOT written, because "no maximums" and "unlimited" must not look the same.`);
     return;
@@ -1512,11 +1615,11 @@ async function cmdSyncRosters(rest: string[]) {
   const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
   const db = openDb(valueOf(rest, "--db"));
   const lg = db.prepare("SELECT league_id, season FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; season: number } | undefined;
-  if (!lg) { db.close(); console.log("no league synced -- run league_sync first"); return; }
+  if (!lg) { db.close(); return failStep("no league synced -- run league_sync first"); }
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
-  if (!browser) { db.close(); console.log("app not running -- open the desktop app (its logged-in session is needed)"); return; }
+  if (!browser) { db.close(); return failStep("app not running -- open the desktop app (its logged-in session is needed)"); }
   const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://"));
-  if (!page) { db.close(); await browser.close(); console.log("app renderer not found"); return; }
+  if (!page) { db.close(); await browser.close(); return failStep("app renderer not found"); }
   const wvEval = (js: string): Promise<string> => page.evaluate(async (code) => { const wv = document.getElementById("espnview") as any; if (!wv?.executeJavaScript) return ""; try { return await wv.executeJavaScript(code); } catch (e: any) { return "ERR:" + (e?.message ?? e); } }, js);
   const cur = await wvEval("location.href");
   if (!/fantasy\.espn\.com/.test(cur)) { await page.evaluate(() => { const wv = document.getElementById("espnview") as any; if (wv?.loadURL) wv.loadURL("https://fantasy.espn.com/football/"); }); await page.waitForTimeout(4000); }
@@ -1524,7 +1627,7 @@ async function cmdSyncRosters(rest: string[]) {
   const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${lg.season}/segments/0/leagues/${lg.league_id}?view=mRoster&view=mTeam`;
   const raw = await wvEval(`fetch(${JSON.stringify(url)},{credentials:'include'}).then(function(r){return r.ok?r.text():('HTTP '+r.status)}).catch(function(e){return 'ERR '+e.message})`);
   await browser.close();
-  let j: any; try { j = JSON.parse(raw); } catch { db.close(); console.log(`could not read rosters: ${raw?.slice(0, 60)}`); return; }
+  let j: any; try { j = JSON.parse(raw); } catch { db.close(); return failStep(`could not read rosters: ${raw?.slice(0, 60)}`); }
   const memberName = new Map<string, string>((j.members ?? []).map((m: any) => [m.id, m.displayName || m.firstName || m.id]));
   const up = db.prepare("INSERT OR REPLACE INTO ownership (league_id, player_id, owner, team_abbrev, slot, team_id, updated_at) VALUES (@lid,@pid,@own,@abr,@slot,@tid,@now)");
   const now = nowIso(); let n = 0, teams = 0;
