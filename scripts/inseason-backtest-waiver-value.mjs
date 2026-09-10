@@ -5,7 +5,7 @@
 import { openDb } from "../src/db/db.ts";
 import { backtestPolicies } from "../src/inseason/backtest/harness.ts";
 import { makeSimExpectedScorer } from "../src/inseason/backtest/scorers.ts";
-import { standPat, addBestFreeAgent, valueMinDrop, hasRealDrop } from "../src/inseason/backtest/policies.ts";
+import { standPat, addBestFreeAgent, addBestLineupUpgrade, addHottestFreeAgent, valueMinDrop, hasRealDrop } from "../src/inseason/backtest/policies.ts";
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i >= 0 ? process.argv[i + 1] : d; };
 const seasonsArg = arg("--seasons", "2018-2025");
@@ -16,17 +16,24 @@ const db = openDb(arg("--db", undefined));
 const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
 if (!lg) { console.error("no league synced"); process.exit(2); }
 
-const run = (scorer) => backtestPolicies(db, {
+const run = (variant, scorer) => backtestPolicies(db, {
   leagueId: lg.league_id, seasons, model, scorer,
-  baseline: standPat, variant: addBestFreeAgent(valueMinDrop), admit: hasRealDrop,
+  baseline: standPat, variant, admit: hasRealDrop,
 });
 const line = (r, label) =>
-  `  ${label.padEnd(16)} diff/decision ${r.meanDiff.toFixed(3).padStart(7)}  CI [${r.bootstrap.lo.toFixed(2)}, ${r.bootstrap.hi.toFixed(2)}]  P(add better) ${(100 * r.bootstrap.pVariantBetter).toFixed(0)}%  (claimed ${r.differed} of ${r.evaluated})`;
+  `  ${label.padEnd(20)} diff/decision ${r.meanDiff.toFixed(3).padStart(7)}  CI [${r.bootstrap.lo.toFixed(2)}, ${r.bootstrap.hi.toFixed(2)}]  P(better) ${(100 * r.bootstrap.pVariantBetter).toFixed(0)}%  (claimed ${r.differed} of ${r.evaluated})`;
 
 const t0 = Date.now();
-console.log(`\nWAIVER-CLAIM VALUE -- stand pat vs add-best-FA, ${model} model, seasons ${seasonsArg}`);
+const sim = makeSimExpectedScorer(db, { trials: 200 });
+console.log(`\nWAIVER-CLAIM VALUE -- vs STAND PAT, ${model} model, seasons ${seasonsArg}`);
 console.log(`  + => the claim helped; diff = realized/expected rest-of-season lineup points gained\n`);
-console.log(line(run(undefined), "REALIZED"));
-console.log(line(run(makeSimExpectedScorer(db, { trials: 200 })), "SIM (distr.)"));
+console.log("  add-best-FA (naive: highest projection)");
+console.log(line(run(addBestFreeAgent(valueMinDrop), undefined), "  REALIZED"));
+console.log(line(run(addBestFreeAgent(valueMinDrop), sim), "  SIM (distr.)"));
+console.log("  add-need (upgrade the starting lineup by projection)");
+console.log(line(run(addBestLineupUpgrade(valueMinDrop), undefined), "  REALIZED"));
+console.log(line(run(addBestLineupUpgrade(valueMinDrop), sim), "  SIM (distr.)"));
+console.log("  add-form (best RECENT FORM, hotter than our coldest)");
+console.log(line(run(addHottestFreeAgent(valueMinDrop), undefined), "  REALIZED"));
 db.close();
 console.log(`\n  ${((Date.now() - t0) / 1000).toFixed(1)}s`);

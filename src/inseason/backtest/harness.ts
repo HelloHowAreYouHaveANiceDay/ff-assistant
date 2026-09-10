@@ -28,6 +28,10 @@ export interface DecisionMember {
   playerSk: string; name: string; pos: string;
   /** POINT-IN-TIME projection at the decision week. Never an outcome. */
   proj: number;
+  /** POINT-IN-TIME recent form: trailing-4-week mean through week w-1. A responsive signal the
+   *  preseason-anchored projection misses -- the thing a waiver claim is really chasing. Optional
+   *  because the drop policies do not read it; the waiver loader always sets it. */
+  form?: number;
 }
 
 /** What a policy sees. Everything here was knowable before the decision week's kickoff. */
@@ -89,12 +93,14 @@ function iterateStates(
 
   for (const season of seasons) {
     const future: SeasonFuture = new Map();
+    const formByKey = new Map<string, number>();  // `${player_sk}|${week}` -> point-in-time trailing-4 form
     for (const r of db.prepare(
-      `SELECT player_sk, week, pts, is_bye, inj_out FROM feat_player_week_model
+      `SELECT player_sk, week, pts, is_bye, inj_out, t4_mean FROM feat_player_week_model
         WHERE season=? AND player_sk IS NOT NULL`,
-    ).all(season) as { player_sk: string; week: number; pts: number | null; is_bye: number | null; inj_out: number | null }[]) {
+    ).all(season) as { player_sk: string; week: number; pts: number | null; is_bye: number | null; inj_out: number | null; t4_mean: number | null }[]) {
       let m = future.get(r.player_sk); if (!m) { m = new Map(); future.set(r.player_sk, m); }
       m.set(r.week, { pts: r.pts ?? 0, bye: !!r.is_bye, out: !!r.inj_out });
+      if (r.t4_mean != null) formByKey.set(`${r.player_sk}|${r.week}`, r.t4_mean);
     }
     const regWeeks = (db.prepare(`SELECT MAX(reg_weeks) rw FROM raw_league_season WHERE season=?`).get(season) as { rw: number | null }).rw
       ?? (db.prepare(`SELECT MAX(week) w FROM feat_player_week_model WHERE season=? AND pts IS NOT NULL`).get(season) as { w: number | null }).w
@@ -120,14 +126,14 @@ function iterateStates(
       for (const fa of faByWeek.get(W) ?? []) {
         const p = wc.players.get(fa.playerSk);
         if (!p || (p.proj == null && p.fallback == null)) continue;
-        freeAgents.push({ playerSk: fa.playerSk, name: p.name, pos: p.pos, proj: p.proj ?? p.fallback ?? 0 });
+        freeAgents.push({ playerSk: fa.playerSk, name: p.name, pos: p.pos, proj: p.proj ?? p.fallback ?? 0, form: formByKey.get(`${fa.playerSk}|${W}`) ?? 0 });
       }
       for (const [teamId, entries] of wc.rosters) {
         const roster: DecisionMember[] = [];
         for (const e of entries) {
           const p = wc.players.get(e.playerSk);
           if (!p) continue;
-          roster.push({ playerSk: e.playerSk, name: p.name, pos: p.pos, proj: p.proj ?? p.fallback ?? 0 });
+          roster.push({ playerSk: e.playerSk, name: p.name, pos: p.pos, proj: p.proj ?? p.fallback ?? 0, form: formByKey.get(`${e.playerSk}|${W}`) ?? 0 });
         }
         visit({ season, week: W, teamId, roster, freeAgents, template: wc.template, flexOk }, scoreCtx);
       }

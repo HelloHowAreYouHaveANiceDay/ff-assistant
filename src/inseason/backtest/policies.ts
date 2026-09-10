@@ -84,6 +84,49 @@ export const hasRealDrop = (state: DecisionState): boolean => state.roster.lengt
 /** STAND PAT: hold the roster. The waiver baseline. */
 export const standPat: RosterPolicy = { name: "stand pat", apply(state) { return { roster: state.roster }; } };
 
+/** FORM-AWARE ADD: claim the free agent with the best RECENT FORM (trailing-4 points), dropping via
+ *  `drop`, when he is hotter than the man dropped. The preseason-anchored projection over-rates the
+ *  bust-heavy FA pool and misses in-season breakouts; recent form is what a real waiver chases. */
+export function addHottestFreeAgent(drop: RosterPolicy): RosterPolicy {
+  const form = (m: DecisionMember) => m.form ?? 0;
+  return {
+    name: `add-form + ${drop.name}`,
+    apply(state) {
+      if (!state.freeAgents.length) return { roster: state.roster };
+      const hottest = [...state.freeAgents].sort((a, b) => form(b) - form(a) || -byProjAsc(a, b))[0];
+      const after = drop.apply(state).roster;
+      if (after.length === state.roster.length) return { roster: state.roster };
+      const dropped = state.roster.find((m) => !after.some((x) => x.playerSk === m.playerSk));
+      if (dropped && form(hottest) <= form(dropped)) return { roster: state.roster }; // not hotter than our coldest
+      return { roster: [...after, hottest], meta: { addedPos: hottest.pos } };
+    },
+  };
+}
+
+/** NEED-AWARE ADD: claim the free agent who most improves our projected OPTIMAL STARTING LINEUP
+ *  (dropping via `drop`), and only when he improves it at all. Unlike add-best-FA, a redundant body
+ *  -- a second QB behind your starter -- yields zero lineup gain and is skipped, so this claims a
+ *  starter upgrade or nothing. Decision reads only point-in-time projections. */
+export function addBestLineupUpgrade(drop: RosterPolicy): RosterPolicy {
+  const rp = (m: DecisionMember) => ({ name: m.name, pos: m.pos, proj: m.proj, available: true });
+  return {
+    name: `add-need + ${drop.name}`,
+    apply(state) {
+      const after = drop.apply(state).roster;
+      if (after.length === state.roster.length) return { roster: state.roster }; // no legal drop
+      const base = optimalLineup(after.map(rp), state.template, state.flexOk).totalProj;
+      let best: DecisionMember | null = null, bestGain = 0;
+      for (const fa of state.freeAgents) {
+        if (fa.proj <= bestGain) continue; // cannot beat the current best gain even as a pure add
+        const gain = optimalLineup([...after, fa].map(rp), state.template, state.flexOk).totalProj - base;
+        if (gain > bestGain) { bestGain = gain; best = fa; }
+      }
+      if (!best) return { roster: state.roster }; // nothing upgrades the lineup -> stand pat
+      return { roster: [...after, best], meta: { addedPos: best.pos } };
+    },
+  };
+}
+
 /** ADD THE BEST FREE AGENT (dropping via `drop`), but only when he out-projects the man dropped --
  *  a rational manager does not claim a worse player. Tests whether one waiver claim is worth making;
  *  `meta.addedPos` tags the added position. */
