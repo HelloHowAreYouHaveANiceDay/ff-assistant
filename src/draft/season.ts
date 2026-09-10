@@ -185,7 +185,7 @@ function gauss(rng: () => number): number {
 
 /** Tier a player by his projection relative to the others at his position, matching how the model
  *  was fitted (within-position rank, split into equal quartiles). */
-function tierFor(rankFrac: number, tiers: number): number {
+export function tierFor(rankFrac: number, tiers: number): number {
   return Math.min(tiers - 1, Math.max(0, Math.floor(rankFrac * tiers)));
 }
 
@@ -194,7 +194,7 @@ function tierFor(rankFrac: number, tiers: number): number {
  * non-negative and right-skewed, matching the fitted skew -- a symmetric normal both produces
  * impossible negative scores and understates the ceiling games that win playoff weeks.
  */
-function sampleWeek(mean: number, cv: number, rng: () => number): number {
+export function sampleWeek(mean: number, cv: number, rng: () => number): number {
   if (mean <= 0) return 0;
   const sigma = Math.sqrt(Math.log(1 + cv * cv));
   const mu = -0.5 * sigma * sigma;                 // so E[exp(mu + sigma*Z)] = 1

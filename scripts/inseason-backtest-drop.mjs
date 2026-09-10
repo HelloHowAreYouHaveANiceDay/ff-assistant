@@ -5,6 +5,7 @@
 //     [--protect QB,TE,K,DST]   (omit to run the per-position diagnostic + tuned policy)
 import { openDb } from "../src/db/db.ts";
 import { backtestPolicies } from "../src/inseason/backtest/harness.ts";
+import { makeSimExpectedScorer } from "../src/inseason/backtest/scorers.ts";
 import { valueMinDrop, depthAwareDrop, dropBest, hasRealDrop } from "../src/inseason/backtest/policies.ts";
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i >= 0 ? process.argv[i + 1] : d; };
@@ -16,8 +17,9 @@ const db = openDb(arg("--db", undefined));
 const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
 if (!lg) { console.error("no league synced"); process.exit(2); }
 
+const scorer = arg("--scorer", "realized") === "sim" ? makeSimExpectedScorer(db, { trials: 200 }) : undefined;
 const run = (protect, control) => backtestPolicies(db, {
-  leagueId: lg.league_id, seasons, model,
+  leagueId: lg.league_id, seasons, model, scorer,
   baseline: valueMinDrop, variant: depthAwareDrop(protect), control, admit: hasRealDrop,
 });
 const line = (r, label) =>

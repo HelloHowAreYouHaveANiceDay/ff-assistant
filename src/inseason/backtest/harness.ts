@@ -45,7 +45,7 @@ export interface DecisionState {
 export type SeasonFuture = Map<string, Map<number, { pts: number; bye: boolean; out: boolean }>>;
 
 export interface ScoreCtx {
-  fromWeek: number; toWeek: number; template: string[]; flexOk: Set<string>; future: SeasonFuture;
+  season: number; fromWeek: number; toWeek: number; template: string[]; flexOk: Set<string>; future: SeasonFuture;
 }
 
 /** A decision, expressed as the roster it leaves you holding. `meta` lets a policy tag the decision
@@ -103,7 +103,7 @@ function iterateStates(
 
     for (let W = 1; W <= maxW; W++) {
       const wc = loadWeekContext(db, leagueId, season, W, wm);
-      const scoreCtx: ScoreCtx = { fromWeek: W, toWeek: regWeeks, template: wc.template, flexOk, future };
+      const scoreCtx: ScoreCtx = { season, fromWeek: W, toWeek: regWeeks, template: wc.template, flexOk, future };
       for (const [teamId, entries] of wc.rosters) {
         const roster: DecisionMember[] = [];
         for (const e of entries) {
