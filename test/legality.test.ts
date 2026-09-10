@@ -427,3 +427,38 @@ test("v2 posMult FAULT: a position with no entry is unchanged, never zeroed", ()
   assert.equal(b.maxBid(st).maxBid, a.maxBid(st).maxBid);
   assert.ok(b.maxBid(st).maxBid > 0);
 });
+
+// ROSTER MAXIMUMS -- the ceiling, as distinct from rosterGaps' floor. These arrived with
+// `ff sync-settings`, because the maximums are absent from the mSettings API entirely.
+test("rosterOverfills: a roster over a position maximum is named", async () => {
+  const { rosterOverfills } = await import("../src/draft/season.ts");
+  const roster = [{ pos: "TE" }, { pos: "TE" }, { pos: "TE" }, { pos: "TE" }];
+  const out = rosterOverfills([{ id: "t", name: "Bird", roster }], { TE: 3 });
+  assert.equal(out.length, 1);
+  assert.match(out[0], /would hold 4 TE but the league allows 3/);
+});
+
+test("rosterOverfills: a legal roster and an unknown position produce nothing", async () => {
+  const { rosterOverfills } = await import("../src/draft/season.ts");
+  const roster = [{ pos: "TE" }, { pos: "TE" }, { pos: "QB" }];
+  assert.deepEqual(rosterOverfills([{ id: "t", roster }], { TE: 3 }), []);
+  assert.deepEqual(rosterOverfills([{ id: "t", roster }], {}), [], "no maximums configured = nothing to enforce");
+  assert.deepEqual(rosterOverfills([{ id: "t", roster }], undefined), [],
+    "UNKNOWN maximums must behave as before this existed, not as zero");
+});
+
+// The distinction that justifies a second function: this roster fields a legal lineup and is still
+// illegal. If the two checks were merged, one of the two answers would have to be wrong.
+test("a roster can pass rosterGaps and still breach a maximum", async () => {
+  const { rosterGaps, rosterOverfills } = await import("../src/draft/season.ts");
+  const slots = ["QB", "RB", "WR", "TE", "FLEX", "FLEX", "DST", "K"];
+  const roster = [
+    { pos: "QB" }, { pos: "RB" }, { pos: "TE" }, { pos: "DST" }, { pos: "K" },
+    { pos: "WR" }, { pos: "WR" }, { pos: "WR" }, { pos: "WR" }, { pos: "WR" },
+    { pos: "WR" }, { pos: "WR" }, { pos: "WR" }, { pos: "WR" },  // nine receivers, cap is eight
+  ];
+  assert.deepEqual(rosterGaps([{ id: "t", roster }], slots, ["RB", "WR", "TE"]), [],
+    "the lineup is fillable -- the floor is satisfied");
+  assert.equal(rosterOverfills([{ id: "t", roster }], { WR: 8 }).length, 1,
+    "and the ceiling is still breached");
+});

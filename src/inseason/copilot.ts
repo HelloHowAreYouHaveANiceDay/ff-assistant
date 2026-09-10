@@ -39,7 +39,7 @@ import { optimalLineup } from "./lineup.js";
 // file's job is to hand it the roster, the opponent and the week and to report what it said.
 import { winProbLineup, opponentStarters, type WeeklyBand, type WinProbOpts, type WinProbResult, type WinProbPlayer } from "./winprob.js";
 import { handcuffBoard, loadInjuryOutlook, type DepthEntry, type HandcuffRow, type InjuryOutlookSet } from "./handcuff.js";
-import { rosterGaps, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
+import { rosterGaps, rosterOverfills, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
 import { nameKey } from "../draft/values.js";
 import {
   loadFaabModel, liveFaabState, featureRow, recommendBid, FAAB_ARTIFACT_PATH,
@@ -715,7 +715,10 @@ export function streamRecommend(
     for (const cand of candidates) {
       const after = roster.filter((p) => p.name !== cand.name)
         .concat([{ name: best.name, pos: best.pos, proj: cand.proj, team: best.team ?? undefined, bye: null }]);
-      const gaps = rosterGaps([{ id: "us", name: "us", roster: after }], ctx.slots, ctx.flexOk);
+      // Floor and ceiling both -- a swap keeps the roster SIZE constant but can still leave a
+      // position over its league maximum (drop a tight end, add a fifth quarterback).
+      const gaps = [...rosterGaps([{ id: "us", name: "us", roster: after }], ctx.slots, ctx.flexOk),
+        ...rosterOverfills([{ id: "us", name: "us", roster: after }], ctx.posMax)];
       if (gaps.length) {
         refused.push({ add: best.name, drop: cand.name, why: gaps[0].replace(/^[^:]*:\s*/, "") });
         continue;
@@ -1011,7 +1014,8 @@ export function waiverTargets(
       if (drops.length >= nDrops) break;
       const probe = ctx.clone();
       probe[ctx.meIdx].roster = probe[ctx.meIdx].roster.filter((p) => p.name !== cand.name).concat([{ ...add }]);
-      const gaps = rosterGaps([probe[ctx.meIdx]], ctx.slots, ctx.flexOk);
+      const gaps = [...rosterGaps([probe[ctx.meIdx]], ctx.slots, ctx.flexOk),
+        ...rosterOverfills([probe[ctx.meIdx]], ctx.posMax)];
       if (gaps.length) {
         refused.push({ add: add.name, drop: cand.name, pos: cand.pos, why: gaps[0].replace(/^[^:]*:\s*/, "") });
         continue;
@@ -1133,8 +1137,13 @@ export function tradeCheck(ctx: SimContext, offer: TradeOffer, o: BaseOpts = {})
 
   const probe = ctx.clone();
   apply(probe);
-  const usGaps = rosterGaps([probe[ctx.meIdx]], ctx.slots, ctx.flexOk);
-  const themGaps = rosterGaps([probe[ti]], ctx.slots, ctx.flexOk);
+  // BOTH legality questions, on both sides. `rosterGaps` is the floor -- can the roster still field
+  // a lineup. `rosterOverfills` is the ceiling -- does it now hold more of a position than the
+  // league permits. A trade can pass the first and fail the second, and until `ff sync-settings`
+  // existed nothing here could ask the second at all: the maximums are not in the mSettings API, so
+  // the finder proposed moves the league would reject (2 of 95, measured).
+  const usGaps = [...rosterGaps([probe[ctx.meIdx]], ctx.slots, ctx.flexOk), ...rosterOverfills([probe[ctx.meIdx]], ctx.posMax)];
+  const themGaps = [...rosterGaps([probe[ti]], ctx.slots, ctx.flexOk), ...rosterOverfills([probe[ti]], ctx.posMax)];
 
   const baseUs: Outcome[] = [], baseThem: Outcome[] = [], afterUs: Outcome[] = [], afterThem: Outcome[] = [];
   for (const s of seeds) {
@@ -1238,7 +1247,11 @@ export function tradeFinder(
         if (gap > maxGap) continue;
         const a = mine.filter((p) => p.name !== give.name).concat([get]);
         const b = ctx.teams[ti].roster.filter((p) => p.name !== get.name).concat([give]);
-        if (rosterGaps([{ id: "a", name: "us", roster: a }, { id: "b", name: ctx.teams[ti].name, roster: b }], ctx.slots, ctx.flexOk).length) continue;
+        const sides = [{ id: "a", name: "us", roster: a }, { id: "b", name: ctx.teams[ti].name, roster: b }];
+        // Floor AND ceiling -- see tradeCheck. Skipping only the lineup check let through trades
+        // that overfilled a position on the RECEIVING side, which is a move the league refuses.
+        if (rosterGaps(sides, ctx.slots, ctx.flexOk).length) continue;
+        if (rosterOverfills(sides, ctx.posMax).length) continue;
         cand.push({ ti, give, get, gv, tv, gap });
       }
     }

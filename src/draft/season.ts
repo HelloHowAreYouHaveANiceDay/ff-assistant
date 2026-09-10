@@ -364,6 +364,41 @@ export function rosterGaps(
   return problems;
 }
 
+/**
+ * ROSTERS THAT HOLD MORE OF A POSITION THAN THE LEAGUE ALLOWS.
+ *
+ * A SEPARATE QUESTION FROM `rosterGaps`, and that is why it is a separate function. `rosterGaps`
+ * asks "can this roster field a legal lineup" -- a floor. This asks "is this roster legal at all"
+ * -- a ceiling. A roster can pass the first and fail the second: eight receivers start fine and are
+ * still one over the cap.
+ *
+ * The maximums come from `config.posMax`, which `ff sync-settings` reads off the rendered league
+ * settings page. They are NOT in the mSettings API, so before that verb existed nothing here could
+ * have known them, and the trade finder proposed moves the league would have rejected -- measured:
+ * 2 of 95, both sending a third tight end to the only team already at three.
+ *
+ * AN ABSENT MAXIMUM MEANS UNLIMITED, NOT ZERO. `posMax` omits a position ESPN reports as "No Limit"
+ * or "N/A" rather than storing 0, because 0 is a real and very different answer -- it is what the
+ * IDP slots carry in this league. A caller with no `posMax` at all gets no problems, which is the
+ * behaviour every existing caller had before this function existed.
+ */
+export function rosterOverfills(
+  teams: { id: string; name?: string; roster: { pos: string }[] }[],
+  posMax: Record<string, number> | undefined,
+): string[] {
+  if (!posMax || !Object.keys(posMax).length) return [];
+  const problems: string[] = [];
+  for (const t of teams) {
+    const have: Record<string, number> = {};
+    for (const p of t.roster) have[p.pos] = (have[p.pos] ?? 0) + 1;
+    for (const [pos, n] of Object.entries(have)) {
+      const max = posMax[pos];
+      if (max != null && n > max) problems.push(`${t.name || t.id}: would hold ${n} ${pos} but the league allows ${max}`);
+    }
+  }
+  return problems;
+}
+
 export function simulateSeasons(
   teams: SeasonTeamInput[],
   schedule: [number, number][][],

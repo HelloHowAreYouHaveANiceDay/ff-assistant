@@ -53,6 +53,10 @@ export interface SimContext {
    *  can ask whether it is legal (rosterGaps) instead of finding out when the simulator refuses. */
   slots: string[];
   flexOk?: string[];
+  /** Per-position ROSTER MAXIMUMS, from `ff sync-settings` (they are absent from the mSettings API).
+   *  Undefined when that verb has never run -- and undefined must mean "unknown", never "unlimited",
+   *  so `rosterOverfills` returns no problems rather than pretending the roster is legal. */
+  posMax?: Record<string, number>;
   /** Per-position WEEKLY points freely available off waivers -- the streaming floor. */
   replacement: Record<string, number>;
   /** The league's calendar and playoff format, WITH its provenance. Consumers that need the playoff
@@ -240,6 +244,7 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
   return {
     teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds, format,
     slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement,
+    posMax: (cfg as { posMax?: Record<string, number> }).posMax,
     opts: mkOpts,
     run: (t, trials, seed, extra) => simulateSeasons(t, weeks, vm, { ...mkOpts(trials, seed), ...extra }),
     clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),
