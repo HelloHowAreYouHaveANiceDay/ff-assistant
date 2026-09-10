@@ -31,9 +31,11 @@ import { optimalLineup, type RosterPlayer } from "../lineup.js";
 import { loadWeekContext, loadModel, type ModelName } from "./context.js";
 import { getConfig, type DB } from "../../db/db.js";
 
-/** Positions where you start exactly one and a backup is genuine injury/bye insurance. A depth-aware
- *  policy refuses to cut the LAST backup here; RB/WR are deep by construction and freely droppable. */
-const SCARCE = new Set(["QB", "TE", "K", "DST"]);
+/** DEFAULT protected set: positions where you start exactly one and a backup is injury/bye insurance.
+ *  Tunable per run -- the whole question is WHICH positions actually reward a bench backup, since the
+ *  slot it occupies is itself scarce (it could hold a higher-upside stash). K/DST are streamable, so
+ *  their backups may not earn the slot; the per-position breakdown measures exactly that. */
+export const DEFAULT_PROTECTED = new Set(["QB", "TE", "K", "DST"]);
 
 interface RosterMember { playerSk: string; name: string; pos: string; proj: number }
 
@@ -48,6 +50,10 @@ export interface DropPolicyResult {
   meanDiff: number;          // mean realized points saved per DIFFERING decision by depth-aware
   meanDiffAll: number;       // spread over ALL decisions (agreements count as 0)
   perSeason: { season: number; differing: number; meanDiff: number }[];
+  /** THE VALUE OF A BENCH BACKUP, PER POSITION. Attributed to the position of the backup depth-aware
+   *  KEPT (the value-min drop it avoided). A position whose mean is ~0 or negative does not earn its
+   *  bench slot -- its backup is a stash the slot could spend better (e.g. streamable K/DST). */
+  byPosition: { pos: string; n: number; meanDiff: number }[];
   bootstrap: { lo: number; hi: number; pDepthBetter: number }; // season-level 90% CI on meanDiffAll
   // POSITIVE CONTROL: a policy that drops the HIGHEST-projected starter must score far WORSE than
   // value-min, or the harness is not measuring realized lineup value at all.
@@ -73,13 +79,13 @@ function backupsAt(members: RosterMember[], pos: string, template: string[]): nu
 /** value-min: lowest week-W projection among legal drops. depth-aware: lowest projection among legal
  *  drops that do NOT cut the last backup at a scarce position; if none qualifies, it falls back to
  *  value-min (there was no depth-preserving drop to make). */
-function chooseDrops(members: RosterMember[], template: string[], flexOk: Set<string>):
+function chooseDrops(members: RosterMember[], template: string[], flexOk: Set<string>, protectedPositions: Set<string>):
   { valueMin: RosterMember | null; depth: RosterMember | null; best: RosterMember | null } {
   const legal = members.filter((m) => canFillTemplate(members.filter((x) => x !== m), template, flexOk));
   if (!legal.length) return { valueMin: null, depth: null, best: null };
   const byProjAsc = [...legal].sort((a, b) => a.proj - b.proj || a.playerSk.localeCompare(b.playerSk));
   const valueMin = byProjAsc[0];
-  const depthSafe = byProjAsc.filter((m) => !SCARCE.has(m.pos) || backupsAt(members, m.pos, template) - 1 >= 1);
+  const depthSafe = byProjAsc.filter((m) => !protectedPositions.has(m.pos) || backupsAt(members, m.pos, template) - 1 >= 1);
   const depth = depthSafe.length ? depthSafe[0] : valueMin;
   const best = [...legal].sort((a, b) => b.proj - a.proj || a.playerSk.localeCompare(b.playerSk))[0]; // control
   return { valueMin, depth, best };
@@ -109,14 +115,16 @@ function marginalValue(
 }
 
 export function backtestDropPolicy(
-  db: DB, opts: { leagueId: string; seasons: number[]; model?: ModelName; maxDecisionWeek?: number },
+  db: DB, opts: { leagueId: string; seasons: number[]; model?: ModelName; maxDecisionWeek?: number; protectedPositions?: Set<string> },
 ): DropPolicyResult {
   const modelName = opts.model ?? "served";
   const model = loadModel(modelName);
+  const protectedPositions = opts.protectedPositions ?? DEFAULT_PROTECTED;
   const cfg = getConfig(db);
   const flexOk = new Set<string>(cfg.flex_ok as string[]);
 
   const perSeasonDiffs = new Map<number, number[]>();
+  const byPos = new Map<string, number[]>();
   const controlDiffs: number[] = [];
   let decisions = 0, differing = 0, agree = 0;
 
@@ -147,7 +155,7 @@ export function backtestDropPolicy(
           members.push({ playerSk: e.playerSk, name: p.name, pos: p.pos, proj: p.proj ?? p.fallback ?? 0 });
         }
         if (members.length < template.filter((s) => s !== "BE" && s !== "BENCH").length + 1) continue; // no real drop choice
-        const { valueMin, depth, best } = chooseDrops(members, template, flexOk);
+        const { valueMin, depth, best } = chooseDrops(members, template, flexOk, protectedPositions);
         if (!valueMin || !depth) continue;
         decisions++;
         // Control: value-min vs dropping the BEST player -- must be strongly negative.
@@ -163,6 +171,9 @@ export function backtestDropPolicy(
           marginalValue(members, valueMin, W, regWeeks, season2, template, flexOk) -
           marginalValue(members, depth, W, regWeeks, season2, template, flexOk);
         perSeasonDiffs.get(season)!.push(diff);
+        // Attribute to the position of the backup depth-aware KEPT (the value-min drop it avoided).
+        let byp = byPos.get(valueMin.pos); if (!byp) { byp = []; byPos.set(valueMin.pos, byp); }
+        byp.push(diff);
       }
     }
   }
@@ -194,6 +205,8 @@ export function backtestDropPolicy(
     meanDiff: mean(nzAll),
     meanDiffAll: mean(all),
     perSeason,
+    byPosition: [...byPos.entries()].map(([pos, d]) => ({ pos, n: d.length, meanDiff: mean(d) }))
+      .sort((a, b) => b.meanDiff - a.meanDiff),
     bootstrap: {
       lo: boot[Math.floor(0.05 * boot.length)], hi: boot[Math.floor(0.95 * boot.length)],
       pDepthBetter: boot.filter((x) => x > 0).length / boot.length,
