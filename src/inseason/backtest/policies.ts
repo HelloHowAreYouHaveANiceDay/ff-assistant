@@ -83,6 +83,24 @@ export function upsideDrop(ceilingOf: (m: DecisionMember, season: number) => num
   };
 }
 
+/** HANDCUFF-AWARE DROP: cut the legal body with the lowest TOTAL value = projection + conditional
+ *  handcuff EV (the per-week value if the workhorse ahead of him goes down). So a buried backup RB who
+ *  projects ~0 but is a real handcuff is KEPT, while value-min would cut him for a steadier non-
+ *  handcuff. Tests whether the validated handcuff signal earns a roster decision. `handcuffOf` is
+ *  injected (built from the shipped handcuff model) so this file stays decoupled from it. */
+export function handcuffAwareDrop(handcuffOf: (m: DecisionMember, season: number) => number): RosterPolicy {
+  const total = (m: DecisionMember, season: number) => m.proj + handcuffOf(m, season);
+  return {
+    name: "handcuff-aware drop",
+    apply(state) {
+      const legal = legalDrops(state);
+      if (!legal.length) return { roster: state.roster };
+      const drop = [...legal].sort((a, b) => total(a, state.season) - total(b, state.season) || a.playerSk.localeCompare(b.playerSk))[0];
+      return { roster: without(state, drop.playerSk), meta: { droppedPos: drop.pos } };
+    },
+  };
+}
+
 /** POSITIVE CONTROL: drop the HIGHEST-projected legal body. Must score far worse than value-min, or
  *  the harness is not measuring realized value at all. */
 export const dropBest: RosterPolicy = {

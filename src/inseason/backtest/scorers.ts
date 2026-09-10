@@ -28,7 +28,7 @@ import type { DecisionMember, ScoreCtx, Scorer } from "./harness.js";
 /** Each player's rank WITHIN his position, by preseason line, for that season -- the pool rank the
  *  variance tiers are fitted against. Reconstructed from feat_player_week_model (not the board, which
  *  is stored only for the live season). Keyed by name, which is what the roster carries. */
-function poolRankFor(db: DB, season: number): Map<string, { rank: number; of: number }> {
+export function poolRankFor(db: DB, season: number): Map<string, { rank: number; of: number }> {
   const rows = db.prepare(
     `SELECT name, pos, MAX(season_line_pg) AS line FROM feat_player_week_model
       WHERE season=? AND season_line_pg IS NOT NULL AND name IS NOT NULL GROUP BY name, pos`,
