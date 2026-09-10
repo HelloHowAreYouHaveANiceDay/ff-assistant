@@ -67,6 +67,22 @@ export function depthAwareDrop(protectedPositions: Set<string>): RosterPolicy {
   };
 }
 
+/** UPSIDE-AWARE DROP: cut the legal body with the lowest CEILING (mean scaled by boom potential),
+ *  keeping the high-variance stash a mean-only view would discard. Tests the "use bench spots for
+ *  upside, not floor" theory: it diverges from value-min exactly on a low-mean/high-ceiling body.
+ *  `ceilingOf` is injected (built from the variance model) so this file stays decoupled from it. */
+export function upsideDrop(ceilingOf: (m: DecisionMember, season: number) => number): RosterPolicy {
+  return {
+    name: "upside drop (keep boom)",
+    apply(state) {
+      const legal = legalDrops(state);
+      if (!legal.length) return { roster: state.roster };
+      const drop = [...legal].sort((a, b) => ceilingOf(a, state.season) - ceilingOf(b, state.season) || a.playerSk.localeCompare(b.playerSk))[0];
+      return { roster: without(state, drop.playerSk), meta: { droppedPos: drop.pos } };
+    },
+  };
+}
+
 /** POSITIVE CONTROL: drop the HIGHEST-projected legal body. Must score far worse than value-min, or
  *  the harness is not measuring realized value at all. */
 export const dropBest: RosterPolicy = {

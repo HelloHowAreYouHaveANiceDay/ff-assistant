@@ -49,14 +49,17 @@ function seededRng(key: string): () => number {
   return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 
-export function makeSimExpectedScorer(db: DB, opts: { trials?: number; seed?: number } = {}): Scorer {
-  const trials = opts.trials ?? 200;
-  const seed = opts.seed ?? 7;
-  const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8")) as VarianceModel;
+/** The fitted variance model, read once. */
+export function loadVarianceModel(): VarianceModel {
+  return JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8")) as VarianceModel;
+}
+
+/** (season, name) -> variance TIER, cached, from the per-season pool rank. Shared by the sim scorer
+ *  and the ceiling function so both tier a player identically. */
+export function makeTierFn(db: DB, vm: VarianceModel): (season: number, name: string) => number {
   const poolBySeason = new Map<number, Map<string, { rank: number; of: number }>>();
   const tierCache = new Map<string, number>();
-
-  const tierOf = (season: number, name: string): number => {
+  return (season, name) => {
     const ck = `${season}|${name}`;
     const cached = tierCache.get(ck); if (cached != null) return cached;
     let pool = poolBySeason.get(season); if (!pool) { pool = poolRankFor(db, season); poolBySeason.set(season, pool); }
@@ -65,6 +68,33 @@ export function makeSimExpectedScorer(db: DB, opts: { trials?: number; seed?: nu
     tierCache.set(ck, t);
     return t;
   };
+}
+
+/**
+ * A player's weekly CEILING at a decision -- his projected mean scaled by his position/tier boom
+ * factor (the p90 of the fitted lognormal weekly distribution). Used to A/B "keep the boom stash"
+ * (drop by lowest ceiling) against value-min (drop by lowest mean): they diverge on exactly the
+ * low-mean/high-variance body a floor-only view discards. Returns (member, season) -> ceiling points.
+ */
+export function makeCeilingFn(db: DB): (m: DecisionMember, season: number) => number {
+  const vm = loadVarianceModel();
+  const tierFn = makeTierFn(db, vm);
+  return (m, season) => {
+    const posVm = vm.pos[m.pos];
+    if (!posVm) return m.proj;
+    const tier = tierFn(season, m.name);
+    const cv = posVm.cv[tier] ?? posVm.cv[posVm.cv.length - 1] ?? 0.5;
+    const sigma = Math.sqrt(Math.log(1 + cv * cv));
+    const p90mult = Math.exp(1.2816 * sigma - (sigma * sigma) / 2); // p90 of the E[·]=1 lognormal factor
+    return m.proj * p90mult;
+  };
+}
+
+export function makeSimExpectedScorer(db: DB, opts: { trials?: number; seed?: number } = {}): Scorer {
+  const trials = opts.trials ?? 200;
+  const seed = opts.seed ?? 7;
+  const vm = loadVarianceModel();
+  const tierOf = makeTierFn(db, vm);
 
   return {
     name: `sim-expected (${trials} trials)`,
