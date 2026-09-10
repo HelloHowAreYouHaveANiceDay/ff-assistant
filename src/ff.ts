@@ -84,6 +84,8 @@ async function main() {
       return cmdBuildFeatures(rest);
     case "build-picks":
       return cmdBuildPicks(rest);
+    case "build-roster-state":
+      return cmdBuildRosterState(rest);
     case "build-managers":
       return cmdBuildManagers(rest);
     case "build-artifact":
@@ -2047,6 +2049,47 @@ async function cmdBuildFeatures(rest: string[]) {
       `${String(s.withEcr).padStart(5)}  ${String(s.withUsage).padStart(6)}  ${String(s.withAge).padStart(6)}`);
   }
   console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+}
+
+/**
+ * Weekly roster state, the free-agent pool, and lineup regret -> fact_roster_week /
+ * fact_fa_pool_week / fact_lineup_week. See features/sources/rosterState.ts.
+ *
+ * WHY THIS VERB EXISTS. `buildRosterStateInto` shipped with no caller outside a test, so the three
+ * tables it fills could not be populated by any command in this repo. They were not empty because
+ * nobody had run the build -- there was no build to run. That is invisible from the inside: the
+ * tables exist (the schema creates them), every consumer reads them without error, and an empty
+ * table answers "no rows" rather than "never built". `ROSTER_DEPTH re-measured from
+ * fact_roster_week` is the only thing that noticed, and it reported "the roster feed names no
+ * teams" rather than a wrong depth -- which is the honest failure, and was left standing for
+ * exactly as long as the producer had no caller.
+ *
+ * Defaults to every season the league has raw roster weeks for, because a partial build is the
+ * failure mode that reads like a complete one.
+ */
+async function cmdBuildRosterState(rest: string[]) {
+  const { buildRosterStateInto } = await import("./features/sources/rosterState.js");
+  const { openDb } = await import("./db/db.js");
+  let seasons: number[];
+  const arg = valueOf(rest, "--seasons");
+  if (arg) {
+    const [lo, hi] = arg.split("-").map(Number);
+    seasons = []; for (let y = lo; y <= (hi ?? lo); y++) seasons.push(y);
+  } else {
+    const db = openDb(valueOf(rest, "--db"));
+    seasons = (db.prepare("SELECT DISTINCT season FROM raw_league_roster_week ORDER BY season").all() as { season: number }[]).map((r) => r.season);
+    db.close();
+    if (!seasons.length) { console.log("no raw_league_roster_week rows -- run `ff scrape-league` first"); return; }
+  }
+  const t0 = Date.now();
+  const r = await buildRosterStateInto({ dbPath: valueOf(rest, "--db"), seasons, throughAsOf: valueOf(rest, "--through") });
+  console.log(`fact_roster_week ${r.rosterRows.toLocaleString()} rows | fact_fa_pool_week ${r.faRows.toLocaleString()} | fact_lineup_week ${r.lineupRows.toLocaleString()}`);
+  console.log(`  seasons ${r.seasons.join(",")}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  // IDENTITY RESOLUTION, PER RULE, printed rather than inferred. A feed that resolves at 4% and a
+  // feed with no signal produce the same column of nulls; this is the number that tells them apart.
+  const q = r.resolve;
+  console.log(`  resolved ${(q.total - q.unresolved).toLocaleString()}/${q.total.toLocaleString()} entries: xref ${q.byXref.toLocaleString()}, DST ${q.byDst.toLocaleString()}, name+pos ${q.byName.toLocaleString()}`);
+  if (q.unresolved) console.log(`  ${q.unresolved.toLocaleString()} UNRESOLVED (named, not dropped in silence): ${q.examples.slice(0, 6).join("; ")}`);
 }
 
 // One row per real draft pick this league made, with the consensus as it stood. See features/picks.ts.
