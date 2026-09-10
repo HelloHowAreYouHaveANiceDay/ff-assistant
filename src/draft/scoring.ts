@@ -143,8 +143,20 @@ export interface DefenseRules {
    * the underlying play-by-play it counts from.
    */
   tflProviderScale: number;
-  /** [maxPointsAllowed, points] ascending; first match wins. Derived from 175 scored DST weeks. */
-  paLadder: [number, number][];
+  /**
+   * [maxPointsAllowed, points] ascending; first match wins. Derived from 175 scored DST weeks.
+   *
+   * THE LAST TIER'S BOUND MAY BE `null`, AND MUST BE READ AS "no upper bound". The in-code default
+   * writes `Infinity`, which is the honest value -- but this object is stored in `settings.config`
+   * as JSON, and `JSON.stringify(Infinity)` is `null`. So a ladder that has been round-tripped
+   * through the store ends `[null, -7]` while the one built in memory ends `[Infinity, -7]`, and
+   * `pointsAllowed <= null` is FALSE for every real score: the worst tier silently stops applying
+   * and a defence that shipped 46 points scores 0 instead of -7.
+   *
+   * Nothing failed when that happened. The ladder still had eight tiers, the seven that fire most
+   * often were untouched, and only the tail -- the blowouts -- went quietly missing.
+   */
+  paLadder: [number | null, number][];
 }
 
 /**
@@ -247,7 +259,9 @@ export function scoreDefenseWeek(r: Record<string, string>, pointsAllowed: numbe
     + nz(r, "def_pass_defended") * d.passDefended
     + nz(r, "def_tackles_for_loss") * (d.tflProviderScale ?? 1) * d.tacklesForLoss
     + tds * d.td;
-  const pa = d.paLadder.find(([max]) => pointsAllowed <= max)?.[1] ?? 0;
+  // `max == null` is the open-ended top tier -- see DefenseRules.paLadder. Written as an explicit
+  // null check rather than `<= (max ?? Infinity)` so the intent survives the next reader.
+  const pa = d.paLadder.find(([max]) => max == null || pointsAllowed <= max)?.[1] ?? 0;
   return base + pa;
 }
 

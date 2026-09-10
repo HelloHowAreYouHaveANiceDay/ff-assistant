@@ -92,3 +92,34 @@ test("DEFAULT_LEAGUE_SCORING hands out an INDEPENDENT copy (no shared mutable la
   assert.equal(b.defense.sack, DEFAULT_DEFENSE.sack);
   assert.equal(b.defense.paLadder[0][1], DEFAULT_DEFENSE.paLadder[0][1], "the ladder must be deep-copied");
 });
+
+// THE STORE ROUND-TRIP. `settings.config` holds this model as JSON, and `JSON.stringify(Infinity)`
+// is `null` -- so the open-ended top tier arrives back as `[null, -7]`. `pointsAllowed <= null` is
+// false for every real score, which deleted the worst tier and scored a 46-point blowout as 0.
+//
+// It is asserted through an ACTUAL round-trip rather than by handing the scorer a hand-written
+// `null`, because the bug is a property of the storage path: a test that types the null itself
+// would keep passing if someone changed how the model is serialised.
+test("the points-allowed ladder survives a JSON round-trip through the store", () => {
+  const inMemory = DEFAULT_LEAGUE_SCORING().defense;
+  const stored = JSON.parse(JSON.stringify(inMemory));
+  assert.equal(stored.paLadder.at(-1)[0], null, "precondition: Infinity serialises to null");
+
+  const blowout = { def_sacks: "0", def_interceptions: "0", def_fumble_recovery_opp: "0" };
+  const PA = 52; // past every finite tier, so only the open-ended one can fire
+  const live = scoreDefenseWeek(blowout, PA, inMemory);
+  const back = scoreDefenseWeek(blowout, PA, stored);
+  assert.equal(back, live, "a stored ladder must score a blowout the same as the in-memory one");
+  assert.equal(live, DEFAULT_DEFENSE.paLadder.at(-1)[1], "the worst tier is what should have fired");
+});
+
+// FAULT INJECTION for the tier itself: drop the open-ended tier and the same blowout must change.
+// Without this, the test above would still pass if the ladder stopped being consulted at all.
+test("FAULT INJECTION: removing the open-ended tier changes what a blowout scores", () => {
+  const d = DEFAULT_LEAGUE_SCORING().defense;
+  const blowout = { def_sacks: "0" };
+  const withTail = scoreDefenseWeek(blowout, 52, d);
+  const truncated = { ...d, paLadder: d.paLadder.slice(0, -1) };
+  const without = scoreDefenseWeek(blowout, 52, truncated);
+  assert.notEqual(without, withTail, "the ladder's last tier is not being read at all");
+});
