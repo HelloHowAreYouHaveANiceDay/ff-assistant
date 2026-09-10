@@ -64,6 +64,10 @@ const OUT_OF_SCOPE_TABLES = new Set([
   "action_log", "draft", "draft_pick", "draft_state", "fact_matchup", "identity_rekey",
   "matchup", "my_roster", "ownership", "player_ids", "player_ids_variant", "player_position",
   "projection", "roster", "settings", "usage_log",
+  // ingest_audit is a cross-cutting VALIDATION log written by every source after it writes its data
+  // (src/data/validatedIngest.ts), not a data node any producer reads -- an operational log like
+  // action_log/usage_log, not a feature/model table.
+  "ingest_audit",
 ]);
 
 test("every served table has a producer or is external -- every real schema table not on the frozen out-of-scope list is a node the graph produces", () => {
