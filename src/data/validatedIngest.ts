@@ -83,7 +83,13 @@ export function auditIngest(
   const minRows = policy.minRows ?? 1;
   const rowsReadback = args.readback();
   const reasons: string[] = [];
-  if (rowsReadback < minRows) reasons.push(`readback ${rowsReadback} < required minimum ${minRows}`);
+  // TWO independent signals, because they fail in different ways. `rowsWritten` is the writer's own
+  // count -- 0 means the PULL was empty (session expired, empty payload), which a readback cannot see
+  // when stale rows from a prior run still sit in the table. `rowsReadback` is the store's truth --
+  // 0 means the write did not PERSIST (a rolled-back transaction, the wrong table), which the writer's
+  // optimistic count cannot see. A healthy sync clears both.
+  if (args.rowsWritten < minRows) reasons.push(`the writer processed ${args.rowsWritten} rows (< ${minRows}) -- the pull was empty`);
+  if (rowsReadback < minRows) reasons.push(`readback ${rowsReadback} < required minimum ${minRows} -- the write did not persist`);
   if (policy.minFractionOfPrev && policy.minFractionOfPrev > 0) {
     const prev = (season == null
       ? db.prepare(`SELECT rows_readback AS r FROM ingest_audit WHERE source = ? AND ok = 1 AND season IS NULL ORDER BY id DESC LIMIT 1`).get(args.source)

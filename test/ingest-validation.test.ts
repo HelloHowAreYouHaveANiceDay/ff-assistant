@@ -48,6 +48,17 @@ test("auditIngest: PASS on real rows, FAIL on an empty write -- and both leave a
   assert.equal(audits.find((a) => a.source === "raw_empty")?.ok, false);
 });
 
+test("auditIngest: an empty pull is caught even when STALE rows remain in the table", () => {
+  const d = db();
+  d.exec(`CREATE TABLE raw_stale (season INTEGER, v TEXT)`);
+  d.prepare(`INSERT INTO raw_stale VALUES (2026,'old1'),(2026,'old2')`).run(); // last week's rows, still here
+  // This week's pull returned nothing (rowsWritten 0), but the readback still finds the 2 stale rows.
+  // The readback signal alone would say "2 rows, fine"; the writer-count signal catches the empty pull.
+  const v = auditIngest(d, { source: "raw_stale", season: 2026, rowsWritten: 0, readback: () => countTable(d, "raw_stale", 2026) });
+  assert.equal(v.ok, false, "an empty pull that leaves stale rows must still fail");
+  assert.match(v.reason, /pull was empty/);
+});
+
 test("auditIngest: minFractionOfPrev catches a COLLAPSE against the last good sync", () => {
   const d = db();
   // First good sync: 200 rows.

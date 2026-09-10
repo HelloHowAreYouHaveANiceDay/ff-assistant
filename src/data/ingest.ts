@@ -439,7 +439,23 @@ async function ingestRawOnly(dbPath: string | undefined, id: string, opts: { sea
     for (let y = lo; y <= hi; y++) seasons.push(y);
   }
   seasons = seasons.slice().sort((a, b) => a - b);
-  return { rows: await asset.run(dbPath, seasons) };
+  const rows = await asset.run(dbPath, seasons);
+  // VALIDATE THE WRITE LANDED. Read back the asset's primary table for exactly the seasons this run
+  // targeted, record the verdict in ingest_audit, and fail loudly on a degenerate write -- a raw
+  // sweep that reported a total but left the store empty is the silent failure this contract exists
+  // to end. (An all-empty result usually means the requested seasons predate the feed.)
+  const { openDb } = await import("../db/db.js");
+  const { auditIngest, countTable } = await import("./validatedIngest.js");
+  const db = openDb(dbPath);
+  try {
+    const table = asset.writes[0];
+    const v = auditIngest(db, {
+      source: id, season: seasons.length ? seasons[seasons.length - 1] : null, rowsWritten: rows,
+      readback: () => (seasons.length ? seasons.reduce((s, y) => s + countTable(db, table, y), 0) : countTable(db, table)),
+    });
+    if (!v.ok) throw new Error(`${id}: ingest validation FAILED -- ${v.reason}. The write did not land as reported.`);
+  } finally { db.close(); }
+  return { rows };
 }
 
 // Materialize ONE source (asset) + only its affected downstream: ECR feeds the projection curve, so
@@ -476,6 +492,15 @@ export async function ingestOne(dbPath: string | undefined, id: string, opts: { 
     case "market": rows = await ingestMarketValue(db, scoring, teams, numQbs); break;
     case "news": rows = Object.values(await ingestNews(db, SEASON)).reduce((a, b) => a + b, 0); break;
     default: db.close(); throw new Error(`unknown source: ${id}`);
+  }
+  // RECORD THE WRITE in ingest_audit. Not throwOnFail here: the board-feeding L1 feeds include live,
+  // legitimately-sparse sources (news on a quiet day, a status feed between updates), and ecr already
+  // throws on 0 rows at its own source. So the audit is the durable freshness/validation record; the
+  // hard refusal lives on the RAW_ASSETS (historical, must-have-data) and the ESPN sync verbs.
+  const l1 = L1_ASSETS.find((a) => a.id === id);
+  if (l1) {
+    const { auditIngest, countTable } = await import("./validatedIngest.js");
+    auditIngest(db, { source: id, season: SEASON, rowsWritten: rows, readback: () => countTable(db, l1.writes[0], SEASON) });
   }
   db.close();
   if (id === "ecr") await project(dbPath); // ECR changes the within-position rank -> re-derive the curve
