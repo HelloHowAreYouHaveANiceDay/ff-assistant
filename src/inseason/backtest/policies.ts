@@ -80,3 +80,24 @@ export const dropBest: RosterPolicy = {
 
 /** States with a real drop choice: a bench body beyond the starters. */
 export const hasRealDrop = (state: DecisionState): boolean => state.roster.length >= startersNeeded(state.template) + 1;
+
+/** STAND PAT: hold the roster. The waiver baseline. */
+export const standPat: RosterPolicy = { name: "stand pat", apply(state) { return { roster: state.roster }; } };
+
+/** ADD THE BEST FREE AGENT (dropping via `drop`), but only when he out-projects the man dropped --
+ *  a rational manager does not claim a worse player. Tests whether one waiver claim is worth making;
+ *  `meta.addedPos` tags the added position. */
+export function addBestFreeAgent(drop: RosterPolicy): RosterPolicy {
+  return {
+    name: `add-best-FA + ${drop.name}`,
+    apply(state) {
+      if (!state.freeAgents.length) return { roster: state.roster };
+      const bestFa = [...state.freeAgents].sort((a, b) => -byProjAsc(a, b))[0];
+      const after = drop.apply(state).roster;
+      if (after.length === state.roster.length) return { roster: state.roster }; // no legal drop
+      const dropped = state.roster.find((m) => !after.some((x) => x.playerSk === m.playerSk));
+      if (dropped && bestFa.proj <= dropped.proj) return { roster: state.roster }; // no improvement
+      return { roster: [...after, bestFa], meta: { addedPos: bestFa.pos } };
+    },
+  };
+}

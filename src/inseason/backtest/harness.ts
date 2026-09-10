@@ -101,9 +101,27 @@ function iterateStates(
       ?? 14;
     const maxW = Math.min(maxDecisionWeek ?? regWeeks - 1, regWeeks - 1);
 
+    // Preload every season's FA-pool rows once, indexed by week.
+    const faByWeek = new Map<number, { playerSk: string; name: string; pos: string }[]>();
+    for (const r of db.prepare(
+      `SELECT week, player_sk, name, pos FROM fact_fa_pool_week WHERE season=? AND player_sk IS NOT NULL`,
+    ).all(season) as { week: number; player_sk: string; name: string; pos: string }[]) {
+      let l = faByWeek.get(r.week); if (!l) { l = []; faByWeek.set(r.week, l); }
+      l.push({ playerSk: r.player_sk, name: r.name, pos: r.pos });
+    }
+
     for (let W = 1; W <= maxW; W++) {
       const wc = loadWeekContext(db, leagueId, season, W, wm);
       const scoreCtx: ScoreCtx = { season, fromWeek: W, toWeek: regWeeks, template: wc.template, flexOk, future };
+      // The free-agent pool is league-wide for the week; each FA's POINT-IN-TIME projection comes from
+      // the same week context the roster players use (loadWeekContext projects every player with a
+      // weekly row, not just the rostered). FAs with no projection row are dropped, not zeroed.
+      const freeAgents: DecisionMember[] = [];
+      for (const fa of faByWeek.get(W) ?? []) {
+        const p = wc.players.get(fa.playerSk);
+        if (!p || (p.proj == null && p.fallback == null)) continue;
+        freeAgents.push({ playerSk: fa.playerSk, name: p.name, pos: p.pos, proj: p.proj ?? p.fallback ?? 0 });
+      }
       for (const [teamId, entries] of wc.rosters) {
         const roster: DecisionMember[] = [];
         for (const e of entries) {
@@ -111,7 +129,7 @@ function iterateStates(
           if (!p) continue;
           roster.push({ playerSk: e.playerSk, name: p.name, pos: p.pos, proj: p.proj ?? p.fallback ?? 0 });
         }
-        visit({ season, week: W, teamId, roster, freeAgents: [], template: wc.template, flexOk }, scoreCtx);
+        visit({ season, week: W, teamId, roster, freeAgents, template: wc.template, flexOk }, scoreCtx);
       }
     }
   }
