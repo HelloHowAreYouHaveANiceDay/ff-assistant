@@ -254,11 +254,6 @@ async function cmdServe(rest: string[]) {
           result = row ? { ageSec: Math.round((Date.now() - Date.parse(row.updated_at)) / 1000), data: JSON.parse(row.state_json) } : null;
           break;
         }
-        case "draft-picks": {
-          const picks = db.prepare("SELECT pick_no, player_id, team, price, ts FROM draft_pick WHERE draft_id = ? ORDER BY pick_no").all(String(params.draftId ?? "local"));
-          result = picks.length ? { picks } : null;
-          break;
-        }
         case "data-sources": {
           // freshness (rows + last-updated) for every table node in the warehouse DAG; the renderer
           // holds the static lineage and looks up each table here by name.
@@ -271,7 +266,7 @@ async function cmdServe(rest: string[]) {
             // identity + staging: freshness for the new spine, so the lineage view can show row
             // counts for them like any other node rather than rendering them permanently empty.
             ["ranking_history", "fetched_at"], ["player_ids", "updated_at"],
-            ["player_identity", "created_at"], ["player_xref", "created_at"], ["player_position", ""],
+            ["player_identity", "created_at"], ["player_xref", "created_at"],
             ["stg_player", "updated_at"],
             // RAW LAYER (`ff ingest-raw`): the league's own history plus the nflverse/FFC feeds.
             // Freshness is the FETCH time, not the as_of stamp -- as_of is a point-in-time property
@@ -1478,8 +1473,10 @@ async function cmdStore(rest: string[]) {
  * `ff sync-league [--tier fast|daily|weekly]` -- ONE entry point for pulling this league's latest,
  * grouped by how often the underlying thing actually changes.
  *
- * THE TIERS ARE READ OFF THE LEAGUE'S OWN SETTINGS, not chosen by feel. `ff sync-settings` stores
- * them under `config.rosterSettings`, and three of them decide the cadence:
+ * THE TIER GROUPING IS INFORMED BY THE LEAGUE'S OWN SETTINGS, not chosen by feel -- but the tier is
+ * selected by the `--tier` flag, NOT read back from the store. `ff sync-settings` records the raw
+ * settings under `config.rosterSettings` for reference; nothing consumes that field to pick a
+ * cadence, so the mapping below is fixed. The three settings that shaped it:
  *
  *   "Lineup Changes: Lock individually at Scheduled Gametime"  -- a roster is not frozen at 1pm on
  *       Sunday. Each player locks at HIS OWN kickoff, so what is startable changes through the day

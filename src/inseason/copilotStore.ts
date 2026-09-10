@@ -247,9 +247,7 @@ export function currentWeek(dbPath?: string, now: Date = new Date()): { week: nu
       };
     }
 
-    const row = db.prepare("SELECT max(week) w FROM matchup").get() as { w: number | null } | undefined;
-    if (row?.w != null) return { week: Number(row.w), source: "matchup table (last fetched live matchup)" };
-    return { week: 1, source: `default -- nothing in the store records the current week (no rows in \`raw_nfl_game\` for season ${cfg.season}, no rows in \`matchup\`); pass --week to be sure` };
+    return { week: 1, source: `default -- nothing in the store records the current week (no rows in \`raw_nfl_game\` for season ${cfg.season}); pass --week to be sure` };
   } catch {
     return { week: 1, source: "default -- the store could not be read" };
   } finally { db.close(); }

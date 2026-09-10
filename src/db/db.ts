@@ -253,13 +253,6 @@ export function recentActions(db: DB, limit = 10): { ts: string; action: string;
   return db.prepare(`SELECT ts, action, status, detail_json, reason FROM action_log ORDER BY id DESC LIMIT ?`).all(limit) as never;
 }
 
-// --- agent token usage (feeds the budget governor) ---
-export function appendUsage(db: DB, u: { runId?: string; runType: string; input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): void {
-  db.prepare(
-    `INSERT INTO usage_log (ts, run_id, run_type, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(nowIso(), u.runId ?? null, u.runType, u.input ?? 0, u.output ?? 0, u.cacheRead ?? 0, u.cacheWrite ?? 0);
-}
 
 // --- live draft snapshot (the engine's per-tick state; agent reads it) ---
 export function writeDraftState(db: DB, draftId: string, state: Record<string, unknown>): void {

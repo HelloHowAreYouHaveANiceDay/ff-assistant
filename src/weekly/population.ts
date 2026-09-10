@@ -56,9 +56,8 @@
 import { createHash } from "node:crypto";
 import type { Database as DB } from "better-sqlite3";
 
-/** The league this population is about. Both numbers appear in the depth derivation above. */
+/** The league this population is about; it appears in the depth derivation above. */
 export const LEAGUE_TEAMS = 16;
-export const LEAGUE_SLOTS = 12;
 
 /**
  * MEN CARRIED AT EACH POSITION ACROSS A 16-TEAM LEAGUE-WEEK. Measured from `fact_roster_week`;

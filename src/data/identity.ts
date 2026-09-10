@@ -241,12 +241,6 @@ export function buildIdentity(dbPath?: string, opts: { rebuild?: boolean } = {})
         ids: idBag(p),
       };
       const { sk, matchedBy, minted } = resolveOrMint(db, inp, disputed);
-      // Position is recorded as ELIGIBILITY, many rows per player, because that is what it is: ESPN
-      // qualifies one man at several positions and sources reclassify him between seasons. Holding a
-      // single position on the identity row is what made those look like different people.
-      db.prepare(
-        "INSERT INTO player_position (player_sk, position, source) VALUES (?,?,?) ON CONFLICT DO NOTHING",
-      ).run(sk, normPos(p.position), "playerids");
       res.players++;
       if (minted) res.minted++;
       res.matched[matchedBy] = (res.matched[matchedBy] ?? 0) + 1;

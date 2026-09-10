@@ -122,10 +122,6 @@ export const depthChartsUrl = (season: number) => `${NFLVERSE}/depth_charts/dept
 export const snapCountsUrl = (season: number) => `${NFLVERSE}/snap_counts/snap_counts_${season}.csv`;
 export const participationUrl = (season: number) => `${NFLVERSE}/pbp_participation/pbp_participation_${season}.csv`;
 export const contractsUrl = `${NFLVERSE}/contracts/historical_contracts.csv.gz`;
-/** NGS ships one combined file per phase covering every season, plus per-season copies. The
- *  combined file is one fetch instead of ten and carries the same rows. */
-export const ngsUrl = (phase: "passing" | "receiving" | "rushing") => `${NFLVERSE}/nextgen_stats/ngs_${phase}.csv.gz`;
-
 /** Cache tags for the per-season raw feeds. Same rule as `cacheTag`: never type a tag twice. */
 export const rawTag = {
   injuries: (s: number) => `injuries-${s}`,

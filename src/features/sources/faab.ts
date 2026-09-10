@@ -42,7 +42,7 @@
  * the claim bought and are targets; `competing_bids` is knowable only afterwards and is stored for
  * reporting, never as a feature. `scripts/faab-leakage.mjs` is the guard, and it fault-injects.
  */
-import { openDb, nowIso, type DB } from "../../db/db.js";
+import { nowIso, type DB } from "../../db/db.js";
 
 /** ESPN's Integer.MIN_VALUE null sentinel, which appears as a team id on unresolved claims. */
 export const NULL_TEAM = "-2147483648";
@@ -119,13 +119,6 @@ export function budgetFor(db: DB, season: number, fallback = 100): number {
   const r = db.prepare(`SELECT MAX(faab_spent) mx FROM fact_team_season WHERE season = ?`).get(season) as { mx: number | null };
   const mx = r?.mx ?? 0;
   return mx >= fallback ? Math.round(mx) : fallback;
-}
-
-export function buildWaiverClaims(opts: { dbPath?: string; seasons?: number[] } = {}): BuildFaabResult {
-  const db = openDb(opts.dbPath);
-  try {
-    return buildWaiverClaimsOn(db, opts.seasons);
-  } finally { db.close(); }
 }
 
 export function buildWaiverClaimsOn(db: DB, seasons?: number[]): BuildFaabResult {

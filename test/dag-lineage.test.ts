@@ -61,12 +61,11 @@ test("allProducers returns both registries' declarations, non-empty on each side
 // pass 5) against `git grep 'INSERT INTO <table>'` to confirm it really is one of those, not a
 // Programme-3 table someone forgot to register.
 const OUT_OF_SCOPE_TABLES = new Set([
-  "action_log", "draft", "draft_pick", "draft_state", "fact_matchup", "identity_rekey",
-  "matchup", "my_roster", "ownership", "player_ids", "player_ids_variant", "player_position",
-  "projection", "roster", "settings", "usage_log",
+  "action_log", "draft", "draft_state", "fact_matchup", "identity_rekey",
+  "my_roster", "ownership", "player_ids", "player_ids_variant", "settings",
   // ingest_audit is a cross-cutting VALIDATION log written by every source after it writes its data
   // (src/data/validatedIngest.ts), not a data node any producer reads -- an operational log like
-  // action_log/usage_log, not a feature/model table.
+  // action_log, not a feature/model table.
   "ingest_audit",
 ]);
 
@@ -82,10 +81,10 @@ test("every served table has a producer or is external -- every real schema tabl
 test("FAULT INJECTION: the out-of-scope list is doing real work, not silencing a clean check by accident", () => {
   const graph = computeLineage();
   const known = schemaTables();
-  // Remove one real exclusion (`roster`) and confirm the guard actually names it -- proving the
+  // Remove one real exclusion (`my_roster`) and confirm the guard actually names it -- proving the
   // exclusion list is load-bearing, not a no-op next to an already-empty result.
   const withoutOneExclusion = new Set(OUT_OF_SCOPE_TABLES);
-  withoutOneExclusion.delete("roster");
+  withoutOneExclusion.delete("my_roster");
   const missing = unplacedServedTables([...known].filter((t) => !withoutOneExclusion.has(t)), graph);
-  assert.ok(missing.includes("roster"), "removing 'roster' from the exclusion list did not surface it as missing a producer");
+  assert.ok(missing.includes("my_roster"), "removing 'my_roster' from the exclusion list did not surface it as missing a producer");
 });

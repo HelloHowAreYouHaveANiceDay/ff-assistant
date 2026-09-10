@@ -367,11 +367,11 @@ export const RAW_ASSETS: RawAsset[] = [
   },
   {
     id: "league-rosters",
-    table: "raw_league_roster_week (+ _status)",
+    table: "raw_league_roster_week",
     what: "this league's roster AND starting lineup for every scoring period, through the app's ESPN session (the /seasons/ boxscore view -- leagueHistory+mRoster ignores the week and serves the final roster)",
     defaultSeasons: [2018, new Date().getFullYear()],
     reads: ["src_espn"],
-    writes: ["raw_league_roster_week", "raw_league_roster_week_status"],
+    writes: ["raw_league_roster_week"],
     async run(dbPath, seasons) {
       const { ingestLeagueRosters } = await import("./leagueRosters.js");
       const r = await ingestLeagueRosters({ dbPath, seasons });

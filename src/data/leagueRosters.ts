@@ -189,17 +189,12 @@ export function loadLeagueRosterWeeks(db: DB, leagueId: string, weeks: RosterWee
        acquisition_type=excluded.acquisition_type, acquisition_date=excluded.acquisition_date,
        as_of=excluded.as_of, as_of_start=excluded.as_of_start, as_of_end=excluded.as_of_end,
        fetched_at=excluded.fetched_at`);
-  const upWeek = db.prepare(
-    `INSERT INTO raw_league_roster_week_status VALUES (@l,@s,@w,@a,@n,@note,@now)
-     ON CONFLICT(league_id,season,week) DO UPDATE SET available=excluded.available, rows=excluded.rows,
-       note=excluded.note, fetched_at=excluded.fetched_at`);
   const c: RosterWeekCounts = { weeks: 0, available: 0, rows: 0, starters: 0 };
   db.transaction(() => {
     for (const wk of weeks) {
       const k = kick.get(`${wk.season}|${wk.week}`) ?? null;
       c.weeks++;
       if (wk.available) c.available++;
-      upWeek.run({ l: leagueId, s: wk.season, w: wk.week, a: wk.available ? 1 : 0, n: wk.rows.length, note: wk.note, now: fetchedAt });
       for (const r of wk.rows) {
         up.run({
           l: leagueId, s: r.season, w: r.week, t: r.teamId, p: r.espnPlayerId, name: r.name, pos: r.position,

@@ -159,19 +159,3 @@ export function loadWeekContext(
   };
 }
 
-/** Which (season, week) pairs have both roster state and a weekly feature table. */
-export function playableWeeks(db: DB, leagueId: string, seasons: number[]): { season: number; week: number }[] {
-  const out: { season: number; week: number }[] = [];
-  for (const season of seasons) {
-    for (const r of db.prepare(
-      `SELECT DISTINCT week FROM fact_roster_week WHERE season=? ORDER BY week`,
-    ).all(season) as { week: number }[]) {
-      const n = (db.prepare(
-        `SELECT COUNT(*) AS n FROM feat_player_week_model WHERE season=? AND week=?`,
-      ).get(season, r.week) as { n: number }).n;
-      if (n > 0) out.push({ season, week: r.week });
-    }
-  }
-  void leagueId;
-  return out;
-}

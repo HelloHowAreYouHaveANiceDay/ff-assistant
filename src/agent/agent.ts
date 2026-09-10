@@ -5,7 +5,7 @@
 // discover_leagues, driven via the renderer). No bro -- everything goes through the app session.
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { openDb, getConfig, setConfig, appendUsage, getMyRoster, setMyRoster, logAction, completeAction, recentActions, type RosterEntry } from "../db/db.js";
+import { openDb, getConfig, setConfig, getMyRoster, setMyRoster, logAction, completeAction, recentActions, type RosterEntry } from "../db/db.js";
 import { nameKey } from "../draft/values.js";
 import { scoringFromEspn, type ScoringRules } from "../draft/scoring.js";
 import { LEVER_META, clampLever, applyLevers } from "../draft/levers.js";
@@ -462,11 +462,6 @@ function buildTools(dbPath: string | undefined, season: number) {
             const mine = teams.find((t: any) => t.id === Number(lg.team_id));
             const entries = mine?.roster?.entries ?? [];
             const roster = entries.map((e: any) => { const p = e.playerPoolEntry?.player ?? {}; return `${ESPN_SLOT[e.lineupSlotId] ?? e.lineupSlotId}: ${p.fullName ?? "?"} (${ESPN_POS[p.defaultPositionId] ?? "?"}${p.injuryStatus && p.injuryStatus !== "ACTIVE" ? " " + p.injuryStatus : ""})`; });
-            if (entries.length) { // persist snapshot -- ready for the in-season tools
-              const snap = new Date().toISOString();
-              const up = db.prepare("INSERT OR REPLACE INTO roster (league_id, player_id, slot, is_starter, snapshot_at) VALUES (?,?,?,?,?)");
-              db.transaction(() => { for (const e of entries) { const p = e.playerPoolEntry?.player ?? {}; const k = nameKey(p.fullName ?? ""); if (k) up.run(lg.league_id, k, ESPN_SLOT[e.lineupSlotId] ?? String(e.lineupSlotId), (e.lineupSlotId === 20 || e.lineupSlotId === 21) ? 0 : 1, snap); } })();
-            }
             const standings = teams.map((t: any) => ({ name: t.name ?? `${t.location ?? ""} ${t.nickname ?? ""}`.trim(), w: t.record?.overall?.wins ?? 0, l: t.record?.overall?.losses ?? 0, pf: Math.round(t.record?.overall?.pointsFor ?? 0) }))
               .sort((a: any, b: any) => b.w - a.w || b.pf - a.pf);
             const drafted = j.draftDetail?.drafted ?? false; const inProg = j.draftDetail?.inProgress ?? false;
@@ -680,16 +675,6 @@ export async function agentAsk(question: string, opts: { dbPath?: string; season
       permissionMode: "bypassPermissions",
     },
   })) {
-    // record token usage per turn (feeds the budget governor)
-    const mm = m as { type?: string; usage?: Record<string, number>; message?: { usage?: Record<string, number> } };
-    const u = mm.usage ?? mm.message?.usage;
-    if (mm.type === "result" && u) {
-      try {
-        const db = openDb(opts.dbPath);
-        appendUsage(db, { runType: "chat", input: u.input_tokens, output: u.output_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens });
-        db.close();
-      } catch { /* best-effort */ }
-    }
     opts.onEvent(m);
   }
 }

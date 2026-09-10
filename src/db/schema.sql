@@ -265,18 +265,6 @@ CREATE TABLE IF NOT EXISTS draft (
   updated_at  TEXT
 );
 
--- every pick made in a draft (append per pick)
-CREATE TABLE IF NOT EXISTS draft_pick (
-  draft_id     TEXT REFERENCES draft(draft_id),
-  pick_no      INTEGER,
-  player_id    TEXT,                 -- name_key
-  team         TEXT,
-  price        INTEGER,
-  nominated_by TEXT,
-  ts           TEXT,
-  PRIMARY KEY (draft_id, pick_no)
-);
-
 -- the live per-tick snapshot (one row per draft, upserted); state_json holds the full payload
 CREATE TABLE IF NOT EXISTS draft_state (
   draft_id        TEXT PRIMARY KEY REFERENCES draft(draft_id),
@@ -306,16 +294,6 @@ CREATE TABLE IF NOT EXISTS my_roster (
 
 -- ==================== L4: governance (APPEND-ONLY logs) ====================
 
-CREATE TABLE IF NOT EXISTS usage_log (
-  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts                 TEXT,
-  run_id             TEXT,
-  run_type           TEXT,           -- 'chat' | 'lineup' | 'waiver' | 'injury_check'
-  input_tokens       INTEGER,
-  output_tokens      INTEGER,
-  cache_read_tokens  INTEGER,
-  cache_write_tokens INTEGER
-);
 CREATE TABLE IF NOT EXISTS action_log (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   ts           TEXT,
@@ -337,23 +315,6 @@ CREATE TABLE IF NOT EXISTS league (
   team_id        TEXT,
   scoring_json   TEXT,
   last_synced_at TEXT
-);
-CREATE TABLE IF NOT EXISTS roster (
-  league_id   TEXT,
-  player_id   TEXT,
-  slot        TEXT,
-  is_starter  INTEGER,
-  snapshot_at TEXT,
-  PRIMARY KEY (league_id, player_id, snapshot_at)
-);
-CREATE TABLE IF NOT EXISTS projection (
-  league_id   TEXT,
-  player_id   TEXT,
-  week        INTEGER,
-  source      TEXT,
-  proj_points REAL,
-  fetched_at  TEXT,
-  PRIMARY KEY (league_id, player_id, week, source)
 );
 -- who owns each player in a league (all teams' rosters) -- the board's per-league ownership overlay.
 CREATE TABLE IF NOT EXISTS ownership (
@@ -386,17 +347,6 @@ CREATE TABLE IF NOT EXISTS player_identity (
 -- Uniqueness on (name_key, birthdate). SQLite treats NULLs as distinct, which is the behaviour we
 -- want: two players with the same name and no known birthdate stay separate rather than colliding.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_natural ON player_identity (name_key, birthdate);
-
--- Position ELIGIBILITY, many per player. ESPN qualifies a player at several positions at once, so a
--- single position column cannot hold the truth -- and holding it on the identity row made position
--- changes look like new people.
-CREATE TABLE IF NOT EXISTS player_position (
-  player_sk  INTEGER REFERENCES player_identity(player_sk),
-  position   TEXT,
-  source     TEXT,
-  PRIMARY KEY (player_sk, position, source)
-);
-CREATE INDEX IF NOT EXISTS idx_pos_sk ON player_position (player_sk);
 
 -- One row per (source, source_id). MANY per player: a single espn_id column cannot express a player
 -- with two ids, nor an id later reassigned. UNIQUE on (source, source_id) is what makes a disputed
@@ -545,16 +495,6 @@ CREATE TABLE IF NOT EXISTS ranking_history (
 );
 CREATE INDEX IF NOT EXISTS idx_rankhist_season ON ranking_history (season, ecr_type, scrape_date);
 CREATE INDEX IF NOT EXISTS idx_rankhist_player ON ranking_history (player_id, season);
-
-CREATE TABLE IF NOT EXISTS matchup (
-  league_id        TEXT,
-  week             INTEGER,
-  opponent_team_id TEXT,
-  my_proj          REAL,
-  opp_proj         REAL,
-  fetched_at       TEXT,
-  PRIMARY KEY (league_id, week)
-);
 
 -- ================= FEATURE LAYER: feat_* =================
 --
@@ -1222,15 +1162,6 @@ CREATE TABLE IF NOT EXISTS player_eligibility (
 -- (every statement is CREATE ... IF NOT EXISTS), so a new column would also need an ALTER in
 -- src/db/db.ts; a new table needs neither and lands on an existing store unchanged. One row per
 -- valued player per season, written by the assembler alongside player_value.
-CREATE TABLE IF NOT EXISTS player_value_position (
-  player_id      TEXT,               -- name_key, the same key player_value uses
-  season         INTEGER,
-  board_pos      TEXT,               -- the position the projection carried
-  value_pos      TEXT,               -- the eligible position the VOR was taken at
-  eligible_json  TEXT,               -- the full eligible set, for audit
-  updated_at     TEXT,
-  PRIMARY KEY (player_id, season)
-);
 -- ================= RAW LAYER: this league's week-by-week rosters and transaction log =============
 --
 -- Added by the in-season backtest track. The store already held this league's auction, finish and
@@ -1254,14 +1185,6 @@ CREATE TABLE IF NOT EXISTS raw_league_roster_week (
   PRIMARY KEY (league_id, season, week, team_id, espn_player_id));
 CREATE INDEX IF NOT EXISTS idx_rlrw_wk ON raw_league_roster_week (season, week);
 CREATE INDEX IF NOT EXISTS idx_rlrw_pl ON raw_league_roster_week (espn_player_id, season);
-
--- One row per SCORING PERIOD ASKED FOR, whether or not it had data. A week ESPN served nothing for
--- is a fact worth keeping: without it, a season we never fetched and a season ESPN has purged look
--- identical.
-CREATE TABLE IF NOT EXISTS raw_league_roster_week_status (
-  league_id TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL,
-  available INTEGER NOT NULL, rows INTEGER NOT NULL, note TEXT, fetched_at TEXT NOT NULL,
-  PRIMARY KEY (league_id, season, week));
 
 -- ONE ROW PER TRANSACTION ITEM, not per transaction: a free-agent pickup is one ESPN transaction
 -- containing an ADD item and a DROP item, and a trade contains four. `item_no` is the index in

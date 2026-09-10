@@ -76,9 +76,9 @@ export const PRODUCERS: Producer[] = [
     //    actually feed each other. Table-level lineage cannot see the partition; this is the one
     //    place that limitation had to be resolved by hand rather than by a finer-grained node.
     reads: ["stg_player", "player_bio", "team_bye", "ranking", "adp", "market_value", "news",
-      "raw_espn_eligibility", "player_value", "player_value_position", "board", "points.csv",
+      "raw_espn_eligibility", "player_value", "board", "points.csv",
       "rank-outcomes.json", "correlation-model.json"],
-    writes: ["player_value", "player_value_position", "board"],
+    writes: ["player_value", "board"],
   },
   {
     id: "project",

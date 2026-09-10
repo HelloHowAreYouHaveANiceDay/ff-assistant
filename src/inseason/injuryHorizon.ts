@@ -223,15 +223,6 @@ export function checkHorizonGolden(a: InjuryHorizonArtifact, tol = 1e-6): void {
 
 export const INJURY_HORIZON_ARTIFACT = "injury-duration-artifact.json";
 
-/** Load the shipped artifact from data/, or null where it has not been fitted. A missing model is
- *  reported by the caller as an assumption ("tier rate, no injury model on file"), never silently
- *  replaced by one -- which is exactly how `opportunity-model.json` used to degrade. */
-export function loadShippedHorizonArtifact(dataPathOf: (f: string) => string, read: (p: string) => string, exists: (p: string) => boolean): InjuryHorizonArtifact | null {
-  const p = dataPathOf(INJURY_HORIZON_ARTIFACT);
-  if (!exists(p)) return null;
-  return loadInjuryHorizonArtifact(JSON.parse(read(p)));
-}
-
 export interface LiveEpisode extends HorizonRow {
   playerSk: number | null;
   name: string;

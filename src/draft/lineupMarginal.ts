@@ -487,12 +487,3 @@ export function calibrateSurrogateDollars(
   return Math.max(0, Math.exp(f.a) * Math.pow(dollars, f.b));
 }
 
-/** The same marginal restricted to the fantasy playoff weeks -- the SECONDARY objective. Byes do not
- *  fall in the league PLAYOFF WEEKS (weeks 14-16 under the current format block), so this is three plain weeks and reduces to a depth-and-availability
- *  question, which is exactly what it should be. */
-export function playoffWeekMarginal(roster: readonly LmPlayer[], add: LmPlayer, o: LmOpts, playoffWeeks: readonly number[]): number {
-  const strip = (r: readonly LmPlayer[]) => r.map((p) => ({ ...p, bye: null }));
-  const before = playoffWeeks.length * expectedWeekPoints(strip(roster), 0, o);
-  const after = playoffWeeks.length * expectedWeekPoints(strip([...roster, add]), 0, o);
-  return Math.max(0, after - before);
-}

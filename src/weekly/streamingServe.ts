@@ -25,15 +25,12 @@ import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
 import { loadWeeklyRows } from "./features.js";
 import {
-  loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT,
+  loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT,
   type WeeklyArtifact,
 } from "./projector.js";
 
 /** The full-data streaming artifact, from tools/train_streaming.py. */
 export const STREAMING_ARTIFACT = "streaming-artifact.json";
-/** The full-data two-part weekly artifact, from tools/train_weekly.py --zero-model two-part. Named
- *  by the same constant the challenger scorecard series uses, so one file has one name. */
-export const TWO_PART_ARTIFACT = CHALLENGER_WEEKLY_ARTIFACT;
 
 /**
  * WHAT SHIPS, PER POSITION. THE SINGLE TABLE, and every consumer reads it.

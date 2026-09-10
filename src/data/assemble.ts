@@ -292,7 +292,6 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     db.prepare("DELETE FROM player_value WHERE season=@s").run({ s: season });
     db.prepare("DELETE FROM ranking WHERE source='espn' AND season=@s").run({ s: season });
     db.prepare("DELETE FROM board WHERE season=@s").run({ s: season });
-    db.prepare("DELETE FROM player_value_position WHERE season=@s").run({ s: season });
     const upPlayer = db.prepare("INSERT INTO player (player_id, name, position, updated_at) VALUES (?,?,?,?) ON CONFLICT(player_id) DO NOTHING");
     // player_sk comes from STAGING, looked up by (name_key, position). Consumers get the stable id so
     // they can stop joining on names; player_id stays for the callers not yet migrated.
@@ -304,9 +303,6 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     const upVal = db.prepare("INSERT INTO player_value (player_id, player_sk, season, our_value, our_rank, pos_rank, tier, proj_pts, last_pts, last_gms, updated_at) VALUES (@id,@sk,@s,@v,@rk,@pr,@t,@pp,@lp,@lg,@now)");
     const upRank = db.prepare("INSERT INTO ranking (player_id, source, season, overall_rank, pos_rank, adp, fetched_at) VALUES (@id,'espn',@s,@rank,@pos,@adp,@now) ON CONFLICT(player_id,source,season) DO UPDATE SET overall_rank=excluded.overall_rank, pos_rank=excluded.pos_rank, adp=excluded.adp, fetched_at=excluded.fetched_at");
     const upBoard = db.prepare("INSERT INTO board (player_id, player_sk, season, row_json, updated_at) VALUES (@id,@sk,@s,@json,@now)");
-    // WHICH POSITION THE DOLLAR VALUE WAS TAKEN AT. Written only when eligibility has actually been
-    // ingested, so an empty table means "not measured" rather than "everyone is single-eligible".
-    const upValPos = db.prepare("INSERT INTO player_value_position (player_id, season, board_pos, value_pos, eligible_json, updated_at) VALUES (@id,@s,@bp,@vp,@ej,@now)");
     const numOrNull = (x: unknown) => typeof x === "number" ? x : null;
     for (const r of rows) {
       const id = nameKey(r.player as string); if (!id) continue;
@@ -322,10 +318,6 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
       if (typeof r.espn_rank === "number") upRank.run({ id, s: season, rank: r.espn_rank, pos: r.espn_pos || null, adp: numOrNull(r.espn_adp), now });
       const obj: Record<string, unknown> = {}; COLS.forEach((c, i) => (obj[HEAD[i]] = r[c]));
       upBoard.run({ id, sk, s: season, json: JSON.stringify(obj), now });
-      if (eligKnown) {
-        upValPos.run({ id, s: season, bp: String(r.pos), vp: String(r.value_pos ?? r.pos),
-          ej: JSON.stringify(elig.get(id) ?? [String(r.pos)]), now });
-      }
     }
   });
   tx();
