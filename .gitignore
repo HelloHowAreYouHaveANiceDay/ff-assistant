@@ -108,3 +108,4 @@ data/projection-artifact.2c.json
 # bought nothing that the setup script does not already do.
 data/variance-model.json
 data/fold-models/
+docs/redesign/*.out

@@ -431,7 +431,16 @@ export type WeeklyProjection = Map<string, number>;
 
 /** Loose name key -- lower case, no punctuation, no suffix. The board and the weekly feature table
  *  spell "Chris Godwin Jr." and "Chris Godwin Jr" differently often enough that an exact match
- *  would quietly send half a roster down the fallback path and report it as a weekly projection. */
+ *  would quietly send half a roster down the fallback path and report it as a weekly projection.
+ *
+ *  DELIBERATELY NOT the canonical nameKey in src/draft/values.ts, and MUST NOT be unified with it.
+ *  This key has a different normal form on purpose: it keeps digits and word-separating SPACES
+ *  ([^a-z0-9]+ -> " "), drops suffix tokens to "" rather than " ", and does NOT strip a "d/st" token
+ *  -- whereas canonical collapses to letters only with no spaces or digits ([^a-z] -> "") and strips
+ *  "d/st". e.g. "Amon-Ra St. Brown Jr." -> "amon ra st brown" here vs "amonrastbrown" canonical;
+ *  "Broncos D/ST" -> "broncos d st" here vs "broncos" canonical. The weekly projection Map is keyed
+ *  by THIS form on both sides of its join, so swapping in canonical would silently break weekly
+ *  lineup matching. Left as its own definition intentionally -- an owner decision, not an oversight. */
 export const lineupNameKey = (s: string): string =>
   s.toLowerCase().replace(/[.'`]/g, "").replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 

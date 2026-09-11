@@ -28,6 +28,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { nowIso, type DB } from "../db/db.js";
 import { dataPath } from "./paths.js";
+import { nameKey as valuesNameKey } from "../draft/values.js";
 
 const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 
@@ -238,10 +239,12 @@ export function stageEligibility(
   return { staged: bySk.size, unresolved: unresolvedNames.length, unresolvedNames: unresolvedNames.slice(0, 20) };
 }
 
-/** A local copy of the name normaliser, imported lazily to keep this module free of a value-book
- *  dependency in the hot path. Only the "name" fault-injection mode uses it. */
+/** The name normaliser. Was a hand-copied duplicate of the canonical nameKey in src/draft/values.ts
+ *  (byte-for-byte identical); now delegates to it so there is one source of truth. values.ts is a
+ *  pure, import-free module, so the old "keep this module free of a value-book dependency" concern
+ *  does not apply -- the static import adds no runtime weight and creates no cycle. */
 function nameKeyLocal(s: string): string {
-  return s.toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, " ").replace(/\bd\/?st\b/g, " ").replace(/[^a-z]/g, "");
+  return valuesNameKey(s);
 }
 
 /**

@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { Database as DB } from "better-sqlite3";
 import { optimalLineup } from "../inseason/lineup.js";
-import { dstAliasKey } from "../draft/values.js";
+import { dstAliasKey, nameKey as valuesNameKey } from "../draft/values.js";
 import type { LeagueDivision, LeagueFormat, LeaguePlayer, LeagueProvider, LeagueTeam, SeedingRule } from "./types.js";
 export type { LeaguePlayer, LeagueTeam, FreeAgent, LeagueShape, LeagueProvider, LeagueFormat, LeagueDivision, SeedingRule } from "./types.js";
 
@@ -150,9 +150,12 @@ export function leagueCalendar(db: DB): { season: number; regWeeks: number; nflW
   return { season: cfg.season, regWeeks: format.regWeeks, nflWeeks: NFL_WEEKS, playoffWeeks: format.playoffWeeks, format };
 }
 
-/** Name matching across sources: ESPN, FantasyPros and nflverse disagree on suffixes and punctuation. */
-export const nameKey = (s: string): string =>
-  String(s).toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, " ").replace(/\bd\/?st\b/g, " ").replace(/[^a-z]/g, "");
+/** Name matching across sources: ESPN, FantasyPros and nflverse disagree on suffixes and punctuation.
+ *  Delegates to the CANONICAL nameKey in src/draft/values.ts -- the two were byte-for-byte identical
+ *  (the only historical difference was this wrapper's defensive `String(s)` coercion, preserved here
+ *  so a non-string caller still cannot throw). Kept as a re-export so every existing importer of
+ *  `nameKey` from this module is unchanged. */
+export const nameKey = (s: string): string => valuesNameKey(String(s));
 
 export interface OpenLeague {
   provider: LeagueProvider;

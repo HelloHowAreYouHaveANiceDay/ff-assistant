@@ -4,7 +4,9 @@
 //
 //   node scripts/lever-connected.mjs benchNonFlex 1 0.2
 import { readFileSync } from "node:fs";
+import Database from "better-sqlite3";
 import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
+import { DEFAULT_LEVERS } from "../src/draft/levers.ts";
 
 const [, , lever, aRaw, bRaw] = process.argv;
 if (!lever) { console.error("usage: lever-connected.mjs <lever> <valueA> <valueB>   (values may be JSON)"); process.exit(2); }
@@ -18,7 +20,15 @@ const readCsv = (p) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).ma
 const points = readCsv("data/points.csv").map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
 const ourValues = new Map();
 for (const f of readCsv("data/values.csv")) ourValues.set(f[0].trim(), Number(f[2]));
-const base = { values: Object.fromEntries(ourValues), starterReserve: 15, benchReserve: 1, premium: 2, maxShare: 0.35, maxKDst: 2, benchDiscount: 0.25 };
+// Read the SHIPPED levers rather than hardcoding them -- a stale baseline here silently tests the
+// lever against a config we no longer ship, so a "DEAD" verdict could be an artifact of the wrong
+// base. This mirrors getConfig()'s merge (stored levers OVER code defaults) without opening the DB
+// for writes (openDb migrates + seeds): read-only, exactly like scripts/read-config.mjs.
+const db = new Database("data/ff.db", { readonly: true });
+const storedRow = db.prepare("SELECT value FROM settings WHERE key='config'").get();
+const storedLevers = storedRow ? (JSON.parse(storedRow.value).levers ?? {}) : {};
+db.close();
+const base = { values: Object.fromEntries(ourValues), ...DEFAULT_LEVERS, ...storedLevers };
 
 const N = 40;
 const measure = (v) => {

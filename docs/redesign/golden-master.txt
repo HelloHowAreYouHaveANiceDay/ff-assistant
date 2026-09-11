@@ -1,0 +1,6 @@
+56830ec9dde2e3ce94525e84beab47108e45561d
+=== GOLDEN MASTER baseline captured 2026-09-11T20:41:48Z ===
+FORMAT  weeks 1-13, 7-team playoff, seeding division-winners-first, bracket reseeds  (from the espn format block)
+BACKTEST age-curve opportunity FULL-SYSTEM(real lineup)+inflation no-lookahead(prev-yr proj)  16-team $200 HALF 7-team-playoff | reserve=4 maxShare=0.25  market 0.3  book vor
+  CHAMPIONSHIPS: 38.5%  (random 6.3%)  |  playoffs: 96%
+  TESTS baseline: 736 total, 733 pass, 1 fail (pre-existing)

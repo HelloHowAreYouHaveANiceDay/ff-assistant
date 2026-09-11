@@ -1,4 +1,7 @@
 /**
+ * BUILT-BUT-UNCONSUMED (edges #9): this derivation writes `feat_player_prospect`, but no shipped
+ * model or board reads it -- it is kept as a deliberate, separate decision, not an oversight.
+ *
  * PROSPECT FEATURE DERIVATION -- turn the raw combine + college-production tables into the per-player
  * rookie priors the projection's history-based features cannot supply, written to `feat_player_prospect`.
  *
