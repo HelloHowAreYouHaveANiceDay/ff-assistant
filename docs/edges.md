@@ -351,8 +351,13 @@ rookies (they filtered on non-null `season_line_pg`). The live board path does p
 scheduled games) -- MAE 4.30 vs actual, a legitimate line where there was none. Re-tested role-trend on
 rookies with it (`scripts/rookie-weekly-roletrend.mjs`): on the role-change subset (31% of rookie-weeks,
 far more than veterans) role-trend cuts MAE 4.1% at a=1.0 -- ~2x the veterans' ~2% (#7), the
-highest-leverage case as predicted. Still ACCURACY only; whether it converts to a decision edge on
-rookies (now testable via the fallback + harness) is the open gate, same as #7.
+highest-leverage case as predicted. Still ACCURACY only. WIRED the fallback into the projection (preseasonLinePerGame,
+backtest branch; the live board path keeps ECR) and rebuilt 2018-2024: rookies now have a
+season_line_pg (59/59 for 2023, was 0), so the weekly model, scorecard, and decision harness
+finally SEE them -- veterans unchanged (additive). With rookies now in the harness, the
+role-trend DECISION test is STILL refuted (accuracy 2x on rookies does not convert to a waiver
+edge, same as #7). So: the coverage gap is fixed (a real win -- the model represents rookies
+weekly), but week-over-week role re-projection remains accuracy-only, not an automatable edge.
 
 ## Edges that DON'T exist / aren't worth chasing
 

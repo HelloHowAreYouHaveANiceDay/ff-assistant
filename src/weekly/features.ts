@@ -40,6 +40,7 @@ import { nameKey } from "../draft/values.js";
 import { fetchCsvCached, URLS, cacheTag, canonTeam, pick } from "../data/nflverse.js";
 import { loadArtifact, type ProjectionArtifact } from "../model/projector.js";
 import { backtestProjection, boardProjection } from "../model/features.js";
+import { fitRookieCurve, rookieProjections } from "../draft/rookieModel.js";
 import { STREAM_FIELD_NAMES, presentStreamFields } from "./streamingFields.js";
 
 /** The positions a weekly model has an opinion about. Same list src/features/build.ts uses. */
@@ -324,6 +325,20 @@ export function preseasonLinePerGame(
     const key = weekFeatKey(r.player_sk, r.name, r.pos);
     const g = gamesFor(teamOf.get(key) ?? null);
     if (Number.isFinite(r.mean) && g > 0) out.set(key, r.mean / g);
+  }
+  // ROOKIE FALLBACK. The BACKTEST path (season < currentSeason) prices players by prior-season rank, so
+  // a rookie -- who has none -- is absent and his season_line_pg is left NULL, which drops him from the
+  // weekly scorecard, the in-season harness and every decision experiment. Give him a draft-capital line
+  // (src/draft/rookieModel.ts, leakage-clean: the curve is fit on rookies from BEFORE this season). The
+  // BOARD path (live) already prices rookies via ECR consensus rank, so this only fills the backtest gap.
+  if (season < currentSeason) {
+    const curve = fitRookieCurve(db, { beforeSeason: season });
+    for (const rp of rookieProjections(db, season, curve)) {
+      const key = weekFeatKey(rp.player_sk, rp.name, rp.pos);
+      if (out.has(key)) continue;                 // already priced (e.g. a rare rank) -- do not override
+      const g = gamesFor(teamOf.get(key) ?? null);
+      if (g > 0) out.set(key, rp.points / g);
+    }
   }
   return out;
 }
