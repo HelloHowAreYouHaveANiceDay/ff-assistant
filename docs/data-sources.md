@@ -175,8 +175,10 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
   the full history in one fetch (receiving 1.0MB / ~14,700 rows, passing 0.6MB, rushing 0.3MB).
   **Only players above a usage threshold appear** -- this is a leaderboard feed, not a census, so
   absence from it is not zero.
-- **Raw table.** `raw_ngs`.
-- **Status.** proposed.
+- **Raw table.** `raw_ngs` (`ingestRawNgs`, `ff ingest-raw ngs`) -- one table, `stat_type` in
+  {rec,rush,pass}, 26,737 rows 2016-2026 (2,173 are week=0 season aggregates). gsis crosswalk resolves
+  1,140 of 1,142 players (99.8%) -- the cheapest bridge in the repo.
+- **Status.** ingested (2026-09). Not yet read by a feature.
 
 ### 1.8 Depth charts -- `depth_charts_<season>.csv`
 
@@ -356,12 +358,18 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
 
 ### 1.14 Combine -- `combine/combine.csv`
 
-- **Grain / key.** (draft_year, player). Name-keyed in our ingest -- `ingestBio` builds a
-  `nameKey -> forty` map with "first non-empty wins", which is the loose kind of join this repo has
-  been burned by; the comment there acknowledges it.
-- **As-of.** February of the draft year.
-- **Feeds.** `player_bio.forty` -> the board's `40yd` column.
-- **Status.** ingested. **Unread columns:** `draft_team`, `draft_ovr`, `cfb_id`, `school`.
+- **Grain / key.** (draft_year, player_name, pos) in `raw_combine`. Carries **`pfr_id`** (7,436 of
+  8,967 rows) which joins `player_xref('pfr')` directly -- a clean id crosswalk, not a name guess --
+  resolving 5,441 combine players to `player_sk` (1,003 of them drafted 2022+). Also carries
+  **`cfb_id`** (sports-reference college slug, 7,445 rows), the bridge to college-production data.
+- **As-of.** Late February of the draft year; stored as `<draft_year>-03-01`.
+- **What.** The full athletic profile -- `ht, wt, forty, bench, vertical, broad_jump, cone, shuttle`
+  -- i.e. the RAS inputs (the ATHLETIC pillar of a rookie projection). Skill-position coverage among
+  3,014 RB/WR/TE/QB: forty 2,746, vertical 2,392, broad 2,340, shuttle 1,798, cone 1,742, bench 1,458.
+- **Raw table.** `raw_combine` (`ingestRawCombine`, `ff ingest-raw combine`).
+- **Feeds.** `player_bio.forty` still enriches the board's `40yd` via the legacy name-keyed `ingestBio`
+  path; the full `raw_combine` profile is the foundation for an athletic-score feature (not yet built).
+- **Status.** ingested (full profile, 2026-09). Previously only `forty` was read, by name.
 
 ### 1.15 PFR advanced stats -- `pfr_advstats/advstats_week_{pass,rush,rec,def}_<season>.csv`
 
@@ -578,6 +586,31 @@ is the credential. Everything below is a GET.
 - **Fetch path and cost.** `ff build-waiver-claims`, 0.2s, no network.
 - **Feeds.** `tools/train_faab.py` -> `data/faab-model.json` -> `waiver_targets` / `ff copilot
   waivers`. Guarded by `scripts/faab-leakage.mjs`, which fault-injects five leaks.
+
+## 5.9 cfbfastR -- college production (the rookie college pillar)
+
+- **What.** College receiving/rushing production, the raw material of Dominator Rating and Breakout
+  Age -- the analytics-community rookie signal our model lacked. Aggregated at INGEST from cfbfastR
+  play-by-play (`sportsdataverse/cfbfastR-data`, `player_stats/csv/player_stats_<season>.csv`, keyless
+  raw.githubusercontent CSV, same pattern as nflverse) into player-season and team-season totals.
+- **Grain / key.** `raw_college_player_season` (season, cfb_athlete_id): games, receptions, targets,
+  rec_yards, rec_tds, rush_attempts, rush_yards, rush_tds. `raw_college_team_season` (season, team):
+  the team totals that are the Dominator denominator. 52,600 player-seasons, 3,061 team-seasons.
+- **As-of.** `<season+1>-02-01` -- a fall college season is complete and public by the next combine,
+  so it is knowable for that player's NFL rookie projection.
+- **Seasons, measured.** cfbfastR PBP is 2014+, so college features are null for rookies who last
+  played college before 2014 (same shape as the 2016+ participation feed).
+- **Crosswalk, MEASURED.** `cfb_athlete_id` is the CFBD id, which does NOT equal the sports-reference
+  `cfb_id` on `raw_combine`, so the bridge to `player_sk` is name+school+year, not a join. Measured on
+  combine skill players 2016+ resolved to `player_sk` (n=844): **81.9% match by name+school+year (the
+  safe rate), 96.7% by name+year.** The gap is school-name variants, recoverable with an alias map.
+- **Known limitation.** TD attribution (matching the touchdown player to the reception/rush player on
+  the play) UNDERCOUNTS -- some scores are coded on a separate PBP row. Yards (the 80% weight of
+  Dominator) are correct; the TD component is a refinement pass.
+- **Raw tables.** `raw_college_player_season`, `raw_college_team_season` (`ingestRawCollege`,
+  `ff ingest-raw college`, ~27s).
+- **Status.** ingested (2026-09). No feature reads it yet -- Dominator/Breakout derivation + the
+  name+school crosswalk to `player_sk` are the next step.
 
 ## 6. Other ingested sources
 

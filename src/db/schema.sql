@@ -847,6 +847,76 @@ CREATE TABLE IF NOT EXISTS raw_nfl_draft_pick (
   PRIMARY KEY (season, round, pick));
 CREATE INDEX IF NOT EXISTS idx_raw_draft_gsis ON raw_nfl_draft_pick (gsis_id);
 
+-- The NFL COMBINE: physical measurements and athletic testing (the ATHLETIC pillar of a rookie
+-- projection -- RAS is built from exactly these fields). One file, 2000-2025.
+--
+-- All of it is POINT-IN-TIME as of the combine (late February of the draft year); `as_of` is set a
+-- safe margin after, <draft_year>-03-01. Two crosswalk keys ride along: `pfr_player_id` joins our
+-- player_xref('pfr') directly (the same clean key snap counts use), and `cfb_player_id` is the
+-- sports-reference COLLEGE slug -- the bridge to college-production data for the college pillar.
+-- Only the 40 was ever read before (into player_bio.forty by name); this stores the full profile.
+CREATE TABLE IF NOT EXISTS raw_combine (
+  draft_year INTEGER NOT NULL, player_name TEXT NOT NULL, pos TEXT NOT NULL,
+  as_of TEXT,                      -- <draft_year>-03-01, after that year's combine
+  pfr_player_id TEXT, cfb_player_id TEXT, school TEXT,
+  draft_team TEXT, draft_round INTEGER, draft_ovr INTEGER,
+  ht TEXT, wt REAL, forty REAL, bench REAL, vertical REAL, broad_jump REAL, cone REAL, shuttle REAL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (draft_year, player_name, pos));
+CREATE INDEX IF NOT EXISTS idx_raw_combine_pfr ON raw_combine (pfr_player_id);
+CREATE INDEX IF NOT EXISTS idx_raw_combine_cfb ON raw_combine (cfb_player_id);
+
+-- Next Gen Stats: player-tracking ADVANCED metrics that box scores cannot see -- receiver
+-- separation and air-yards share, rusher yards-over-expected and stacked-box rate, passer time-to-
+-- throw and CPOE. The EFFICIENCY signal for the projection's opportunity x efficiency split. One
+-- combined file per stat type (receiving/rushing/passing), 2016+. **Carries gsis directly** -> the
+-- cheapest crosswalk to player_sk (player_xref('gsis')).
+--
+-- Two traps recorded so a consumer does not step in them: (1) week = 0 rows are SEASON AGGREGATES in
+-- the same feed -- a weekly builder must filter them or it double-counts; (2) it is a LEADERBOARD
+-- (players above a usage threshold), not a census, so absence is not zero. As-of = that week's games
+-- (prior-only); left null here and applied in the feature layer.
+CREATE TABLE IF NOT EXISTS raw_ngs (
+  season INTEGER NOT NULL, season_type TEXT NOT NULL, week INTEGER NOT NULL, stat_type TEXT NOT NULL,
+  player_gsis_id TEXT NOT NULL, player_display_name TEXT, player_position TEXT, team_abbr TEXT,
+  -- receiving
+  avg_cushion REAL, avg_separation REAL, avg_intended_air_yards REAL, pct_share_intended_air_yards REAL,
+  catch_pct REAL, avg_yac_above_expectation REAL, receptions REAL, targets REAL, rec_yards REAL, rec_tds REAL,
+  -- rushing
+  efficiency REAL, pct_attempts_gte_eight REAL, ryoe_per_att REAL, rush_pct_over_expected REAL,
+  rush_attempts REAL, rush_yards REAL, rush_tds REAL,
+  -- passing
+  avg_time_to_throw REAL, aggressiveness REAL, cpoe REAL, avg_air_yards_to_sticks REAL,
+  pass_attempts REAL, pass_yards REAL, pass_tds REAL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, season_type, week, stat_type, player_gsis_id));
+CREATE INDEX IF NOT EXISTS idx_raw_ngs_gsis ON raw_ngs (player_gsis_id, season, week);
+
+-- COLLEGE PRODUCTION (the college pillar of a rookie projection). Aggregated at ingest from cfbfastR
+-- play-by-play into player-season and team-season totals -- the ingredients of Dominator Rating (a
+-- player's share of his team's receiving+rushing yards and TDs) and Breakout Age. cfbfastR PBP is
+-- 2014+, so these are null for rookies who last played college before 2014.
+--
+-- As-of = <season+1>-02-01: a college season (fall of year S) is complete and public by the combine
+-- of the following year, so it is knowable for an NFL rookie's projection in NFL season S+1.
+--
+-- CROSSWALK CAVEAT: `cfb_athlete_id` is the CFBD id, which does NOT equal the sports-reference
+-- `cfb_id` on raw_combine -- so the bridge to player_sk is name+school, measured (not a direct join).
+CREATE TABLE IF NOT EXISTS raw_college_player_season (
+  season INTEGER NOT NULL, cfb_athlete_id TEXT NOT NULL,
+  as_of TEXT, player_name TEXT, team TEXT, games INTEGER,
+  receptions INTEGER, targets INTEGER, rec_yards REAL, rec_tds INTEGER,
+  rush_attempts INTEGER, rush_yards REAL, rush_tds INTEGER,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, cfb_athlete_id));
+CREATE INDEX IF NOT EXISTS idx_raw_cfb_player_name ON raw_college_player_season (player_name, season);
+
+CREATE TABLE IF NOT EXISTS raw_college_team_season (
+  season INTEGER NOT NULL, team TEXT NOT NULL,
+  team_rec_yards REAL, team_rush_yards REAL, team_rec_tds INTEGER, team_rush_tds INTEGER,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, team));
+
 -- FantasyFootballCalculator's ADP archive: the real draft market, by format and year.
 --
 -- `as_of` IS `meta.end_date` -- the last day of the draft window the average was taken over, which

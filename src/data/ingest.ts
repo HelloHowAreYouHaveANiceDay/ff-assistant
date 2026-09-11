@@ -305,6 +305,45 @@ export const RAW_ASSETS: RawAsset[] = [
     },
   },
   {
+    id: "combine",
+    table: "raw_combine",
+    what: "the NFL combine: full physicals + athletic testing (40, bench, vertical, broad, cone, shuttle) -- the RAS/athletic pillar, 2000-2025, with pfr + college crosswalk ids",
+    defaultSeasons: null,
+    reads: ["src_nflverse"],
+    writes: ["raw_combine"],
+    async run(dbPath) {
+      const { ingestRawCombine } = await import("./rawSources.js");
+      const r = await ingestRawCombine({ dbPath });
+      return r.total;
+    },
+  },
+  {
+    id: "ngs",
+    table: "raw_ngs",
+    what: "Next Gen Stats player-tracking advanced metrics (receiver separation/air-yards share, rusher yards-over-expected, passer CPOE) 2016+, gsis-keyed -- the efficiency signal",
+    defaultSeasons: null,
+    reads: ["src_nflverse"],
+    writes: ["raw_ngs"],
+    async run(dbPath) {
+      const { ingestRawNgs } = await import("./rawSources.js");
+      const r = await ingestRawNgs({ dbPath });
+      return r.total;
+    },
+  },
+  {
+    id: "college",
+    table: "raw_college_player_season (+ raw_college_team_season)",
+    what: "college production aggregated from cfbfastR play-by-play (2014+): player-season receiving/rushing yards+TDs and team totals -- the Dominator/Breakout ingredients for the rookie college pillar",
+    defaultSeasons: null,
+    reads: ["src_cfbfastr"],
+    writes: ["raw_college_player_season", "raw_college_team_season"],
+    async run(dbPath) {
+      const { ingestRawCollege } = await import("./rawSources.js");
+      const r = await ingestRawCollege({ dbPath });
+      return r.total;
+    },
+  },
+  {
     id: "contracts",
     table: "raw_contract",
     what: "OverTheCap contracts via nflverse -- year signed, length, value; the source of the contract-year flag",

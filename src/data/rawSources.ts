@@ -27,7 +27,7 @@
  */
 import { openDb, nowIso, type DB } from "../db/db.js";
 import {
-  fetchCsvCached, cacheTag, rawTag, URLS, canonTeam, pick,
+  fetchCsvCached, cacheTag, rawTag, URLS, NFLVERSE, canonTeam, pick,
   injuriesUrl, depthChartsUrl, snapCountsUrl, draftPicksUrl, participationUrl, contractsUrl,
 } from "./nflverse.js";
 
@@ -448,6 +448,191 @@ export async function ingestRawDraftPicks(opts: { dbPath?: string; seasons?: num
   const seasons: SeasonResult[] = [...perSeason.keys()].sort((a, b) => a - b)
     .map((s) => ({ season: s, ok: true, rows: perSeason.get(s)! }));
   return { table: "raw_nfl_draft_pick", seasons, total: totalOf(seasons) };
+}
+
+// ==================================================================================================
+// raw_combine -- the NFL combine: physicals + athletic testing. One file, all years.
+// ==================================================================================================
+
+/** `as_of = <draft_year>-03-01`: the combine runs in late February, so a result is knowable by the
+ *  first of March of the draft year and for every September anchor after it. The full athletic
+ *  profile (the RAS inputs) plus the pfr and college crosswalk ids -- only the 40 was read before. */
+export async function ingestRawCombine(opts: { dbPath?: string; refresh?: boolean } = {}): Promise<IngestReport> {
+  const rows = await fetchCsvCached(URLS.combine, cacheTag.combine, opts.refresh ?? false);
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const ins = db.prepare(
+    `INSERT INTO raw_combine (draft_year, player_name, pos, as_of, pfr_player_id, cfb_player_id, school,
+       draft_team, draft_round, draft_ovr, ht, wt, forty, bench, vertical, broad_jump, cone, shuttle, fetched_at)
+     VALUES (@draftYear,@name,@pos,@asOf,@pfr,@cfb,@school,@team,@round,@ovr,@ht,@wt,@forty,@bench,@vert,@broad,@cone,@shuttle,@now)
+     ON CONFLICT(draft_year, player_name, pos) DO UPDATE SET
+       as_of=excluded.as_of, pfr_player_id=excluded.pfr_player_id, cfb_player_id=excluded.cfb_player_id,
+       school=excluded.school, draft_team=excluded.draft_team, draft_round=excluded.draft_round,
+       draft_ovr=excluded.draft_ovr, ht=excluded.ht, wt=excluded.wt, forty=excluded.forty, bench=excluded.bench,
+       vertical=excluded.vertical, broad_jump=excluded.broad_jump, cone=excluded.cone, shuttle=excluded.shuttle,
+       fetched_at=excluded.fetched_at`,
+  );
+  const perSeason = new Map<number, number>();
+  db.transaction(() => {
+    for (const r of rows) {
+      const draftYear = int(pick(r, "draft_year", "season"));
+      const name = str(pick(r, "player_name"));
+      const pos = str(pick(r, "pos"));
+      if (draftYear == null || !name || !pos) continue;
+      ins.run({
+        draftYear, name, pos, asOf: `${draftYear}-03-01`,
+        pfr: str(pick(r, "pfr_id")), cfb: str(pick(r, "cfb_id")), school: str(pick(r, "school")),
+        team: str(pick(r, "draft_team")), round: int(pick(r, "draft_round")), ovr: int(pick(r, "draft_ovr")),
+        ht: str(pick(r, "ht")), wt: num(pick(r, "wt")), forty: num(pick(r, "forty")), bench: num(pick(r, "bench")),
+        vert: num(pick(r, "vertical")), broad: num(pick(r, "broad_jump")), cone: num(pick(r, "cone")), shuttle: num(pick(r, "shuttle")),
+        now,
+      });
+      perSeason.set(draftYear, (perSeason.get(draftYear) ?? 0) + 1);
+    }
+  })();
+  db.close();
+  const seasons: SeasonResult[] = [...perSeason.keys()].sort((a, b) => a - b)
+    .map((s) => ({ season: s, ok: true, rows: perSeason.get(s)! }));
+  return { table: "raw_combine", seasons, total: totalOf(seasons) };
+}
+
+// ==================================================================================================
+// raw_ngs -- Next Gen Stats player-tracking advanced metrics. Three combined files, one table.
+// ==================================================================================================
+
+/** Receiving/rushing/passing NGS into one `raw_ngs` keyed by (season, season_type, week, stat_type,
+ *  gsis). Every column is read for every file; `pick` returns "" for a column a file does not have,
+ *  so the irrelevant metrics land null without per-type branching. week=0 season aggregates are kept
+ *  as the source ships them (a weekly consumer must filter them). */
+export async function ingestRawNgs(opts: { dbPath?: string; refresh?: boolean } = {}): Promise<IngestReport> {
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const ins = db.prepare(
+    `INSERT INTO raw_ngs (season, season_type, week, stat_type, player_gsis_id, player_display_name,
+       player_position, team_abbr, avg_cushion, avg_separation, avg_intended_air_yards,
+       pct_share_intended_air_yards, catch_pct, avg_yac_above_expectation, receptions, targets, rec_yards,
+       rec_tds, efficiency, pct_attempts_gte_eight, ryoe_per_att, rush_pct_over_expected, rush_attempts,
+       rush_yards, rush_tds, avg_time_to_throw, aggressiveness, cpoe, avg_air_yards_to_sticks,
+       pass_attempts, pass_yards, pass_tds, fetched_at)
+     VALUES (@season,@seasonType,@week,@statType,@gsis,@name,@pos,@team,@avgCushion,@avgSep,@avgIay,
+       @pctShare,@catchPct,@yacAe,@rec,@tgt,@recYds,@recTds,@eff,@pctEight,@ryoeAtt,@rushPctOe,@rushAtt,
+       @rushYds,@rushTds,@timeThrow,@aggr,@cpoe,@aySticks,@passAtt,@passYds,@passTds,@now)
+     ON CONFLICT(season, season_type, week, stat_type, player_gsis_id) DO UPDATE SET
+       player_display_name=excluded.player_display_name, player_position=excluded.player_position,
+       team_abbr=excluded.team_abbr, avg_cushion=excluded.avg_cushion, avg_separation=excluded.avg_separation,
+       avg_intended_air_yards=excluded.avg_intended_air_yards, pct_share_intended_air_yards=excluded.pct_share_intended_air_yards,
+       catch_pct=excluded.catch_pct, avg_yac_above_expectation=excluded.avg_yac_above_expectation,
+       receptions=excluded.receptions, targets=excluded.targets, rec_yards=excluded.rec_yards, rec_tds=excluded.rec_tds,
+       efficiency=excluded.efficiency, pct_attempts_gte_eight=excluded.pct_attempts_gte_eight,
+       ryoe_per_att=excluded.ryoe_per_att, rush_pct_over_expected=excluded.rush_pct_over_expected,
+       rush_attempts=excluded.rush_attempts, rush_yards=excluded.rush_yards, rush_tds=excluded.rush_tds,
+       avg_time_to_throw=excluded.avg_time_to_throw, aggressiveness=excluded.aggressiveness, cpoe=excluded.cpoe,
+       avg_air_yards_to_sticks=excluded.avg_air_yards_to_sticks, pass_attempts=excluded.pass_attempts,
+       pass_yards=excluded.pass_yards, pass_tds=excluded.pass_tds, fetched_at=excluded.fetched_at`,
+  );
+  const perSeason = new Map<number, number>();
+  for (const [statType, file] of [["rec", "receiving"], ["rush", "rushing"], ["pass", "passing"]] as const) {
+    const rows = await fetchCsvCached(`${NFLVERSE}/nextgen_stats/ngs_${file}.csv.gz`, rawTag.ngs(statType), opts.refresh ?? false);
+    db.transaction(() => {
+      for (const r of rows) {
+        const season = int(pick(r, "season")), week = int(pick(r, "week")), gsis = str(pick(r, "player_gsis_id"));
+        if (season == null || week == null || !gsis) continue;
+        ins.run({
+          season, seasonType: str(pick(r, "season_type")) ?? "REG", week, statType, gsis,
+          name: str(pick(r, "player_display_name")), pos: str(pick(r, "player_position")), team: canonTeam(pick(r, "team_abbr")) || null,
+          avgCushion: num(pick(r, "avg_cushion")), avgSep: num(pick(r, "avg_separation")), avgIay: num(pick(r, "avg_intended_air_yards")),
+          pctShare: num(pick(r, "percent_share_of_intended_air_yards")), catchPct: num(pick(r, "catch_percentage")),
+          yacAe: num(pick(r, "avg_yac_above_expectation")), rec: num(pick(r, "receptions")), tgt: num(pick(r, "targets")),
+          recYds: num(pick(r, "yards")), recTds: num(pick(r, "rec_touchdowns")),
+          eff: num(pick(r, "efficiency")), pctEight: num(pick(r, "percent_attempts_gte_eight_defenders")),
+          ryoeAtt: num(pick(r, "rush_yards_over_expected_per_att")), rushPctOe: num(pick(r, "rush_pct_over_expected")),
+          rushAtt: num(pick(r, "rush_attempts")), rushYds: num(pick(r, "rush_yards")), rushTds: num(pick(r, "rush_touchdowns")),
+          timeThrow: num(pick(r, "avg_time_to_throw")), aggr: num(pick(r, "aggressiveness")), cpoe: num(pick(r, "completion_percentage_above_expectation")),
+          aySticks: num(pick(r, "avg_air_yards_to_sticks")), passAtt: num(pick(r, "attempts")), passYds: num(pick(r, "pass_yards")), passTds: num(pick(r, "pass_touchdowns")),
+          now,
+        });
+        perSeason.set(season, (perSeason.get(season) ?? 0) + 1);
+      }
+    })();
+  }
+  db.close();
+  const seasons: SeasonResult[] = [...perSeason.keys()].sort((a, b) => a - b).map((s) => ({ season: s, ok: true, rows: perSeason.get(s)! }));
+  return { table: "raw_ngs", seasons, total: totalOf(seasons) };
+}
+
+// ==================================================================================================
+// raw_college_player_season (+ raw_college_team_season) -- the COLLEGE PRODUCTION pillar.
+// Aggregated at ingest from cfbfastR play-by-play (2014+) into player-season and team-season totals,
+// the ingredients of Dominator Rating and Breakout Age.
+// ==================================================================================================
+
+const CFB_PBP = "https://raw.githubusercontent.com/sportsdataverse/cfbfastR-data/main/player_stats/csv";
+
+export async function ingestRawCollege(opts: { dbPath?: string; refresh?: boolean } = {}): Promise<IngestReport> {
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const insP = db.prepare(
+    `INSERT INTO raw_college_player_season (season, cfb_athlete_id, as_of, player_name, team, games,
+       receptions, targets, rec_yards, rec_tds, rush_attempts, rush_yards, rush_tds, fetched_at)
+     VALUES (@season,@id,@asOf,@name,@team,@games,@rec,@tgt,@recYds,@recTds,@rushAtt,@rushYds,@rushTds,@now)
+     ON CONFLICT(season, cfb_athlete_id) DO UPDATE SET as_of=excluded.as_of, player_name=excluded.player_name,
+       team=excluded.team, games=excluded.games, receptions=excluded.receptions, targets=excluded.targets,
+       rec_yards=excluded.rec_yards, rec_tds=excluded.rec_tds, rush_attempts=excluded.rush_attempts,
+       rush_yards=excluded.rush_yards, rush_tds=excluded.rush_tds, fetched_at=excluded.fetched_at`,
+  );
+  const insT = db.prepare(
+    `INSERT INTO raw_college_team_season (season, team, team_rec_yards, team_rush_yards, team_rec_tds, team_rush_tds, fetched_at)
+     VALUES (@season,@team,@recYds,@rushYds,@recTds,@rushTds,@now)
+     ON CONFLICT(season, team) DO UPDATE SET team_rec_yards=excluded.team_rec_yards,
+       team_rush_yards=excluded.team_rush_yards, team_rec_tds=excluded.team_rec_tds, team_rush_tds=excluded.team_rush_tds, fetched_at=excluded.fetched_at`,
+  );
+
+  type P = { name: string; team: string; games: Set<string>; rec: number; tgt: number; recYds: number; recTds: number; rushAtt: number; rushYds: number; rushTds: number };
+  type T = { recYds: number; rushYds: number; recTds: number; rushTds: number };
+  const perSeason = new Map<number, number>();
+  const thisYear = new Date().getFullYear();
+
+  for (let season = 2014; season <= thisYear; season++) {
+    let rows: Record<string, string>[];
+    try { rows = await fetchCsvCached(`${CFB_PBP}/player_stats_${season}.csv`, `cfb-pbp-${season}`, opts.refresh ?? false); }
+    catch { continue; } // a season the feed has not published yet
+    const players = new Map<string, P>();
+    const teams = new Map<string, T>();
+    const getP = (id: string, name: string, team: string): P => {
+      let p = players.get(id);
+      if (!p) { p = { name, team, games: new Set(), rec: 0, tgt: 0, recYds: 0, recTds: 0, rushAtt: 0, rushYds: 0, rushTds: 0 }; players.set(id, p); }
+      if (!p.name && name) p.name = name;
+      if (team) p.team = team; // last team seen on an offensive play (handles mid-season attribution)
+      return p;
+    };
+    for (const r of rows) {
+      const team = str(pick(r, "team"));
+      const gameId = pick(r, "game_id");
+      const recId = str(pick(r, "reception_player_id")), rushId = str(pick(r, "rush_player_id")), tgtId = str(pick(r, "target_player_id")), tdId = str(pick(r, "touchdown_player_id"));
+      const recYds = num(pick(r, "reception_yds")) ?? 0, rushYds = num(pick(r, "rush_yds")) ?? 0;
+      if (team) { const t = teams.get(team) ?? { recYds: 0, rushYds: 0, recTds: 0, rushTds: 0 }; t.recYds += recYds; t.rushYds += rushYds; teams.set(team, t); }
+      if (recId) { const p = getP(recId, str(pick(r, "reception_player")) ?? "", team ?? ""); p.recYds += recYds; p.rec++; if (gameId) p.games.add(gameId); }
+      if (tgtId) { const p = getP(tgtId, str(pick(r, "target_player")) ?? "", team ?? ""); p.tgt++; if (gameId) p.games.add(gameId); }
+      if (rushId) { const p = getP(rushId, str(pick(r, "rush_player")) ?? "", team ?? ""); p.rushYds += rushYds; p.rushAtt++; if (gameId) p.games.add(gameId); }
+      if (tdId) {
+        const p = getP(tdId, str(pick(r, "touchdown_player")) ?? "", team ?? "");
+        if (tdId === recId) { p.recTds++; if (team) teams.get(team)!.recTds++; }
+        else if (tdId === rushId) { p.rushTds++; if (team) teams.get(team)!.rushTds++; }
+      }
+    }
+    const asOf = `${season + 1}-02-01`;
+    db.transaction(() => {
+      for (const [id, p] of players) {
+        if (p.rec + p.rushAtt + p.tgt === 0) continue; // no offensive touches -> not a skill contributor
+        insP.run({ season, id, asOf, name: p.name || null, team: p.team || null, games: p.games.size, rec: p.rec, tgt: p.tgt, recYds: p.recYds, recTds: p.recTds, rushAtt: p.rushAtt, rushYds: p.rushYds, rushTds: p.rushTds, now });
+      }
+      for (const [team, t] of teams) insT.run({ season, team, recYds: t.recYds, rushYds: t.rushYds, recTds: t.recTds, rushTds: t.rushTds, now });
+    })();
+    perSeason.set(season, players.size);
+  }
+  db.close();
+  const seasons: SeasonResult[] = [...perSeason.keys()].sort((a, b) => a - b).map((s) => ({ season: s, ok: true, rows: perSeason.get(s)! }));
+  return { table: "raw_college_player_season", seasons, total: totalOf(seasons) };
 }
 
 // ==================================================================================================

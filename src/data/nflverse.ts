@@ -99,6 +99,7 @@ export const cacheTag = {
   schedules: "schedules",
   players: "players",
   draftPicks: "draft-picks",
+  combine: "combine",
 } as const;
 
 export const draftPicksUrl = `${NFLVERSE}/draft_picks/draft_picks.csv`;
