@@ -377,6 +377,20 @@ is permanent -> frozen-forward is right).
 So trade recommendations have teeth, and the capability is now VALIDATED, not just shipped. (A two-sided
 RosterPolicy is still absent from the generic harness; this is a dedicated two-roster backtest.)
 
+### 11. Lineup information gap -- game-day availability is worth ~1.8 pts/week [backtested]
+The QA audit's one decision we LOSE to humans (lineup, -1.4 to -4.5 pts/wk). Root cause is mechanical:
+the live copilot benches OUT/DOUBTFUL but STARTS questionable players (copilot.ts:341), and there is NO
+game-day inactive feed anywhere in the repo (Sleeper `player_status` is a designation snapshot, not the
+~90-min OUT list). So a questionable-then-inactive player is started and scores 0.
+`scripts/inseason-backtest-lineup-info.mjs` sizes it: set each historical lineup by projection with NAIVE
+availability (bench OUT/DOUBTFUL, start Q -- our live rule) vs FRESH (bench every actual scratch), diff
+realized. **Gap = 1.79 pts/team-week (2018-2024, 1330 team-weeks; 1.24-2.88 by season)** -- of 884
+questionables we'd start, 232 (26%) sat for 0. This is the ceiling of what game-day availability info is
+worth, and it explains most of the human gap. CLOSING it needs (a) a game-day inactive feed (ESPN
+app-bridge/Sleeper gameday, none wired), and/or (b) a play-probability model for questionables (the
+prior-art approach: P(active | report+practice status), data exists in feat_player_week_context). News
+blurbs (ESPN/RotoWire RSS) are ingested but read-only -- no NLP-to-status path (in-season-design.md:174).
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).
