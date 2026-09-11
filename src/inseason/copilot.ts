@@ -473,6 +473,10 @@ export function lineupRecommend(
     bands?: Map<string, WeeklyBand>;
     /** Sampler and search knobs, including `noSearch` -- the fault-injection handle. */
     winprob?: WinProbOpts;
+    /** NFL team (UPPER abbrev) -> its opponent this week. When present, the lineup is checked for a
+     *  DST that shares an NFL game with one of our offensive starters (they partly cancel). Absent,
+     *  no such flag is produced -- the default is unchanged. */
+    nflOpp?: Map<string, string>;
   } = {},
 ): LineupResultJson {
   const availability = o.availability ?? new Map<string, AvailabilityEntry>();
@@ -574,13 +578,38 @@ export function lineupRecommend(
         .map((p) => ({ name: p.name, pos: p.pos, proj: r2(p.proj), available: p.available, reason: p.reason }))
     : res.bench.map((b) => ({ ...b, proj: r2(b.proj), reason: reasonOf.get(b.name) ?? "available" }));
 
+  // DST SAME-GAME CONFLICT. Our defense is negatively correlated with the offense it FACES (measured
+  // 2012-2025: vs the opposing QB -0.32, RB -0.11, WR -0.05), so starting our DST AND an offensive
+  // player in the SAME NFL game means the two partly cancel -- a hedge against ourselves. Flag it
+  // (informational, small, worst for a QB). Needs the week's NFL schedule via `o.nflOpp`; absent it,
+  // nothing is flagged and the output is byte-identical.
+  const extraFlags: string[] = [];
+  if (o.nflOpp) {
+    const teamOf = new Map(roster.map((p) => [p.name, (p.team ?? "").toUpperCase()]));
+    for (const s of starters) {
+      if (s.pos !== "DST") continue;
+      const dstTeam = teamOf.get(s.name);
+      const opp = dstTeam ? o.nflOpp.get(dstTeam) : undefined;
+      if (!opp) continue;
+      for (const c of starters) {
+        if (c.pos === "DST" || c.pos === "K") continue;
+        if (teamOf.get(c.name) !== opp) continue;
+        extraFlags.push(
+          `DST conflict: ${s.name} and ${c.name} (${c.pos}) are in the same NFL game ` +
+          `(${dstTeam} vs ${opp}) -- your defense and your ${c.pos} partly cancel ` +
+          `(measured DST-vs-opposing-offense correlation, worst for a QB).`,
+        );
+      }
+    }
+  }
+
   return {
     week,
     starters,
     bench,
     unavailable,
     totalProj: wp ? wp.totalProj : r2(res.totalProj),
-    flags: res.flags,
+    flags: [...res.flags, ...extraFlags],
     assumptions,
     objective,
     ...(wp ? { winprob: wp } : {}),

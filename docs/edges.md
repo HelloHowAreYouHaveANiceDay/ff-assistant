@@ -452,6 +452,50 @@ no per-week transfer cost, uncontested waivers, and a 16-team H2H sim with NO me
 Markov structure that binds in FPL does not bind here. Conclusion: invest in myopic decisions done well
 (trades validated, lineup availability fixed, rookies represented), not in sequential planning.
 
+### 13. Share-scaled QB-WR copula coupling -- effect REAL and fittable, decision NULL [calibration-gated, REVERTED]
+The season sim already couples NFL teammates with a Gaussian copula (`data/correlation-model.json`,
+`bootstrap.ts`) at FLAT per-position correlations (QB-WR 0.35). Measured 2012-2024: the QB-WR weekly
+correlation SCALES ~linearly with the WR's target share -- 0.12 at a 5-10% role to 0.39 at 25%+
+(r = 0.064 + 1.247*share, ~22k teammate-weeks). So the flat model over-couples depth WRs and
+under-couples alphas (our Goff->Amon-Ra is ~0.51 vs the 0.35 applied). Wired a share-scaled coupling
+(`coupleCorr`, share from leak-free `td_ts`) into the season sim and gated it on the ONLY honest arbiter
+for an in-season sim change: playoff/title Brier vs 114 real team-seasons (`scripts/season-calibration.mjs`,
+per-fold artifacts `data/fold-artifacts-2b`, prior-season shares, `NO_SHARE=1` for the paired baseline).
+Result: CONNECTED but NULL -- playoff Brier 0.2345 vs 0.2343 baseline (skill 4.3% vs 4.4%), title 0.0655
+vs 0.0652 (skill -0.4% vs +0.1%). The Briers DIFFER (proving the lever fired under CRN) but at the 4th
+decimal, inside the +/-1.3% held-out noise, and if anything slightly WORSE. Coherent: within-team
+correlation is a second-order effect on a playoff berth, which is dominated by roster strength -- the same
+reason the "derisk the stack" concern is genuinely small. Per the one rule, a value change that does not
+beat the arbiter does not ship: REVERTED to the flat copula. (The fit itself is real and belongs in any
+JOINT-distribution use -- stack boom/bust bands, matchup win-prob variance -- where playoff-Brier is not
+the arbiter; the winprob.ts weekly copula is separate and untouched.)
+
+### 14. Early-season target-share WEIGHTING (games x share interaction) -- accuracy NULL [pre-check gated]
+Target-share LEVEL predicts rest-of-season WR PPG well (corr 0.60, ~= to-date PPG's 0.63) and in
+ISOLATION adds over points early (partial(td_ts | td_ppg) = 0.315 at a 3-game snapshot). The proposal:
+weight share MORE early (when few games inform PPG) via a games x share interaction, since a flat
+coefficient can't express a decaying weight. GATED cheaply first on held-out accuracy (LOSO, per-position
+OLS over the model's FULL as-of feature set, predicting RoS PPG). Result: the interaction adds dRMSE
+0.0000 -- EXACTLY nothing -- on top of the shipped features. Connectivity proven (rule #3): on a usage-free
+base, adding raw `td_ts` lowers RMSE 3.1968 -> 3.1585, so the harness detects usage signal; but the model
+ALREADY carries `td_ts` (a valuable feature: it, not snap/route share, is what moves WR RoS), and the
+early-weighting nuance is a second-order effect that does not survive as held-out signal. The isolated
+0.315 partial was real and is already captured by the flat `td_ts` coefficient. Accuracy gate failed ->
+never reached a decision gate -> pipeline untouched. (Same shape as #7: a real marginal effect vanishes
+once the base feature is present. Corollary kept: WATCH THE LEVEL of target share, not its trend or its
+early-vs-late weighting -- and the level is already in the model.)
+
+### 15. DST same-game conflict flag -- SHIPPED (operational, not a value change)
+Measured (2012-2025) a DST is negatively correlated with the offense it FACES: vs the opposing QB
+-0.32, RB -0.11, WR -0.05 (vs its OWN offense ~0). So starting our DST AND an offensive player in the
+SAME NFL game partly cancels them -- a small hedge against ourselves, worst for a QB. `lineupRecommend`
+now flags it when handed the week's NFL schedule (`nflOpp`, built in `copilotActions` from
+feat_player_week_model; abbrevs match, no crosswalk). Not a value/strategy change (no arbiter) --
+correctness/UX. QA: fault-injected BOTH ways (fires naming both men on a real conflict; silent on a
+clean schedule; silent with no map; both men confirmed starters so the guard CAN fire), 4/4 +
+19/19 lineup-path regression tests, live end-to-end runs and correctly stays silent (MIN plays GB wk1,
+no Packers started). `test/lineup-dst-conflict.test.ts`.
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).

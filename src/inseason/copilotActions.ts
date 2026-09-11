@@ -197,10 +197,23 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // its own p10/p90 cannot come from two different reads of the table.
       const withBands = objective === "winprob" ? S.loadWeeklyBands(ctx.season, wk, dbPath) : null;
       const weekly = withBands?.weekly ?? S.loadWeeklyProjection(ctx.season, wk, dbPath) ?? undefined;
+      // The week's NFL schedule as team -> opponent, for the DST same-game conflict flag. Absent rows
+      // (a week the model table has not built) leave the map empty, and the flag simply does not fire.
+      const nflOpp = new Map<string, string>();
+      {
+        const db = openDb(dbPath);
+        try {
+          for (const r of db.prepare(
+            "SELECT DISTINCT team, opponent FROM feat_player_week_model WHERE season=? AND week=? AND team IS NOT NULL AND opponent IS NOT NULL",
+          ).all(ctx.season, wk) as { team: string; opponent: string }[]) {
+            nflOpp.set(String(r.team).toUpperCase(), String(r.opponent).toUpperCase());
+          }
+        } finally { db.close(); }
+      }
       return {
         ...C.lineupRecommend(ctx, wk, {
           provenance, availability: S.loadAvailability(dbPath), weekly,
-          objective, bands: withBands?.bands,
+          objective, bands: withBands?.bands, nflOpp,
           winprob: { sims: a.trials ?? 8000, seed: a.seed ?? 7 },
         }),
         weekSource: a.week != null ? "caller" : S.currentWeek(dbPath).source,
