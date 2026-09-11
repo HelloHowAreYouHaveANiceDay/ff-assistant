@@ -614,7 +614,9 @@ export async function ingestRawCollege(opts: { dbPath?: string; refresh?: boolea
       if (recId) { const p = getP(recId, str(pick(r, "reception_player")) ?? "", team ?? ""); p.recYds += recYds; p.rec++; if (gameId) p.games.add(gameId); }
       if (tgtId) { const p = getP(tgtId, str(pick(r, "target_player")) ?? "", team ?? ""); p.tgt++; if (gameId) p.games.add(gameId); }
       if (rushId) { const p = getP(rushId, str(pick(r, "rush_player")) ?? "", team ?? ""); p.rushYds += rushYds; p.rushAtt++; if (gameId) p.games.add(gameId); }
-      if (tdId) {
+      // A TD is marked by touchdown_stat = '1' (touchdown_player_id is populated on EVERY row, so its
+      // presence is not the signal). Classify by whether the scorer caught or ran on this play.
+      if (pick(r, "touchdown_stat") === "1" && tdId) {
         const p = getP(tdId, str(pick(r, "touchdown_player")) ?? "", team ?? "");
         if (tdId === recId) { p.recTds++; if (team) teams.get(team)!.recTds++; }
         else if (tdId === rushId) { p.rushTds++; if (team) teams.get(team)!.rushTds++; }

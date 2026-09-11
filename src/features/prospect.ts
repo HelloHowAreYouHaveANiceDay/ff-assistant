@@ -22,15 +22,28 @@ const htToInches = (ht: string | null): number | null => {
   if (!ht) return null; const m = /^(\d+)-(\d+)$/.exec(ht); return m ? Number(m[1]) * 12 + Number(m[2]) : null;
 };
 
-/** combine `school` vs cfbfastR `team` name variants, normalized. Lifts the crosswalk hit-rate. */
+/** combine `school` vs cfbfastR `team` name variants, normalized. Lifts the crosswalk hit-rate.
+ *  Applied AFTER the word-expansions in canonSchool, so keys are already st->state etc. */
 const SCHOOL_ALIAS: Record<string, string> = {
   "ole miss": "mississippi", "usc": "southern california", "pitt": "pittsburgh", "uconn": "connecticut",
   "smu": "southern methodist", "tcu": "texas christian", "ucf": "central florida", "utsa": "texas san antonio",
   "unlv": "nevada las vegas", "byu": "brigham young", "lsu": "louisiana state", "miami fl": "miami",
-  "miami oh": "miami ohio", "nc state": "north carolina state", "ul monroe": "louisiana monroe",
-  "ul lafayette": "louisiana", "southern miss": "southern mississippi", "fiu": "florida international",
+  "miami oh": "miami ohio", "southern miss": "southern mississippi", "fiu": "florida international",
+  "app state": "appalachian state", "middle tennessee state": "middle tennessee",
+  "texassan antonio": "texas san antonio", "texasel paso": "texas el paso", "utep": "texas el paso",
+  "lamonroe": "louisiana monroe", "ul monroe": "louisiana monroe", "louisianalafayette": "louisiana",
+  "ul lafayette": "louisiana", "northwestern st la": "northwestern state",
 };
-const canonSchool = (s: string | null): string => { const n = norm(s); return SCHOOL_ALIAS[n] ?? n; };
+/** combine abbreviates where cfbfastR spells out -- expand the systematic ones (St->State is by far
+ *  the biggest miss: Ohio St vs Ohio State), THEN apply the explicit alias table. */
+const canonSchool = (s: string | null): string => {
+  const n = norm(s)
+    .replace(/\bst\b/g, "state")     // Ohio St -> Ohio State (the dominant miss)
+    .replace(/\beast\b/g, "eastern") // East Washington -> Eastern Washington
+    .replace(/\bwest\b/g, "western") // West Michigan -> Western Michigan
+    .replace(/\bcol\b/g, "college"); // Boston Col -> Boston College
+  return SCHOOL_ALIAS[n] ?? n;
+};
 
 type Combine = { player_sk: number; pos: string; forty: number | null; vertical: number | null; broad_jump: number | null; cone: number | null; shuttle: number | null; bench: number | null; ht: string | null; wt: number | null };
 
@@ -147,7 +160,7 @@ export function buildProspectFeatures(dbPath?: string): { rows: number; athletic
       if (seasons && seasons.length) {
         const peak = seasons.reduce((best, s) => (s.dom > best.dom ? s : best));
         dom = peak.dom; domSeason = peak.season;
-        cmatch = seasons.every((s) => s.match === "name+school+year") ? "name+school+year" : "name+year";
+        cmatch = peak.match; // the match tier of the season we actually report -- the right gate for trusting `dom`
         const bo = [...seasons].filter((s) => s.dom >= 0.20).sort((x, y) => x.season - y.season)[0];
         const age = draftAge.get(sk);
         if (bo && age) breakout = age.age - (age.year - bo.season); // age at Sep 1 of the breakout season

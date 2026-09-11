@@ -604,11 +604,13 @@ is the credential. Everything below is a GET.
   played college before 2014 (same shape as the 2016+ participation feed).
 - **Crosswalk, MEASURED.** `cfb_athlete_id` is the CFBD id, which does NOT equal the sports-reference
   `cfb_id` on `raw_combine`, so the bridge to `player_sk` is name+school+year, not a join. Measured on
-  combine skill players 2016+ resolved to `player_sk` (n=844): **81.9% match by name+school+year (the
-  safe rate), 96.7% by name+year.** The gap is school-name variants, recoverable with an alias map.
-- **Known limitation.** TD attribution (matching the touchdown player to the reception/rush player on
-  the play) UNDERCOUNTS -- some scores are coded on a separate PBP row. Yards (the 80% weight of
-  Dominator) are correct; the TD component is a refinement pass.
+  combine skill players 2016+ resolved to `player_sk` (n=844): **87.9% safe (name+school+year on the
+  reported peak season), 96.7% matched (name+year).** The `St`->`State` expansion is the dominant lift
+  (Ohio St vs Ohio State); `college_match` gates on the PEAK season since that is the season `dominator`
+  reports. The residual gap is transfers (peak season at a different school than the combine listing).
+- **TD attribution.** Fixed: a TD is `touchdown_stat = '1'` (touchdown_player_id is populated on every
+  row, so its presence is NOT the signal), classified receiving/rushing by the scorer on the play.
+  Validated -- Blake Corum's 27 rushing TDs (led the nation, 2023) come out exactly.
 - **Raw tables.** `raw_college_player_season`, `raw_college_team_season` (`ingestRawCollege`,
   `ff ingest-raw college`, ~27s).
 - **Feeds.** `feat_player_prospect.dominator` / `dominator_season` / `breakout_age` (`ff build-prospect`,
