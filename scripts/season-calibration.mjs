@@ -31,11 +31,17 @@
 //               CEILING rather than a rival: it says how much of the outcome is decidable from
 //               scoring alone once you know it, which bounds what any preseason model could reach.
 //
-// WHAT THIS DOES NOT FIX. The variance model, the outcome pools and the correlation model are the
-// SHIPPED ones, fitted over all history including these seasons. That is a real leak and it flatters
-// the simulator; it is declared rather than removed because refitting three models per season is a
-// different piece of work, and every direction it biases is towards the simulator looking BETTER,
-// which makes an over-confidence finding a lower bound rather than an artefact.
+// THE OTHER-MODEL LEAK, NOW MEASURED AND CLOSABLE. The variance model, the outcome pools and the
+// correlation model default to the SHIPPED ones, fitted over all history INCLUDING these seasons -- a
+// real leak that flatters the simulator (only the projection artifact was per-fold). It is now fixable:
+// run `UNLEAK=1` and this harness loads, per season Y, the three models REFIT on history EXCLUDING Y
+// (data/fold-models/, produced by fit-variance/fit-correlation/fit-bootstrap with FIT_EXCLUDE=Y FIT_OUT=...).
+//   Regenerate the folds once:  for Y in 2018..2025: FIT_EXCLUDE=$Y FIT_OUT=data/fold-models/<kind>-$Y.json node --import tsx scripts/fit-<kind>.mjs
+// MEASURED 2026-09-11 (2018-2025, 3000 trials, seed 7): the leak is NEGLIGIBLE. Playoff Brier 0.2343 ->
+// 0.2347, skill vs uniform 4.4% -> 4.2%; title stays no-skill (0.1% -> -0.8%). So the honest OUT-OF-SAMPLE
+// number is ~4.2% playoff skill, the leak flattered by ~0.2pp, and every paired A/B gate run through this
+// harness (it uses the same models in both arms) was already valid. Default stays shipped-models so a
+// fresh clone reproduces the recorded figures without first regenerating 24 fold files.
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { simulateSeasons } from "../src/draft/season.ts";
@@ -83,6 +89,19 @@ const db = new Database("data/ff.db", { readonly: true });
 const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
 const outcomes = JSON.parse(readFileSync("data/rank-outcomes.json", "utf8"));
 const corr = JSON.parse(readFileSync("data/correlation-model.json", "utf8"));
+
+// UN-LEAKED calibration: with UNLEAK set, each season Y is scored with the variance / outcome-pool /
+// correlation models REFIT on history EXCLUDING Y (data/fold-models/, from fit-*.mjs FIT_EXCLUDE=Y).
+// Unset -> the SHIPPED all-history models, i.e. the leaked baseline the header above declares. The
+// projection artifact was already per-fold; this closes the leak in the other three inputs so the
+// Brier is honestly out-of-sample. Missing a fold file falls back to shipped (and is worth noticing).
+const UNLEAK = !!process.env.UNLEAK;
+const foldModel = (kind, season) => {
+  const p = `data/fold-models/${kind}-${season}.json`;
+  if (existsSync(p)) return JSON.parse(readFileSync(p, "utf8"));
+  if (UNLEAK) console.warn(`  UNLEAK: no ${p} -- falling back to the SHIPPED (leaked) model for ${season}`);
+  return null;
+};
 
 // ---------------------------------------------------------------------------------------------
 // ONE SEASON'S LEAGUE, assembled from the facts.
@@ -315,11 +334,14 @@ console.log(`  season teams  reg  field(src)  seeding                 reseed  ro
 for (const season of seasons) {
   const s = buildSeason(season);
   if (s.skip) { console.log(`  ${season}  SKIPPED -- ${s.skip}`); continue; }
-  const odds = simulateSeasons(s.teams, s.weeks, vm, {
+  const useVm = UNLEAK ? (foldModel("variance", season) ?? vm) : vm;
+  const useOutcomes = UNLEAK ? (foldModel("outcomes", season) ?? outcomes) : outcomes;
+  const useCorr = UNLEAK ? (foldModel("correlation", season) ?? corr) : corr;
+  const odds = simulateSeasons(s.teams, s.weeks, useVm, {
     weeks: s.weeks.length, playoffTeams: s.field, slots: s.slots, flexOk: ["RB", "WR", "TE"],
     seeding: s.seasonSeeding, divisionOf: s.divisionOf, playoffReseed: s.seasonReseed,
     projSd: 0.30, replacement: s.replacement, trials: TRIALS, seed: SEED, poolRank: s.poolRank,
-    bootstrap: { outcomes, corr, calibration: "scale" },
+    bootstrap: { outcomes: useOutcomes, corr: useCorr, calibration: "scale" },
     // A REAL POST-DRAFT ROSTER CAN BE SHORT AT A SLOT, and refusing to simulate it would drop the
     // team. Some managers really do leave the draft with no tight end and stream one; the
     // `replacement` floor above is exactly the model of that, and it is per-position and measured.

@@ -496,6 +496,24 @@ clean schedule; silent with no map; both men confirmed starters so the guard CAN
 19/19 lineup-path regression tests, live end-to-end runs and correctly stays silent (MIN plays GB wk1,
 no Packers started). `test/lineup-dst-conflict.test.ts`.
 
+### 16. In-season roster CHURN in the season sim -- makes calibration WORSE [calibration-gated, REVERTED]
+The season sim (`season.ts`) keeps each team's DRAFT roster static all year; its header long assumed
+modelling waiver churn would be ~uniform across teams and thus neutral for relative odds. Built it: a
+`churn` mode that injects REPLACEMENT-LEVEL free-agent phantoms (one per starting slot a position can
+fill, worth `replacement[pos]`, no lookahead) into every team's pool each week, so any slot whose best
+available rostered man projects below the waiver floor -- a bust, or an uncovered bye/injury -- is
+streamed instead. Gated on `scripts/season-calibration.mjs` (playoff/title Brier vs 114 real
+team-seasons, `CHURN=1` A/B). Result: DECISIVELY WORSE, not neutral -- playoff Brier 0.2343 -> 0.2489,
+skill vs uniform +4.4% -> -1.6% (the sim went from beating uniform to LOSING to it). The lever is
+plainly connected (large Brier move). WHY: a good team's starters out-project the floor so its phantoms
+bench (unaffected); only BAD teams get floored up, which COMPRESSES the field from the bottom -- and the
+sim's playoff skill lives entirely in DISCRIMINATING weak rosters from strong ones. Deeper cause (rule
+#4): the rank-based outcome pools already resample real players who WERE streamed/managed all season, so
+an explicit churn floor DOUBLE-COUNTS management already in the data. The header's "understates every
+team ~equally" was wrong: churn is bottom-compressing, not uniform. Per the one rule, REVERTED. Lesson
+(again): "more realistic" != "better calibrated" -- the arbiter is the judge, and the static-roster sim
+wins. (Same shape as #13: a plausible realism upgrade to the sim, gated, arbiter says no.)
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).

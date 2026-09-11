@@ -33,11 +33,16 @@ const LAST_REG_WEEK = 17;
 
 const rows = readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1);
 
+// LEAVE-SEASON-OUT support for the calibration harness's un-leaked refit. Both unset -> shipped run.
+const FIT_EXCLUDE = process.env.FIT_EXCLUDE ? Number(process.env.FIT_EXCLUDE) : null;
+const FIT_OUT = process.env.FIT_OUT || "data/rank-outcomes.json";
+
 // season -> name -> {pos, team, weeks:Map}
 const byKey = new Map();
 const teamWeeks = new Map();   // season|team -> Set(weeks the team played)
 for (const line of rows) {
   const [season, name, pos, week, pts, team] = line.split(",");
+  if (FIT_EXCLUDE != null && Number(season) === FIT_EXCLUDE) continue;   // leave-season-out
   if (!POS.includes(pos)) continue;
   const s = Number(season), w = Number(week), p = Number(pts);
   if (!Number.isFinite(s) || !Number.isFinite(w) || !Number.isFinite(p)) continue;
@@ -130,8 +135,8 @@ for (const pos of POS) {
   const q = (f) => totals.length ? totals[Math.floor(f * (totals.length - 1))] : 0;
   console.log(`  ${pos.padEnd(4)} ${String(Object.keys(out).length).padStart(6)} ${String(med).padStart(13)}   ${mean.toFixed(0)} / ${q(0.1).toFixed(0)} / ${q(0.9).toFixed(0)}   (${wkMean.toFixed(1)}/wk)`);
 }
-writeFileSync("data/rank-outcomes.json", JSON.stringify(model));
-const bytes = readFileSync("data/rank-outcomes.json").length;
+writeFileSync(FIT_OUT, JSON.stringify(model));
+const bytes = readFileSync(FIT_OUT).length;
 console.log(`\nwrote data/rank-outcomes.json (${(bytes / 1024 / 1024).toFixed(1)} MB)`);
 console.log(`\nThe p10 column is the point of this file: it is a REAL bad SEASON posted by a real player`);
 console.log(`who entered at that rank, including the ones who got hurt in week 3. A fitted lognormal`);

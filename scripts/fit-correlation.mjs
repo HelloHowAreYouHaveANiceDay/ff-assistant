@@ -19,10 +19,15 @@ import { readFileSync, writeFileSync } from "node:fs";
 const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
 const rows = readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1);
 
+// LEAVE-SEASON-OUT support for the calibration harness's un-leaked refit. Both unset -> shipped run.
+const FIT_EXCLUDE = process.env.FIT_EXCLUDE ? Number(process.env.FIT_EXCLUDE) : null;
+const FIT_OUT = process.env.FIT_OUT || "data/correlation-model.json";
+
 // season -> name -> {pos, team, weeks: Map<week, pts>}
 const players = new Map();
 for (const line of rows) {
   const [season, name, pos, week, pts, team] = line.split(",");
+  if (FIT_EXCLUDE != null && Number(season) === FIT_EXCLUDE) continue;   // leave-season-out
   if (!POS.includes(pos) || !team) continue;
   const p = Number(pts), w = Number(week);
   if (!Number.isFinite(p) || !Number.isFinite(w)) continue;
@@ -140,7 +145,7 @@ for (const [pos, i, j, key] of SAME) {
   console.log(`  ${label.padEnd(10)} ${String(xs.length).padStart(6)}  ${r == null ? "  n/a" : (r >= 0 ? "+" : "") + r.toFixed(4)}  ${se.toFixed(4)}  ${(shrunk >= 0 ? "+" : "") + shrunk.toFixed(4)}   ${noisy ? "(within 2 SE -- written as 0)" : ""}${key ? "" : "  [reported only, not written]"}`);
 }
 
-writeFileSync("data/correlation-model.json", JSON.stringify(model, null, 2));
+writeFileSync(FIT_OUT, JSON.stringify(model, null, 2));
 console.log(`\nwrote data/correlation-model.json`);
 console.log(`\nThese are the numbers the season simulator should impose between rostered NFL teammates.`);
 console.log(`Anything flagged indistinguishable from 0 should be modelled as 0 -- imposing a`);

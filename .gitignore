@@ -107,3 +107,4 @@ data/projection-artifact.2c.json
 # rank-outcomes.json, which was gitignored here all along) on every new machine, so tracking it
 # bought nothing that the setup script does not already do.
 data/variance-model.json
+data/fold-models/

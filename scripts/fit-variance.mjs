@@ -22,10 +22,15 @@ const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
 const REG_WEEKS = 17;
 const rows = readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1);
 
+// LEAVE-SEASON-OUT support for the calibration harness's un-leaked refit. Both unset -> shipped run.
+const FIT_EXCLUDE = process.env.FIT_EXCLUDE ? Number(process.env.FIT_EXCLUDE) : null;
+const FIT_OUT = process.env.FIT_OUT || "data/variance-model.json";
+
 // season -> pos -> name -> weekly points
 const bySeason = new Map();
 for (const line of rows) {
   const [season, name, pos, week, pts] = line.split(",");
+  if (FIT_EXCLUDE != null && Number(season) === FIT_EXCLUDE) continue;   // leave-season-out
   if (!POS.includes(pos)) continue;
   const s = Number(season), p = Number(pts);
   if (!Number.isFinite(p)) continue;
@@ -114,7 +119,7 @@ for (const p of POS) {
   }
 }
 
-writeFileSync("data/variance-model.json", JSON.stringify(model, null, 2));
+writeFileSync(FIT_OUT, JSON.stringify(model, null, 2));
 console.log(`\nwrote data/variance-model.json (${model.seasons.length} seasons)`);
 console.log(`\nRead the CV column: it is the fraction of a player's weekly mean that a typical week`);
 console.log(`swings by. Anything near 1.0 means the position is close to a coin flip week to week,`);
