@@ -391,6 +391,16 @@ app-bridge/Sleeper gameday, none wired), and/or (b) a play-probability model for
 prior-art approach: P(active | report+practice status), data exists in feat_player_week_context). News
 blurbs (ESPN/RotoWire RSS) are ingested but read-only -- no NLP-to-status path (in-season-design.md:174).
 
+**B1 (play-probability model) built and REFUTED as the fix.** `src/inseason/backtest/playProb.ts` fits
+P(active | Friday report + practice), leave-one-season-out -- beautifully calibrated (Q+Full 70%,
+Q+Limited 61%, Q+DNP 38%, Out/Doubtful ~0%). But down-weighting the lineup by proj x P(active)
+(`scripts/inseason-backtest-playprob.mjs`) recovers only 0.09 of the 1.79 pts/wk gap (5%, sign-unstable).
+Same lesson as #7: a PROBABILITY cannot pinpoint WHICH questionable sits -- a 61%-to-play star is still
+EV-optimal to start, and you eat the zero on the unlucky 39%; only the game-day RESOLUTION helps. So the
+gap is a resolved-fact problem, and the fix is **B2, a game-day inactive feed** (ingest the ~90-min OUT
+list into player_status before lock -- ESPN app-bridge/Sleeper gameday; Part A shows perfect availability
+recovers the full 1.79). B1 stays a valid reusable "play-risk" flag, just not the lineup fix.
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).
