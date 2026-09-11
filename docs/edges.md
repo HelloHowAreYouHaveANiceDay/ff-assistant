@@ -494,8 +494,11 @@ affected rows before trusting their numbers -- the RANKING of edges usually surv
 not. (The lineage DAG, `ff lineage`, tracks the DATA assets; this table is the FINDINGS layer the DAG
 does not cover.)
 
-**Currently re-measured on the post-rebuild (rookie-inclusive) weekly model:** trades/#10, packages,
+**Re-measured on the post-rebuild (rookie-inclusive) weekly model (2026-09-11):** trades/#10, packages,
 lineup/#11, play-prob, role-trend/#7 (rookie-inclusive), rookie re-test/#9, MDP/#12, and the draft pool/#9.
-The early in-season nulls (drop/bench/handcuff/stream/denial) predate the rebuild; their conclusions are
-robust to it (the rebuild only ADDED rookies to the pool, veterans unchanged, and those findings are
-nulls), but they have not been re-run on the current model -- flagged here rather than silently trusted.
+The early in-season nulls (drop/bench/handcuff/stream/denial) have NOW ALSO been re-run on the current
+model and all HOLD -- no conclusion flipped, as the additive rookie rebuild left the veteran-population
+findings intact: depth-aware drop +0.58-0.74 (CI crosses 0, ns); bench upside -0.44 realized / -0.21 sim;
+handcuff +0.16 / -0.06 (sign-flip, 32 differed); stream QB -1.69 (loss), K/DST +0.35/+0.15 (CI incl 0);
+denial 4.84 pts/lead-out-week (was 5.48 -- magnitude drifted, conclusion unchanged). So every "weekly"
+row above is current as of 2026-09-11.
