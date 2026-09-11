@@ -359,6 +359,24 @@ role-trend DECISION test is STILL refuted (accuracy 2x on rookies does not conve
 edge, same as #7). So: the coverage gap is fixed (a real win -- the model represents rookies
 weekly), but week-over-week role re-projection remains accuracy-only, not an automatable edge.
 
+### 10. Trades -- a REAL validated edge, and the biggest coverage gap now closed [backtested]
+The QA audit flagged trades as the biggest hole: `trade_check`/`trade_finder` ran a full paired sim and
+shipped live, but NOTHING backtested them (the single-roster harness can't A/B a two-sided deal). Built
+`src/inseason/backtest/trades.ts` (`ff inseason-backtest trade`): replay every point-in-time state,
+propose the best roughly-fair (|proj gap|<=3) one-for-one that improves OUR projected optimal lineup and
+does not hurt the counterparty (mutual), apply it to BOTH rosters, score realized rest-of-season (a trade
+is permanent -> frozen-forward is right).
+- REALIZED: +5.06 pts/decision (CI [1.54, 9.89], P 100%), traded 1220/1232 -- the first strongly-positive,
+  well-controlled in-season decision edge in the repo. Positional arbitrage: trade surplus for need at
+  fair value.
+- CONTROLS: a RANDOM fair trade is -2.05 (a random swap slightly hurts), so the +5 is genuine SELECTION
+  skill, not a frozen-forward/hindsight artifact; give-best-for-worst is -38.2 (scorer detects direction).
+- CAVEATS: the SIM scorer reads +18.9 but is CIRCULAR (we select and score on the same projection) -- trust
+  the realized +5. The counterparty loses realized -3.9, so "mutual" (projected non-negative) deals still
+  extract value in hindsight -- real, but not truly win-win. Season-variable (2018 +20, 2019/2022 ~0).
+So trade recommendations have teeth, and the capability is now VALIDATED, not just shipped. (A two-sided
+RosterPolicy is still absent from the generic harness; this is a dedicated two-roster backtest.)
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).
