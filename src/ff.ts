@@ -2107,6 +2107,18 @@ async function cmdBacktest(rest: string[]) {
     const shown = artifact ?? [...perYear.values()][0];
     console.log(`  --projection ${projArg}: the SHIPPED projector, ` +
       (artDir ? `per-season artifacts from ${artDir} (each blind to its own season)` : `artifact ${ap}`));
+    if (!artDir) {
+      // LEAK WARNING (redesign #7). Without --artifact-dir this scores every replayed season with the
+      // SINGLE all-history artifact, fitted on 1999-2025 -- it has SEEN every season it now projects,
+      // i.e. lookahead moved into the model, which FLATTERS the result. The honest, leak-free run
+      // passes per-season artifacts each blind to their own season.
+      console.warn(
+        `  WARNING: no --artifact-dir -- every replayed season is scored with the single all-history ` +
+        `artifact (${ap}), which has seen the seasons it is projecting. This FLATTERS the backtest. ` +
+        `For an honest run use --artifact-dir <dir>, e.g. from ` +
+        `\`ff evaluate-projection --keep-artifacts data/fold-artifacts-2b\` (see docs/validation.md).`,
+      );
+    }
     if (shown) {
       console.log(`    ${shown.fittedFrom}; base ${shown.base}; ` +
         `${shown.features.length} fitted features; multiplicative [${shown.multiplicative.join(", ") || "none"}]`);
