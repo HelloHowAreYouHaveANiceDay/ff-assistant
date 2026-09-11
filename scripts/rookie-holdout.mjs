@@ -10,12 +10,12 @@ const db = openDb();
 // drafted skill rookies 2016-2024 with a rookie-season PPG (>=4 games) and prospect features.
 const rows = db.prepare(`
   WITH ppg AS (
-    SELECT player_sk, season, AVG(pts) ppg, COUNT(*) games
+    SELECT player_sk, season, AVG(pts) ppg, COUNT(*) games, MAX(season_line_pg) line
       FROM feat_player_week_model
      WHERE pts IS NOT NULL AND (is_bye=0 OR is_bye IS NULL) AND (inj_out=0 OR inj_out IS NULL)
      GROUP BY player_sk, season)
   SELECT CAST(xr.player_sk AS INTEGER) sk, c.pos, c.draft_year, c.draft_round, c.draft_ovr,
-         fp.athletic_score, fp.dominator, fp.breakout_age, p.ppg, p.games
+         fp.athletic_score, fp.dominator, fp.breakout_age, p.ppg, p.games, p.line
     FROM raw_combine c
     JOIN player_xref xr ON xr.source='pfr' AND xr.source_id=c.pfr_player_id
     JOIN feat_player_prospect fp ON fp.player_sk = CAST(xr.player_sk AS INTEGER)
@@ -34,6 +34,7 @@ const feat = (r, cols) => cols.map((c) => {
     case "draft_ovr": return r.draft_ovr; case "round": return r.draft_round;
     case "isRB": return r.pos === "RB" ? 1 : 0; case "isWR": return r.pos === "WR" ? 1 : 0; case "isTE": return r.pos === "TE" ? 1 : 0;
     case "athletic_score": return r.athletic_score; case "dominator": return r.dominator; case "breakout_age": return r.breakout_age;
+    case "line": return r.line;
     default: return null;
   }
 });
@@ -60,16 +61,28 @@ function fit(train, cols, lambda = 3) {
 const mae = (arr, f) => arr.reduce((s, r) => s + Math.abs(f(r) - r.ppg), 0) / arr.length;
 const pearson = (arr, f) => { const p = arr.map(f), a = arr.map((r) => r.ppg); const mp = p.reduce((x, y) => x + y, 0) / p.length, ma = a.reduce((x, y) => x + y, 0) / a.length; let n = 0, dp = 0, da = 0; for (let i = 0; i < p.length; i++) { n += (p[i] - mp) * (a[i] - ma); dp += (p[i] - mp) ** 2; da += (a[i] - ma) ** 2; } return n / Math.sqrt(dp * da); };
 
+// Does the SHIPPED projection (season_line_pg) use draft capital optimally for rookies?
+const SHIP = ["line"];
+const SHIP_DC = ["line", "draft_ovr", "round"];
+
 // holdout by draft-year parity, both directions
 const even = rows.filter((r) => r.draft_year % 2 === 0), odd = rows.filter((r) => r.draft_year % 2 === 1);
 console.log(`ROOKIE-HOLDOUT: predict rookie-season PPG, drafted RB/WR/TE 2016-2024, >=4 games. n=${rows.length}`);
-console.log(`  coverage: athletic ${rows.filter((r) => r.athletic_score != null).length}, dominator ${rows.filter((r) => r.dominator != null).length}, breakout ${rows.filter((r) => r.breakout_age != null).length}\n`);
+console.log(`  coverage: athletic ${rows.filter((r) => r.athletic_score != null).length}, dominator ${rows.filter((r) => r.dominator != null).length}, breakout ${rows.filter((r) => r.breakout_age != null).length}, shipped-line ${rows.filter((r) => r.line != null).length}\n`);
 for (const [train, test, label] of [[even, odd, "train even yrs -> test odd"], [odd, even, "train odd yrs -> test even"]]) {
   const fB = fit(train, BASE), fP = fit(train, PROS), fO = fit(train, ONLY);
   console.log(`  ${label} (test n=${test.length}):`);
   console.log(`    draft-capital only:  MAE ${mae(test, fB).toFixed(3)}   r ${pearson(test, fB).toFixed(3)}`);
   console.log(`    + prospect features: MAE ${mae(test, fP).toFixed(3)}   r ${pearson(test, fP).toFixed(3)}`);
   console.log(`    prospect ONLY (connectivity, no draft capital): r ${pearson(test, fO).toFixed(3)}`);
+  // the SHIPPED projection, and what draft capital adds to it
+  const withLine = rows.filter((r) => r.line != null);
+  const trainL = withLine.filter((r) => train.includes(r)), testL = withLine.filter((r) => test.includes(r));
+  if (testL.length >= 15) {
+    const fShip = fit(trainL, SHIP), fShipDc = fit(trainL, SHIP_DC);
+    console.log(`    shipped line only (n=${testL.length}):        r ${pearson(testL, fShip).toFixed(3)}`);
+    console.log(`    shipped line + draft capital:        r ${pearson(testL, fShipDc).toFixed(3)}   <- does draft capital add over the shipped projection?`);
+  } else console.log(`    shipped line: only ${testL.length} rookies have a season_line_pg -- historical rookies are largely UNPRICED`);
 }
 
 // Where draft capital is COARSE: Day 3 / undrafted-adjacent (overall pick >= 100). Does college

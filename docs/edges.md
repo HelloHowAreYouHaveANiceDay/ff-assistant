@@ -319,8 +319,18 @@ Matches the prior art exactly ("athleticism gets the smallest weight because NFL
 with draft capital"). The data foundation is real and reusable (combine/NGS/college now ingested +
 crosswalked, docs/data-sources.md), and `feat_player_prospect` is a validated per-player asset -- but the
 projection should NOT fold these in as rookie features; draft capital (already a projection feature)
-carries the signal. The open lever, if any, is whether the SHIPPED projection uses draft capital
-optimally -- not adding college/athletic on top.
+carries the signal.
+
+**The deeper structural finding (the real gap): rookies are unpriced in the backtest, so the ARBITER
+cannot see them.** `season_line_pg` is NULL for 0/406 historical rookies in their rookie season, because
+`backtestFeatureRows` (src/model/features.ts:234) builds its pool from `feat_player_season` season Y-1
+finishers and a rookie has no Y-1 NFL row. So the championship backtest never drafts a rookie and cannot
+evaluate rookie draft value, and rookie projection quality is not gradeable there. The live board path
+DOES price rookies (ECR consensus rank, which encodes draft capital), and the achievable rookie-year
+ceiling is r~0.52 (draft capital) -- but none of that is historically validatable. The one project that
+would matter is a rookie POOL in the backtest priced by a draft-capital->finish model, so rookies enter
+the arbiter -- a real modeling effort that PERTURBS the shipped 33% championship number, so it needs
+explicit sign-off, not a silent core change.
 
 ## Edges that DON'T exist / aren't worth chasing
 
