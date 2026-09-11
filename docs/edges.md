@@ -343,6 +343,17 @@ systematic edge, but the arbiter now REPRESENTS rookies instead of being blind t
 corrected to ~39% (the effective tripwire is 39.7%; rookies barely move it). The next full validation
 pass should record the rookies-on tripwire.
 
+**The parallel WEEKLY gap, and the rookie role-trend re-test.** Rookies are also unpriced in the WEEKLY
+backtest path -- `season_line_pg` is NULL for 0/59 historical rookies (2023) -- so the weekly scorecard,
+the in-season decision harness, AND the #7 progressive-projection experiment all silently EXCLUDED
+rookies (they filtered on non-null `season_line_pg`). The live board path does price them (ECR rank:
+54/54 2026 rookies). Built a weekly rookie fallback (`rookieWeeklyLines`, draft-capital season points /
+scheduled games) -- MAE 4.30 vs actual, a legitimate line where there was none. Re-tested role-trend on
+rookies with it (`scripts/rookie-weekly-roletrend.mjs`): on the role-change subset (31% of rookie-weeks,
+far more than veterans) role-trend cuts MAE 4.1% at a=1.0 -- ~2x the veterans' ~2% (#7), the
+highest-leverage case as predicted. Still ACCURACY only; whether it converts to a decision edge on
+rookies (now testable via the fallback + harness) is the open gate, same as #7.
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).

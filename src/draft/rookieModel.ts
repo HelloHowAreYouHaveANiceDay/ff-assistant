@@ -47,6 +47,16 @@ export function rookiePoints(curve: RookieCurve, pos: string, overall: number): 
   return Math.max(5, c.a + c.b * Math.log(overall));
 }
 
+/** WEEKLY fallback: rookies drafted in `season` -> a per-game season line (season points / scheduled
+ *  games), the `season_line_pg` the projection's backtest path leaves NULL for them. Keyed by player_sk
+ *  (TEXT, as feat_player_week_model keys). */
+export function rookieWeeklyLines(db: DB, season: number, curve: RookieCurve): Map<string, number> {
+  const games = season >= 2021 ? 17 : 16; // scheduled games; the line is per-game like season_line_pg
+  const out = new Map<string, number>();
+  for (const r of rookieProjections(db, season, curve)) out.set(r.player_sk, r.points / games);
+  return out;
+}
+
 /** Rookies drafted in `season` (skill positions) with their draft-capital projected season points. */
 export function rookieProjections(db: DB, season: number, curve: RookieCurve): { player_sk: string; name: string; pos: string; overall: number; points: number }[] {
   const rows = db.prepare(
