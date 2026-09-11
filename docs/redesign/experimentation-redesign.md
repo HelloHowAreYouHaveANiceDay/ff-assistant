@@ -184,8 +184,14 @@ these is a bug, not a refactor. (Backtest capture in progress.)
 - **Phase 0** — golden master + this doc. *(in progress)*
 - **Phase 1 — Cleanup (full sweep, B1–B4).** Delete dead code, consolidate harnesses, fix shared
   primitives, unify the feature registry. Every step checked against the golden master.
-- **Phase 2 — CPCV core (A1–A3).** Engine + ledger + PBO; then run the Pareto budget experiment
-  (A3.1) to calibrate it.
+- **Phase 2 — CPCV core (A1–A3).** ENGINE + LEDGER DONE (`scripts/cpcv.mjs`, `data/experiments.jsonl`).
+  Reuses `--dump-trials` CRN pairs; samples 200 season-subset paths → lift distribution + PBO; logs each
+  run. CONSISTENCY CHECK PASSES (baseline full-set 38.48% vs golden 38.5%). Validated on `--no-rookies`:
+  correctly NULL (CI [-1.22,+1.72] straddles 0, P(lift>0)=57%). **PBO scale note:** with two complementary
+  splits, train/test lifts are mechanically anti-correlated, so a NULL drives PBO HIGH (~0.8-1.0) and a
+  robust edge drives it toward 0 — read PBO RELATIVELY; A3.1 calibrates the ship bar against known-large
+  references. REMAINING: (a) the Pareto budget experiment (A3.1) to set default/high-confidence budgets
+  and the PBO/lift ship thresholds; (b) v2 embargo (needs per-fold refit excluding adjacent seasons).
 - **Phase 3 — Research funnel (A4–A5).** Registry + bake-off + proxy→arbiter monitor. First real run:
   re-evaluate ALL features (existing + the 5 new signals).
 - **Phase 4 — Continuous loop (A6).** Triggers on data refresh; re-measurement registry wired in.
