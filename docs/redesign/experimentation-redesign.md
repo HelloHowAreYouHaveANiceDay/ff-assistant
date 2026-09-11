@@ -12,6 +12,22 @@ The organizing discipline is **quantitative-finance backtesting** (López de Pra
 liability to be spent sparingly, overfitting is quantified, validation is purged/embargoed, and
 research is done on predictive content — not by iterating against the backtest.
 
+## Progress log (committed + pushed)
+- **`e05b8c5`** Phase 1 cleanup: 25 dead files deleted, 5 rejected-experiment modules + runners +
+  tests deleted, `nameKey` unified (weekly-match key kept distinct). Golden master held 38.5%/96%.
+- **`2470eca`** lineage producers declared → **suite fully green (718/0)**.
+- **`d50fe34`** Phase 2 CPCV core + ledger (`scripts/cpcv.mjs`, `data/experiments.jsonl`) — distribution
+  + PBO, consistency check passes (38.48% vs 38.5%), `--no-rookies` reads correctly NULL.
+- **`b345a08`** #7 backtest leak-warning; **#9 team-crosswalk closed as PHANTOM DEBT** — the audit
+  over-called it; `ownership` (id/abbrev/owner, live) and `raw_league_team_season` (id/name/owner,
+  historical) have disjoint schemas, each used at one site, so there is no crosswalk to unify. Only
+  real residue: `scripts/sim-convergence.mjs` has a stale ownership-grouping copy missing the
+  `dstAliasKey` DST fix — a behavior-changing bug fix, filed as a separate follow-up.
+
+**STATUS: Phase 1 (cleanup) COMPLETE; Phase 2 CORE built + validated.** Remaining: A3.1 (CPCV budget +
+threshold calibration — needs a flag-expressible reference set since churn/copula were reverted);
+Phase 3 (feature manifest #4 + eval scaffold #10 + the research funnel A4/A5); Phase 4 (continuous loop).
+
 ---
 
 ## Part A — Target architecture
