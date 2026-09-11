@@ -4,6 +4,16 @@ All championship numbers are from the multi-season backtest (`ff backtest --seas
 docs/validation.md); random baseline = 6.3% (1 of 16). Directions are robust; absolute magnitudes
 depend on the bot model, so weigh them as "big / medium / none", not to the decimal.
 
+> **CONDITIONALITY & RE-MEASUREMENT (2026-09-11).** Every number on this page is an ESTIMATE conditional
+> on (a) the PROJECTION MODEL it read (draft `computeValues`/curve, or the weekly `season_line`/served
+> model), (b) the historical ROSTER/SAMPLE it replayed, and (c) the league FORMAT/levers -- with sampling
+> variance (the CIs). They are NOT fixed truths. When a dependency shifts -- a projection-model rebuild, a
+> data refresh, a roster/format/lever change -- the dependent numbers move, so **re-measure and quote the
+> re-measured value; do not enshrine a point estimate.** We saw this directly this session: a weekly-model
+> rebuild (#9) plus a one-line roster-trim bug moved the trade baseline between +5.06 and +0.24 on the same
+> question. The RE-MEASUREMENT REGISTRY at the bottom of this file maps each backtested finding to the
+> dependency that, when it shifts, requires re-running it.
+
 > **Curve note (2026-09-03):** the percentages on this page were measured under the OLD even-split
 > FLEX baseline. The value curve has since changed (points-weighted FLEX allocation), which moved
 > the full-system no-lookahead headline from 13.6% to 24.4% championships -- and later work (bid
@@ -457,3 +467,35 @@ Markov structure that binds in FPL does not bind here. Conclusion: invest in myo
 3. **Wire live inflation + smarter nomination** into the draft bidder -- medium edges we've scaffolded.
 4. **Do NOT keep tuning the aggression dial** -- proven neutral.
 5. Waiver/trade automation (also fed by the same ROS projection) -- the next in-season surface.
+
+## Re-measurement registry (which finding to re-run when a dependency shifts)
+
+Every backtested finding depends on a MODEL and/or DATA input. When that input changes, the finding is
+STALE until re-run. Primary dependencies: **weekly** = `season_line`/served weekly projector
+(`ff build-weekly-features`); **draft** = `computeValues`/curve + `feat_player_season`; **data** = the
+raw feeds (rosters, actuals, injuries). Re-run on the dependency's shift and quote the new number.
+
+| Finding | Primary dependency | Re-run |
+|---|---|---|
+| Draft value / aggr / shading (#0-#5) | draft | `ff backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150` |
+| Rookies in draft pool (#9) | draft + rookie curve | same `ff backtest` (rookies default-on; `--no-rookies` to compare) |
+| Waiver churn (#6), drop/waiver-value/bench/handcuff | weekly | `ff inseason-backtest {drop,waiver-value,bench,handcuff}` |
+| Streaming (#6/stream) | weekly + stream features | `ff inseason-backtest stream` |
+| Progressive / role-trend (#7) | weekly | `scripts/inseason-backtest-progressive.mjs`, `inseason-progressive-accuracy.mjs` |
+| Rookie weekly fallback + role-trend (#9) | weekly + rookie curve | `scripts/rookie-weekly-roletrend.mjs` |
+| Playoff-SOS (#8) | weekly | `scripts/inseason-backtest-sos.mjs`, `inseason-sos-playoff-firmup.mjs` |
+| Lineup info gap + play-prob (#11) | weekly + injury feeds | `scripts/inseason-backtest-lineup-info.mjs`, `inseason-backtest-playprob.mjs` |
+| Trades one-for-one + packages (#10) | weekly | `ff inseason-backtest trade`, `trade-package` |
+| MDP / trade-in-playoffs (#12) | weekly | `scripts/mdp-trade-playoff-probe.mjs` |
+
+**Rule:** a `ff build-weekly-features` rebuild invalidates every "weekly" row above; a projection/curve
+change invalidates the "draft" rows; a data refresh can touch both. After such a change, re-run the
+affected rows before trusting their numbers -- the RANKING of edges usually survives, the MAGNITUDES do
+not. (The lineage DAG, `ff lineage`, tracks the DATA assets; this table is the FINDINGS layer the DAG
+does not cover.)
+
+**Currently re-measured on the post-rebuild (rookie-inclusive) weekly model:** trades/#10, packages,
+lineup/#11, play-prob, role-trend/#7 (rookie-inclusive), rookie re-test/#9, MDP/#12, and the draft pool/#9.
+The early in-season nulls (drop/bench/handcuff/stream/denial) predate the rebuild; their conclusions are
+robust to it (the rebuild only ADDED rookies to the pool, veterans unchanged, and those findings are
+nulls), but they have not been re-run on the current model -- flagged here rather than silently trusted.
