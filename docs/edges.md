@@ -304,6 +304,24 @@ in its right layer playoff-SOS is not an automatable edge -- a conclusion must s
 the realized-only positive is the recurring seduction of a variance-blind metric. Keep playoff SOS a
 human-gated read (`playoff_sos`); do NOT fold it into the projection or an automated waiver.
 
+### 9. College production + athleticism as rookie-projection features -- REAL but redundant with draft capital [backtested]
+Gathered the missing rookie pillars (combine/RAS, NGS, college Dominator/Breakout -- commits e5e0fc3,
+2879a42, d897861) and validated them on a rookie-holdout (`scripts/rookie-holdout.mjs`): predict
+rookie-season PPG for drafted RB/WR/TE 2016-2024 (n=406), held out by draft class. Rookies never appear
+in the projection's training set or the historical backtest (both need a prior-season finish), so this
+purpose-built holdout is the only way to check them.
+- The features are CONNECTED and real: prospect-only (athletic_score + dominator + breakout_age, no draft
+  capital) predicts rookie PPG at r 0.23-0.26 on holdout.
+- But they are fully SUBSUMED by draft capital: draft capital alone is r 0.50-0.54; adding the prospect
+  features moves it ~0.00 (0.497->0.494, 0.541->0.541), MAE unchanged. Even on late picks (overall >=100,
+  where draft capital is coarse) +prospect does not help (r 0.234 vs 0.242, 0.233 vs 0.228).
+Matches the prior art exactly ("athleticism gets the smallest weight because NFL teams account for it
+with draft capital"). The data foundation is real and reusable (combine/NGS/college now ingested +
+crosswalked, docs/data-sources.md), and `feat_player_prospect` is a validated per-player asset -- but the
+projection should NOT fold these in as rookie features; draft capital (already a projection feature)
+carries the signal. The open lever, if any, is whether the SHIPPED projection uses draft capital
+optimally -- not adding college/athletic on top.
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).
