@@ -401,6 +401,15 @@ gap is a resolved-fact problem, and the fix is **B2, a game-day inactive feed** 
 list into player_status before lock -- ESPN app-bridge/Sleeper gameday; Part A shows perfect availability
 recovers the full 1.79). B1 stays a valid reusable "play-risk" flag, just not the lineup fix.
 
+**B2 (game-day inactive feed) BUILT.** `src/data/gamedayStatus.ts` (`ff refresh-gameday-status`) pulls
+ESPN's public per-game `injuries` block (Out/Doubtful/Questionable, updated near kickoff), crosswalks
+`athlete.id` -> player_sk via player_xref('espn') (~100% of fantasy-relevant players; the ~19% misses are
+linemen), into `raw_gameday_status`. `loadAvailability` (copilotStore.ts) now escalates a game-day OUT to
+a bench, keyed by nameKey -- 19 late-scratch players benched for the current week in a live run. This is
+the operational closer for #11: run it near lineup lock to catch the ~90-min OUT list the Friday/Sleeper
+snapshot misses. Its value is Part A's 1.79-pt ceiling (proven); it needs no separate backtest, just the
+pre-lock refresh.
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).

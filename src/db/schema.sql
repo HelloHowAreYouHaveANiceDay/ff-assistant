@@ -934,6 +934,16 @@ CREATE TABLE IF NOT EXISTS feat_player_prospect (
   breakout_age REAL,       -- age at Sep 1 of the first season with dominator >= 0.20, null if age unknown
   updated_at TEXT);
 
+-- ESPN GAME-DAY injury designations -- the freshest OUT list (~90 min pre-kickoff), the source the
+-- lineup needs to bench a late scratch (edges.md #11: worth ~1.8 pts/wk). From ESPN's public summary
+-- `injuries` block per game, crosswalked to player_sk via player_xref('espn'). Refreshed near lineup
+-- lock; `as_of` is ESPN's own status date. One row per (season, week, player_sk).
+CREATE TABLE IF NOT EXISTS raw_gameday_status (
+  season INTEGER NOT NULL, week INTEGER NOT NULL, player_sk TEXT NOT NULL,
+  espn_athlete_id TEXT, name TEXT, status TEXT, detail TEXT, as_of TEXT, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, week, player_sk));
+CREATE INDEX IF NOT EXISTS idx_gameday_status ON raw_gameday_status (season, week, status);
+
 -- FantasyFootballCalculator's ADP archive: the real draft market, by format and year.
 --
 -- `as_of` IS `meta.end_date` -- the last day of the draft window the average was taken over, which

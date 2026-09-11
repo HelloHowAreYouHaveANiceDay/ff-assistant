@@ -68,6 +68,20 @@ export function loadAvailability(dbPath?: string): AvailabilityMap {
       if (cur?.status === "OUT") continue;
       out.set(k, { status: "OUT", source: "news(injury/high)", detail: String(r.detail ?? "").slice(0, 120) });
     }
+    // GAME-DAY status (B2): ESPN's freshest designation for the latest refreshed week, the ~90-min OUT
+    // list our Friday/Sleeper snapshot misses (edges.md #11, worth ~1.8 pts/wk). Escalates only -- a
+    // game-day OUT/DOUBTFUL benches a late scratch; QUESTIONABLE stays startable; never clears an OUT.
+    for (const r of db.prepare(
+      `SELECT name, status FROM raw_gameday_status
+        WHERE (season, week) = (SELECT season, week FROM raw_gameday_status ORDER BY season DESC, week DESC LIMIT 1)
+          AND name IS NOT NULL AND status IS NOT NULL`,
+    ).all() as { name: string; status: string }[]) {
+      const status = normalizeStatus(r.status);
+      if (status !== "OUT") continue;                             // normalizeStatus maps Doubtful->OUT; Q stays startable
+      const k = nameKey(r.name); if (!k) continue;
+      if (out.get(k)?.status === "OUT") continue;                 // idempotent; never clears an OUT
+      out.set(k, { status, source: "gameday(espn)", detail: `ESPN game-day ${r.status}` });
+    }
   } finally { db.close(); }
   return out;
 }

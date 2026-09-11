@@ -110,6 +110,8 @@ async function main() {
       return cmdBuildInjuryHorizon(rest);
     case "build-prospect":
       return cmdBuildProspect(rest);
+    case "refresh-gameday-status":
+      return cmdRefreshGamedayStatus(rest);
     case "sync-rosters":
       return cmdSyncRosters(rest);
     case "sync-settings":
@@ -3821,6 +3823,15 @@ async function cmdBuildWaiverClaims(rest: string[]) {
   const args = ["--import", "tsx", "scripts/faab-coverage.mjs", "--build", ...rest];
   const r = spawnSync(process.execPath, args, { stdio: "inherit" });
   if (r.status) process.exitCode = r.status;
+}
+
+/** `ff refresh-gameday-status [--week N] [--year Y]` -- pull ESPN's freshest game-day injury
+ *  designations into raw_gameday_status so the lineup benches late scratches (B2, gap #11). */
+async function cmdRefreshGamedayStatus(rest: string[]) {
+  const { ingestGamedayStatus } = await import("./data/gamedayStatus.js");
+  const wk = valueOf(rest, "--week"); const yr = valueOf(rest, "--year");
+  const r = await ingestGamedayStatus({ dbPath: valueOf(rest, "--db"), week: wk ? Number(wk) : undefined, year: yr ? Number(yr) : undefined });
+  console.log(`raw_gameday_status: season ${r.season} week ${r.week} -- ${r.rows} fantasy players across ${r.events} games (${r.out} OUT)`);
 }
 
 /** `ff build-prospect` -- derive feat_player_prospect (athletic RAS score + college Dominator/Breakout
