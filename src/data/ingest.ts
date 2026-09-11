@@ -331,6 +331,19 @@ export const RAW_ASSETS: RawAsset[] = [
     },
   },
   {
+    id: "gameday-status",
+    table: "raw_gameday_status",
+    what: "ESPN's freshest game-day injury designations (Out/Doubtful/Questionable) crosswalked to player_sk -- the ~90-min list the Friday/Sleeper snapshots miss, so the lineup benches late scratches",
+    defaultSeasons: null,
+    reads: ["src_espn", "player_xref"],
+    writes: ["raw_gameday_status"],
+    async run(dbPath) {
+      const { ingestGamedayStatus } = await import("./gamedayStatus.js");
+      const r = await ingestGamedayStatus({ dbPath });
+      return r.rows;
+    },
+  },
+  {
     id: "college",
     table: "raw_college_player_season (+ raw_college_team_season)",
     what: "college production aggregated from cfbfastR play-by-play (2014+): player-season receiving/rushing yards+TDs and team totals -- the Dominator/Breakout ingredients for the rookie college pillar",

@@ -182,6 +182,15 @@ export const PRODUCERS: Producer[] = [
     writes: ["faab-model.json"],
   },
   {
+    id: "build-prospect",
+    what: "the rookie prospect priors: combine RAS athletic score + college Dominator/Breakout age, written to feat_player_prospect",
+    // verified: src/features/prospect.ts `buildProspectFeatures` -- `FROM raw_combine JOIN player_xref`,
+    // `FROM raw_nfl_draft_pick JOIN player_xref`, `FROM raw_college_team_season`,
+    // `FROM raw_college_player_season`; `INSERT INTO feat_player_prospect`.
+    reads: ["raw_combine", "raw_nfl_draft_pick", "raw_college_team_season", "raw_college_player_season", "player_xref"],
+    writes: ["feat_player_prospect"],
+  },
+  {
     id: "ledger sync",
     what: "Track K: rebuilds fact_prediction from the checked-in prediction-ledger transcription",
     // verified: src/lineage/ledger.ts `syncLedger` -- reads data/predictions.json,
