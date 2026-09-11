@@ -1953,6 +1953,7 @@ async function cmdBacktest(rest: string[]) {
   const ourWeeklySd = valueOf(rest, "--our-weekly-noise") != null ? Number(valueOf(rest, "--our-weekly-noise")) : undefined;
   const botWeeklySd = valueOf(rest, "--bot-weekly-noise") != null ? Number(valueOf(rest, "--bot-weekly-noise")) : undefined;
   const full = rest.includes("--full"); // run the REAL lineup optimizer (inseason/lineup.ts) for our team
+  const rookies = rest.includes("--rookies"); // add draft-capital-priced rookies to the pool (else absent)
   const noLookahead = rest.includes("--no-lookahead"); // draft/lineup on LAST season, score by THIS season
   const waivers = rest.includes("--waivers"); // our team works the waiver wire (trailing-avg, no lookahead)
   // THE FIELD works it too. Off by default until the paired result says otherwise: it moves the
@@ -2213,6 +2214,26 @@ async function cmdBacktest(rest: string[]) {
     console.log(`          2020-2025. It is a SHORT WINDOW and every number from it should be read as one.`);
   }
 
+  // ROOKIES. The default pool is last season's finishers, so a rookie -- who has no prior NFL season
+  // -- is absent, and the arbiter never drafts one. `--rookies` prices each drafted skill rookie by
+  // draft capital (src/draft/rookieModel.ts, r~0.66 leave-one-season-out) and adds him to the pool.
+  // He is identified by his name appearing in THIS season's actuals AND matching a draft-year pick,
+  // which keeps names in the `pts`/`wk` namespace (a name that did not match would score 0 and
+  // penalise rookies unfairly); the projection itself is draft capital only, knowable in August.
+  let rookieDraft: Map<string, { pos: string; overall: number }> | null = null;
+  let rookieModel: typeof import("./draft/rookieModel.js") | null = null;
+  let rookieDb: ReturnType<typeof import("./db/db.js").openDb> | null = null;
+  const normNm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim();
+  const rookiesAdded = new Map<number, number>();
+  if (rookies) {
+    const { openDb } = await import("./db/db.js");
+    rookieModel = await import("./draft/rookieModel.js");
+    rookieDb = openDb(valueOf(rest, "--db"));
+    rookieDraft = new Map();
+    for (const d of rookieDb.prepare("SELECT season, position pos, pick, pfr_player_name name FROM raw_nfl_draft_pick WHERE position IN ('QB','RB','WR','TE') AND pick > 0 AND pfr_player_name IS NOT NULL").all() as { season: number; pos: string; pick: number; name: string }[])
+      rookieDraft.set(`${normNm(d.name)}|${d.season}`, { pos: d.pos, overall: d.pick });
+  }
+
   for (const yr of seasons) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
     let proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
@@ -2259,6 +2280,25 @@ async function cmdBacktest(rest: string[]) {
       for (const r of ranked) { seen[r.pos] = (seen[r.pos] ?? 0) + 1; rankOf.set(r.name, seen[r.pos]); }
       proj = proj.map((r) => ({ ...r, points: r.points * opportunityFactor(oppModel, r.name, r.pos, rankOf.get(r.name) ?? 999, yr) }));
     }
+    // ROOKIE INJECTION. Fit the draft-capital curve on rookies from BEFORE this season (leakage-clean),
+    // then add each drafted skill rookie who shows up in this season's actuals, priced by his draft
+    // pick. proj is copied first so the shared `pts` array is never mutated.
+    if (rookies && rookieModel && rookieDraft && rookieDb) {
+      const rc = rookieModel.fitRookieCurve(rookieDb, { beforeSeason: yr });
+      const have = new Set(proj.map((r) => normNm(r.name)));
+      const add: { name: string; pos: string; points: number }[] = [];
+      for (const r of pts.get(yr) ?? []) {
+        const nk = normNm(r.name);
+        if (have.has(nk)) continue;                       // already in the pool (a returning veteran)
+        const dc = rookieDraft.get(`${nk}|${yr}`);
+        if (!dc) continue;                                // not a rookie drafted this year
+        const p = rookieModel.rookiePoints(rc, r.pos, dc.overall);
+        if (p == null) continue;
+        add.push({ name: r.name, pos: r.pos, points: p });
+        have.add(nk);
+      }
+      if (add.length) { proj = [...proj, ...add]; rookiesAdded.set(yr, add.length); }
+    }
     // availability signal for the injury lever: prior-season games played / the busiest player's games
     const avail = new Map<string, number>();
     const priorWk = wk.get(projYr);
@@ -2280,6 +2320,11 @@ async function cmdBacktest(rest: string[]) {
     `  (from the ${btFormat.source} format block${seedingArg || valueOf(rest, "--reg-weeks") || valueOf(rest, "--playoff-teams") || reseedArg ? ", overridden on the command line" : ""})`);
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${btPlayoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(shared ${marketNoiseGiven ? String(marketSd) : "measured band sd"}, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);
   console.log(`  CHAMPIONSHIPS: ${((champ / total) * 100).toFixed(1)}%  (random ${(100 / lg.teams).toFixed(1)}%)  |  playoffs: ${((playoffs / total) * 100).toFixed(0)}%`);
+  if (rookies) {
+    const tot = [...rookiesAdded.values()].reduce((a, b) => a + b, 0), nYr = rookiesAdded.size || 1;
+    console.log(`  ROOKIES: added ${tot} draft-capital-priced rookies across ${rookiesAdded.size} seasons (~${(tot / nYr).toFixed(0)}/yr) to the pool`);
+    rookieDb?.close();
+  }
   if (dumpPath) {
     writeDump(dumpPath, ["season", "seed", "champ", "playoffs", "wins", "regPoints"].join("\t") + "\n" + dumpRows.join("\n") + "\n", "utf8");
     console.log(`  wrote ${dumpRows.length} trial rows -> ${dumpPath}`);

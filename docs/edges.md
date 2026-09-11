@@ -329,8 +329,17 @@ evaluate rookie draft value, and rookie projection quality is not gradeable ther
 DOES price rookies (ECR consensus rank, which encodes draft capital), and the achievable rookie-year
 ceiling is r~0.52 (draft capital) -- but none of that is historically validatable. The one project that
 would matter is a rookie POOL in the backtest priced by a draft-capital->finish model, so rookies enter
-the arbiter -- a real modeling effort that PERTURBS the shipped 33% championship number, so it needs
-explicit sign-off, not a silent core change.
+the arbiter.
+
+**BUILT (flag-gated): `ff backtest --rookies`.** `src/draft/rookieModel.ts` fits expected rookie season
+points as a log-linear function of overall draft pick per position (E[pts]=a+b*ln(overall)); leave-one-
+season-out r=0.663, MAE 37.5 (matches the draft-capital ceiling). `--rookies` adds each drafted skill
+rookie who appears in that season's actuals, priced by his draft pick, to the pool -- 1,451 across 25
+seasons (~58/yr). Paired (CRN) effect on the shipped headline (1999-2024, n=100): 38.6% -> 38.1%
+championships, NEUTRAL/within noise. Healthy: rookies priced by draft capital ~ how the market prices
+them, so no systematic edge, but the arbiter now REPRESENTS rookies instead of being blind to them. Left
+flag-gated (default off) pending a decision to flip the default, since that re-baselines every recorded
+backtest number.
 
 ## Edges that DON'T exist / aren't worth chasing
 
