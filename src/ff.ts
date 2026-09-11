@@ -1953,7 +1953,7 @@ async function cmdBacktest(rest: string[]) {
   const ourWeeklySd = valueOf(rest, "--our-weekly-noise") != null ? Number(valueOf(rest, "--our-weekly-noise")) : undefined;
   const botWeeklySd = valueOf(rest, "--bot-weekly-noise") != null ? Number(valueOf(rest, "--bot-weekly-noise")) : undefined;
   const full = rest.includes("--full"); // run the REAL lineup optimizer (inseason/lineup.ts) for our team
-  const rookies = rest.includes("--rookies"); // add draft-capital-priced rookies to the pool (else absent)
+  const rookies = !rest.includes("--no-rookies"); // draft-capital-priced rookies in the pool by default; --no-rookies drops them
   const noLookahead = rest.includes("--no-lookahead"); // draft/lineup on LAST season, score by THIS season
   const waivers = rest.includes("--waivers"); // our team works the waiver wire (trailing-avg, no lookahead)
   // THE FIELD works it too. Off by default until the paired result says otherwise: it moves the

@@ -11,7 +11,10 @@ real time. Read it before changing strategy, the sim, or anything that produces 
 
 ```
 npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
-# shipped default: ~33% championships / 94% playoffs (random 6.3%)
+# shipped default: ~39% championships / 96% playoffs (random 6.3%). Rookies are now IN the pool by
+# default (priced by draft capital, src/draft/rookieModel.ts); --no-rookies drops them. The rookie
+# effect is NEUTRAL (paired ~-0.2pp) -- the arbiter now REPRESENTS rookies without a systematic edge.
+# (The old "~33%" note was stale; the effective tripwire in docs/validation.md is ~39.7%.)
 ```
 
 A materially different number means an input drifted — find it before doing anything else.

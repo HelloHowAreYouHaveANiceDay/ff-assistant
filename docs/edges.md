@@ -335,11 +335,13 @@ the arbiter.
 points as a log-linear function of overall draft pick per position (E[pts]=a+b*ln(overall)); leave-one-
 season-out r=0.663, MAE 37.5 (matches the draft-capital ceiling). `--rookies` adds each drafted skill
 rookie who appears in that season's actuals, priced by his draft pick, to the pool -- 1,451 across 25
-seasons (~58/yr). Paired (CRN) effect on the shipped headline (1999-2024, n=100): 38.6% -> 38.1%
-championships, NEUTRAL/within noise. Healthy: rookies priced by draft capital ~ how the market prices
-them, so no systematic edge, but the arbiter now REPRESENTS rookies instead of being blind to them. Left
-flag-gated (default off) pending a decision to flip the default, since that re-baselines every recorded
-backtest number.
+seasons (~58/yr). Paired (CRN) effect on the shipped headline: NEUTRAL/within noise (n=150: --no-rookies 38.7% ->
+rookies-on 38.5%, -0.2pp). Healthy: rookies priced by draft capital ~ how the market prices them, so no
+systematic edge, but the arbiter now REPRESENTS rookies instead of being blind to them.
+
+**NOW DEFAULT ON** (`--no-rookies` drops them for the old behavior). CLAUDE.md's stale "~33%" was
+corrected to ~39% (the effective tripwire is 39.7%; rookies barely move it). The next full validation
+pass should record the rookies-on tripwire.
 
 ## Edges that DON'T exist / aren't worth chasing
 
