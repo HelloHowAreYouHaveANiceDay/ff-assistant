@@ -917,6 +917,23 @@ CREATE TABLE IF NOT EXISTS raw_college_team_season (
   fetched_at TEXT NOT NULL,
   PRIMARY KEY (season, team));
 
+-- PROSPECT FEATURES: the derived per-player rookie priors, from raw_combine (athletic) and the college
+-- production tables (Dominator / Breakout Age). One row per player_sk; these are career-fixed traits
+-- (a player has one combine, one college career), so they are NOT per-season. A rookie projection reads
+-- them as the prior the history-based features cannot supply. `college_match` records HOW the college
+-- crosswalk resolved (name+school+year is the safe tier) so a consumer can gate on match quality.
+CREATE TABLE IF NOT EXISTS feat_player_prospect (
+  player_sk INTEGER PRIMARY KEY,
+  pos TEXT,
+  athletic_score REAL,     -- 0-10 RAS-like composite, position-relative percentile of the combine drills
+  athletic_n INTEGER,      -- how many drills the score averaged (coverage)
+  forty REAL, vertical REAL, broad_jump REAL, cone REAL, shuttle REAL, bench REAL, ht_in REAL, wt REAL,
+  college_athlete_id TEXT, college_team TEXT, college_match TEXT,
+  dominator REAL,          -- peak-season weighted (0.8 yards + 0.2 TD) share of team offense, 0-1
+  dominator_season INTEGER,
+  breakout_age REAL,       -- age at Sep 1 of the first season with dominator >= 0.20, null if age unknown
+  updated_at TEXT);
+
 -- FantasyFootballCalculator's ADP archive: the real draft market, by format and year.
 --
 -- `as_of` IS `meta.end_date` -- the last day of the draft window the average was taken over, which

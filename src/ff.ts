@@ -108,6 +108,8 @@ async function main() {
       return cmdBuildLiveContext(rest);
     case "build-injury-horizon":
       return cmdBuildInjuryHorizon(rest);
+    case "build-prospect":
+      return cmdBuildProspect(rest);
     case "sync-rosters":
       return cmdSyncRosters(rest);
     case "sync-settings":
@@ -3773,6 +3775,14 @@ async function cmdBuildWaiverClaims(rest: string[]) {
   const args = ["--import", "tsx", "scripts/faab-coverage.mjs", "--build", ...rest];
   const r = spawnSync(process.execPath, args, { stdio: "inherit" });
   if (r.status) process.exitCode = r.status;
+}
+
+/** `ff build-prospect` -- derive feat_player_prospect (athletic RAS score + college Dominator/Breakout
+ *  rookie priors) from raw_combine and the college-production tables. */
+async function cmdBuildProspect(rest: string[]) {
+  const { buildProspectFeatures } = await import("./features/prospect.js");
+  const r = buildProspectFeatures(valueOf(rest, "--db"));
+  console.log(`feat_player_prospect: ${r.rows} players -- ${r.athletic} athletic scores, ${r.college} college dominators (${r.collegeSafe} name+school+year safe).`);
 }
 
 /**

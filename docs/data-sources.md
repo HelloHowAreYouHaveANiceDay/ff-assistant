@@ -368,8 +368,10 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
   3,014 RB/WR/TE/QB: forty 2,746, vertical 2,392, broad 2,340, shuttle 1,798, cone 1,742, bench 1,458.
 - **Raw table.** `raw_combine` (`ingestRawCombine`, `ff ingest-raw combine`).
 - **Feeds.** `player_bio.forty` still enriches the board's `40yd` via the legacy name-keyed `ingestBio`
-  path; the full `raw_combine` profile is the foundation for an athletic-score feature (not yet built).
-- **Status.** ingested (full profile, 2026-09). Previously only `forty` was read, by name.
+  path; the full profile feeds **`feat_player_prospect.athletic_score`** -- a 0-10 position-relative RAS-
+  like composite of the drills (`ff build-prospect`), mean 4.98, validated (Chase 8.5, Saquon 8.5;
+  correctly null for non-testers like Marvin Harrison).
+- **Status.** ingested + derived (2026-09). Previously only `forty` was read, by name.
 
 ### 1.15 PFR advanced stats -- `pfr_advstats/advstats_week_{pass,rush,rec,def}_<season>.csv`
 
@@ -609,8 +611,12 @@ is the credential. Everything below is a GET.
   Dominator) are correct; the TD component is a refinement pass.
 - **Raw tables.** `raw_college_player_season`, `raw_college_team_season` (`ingestRawCollege`,
   `ff ingest-raw college`, ~27s).
-- **Status.** ingested (2026-09). No feature reads it yet -- Dominator/Breakout derivation + the
-  name+school crosswalk to `player_sk` are the next step.
+- **Feeds.** `feat_player_prospect.dominator` / `dominator_season` / `breakout_age` (`ff build-prospect`,
+  `src/features/prospect.ts`): peak-season 0.8*yards + 0.2*TD share of team offense, crosswalked to
+  `player_sk` (1,032 players, 726 safe). Validated -- Bijan 0.39, CMC 0.43, Chase 0.14 (correctly
+  suppressed by the 2019 LSU target split).
+- **Status.** ingested + derived (2026-09). Not yet read by the PROJECTION -- wiring it in as the
+  rookie prior is the next step.
 
 ## 6. Other ingested sources
 
