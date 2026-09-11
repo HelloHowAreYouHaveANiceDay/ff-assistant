@@ -410,6 +410,24 @@ the operational closer for #11: run it near lineup lock to catch the ~90-min OUT
 snapshot misses. Its value is Part A's 1.79-pt ceiling (proven); it needs no separate backtest, just the
 pre-lock refresh.
 
+### 12. The MDP / sequential frontier -- myopic is near-optimal for THIS league [explored]
+Prior art (recon) treats season-long fantasy as a Markov decision process (FPL solved as a belief-state
+MDP + Bayesian Q-learning), planning a SEQUENCE of moves. Our system is myopic -- every verb scores one
+move vs the current roster. Explored whether the sequential view adds value here; it does not, because
+every sequential effect is measured-low:
+- FAAB budget pacing: bid effect not separable from zero (uncontested deep-league waivers, #6/faab).
+- Playoff timing/stashing: playoff-SOS refuted under the sim scorer (#8).
+- Bench/roster sequencing: low-leverage (#7, insurance/handcuff/bench nulls).
+- The one real edge, TRADES (#10, +5 pts full-RoS), is a REGULAR-SEASON accumulation, not a playoff
+  edge: `scripts/mdp-trade-playoff-probe.mjs` scores the same trades on weeks 15-17 only -> -0.06
+  (CI [-1.33, 1.20], P 49%). It evaporates in the games that decide the title, so temporal (playoff)
+  weighting of trades -- the recon's GA-playoff-biasing lever -- adds nothing.
+WHY myopic ~ optimal here but the MDP view pays for FPL: FPL has a hard per-week transfer budget/penalty
+(genuine sequential resource management) and is a single global top-percentile contest; our redraft has
+no per-week transfer cost, uncontested waivers, and a 16-team H2H sim with NO measured title skill -- the
+Markov structure that binds in FPL does not bind here. Conclusion: invest in myopic decisions done well
+(trades validated, lineup availability fixed, rookies represented), not in sequential planning.
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).
