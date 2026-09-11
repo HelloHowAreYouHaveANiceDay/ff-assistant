@@ -161,6 +161,27 @@ export function addBestLineupUpgrade(drop: RosterPolicy): RosterPolicy {
   };
 }
 
+/** WAIVER BY PROJECTION: add the free agent with the highest REST-OF-SEASON per-game mean under the
+ *  injected `projOf`, dropping the rostered legal body with the lowest `projOf`, and only when the add
+ *  out-projects the drop. Add and drop are ranked by the SAME projector, so the projector alone drives
+ *  the decision -- this is the probe the progressive-projection experiment A/Bs: baseline reads the
+ *  frozen line, variant reads a candidate projection. `meta.addedPos` tags the add for attribution. */
+export function waiverByProjection(projOf: (m: DecisionMember, season: number, week: number) => number): RosterPolicy {
+  return {
+    name: "waiver-by-projection",
+    apply(state) {
+      if (!state.freeAgents.length) return { roster: state.roster };
+      const p = (m: DecisionMember) => projOf(m, state.season, state.week);
+      const best = [...state.freeAgents].sort((a, b) => p(b) - p(a) || a.playerSk.localeCompare(b.playerSk))[0];
+      const legal = legalDrops(state);
+      if (!legal.length) return { roster: state.roster };
+      const worst = [...legal].sort((a, b) => p(a) - p(b) || a.playerSk.localeCompare(b.playerSk))[0];
+      if (p(best) <= p(worst)) return { roster: state.roster }; // no projected improvement
+      return { roster: [...without(state, worst.playerSk), best], meta: { addedPos: best.pos } };
+    },
+  };
+}
+
 /** ADD THE BEST FREE AGENT (dropping via `drop`), but only when he out-projects the man dropped --
  *  a rational manager does not claim a worse player. Tests whether one waiver claim is worth making;
  *  `meta.addedPos` tags the added position. */

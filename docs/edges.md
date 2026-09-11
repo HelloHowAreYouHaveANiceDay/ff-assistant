@@ -242,6 +242,68 @@ so waivers are a CONSERVATIVE human-gated COPILOT (`src/inseason/waivers.ts` -- 
 rest-of-season upgrades, don't auto-drop), NOT an auto-edge. Shallower leagues (8-10 team) would
 differ -- more talent on the wire.
 
+### 7. Progressive in-season re-projection (role-trend) -- accuracy signal REAL but tiny; decision NULL/NEGATIVE [backtested]
+Tested the strong hypothesis that in-season role (snap/route share) trend should sharpen the frozen
+preseason line -- the shipped projection is static (frozen at Y-09-01; only availability updates), so
+a role-change like a backfield takeover is structurally invisible to it. Built a full decision-backtest
+layer for it (`src/inseason/backtest/{projectors,opportunity,progressive}.ts`, Phases 0-4, all with
+hermetic tests):
+- **The instrument works** (Phase 0 guillotine): an oracle projection beats the frozen line by +38.5
+  pts/decision on the waiver probe (CI clear), while noise (-29.7) and shuffle (-21.7) do NOT -- so the
+  harness can see projection quality and reject fakes.
+- **The signal is REAL but small** (accuracy diagnostic): role-trend re-projection is more accurate than
+  the frozen line on the ~4,900 role-change players, MAE 4.223 -> 4.131 (~2%), largest exactly where
+  role moved -- the conviction is correct in principle. Overall MAE 4.282 -> 4.255.
+- **It does NOT clear the decision bar** (holdout, both scorers): re-scaling the frozen line by role
+  trend did not improve the waiver ADD decision on either holdout split under both realized and sim
+  scorers -- tiny, sign-unstable across scorers. The sharper CHANGE-POINT variant (regime detector) was
+  actively NEGATIVE (-0.5 to -1.1). A ~2% accuracy gain on a 4.2-pt-MAE base (weekly points are mostly
+  irreducible noise) is too small to flip which FA is the best add, and speculative hot-role adds
+  mean-revert while the frozen-forward scorer holds them all season.
+- **The ~2% ceiling is robust to the CHANGE ENCODING** (`scripts/inseason-change-metrics.mjs`): swept a
+  family -- SMA(2..5), EWMA(hl 1..3), MA crossover, OLS slope -- on the accuracy diagnostic with holdout
+  selection. Shorter/more-responsive wins marginally (SMA(2) best, held-out ~2.7%), EWMA(1) close; slope
+  and crossover worse. But every encoding lands at ~2-3%, and SMA(2) -- the winner -- was itself
+  decision-REFUTED on holdout (realized/sim sign-flip). It is not the encoding; the role signal is just
+  small.
+- **The features AGGREGATE to a bigger accuracy lift -- but STILL fail the decision**
+  (`scripts/inseason-aggregate-model.mjs`): a per-fold ridge over the full in-season set (frozen line +
+  form + role level + role trend + usage + dvp matchup + Vegas implied total) is held-out ~5-6% more
+  accurate on role-change players (3.94->3.74, 4.35->4.10) -- 2-3x the role-alone lift, because the
+  orthogonal features (matchup, Vegas) add real signal the correlated ones (role/form/usage) don't. Yet
+  its waiver decision is realized +0.3/+0.5 (CI includes 0) and sim -0.35/-0.56 (CI EXCLUDES 0,
+  negative). A genuinely more accurate projection makes a WORSE distributional decision: MAE rewards
+  average calibration, but the waiver decision is top-of-pool RANKING + tails, and a model more
+  confident about volatile players makes riskier adds that the injury/variance-aware scorer punishes.
+Lesson (same shape as #6 and the CLAUDE.md accuracy-vs-decision rule): a targeted -- OR aggregate --
+accuracy win does not imply a decision win; accuracy and decision value are different objectives. Role
+trend is worth surfacing as a COPILOT signal ("this player's role is rising") but neither it nor the
+full aggregate model is an automatable projection edge. Reproduce: `scripts/inseason-backtest-progressive.mjs`,
+`scripts/inseason-progressive-accuracy.mjs`, `scripts/inseason-change-metrics.mjs`,
+`scripts/inseason-backtest-projection.mjs`.
+
+### 8. Strength of schedule -- a LAYER-2 (playoff) signal, not a Layer-1 (accuracy) one [backtested]
+Tested SOS (point-in-time opponent defense-vs-position ease, rated only through the decision week) in
+both layers (`scripts/inseason-backtest-sos.mjs`, `src/inseason/backtest/sos.ts`):
+- **Layer 1 accuracy: NO.** A naive season-to-date SOS adjustment makes next-week prediction slightly
+  WORSE (frozen MAE 4.55 -> 4.56/4.62), because raw points-allowed is noisy and multiplicative ease^beta
+  over-adjusts. (A properly SHRUNK matchup coefficient -- dvp inside the ridge aggregate model, #7 --
+  gave only a tiny help.) Matchup is real signal but must be regularised, not applied raw.
+- **Layer 1 rest-of-season -> waiver decision: REFUTED/negative**, sign-unstable like every other
+  in-season projection tweak.
+- **Layer 2 playoff schedule -> playoff-week value: looked positive, REFUTED on firm-up.** Under the
+  REALIZED playoff scorer, favouring soft weeks-15-17 matchups looked like the one positive lead
+  (+0.94/+1.45 across holdout splits; +1.18 CI[0.36,2.07] P99% at fixed beta over all 7 seasons). But the
+  firm-up (`scripts/inseason-sos-playoff-firmup.mjs`) ran the SIM-DISTRIBUTIONAL playoff scorer and it
+  FLIPPED SIGN: -1.27 CI[-2.09,-0.48] P0%. Per-season the realized positive is driven by 3 of 7 seasons
+  (2018/19/24 each +7 to +9; 2022/23 negative) -- high variance, not robust. Same failure as role trend:
+  the realized scorer rewards risky soft-matchup adds that happened to hit; the variance/injury-aware
+  scorer, which prices their downside, refutes them.
+Lesson: the layer framing is load-bearing (SOS is a playoff concept, not a season-accuracy one), but even
+in its right layer playoff-SOS is not an automatable edge -- a conclusion must survive BOTH scorers, and
+the realized-only positive is the recurring seduction of a variance-blind metric. Keep playoff SOS a
+human-gated read (`playoff_sos`); do NOT fold it into the projection or an automated waiver.
+
 ## Edges that DON'T exist / aren't worth chasing
 
 - A "perfect" aggression setting -- there isn't one (see #5).
