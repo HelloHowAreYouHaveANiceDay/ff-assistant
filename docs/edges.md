@@ -377,6 +377,20 @@ is permanent -> frozen-forward is right).
 So trade recommendations have teeth, and the capability is now VALIDATED, not just shipped. (A two-sided
 RosterPolicy is still absent from the generic harness; this is a dedicated two-roster backtest.)
 
+**PACKAGE trades (2-for-1 / 1-for-2 / 2-for-2) -- a prior-art borrow that pays [backtested].** Extended
+the search to multi-player packages (arXiv 2111.02859, 2511.17535: trades as a knapsack over packages;
+the net-receiver auto-drops its lowest-proj scrub back to its original roster size, so a full roster does
+not block a 2-for-1). `ff inseason-backtest trade-package`, `src/inseason/backtest/trades.ts`
+(maxGive/maxGet), 2018-2024 realized: 1-for-1 +5.06 -> **1-for-2 +7.62 (CI [3.73, 12.29], P 100%)** ->
+2-for-2 +7.26. The clean win is **1-for-2 (acquire depth)**: trading a surplus stud for two contributors
+adds ~+2.6 over the one-for-one -- flexibility and injury resilience pay in a deep league. 2-for-1
+(consolidate into a stud) reads -1.385, but that is CONFOUNDED: a 2-for-1 shrinks our roster and the
+backtest does not model filling the freed slot with a free agent, so consolidation is understated, not
+shown bad. Random control stable -2.05 throughout. (Implementation note: an early version trimmed rosters
+to the TEMPLATE slot count, which silently shrank legitimately-large rosters and collapsed the one-for-one
+baseline to +0.24 -- caught because the MDP probe showed +5.06 on the same data, so it had to be code, not
+data; the fix trims only a net-receiver, back to its own original size.)
+
 ### 11. Lineup information gap -- game-day availability is worth ~1.8 pts/week [backtested]
 The QA audit's one decision we LOSE to humans (lineup, -1.4 to -4.5 pts/wk). Root cause is mechanical:
 the live copilot benches OUT/DOUBTFUL but STARTS questionable players (copilot.ts:341), and there is NO

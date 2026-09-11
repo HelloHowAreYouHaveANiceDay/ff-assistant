@@ -37,14 +37,33 @@ export interface TradeResult {
   randomControl: { meanDiff: number; n: number };
 }
 
+/** All non-empty subsets of `arr` of size 1..k (k in {1,2}). Bounded for the package search. */
+function subsetsUpTo<T>(arr: T[], k: number): T[][] {
+  const out: T[][] = arr.map((a) => [a]);
+  if (k >= 2) for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) out.push([arr[i], arr[j]]);
+  return out;
+}
+const sumProj = (ms: DecisionMember[]) => ms.reduce((s, m) => s + m.proj, 0);
+
+/** A team that receives more than it gives must DROP to its roster max -- realistically the lowest-
+ *  projected scrubs, the way accepting a 2-for-1 forces a cut. */
+function fitToMax(roster: DecisionMember[], maxRoster: number): DecisionMember[] {
+  if (roster.length <= maxRoster) return roster;
+  const keep = [...roster].sort((a, b) => b.proj - a.proj).slice(0, maxRoster); // drop lowest-proj
+  return keep;
+}
+
 export function backtestTrades(db: DB, opts: {
   leagueId: string; seasons: number[]; model?: ModelName; scorer?: Scorer; gap?: number; mutual?: boolean;
+  maxGive?: number; maxGet?: number;
 }): TradeResult {
   const model = opts.model ?? "served";
   const wm = loadModel(model);
   const scorer: Scorer = opts.scorer ?? { name: "realized-rest-of-season", score: realizedRestOfSeason };
-  const gap = opts.gap ?? 3;            // |proj_X - proj_Y| <= gap  => a roughly-fair one-for-one
+  const gap = opts.gap ?? 3;            // |sum(give proj) - sum(get proj)| <= gap  => a roughly-fair deal
   const mutual = opts.mutual ?? true;   // require the deal to not hurt the counterparty (acceptable)
+  const maxGive = opts.maxGive ?? 1;    // 1 = one-for-one (#10); 2 enables 2-for-1 / 1-for-2 packages
+  const maxGet = opts.maxGet ?? 1;
   const cfg = getConfig(db);
   const flexOk = new Set<string>(cfg.flex_ok as string[]);
 
@@ -87,29 +106,43 @@ export function backtestTrades(db: DB, opts: {
         evaluated++;
         const ourBase = optimalLineup(us.map(rp), wc.template, flexOk).totalProj;
 
-        // best fair, improving (and optionally mutual) one-for-one across all opponents
-        let best: { give: DecisionMember; get: DecisionMember; them: DecisionMember[]; themId: string; ourGain: number; theirGain: number } | null = null;
+        // best fair, improving (and optionally mutual) PACKAGE across all opponents. maxGive=maxGet=1
+        // is the one-for-one (#10); 2 enables 2-for-1 / 1-for-2 (consolidate surplus into a stud, or add
+        // depth). The balanced-total-projection gap is checked BEFORE the expensive lineup calls.
+        const need = startersNeeded(wc.template);
+        let best: { give: DecisionMember[]; get: DecisionMember[]; them: DecisionMember[]; themId: string; ourGain: number; theirGain: number } | null = null;
+        const giveSets = subsetsUpTo(us, maxGive);
         for (const themId of teamIds) {
           if (themId === usId) continue;
           const them = teams.get(themId)!;
           const theirBase = optimalLineup(them.map(rp), wc.template, flexOk).totalProj;
-          for (const X of us) for (const Y of them) {
-            if (Math.abs(X.proj - Y.proj) > gap) continue;                 // roughly fair
-            const usPost = [...us.filter((m) => m.playerSk !== X.playerSk), Y];
-            const themPost = [...them.filter((m) => m.playerSk !== Y.playerSk), X];
-            if (!canField(usPost, wc.template, flexOk) || !canField(themPost, wc.template, flexOk)) continue;
-            const ourGain = optimalLineup(usPost.map(rp), wc.template, flexOk).totalProj - ourBase;
-            if (ourGain <= 0) continue;                                     // must improve our lineup
-            const theirGain = optimalLineup(themPost.map(rp), wc.template, flexOk).totalProj - theirBase;
-            if (mutual && theirGain < 0) continue;                          // acceptable = doesn't hurt them
-            if (!best || ourGain > best.ourGain) best = { give: X, get: Y, them, themId, ourGain, theirGain };
+          const getSets = subsetsUpTo(them, maxGet);
+          for (const giveSet of giveSets) {
+            const sg = new Set(giveSet.map((m) => m.playerSk)); const giveProj = sumProj(giveSet);
+            for (const getSet of getSets) {
+              if (Math.abs(giveProj - sumProj(getSet)) > gap) continue;     // balanced total value (cheap prune first)
+              if (us.length - giveSet.length + getSet.length < need || them.length - getSet.length + giveSet.length < need) continue;
+              const st = new Set(getSet.map((m) => m.playerSk));
+              // the team that NETS players drops its lowest-proj scrubs back to its ORIGINAL roster size,
+              // as accepting a 2-for-1 forces a cut. Trimming to the team's own size (not the template)
+              // leaves a one-for-one untouched and never spuriously shrinks a legitimately-large roster.
+              const usPost = fitToMax([...us.filter((m) => !sg.has(m.playerSk)), ...getSet], us.length);
+              const themPost = fitToMax([...them.filter((m) => !st.has(m.playerSk)), ...giveSet], them.length);
+              if (!canField(usPost, wc.template, flexOk) || !canField(themPost, wc.template, flexOk)) continue;
+              const ourGain = optimalLineup(usPost.map(rp), wc.template, flexOk).totalProj - ourBase;
+              if (ourGain <= 0) continue;
+              const theirGain = optimalLineup(themPost.map(rp), wc.template, flexOk).totalProj - theirBase;
+              if (mutual && theirGain < 0) continue;
+              if (!best || ourGain > best.ourGain) best = { give: giveSet, get: getSet, them, themId, ourGain, theirGain };
+            }
           }
         }
 
         if (best) {
           traded++;
-          const usPost = [...us.filter((m) => m.playerSk !== best!.give.playerSk), best.get];
-          const themPost = [...best.them.filter((m) => m.playerSk !== best!.get.playerSk), best.give];
+          const sg = new Set(best.give.map((m) => m.playerSk)), st = new Set(best.get.map((m) => m.playerSk));
+          const usPost = [...us.filter((m) => !sg.has(m.playerSk)), ...best.get];
+          const themPost = [...best.them.filter((m) => !st.has(m.playerSk)), ...best.give];
           const usBaseScore = scorer.score(us, ctx);
           perSeasonDiffs.get(season)!.push(scorer.score(usPost, ctx) - usBaseScore);
           theirDiffs.push(scorer.score(themPost, ctx) - scorer.score(best.them, ctx));
