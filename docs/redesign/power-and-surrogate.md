@@ -64,13 +64,22 @@ Measured on the consensus contrast:
 ## Validation status & plan
 
 1. Predictive surrogacy -- DONE (OOS AUC 0.695).
-2. **Cross-intervention surrogacy -- REQUIRED before trusting the index for optimisation.** Run a few
-   DIVERSE levers (incl. a known top-heavy-favouring one, e.g. high maxShare) and confirm the index-LIFT
-   tracks the champ-LIFT across them (Prentice). If a lever shows index-up-but-champ-down, that is a
-   paradox flag and the index needs richer roster-composition features (enrich the trial dump: weekly
-   point variance/consistency, bench share, positional concentration).
-3. Once validated: tune levers on the index (t~4 power), layer shrinkage across the family + deflated
-   trial-count discipline, and CONFIRM only the gross survivors on the 25-season arbiter.
+2. **Cross-intervention surrogacy -- DONE (`scripts/surrogate-validate.mjs`).** Across 4 diverse, large
+   interventions (consensus-off, maxShare 0.5, aggr 1.0, benchDiscount 1.0 vs the shipped baseline) the
+   index-LIFT tracks the champ-LIFT with **r=0.999**, agrees in sign every time, and carries **~2x the
+   power** (|t|) of the binary title on every one (e.g. maxShare champ t=-3.11 -> index t=-5.29). The
+   index roughly HALVES the resolution floor (champ ~3.8pp -> index ~1.9pp champ-prob).
+   CAVEAT (honest): all 4 interventions moved regPoints and champ the SAME direction (regPoints also
+   r=0.995 with champ), so a true PARADOX case (regPoints up, champ down) was NOT exercised -- maxShare
+   0.5 lowered BOTH (too thin to score). So in the backtest's LEVER space regPoints and titles are
+   tightly aligned and the paradox (a property of optimising season-points across a huge config space,
+   per winner's-curse selection) does not strongly bite; the index is safe for lever TUNING. The index's
+   discrimination OVER raw regPoints is therefore unproven here, but it is calibrated to champ-prob and
+   down-weights points via the fit, so it is the safe choice at no cost. Richer roster-composition
+   features (enrich the trial dump) would lower the floor further and harden the guard.
+3. Once validated: tune levers on the index (~2x power), layer shrinkage across the family + deflated
+   trial-count discipline, and CONFIRM only the gross survivors on the 25-season arbiter. NOTE the index
+   still cannot resolve arbitrarily thin (sub-~1pp) edges -- it halves the floor, it does not remove it.
 
 Sources: Athey-Chetty-Imbens NBER w26463; arXiv:2309.07893, 2402.03915, 2311.11922; Deng et al. CUPED
 (arXiv:2312.02935 retrospective); Bailey-Lopez de Prado Deflated Sharpe; Efron CASI ch.7.
