@@ -535,6 +535,12 @@ wins. (Same shape as #13: a plausible realism upgrade to the sim, gated, arbiter
 - Beating the market with the SAME projection everyone uses -- collapses to just the discipline edge.
 - **Automated waiver churn in a deep league** -- negative-EV (see #6); keep it a recommendation copilot.
 - Out of scope for a draft agent: **trades**, a future copilot surface.
+- **Ball security (fumble rates)** -- screened and ruled out (2026-09, funnel-widening). The six
+  derivable rates (rushing/receiving/sack fumbles, total + lost, each per touch of its type) are the
+  only untouched offensive player-level columns; all six fail BH-FDR with |rho| < 0.045, indistinguishable
+  from the random control. Fumbling is rare and recovery is luck year-to-year, so it carries no residual
+  the shipped model is missing. `scripts/feature-sweep.mjs` now derives and screens them (coverage 56->62
+  player-week columns consumed), documenting the null in-place.
 
 ## Where to invest (in priority order)
 1. **Build ONE sharp, independent projection layer** -- it powers BOTH the draft (season -> values,

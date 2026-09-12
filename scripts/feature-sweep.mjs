@@ -144,6 +144,15 @@ for (const yr of [SEASONS[0] - 1, ...SEASONS]) {
     // negative events
     add("sack", N(r.sacks_suffered)); add("sackyd", N(r.sack_yards_lost));
     add("fum", N(r.fumbles_total)); add("fumlost", N(r.fumbles_lost_total));
+    // COMPONENT fumbles. `fumbles_total` pools rushing, receiving and sack fumbles across every touch
+    // type, so `fumblesPerTouch` above can only be an all-position ball-security average -- which
+    // measured ~0 precisely because a receiver's drop-strip and a back's carry fumble and a QB's
+    // sack strip are three different skills diluted into one column. These break them out so a rushing
+    // fumble is screened per CARRY on backs, a receiving fumble per RECEPTION on pass-catchers, and a
+    // sack fumble per SACK on quarterbacks -- each on the position that actually accrues it.
+    add("rushfum", N(r.rushing_fumbles)); add("rushfuml", N(r.rushing_fumbles_lost));
+    add("recfum", N(r.receiving_fumbles)); add("recfuml", N(r.receiving_fumbles_lost));
+    add("sackfum", N(r.sack_fumbles)); add("sackfuml", N(r.sack_fumbles_lost));
     add("pen", N(r.penalties)); add("penyd", N(r.penalty_yards));
     add("int", N(r.passing_interceptions));
     // return work -- a real usage signal for the back half of a depth chart
@@ -192,6 +201,13 @@ for (const yr of [SEASONS[0] - 1, ...SEASONS]) {
       // --- negative events
       sackRate: a.att > 0 ? (a.sack ?? 0) / (a.att + (a.sack ?? 0)) : null,
       fumblesPerTouch: touches > 0 ? (a.fum ?? 0) / touches : null,
+      // --- POSITION-SCOPED ball security, from the component-fumble columns. Rate over the touch type
+      //     that produces each, so the denominator is the exposure and not the whole workload. The
+      //     `_lost` variants isolate the fumbles the opponent recovered (the ones that actually score
+      //     against a fantasy team), which carry recovery luck and so are the noisier of each pair.
+      rushFumbleRate: rate("rushfum", "car"), rushFumbleLostRate: rate("rushfuml", "car"),
+      recFumbleRate: rate("recfum", "rec"), recFumbleLostRate: rate("recfuml", "rec"),
+      sackFumbleRate: rate("sackfum", "sack"), sackFumbleLostRate: rate("sackfuml", "sack"),
       intRate: rate("int", "att"),
       penalties: per("pen"),
       // --- availability and consistency
@@ -555,6 +571,12 @@ const SCOPE = {
   yacPerRec: ["WR", "TE", "RB"], returns: ["RB", "WR"], returnYards: ["RB", "WR"],
   steadyPass: ["QB"], midPass: ["QB"], steadyRush: ["RB"], midRush: ["RB"],
   steadyRec: ["WR", "TE", "RB"], midRec: ["WR", "TE"],
+  // Ball security, scoped to the position that owns the touch type in the denominator. A carry-fumble
+  // rate across WRs (who almost never carry) or a sack-fumble rate across skill players (who are not
+  // sacked) would be a column of zeros with a plausible name.
+  rushFumbleRate: ["RB"], rushFumbleLostRate: ["RB"],
+  recFumbleRate: ["WR", "TE", "RB"], recFumbleLostRate: ["WR", "TE", "RB"],
+  sackFumbleRate: ["QB"], sackFumbleLostRate: ["QB"],
   forty: ["RB", "WR", "TE"], vertical: ["RB", "WR", "TE"], broad: ["RB", "WR", "TE"],
   cone: ["RB", "WR", "TE"], shuttle: ["RB", "WR", "TE"], bench: ["RB", "WR", "TE"],
   // Extension-table columns. Same rule and the same reason: a carry share screened across all four
@@ -697,6 +719,8 @@ const CONSUMED = new Set([
   "kickoff_return_yards", "punt_return_yards", "special_teams_tds", "misc_yards",
   "passing_10", "passing_16", "rushing_10", "rushing_12", "receiving_10", "receiving_16",
   "passing_2pt_conversions", "rushing_2pt_conversions", "receiving_2pt_conversions",
+  "rushing_fumbles", "rushing_fumbles_lost", "receiving_fumbles", "receiving_fumbles_lost",
+  "sack_fumbles", "sack_fumbles_lost",
   // players / combine
   "draft_round", "draft_pick", "height", "weight", "rookie_season", "forty", "vertical", "broad_jump",
   "cone", "shuttle", "bench", "birth_date",
