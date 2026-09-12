@@ -331,6 +331,18 @@ export const RAW_ASSETS: RawAsset[] = [
     },
   },
   {
+    id: "fftoday",
+    table: "raw_fftoday_proj",
+    what: "FFToday single-expert preseason projected fantasy points 2008-2024 (QB/RB/WR/TE), scraped to data/fftoday-proj.csv -- a projection signal that predicts finish about as well as ECR, name_key-joined to the player universe",
+    defaultSeasons: null,
+    reads: ["src_fftoday"],
+    writes: ["raw_fftoday_proj"],
+    async run(dbPath) {
+      const { ingestFftodayProj } = await import("./fftoday.js");
+      return ingestFftodayProj({ dbPath });
+    },
+  },
+  {
     id: "gameday-status",
     table: "raw_gameday_status",
     what: "ESPN's freshest game-day injury designations (Out/Doubtful/Questionable) crosswalked to player_sk -- the ~90-min list the Friday/Sleeper snapshots miss, so the lineup benches late scratches",

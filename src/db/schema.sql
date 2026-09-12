@@ -892,6 +892,18 @@ CREATE TABLE IF NOT EXISTS raw_ngs (
   PRIMARY KEY (season, season_type, week, stat_type, player_gsis_id));
 CREATE INDEX IF NOT EXISTS idx_raw_ngs_gsis ON raw_ngs (player_gsis_id, season, week);
 
+-- FFToday single-expert PRESEASON projected fantasy points, 2008-2024, QB/RB/WR/TE. Point-in-time
+-- history a model is fitted on, not a live-board feed: one row per (season, player, pos), the number
+-- FFToday published BEFORE that season. Validated this cycle to predict finish about as well as ECR,
+-- so it is a first-class evaluable projection signal alongside `ranking` and `adp`. `name_key` is the
+-- canonical nameKey (src/draft/values.ts), the only bridge to the player universe -- the source is a
+-- name+team scrape with no stable id. `proj_fpts` is FFToday's own scoring, not this league's.
+CREATE TABLE IF NOT EXISTS raw_fftoday_proj (
+  season INTEGER NOT NULL, pos TEXT NOT NULL, name TEXT, team TEXT,
+  proj_fpts REAL, name_key TEXT NOT NULL, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, name_key, pos));
+CREATE INDEX IF NOT EXISTS idx_raw_fftoday_proj_key ON raw_fftoday_proj (name_key, season);
+
 -- COLLEGE PRODUCTION (the college pillar of a rookie projection). Aggregated at ingest from cfbfastR
 -- play-by-play into player-season and team-season totals -- the ingredients of Dominator Rating (a
 -- player's share of his team's receiving+rushing yards and TDs) and Breakout Age. cfbfastR PBP is
