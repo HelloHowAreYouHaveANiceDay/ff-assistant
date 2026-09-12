@@ -120,6 +120,8 @@ async function main() {
       return cmdSyncLeague(rest);
     case "sync-pending-trades":
       return cmdSyncPendingTrades(rest);
+    case "sync-actuals":
+      return cmdSyncActuals(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -1517,12 +1519,15 @@ async function cmdSyncLeague(rest: string[]) {
       ["sync-pending-trades", []],
       ["sync-rosters", []],
     ] },
-    // Between gamedays. Adds standings/results, which settle after the last game of a week.
-    daily: { what: "between gamedays: + standings and results", steps: [
+    // Between gamedays. Adds standings/results, which settle after the last game of a week, plus the
+    // nflverse player actuals + forward-board rebuild (change-gated: a no-op until a game goes final or
+    // a stat correction lands). sync-actuals fetches the feed directly, so it needs no app session.
+    daily: { what: "between gamedays: + standings, results, and player actuals", steps: [
       ["ingest-raw", ["league-rosters"]],
       ["ingest-raw", ["league-transactions"]],
       ["sync-pending-trades", []],
       ["ingest-raw", ["league-history"]],
+      ["sync-actuals", []],
       ["sync-rosters", []],
     ] },
     // Rules, the injury/usage feeds, and the derived layer. Everything whose source updates slowly.
@@ -1537,6 +1542,7 @@ async function cmdSyncLeague(rest: string[]) {
       ["ingest-raw", ["snap-counts"]],
       ["ingest-raw", ["participation"]],
       ["ingest-raw", ["nfl-games"]],
+      ["sync-actuals", []],
       ["sync-rosters", []],
       ["build-roster-state", []],
       ["build-picks", []],
@@ -1794,6 +1800,67 @@ async function cmdBuildHistory(rest: string[]) {
   const tot = r.resolved + r.unresolved;
   console.log(`  player_sk resolved for ${r.resolved}/${tot} season rows (${((r.resolved / Math.max(1, tot)) * 100).toFixed(1)}%) ` +
     `from ${resolver.staged} staged players; unresolved rows are KEPT and carry an empty key`);
+}
+
+/**
+ * `ff sync-actuals [--force]` -- the IN-SEASON half of build-history. Re-scores ONLY the current
+ * season from the (cache-bypassed) nflverse feed, splices it into history-{weekly,points}.csv without
+ * touching any historical row, and -- ONLY IF the current-season actuals actually changed -- rebuilds
+ * the derived in-season features (feat_player_week + feat_player_week_model, i.e. the trailing means
+ * and the `pts` target the weekly model adapts on). The change gate is a content hash of the season
+ * slice kept in data/actuals-state.json, so this is a CHEAP NO-OP when nothing moved -- which is what
+ * lets a gameday poller run it every few minutes safely. Rebuilds fire only on a newly-final game or a
+ * stat correction. `--force` rebuilds even when the hash is unchanged.
+ *
+ * This is the source-of-truth-is-nflverse decision made concrete: everything the fitted model reads
+ * comes through the SAME scoreSeasonWeekly path the backtest uses, never a second re-scoring of ESPN
+ * live points that could drift from the schema the coefficients were fitted on.
+ */
+async function cmdSyncActuals(rest: string[]) {
+  const { ingestCurrentSeasonActuals } = await import("./data/history.js");
+  const { openDb, getConfig } = await import("./db/db.js");
+  const { buildSkResolver } = await import("./data/skResolve.js");
+  const { DEFAULT_LEAGUE_SCORING } = await import("./draft/scoring.js");
+  const dbPath = valueOf(rest, "--db");
+  const force = rest.includes("--force");
+  const db = openDb(dbPath); const conf = getConfig(db);
+  const season = Number(process.env.FF_SEASON ?? conf.season);
+  const resolver = buildSkResolver(db);
+  const c = conf as unknown as { kicker?: unknown; defense?: unknown };
+  const model = { ...DEFAULT_LEAGUE_SCORING(), rules: conf.scoring_rules,
+    ...(c.kicker ? { kicker: c.kicker as never } : {}), ...(c.defense ? { defense: c.defense as never } : {}) };
+  db.close();
+
+  // The change-gate lives in a small JSON next to the other model artifacts, not in a schema change.
+  const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
+  const { dataPath } = await import("./data/paths.js");
+  const statePath = dataPath("actuals-state.json");
+  const prev: { season?: number; hash?: string } = existsSync(statePath)
+    ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+
+  console.log(`sync-actuals: re-scoring ${season} from nflverse (cache-bypassed)...`);
+  const r = await ingestCurrentSeasonActuals(season, model, resolver);
+  if (!r.ok || r.weekly === 0) {
+    console.log(`  nflverse has no ${season} weekly rows yet -- nothing to ingest (the season's feed is not published or empty).`);
+    return;
+  }
+  console.log(`  wrote ${r.weekly} weekly rows to ${r.path}; weeks present: ${r.weeks.join(", ") || "none"} (history-weekly.csv untouched)`);
+
+  const changed = force || prev.season !== season || prev.hash !== r.hash;
+  if (!changed) {
+    console.log(`  actuals UNCHANGED (hash ${r.hash}) -- skipping board rebuild. (--force to override.)`);
+    return;
+  }
+  console.log(`  actuals CHANGED (${prev.hash ?? "none"} -> ${r.hash})${force ? " [forced]" : ""} -- rebuilding the forward in-season board for ${season}...`);
+
+  // The FORWARD board: board population x schedule for every remaining week, actuals merged as pts.
+  // Never buildFeatures (that is the actuals-capped backtest builder that collapses the live board).
+  const { buildForwardBoard } = await import("./weekly/forwardBoard.js");
+  const b = await buildForwardBoard({ dbPath, season, actualsPath: r.path });
+  console.log(`  forward board: ${b.keys} players x ${b.maxWeek} weeks -> feat_player_week ${b.weekRows} rows (${b.withPts} with actual pts), feat_player_week_model ${b.modelRows} rows`);
+
+  writeFileSync(statePath, JSON.stringify({ season, hash: r.hash, weeks: r.weeks, updatedAt: new Date().toISOString() }, null, 2) + "\n", "utf8");
+  console.log(`  wrote ${statePath}. In-season board now reflects ${season} weeks ${r.weeks.join(",")}.`);
 }
 
 // Build per-manager draft tendencies for MY league from its real auction history (prior seasons),
