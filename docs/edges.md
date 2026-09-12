@@ -47,10 +47,12 @@ ARBITER (`backtest --consensus-blend <w>` + `scripts/cpcv.mjs`): adopting the co
 keeping our own point magnitudes lifts titles on the sanctioned arbiter, a MONOTONE dose-response
 peaking at w=1.0: **+2.84pp, 95% CI [0.22, 5.56], P(>0)=98.5%, PBO=2%**, robust across 4 path-seeds.
 The pre-registered w=0.5 was positive but sub-threshold (+1.29pp, CI straddled 0). Leak-safe (preseason;
-pre-2008 seasons pair identically). **CAVEAT:** measured vs the arbiter's PRIOR-ACTUALS book, so this is
-"beats a prior-actuals ordering," not yet "beats our trained projection" -- the artifact-mode cross-check
-is pre-registered to gate a ship. **Off by default (golden master preserved); a ship needs an owner call
-+ live-season FFToday.** Full record: docs/redesign/experimentation-redesign.md, data/experiments.jsonl.
+pre-2008 seasons pair identically). The artifact-mode cross-check confirms it beats even the TRAINED model
+(not just prior actuals): +8.19pp on the 7 fold seasons 2018-24, CI [2.0, 16.0], PBO 0% -- same direction,
+but only 7 seasons, so quote the well-powered 25-season **+2.84pp [0.22, 5.56]** as the magnitude, this arm
+as directional confirmation. **Off by default (golden master preserved); a ship needs an owner call +
+live-season FFToday** (the scrape is 2008-24). Full record: docs/redesign/experimentation-redesign.md,
+data/experiments.jsonl.
 
 ### 0. Get the value curve itself right -- BIG, proven [13.6% -> 24.4%, pre-shading]
 Before any strategy dial: the bid table must price positions the way the format actually consumes

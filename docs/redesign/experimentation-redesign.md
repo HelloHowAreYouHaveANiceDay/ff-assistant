@@ -82,16 +82,28 @@ research is done on predictive content — not by iterating against the backtest
   correctly predicted a positive arbiter, magnitude rising with dose).
   **NOT shipped.** Turning the lever on moves the headline (38.5%→~41%) and needs (a) an OWNER decision
   and (b) live-season FFToday + integration into the board path (the scrape is 2008-2024 only). Recorded
-  as a validated ship-CANDIDATE. Pre-registered next: the artifact-mode cross-check (does FFToday beat
-  our TRAINED projection, not just prior actuals?) must gate any ship.
+  as a validated ship-CANDIDATE.
+- **Phase 3.3-followup — the artifact-mode cross-check (the "beats our TRAINED model?" gate), RESOLVED
+  POSITIVE.** Baseline = the trained per-fold artifacts (`--projection artifact` on fold-artifacts-2b),
+  treatment = same magnitudes + FFToday ORDERING (w=1.0). On the 7 FFToday-covered fold seasons
+  (2018-2024): baseline 40.67% → treatment 48.86%, **+8.19pp, CI [2.00, 16.00], P(>0)=100%, PBO=0%**,
+  every season held or rose (2018 45→63, 2024 27→50, none dropped). So FFToday's ordering beats even the
+  TRAINED model, not just prior actuals — the caveat above is cleared in DIRECTION. **Magnitude is NOT
+  refined by this arm:** 7 seasons only (CPCV enumerated all C(7,3)=35 paths, CI ±4pp), and the +8.19pp
+  being LARGER than the 25-season +2.84pp is the tell that the 2018-24 window flatters it. So both
+  arbiter arms AGREE on direction (P>0 96-100%, PBO 0-8.5%); quote the well-powered 25-season **+2.84pp
+  [0.22, 5.56]** as the magnitude, the artifact arm as directional confirmation vs the trained model.
+  Ledger has all four A5 datapoints (proxy_lift −0.127 → arbiter_lift, dose- and baseline-resolved).
 
 **STATUS: Phase 1 (cleanup) COMPLETE + QA'd; Phase 2 (CPCV core + A3.1 calibration) COMPLETE + QA'd;
 Phase 3.1 (FFToday ingest) + 3.2 (consensus screened, SURVIVES) + 3.3 (arbiter: validated ship-CANDIDATE,
-off by default) COMPLETE + QA'd.** The research funnel now runs end-to-end: ingest → screen (FDR+controls)
-→ arbiter (CPCV+PBO, dose-response, seed-robust) → ledger, one external signal all the way through.
-Remaining: Phase 3.3-followup (artifact-mode cross-check → owner ship decision + live-FFToday integration);
-feature manifest #4 + eval scaffold #10; Phase 4 (continuous loop). Follow-up still open:
-`scripts/sim-convergence.mjs` stale ownership-grouping copy.
+off by default) + 3.3-followup (artifact cross-check: beats the TRAINED model too, direction confirmed)
+COMPLETE + QA'd.** The research funnel now runs end-to-end: ingest → screen (FDR+controls) → arbiter
+(CPCV+PBO, dose-response, seed-robust, trained-model cross-check) → ledger, one external signal all the
+way through, and it produced a validated edge (+2.84pp titles, off by default pending an owner ship call).
+Remaining: OWNER ship decision + live-season FFToday integration into the board path; feature manifest #4
++ eval scaffold #10; Phase 4 (continuous loop). Follow-up still open: `scripts/sim-convergence.mjs` stale
+ownership-grouping copy.
 
 ---
 
