@@ -28,6 +28,7 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { nameKey } from "../src/league/index.ts";
+import { dstAliasKey } from "../src/draft/values.ts";
 import { simulateSeasons } from "../src/draft/season.ts";
 import { effectiveFormat } from "../src/league/index.ts";
 import { buildSchedule } from "../src/draft/schedule.ts";
@@ -51,7 +52,11 @@ for (const r of db.prepare("SELECT player_id, row_json FROM board WHERE season=?
 }
 const byTeam = new Map();
 for (const r of db.prepare("SELECT player_id, team_id, team_abbrev, owner FROM ownership WHERE league_id=?").all(lgRow.league_id)) {
-  const b = board.get(r.player_id);
+  // ESPN keys defenses by NICKNAME ("packers"); the board keys them by ABBREVIATION ("gb"). Fall
+  // back to the DST alias table (values.ts) so every roster keeps its defense -- the same fix
+  // loadSimContext applies. Without it every DST resolves to nothing and gets silently dropped.
+  const alias = dstAliasKey(r.player_id);
+  const b = board.get(r.player_id) ?? (alias ? board.get(alias) : undefined);
   if (!b) continue;
   if (!byTeam.has(r.team_id)) byTeam.set(r.team_id, { id: r.team_id, name: r.team_abbrev || r.owner, roster: [] });
   byTeam.get(r.team_id).roster.push({ ...b, bye: byeOf.get(nameKey(b.name)) ?? null });
