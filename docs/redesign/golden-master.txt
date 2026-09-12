@@ -12,3 +12,11 @@ CPCV arbiter, and it is now SHIPPED ON by default. The flagless golden master is
   CHAMPIONSHIPS: 41.3%  (random 6.3%)  |  playoffs: 97%   (n=150, 1999-2024)
   `--consensus-blend 0` reproduces the pre-edge 38.5% / 96% base; the +2.8pp between them is the edge.
 This is a DELIBERATE value change, not drift -- the 38.5% above is retained as the pre-edge reference.
+
+=== GOLDEN MASTER MOVED 2026-09-12 (2): bench-discount RE-OPTIMISED 0.25 -> 0.35, SHIPPED ===
+The lever re-optimisation (docs/redesign/power-and-surrogate.md) found bench-discount's optimum had
+moved to ~0.35 (value bench-only players a bit more): +1.09pp titles, CI [0.16,2.11], PBO 1%,
+arbiter-confirmed, surfaced by the surrogate index (t~6). Shipped (default 0.35 + stored). Flagless
+golden master now:
+  CHAMPIONSHIPS: 42.3%  (random 6.3%)  |  playoffs: 97%   (n=150, 1999-2024)
+Pre-edge base ~38.5% is reproduced by `--consensus-blend 0 --bench-discount 0.25`.

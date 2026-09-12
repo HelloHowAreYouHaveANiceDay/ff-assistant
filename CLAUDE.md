@@ -11,10 +11,11 @@ real time. Read it before changing strategy, the sim, or anything that produces 
 
 ```
 npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
-# shipped default: ~41% championships / 97% playoffs (random 6.3%) -- the FFToday consensus blend is
-# now ON by default (consensusBlend lever = 1). `--consensus-blend 0` turns it off and reproduces the
-# pre-edge base ~38.5% / 96%; the edge is the +2.8pp between them (CPCV-validated, data/experiments.jsonl,
-# docs/edges.md). Rookies are IN the pool by default (draft capital, src/draft/rookieModel.ts;
+# shipped default: ~42% championships / 97% playoffs (random 6.3%). Two shipped edges since the ~38.5%
+# base: the FFToday consensus blend (consensusBlend=1, +2.8pp titles; `--consensus-blend 0` reverts) and
+# benchDiscount 0.35 (re-optimised from 0.25, +1.1pp titles; docs/redesign/power-and-surrogate.md). Both
+# CPCV-validated (data/experiments.jsonl, docs/edges.md). Rookies are IN the pool by default (draft
+# capital, src/draft/rookieModel.ts;
 # --no-rookies drops them), a NEUTRAL effect (paired ~-0.2pp). (The "~39.7%" effective-format tripwire
 # in docs/validation.md predates both the rookie rebuild and this edge; it is measured under the
 # league's real 13-week/7-team format, a slightly different config than this flagless run.)

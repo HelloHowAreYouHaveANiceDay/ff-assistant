@@ -156,7 +156,7 @@ export const LEVER_SPECS: readonly LeverSpec[] = [
     help: "Min vsECR for the SLEEPERS board filter.",
   },
   {
-    key: "benchDiscount", kind: "number", default: 0.25, off: 1, min: 0.1, max: 1, step: 0.05,
+    key: "benchDiscount", kind: "number", default: 0.35, off: 1, min: 0.1, max: 1, step: 0.05,
     label: "Bench discount", board: false, group: "value", flag: "bench-discount", status: "shipped",
     help: "How much a bench-only player is worth vs his standalone value. 1 = no discount.",
     note: "Measured 2026-09-04: full-system no-lookahead championships 24.4% -> 28.0% (n=400 x 9 "

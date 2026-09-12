@@ -96,9 +96,10 @@ objective (playoffs-primary). **No optimum moved -- the shipped posture holds un
   and the ARBITER confirms on the true objective: bench-discount 0.35 = **+1.09pp titles, CI [0.16, 2.11],
   PBO 1%** (playoffs +0.27pp null -- same near-ceiling-berth story). So valuing bench-only players a bit
   more is a REAL thin edge the powered surrogate surfaced and the arbiter confirmed -- the payoff of the
-  re-optimisation. Enrolled in the ledger. SHIP CALL is the owner's: it is a value change that moves the
-  golden master again (~41.3% -> ~42.4%) and is a SELECTED thin edge (~+1pp, near the resolution floor),
-  so it warrants an explicit yes, like the consensus ship -- recommended, not auto-shipped.
+  re-optimisation. **SHIPPED 2026-09-12 (owner-authorised):** benchDiscount default 0.25 -> 0.35 (code +
+  stored). Flagless golden master moved 41.3% -> 42.3% / 97%. It is a SELECTED thin edge (~+1pp, near the
+  floor), so the magnitude may be winner's-curse-inflated -- but the 0.3-0.4 plateau + PBO 1% + arbiter
+  CI clearing 0 support the direction; treat it as a real but modest improvement, tunable via the lever.
 
 So the answer to "have we re-run the levers under the new model?": yes, on the powered instrument, and
 the consensus edge did not destabilise any lever. The 13 levers are now drift-aware ledger experiments;

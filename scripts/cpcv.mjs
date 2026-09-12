@@ -43,7 +43,7 @@ const argv = process.argv.slice(2);
 const val = (k, d) => { const i = argv.indexOf(k); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
 const has = (k) => argv.includes(k);
 
-const BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config (golden master = 41.3%, consensus blend ON by default; --consensus-blend 0 for the ~38.5% pre-edge base)
+const BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config (golden master = 42.3%, consensus blend ON by default; --consensus-blend 0 + --bench-discount 0.25 for the pre-edge base)
 const TREATMENT = val("--treatment", "--no-rookies");                        // the flag(s) to ADD for the treatment arm
 const SEASONS = val("--seasons", "1999-2024");
 const N = val("--n", "150");
@@ -52,7 +52,7 @@ const K = val("--k", null);                       // test-group size; default fl
 const N_PATHS = Number(val("--paths", "200"));
 const PATH_SEED = Number(val("--path-seed", "12345"));
 const LEDGER = val("--ledger", "data/experiments.jsonl");
-const GOLDEN = Number(val("--golden", "41.3"));   // consistency-check target (shipped-config golden master, consensus blend ON; pass --golden 38.5 when BASE_FLAGS pins --consensus-blend 0)
+const GOLDEN = Number(val("--golden", "42.3"));   // consistency-check target (shipped-config golden master, consensus blend ON; pass --golden 38.5 when BASE_FLAGS pins --consensus-blend 0)
 const GOLDEN_TOL = Number(val("--golden-tol", "3.0")); // +/- pp of Monte-Carlo slack
 const OUT_DIR = val("--out-dir", "data/trials");
 const BASE_LABEL = val("--baseline-label", `shipped[${BASE_FLAGS}]`);
