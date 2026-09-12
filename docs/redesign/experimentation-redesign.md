@@ -34,9 +34,30 @@ research is done on predictive content — not by iterating against the backtest
   subagent's P-sweep. (Note: CPCV reads inflation at −2.4pp vs the documented −4.2pp because the metric
   is equal-season-weighted over subsets, not the aggregate point delta — detection is unambiguous.)
 
-**STATUS: Phase 1 (cleanup) COMPLETE + QA'd; Phase 2 (CPCV core + A3.1 calibration) COMPLETE + QA'd.**
-Remaining: Phase 3 (feature manifest #4 + eval scaffold #10 + the research funnel A4/A5); Phase 4
-(continuous loop). Follow-up filed: `scripts/sim-convergence.mjs` stale ownership-grouping copy.
+- **`1fc505a`** Phase 3.1 — FFToday consensus ingested (`raw_fftoday_proj`, 6315 rows, 2008-2024;
+  `src/data/fftoday.ts` + RAW_ASSETS entry). Lineage 8/8, suite 718/0. The first external signal to
+  enter the research funnel.
+- **Phase 3.2 — the consensus, screened through the A4 bake-off.** No new harness: `scripts/feature-sweep.mjs`
+  ALREADY IS the bake-off (OOS residual-lift = Spearman vs the shipped model's nested-CV residual,
+  BH-FDR over the family, random negative + age positive controls, position-scope gating, survivor
+  clustering, skip-reporting), so the consensus DROPPED IN as one candidate (positional rank, joined
+  by canonical `nameKey`) rather than forking the eval layer (honours B2). Result, over 4750 OOS
+  errors / 14 seasons, 102-candidate family, FDR 0.10:
+  **`FFToday consensus rank`: rho(bare) −0.217, rho(shipped) −0.127, p=1.6e-14, SURVIVES — the single
+  strongest residual signal on the whole board** (next is epaPass at +0.101, and QB-only). Controls
+  behaved: random did NOT survive (p=0.64), age detected against bare (−0.111). Reading: the shipped
+  model (ECR included) already captures part of it (0.217→0.127), but a large marginal −0.127 remains,
+  and the sign says where FFToday is more bullish than our model, reality sides with FFToday.
+  **This is a licence to run the ARBITER, not a ship** (the repo's own winner's-curse rule). Pre-registered
+  for Phase 3.3: build a consensus-blended season projection and run it through the championship
+  backtest (CPCV distribution + PBO); ship rule stays CI-excludes-0 AND PBO<0.4, and log
+  (proxy_lift=−0.127, arbiter_lift) for the A5 monitor. (`data/residuals.tsv` is gitignored/regenerable
+  via `ff evaluate-projection --dump-residuals`; the harness change is the only committed artifact.)
+
+**STATUS: Phase 1 (cleanup) COMPLETE + QA'd; Phase 2 (CPCV core + A3.1 calibration) COMPLETE + QA'd;
+Phase 3.1 (FFToday ingest) + 3.2 (consensus screened, SURVIVES) COMPLETE + QA'd.**
+Remaining: Phase 3.3 (consensus-blend → arbiter + A5 monitor); feature manifest #4 + eval scaffold #10;
+Phase 4 (continuous loop). Follow-up filed: `scripts/sim-convergence.mjs` stale ownership-grouping copy.
 
 ---
 

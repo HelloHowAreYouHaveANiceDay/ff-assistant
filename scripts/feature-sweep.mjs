@@ -31,6 +31,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { parseCsv, playerWeekUrl, teamWeekUrl, canonTeam, URLS } from "../src/data/nflverse.ts";
+import { nameKey } from "../src/draft/values.ts";
 
 const REFRESH = process.argv.includes("--refresh");
 const POS = ["QB", "RB", "WR", "TE"];
@@ -417,6 +418,39 @@ const adpByPosSeason = new Map();
 const adpRankOf = (season, pos, sk) =>
   (adpByPosSeason.get(`${season}|${pos}`) ?? []).find((x) => x.sk === String(sk))?.posRank ?? null;
 
+// --- FFTODAY CONSENSUS PROJECTION (raw_fftoday_proj, 2008-2024) --------------------------------------
+// An INDEPENDENT expert consensus, and the reason this whole ingestion increment exists. The model
+// already carries one consensus (ECR, `ecr_pos_rank`), so the only question worth the join is whether
+// a SECOND, differently-sourced consensus knows anything the shipped model -- ECR included -- gets
+// wrong. That is a residual question, which is exactly what this screen is built to ask.
+//
+// Screened as a POSITIONAL RANK, not raw projected points, for the same reason ADP is: FFToday's
+// point scale differs by position (a QB total dwarfs a TE's), so pooling raw points across positions
+// would rank a screen artifact. Ranking within (season, pos) puts every position on the 1..N scale
+// the pooled Spearman can read honestly. Joined by the CANONICAL nameKey (letters-only, d/st stripped
+// -- the same key the ingestion derived), so this is a match on identity, not on display spelling.
+// Preseason by construction (a projection published before the season), so knowable at draft time.
+const fftodayRank = new Map();  // `${season}|${pos}|${name_key}` -> positional rank (1 = highest proj)
+{
+  const { default: Database } = await import("better-sqlite3");
+  const fdb = new Database("data/ff.db", { readonly: true });
+  const frows = fdb.prepare(
+    "SELECT season, pos, name_key, proj_fpts FROM raw_fftoday_proj WHERE proj_fpts IS NOT NULL",
+  ).all();
+  fdb.close();
+  const byPosSeason = new Map();
+  for (const r of frows) {
+    const k = `${r.season}|${r.pos}`;
+    (byPosSeason.get(k) ?? byPosSeason.set(k, []).get(k)).push(r);
+  }
+  for (const [k, list] of byPosSeason) {
+    list.sort((a, b) => b.proj_fpts - a.proj_fpts);
+    list.forEach((r, i) => fftodayRank.set(`${k}|${r.name_key}`, i + 1));
+  }
+  const fseasons = [...new Set(frows.map((r) => r.season))].sort();
+  console.log(`raw_fftoday_proj: ${frows.length} rows, seasons ${fseasons[0]}-${fseasons[fseasons.length - 1]}`);
+}
+
 // --- assemble the candidate matrix -----------------------------------------------------------------
 let seed = 20260908;
 const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -472,6 +506,10 @@ for (const r of scored) {
   //     P27 pre-registers that this does NOT survive: it is the same consensus measured twice.
   const ar = sk != null ? adpRankOf(r.season, r.pos, sk) : null;
   r.f.adpVsEcr = ar != null && r.feat?.ecr_pos_rank != null ? ar - r.feat.ecr_pos_rank : null;
+
+  // (4) FFTODAY CONSENSUS: does a second, independent expert consensus know anything the shipped
+  //     model (ECR included) gets wrong? Positional rank, joined by canonical nameKey.
+  r.f.fftodayRankPos = fftodayRank.get(`${r.season}|${r.pos}|${nameKey(r.name)}`) ?? null;
 }
 
 // --- statistics ------------------------------------------------------------------------------------
@@ -528,6 +566,7 @@ const SCOPE = {
 };
 const LABEL = {
   __random: "RANDOM (negative control)", age: "age (positive control)",
+  fftodayRankPos: "FFToday consensus rank",
 };
 
 const CANDIDATES = [...new Set(scored.flatMap((r) => Object.keys(r.f)))].sort();
