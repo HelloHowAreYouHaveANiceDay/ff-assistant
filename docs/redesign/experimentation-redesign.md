@@ -95,15 +95,29 @@ research is done on predictive content — not by iterating against the backtest
   [0.22, 5.56]** as the magnitude, the artifact arm as directional confirmation vs the trained model.
   Ledger has all four A5 datapoints (proxy_lift −0.127 → arbiter_lift, dose- and baseline-resolved).
 
+- **Phase 4 — the continuous loop (A6), MECHANIZED.** The re-measurement registry in edges.md was prose
+  a human had to remember to act on; Phase 4 makes it mechanical. `scripts/lib/deps.mjs` computes a
+  deterministic DEPENDENCY FINGERPRINT of the draft arbiter (3 history/bot files content-hashed, 2 raw
+  tables versioned by rows+max(fetched_at), the fold-artifact dir, 9 source files, and the stored levers)
+  — deliberately BROAD so it never UNDER-flags (safe = re-run a valid experiment; unsafe = trust a stale
+  one). `scripts/cpcv.mjs` now stamps every arbiter run with `deps_hash` + `deps_parts` at measurement
+  time. `scripts/experiments-status.mjs` recomputes the fingerprint NOW and reports each experiment
+  CURRENT / STALE / LEGACY, NAMING the exact input that drifted on a STALE row, plus **T** — the count of
+  arbiter runs spent (the multiple-testing number behind PBO / a deflated threshold, now impossible to
+  lose track of). QA by FAULT INJECTION (the machine rule: prove the guard returns BOTH values): an
+  enrolled entry reads CURRENT; perturbing one source file flips it to STALE naming `code:src/draft/
+  values.ts` with the hash delta; reverting restores CURRENT. Headline ship-candidate enrolled into the
+  live ledger (1 CURRENT + 17 LEGACY pre-Phase-4 rows, T=18); any re-run auto-enrols a legacy row.
+
 **STATUS: Phase 1 (cleanup) COMPLETE + QA'd; Phase 2 (CPCV core + A3.1 calibration) COMPLETE + QA'd;
-Phase 3.1 (FFToday ingest) + 3.2 (consensus screened, SURVIVES) + 3.3 (arbiter: validated ship-CANDIDATE,
-off by default) + 3.3-followup (artifact cross-check: beats the TRAINED model too, direction confirmed)
-COMPLETE + QA'd.** The research funnel now runs end-to-end: ingest → screen (FDR+controls) → arbiter
-(CPCV+PBO, dose-response, seed-robust, trained-model cross-check) → ledger, one external signal all the
-way through, and it produced a validated edge (+2.84pp titles, off by default pending an owner ship call).
-Remaining: OWNER ship decision + live-season FFToday integration into the board path; feature manifest #4
-+ eval scaffold #10; Phase 4 (continuous loop). Follow-up still open: `scripts/sim-convergence.mjs` stale
-ownership-grouping copy.
+Phase 3 (research funnel 3.1-3.3 + cross-check) COMPLETE + QA'd; Phase 4 (continuous loop / A6)
+COMPLETE + QA'd.** The redesign's spine is now built end-to-end: ingest → screen (FDR+controls) →
+arbiter (CPCV+PBO, dose-response, seed-robust, trained-model cross-check) → ledger → drift-aware
+re-measurement (fingerprint + T), and it produced a validated edge (+2.84pp titles, off by default
+pending an owner ship call). Remaining (optional / owner-gated): OWNER ship decision + live-season
+FFToday integration; widen the funnel with more signals (win totals, expected points); the deferred
+infrastructure (feature manifest #4 language-neutral source, eval scaffold #10). Follow-up still open:
+`scripts/sim-convergence.mjs` stale ownership-grouping copy.
 
 ---
 

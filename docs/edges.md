@@ -571,6 +571,15 @@ affected rows before trusting their numbers -- the RANKING of edges usually surv
 not. (The lineage DAG, `ff lineage`, tracks the DATA assets; this table is the FINDINGS layer the DAG
 does not cover.)
 
+**MECHANIZED for the DRAFT ARBITER (Phase 4 / A6).** The `draft`-row rule above is now enforced without
+anyone remembering it: `scripts/cpcv.mjs` stamps every arbiter run in `data/experiments.jsonl` with a
+dependency fingerprint (history/bot files + raw signal tables + fold artifacts + the draft source + the
+stored levers), and `node scripts/experiments-status.mjs` recomputes it and reports each result CURRENT /
+STALE / LEGACY -- naming the exact input that drifted -- plus T, the arbiter-run count behind PBO. Run it
+after any data refresh or draft-code change; a STALE row means re-run before quoting the number. (The
+weekly rows above are still hand-tracked; the same fingerprint pattern extends to them when the in-season
+backtests move onto the ledger.)
+
 **Re-measured on the post-rebuild (rookie-inclusive) weekly model (2026-09-11):** trades/#10, packages,
 lineup/#11, play-prob, role-trend/#7 (rookie-inclusive), rookie re-test/#9, MDP/#12, and the draft pool/#9.
 The early in-season nulls (drop/bench/handcuff/stream/denial) have NOW ALSO been re-run on the current

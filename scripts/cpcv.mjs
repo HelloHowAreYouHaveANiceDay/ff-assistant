@@ -36,6 +36,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execSync } from "node:child_process";
+import { fingerprintDraftArbiter } from "./lib/deps.mjs";
 
 // ---- args -------------------------------------------------------------------------------------
 const argv = process.argv.slice(2);
@@ -208,11 +209,24 @@ console.log(`  PBO        ${(100 * pbo).toFixed(1)}%   (${overfit}/${decided} pa
 const configHash = crypto.createHash("sha256").update(JSON.stringify({
   baseFlags: BASE_FLAGS, treatment: TREATMENT, seasons: SEASONS, n: N, artifactDir: ARTIFACT_DIR,
 })).digest("hex").slice(0, 16);
+// PHASE 4: the dependency fingerprint AT MEASUREMENT TIME. scripts/experiments-status.mjs recomputes it
+// later and flags this experiment STALE if it moved. A dedicated readonly handle so the ledger append
+// never depends on an open db from the arms above.
+let depsHash = null, depsParts = null;
+try {
+  const { default: Database } = await import("better-sqlite3");
+  const ddb = new Database("data/ff.db", { readonly: true });
+  const fp = fingerprintDraftArbiter(ddb);
+  depsHash = fp.hash; depsParts = fp.parts;
+  ddb.close();
+} catch (e) { console.log(`  (deps fingerprint skipped: ${e.message})`); }
 const line = {
   timestamp: new Date().toISOString(),
   baseline_label: BASE_LABEL,
   treatment_label: TREAT_LABEL,
   config_hash: configHash,
+  deps_hash: depsHash,
+  deps_parts: depsParts,
   mean_lift: Number(meanLift.toFixed(4)),
   ci_lo: Number(ciLo.toFixed(4)),
   ci_hi: Number(ciHi.toFixed(4)),
