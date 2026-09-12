@@ -118,6 +118,8 @@ async function main() {
       return cmdSyncSettings(rest);
     case "sync-league":
       return cmdSyncLeague(rest);
+    case "sync-pending-trades":
+      return cmdSyncPendingTrades(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -1498,6 +1500,13 @@ async function cmdStore(rest: string[]) {
  * Every step reports rows and duration, and a failing step does NOT stop the others -- a poller that
  * aborts the whole sweep because one feed 404'd is a poller that silently stops updating everything.
  */
+/** Poll ESPN's mPendingTransactions and bank any live trade proposals with FULL terms before ESPN
+ *  purges a declined one to a thin event. Run frequently in-season (it is in the fast/daily/weekly tiers). */
+async function cmdSyncPendingTrades(rest: string[]) {
+  const { ingestPendingTrades } = await import("./data/leagueTransactions.js");
+  await ingestPendingTrades({ dbPath: valueOf(rest, "--db") });
+}
+
 async function cmdSyncLeague(rest: string[]) {
   const tier = (valueOf(rest, "--tier") ?? "daily").toLowerCase();
   const TIERS: Record<string, { what: string; steps: [string, string[]][] }> = {
@@ -1505,12 +1514,14 @@ async function cmdSyncLeague(rest: string[]) {
     fast: { what: "gameday: roster state + transactions", steps: [
       ["ingest-raw", ["league-rosters"]],
       ["ingest-raw", ["league-transactions"]],
+      ["sync-pending-trades", []],
       ["sync-rosters", []],
     ] },
     // Between gamedays. Adds standings/results, which settle after the last game of a week.
     daily: { what: "between gamedays: + standings and results", steps: [
       ["ingest-raw", ["league-rosters"]],
       ["ingest-raw", ["league-transactions"]],
+      ["sync-pending-trades", []],
       ["ingest-raw", ["league-history"]],
       ["sync-rosters", []],
     ] },
@@ -1519,6 +1530,7 @@ async function cmdSyncLeague(rest: string[]) {
       ["sync-settings", []],
       ["ingest-raw", ["league-rosters"]],
       ["ingest-raw", ["league-transactions"]],
+      ["sync-pending-trades", []],
       ["ingest-raw", ["league-history"]],
       ["ingest-raw", ["injuries"]],
       ["ingest-raw", ["depth-charts"]],

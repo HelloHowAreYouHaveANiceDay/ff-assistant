@@ -104,7 +104,10 @@ export async function fetchTransactionWeek(leagueId: string, season: number, wee
 
 export interface TransactionCounts { weeks: number; available: number; rows: number; transactions: number }
 
-export function loadLeagueTransactions(db: DB, leagueId: string, weeks: TransactionWeekFetch[], fetchedAt: string): TransactionCounts {
+/** Upsert transaction ROWS only (by PK, never delete-replace) -- no status-table touch. Shared by the
+ *  full per-week sync and the pending-proposal capture, so a pending-only fetch cannot clobber a week's
+ *  real transaction count in raw_league_transaction_status. */
+export function upsertTransactionRows(db: DB, leagueId: string, rows: TransactionItemRow[], fetchedAt: string): number {
   const kick = weekKickoffs(db);
   const up = db.prepare(
     `INSERT INTO raw_league_transaction VALUES (@l,@s,@w,@id,@i,@ty,@ity,@ex,@ms,@t,@m,@p,@ft,@tt,@fs,@ts_,@bid,@st,@et,@pend,@a0,@a1,@now)
@@ -116,31 +119,42 @@ export function loadLeagueTransactions(db: DB, leagueId: string, weeks: Transact
        bid_amount=excluded.bid_amount, status=excluded.status, execution_type=excluded.execution_type,
        is_pending=excluded.is_pending, as_of_start=excluded.as_of_start, as_of_end=excluded.as_of_end,
        fetched_at=excluded.fetched_at`);
+  db.transaction(() => {
+    for (const r of rows) {
+      const k = kick.get(`${r.season}|${r.week}`) ?? null;
+      up.run({
+        l: leagueId, s: r.season, w: r.week, id: r.transactionId, i: r.itemNo, ty: r.type, ity: r.itemType,
+        ex: r.executedAt, ms: r.proposedAtMs, t: r.teamId, m: r.memberId, p: r.espnPlayerId,
+        ft: r.fromTeamId, tt: r.toTeamId, fs: r.fromLineupSlotId, ts_: r.toLineupSlotId,
+        bid: r.bidAmount, st: r.status, et: r.executionType, pend: r.isPending,
+        a0: k?.first ?? null, a1: k?.last ?? null, now: fetchedAt,
+      });
+    }
+  })();
+  return rows.length;
+}
+
+export function loadLeagueTransactions(db: DB, leagueId: string, weeks: TransactionWeekFetch[], fetchedAt: string): TransactionCounts {
   const upWeek = db.prepare(
     `INSERT INTO raw_league_transaction_status VALUES (@l,@s,@w,@a,@n,@note,@now)
      ON CONFLICT(league_id,season,week) DO UPDATE SET available=excluded.available, rows=excluded.rows,
        note=excluded.note, fetched_at=excluded.fetched_at`);
   const c: TransactionCounts = { weeks: 0, available: 0, rows: 0, transactions: 0 };
   const seen = new Set<string>();
+  const allRows: TransactionItemRow[] = [];
   db.transaction(() => {
     for (const wk of weeks) {
-      const k = kick.get(`${wk.season}|${wk.week}`) ?? null;
       c.weeks++;
       if (wk.available) c.available++;
       upWeek.run({ l: leagueId, s: wk.season, w: wk.week, a: wk.available ? 1 : 0, n: wk.rows.length, note: wk.note, now: fetchedAt });
       for (const r of wk.rows) {
-        up.run({
-          l: leagueId, s: r.season, w: r.week, id: r.transactionId, i: r.itemNo, ty: r.type, ity: r.itemType,
-          ex: r.executedAt, ms: r.proposedAtMs, t: r.teamId, m: r.memberId, p: r.espnPlayerId,
-          ft: r.fromTeamId, tt: r.toTeamId, fs: r.fromLineupSlotId, ts_: r.toLineupSlotId,
-          bid: r.bidAmount, st: r.status, et: r.executionType, pend: r.isPending,
-          a0: k?.first ?? null, a1: k?.last ?? null, now: fetchedAt,
-        });
+        allRows.push(r);
         c.rows++;
         if (!seen.has(r.transactionId)) { seen.add(r.transactionId); c.transactions++; }
       }
     }
   })();
+  upsertTransactionRows(db, leagueId, allRows, fetchedAt);
   return c;
 }
 
@@ -195,5 +209,34 @@ export async function ingestLeagueTransactions(opts: { dbPath?: string; seasons:
     }
     const counts = loadLeagueTransactions(db, leagueId, fetched, nowIso());
     return { counts, checks: readBackTransactions(db, leagueId) };
+  } finally { db.close(); }
+}
+
+/**
+ * CAPTURE PENDING TRADE PROPOSALS with FULL TERMS, before ESPN purges them. The regular mTransactions2
+ * feed keeps a PENDING/CANCELED proposal's terms but DROPS a DECLINED proposal's -- leaving only a thin
+ * decline event + a dangling relatedTransactionId (verified 2026-09-12: the Garrett Wilson decline's
+ * proposal was gone). `mPendingTransactions` returns the same transaction objects WHILE the trade is
+ * live, so polling it and upserting into raw_league_transaction banks every proposal's full bilateral
+ * terms (both teams, all players, proposer) permanently -- they persist even after the trade resolves.
+ * Uncached (bridgeFetch, not espnGet) so a poll always sees fresh pending state; needs the app running.
+ */
+export async function ingestPendingTrades(opts: { dbPath?: string }): Promise<{ pending: number; proposals: number }> {
+  const { currentLeagueId } = await import("./leagueHistory.js");
+  const { getConfig } = await import("../db/db.js");
+  const { bridgeFetch } = await import("../browser/appBridge.js");
+  const db = openDb(opts.dbPath);
+  try {
+    const leagueId = currentLeagueId(db);
+    const season = getConfig(db).season;
+    const url = `${HOST}/seasons/${season}/segments/0/leagues/${leagueId}?view=mPendingTransactions`;
+    let payload: unknown;
+    try { payload = JSON.parse(await bridgeFetch(url, {}, 20000)); }
+    catch (e) { console.log(`pending-trades: fetch failed (${(e as Error).message}) -- is the app running + logged in?`); return { pending: 0, proposals: 0 }; }
+    const parsed = parseTransactionWeek(payload, season, 0);   // each row's real week comes from its scoringPeriodId
+    upsertTransactionRows(db, leagueId, parsed.rows, nowIso());
+    const proposals = new Set(parsed.rows.filter((r) => r.type === "TRADE_PROPOSAL").map((r) => r.transactionId)).size;
+    console.log(`pending-trades: ${parsed.rows.length} pending item(s), ${proposals} trade proposal(s) captured with full terms -> raw_league_transaction`);
+    return { pending: parsed.rows.length, proposals };
   } finally { db.close(); }
 }
