@@ -101,3 +101,25 @@ the consensus edge did not destabilise any lever. The 13 levers are now drift-aw
 
 Sources: Athey-Chetty-Imbens NBER w26463; arXiv:2309.07893, 2402.03915, 2311.11922; Deng et al. CUPED
 (arXiv:2312.02935 retrospective); Bailey-Lopez de Prado Deflated Sharpe; Efron CASI ch.7.
+
+## Deferred capabilities (scoped, not yet built)
+
+Two net-new builds, filed here rather than half-done. Both are future CAPABILITY, not fixes for a
+current wrong number -- the lever re-optimisation is complete and correct without them.
+
+- **Richer surrogate features (lower the floor further, harden the paradox guard).** The index is
+  `E[champ | wins, regPoints, playoffs]` -- three per-trial columns. Adding roster-composition mediators
+  (weekly-point SD / consistency, bench-point share, positional concentration, playoff-week points)
+  would (a) lower the resolution floor below the current ~half, letting sub-1pp edges be seen, and (b)
+  harden the top-heavy guard (the true paradox test needs a feature that discriminates a top-heavy roster).
+  IMPLEMENTATION: extend the backtest `--dump-trials` writer (src/draft/backtest.ts) to emit those
+  columns per trial, re-generate the dumps, and add the columns to FEATS in surrogate-index.mjs /
+  surrogate-validate.mjs. COST: a code change plus a full re-dump. DEFERRED because the lever question is
+  already answered (no optimum moved) and diminishing-returns until a specific sub-1pp edge is being chased.
+- **Automated data-source SCOUTING (the loop's missing front end).** Research today scouts unused COLUMNS
+  within ingested feeds (feature-sweep's coverage report) but does NOT discover new external SOURCES --
+  FFToday was a manual scrape. IMPLEMENTATION: a periodic recon (browser-driven, zero WebSearch budget per
+  the bro/DuckDuckGo pattern) that proposes candidate sources against a checklist (preseason, per-season
+  history, keyable to our player universe), plus a source registry the ingest layer reads. COST: a net-new
+  subsystem with its own reliability concerns (recon budget, 403 walls). DEFERRED as the largest and most
+  open-ended item; the ingest side is ready (raw_* + RAW_ASSETS + lineage), only discovery is manual.

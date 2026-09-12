@@ -57,6 +57,17 @@ flagless golden master moved 38.5% -> 41.3% / 97%; `--consensus-blend 0` reprodu
 day (lower toward 0 to trust our own model more). Full record: docs/redesign/experimentation-redesign.md,
 data/experiments.jsonl.
 
+**KEPT ON -- the playoff-null yellow flag, resolved (2026-09-12).** The corrected machinery (playoffs-
+primary) showed the edge is REAL+transferable on titles (+2.77pp, PBO 2%) but NULL on the playoff berth
+(+0.67pp, up in only 8/25 seasons). That is NOT evidence the edge is fake: our team already makes the
+playoffs ~96-97% of the time, so the SEED has almost no headroom -- it cannot move much. The
+differentiator for a team this strong is the BRACKET (the title), and the edge demonstrably builds a
+better roster there: regPoints t=4.27, the title-aligned surrogate index t=3.72 (docs/redesign/power-and-
+surrogate.md). So the near-ceiling berth explains the playoff-null, and the transferable (PBO 2%) title
+gain is real roster-ceiling value, not lottery. DECISION: keep consensusBlend ON (default 1). Corollary:
+the "playoffs is the proximate target" rule assumes the seed has headroom; at a ~96% berth it does not,
+so for this roster the title/roster-ceiling is the operative objective.
+
 ### 0. Get the value curve itself right -- BIG, proven [13.6% -> 24.4%, pre-shading]
 Before any strategy dial: the bid table must price positions the way the format actually consumes
 them. Splitting FLEX slots evenly across RB/WR/TE instead of allocating them by projected points
