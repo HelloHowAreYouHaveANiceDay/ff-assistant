@@ -46,6 +46,7 @@ export const DRAFT_ARBITER_DEPS = {
     "src/draft/strategy.ts",
     "src/draft/levers.ts",
     "src/draft/values.ts",
+    "src/draft/consensusBlend.ts",     // the FFToday consensus re-rank the backtest lever applies
     "src/draft/rookieModel.ts",
     "src/model/projector.ts",          // artifact-mode projection
     "src/inseason/lineup.ts",          // --full real lineup optimizer

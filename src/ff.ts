@@ -1964,32 +1964,23 @@ async function cmdBacktest(rest: string[]) {
   const drainNom = rest.includes("--drain-nom"); // our team drain-nominates the known position-payers
   const greedyNom = rest.includes("--greedy-nom"); // our team nominates the best player we don't want
   const injuryLever = valueOf(rest, "--injury-lever") != null ? Number(valueOf(rest, "--injury-lever")) : 0; // discount OUR values by prior-yr availability
-  // CONSENSUS BLEND (Phase 3.3 arbiter). Nudge the draft board's ORDERING toward the FFToday expert
-  // consensus, 0 = off (byte-identical) to 1 = order purely by FFToday. The feature-sweep found the
-  // consensus rank the strongest residual signal on the board (rho -0.127 vs the shipped model); this
-  // is its arbiter test -- does that residual signal convert into championship value?
-  const consensusBlend = Number(valueOf(rest, "--consensus-blend") ?? 0);
-  // FFToday stored as a within-(season,pos) PERCENTILE (0 = best), so it blends against OUR own board
-  // percentile regardless of the two lists' differing lengths. Preseason by construction -> no leak.
-  // FFToday begins in 2008, so a pre-2008 season carries no entries and the blend is identity there --
-  // those seasons run the baseline in BOTH arms, a paired short-window read like --market ecr.
-  const fftodayPct = new Map<string, number>(); // `${season}|${pos}|${nameKey}` -> percentile in [0,1]
-  let nameKeyFn: ((s: string) => string) | null = null;
+  // CONSENSUS BLEND. Re-rank the draft board's ORDERING toward the FFToday expert consensus, read from
+  // the `consensusBlend` LEVER (shipped default 1; `--consensus-blend 0` turns it off). The transform
+  // lives in src/draft/consensusBlend.ts and is SHARED with the live board (src/data/assemble.ts) -- one
+  // copy, so the arbiter validates exactly what ships. No-lookahead only, like the age/opportunity
+  // levers: with lookahead the "projection" is the season's own truth and there is nothing for a
+  // consensus to improve. FFToday is preseason (knowable at draft time) and covers 2008+, so a pre-2008
+  // season is simply absent and the blend is identity there.
+  const consensusBlend = noLookahead ? (lvEff.consensusBlend ?? 0) : 0;
+  let applyConsensus: ((rows: { name: string; pos: string; points: number }[], yr: number) => { name: string; pos: string; points: number }[]) | null = null;
   if (consensusBlend > 0) {
-    if (!noLookahead) throw new Error("--consensus-blend is only meaningful with --no-lookahead (with lookahead the projection is the season's own truth, nothing for a consensus to improve)");
     const { nameKey } = await import("./draft/values.js");
-    nameKeyFn = nameKey;
+    const { loadConsensusPct, blendConsensus } = await import("./draft/consensusBlend.js");
     const cdb = openDb(valueOf(rest, "--db"));
-    const frows = cdb.prepare("SELECT season, pos, name_key, proj_fpts FROM raw_fftoday_proj WHERE proj_fpts IS NOT NULL").all() as { season: number; pos: string; name_key: string; proj_fpts: number }[];
+    const pct = loadConsensusPct(cdb);
     cdb.close();
-    const byPS = new Map<string, { name_key: string; proj_fpts: number }[]>();
-    for (const r of frows) (byPS.get(`${r.season}|${r.pos}`) ?? byPS.set(`${r.season}|${r.pos}`, []).get(`${r.season}|${r.pos}`)!).push(r);
-    for (const [k, list] of byPS) {
-      list.sort((a, b) => b.proj_fpts - a.proj_fpts);
-      const n = list.length;
-      list.forEach((r, i) => fftodayPct.set(`${k}|${r.name_key}`, n > 1 ? i / (n - 1) : 0));
-    }
-    console.log(`  --consensus-blend ${consensusBlend}: re-rank the board toward FFToday (${fftodayPct.size} player-seasons, ${byPS.size} pos-seasons)`);
+    applyConsensus = (rows, yr) => blendConsensus(rows, (pos, name) => pct.get(`${yr}|${pos}|${nameKey(name)}`) ?? null, consensusBlend);
+    console.log(`  consensus-blend ${consensusBlend}: re-rank the board toward FFToday (${pct.size} player-seasons)`);
   }
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;
@@ -2340,34 +2331,9 @@ async function cmdBacktest(rest: string[]) {
       }
       if (add.length) { proj = [...proj, ...add]; rookiesAdded.set(yr, add.length); }
     }
-    // CONSENSUS BLEND. Re-rank the board's ORDERING toward FFToday by blending each player's
-    // within-(pos) percentile with FFToday's, then REASSIGNING the pool's own points by slot -- the
-    // points DISTRIBUTION (and so the prices) is untouched, only WHICH player gets which projection
-    // moves. Applied AFTER rookie injection so the consensus can re-rank rookies too. w=0 is
-    // byte-identical: the blended key equals our own percentile, so every player keeps his own slot.
-    // A player FFToday does not rank keeps his own percentile (blend is identity for him).
-    if (consensusBlend > 0 && nameKeyFn) {
-      const w = consensusBlend;
-      const byPos = new Map<string, { name: string; pos: string; points: number }[]>();
-      for (const r of proj) (byPos.get(r.pos) ?? byPos.set(r.pos, []).get(r.pos)!).push(r);
-      const reassigned = new Map<string, number>();
-      for (const [pos, players] of byPos) {
-        const n = players.length;
-        if (n < 2) continue;
-        const ourSorted = players.slice().sort((a, b) => b.points - a.points);
-        const ourPct = new Map<string, number>();
-        ourSorted.forEach((r, i) => ourPct.set(r.name, i / (n - 1)));
-        const slots = ourSorted.map((r) => r.points);               // the pool's own points, best-first
-        const keyed = players.map((r) => {
-          const op = ourPct.get(r.name)!;
-          const fp = fftodayPct.get(`${yr}|${pos}|${nameKeyFn!(r.name)}`);
-          return { name: r.name, key: fp != null ? (1 - w) * op + w * fp : op };
-        });
-        keyed.sort((a, b) => a.key - b.key);
-        keyed.forEach((r, i) => reassigned.set(r.name, slots[i]));
-      }
-      proj = proj.map((r) => ({ ...r, points: reassigned.get(r.name) ?? r.points }));
-    }
+    // CONSENSUS BLEND. Re-rank the board's ORDERING toward FFToday (src/draft/consensusBlend.ts, shared
+    // with the live board). AFTER rookie injection so the consensus can re-rank rookies too.
+    if (applyConsensus) proj = applyConsensus(proj, yr);
     // availability signal for the injury lever: prior-season games played / the busiest player's games
     const avail = new Map<string, number>();
     const priorWk = wk.get(projYr);

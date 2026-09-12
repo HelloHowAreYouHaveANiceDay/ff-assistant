@@ -4,3 +4,11 @@ FORMAT  weeks 1-13, 7-team playoff, seeding division-winners-first, bracket rese
 BACKTEST age-curve opportunity FULL-SYSTEM(real lineup)+inflation no-lookahead(prev-yr proj)  16-team $200 HALF 7-team-playoff | reserve=4 maxShare=0.25  market 0.3  book vor
   CHAMPIONSHIPS: 38.5%  (random 6.3%)  |  playoffs: 96%
   TESTS baseline: 736 total, 733 pass, 1 fail (pre-existing)
+
+=== GOLDEN MASTER MOVED 2026-09-12: FFToday consensus blend SHIPPED ===
+The redesign's cleanup phases (1-2) were behavior-preserving and golden-master-gated at 38.5%.
+Phase 3 then VALIDATED a value change (the FFToday consensus blend, consensusBlend lever) through the
+CPCV arbiter, and it is now SHIPPED ON by default. The flagless golden master is therefore now:
+  CHAMPIONSHIPS: 41.3%  (random 6.3%)  |  playoffs: 97%   (n=150, 1999-2024)
+  `--consensus-blend 0` reproduces the pre-edge 38.5% / 96% base; the +2.8pp between them is the edge.
+This is a DELIBERATE value change, not drift -- the 38.5% above is retained as the pre-edge reference.

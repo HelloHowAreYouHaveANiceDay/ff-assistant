@@ -113,11 +113,20 @@ research is done on predictive content — not by iterating against the backtest
 Phase 3 (research funnel 3.1-3.3 + cross-check) COMPLETE + QA'd; Phase 4 (continuous loop / A6)
 COMPLETE + QA'd.** The redesign's spine is now built end-to-end: ingest → screen (FDR+controls) →
 arbiter (CPCV+PBO, dose-response, seed-robust, trained-model cross-check) → ledger → drift-aware
-re-measurement (fingerprint + T), and it produced a validated edge (+2.84pp titles, off by default
-pending an owner ship call). Remaining (optional / owner-gated): OWNER ship decision + live-season
-FFToday integration; widen the funnel with more signals (win totals, expected points); the deferred
-infrastructure (feature manifest #4 language-neutral source, eval scaffold #10). Follow-up still open:
-`scripts/sim-convergence.mjs` stale ownership-grouping copy.
+re-measurement (fingerprint + T), and it produced a validated edge (+2.84pp titles), NOW SHIPPED.
+
+**SHIPPED 2026-09-12 (owner-authorised).** The FFToday consensus blend is live: one shared transform
+(`src/draft/consensusBlend.ts`) drives BOTH the arbiter lever AND the live board (`assemble`), the
+`consensusBlend` lever defaults to 1, 2026 FFToday is scraped (`scripts/scrape-fftoday.mjs`) and
+ingested, and the flagless golden master moved 38.5% -> 41.3% / 97% (`--consensus-blend 0` reproduces
+the pre-edge base; the refactor is behavior-preserving). The deps fingerprint covers the new module.
+Also done this pass: `sim-convergence.mjs` dstAliasKey fix (the filed follow-up, closed); a funnel-widening
+screen of the ball-security family (a clean NULL, ruled out).
+
+Remaining (optional): widen the funnel with more signals (win totals, expected points); the deferred
+infrastructure (feature manifest #4 language-neutral source, eval scaffold #10); a `read-config.mjs` that
+prints the getConfig-EFFECTIVE levers, not just the stored ones (it currently hides a code-default-only
+lever, which briefly masked consensusBlend this session).
 
 ---
 

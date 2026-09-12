@@ -18,6 +18,7 @@ const SHIPPED: Levers = {
   tierBreak: 0.75, maxKDst: 2, starterReserve: 4, benchReserve: 1, maxShare: 0.25,
   aggr: 0.7, premium: 2, sleeperThreshold: 5, benchDiscount: 0.25,
   multQB: 1, multRB: 1, multWR: 1, multTE: 1,
+  consensusBlend: 1, // SHIPPED 2026-09-12: FFToday consensus re-rank on by default (+2.8pp, 38.5%->41.3%)
 };
 
 test("regression lock: DEFAULT_LEVERS is the shipped, holdout-validated posture", () => {

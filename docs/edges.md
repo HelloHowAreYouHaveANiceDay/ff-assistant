@@ -39,7 +39,7 @@ depend on the bot model, so weigh them as "big / medium / none", not to the deci
 > 2025 champion was the **7 seed at 9-5**. A draft strategy can put you in the bracket. What happens
 > in the bracket is not an edge anybody in this repo has been able to find.
 
-### External expert consensus (FFToday) as a draft-board RANKING -- VALIDATED via CPCV, off by default [+2.8pp @ w=1.0]
+### External expert consensus (FFToday) as a draft-board RANKING -- SHIPPED (consensusBlend lever = 1) [+2.8pp: 38.5% -> 41.3%]
 The FFToday consensus (`raw_fftoday_proj`, 2008-2024) entered the research funnel and cleared both
 gates. SCREEN (`scripts/feature-sweep.mjs`): its positional rank is the STRONGEST residual signal on
 the whole 102-candidate board -- rho −0.127 vs the shipped TRAINED model (p=1.6e-14), controls clean.
@@ -50,8 +50,11 @@ The pre-registered w=0.5 was positive but sub-threshold (+1.29pp, CI straddled 0
 pre-2008 seasons pair identically). The artifact-mode cross-check confirms it beats even the TRAINED model
 (not just prior actuals): +8.19pp on the 7 fold seasons 2018-24, CI [2.0, 16.0], PBO 0% -- same direction,
 but only 7 seasons, so quote the well-powered 25-season **+2.84pp [0.22, 5.56]** as the magnitude, this arm
-as directional confirmation. **Off by default (golden master preserved); a ship needs an owner call +
-live-season FFToday** (the scrape is 2008-24). Full record: docs/redesign/experimentation-redesign.md,
+as directional confirmation. **SHIPPED 2026-09-12** (`consensusBlend` lever, default 1; the shared
+transform src/draft/consensusBlend.ts drives BOTH the arbiter and the live board via assemble). The
+flagless golden master moved 38.5% -> 41.3% / 97%; `--consensus-blend 0` reproduces the pre-edge base.
+2026 FFToday scraped (scripts/scrape-fftoday.mjs) so the live board has current data. Tunable on draft
+day (lower toward 0 to trust our own model more). Full record: docs/redesign/experimentation-redesign.md,
 data/experiments.jsonl.
 
 ### 0. Get the value curve itself right -- BIG, proven [13.6% -> 24.4%, pre-shading]

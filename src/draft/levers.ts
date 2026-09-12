@@ -38,6 +38,12 @@ export interface Levers {
   multRB: number;
   multWR: number;
   multTE: number;
+  // Re-rank the draft board's ORDERING toward the FFToday expert consensus (0 = our projection as-is,
+  // 1 = order purely by the consensus where it ranks a player, keeping our own point magnitudes). A
+  // BOARD lever: it changes the drafted book, so a rebuild is required. Validated by the CPCV arbiter
+  // (~+2.8pp championships; docs/edges.md, docs/redesign/experimentation-redesign.md). Applied to the
+  // projection before computeValues, so it does not feed V2Config.
+  consensusBlend: number;
 }
 
 /** What a lever ACTS ON. Drives grouping in the UI and tells an agent which harness can see it:
@@ -182,6 +188,11 @@ export const LEVER_SPECS: readonly LeverSpec[] = [
     key: "multTE", kind: "number", default: 1, off: 1, min: 0.4, max: 1.5, step: 0.05,
     label: "TE value x", board: false, group: "value", flag: "mult-te", status: "shipped",
     help: "Multiplier on OUR TE values. <1 = pay less for TE than raw VOR says.",
+  },
+  {
+    key: "consensusBlend", kind: "number", default: 1, off: 0, min: 0, max: 1, step: 0.05,
+    label: "FFToday consensus blend", board: true, group: "board", flag: "consensus-blend", status: "shipped",
+    help: "Re-rank the board's ORDERING toward the FFToday consensus (0 = our projection, 1 = the consensus). Validated ~+2.8pp titles.",
   },
 ];
 

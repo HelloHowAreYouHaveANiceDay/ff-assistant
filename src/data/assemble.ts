@@ -139,9 +139,22 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
 
   // 1. projections -> our values (existing TS computeValues)
   if (!existsSync(pointsPath)) throw new Error(`missing ${pointsPath} (run build_projections first)`);
-  const points: PointsRow[] = readFileSync(pointsPath, "utf8").trim().split(/\r?\n/).slice(1).map((l) => {
+  let points: PointsRow[] = readFileSync(pointsPath, "utf8").trim().split(/\r?\n/).slice(1).map((l) => {
     const [name, pos, pts] = l.split(","); return { name: (name || "").trim(), pos: (pos || "").trim().toUpperCase(), points: Number(pts) };
   }).filter((p) => p.name && Number.isFinite(p.points));
+  // CONSENSUS BLEND (the shipped FFToday edge). Re-rank the board's ORDERING toward the FFToday expert
+  // consensus per the `consensusBlend` lever, BEFORE pricing, so both the value and the displayed
+  // proj_pts reflect it. The transform is shared with the arbiter (src/draft/consensusBlend.ts), so the
+  // live board gets exactly what the CPCV backtest validated (~+2.8pp titles). A no-op when the lever is
+  // 0, and identity for any player FFToday does not rank (or a season it does not cover).
+  const consensusBlend = cfg.levers.consensusBlend ?? 0;
+  if (consensusBlend > 0) {
+    const { loadConsensusPct, blendConsensus } = await import("../draft/consensusBlend.js");
+    const pct = loadConsensusPct(db);
+    const ranked = points.filter((p) => pct.has(`${season}|${p.pos}|${nameKey(p.name)}`)).length;
+    points = blendConsensus(points, (pos, name) => pct.get(`${season}|${pos}|${nameKey(name)}`) ?? null, consensusBlend);
+    console.log(`  consensus-blend ${consensusBlend}: re-ranked the board toward FFToday (${ranked}/${points.length} players ranked, season ${season})`);
+  }
   const projByName = new Map(points.map((p) => [p.name, p.points]));
   // ESPN'S OWN ELIGIBILITY, when it has been ingested. `loadEligibilityMap` carries only players who
   // are startable at more than one of QB/RB/WR/TE, so on a board where nobody is -- which is every
