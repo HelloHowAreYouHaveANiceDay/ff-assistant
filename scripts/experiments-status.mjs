@@ -15,11 +15,18 @@
 // count behind PBO / a deflated ship threshold (Lopez de Prado): every extra config tried raises the
 // bar a genuine edge must clear, so a system that consults the backtest freely without tracking T is
 // deceiving itself about significance. This makes T impossible to lose track of.
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { execSync } from "node:child_process";
+import path from "node:path";
 import { fingerprintDraftArbiter, DRAFT_ARBITER_DEPS } from "./lib/deps.mjs";
 
 const LEDGER = process.argv.includes("--ledger") ? process.argv[process.argv.indexOf("--ledger") + 1] : "data/experiments.jsonl";
 const VERBOSE = process.argv.includes("--verbose");
+// --rerun-stale re-runs every STALE experiment that carries a `spec` (reconstructing its cpcv command),
+// re-enrolling it at the current fingerprint. It runs BACKTESTS, so it PREVIEWS by default; pass --run
+// to execute. This is the A6 loop's active half: detect drift AND close it.
+const RERUN = process.argv.includes("--rerun-stale");
+const RUN = process.argv.includes("--run");
 
 if (!existsSync(LEDGER)) { console.error(`no ledger at ${LEDGER}`); process.exit(1); }
 const entries = readFileSync(LEDGER, "utf8").trim().split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
@@ -82,3 +89,50 @@ if (legacy) {
 console.log(`\n  Fingerprint covers ${DRAFT_ARBITER_DEPS.files.length} data files, ${DRAFT_ARBITER_DEPS.tables.length} tables, ` +
   `${DRAFT_ARBITER_DEPS.dirs.length} artifact dir(s), ${DRAFT_ARBITER_DEPS.code.length} source files, and the stored levers.`);
 console.log("");
+
+// ---- --rerun-stale: close the loop ----------------------------------------------------------------
+if (RERUN) {
+  // STALE (drifted) entries that carry a spec, DEDUP by config_hash keeping the latest -- so an
+  // experiment re-run many times is re-run ONCE. Stale-without-spec (pre-spec rows) cannot be
+  // reconstructed and are reported, not run.
+  const staleWithSpec = [], staleNoSpec = [], seen = new Set();
+  for (const e of entries.slice().reverse()) {
+    if (e.deps_hash == null || e.deps_hash === now.hash) continue;   // legacy-no-hash or CURRENT
+    if (seen.has(e.config_hash)) continue; seen.add(e.config_hash);
+    (e.spec ? staleWithSpec : staleNoSpec).push(e);
+  }
+  console.log(`${"=".repeat(92)}`);
+  console.log(`RERUN-STALE -- ${staleWithSpec.length} re-runnable, ${staleNoSpec.length} stale-without-spec (cannot reconstruct)`);
+  if (staleNoSpec.length) console.log(`  (pre-spec rows, re-run manually once to enrol: ${staleNoSpec.map((e) => e.treatment_label).slice(0, 6).join("; ")}${staleNoSpec.length > 6 ? " ..." : ""})`);
+  if (!staleWithSpec.length) { console.log(`  nothing to re-run.\n`); process.exit(0); }
+
+  // group by BASELINE spec so the baseline arm is run ONCE per group and reused across its treatments.
+  const groups = new Map();
+  for (const e of staleWithSpec) {
+    const s = e.spec, gk = JSON.stringify([s.base_flags, s.seasons, s.n, s.artifact_dir]);
+    (groups.get(gk) ?? groups.set(gk, []).get(gk)).push(e);
+  }
+  const nBt = groups.size + staleWithSpec.length;   // 1 baseline/group + 1 treatment/experiment
+  console.log(`  ${groups.size} baseline group(s), ${staleWithSpec.length} treatments -> ~${nBt} backtests` + (RUN ? "" : " (PREVIEW -- pass --run to execute)"));
+  for (const [gk, es] of groups) {
+    const s = es[0].spec;
+    console.log(`\n  baseline: backtest ${s.base_flags} --seasons ${s.seasons} --n ${s.n} --artifact-dir ${s.artifact_dir}`);
+    for (const e of es) console.log(`    + treatment ${e.spec.treatment}   [${e.treatment_label}]`);
+  }
+  if (!RUN) { console.log(`\n  Preview only. Re-run with --run (this executes ~${nBt} backtests).\n`); process.exit(0); }
+
+  mkdirSync("data/trials", { recursive: true });
+  let done = 0;
+  for (const [gk, es] of groups) {
+    const s = es[0].spec;
+    const baseDump = path.join("data/trials", `rerun-base-${Date.now()}.tsv`);
+    console.log(`\n$ (baseline) backtest ${s.base_flags} ...`);
+    execSync(`npm run -s ff -- backtest ${s.base_flags} --seasons ${s.seasons} --n ${s.n} --artifact-dir ${s.artifact_dir} --dump-trials ${baseDump}`, { stdio: "inherit" });
+    for (const e of es) {
+      console.log(`\n$ (rerun) ${e.treatment_label}`);
+      execSync(`node scripts/cpcv.mjs --base-flags "${s.base_flags}" --baseline-dump ${baseDump} --treatment "${e.spec.treatment}" --seasons ${s.seasons} --n ${s.n} --artifact-dir ${s.artifact_dir} --baseline-label ${JSON.stringify(e.baseline_label)} --treatment-label ${JSON.stringify(e.treatment_label)}`, { stdio: "inherit" });
+      done++;
+    }
+  }
+  console.log(`\n  re-ran ${done} experiment(s); each appended a fresh CURRENT ledger row. Run experiments-status again to confirm.\n`);
+}
