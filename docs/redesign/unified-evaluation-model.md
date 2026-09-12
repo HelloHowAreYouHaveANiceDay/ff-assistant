@@ -127,6 +127,25 @@ Check #4 killed the state-value-function stage; the rest stands, in outcome-surr
 5. **Re-run lineup / waivers / trades** through the shared core → drift-aware ledger rows, graded on the
    realized champ-aligned outcome with the outcome-surrogate for power. `--rerun-stale` then covers both.
 
+## STAGE 3 finding (2026-09-12): in-season CANNOT be champ-aligned in its own harness -- use the full field
+
+The in-season harness scores ONE roster in isolation on POINTS because playoff-Δ/wins need the whole
+field's rosters + H2H schedule + projection pool, and those are built only for the LIVE season -- there
+is no stored historical board to reconstruct 2018-2025 sim contexts from (`scorers.ts`). So the metric
+swap (Stage 3) is INFEASIBLE in that harness. But the constraint points at the right answer: the
+FULL-FIELD DRAFT BACKTEST already simulates the whole league + playoffs (so it HAS champ) and already
+runs in-season policies inside it -- `--full` is the lineup optimizer, `--waivers` the waiver churn. So
+**lineup and waivers are already champ-measurable through the shared cpcv core; they were just never
+ledger experiments.** REVISED architecture:
+- CHAMP-ALIGNED ARBITER = the full-field backtest + cpcv (shared core), for any in-season policy it can
+  simulate (lineup `--full`, waivers `--waivers`; trades not yet -- no trade sim in the field).
+- The points-based in-season harness stays a COMPLEMENTARY high-power SCREEN (more decisions, but points
+  only), whose point-improvements must be confirmed on champ in the full-field sim -- exactly the
+  screen->arbiter relationship the funnel already uses.
+So "re-run lineup/waivers off the new engine" is: enroll them as cpcv LEDGER experiments (champ-aligned,
+playoffs-primary, PBO, drift-fingerprinted). Trades remain on the points-screen until a field trade sim
+exists.
+
 The elegant end state (revised): **one analysis core, one ledger, one drift discipline; draft and
 in-season are the same DOUBLY-ROBUST policy-comparison engine measuring the effect on a realized,
 champ-aligned outcome -- differing only in what trajectory each producer rolls out.** Not a shared value
