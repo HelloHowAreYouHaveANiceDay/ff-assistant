@@ -39,6 +39,19 @@ depend on the bot model, so weigh them as "big / medium / none", not to the deci
 > 2025 champion was the **7 seed at 9-5**. A draft strategy can put you in the bracket. What happens
 > in the bracket is not an edge anybody in this repo has been able to find.
 
+### External expert consensus (FFToday) as a draft-board RANKING -- VALIDATED via CPCV, off by default [+2.8pp @ w=1.0]
+The FFToday consensus (`raw_fftoday_proj`, 2008-2024) entered the research funnel and cleared both
+gates. SCREEN (`scripts/feature-sweep.mjs`): its positional rank is the STRONGEST residual signal on
+the whole 102-candidate board -- rho −0.127 vs the shipped TRAINED model (p=1.6e-14), controls clean.
+ARBITER (`backtest --consensus-blend <w>` + `scripts/cpcv.mjs`): adopting the consensus ORDERING while
+keeping our own point magnitudes lifts titles on the sanctioned arbiter, a MONOTONE dose-response
+peaking at w=1.0: **+2.84pp, 95% CI [0.22, 5.56], P(>0)=98.5%, PBO=2%**, robust across 4 path-seeds.
+The pre-registered w=0.5 was positive but sub-threshold (+1.29pp, CI straddled 0). Leak-safe (preseason;
+pre-2008 seasons pair identically). **CAVEAT:** measured vs the arbiter's PRIOR-ACTUALS book, so this is
+"beats a prior-actuals ordering," not yet "beats our trained projection" -- the artifact-mode cross-check
+is pre-registered to gate a ship. **Off by default (golden master preserved); a ship needs an owner call
++ live-season FFToday.** Full record: docs/redesign/experimentation-redesign.md, data/experiments.jsonl.
+
 ### 0. Get the value curve itself right -- BIG, proven [13.6% -> 24.4%, pre-shading]
 Before any strategy dial: the bid table must price positions the way the format actually consumes
 them. Splitting FLEX slots evenly across RB/WR/TE instead of allocating them by projected points

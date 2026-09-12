@@ -54,10 +54,44 @@ research is done on predictive content — not by iterating against the backtest
   (proxy_lift=−0.127, arbiter_lift) for the A5 monitor. (`data/residuals.tsv` is gitignored/regenerable
   via `ff evaluate-projection --dump-residuals`; the harness change is the only committed artifact.)
 
+- **Phase 3.3 — the consensus at the ARBITER (the full funnel, end to end).** New lever
+  `backtest --consensus-blend <w>` (src/ff.ts): re-rank the draft board's ORDERING toward the FFToday
+  consensus by blending each player's within-(pos) PERCENTILE with FFToday's, then reassigning the
+  pool's OWN points by slot — so prices/magnitudes are untouched, only WHICH player gets which
+  projection moves. w=0 byte-identical (short-circuit); leak-safe (FFToday preseason; the per-season
+  deltas confirm 2000-2008 pair IDENTICALLY — no FFToday there — and only 2009+ move). Off by default,
+  so the golden master is preserved (consistency check reproduced 38.48% in every run).
+  CPCV arbiter (n=150, 1999-2024, 200 paths, k=12), **pre-registered primary w=0.5**, ship rule
+  CI-excludes-0 AND PBO<0.4:
+  | w | mean lift | 95% CI | P(>0) | PBO | clears? |
+  |---|---|---|---|---|---|
+  | 0.25 | +1.32pp | [−0.17, 2.94] | 95.5% | 7.5% | no (straddles 0) |
+  | **0.50 (pre-reg)** | +1.29pp | [−0.11, 2.83] | 96.0% | 8.5% | **no** (straddles, barely) |
+  | 1.00 | **+2.84pp** | **[0.22, 5.56]** | 98.5% | 2.0% | **YES** |
+
+  The pre-registered dose did NOT clear. A dose-response probe (all reported, baseline reused) found a
+  **MONOTONE gradient** peaking at the corner w=1.0, which clears the rule; robust across 4 path-seeds
+  (+2.6..+2.9pp, CI clears 0 every time, PBO 2-3%) — not a path-sampling fluke. A monotone gradient to
+  a range endpoint is far stronger than a lucky cell, but w=1.0 was NOT the pre-registered dose, so the
+  selection is guarded, not ignored.
+  **SCOPE CAVEAT, load-bearing:** the sanctioned arbiter's own book is PRIOR-YEAR ACTUALS (a weak
+  projection). So the honest claim is "FFToday's consensus ORDERING beats a prior-actuals ordering for
+  titles," NOT yet "beats our best TRAINED projection." The screen (3.2) is the complementary evidence:
+  it found −0.127 residual signal against the SHIPPED TRAINED model, so both layers agree the consensus
+  adds signal. A5 monitor datapoints logged (proxy_lift=−0.127 → arbiter_lift +1.3..+2.8pp; the proxy
+  correctly predicted a positive arbiter, magnitude rising with dose).
+  **NOT shipped.** Turning the lever on moves the headline (38.5%→~41%) and needs (a) an OWNER decision
+  and (b) live-season FFToday + integration into the board path (the scrape is 2008-2024 only). Recorded
+  as a validated ship-CANDIDATE. Pre-registered next: the artifact-mode cross-check (does FFToday beat
+  our TRAINED projection, not just prior actuals?) must gate any ship.
+
 **STATUS: Phase 1 (cleanup) COMPLETE + QA'd; Phase 2 (CPCV core + A3.1 calibration) COMPLETE + QA'd;
-Phase 3.1 (FFToday ingest) + 3.2 (consensus screened, SURVIVES) COMPLETE + QA'd.**
-Remaining: Phase 3.3 (consensus-blend → arbiter + A5 monitor); feature manifest #4 + eval scaffold #10;
-Phase 4 (continuous loop). Follow-up filed: `scripts/sim-convergence.mjs` stale ownership-grouping copy.
+Phase 3.1 (FFToday ingest) + 3.2 (consensus screened, SURVIVES) + 3.3 (arbiter: validated ship-CANDIDATE,
+off by default) COMPLETE + QA'd.** The research funnel now runs end-to-end: ingest → screen (FDR+controls)
+→ arbiter (CPCV+PBO, dose-response, seed-robust) → ledger, one external signal all the way through.
+Remaining: Phase 3.3-followup (artifact-mode cross-check → owner ship decision + live-FFToday integration);
+feature manifest #4 + eval scaffold #10; Phase 4 (continuous loop). Follow-up still open:
+`scripts/sim-convergence.mjs` stale ownership-grouping copy.
 
 ---
 
