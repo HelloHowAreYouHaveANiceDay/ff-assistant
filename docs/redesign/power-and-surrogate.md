@@ -81,5 +81,23 @@ Measured on the consensus contrast:
    trial-count discipline, and CONFIRM only the gross survivors on the 25-season arbiter. NOTE the index
    still cannot resolve arbitrarily thin (sub-~1pp) edges -- it halves the floor, it does not remove it.
 
+## Lever re-optimisation under the consensus-on baseline (RESULT)
+
+`scripts/lever-sweep.mjs` swept 27 lever contrasts, analysed on the index (`scripts/surrogate-validate.mjs`,
+~2x power); each lever's canonical contrast is enrolled as a drift-aware LEDGER experiment on the true
+objective (playoffs-primary). **No optimum moved -- the shipped posture holds under the consensus edge:**
+- HOLD (alternative REJECTed on the arbiter): aggr, max-share, bench-discount, premium, max-kdst,
+  mult-qb, mult-rb. Moving away from the shipped value is measurably worse.
+- INERT / below resolution (neither confirmed nor refuted -- they do not move the seed): starter-reserve,
+  bench-reserve, mult-wr, mult-te. sleeper-threshold and tier-break read EXACTLY 0.00 (byte-identical) --
+  board-display filters the draft backtest cannot see, so they cannot be validated this way at all.
+- ONE thin CANDIDATE: bench-discount 0.5 reads index +0.57 (t=2.79) vs shipped 0.25 -- suggestive that
+  valuing bench-only players slightly more may help, but it does NOT survive FDR across 27 tests. Logged
+  for a finer sweep (0.3-0.4) + arbiter confirmation; not shipped.
+
+So the answer to "have we re-run the levers under the new model?": yes, on the powered instrument, and
+the consensus edge did not destabilise any lever. The 13 levers are now drift-aware ledger experiments;
+`experiments-status --rerun-stale` (the last engine piece) will re-run them automatically on future drift.
+
 Sources: Athey-Chetty-Imbens NBER w26463; arXiv:2309.07893, 2402.03915, 2311.11922; Deng et al. CUPED
 (arXiv:2312.02935 retrospective); Bailey-Lopez de Prado Deflated Sharpe; Efron CASI ch.7.
