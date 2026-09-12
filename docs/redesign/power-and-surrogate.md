@@ -91,9 +91,14 @@ objective (playoffs-primary). **No optimum moved -- the shipped posture holds un
 - INERT / below resolution (neither confirmed nor refuted -- they do not move the seed): starter-reserve,
   bench-reserve, mult-wr, mult-te. sleeper-threshold and tier-break read EXACTLY 0.00 (byte-identical) --
   board-display filters the draft backtest cannot see, so they cannot be validated this way at all.
-- ONE thin CANDIDATE: bench-discount 0.5 reads index +0.57 (t=2.79) vs shipped 0.25 -- suggestive that
-  valuing bench-only players slightly more may help, but it does NOT survive FDR across 27 tests. Logged
-  for a finer sweep (0.3-0.4) + arbiter confirmation; not shipped.
+- ONE MOVER, confirmed: bench-discount's optimum moved from shipped 0.25 to ~0.3-0.4. The finer sweep
+  (0.3/0.35/0.4) is a clean PLATEAU -- each ~+1.1pp champ, surrogate index t~5-7 (decisively resolvable),
+  and the ARBITER confirms on the true objective: bench-discount 0.35 = **+1.09pp titles, CI [0.16, 2.11],
+  PBO 1%** (playoffs +0.27pp null -- same near-ceiling-berth story). So valuing bench-only players a bit
+  more is a REAL thin edge the powered surrogate surfaced and the arbiter confirmed -- the payoff of the
+  re-optimisation. Enrolled in the ledger. SHIP CALL is the owner's: it is a value change that moves the
+  golden master again (~41.3% -> ~42.4%) and is a SELECTED thin edge (~+1pp, near the resolution floor),
+  so it warrants an explicit yes, like the consensus ship -- recommended, not auto-shipped.
 
 So the answer to "have we re-run the levers under the new model?": yes, on the powered instrument, and
 the consensus edge did not destabilise any lever. The 13 levers are now drift-aware ledger experiments;
