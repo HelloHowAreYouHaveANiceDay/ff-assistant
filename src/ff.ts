@@ -2346,7 +2346,7 @@ async function cmdBacktest(rest: string[]) {
       // matched PAIR, and paired tests on those pairs are far more powerful -- and far more honest
       // -- than comparing two aggregate percentages. Also: the unit of GENERALISATION is the season,
       // not the trial, so downstream analysis needs the season label on every row.
-      if (dumpPath) dumpRows.push([yr, s + 1 + yr * 1000, r.champ ? 1 : 0, r.madePlayoffs ? 1 : 0, r.wins, r.regPoints].join("\t"));
+      if (dumpPath) dumpRows.push([yr, s + 1 + yr * 1000, r.champ ? 1 : 0, r.madePlayoffs ? 1 : 0, r.wins, r.regPoints, r.projTotal, r.projStart, r.projBench, r.projHHI].join("\t"));
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
@@ -2361,7 +2361,7 @@ async function cmdBacktest(rest: string[]) {
     rookieDb?.close();
   }
   if (dumpPath) {
-    writeDump(dumpPath, ["season", "seed", "champ", "playoffs", "wins", "regPoints"].join("\t") + "\n" + dumpRows.join("\n") + "\n", "utf8");
+    writeDump(dumpPath, ["season", "seed", "champ", "playoffs", "wins", "regPoints", "projTotal", "projStart", "projBench", "projHHI"].join("\t") + "\n" + dumpRows.join("\n") + "\n", "utf8");
     console.log(`  wrote ${dumpRows.length} trial rows -> ${dumpPath}`);
   }
   console.log(`  per season: ${perYear.join("  ")}`);

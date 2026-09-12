@@ -87,20 +87,50 @@ ONE engine, two producers:
 5. **`Φ` needs roster-state features we don't yet dump.** Raw (wins, regPoints, playoffs) is enough for
    a draft-roster `Φ` but likely too coarse for weekly states. The richer-feature build gates this.
 
-## Recommendation & migration (staged, each QA-gated)
+## FOUNDATIONAL CHECK #4 -- RESULT (2026-09-12): state-Φ does NOT work; use the outcome-surrogate
 
-1. **Enrich the trial dump** with roster-state features (prerequisite for a weekly-capable `Φ`).
-2. **Extract `scripts/lib/arbiter.mjs`** from cpcv (CRN OPE + bootstrap + PBO + ledger + fingerprint
+We enriched the trial dump with PROJECTED roster-structure (projTotal, projStart, projBench, projHHI --
+`src/draft/backtest.ts`) and fit state-Φ = E[champ | projected structure], vs outcome-Φ = E[champ |
+wins,regPoints,playoffs] (`scripts/state-phi-check.mjs`). Three checks, all negative for state-Φ:
+- **AUC 0.501** (state-Φ) vs 0.696 (outcome-Φ), leave-season-out. Projected structure has ~ZERO
+  within-strategy champ-predictive power. Diagnostic: the features VARY (CV 0.06-0.22) with the RIGHT
+  signs (projHHI corr −0.063, top-heavy bad) but corr with champ is 0.02-0.07, vs 0.30-0.33 for realized
+  wins/regPoints.
+- **Wrong SIGN on bench-discount** in the surrogacy check: state-Φ +0.47 while champ −4.67 -- a real
+  paradox (bench-discount-off adds structural "depth" state-Φ rewards while it weakens the starters).
+- Root cause (FUNDAMENTAL, not tuning): within a fixed strategy every trial drafts a similar-QUALITY
+  roster; which SPECIFIC trial wins the title is realized luck (weekly variance + injuries + single-elim
+  bracket), which no projected structure can see. A per-state value function is orthogonal to the
+  outcome by construction. **The cheap instant-roster-score Φ is dead.**
+
+IMPLICATION: the unification does NOT rest on a state-value function. It uses the OUTCOME-SURROGATE /
+doubly-robust form (which was the pre-registered fallback): both harnesses stay POLICY COMPARISONS
+measured on REALIZED, champ-aligned outcomes (CRN rollouts) with outcome-Φ (AUC 0.696) for power. The
+in-season fix is a METRIC SWAP, not a new sim: the harness already rolls out realized rest-of-season;
+swap raw POINTS (paradox-prone) for realized rest-of-season WINS / playoff-Δ (champ-aligned, corr 0.30).
+This is simpler and more robust than state-Φ: no value-function fitting, no state-distribution-shift, no
+paradox-fitting. The structure columns are kept as cheap telemetry / potential control variates.
+
+## Recommendation & migration (staged, each QA-gated) -- REVISED after check #4
+
+Check #4 killed the state-value-function stage; the rest stands, in outcome-surrogate form:
+1. ~~Enrich dump + fit a state-Φ value function~~ -- DONE and REJECTED (check #4 above). Structure columns
+   kept as telemetry.
+2. **Extract `scripts/lib/arbiter.mjs`** from cpcv (CRN OPE + season bootstrap + PBO + ledger + fingerprint
    profiles); refactor cpcv to use it (behaviour-preserving, byte-identical draft output = the gate).
-3. **Fit + validate one `Φ`** over roster-state; re-validate surrogacy on in-season states.
-4. **Add in-season `--dump-trials`** emitting `(season, seed, ΔΦ, champ)`; wire a thin in-season arbiter
-   wrapper to the shared core with the `weekly` fingerprint profile.
-5. **Re-run lineup / waivers / trades** through the unified engine → drift-aware ledger rows, graded on
-   `ΔΦ` (power) + terminal champ (truth). `--rerun-stale` then covers both.
+3. **Align the in-season METRIC to the terminal objective:** swap the harness's raw-POINTS scorer for a
+   realized rest-of-season WINS / playoff-Δ scorer (champ-aligned, corr ~0.30, not paradox-prone). This is
+   a scorer change in `src/inseason/backtest/scorers.ts`, not a new sim.
+4. **Add an in-season CRN `--dump-trials`** emitting `(season, seed, <realized champ-aligned metric>)` in
+   the common schema; wire a thin in-season wrapper to `lib/arbiter.mjs` with the `weekly` fingerprint
+   profile + spec (runner = the in-season harness).
+5. **Re-run lineup / waivers / trades** through the shared core → drift-aware ledger rows, graded on the
+   realized champ-aligned outcome with the outcome-surrogate for power. `--rerun-stale` then covers both.
 
-The elegant end state: **one potential function `Φ`, one ledger, one drift discipline; draft and
-in-season are the same engine measuring the same thing (championship win-probability) at different
-points in one season-long MDP.**
+The elegant end state (revised): **one analysis core, one ledger, one drift discipline; draft and
+in-season are the same DOUBLY-ROBUST policy-comparison engine measuring the effect on a realized,
+champ-aligned outcome -- differing only in what trajectory each producer rolls out.** Not a shared value
+function (check #4), but a shared ESTIMATOR and ledger, which is the honest unification.
 
 Sources: Jiang & Li, Doubly Robust OPE (arXiv:1511.03722); MRDR (arXiv:1802.03493); Ng-Harada-Russell,
 Policy invariance under reward transformations (ICML 1999); FPL-as-MDP (arXiv:2505.02170); Athey-Chetty-

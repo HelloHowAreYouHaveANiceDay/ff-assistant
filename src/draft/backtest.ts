@@ -33,7 +33,13 @@ function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v =
 
 export type Weekly = Map<string, Map<number, number>>; // name -> week -> actual points
 
-export interface BacktestResult { champ: boolean; madePlayoffs: boolean; wins: number; regPoints: number; }
+export interface BacktestResult {
+  champ: boolean; madePlayoffs: boolean; wins: number; regPoints: number;
+  // PROJECTED roster-STRUCTURE of our team, knowable at draft time (a value function of the state, not a
+  // realized outcome). For the unified surrogate Phi = E[champ | state]: overall strength, starting-lineup
+  // strength, depth beyond the starters, and concentration (the top-heavy paradox discriminator).
+  projTotal: number; projStart: number; projBench: number; projHHI: number;
+}
 
 /**
  * Single-elimination playoff with byes for the top seeds (handles 4/6/7/8...). seeds[0] = best.
@@ -285,5 +291,14 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   const madePlayoffs = seeds.includes(0);
   const beat = (a: number, b: number, wk: number) => (wkS(a, wk) >= wkS(b, wk) ? a : b);
   const champ = playoffWinner(seeds, beat, regWeeks + 1, playoffReseed); // playoffs begin the week after the regular season
-  return { champ: champ === 0, madePlayoffs, wins: wins[0], regPoints: Math.round(totPts[0]) };
+  // PROJECTED roster-structure of OUR team (0), from season projections -> a value function of the
+  // drafted state (knowable at draft time, no realized outcomes). projStart = the optimal starting
+  // lineup by projection; projBench = value beyond the starters (depth); projHHI = concentration of
+  // projected value (high = top-heavy, the paradox structure regPoints alone cannot see).
+  const ourR = rosters[0];
+  const projTotal = ourR.reduce((s, p) => s + p.proj, 0);
+  const projStart = optimalLineup(ourR.map((p) => ({ name: p.name, pos: p.pos, proj: p.proj, available: true })), lg.slots).totalProj;
+  const projBench = Math.max(0, projTotal - projStart);
+  const projHHI = projTotal > 0 ? ourR.reduce((s, p) => s + (p.proj / projTotal) ** 2, 0) : 0;
+  return { champ: champ === 0, madePlayoffs, wins: wins[0], regPoints: Math.round(totPts[0]), projTotal: Math.round(projTotal), projStart: Math.round(projStart), projBench: Math.round(projBench), projHHI: Number(projHHI.toFixed(5)) };
 }
