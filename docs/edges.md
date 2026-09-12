@@ -261,6 +261,23 @@ software agent beats distracted humans:
   the draft log (shows where the room is overpaying), not an automated lever. Same discipline as
   scarcity/waivers/nomination: measured, didn't help, not shipped.
 
+- **FADING RB against a REAL-PRICE-CALIBRATED field -- BACKTESTED, REJECTED (2026-09-12).** The 2026
+  draft board shows the field genuinely OVERVALUING RB (ECR benchmark: auction $25.5 vs ECR-implied
+  $17.8 and vs our book $19.4) and PUNTING QB ($10.9 vs $32.3 / $24.0). The generic `--bot-book vor`
+  arbiter can't see this (its bots price by OUR fair VOR, no RB tilt), so the open question was whether
+  a manual fade-RB lean is an edge the shipped backtest is structurally blind to. Tested it the honest
+  way: `--bot-book price` bots price from a regression fitted to THIS league's real 2020-2025 auction
+  prices, so they reproduce the room's actual positional overpay; then `--mult-rb 0.85` vs that field
+  through the shared cpcv core. Result: **REJECTED** -- playoffs -1.09pp (CI [-1.92, -0.27], PBO 3%,
+  resolvable >=1.31pp), titles -1.28pp (CI [-2.99, 0.27], PBO 9%, null/underpowered but LEANING
+  negative). Fading RB HURTS even against a field that overpays RB. Same root cause as per-position
+  inflation above: disciplined value-bidding ALREADY captures the field's RB overpay automatically --
+  we bid our fair value, the field outbids us on RB, we redirect the money to WR/TE/QB value. A blunt
+  0.85x tilt over-corrects and strands us at RB, costing playoff spots. The exploit of a mispricing
+  field is fair-value discipline, NOT a systematic position fade. Ledger row in data/experiments.jsonl
+  (baseline "shipped vs price-book (real-calibrated) bots"). IN-SEASON COROLLARY: on waivers/FAAB the
+  same -- don't overpay for RB, but don't refuse RB value either; buy fair, let the field overpay.
+
 ### 5b. THE FIELD ALSO WORKS THE WIRE, and about a third of our headline was it not doing so (2026-09-08)
 Every championship number on this page and in docs/validation.md was measured against a field that
 stood pat from September to January. This room does not: about fifteen adds per team per season,
