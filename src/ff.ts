@@ -70,6 +70,8 @@ async function main() {
       return cmdHandcuffs(rest);
     case "copilot":
       return cmdCopilot(rest);
+    case "refresh-decisions":
+      return cmdRefreshDecisions(rest);
     case "format":
       return cmdFormat(rest);
     case "calibrate":
@@ -1861,6 +1863,32 @@ async function cmdSyncActuals(rest: string[]) {
 
   writeFileSync(statePath, JSON.stringify({ season, hash: r.hash, weeks: r.weeks, updatedAt: new Date().toISOString() }, null, 2) + "\n", "utf8");
   console.log(`  wrote ${statePath}. In-season board now reflects ${season} weeks ${r.weeks.join(",")}.`);
+
+  // Stage B: the actuals moved, so the standing waiver/trade/odds recommendations may have too.
+  // Recompute and store them, stamped with the same hash. Best-effort and refresh-only: a snapshot
+  // failure (e.g. the app is down and no real schedule is reachable) must not fail the ingest, and
+  // nothing here writes to ESPN -- every copilot run is logged at status "recommended" (D3).
+  try {
+    const { refreshDecisionSnapshot } = await import("./inseason/decisionSnapshot.js");
+    const d = await refreshDecisionSnapshot({ dbPath, actualsHash: r.hash, schedule: "auto" });
+    console.log(`  refreshed decision snapshot: ${d.verbs.join(", ")} (week ${d.week ?? "?"}, ${d.schedule} schedule)`);
+  } catch (e) {
+    console.log(`  decision-snapshot refresh skipped: ${String(e).slice(0, 140)}`);
+  }
+}
+
+/**
+ * `ff refresh-decisions [--schedule auto|real|generated]` -- recompute the standing waiver/trade/odds
+ * recommendations and store them in `decision_snapshot`, so a reader (the app, or the next person)
+ * sees the current answer without re-simulating, stamped with when and against which schedule. Called
+ * automatically by `ff sync-actuals` when the actuals change; exposed as its own verb for a manual
+ * refresh. Refresh-only: it recomputes ADVICE, it never makes a roster move.
+ */
+async function cmdRefreshDecisions(rest: string[]) {
+  const { refreshDecisionSnapshot } = await import("./inseason/decisionSnapshot.js");
+  const sched = (valueOf(rest, "--schedule") ?? "auto") as "real" | "generated" | "auto";
+  const r = await refreshDecisionSnapshot({ dbPath: valueOf(rest, "--db"), schedule: sched });
+  console.log(`refreshed ${r.rows} decision snapshots (${r.verbs.join(", ")}) for week ${r.week ?? "?"} on the ${r.schedule} schedule`);
 }
 
 // Build per-manager draft tendencies for MY league from its real auction history (prior seasons),

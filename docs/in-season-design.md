@@ -233,3 +233,35 @@ governor; desktop notifications of every lineup/waiver move and why.
 1. Shared projection layer (weekly + ROS), independent source. 2. Weekly lineup optimizer + backtest
 of waiver value. 3. Waiver/FAAB automation. 4. Trade copilot. Draft-bidder inflation/nomination
 (docs/edges 3) can proceed in parallel since it reuses the same projection layer.
+
+## Continuous in-season updates (2026-09-12)
+
+Actuals are not static -- live scoring, then the official Tue/Wed finals, then stat corrections all
+week -- and every change ripples into roster values, playoff odds, and therefore the waiver/trade
+recommendations. The loop that keeps everything current, refresh-only and nflverse-canonical (the two
+decisions taken):
+
+- **`ff sync-actuals`** re-scores the CURRENT season from the cache-bypassed nflverse feed through the
+  same `scoreSeasonWeekly` path the backtest uses (one scoring implementation, no drift), into its own
+  `data/current-actuals.csv` -- **never** `history-weekly.csv`, which is a frozen backtest input in the
+  draft deps fingerprint. It is **change-gated** on a content hash of the season slice (kept in
+  `data/actuals-state.json`), so it is a cheap no-op until a game finalizes or a correction lands.
+- **The forward board** (`src/weekly/forwardBoard.ts`) is the in-season counterpart to the actuals-
+  capped backtest builder in `src/features/build.ts`: it writes `feat_player_week` for the board
+  population x the schedule across ALL remaining weeks (so the projector can see the playoff weeks),
+  merges the actuals as `pts` (NULL for unplayed weeks), and rebuilds `feat_player_week_model`. It
+  reproduces the same `(season, week, feat_key)` universe `feat_player_week_stream` carries, keeping
+  the two 1:1.
+- **`ff refresh-decisions`** (also fired by sync-actuals on change) recomputes `season_odds`,
+  `waiver_targets`, `trade_finder` over ONE shared context and stores them in `decision_snapshot`,
+  stamped with the actuals hash and the schedule basis -- so a reader sees the current answer, and
+  when it was last refreshed, without re-simulating. Refresh-only: it recomputes advice, never a move.
+- **Cadence:** `scripts/inseason-poll.ps1` under Windows Task Scheduler (every ~15 min on gamedays);
+  the change-gate makes frequent polling idle-cheap. sync-actuals is also in the daily + weekly
+  `sync-league` tiers.
+
+**Honest limit (2026-09-12):** the shipped weekly artifact is season-line-only (every coefficient
+zero), so ingested actuals do NOT yet shift future-week projections -- the recomputed waiver/trade
+numbers barely move from a game result alone until a TRAINED weekly artifact (one that uses trailing
+form) ships. Until then this loop keeps the data, the board, and the scorecard current and correct,
+and is the plumbing a trained model plugs into.
