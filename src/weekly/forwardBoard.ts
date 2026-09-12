@@ -16,7 +16,7 @@ import { openDb, getConfig, nowIso, type DB } from "../db/db.js";
 import { dataPath } from "../data/paths.js";
 import { nameKey } from "../draft/values.js";
 import { fetchCsvCached, canonTeam, pick, URLS, cacheTag } from "../data/nflverse.js";
-import { loadSchedule, buildInto, WEEKLY_POS } from "./features.js";
+import { loadSchedule, buildForwardInto, WEEKLY_POS } from "./features.js";
 import { readFileSync, existsSync } from "node:fs";
 
 const featKey = (sk: string | null, nk: string, pos: string) => sk ?? `NK:${nk}|${pos}`;
@@ -143,8 +143,10 @@ export async function buildForwardBoardInto(db: DB, opts: {
     }
   })();
 
-  // Rebuild the model view from the freshly-written raw facts. currentSeason=season selects the BOARD
-  // season-line path inside buildInto; season_line_pg here is set by preseasonLinePerGame identically.
-  const wr = await buildInto(db, { seasons: [season], currentSeason: season });
+  // Rebuild feat_player_week_model through the CANONICAL live-season builder (the one `ff scorecard`
+  // and the serve path use), so sync-actuals and the scorecard can never diverge on the board. It
+  // reads the played `pts` this function just wrote into feat_player_week to derive the trailing form
+  // -- the whole point of ingesting actuals -- and projects the board population forward from there.
+  const wr = await buildForwardInto(db, { season });
   return { season, weekRows, modelRows: wr.rows, keys: pop.length, maxWeek, withPts };
 }

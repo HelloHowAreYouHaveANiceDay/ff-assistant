@@ -1530,6 +1530,10 @@ async function cmdSyncLeague(rest: string[]) {
       ["sync-pending-trades", []],
       ["ingest-raw", ["league-history"]],
       ["sync-actuals", []],
+      // Freeze the imminent week's weekly predictions and score any settled week. Write-once, so it
+      // is a no-op after the first run of a week; --no-forward reuses the board sync-actuals just
+      // built; --no-odds keeps it app-independent (the odds accrual needs the real-schedule sim).
+      ["scorecard", ["--no-forward", "--no-odds"]],
       ["sync-rosters", []],
     ] },
     // Rules, the injury/usage feeds, and the derived layer. Everything whose source updates slowly.
@@ -1545,6 +1549,7 @@ async function cmdSyncLeague(rest: string[]) {
       ["ingest-raw", ["participation"]],
       ["ingest-raw", ["nfl-games"]],
       ["sync-actuals", []],
+      ["scorecard", ["--no-forward", "--no-odds"]],
       ["sync-rosters", []],
       ["build-roster-state", []],
       ["build-picks", []],
