@@ -15,7 +15,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { streamRecommend, type AvailabilityMap, type StreamPlayer } from "../src/inseason/copilot.js";
 import { fixtureCtx, key } from "./fixtures/copilot-league.js";
-import { artifactForPos, SHIPPED_STREAMING_POSITIONS, topStreamPick, type StreamProj } from "../src/weekly/streamingServe.js";
+import { artifactForPos, WEEKLY_SERVE, topStreamPick, type StreamProj } from "../src/weekly/streamingServe.js";
+import { SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
 
 /** Build a pool row. `ours`/`rostered` are what the caller resolves from the league. */
 const P = (o: Partial<StreamPlayer> & { name: string; pos: string; proj: number }): StreamPlayer => ({
@@ -173,15 +174,15 @@ test("stream: a position with NO projections says so rather than recommending no
 // THE PER-POSITION SHIP MAPPING
 // =============================================================================================
 
-test("artifactForPos: a position outside the shipped list serves the FLOOR, not the streaming model", () => {
+test("artifactForPos: each position resolves through WEEKLY_SERVE; an UNMAPPED position falls to the FLOOR", () => {
   for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
-    const want = SHIPPED_STREAMING_POSITIONS.includes(pos) ? "streaming-artifact.json" : "weekly-artifact-lineonly.json";
-    assert.equal(artifactForPos(pos), want, `${pos} is served by the wrong artifact`);
+    assert.equal(artifactForPos(pos), WEEKLY_SERVE[pos], `${pos} does not resolve through the table`);
+    // D11 override: every position serves the form model.
+    assert.equal(artifactForPos(pos), CHALLENGER_WEEKLY_ARTIFACT, `${pos} is not served by the form model`);
   }
-  // FAULT INJECTION on the mapping itself: a position that is NOT on the list must not resolve to
-  // the streaming artifact, or the mapping is returning one answer for everything.
-  const off = ["QB", "RB", "WR", "TE", "K", "DST"].find((p) => !SHIPPED_STREAMING_POSITIONS.includes(p));
-  if (off) assert.notEqual(artifactForPos(off), "streaming-artifact.json");
+  // FAULT INJECTION on the fallback: a position with NO table entry must fall to the FLOOR, not to
+  // whatever the last mapped position returned -- proving the `?? floor` branch is live.
+  assert.equal(artifactForPos("ZZ"), SHIPPED_WEEKLY_ARTIFACT, "an unmapped position must fall to the floor");
 });
 
 test("topStreamPick: picks out of the POOL only, and freezes the board's pick beside ours", () => {

@@ -34,8 +34,8 @@ import { openDb, type DB } from "../src/db/db.js";
 import { dataPath } from "../src/data/paths.js";
 import { loadWeeklyProjection, loadWeeklyBands, weeklyServeAssumption } from "../src/inseason/copilotStore.js";
 import { lineupRecommend, lineupNameKey, NFL_WEEKS } from "../src/inseason/copilot.js";
-import { WEEKLY_SERVE, SHIPPED_STREAMING_POSITIONS, STREAM_SERVE_POS } from "../src/weekly/streamingServe.js";
-import { SHIPPED_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
+import { WEEKLY_SERVE, STREAM_SERVE_POS } from "../src/weekly/streamingServe.js";
+import { SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
 import { ensurePopulationColumn } from "../src/weekly/population.js";
 import { fixtureCtx } from "./fixtures/copilot-league.js";
 
@@ -79,7 +79,7 @@ function seeded(): string {
   return path;
 }
 
-test("the LINEUP seam serves EVERY position from the streaming artifact -- the 2026-09-09 owner decision", () => {
+test("the LINEUP seam serves EVERY position from the FORM model -- the 2026-09-12 owner override (D11)", () => {
   const path = seeded();
   const served = loadWeeklyProjection(SEASON, WEEK, path);
   const floor = loadWeeklyProjection(SEASON, WEEK, path, dataPath(SHIPPED_WEEKLY_ARTIFACT));
@@ -89,13 +89,14 @@ test("the LINEUP seam serves EVERY position from the streaming artifact -- the 2
   const roster = ctx.teams[ctx.meIdx].roster;
 
   // (1) THE POSITIVE CONTROL. A guard that can only ever report "same" is indistinguishable from a
-  // seam that was never rewired, so every streaming position MUST differ. This is read FROM THE
-  // TABLE (`SHIPPED_STREAMING_POSITIONS`), never as a hardcoded subset -- as of 2026-09-09 that is
-  // all six positions, and asserting it by name here would go stale the next time the table changes.
-  assert.deepEqual([...SHIPPED_STREAMING_POSITIONS].sort(), [...STREAM_SERVE_POS].sort(),
-    "the owner decision to ship streaming at all six positions is not reflected in the table -- " +
+  // seam that was never rewired, so every NON-FLOOR position MUST differ from the floor. This is
+  // derived from the TABLE (positions whose artifact is not the floor), never a hardcoded subset, so
+  // it stays a real check whatever WEEKLY_SERVE names -- as of D11 that is all six, on the form model.
+  const nonFloorPos = STREAM_SERVE_POS.filter((p) => WEEKLY_SERVE[p] !== SHIPPED_WEEKLY_ARTIFACT);
+  assert.deepEqual(nonFloorPos.sort(), [...STREAM_SERVE_POS].sort(),
+    "the D11 override to serve the form model at all six positions is not reflected in the table -- " +
     "this test's premise needs re-reading");
-  for (const pos of SHIPPED_STREAMING_POSITIONS) {
+  for (const pos of nonFloorPos) {
     const p = roster.find((r) => r.pos === pos);
     assert.ok(p, `the fixture roster has no ${pos}`);
     const k = lineupNameKey(p!.name);
@@ -119,12 +120,12 @@ test("the LINEUP seam serves EVERY position from the streaming artifact -- the 2
   const say = weeklyServeAssumption();
   assert.equal(say.table.QB, WEEKLY_SERVE.QB);
   assert.match(say.text, /WEEKLY_SERVE/);
-  // Every position's assumption names the streaming artifact by file, since that is what serves it
-  // under the 2026-09-09 mapping -- a report that omitted one would be claiming a model was NOT
-  // consulted that in fact was.
+  // Every position's assumption names the FORM model by file, since that is what serves it under the
+  // 2026-09-12 D11 override -- a report that omitted one would be claiming a model was NOT consulted
+  // that in fact was.
   for (const pos of STREAM_SERVE_POS) {
-    assert.equal(say.table[pos], "streaming-artifact.json",
-      `${pos}'s assumption does not name the streaming artifact`);
+    assert.equal(say.table[pos], CHALLENGER_WEEKLY_ARTIFACT,
+      `${pos}'s assumption does not name the form model (${CHALLENGER_WEEKLY_ARTIFACT})`);
   }
 });
 

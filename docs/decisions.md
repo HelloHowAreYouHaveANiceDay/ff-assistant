@@ -228,6 +228,33 @@ stand as written; D7's *runtime/agent* framing is what D10 supersedes.
   and the Claude credentials live on disk, and how the app communicates that these never leave
   the machine.
 
+## D11 -- Ship the form weekly model over the streaming serve, as an explicit GATE OVERRIDE (2026-09-12)
+
+The weekly serve (`WEEKLY_SERVE`, `src/weekly/streamingServe.ts`) now points all six positions at
+`CHALLENGER_WEEKLY_ARTIFACT` (`weekly-artifact.json`) -- the two-part model over the full weekly
+feature set, including the player's own trailing form (`t4_mean`). It replaces `STREAMING_ARTIFACT`,
+shipped at D-time 2026-09-09.
+
+This OVERRIDES the pre-registered ship gate, deliberately, and is recorded as an override rather than
+dressed up as a pass. `ff evaluate-weekly --rosters 200` (holdout 2012-2025, 69,825 scored rows):
+- The form model is MORE ACCURATE at every position: pooled CRPS **2.82 vs 3.34** (streaming) and
+  **3.32** (season-line floor); RMSE **6.45 vs 7.02**; bias -0.03. Per position the CRPS win holds
+  (e.g. RB 2.72 vs 3.37, WR 2.97 vs 3.46, QB 3.34 vs 4.65).
+- It FAILS gate clause (b), coverage-given-positive, at **0.851 pooled** against the [0.75, 0.85]
+  band -- its intervals are ~0.001 too wide. Streaming passes (b) at 0.827 and is the worse model.
+
+The owner chose accuracy over the 0.001 calibration miss, and explicitly chose NOT to fit the gate by
+shrinking the sd to squeak under 0.85 (the repo forbids gate-fitting). Two things make this safe to
+reverse: it is a one-line change back to `STREAMING_ARTIFACT`, and `ff scorecard` now scores this
+exact model against 2026 actuals every week (the predict->verify loop, wired 2026-09-12), so the
+override is under continuous out-of-sample audit. What made the form model meaningful at all was
+`ff sync-actuals` feeding real current-season results into `feat_player_week`, from which the forward
+board derives the trailing form the model reads.
+
+REVERSAL CONDITION: if the live 2026 scorecard shows the form model losing to streaming/season-line on
+CRPS over a meaningful sample, revert `WEEKLY_SERVE` to `STREAMING_ARTIFACT`; or replace the override
+with a calibrated refit (a train-only interval recalibration) that passes clause (b) on its own merit.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

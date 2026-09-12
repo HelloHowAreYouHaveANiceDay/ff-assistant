@@ -8,7 +8,7 @@
 // (see test/model-page.test.ts).
 import { readFileSync, existsSync } from "node:fs";
 import { MODELS, EVALUATED_NOT_SHIPPED, modelStatus, type ModelStatus } from "../draft/models.js";
-import { SHIPPED_STREAMING_POSITIONS, STREAM_SERVE_POS, artifactForPos, STREAMING_ARTIFACT } from "../weekly/streamingServe.js";
+import { STREAM_SERVE_POS, artifactForPos, STREAMING_ARTIFACT } from "../weekly/streamingServe.js";
 import { SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT } from "../weekly/projector.js";
 import { SCORECARD_KINDS, CHALLENGER_FIRST_WEEK } from "../weekly/scorecard.js";
 import { dataPath } from "../data/paths.js";
@@ -53,13 +53,15 @@ function artifactMeta(key: string, file: string): ModelPageArtifactMeta | null {
 export interface WeeklyServeRow { pos: string; artifact: string; shipped: boolean }
 
 /** WEEKLY_SERVE, as this page names it: which artifact answers each of the six streaming positions,
- *  from `SHIPPED_STREAMING_POSITIONS` / `artifactForPos` (src/weekly/streamingServe.ts) -- the one
- *  constant that decides this, per that module's own header comment. */
+ *  from `artifactForPos` (src/weekly/streamingServe.ts) -- the one constant that decides this, per
+ *  that module's own header comment. `shipped` means a REAL (non-floor) model serves the position, so
+ *  it stays meaningful across model changes -- streaming, form, whichever -- rather than tracking one
+ *  named artifact (the D11 override moved every position from streaming to the form model). */
 function weeklyServeTable(): WeeklyServeRow[] {
   return STREAM_SERVE_POS.map((pos) => ({
     pos,
     artifact: artifactForPos(pos),
-    shipped: SHIPPED_STREAMING_POSITIONS.includes(pos),
+    shipped: artifactForPos(pos) !== SHIPPED_WEEKLY_ARTIFACT,
   }));
 }
 
