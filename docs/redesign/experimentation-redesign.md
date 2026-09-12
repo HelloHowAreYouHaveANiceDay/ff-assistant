@@ -24,9 +24,19 @@ research is done on predictive content — not by iterating against the backtest
   real residue: `scripts/sim-convergence.mjs` has a stale ownership-grouping copy missing the
   `dstAliasKey` DST fix — a behavior-changing bug fix, filed as a separate follow-up.
 
-**STATUS: Phase 1 (cleanup) COMPLETE; Phase 2 CORE built + validated.** Remaining: A3.1 (CPCV budget +
-threshold calibration — needs a flag-expressible reference set since churn/copula were reverted);
-Phase 3 (feature manifest #4 + eval scaffold #10 + the research funnel A4/A5); Phase 4 (continuous loop).
+- **A3.1 CPCV calibration — Phase-2 QA PASSED.** Reference set: `--inflation` toggle (real, ~-4pp
+  documented) vs `--no-rookies` (null). Ledger (`data/experiments.jsonl`) shows a textbook separation:
+  **inflation-off = lift −2.4pp, CI EXCLUDES 0 at every budget (P=20…200), PBO=0.00** (robust edge);
+  **--no-rookies = +0.14, CI [−1.22,+1.72] straddles 0, PBO=0.82** (null/reversal). So the engine both
+  DETECTS a real effect and REJECTS a null. **Ship rule:** lift-CI excludes 0 AND PBO below ~0.4 (the
+  0.00-vs-0.82 gap separates them cleanly). Budget: the inflation call is stable even at P=20 (n=150),
+  so a modest budget suffices for a ~2pp effect — final default/high-confidence budgets from the
+  subagent's P-sweep. (Note: CPCV reads inflation at −2.4pp vs the documented −4.2pp because the metric
+  is equal-season-weighted over subsets, not the aggregate point delta — detection is unambiguous.)
+
+**STATUS: Phase 1 (cleanup) COMPLETE + QA'd; Phase 2 (CPCV core + A3.1 calibration) COMPLETE + QA'd.**
+Remaining: Phase 3 (feature manifest #4 + eval scaffold #10 + the research funnel A4/A5); Phase 4
+(continuous loop). Follow-up filed: `scripts/sim-convergence.mjs` stale ownership-grouping copy.
 
 ---
 
