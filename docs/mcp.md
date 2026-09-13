@@ -63,7 +63,7 @@ moment a tenth verb lands, while continuing to pass. It calls `season_odds` for 
 things the descriptions promise -- that the answer carries its `assumptions` block, and that the
 call left a row in `action_log`.
 
-## The tools (35)
+## The tools (39)
 
 | Tool | What it does | Writes? |
 |---|---|---|
@@ -87,6 +87,10 @@ call left a row in `action_log`.
 | `scroll_page` | scroll the page or a scrollable element; wheel-event aware | page |
 | `read_dom` | structured elements (tag/text/class/disabled/href), not flat text | no |
 | `wait_for` | poll until text or a selector appears | no |
+| `read_frame` | read text from a NESTED cross-origin iframe (e.g. Fantasy Chat) the top-document readers cannot reach; lists frames, takes a selector, `scrollUp` loads a virtualized message list | no |
+| `press` | hardened click (full pointer/mouse sequence) for a React control a plain `click_page` misses; `frame` clicks INSIDE a nested iframe; fires exactly one click so toggles are not double-toggled | app state |
+| `refresh` | re-run the data pipeline (ingest → project → assemble), same as `ff refresh`, so the numbers every read/decision tool returns are current | writes store |
+| `propose_trade` | PROPOSE A TRADE to another manager. **Dry-run by default** (resolves + validates + shows the transaction); `confirm: true` submits it. Same gated path as `ff propose-trade [--send]` | **ESPN write (gated)** |
 | `read_block` | live auction: player, offer, your legal max, canBid | no |
 | `read_turn` | is it OUR nomination turn | no |
 | `read_draft_roster` | your roster AS ESPN SEES IT in the live room | no |
@@ -151,12 +155,13 @@ SOURCE rather than the flags the optimizer was handed, which is the only version
 availability pipeline cannot satisfy. `waiver_targets` refuses a drop that would leave a mandatory
 slot unfillable and says which, rather than simulating an empty slot nobody would ever field.
 
-**THE ACTION LOG COVERS ADVICE (D3).** No ESPN write exists in this phase, and the instinct is
+**THE ACTION LOG COVERS ADVICE (D3).** No ESPN write exists among these ten, and the instinct is
 therefore that there is nothing to log. That is backwards: what the Assistant DOES here is give
 advice, and advice a human acts on is still the agent driving the team. So every call writes an
 `action_log` row -- verb, arguments, and the summary -- at status `recommended`, BEFORE the answer is
-returned, and a call that throws leaves the row at `failed`. When the write tools arrive, an ESPN
-move will sit in the same log directly beneath the recommendation that produced it. The write lives
+returned, and a call that throws leaves the row at `failed`. The one ESPN write tool that now exists,
+`propose_trade`, lives OUTSIDE this read-only dispatcher (gated -- dry-run by default -- and sharing
+`executeTradeProposal` with `ff propose-trade`), so these ten stay pure advice. The write lives
 in the dispatcher rather than in each tool for the D7 reason: a caller cannot forget to log if there
 is no path to the answer that skips logging.
 
