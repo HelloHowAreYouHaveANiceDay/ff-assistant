@@ -62,7 +62,7 @@ test("the horizon is MONOTONE: P(miss next 4) <= P(miss next 1), on real feature
   // -games-out figure the copilot prints would be nonsense for those rows, and nothing else would
   // notice. This walks the actual product of levels rather than a hand-picked example.
   const a = loadInjuryHorizonArtifact(load());
-  let n = 0, bad: string[] = [];
+  let n = 0; const bad: string[] = [];
   for (const designation of ["Out", "Doubtful", "Questionable", "Probable", ""]) {
     for (const practice_status of ["DNP", "Limited", "Full"]) {
       for (const injury_group of ["knee", "hamstring", "concussion", "unicorn-horn"]) {

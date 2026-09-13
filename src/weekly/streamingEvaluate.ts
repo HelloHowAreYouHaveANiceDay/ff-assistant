@@ -139,7 +139,7 @@ function trainFold(
       "--features", features, "--out", out, "--quiet",
     ], { stdio: "pipe" });
   } catch (e) {
-    throw new Error(`train_streaming failed for holdout ${holdout} (${features}): ${e instanceof Error ? e.message : e}`);
+    throw new Error(`train_streaming failed for holdout ${holdout} (${features}): ${e instanceof Error ? e.message : e}`, { cause: e });
   }
   if (!existsSync(out)) throw new Error(`no artifact produced for holdout ${holdout} (${features})`);
   const a = loadWeeklyArtifact(JSON.parse(readFileSync(out, "utf8")));

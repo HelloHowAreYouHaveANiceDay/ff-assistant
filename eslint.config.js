@@ -30,6 +30,13 @@ export default tseslint.config(
       // not error, so it does not block the lint gate over well-understood boundaries.
       "@typescript-eslint/no-explicit-any": "warn",
       "no-empty": ["warn", { allowEmptyCatch: true }], // empty catch is an intentional pattern here
+      // The codebase deliberately uses `cond ? sideEffect() : other()` and `x && x()` as terse
+      // statement forms (e.g. the JSON-vs-stdout emit paths); allow them rather than rewrite to if/else.
+      "@typescript-eslint/no-unused-expressions": ["error", { allowShortCircuit: true, allowTernary: true }],
+      // Fires on the deliberate `let x = <default>; try { x = ... }` idiom, where the default is the
+      // intentional fallback if the try throws -- not dead code. Kept as a warning (informational), not
+      // an error, so a genuinely-dead write is still surfaced without flagging the defensive pattern.
+      "no-useless-assignment": "warn",
     },
   },
   {

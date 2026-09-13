@@ -46,7 +46,6 @@ function load(): Api {
     extractFn(SRC, "lineageEdges"),
     "return { lineageNodes, lineageEdges };",
   ].join("\n");
-  // eslint-disable-next-line no-new-func
   return new Function(src)() as Api;
 }
 

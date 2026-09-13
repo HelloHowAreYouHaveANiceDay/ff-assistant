@@ -654,7 +654,7 @@ async function cmdLaunchPractice(rest: string[]) {
   // The embedded ESPN webview is our ONE working page -- reuse it whatever it's showing (the old
   // the old logic looked for a separate non-draft tab; here there's just the webview). Fall back to any
   // non-draft page, then a new page.
-  let page = a.pages.find((p) => /espn\.com/.test(p.url()) && !/recaptcha|imrworldwide|registerdisney/.test(p.url()))
+  const page = a.pages.find((p) => /espn\.com/.test(p.url()) && !/recaptcha|imrworldwide|registerdisney/.test(p.url()))
     || a.pages.find((p) => !/\/football\/draft/.test(p.url()))
     || await a.context.newPage();
   // Now close any OTHER draft tabs -- ESPN allows only ONE draft connection; a duplicate
@@ -1394,7 +1394,7 @@ async function cmdCalibrate(rest: string[]) {
     }
   }
   const pct = (x: number) => `${Math.round(x * 100)}%`;
-  let mae: Record<string, number[]> = Object.fromEntries(POS.map((k) => [k, []])), concErr: number[] = [];
+  const mae: Record<string, number[]> = Object.fromEntries(POS.map((k) => [k, []])), concErr: number[] = [];
   console.log(`CALIBRATION -- ${n} all-bot drafts, 16 real manager profiles. sim share vs REAL history:\n`);
   for (const prof of profiles) {
     const a = acc.get(prof.owner)!; if (!a.teams) continue;

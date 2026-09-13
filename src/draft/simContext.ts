@@ -172,7 +172,7 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
         if (weeks.length) syntheticSchedule = false;
       }
     } catch (e) {
-      if (want === "real") throw new Error(`real schedule unavailable: ${(e as Error).message}`);
+      if (want === "real") throw new Error(`real schedule unavailable: ${(e as Error).message}`, { cause: e });
     }
   }
   if (!weeks.length) {

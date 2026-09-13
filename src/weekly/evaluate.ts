@@ -688,7 +688,7 @@ function trainHoldout(
       ...(recalibrateZero ? ["--recalibrate-zero"] : []),
     ], { stdio: "pipe" });
   } catch (e) {
-    throw new Error(`train_weekly failed for holdout ${holdout}: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`train_weekly failed for holdout ${holdout}: ${e instanceof Error ? e.message : e}`, { cause: e });
   }
   return existsSync(out) ? loadWeeklyArtifact(JSON.parse(readFileSync(out, "utf8"))) : null;
 }
