@@ -26,6 +26,7 @@
 import type { DB } from "../../db/db.js";
 import { optimalLineup, type RosterPlayer } from "../lineup.js";
 import { loadWeekContext, loadModel, type ModelName, type WeekContext } from "./context.js";
+import { round3 as r3 } from "../../round3.js";
 
 export interface LineupRow {
   season: number; week: number; teamId: string;
@@ -203,5 +204,4 @@ const median = (xs: number[]): number => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 const r2 = (x: number): number => Math.round(x * 100) / 100;
-const r3 = (x: number): number => Math.round(x * 1000) / 1000;
 export { mean, median, r2, r3 };

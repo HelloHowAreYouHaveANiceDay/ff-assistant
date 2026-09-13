@@ -46,6 +46,7 @@ import {
   type FaabModel, type FaabLiveState, type FaabRow,
 } from "./faab.js";
 import type { SimContext } from "../draft/simContext.js";
+import { round3 as r3 } from "../round3.js";
 
 /** NFL weeks a season projection is spread over. Season projections in the board are FULL-SEASON
  *  totals; every weekly quantity below divides by this, and says so in `assumptions.basis`. */
@@ -237,7 +238,6 @@ const sd = (a: number[]): number => {
   return Math.sqrt(a.reduce((x, y) => x + (y - m) ** 2, 0) / (a.length - 1));
 };
 const r2 = (n: number): number => Math.round(n * 100) / 100;
-const r3 = (n: number): number => Math.round(n * 1000) / 1000;
 
 /**
  * The noise floor of a run, stated BEFORE anything is ranked.

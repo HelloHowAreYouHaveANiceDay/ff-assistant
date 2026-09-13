@@ -41,6 +41,7 @@ import { openDb, nowIso, type DB } from "../db/db.js";
 import { bridgeFetch } from "../browser/appBridge.js";
 import { DATA_ROOT } from "./paths.js";
 import { ESPN_READS_BASE as HOST } from "./espnApi.js";
+import { round3 } from "../round3.js";
 
 
 /** ESPN's defaultPositionId -> position. Same table the league adaptor uses; duplicated rather than
@@ -290,7 +291,6 @@ export function checkRosterWeeks(checks: RosterWeekCheck[], tolerance = 0.05, st
   }
   return bad;
 }
-const round3 = (x: number): number => Math.round(x * 1000) / 1000;
 
 // -------------------------------------------------------------------------------------------
 // THE VERB
