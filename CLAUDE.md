@@ -75,6 +75,28 @@ app's embedded ESPN webview, driven with `--app` (see the trap below). It carrie
 and is the only surface the draft/in-season verbs actually control. If a task needs the browser, reach
 for the `--app` path or the `ff-draft` MCP tools, not Chrome. (Standing owner instruction 2026-09-13.)
 
+**RUN EXACTLY ONE APP INSTANCE — multiple instances split-brain (2026-09-13, cost ~an hour).** The
+MCP browser tools attach to a FIXED CDP port (9223, first instance to bind wins); the app bridge is
+whatever the NEWEST instance wrote to `data/app-bridge.json`. With two instances up, those are
+DIFFERENT webview guests: the symptom is the bridge reading one page (e.g. the fantasy home) while
+the MCP tools drive another (the clubhouse), and every click/read landing on the wrong one. It is
+easy to end up with several — each `npm run start:plain` is a new instance, and killing the launching
+shell does not kill the tree. Before driving the app, assert one instance:
+`Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | Where CommandLine -like '*ff-assistant\app*'`
+and (excluding `--type=*` children) confirm a single main. Kill extras with `taskkill /PID <pid> /T /F`.
+The `/read-frame` and `/click` bridge routes now resolve the ESPN guest by scanning `webContents`
+for the one on `espn.com` (not `win`), which is robust to this — but the MCP CDP path still can't be,
+so one instance is the rule.
+
+**The ESPN Fantasy Chat (trade DMs / notes) is a CROSS-ORIGIN iframe (`chat.espn.com`).** The
+top-document readers (`read_page`/`read_dom`, and the guest's own `executeJavaScript`) cannot see
+into it, and the reads API (`?view=kona_league_communication`) carries chat message METADATA, not the
+typed bodies. Read it with the `read_frame` tool / `/read-frame` bridge route (a main-process frame
+walk; `scrollUp` loads a virtualized thread), and click INSIDE it with `press`/`/click` using the
+`frame:"chat.espn.com"` arg. The hardened clicker fires exactly ONE click (a synthetic click PLUS
+`el.click()` double-toggles a click-driven toggle like Pending Moves; the pointer/mouse down-up are
+for controls that open on those, e.g. the chat launcher).
+
 ## Live-draft traps
 
 - **`--app` drives the desktop app's embedded ESPN webview; plain `--port 9223` does NOT.**
