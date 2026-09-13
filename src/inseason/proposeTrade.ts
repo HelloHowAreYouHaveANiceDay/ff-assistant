@@ -4,8 +4,8 @@
 // show) is the default, and the write is a separate, opt-in step whose payload is printed in full
 // before it is ever sent. Nothing here runs on the automation loop; a trade proposal is only ever a
 // deliberate, per-trade act.
-import { getConfig, type DB } from "../db/db.js";
-import { ESPN_WRITES_BASE } from "../data/espnApi.js";
+import { getConfig, openDb, type DB } from "../db/db.js";
+import { ESPN_READS_BASE, ESPN_WRITES_BASE } from "../data/espnApi.js";
 
 export interface TradePlayer { name: string; playerId: string; teamId: string }
 export interface TradeResolution {
@@ -91,4 +91,55 @@ export function resolveTrade(db: DB, giveNames: string[], getNames: string[]): T
   const writeUrl = ok && leagueId ? `${ESPN_WRITES_BASE}/seasons/${season}/segments/0/leagues/${leagueId}/transactions/` : null;
 
   return { ok, problems, season, leagueId, myTeamId, otherTeamId, otherTeamName, give, get, writeUrl, payload };
+}
+
+export interface TradeProposalRun {
+  resolution: TradeResolution;
+  scoringPeriodId: number | null;
+  sent: boolean;
+  response?: string;
+  error?: string;
+}
+
+/**
+ * Resolve a trade, inject the CURRENT scoringPeriodId (ESPN rejects a proposal without it), and --
+ * ONLY when `send` is true -- POST it through the app's authenticated session. This is the shared
+ * orchestration behind BOTH `ff propose-trade` and the MCP `propose_trade` tool, so the dry run and
+ * the write cannot diverge between the two front doors. The write stays a deliberate, gated act:
+ * callers default to send:false and must opt in per proposal; nothing here runs on a loop.
+ */
+export async function executeTradeProposal(
+  dbPath: string | undefined,
+  giveNames: string[],
+  getNames: string[],
+  opts: { send?: boolean } = {},
+): Promise<TradeProposalRun> {
+  const db = openDb(dbPath);
+  let resolution: TradeResolution;
+  try { resolution = resolveTrade(db, giveNames, getNames); } finally { db.close(); }
+  if (!resolution.ok) return { resolution, scoringPeriodId: null, sent: false };
+
+  // The current scoringPeriodId, read LIVE through the app session (else the store's current week),
+  // injected into the payload so what is validated is exactly what is sent.
+  let spid: number | null = null;
+  try {
+    const { bridgeAvailable, bridgeFetch } = await import("../browser/appBridge.js");
+    if (bridgeAvailable()) {
+      const b = await bridgeFetch(`${ESPN_READS_BASE}/seasons/${resolution.season}/segments/0/leagues/${resolution.leagueId}?view=mStatus`);
+      const sp = (JSON.parse(b) as { scoringPeriodId?: number }).scoringPeriodId;
+      if (Number.isFinite(sp)) spid = Number(sp);
+    }
+  } catch { /* fall through to the store */ }
+  if (spid == null) { try { const { currentWeek } = await import("./copilotStore.js"); spid = currentWeek(dbPath).week; } catch { /* leave null */ } }
+  if (spid != null) (resolution.payload as { scoringPeriodId?: number }).scoringPeriodId = spid;
+
+  if (!opts.send) return { resolution, scoringPeriodId: spid, sent: false };
+  if (spid == null) return { resolution, scoringPeriodId: null, sent: false, error: "cannot determine the current scoring period (need the app running) -- refusing to send without it" };
+  try {
+    const { bridgeWriteTransaction } = await import("../browser/appBridge.js");
+    const response = await bridgeWriteTransaction(resolution.writeUrl!, JSON.stringify(resolution.payload));
+    return { resolution, scoringPeriodId: spid, sent: true, response };
+  } catch (e) {
+    return { resolution, scoringPeriodId: spid, sent: false, error: String(e instanceof Error ? e.message : e) };
+  }
 }

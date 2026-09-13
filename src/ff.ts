@@ -515,13 +515,10 @@ async function cmdProjections(rest: string[]) {
 
 // The full data refresh, ALL TS (no Python): ingest reference+news -> project curve -> assemble value/board.
 async function cmdRefresh(rest: string[]) {
-  const db = valueOf(rest, "--db");
-  const { ingestAll } = await import("./data/ingest.js");
-  const { project } = await import("./data/projections.js");
-  const { assemble } = await import("./data/assemble.js");
-  await ingestAll(db);
-  console.log(`projections: ${await project(db)} players`);
-  console.log(`refresh complete: ${await assemble(db)} players (all TS, no Python)`);
+  const { runRefresh } = await import("./data/refresh.js");
+  const r = await runRefresh(valueOf(rest, "--db"));
+  console.log(`projections: ${r.projected} players`);
+  console.log(`refresh complete: ${r.assembled} players (all TS, no Python)`);
 }
 
 // Assemble L1 player_value + L2 board (TS port of build_report). Reads reference data from the store
@@ -1972,13 +1969,15 @@ async function cmdInseasonTick(rest: string[]) {
  * before it leaves.
  */
 async function cmdProposeTrade(rest: string[]) {
-  const { resolveTrade } = await import("./inseason/proposeTrade.js");
-  const { openDb } = await import("./db/db.js");
+  const { executeTradeProposal } = await import("./inseason/proposeTrade.js");
   const give = (valueOf(rest, "--give") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const get = (valueOf(rest, "--get") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   if (!give.length || !get.length) { console.log(`usage: ff propose-trade --give "Player A" --get "Player B" [--send]`); return; }
-  const db = openDb(valueOf(rest, "--db"));
-  let r; try { r = resolveTrade(db, give, get); } finally { db.close(); }
+  const send = rest.includes("--send");
+  // ONE orchestration for CLI and MCP: resolve + inject the current scoringPeriodId, and send only
+  // behind the gate. See executeTradeProposal in inseason/proposeTrade.ts.
+  const run = await executeTradeProposal(valueOf(rest, "--db"), give, get, { send });
+  const r = run.resolution;
 
   console.log(`TRADE PROPOSAL (season ${r.season}, league ${r.leagueId ?? "?"})`);
   console.log(`  YOU (team ${r.myTeamId ?? "?"}) GIVE: ${r.give.map((p) => `${p.name} [id ${p.playerId || "?"}]`).join(", ")}`);
@@ -1986,37 +1985,20 @@ async function cmdProposeTrade(rest: string[]) {
   if (r.problems.length) { console.log("  PROBLEMS:"); r.problems.forEach((p) => console.log(`    - ${p}`)); }
   if (!r.ok) { console.log("\n  NOT SENDABLE -- fix the problems above. Nothing was sent."); process.exitCode = 1; return; }
 
-  // ESPN requires the CURRENT scoringPeriodId on a trade proposal ("can only be executed in the current
-  // scoring period"). Read it live from ESPN through the app session; fall back to the store's current
-  // week for an app-less dry run. Injected into the payload so what is shown is exactly what is sent.
-  let spid: number | undefined;
-  try {
-    const { bridgeFetch, bridgeAvailable } = await import("./browser/appBridge.js");
-    if (bridgeAvailable()) {
-      const b = await bridgeFetch(`${ESPN_READS_BASE}/seasons/${r.season}/segments/0/leagues/${r.leagueId}?view=mStatus`);
-      const sp = (JSON.parse(b) as { scoringPeriodId?: number }).scoringPeriodId;
-      if (Number.isFinite(sp)) spid = Number(sp);
-    }
-  } catch { /* fall through to the store */ }
-  if (spid == null) { try { const { currentWeek } = await import("./inseason/copilotStore.js"); spid = currentWeek(valueOf(rest, "--db")).week; } catch { /* leave undefined */ } }
-  if (spid != null) (r.payload as { scoringPeriodId?: number }).scoringPeriodId = spid;
-  else if (rest.includes("--send")) { console.log("\n  Cannot determine the current scoring period (need the app running) -- refusing to send without it."); process.exitCode = 1; return; }
-
   console.log(`\n  ESPN transaction (POST ${r.writeUrl}):`);
   console.log(`    ${JSON.stringify(r.payload)}`);
-  if (!rest.includes("--send")) {
+  if (!send) {
     console.log("\n  DRY RUN -- nothing sent. Re-run with --send to submit this proposal to ESPN (an irreversible");
     console.log("  outward action, visible to the other manager). The payload above is what would be POSTed.");
     return;
   }
-
-  console.log("\n  --send: submitting through the app's authenticated ESPN session...");
-  const { bridgeWriteTransaction } = await import("./browser/appBridge.js");
-  try {
-    const res = await bridgeWriteTransaction(r.writeUrl!, JSON.stringify(r.payload));
-    console.log(`  ESPN response: ${res.slice(0, 600)}`);
-    console.log("  (verify in ESPN that the proposal appears as pending.)");
-  } catch (e) { console.log(`  SEND FAILED (nothing may have been created -- check ESPN): ${String(e)}`); process.exitCode = 1; }
+  if (!run.sent) {
+    const msg = run.error && /scoring period/.test(run.error) ? run.error : `SEND FAILED (nothing may have been created -- check ESPN): ${run.error ?? "unknown"}`;
+    console.log(`\n  ${msg}`); process.exitCode = 1; return;
+  }
+  console.log("\n  --send: submitted through the app's authenticated ESPN session.");
+  console.log(`  ESPN response: ${(run.response ?? "").slice(0, 600)}`);
+  console.log("  (verify in ESPN that the proposal appears as pending.)");
 }
 
 /**

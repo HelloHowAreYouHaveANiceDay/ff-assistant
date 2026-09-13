@@ -502,6 +502,36 @@ function buildTools(dbPath: string | undefined, season: number) {
       // percentage will quote it as a fact; the returned JSON carries an `assumptions` block (real
       // vs generated schedule, trials, seeds, data stamp) and these descriptions tell the model to
       // read it. The pair is deliberate -- a field is only a caveat if the reader knows to look.
+      tool(
+        "refresh",
+        "Re-pull the DATA PIPELINE: ingest the sources, rebuild projections, reassemble the board. This is the CLI `ff refresh` behind the same runRefresh(), so the numbers every read/decision tool returns afterward are current (projections carry a build stamp; this is how you freshen it). It scrapes, so it can take a while. Returns the projected/assembled player counts.",
+        {},
+        async () => {
+          const { runRefresh } = await import("../data/refresh.js");
+          const r = await runRefresh(dbPath);
+          return { content: [{ type: "text" as const, text: `refresh complete: projected ${r.projected} players, assembled ${r.assembled} players` }] };
+        },
+      ),
+      tool(
+        "propose_trade",
+        "PROPOSE A TRADE to another manager -- the ONE tool that WRITES to the league. `give` = players I send (must be on my roster); `get` = players I receive (all from ONE opponent). DEFAULT IS A DRY RUN: it resolves names to ESPN ids, validates ownership, injects the current scoring period, and returns the exact transaction WITHOUT sending. Pass confirm:true to actually SUBMIT it -- an irreversible outward action visible to the other manager. Same gated path as CLI `ff propose-trade [--send]`; a deliberate, per-trade act, never on a loop.",
+        {
+          give: z.array(z.string()).describe("players I send (must be on my roster)"),
+          get: z.array(z.string()).describe("players I receive -- all from ONE opponent's roster"),
+          confirm: z.boolean().optional().describe("must be true to actually SEND; omit or false for a dry run that sends nothing"),
+        },
+        async (args) => {
+          const a = args as unknown as { give?: string[]; get?: string[]; confirm?: boolean };
+          const { executeTradeProposal } = await import("../inseason/proposeTrade.js");
+          const run = await executeTradeProposal(dbPath, a.give ?? [], a.get ?? [], { send: a.confirm === true });
+          const r = run.resolution;
+          const head = `${r.give.map((p) => p.name).join(", ") || "?"} -> ${r.get.map((p) => p.name).join(", ") || "?"} with ${r.otherTeamName ?? "?"}`;
+          if (!r.ok) return { content: [{ type: "text" as const, text: `NOT SENDABLE: ${head}\n  - ${r.problems.join("\n  - ")}` }] };
+          if (a.confirm !== true) return { content: [{ type: "text" as const, text: `DRY RUN (nothing sent): ${head}\n  payload: ${JSON.stringify(r.payload)}\n  pass confirm:true to submit this to ESPN (irreversible, visible to the other manager).` }] };
+          if (!run.sent) return { content: [{ type: "text" as const, text: `SEND FAILED: ${head}\n  ${run.error ?? "unknown error"}` }] };
+          return { content: [{ type: "text" as const, text: `SENT to ESPN (pending): ${head}\n  ESPN response: ${(run.response ?? "").slice(0, 300)}\n  (verify it appears as pending in ESPN.)` }] };
+        },
+      ),
       ...(copilotTools(tool as never, dbPath) as never[]),
   ];
 }
