@@ -73,6 +73,34 @@ export function bridgeAvailable(): boolean {
   return bridgeInfo() !== null;
 }
 
+/**
+ * WRITE a transaction to ESPN through the app's authenticated session. This is the ONLY write path in
+ * the system and it goes through a DEDICATED bridge route (`/write-transaction`) that accepts only the
+ * league-transactions write URL -- never the general `/fetch` GET reader -- so the ability to write can
+ * never be reached by a caller that only meant to read. Used exclusively by `ff propose-trade --send`,
+ * behind its own dry-run gate.
+ */
+export async function bridgeWriteTransaction(url: string, body: string, timeoutMs = 25000): Promise<string> {
+  const info = bridgeInfo();
+  if (!info) throw new Error("app bridge not available (open the desktop app and sign in to ESPN)");
+  const payload = JSON.stringify({ url, body });
+  const respBody = await new Promise<string>((resolve, reject) => {
+    const req = request({
+      host: "127.0.0.1", port: info.port, path: "/write-transaction", method: "POST",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload), "x-ff-token": info.token },
+      timeout: timeoutMs,
+    }, (res) => { let o = ""; res.on("data", (d) => (o += d)); res.on("end", () => resolve(o)); });
+    req.on("timeout", () => req.destroy(new Error(`write timed out after ${timeoutMs}ms`)));
+    req.on("error", reject);
+    req.write(payload); req.end();
+  });
+  let parsed: { status?: number; body?: string; error?: string };
+  try { parsed = JSON.parse(respBody); } catch { throw new Error(`app bridge returned non-JSON: ${respBody.slice(0, 160)}`); }
+  if (parsed.error) throw new Error(`app bridge: ${parsed.error}`);
+  if (parsed.status && parsed.status >= 400) throw new Error(`ESPN returned HTTP ${parsed.status}: ${(parsed.body ?? "").slice(0, 300)}`);
+  return typeof parsed.body === "string" ? parsed.body : JSON.stringify(parsed);
+}
+
 export interface ReadResult { title: string; url: string; text: string }
 
 /**

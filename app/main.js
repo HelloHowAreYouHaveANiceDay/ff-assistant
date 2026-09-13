@@ -475,6 +475,38 @@ function startBridge() {
       });
       return;
     }
+    // /write-transaction -- the ONLY write route, kept separate from /fetch on purpose: /fetch is a GET
+    // reader and must never carry a body that mutates the league. This one accepts ONLY the ESPN
+    // league-transactions write URL and POSTs the given JSON body through the authenticated webview.
+    // It is reached only by `ff propose-trade --send`, which itself dry-runs by default. A trade
+    // proposal is visible to another manager, so this stays as narrow as the read route it sits beside.
+    if (req.method === "POST" && req.url === "/write-transaction") {
+      let wbody = "";
+      req.on("data", (d) => { wbody += d; if (wbody.length > 1e6) req.destroy(); });
+      req.on("end", async () => {
+        let url, tbody;
+        try { const j = JSON.parse(wbody); url = j.url; tbody = j.body; } catch { return reply(400, { error: "bad json" }); }
+        // Only the ESPN transactions WRITE endpoint. Not lm-api-reads, not any other espn path.
+        if (!/^https:\/\/lm-api-writes\.fantasy\.espn\.com\/apis\/v3\/games\/ffl\/seasons\/\d+\/segments\/0\/leagues\/\d+\/transactions\/?$/i.test(String(url))) {
+          return reply(400, { error: "url must be the ESPN league-transactions write endpoint" });
+        }
+        if (typeof tbody !== "string" || tbody.length > 1e5) return reply(400, { error: "body must be a JSON string" });
+        if (!win || win.isDestroyed()) return reply(503, { error: "no window" });
+        try {
+          const initJson = JSON.stringify({ method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: tbody });
+          const inner = `fetch(${JSON.stringify(url)},${initJson})` +
+            `.then(function(r){ return r.text().then(function(t){ return { status: r.status, body: t }; }); })` +
+            `.catch(function(e){ return { error: String((e && e.message) || e) }; })`;
+          const out = await win.webContents.executeJavaScript(
+            `(async () => { const wv = document.getElementById("espnview");` +
+            `  if (!wv || !wv.executeJavaScript) return { error: "webview not mounted" };` +
+            `  return await wv.executeJavaScript(${JSON.stringify(inner)});` +
+            `})()`);
+          return reply(200, out ?? { error: "no result" });
+        } catch (e) { return reply(500, { error: String((e && e.message) || e) }); }
+      });
+      return;
+    }
     if (req.method !== "POST" || req.url !== "/fetch") return reply(404, { error: "no such route" });
     let body = "";
     req.on("data", (d) => { body += d; if (body.length > 1e6) req.destroy(); });

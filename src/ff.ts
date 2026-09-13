@@ -76,6 +76,8 @@ async function main() {
       return cmdInseasonTick(rest);
     case "schedule":
       return cmdSchedule(rest);
+    case "propose-trade":
+      return cmdProposeTrade(rest);
     case "format":
       return cmdFormat(rest);
     case "calibrate":
@@ -1958,6 +1960,46 @@ async function cmdInseasonTick(rest: string[]) {
   console.log(`\n${okN}/${results.length} steps ok in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   if (rest.includes("--json")) console.log(JSON.stringify({ ran, unknown, results, ok: okN === results.length }));
   if (okN !== results.length) process.exitCode = 1;   // so a poller / the app can see it without parsing stdout
+}
+
+/**
+ * `ff propose-trade --give "A" --get "B" [--send]` -- the ONLY verb in the system that can write to the
+ * league, and it does so only under an explicit gate. Without `--send` it RESOLVES the trade (players ->
+ * ESPN ids, that you own each GIVE and one team owns every GET) and prints the exact transaction it
+ * would POST -- a full dry run that sends nothing. `--send` submits it through the app's authenticated
+ * ESPN session. It is never on the automation loop: a proposal is a deliberate, per-trade act, reviewed
+ * before it leaves.
+ */
+async function cmdProposeTrade(rest: string[]) {
+  const { resolveTrade } = await import("./inseason/proposeTrade.js");
+  const { openDb } = await import("./db/db.js");
+  const give = (valueOf(rest, "--give") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const get = (valueOf(rest, "--get") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!give.length || !get.length) { console.log(`usage: ff propose-trade --give "Player A" --get "Player B" [--send]`); return; }
+  const db = openDb(valueOf(rest, "--db"));
+  let r; try { r = resolveTrade(db, give, get); } finally { db.close(); }
+
+  console.log(`TRADE PROPOSAL (season ${r.season}, league ${r.leagueId ?? "?"})`);
+  console.log(`  YOU (team ${r.myTeamId ?? "?"}) GIVE: ${r.give.map((p) => `${p.name} [id ${p.playerId || "?"}]`).join(", ")}`);
+  console.log(`  GET from ${r.otherTeamName ?? "?"} (team ${r.otherTeamId ?? "?"}): ${r.get.map((p) => `${p.name} [id ${p.playerId || "?"}]`).join(", ")}`);
+  if (r.problems.length) { console.log("  PROBLEMS:"); r.problems.forEach((p) => console.log(`    - ${p}`)); }
+  if (!r.ok) { console.log("\n  NOT SENDABLE -- fix the problems above. Nothing was sent."); process.exitCode = 1; return; }
+
+  console.log(`\n  ESPN transaction (POST ${r.writeUrl}):`);
+  console.log(`    ${JSON.stringify(r.payload)}`);
+  if (!rest.includes("--send")) {
+    console.log("\n  DRY RUN -- nothing sent. Re-run with --send to submit this proposal to ESPN (an irreversible");
+    console.log("  outward action, visible to the other manager). The payload above is what would be POSTed.");
+    return;
+  }
+
+  console.log("\n  --send: submitting through the app's authenticated ESPN session...");
+  const { bridgeWriteTransaction } = await import("./browser/appBridge.js");
+  try {
+    const res = await bridgeWriteTransaction(r.writeUrl!, JSON.stringify(r.payload));
+    console.log(`  ESPN response: ${res.slice(0, 600)}`);
+    console.log("  (verify in ESPN that the proposal appears as pending.)");
+  } catch (e) { console.log(`  SEND FAILED (nothing may have been created -- check ESPN): ${String(e)}`); process.exitCode = 1; }
 }
 
 /**
