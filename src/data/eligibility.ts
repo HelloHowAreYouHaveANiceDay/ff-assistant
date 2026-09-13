@@ -29,30 +29,9 @@ import { dirname } from "node:path";
 import { nowIso, type DB } from "../db/db.js";
 import { dataPath } from "./paths.js";
 import { nameKey as valuesNameKey } from "../draft/values.js";
+import { ESPN_POS, DEDICATED_SLOT_POS } from "../league/espnSlots.js";
 
 const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
-
-/** Every lineupSlotId ESPN uses, with its name. Kept complete so an unknown id is visibly unknown
- *  rather than silently absent. Mirrors SLOT_NAME in src/league/espn.ts. */
-export const ESPN_SLOT_NAME: Record<number, string> = {
-  0: "QB", 1: "TQB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP",
-  8: "DT", 9: "DE", 10: "LB", 11: "DL", 12: "CB", 13: "S", 14: "DB", 15: "DP",
-  16: "DST", 17: "K", 18: "P", 19: "HC", 20: "BE", 21: "IR", 23: "FLEX", 24: "ER",
-  // 25 appears on 89 of the 1,036 players in the 2026 pool and ESPN does not publish a name for it
-  // in any documentation this repo has found. It is recorded as unknown rather than guessed at, and
-  // it is NOT in DEDICATED_SLOT_POS, so it contributes no position either way.
-  25: "?25",
-};
-
-/** The ONLY slot ids that name a single position in our vocabulary. A combo slot (3, 5, 7, 23) is
- *  eligibility at a SET and is deliberately absent: treating it as a position would mark every
- *  receiver in football RB-eligible. */
-export const DEDICATED_SLOT_POS: Record<number, string> = {
-  0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K",
-};
-
-/** ESPN's defaultPositionId -- the same table src/league/espn.ts keeps. */
-const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
 
 /** The positions a value book and a lineup actually distinguish. */
 export const SKILL_POSITIONS = ["QB", "RB", "WR", "TE"];

@@ -17,16 +17,9 @@ import type { AcquisitionRules, DraftPick, FreeAgent, LeagueFormat, LeagueProvid
 // The calendar is a fact with a source; these two functions are where it is read and validated.
 // (index.ts imports this adaptor DYNAMICALLY, so this static edge does not close a cycle.)
 import { effectiveFormat, formatFromEspnSettings } from "./index.js";
-
-const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
-/** lineupSlotId -> position, the fallback when a drafted player is missing from the public pool. */
-const SLOT_POS: Record<number, string> = { 0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K" };
-/** lineupSlotId -> slot NAME, for reporting a league's roster shape. 23 is FLEX, NOT IR (IR is 21)
- *  -- getting that backwards would hide the FLEX slots the whole value curve is built on. */
-const SLOT_NAME: Record<number, string> = {
-  0: "QB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP",
-  16: "DST", 17: "K", 20: "BE", 21: "IR", 23: "FLEX",
-};
+// The ESPN id maps live in ONE place now (src/league/espnSlots.ts). They used to be duplicated here
+// and in src/data/eligibility.ts and had already drifted; SLOT_NAME here is the complete map.
+import { ESPN_POS, DEDICATED_SLOT_POS as SLOT_POS, ESPN_SLOT_NAME as SLOT_NAME } from "./espnSlots.js";
 /** ESPN statId for a reception -- the PPR dial. */
 const RECEPTION_STAT_ID = 53;
 const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
