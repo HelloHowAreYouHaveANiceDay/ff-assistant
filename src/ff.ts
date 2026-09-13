@@ -1985,6 +1985,22 @@ async function cmdProposeTrade(rest: string[]) {
   if (r.problems.length) { console.log("  PROBLEMS:"); r.problems.forEach((p) => console.log(`    - ${p}`)); }
   if (!r.ok) { console.log("\n  NOT SENDABLE -- fix the problems above. Nothing was sent."); process.exitCode = 1; return; }
 
+  // ESPN requires the CURRENT scoringPeriodId on a trade proposal ("can only be executed in the current
+  // scoring period"). Read it live from ESPN through the app session; fall back to the store's current
+  // week for an app-less dry run. Injected into the payload so what is shown is exactly what is sent.
+  let spid: number | undefined;
+  try {
+    const { bridgeFetch, bridgeAvailable } = await import("./browser/appBridge.js");
+    if (bridgeAvailable()) {
+      const b = await bridgeFetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${r.season}/segments/0/leagues/${r.leagueId}?view=mStatus`);
+      const sp = (JSON.parse(b) as { scoringPeriodId?: number }).scoringPeriodId;
+      if (Number.isFinite(sp)) spid = Number(sp);
+    }
+  } catch { /* fall through to the store */ }
+  if (spid == null) { try { const { currentWeek } = await import("./inseason/copilotStore.js"); spid = currentWeek(valueOf(rest, "--db")).week; } catch { /* leave undefined */ } }
+  if (spid != null) (r.payload as { scoringPeriodId?: number }).scoringPeriodId = spid;
+  else if (rest.includes("--send")) { console.log("\n  Cannot determine the current scoring period (need the app running) -- refusing to send without it."); process.exitCode = 1; return; }
+
   console.log(`\n  ESPN transaction (POST ${r.writeUrl}):`);
   console.log(`    ${JSON.stringify(r.payload)}`);
   if (!rest.includes("--send")) {
