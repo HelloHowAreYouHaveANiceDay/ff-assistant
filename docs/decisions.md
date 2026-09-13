@@ -255,6 +255,27 @@ REVERSAL CONDITION: if the live 2026 scorecard shows the form model losing to st
 CRPS over a meaningful sample, revert `WEEKLY_SERVE` to `STREAMING_ARTIFACT`; or replace the override
 with a calibrated refit (a train-only interval recalibration) that passes clause (b) on its own merit.
 
+## D12 -- Keep the agent browser-tool surface BROAD (do NOT narrow per the paused hardening plan) (2026-09-13)
+
+The 2026-09-09 architecture-hardening review proposed *narrowing* the Assistant/MCP surface -- removing
+the unrestricted click/fill/navigate tools in the name of safety (see `wip/architecture-hardening`,
+now dropped). This session went the other way and *extended* it (`read_frame`, `press`, a frame-aware
+click, `refresh`, `propose_trade`), taking the surface 35 -> 39. Owner call: **keep it broad -- we want
+agents to have a good capability set.** The narrowing items from that plan are explicitly NOT adopted.
+
+Why this is safe without narrowing the read/interact tools:
+- **Writes stay gated, not removed.** `propose_trade` is the ONLY ESPN write and defaults to a dry run
+  (`confirm: true` to send) -- same gate as `ff propose-trade [--send]`. Draft/roster mutations are
+  logged (D3) and the auto-draft **ownership lock** (extracted this session, race-free) serializes seat
+  access, so a broad *action* surface still cannot double-enter or write silently.
+- **Everything runs through OUR authenticated webview**, never Claude-in-Chrome (the standing browser
+  rule) -- a broad surface is broad over one controlled, logged session, not the open internet.
+
+So the guardrail is the WRITE gate + the lock + the single-session boundary, not a thin tool list.
+REVERSAL CONDITION: revisit only if a broad read/interact tool is shown to cause an unintended
+league-visible side effect that the write gate did not catch -- then gate that specific tool, don't
+blanket-narrow.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
