@@ -28,6 +28,13 @@ const dbPath = (argv.includes("--db") ? argv[argv.indexOf("--db") + 1] : undefin
 const ARTIFACT = "data/faab-model.json";
 const db = openDb(dbPath);
 
+// FAAB budget from the league's OWN settings, not hardcoded -- a leak guard that assumes the wrong
+// budget on a different league silently cannot fire. Same source as loadFaabBudget (copilotStore.ts).
+const FAAB_BUDGET = (() => {
+  const r = db.prepare("SELECT scoring_json FROM league WHERE scoring_json IS NOT NULL ORDER BY last_synced_at DESC LIMIT 1").get();
+  try { const b = Number(JSON.parse(r?.scoring_json ?? "{}").faabBudget); return b > 0 ? b : 100; } catch { return 100; }
+})();
+
 const rows = db.prepare("SELECT * FROM fact_waiver_claim ORDER BY season, proposed_at_ms, transaction_id").all();
 if (!rows.length) { console.log("fact_waiver_claim is empty -- run scripts/faab-coverage.mjs --build first."); process.exit(1); }
 
@@ -49,7 +56,7 @@ const check = (id, what, ok, detail) => { results.push({ id, what, ok, detail })
     const head = raw[i];
     let j = i;
     while (j < raw.length && raw[j].season === head.season && raw[j].proposed_at_ms === head.proposed_at_ms) j++;
-    const budget = 100;
+    const budget = FAAB_BUDGET;
     for (const c of raw.slice(i, j)) {
       const t = claimantOf(c);
       expect.set(`${c.season}|${c.transaction_id}|${c.espn_player_id}`, budget - (spent.get(`${c.season}|${t}`) ?? 0));
