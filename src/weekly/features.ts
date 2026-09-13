@@ -126,22 +126,6 @@ export const PENDING_DATA_TRACK_FIELDS = [
   "report_status_wed", "practice_status_wed", "vegas_implied_team_total_live",
 ] as const;
 
-/** Games per team in a season's REGULAR schedule, read from the published schedule. Known in
- *  August, so using it in a week-w feature is not lookahead. */
-export interface WeekModelRow {
-  feat_key: string; player_sk: string | null; season: number; week: number; as_of: string;
-  name: string; pos: string; team: string | null; opponent: string | null;
-  home: number | null; is_bye: number;
-  season_line_pg: number | null;
-  td_games: number; td_ppg: number | null;
-  t4_mean: number | null; t4_sd: number | null;
-  td_fd: number | null; td_ts: number | null; td_attempts: number | null; td_rush_yards: number | null;
-  dvp_mult: number | null; dvp_n: number | null;
-  spread_line: number | null; total_line: number | null; implied_team_total: number | null;
-  days_rest: number | null;
-  pts: number | null;
-}
-
 /** How hard DvP is pulled toward 1.0, in team-games of league-average prior. */
 export const DVP_SHRINK = 4;
 /** How many team-games of credit the PRIOR season's DvP is worth. Non-zero because week 1 of a

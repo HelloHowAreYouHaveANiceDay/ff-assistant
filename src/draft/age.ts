@@ -63,13 +63,3 @@ export function ageFactor(curve: AgeCurve | null, name: string, pos: string, sea
   return factorFor(curve, pos, season - by);
 }
 
-/** How many of `names` the curve can actually age -- for reporting coverage rather than assuming it. */
-export function ageCoverage(curve: AgeCurve | null, players: { name: string; pos: string; sk?: number | null }[]): { known: number; total: number } {
-  if (!curve) return { known: 0, total: players.length };
-  let known = 0;
-  // Coverage must ask the SAME question ageFactor asks. It previously took bare names and counted
-  // name-only hits, which would now report a coverage number the model cannot actually use -- the
-  // classic shape of a check that measures something adjacent to the thing it claims to measure.
-  for (const p of players) if ((p.sk != null && curve.bySk?.[String(p.sk)]) || curve.birthYear?.[`${p.pos}|${p.name}`]) known++;
-  return { known, total: players.length };
-}

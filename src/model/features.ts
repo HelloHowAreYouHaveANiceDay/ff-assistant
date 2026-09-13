@@ -18,7 +18,7 @@
  * Phase 1's `--projection conditional` arm did, and keeping it that way is what makes the two arms
  * comparable at all.
  */
-import { openDb, type DB } from "../db/db.js";
+import { type DB } from "../db/db.js";
 import type { FeatureRow, ProjectionArtifact, ProjRow } from "./projector.js";
 import { projectSeason } from "./projector.js";
 
@@ -297,9 +297,3 @@ export function backtestProjection(db: DB, season: number, artifact: ProjectionA
   return projectSeason({ season, asOf: asOf ?? `${season}-09-01`, artifact, features: backtestFeatureRows(db, season, artifact) });
 }
 
-/** Open the store, project, close. For callers that only want the numbers. */
-export function projectWith(dbPath: string | undefined, season: number, artifact: ProjectionArtifact, path: "board" | "backtest"): ProjRow[] {
-  const db = openDb(dbPath);
-  try { return path === "board" ? boardProjection(db, season, artifact) : backtestProjection(db, season, artifact); }
-  finally { db.close(); }
-}

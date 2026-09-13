@@ -326,16 +326,6 @@ export function buildConditionalCurve(
   return { curve, levelFactor, pairs };
 }
 
-/** The curve `project` and the backtest use, selected by kind. */
-export function buildCurve(
-  kind: CurveKind,
-  season: number,
-  db: ReturnType<typeof openDb> | null = null,
-  path = dataPath("history-points.csv"),
-): Record<string, number[]> {
-  return kind === "orderstat" ? buildCurveFromHistory(season, 6, path) : buildConditionalCurve(db, season, path).curve;
-}
-
 /**
  * `project` is now a THIN CALLER of the shared projector.
  *

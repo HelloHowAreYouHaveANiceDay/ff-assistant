@@ -31,11 +31,6 @@ export function ensureSnapshotTable(db: DB): void {
   );
 }
 
-export interface SnapshotRow {
-  verb: string; season: number | null; week: number | null; schedule: string | null;
-  actuals_hash: string | null; summary: string | null; result_json: string | null; updated_at: string | null;
-}
-
 /**
  * Recompute the snapshot verbs against the current board and store them, stamped with `actualsHash`.
  * Builds the sim context ONCE and shares it across verbs (rosters/board/schedule are identical for
@@ -71,14 +66,5 @@ export async function refreshDecisionSnapshot(opts: {
       done.push(verb);
     }
     return { rows: done.length, schedule, week: (ctx as { week?: number }).week ?? null, verbs: done };
-  } finally { db.close(); }
-}
-
-/** The current decision state, newest per verb. What an app or a person reads instead of re-simulating. */
-export function readDecisionSnapshot(dbPath?: string): SnapshotRow[] {
-  const db = openDb(dbPath);
-  try {
-    ensureSnapshotTable(db);
-    return db.prepare("SELECT * FROM decision_snapshot ORDER BY verb").all() as SnapshotRow[];
   } finally { db.close(); }
 }

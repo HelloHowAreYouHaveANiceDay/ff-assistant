@@ -4,7 +4,7 @@
 // show) is the default, and the write is a separate, opt-in step whose payload is printed in full
 // before it is ever sent. Nothing here runs on the automation loop; a trade proposal is only ever a
 // deliberate, per-trade act.
-import { openDb, getConfig, type DB } from "../db/db.js";
+import { getConfig, type DB } from "../db/db.js";
 
 export interface TradePlayer { name: string; playerId: string; teamId: string }
 export interface TradeResolution {
@@ -91,9 +91,4 @@ export function resolveTrade(db: DB, giveNames: string[], getNames: string[]): T
   const writeUrl = ok && leagueId ? `${WRITE_HOST}/seasons/${season}/segments/0/leagues/${leagueId}/transactions/` : null;
 
   return { ok, problems, season, leagueId, myTeamId, otherTeamId, otherTeamName, give, get, writeUrl, payload };
-}
-
-export function withResolved<T>(dbPath: string | undefined, fn: (db: DB) => T): T {
-  const db = openDb(dbPath);
-  try { return fn(db); } finally { db.close(); }
 }
