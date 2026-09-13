@@ -5,6 +5,7 @@
 // before it is ever sent. Nothing here runs on the automation loop; a trade proposal is only ever a
 // deliberate, per-trade act.
 import { getConfig, type DB } from "../db/db.js";
+import { ESPN_WRITES_BASE } from "../data/espnApi.js";
 
 export interface TradePlayer { name: string; playerId: string; teamId: string }
 export interface TradeResolution {
@@ -24,7 +25,6 @@ export interface TradeResolution {
   payload: unknown;
 }
 
-const WRITE_HOST = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl";
 
 /** Find a player on the current-season roster feed by a loose name match; returns every hit so an
  *  ambiguous name is a reported problem, not a silent pick. */
@@ -88,7 +88,7 @@ export function resolveTrade(db: DB, giveNames: string[], getNames: string[]): T
     ],
   } : null;
 
-  const writeUrl = ok && leagueId ? `${WRITE_HOST}/seasons/${season}/segments/0/leagues/${leagueId}/transactions/` : null;
+  const writeUrl = ok && leagueId ? `${ESPN_WRITES_BASE}/seasons/${season}/segments/0/leagues/${leagueId}/transactions/` : null;
 
   return { ok, problems, season, leagueId, myTeamId, otherTeamId, otherTeamName, give, get, writeUrl, payload };
 }

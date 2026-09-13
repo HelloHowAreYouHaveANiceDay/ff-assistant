@@ -11,6 +11,7 @@ import { openDb, getConfig, nowIso } from "../db/db.js";
 import { dataPath } from "./paths.js";
 import { boardSpreads } from "../draft/spread.js";
 import { loadEligibilityMap } from "./eligibility.js";
+import { ESPN_READS_BASE } from "./espnApi.js";
 
 // last-year (season-1) REG fantasy points + games played under the LEAGUE's scoring, keyed by name_key
 async function lastYear(season: number, scoring: ScoringRules): Promise<Map<string, { pts: number; gms: number }>> {
@@ -31,7 +32,7 @@ async function lastYear(season: number, scoring: ScoringRules): Promise<Map<stri
 
 // ESPN draft rank (STANDARD) + ADP, keyed by name_key
 async function espnRanks(season: number): Promise<Map<string, { rank: number; adp: number | null }>> {
-  const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leaguedefaults/3?view=kona_player_info`;
+  const url = `${ESPN_READS_BASE}/seasons/${season}/segments/0/leaguedefaults/3?view=kona_player_info`;
   const filter = JSON.stringify({ players: { limit: 900, sortDraftRanks: { sortPriority: 1, sortAsc: true, value: "STANDARD" } } });
   const out = new Map<string, { rank: number; adp: number | null }>();
   try {

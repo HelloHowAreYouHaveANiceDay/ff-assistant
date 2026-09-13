@@ -30,8 +30,8 @@ import { nowIso, type DB } from "../db/db.js";
 import { dataPath } from "./paths.js";
 import { nameKey as valuesNameKey } from "../draft/values.js";
 import { ESPN_POS, DEDICATED_SLOT_POS } from "../league/espnSlots.js";
+import { ESPN_READS_BASE as HOST } from "./espnApi.js";
 
-const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 
 /** The positions a value book and a lineup actually distinguish. */
 export const SKILL_POSITIONS = ["QB", "RB", "WR", "TE"];

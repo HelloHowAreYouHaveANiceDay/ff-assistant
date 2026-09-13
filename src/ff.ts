@@ -13,6 +13,7 @@ import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank
 import { ingestAll } from "./data/ingest.js";
 import { openDb } from "./db/db.js";
 import { dataPath } from "./data/paths.js";
+import { ESPN_READS_BASE } from "./data/espnApi.js";
 
 const DEFAULT_LEAGUE: LeagueSettings = {
   teams: 10,
@@ -1703,7 +1704,7 @@ async function cmdSyncRosters(rest: string[]) {
   const cur = await wvEval("location.href");
   if (!/fantasy\.espn\.com/.test(cur)) { await page.evaluate(() => { const wv = document.getElementById("espnview") as any; if (wv?.loadURL) wv.loadURL("https://fantasy.espn.com/football/"); }); await page.waitForTimeout(4000); }
   const ESPN_SLOT: Record<number, string> = { 0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K", 20: "BE", 21: "IR", 23: "FLEX" };
-  const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${lg.season}/segments/0/leagues/${lg.league_id}?view=mRoster&view=mTeam`;
+  const url = `${ESPN_READS_BASE}/seasons/${lg.season}/segments/0/leagues/${lg.league_id}?view=mRoster&view=mTeam`;
   const raw = await wvEval(`fetch(${JSON.stringify(url)},{credentials:'include'}).then(function(r){return r.ok?r.text():('HTTP '+r.status)}).catch(function(e){return 'ERR '+e.message})`);
   await browser.close();
   let j: any; try { j = JSON.parse(raw); } catch { db.close(); return failStep(`could not read rosters: ${raw?.slice(0, 60)}`); }
@@ -1992,7 +1993,7 @@ async function cmdProposeTrade(rest: string[]) {
   try {
     const { bridgeFetch, bridgeAvailable } = await import("./browser/appBridge.js");
     if (bridgeAvailable()) {
-      const b = await bridgeFetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${r.season}/segments/0/leagues/${r.leagueId}?view=mStatus`);
+      const b = await bridgeFetch(`${ESPN_READS_BASE}/seasons/${r.season}/segments/0/leagues/${r.leagueId}?view=mStatus`);
       const sp = (JSON.parse(b) as { scoringPeriodId?: number }).scoringPeriodId;
       if (Number.isFinite(sp)) spid = Number(sp);
     }
@@ -2136,7 +2137,7 @@ async function cmdScrapeLeague(rest: string[]) {
   const poolFilter = JSON.stringify({ players: { limit: 1500, sortDraftRanks: { sortPriority: 1, sortAsc: true, value: "STANDARD" } } });
   for (const yr of [...seasons, conf.season]) {
     try {
-      const res = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}/segments/0/leaguedefaults/3?view=kona_player_info`, { headers: { "x-fantasy-filter": poolFilter } });
+      const res = await fetch(`${ESPN_READS_BASE}/seasons/${yr}/segments/0/leaguedefaults/3?view=kona_player_info`, { headers: { "x-fantasy-filter": poolFilter } });
       if (!res.ok) continue;
       const data = await res.json() as { players?: { player?: { id?: number; defaultPositionId?: number } }[] };
       for (const pe of data.players ?? []) { const pl = pe.player ?? {}; if (pl.id != null && !posMap.has(pl.id)) { const pos = ESPN_POS[pl.defaultPositionId ?? -1]; if (pos) posMap.set(pl.id, pos); } }
@@ -2145,7 +2146,7 @@ async function cmdScrapeLeague(rest: string[]) {
   console.log(`scraping league ${leagueId} draft history for seasons ${seasons.join(", ")} (${posMap.size} players position-mapped)...`);
   const recaps: Recap[] = [];
   for (const yr of seasons) {
-    const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}/segments/0/leagues/${leagueId}?view=mDraftDetail&view=mTeam`;
+    const url = `${ESPN_READS_BASE}/seasons/${yr}/segments/0/leagues/${leagueId}?view=mDraftDetail&view=mTeam`;
     const raw = await wvEval(`fetch(${JSON.stringify(url)},{credentials:'include'}).then(function(r){return r.ok?r.text():('HTTP '+r.status)}).catch(function(e){return 'ERR '+e.message})`);
     if (!raw || raw.startsWith("HTTP") || raw.startsWith("ERR")) { console.log(`  ${yr}: ${raw || "no data"}`); continue; }
     let j: any; try { j = JSON.parse(raw); } catch { console.log(`  ${yr}: parse error`); continue; }
@@ -3978,7 +3979,7 @@ async function cmdFormat(rest: string[]) {
         const { bridgeFetch } = await import("./browser/appBridge.js");
         const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string } | undefined;
         if (!lg) throw new Error("no league synced -- run discover_leagues/league_sync in the app first.");
-        const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${lg.league_id}?view=mSettings&view=mTeam`;
+        const url = `${ESPN_READS_BASE}/seasons/${season}/segments/0/leagues/${lg.league_id}?view=mSettings&view=mTeam`;
         payload = JSON.parse(await bridgeFetch(url));   // READ-ONLY: a GET through the app's session
       }
       const fmt = formatFromEspnSettings(payload);

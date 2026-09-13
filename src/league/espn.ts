@@ -20,9 +20,9 @@ import { effectiveFormat, formatFromEspnSettings } from "./index.js";
 // The ESPN id maps live in ONE place now (src/league/espnSlots.ts). They used to be duplicated here
 // and in src/data/eligibility.ts and had already drifted; SLOT_NAME here is the complete map.
 import { ESPN_POS, DEDICATED_SLOT_POS as SLOT_POS, ESPN_SLOT_NAME as SLOT_NAME } from "./espnSlots.js";
+import { ESPN_READS_BASE as HOST } from "../data/espnApi.js";
 /** ESPN statId for a reception -- the PPR dial. */
 const RECEPTION_STAT_ID = 53;
-const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 
 interface EspnPlayer { fullName?: string; defaultPositionId?: number; proTeamId?: number; ownership?: { percentOwned?: number } }
 interface EspnEntry { playerPoolEntry?: { player?: EspnPlayer }; player?: EspnPlayer }

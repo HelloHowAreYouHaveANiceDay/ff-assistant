@@ -40,8 +40,8 @@ import { join } from "node:path";
 import { openDb, nowIso, type DB } from "../db/db.js";
 import { bridgeFetch } from "../browser/appBridge.js";
 import { DATA_ROOT } from "./paths.js";
+import { ESPN_READS_BASE as HOST } from "./espnApi.js";
 
-const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 
 /** ESPN's defaultPositionId -> position. Same table the league adaptor uses; duplicated rather than
  *  imported because espn.ts is the adaptor for the LIVE league and this is a history ingester -- the

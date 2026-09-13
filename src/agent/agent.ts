@@ -10,6 +10,7 @@ import { nameKey } from "../draft/values.js";
 import { scoringFromEspn, type ScoringRules } from "../draft/scoring.js";
 import { LEVER_META, clampLever, applyLevers } from "../draft/levers.js";
 import { browserTools } from "./browserTools.js";
+import { ESPN_READS_BASE } from "../data/espnApi.js";
 
 // ESPN fantasy id maps (defaultPositionId / lineupSlotId)
 const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
@@ -22,7 +23,7 @@ function espnSlotsToConfig(counts: Record<string, number>): string[] {
   return out;
 }
 const espnLeagueUrl = (season: number, leagueId: string, views: string[]) =>
-  `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${leagueId}?` + views.map((v) => `view=${v}`).join("&");
+  `${ESPN_READS_BASE}/seasons/${season}/segments/0/leagues/${leagueId}?` + views.map((v) => `view=${v}`).join("&");
 const normSwid = (s: string) => (s || "").replace(/[{}]/g, "").toUpperCase();
 
 // One row per player joining our value + both consensus sources, for the tools to format.
