@@ -3006,22 +3006,26 @@ function positionalStats(picks: { pos: string | null; price: number; name: strin
 /** Refuse to run a second bidding agent in the same seat. Returns a release function.
  *  A lock whose PID is no longer alive is stale (crash/kill) and is taken over. */
 async function acquireDraftLock(force: boolean): Promise<() => void> {
-  const { existsSync, readFileSync, writeFileSync, unlinkSync } = await import("node:fs");
+  // The lock itself lives in src/draft/lock.ts (guarded critical section + ownership token, so two
+  // contenders cannot both enter and a late release cannot delete a newer owner's lock). This wrapper
+  // keeps the CLI's operator experience: --force-lock, the stale-reclaim log, and exit(2) with the
+  // taskkill hint when a LIVE holder blocks a start.
+  const { acquireDraftLock: acquire, DraftLockHeldError } = await import("./draft/lock.js");
   const lock = dataPath("auto-draft.lock");
-  const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
-  if (existsSync(lock) && !force) {
-    const prev = Number((readFileSync(lock, "utf8").match(/pid=(\d+)/) ?? [])[1] ?? 0);
-    if (prev && prev !== process.pid && alive(prev)) {
-      console.error(`another auto-draft is already running (pid ${prev}). Two agents in one seat bid`);
+  try {
+    return acquire(lock, {
+      force,
+      onReclaim: (pid) => console.log(`[auto-draft] reclaiming stale lock (pid ${pid ?? "?"} not running)`),
+    });
+  } catch (e) {
+    if (e instanceof DraftLockHeldError) {
+      console.error(`another auto-draft is already running (pid ${e.pid}). Two agents in one seat bid`);
       console.error(`against each other. Stop it first, or pass --force-lock if you know it is dead.`);
-      console.error(`Windows: taskkill /F /T /PID ${prev}`);
+      console.error(`Windows: taskkill /F /T /PID ${e.pid}`);
       process.exit(2);
     }
-    console.log(`[auto-draft] reclaiming stale lock (pid ${prev || "?"} not running)`);
+    throw e;
   }
-  writeFileSync(lock, `pid=${process.pid} started=${new Date().toISOString()}\n`, "utf8");
-  let released = false;
-  return () => { if (released) return; released = true; try { unlinkSync(lock); } catch { /* already gone */ } };
 }
 
 async function cmdAutoDraft(rest: string[]) {
