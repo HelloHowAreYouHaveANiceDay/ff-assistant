@@ -10,6 +10,7 @@ import { nameKey } from "../draft/values.js";
 import { scoringFromEspn, type ScoringRules } from "../draft/scoring.js";
 import { LEVER_META, clampLever, applyLevers } from "../draft/levers.js";
 import { browserTools } from "./browserTools.js";
+import { ESPN_READS_BASE } from "../data/espnApi.js";
 
 // ESPN fantasy id maps (defaultPositionId / lineupSlotId)
 const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
@@ -22,7 +23,7 @@ function espnSlotsToConfig(counts: Record<string, number>): string[] {
   return out;
 }
 const espnLeagueUrl = (season: number, leagueId: string, views: string[]) =>
-  `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${leagueId}?` + views.map((v) => `view=${v}`).join("&");
+  `${ESPN_READS_BASE}/seasons/${season}/segments/0/leagues/${leagueId}?` + views.map((v) => `view=${v}`).join("&");
 const normSwid = (s: string) => (s || "").replace(/[{}]/g, "").toUpperCase();
 
 // One row per player joining our value + both consensus sources, for the tools to format.
@@ -317,7 +318,21 @@ function buildTools(dbPath: string | undefined, season: number) {
               "if(!c.length)return 'NOMATCH';" +
               "var el=c[Math.min(a.nth,c.length-1)];" +
               "var label=(el.innerText||el.value||el.tagName).trim().slice(0,60);" +
-              "el.scrollIntoView({block:'center'});el.click();" +
+              // Fire the FULL bubbling sequence, not just el.click(): a bare click does not drive
+              // React's synthetic onClick on a chrome-less control (the Fantasy Chat toggle). Same
+              // lesson as fill_page. KEEP IN SYNC with the /click bridge route in app/main.js.
+              "el.scrollIntoView({block:'center'});" +
+              "var r=el.getBoundingClientRect();var o={bubbles:true,cancelable:true,view:window,clientX:r.left+r.width/2,clientY:r.top+r.height/2,button:0};" +
+              "function P(ty){try{el.dispatchEvent(new PointerEvent(ty,o));}catch(e){}}" +
+              "function M(ty){try{el.dispatchEvent(new MouseEvent(ty,o));}catch(e){}}" +
+              "P('pointerover');M('mouseover');P('pointerenter');" +
+              "P('pointerdown');M('mousedown');try{if(el.focus)el.focus();}catch(e){}" +
+              "P('pointerup');M('mouseup');" +
+              // Exactly ONE click event: el.click() (which also fires a link/button's default action).
+              // Dispatching a synthetic MouseEvent('click') HERE TOO double-fired -> a click-driven
+              // TOGGLE (the Pending Moves link) opened then closed. The pointer/mouse down+up above
+              // still fire for components that open on those instead of click.
+              "try{if(typeof el.click==='function')el.click();}catch(e){}" +
               "return 'CLICKED:'+label;})()";
             const res = await wvEval(page, js);
             if (res === "NOMATCH") { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: `no visible element matched ${args.selector ? "selector " + args.selector : `text "${args.text}"`}` }] }; }
@@ -487,6 +502,36 @@ function buildTools(dbPath: string | undefined, season: number) {
       // percentage will quote it as a fact; the returned JSON carries an `assumptions` block (real
       // vs generated schedule, trials, seeds, data stamp) and these descriptions tell the model to
       // read it. The pair is deliberate -- a field is only a caveat if the reader knows to look.
+      tool(
+        "refresh",
+        "Re-pull the DATA PIPELINE: ingest the sources, rebuild projections, reassemble the board. This is the CLI `ff refresh` behind the same runRefresh(), so the numbers every read/decision tool returns afterward are current (projections carry a build stamp; this is how you freshen it). It scrapes, so it can take a while. Returns the projected/assembled player counts.",
+        {},
+        async () => {
+          const { runRefresh } = await import("../data/refresh.js");
+          const r = await runRefresh(dbPath);
+          return { content: [{ type: "text" as const, text: `refresh complete: projected ${r.projected} players, assembled ${r.assembled} players` }] };
+        },
+      ),
+      tool(
+        "propose_trade",
+        "PROPOSE A TRADE to another manager -- the ONE tool that WRITES to the league. `give` = players I send (must be on my roster); `get` = players I receive (all from ONE opponent). DEFAULT IS A DRY RUN: it resolves names to ESPN ids, validates ownership, injects the current scoring period, and returns the exact transaction WITHOUT sending. Pass confirm:true to actually SUBMIT it -- an irreversible outward action visible to the other manager. Same gated path as CLI `ff propose-trade [--send]`; a deliberate, per-trade act, never on a loop.",
+        {
+          give: z.array(z.string()).describe("players I send (must be on my roster)"),
+          get: z.array(z.string()).describe("players I receive -- all from ONE opponent's roster"),
+          confirm: z.boolean().optional().describe("must be true to actually SEND; omit or false for a dry run that sends nothing"),
+        },
+        async (args) => {
+          const a = args as unknown as { give?: string[]; get?: string[]; confirm?: boolean };
+          const { executeTradeProposal } = await import("../inseason/proposeTrade.js");
+          const run = await executeTradeProposal(dbPath, a.give ?? [], a.get ?? [], { send: a.confirm === true });
+          const r = run.resolution;
+          const head = `${r.give.map((p) => p.name).join(", ") || "?"} -> ${r.get.map((p) => p.name).join(", ") || "?"} with ${r.otherTeamName ?? "?"}`;
+          if (!r.ok) return { content: [{ type: "text" as const, text: `NOT SENDABLE: ${head}\n  - ${r.problems.join("\n  - ")}` }] };
+          if (a.confirm !== true) return { content: [{ type: "text" as const, text: `DRY RUN (nothing sent): ${head}\n  payload: ${JSON.stringify(r.payload)}\n  pass confirm:true to submit this to ESPN (irreversible, visible to the other manager).` }] };
+          if (!run.sent) return { content: [{ type: "text" as const, text: `SEND FAILED: ${head}\n  ${run.error ?? "unknown error"}` }] };
+          return { content: [{ type: "text" as const, text: `SENT to ESPN (pending): ${head}\n  ESPN response: ${(run.response ?? "").slice(0, 300)}\n  (verify it appears as pending in ESPN.)` }] };
+        },
+      ),
       ...(copilotTools(tool as never, dbPath) as never[]),
   ];
 }

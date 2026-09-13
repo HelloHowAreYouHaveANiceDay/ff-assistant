@@ -20,8 +20,9 @@ import { join } from "node:path";
 import { openDb } from "../src/db/db.js";
 import {
   mapEligibility, stageEligibility, storeRawEligibility, loadEligibilityMap,
-  DEDICATED_SLOT_POS, ESPN_SLOT_NAME, type EligibilityRow,
+  type EligibilityRow,
 } from "../src/data/eligibility.js";
+import { DEDICATED_SLOT_POS, ESPN_SLOT_NAME } from "../src/league/espnSlots.js";
 
 const SEASON = 2026;
 

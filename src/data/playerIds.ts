@@ -198,18 +198,3 @@ export function ambiguousNames(db: DB, limit = 50): Ambiguity[] {
   ).all(limit) as Ambiguity[];
 }
 
-/**
- * Resolve a name (+ position when known) to the crosswalk row.
- *
- * Position is REQUIRED to be safe and optional to be usable. Without it, a name shared by two players
- * returns null rather than a guess -- returning either one would be exactly the silent wrong answer
- * this module exists to remove.
- */
-export function resolveIds(db: DB, name: string, pos?: string): Record<string, string | null> | null {
-  const nk = nameKey(name);
-  if (pos) {
-    return (db.prepare("SELECT * FROM player_ids WHERE name_key = ? AND position = ?").get(nk, pos.toUpperCase()) as Record<string, string | null>) ?? null;
-  }
-  const all = db.prepare("SELECT * FROM player_ids WHERE name_key = ?").all(nk) as Record<string, string | null>[];
-  return all.length === 1 ? all[0] : null;
-}

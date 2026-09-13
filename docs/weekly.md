@@ -1146,8 +1146,8 @@ rather than refusing everything.
 regardless of what `WEEKLY_SERVE` said, so the scorecard could record a quarterback under the
 streaming model while the lineup picked him under the floor. Integration pass 4 routed it through
 `projectStreamingWith`, asserted in `test/weekly-serve-lineup.test.ts`. Then, on 2026-09-09, the
-owner widened `WEEKLY_SERVE` itself to all six positions (see the addendum below), so the seam now
-serves the streaming artifact everywhere.
+owner widened `WEEKLY_SERVE` to all six positions, and on 2026-09-12 (D11) OVERRODE that to the FORM
+model at all six (see the addenda below), so the seam now serves `weekly-artifact.json` everywhere.
 
 ### Addendum, 2026-09-09: the streaming model now ships at all six positions
 
@@ -1161,6 +1161,22 @@ were measured on the pre-unification population; they do not survive re-measurem
 one. `WEEKLY_SERVE` now maps all six positions to `streaming-artifact.json`, switched
 `WEEKLY_SERVE_SWITCHED_ON = "2026-09-09"`. This is a **constant change, not a gate change**: no gate,
 check or clause in `evaluate.ts`/`streamingEvaluate.ts` was widened or altered to reach it.
+
+### Addendum, 2026-09-12 (D11): the FORM model ships at all six, overriding streaming
+
+**OWNER OVERRIDE**, recorded in `docs/decisions.md` D11 and `docs/validation.md`. `ff evaluate-weekly`
+(holdout 2012-2025, 69,825 rows) found the form model (`weekly-artifact.json`, the two-part model over
+the full weekly feature set incl. the player's own trailing form `t4_mean`) MORE ACCURATE than
+streaming at every position -- pooled CRPS **2.82 vs 3.34**, RMSE **6.45 vs 7.02**, bias -0.03 -- but
+FAILING gate clause (b), coverage-given-positive, at **0.851 pooled** against [0.75, 0.85] (its bands
+are ~0.001 too wide; streaming passes at 0.827 and is the worse model). The owner shipped the
+more-accurate model and accepted the hair's-breadth calibration miss rather than fit the gate by
+shrinking the sd. `WEEKLY_SERVE` now maps all six positions to `CHALLENGER_WEEKLY_ARTIFACT`,
+`WEEKLY_SERVE_SWITCHED_ON = "2026-09-12"`, and `SHIPPED_STREAMING_POSITIONS` is empty. What made the
+form model meaningful was `ff sync-actuals` feeding real current-season results into
+`feat_player_week`, from which the forward board derives the trailing form. The live `ff scorecard`
+scores this exact model against 2026 actuals every week, so the override is under continuous
+out-of-sample audit; reverting is one line back to `STREAMING_ARTIFACT`.
 
 The lineup replay (`scripts/inseason-backtest-lineup.mjs`, `docs/in-season-backtest.md`) moved with
 it: the `served` arm went from 85.71 to 88.22 points per team-week (floor 85.19, challenger 88.10,

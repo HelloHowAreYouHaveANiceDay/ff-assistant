@@ -35,6 +35,7 @@ import { dataPath } from "../data/paths.js";
 import { nameKey } from "../draft/values.js";
 import { buildSkResolver } from "../data/skResolve.js";
 import { normPos } from "../data/stgPlayer.js";
+import { PRESEASON_WINDOW_SQL } from "../data/preseasonWindow.js";
 
 interface RecapTeam { season: number; name: string; picks: { pick: number; player: string; pos: string; price: number }[] }
 
@@ -176,7 +177,7 @@ function preseasonConsensus(db: DB, yr: number): { rank: Map<string, { rank: num
     raw = db.prepare(
       "SELECT scrape_date, name, pos, ecr, sd FROM ranking_history " +
       "WHERE ecr_type='ro' AND source='fantasypros' AND season=@s AND ecr IS NOT NULL " +
-      "AND (substr(scrape_date,6,2)='08' OR (substr(scrape_date,6,2)='09' AND CAST(substr(scrape_date,9,2) AS INTEGER)<=7))",
+      PRESEASON_WINDOW_SQL,
     ).all({ s: yr }) as typeof raw;
   } catch { return { rank: out, asOf: null }; }
   if (!raw.length) return liveConsensus(db, yr, out);

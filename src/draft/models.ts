@@ -88,9 +88,6 @@ function storePopulation(): PopulationSignature | null {
   return SIG_CACHE;
 }
 
-/** For tests: forget the cached signature, so a fixture store can be pointed at. */
-export function resetPopulationCache(): void { SIG_CACHE = undefined; }
-
 export interface ModelSpec {
   key: string;
   file: string;

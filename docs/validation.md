@@ -105,6 +105,27 @@
 >
 > ---
 
+> ## OWNER OVERRIDE: the FORM model replaces streaming at all six positions (2026-09-12, D11)
+>
+> Supersedes the 2026-09-09 streaming decision below. Recorded as a GATE OVERRIDE, not a gate pass --
+> see docs/decisions.md D11 for the full rationale and reversal condition. `ff evaluate-weekly
+> --rosters 200` (holdout 2012-2025, 69,825 scored rows): the form model (`weekly-artifact.json`, the
+> two-part model over the full weekly feature set including the player's own trailing form `t4_mean`)
+> is MORE ACCURATE than streaming at every position -- pooled CRPS **2.82 vs 3.34**, RMSE **6.45 vs
+> 7.02**, bias -0.03; per position RB 2.72 vs 3.37, WR 2.97 vs 3.46, QB 3.34 vs 4.65 -- but FAILS gate
+> clause (b), coverage-given-positive, at **0.851 pooled** against the [0.75, 0.85] band (intervals
+> ~0.001 too wide). The owner shipped the more-accurate model and accepted the miss rather than fit the
+> gate by shrinking the sd. `ff scorecard` scores this exact model against 2026 actuals every week, so
+> the override is under continuous out-of-sample audit.
+>
+> **What changed:** `WEEKLY_SERVE` now maps all six positions to `CHALLENGER_WEEKLY_ARTIFACT`
+> (`weekly-artifact.json`); `WEEKLY_SERVE_SWITCHED_ON = "2026-09-12"`; `SHIPPED_STREAMING_POSITIONS`,
+> derived from that table, is now EMPTY (streaming ships nowhere). The form model only became
+> meaningful once `ff sync-actuals` began feeding real 2026 results into `feat_player_week`, from which
+> the forward board derives the trailing form it reads. Reverting is one line back to
+> `STREAMING_ARTIFACT`. What did NOT change: no clause, band or tolerance in `evaluate.ts` -- the model
+> still fails the gate; the owner chose to ship it anyway.
+>
 > ## OWNER DECISION: streaming ships at all six positions (2026-09-09)
 >
 > Decided by the owner, executed on the measurement recorded just below in "THE STREAMING GATE

@@ -16,6 +16,7 @@ import { optimalLineup } from "../lineup.js";
 import { loadWeekContext, loadModel, type ModelName } from "./context.js";
 import { realizedRestOfSeason, type DecisionMember, type Scorer, type ScoreCtx, type SeasonFuture } from "./harness.js";
 import { getConfig, type DB } from "../../db/db.js";
+import { regWeeksFor } from "../regWeeks.js";
 
 const startersNeeded = (t: string[]) => t.filter((s) => s !== "BE" && s !== "BENCH").length;
 const rp = (m: DecisionMember) => ({ name: m.name, pos: m.pos, proj: m.proj, available: true });
@@ -83,8 +84,7 @@ export function backtestTrades(db: DB, opts: {
       let m = future.get(r.player_sk); if (!m) { m = new Map(); future.set(r.player_sk, m); }
       m.set(r.week, { pts: r.pts ?? 0, bye: !!r.is_bye, out: !!r.inj_out });
     }
-    const regWeeks = (db.prepare(`SELECT MAX(reg_weeks) rw FROM raw_league_season WHERE season=?`).get(season) as { rw: number | null }).rw
-      ?? (db.prepare(`SELECT MAX(week) w FROM feat_player_week_model WHERE season=? AND pts IS NOT NULL`).get(season) as { w: number | null }).w ?? 14;
+    const regWeeks = regWeeksFor(db, season);
 
     for (let W = 1; W <= regWeeks - 1; W++) {
       const wc = loadWeekContext(db, opts.leagueId, season, W, wm);

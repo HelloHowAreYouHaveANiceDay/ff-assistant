@@ -210,7 +210,7 @@ test("the trainer selects on the population column and NO LONGER on the line cut
   // than against a second copy of the string.
   assert.ok(py.includes(`POPULATION_COLUMN = "${POPULATION_COLUMN}"`),
     `tools/train_weekly.py does not name the population column as "${POPULATION_COLUMN}"`);
-  assert.ok(/AND \" \+ POPULATION_COLUMN \+ \" = 1/.test(py) || py.includes('POPULATION_COLUMN + " = 1"'),
+  assert.ok(/AND " \+ POPULATION_COLUMN \+ " = 1/.test(py) || py.includes('POPULATION_COLUMN + " = 1"'),
     "tools/train_weekly.py does not select on the population column -- it would fit a wider set " +
     "than the harness scores, which is the defect this whole module removes");
   assert.ok(!py.includes('r["season_line_pg"] >= TRAIN_MIN_LINE'),

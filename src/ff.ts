@@ -13,6 +13,7 @@ import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank
 import { ingestAll } from "./data/ingest.js";
 import { openDb } from "./db/db.js";
 import { dataPath } from "./data/paths.js";
+import { ESPN_READS_BASE } from "./data/espnApi.js";
 
 const DEFAULT_LEAGUE: LeagueSettings = {
   teams: 10,
@@ -70,6 +71,14 @@ async function main() {
       return cmdHandcuffs(rest);
     case "copilot":
       return cmdCopilot(rest);
+    case "refresh-decisions":
+      return cmdRefreshDecisions(rest);
+    case "inseason-tick":
+      return cmdInseasonTick(rest);
+    case "schedule":
+      return cmdSchedule(rest);
+    case "propose-trade":
+      return cmdProposeTrade(rest);
     case "format":
       return cmdFormat(rest);
     case "calibrate":
@@ -120,6 +129,8 @@ async function main() {
       return cmdSyncLeague(rest);
     case "sync-pending-trades":
       return cmdSyncPendingTrades(rest);
+    case "sync-actuals":
+      return cmdSyncActuals(rest);
     case "enter-draft":
       return cmdEnterDraft(rest);
     case "preflight":
@@ -425,6 +436,14 @@ async function cmdServe(rest: string[]) {
         }
         case "config-get": result = getConfig(db); break;
         case "config-set": setConfig(db, (params.config as Record<string, unknown>) ?? {}); result = getConfig(db); break;
+        // The in-season schedule the app's timer obeys. `schedule-get` on boot and after a change;
+        // `schedule-set` writes a partial patch (the copilot, or a settings toggle in the renderer).
+        case "schedule-get": { const { getSchedule } = await import("./inseason/routines.js"); result = getSchedule(db); break; }
+        case "schedule-set": {
+          const { setSchedule } = await import("./inseason/routines.js");
+          result = setSchedule(db, (params.patch as Record<string, unknown>) ?? {});
+          break;
+        }
         case "levers-set": { // clamp each knob to its valid range before storing
           const patch = (params.patch as Record<string, unknown>) ?? {};
           // `reset: true` restores DEFAULT_LEVERS *server-side*. The renderer must never carry its
@@ -496,13 +515,10 @@ async function cmdProjections(rest: string[]) {
 
 // The full data refresh, ALL TS (no Python): ingest reference+news -> project curve -> assemble value/board.
 async function cmdRefresh(rest: string[]) {
-  const db = valueOf(rest, "--db");
-  const { ingestAll } = await import("./data/ingest.js");
-  const { project } = await import("./data/projections.js");
-  const { assemble } = await import("./data/assemble.js");
-  await ingestAll(db);
-  console.log(`projections: ${await project(db)} players`);
-  console.log(`refresh complete: ${await assemble(db)} players (all TS, no Python)`);
+  const { runRefresh } = await import("./data/refresh.js");
+  const r = await runRefresh(valueOf(rest, "--db"));
+  console.log(`projections: ${r.projected} players`);
+  console.log(`refresh complete: ${r.assembled} players (all TS, no Python)`);
 }
 
 // Assemble L1 player_value + L2 board (TS port of build_report). Reads reference data from the store
@@ -636,7 +652,7 @@ async function cmdLaunchPractice(rest: string[]) {
   // The embedded ESPN webview is our ONE working page -- reuse it whatever it's showing (the old
   // the old logic looked for a separate non-draft tab; here there's just the webview). Fall back to any
   // non-draft page, then a new page.
-  let page = a.pages.find((p) => /espn\.com/.test(p.url()) && !/recaptcha|imrworldwide|registerdisney/.test(p.url()))
+  const page = a.pages.find((p) => /espn\.com/.test(p.url()) && !/recaptcha|imrworldwide|registerdisney/.test(p.url()))
     || a.pages.find((p) => !/\/football\/draft/.test(p.url()))
     || await a.context.newPage();
   // Now close any OTHER draft tabs -- ESPN allows only ONE draft connection; a duplicate
@@ -1376,7 +1392,7 @@ async function cmdCalibrate(rest: string[]) {
     }
   }
   const pct = (x: number) => `${Math.round(x * 100)}%`;
-  let mae: Record<string, number[]> = Object.fromEntries(POS.map((k) => [k, []])), concErr: number[] = [];
+  const mae: Record<string, number[]> = Object.fromEntries(POS.map((k) => [k, []])), concErr: number[] = [];
   console.log(`CALIBRATION -- ${n} all-bot drafts, 16 real manager profiles. sim share vs REAL history:\n`);
   for (const prof of profiles) {
     const a = acc.get(prof.owner)!; if (!a.teams) continue;
@@ -1517,12 +1533,19 @@ async function cmdSyncLeague(rest: string[]) {
       ["sync-pending-trades", []],
       ["sync-rosters", []],
     ] },
-    // Between gamedays. Adds standings/results, which settle after the last game of a week.
-    daily: { what: "between gamedays: + standings and results", steps: [
+    // Between gamedays. Adds standings/results, which settle after the last game of a week, plus the
+    // nflverse player actuals + forward-board rebuild (change-gated: a no-op until a game goes final or
+    // a stat correction lands). sync-actuals fetches the feed directly, so it needs no app session.
+    daily: { what: "between gamedays: + standings, results, and player actuals", steps: [
       ["ingest-raw", ["league-rosters"]],
       ["ingest-raw", ["league-transactions"]],
       ["sync-pending-trades", []],
       ["ingest-raw", ["league-history"]],
+      ["sync-actuals", []],
+      // Freeze the imminent week's weekly predictions and score any settled week. Write-once, so it
+      // is a no-op after the first run of a week; --no-forward reuses the board sync-actuals just
+      // built; --no-odds keeps it app-independent (the odds accrual needs the real-schedule sim).
+      ["scorecard", ["--no-forward", "--no-odds"]],
       ["sync-rosters", []],
     ] },
     // Rules, the injury/usage feeds, and the derived layer. Everything whose source updates slowly.
@@ -1537,6 +1560,8 @@ async function cmdSyncLeague(rest: string[]) {
       ["ingest-raw", ["snap-counts"]],
       ["ingest-raw", ["participation"]],
       ["ingest-raw", ["nfl-games"]],
+      ["sync-actuals", []],
+      ["scorecard", ["--no-forward", "--no-odds"]],
       ["sync-rosters", []],
       ["build-roster-state", []],
       ["build-picks", []],
@@ -1676,7 +1701,7 @@ async function cmdSyncRosters(rest: string[]) {
   const cur = await wvEval("location.href");
   if (!/fantasy\.espn\.com/.test(cur)) { await page.evaluate(() => { const wv = document.getElementById("espnview") as any; if (wv?.loadURL) wv.loadURL("https://fantasy.espn.com/football/"); }); await page.waitForTimeout(4000); }
   const ESPN_SLOT: Record<number, string> = { 0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K", 20: "BE", 21: "IR", 23: "FLEX" };
-  const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${lg.season}/segments/0/leagues/${lg.league_id}?view=mRoster&view=mTeam`;
+  const url = `${ESPN_READS_BASE}/seasons/${lg.season}/segments/0/leagues/${lg.league_id}?view=mRoster&view=mTeam`;
   const raw = await wvEval(`fetch(${JSON.stringify(url)},{credentials:'include'}).then(function(r){return r.ok?r.text():('HTTP '+r.status)}).catch(function(e){return 'ERR '+e.message})`);
   await browser.close();
   let j: any; try { j = JSON.parse(raw); } catch { db.close(); return failStep(`could not read rosters: ${raw?.slice(0, 60)}`); }
@@ -1796,6 +1821,220 @@ async function cmdBuildHistory(rest: string[]) {
     `from ${resolver.staged} staged players; unresolved rows are KEPT and carry an empty key`);
 }
 
+/**
+ * `ff sync-actuals [--force]` -- the IN-SEASON half of build-history. Re-scores ONLY the current
+ * season from the (cache-bypassed) nflverse feed, splices it into history-{weekly,points}.csv without
+ * touching any historical row, and -- ONLY IF the current-season actuals actually changed -- rebuilds
+ * the derived in-season features (feat_player_week + feat_player_week_model, i.e. the trailing means
+ * and the `pts` target the weekly model adapts on). The change gate is a content hash of the season
+ * slice kept in data/actuals-state.json, so this is a CHEAP NO-OP when nothing moved -- which is what
+ * lets a gameday poller run it every few minutes safely. Rebuilds fire only on a newly-final game or a
+ * stat correction. `--force` rebuilds even when the hash is unchanged.
+ *
+ * This is the source-of-truth-is-nflverse decision made concrete: everything the fitted model reads
+ * comes through the SAME scoreSeasonWeekly path the backtest uses, never a second re-scoring of ESPN
+ * live points that could drift from the schema the coefficients were fitted on.
+ */
+async function cmdSyncActuals(rest: string[]) {
+  const { ingestCurrentSeasonActuals } = await import("./data/history.js");
+  const { openDb, getConfig } = await import("./db/db.js");
+  const { buildSkResolver } = await import("./data/skResolve.js");
+  const { DEFAULT_LEAGUE_SCORING } = await import("./draft/scoring.js");
+  const dbPath = valueOf(rest, "--db");
+  const force = rest.includes("--force");
+  const db = openDb(dbPath); const conf = getConfig(db);
+  const season = Number(process.env.FF_SEASON ?? conf.season);
+  const resolver = buildSkResolver(db);
+  const c = conf as unknown as { kicker?: unknown; defense?: unknown };
+  const model = { ...DEFAULT_LEAGUE_SCORING(), rules: conf.scoring_rules,
+    ...(c.kicker ? { kicker: c.kicker as never } : {}), ...(c.defense ? { defense: c.defense as never } : {}) };
+  db.close();
+
+  // The change-gate lives in a small JSON next to the other model artifacts, not in a schema change.
+  const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
+  const { dataPath } = await import("./data/paths.js");
+  const statePath = dataPath("actuals-state.json");
+  const prev: { season?: number; hash?: string } = existsSync(statePath)
+    ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+
+  console.log(`sync-actuals: re-scoring ${season} from nflverse (cache-bypassed)...`);
+  const r = await ingestCurrentSeasonActuals(season, model, resolver);
+  if (!r.ok || r.weekly === 0) {
+    console.log(`  nflverse has no ${season} weekly rows yet -- nothing to ingest (the season's feed is not published or empty).`);
+    return;
+  }
+  console.log(`  wrote ${r.weekly} weekly rows to ${r.path}; weeks present: ${r.weeks.join(", ") || "none"} (history-weekly.csv untouched)`);
+
+  const changed = force || prev.season !== season || prev.hash !== r.hash;
+  if (!changed) {
+    console.log(`  actuals UNCHANGED (hash ${r.hash}) -- skipping board rebuild. (--force to override.)`);
+    return;
+  }
+  console.log(`  actuals CHANGED (${prev.hash ?? "none"} -> ${r.hash})${force ? " [forced]" : ""} -- rebuilding the forward in-season board for ${season}...`);
+
+  // The FORWARD board: board population x schedule for every remaining week, actuals merged as pts.
+  // Never buildFeatures (that is the actuals-capped backtest builder that collapses the live board).
+  const { buildForwardBoard } = await import("./weekly/forwardBoard.js");
+  const b = await buildForwardBoard({ dbPath, season, actualsPath: r.path });
+  console.log(`  forward board: ${b.keys} players x ${b.maxWeek} weeks -> feat_player_week ${b.weekRows} rows (${b.withPts} with actual pts), feat_player_week_model ${b.modelRows} rows`);
+
+  writeFileSync(statePath, JSON.stringify({ season, hash: r.hash, weeks: r.weeks, updatedAt: new Date().toISOString() }, null, 2) + "\n", "utf8");
+  console.log(`  wrote ${statePath}. In-season board now reflects ${season} weeks ${r.weeks.join(",")}.`);
+
+  // Stage B: the actuals moved, so the standing waiver/trade/odds recommendations may have too.
+  // Recompute and store them, stamped with the same hash. Best-effort and refresh-only: a snapshot
+  // failure (e.g. the app is down and no real schedule is reachable) must not fail the ingest, and
+  // nothing here writes to ESPN -- every copilot run is logged at status "recommended" (D3).
+  try {
+    const { refreshDecisionSnapshot } = await import("./inseason/decisionSnapshot.js");
+    const d = await refreshDecisionSnapshot({ dbPath, actualsHash: r.hash, schedule: "auto" });
+    console.log(`  refreshed decision snapshot: ${d.verbs.join(", ")} (week ${d.week ?? "?"}, ${d.schedule} schedule)`);
+  } catch (e) {
+    console.log(`  decision-snapshot refresh skipped: ${String(e).slice(0, 140)}`);
+  }
+}
+
+/**
+ * `ff refresh-decisions [--schedule auto|real|generated]` -- recompute the standing waiver/trade/odds
+ * recommendations and store them in `decision_snapshot`, so a reader (the app, or the next person)
+ * sees the current answer without re-simulating, stamped with when and against which schedule. Called
+ * automatically by `ff sync-actuals` when the actuals change; exposed as its own verb for a manual
+ * refresh. Refresh-only: it recomputes ADVICE, it never makes a roster move.
+ */
+async function cmdRefreshDecisions(rest: string[]) {
+  const { refreshDecisionSnapshot } = await import("./inseason/decisionSnapshot.js");
+  const sched = (valueOf(rest, "--schedule") ?? "auto") as "real" | "generated" | "auto";
+  const r = await refreshDecisionSnapshot({ dbPath: valueOf(rest, "--db"), schedule: sched });
+  console.log(`refreshed ${r.rows} decision snapshots (${r.verbs.join(", ")}) for week ${r.week ?? "?"} on the ${r.schedule} schedule`);
+}
+
+/**
+ * `ff inseason-tick [--routines a,b,c] [--json]` -- run the in-season scheduler's routine set ONCE.
+ * This is the unit the Electron app's timer (and any poller) calls. Each routine's verbs run IN-PROCESS
+ * through the same handlers the CLI dispatches, wrapped per-step so one routine's failure does not stop
+ * the rest -- and, unlike a child-process sweep, this runs unchanged in the packaged app (no `tsx` /
+ * `src/ff.ts` on disk there). With no `--routines`, it runs whatever the stored schedule selects.
+ */
+async function cmdInseasonTick(rest: string[]) {
+  const { getSchedule, stepsFor, DEFAULT_ROUTINES } = await import("./inseason/routines.js");
+  const { openDb } = await import("./db/db.js");
+  const dbPath = valueOf(rest, "--db");
+  const override = valueOf(rest, "--routines");
+  let names: string[];
+  if (override) names = override.split(",").map((s) => s.trim()).filter(Boolean);
+  else { const db = openDb(dbPath); try { names = getSchedule(db).routines; } finally { db.close(); } }
+  if (!names.length) names = DEFAULT_ROUTINES;
+
+  const { steps, ran, unknown } = stepsFor(names);
+  if (unknown.length) console.log(`  ignoring unknown routine(s): ${unknown.join(", ")}`);
+  console.log(`inseason-tick: ${ran.join(", ") || "(nothing)"} -- ${steps.length} step(s)`);
+
+  // Map each routine verb to its CLI handler. In-process, so it needs no on-disk source in the packaged
+  // build; `sync-league` still spawns its own steps (its existing behaviour) and is app-gated.
+  const HANDLERS: Record<string, (a: string[]) => Promise<void>> = {
+    "sync-actuals": cmdSyncActuals,
+    "scorecard": cmdScorecard,
+    "refresh-decisions": cmdRefreshDecisions,
+    "sync-league": cmdSyncLeague,
+  };
+  const passThrough = dbPath ? ["--db", dbPath] : [];
+  const t0 = Date.now();
+  const results: { step: string; ok: boolean; error?: string }[] = [];
+  for (const [verb, args] of steps) {
+    const label = [verb, ...args].join(" ");
+    const s = Date.now();
+    const handler = HANDLERS[verb];
+    if (!handler) { results.push({ step: label, ok: false, error: "no handler" }); console.log(`  SKIP ${label} (no handler)`); continue; }
+    try {
+      await handler([...args, ...passThrough]);
+      results.push({ step: label, ok: true });
+      console.log(`  ok   ${label.padEnd(36)} ${((Date.now() - s) / 1000).toFixed(1)}s`);
+    } catch (e) {
+      results.push({ step: label, ok: false, error: String(e).slice(0, 200) });
+      console.log(`  FAIL ${label.padEnd(36)} ${((Date.now() - s) / 1000).toFixed(1)}s -- ${String(e).slice(0, 120)}`);
+    }
+  }
+  const okN = results.filter((r) => r.ok).length;
+  console.log(`\n${okN}/${results.length} steps ok in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  if (rest.includes("--json")) console.log(JSON.stringify({ ran, unknown, results, ok: okN === results.length }));
+  if (okN !== results.length) process.exitCode = 1;   // so a poller / the app can see it without parsing stdout
+}
+
+/**
+ * `ff propose-trade --give "A" --get "B" [--send]` -- the ONLY verb in the system that can write to the
+ * league, and it does so only under an explicit gate. Without `--send` it RESOLVES the trade (players ->
+ * ESPN ids, that you own each GIVE and one team owns every GET) and prints the exact transaction it
+ * would POST -- a full dry run that sends nothing. `--send` submits it through the app's authenticated
+ * ESPN session. It is never on the automation loop: a proposal is a deliberate, per-trade act, reviewed
+ * before it leaves.
+ */
+async function cmdProposeTrade(rest: string[]) {
+  const { executeTradeProposal } = await import("./inseason/proposeTrade.js");
+  const give = (valueOf(rest, "--give") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const get = (valueOf(rest, "--get") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!give.length || !get.length) { console.log(`usage: ff propose-trade --give "Player A" --get "Player B" [--send]`); return; }
+  const send = rest.includes("--send");
+  // ONE orchestration for CLI and MCP: resolve + inject the current scoringPeriodId, and send only
+  // behind the gate. See executeTradeProposal in inseason/proposeTrade.ts.
+  const run = await executeTradeProposal(valueOf(rest, "--db"), give, get, { send });
+  const r = run.resolution;
+
+  console.log(`TRADE PROPOSAL (season ${r.season}, league ${r.leagueId ?? "?"})`);
+  console.log(`  YOU (team ${r.myTeamId ?? "?"}) GIVE: ${r.give.map((p) => `${p.name} [id ${p.playerId || "?"}]`).join(", ")}`);
+  console.log(`  GET from ${r.otherTeamName ?? "?"} (team ${r.otherTeamId ?? "?"}): ${r.get.map((p) => `${p.name} [id ${p.playerId || "?"}]`).join(", ")}`);
+  if (r.problems.length) { console.log("  PROBLEMS:"); r.problems.forEach((p) => console.log(`    - ${p}`)); }
+  if (!r.ok) { console.log("\n  NOT SENDABLE -- fix the problems above. Nothing was sent."); process.exitCode = 1; return; }
+
+  console.log(`\n  ESPN transaction (POST ${r.writeUrl}):`);
+  console.log(`    ${JSON.stringify(r.payload)}`);
+  if (!send) {
+    console.log("\n  DRY RUN -- nothing sent. Re-run with --send to submit this proposal to ESPN (an irreversible");
+    console.log("  outward action, visible to the other manager). The payload above is what would be POSTed.");
+    return;
+  }
+  if (!run.sent) {
+    const msg = run.error && /scoring period/.test(run.error) ? run.error : `SEND FAILED (nothing may have been created -- check ESPN): ${run.error ?? "unknown"}`;
+    console.log(`\n  ${msg}`); process.exitCode = 1; return;
+  }
+  console.log("\n  --send: submitted through the app's authenticated ESPN session.");
+  console.log(`  ESPN response: ${(run.response ?? "").slice(0, 600)}`);
+  console.log("  (verify in ESPN that the proposal appears as pending.)");
+}
+
+/**
+ * `ff schedule [--enable|--disable] [--every N] [--routines a,b,c] [--json]` -- read or write the
+ * in-season schedule the app's timer obeys. This is HOW THE COPILOT SETS THE ROUTINES: it is a stored
+ * config (a `settings` row), so turning a routine on or changing the cadence is a data change the next
+ * tick picks up, not a code change. With no flags it prints the current schedule.
+ */
+async function cmdSchedule(rest: string[]) {
+  const { getSchedule, setSchedule, ROUTINES, clampMinutes } = await import("./inseason/routines.js");
+  const { openDb } = await import("./db/db.js");
+  const db = openDb(valueOf(rest, "--db"));
+  try {
+    const wantsSet = rest.includes("--enable") || rest.includes("--disable") ||
+      valueOf(rest, "--every") != null || valueOf(rest, "--routines") != null;
+    if (wantsSet) {
+      const patch: Record<string, unknown> = {};
+      if (rest.includes("--enable")) patch.enabled = true;
+      if (rest.includes("--disable")) patch.enabled = false;
+      const every = valueOf(rest, "--every"); if (every != null) patch.everyMinutes = clampMinutes(Number(every));
+      const routines = valueOf(rest, "--routines"); if (routines != null) patch.routines = routines.split(",").map((s) => s.trim()).filter(Boolean);
+      const { droppedRoutines } = setSchedule(db, patch);
+      if (droppedRoutines.length) console.log(`ignored unknown routine(s): ${droppedRoutines.join(", ")} (valid: ${Object.keys(ROUTINES).join(", ")})`);
+    }
+    const cfg = getSchedule(db);
+    if (rest.includes("--json")) { console.log(JSON.stringify(cfg)); return; }
+    console.log(`in-season schedule: ${cfg.enabled ? "ON" : "OFF"}, every ${cfg.everyMinutes} min`);
+    console.log(`  routines: ${cfg.routines.join(", ") || "(none)"}`);
+    console.log("  registry:");
+    for (const [name, r] of Object.entries(ROUTINES)) {
+      const on = cfg.routines.includes(name) ? "x" : " ";
+      console.log(`    [${on}] ${name.padEnd(10)} ${r.needsApp ? "(needs app) " : ""}${r.what}`);
+    }
+  } finally { db.close(); }
+}
+
 // Build per-manager draft tendencies for MY league from its real auction history (prior seasons),
 // read through the app's logged-in ESPN session. Config-driven: works for any league. Writes
 /**
@@ -1880,7 +2119,7 @@ async function cmdScrapeLeague(rest: string[]) {
   const poolFilter = JSON.stringify({ players: { limit: 1500, sortDraftRanks: { sortPriority: 1, sortAsc: true, value: "STANDARD" } } });
   for (const yr of [...seasons, conf.season]) {
     try {
-      const res = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}/segments/0/leaguedefaults/3?view=kona_player_info`, { headers: { "x-fantasy-filter": poolFilter } });
+      const res = await fetch(`${ESPN_READS_BASE}/seasons/${yr}/segments/0/leaguedefaults/3?view=kona_player_info`, { headers: { "x-fantasy-filter": poolFilter } });
       if (!res.ok) continue;
       const data = await res.json() as { players?: { player?: { id?: number; defaultPositionId?: number } }[] };
       for (const pe of data.players ?? []) { const pl = pe.player ?? {}; if (pl.id != null && !posMap.has(pl.id)) { const pos = ESPN_POS[pl.defaultPositionId ?? -1]; if (pos) posMap.set(pl.id, pos); } }
@@ -1889,7 +2128,7 @@ async function cmdScrapeLeague(rest: string[]) {
   console.log(`scraping league ${leagueId} draft history for seasons ${seasons.join(", ")} (${posMap.size} players position-mapped)...`);
   const recaps: Recap[] = [];
   for (const yr of seasons) {
-    const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}/segments/0/leagues/${leagueId}?view=mDraftDetail&view=mTeam`;
+    const url = `${ESPN_READS_BASE}/seasons/${yr}/segments/0/leagues/${leagueId}?view=mDraftDetail&view=mTeam`;
     const raw = await wvEval(`fetch(${JSON.stringify(url)},{credentials:'include'}).then(function(r){return r.ok?r.text():('HTTP '+r.status)}).catch(function(e){return 'ERR '+e.message})`);
     if (!raw || raw.startsWith("HTTP") || raw.startsWith("ERR")) { console.log(`  ${yr}: ${raw || "no data"}`); continue; }
     let j: any; try { j = JSON.parse(raw); } catch { console.log(`  ${yr}: parse error`); continue; }
@@ -3722,7 +3961,7 @@ async function cmdFormat(rest: string[]) {
         const { bridgeFetch } = await import("./browser/appBridge.js");
         const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string } | undefined;
         if (!lg) throw new Error("no league synced -- run discover_leagues/league_sync in the app first.");
-        const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${lg.league_id}?view=mSettings&view=mTeam`;
+        const url = `${ESPN_READS_BASE}/seasons/${season}/segments/0/leagues/${lg.league_id}?view=mSettings&view=mTeam`;
         payload = JSON.parse(await bridgeFetch(url));   // READ-ONLY: a GET through the app's session
       }
       const fmt = formatFromEspnSettings(payload);

@@ -51,9 +51,9 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
    ```
    npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
    ```
-   Expect **~33%** championships / ~94% playoffs. A very different number means an input drifted --
-   find it before drafting. Shipped levers (2026-09-05): **aggr 0.7, benchDiscount 0.25,
-   starterReserve 4, maxShare 0.25, premium 2**, all positional multipliers 1.0, inflation ON.
+   Expect **~42%** championships / ~97% playoffs. A very different number means an input drifted --
+   find it before drafting. Shipped levers: **aggr 0.7, benchDiscount 0.35, starterReserve 4,
+   maxShare 0.25, premium 2, consensusBlend 1**, all positional multipliers 1.0, inflation ON.
    `node scripts/read-config.mjs` prints what the engine will ACTUALLY use (stored config wins over
    code defaults). `ff sim` is a season-points proxy only -- never pick the config from it.
 4. **Generate the cheat sheet:** `npm run ff -- cheatsheet` -> `data/cheatsheet.md`. Keep it open.
@@ -129,9 +129,9 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
 - **Every lever has a CLI flag, derived from `LEVER_SPECS`** (`src/draft/levers.ts`) -- there is no
   hand-maintained flag list to fall out of sync, so a lever added there is measurable by the backtest
   immediately. Current set: `--tier-break --max-kdst --starter-reserve --bench-reserve --max-share
-  --aggr --premium --sleeper-threshold --bench-discount --mult-qb --mult-rb --mult-wr --mult-te`.
+  --aggr --premium --sleeper-threshold --bench-discount --consensus-blend --mult-qb --mult-rb --mult-wr --mult-te`.
   Shipped defaults are **aggr 0.7 / starterReserve 4 / maxShare 0.25 / premium 2 / benchDiscount
-  0.25**, multipliers 1.0 (higher reserve = more balanced/less concentration). These are the
+  0.35 / consensusBlend 1**, multipliers 1.0 (higher reserve = more balanced/less concentration). These are the
   backtested winners; `node scripts/read-config.mjs` prints what the engine will ACTUALLY use.
 - `--lever-off <key>` -- set one lever to its declared no-op value. Not every lever has one:
   `tierBreak`, `maxKDst`, `maxShare` and `sleeperThreshold` always do something, so they declare none
@@ -200,10 +200,11 @@ $200 auction; **half-PPR** -- the synced ESPN settings say `ppr: 0.5`). All comm
 ## What's validated vs not (trust the right things)
 
 - **Validated + shipped (2026-09-05):** independent+current values; **bid shading `aggr` 0.7** (the
-  winner's-curse correction, the largest single lever, ~+10pp); `benchDiscount` 0.25 (+4.4pp); live
+  winner's-curse correction, the largest single lever, ~+10pp); `benchDiscount` 0.35 (+4.4pp base,
+  re-optimised 0.25->0.35 for +1.1pp more); `consensusBlend` 1 (FFToday board blend, +2.8pp); live
   inflation ON, clamped [0.8,1.4] (+4.2pp); `starterReserve` 4 / `maxShare` 0.25; `premium` 2; all
-  positional multipliers 1.0. **~33% championships / 94% playoffs** on 25 scored seasons
-  (1999-2024), ~5x random, and it replicates on a 1999-2013 holdout no tuning ever saw.
+  positional multipliers 1.0. **~42% championships / 97% playoffs** on 25 scored seasons
+  (1999-2024), ~7x random, and it replicates on a 1999-2013 holdout no tuning ever saw.
   docs/validation.md. (The flagless arbiter reads 38.1% / 96% since Phase 2c rebuilt the bot field;
   the posture is the same one.)
 - **Measured FLAT under the honest arbiter (2026-09-09, Phase 3), and it changes what is worth
@@ -297,9 +298,10 @@ cd .. && bash scripts/bootstrap-machine.sh
 > than letting you discover it mid-setup.
 
 **End-to-end verified on a fresh clone:** bootstrap ran clean, all value gates passed, the ESPN
-config cross-check reported ALL MATCH, tests 72/72, and the backtest reproduced this machine
-EXACTLY -- 32.9% championships / 94% playoffs. The tuned levers arrived from code as designed
-(`aggr 0.7, benchDiscount 0.25, starterReserve 4, maxShare 0.25`).
+config cross-check reported ALL MATCH, the suite passed, and the backtest reproduced this machine
+deterministically -- ~42% championships / 97% playoffs with the shipped edges. The tuned levers
+arrive from code as designed (`aggr 0.7, benchDiscount 0.35, starterReserve 4, maxShare 0.25,
+consensusBlend 1`).
 
 **Travels with the repo (nothing to do):** the tuned levers -- they live in `src/draft/levers.ts`
 (`DEFAULT_LEVERS`) and a fresh `data/ff.db` is seeded from `DEFAULT_CONFIG`, so `aggr`,

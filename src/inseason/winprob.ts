@@ -48,6 +48,7 @@
  */
 import { optimalLineup, type RosterPlayer } from "./lineup.js";
 import { cholesky, normalCdf, teammateCorr, type CorrelationModel } from "../draft/bootstrap.js";
+import { round3 as r3 } from "../round3.js";
 
 // ---------------------------------------------------------------------------------------------
 // THE MARGINAL: a published band, read as a quantile function.
@@ -355,7 +356,6 @@ export interface WinProbResult {
 export const EVEN_BAND_PTS = 5;
 
 const r2 = (x: number): number => Math.round(x * 100) / 100;
-const r3 = (x: number): number => Math.round(x * 1000) / 1000;
 
 /** Points-per-simulation for a set of player indices. */
 function totalsOf(m: SampleMatrix, idx: number[]): Float64Array {

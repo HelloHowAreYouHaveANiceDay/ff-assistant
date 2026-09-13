@@ -48,7 +48,6 @@ function load(): Api {
     extractFn(SRC, "modelGraphEdges"),
     "return { modelGraphNodes, modelGraphEdges };",
   ].join("\n");
-  // eslint-disable-next-line no-new-func
   return new Function(src)() as Api;
 }
 

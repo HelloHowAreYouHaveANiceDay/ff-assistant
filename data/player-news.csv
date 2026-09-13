@@ -1,126 +1,136 @@
 player,pos,team,category,severity,detail,source,asof,url
-TreVeyon Henderson,RB,NE,injury,high,Out - Ankle,nflverse-injury,2026-09-10T01:20:45.135Z,
-Tory Horton,WR,SEA,injury,medium,Questionable - Hamstring,nflverse-injury,2026-09-10T01:20:45.136Z,
-Drake Maye,QB,NE,headline,low,Follow live: Drake Maye orchestrates drive to put Pats on the board,rss:espn,2026-09-10T02:10:13.000Z,https://www.espn.com/nfl/story/_/id/49799249/seattle-seahawks-vs-new-england-patriots-live-results-analysis-nfl-season-kickoff-super-bowl-lx-rematch
-Brock Bowers,TE,LV,headline,low,Sources: Raiders' Bowers has knee procedure; out 'a game or two',rss:espn,2026-09-10T00:37:05.000Z,https://www.espn.com/nfl/story/_/id/49884014/sources-brock-bowers-knee-miss-least-raiders-opener
-Ashton Jeanty,RB,LV,headline,low,Raiders get boost as RB Jeanty returns to practice,rss:espn,2026-09-10T00:37:06.000Z,https://www.espn.com/nfl/story/_/id/49884394/raiders-jeanty-returns-practice-two-week-absence
-Rashee Rice,WR,KC,headline,low,Facts vs. Feelings: Seven players who will get off to fast (or slow) starts in Week 1,rss:espn,2026-09-09T22:30:55.000Z,https://www.espn.com/fantasy/football/story/_/id/49880596/facts-vs-feelings-fantasy-advice-week-1
-Juwan Johnson,TE,NO,headline,low,Facts vs. Feelings: Seven players who will get off to fast (or slow) starts in Week 1,rss:espn,2026-09-09T22:30:55.000Z,https://www.espn.com/fantasy/football/story/_/id/49880596/facts-vs-feelings-fantasy-advice-week-1
-Baker Mayfield,QB,TB,headline,low,Grading the move: Why the Bucs gave Baker Mayfield the largest contract in franchise history,rss:espn,2026-09-10T01:27:05.000Z,https://www.espn.com/nfl/story/_/id/49872406/key-intel-grade
-Baker Mayfield,QB,TB,headline,low,From 'Ka-chow' to ka-ching: How Baker Mayfield found out about his new contract,rss:espn,2026-09-10T01:43:46.000Z,https://www.espn.com/nfl/story/_/id/49885155/tampa-bay-buccaneers-how-baker-mayfield-learned-new-contract-cars-movie
-Deshaun Watson,QB,CLE,headline,low,One thing Deshaun Watson has to improve to remain Browns' starting QB,rss:espn,2026-09-09T17:52:35.000Z,https://www.espn.com/nfl/story/_/id/49874096/one-thing-cleveland-browns-deshaun-watson-improve-remain-starting-quarterback-2026
-Josh Jacobs,RB,GB,headline,low,Expectations for Packers' MarShawn Lloyd with Josh Jacobs out,rss:espn,2026-09-09T17:52:35.000Z,https://www.espn.com/nfl/story/_/id/49869653/nfl-green-bay-packers-marshawn-lloyd-josh-jacobs-commissioner-exempt
-MarShawn Lloyd,RB,GB,headline,low,Expectations for Packers' MarShawn Lloyd with Josh Jacobs out,rss:espn,2026-09-09T17:52:35.000Z,https://www.espn.com/nfl/story/_/id/49869653/nfl-green-bay-packers-marshawn-lloyd-josh-jacobs-commissioner-exempt
-Eli Raridon,TE,NE,headline,low,In Super Bowl rematch; it's a Patriots rookie who surprisingly gets first TD of NFL season,rss:yahoo,2026-09-10T01:17:30.000Z,https://sports.yahoo.com/nfl/article/in-super-bowl-rematch-its-a-patriots-rookie-who-surprisingly-gets-first-td-of-nfl-season-011730032.html
-Sam Darnold,QB,SEA,headline,low,Patriots vs. Seahawks score; live updates: Sam Darnold questionable with hip injury; replaced by Drew Lock after opening drive,rss:yahoo,2026-09-09T22:20:00.000Z,https://sports.yahoo.com/nfl/live/patriots-vs-seahawks-score-live-updates-highlights-stats-where-to-watch-week-1-season-opener-super-bowl-lx-rematch-222000691.html
-Drake Maye,QB,NE,headline,low,Patriots take 7-0 lead on Drake Maye 2-yard touchdown pass,rss:yahoo,2026-09-10T01:12:19.000Z,https://sports.yahoo.com/articles/patriots-7-0-lead-drake-011219139.html
-Sam Darnold,QB,SEA,headline,low,Seahawks' Drew Lock replaces Sam Darnold after injury. What to know about backup QB,rss:yahoo,2026-09-10T01:01:09.000Z,https://sports.yahoo.com/articles/seahawks-drew-lock-replaces-sam-010109905.html
-Sean Tucker,RB,TB,headline,low,Buccaneers at Bengals: Initial injury report for Week 1,rss:yahoo,2026-09-10T00:57:29.000Z,https://sports.yahoo.com/articles/buccaneers-bengals-initial-injury-report-005729628.html
-Josh Allen,QB,BUF,headline,low,Oddsmakers rank every NFL starting QBs by point-spread value: How much is Sam Darnold worth?,rss:yahoo,2026-08-03T13:07:25.000Z,https://sports.yahoo.com/nfl/betting/article/oddsmakers-rank-every-nfl-starting-qbs-by-point-spread-value-how-much-is-sam-darnold-worth-130725555.html
-Sam Darnold,QB,SEA,headline,low,Oddsmakers rank every NFL starting QBs by point-spread value: How much is Sam Darnold worth?,rss:yahoo,2026-08-03T13:07:25.000Z,https://sports.yahoo.com/nfl/betting/article/oddsmakers-rank-every-nfl-starting-qbs-by-point-spread-value-how-much-is-sam-darnold-worth-130725555.html
-Sam Darnold,QB,SEA,headline,low,Sam Darnold limps off field with hip injury after first drive and heads to locker room; replaced by Drew Lock,rss:yahoo,2026-09-10T00:42:22.000Z,https://sports.yahoo.com/nfl/article/sam-darnold-limps-off-field-with-hip-injury-after-first-drive-and-heads-to-locker-room-replaced-by-drew-lock-004222706.html
-Sam Darnold,QB,SEA,headline,low,Seahawks quarterback Sam Darnold injured; replaced by Drew Lock,rss:yahoo,2026-09-10T00:44:11.000Z,https://sports.yahoo.com/articles/seahawks-quarterback-sam-darnold-injured-004411014.html
-Sam Darnold,QB,SEA,headline,low,Sam Darnold heads to locker room with hip injury,rss:yahoo,2026-09-10T00:42:05.000Z,https://sports.yahoo.com/articles/sam-darnold-heads-locker-room-004205648.html
-Sam Darnold,QB,SEA,headline,low,Sam Darnold injury update: Seahawks QB injures hip; leaves game vs. Patriots,rss:yahoo,2026-09-10T00:41:19.000Z,https://sports.yahoo.com/articles/sam-darnold-injury-seahawks-qb-004119869.html
-Sam Darnold,QB,SEA,headline,low,Sam Darnold injury: Seahawks QB to locker room after sack,rss:yahoo,2026-09-10T00:41:02.000Z,https://sports.yahoo.com/articles/sam-darnold-injury-seahawks-qb-004102363.html
-Malik Nabers,WR,NYG,headline,low,Malik Nabers looks ready for Week 1 game vs. Dallas Cowboys,rss:yahoo,2026-09-10T00:36:29.000Z,https://sports.yahoo.com/articles/malik-nabers-looks-ready-week-175736638.html
-Jaxon Smith-Njigba,WR,SEA,headline,low,Week 1 Yahoo Fantasy x Arena Club Slab Packs: Drake Maye; Jaxon Smith-Njigba among chase cards,rss:yahoo,2026-09-10T00:02:14.000Z,https://sports.yahoo.com/fantasy/article/week-1-yahoo-fantasy-x-arena-club-slab-packs-drake-maye-jaxon-smith-njigba-among-chase-cards-000214065.html
-Joe Burrow,QB,CIN,headline,low,The Ringer somehow has the Bengals QB room ranked 10th in the NFL,rss:yahoo,2026-09-09T23:57:05.000Z,https://sports.yahoo.com/articles/ringer-somehow-bengals-qb-room-235705162.html
-Joe Flacco,QB,CIN,headline,low,The Ringer somehow has the Bengals QB room ranked 10th in the NFL,rss:yahoo,2026-09-09T23:57:05.000Z,https://sports.yahoo.com/articles/ringer-somehow-bengals-qb-room-235705162.html
-Zachariah Branch,WR,ATL,headline,low,Michael Penix Jr. was a full participant in Falcons practice; and Zachariah Branch was limited,rss:yahoo,2026-09-09T22:57:50.000Z,https://sports.yahoo.com/articles/michael-penix-jr-full-participant-225750817.html
-Michael Penix Jr.,QB,ATL,headline,low,Michael Penix Jr. was a full participant in Falcons practice; and Zachariah Branch was limited,rss:yahoo,2026-09-09T22:57:50.000Z,https://sports.yahoo.com/articles/michael-penix-jr-full-participant-225750817.html
-Tory Horton,WR,SEA,headline,low,Nick Emmanwori; Tory Horton inactive for Seahawks vs. Patriots,rss:yahoo,2026-09-09T22:56:52.000Z,https://sports.yahoo.com/articles/nick-emmanwori-tory-horton-inactive-225652110.html
-Eli Stowers,TE,PHI,headline,low,Eagles Injury Report: Jonathan Greenard and Eli Stowers limited,rss:yahoo,2026-09-09T22:50:10.000Z,https://sports.yahoo.com/articles/eagles-injury-report-jonathan-greenard-225010883.html
-George Kittle,TE,SF,headline,low,49ers DT James Thompson returns to limited work; while Nick Bosa; George Kittle remain limited,rss:yahoo,2026-09-09T22:49:17.000Z,https://sports.yahoo.com/articles/49ers-dt-james-thompson-returns-224917271.html
-Brock Bowers,TE,LV,headline,low,NFL news; live updates: Brock Bowers to miss 'a game or 2' after undergoing knee procedure Tuesday; TreVeyon Henderson ruled out vs. Seahawks; while Malik Nabers practices in full Wednesday,rss:yahoo,2026-09-07T14:25:42.000Z,https://sports.yahoo.com/nfl/live/nfl-news-injury-updates-week-1-142542967.html
-Malik Nabers,WR,NYG,headline,low,NFL news; live updates: Brock Bowers to miss 'a game or 2' after undergoing knee procedure Tuesday; TreVeyon Henderson ruled out vs. Seahawks; while Malik Nabers practices in full Wednesday,rss:yahoo,2026-09-07T14:25:42.000Z,https://sports.yahoo.com/nfl/live/nfl-news-injury-updates-week-1-142542967.html
-TreVeyon Henderson,RB,NE,headline,low,NFL news; live updates: Brock Bowers to miss 'a game or 2' after undergoing knee procedure Tuesday; TreVeyon Henderson ruled out vs. Seahawks; while Malik Nabers practices in full Wednesday,rss:yahoo,2026-09-07T14:25:42.000Z,https://sports.yahoo.com/nfl/live/nfl-news-injury-updates-week-1-142542967.html
-CeeDee Lamb,WR,DAL,headline,low,George Pickens: Greg Newsome should feel how he feels; but we disagree,rss:yahoo,2026-09-09T22:38:18.000Z,https://sports.yahoo.com/articles/george-pickens-greg-newsome-feel-223818674.html
-George Pickens,WR,DAL,headline,low,George Pickens: Greg Newsome should feel how he feels; but we disagree,rss:yahoo,2026-09-09T22:38:18.000Z,https://sports.yahoo.com/articles/george-pickens-greg-newsome-feel-223818674.html
-Keaton Mitchell,RB,LAC,headline,low,Chargers vs. Cardinals Injury Report: Keaton Mitchell; Tuli Tuipulotu limited to start Week 1,rss:yahoo,2026-09-09T22:27:58.000Z,https://sports.yahoo.com/articles/chargers-vs-cardinals-injury-report-222758063.html
-Brock Bowers,TE,LV,headline,low,Brock Bowers injury: Raiders TE expected to miss time after having meniscus trim; per report,rss:cbs,2026-09-09T20:32:29.000Z,https://www.cbssports.com/nfl/news/brock-bowers-injury-raiders-te-expected-to-miss-time/
-J.J. McCarthy,QB,MIN,headline,low,Vikings name ex-top 10 pick J.J. McCarthy third quarterback for Week 1 vs. Packers; Carson Wentz backup,rss:cbs,2026-09-09T19:10:25.000Z,https://www.cbssports.com/nfl/news/vikings-name-ex-top-10-pick-j-j-mccarthy-third-quarterback-for-week-1-vs-packers-carson-wentz-backup/
-Puka Nacua,WR,LAR,headline,low,Agent's Take: George Pickens; Puka Nacua headline non-quarterbacks who are at a crossroads entering 2026,rss:cbs,2026-09-09T18:37:41.000Z,https://www.cbssports.com/nfl/news/agents-take-george-pickens-puka-nacua-headline-non-quarterbacks-who-are-at-a-crossroads-entering-2026/
-George Pickens,WR,DAL,headline,low,Agent's Take: George Pickens; Puka Nacua headline non-quarterbacks who are at a crossroads entering 2026,rss:cbs,2026-09-09T18:37:41.000Z,https://www.cbssports.com/nfl/news/agents-take-george-pickens-puka-nacua-headline-non-quarterbacks-who-are-at-a-crossroads-entering-2026/
-Joe Burrow,QB,CIN,headline,low,2026 NFL MVP odds; award best bets: Joe Burrow a runaway favorite; buy Will Anderson Jr. for DPOY; and more,rss:cbs,2026-09-08T21:30:23.000Z,https://www.cbssports.com/nfl/news/2026-nfl-mvp-odds-award-best-bets-joe-burrow-mvp/
-Fernando Mendoza,QB,LV,headline,low,2026 NFL Preseason All-Rookie Team: Fernando Mendoza; Caleb Downs headline selections,rss:cbs,2026-09-08T18:00:12.000Z,https://www.cbssports.com/nfl/news/2026-nfl-all-rookie-team/
-Drake Maye,QB,NE,headline,low,Patriots take 7-0 lead on Drake Maye 2-yard touchdown pass,rss:pft,2026-09-10T01:12:19.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/patriots-take-7-0-lead-on-drake-maye-2-yard-touchdown-pass
-Sam Darnold,QB,SEA,headline,low,Sam Darnold heads to locker room with hip injury,rss:pft,2026-09-10T00:42:05.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/sam-darnold-heads-to-locker-room-with-apparent-leg-injury
-George Kittle,TE,SF,headline,low,49ers DT James Thompson returns to limited work; while Nick Bosa; George Kittle remain limited,rss:pft,2026-09-09T22:49:17.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/49ers-dt-james-thompson-returns-to-limited-work-while-nick-bosa-george-kittle-remain-limited
-CeeDee Lamb,WR,DAL,headline,low,George Pickens: Greg Newsome should feel how he feels; but we disagree,rss:pft,2026-09-09T22:38:18.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/ceedee-lamb-greg-newsome-should-feel-how-he-feels-but-we-disagree
-George Pickens,WR,DAL,headline,low,George Pickens: Greg Newsome should feel how he feels; but we disagree,rss:pft,2026-09-09T22:38:18.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/ceedee-lamb-greg-newsome-should-feel-how-he-feels-but-we-disagree
-Ashton Jeanty,RB,LV,headline,low,Ashton Jeanty listed as full participant for Raiders,rss:pft,2026-09-09T22:21:59.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/ashton-jeanty-listed-as-full-participant-for-raiders
-Tyreek Hill,WR,FA,headline,low,Doctors recommend Tyreek Hill hold off on coming back until October,rss:pft,2026-09-09T21:42:15.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/doctors-recommend-tyreek-hill-hold-off-on-coming-back-until-october
-Baker Mayfield,QB,TB,headline,low,Inside the new Baker Mayfield deal,rss:pft,2026-09-09T21:36:16.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/inside-the-new-baker-mayfield-deal
-Deshaun Watson,QB,CLE,headline,low,Deshaun Watson relishes "opportunity" to prove he can still play,rss:pft,2026-09-09T21:25:46.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/deshaun-watson-relishes-opportunity-to-prove-he-can-still-play
-Ja'Marr Chase,WR,CIN,headline,low,Ja'Marr Chase; Tee Higgins; Shemar Stewart listed as full participants on Wednesday,rss:pft,2026-09-09T21:05:15.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/jamarr-chase-tee-higgins-shemar-stewart-listed-as-full-participants-on-wednesday
-Emeka Egbuka,WR,TB,headline,low,Emeka Egbuka full; Jalen McMillan limited at Buccaneers practice,rss:pft,2026-09-09T20:55:44.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/emeka-egbuka-full-jalen-mcmillan-limited-at-buccaneers-practice
-Jalen McMillan,WR,TB,headline,low,Emeka Egbuka full; Jalen McMillan limited at Buccaneers practice,rss:pft,2026-09-09T20:55:44.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/emeka-egbuka-full-jalen-mcmillan-limited-at-buccaneers-practice
-Malik Nabers,WR,NYG,headline,low,Malik Nabers has full practice; appears "ready to go" for season opener,rss:pft,2026-09-09T20:54:05.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/malik-nabers-has-full-practice-appears-ready-to-go-for-season-opener
-Alec Pierce,WR,IND,headline,low,Alec Pierce listed as limited on Wednesday,rss:pft,2026-09-09T20:50:07.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/alec-pierce-listed-as-limited-on-wednesday
-Alvin Kamara,RB,NO,headline,low,Cam Jordan won't play this week; Alvin Kamara returns to practice,rss:pft,2026-09-09T20:40:09.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/cam-jordan-wont-play-this-week-alvin-kamara-returns-to-practice
-Rome Odunze,WR,CHI,headline,low,Rome Odunze dealing with calf injury; Bears hopeful he'll play Week 1,rss:pft,2026-09-08T17:13:34.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/rome-odunze-dealing-with-foot-injury-bears-hopeful-hell-play-week-1
-Rome Odunze,WR,CHI,headline,low,Bears WR Rome Odunze limited in practice with calf injury,rss:pft,2026-09-09T20:35:47.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/bears-wr-rome-odunze-limited-in-practice-with-calf-injury
-Zay Flowers,WR,BAL,headline,low,Zay Flowers; Nnamdi Madubuike listed as limited in Ravens practice,rss:pft,2026-09-09T20:32:35.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/zay-flowers-nnamdi-madubuike-listed-as-limited-in-ravens-practice
-Kenyon Sadiq,TE,NYJ,headline,low,Breece Hall; Kenyon Sadiq listed as full participants in Jets practice,rss:pft,2026-09-09T20:16:37.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/breece-hall-kenyon-sadiq-fully-participate-in-jets-practice
-Baker Mayfield,QB,TB,headline,low,Vikings' struggles after letting Sam Darnold walk may have convinced Buccaneers to sign Baker Mayfield to $165M extension,rss:yardbarker,2026-09-09T20:57:52.000Z,https://www.yardbarker.com/nfl/articles/vikings_struggles_after_letting_sam_darnold_walk_may_have_convinced_buccaneers_to_sign_baker_mayfield_to_165m_extension/s1_13132_44278438
-Sam Darnold,QB,SEA,headline,low,Vikings' struggles after letting Sam Darnold walk may have convinced Buccaneers to sign Baker Mayfield to $165M extension,rss:yardbarker,2026-09-09T20:57:52.000Z,https://www.yardbarker.com/nfl/articles/vikings_struggles_after_letting_sam_darnold_walk_may_have_convinced_buccaneers_to_sign_baker_mayfield_to_165m_extension/s1_13132_44278438
-Josh Jacobs,RB,GB,headline,low,Packers' plan at running back revealed with Josh Jacobs situation in flux,rss:yardbarker,2026-09-09T21:44:50.000Z,https://www.yardbarker.com/nfl/articles/packers_plan_at_running_back_revealed_with_josh_jacobs_situation_in_flux/s1_13132_44278769
-Aaron Rodgers,QB,PIT,headline,low,Aaron Rodgers had explicit demands for one Steelers rookie,rss:yardbarker,2026-09-09T21:44:50.000Z,https://www.yardbarker.com/nfl/articles/aaron_rodgers_had_explicit_demands_for_one_steelers_rookie/s1_13132_44282708
-Sam Darnold,QB,SEA,headline,low,Sam Darnold suffers injury; limps off field after Seahawks' first drive,rss:yardbarker,2026-09-10T01:12:25.000Z,https://www.yardbarker.com/nfl/articles/sam_darnold_suffers_injury_limps_off_field_after_seahawks_first_drive/s1_13132_44284287
-Garrett Wilson,WR,NYJ,headline,low,Jets' Garrett Wilson responds to perceived snub,rss:yardbarker,2026-09-09T21:44:50.000Z,https://www.yardbarker.com/nfl/articles/jets_garrett_wilson_responds_to_perceived_snub/s1_13132_44281148
-Baker Mayfield,QB,TB,headline,low,Baker Mayfield was watching a classic Pixar movie while agreeing to contract extension,rss:yardbarker,2026-09-09T23:32:28.000Z,https://www.yardbarker.com/nfl/articles/baker_mayfield_was_watching_a_classic_pixar_movie_while_agreeing_to_contract_extension/s1_13132_44283043
-Brandon Aiyuk,WR,SF,headline,low,Brandon Aiyuk might still land with one of two desperate teams,rss:yardbarker,2026-09-09T21:44:45.000Z,https://www.yardbarker.com/nfl/articles/brandon_aiyuk_might_still_land_with_one_of_two_desperate_teams/s1_13132_44281688
-Aaron Rodgers,QB,PIT,headline,low,Steelers' Aaron Rodgers has opportunity to return to Super Bowl,rss:yardbarker,2026-09-09T21:11:02.000Z,https://www.yardbarker.com/nfl/articles/steelers_aaron_rodgers_has_opportunity_to_return_to_super_bowl/s1_13132_44283415
-Kyler Murray,QB,MIN,headline,low,Kyler Murray beating J.J. McCarthy in QB battle came down to one deciding factor,rss:yardbarker,2026-09-09T21:34:11.000Z,https://www.yardbarker.com/nfl/articles/kyler_murray_beating_jj_mccarthy_in_qb_battle_came_down_to_one_deciding_factor/s1_13132_44283304
-J.J. McCarthy,QB,MIN,headline,low,Kyler Murray beating J.J. McCarthy in QB battle came down to one deciding factor,rss:yardbarker,2026-09-09T21:34:11.000Z,https://www.yardbarker.com/nfl/articles/kyler_murray_beating_jj_mccarthy_in_qb_battle_came_down_to_one_deciding_factor/s1_13132_44283304
-Jordan Love,QB,GB,headline,low,Jordan Love is unbothered by Micah Parsons' absence vs. Vikings,rss:yardbarker,2026-09-09T23:23:29.000Z,https://www.yardbarker.com/nfl/articles/jordan_love_is_unbothered_by_micah_parsons_absence_vs_vikings/s1_13132_44283970
-Ashton Jeanty,RB,LV,headline,low,Positive development emerges for Raiders' Ashton Jeanty,rss:yardbarker,2026-09-09T23:45:07.000Z,https://www.yardbarker.com/nfl/articles/positive_development_emerges_for_raiders_ashton_jeanty/s1_13132_44284107
-TreVeyon Henderson,RB,NE,headline,low,Replacements for TreVeyon Henderson in Patriots-Seahawks matchup,rss:yardbarker,2026-09-09T21:13:14.000Z,https://www.yardbarker.com/nfl/articles/replacements_for_treveyon_henderson_in_patriots_seahawks_matchup/s1_13132_44283213
-Deshaun Watson,QB,CLE,headline,low,Browns to make 'inevitable' Shedeur Sanders move after Deshaun Watson decision,rss:yardbarker,2026-09-09T21:44:45.000Z,https://www.yardbarker.com/nfl/articles/browns_to_make_inevitable_shedeur_sanders_move_after_deshaun_watson_decision/s1_13132_44281388
-Shedeur Sanders,QB,CLE,headline,low,Browns to make 'inevitable' Shedeur Sanders move after Deshaun Watson decision,rss:yardbarker,2026-09-09T21:44:45.000Z,https://www.yardbarker.com/nfl/articles/browns_to_make_inevitable_shedeur_sanders_move_after_deshaun_watson_decision/s1_13132_44281388
-Michael Mayer,TE,LVR,trending,medium,trending added across leagues (Sleeper #1; 1284030 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Roschon Johnson,RB,CHI,trending,medium,trending added across leagues (Sleeper #2; 267936 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Devaughn Vele,WR,NOS,trending,medium,trending added across leagues (Sleeper #3; 218701 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Darren Waller,TE,CAR,trending,medium,trending added across leagues (Sleeper #5; 183051 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Malik Davis,RB,DAL,trending,medium,trending added across leagues (Sleeper #6; 168066 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-AJ Barner,TE,SEA,trending,medium,trending added across leagues (Sleeper #7; 165258 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Tank Dell,WR,HOU,trending,medium,trending added across leagues (Sleeper #8; 135552 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Mark Andrews,TE,BAL,trending,medium,trending added across leagues (Sleeper #9; 127863 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Juwan Johnson,TE,NOS,trending,low,trending added across leagues (Sleeper #12; 107200 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Tre Tucker,WR,LVR,trending,low,trending added across leagues (Sleeper #13; 96906 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Kaelon Black,RB,SFO,trending,low,trending added across leagues (Sleeper #14; 93044 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-MarShawn Lloyd,RB,GBP,trending,low,trending added across leagues (Sleeper #15; 90486 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Chris Bell,WR,MIA,trending,low,trending added across leagues (Sleeper #16; 83111 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Tyler Allgeier,RB,ARI,trending,low,trending added across leagues (Sleeper #17; 79260 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Charlie Kolar,TE,LAC,trending,low,trending added across leagues (Sleeper #18; 73488 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Terrance Ferguson,TE,LAR,trending,low,trending added across leagues (Sleeper #19; 68320 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Caleb Douglas,WR,MIA,trending,low,trending added across leagues (Sleeper #20; 65032 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Malachi Fields,WR,NYG,trending,low,trending added across leagues (Sleeper #22; 59795 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Justice Hill,RB,BAL,trending,low,trending added across leagues (Sleeper #23; 58734 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Odell Beckham,WR,NYG,trending,low,trending added across leagues (Sleeper #24; 58380 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Jalen Nailor,WR,LVR,trending,low,trending added across leagues (Sleeper #25; 52821 moves),sleeper:add,2026-09-10T01:20:46.184Z,
-Roschon Johnson,RB,CHI,trending,medium,trending dropped across leagues (Sleeper #1; 163784 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Oronde Gadsden,TE,LAC,trending,medium,trending dropped across leagues (Sleeper #3; 90670 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Kenyon Sadiq,TE,NYJ,trending,medium,trending dropped across leagues (Sleeper #4; 87471 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Darius Slayton,WR,NYG,trending,medium,trending dropped across leagues (Sleeper #5; 84756 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Brenton Strange,TE,JAC,trending,medium,trending dropped across leagues (Sleeper #6; 82332 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Michael Mayer,TE,LVR,trending,medium,trending dropped across leagues (Sleeper #7; 77832 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Alvin Kamara,RB,NOS,trending,medium,trending dropped across leagues (Sleeper #8; 77136 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Cyrus Allen,WR,KCC,trending,medium,trending dropped across leagues (Sleeper #9; 71328 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Jaydon Blue,RB,PHI,trending,medium,trending dropped across leagues (Sleeper #10; 68872 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Tyreek Hill,WR,FA,trending,low,trending dropped across leagues (Sleeper #11; 67336 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Travis Hunter,WR,JAC,trending,low,trending dropped across leagues (Sleeper #12; 64074 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Keaton Mitchell,RB,LAC,trending,low,trending dropped across leagues (Sleeper #13; 63540 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Kaelon Black,RB,SFO,trending,low,trending dropped across leagues (Sleeper #14; 62272 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Malik Davis,RB,DAL,trending,low,trending dropped across leagues (Sleeper #15; 61830 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Malik Washington,WR,MIA,trending,low,trending dropped across leagues (Sleeper #16; 52712 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Emmett Johnson,RB,KCC,trending,low,trending dropped across leagues (Sleeper #17; 52551 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Chris Rodriguez,RB,JAC,trending,low,trending dropped across leagues (Sleeper #18; 50949 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Tank Bigsby,RB,PHI,trending,low,trending dropped across leagues (Sleeper #19; 50820 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Omar Cooper Jr.,WR,NYJ,trending,low,trending dropped across leagues (Sleeper #20; 50616 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Darren Waller,TE,CAR,trending,low,trending dropped across leagues (Sleeper #21; 49590 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Jalen Nailor,WR,LVR,trending,low,trending dropped across leagues (Sleeper #22; 49140 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Brian Robinson,RB,ATL,trending,low,trending dropped across leagues (Sleeper #23; 48312 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Josh Jacobs,RB,GBP,trending,low,trending dropped across leagues (Sleeper #24; 47280 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
-Fernando Mendoza,QB,LVR,trending,low,trending dropped across leagues (Sleeper #25; 47088 moves),sleeper:drop,2026-09-10T01:20:46.208Z,
+Jeremiyah Love,RB,ARI,injury,medium,Questionable - Ankle,nflverse-injury,2026-09-13T10:35:52.489Z,
+Tua Tagovailoa,QB,ATL,injury,high,Out - Oblique,nflverse-injury,2026-09-13T10:35:52.489Z,
+Michael Penix Jr.,QB,ATL,injury,high,Out - Knee,nflverse-injury,2026-09-13T10:35:52.489Z,
+Devontez Walker,WR,BAL,injury,medium,Questionable - Groin,nflverse-injury,2026-09-13T10:35:52.489Z,
+Ty Johnson,RB,BUF,injury,medium,Questionable - Hamstring,nflverse-injury,2026-09-13T10:35:52.489Z,
+Tyson Bagent,QB,CHI,injury,medium,Questionable - Back,nflverse-injury,2026-09-13T10:35:52.489Z,
+Rome Odunze,WR,CHI,injury,medium,Questionable - Calf,nflverse-injury,2026-09-13T10:35:52.489Z,
+Malik Davis,RB,DAL,injury,high,Out - Hip,nflverse-injury,2026-09-13T10:35:52.489Z,
+LeQuint Allen Jr.,RB,JAX,injury,medium,Questionable - Hip,nflverse-injury,2026-09-13T10:35:52.489Z,
+Brock Bowers,TE,LV,injury,high,Out - Knee,nflverse-injury,2026-09-13T10:35:52.489Z,
+TreVeyon Henderson,RB,NE,injury,high,Out - Ankle,nflverse-injury,2026-09-13T10:35:52.489Z,
+Alvin Kamara,RB,NO,injury,medium,Questionable - Knee,nflverse-injury,2026-09-13T10:35:52.489Z,
+Audric Estimé,RB,NO,injury,high,Out - Thigh,nflverse-injury,2026-09-13T10:35:52.489Z,
+Oscar Delp,TE,NO,injury,high,Out - Hamstring,nflverse-injury,2026-09-13T10:35:52.489Z,
+Malik Nabers,WR,NYG,injury,medium,Questionable - Knee,nflverse-injury,2026-09-13T10:35:52.489Z,
+Tim Patrick,WR,NYJ,injury,high,Out - Groin,nflverse-injury,2026-09-13T10:35:52.489Z,
+Kene Nwangwu,RB,NYJ,injury,high,Doubtful - Back,nflverse-injury,2026-09-13T10:35:52.489Z,
+Eli Stowers,TE,PHI,injury,medium,Questionable - Hamstring,nflverse-injury,2026-09-13T10:35:52.489Z,
+Tory Horton,WR,SEA,injury,medium,Questionable - Hamstring,nflverse-injury,2026-09-13T10:35:52.489Z,
+Sean Tucker,RB,TB,injury,high,Doubtful - Hamstring,nflverse-injury,2026-09-13T10:35:52.489Z,
+Jalen McMillan,WR,TB,injury,high,Doubtful - Knee,nflverse-injury,2026-09-13T10:35:52.489Z,
+DeVonta Smith,WR,PHI,headline,low,15 predictions for NFL Week 1: Upset picks; fantasy sleepers; projected stat lines and more,rss:espn,2026-09-13T00:14:15.000Z,https://www.espn.com/nfl/story/_/id/49872076/week-1-predictions-upsets-fantasy-sleepers-stats-2026
+Lamar Jackson,QB,BAL,headline,low,Sources: Jackson won't have deal with Ravens before start of season,rss:espn,2026-09-13T05:38:41.000Z,https://www.espn.com/nfl/story/_/id/49915181/sources-lamar-jackson-reluctant-talk-deal-ravens
+Parker Washington,WR,JAC,headline,low,Source: Jags; WR Washington unlikely to agree to deal before season,rss:espn,2026-09-13T05:38:41.000Z,https://www.espn.com/nfl/story/_/id/49920927/source-jaguars-parker-washington-unlikely-agree-deal
+C.J. Stroud,QB,HOU,headline,low,Sources: Stroud; Texans to table extension talks amid looming QB market,rss:espn,2026-09-13T05:38:41.000Z,https://www.espn.com/nfl/story/_/id/49917836/sources-cj-stroud-texans-table-extension-talks
+Tucker Kraft,TE,GB,headline,low,Sources: Packers; TE Kraft reach 4-year extension worth up to $92M,rss:espn,2026-09-13T05:38:41.000Z,https://www.espn.com/nfl/story/_/id/49914334/sources-packers-tucker-kraft-agree-4-year-extension
+Brock Bowers,TE,LV,headline,low,Sources: Raiders TE Mayer lands $45M extension as Bowers sidelined,rss:espn,2026-09-13T05:38:41.000Z,https://www.espn.com/nfl/story/_/id/49914437/raiders-te-michael-mayer-gets-3-year-45m-extension-sources-say
+Josh Allen,QB,BUF,headline,low,14 more NFL Week 1 games; 14 matchup previews: We have predictions; picks and wild stats,rss:espn,2026-09-13T05:37:49.000Z,https://www.espn.com/nfl/story/_/id/49805531/week-1-picks-predictions-schedule-fantasy-odds-2026
+Jayden Daniels,QB,WAS,headline,low,14 more NFL Week 1 games; 14 matchup previews: We have predictions; picks and wild stats,rss:espn,2026-09-13T05:37:49.000Z,https://www.espn.com/nfl/story/_/id/49805531/week-1-picks-predictions-schedule-fantasy-odds-2026
+Kirk Cousins,QB,LV,headline,low,How Kirk Cousins is approaching Year 15 as a starter -- and mentor to the Raiders' young core,rss:espn,2026-09-12T12:52:03.000Z,https://www.espn.com/nfl/story/_/id/49904333/las-vegas-raiders-quarterback-kirk-cousins-year-15-mentor-starter
+Jayden Daniels,QB,WAS,headline,low,'He's a star': Why Commanders are expecting a big year for Jayden Daniels in 2026,rss:espn,2026-09-13T05:36:18.000Z,https://www.espn.com/nfl/story/_/id/49905762/washington-commanders-jayden-daniels-new-offense
+Saquon Barkley,RB,PHI,headline,low,Eagles' Saquon Barkley is 'going back to a little kid again' to recapture his 2024 dominance,rss:espn,2026-09-12T12:45:22.000Z,https://www.espn.com/nfl/story/_/id/49893820/can-philadelphia-eagles-saquon-barkley-recapture-2024-dominance
+Michael Pittman Jr.,WR,PIT,headline,low,Aaron Rodgers' favorite target? Michael Pittman Jr. debut. Things to watch in Steelers opener,rss:yahoo,2026-09-13T10:04:38.000Z,https://sports.yahoo.com/articles/aaron-rodgers-favorite-target-michael-100438512.html
+Malik Nabers,WR,NYG,headline,low,Is Malik Nabers playing vs. the Cowboys? Latest status update for Giants WR,rss:yahoo,2026-09-13T10:04:27.000Z,https://sports.yahoo.com/articles/malik-nabers-playing-vs-cowboys-100427516.html
+Aaron Rodgers,QB,PIT,headline,low,Steelers vs Falcons live updates: TV info; live stream; odds for NFL Week 1 game,rss:yahoo,2026-09-13T10:00:53.000Z,https://sports.yahoo.com/articles/steelers-vs-falcons-live-updates-100053404.html
+Courtland Sutton,WR,DEN,headline,low,Broncos captains show what leadership means in Denver,rss:yahoo,2026-09-13T10:00:00.000Z,https://sports.yahoo.com/articles/broncos-captains-show-leadership-means-100000833.html
+Wil Lutz,K,DEN,headline,low,Broncos captains show what leadership means in Denver,rss:yahoo,2026-09-13T10:00:00.000Z,https://sports.yahoo.com/articles/broncos-captains-show-leadership-means-100000833.html
+DeVonta Smith,WR,PHI,headline,low,Makai Lemon appreciates guidance from DeVonta Smith as his NFL career begins,rss:yahoo,2026-09-13T05:00:00.000Z,https://sports.yahoo.com/articles/makai-lemon-appreciates-guidance-devonta-050000905.html
+Makai Lemon,WR,PHI,headline,low,Makai Lemon appreciates guidance from DeVonta Smith as his NFL career begins,rss:yahoo,2026-09-13T05:00:00.000Z,https://sports.yahoo.com/articles/makai-lemon-appreciates-guidance-devonta-050000905.html
+Kyler Murray,QB,MIN,headline,low,Kyler Murray will be the ninth Vikings' starting QB since 2023,rss:yahoo,2026-09-13T02:45:45.000Z,https://sports.yahoo.com/articles/kyler-murray-ninth-vikings-starting-024545927.html
+Parker Washington,WR,JAC,headline,low,Report: Parker Washington; Jaguars unlikely to come to agreement,rss:yahoo,2026-09-13T00:40:28.000Z,https://sports.yahoo.com/articles/report-parker-washington-jaguars-unlikely-004028485.html
+Malik Nabers,WR,NYG,headline,low,Giants sign wide receiver Dalen Cambre from practice squad with Malik Nabers questionable,rss:yahoo,2026-09-13T00:36:53.000Z,https://sports.yahoo.com/articles/giants-sign-wide-receiver-dalen-003653096.html
+A.J. Brown,WR,NE,headline,low,Patriots place WR A.J. Brown on IR; officially sign DT DaQuan Jones,rss:yahoo,2026-09-13T00:12:08.000Z,https://sports.yahoo.com/articles/patriots-place-wr-j-brown-001208590.html
+Geno Smith,QB,NYJ,headline,low,Cade Klubnik ready for his Jets turn at QB — whenever it comes,rss:yahoo,2026-09-12T23:31:31.000Z,https://sports.yahoo.com/articles/cade-klubnik-ready-jets-turn-233131973.html
+Cade Klubnik,QB,NYJ,headline,low,Cade Klubnik ready for his Jets turn at QB — whenever it comes,rss:yahoo,2026-09-12T23:31:31.000Z,https://sports.yahoo.com/articles/cade-klubnik-ready-jets-turn-233131973.html
+Emeka Egbuka,WR,TB,headline,low,NFL anytime TD best bets: Our favorite picks for Week 1; including Emeka Egbuka,rss:cbs,2026-09-13T03:00:56.000Z,https://www.cbssports.com/nfl/news/nfl-anytime-td-best-bets-week-1/
+C.J. Stroud,QB,HOU,headline,low,Last minute best bets for NFL Week 1: Three underdogs are live; including C.J. Stroud and the Texans,rss:cbs,2026-09-13T02:00:53.000Z,https://www.cbssports.com/nfl/news/last-minute-best-bets-for-nfl-week-1/
+Michael Mayer,TE,LV,headline,low,Tucker Kraft; Michael Mayer join highest-paid tight ends with contract extensions,rss:cbs,2026-09-12T18:49:56.000Z,https://www.cbssports.com/nfl/news/tucker-kraft-agrees-to-contract-extension-packers/
+Amon-Ra St. Brown,WR,DET,headline,low,Lions restructure two contracts: What salary cap flexibility means for Sam LaPorta; Brian Branch extensions,rss:cbs,2026-09-12T17:21:38.000Z,https://www.cbssports.com/nfl/news/lions-restructure-two-contracts-salary-cap-flexibility/
+Malik Nabers,WR,NYG,headline,low,NFL Week 1 injuries: Giants' Malik Nabers; Bears' Rome Odunze listed as questionable,rss:cbs,2026-09-11T23:50:55.000Z,https://www.cbssports.com/nfl/news/nfl-week-1-injuries-tracker-rome-odunze-alvin-kamara/
+Rome Odunze,WR,CHI,headline,low,NFL Week 1 injuries: Giants' Malik Nabers; Bears' Rome Odunze listed as questionable,rss:cbs,2026-09-11T23:50:55.000Z,https://www.cbssports.com/nfl/news/nfl-week-1-injuries-tracker-rome-odunze-alvin-kamara/
+Jonathon Brooks,RB,CAR,headline,low,NFL Week 1 injuries: Giants' Malik Nabers; Bears' Rome Odunze listed as questionable,rss:cbs,2026-09-11T23:50:55.000Z,https://www.cbssports.com/nfl/news/nfl-week-1-injuries-tracker-rome-odunze-alvin-kamara/
+D'Andre Swift,RB,CHI,headline,low,Bears extend RB D'Andre Swift to three-year; $33.75 million deal; per report,rss:cbs,2026-09-11T20:03:55.000Z,https://www.cbssports.com/nfl/news/bears-re-sign-dandre-swift-to-three-year-deal/
+C.J. Stroud,QB,HOU,headline,low,Agent's Take: Jayden Daniels; C.J. Stroud and other quarterbacks who are at a crossroads entering 2026 season,rss:cbs,2026-09-11T18:04:36.000Z,https://www.cbssports.com/nfl/news/jayden-daniels-c-j-stroud-quarterbacks-at-crossroads-2026-nfl-season/
+Deshaun Watson,QB,CLE,headline,low,Agent's Take: Jayden Daniels; C.J. Stroud and other quarterbacks who are at a crossroads entering 2026 season,rss:cbs,2026-09-11T18:04:36.000Z,https://www.cbssports.com/nfl/news/jayden-daniels-c-j-stroud-quarterbacks-at-crossroads-2026-nfl-season/
+Tua Tagovailoa,QB,ATL,headline,low,Falcons rule out Tua Tagovailoa against Steelers; Cooper Rush to start at quarterback,rss:cbs,2026-09-11T18:07:49.000Z,https://www.cbssports.com/nfl/news/falcons-rule-out-tua-tagovailoa-vs-steelers-cooper-rush-to-start/
+Josh Allen,QB,BUF,headline,low,Week 1 2026 bold predictions: Can Josh Allen finally overcome his Houston woes?,rss:cbs,2026-09-11T17:51:53.000Z,https://www.cbssports.com/nfl/news/week-1-2026-bold-predictions-tua-tagovailoa-aaron-rodgers/
+A.J. Brown,WR,NE,headline,low,Patriots WR A.J. Brown headed to IR with high ankle sprain; next steps for New England,rss:cbs,2026-09-11T17:44:53.000Z,https://www.cbssports.com/nfl/news/patriots-a-j-brown-injured-reserve/
+Jalen Hurts,QB,PHI,headline,low,Will Brinson's NFL Week 1 predictions and picks: Best bets; player props; anytime touchdown scorers,rss:cbs,2026-09-11T16:33:31.000Z,https://www.cbssports.com/betting/news/will-brinsons-nfl-week-1-predictions-and-picks-best-bets-player-props-anytime-touchdown-scorers/
+Jeremiyah Love,RB,ARI,headline,low,Jeremiyah Love expected to play in Week 1 but questions remain about his workload,rss:cbs,2026-09-11T16:00:52.000Z,https://www.cbssports.com/nfl/news/jeremiyah-love-injury-update-cardinals-chargers/
+Aaron Rodgers,QB,PIT,headline,low,NFL Week 1 picks; odds; best bets: Aaron Rodgers beats Falcons; Broncos upset Patrick Mahomes and the Chiefs,rss:cbs,2026-09-11T13:49:06.000Z,https://www.cbssports.com/nfl/news/nfl-week-1-picks-odds-best-bets-steelers-broncos/
+A.J. Brown,WR,NE,headline,low,Patriots' A.J. Brown believed to have suffered high ankle sprain; expected to miss four weeks,rss:cbs,2026-09-10T23:58:23.000Z,https://www.cbssports.com/nfl/news/patriots-a-j-brown-injures-ankle-ruled-out/
+Kyler Murray,QB,MIN,headline,low,Kyler Murray will be the ninth Vikings' starting QB since 2023,rss:pft,2026-09-13T02:45:45.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/kyler-murray-will-be-the-ninth-vikings-starting-qb-since-2023
+C.J. Stroud,QB,HOU,headline,low,To no surprise; the Texans and C.J. Stroud will kick the contract can to 2027,rss:pft,2026-09-13T02:15:43.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/to-no-surprise-the-texans-and-c-j-stroud-will-kick-the-contract-can-to-2027
+Parker Washington,WR,JAC,headline,low,Report: Parker Washington; Jaguars unlikely to come to agreement,rss:pft,2026-09-13T00:40:28.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/report-parker-washington-jaguars-unlikely-to-come-to-agreement
+A.J. Brown,WR,NE,headline,low,Patriots place WR A.J. Brown on IR; officially sign DT DaQuan Jones,rss:pft,2026-09-13T00:12:08.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/patriots-place-wr-a-j-brown-on-ir-officially-sign-dt-daquan-jones
+Josh Jacobs,RB,GB,headline,low,Judge seals video in Josh Jacobs case,rss:pft,2026-09-12T23:27:09.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/judge-seals-video-in-josh-jacobs-case
+Eli Stowers,TE,PHI,headline,low,Eagles place second-round pick Eli Stowers on IR,rss:pft,2026-09-12T20:29:24.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/eagles-place-second-round-pick-eli-stowers-on-ir
+Audric Estime,RB,NO,headline,low,Saints put RB Audric Estime on IR,rss:pft,2026-09-12T19:52:43.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/saints-put-rb-audric-estime-on-ir
+Tyson Bagent,QB,CHI,headline,low,Bears sign QB Miller Moss to practice squad; elevate him for Sunday's game,rss:pft,2026-09-12T19:34:47.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/bears-sign-qb-miller-moss-to-practice-squad-elevate-him-for-sundays-game
+Amon-Ra St. Brown,WR,DET,headline,low,Amon-Ra St. Brown needs only 33 catches for most ever through six NFL seasons,rss:pft,2026-09-12T18:57:38.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/amon-ra-st-brown-needs-only-33-catches-for-most-ever-through-six-nfl-seasons
+Malik Davis,RB,DAL,headline,low,Cowboys place RB Malik Davis on injured reserve,rss:pft,2026-09-12T18:44:15.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/cowboys-place-rb-malik-davis-on-injured-reserve
+Michael Mayer,TE,LV,headline,low,Inside the Michael Mayer deal,rss:pft,2026-09-12T16:54:08.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/inside-the-michael-mayer-deal
+Justin Herbert,QB,LAC,headline,low,Jim Harbaugh: Justin Herbert will be remembered as the greatest quarterback ever,rss:pft,2026-09-12T16:09:57.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/jim-harbaugh-justin-herbert-will-be-remembered-as-the-greatest-quarterback-ever
+Michael Mayer,TE,LV,headline,low,Raiders; Michael Mayer agree to three-year extension,rss:pft,2026-09-12T15:09:00.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/raiders-michael-mayer-agree-to-three-year-extension
+Tucker Kraft,TE,GB,headline,low,Packers; Tucker Kraft agree to four-year extension,rss:pft,2026-09-12T15:01:00.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/packers-tucker-kraft-agree-to-four-year-extension
+Jahmyr Gibbs,RB,DET,headline,low,Jahmyr Gibbs needs one TD on Sunday to join 50-in-50 club,rss:pft,2026-09-12T13:41:39.000Z,https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/jahmyr-gibbs-needs-one-td-on-sunday-to-join-50-in-50-club
+Josh Allen,QB,BUF,headline,low,Bold predictions for NFL Week 1: Josh Allen stumbles; Dolphins surprise,rss:yardbarker,2026-09-13T05:16:02.000Z,https://www.yardbarker.com/nfl/articles/bold_predictions_for_nfl_week_1_josh_allen_stumbles_dolphins_surprise/s1_13132_44282768
+Brock Bowers,TE,LV,headline,low,Raiders bolster tight end room after Brock Bowers injury,rss:yardbarker,2026-09-12T21:33:20.000Z,https://www.yardbarker.com/nfl/articles/raiders_bolster_tight_end_room_after_brock_bowers_injury/s1_13132_44295822
+C.J. Stroud,QB,HOU,headline,low,Texans; C.J. Stroud both making smart move to put contract talks on hold,rss:yardbarker,2026-09-12T23:57:54.000Z,https://www.yardbarker.com/nfl/articles/texans_cj_stroud_both_making_smart_move_to_put_contract_talks_on_hold/s1_13132_44295902
+Deshaun Watson,QB,CLE,headline,low,Shedeur Sanders may not get a chance with Browns for a long time,rss:yardbarker,2026-09-13T00:33:23.000Z,https://www.yardbarker.com/nfl/articles/shedeur_sanders_may_not_get_a_chance_with_browns_for_a_long_time/s1_13132_44296543
+Shedeur Sanders,QB,CLE,headline,low,Shedeur Sanders may not get a chance with Browns for a long time,rss:yardbarker,2026-09-13T00:33:23.000Z,https://www.yardbarker.com/nfl/articles/shedeur_sanders_may_not_get_a_chance_with_browns_for_a_long_time/s1_13132_44296543
+Parker Washington,WR,JAC,headline,low,Jaguars' Parker Washington betting on himself after failed contract talks,rss:yardbarker,2026-09-13T01:07:15.000Z,https://www.yardbarker.com/nfl/articles/jaguars_parker_washington_betting_on_himself_after_failed_contract_talks/s1_13132_44296626
+Tua Tagovailoa,QB,ATL,headline,low,Former NFL HC believes Tua Tagovailoa has already decided to retire,rss:yardbarker,2026-09-13T05:14:27.000Z,https://www.yardbarker.com/nfl/articles/former_nfl_hc_believes_tua_tagovailoa_has_already_decided_to_retire/s1_13132_44295555
+Lamar Jackson,QB,BAL,headline,low,Ravens' Lamar Jackson contract extension will reportedly remain on hold,rss:yardbarker,2026-09-13T01:28:09.000Z,https://www.yardbarker.com/nfl/articles/ravens_lamar_jackson_contract_extension_will_reportedly_remain_on_hold/s1_13132_44296488
+A.J. Brown,WR,NE,headline,low,Patriots making expected A.J. Brown move after concerning injury report,rss:yardbarker,2026-09-12T04:54:17.000Z,https://www.yardbarker.com/nfl/articles/patriots_making_expected_aj_brown_move_after_concerning_injury_report/s1_13132_44291129
+Brandon Aiyuk,WR,SF,headline,low,Brandon Aiyuk might still land with one of two desperate teams,rss:yardbarker,2026-09-09T14:35:19.000Z,https://www.yardbarker.com/nfl/articles/brandon_aiyuk_might_still_land_with_one_of_two_desperate_teams/s1_13132_44281688
+Sam Darnold,QB,SEA,headline,low,Seahawks' Sam Darnold is dealing with an 'unusual' injury,rss:yardbarker,2026-09-12T15:22:55.000Z,https://www.yardbarker.com/nfl/articles/seahawks_sam_darnold_is_dealing_with_an_unusual_injury/s1_13132_44290806
+Tucker Kraft,TE,GB,headline,low,Packers show confidence in Tucker Kraft with massive extension,rss:yardbarker,2026-09-12T15:57:34.000Z,https://www.yardbarker.com/nfl/articles/packers_show_confidence_in_tucker_kraft_with_massive_extension/s1_13132_44294848
+Michael Mayer,TE,LV,headline,low,Raiders end bizarre trend with Michael Mayer contract extension,rss:yardbarker,2026-09-12T23:39:57.000Z,https://www.yardbarker.com/nfl/articles/raiders_end_bizarre_trend_with_michael_mayer_contract_extension/s1_13132_44294910
+Michael Mayer,TE,LVR,trending,medium,trending added across leagues (Sleeper #1; 311211 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Kaelon Black,RB,SFO,trending,medium,trending added across leagues (Sleeper #2; 71932 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Chris Bell,WR,MIA,trending,medium,trending added across leagues (Sleeper #3; 52661 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Demarcus Robinson,WR,SFO,trending,medium,trending added across leagues (Sleeper #4; 43200 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Tre Tucker,WR,LVR,trending,medium,trending added across leagues (Sleeper #5; 35448 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Malachi Fields,WR,NYG,trending,medium,trending added across leagues (Sleeper #6; 31410 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Cooper Rush,QB,ATL,trending,medium,trending added across leagues (Sleeper #7; 29312 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Devaughn Vele,WR,NOS,trending,medium,trending added across leagues (Sleeper #9; 25704 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Darren Waller,TE,CAR,trending,medium,trending added across leagues (Sleeper #10; 22653 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Alvin Kamara,RB,NOS,trending,low,trending added across leagues (Sleeper #11; 22544 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Darnell Mooney,WR,NYG,trending,low,trending added across leagues (Sleeper #12; 22050 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Keaton Mitchell,RB,LAC,trending,low,trending added across leagues (Sleeper #13; 21897 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Odell Beckham,WR,NYG,trending,low,trending added across leagues (Sleeper #15; 18424 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Justice Hill,RB,BAL,trending,low,trending added across leagues (Sleeper #16; 17991 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Seth McGowan,RB,IND,trending,low,trending added across leagues (Sleeper #17; 16336 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Jalen Nailor,WR,LVR,trending,low,trending added across leagues (Sleeper #18; 14751 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Samaje Perine,RB,CIN,trending,low,trending added across leagues (Sleeper #19; 13612 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Kenneth Gainwell,RB,TBB,trending,low,trending added across leagues (Sleeper #21; 11056 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Kyler Murray,QB,MIN,trending,low,trending added across leagues (Sleeper #22; 10840 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Mack Hollins,WR,NEP,trending,low,trending added across leagues (Sleeper #23; 10800 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Caleb Douglas,WR,MIA,trending,low,trending added across leagues (Sleeper #24; 10496 moves),sleeper:add,2026-09-13T10:35:53.872Z,
+Malik Davis,RB,DAL,trending,medium,trending dropped across leagues (Sleeper #1; 213993 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Roschon Johnson,RB,CHI,trending,medium,trending dropped across leagues (Sleeper #2; 35848 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Terrance Ferguson,TE,LAR,trending,medium,trending dropped across leagues (Sleeper #3; 18888 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Brenton Strange,TE,JAC,trending,medium,trending dropped across leagues (Sleeper #4; 17775 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Michael Mayer,TE,LVR,trending,medium,trending dropped across leagues (Sleeper #5; 15597 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Kenyon Sadiq,TE,NYJ,trending,medium,trending dropped across leagues (Sleeper #6; 12042 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Romeo Doubs,WR,NEP,trending,medium,trending dropped across leagues (Sleeper #7; 11664 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Alvin Kamara,RB,NOS,trending,medium,trending dropped across leagues (Sleeper #8; 11408 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Malik Washington,WR,MIA,trending,medium,trending dropped across leagues (Sleeper #9; 11216 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Oronde Gadsden,TE,LAC,trending,medium,trending dropped across leagues (Sleeper #10; 11205 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Keaton Mitchell,RB,LAC,trending,low,trending dropped across leagues (Sleeper #11; 10710 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Cyrus Allen,WR,KCC,trending,low,trending dropped across leagues (Sleeper #13; 10590 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Chris Rodriguez,RB,JAC,trending,low,trending dropped across leagues (Sleeper #14; 10377 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Darren Waller,TE,CAR,trending,low,trending dropped across leagues (Sleeper #15; 10359 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Darius Slayton,WR,FA,trending,low,trending dropped across leagues (Sleeper #16; 9342 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Tyreek Hill,WR,FA,trending,low,trending dropped across leagues (Sleeper #17; 9160 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Emmett Johnson,RB,KCC,trending,low,trending dropped across leagues (Sleeper #18; 8973 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Jaydon Blue,RB,PHI,trending,low,trending dropped across leagues (Sleeper #19; 8872 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Xavier Worthy,WR,KCC,trending,low,trending dropped across leagues (Sleeper #20; 8829 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Jalen Nailor,WR,LVR,trending,low,trending dropped across leagues (Sleeper #21; 8748 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+KC Concepcion,WR,CLE,trending,low,trending dropped across leagues (Sleeper #22; 8676 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Caleb Douglas,WR,MIA,trending,low,trending dropped across leagues (Sleeper #23; 8464 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Travis Hunter,WR,JAC,trending,low,trending dropped across leagues (Sleeper #24; 8388 moves),sleeper:drop,2026-09-13T10:35:53.914Z,
+Tank Bigsby,RB,PHI,trending,low,trending dropped across leagues (Sleeper #25; 8246 moves),sleeper:drop,2026-09-13T10:35:53.914Z,

@@ -21,8 +21,8 @@
  */
 import { bridgeAvailable, bridgeFetch } from "../browser/appBridge.js";
 import { nowIso, type DB } from "../db/db.js";
+import { ESPN_READS_BASE as HOST } from "../data/espnApi.js";
 
-const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 /** ESPN numbers positions; 4 is a tight end. Same table src/league/espn.ts keeps. */
 const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
 

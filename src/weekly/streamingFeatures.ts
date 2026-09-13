@@ -513,18 +513,3 @@ export function streamCoverage(db: DB, seasons?: number[]): { season: number; ro
 /** The streaming columns for one (season, week), keyed by feat_key. Used by the serving path so the
  *  projector sees the same columns the trainer fitted -- a column the loader silently omits would
  *  fall back on its declared `missing` default and produce a plausible, wrong number. */
-export function loadStreamRows(db: DB, season: number, week?: number): Map<string, Record<string, number | null>> {
-  const present = presentStreamFields(db);
-  const out = new Map<string, Record<string, number | null>>();
-  if (!present.length) return out;
-  const rows = db.prepare(
-    `SELECT feat_key, ${present.join(", ")} FROM feat_player_week_stream
-      WHERE season = ?${week == null ? "" : " AND week = ?"}`,
-  ).all(...(week == null ? [season] : [season, week])) as Record<string, unknown>[];
-  for (const r of rows) {
-    out.set(String(r.feat_key), Object.fromEntries(
-      STREAM_FIELD_NAMES.map((c) => [c, r[c] == null ? null : Number(r[c])]),
-    ));
-  }
-  return out;
-}

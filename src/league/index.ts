@@ -18,18 +18,6 @@ export type { LeaguePlayer, LeagueTeam, FreeAgent, LeagueShape, LeagueProvider, 
 
 export const NFL_WEEKS = 17;
 
-/** The fantasy playoff weeks. Shared so nothing hardcodes 15/16/17 -- a 13-week regular season or a
- *  4-round playoff shifts them, and a consumer that guessed would be silently wrong, not broken.
- *
- *  PREFER `leagueFormat(db).playoffWeeks`: this fills the season out to the last NFL week, which is
- *  right only when the bracket happens to run to the end of the year. The format block carries the
- *  weeks ESPN actually schedules the bracket in. */
-export const playoffWeeksFor = (regWeeks: number, nflWeeks = NFL_WEEKS): number[] => {
-  const out: number[] = [];
-  for (let w = regWeeks + 1; w <= nflWeeks; w++) out.push(w);
-  return out;
-};
-
 /** How many single-elimination rounds a field of `playoffTeams` needs (byes for the top seeds). */
 export const playoffRounds = (playoffTeams: number): number => Math.ceil(Math.log2(Math.max(2, playoffTeams)));
 
@@ -283,8 +271,3 @@ export async function openLeague(opts: { dbPath?: string; points?: string } = {}
   };
 }
 
-/** Free agents with our projection attached -- same enrichment as rosters. */
-export async function freeAgentsWithProj(lg: OpenLeague, limit?: number) {
-  const fas = await lg.provider.freeAgents(limit);
-  return fas.map((f) => ({ ...f, proj: lg.proj(f.name), team: lg.teamOf(f.name) })).filter((f) => f.proj > 0);
-}

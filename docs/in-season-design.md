@@ -10,9 +10,9 @@ sharper projections. So the design centers on ONE **projection layer** feeding b
 Most of this document is a plan. This section is what exists, so a reader does not go looking for the
 plan and find the code, or the other way round.
 
-**`src/inseason/copilot.ts` -- the nine in-season decisions as pure functions over one `SimContext`.**
+**`src/inseason/copilot.ts` -- the ten in-season decisions as pure functions over one `SimContext`.**
 Season odds, weekly lineup, waivers, trade check, trade finder, handcuffs, depth risk, power
-rankings, playoff SOS. Each takes a context plus plain arguments and returns structured JSON; none of
+rankings, playoff SOS, and streaming (whom to start/add at ONE position out of the free-agent pool). Each takes a context plus plain arguments and returns structured JSON; none of
 them opens a file or a database, which is what makes the whole surface testable on a fixture with no
 store, no app and no league (`test/copilot.test.ts`, 33 tests).
 
@@ -57,7 +57,7 @@ fixes the callers.
    Every scored row carries `playoffsPp`, `playoffWeekPts` and `titlePp`, plus `rankValue` -- whichever
    of the first two the active regime ranks on -- and all three come from ONE simulation of each
    state, so two of them can never be correlated across different samples. The noise floor is
-   computed for the PRIMARY. The FAAB rule of thumb is now priced per point of PLAYOFF probability
+   computed for the PRIMARY. The FAAB bid is now priced (data/faab-model.json, fitted on real waiver claims) per point of PLAYOFF probability
    and its own text says the quantity changed.
 2. **ASSUMPTIONS TRAVEL WITH THE NUMBER.** `{schedule, basis, trials, seeds, artifact, asOf}` is on
    every result. An LLM handed a bare "6.5%" quotes it as a fact; handed it with its caveats attached
@@ -74,7 +74,7 @@ themselves: the availability map (`player_status` AND high-severity injury news,
 on different cycles and the stale one is not always the same), the depth chart, consensus values, the
 posted lines, the data stamp. Everything opens `{readonly: true}`.
 
-**`src/inseason/copilotActions.ts`** is the single dispatcher `ff copilot <verb>` and the nine MCP
+**`src/inseason/copilotActions.ts`** is the single dispatcher `ff copilot <verb>` and the ten MCP
 tools both go through, so a number a terminal prints and a number the Assistant quotes are the same
 computation. It is also where the D3 write lives.
 
@@ -96,13 +96,12 @@ that -- a call that reaches the same work directly must leave the log empty.
 
 - **No ESPN writes, and no stubs for them.** A stub named `set_lineup` on the tool surface would read
   to a model as a capability.
-- **`lineupRecommend` goes through the weekly projector, and the artifact behind it is the floor**
-  (integration pass 2, 2026-09-08). It calls `projectWeekly` (`src/weekly/projector.ts`) with the
-  SHIPPED season-line-only artifact, which projects the season line exactly -- so no number moved
-  when the seam landed, by construction. It still has no matchup, form or weather in it, because the
-  trained artifact failed its pre-registered coverage band (`docs/weekly.md`). What changed is that
-  the day a trained artifact passes, the lineup improves by swapping one file rather than by a
-  rewrite. A roster player the projector has no row for falls back to the season line divided by 17
+- **`lineupRecommend` goes through the weekly projector; since D11 (2026-09-12) the artifact behind it
+  is the FORM model** (`weekly-artifact.json`, all six positions), which carries the player's own
+  trailing form and matchup rather than the flat season line. It calls `projectWeekly`
+  (`src/weekly/projector.ts`); the form model beat the prior serve on accuracy and ships as an owner
+  override of the ~0.001 coverage-gate miss (`docs/weekly.md`, `docs/decisions.md` D11). Swapping the
+  served artifact is one line in `WEEKLY_SERVE` -- which is exactly what D11 did. A roster player the projector has no row for falls back to the season line divided by 17
   and `assumptions.basisNote` NAMES him; `basis` is `weekly-model` only when every player came from
   the projector, so a half-weekly, half-flat lineup cannot report itself as one thing.
 - **`lineupRecommend` now takes an OBJECTIVE, and its default did not change** (Track H, 2026-09-09).
@@ -126,7 +125,7 @@ that -- a call that reaches the same work directly must leave the log empty.
   every player's band is the same multiple of his own season line, so there is no relative shape to
   trade and the objective is inert by construction. Revisit the day an artifact PASSES that gate.
 
-  `ff copilot lineup --objective winprob` does not exist yet -- the dispatcher was outside Track H's
+  `ff copilot lineup --objective winprob` now exists (src/ff.ts, copilotActions.ts) -- it was outside Track H's
   file fence. `scripts/winprob-lineup.mjs` is the caller, reaching the same function through the same
   loaders with the same action-log write.
 - **The store CAN now tell you what week it is** (integration pass 2). The data track's
@@ -138,7 +137,7 @@ that -- a call that reaches the same work directly must leave the log empty.
   The comparison is on the LOCAL date: in UTC every evening after 8pm ET lands on the next calendar
   day, and on a week's last kickoff day that hands back the NEXT week. A store with no schedule rows
   still gets the old `default` answer, said out loud.
-- **FAAB guidance is a stated rule of thumb**, not a fitted value: there is no historical bid data in
+- **FAAB guidance is FITTED** (data/faab-model.json, on 794 real waiver claims), with the rule of thumb kept only as a labeled fallback; historical bid data now lives in
   this repo to fit it on, so the rule travels with the number.
 - **Per-owner targeting is still not trustworthy** (CLAUDE.md): manager profiles have no
   out-of-sample signal, so nothing here tries to model what a specific opponent will accept. The
@@ -233,3 +232,49 @@ governor; desktop notifications of every lineup/waiver move and why.
 1. Shared projection layer (weekly + ROS), independent source. 2. Weekly lineup optimizer + backtest
 of waiver value. 3. Waiver/FAAB automation. 4. Trade copilot. Draft-bidder inflation/nomination
 (docs/edges 3) can proceed in parallel since it reuses the same projection layer.
+
+## Continuous in-season updates (2026-09-12)
+
+Actuals are not static -- live scoring, then the official Tue/Wed finals, then stat corrections all
+week -- and every change ripples into roster values, playoff odds, and therefore the waiver/trade
+recommendations. The loop that keeps everything current, refresh-only and nflverse-canonical (the two
+decisions taken):
+
+- **`ff sync-actuals`** re-scores the CURRENT season from the cache-bypassed nflverse feed through the
+  same `scoreSeasonWeekly` path the backtest uses (one scoring implementation, no drift), into its own
+  `data/current-actuals.csv` -- **never** `history-weekly.csv`, which is a frozen backtest input in the
+  draft deps fingerprint. It is **change-gated** on a content hash of the season slice (kept in
+  `data/actuals-state.json`), so it is a cheap no-op until a game finalizes or a correction lands.
+- **The forward board** (`src/weekly/forwardBoard.ts`) is the in-season counterpart to the actuals-
+  capped backtest builder in `src/features/build.ts`: it writes `feat_player_week` for the board
+  population x the schedule across ALL remaining weeks (so the projector can see the playoff weeks),
+  merges the actuals as `pts` (NULL for unplayed weeks), and rebuilds `feat_player_week_model`. It
+  reproduces the same `(season, week, feat_key)` universe `feat_player_week_stream` carries, keeping
+  the two 1:1.
+- **`ff refresh-decisions`** (also fired by sync-actuals on change) recomputes `season_odds`,
+  `waiver_targets`, `trade_finder` over ONE shared context and stores them in `decision_snapshot`,
+  stamped with the actuals hash and the schedule basis -- so a reader sees the current answer, and
+  when it was last refreshed, without re-simulating. Refresh-only: it recomputes advice, never a move.
+- **Cadence, IN THE APP (2026-09-12):** the Electron main process runs a self-rescheduling timer that,
+  each cycle, re-reads a stored schedule and -- if it is ON -- runs `ff inseason-tick`, which runs the
+  routines the schedule names. So the loop runs exactly while the app is open, needs no OS-level setup,
+  and picks up a config change on the next cycle without a restart. `scripts/inseason-poll.ps1` under
+  Windows Task Scheduler remains the headless alternative for when the app is closed.
+  - **Routines** are the scheduler's unit of work, a named registry in `src/inseason/routines.ts`:
+    `actuals` (sync-actuals: ingest + board + decisions-on-change), `scorecard` (freeze/score),
+    `decisions` (recompute the snapshot without new actuals), `roster` (fast league sync -- needs the
+    app bridge, so off by default). The registry lives in the engine, so the app, the CLI and the
+    copilot all agree on what a routine IS.
+  - **The copilot sets the routines** because the schedule is a stored `settings` row, not code:
+    `ff schedule --enable --every 15 --routines actuals,scorecard,decisions` (or the `schedule-get` /
+    `schedule-set` serve RPC the renderer's settings panel and the copilot both use). Changing which
+    routines run, or the cadence, is a data change the next tick obeys. Default is OFF (opt-in); the
+    cadence is clamped to [5, 720] minutes and unknown routine names are dropped before they can reach
+    the timer. Each tick is refresh-only -- it recomputes data and advice, never makes an ESPN move.
+
+**Update (2026-09-12, D11):** the trained FORM model now ships (`weekly-artifact.json`, all six
+positions), so ingested actuals DO shift future-week projections through trailing form -- the earlier
+"season-line-only, actuals don't move projections" limit is closed. The form model beats the prior
+serve on accuracy but misses the calibration gate by ~0.001, so it ships as an explicit owner override
+under continuous scorecard audit (see `docs/decisions.md` D11). The loop keeps the data, board,
+scorecard, and now the served projections current.

@@ -25,7 +25,7 @@ import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
 import { loadWeeklyRows } from "./features.js";
 import {
-  loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT,
+  loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT,
   type WeeklyArtifact,
 } from "./projector.js";
 
@@ -35,27 +35,41 @@ export const STREAMING_ARTIFACT = "streaming-artifact.json";
 /**
  * WHAT SHIPS, PER POSITION. THE SINGLE TABLE, and every consumer reads it.
  *
- * Three artifacts can serve a position and the choice is a MEASUREMENT per position, never a
- * preference. `SHIPPED_WEEKLY_ARTIFACT` is the season-line floor -- every coefficient zero, mean
- * intercept 1.0 -- and is what a position falls back to when nothing beat it. `STREAMING_ARTIFACT`
- * is the two-part model plus the twelve point-in-time opponent columns, with K and DST fitted rather
- * than intercepts. `TWO_PART_ARTIFACT` is the same two-part structure without those columns.
+ * Three artifacts can serve a position. `SHIPPED_WEEKLY_ARTIFACT` is the season-line floor -- every
+ * coefficient zero, mean intercept 1.0 -- and is what a position falls back to when nothing beat it.
+ * `STREAMING_ARTIFACT` is the two-part model plus the twelve point-in-time opponent columns.
+ * `CHALLENGER_WEEKLY_ARTIFACT` is the two-part model over the full weekly feature set INCLUDING the
+ * player's own trailing form (`t4_mean`) and matchup (`dvp_mult`) -- the model that only became
+ * meaningful once `ff sync-actuals` began feeding real current-season results into `feat_player_week`,
+ * from which the forward board derives that form.
  *
- * The mapping below is set from the gate recorded in docs/validation.md and MUST NOT be widened
- * without re-running `ff evaluate-weekly` / `ff evaluate-streaming` and re-recording the verdict.
- * There is no other honest way to add a position.
+ * 2026-09-12 -- OWNER OVERRIDE, RECORDED AS ONE (docs/decisions.md D11, docs/validation.md). This
+ * table ordinarily is a MEASUREMENT: a model ships only where it passes the pre-registered gate. The
+ * mapping below breaks that rule DELIBERATELY and it must be read as an override, not a passed gate:
  *
- * WHY THIS IS A TABLE AND NOT A LIST OF "POSITIONS WHERE X SHIPS": with two candidate models the
- * list form needs two lists whose overlap nobody checks, and a position in both is served by
- * whichever list is consulted first. The table cannot express that state.
+ *   `ff evaluate-weekly --rosters 200` (holdout 2012-2025) found the form model MORE ACCURATE than
+ *   the shipped streaming serve at every position -- pooled CRPS 2.82 vs 3.34, RMSE 6.45 vs 7.02,
+ *   bias -0.03 -- but it FAILS gate clause (b), coverage-given-positive, at 0.851 pooled against the
+ *   [0.75, 0.85] band (its intervals are ~0.001 too wide). Streaming passes (b) at 0.827 and is the
+ *   less accurate model. The owner chose to ship the more-accurate model and accept the hair's-breadth
+ *   calibration miss, rather than fit the gate by shrinking the sd to squeak under 0.85 (which the
+ *   repo's discipline forbids). The live `ff scorecard` scores this exact model against 2026 actuals
+ *   each week, so the override is under continuous out-of-sample audit, not a one-time bet.
+ *
+ * Reverting is a one-line change back to STREAMING_ARTIFACT; do that if the live scorecard turns
+ * against it, or if a calibrated refit makes the override unnecessary.
+ *
+ * WHY THIS IS A TABLE AND NOT A LIST OF "POSITIONS WHERE X SHIPS": with candidate models the list
+ * form needs lists whose overlap nobody checks, and a position in both is served by whichever list is
+ * consulted first. The table cannot express that state.
  */
 export const WEEKLY_SERVE: Record<string, string> = {
-  QB: STREAMING_ARTIFACT,
-  RB: STREAMING_ARTIFACT,
-  WR: STREAMING_ARTIFACT,
-  TE: STREAMING_ARTIFACT,
-  K: STREAMING_ARTIFACT,
-  DST: STREAMING_ARTIFACT,
+  QB: CHALLENGER_WEEKLY_ARTIFACT,
+  RB: CHALLENGER_WEEKLY_ARTIFACT,
+  WR: CHALLENGER_WEEKLY_ARTIFACT,
+  TE: CHALLENGER_WEEKLY_ARTIFACT,
+  K: CHALLENGER_WEEKLY_ARTIFACT,
+  DST: CHALLENGER_WEEKLY_ARTIFACT,
 };
 
 /**
@@ -63,7 +77,7 @@ export const WEEKLY_SERVE: Record<string, string> = {
  * metadata so a series that changes model mid-season says WHEN and to WHAT, rather than leaving a
  * later reader to explain a step change in the numbers.
  */
-export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-09";
+export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-12";
 
 /** Positions the given artifact file serves. Derived from the table so the two can never disagree;
  *  a hand-maintained second list is the enumeration that rots. */
@@ -72,22 +86,17 @@ export function SERVE_POSITIONS_FOR(file: string): string[] {
 }
 
 /**
- * THE POSITIONS AT WHICH THE STREAMING MODEL PASSED ITS PRE-REGISTERED GATE and therefore ships.
+ * THE POSITIONS AT WHICH THE STREAMING MODEL SERVES. Derived from `WEEKLY_SERVE`, so it moves with it.
  *
- * Originally measured by `ff evaluate-streaming --seasons 2012-2025 --train-seasons 2010-2025`, 14
- * held-out seasons, 112,782 player-weeks: QB, K and DST passed all three clauses; RB, WR and TE
- * passed (a) and (b) and failed (c) by 0.031, 0.039 and 0.074 against a 0.030 tolerance -- run
- * before the decision population existed.
+ * History: `ff evaluate-streaming` (14 held-out seasons, 112,782 player-weeks) then the 2026-09-09
+ * re-run on the decision population (docs/validation.md) found the streaming artifact passed all three
+ * gate clauses at all six positions, and the owner shipped it at all six.
  *
- * 2026-09-09: `docs/validation.md` ("THE STREAMING GATE QUESTION -- REPORTED, NOT DECIDED") re-ran
- * the SAME three clauses, including the pooled coverage band, on the decision population (69,500
- * scored rows) and found the streaming artifact passes all three clauses at ALL SIX positions,
- * including RB, WR and TE. The owner then widened `WEEKLY_SERVE` on that measurement -- see the
- * comment on `WEEKLY_SERVE_SWITCHED_ON` above for the numbers. This list is DERIVED from that table
- * and is therefore now all six positions.
- *
- * The list is a MEASUREMENT, not a preference. Narrowing OR widening it again means re-running the
- * harness and re-recording the verdict; there is no other honest way to change a position.
+ * 2026-09-12: the owner OVERRODE that (see the `WEEKLY_SERVE` header) to ship the more-accurate form
+ * model despite its 0.001 coverage miss, so `WEEKLY_SERVE` now names `CHALLENGER_WEEKLY_ARTIFACT` at
+ * every position and this DERIVED list is consequently EMPTY -- the streaming artifact ships nowhere.
+ * That is correct, not a bug: it is a measurement of the table, and the table changed. The lineage
+ * page reads it to mark which positions streaming serves, which is now none.
  *
  * READ THE GAIN WITH ITS SOURCE ATTACHED. At every position the streaming model beats the shipped
  * baseline -- but the CONTROL (the same trainer with the twelve opponent columns removed) is within

@@ -3,6 +3,7 @@
 // league uses (half-PPR, PPR, standard...). Was a Python one-off (build_history.py) hardcoded to
 // No-PPR; this is the config-driven TS port. Fetches nflverse stats_player_week per season.
 import { writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fetchCsvCached, pick, URLS, playerWeekUrl, teamWeekUrl, canonTeam, cacheTag } from "./nflverse.js";
 import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, scoreIdpWeek, idpGroup, espnPointsAllowed, DEFAULT_LEAGUE_SCORING, type LeagueScoring, type ScoringRules } from "../draft/scoring.js";
 import { dataPath } from "./paths.js";
@@ -26,9 +27,9 @@ const clean = (s: string) => s.replace(/,/g, " ").trim();
 
 
 /** points ALLOWED by each team, per week, from the schedule's final scores. */
-async function pointsAllowed(yr: number): Promise<Map<string, number>> {
+async function pointsAllowed(yr: number, refresh = false): Promise<Map<string, number>> {
   const out = new Map<string, number>();
-  const games = await fetchCsvCached(URLS.schedules, cacheTag.schedules);
+  const games = await fetchCsvCached(URLS.schedules, cacheTag.schedules, refresh);
   for (const g of games) {
     if (Number(pick(g, "season")) !== yr) continue;
     if (pick(g, "game_type") !== "REG") continue;
@@ -40,6 +41,84 @@ async function pointsAllowed(yr: number): Promise<Map<string, number>> {
     out.set(`${away}|${wk}`, hs);
   }
   return out;
+}
+
+interface SeasonScore { ok: boolean; nW: number; nP: number; resolved: number; unresolved: number }
+
+/**
+ * Score ONE season's weekly + season-total rows under `model`, appending to `wkLines`/`ptLines` in the
+ * exact history-*.csv column order. The single scoring path shared by the full backtest rebuild
+ * (`buildHistory`) and the in-season live updater (`ingestCurrentSeasonActuals`) -- so a live poll can
+ * never score a player under a different ruleset than the backtest fitted on. `refresh` bypasses the
+ * nflverse disk cache, which the current season needs (its feed grows and is stat-corrected all week)
+ * and a settled historical season must not (re-fetching 27 seasons a poll, and re-perturbing a frozen
+ * backtest input, for no new data).
+ */
+async function scoreSeasonWeekly(
+  yr: number, model: LeagueScoring, resolver: SkResolver | null | undefined,
+  wkLines: string[], ptLines: string[], refresh = false,
+): Promise<SeasonScore> {
+  const nil: SeasonScore = { ok: false, nW: 0, nP: 0, resolved: 0, unresolved: 0 };
+  let rows: Record<string, string>[];
+  try { rows = await fetchCsvCached(playerWeekUrl(yr), cacheTag.playerWeek(yr), refresh); } catch { return nil; }
+  if (!rows.length) return nil;
+  let nW = 0, nP = 0, resolved = 0, unresolved = 0;
+  const seasonAgg = new Map<string, { pos: string; pts: number; sk: string | null }>();
+  for (const r of rows) {
+    if (pick(r, "season_type") !== "REG") continue;
+    const name = pick(r, "player_display_name"); if (!name) continue;
+    const rawPos = pick(r, "position").toUpperCase();
+    const isK = rawPos === "K";
+    // IDP players are emitted under their FANTASY GROUP (DL/LB/DB), not their depth-chart position,
+    // because that is the unit a roster slot is defined in. Included even though this league does
+    // not use IDP -- see the benchmark note on DEFAULT_IDP.
+    const idp = (!SKILL_POS.has(rawPos) && !isK) ? idpGroup(rawPos) : null;
+    if (!SKILL_POS.has(rawPos) && !isK && !idp) continue;
+    const pos = idp ?? rawPos;
+    const week = Number(pick(r, "week")); if (!week) continue;
+    const raw = idp ? scoreIdpWeek(r, model.idp) : isK ? scoreKickerWeek(r, model.kicker) : scoreWeek(r, model.rules);
+    const pts = Math.round(raw * 10) / 10;
+    const team = canonTeam(pick(r, "team"));
+    // `player_id` in this feed IS the gsis id, which is the strongest evidence the resolver has.
+    const sk = resolver
+      ? resolver.resolve({ gsis: pick(r, "player_id"), name, pos, team })
+      : null;
+    wkLines.push(`${yr},${clean(name)},${pos},${week},${pts},${team},${sk ?? ""}`); nW++;
+    const a = seasonAgg.get(name) ?? { pos, pts: 0, sk }; a.pts += pts; if (a.sk == null) a.sk = sk; seasonAgg.set(name, a);
+  }
+
+  // --- team defenses, from the TEAM feed + points allowed ------------------------------------
+  try {
+    const teamRows = await fetchCsvCached(teamWeekUrl(yr), cacheTag.teamWeek(yr), refresh);
+    const pa = await pointsAllowed(yr, refresh);
+    // Opponent lookup, so points-allowed can exclude the opponent's DEFENSIVE touchdowns the way
+    // ESPN does -- 97.0% tier agreement against ESPN's own credited tier, vs 93.6% for the raw
+    // final score. Special-teams returns are NOT excluded; see espnPointsAllowed.
+    const byTeamWeek = new Map<string, Record<string, string>>();
+    for (const r of teamRows) {
+      if (pick(r, "season_type") !== "REG") continue;
+      byTeamWeek.set(`${canonTeam(pick(r, "team"))}|${pick(r, "week")}`, r);
+    }
+    for (const r of teamRows) {
+      if (pick(r, "season_type") !== "REG") continue;
+      const team = canonTeam(pick(r, "team")); if (!team) continue;
+      const week = Number(pick(r, "week")); if (!week) continue;
+      const allowed = pa.get(`${team}|${week}`);
+      if (allowed == null) continue;   // no final score -> cannot score the PA ladder; skip, never assume 0
+      const opp = canonTeam(pick(r, "opponent_team"));
+      const adjusted = espnPointsAllowed(allowed, opp ? byTeamWeek.get(`${opp}|${week}`) : null);
+      const pts = Math.round(scoreDefenseWeek(r, adjusted, model.defense) * 10) / 10;
+      const name = `${team} DST`;
+      const sk = dstKey(team);
+      wkLines.push(`${yr},${name},DST,${week},${pts},${team},${sk}`); nW++;
+      const a = seasonAgg.get(name) ?? { pos: "DST", pts: 0, sk }; a.pts += pts; seasonAgg.set(name, a);
+    }
+  } catch { /* team feed absent for very old seasons -> that year simply has no DST */ }
+  for (const [name, a] of seasonAgg) {
+    ptLines.push(`${yr},${clean(name)},${a.pos},${Math.round(a.pts * 10) / 10},${a.sk ?? ""}`); nP++;
+    if (a.sk == null) unresolved++; else resolved++;
+  }
+  return { ok: true, nW, nP, resolved, unresolved };
 }
 
 /** Rebuild history-points (season totals) + history-weekly (per-week) under `scoring`, for `seasons`. */
@@ -67,67 +146,44 @@ export async function buildHistory(
   let nP = 0, nW = 0; const got: number[] = [];
   let resolved = 0, unresolved = 0;
   for (const yr of seasons) {
-    let rows: Record<string, string>[];
-    try { rows = await fetchCsvCached(playerWeekUrl(yr), cacheTag.playerWeek(yr)); } catch { continue; }
-    if (!rows.length) continue;
-    got.push(yr);
-    const seasonAgg = new Map<string, { pos: string; pts: number; sk: string | null }>();
-    for (const r of rows) {
-      if (pick(r, "season_type") !== "REG") continue;
-      const name = pick(r, "player_display_name"); if (!name) continue;
-      const rawPos = pick(r, "position").toUpperCase();
-      const isK = rawPos === "K";
-      // IDP players are emitted under their FANTASY GROUP (DL/LB/DB), not their depth-chart position,
-      // because that is the unit a roster slot is defined in. Included even though this league does
-      // not use IDP -- see the benchmark note on DEFAULT_IDP.
-      const idp = (!SKILL_POS.has(rawPos) && !isK) ? idpGroup(rawPos) : null;
-      if (!SKILL_POS.has(rawPos) && !isK && !idp) continue;
-      const pos = idp ?? rawPos;
-      const week = Number(pick(r, "week")); if (!week) continue;
-      const raw = idp ? scoreIdpWeek(r, model.idp) : isK ? scoreKickerWeek(r, model.kicker) : scoreWeek(r, model.rules);
-      const pts = Math.round(raw * 10) / 10;
-      const team = canonTeam(pick(r, "team"));
-      // `player_id` in this feed IS the gsis id, which is the strongest evidence the resolver has.
-      const sk = resolver
-        ? resolver.resolve({ gsis: pick(r, "player_id"), name, pos, team })
-        : null;
-      wkLines.push(`${yr},${clean(name)},${pos},${week},${pts},${team},${sk ?? ""}`); nW++;
-      const a = seasonAgg.get(name) ?? { pos, pts: 0, sk }; a.pts += pts; if (a.sk == null) a.sk = sk; seasonAgg.set(name, a);
-    }
-
-    // --- team defenses, from the TEAM feed + points allowed ------------------------------------
-    try {
-      const teamRows = await fetchCsvCached(teamWeekUrl(yr), cacheTag.teamWeek(yr));
-      const pa = await pointsAllowed(yr);
-      // Opponent lookup, so points-allowed can exclude the opponent's DEFENSIVE touchdowns the way
-      // ESPN does -- 97.0% tier agreement against ESPN's own credited tier, vs 93.6% for the raw
-      // final score. Special-teams returns are NOT excluded; see espnPointsAllowed.
-      const byTeamWeek = new Map<string, Record<string, string>>();
-      for (const r of teamRows) {
-        if (pick(r, "season_type") !== "REG") continue;
-        byTeamWeek.set(`${canonTeam(pick(r, "team"))}|${pick(r, "week")}`, r);
-      }
-      for (const r of teamRows) {
-        if (pick(r, "season_type") !== "REG") continue;
-        const team = canonTeam(pick(r, "team")); if (!team) continue;
-        const week = Number(pick(r, "week")); if (!week) continue;
-        const allowed = pa.get(`${team}|${week}`);
-        if (allowed == null) continue;   // no final score -> cannot score the PA ladder; skip, never assume 0
-        const opp = canonTeam(pick(r, "opponent_team"));
-        const adjusted = espnPointsAllowed(allowed, opp ? byTeamWeek.get(`${opp}|${week}`) : null);
-        const pts = Math.round(scoreDefenseWeek(r, adjusted, model.defense) * 10) / 10;
-        const name = `${team} DST`;
-        const sk = dstKey(team);
-        wkLines.push(`${yr},${name},DST,${week},${pts},${team},${sk}`); nW++;
-        const a = seasonAgg.get(name) ?? { pos: "DST", pts: 0, sk }; a.pts += pts; seasonAgg.set(name, a);
-      }
-    } catch { /* team feed absent for very old seasons -> that year simply has no DST */ }
-    for (const [name, a] of seasonAgg) {
-      ptLines.push(`${yr},${clean(name)},${a.pos},${Math.round(a.pts * 10) / 10},${a.sk ?? ""}`); nP++;
-      if (a.sk == null) unresolved++; else resolved++;
-    }
+    const s = await scoreSeasonWeekly(yr, model, resolver, wkLines, ptLines);
+    if (!s.ok) continue;
+    got.push(yr); nW += s.nW; nP += s.nP; resolved += s.resolved; unresolved += s.unresolved;
   }
   writeFileSync(dataPath("history-points.csv"), ptLines.join("\n") + "\n", "utf8");
   writeFileSync(dataPath("history-weekly.csv"), wkLines.join("\n") + "\n", "utf8");
   return { points: nP, weekly: nW, seasons: got, resolved, unresolved };
+}
+
+/**
+ * IN-SEASON live actuals: re-score ONLY the current season from the (cache-bypassed) nflverse feed and
+ * write it to its OWN file, `data/current-actuals.csv` -- NEVER to history-{weekly,points}.csv.
+ *
+ * Why a separate file: history-weekly.csv/history-points.csv are FROZEN backtest inputs and both are in
+ * the DRAFT deps fingerprint (scripts/lib/deps.mjs). Appending the live season to them would flip that
+ * hash on every gameday and mark every backtested lever result stale, for no draft benefit. The current
+ * season is a distinct concern with a distinct consumer (the forward in-season board), so it gets a
+ * distinct file. It is scored through the exact same `scoreSeasonWeekly` path the backtest uses -- one
+ * scoring implementation, no drift. The returned `hash` is the content of the weekly slice,
+ * order-independent, so a caller can tell a real change (a newly-final game, a stat correction) from a
+ * no-op re-run and rebuild the derived features only when something actually moved.
+ */
+export async function ingestCurrentSeasonActuals(
+  season: number, scoring: ScoringRules | LeagueScoring, resolver?: SkResolver | null,
+): Promise<{ ok: boolean; weekly: number; weeks: number[]; hash: string; path: string }> {
+  const model: LeagueScoring = "rules" in scoring
+    ? scoring as LeagueScoring
+    : { ...DEFAULT_LEAGUE_SCORING(), rules: scoring as ScoringRules };
+  const wk: string[] = [], pt: string[] = [];
+  const s = await scoreSeasonWeekly(season, model, resolver, wk, pt, /* refresh */ true);
+
+  // Same column order as history-weekly.csv (season,name,pos,week,points,team,player_sk) so the forward
+  // board reads it with the identical parser. A standalone file holding ONLY the current season.
+  const path = dataPath("current-actuals.csv");
+  const header = "season,name,pos,week,points,team,player_sk";
+  writeFileSync(path, [header, ...wk].join("\n") + "\n", "utf8");
+
+  const hash = createHash("sha256").update([...wk].sort().join("\n")).digest("hex").slice(0, 16);
+  const weeks = [...new Set(wk.map((l) => Number(l.split(",")[3])))].filter((w) => w > 0).sort((a, b) => a - b);
+  return { ok: s.ok, weekly: s.nW, weeks, hash, path };
 }

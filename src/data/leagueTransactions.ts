@@ -29,8 +29,8 @@
 import { openDb, nowIso, type DB } from "../db/db.js";
 import { espnGet, espnRoot, espnCachePath, weeksInSeason, weekKickoffs } from "./leagueRosters.js";
 import { existsSync } from "node:fs";
+import { ESPN_READS_BASE as HOST } from "./espnApi.js";
 
-const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 
 export interface TransactionItemRow {
   season: number; week: number; transactionId: string; itemNo: number;

@@ -67,6 +67,14 @@ Documented limits, all measured:
 - `marketSd = 0.30` is an assumption `calibrate` never measures. The `aggr` optimum was swept across
   0.20–0.45 and held; re-check it if you lean on that parameter.
 
+## Browser access — always the Electron app, never Claude in Chrome
+
+**Never use the Claude-in-Chrome tools (`mcp__claude-in-chrome__*`) in this repo.** All browser work —
+reading ESPN pages, trade/message inboxes, the draft room, anything live — goes through OUR Electron
+app's embedded ESPN webview, driven with `--app` (see the trap below). It carries the real ESPN login
+and is the only surface the draft/in-season verbs actually control. If a task needs the browser, reach
+for the `--app` path or the `ff-draft` MCP tools, not Chrome. (Standing owner instruction 2026-09-13.)
+
 ## Live-draft traps
 
 - **`--app` drives the desktop app's embedded ESPN webview; plain `--port 9223` does NOT.**
@@ -125,16 +133,20 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
 - Strategy/levers: `src/draft/{strategy,levers,values,sim,backtest}.ts`
 - Findings + every rejected idea with its number: `docs/validation.md`, `docs/edges.md`
 - Draft-day procedure and machine setup: `docs/draft-day-runbook.md`
-- The MCP control surface (35 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is
+- The MCP control surface (39 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is
   `TOOL_NAMES.length` in `src/agent/agent.ts`, not a number to retype -- `scripts/copilot-mcp-smoke.mjs`
-  asserts it. The last ten are the in-season copilot's, and the same ten decisions are reachable
+  asserts it. Besides the ten copilot decisions it now includes `read_frame`/`press` (read a nested
+  cross-origin iframe like Fantasy Chat, and a hardened frame-aware click), `refresh` (rerun the data
+  pipeline), and `propose_trade` (the gated ESPN trade write, dry-run by default -- shares
+  `executeTradeProposal` with `ff propose-trade`). The last ten are the in-season copilot's, and the same ten decisions are reachable
   from a terminal as `ff copilot <verb>` through one dispatcher (`src/inseason/copilotActions.ts`),
   so a number printed in a shell and a number the Assistant quotes cannot differ. The tenth is
   `stream_recommend` / `ff copilot stream`: of the men nobody rosters, who to start this week -- at
-  any of the six positions, since the 2026-09-09 owner decision widened `SHIPPED_STREAMING_POSITIONS`
-  (`src/weekly/streamingServe.ts`) to all of QB/RB/WR/TE/K/DST on the decision-population measurement
-  in `docs/validation.md`.
+  any of the six positions (`STREAM_SERVE_POS`). The weekly serve at every position is now the FORM
+  model (`WEEKLY_SERVE` -> `CHALLENGER_WEEKLY_ARTIFACT`, `src/weekly/streamingServe.ts`) per the
+  2026-09-12 owner override D11; the streaming artifact ships nowhere now, so `SHIPPED_STREAMING_POSITIONS`
+  is empty. See `docs/decisions.md` D11 and `docs/validation.md`.
 - The in-season decision surface and its limits: `docs/in-season-design.md`; the weekly model and its
   write-once scorecard: `docs/weekly.md`
-- Recorded decisions D0–D10 (do not silently reverse): `docs/decisions.md`
+- Recorded decisions D0–D11 (do not silently reverse): `docs/decisions.md`
 - Planning/roadmap lives in the wiki, not here: `wiki/projects/project--ff-assistant.md`
