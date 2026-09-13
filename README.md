@@ -91,7 +91,7 @@ src/
     backtest.ts      #   season+playoffs -> title rate    inflation.ts# live value repricing
     nomination.ts / cheatsheet.ts
   inseason/          # the in-season decision surface
-    copilot.ts       #   the nine decisions as PURE functions over one SimContext, each result
+    copilot.ts       #   the ten decisions as PURE functions over one SimContext, each result
                      #   carrying its own assumptions (schedule/trials/seeds/data stamp)
     copilotStore.ts  #   the read-only loading copilot.ts refuses to do (availability, depth, lines)
     copilotActions.ts#   ONE dispatcher for `ff copilot` and the MCP tools + the D3 action-log write
@@ -107,8 +107,7 @@ app/
 test/                # node --test fault-injection suites
 tools/               # legacy Python pipeline, superseded by src/data/* (see tools/README.md)
 data/                # values.csv, points.csv, history-*.csv (+ samples); real per-league data gitignored
-docs/                # architecture, decisions (D0-D10), specs, and the harness findings (below)
-scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot model input
+docs/                # architecture, decisions (D0-D11), specs, and the harness findings (below)
 ```
 
 ## Running it
@@ -307,15 +306,15 @@ scrape.mjs / analyze.mjs  # league draft-recap + owner scrape -> per-manager bot
 
 ## What the harness decided (docs/edges.md, docs/validation.md)
 
-Headline: **38.2% championships / 96% playoffs** (full-system, no-lookahead, 25 scored seasons
-1999-2024, random = 6.3%). Shipped levers: `aggr 0.7`, `benchDiscount 0.25`, `starterReserve 4`,
-`maxShare 0.25`, `premium 2`, all positional multipliers `1.0`, inflation ON.
+Headline: **~42% championships / 97% playoffs** (full-system, no-lookahead, 25 scored seasons
+1999-2024, random = 6.3%). Shipped levers: `aggr 0.7`, `benchDiscount 0.35`, `starterReserve 4`,
+`maxShare 0.25`, `premium 2`, `consensusBlend 1`, all positional multipliers `1.0`, inflation ON.
 
 **Read that number with its arbiter attached (Phase 2c, 2026-09-09).** It is measured against a field
 that drafts on our own projection plus one shared error of an asserted sd 0.30, and that never
 touches its roster after August. Neither is true of this room. Give the field the REAL published
 consensus with an independent view per bot AND the waiver wire — the honest arbiter — and the same
-strategy wins **12-21%** rather than 33-41%, depending on which book the bots price with. Thirty
+strategy wins **12-21%** rather than the flagless ~42%, depending on which book the bots price with. The gap,
 points, none of it a change to our strategy. The direction of every lever below survives; the
 absolute rate is a statement about the opponent as much as about us. docs/validation.md has the grid.
 
@@ -330,7 +329,7 @@ the other two, per this repo's standing rule: the same cell reads 21.0% with `ra
 recorded here.
 
 - **Shipped (validated):** independent + current values; **bid shading (`aggr` 0.7)** — the biggest
-  single lever, a winner's-curse correction worth ~+10pp; **`benchDiscount` 0.25** (a bench-only
+  single lever, a winner's-curse correction worth ~+10pp; **`benchDiscount` 0.35** (a bench-only
   player cannot score, so he is not worth his standalone value, +4.4pp); live inflation repricing
   (+4.2pp, clamped [0.8,1.4]); points-weighted FLEX baselines in the value curve.
 - **Rejected (measured neutral-to-negative, off by default):** all four **positional value
@@ -436,7 +435,7 @@ integration pass 3) for what each choice is worth: 13 weeks moves the championsh
 ## Where planning lives
 
 Roadmap, phases, and issue tracking are in the wiki (`wiki/projects/project--ff-assistant.md` +
-`roadmap--ff-assistant.md`). Design rationale is `docs/decisions.md` (D0-D10, incl. **D10**: the
+`roadmap--ff-assistant.md`). Design rationale is `docs/decisions.md` (D0-D11, incl. **D10**: the
 engine is deterministic TS, no LLM in the bid loop). The draft-day procedure is
 `docs/draft-day-runbook.md`.
 

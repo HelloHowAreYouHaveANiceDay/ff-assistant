@@ -6,28 +6,29 @@
 > Electron webview not being a Playwright page, the auto-draft single-instance lock, stored-vs-code
 > lever precedence, and the npm install order. This file is the work contract; that one is the map.
 
-This repo has a WORKING Phase-2 engine: the `ff` TypeScript CLI (draft agent + validation
-harness) -- see `README.md` for the current stack and layout. The PACKAGED APP (Electron +
-Claude Agent SDK + SQLite, `docs/architecture.md`) is still design-stage and delegated to
-follow-up sessions / the dim-factory, driven by `ready` issues compiled from
-`wiki/projects/roadmap--ff-assistant.md`. Know which layer you are working on before you start.
+This repo has a WORKING engine AND a working desktop app -- see `README.md` for the current stack
+and layout. The `ff` TypeScript CLI is the draft agent + validation harness + in-season copilot; the
+PACKAGED APP (Electron + Claude Agent SDK + SQLite, `docs/architecture.md`) is BUILT and runs -- a
+persistent Assistant, the live Board, authenticated ESPN pages, and News/Data/Model pages. Further
+work is driven by `ready` issues compiled from `wiki/projects/roadmap--ff-assistant.md`. Know which
+layer you are working on before you start.
 
 ## Before writing any code
 
 1. Read `docs/architecture.md` (the whole system), then the relevant `docs/specs/*.md`.
-2. Read `docs/decisions.md` -- do NOT silently reverse a recorded decision (D0-D10). If a
+2. Read `docs/decisions.md` -- do NOT silently reverse a recorded decision (D0-D11). If a
    decision looks wrong, raise it as an open question in the wiki roadmap instead of coding
    around it. Note **D10**: the shipped `ff` engine is TypeScript + deterministic (no LLM in the
-   bid loop); Python is only the offline data builder; Electron/Agent SDK/SQLite are unbuilt.
+   bid loop); Python is only the offline data builder; the app (Electron/Agent SDK/SQLite) is BUILT.
 3. Build against the acceptance criteria in the specs -- each spec ends with testable criteria.
 
-## Intended stack (once implementation starts)
+## Stack
 
 - Electron shell (D5), Node/TypeScript throughout.
 - Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) for the agent, subscription OAuth for auth.
-- SQLite (WAL mode) as the single source of truth; a SQLite MCP server exposes it to the agent.
+- SQLite (WAL mode) as the single source of truth; the agent reads it through the tools in `src/agent/`.
 - CDP browser control reusing the `bro` repo's persistent-session machinery.
-- node-cron scheduler.
+- In-app scheduler for in-season routines (`src/inseason/routines.ts` + the Electron main-process timer).
 
 ## Hard rules
 

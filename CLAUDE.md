@@ -131,10 +131,11 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   from a terminal as `ff copilot <verb>` through one dispatcher (`src/inseason/copilotActions.ts`),
   so a number printed in a shell and a number the Assistant quotes cannot differ. The tenth is
   `stream_recommend` / `ff copilot stream`: of the men nobody rosters, who to start this week -- at
-  any of the six positions, since the 2026-09-09 owner decision widened `SHIPPED_STREAMING_POSITIONS`
-  (`src/weekly/streamingServe.ts`) to all of QB/RB/WR/TE/K/DST on the decision-population measurement
-  in `docs/validation.md`.
+  any of the six positions (`STREAM_SERVE_POS`). The weekly serve at every position is now the FORM
+  model (`WEEKLY_SERVE` -> `CHALLENGER_WEEKLY_ARTIFACT`, `src/weekly/streamingServe.ts`) per the
+  2026-09-12 owner override D11; the streaming artifact ships nowhere now, so `SHIPPED_STREAMING_POSITIONS`
+  is empty. See `docs/decisions.md` D11 and `docs/validation.md`.
 - The in-season decision surface and its limits: `docs/in-season-design.md`; the weekly model and its
   write-once scorecard: `docs/weekly.md`
-- Recorded decisions D0–D10 (do not silently reverse): `docs/decisions.md`
+- Recorded decisions D0–D11 (do not silently reverse): `docs/decisions.md`
 - Planning/roadmap lives in the wiki, not here: `wiki/projects/project--ff-assistant.md`

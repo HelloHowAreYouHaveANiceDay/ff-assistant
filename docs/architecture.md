@@ -3,11 +3,11 @@
 One-page picture of ff-assistant. Component detail lives in `docs/specs/`; the rationale
 behind each choice lives in `docs/decisions.md`.
 
-> **Built vs planned (2026-09).** What follows is the LONG-TERM packaged-app target (Electron +
-> Claude Agent SDK + SQLite). It is NOT built yet. What IS built is the Phase-2 engine -- the `ff`
-> TypeScript CLI (draft agent + validation harness) that this app will eventually wrap. For the
-> current, working system and its stack, read `README.md`. This doc is the destination, not the
-> present state.
+> **Status (2026-09).** The packaged app described here (Electron + Claude Agent SDK + SQLite) is
+> BUILT and running -- the `ff` engine, the desktop cockpit, and the in-season copilot all ship. For
+> the current stack, layout, and per-component status, read `README.md`. This one-pager is the shape of
+> the system; a few forward-looking details below (e.g. multi-league fan-out, the lineup writer) remain
+> aspirational and are marked where they appear.
 
 ## The problem being solved
 

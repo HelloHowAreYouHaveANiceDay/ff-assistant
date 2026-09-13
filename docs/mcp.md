@@ -165,11 +165,11 @@ is no path to the answer that skips logging.
   argued from the shape of the format: over 114 real team-seasons the simulator beats a uniform
   baseline on the berth and is WORSE THAN UNIFORM on the champion. Lead with the playoff figure;
   quote the title figure as context, never as the reason for a decision;
-- `lineup_recommend` runs the weekly projector, but the SHIPPED weekly artifact is the
-  season-line-only floor, whose projection IS the season line per game. So the numbers are still the
-  season projection spread flat: it ranks a roster correctly and has no matchup, form or weather in
-  it. Read `assumptions.basis` -- `weekly-model` means every player came from the projector,
-  `projection` means at least one fell back, and `assumptions.basisNote` names who;
+- `lineup_recommend` runs the weekly projector; since the 2026-09-12 owner override (D11) the SHIPPED
+  weekly artifact is the FORM model (`weekly-artifact.json`) at every position -- trailing form
+  (`t4_mean`) and matchup (`dvp_mult`), not the flat season line. Read `assumptions.basis` --
+  `weekly-model` means every player came from the projector, `projection` means at least one fell back
+  to the season line, and `assumptions.basisNote` names who;
 - `lineup_recommend` returns `weekSource`. It now usually reads `schedule`, derived from
   `raw_nfl_game` kickoff dates on the LOCAL calendar; `default` means the store has no schedule for
   the season and nobody knew, in which case pass `week` explicitly;
@@ -318,11 +318,11 @@ noise floor of a season simulation would be larger than the effect it was meant 
 regime unknown -- exactly as `lineup_recommend` does -- rather than dressing a points quantity up as
 a probability.
 
-**Read `artifactByPos` and quote it.** The streaming gate is applied PER POSITION, so this is the
-only tool on the surface where different rows of one answer can come from different models. A
-position that passed serves `streaming-artifact.json`; one that did not serves
-`weekly-artifact-lineonly.json` -- the same floor the lineup is served from, which has no matchup, no
-form and no weather in it. A reader who cannot tell which would read a floor projection as a
+**Read `artifactByPos` and quote it.** It names the model behind each position's number. Since the
+2026-09-12 owner override (D11), every position serves the FORM model (`weekly-artifact.json`,
+trailing form + matchup); the streaming artifact ships nowhere now, and a position falls to the
+season-line floor (`weekly-artifact-lineonly.json` -- no matchup, form or weather) only if the
+projector has no row for it. A reader who cannot tell which would read a floor projection as a
 matchup-aware one, and there is no way to infer it from the number.
 
 What it returns: our men and the streamable pool ranked by the weekly projection with p10/p90 and,

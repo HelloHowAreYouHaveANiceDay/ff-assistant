@@ -84,9 +84,11 @@ export interface LeverSpec {
   note?: string;
 }
 
-// Defaults = the shipped, holdout-validated posture (2026-09-05): aggr 0.7 / benchDiscount 0.25 /
-// starterReserve 4 / maxShare 0.25 / premium 2, all positional multipliers 1.0. ~33% championships
-// on 25 scored seasons. Do NOT edit a value here without re-reading docs/validation.md -- several of
+// Defaults = the shipped, holdout-validated posture: aggr 0.7 / benchDiscount 0.35 / starterReserve 4
+// / maxShare 0.25 / premium 2 / consensusBlend 1, all positional multipliers 1.0. ~42% championships
+// / 97% playoffs on 25 scored seasons -- benchDiscount re-optimised 0.25->0.35 and the FFToday
+// consensus blend are the two edges since the ~38.5% base (docs/edges.md).
+// Do NOT edit a value here without re-reading docs/validation.md -- several of
 // these were measured, rejected, and re-measured, and the reasoning is recorded per lever below.
 export const LEVER_SPECS: readonly LeverSpec[] = [
   {
