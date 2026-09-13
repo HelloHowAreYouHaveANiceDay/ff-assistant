@@ -256,9 +256,22 @@ decisions taken):
   `waiver_targets`, `trade_finder` over ONE shared context and stores them in `decision_snapshot`,
   stamped with the actuals hash and the schedule basis -- so a reader sees the current answer, and
   when it was last refreshed, without re-simulating. Refresh-only: it recomputes advice, never a move.
-- **Cadence:** `scripts/inseason-poll.ps1` under Windows Task Scheduler (every ~15 min on gamedays);
-  the change-gate makes frequent polling idle-cheap. sync-actuals is also in the daily + weekly
-  `sync-league` tiers.
+- **Cadence, IN THE APP (2026-09-12):** the Electron main process runs a self-rescheduling timer that,
+  each cycle, re-reads a stored schedule and -- if it is ON -- runs `ff inseason-tick`, which runs the
+  routines the schedule names. So the loop runs exactly while the app is open, needs no OS-level setup,
+  and picks up a config change on the next cycle without a restart. `scripts/inseason-poll.ps1` under
+  Windows Task Scheduler remains the headless alternative for when the app is closed.
+  - **Routines** are the scheduler's unit of work, a named registry in `src/inseason/routines.ts`:
+    `actuals` (sync-actuals: ingest + board + decisions-on-change), `scorecard` (freeze/score),
+    `decisions` (recompute the snapshot without new actuals), `roster` (fast league sync -- needs the
+    app bridge, so off by default). The registry lives in the engine, so the app, the CLI and the
+    copilot all agree on what a routine IS.
+  - **The copilot sets the routines** because the schedule is a stored `settings` row, not code:
+    `ff schedule --enable --every 15 --routines actuals,scorecard,decisions` (or the `schedule-get` /
+    `schedule-set` serve RPC the renderer's settings panel and the copilot both use). Changing which
+    routines run, or the cadence, is a data change the next tick obeys. Default is OFF (opt-in); the
+    cadence is clamped to [5, 720] minutes and unknown routine names are dropped before they can reach
+    the timer. Each tick is refresh-only -- it recomputes data and advice, never makes an ESPN move.
 
 **Honest limit (2026-09-12):** the shipped weekly artifact is season-line-only (every coefficient
 zero), so ingested actuals do NOT yet shift future-week projections -- the recomputed waiver/trade

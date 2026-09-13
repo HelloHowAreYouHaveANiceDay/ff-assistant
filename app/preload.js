@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld("mc", {
   // Pushed by main after any engine invocation whose board stamp differs from the last one seen.
   // Carries the stamp itself so the renderer decides, rather than trusting "something happened".
   onBoardChanged: (cb) => ipcRenderer.on("mc:boardChanged", (_e, data) => cb(data)),
+  // The in-season scheduler: read the config + last tick, write a partial change (enable/disable,
+  // cadence, which routines), run the routine set once now, and hear each tick as it lands. The copilot
+  // drives the same config through the engine (`ff schedule`), so a change from either side is one state.
+  scheduleGet: () => ipcRenderer.invoke("mc:scheduleGet"),
+  scheduleSet: (patch) => ipcRenderer.invoke("mc:scheduleSet", patch),
+  tickNow: () => ipcRenderer.invoke("mc:tickNow"),
+  onSchedulerTick: (cb) => ipcRenderer.on("mc:schedulerTick", (_e, data) => cb(data)),
   // the drafted team lives in SQLite (my_roster) now -- read/write via the helper (source of truth)
   teamSet: (team) => ipcRenderer.invoke("mc:teamSet", team),
   teamGet: () => ipcRenderer.invoke("mc:teamGet"),

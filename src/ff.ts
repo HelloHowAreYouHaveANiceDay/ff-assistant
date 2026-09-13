@@ -72,6 +72,10 @@ async function main() {
       return cmdCopilot(rest);
     case "refresh-decisions":
       return cmdRefreshDecisions(rest);
+    case "inseason-tick":
+      return cmdInseasonTick(rest);
+    case "schedule":
+      return cmdSchedule(rest);
     case "format":
       return cmdFormat(rest);
     case "calibrate":
@@ -429,6 +433,14 @@ async function cmdServe(rest: string[]) {
         }
         case "config-get": result = getConfig(db); break;
         case "config-set": setConfig(db, (params.config as Record<string, unknown>) ?? {}); result = getConfig(db); break;
+        // The in-season schedule the app's timer obeys. `schedule-get` on boot and after a change;
+        // `schedule-set` writes a partial patch (the copilot, or a settings toggle in the renderer).
+        case "schedule-get": { const { getSchedule } = await import("./inseason/routines.js"); result = getSchedule(db); break; }
+        case "schedule-set": {
+          const { setSchedule } = await import("./inseason/routines.js");
+          result = setSchedule(db, (params.patch as Record<string, unknown>) ?? {});
+          break;
+        }
         case "levers-set": { // clamp each knob to its valid range before storing
           const patch = (params.patch as Record<string, unknown>) ?? {};
           // `reset: true` restores DEFAULT_LEVERS *server-side*. The renderer must never carry its
@@ -1894,6 +1906,92 @@ async function cmdRefreshDecisions(rest: string[]) {
   const sched = (valueOf(rest, "--schedule") ?? "auto") as "real" | "generated" | "auto";
   const r = await refreshDecisionSnapshot({ dbPath: valueOf(rest, "--db"), schedule: sched });
   console.log(`refreshed ${r.rows} decision snapshots (${r.verbs.join(", ")}) for week ${r.week ?? "?"} on the ${r.schedule} schedule`);
+}
+
+/**
+ * `ff inseason-tick [--routines a,b,c] [--json]` -- run the in-season scheduler's routine set ONCE.
+ * This is the unit the Electron app's timer (and any poller) calls. Each routine's verbs run IN-PROCESS
+ * through the same handlers the CLI dispatches, wrapped per-step so one routine's failure does not stop
+ * the rest -- and, unlike a child-process sweep, this runs unchanged in the packaged app (no `tsx` /
+ * `src/ff.ts` on disk there). With no `--routines`, it runs whatever the stored schedule selects.
+ */
+async function cmdInseasonTick(rest: string[]) {
+  const { getSchedule, stepsFor, DEFAULT_ROUTINES } = await import("./inseason/routines.js");
+  const { openDb } = await import("./db/db.js");
+  const dbPath = valueOf(rest, "--db");
+  const override = valueOf(rest, "--routines");
+  let names: string[];
+  if (override) names = override.split(",").map((s) => s.trim()).filter(Boolean);
+  else { const db = openDb(dbPath); try { names = getSchedule(db).routines; } finally { db.close(); } }
+  if (!names.length) names = DEFAULT_ROUTINES;
+
+  const { steps, ran, unknown } = stepsFor(names);
+  if (unknown.length) console.log(`  ignoring unknown routine(s): ${unknown.join(", ")}`);
+  console.log(`inseason-tick: ${ran.join(", ") || "(nothing)"} -- ${steps.length} step(s)`);
+
+  // Map each routine verb to its CLI handler. In-process, so it needs no on-disk source in the packaged
+  // build; `sync-league` still spawns its own steps (its existing behaviour) and is app-gated.
+  const HANDLERS: Record<string, (a: string[]) => Promise<void>> = {
+    "sync-actuals": cmdSyncActuals,
+    "scorecard": cmdScorecard,
+    "refresh-decisions": cmdRefreshDecisions,
+    "sync-league": cmdSyncLeague,
+  };
+  const passThrough = dbPath ? ["--db", dbPath] : [];
+  const t0 = Date.now();
+  const results: { step: string; ok: boolean; error?: string }[] = [];
+  for (const [verb, args] of steps) {
+    const label = [verb, ...args].join(" ");
+    const s = Date.now();
+    const handler = HANDLERS[verb];
+    if (!handler) { results.push({ step: label, ok: false, error: "no handler" }); console.log(`  SKIP ${label} (no handler)`); continue; }
+    try {
+      await handler([...args, ...passThrough]);
+      results.push({ step: label, ok: true });
+      console.log(`  ok   ${label.padEnd(36)} ${((Date.now() - s) / 1000).toFixed(1)}s`);
+    } catch (e) {
+      results.push({ step: label, ok: false, error: String(e).slice(0, 200) });
+      console.log(`  FAIL ${label.padEnd(36)} ${((Date.now() - s) / 1000).toFixed(1)}s -- ${String(e).slice(0, 120)}`);
+    }
+  }
+  const okN = results.filter((r) => r.ok).length;
+  console.log(`\n${okN}/${results.length} steps ok in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  if (rest.includes("--json")) console.log(JSON.stringify({ ran, unknown, results, ok: okN === results.length }));
+  if (okN !== results.length) process.exitCode = 1;   // so a poller / the app can see it without parsing stdout
+}
+
+/**
+ * `ff schedule [--enable|--disable] [--every N] [--routines a,b,c] [--json]` -- read or write the
+ * in-season schedule the app's timer obeys. This is HOW THE COPILOT SETS THE ROUTINES: it is a stored
+ * config (a `settings` row), so turning a routine on or changing the cadence is a data change the next
+ * tick picks up, not a code change. With no flags it prints the current schedule.
+ */
+async function cmdSchedule(rest: string[]) {
+  const { getSchedule, setSchedule, ROUTINES, clampMinutes } = await import("./inseason/routines.js");
+  const { openDb } = await import("./db/db.js");
+  const db = openDb(valueOf(rest, "--db"));
+  try {
+    const wantsSet = rest.includes("--enable") || rest.includes("--disable") ||
+      valueOf(rest, "--every") != null || valueOf(rest, "--routines") != null;
+    if (wantsSet) {
+      const patch: Record<string, unknown> = {};
+      if (rest.includes("--enable")) patch.enabled = true;
+      if (rest.includes("--disable")) patch.enabled = false;
+      const every = valueOf(rest, "--every"); if (every != null) patch.everyMinutes = clampMinutes(Number(every));
+      const routines = valueOf(rest, "--routines"); if (routines != null) patch.routines = routines.split(",").map((s) => s.trim()).filter(Boolean);
+      const { droppedRoutines } = setSchedule(db, patch);
+      if (droppedRoutines.length) console.log(`ignored unknown routine(s): ${droppedRoutines.join(", ")} (valid: ${Object.keys(ROUTINES).join(", ")})`);
+    }
+    const cfg = getSchedule(db);
+    if (rest.includes("--json")) { console.log(JSON.stringify(cfg)); return; }
+    console.log(`in-season schedule: ${cfg.enabled ? "ON" : "OFF"}, every ${cfg.everyMinutes} min`);
+    console.log(`  routines: ${cfg.routines.join(", ") || "(none)"}`);
+    console.log("  registry:");
+    for (const [name, r] of Object.entries(ROUTINES)) {
+      const on = cfg.routines.includes(name) ? "x" : " ";
+      console.log(`    [${on}] ${name.padEnd(10)} ${r.needsApp ? "(needs app) " : ""}${r.what}`);
+    }
+  } finally { db.close(); }
 }
 
 // Build per-manager draft tendencies for MY league from its real auction history (prior seasons),

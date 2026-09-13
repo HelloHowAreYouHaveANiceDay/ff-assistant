@@ -53,6 +53,41 @@ function ffRun(args) {
   });
 }
 
+// THE IN-SEASON SCHEDULER. A single self-rescheduling loop: each cycle re-reads the schedule config
+// (so a change the copilot makes via `schedule-set` takes effect next cycle, with no restart), and if
+// it is ON, runs `ff inseason-tick` -- which runs whatever routines the stored config selects, IN THE
+// ENGINE, so the app never hardcodes the routine list. The cadence is the config's own `everyMinutes`.
+// Living in the app rather than an external Task Scheduler job means it runs exactly while the app is
+// open (which is when a live-draft/in-season user is watching) and needs no OS-level setup.
+let schedulerTimer = null, tickRunning = false, lastTick = null;
+async function schedulerCycle() {
+  schedulerTimer = null;
+  let cfg = null;
+  try { cfg = await rpc("schedule-get"); } catch (_) { /* helper may be restarting; try again next cycle */ }
+  const everyMin = Math.max(5, Math.min(720, (cfg && Number(cfg.everyMinutes)) || 15));
+  if (cfg && cfg.enabled && !tickRunning) {
+    tickRunning = true;
+    try {
+      const r = await ffRun(["inseason-tick", "--json"]);
+      lastTick = { at: new Date().toISOString(), ok: r.ok, out: r.out };
+      if (win && !win.isDestroyed()) win.webContents.send("mc:schedulerTick", lastTick);
+    } catch (e) { lastTick = { at: new Date().toISOString(), ok: false, out: String(e) }; }
+    finally { tickRunning = false; }
+  }
+  // Always reschedule -- a disabled cycle is a cheap no-op that keeps re-enabling to within one period;
+  // an explicit schedule-set also kicks a cycle immediately (see the IPC handler).
+  schedulerTimer = setTimeout(schedulerCycle, everyMin * 60000);
+}
+function startScheduler() {
+  if (schedulerTimer) return;
+  // First cycle after a short delay so serve + bridge have settled; then it self-schedules.
+  schedulerTimer = setTimeout(schedulerCycle, 30000);
+}
+function kickSchedulerSoon() {
+  if (schedulerTimer) { clearTimeout(schedulerTimer); }
+  schedulerTimer = setTimeout(schedulerCycle, 1500);
+}
+
 // BOARD-CHANGE NOTIFICATION, hung on the CHOKEPOINTS rather than on a list of commands.
 //
 // Every `ff` invocation the app makes goes through exactly two places: ffRun (one-shot verbs) and
@@ -343,6 +378,14 @@ ipcMain.handle("mc:modelGraph", () => rpc("model-graph").catch(() => null));
 ipcMain.handle("mc:lineage", () => rpc("lineage").catch(() => null));
 ipcMain.handle("mc:modelPage", () => rpc("model-page").catch(() => null));
 ipcMain.handle("mc:ownership", () => rpc("ownership").catch(() => null));
+// The in-season scheduler surface for the renderer (a settings panel) and, through it, the copilot.
+ipcMain.handle("mc:scheduleGet", async () => { try { return { config: await rpc("schedule-get"), lastTick }; } catch (_) { return { config: null, lastTick }; } });
+ipcMain.handle("mc:scheduleSet", async (e, patch) => {
+  let res = null; try { res = await rpc("schedule-set", { patch: patch || {} }); } catch (_) { /* return null */ }
+  kickSchedulerSoon(); // a just-enabled schedule (or a cadence change) starts promptly, not next period
+  return res;
+});
+ipcMain.handle("mc:tickNow", () => ffRun(["inseason-tick", "--json"])); // run the routine set once, on demand
 ipcMain.handle("mc:syncRosters", () => ffRun(["sync-rosters"]));
 // materialize one source (asset) + its downstream -- a separate process so the serve helper isn't blocked
 ipcMain.handle("mc:ingestSource", (e, id) => ffRun(["ingest-source", String(id)]));
@@ -476,8 +519,12 @@ app.whenReady().then(() => {
   ensureDb();   // packaged first-run: copy the seeded store into writable userData
   startServe(); // one long-lived DB helper for the whole session
   startBridge();// loopback door so the engine can use the app's authenticated webview
+  startScheduler(); // in-season routine timer (obeys the stored schedule; OFF by default)
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
-app.on("before-quit", () => { try { if (serve && serve.pid) cp.execSync(`taskkill /F /T /PID ${serve.pid}`); } catch (_) { /* gone */ } });
+app.on("before-quit", () => {
+  if (schedulerTimer) { clearTimeout(schedulerTimer); schedulerTimer = null; }
+  try { if (serve && serve.pid) cp.execSync(`taskkill /F /T /PID ${serve.pid}`); } catch (_) { /* gone */ }
+});
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
