@@ -27,6 +27,7 @@ import { buildConditionalCurve, buildCurveFromHistory } from "../data/projection
 import { buildSkResolver, type SkResolver } from "../data/skResolve.js";
 import { fetchCsvCached, playerWeekUrl, cacheTag, canonTeam, pick, URLS, draftPicksUrl } from "../data/nflverse.js";
 import { normPos } from "../data/stgPlayer.js";
+import { PRESEASON_WINDOW_SQL } from "../data/preseasonWindow.js";
 
 /** The positions a fantasy roster is made of. IDP rows exist in the history files and are left out
  *  here on purpose: this league does not start them, and carrying 20k rows nothing reads would make
@@ -144,7 +145,7 @@ function ecrForSeason(db: DB, yr: number, currentSeason: number, resolver: SkRes
     raw = db.prepare(
       "SELECT scrape_date, name, pos, team, ecr, sd FROM ranking_history " +
       "WHERE ecr_type='ro' AND source='fantasypros' AND season=@s AND ecr IS NOT NULL " +
-      "AND (substr(scrape_date,6,2)='08' OR (substr(scrape_date,6,2)='09' AND CAST(substr(scrape_date,9,2) AS INTEGER)<=7))",
+      PRESEASON_WINDOW_SQL,
     ).all({ s: yr }) as typeof raw;
   } catch { return out; }
   if (!raw.length) return out;

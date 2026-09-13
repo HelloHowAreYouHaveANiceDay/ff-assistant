@@ -22,6 +22,7 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { openDb, getConfig } from "../db/db.js";
 import { nameKey } from "../draft/values.js";
 import { dataPath } from "./paths.js";
+import { PRESEASON_WINDOW_SQL } from "./preseasonWindow.js";
 
 /**
  * curve[pos][k] = mean across the last `nSeasons` completed seasons of the k-th best player's season
@@ -237,7 +238,7 @@ export function buildEcrCurve(
     raw = db.prepare(
       "SELECT season, scrape_date, player_id, pos, ecr FROM ranking_history " +
       "WHERE ecr_type='ro' AND source='fantasypros' AND ecr IS NOT NULL " +
-      "AND (substr(scrape_date,6,2)='08' OR (substr(scrape_date,6,2)='09' AND CAST(substr(scrape_date,9,2) AS INTEGER)<=7))",
+      PRESEASON_WINDOW_SQL,
     ).all() as typeof raw;
   } catch { return { curve: {}, seasons: [], joined: 0, unmatched: 0 }; }
 
