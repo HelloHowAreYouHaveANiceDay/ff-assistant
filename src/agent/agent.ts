@@ -318,7 +318,21 @@ function buildTools(dbPath: string | undefined, season: number) {
               "if(!c.length)return 'NOMATCH';" +
               "var el=c[Math.min(a.nth,c.length-1)];" +
               "var label=(el.innerText||el.value||el.tagName).trim().slice(0,60);" +
-              "el.scrollIntoView({block:'center'});el.click();" +
+              // Fire the FULL bubbling sequence, not just el.click(): a bare click does not drive
+              // React's synthetic onClick on a chrome-less control (the Fantasy Chat toggle). Same
+              // lesson as fill_page. KEEP IN SYNC with the /click bridge route in app/main.js.
+              "el.scrollIntoView({block:'center'});" +
+              "var r=el.getBoundingClientRect();var o={bubbles:true,cancelable:true,view:window,clientX:r.left+r.width/2,clientY:r.top+r.height/2,button:0};" +
+              "function P(ty){try{el.dispatchEvent(new PointerEvent(ty,o));}catch(e){}}" +
+              "function M(ty){try{el.dispatchEvent(new MouseEvent(ty,o));}catch(e){}}" +
+              "P('pointerover');M('mouseover');P('pointerenter');" +
+              "P('pointerdown');M('mousedown');try{if(el.focus)el.focus();}catch(e){}" +
+              "P('pointerup');M('mouseup');" +
+              // Exactly ONE click event: el.click() (which also fires a link/button's default action).
+              // Dispatching a synthetic MouseEvent('click') HERE TOO double-fired -> a click-driven
+              // TOGGLE (the Pending Moves link) opened then closed. The pointer/mouse down+up above
+              // still fire for components that open on those instead of click.
+              "try{if(typeof el.click==='function')el.click();}catch(e){}" +
               "return 'CLICKED:'+label;})()";
             const res = await wvEval(page, js);
             if (res === "NOMATCH") { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: `no visible element matched ${args.selector ? "selector " + args.selector : `text "${args.text}"`}` }] }; }

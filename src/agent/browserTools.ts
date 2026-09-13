@@ -140,6 +140,47 @@ export function browserTools(tool: Tool): unknown[] {
         }
       }) as never,
     ),
+    tool(
+      "read_frame",
+      "Read text from a NESTED IFRAME inside the embedded ESPN page -- e.g. the Fantasy Chat / direct-message panel, which read_page and read_dom CANNOT see because it is a cross-origin child frame walled off from the top document. Call with NO `match` to list every frame's URL; call with `match` (a substring of the target frame's URL) to get that frame's visible text, optionally scoped to a CSS `selector`. Open the chat panel in the UI first so the frame exists.",
+      {
+        match: z.string().optional().describe("substring of the target frame's URL; omit to list all frames"),
+        selector: z.string().optional().describe("CSS selector within the frame to scope the read; omit for the whole frame body"),
+        scrollUp: z.boolean().optional().describe("wheel the frame's largest scrollable area to the top before reading, to load earlier messages in a virtualized chat list"),
+      },
+      (async (args: { match?: string; selector?: string; scrollUp?: boolean }) => {
+        try {
+          const { bridgeReadFrame } = await import("../browser/appBridge.js");
+          const r = await bridgeReadFrame({ match: args.match, selector: args.selector, scrollUp: args.scrollUp });
+          if (r.frames) return text("frames (" + r.frames.length + "):\n" + r.frames.map((f) => `- ${f.name || "(top)"}: ${f.url}`).join("\n"));
+          if (r.text === "__NOSEL__") return text(`frame ${r.url}: no element matched ${args.selector}`);
+          return text(`[${r.url}]\n` + String(r.text ?? "").slice(0, 8000));
+        } catch (e) {
+          return text(`read_frame failed: ${String(e).slice(0, 200)}`);
+        }
+      }) as never,
+    ),
+    tool(
+      "press",
+      "HARDENED click for controls that a plain click_page does not activate -- e.g. the Fantasy Chat toggle or any React onClick on a non-button element. It dispatches the full bubbling pointer/mouse/click sequence (the fill_page lesson, for clicks), not just el.click(). Target by CSS `selector` or visible `text`; the smallest visible match wins. Pass `frame` (a substring of a nested iframe's URL, e.g. 'chat.espn.com') to click INSIDE that cross-origin frame, which read_page/click_page cannot reach. Use click_page for ordinary buttons/links; reach for this when a click seems to do nothing or the target is inside an iframe.",
+      {
+        selector: z.string().optional().describe("CSS selector of the control to click"),
+        text: z.string().optional().describe("visible text of the control (used when selector is omitted)"),
+        nth: z.number().optional().describe("which match to click when several tie, 0-based (default 0)"),
+        frame: z.string().optional().describe("substring of a nested iframe's URL to click inside (e.g. 'chat.espn.com'); omit for the top document"),
+      },
+      (async (args: { selector?: string; text?: string; nth?: number; frame?: string }) => {
+        if (!args.selector && !args.text) return text("give a selector or text");
+        try {
+          const { bridgeClick } = await import("../browser/appBridge.js");
+          const r = await bridgeClick({ selector: args.selector, text: args.text, nth: args.nth, frame: args.frame });
+          if (!r.ok) return text(`press: ${r.err === "NOMATCH" ? `no visible element matched ${args.selector ?? `"${args.text}"`}` : (r.err ?? "failed")}`);
+          return text(`pressed: ${r.clicked}${r.popup ? ` (captured popup -> ${r.popup})` : ""}`);
+        } catch (e) {
+          return text(`press failed: ${String(e).slice(0, 200)}`);
+        }
+      }) as never,
+    ),
 
     // --- LIVE DRAFT: reads --------------------------------------------------------------------
     tool(

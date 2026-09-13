@@ -433,6 +433,26 @@ ipcMain.handle("mc:pushSheet", async (e, id) => {
 // route, bound to 127.0.0.1 only, gated by a random token written to a file alongside the port. The
 // engine reads that file to discover both. No debug port, no playwright, and the surface is one
 // function rather than the whole renderer.
+// Resolve the ESPN <webview> GUEST webContents directly, rather than via `win` +
+// getElementById("espnview"). Measured 2026-09-13: those resolved a DIFFERENT guest than the one the
+// CDP-driven tools (and the user) are actually looking at -- the bridge landed on fantasy.espn.com's
+// home while the visible view was the clubhouse -- so a click or frame-read hit the wrong page. The
+// full webContents list is the source of truth: take the <webview> guests, prefer those on espn.com,
+// and among those the MOST SPECIFIC url (longest -- a clubhouse with a query string beats the bare
+// home), or the one matching `urlIncludes` when the caller names it.
+function espnGuestWebContents(urlIncludes) {
+  const { webContents } = require("electron");
+  let guests;
+  try { guests = webContents.getAllWebContents().filter((wc) => { try { return wc.getType && wc.getType() === "webview" && !wc.isDestroyed(); } catch (_) { return false; } }); }
+  catch (_) { return null; }
+  const url = (wc) => { try { return wc.getURL() || ""; } catch (_) { return ""; } };
+  const onEspn = guests.filter((wc) => /espn\.com/.test(url(wc)));
+  const pool = onEspn.length ? onEspn : guests;
+  if (urlIncludes) { const m = pool.find((wc) => url(wc).includes(urlIncludes)); if (m) return m; }
+  pool.sort((a, b) => url(b).length - url(a).length);
+  return pool[0] || null;
+}
+
 function startBridge() {
   const http = require("http");
   const crypto = require("crypto");
@@ -472,6 +492,128 @@ function startBridge() {
         } catch (e) {
           return reply(200, { error: String((e && e.message) || e) });
         } finally { if (w && !w.isDestroyed()) w.destroy(); }
+      });
+      return;
+    }
+    // /read-frame -- read text from a NESTED FRAME of the ESPN guest (e.g. the Fantasy Chat / direct-
+    // message iframe). /fetch and the DOM readers cannot reach it: they run in the guest's TOP
+    // document via `wv.executeJavaScript`, and a cross-origin child iframe is walled off from the top
+    // document by same-origin policy. The MAIN PROCESS is the embedder, so it can enumerate the
+    // guest's whole frame tree and run a read INSIDE the chosen frame -- the one place that wall does
+    // not apply. Strictly READ-ONLY, like /read and /fetch: it does not accept caller-supplied JS,
+    // only a URL substring to pick the frame and an optional CSS selector to scope the text.
+    //   { }                          -> lists every frame's url, so the caller can pick one
+    //   { match, selector? }         -> innerText of the first frame whose url contains `match`
+    if (req.method === "POST" && req.url === "/read-frame") {
+      let fbody = "";
+      req.on("data", (d) => { fbody += d; if (fbody.length > 1e6) req.destroy(); });
+      req.on("end", async () => {
+        let match, selector, waitMs, scrollUp, anchorText;
+        try { const j = JSON.parse(fbody); match = j.match; selector = j.selector; waitMs = Math.min(10000, Number(j.waitMs) || 0); scrollUp = !!j.scrollUp; anchorText = j.anchorText; }
+        catch { return reply(400, { error: "bad json" }); }
+        if (anchorText != null && typeof anchorText !== "string") return reply(400, { error: "anchorText must be a string" });
+        if (selector != null && typeof selector !== "string") return reply(400, { error: "selector must be a string" });
+        if (match != null && typeof match !== "string") return reply(400, { error: "match must be a string" });
+        try {
+          const guest = espnGuestWebContents();
+          if (!guest || guest.isDestroyed()) return reply(200, { error: "no ESPN webview guest found (open the Live Draft view first)" });
+          if (waitMs) await new Promise((r) => setTimeout(r, waitMs));
+          const frames = guest.mainFrame.framesInSubtree.map((f) => ({ url: f.url, name: f.name }));
+          if (!match) return reply(200, { frames });
+          const frame = guest.mainFrame.framesInSubtree.find((f) => (f.url || "").includes(match));
+          if (!frame) return reply(200, { error: `no frame url contained "${match}"`, frames });
+          // Chat message lists are virtualized -- only rows near the viewport are in the DOM. When
+          // asked, wheel the largest scrollable element up to load earlier messages before scraping.
+          if (scrollUp) {
+            // A virtualized message THREAD lazy-loads earlier rows only when ITS OWN scroller reaches
+            // the top. Scrolling every scrollable element is too blunt -- it moves the conversation
+            // LIST and collapses the view. So find the scroller that actually holds the messages: the
+            // scrollable ancestor of an element whose text marks a message (a proposal card says
+            // "Receives"/"Trade Proposal"; anchorText lets a caller name another marker), and wheel
+            // only that one to the top, repeatedly, letting each load settle.
+            const marker = JSON.stringify(anchorText || "Receives");
+            for (let pass = 0; pass < 6; pass++) {
+              await frame.executeJavaScript(
+                "(function(){var m=" + marker + ";var all=document.querySelectorAll('*');var anchor=null;" +
+                "for(var i=all.length-1;i>=0;i--){var e=all[i];if((e.textContent||'').indexOf(m)>=0&&e.children.length<=3){anchor=e;break;}}" +
+                "if(!anchor)return false;var s=anchor;while(s&&!(s.scrollHeight>s.clientHeight+20))s=s.parentElement;" +
+                "if(!s)return false;try{s.dispatchEvent(new WheelEvent('wheel',{deltaY:-1500,bubbles:true,cancelable:true}));}catch(_){}s.scrollTop=0;return true;})()");
+              await new Promise((r) => setTimeout(r, 700));
+            }
+          }
+          const scrape = selector
+            ? `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e ? (e.innerText || "").slice(0, 200000) : "__NOSEL__"; })()`
+            : `(() => ((document.body && document.body.innerText) || "").slice(0, 200000))()`;
+          const text = await frame.executeJavaScript(scrape);
+          return reply(200, { url: frame.url, name: frame.name, text });
+        } catch (e) { return reply(200, { error: String((e && e.message) || e) }); }
+      });
+      return;
+    }
+    // /click -- the HARDENED clicker for the ESPN guest. `click_page`'s plain `el.click()` is enough
+    // for a real <button> (espnAuction's bid/Select buttons), but NOT for a React onClick on a
+    // chrome-less toggle like the Fantasy Chat launcher: that node has no button role and a bare
+    // .click() does not drive React's synthetic system. So this dispatches the full bubbling sequence
+    // -- pointerover/enter, pointerdown+mousedown, focus, pointerup+mouseup -- and then ONE click via
+    // el.click() (which also fires a link/button default action). Exactly one click event: dispatching
+    // a synthetic click on top of el.click() double-fired and double-toggled toggle controls.
+    // Same lesson as fill_page, which learned React ignores anything but real {bubbles:true} events.
+    // Narrow like its siblings: it takes a CSS selector OR visible text, never caller JS.
+    // KEEP THE SEQUENCE IN SYNC with click_page in src/agent/agent.ts.
+    if (req.method === "POST" && req.url === "/click") {
+      let cbody = "";
+      req.on("data", (d) => { cbody += d; if (cbody.length > 1e6) req.destroy(); });
+      req.on("end", async () => {
+        let selector, textMatch, nth, frameMatch;
+        try { const j = JSON.parse(cbody); selector = j.selector; textMatch = j.text; nth = Math.max(0, Number(j.nth) || 0); frameMatch = j.frame; }
+        catch { return reply(400, { error: "bad json" }); }
+        if (selector != null && typeof selector !== "string") return reply(400, { error: "selector must be a string" });
+        if (textMatch != null && typeof textMatch !== "string") return reply(400, { error: "text must be a string" });
+        if (frameMatch != null && typeof frameMatch !== "string") return reply(400, { error: "frame must be a string" });
+        if (!selector && !textMatch) return reply(400, { error: "give a selector or text" });
+        try {
+          const guest = espnGuestWebContents();
+          if (!guest || guest.isDestroyed()) return reply(503, { error: "no ESPN webview guest found (open the Live Draft view first)" });
+          // Click in a NESTED frame when asked (the chat lives in a cross-origin iframe); else the top document.
+          let targetFrame = guest.mainFrame;
+          if (frameMatch) {
+            const f = guest.mainFrame.framesInSubtree.find((fr) => (fr.url || "").includes(frameMatch));
+            if (!f) return reply(200, { ok: false, err: `no frame url contained "${frameMatch}"` });
+            targetFrame = f;
+          }
+          const spec = JSON.stringify({ selector: selector || "", text: textMatch || "", nth });
+          const inner =
+            "(function(){var a=" + spec + ";" +
+            "window.__ffOpen=null;if(!window.__ffPatched){window.__ffPatched=1;" +
+            "window.open=function(u){try{window.__ffOpen=String(u||'');}catch(e){}return {closed:false,focus:function(){},blur:function(){},close:function(){},postMessage:function(){}};};}" +
+            "function vis(e){var r=e.getBoundingClientRect();var s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';}" +
+            "var c=[];" +
+            "if(a.selector){c=Array.prototype.slice.call(document.querySelectorAll(a.selector)).filter(vis);}" +
+            "else{var t=a.text.toLowerCase();c=Array.prototype.slice.call(document.querySelectorAll('a,button,input,[role=button],div,span,td')).filter(function(e){var x=(e.innerText||e.value||'').trim().toLowerCase();return x&&x.indexOf(t)>=0&&vis(e);}).sort(function(p,q){return (p.innerText||'').length-(q.innerText||'').length;});}" +
+            "if(!c.length)return JSON.stringify({ok:false,err:'NOMATCH'});" +
+            "var el=c[Math.min(a.nth,c.length-1)];" +
+            "var label=(el.innerText||el.value||el.tagName||'').trim().slice(0,60);" +
+            "el.scrollIntoView({block:'center'});" +
+            "var r=el.getBoundingClientRect();var o={bubbles:true,cancelable:true,view:window,clientX:r.left+r.width/2,clientY:r.top+r.height/2,button:0};" +
+            "function P(ty){try{el.dispatchEvent(new PointerEvent(ty,o));}catch(e){}}" +
+            "function M(ty){try{el.dispatchEvent(new MouseEvent(ty,o));}catch(e){}}" +
+            "P('pointerover');M('mouseover');P('pointerenter');" +
+            "P('pointerdown');M('mousedown');try{if(el.focus)el.focus();}catch(e){}" +
+            "P('pointerup');M('mouseup');" +
+            // Exactly ONE click event: el.click(). A synthetic MouseEvent('click') here TOO double-fired
+            // and double-toggled a click-driven toggle (the Pending Moves link opened then closed). The
+            // pointer/mouse down+up above still fire for components that open on those instead of click.
+            "try{if(typeof el.click==='function')el.click();}catch(e){}" +
+            "return JSON.stringify({ok:true,clicked:label});})()";
+          const raw = await targetFrame.executeJavaScript(inner);
+          let out; try { out = JSON.parse(String(raw || "{}")); } catch { out = { ok: false, err: "unparseable result" }; }
+          // Surface a captured popup URL the same way click_page does, so a caller can follow it.
+          try {
+            const popped = await targetFrame.executeJavaScript("String(window.__ffOpen||'')");
+            if (popped && popped !== "null") out.popup = String(popped);
+          } catch (_) { /* popup capture is best-effort */ }
+          return reply(200, out);
+        } catch (e) { return reply(200, { ok: false, err: String((e && e.message) || e) }); }
       });
       return;
     }
