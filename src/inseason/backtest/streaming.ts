@@ -22,6 +22,7 @@
  */
 import { loadWeekContext, loadModel, type ModelName } from "./context.js";
 import type { DB } from "../../db/db.js";
+import { regWeeksFor } from "../regWeeks.js";
 
 export interface StreamPosResult {
   pos: string;
@@ -60,8 +61,7 @@ export function backtestStreaming(
     ).all(season) as { week: number; player_sk: string; pos: string }[]) {
       let l = faByWeek.get(r.week); if (!l) { l = []; faByWeek.set(r.week, l); } l.push({ playerSk: r.player_sk, pos: r.pos });
     }
-    const regWeeks = (db.prepare(`SELECT MAX(reg_weeks) rw FROM raw_league_season WHERE season=?`).get(season) as { rw: number | null }).rw
-      ?? (db.prepare(`SELECT MAX(week) w FROM feat_player_week_model WHERE season=? AND pts IS NOT NULL`).get(season) as { w: number | null }).w ?? 14;
+    const regWeeks = regWeeksFor(db, season);
 
     for (let w = 1; w <= regWeeks; w++) {
       const wc = loadWeekContext(db, opts.leagueId, season, w, wm);

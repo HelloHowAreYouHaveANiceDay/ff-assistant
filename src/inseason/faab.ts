@@ -31,6 +31,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { nameKey } from "../draft/values.js";
+import { latestScoredWeek } from "./regWeeks.js";
 
 export const FAAB_ARTIFACT_PATH = process.env.FF_FAAB_MODEL ?? "data/faab-model.json";
 
@@ -240,9 +241,7 @@ export function liveFaabState(o: {
   try {
     let week = o.week ?? 0, weekSource = "caller";
     if (!week) {
-      const r = db.prepare(
-        `SELECT MAX(week) w FROM feat_player_week_model WHERE season = ? AND pts IS NOT NULL`).get(o.season) as { w: number | null };
-      week = (r?.w ?? 0) + 1;
+      week = (latestScoredWeek(db, o.season) ?? 0) + 1;
       weekSource = "the week after the last one with settled points";
       if (week < 1) { week = 1; weekSource = "no settled week in the store -- week 1"; }
     }

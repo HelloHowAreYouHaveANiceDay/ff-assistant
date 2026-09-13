@@ -23,6 +23,7 @@
 import { optimalLineup, type RosterPlayer } from "../lineup.js";
 import { loadWeekContext, loadModel, type ModelName } from "./context.js";
 import { getConfig, type DB } from "../../db/db.js";
+import { regWeeksFor } from "../regWeeks.js";
 
 export interface DecisionMember {
   playerSk: string; name: string; pos: string;
@@ -102,9 +103,7 @@ function iterateStates(
       m.set(r.week, { pts: r.pts ?? 0, bye: !!r.is_bye, out: !!r.inj_out });
       if (r.t4_mean != null) formByKey.set(`${r.player_sk}|${r.week}`, r.t4_mean);
     }
-    const regWeeks = (db.prepare(`SELECT MAX(reg_weeks) rw FROM raw_league_season WHERE season=?`).get(season) as { rw: number | null }).rw
-      ?? (db.prepare(`SELECT MAX(week) w FROM feat_player_week_model WHERE season=? AND pts IS NOT NULL`).get(season) as { w: number | null }).w
-      ?? 14;
+    const regWeeks = regWeeksFor(db, season);
     const maxW = Math.min(maxDecisionWeek ?? regWeeks - 1, regWeeks - 1);
 
     // Preload every season's FA-pool rows once, indexed by week.
