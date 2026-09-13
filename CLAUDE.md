@@ -67,6 +67,14 @@ Documented limits, all measured:
 - `marketSd = 0.30` is an assumption `calibrate` never measures. The `aggr` optimum was swept across
   0.20–0.45 and held; re-check it if you lean on that parameter.
 
+## Browser access — always the Electron app, never Claude in Chrome
+
+**Never use the Claude-in-Chrome tools (`mcp__claude-in-chrome__*`) in this repo.** All browser work —
+reading ESPN pages, trade/message inboxes, the draft room, anything live — goes through OUR Electron
+app's embedded ESPN webview, driven with `--app` (see the trap below). It carries the real ESPN login
+and is the only surface the draft/in-season verbs actually control. If a task needs the browser, reach
+for the `--app` path or the `ff-draft` MCP tools, not Chrome. (Standing owner instruction 2026-09-13.)
+
 ## Live-draft traps
 
 - **`--app` drives the desktop app's embedded ESPN webview; plain `--port 9223` does NOT.**
