@@ -24,6 +24,23 @@
 > - Route: one-line `WEEKLY_SERVE["DST"] = DST_STREAM_ARTIFACT`, served by `projectWeekly` unchanged;
 >   both DST consumers read the table. Reversal is the one line back to the floor. Full record:
 >   docs/decisions.md D20, docs/weekly.md section 9; regression guard `test/dst-stream-serve.test.ts`.
+>
+> **BOTTOM-UP DST (individual defenders aggregated) -- SCREENED, NULL, NOT shipped.** Tested whether
+> modelling individual defensive players (per-defender as-of sack/takeaway rates, down-weighted when a
+> defender is OUT this week) and aggregating to a team DST projection beats the team-level matchup model
+> above -- the hypothesis being that injuries / roster moves carry signal the team-level "sacks/game"
+> average smears out. The data build WORKS and is leakage-clean (per-player defensive box stats from the
+> unified `stats_player_week_<season>.csv` feed's `def_*` columns, 2005-2025 incl. 2025, `as_of` == the
+> game day; NB the first pass wrongly used the deprecated frozen-at-2024 `player_stats_def_*` release --
+> corrected), and the injury lever is provably connected (forcing a top rusher OUT drops the projection,
+> right-signed coef). But the VERDICT is NULL: bottom-up does not beat team-level on accuracy (C-vs-A
+> MAE +0.019 holdout, within the 0.024 floor) or the pick (streamable holdout +1.03 excludes 0 but is
+> flat on the SELECTION block -- winner's curse); the injury signal is material in only ~6% of team-weeks
+> and even there does not clear the floor. The team-level opponent features (`opp_off_sacks_allowed_pg`,
+> `opp_off_giveaways_pg`) already absorb the matchup half. Not productionized. REBUILD POINTER: branch
+> `explore/dst-bottomup` carries `raw_player_def_week` + `ingestRawPlayerDef` (source = the `def_*`
+> columns of `stats_player_week`) and the fit (`scripts/dst_bottomup_fit.py`); rebuild from there if a
+> future feature needs per-defender defensive stats. The ingest is NOT wired into the default refresh.
 
 > ## SHIPPED (D19): the weekly lineup model is gradient-boosted -- a rung-4 rigor pass found the real edge (2026-09-14)
 >
