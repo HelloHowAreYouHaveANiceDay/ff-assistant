@@ -1115,6 +1115,13 @@ CREATE TABLE IF NOT EXISTS feat_player_season_ext (
   -- as of September 1 specifically
   depth_rank_sep1  INTEGER,
   injury_status_sep1 TEXT,
+  -- FRONTIER CANDIDATES (2026-09-14), all prior-season (Y-1) or Sep-1, so safe at the anchor. Declared
+  -- as --add-features candidates in tools/train_projection.py, NONE fitted by default until a gate passes.
+  prior_out_games  REAL,             -- Y-1 count of REG weeks the player was listed report_status='Out' (durability)
+  prior_yac_oe     REAL,             -- Y-1 season NGS avg yards-after-catch OVER EXPECTED (receivers; week-0 agg row)
+  prior_ryoe       REAL,             -- Y-1 season NGS rush yards over expected PER ATTEMPT (backs)
+  prior_cpoe       REAL,             -- Y-1 season NGS completion % over expected (quarterbacks)
+  qb_changed       INTEGER,          -- 1 if the player's team's Sep-1 expected QB1 differs from its Y-1 primary starter (skill players)
   -- the draft market, from the FFC archive. adp_as_of is the archive's own window end and is NOT
   -- always inside the season: standard 2008 and 2009 are both stamped 2010-06-20.
   adp             REAL,

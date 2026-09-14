@@ -158,6 +158,13 @@ function addColumns(db: DB): void {
     ["fact_team_season", "playoff_reseed", "INTEGER"],
     ["fact_team_season", "seeding_rule", "TEXT"],
     ["fact_team_season", "division_count", "INTEGER"],
+    // FRONTIER CANDIDATES on feat_player_season_ext (2026-09-14). Prior-season / Sep-1, so safe at the
+    // anchor; declared as --add-features candidates only, never default. See docs/feature-frontier.md.
+    ["feat_player_season_ext", "prior_out_games", "REAL"],
+    ["feat_player_season_ext", "prior_yac_oe", "REAL"],
+    ["feat_player_season_ext", "prior_ryoe", "REAL"],
+    ["feat_player_season_ext", "prior_cpoe", "REAL"],
+    ["feat_player_season_ext", "qb_changed", "INTEGER"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
