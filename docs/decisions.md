@@ -403,10 +403,16 @@ The three heavy acceptance runs the earlier work streams deferred, now executed:
   `--candidate contract_year --remove --seasons 2008-2025`: **the feature's own contribution is +0.0039 pinball
   (SE 0.0035), floor 0.0100, wins 3/9 -> DROP** (within the floor = noise); holdout 2021-2025 confirm +0.0181,
   floor 0.0593, NOT confirmed. This matches the trainer's own comment (train_projection.py:132-141: contract_year
-  "PREDATES that floor and would not clear it"). **RECOMMENDATION (owner decision, NOT applied):** remove
-  contract_year from `INDICATOR_FEATURES`/`EXT_INDICATOR` (a one-line drop) -- it is a noise feature the WS1
-  floor was built to catch. Not auto-removed: dropping a default column changes the shipped projection model
-  (draft board + in-season), so it wants a playoff-gate check and sign-off, per the no-silent-model-change rule.
+  "PREDATES that floor and would not clear it"). **APPLIED (owner decision, 2026-09-14): DROPPED.** Removed from
+  `INDICATOR_FEATURES` (the default fit list) in train_projection.py; KEPT in `EXT_INDICATOR` as an
+  --add-features candidate and as a `feat_player_season_ext` column (data-layer coverage), so re-admitting it
+  is one flag + a passing gate. Not because it hurt (it is inert, ~0 effect) but because WS1 requires a feature
+  to clear the floor to be carried, and a grandfathered noise column is what the floor exists to catch. The
+  shipped `data/projection-artifact.json` was REGENERATED without it (contract_year specs 25 -> 0), re-validated
+  through the shipped loader + golden self-check (test/projector.test.ts green), and the flagless backtest is
+  UNCHANGED at 38.5% champ / 96% playoff -- the correct gate for a projector feature is projection pinball
+  (measured ~0), and the downstream championship number does not move. Re-admit later via `--add-features
+  contract_year` only if a powered screen clears the floor.
 - **Adjacent-season embargo (WS3) -- CONFIRMED at full scale.** The 18-fold `--embargo 1 --keep-artifacts
   data/fold-artifacts-2b-embargo` regen ran (P5 HELD, coverage 0.752 in band); the 2015 fold artifact EXCLUDES
   2014 and includes 2013 (max 2013). The embargo mechanism works end-to-end at full 18-fold scale.

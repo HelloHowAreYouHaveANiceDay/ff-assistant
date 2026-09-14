@@ -129,19 +129,20 @@ RATIO_FEATURES = {
 # than on the residuals it was screened against. The admission trace is in docs/validation.md.
 #   depth_rank_sep1  screen rho -0.186 (the strongest candidate the sweep has ever produced);
 #                    admitted at pinball 12.31 -> 12.03, RMSE 54.17 -> 52.79, coverage 0.759 -> 0.761.
-#   contract_year    screen rho -0.124; admitted at pinball 12.03 -> 12.02, RMSE unchanged,
-#                    coverage 0.761 -> 0.760. It clears the pre-registered rule (pooled CRPS improves,
-#                    coverage stays in band) by 0.01, which is the edge of what this evaluation can
-#                    resolve -- recorded plainly rather than dressed up, because a keep/drop rule with
-#                    no effect-size floor will eventually admit noise and this is the first candidate
-#                    to sit near it.
+#   contract_year    screen rho -0.124; admitted at pinball 12.03 -> 12.02 (the edge of resolution),
+#                    then DROPPED 2026-09-14 -- see below.
 # EFFECT-SIZE FLOOR NOW ENFORCED (rigor WS1). Admission no longer reads a hand-noted 12.03->12.02:
 # `scripts/admit-feature.mjs` runs the nested CV baseline vs +candidate, takes the per-SEASON trained
-# pinball, and admits ONLY if the season-paired improvement clears 2.9*SE (the arbiter's floor). The
-# `contract_year` above PREDATES that floor and would not clear it -- it is kept here for now and
-# queued for WS6 re-validation (demote via a recorded decision, not a silent drop).
+# pinball, and admits ONLY if the season-paired improvement clears 2.9*SE (the arbiter's floor).
+# `contract_year` PREDATED that floor and, when finally tested by leave-one-out (--remove, 2026-09-14),
+# did NOT clear it: its own contribution was +0.0039 pinball vs a 0.0100 floor, winning only 3/9
+# seasons, holdout not confirmed (docs/decisions.md acceptance block; docs/feature-frontier.md). So it
+# was DROPPED from the fit (owner decision) -- not because it hurt (it is inert, ~0 effect) but because
+# WS1 says a feature must clear the floor to be carried, and a grandfathered noise column is exactly
+# what the floor exists to catch. It remains a COLUMN of feat_player_season_ext (data-layer coverage)
+# and an --add-features candidate below, so re-admitting it later is one flag + a passing gate.
 CENTER_FEATURES = ["age", "prior_games", "draft_round", "prior_pos_rank", "depth_rank_sep1"]
-INDICATOR_FEATURES = ["team_changed", "contract_year"]
+INDICATOR_FEATURES = ["team_changed"]
 
 # ==================================================================================================
 # THE EXTENSION TABLE'S CANDIDATE COLUMNS (Phase 2d), and why they are OPT-IN.
@@ -158,9 +159,9 @@ INDICATOR_FEATURES = ["team_changed", "contract_year"]
 # trainer and the serving path cannot compute them differently:
 #   adp_vs_ecr        -- ADP ranked within (season, position) minus ECR positional rank.
 #   rookie_draft_pick -- draft_pick where draft_year == season, NULL otherwise.
-# `depth_rank_sep1` and `contract_year` are in the DEFAULT lists above from Phase 2d onward; they
-# stay named here so the loader still reads them and so `--add-features` remains a complete list of
-# what the extension table offers.
+# `depth_rank_sep1` is in the DEFAULT list above (Phase 2d). `contract_year` WAS, until it was dropped
+# 2026-09-14 for failing the WS1 floor (see above); it stays named here as an --add-features candidate
+# so the loader still reads the column and re-admitting it is one flag + a passing gate.
 EXT_CENTER = [
     "prior_snap_share", "prior_route_share", "prior_carries_per_game", "prior_carry_share",
     "prior_air_yards_share", "prior_wopr", "depth_rank_sep1", "adp", "adp_vs_ecr",

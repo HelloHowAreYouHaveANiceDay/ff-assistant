@@ -66,8 +66,9 @@ is a list, not a shrug.
 - `raw_combine` -> `feat_player_prospect.athletic_score` already feeds the rookie model; static
   (draft-class), not a season lag, so not a projector feature.
 - `raw_college_player_season` -> rookie-model territory, not the returning-player projector.
-- `contract_year` -> screened by leave-one-out 2026-09-14: **DROP** (contribution +0.0039, floor
-  0.0100; docs/decisions.md acceptance block). A recommendation to remove it is open with the owner.
+- `contract_year` -> screened by leave-one-out 2026-09-14: **DROPPED** (contribution +0.0039, floor
+  0.0100; docs/decisions.md acceptance block). Removed from the default fit list and the shipped artifact
+  regenerated; kept as an --add-features candidate + ext column for later re-admission.
 
 ## Discipline reminders (this repo's, applied to the frontier)
 - Screen each candidate against the baseline that would SHIP, on the D13 **playoff** gate, with the
