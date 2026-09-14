@@ -49,6 +49,7 @@ import { loadArtifact } from "../src/model/projector.ts";
 import { boardProjection } from "../src/model/features.ts";
 import { nameKey, dstAliasKey } from "../src/draft/values.ts";
 import { playoffFieldFor } from "../src/features/picks.ts";
+import { rosPerGame, loadRosBlend } from "../src/draft/rosBlend.ts";
 
 const argv = process.argv.slice(2);
 const val = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : d; };
@@ -57,6 +58,16 @@ const TRIALS = Number(val("--trials", "3000"));
 const SEED = Number(val("--seed", "7"));
 const FOLD_DIR = val("--artifact-dir", "data/fold-artifacts-2b");
 const JSON_OUT = argv.includes("--json");
+// `--at-week W` -- THE IN-SEASON GATE (D18, 2026-09-14). Instead of the post-draft roster and a
+// from-scratch season, every team's roster AS OF week W (fact_roster_week), and three arms scored
+// against the same real outcomes:
+//   A  from scratch: the pre-D18 simulator with week-W rosters (no seed, preseason lines)
+//   B  standings SEEDED from the W-1 settled weeks (fact_lineup_week started points, fact_matchup)
+//   C  B plus REST-OF-SEASON lines: each man's preseason per-week line updated on his W-1 weeks by
+//      the fitted blend (data/ros-blend.json, K weeks of prior)
+// Paired per season, so the delta is a season-level statistic. `--at-week` one past the regular
+// season is the sanity check: every week settled, C must reproduce the realised field exactly.
+const AT_WEEK = val("--at-week", null) == null ? null : Number(val("--at-week", null));
 // `--emit-odds <path>` writes one row per team-season: the probabilities this harness produced and
 // the outcome they are scored against. It exists so `scripts/odds-accrual-2025.mjs` can push exactly
 // these numbers through `scorecard.ts`'s odds branch and check the two agree -- a scorer validated
@@ -161,7 +172,7 @@ function slotsFor(season) {
   return out;
 }
 
-function buildSeason(season) {
+function buildSeason(season, atWeek = null) {
   const path = `${FOLD_DIR}/artifact-${season}.json`;
   if (!existsSync(path)) return { skip: `no ${path}` };
   const art = loadArtifact(JSON.parse(readFileSync(path, "utf8")));
@@ -206,17 +217,27 @@ function buildSeason(season) {
     }
   }
 
-  const picks = db.prepare(
-    `SELECT p.team_id, p.name, p.pos, t.owner, t.team_name, t.wins, t.points_for, t.playoff_seed,
-            t.final_rank, t.champion, t.made_playoffs
-       FROM fact_draft_pick p JOIN fact_team_season t ON t.season = p.season AND t.team_id = p.team_id
-      WHERE p.season = ? ORDER BY p.pick_order`,
-  ).all(season);
-  if (!picks.length) return { skip: "no picks" };
+  // THE ROSTERS. Post-draft (the preseason question) or AS OF WEEK W (the in-season gate). Both carry
+  // the season's outcomes on the team so the scoring below is one code path.
+  const picks = atWeek == null
+    ? db.prepare(
+      `SELECT p.team_id, p.name, p.pos, NULL AS player_sk, t.owner, t.team_name, t.wins, t.points_for, t.playoff_seed,
+              t.final_rank, t.champion, t.made_playoffs
+         FROM fact_draft_pick p JOIN fact_team_season t ON t.season = p.season AND t.team_id = p.team_id
+        WHERE p.season = ? ORDER BY p.pick_order`,
+    ).all(season)
+    : db.prepare(
+      `SELECT r.team_id, r.name, r.pos, r.player_sk, t.owner, t.team_name, t.wins, t.points_for, t.playoff_seed,
+              t.final_rank, t.champion, t.made_playoffs
+         FROM fact_roster_week r JOIN fact_team_season t ON t.season = r.season AND t.team_id = r.team_id
+        WHERE r.season = ? AND r.week = ? ORDER BY r.team_id, r.name`,
+    ).all(season, Math.min(atWeek, 17));
+  if (!picks.length) return { skip: atWeek == null ? "no picks" : `no rosters for week ${atWeek}` };
 
   const byTeam = new Map();
   let matched = 0, missed = 0;
   const rostered = new Set();
+  const skOf = new Map();                          // projection name -> player_sk (in-season only)
   for (const p of picks) {
     const t = byTeam.get(p.team_id) ?? byTeam.set(p.team_id, {
       id: String(p.team_id), name: p.owner ?? p.team_name ?? String(p.team_id), roster: [],
@@ -227,6 +248,7 @@ function buildSeason(season) {
     if (!pr) { missed++; continue; }               // counted, never replaced by a stand-in
     matched++;
     rostered.add(pr.name);
+    if (p.player_sk != null) skOf.set(pr.name, String(p.player_sk));
     const tm = nflTeam.get(`${nameKey(pr.name)}|${pr.pos}`) ?? nflTeam.get(k) ?? null;
     t.roster.push({ name: pr.name, pos: pr.pos, proj: pr.mean, team: tm ?? "", bye: tm ? (bye.get(tm) ?? null) : null });
   }
@@ -245,6 +267,48 @@ function buildSeason(season) {
     if (g.length) weeks.push(g);
   }
   if (weeks.length !== reg) return { skip: `schedule has ${weeks.length} of ${reg} regular-season weeks` };
+
+  // THE SEASON SO FAR, for the in-season gate: standings from the W-1 settled weeks (started points
+  // per team-week from fact_lineup_week, head-to-head from fact_matchup) and each man's
+  // rest-of-season line from his W-1 weeks, in the frame the blend was fitted in (per non-bye week,
+  // a missed game a zero). Both are built here and applied per ARM in the run loop, so arms A, B and
+  // C differ in exactly one thing each.
+  let played = null;
+  const rosOf = new Map();
+  let rosK = Infinity;
+  if (atWeek != null && atWeek > 1) {
+    const playedWeeks = Math.min(atWeek - 1, reg);
+    const startedPts = new Map();
+    for (const r of db.prepare("SELECT week, team_id, started_pts FROM fact_lineup_week WHERE season = ? AND week <= ?").all(season, playedWeeks)) {
+      startedPts.set(`${r.week}|${r.team_id}`, r.started_pts);
+    }
+    const wins = teams.map(() => 0), pts = teams.map(() => 0);
+    for (let w = 1; w <= playedWeeks; w++) {
+      teams.forEach((t, i) => { pts[i] += startedPts.get(`${w}|${t.id}`) ?? 0; });
+      for (const [a, b] of weeks[w - 1]) {
+        const sa = startedPts.get(`${w}|${teams[a].id}`) ?? 0, sb = startedPts.get(`${w}|${teams[b].id}`) ?? 0;
+        if (sa >= sb) wins[a]++; else wins[b]++;
+      }
+    }
+    played = { weeks: playedWeeks, wins, pts };
+    const { blend } = loadRosBlend();
+    rosK = blend.K;
+    if (rosK !== Infinity) {
+      const rate = new Map();
+      for (const r of db.prepare("SELECT player_sk, pts, is_bye FROM feat_player_week WHERE season = ? AND week <= ? AND player_sk IS NOT NULL").all(season, playedWeeks)) {
+        if (r.is_bye) continue;
+        const cur = rate.get(String(r.player_sk)) ?? rate.set(String(r.player_sk), { k: 0, pts: 0 }).get(String(r.player_sk));
+        cur.k++; cur.pts += r.pts ?? 0;
+      }
+      for (const t of teams) for (const p of t.roster) {
+        const sk = skOf.get(p.name);
+        const td = sk ? rate.get(sk) : null;
+        if (!td || td.k <= 0) continue;
+        const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosK);
+        if (ros != null) rosOf.set(p.name, ros);
+      }
+    }
+  }
 
   // Streaming floor: the second-best UNROSTERED projection at each position, per week. Same rule as
   // src/draft/simContext.ts, which is where it is justified.
@@ -288,7 +352,7 @@ function buildSeason(season) {
     }
   }
 
-  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf };
+  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosK };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -322,6 +386,84 @@ function reliability(rows) {
 
 const seasons = [];
 for (let y = LO; y <= HI; y++) seasons.push(y);
+
+// ---------------------------------------------------------------------------------------------
+// THE IN-SEASON GATE (--at-week). Three arms per season on the same week-W rosters, scored against
+// the same outcomes, paired by season. Exits when done; the preseason report below is untouched.
+// ---------------------------------------------------------------------------------------------
+if (AT_WEEK != null) {
+  console.log(`IN-SEASON CALIBRATION at week ${AT_WEEK} -- ${LO}-${HI}, ${TRIALS} trials, seed ${SEED}, per-fold artifacts from ${FOLD_DIR}\n`);
+  console.log(`  arms: A = from scratch (pre-D18: week-${AT_WEEK} rosters, preseason lines, no standings)   B = A + standings seeded from ${AT_WEEK - 1} settled weeks   C = B + rest-of-season lines\n`);
+  const arms = ["A", "B", "C"];
+  const rows = { A: [], B: [], C: [] };
+  const perSeasonBrier = [];
+  console.log(`  season teams reg field  played  ros men   Brier A     Brier B     Brier C    uniform    (C - A)`);
+  for (const season of seasons) {
+    const s = buildSeason(season, AT_WEEK);
+    if (s.skip) { console.log(`  ${season}  SKIPPED -- ${s.skip}`); continue; }
+    if (AT_WEEK > s.reg + 1) { console.log(`  ${season}  SKIPPED -- week ${AT_WEEK} is past the regular season (${s.reg} weeks)`); continue; }
+    const useVm = UNLEAK ? (foldModel("variance", season) ?? vm) : vm;
+    const useOutcomes = UNLEAK ? (foldModel("outcomes", season) ?? outcomes) : outcomes;
+    const useCorr = UNLEAK ? (foldModel("correlation", season) ?? corr) : corr;
+    const base = {
+      weeks: s.weeks.length, playoffTeams: s.field, slots: s.slots, flexOk: ["RB", "WR", "TE"],
+      seeding: s.seasonSeeding, divisionOf: s.divisionOf, playoffReseed: s.seasonReseed,
+      projSd: 0.30, replacement: s.replacement, trials: TRIALS, seed: SEED, poolRank: s.poolRank,
+      bootstrap: { outcomes: useOutcomes, corr: useCorr, calibration: "scale" },
+      allowIncompleteRosters: true,
+    };
+    const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (s.rosOf.has(p.name) ? { ...p, rosPerGame: s.rosOf.get(p.name) } : { ...p })) }));
+    const oddsBy = {
+      A: simulateSeasons(s.teams, s.weeks, useVm, base),
+      B: simulateSeasons(s.teams, s.weeks, useVm, { ...base, played: s.played ?? undefined }),
+      C: simulateSeasons(withRos, s.weeks, useVm, { ...base, played: s.played ?? undefined }),
+    };
+    const b = {};
+    for (const arm of arms) {
+      const byId = new Map(oddsBy[arm].map((o) => [o.id, o]));
+      const seasonRows = s.teams.map((t) => ({ season, team: t.name, p: byId.get(t.id)?.playoffs ?? s.field / s.teams.length, y: t.outcome.playoffs ? 1 : 0 }));
+      rows[arm].push(...seasonRows);
+      b[arm] = brier(seasonRows);
+    }
+    const bu = brier(s.teams.map((t) => ({ p: s.field / s.teams.length, y: t.outcome.playoffs ? 1 : 0 })));
+    perSeasonBrier.push({ season, ...b, uniform: bu });
+    console.log(`  ${season}  ${String(s.teams.length).padStart(4)} ${String(s.reg).padStart(4)} ${String(s.field).padStart(5)}  ${String(s.played?.weeks ?? 0).padStart(6)}  ${String(s.rosOf.size).padStart(7)}   ${b.A.toFixed(4)}      ${b.B.toFixed(4)}      ${b.C.toFixed(4)}     ${bu.toFixed(4)}    ${(b.C - b.A >= 0 ? "+" : "") + (b.C - b.A).toFixed(4)}`);
+  }
+  if (!perSeasonBrier.length) { console.log("nothing scored."); process.exit(1); }
+  const n = perSeasonBrier.length;
+  const meanOf = (f) => perSeasonBrier.reduce((a, r) => a + f(r), 0) / n;
+  const paired = (x, y) => {
+    const d = perSeasonBrier.map((r) => r[y] - r[x]);               // positive = y worse than x
+    const m = d.reduce((a, v) => a + v, 0) / n;
+    const sd = Math.sqrt(d.reduce((a, v) => a + (v - m) ** 2, 0) / Math.max(1, n - 1));
+    return { m, se: sd / Math.sqrt(n), wins: d.filter((v) => v < 0).length };
+  };
+  console.log(`\n  POOLED playoff Brier over ${rows.A.length} team-seasons: A ${brier(rows.A).toFixed(4)}   B ${brier(rows.B).toFixed(4)}   C ${brier(rows.C).toFixed(4)}   uniform ${meanOf((r) => r.uniform).toFixed(4)}`);
+  console.log(`  season-mean Brier:                      A ${meanOf((r) => r.A).toFixed(4)}   B ${meanOf((r) => r.B).toFixed(4)}   C ${meanOf((r) => r.C).toFixed(4)}`);
+  for (const [x, y, label] of [["A", "B", "seeding the standings (B vs A)"], ["B", "C", "rest-of-season lines on top (C vs B)"], ["A", "C", "both (C vs A)"]]) {
+    const p = paired(x, y);
+    console.log(`  ${label.padEnd(40)} Brier change ${(p.m >= 0 ? "+" : "") + p.m.toFixed(4)} +/- SE ${p.se.toFixed(4)}  (t ${(p.se > 0 ? p.m / p.se : 0).toFixed(2)}; better in ${p.wins}/${n} seasons)`);
+  }
+  // THE POSITIVE CONTROL for arm C, same as the preseason report's: outcomes shuffled within season.
+  {
+    let sd = 1234567;
+    const rnd = () => ((sd = (sd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const out = rows.C.map((r) => ({ ...r }));
+    for (const season of new Set(out.map((r) => r.season))) {
+      const idx = out.map((r, i) => i).filter((i) => out[i].season === season);
+      const ys = idx.map((i) => out[i].y);
+      for (let i = ys.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [ys[i], ys[j]] = [ys[j], ys[i]]; }
+      idx.forEach((i, k) => { out[i].y = ys[k]; });
+    }
+    console.log(`  CONTROL, outcomes shuffled within season: C ${brier(out).toFixed(4)} (honest ${brier(rows.C).toFixed(4)}) -> ${brier(out) > brier(rows.C) ? "the honest arm wins; the join is real" : "WARNING: no better than shuffled"}`);
+  }
+  console.log(`\n  RELIABILITY, arm C -- what it predicted against what happened`);
+  for (const b of reliability(rows.C)) console.log(`    ${`${(100 * b.lo).toFixed(0)}-${(100 * b.hi).toFixed(0)}%`.padEnd(10)} n ${String(b.n).padStart(4)}  predicted ${(100 * b.predicted).toFixed(1).padStart(5)}%  observed ${(100 * b.observed).toFixed(1).padStart(5)}%`);
+  if (JSON_OUT) console.log(JSON.stringify({ atWeek: AT_WEEK, perSeasonBrier, pooled: { A: brier(rows.A), B: brier(rows.B), C: brier(rows.C) } }, null, 2));
+  db.close();
+  process.exit(0);
+}
+
 const sim = { playoff: [], title: [] };
 const uni = { playoff: [], title: [] };
 const pf = { playoff: [], title: [] };

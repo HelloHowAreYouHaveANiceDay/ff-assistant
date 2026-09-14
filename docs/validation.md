@@ -1,5 +1,71 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## D18: the season simulator starts from the season so far -- seeded standings are decisive from week 5, rest-of-season lines a small consistent gain from week 8 (2026-09-14)
+>
+> **What was wrong.** Every in-season number the copilot produced -- playoff odds, the trade check,
+> waivers, the trade finder -- came from a season simulated from scratch: every team 0-0, every
+> player at his preseason season total over 17, however many weeks had been played. A 3-0 team and an
+> 0-3 team with the same roster had the same odds. Measured below as arm A: at every checkpoint from
+> week 3 to week 11 its playoff Brier sits at 0.22-0.24 against a uniform floor of 0.245. It barely
+> knew a season was happening.
+>
+> **What was built.** (1) `simulateSeasons` takes `opts.played` -- the settled weeks' wins and
+> points-for, seeded into every trial, the simulation starting at the next week; RNG keys stay indexed
+> by the real week so a seeded and a from-scratch run meet the same draws for the same future weeks.
+> (2) `SeasonPlayer.rosPerGame` replaces `proj / 17` when present: the preseason per-week line updated
+> on the weeks played by `(K*line + k*rate)/(K+k)`, with K FITTED (`scripts/fit-ros-blend.mjs` ->
+> `data/ros-blend.json`, read by `src/draft/rosBlend.ts`). (3) `loadSimContext` builds both for the
+> live season: a week is settled when its last NFL game day is strictly before today AND the store has
+> scored rows for it; team scores for settled weeks come from the started lineup in the roster
+> snapshot, scored by ESPN's applied points where the snapshot post-dates the games and by the synced
+> actuals otherwise (the unmatched are NAMED in the warning, because a sync gap and a name gap look the
+> same as a count); the to-date rate is per non-bye settled week with a missed game a zero. Every
+> copilot caveat now ends with the seed state ("from wk2: standings seeded from 1 settled week, ROS
+> lines blend K=6 on 192 men" / "no settled week yet: full-season simulation from preseason lines").
+>
+> **The blend weight, fitted in the simulator's frame.** The first fit mixed points per GAME PLAYED
+> into a per-SCHEDULED-WEEK line and "found" the line alone best at every K -- a scale mismatch the
+> script's scale check now prints (rate 2.72 against line 7.86 and target 9.76). In the simulator's
+> frame (per scheduled week, missed games zeros; the BLIND per-season lines of D17; 41,524
+> (season, player, checkpoint) triples 2012-2025): **K = 6 weeks**, chosen in all fourteen
+> leave-one-season-out folds; held-out RMSE of rest-of-season per-week points **4.367 against 4.930 for
+> the line alone (-11%) and 5.147 for the rate alone**. At one week elapsed 4.106 -> 3.962; at eight
+> 4.931 -> 4.316; at twelve 5.603 -> 4.799. One played week is worth one sixth of the preseason line.
+>
+> **The gate: `scripts/season-calibration.mjs --at-week W --artifact-dir data/fold-artifacts-d16`**,
+> 2018-2025, 1,500 trials, rosters AS OF week W from `fact_roster_week`, standings from
+> `fact_lineup_week` started points and `fact_matchup`, outcomes from `fact_team_season`, three arms
+> on the same rosters: A from scratch (pre-D18), B seeded standings, C seeded + rest-of-season lines.
+> Sanity first: 2025 at week 15 (every week settled) -> C Brier **0.0000**, the realised field exactly,
+> shuffled control 0.500. Then:
+>
+> | week | A (from scratch) | B (seeded) | C (seeded + ROS) | uniform | B vs A (season-paired) | C vs B |
+> |---|---|---|---|---|---|---|
+> | 3 | 0.2244 | 0.2202 | 0.2250 | 0.2450 | -0.004 +/- 0.007, 5/8 | +0.005 +/- 0.009, 3/8 |
+> | 5 | 0.2224 | **0.1801** | **0.1782** | 0.2450 | **-0.042 +/- 0.008, 8/8, t -5.4** | -0.002 +/- 0.010, 4/8 |
+> | 8 | 0.2356 | **0.1481** | **0.1391** | 0.2450 | **-0.088 +/- 0.015, 8/8, t -5.9** | -0.009 +/- 0.010, 5/8 |
+> | 11 | 0.2324 | **0.0992** | **0.0913** | 0.2450 | **-0.132 +/- 0.023, 8/8, t -5.8** | -0.008 +/- 0.005, 5/8, t -1.6 |
+>
+> Shuffled-outcome control loses to the honest arm at every week (e.g. week 8: 0.286 vs 0.139).
+> **Seeding the standings clears the 2.9*SE floor at weeks 5, 8 and 11 by a wide margin and is a null
+> at week 3** (two games; correct). **The rest-of-season lines are a small further gain from week 8,
+> in 5 of 8 seasons, that does not clear the floor on playoff Brier** and is never a material cost
+> (worst: +0.005 +/- 0.009 at week 3). They ship on the strength of their own gate -- the quantity they
+> model, rest-of-season per-week points, improved 11% out of sample in every fold -- and because the
+> odds-level check is non-negative everywhere; reversal is one number (`K` in data/ros-blend.json, or
+> deleting the file, which is the old behaviour and is reported as such). Recorded rather than
+> dressed up: on the playoff-odds axis the standings are the edge and the lines are the polish.
+>
+> **Reliability of arm C (weeks 8 and 11):** under-confident at the top (predicted 80% -> observed 92%;
+> 89% -> 97%) and over-confident in the 15-30% bin (22% -> 6%). The seeded simulator keeps the full
+> preseason projection uncertainty (`projSd` 0.30) for the remaining weeks; as the season shortens that
+> is too wide. A follow-up, not done here: shrink the remaining-weeks uncertainty with weeks played,
+> gated the same way.
+>
+> Also closed in the same pass: the live schedule read failed silently into a generated schedule
+> whenever the app's CDP port was not bound (this instance never bound it); `loadSimContext` now falls
+> back to the store's synced matchups and prints which source served.
+
 > ## D16 APPLIED: the shipped projector is now the boosted model with FFToday's projection, conformally calibrated -- P5 HELD (2026-09-14)
 >
 > Owner decision, on the rungs 5+7 findings below: "admit the two admits". What shipped, and what it

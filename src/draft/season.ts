@@ -22,6 +22,11 @@
  *   - the real head-to-head schedule, seeding by record with points-for as tiebreak (verified: that
  *     is exactly how this league seeds -- zero rank-vs-record inversions in 2025)
  *   - single-elimination playoffs with byes for top seeds
+ *   - THE SEASON SO FAR (D18, 2026-09-14): the settled weeks' real standings seed every trial
+ *     (`opts.played`) and each man's per-week strength is his preseason line updated on the weeks he
+ *     has played by a fitted weight (`SeasonPlayer.rosPerGame`, K = 6 weeks of prior). Before this
+ *     every in-season number was a from-scratch season -- a 3-0 team and an 0-3 team with the same
+ *     roster had the same odds. Gated in scripts/season-calibration.mjs --at-week (docs/decisions.md).
  *
  * WHAT IS NOT, and both make the output slightly OVER-confident:
  *   - NFL-teammate correlation. A QB and his WR1 boom together; independent draws understate how
@@ -54,6 +59,13 @@ export interface VarianceModel {
  *  correlate. Absent, a player is simply drawn independently. */
 export interface SeasonPlayer {
   name: string; pos: string; proj: number; bye?: number | null; team?: string;
+  /**
+   * REST-OF-SEASON per-game mean (2026-09-14, D18). When present it replaces `proj / 17` as the
+   * player's per-game strength for the weeks still to be simulated -- the preseason line updated
+   * on the games he has actually played, by the amount `src/draft/rosBlend.ts` was fitted to. Absent,
+   * the simulator behaves exactly as before: the preseason season total spread flat over 17.
+   */
+  rosPerGame?: number;
   /**
    * ELIGIBILITY AS A SET, straight through to `optimalLineup`.
    *
@@ -159,6 +171,17 @@ export interface SeasonOpts {
    * from weeks a player's team actually played and would otherwise double-count them.
    */
   bootstrap?: { outcomes: RankOutcomes; corr: CorrelationModel; calibration?: "none" | "scale" };
+  /**
+   * THE SEASON SO FAR (2026-09-14, D18). `weeks` regular-season weeks are already SETTLED; the
+   * simulation starts at week `weeks + 1` with every team's record and points-for seeded from what
+   * actually happened (`wins[i]`, `pts[i]`, parallel to `teams`). Before this every in-season odds
+   * number was a from-scratch season: a 3-0 team and a 0-3 team with the same roster had the same
+   * playoff probability, and 1-of-13 played weeks of the only evidence that cannot be argued with was
+   * thrown away. Omitted or `weeks: 0` is byte-identical to the old behaviour. The RNG keys stay
+   * indexed by the real week number, so a seeded run and a from-scratch run meet the same draws for
+   * the same future weeks -- the pairing property this simulator exists for.
+   */
+  played?: { weeks: number; wins: number[]; pts: number[] };
 }
 export interface SeasonOdds {
   id: string; name: string; playoffs: number; champion: number; meanWins: number; meanPoints: number;
@@ -438,12 +461,21 @@ export function simulateSeasons(
   // BOOTSTRAP prep, once: per-player sorted pools + the Cholesky factor for each NFL-team group.
   // Grouping is per FANTASY team, which is what makes a roster's own variance right -- two managers
   // holding opposite ends of the same NFL stack is a head-to-head covariance we do not need.
+  // ONE definition of a player's per-game strength, used by both sampling paths: the rest-of-season
+  // mean when the context supplied one, else the preseason total over 17. Two readings of this
+  // quantity is how the bootstrap pool and the lineup-setting estimate would come to disagree.
+  const perGame = (p: SeasonPlayer): number => p.rosPerGame ?? p.proj / 17;
+  const played = opts.played && opts.played.weeks > 0 ? opts.played : null;
+  if (played && (played.wins.length !== N || played.pts.length !== N)) {
+    throw new Error(`played standings are for ${played.wins.length}/${played.pts.length} teams but the league has ${N}`);
+  }
+  if (played && played.weeks > opts.weeks) throw new Error(`played.weeks ${played.weeks} exceeds the regular season (${opts.weeks})`);
   const boot = opts.bootstrap
     ? teams.map((tm) => {
       const pp: PoolPlayer[] = tm.roster.map((p) => ({
         name: p.name, pos: p.pos, team: p.team,
         rank: (opts.poolRank?.get(p.name)?.rank ?? 0) + 1,
-        projPerGame: p.proj / 17,
+        projPerGame: perGame(p),
       }));
       return { pp, byName: new Map(pp.map((x) => [x.name, x])), prep: prepBootstrap(pp, opts.bootstrap!.outcomes, opts.bootstrap!.corr, opts.bootstrap!.calibration ?? "none") };
     })
@@ -457,7 +489,7 @@ export function simulateSeasons(
     for (const tm of teams) {
       for (const p of tm.roster) {
         const err = (!boot && opts.projSd > 0) ? Math.exp(drawGauss(seedNum, trial, 0, pid(p.name), PURPOSE.projErr) * opts.projSd - 0.5 * opts.projSd ** 2) : 1;
-        trueMean.set(p, Math.max(0, (p.proj / 17) * err));
+        trueMean.set(p, Math.max(0, perGame(p) * err));
       }
     }
     // --- draw each player's whole SEASON once, then read weeks out of it ---------------------------
@@ -546,9 +578,11 @@ export function simulateSeasons(
     };
 
     // --- play the weeks --------------------------------------------------------------------------
-    const wins = new Array(N).fill(0), pts = new Array(N).fill(0);
+    // SEEDED from the settled weeks when the context supplied them (D18); zeros otherwise.
+    const wins = played ? [...played.wins] : new Array(N).fill(0);
+    const pts = played ? [...played.pts] : new Array(N).fill(0);
     const weekPts: number[][] = Array.from({ length: N }, () => []);
-    for (let w = 1; w <= opts.weeks; w++) {
+    for (let w = (played?.weeks ?? 0) + 1; w <= opts.weeks; w++) {
       const scores = teams.map((_tm, ti) => scoreTeamWeek(ti, w, w, true, false));
       for (let t = 0; t < N; t++) { pts[t] += scores[t]; weekPts[t].push(scores[t]); }
       for (const [a, b] of schedule[(w - 1) % schedule.length]) {

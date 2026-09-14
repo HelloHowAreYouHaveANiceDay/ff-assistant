@@ -529,6 +529,39 @@ In season, with week 1 one game from settled. Full record: docs/weekly.md sectio
 REVERSAL CONDITION: the live 2026 scorecard turning against the form model on CRPS over a meaningful
 sample, or a re-gate on a later window failing clause (a)-(c); the one-line revert is `WEEKLY_SERVE`.
 
+## D18 -- The season simulator starts from the season so far (2026-09-14, owner: "close this gap well", APPLIED)
+
+Until now every in-season odds, trade, waiver and trade-finder number simulated the season from
+scratch: 0-0 standings, preseason lines, whatever the date. Measured (docs/validation.md D18), that
+from-scratch arm sits at playoff Brier 0.22-0.24 against a uniform floor of 0.245 at every checkpoint
+from week 3 to week 11 -- it barely knew a season was happening.
+
+- **Seeded standings** (`simulateSeasons` `opts.played`, built by `loadSimContext` from the SETTLED
+  weeks -- last NFL game day behind today AND scored rows in the store -- with team scores from the
+  started lineup, ESPN applied points where synced, synced actuals otherwise, unmatched starters named):
+  playoff Brier 0.222 -> 0.180 at week 5, 0.236 -> 0.148 at week 8, 0.232 -> 0.099 at week 11, **better
+  in 8 of 8 seasons at each, t -5.4 to -5.9**; a null at week 3. Sanity: with every week settled the
+  seeded arm reproduces the realised 2025 field exactly (Brier 0.0000).
+- **Rest-of-season lines** (`SeasonPlayer.rosPerGame` = (K*line + k*rate)/(K+k), K fitted by
+  `scripts/fit-ros-blend.mjs` in the simulator's per-scheduled-week frame: **K = 6 weeks**, chosen in all
+  14 leave-one-season-out folds, rest-of-season per-week RMSE 4.37 vs 4.93 line-only, -11%). On playoff
+  Brier a small further gain from week 8 (-0.008 to -0.009, 5/8 seasons, t -1.6 at week 11), never a
+  material cost. Shipped on its own gate (the quantity it models) with the odds-level check
+  non-negative; reversal is `K` in `data/ros-blend.json` (delete the file = the old behaviour, reported).
+- Every copilot caveat now states the seed ("from wk2: standings seeded from 1 settled week, ROS lines
+  blend K=6 on 192 men" / "no settled week yet: full-season simulation from preseason lines").
+- The gate is permanent: `scripts/season-calibration.mjs --at-week W --artifact-dir data/fold-artifacts-d16`.
+- Also closed: `--schedule real` fell silently to a generated schedule whenever the app's CDP port was
+  unbound; `loadSimContext` now uses the store's synced matchups and says which source served.
+
+OPERATOR RULE: after the last game of a week, `ff sync-actuals` then `ff ingest-raw league-rosters`, and
+the next decision runs from the settled state. Today (2026-09-14) week 1 has a game to play, so nothing
+is seeded yet and every number is byte-identical to before; tomorrow it is not.
+
+FOLLOW-UP, not done: the seeded simulator keeps the full preseason uncertainty for the remaining weeks and
+reads under-confident late (predicted 89% -> observed 97% at week 11); shrinking it with weeks played is
+the next gated change.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

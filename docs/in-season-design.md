@@ -10,6 +10,23 @@ sharper projections. So the design centers on ONE **projection layer** feeding b
 Most of this document is a plan. This section is what exists, so a reader does not go looking for the
 plan and find the code, or the other way round.
 
+### The season so far (D18, 2026-09-14)
+
+Every copilot decision runs on `loadSimContext`, and until D18 that context simulated the season from
+scratch whatever the date: no standings, preseason lines for everyone. It now carries `played` -- the
+settled weeks' real records and points-for, seeded into every trial, the simulation starting at the
+next week -- and a rest-of-season per-week line for every rostered man whose team has played, the
+preseason line updated on his played weeks by a fitted weight (K = 6 weeks; `data/ros-blend.json`).
+Measured on 2018-2025 with rosters as of the week (`scripts/season-calibration.mjs --at-week`): the
+seed cuts playoff Brier from 0.22 to 0.18 at week 5, 0.15 at week 8 and 0.10 at week 11, in 8 of 8
+seasons; the lines add a little more from week 8. docs/validation.md D18 has the table.
+
+What the operator does: nothing, once the week is synced. A week counts as settled only when its last
+NFL game day is behind us AND the store has scored rows for it, so after the Monday game run
+`ff sync-actuals` (the players' points) and `ff ingest-raw league-rosters` (ESPN's applied points and
+the lineups actually started; without it the seed scores the snapshotted lineup with the synced
+actuals and names any starter it could not match). Every result's caveat says which state it ran in.
+
 **`src/inseason/copilot.ts` -- the ten in-season decisions as pure functions over one `SimContext`.**
 Season odds, weekly lineup, waivers, trade check, trade finder, handcuffs, depth risk, power
 rankings, playoff SOS, and streaming (whom to start/add at ONE position out of the free-agent pool). Each takes a context plus plain arguments and returns structured JSON; none of

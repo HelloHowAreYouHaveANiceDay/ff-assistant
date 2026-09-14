@@ -1,0 +1,49 @@
+{
+  "K": 6,
+  "frame": "scheduled",
+  "fittedOn": "2012-2025",
+  "fittedAt": "2026-09-14",
+  "rows": 41524,
+  "minLine": 3,
+  "minRemaining": 3,
+  "rmseByK": {
+    "0": 5.14742,
+    "1": 4.65398,
+    "2": 4.49174,
+    "3": 4.41864,
+    "4": 4.3842,
+    "5": 4.36978,
+    "6": 4.36664,
+    "8": 4.37767,
+    "10": 4.39887,
+    "12": 4.42331,
+    "15": 4.46017,
+    "20": 4.51533,
+    "30": 4.59839,
+    "50": 4.69575,
+    "0.5": 4.81821,
+    "Infinity": 4.92946
+  },
+  "heldOut": {
+    "rmse": 4.36664,
+    "lineOnly": 4.92946,
+    "rateOnly": 5.14742,
+    "kPerFold": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+    ]
+  },
+  "notes": "ros_pw = (K*line + k*rate)/(K+k), per SCHEDULED week (missed games are zeros, the simulator's frame); k = non-bye weeks elapsed, K in weeks. Fitted by scripts/fit-ros-blend.mjs on the weekly model table's BLIND per-season lines (D17); selection season-grouped. Read by src/draft/rosBlend.ts."
+}

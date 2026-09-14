@@ -101,6 +101,12 @@ export function caveat(a: C.Assumptions): string {
     // number the reader will attach to whichever objective he already had in mind, which for this
     // league is always the championship -- the one the simulator has no measured skill on.
     `ranked on ${a.objective.primary} (${a.objective.regime} regime)`,
+    // THE SEASON SO FAR (D18). A September number and an October number look identical without this.
+    a.played
+      ? (a.played.weeks > 0
+        ? `from wk${a.played.nextWeek}: standings seeded from ${a.played.weeks} settled week(s), ROS lines blend K=${a.played.rosBlendK} on ${a.played.rosApplied} men`
+        : "no settled week yet: full-season simulation from preseason lines")
+      : "season-so-far unknown",
   ];
   return `[${bits.join("; ")}]`;
 }

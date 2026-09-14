@@ -188,6 +188,15 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   Without `--artifact-dir` every historical line comes from an artifact that has SEEN its season (the
   build warns per season); the weekly trainer/evaluator window is 2012-2025 because 2010-2011 cannot be
   fitted blind. `ff scorecard` rebuilds only the live season, which always uses the shipped artifact.
+- **The season simulator starts from the season so far (D18, 2026-09-14):** `loadSimContext` seeds every
+  trial with the SETTLED weeks' real standings and prices each rostered man at his preseason line updated
+  on his played weeks (K = 6 weeks, `data/ros-blend.json`; `scripts/fit-ros-blend.mjs` refits it, in the
+  per-scheduled-week frame -- the per-game frame is a scale mismatch and the script prints why). A week
+  is settled only when its last NFL game day is behind today AND the store has scored rows, so after
+  Monday night run `ff sync-actuals` then `ff ingest-raw league-rosters`; every copilot caveat states the
+  seed. Gate: `scripts/season-calibration.mjs --at-week W --artifact-dir data/fold-artifacts-d16`
+  (docs/validation.md D18: seeding is decisive from week 5, 8/8 seasons). `--schedule real` now falls
+  back to the store's synced matchups when the app's CDP port is unreachable and says so.
 - Draft-day procedure and machine setup: `docs/draft-day-runbook.md`
 - The MCP control surface (39 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is
   `TOOL_NAMES.length` in `src/agent/agent.ts`, not a number to retype -- `scripts/copilot-mcp-smoke.mjs`

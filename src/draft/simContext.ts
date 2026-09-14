@@ -26,6 +26,7 @@ import Database from "better-sqlite3";
 import { simulateSeasons, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "./season.js";
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
+import { loadRosBlend, rosPerGame } from "./rosBlend.js";
 import { dataPath } from "../data/paths.js";
 import { loadEligibilityMap } from "../data/eligibility.js";
 
@@ -62,6 +63,11 @@ export interface SimContext {
   /** The league's calendar and playoff format, WITH its provenance. Consumers that need the playoff
    *  weeks or the field size read them here rather than re-deriving them from a literal. */
   format: import("../league/types.js").LeagueFormat;
+  /** THE SEASON SO FAR (D18): how many weeks seeded the standings and from what, the week the
+   *  simulation starts at, and the rest-of-season blend applied to rostered men. Carried so every
+   *  consumer can PRINT it beside its number rather than leave a reader to guess whether a
+   *  September odds figure knows it is October. */
+  played: { weeks: number; nextWeek: number; source: string[]; rosBlendK: number; rosBlendSource: "fitted" | "absent"; rosApplied: number; today: string };
 }
 
 /**
@@ -74,7 +80,12 @@ export interface SimContext {
  * compared with each other -- which is exactly what happened. The flag is on the returned context so
  * a caller can print it rather than assume.
  */
-export async function loadSimContext(opts: { schedule?: "real" | "generated" | "auto" } = {}): Promise<SimContext> {
+/** Local calendar date, YYYY-MM-DD. A football game day is a local date; UTC would settle a Monday
+ *  night game on the wrong day for anyone west of Greenwich. Same rule as the scorecard's. */
+function localIso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+export async function loadSimContext(opts: { schedule?: "real" | "generated" | "auto"; /** YYYY-MM-DD; defaults to today. A backtest or a test passes the day it is asking about. */ today?: string } = {}): Promise<SimContext> {
   const want = opts.schedule ?? "auto";
   const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8")) as VarianceModel;
   const outcomes = JSON.parse(readFileSync(dataPath("rank-outcomes.json"), "utf8"));
@@ -147,6 +158,105 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
   const storedMatchups = db.prepare(
     "SELECT week, home_id, away_id, fetched_at FROM raw_league_matchup WHERE season=? AND league_id=? ORDER BY week",
   ).all(cfg.season, lgRow.league_id) as { week: number; home_id: string; away_id: string; fetched_at: string }[];
+
+  // =============================================================================================
+  // THE SEASON SO FAR (D18, 2026-09-14). Read here, while the handle is open; applied below.
+  //
+  // A week is SETTLED when its last NFL game day is strictly before today AND the store holds scored
+  // rows for it -- a week in the past with an unsynced actuals file is missing data, not a week of
+  // zeros. A week with one game still to play is NOT settled: a team's score is not a score until
+  // its last starter has played, so the Monday-night week stays "unplayed" until Tuesday.
+  // =============================================================================================
+  const today = opts.today ?? localIso(new Date());
+  const settled: number[] = [];
+  for (const r of db.prepare(
+    "SELECT g.week, MAX(g.gameday) last FROM raw_nfl_game g WHERE g.season=? AND g.game_type='REG' AND g.gameday IS NOT NULL GROUP BY g.week ORDER BY g.week",
+  ).all(cfg.season) as { week: number; last: string }[]) {
+    if (!(r.last < today)) break;
+    const scored = (db.prepare("SELECT COUNT(*) c FROM feat_player_week WHERE season=? AND week=? AND pts IS NOT NULL").get(cfg.season, r.week) as { c: number }).c;
+    if (!scored) break;                        // contiguous from week 1: a gap means unsynced data
+    settled.push(r.week);
+  }
+  const playedWeeks = settled.length;
+  const nextWeek = playedWeeks + 1;
+  // Team scores for the settled weeks: the STARTED lineup ESPN applied, from the roster snapshot,
+  // scored by ESPN's applied points where the snapshot was taken after the games, else by the store's
+  // synced actuals for the same men (the snapshot was taken before kickoff and still holds the
+  // lineup as then set -- a change made Sunday morning is invisible to it, and the build says so).
+  const teamIds = [...byTeam.keys()];
+  const weekScore = new Map<string, number>();     // `${week}|${teamId}` -> started points
+  const seedSource: string[] = [];
+  if (playedWeeks > 0) {
+    const actualByName = new Map<string, number>();
+    for (const r of db.prepare(
+      "SELECT week, name, pos, pts FROM feat_player_week WHERE season=? AND week<=? AND pts IS NOT NULL",
+    ).all(cfg.season, playedWeeks) as { week: number; name: string; pos: string; pts: number }[]) {
+      actualByName.set(`${r.week}|${nameKey(r.name)}|${r.pos}`, r.pts);
+    }
+    for (const w of settled) {
+      const starters = db.prepare(
+        "SELECT team_id, espn_player_id, name, position, applied_points FROM raw_league_roster_week WHERE league_id=? AND season=? AND week=? AND is_starter=1",
+      ).all(lgRow.league_id, cfg.season, w) as { team_id: string; espn_player_id: string; name: string; position: string; applied_points: number | null }[];
+      const applied = starters.filter((s) => s.applied_points != null && s.applied_points !== 0).length;
+      const useApplied = applied >= starters.length / 2;
+      const missing: string[] = [];
+      for (const s of starters) {
+        let v: number | null = useApplied ? (s.applied_points ?? 0) : null;
+        if (v == null) {
+          const pos = s.position === "D/ST" ? "DST" : s.position;
+          // ESPN spells a defense "Bears D/ST"; the feature table says "CHI DST". Same alias the
+          // calibration harness uses, keyed on the NICKNAME, not on the numeric id.
+          const alias = pos === "DST" ? dstAliasKey(s.name.replace(/\s*D\/?ST\s*$/i, "").trim()) : null;
+          v = actualByName.get(`${w}|${nameKey(s.name)}|${pos}`) ?? (alias ? actualByName.get(`${w}|${nameKey(`${alias} DST`)}|DST`) : undefined) ?? null;
+          if (v == null) { missing.push(`${s.name} (${pos})`); v = 0; }
+        }
+        const k = `${w}|${s.team_id}`;
+        weekScore.set(k, (weekScore.get(k) ?? 0) + v);
+      }
+      // The unmatched are NAMED, because two very different things land here: a man whose game is
+      // not synced yet (a data gap, fix by syncing) and a name the two tables spell differently (a
+      // join gap, fix in code). A count cannot tell them apart; a list can.
+      seedSource.push(`wk${w}: ${useApplied ? "ESPN applied points" : "synced actuals for the snapshotted lineup"}` +
+        (missing.length ? ` (${missing.length} starters unmatched, scored 0: ${missing.slice(0, 6).join(", ")}${missing.length > 6 ? ", ..." : ""})` : ""));
+    }
+  }
+  const playedWins = new Map<string, number>(teamIds.map((t) => [t, 0]));
+  const playedPts = new Map<string, number>(teamIds.map((t) => [t, 0]));
+  for (const w of settled) {
+    for (const t of teamIds) playedPts.set(t, (playedPts.get(t) ?? 0) + (weekScore.get(`${w}|${t}`) ?? 0));
+    for (const m of storedMatchups.filter((x) => x.week === w)) {
+      const h = String(m.home_id), a = String(m.away_id);
+      if (!playedWins.has(h) || !playedWins.has(a)) continue;
+      const hs = weekScore.get(`${w}|${h}`) ?? 0, as = weekScore.get(`${w}|${a}`) ?? 0;
+      if (hs >= as) playedWins.set(h, playedWins.get(h)! + 1); else playedWins.set(a, playedWins.get(a)! + 1);
+    }
+  }
+  // REST-OF-SEASON LINE per rostered man: the preseason per-week line updated on the SETTLED weeks,
+  // by the fitted weight (src/draft/rosBlend.ts), IN THE FRAME IT WAS FITTED IN: k = the settled
+  // non-bye weeks, rate = his points over those weeks with a missed game counted as zero -- the same
+  // per-scheduled-week frame `proj / 17` is in. (Not the data track's to-date columns, which are per
+  // game played and on a different scale; that mismatch is what the first fit of K measured.)
+  const { blend: rosBlend, source: rosSource } = loadRosBlend();
+  const rateByName = new Map<string, { k: number; pts: number }>();
+  if (playedWeeks > 0) {
+    for (const r of db.prepare(
+      "SELECT name, pos, week, pts, is_bye FROM feat_player_week WHERE season=? AND week<=?",
+    ).all(cfg.season, playedWeeks) as { name: string; pos: string; week: number; pts: number | null; is_bye: number | null }[]) {
+      if (r.is_bye) continue;
+      const key = `${nameKey(r.name)}|${r.pos}`;
+      const cur = rateByName.get(key) ?? rateByName.set(key, { k: 0, pts: 0 }).get(key)!;
+      cur.k++; cur.pts += r.pts ?? 0;
+    }
+  }
+  let rosApplied = 0;
+  for (const tm of byTeam.values()) {
+    for (const p of tm.roster) {
+      const td = rateByName.get(`${nameKey(p.name)}|${p.pos}`);
+      if (!td || td.k <= 0 || rosBlend.K === Infinity) continue;
+      const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosBlend.K);
+      if (ros != null) { p.rosPerGame = ros; rosApplied++; }
+    }
+  }
   db.close();
 
   // THE FORMAT, from the block that has a source. `cfg.regWeeks ?? 14` used to live here, alongside
@@ -250,8 +360,19 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     }
   }
 
+  // The seeded standings, in `teams` order (ascending team id -- the same order the schedule's
+  // indices refer to). Empty when no week is settled, which is byte-identical to the old simulator.
+  const played = playedWeeks > 0
+    ? { weeks: playedWeeks, wins: teams.map((t) => playedWins.get(t.id) ?? 0), pts: teams.map((t) => playedPts.get(t.id) ?? 0) }
+    : undefined;
+  if (playedWeeks > 0) {
+    console.warn(`season so far: ${playedWeeks} settled week(s) seed the standings (${seedSource.join("; ")}); ` +
+      `rest-of-season lines blend K=${rosBlend.K === Infinity ? "Infinity (line only)" : rosBlend.K} (${rosSource}) on ${rosApplied} rostered men with games played`);
+  }
+
   const mkOpts = (trials: number, seed: number) => ({
     weeks: weeks.length,
+    played,
     playoffTeams: format.playoffTeams,       // FROM THE FORMAT BLOCK -- a hardcoded 7 was right by coincidence
     seeding: format.seeding,
     // ESPN's own bracket rule and its own bracket LENGTH. Both were constants before: the simulator
@@ -274,6 +395,7 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds, format,
     slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement,
     posMax: (cfg as { posMax?: Record<string, number> }).posMax,
+    played: { weeks: playedWeeks, nextWeek, source: seedSource, rosBlendK: rosBlend.K, rosBlendSource: rosSource, rosApplied, today },
     opts: mkOpts,
     run: (t, trials, seed, extra) => simulateSeasons(t, weeks, vm, { ...mkOpts(trials, seed), ...extra }),
     clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),
