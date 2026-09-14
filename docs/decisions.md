@@ -368,10 +368,14 @@ Until then both levers stay at their shipped values (`consensusBlend=1`, `benchD
     draft from the STATIC data/values.csv and never re-assemble the board, so they cannot see a BOARD lever
     (lever-connected has since been fixed to say so instead of reporting a false dead). The demotion below
     rests SOLELY on WS6's powered playoff-null + family-FDR-fail, never on any inertness.
-  - DATA GAP (real, pending): `raw_fftoday_proj` is missing SEASON 2025 (0 rows; 2024 and 2026 present), so the
-    2025 backtest fold had no consensus -- consensusBlend's WS6 measurement carried a hole in 1 of 25 seasons.
-    ACTION: fill 2025 FFToday, then RE-VALIDATE consensusBlend on complete data before treating this demotion
-    as final. Until then the demotion is APPLIED but marked pending-confirmation.
+  - DATA GAP (RESOLVED 2026-09-14): `raw_fftoday_proj` had been missing SEASON 2025, so consensusBlend's WS6
+    measurement carried a hole in 1 of 25 seasons. 2025 was scraped and filled (338 rows; now 2024:355 /
+    2025:338 / 2026:344), and consensusBlend was RE-VALIDATED on the complete data: two fresh full backtests
+    (consensus-blend 0 -> 39.7% champ / 96% playoff; 1 -> 42.3% / 97%) + a playoff-primary CPCV with the
+    selection-blind 2021-2025 holdout. **PLAYOFFS (GATE) +0.22pp, CI [-0.32, 0.79], t 0.73, 6/21 up, PBO 57%,
+    resolvable >= ~0.88pp -> still NULL.** Titles +2.10pp (also below its ~4.11pp resolution). Holdout playoff
+    confirm +2.83pp but 3/4 with CI crossing 0 (underpowered). CONCLUSION: filling 2025 did NOT flip it -- the
+    demotion is **CONFIRMED on complete data**, not pending. (Ledger: data/experiments.jsonl, config_hash 26c96dd1.)
 - **benchDiscount: KEPT at 0.35 (no change).** Its 2021-2024 holdout playoff confirm was +1.67pp (CI [0.67,2.67],
   4/4 seasons up), so demoting it would discard a signal the selection-blind holdout supports; it is FLAGGED for
   a properly-powered playoff-axis re-test rather than reverted. (It still fails full-set family FDR -- the re-test
