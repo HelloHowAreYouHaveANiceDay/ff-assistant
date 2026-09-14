@@ -37,8 +37,16 @@
 >   (the "untested" frontier note was stale); the playoff-prob-delta bid is point-in-time intractable
 >   (it needs a `SimContext`, which exists only for the live season). Injury-opportunity is already in
 >   the model. No decision-layer edge.
-> - **`dvp_mult` removal (SIMPLIFICATION):** flagged by the streaming front as ~0 at both horizons;
->   gated separately (see the follow-up entry / `docs/edges.md`).
+> - **`dvp_mult` removal (SIMPLIFICATION): REJECTED -- KEEP the feature.** The streaming front found it
+>   ~0 to pick quality at both horizons, so removal was gated on the weekly paired floor. Removal is
+>   HARMFUL on the selection-blind holdout: -0.00145 CRPS vs floor 0.00074, 0/5 holdout seasons, CI
+>   [-0.00194, -0.00105] fully negative; connection proven (26 non-zero coefficients; neighbours re-fit
+>   on removal). The reconciliation with the pick-quality null is the point: lineup regret (winShare) is
+>   IDENTICAL with and without it (0.648), so `dvp_mult` changes no lineup, but it is a small real
+>   positive on distributional accuracy (pooled CRPS 2.9036 -> 2.9046). It contributes ~0 to the DECISION
+>   metric and a hair to CALIBRATION -- two different metrics, and the feature lives in the gap. (This
+>   verdict is under the LINEAR weekly model; the weekly-boost front re-examines matchup under a
+>   nonlinear model.)
 >
 > **Net.** No new predictive edge, draft or in-season -- the signature of a model already heavily
 > screened; the shipping tools already beat the room decisively. Durable outputs: `scripts/weekly-paired-floor.mjs`
