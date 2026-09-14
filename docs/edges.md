@@ -68,6 +68,31 @@ gain is real roster-ceiling value, not lottery. DECISION: keep consensusBlend ON
 the "playoffs is the proximate target" rule assumes the seed has headroom; at a ~96% berth it does not,
 so for this roster the title/roster-ceiling is the operative objective.
 
+**WS6 RE-VALIDATION under the new (D13 playoff-primary) regime -- 2026-09-13.** The rigor program (WS1-WS5)
+rebuilt the arbiter around four lenses; consensusBlend=1 was re-validated through all four. RAN this session
+(reused CRN dumps `data/trials/cpcv-baseline-1789173240869.tsv` = consensus OFF and
+`cpcv-treatment-1789174169839.tsv` = consensus w=1.0, both n=150 x 25 seasons; `node scripts/cpcv.mjs
+--holdout-seasons 2021-2025`; `node scripts/experiments-status.mjs`):
+- **Lens 1 -- playoff effect vs the 2.9*SE floor (WS1/WS5, PRIMARY GATE):** RAN. Selection seasons 2000-2020:
+  playoff **+0.73pp, CI [-0.22, 1.84], t 1.36, 6/21 up, PBO 23%, resolvable ~1.56pp -> NULL/UNDERPOWERED**
+  (|effect| below the floor). Full 25-season point delta reproduced at **+0.67pp playoff** (matches the
+  KEPT-ON note above and power-and-surrogate.md). FAILS the effect-size floor on the gated axis.
+- **Lens 2 -- family-wide multiplicity (WS4):** RAN. `experiments-status.mjs`: raw P(lift>0) **98.5% -> BH-adj
+  70.0%** (raw p 0.0150, q 0.3000; N=20 in the `shipped[--full --no-lookahead --inflation]` family).
+  **Does NOT survive FDR 0.10.**
+- **Lens 3 -- selection-blind holdout (WS2):** RAN. Playoff CONFIRM on 2021-2024 (4 seasons, once, not gated):
+  **+0.33pp, CI [-3.33, 4.67], 2/4 up** -- indistinguishable from 0.
+- **Lens 4 -- title% as CONTEXT only (D13, the no-skill axis):** titles selection +2.35pp CI [-0.29, 5.17]
+  (PBO 12%); CARRIED full-25 title **+2.84pp CI [0.22, 5.56], PBO 2%** (ledger, config 07acb4d9). CARRIED
+  surrogate index **t=3.72 (17/25 up)** vs playoff-berth t=1.19 (8/25) and title t=2.10; regPoints t=4.27 but
+  top-heavy-biased (power-and-surrogate.md:57-59).
+
+**VERDICT:** under D13's playoff-primary gate, consensusBlend is NULL on playoffs and does NOT survive family
+FDR. It remains REAL on the title/roster-ceiling (surrogate index, the higher-powered read) -- the exact
+tension the KEPT-ON note names: at a ~96-97% berth the playoff axis has no headroom, so a playoff-null is
+expected and the title/surrogate is where the value shows. This is a DECISION for the owner (see D14), not a
+mechanical revert. No lever changed by this WS.
+
 ### 0. Get the value curve itself right -- BIG, proven [13.6% -> 24.4%, pre-shading]
 Before any strategy dial: the bid table must price positions the way the format actually consumes
 them. Splitting FLEX slots evenly across RB/WR/TE instead of allocating them by projected points
@@ -199,6 +224,28 @@ Three of the four are indistinguishable from doing nothing on this arm, and `sta
 provably inert rather than merely small. Nothing was changed on the strength of it -- five seasons
 cannot adjudicate a lever measured on 25 -- but a plan that treats the reserve as a live dial is
 planning around a knob that is not connected at the shipped aggressiveness.
+
+**WS6 RE-VALIDATION of the shipped `benchDiscount=0.35` edge under the D13 playoff-primary regime --
+2026-09-13.** benchDiscount was re-optimised 0.25 -> 0.35 and shipped 2026-09-12 (power-and-surrogate.md:94-102).
+RAN this session (reused CRN dumps `data/trials/surrog-base.tsv` = benchDiscount 0.25 and
+`sweep-bench-discount-0.35.tsv` = 0.35, both n=150 x 25 seasons; `scripts/cpcv.mjs --holdout-seasons 2021-2025`;
+`experiments-status.mjs`):
+- **Lens 1 -- playoff effect vs 2.9*SE floor (PRIMARY GATE):** RAN. Selection 2000-2020: playoff **+0.00pp,
+  CI [-0.54, 0.48], t 0.00, 7/21 up, PBO 98%, resolvable ~0.78pp -> NULL/UNDERPOWERED.** CARRIED full-25
+  playoff **+0.27pp, CI [-0.24, 0.77], t 0.98, detectable 0.79pp, 11/25 up** (ledger config e625249e). FAILS
+  the floor on the gated axis (0.27 < 0.79).
+- **Lens 2 -- family-wide multiplicity (WS4):** RAN. raw P(lift>0) **83.6% -> BH-adj 18.2%** (raw p 0.1635,
+  q 0.8177; N=20 family). **Does NOT survive FDR 0.10.**
+- **Lens 3 -- selection-blind holdout (WS2):** RAN. Playoff CONFIRM on 2021-2024 (4 seasons, not gated):
+  **+1.67pp, CI [0.67, 2.67], 4/4 up** -- positive but underpowered; the only lens favourable to this edge.
+- **Lens 4 -- title% as CONTEXT (D13, no-skill axis):** titles selection **+1.17pp CI [0.10, 2.22], t 2.09,
+  14/21 up, PBO 3% -> REAL**; CARRIED full-25 title **+1.09pp CI [0.16, 2.11], PBO 1%** and surrogate index
+  **t~5-7** (power-and-surrogate.md:95-96).
+
+**VERDICT:** same shape as consensusBlend -- NULL on the gated playoff axis (effect ~0, PBO 98%), does NOT
+survive family FDR, REAL on titles/surrogate only, with the same near-ceiling-berth explanation. The 2021-2024
+holdout playoff confirm (+1.67pp, 4/4) is the one point in its favour but is 4 seasons and not gated.
+DECISION for the owner (D14); no lever changed by this WS.
 
 ### 6. A DERIVED bidder instead of tuned levers -- TRIED AND REJECTED (2026-09-09, Phase 3)
 
