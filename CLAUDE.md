@@ -179,10 +179,15 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   served heads for QB/RB/WR/TE are now gradient-boosted ensembles carried ON the artifact (schema 2,
   `learner: "gbm"`, walked by `projector.ts`, golden-checked against scikit-learn's own predict), and
   FFToday's preseason projection (`fftoday_proj`) is a default feature -- so the board needs the FFToday
-  archive scraped each preseason.** `--learner ridge` reproduces the pre-D16 linear model. The weekly
-  track's season-line anchor is projected from this artifact at rebuild time: rebuilding
-  `feat_player_week_model` after D16 moves every season's `season_line_pg` and the weekly model must be
-  retrained + re-gated (docs/weekly.md) before that rebuild is trusted.
+  archive scraped each preseason.** `--learner ridge` reproduces the pre-D16 linear model. **The weekly
+  track was redone on top of it (2026-09-14, docs/weekly.md section 7, D17):** the weekly season-line
+  anchor is projected from a projection artifact at rebuild time, and a historical season's line MUST
+  come from an artifact blind to that season -- `ff build-weekly-features --seasons 2010-2026
+  --current-season 2026 --artifact-dir data/fold-artifacts-d16` (one blind artifact per season from
+  `train_projection.py --holdout-season Y`; regenerate the directory whenever the projector changes).
+  Without `--artifact-dir` every historical line comes from an artifact that has SEEN its season (the
+  build warns per season); the weekly trainer/evaluator window is 2012-2025 because 2010-2011 cannot be
+  fitted blind. `ff scorecard` rebuilds only the live season, which always uses the shipped artifact.
 - Draft-day procedure and machine setup: `docs/draft-day-runbook.md`
 - The MCP control surface (39 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is
   `TOOL_NAMES.length` in `src/agent/agent.ts`, not a number to retype -- `scripts/copilot-mcp-smoke.mjs`

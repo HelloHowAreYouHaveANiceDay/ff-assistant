@@ -24,7 +24,7 @@ import { openDb, type DB } from "../src/db/db.js";
 import {
   runScorecard, ensureScorecardMetaColumn, SCORECARD_META_COLUMN, CHALLENGER_FIRST_WEEK,
 } from "../src/weekly/scorecard.js";
-import { seasonLineOnlyArtifact, CHALLENGER_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
+import { seasonLineOnlyArtifact, CHALLENGER_WEEKLY_ARTIFACT, SHIPPED_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
 import {
   WEEKLY_SERVE, STREAM_SERVE_POS, artifactForPos, serveTable, formatServeTable,
   SHIPPED_STREAMING_POSITIONS, STREAMING_ARTIFACT, SERVE_POSITIONS_FOR,
@@ -93,20 +93,23 @@ test("the serve table is ONE table: every position resolves through it and the d
   for (const pos of STREAM_SERVE_POS) assert.ok(printed.includes(pos), `${pos} is missing from the printed table`);
 });
 
-test("2026-09-12 OWNER OVERRIDE (D11): the FORM model serves ALL SIX positions, streaming ships nowhere", () => {
-  // docs/decisions.md D11: the owner overrode the 2026-09-09 streaming decision to ship the more-
-  // accurate form model (weekly-artifact.json) despite its 0.001 coverage miss on gate clause (b).
-  // WEEKLY_SERVE now names CHALLENGER_WEEKLY_ARTIFACT at every position, so the streaming artifact
-  // serves NONE. This asserts the DECISION itself, by name -- the generic "table agrees with its own
-  // derivation" check above would still pass if a position were quietly left on the floor or streaming,
-  // because it never states what the table is SUPPOSED to say.
+test("2026-09-14 D17: the FORM model serves QB/RB/WR/TE, the FLOOR serves K/DST, streaming ships nowhere", () => {
+  // docs/decisions.md D17 (retiring the D11 override): re-gated on season lines blind to their own
+  // season, the form model passes every clause on its own merit and the per-position gate says
+  // QB/RB/WR/TE ship it while K and DST tie the floor (2.4747 vs 2.4725; 3.1334 vs 3.1328) and serve
+  // it. The streaming artifact serves NONE. This asserts the DECISION itself, by name -- the generic
+  // "table agrees with its own derivation" check above would still pass if a position were quietly
+  // left on the wrong artifact, because it never states what the table is SUPPOSED to say.
+  const want: Record<string, string> = {
+    QB: CHALLENGER_WEEKLY_ARTIFACT, RB: CHALLENGER_WEEKLY_ARTIFACT, WR: CHALLENGER_WEEKLY_ARTIFACT,
+    TE: CHALLENGER_WEEKLY_ARTIFACT, K: SHIPPED_WEEKLY_ARTIFACT, DST: SHIPPED_WEEKLY_ARTIFACT,
+  };
   for (const pos of STREAM_SERVE_POS) {
-    assert.equal(WEEKLY_SERVE[pos], CHALLENGER_WEEKLY_ARTIFACT,
-      `${pos} is served by ${WEEKLY_SERVE[pos]}, not the form model -- the 2026-09-12 owner override ` +
-      "to ship weekly-artifact.json at all six positions is not fully in effect");
+    assert.equal(WEEKLY_SERVE[pos], want[pos],
+      `${pos} is served by ${WEEKLY_SERVE[pos]}, not ${want[pos]} -- the D17 per-position measurement is not in effect`);
   }
   assert.deepEqual([...SHIPPED_STREAMING_POSITIONS].sort(), [],
-    "SHIPPED_STREAMING_POSITIONS is not empty -- the streaming artifact should ship nowhere after D11");
+    "SHIPPED_STREAMING_POSITIONS is not empty -- the streaming artifact should ship nowhere after D11/D17");
 });
 
 test("the snapshot serves the `weekly` model PER POSITION and records which artifact produced each row", async () => {

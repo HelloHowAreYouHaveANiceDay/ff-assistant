@@ -175,10 +175,16 @@ test("stream: a position with NO projections says so rather than recommending no
 // =============================================================================================
 
 test("artifactForPos: each position resolves through WEEKLY_SERVE; an UNMAPPED position falls to the FLOOR", () => {
+  // D17 (2026-09-14): the per-position gate on honest season lines -- QB/RB/WR/TE ship the form
+  // model, K and DST tie the floor to the third decimal and serve it. Asserted BY NAME so a position
+  // quietly left on the wrong artifact cannot pass on the table agreeing with itself.
+  const D17: Record<string, string> = {
+    QB: CHALLENGER_WEEKLY_ARTIFACT, RB: CHALLENGER_WEEKLY_ARTIFACT, WR: CHALLENGER_WEEKLY_ARTIFACT,
+    TE: CHALLENGER_WEEKLY_ARTIFACT, K: SHIPPED_WEEKLY_ARTIFACT, DST: SHIPPED_WEEKLY_ARTIFACT,
+  };
   for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
     assert.equal(artifactForPos(pos), WEEKLY_SERVE[pos], `${pos} does not resolve through the table`);
-    // D11 override: every position serves the form model.
-    assert.equal(artifactForPos(pos), CHALLENGER_WEEKLY_ARTIFACT, `${pos} is not served by the form model`);
+    assert.equal(artifactForPos(pos), D17[pos], `${pos} is served by ${artifactForPos(pos)}, not the D17 measurement's ${D17[pos]}`);
   }
   // FAULT INJECTION on the fallback: a position with NO table entry must fall to the FLOOR, not to
   // whatever the last mapped position returned -- proving the `?? floor` branch is live.

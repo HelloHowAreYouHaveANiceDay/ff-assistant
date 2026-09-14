@@ -32,7 +32,8 @@
  * and `PENDING_DATA_TRACK_FIELDS` names the ones waiting, so the trainer, the evaluator and the
  * report all read the same list rather than three copies of it.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { openDb, nowIso, type DB } from "../db/db.js";
 import { buildPopulation } from "./population.js";
 import { dataPath } from "../data/paths.js";
@@ -474,6 +475,19 @@ export interface BuildOpts {
   /** The season treated as LIVE (board path for the season line). Defaults to the max season built. */
   currentSeason?: number;
   artifactPath?: string;
+  /** PER-SEASON PROJECTION ARTIFACTS, EACH BLIND TO ITS OWN SEASON, for the HISTORICAL seasons'
+   *  lines (2026-09-14). `<dir>/artifact-<season>.json`, as `ff evaluate-projection --keep-artifacts`
+   *  writes them or as the trainer's `--holdout-season` does one at a time. Until D16 every historical
+   *  season's line was projected with the single all-history artifact -- a model that had seen the
+   *  season it was projecting -- which was recorded as a "mild" inherited lookahead when the artifact
+   *  was a ridge on two multiplicative factors. The served projector is now a boosted ensemble that
+   *  memorises far more of each season, so the same shortcut would hand the weekly trainer lines that
+   *  know their own outcome and teach it to lean on the line in a way the honest live line cannot
+   *  repay. A historical season with no artifact in the directory falls back to the shipped artifact
+   *  and the build SAYS SO, loudly, per season. The live season always uses the shipped artifact,
+   *  which has not seen it. */
+  artifactDir?: string;
+  log?: (s: string) => void;
   /** A pre-loaded schedule, so a test can be hermetic. Production callers omit it and the feed is
    *  read from the nflverse cache. */
   sched?: ScheduleInfo;
@@ -514,13 +528,42 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
   const artifact = opts.noSeasonLine ? null : loadWeeklyBaseArtifact(opts.artifactPath);
   const sched = opts.sched ?? await loadSchedule(seasons);
   const now = nowIso();
+  const log = opts.log ?? ((s: string) => console.log(s));
+
+  // Which artifact projects a season's line. A historical season gets its own blind artifact from
+  // `artifactDir` when one exists; the live season and any season without one get the shipped
+  // artifact. The choice is printed per season because a leaky line and an honest one produce the
+  // same column with the same coverage, and only this line tells them apart.
+  const artifactFor = (season: number): ProjectionArtifact | null => {
+    if (!artifact) return null;
+    if (season < current && opts.artifactDir) {
+      const p = join(opts.artifactDir, `artifact-${season}.json`);
+      if (existsSync(p)) {
+        const a = loadArtifact(JSON.parse(readFileSync(p, "utf8")));
+        if (a.holdoutSeason !== season) {
+          throw new Error(`${p} declares holdoutSeason ${a.holdoutSeason} but would project ${season} -- ` +
+            "an artifact that saw the season it projects is lookahead, not a season line");
+        }
+        log(`  ${season}: season line from ${p} (blind to ${season})`);
+        return a;
+      }
+    }
+    if (season < current) {
+      log(`  ${season}: WARNING season line from the shipped artifact (holdoutSeason ${artifact.holdoutSeason ?? "none"}) ` +
+        `-- it has SEEN ${season}; pass --artifact-dir with a blind artifact-${season}.json for an honest line`);
+    } else {
+      log(`  ${season}: season line from the shipped artifact (live season, board path)`);
+    }
+    return artifact;
+  };
 
   ensureContextColumns(db);
   const ins = db.prepare(weekModelInsertSql());
 
   const res: BuildResult = { rows: 0, perSeason: [] };
   for (const season of seasons) {
-    const line = artifact ? preseasonLinePerGame(db, season, artifact, sched, current) : new Map<string, number>();
+    const art = artifactFor(season);
+    const line = art ? preseasonLinePerGame(db, season, art, sched, current) : new Map<string, number>();
     const dvp = dvpTable(db, season);
     const ctx = contextFor(db, season);
     const raw = db.prepare(

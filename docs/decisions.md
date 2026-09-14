@@ -503,6 +503,32 @@ playoff-gate null.
   rebuild time, so `feat_player_week_model` must be rebuilt, the weekly model retrained and re-gated
   before the weekly table is touched (docs/validation.md D16 section; CLAUDE.md).
 
+## D17 -- The weekly track redone on honest season lines; the D11 override retired (2026-09-14, owner: "redo the weekly", APPLIED)
+
+In season, with week 1 one game from settled. Full record: docs/weekly.md section 7.
+
+- **The lines were leaking, and D16 would have made it worse.** Every historical season's
+  `season_line_pg` came from the single all-history projection artifact -- a model that had seen the
+  season it projected -- recorded in docs/weekly.md as a "mild" inherited limit when the artifact was a
+  ridge. Measured on the D16 boosted artifact: its 2024 line correlates 0.818 with 2024 actuals, the
+  blind artifact's 0.778. The builder now takes `--artifact-dir` and projects each historical season
+  with an artifact blind to it (`data/fold-artifacts-d16`), warns per season when it cannot, and the
+  training window is 2012-2025 (2010-2011 cannot be fitted blind).
+- **Retrained and re-gated on honest lines: GATE PASSED, every clause, on its own merit** -- (a) CRPS
+  2.9036 vs 3.4182, (b) coverage 0.848 in [0.75, 0.85] with every position inside, (c) zero share
+  0.249 vs 0.246. The D11 override (clause (b) at 0.851 on leaky lines) is retired.
+- **`WEEKLY_SERVE` follows the per-position measurement:** QB/RB/WR/TE serve the two-part form model;
+  K and DST serve the season-line floor (the form model ties the floor there to the third decimal and
+  fails clause (a) by that hair). D11 had all six on the form model.
+- Lineup regret +5.28 points per lineup over the shipped baseline (standard-15), +5.77 (deep-18).
+- The write-once forward record keeps 2026 week 2 as it was frozen (D11 model, old lines); the redone
+  serve reaches the record from the next frozen week. The live serve picked up the new artifact at once.
+- Backups: `data/ff.pre-weekly-redo-2026-09-14.db` (the live store before the rebuild) and the two
+  `*.pre-redo.bak.json` artifacts.
+
+REVERSAL CONDITION: the live 2026 scorecard turning against the form model on CRPS over a meaningful
+sample, or a re-gate on a later window failing clause (a)-(c); the one-line revert is `WEEKLY_SERVE`.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

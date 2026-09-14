@@ -3557,6 +3557,10 @@ async function cmdBuildWeeklyFeatures(rest: string[]) {
     dbPath: valueOf(rest, "--db"), seasons,
     currentSeason: cur ? Number(cur) : undefined,
     artifactPath: valueOf(rest, "--artifact"),
+    // Per-season artifacts blind to their own season, for the historical lines (see BuildOpts).
+    // Without it every historical season's line comes from an artifact that has seen that season,
+    // and the build warns per season.
+    artifactDir: valueOf(rest, "--artifact-dir"),
   });
   console.log(`feat_player_week_model: ${res.rows} rows over ${seasons.length} seasons`);
   const db = openDb(valueOf(rest, "--db"));

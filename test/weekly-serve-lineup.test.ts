@@ -12,9 +12,10 @@
 // naming a subset of positions by hand, so it does not go stale the next time the table changes.
 //
 // WHAT THIS FILE ASSERTS, and why each part is here rather than implied:
-//   1. every position `WEEKLY_SERVE` maps to the streaming artifact produces a projection through
+//   1. every position `WEEKLY_SERVE` maps to a non-floor artifact produces a projection through
 //      the seam that is NOT the floor's number -- the positive control, without which "routed
-//      through the table" and "still hardcoded to the floor" look identical. Today that is all six.
+//      through the table" and "still hardcoded to the floor" look identical. As of D17
+//      (2026-09-14) that is QB/RB/WR/TE on the form model; K and DST serve the floor by measurement.
 //   2. `lineupRecommend` -- the real consumer, not the loader -- reports a different number for the
 //      fixture QB, RB, WR and TE under the two, which is the only thing that proves the seam reaches
 //      a DECISION rather than stopping at the loader;
@@ -93,9 +94,12 @@ test("the LINEUP seam serves EVERY position from the FORM model -- the 2026-09-1
   // derived from the TABLE (positions whose artifact is not the floor), never a hardcoded subset, so
   // it stays a real check whatever WEEKLY_SERVE names -- as of D11 that is all six, on the form model.
   const nonFloorPos = STREAM_SERVE_POS.filter((p) => WEEKLY_SERVE[p] !== SHIPPED_WEEKLY_ARTIFACT);
-  assert.deepEqual(nonFloorPos.sort(), [...STREAM_SERVE_POS].sort(),
-    "the D11 override to serve the form model at all six positions is not reflected in the table -- " +
-    "this test's premise needs re-reading");
+  // D17 (2026-09-14): on honest season lines the per-position gate ships the form model at
+  // QB/RB/WR/TE and keeps the floor at K/DST (a tie to the third decimal). Stated by name so the
+  // premise cannot drift with the table unnoticed.
+  assert.deepEqual(nonFloorPos.sort(), ["QB", "RB", "TE", "WR"],
+    "the D17 per-position measurement (form model at QB/RB/WR/TE, floor at K/DST) is not reflected " +
+    "in the table -- this test's premise needs re-reading");
   for (const pos of nonFloorPos) {
     const p = roster.find((r) => r.pos === pos);
     assert.ok(p, `the fixture roster has no ${pos}`);
@@ -120,12 +124,12 @@ test("the LINEUP seam serves EVERY position from the FORM model -- the 2026-09-1
   const say = weeklyServeAssumption();
   assert.equal(say.table.QB, WEEKLY_SERVE.QB);
   assert.match(say.text, /WEEKLY_SERVE/);
-  // Every position's assumption names the FORM model by file, since that is what serves it under the
-  // 2026-09-12 D11 override -- a report that omitted one would be claiming a model was NOT consulted
-  // that in fact was.
+  // Every position's assumption names the artifact that actually serves it, BY FILE -- the form
+  // model at QB/RB/WR/TE and the floor at K/DST under D17 -- so a report cannot claim a model was
+  // consulted that was not, or omit one that was.
   for (const pos of STREAM_SERVE_POS) {
-    assert.equal(say.table[pos], CHALLENGER_WEEKLY_ARTIFACT,
-      `${pos}'s assumption does not name the form model (${CHALLENGER_WEEKLY_ARTIFACT})`);
+    const want = ["K", "DST"].includes(pos) ? SHIPPED_WEEKLY_ARTIFACT : CHALLENGER_WEEKLY_ARTIFACT;
+    assert.equal(say.table[pos], want, `${pos}'s assumption names ${say.table[pos]}, not ${want}`);
   }
 });
 

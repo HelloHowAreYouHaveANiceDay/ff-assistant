@@ -81,11 +81,21 @@ that it does all the work: the same statistic over the whole season -- which is 
 `data/def-ratings.csv` is, and what almost every published DvP table is -- puts week *w*'s own scoring
 inside week *w*'s feature.
 
-**Inherited limit, stated rather than buried.** The season line comes from the shipped projection
-artifact, whose `age_factor` and `opp_factor` are fitted once over all seasons. So it carries the
-same mild cross-season lookahead the shipped board carries. It is not introduced here and it is
-identical across every model and baseline compared below, so it cannot manufacture a difference
-between them -- but it is not zero.
+**Inherited limit -- CLOSED 2026-09-14.** Until then the season line for EVERY season, historical
+included, came from the single shipped projection artifact, fitted over all seasons: an artifact that
+had seen the season it was projecting. That was recorded here as "mild" when the artifact was a
+ridge on two multiplicative factors. D16 made the served projector a boosted ensemble, which
+memorises far more of each season, and the leak was measured before it could be inherited: the
+all-history D16 artifact's 2024 line correlates **0.818** with 2024's actual season points (RMSE
+46.3) where the artifact blind to 2024 correlates **0.778** (RMSE 51.3). A weekly model trained on
+the former learns to trust a line the live season can never supply. So the builder now takes
+`--artifact-dir` (`BuildOpts.artifactDir`): each historical season's line is projected by the
+artifact blind to it (`data/fold-artifacts-d16/artifact-<season>.json`, one trainer run per season
+with `--holdout-season`), the live season by the shipped artifact (which has not seen it), and the
+build PRINTS per season which one it used and WARNS when a historical season falls back to the
+shipped artifact. 2010 and 2011 cannot be fitted blind (too little history before them for the
+curve), so they keep the shipped line, are warned about, and are excluded from the weekly training
+window, which is now 2012-2025. Section 7 records the rebuild and the retrain.
 
 ### The guard, and its three positive controls
 
@@ -1194,3 +1204,55 @@ The full 14-fold evaluation was run twice, end to end, including re-invoking the
 every fold. Every number in section 3 is byte-identical across the two runs -- alpha search, quantile
 subsample (seeded `default_rng(7)`), roster draws and all. A harness whose numbers move between runs
 cannot tell a real gain from a re-draw, so this is checked rather than assumed.
+
+## 7. The redo on honest lines (2026-09-14, in season, week 1 one game from settled; D17)
+
+D16 changed the projector the season line is projected from, and the owner asked for the weekly
+track to be redone on top of it. Three things were done, in order, and the third is the one the
+first two exist for.
+
+**7.1 The lines.** Section 1's "inherited limit" was closed rather than inherited (see that
+paragraph): the historical seasons' `season_line_pg` is now projected by an artifact BLIND to each
+season (`data/fold-artifacts-d16/artifact-<Y>.json`, Y = 2012-2025, one `train_projection.py
+--holdout-season Y` each), the live 2026 season by the shipped artifact through the board path. The
+size of the leak the shortcut would have carried was measured first: the all-history D16 artifact's
+2024 line correlates 0.818 with 2024's actual season points, the blind one 0.778. The rebuild
+(`ff build-weekly-features --seasons 2010-2026 --current-season 2026 --artifact-dir
+data/fold-artifacts-d16`) printed which artifact projected every season, kept 187,728 rows, left the
+2026 availability columns byte-identical to the pre-rebuild backup, and passed the leakage guard
+(12/12, controls firing) and the leak audit. 2010-2011 cannot be fitted blind and are excluded from
+training. The live database was backed up before the rebuild (`data/ff.pre-weekly-redo-2026-09-14.db`).
+
+**7.2 The retrain.** Both artifacts regenerated on the 2012-2025 window with the recorded commands:
+the floor (`--season-line-only`) and the form model (`--features all --zero-model two-part`). Both
+load through the consumer's loader with their golden blocks.
+
+**7.3 The gate, on honest lines.** `ff evaluate-weekly --seasons 2012-2025 --train-seasons
+2012-2025 --rosters 300`, 14 folds, 13m52s, the two-part model as the shipped artifact declares.
+
+| clause | result | detail |
+|---|---|---|
+| (a) pooled CRPS beats the shipped `week()` baseline | **PASS** | 2.9036 vs 3.4182 |
+| (b) coverage given pts > 0 in [0.75, 0.85] pooled, [0.70, 0.90] per position | **PASS** | pooled **0.848**; every position inside |
+| (c) predicted zero-week share within 0.03 of actual | **PASS** | 0.249 vs 0.246; every position inside |
+
+**GATE PASSED on its own merit.** D11 shipped this model on an owner override because clause (b)
+read 0.851 -- on lines that had seen their season. On honest lines the same model is 0.848, inside
+the band, and the override is retired. Everything is a little less accurate in absolute terms than
+the D11 record (CRPS 2.90 vs 2.82; floor 3.42 vs 3.32), which is the leak leaving the numbers, not a
+regression. Lineup regret: the model's starters score 82.26 vs 76.98 for the shipped baseline on
+standard-15 (+5.28 per lineup, win share 0.633) and 86.29 vs 80.52 on deep-18 (+5.77); W1, W3, W4,
+W5 held, W2 and W6 failed in the same directions as before.
+
+**Per position, which fills `WEEKLY_SERVE`:** QB, RB, WR, TE ship the two-part model (CRPS vs floor:
+3.44 vs 4.55, 2.92 vs 3.56, 2.99 vs 3.49, 2.31 vs 2.66). **K and DST tie the floor** to the third
+decimal (2.4747 vs 2.4725; 3.1334 vs 3.1328) and FAIL clause (a) by that hair, so the table now
+serves the floor at K and DST. D11 had pointed all six at the form model; this is the per-position
+measurement the table exists to record, and the difference at K/DST is nil either way.
+
+**The forward record.** `scorecard_prediction` is write-once. 2026 week 2 was frozen before this
+redo with the D11 model on the old lines; those rows stand and will be graded as what they were.
+The redone model reaches the record from the next week frozen. Week 1 has no frozen rows (the first
+snapshot ran after its kickoff and refused, as designed). The live serve reads the artifact from
+disk per call, so `ff copilot lineup` served week 2 through the retrained model immediately
+(checked: 0.8 s, a full lineup).

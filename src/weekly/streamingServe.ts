@@ -59,6 +59,16 @@ export const STREAMING_ARTIFACT = "streaming-artifact.json";
  * Reverting is a one-line change back to STREAMING_ARTIFACT; do that if the live scorecard turns
  * against it, or if a calibrated refit makes the override unnecessary.
  *
+ * 2026-09-14 -- THE OVERRIDE IS RETIRED; THE TABLE IS A MEASUREMENT AGAIN (docs/decisions.md D17,
+ * docs/weekly.md section 7). The season lines the D11 numbers were measured on had seen their own
+ * seasons (the all-history projection artifact projected every historical season). Rebuilt on lines
+ * blind to each season and retrained, the same two-part form model PASSES every gate clause on its
+ * own merit -- (a) CRPS 2.9036 vs 3.4182, (b) coverage 0.848 in [0.75, 0.85] with every position
+ * inside, (c) zero share 0.249 vs 0.246 -- and the per-position gate says: QB/RB/WR/TE ship the form
+ * model (each beats the floor by 0.35-1.1 CRPS); K and DST TIE the floor to the third decimal
+ * (2.4747 vs 2.4725, 3.1334 vs 3.1328) and fail clause (a) by that hair. So K and DST serve the
+ * floor, which is what the measurement says and costs nothing either way.
+ *
  * WHY THIS IS A TABLE AND NOT A LIST OF "POSITIONS WHERE X SHIPS": with candidate models the list
  * form needs lists whose overlap nobody checks, and a position in both is served by whichever list is
  * consulted first. The table cannot express that state.
@@ -68,8 +78,8 @@ export const WEEKLY_SERVE: Record<string, string> = {
   RB: CHALLENGER_WEEKLY_ARTIFACT,
   WR: CHALLENGER_WEEKLY_ARTIFACT,
   TE: CHALLENGER_WEEKLY_ARTIFACT,
-  K: CHALLENGER_WEEKLY_ARTIFACT,
-  DST: CHALLENGER_WEEKLY_ARTIFACT,
+  K: SHIPPED_WEEKLY_ARTIFACT,
+  DST: SHIPPED_WEEKLY_ARTIFACT,
 };
 
 /**
@@ -77,7 +87,7 @@ export const WEEKLY_SERVE: Record<string, string> = {
  * metadata so a series that changes model mid-season says WHEN and to WHAT, rather than leaving a
  * later reader to explain a step change in the numbers.
  */
-export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-12";
+export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-14";
 
 /** Positions the given artifact file serves. Derived from the table so the two can never disagree;
  *  a hand-maintained second list is the enumeration that rots. */
