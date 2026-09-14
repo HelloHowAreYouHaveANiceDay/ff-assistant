@@ -5,6 +5,9 @@
 // trainer ONE fold at a time (one python at 99.9% of ONE core, ~8% total CPU) -- 31 cores idle. The
 // pipeline had no shared concurrency primitive (only src/draft/simPool.ts, coupled to the sim's
 // worker_threads), and carried a "run sweeps sequentially" belief that was an anecdote, never measured.
+// (Since measured: a single `ff backtest` is single-threaded too -- 1.03 of 32 cores, 2026-09-14 --
+// simPool.runPool is used by nothing but its own self-test, so sweeps CAN fan out on this same primitive;
+// the old stall was orphaned background jobs, not CPU contention. See the repo CLAUDE.md shell-traps note.)
 // This generalises simPool.runPool's proven pattern (results in INPUT order regardless of completion;
 // default cores-1) into a task-agnostic map, and adds the global budget that makes it safe for ALL
 // callers at once.
