@@ -55,10 +55,11 @@ app/engine/
 data/mock-runs.jsonl
 data/mock-*.log
 data/auto-draft.lock
-data/history-*.bak.csv
+# Transient backups written before a regeneration (history, managers, pre-redo artifacts, ...)
+data/*.bak.csv
 data/trials/
 data/trials2b/
-data/managers.*.bak.json
+data/*.bak.json
 data/pos-sweep.txt
 
 # Runtime bridge endpoint: holds a live auth token for the app's loopback API. Never commit.
