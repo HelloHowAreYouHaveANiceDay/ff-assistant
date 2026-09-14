@@ -35,7 +35,7 @@ import { openDb, type DB } from "../src/db/db.js";
 import { dataPath } from "../src/data/paths.js";
 import { loadWeeklyProjection, loadWeeklyBands, weeklyServeAssumption } from "../src/inseason/copilotStore.js";
 import { lineupRecommend, lineupNameKey, NFL_WEEKS } from "../src/inseason/copilot.js";
-import { WEEKLY_SERVE, STREAM_SERVE_POS } from "../src/weekly/streamingServe.js";
+import { WEEKLY_SERVE, STREAM_SERVE_POS, DST_STREAM_ARTIFACT } from "../src/weekly/streamingServe.js";
 import { SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
 import { ensurePopulationColumn } from "../src/weekly/population.js";
 import { fixtureCtx } from "./fixtures/copilot-league.js";
@@ -94,12 +94,12 @@ test("the LINEUP seam serves EVERY position from the FORM model -- the 2026-09-1
   // derived from the TABLE (positions whose artifact is not the floor), never a hardcoded subset, so
   // it stays a real check whatever WEEKLY_SERVE names -- as of D11 that is all six, on the form model.
   const nonFloorPos = STREAM_SERVE_POS.filter((p) => WEEKLY_SERVE[p] !== SHIPPED_WEEKLY_ARTIFACT);
-  // D17 (2026-09-14): on honest season lines the per-position gate ships the form model at
-  // QB/RB/WR/TE and keeps the floor at K/DST (a tie to the third decimal). Stated by name so the
-  // premise cannot drift with the table unnoticed.
-  assert.deepEqual(nonFloorPos.sort(), ["QB", "RB", "TE", "WR"],
-    "the D17 per-position measurement (form model at QB/RB/WR/TE, floor at K/DST) is not reflected " +
-    "in the table -- this test's premise needs re-reading");
+  // D17 (2026-09-14) ships the form model at QB/RB/WR/TE; D20 (2026-09-14) then ships the DST matchup
+  // model at DST. K stays on the floor. Stated by name so the premise cannot drift with the table
+  // unnoticed.
+  assert.deepEqual(nonFloorPos.sort(), ["DST", "QB", "RB", "TE", "WR"],
+    "the D17/D20 per-position measurement (form model at QB/RB/WR/TE, DST matchup model at DST, floor " +
+    "at K) is not reflected in the table -- this test's premise needs re-reading");
   for (const pos of nonFloorPos) {
     const p = roster.find((r) => r.pos === pos);
     assert.ok(p, `the fixture roster has no ${pos}`);
@@ -125,10 +125,12 @@ test("the LINEUP seam serves EVERY position from the FORM model -- the 2026-09-1
   assert.equal(say.table.QB, WEEKLY_SERVE.QB);
   assert.match(say.text, /WEEKLY_SERVE/);
   // Every position's assumption names the artifact that actually serves it, BY FILE -- the form
-  // model at QB/RB/WR/TE and the floor at K/DST under D17 -- so a report cannot claim a model was
-  // consulted that was not, or omit one that was.
+  // model at QB/RB/WR/TE (D17), the DST matchup model at DST (D20) and the floor at K -- so a report
+  // cannot claim a model was consulted that was not, or omit one that was.
   for (const pos of STREAM_SERVE_POS) {
-    const want = ["K", "DST"].includes(pos) ? SHIPPED_WEEKLY_ARTIFACT : CHALLENGER_WEEKLY_ARTIFACT;
+    const want = pos === "K" ? SHIPPED_WEEKLY_ARTIFACT
+      : pos === "DST" ? DST_STREAM_ARTIFACT
+        : CHALLENGER_WEEKLY_ARTIFACT;
     assert.equal(say.table[pos], want, `${pos}'s assumption names ${say.table[pos]}, not ${want}`);
   }
 });

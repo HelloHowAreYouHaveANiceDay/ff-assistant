@@ -1317,3 +1317,36 @@ accumulated games-missed) ADMITs under boosting (+0.0078 CRPS on the holdout) bu
 the injury feed stopped publishing report dates from 2025, so 2026 lineups get no horizon row and a
 learned coefficient would serve zero. Held on branch `explore/weekly-boost`; shipping it needs a live
 horizon feed first. No injury-horizon code is in this ship. See D19.
+
+## 9. DST is served by a matchup model, not the floor (2026-09-14; D20)
+
+Section 7 left DST on the season-line floor because on the WEEKLY feature set it tied the floor to the
+third decimal (3.1334 vs 3.1328). That set did not include the point-in-time OPPONENT columns in
+`feat_player_week_stream` (section 6.1). Fitted on those twelve columns, DST beats the floor materially
+-- so `WEEKLY_SERVE["DST"]` now names `data/dst-stream-artifact.json` (`DST_STREAM_ARTIFACT`), and K
+stays on the floor.
+
+**The model.** `tools/train_dst_stream.py` fits a ridge mean head + three linear quantile heads on the
+ratio `pts / season_line_pg` (the same target the whole weekly track uses, so the WeeklyArtifact serve
+`line * clamp(ratio)` applies) from the twelve matchup columns -- the opponent implied total dominant.
+It REUSES `train_weekly.py`'s feature/serve arithmetic (mirrored in `src/weekly/projector.ts`),
+self-checks `evaluate()` against scikit-learn's own prediction to 1e-9 before writing, and carries a
+golden block the TS loader re-checks to 1e-6 (including a thin-feature fixture). Full-data ships the
+artifact; `--holdout-season Y` and `--gate` do the blind evaluation.
+
+**The numbers (blind LOSO on the SERVED arithmetic, `--gate`).** Out-of-sample corr(pred, actual)
+**0.251 vs the floor's 0.043**; accuracy MAE **+0.126 on the 2021-2025 holdout, 5/5** (SELECTION +0.143,
+9/9); and the decision -- the model's top STREAMABLE DST (excluding the top-12 elites) beats the
+season-line pick by **+2.66 realized pts/wk on the holdout, 5/5** (model 8.72 vs floor 6.46). The full
+pool holdout pick is a NULL, as in the screen; the streamable tier is the manager's actual decision.
+**K stays a NULL** -- its streamable pick does not clear the floor and it loses the full-pool pick.
+
+**The route, and why it is safe forward.** One table move; both DST consumers read the table
+(`stream_recommend` via `loadStreamingProjection`, the season simulator's weekly DST points via
+`loadWeeklyProjection` -> `projectStreamingWith`), so nothing new runs at the serve boundary. Ridge was
+chosen over a GBM precisely for serve robustness (the D19 lesson): a missing matchup column imputes to
+its centred mean, routing an unknown-matchup DST to `line * intercept` ~= the floor, linear all the way,
+no tree cliff. Verified on the live 2026 board -- `ff copilot stream --pos DST` for the current week
+(sane, matchup-differentiated) AND forward weeks 10/15 where `opp_implied_total` is entirely absent (0
+non-finite rows; projections narrow to the floor rather than collapse). `test/dst-stream-serve.test.ts`
+locks the degradation in. Reversal is one line: `WEEKLY_SERVE["DST"] = SHIPPED_WEEKLY_ARTIFACT`.

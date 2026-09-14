@@ -1,0 +1,263 @@
+{
+  "schema": 2,
+  "kind": "weekly",
+  "learner": "linear",
+  "zeroModel": "quantile",
+  "fittedFrom": "train_dst_stream.py: ridge(pts/season_line_pg) + linear quantile heads on the feat_player_week_stream matchup features (docs/decisions.md D20)",
+  "fittedAt": "2026-09-14T21:15:42.815249+00:00",
+  "seasons": [
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "holdoutSeason": null,
+  "target": "ratio_to_season_line",
+  "population": "rostered",
+  "trainMinLine": 0.0,
+  "rowFilter": "in_population",
+  "features": [
+    {
+      "name": "opp_pa_pos",
+      "transform": "center",
+      "center": 6.326825059323594,
+      "scale": 1.7350998075823005,
+      "missing": 0.0
+    },
+    {
+      "name": "opp_pa_pos_n",
+      "transform": "center",
+      "center": 7.6833196833196835,
+      "scale": 4.72401439388426,
+      "missing": 0.0
+    },
+    {
+      "name": "opp_off_sacks_allowed_pg",
+      "transform": "center",
+      "center": 2.3788740602971292,
+      "scale": 0.4588086864038302,
+      "missing": 0.0
+    },
+    {
+      "name": "opp_off_giveaways_pg",
+      "transform": "center",
+      "center": 1.3848742241902998,
+      "scale": 0.27317217984758113,
+      "missing": 0.0
+    },
+    {
+      "name": "opp_implied_total",
+      "transform": "center",
+      "center": 22.60803985803986,
+      "scale": 3.808428452770856,
+      "missing": 0.0
+    },
+    {
+      "name": "opp_def_sacks_pg",
+      "transform": "center",
+      "center": 2.3652132969673616,
+      "scale": 0.35966001467746755,
+      "missing": 0.0
+    },
+    {
+      "name": "opp_def_takeaways_pg",
+      "transform": "center",
+      "center": 1.3793200827988137,
+      "scale": 0.2716896653428276,
+      "missing": 0.0
+    },
+    {
+      "name": "opp_pass_yds_allowed_pg",
+      "transform": "center",
+      "center": 248.46419487748767,
+      "scale": 19.18662496613578,
+      "missing": 0.0
+    },
+    {
+      "name": "opp_rush_yds_allowed_pg",
+      "transform": "center",
+      "center": 113.2144837061976,
+      "scale": 12.161190831352041,
+      "missing": 0.0
+    },
+    {
+      "name": "roof_dome",
+      "transform": "center",
+      "center": 0.2784602784602785,
+      "scale": 0.4482411759087987,
+      "missing": 0.0
+    },
+    {
+      "name": "team_fga_pg",
+      "transform": "center",
+      "center": 1.9624519031192755,
+      "scale": 0.24259717081332907,
+      "missing": 0.0
+    },
+    {
+      "name": "team_pat_pg",
+      "transform": "center",
+      "center": 2.3428396598443433,
+      "scale": 0.4325643712887516,
+      "missing": 0.0
+    }
+  ],
+  "coef": {
+    "DST": {
+      "mean": {
+        "intercept": 1.0655789819808419,
+        "opp_pa_pos": 0.06017913269486376,
+        "opp_pa_pos_n": -0.012857635129770334,
+        "opp_off_sacks_allowed_pg": 0.016281871763902212,
+        "opp_off_giveaways_pg": 0.061264528738592165,
+        "opp_implied_total": -0.2109769022860489,
+        "opp_def_sacks_pg": 0.0024893957921658157,
+        "opp_def_takeaways_pg": 0.02995377503518365,
+        "opp_pass_yds_allowed_pg": 0.012085963074040411,
+        "opp_rush_yds_allowed_pg": 0.007797309887084866,
+        "roof_dome": 0.003562991042030732,
+        "team_fga_pg": 0.012228859673503133,
+        "team_pat_pg": 0.012857965143369567
+      },
+      "p10": {
+        "intercept": -0.10374235497082267,
+        "opp_pa_pos": 0.02146529774166158,
+        "opp_pa_pos_n": 0.0,
+        "opp_off_sacks_allowed_pg": 0.0,
+        "opp_off_giveaways_pg": 0.0,
+        "opp_implied_total": -0.15132223379034548,
+        "opp_def_sacks_pg": 0.0,
+        "opp_def_takeaways_pg": 0.0,
+        "opp_pass_yds_allowed_pg": 0.0,
+        "opp_rush_yds_allowed_pg": 0.0,
+        "roof_dome": 0.0,
+        "team_fga_pg": 0.0,
+        "team_pat_pg": 0.0
+      },
+      "p50": {
+        "intercept": 0.8798115902872491,
+        "opp_pa_pos": 0.08723595199361717,
+        "opp_pa_pos_n": 0.0,
+        "opp_off_sacks_allowed_pg": 0.0,
+        "opp_off_giveaways_pg": 0.012977726374483965,
+        "opp_implied_total": -0.17841652230107866,
+        "opp_def_sacks_pg": 0.0,
+        "opp_def_takeaways_pg": 0.0,
+        "opp_pass_yds_allowed_pg": 0.0,
+        "opp_rush_yds_allowed_pg": 0.0,
+        "roof_dome": 0.0,
+        "team_fga_pg": 0.0,
+        "team_pat_pg": 0.0
+      },
+      "p90": {
+        "intercept": 2.4714404025512673,
+        "opp_pa_pos": 0.03304634264266086,
+        "opp_pa_pos_n": 0.0,
+        "opp_off_sacks_allowed_pg": 0.0,
+        "opp_off_giveaways_pg": 0.1383271874955787,
+        "opp_implied_total": -0.14412777900523646,
+        "opp_def_sacks_pg": 0.0,
+        "opp_def_takeaways_pg": 0.0,
+        "opp_pass_yds_allowed_pg": 0.0,
+        "opp_rush_yds_allowed_pg": 0.0,
+        "roof_dome": 0.0,
+        "team_fga_pg": 0.0,
+        "team_pat_pg": 0.0
+      }
+    }
+  },
+  "clamps": {
+    "lo": 0.0,
+    "hi": 100.0
+  },
+  "notes": "DST streaming model: the weekly DST projection is line * clamp(ratio), the ratio a ridge on the twelve matchup columns (opp implied total dominant). Served by projectWeekly() unchanged; a missing matchup column imputes to its centred mean, so an unknown-matchup DST degrades to ~ the season-line floor. K stays on the floor.",
+  "golden": [
+    {
+      "pos": "DST",
+      "line": 6.2,
+      "f": {
+        "season_line_pg": 6.2,
+        "opp_pa_pos": 7.1,
+        "opp_pa_pos_n": 8,
+        "opp_off_sacks_allowed_pg": 3.1,
+        "opp_off_giveaways_pg": 1.9,
+        "opp_implied_total": 17.5,
+        "opp_def_sacks_pg": 2.2,
+        "opp_def_takeaways_pg": 1.2,
+        "opp_pass_yds_allowed_pg": 260.0,
+        "opp_rush_yds_allowed_pg": 120.0,
+        "roof_dome": 1,
+        "team_fga_pg": 2.0,
+        "team_pat_pg": 2.4
+      },
+      "expect": {
+        "mean": 9.39705871324416,
+        "p10": 0.674455334805233,
+        "p50": 7.331236256968653,
+        "p90": 18.230002966608357
+      }
+    },
+    {
+      "pos": "DST",
+      "line": 5.4,
+      "f": {
+        "season_line_pg": 5.4,
+        "opp_pa_pos": 5.2,
+        "opp_pa_pos_n": 8,
+        "opp_off_sacks_allowed_pg": 1.4,
+        "opp_off_giveaways_pg": 0.8,
+        "opp_implied_total": 28.5,
+        "opp_def_sacks_pg": 2.6,
+        "opp_def_takeaways_pg": 1.5,
+        "opp_pass_yds_allowed_pg": 230.0,
+        "opp_rush_yds_allowed_pg": 95.0,
+        "roof_dome": 0,
+        "team_fga_pg": 1.9,
+        "team_pat_pg": 2.3
+      },
+      "expect": {
+        "mean": 2.798894999341422,
+        "p10": 0.0,
+        "p50": 2.8044719807228993,
+        "p90": 10.426516640617193
+      }
+    },
+    {
+      "pos": "DST",
+      "line": 5.9,
+      "f": {
+        "season_line_pg": 5.9
+      },
+      "expect": {
+        "mean": 6.286915993686968,
+        "p10": 0.0,
+        "p50": 5.19088838269477,
+        "p90": 14.581498375052478
+      }
+    },
+    {
+      "pos": "DST",
+      "line": 6.0,
+      "f": {
+        "season_line_pg": 6.0,
+        "opp_implied_total": 21.0
+      },
+      "expect": {
+        "mean": 6.92796092065659,
+        "p10": 0.0,
+        "p50": 5.730868390200096,
+        "p90": 15.193774463077952
+      }
+    }
+  ]
+}
