@@ -38,6 +38,7 @@ import crypto from "node:crypto";
 import { execSync } from "node:child_process";
 import { fingerprintDraftArbiter } from "./lib/deps.mjs";
 import { loadDump, sharedSeeds, perSeasonRates, cpcvSubsets, pathLifts, seasonEffect, pboOf } from "./lib/arbiter.mjs";
+import { parseHoldout, splitSeasons, assertSelectionBlind } from "./lib/holdout.mjs";
 
 // ---- args -------------------------------------------------------------------------------------
 const argv = process.argv.slice(2);
@@ -56,6 +57,14 @@ const LEDGER = val("--ledger", "data/experiments.jsonl");
 const GOLDEN = Number(val("--golden", "97.0"));   // PRIMARY-axis consistency target = shipped-config PLAYOFF% golden master (D13). 97.0% source: data/trials/struct-base.tsv and data/trials/sweep-bench-discount-0.35.tsv both = 42.35% title / 97.04% playoff (the golden 42.3 title reproduced). Pass --golden 96.0 when BASE_FLAGS pins --consensus-blend 0 / --bench-discount 0.25 (pre-edge base ~38.5% title / ~96% playoff).
 const GOLDEN_TOL = Number(val("--golden-tol", "3.0")); // +/- pp of Monte-Carlo slack
 const GOLDEN_TITLE = Number(val("--golden-title", "42.3")); // SECONDARY/context only -- NOT a gate (title% is the no-skill axis, P16 FAILED). Printed for reference.
+// SELECTION-BLIND HOLDOUT (WS2). A lever/config search must not TUNE on the holdout block: the effect
+// that drives the verdict is computed on the SELECTION seasons only, and the holdout is reported once
+// as a separate CONFIRM. Locked to the canonical HOLDOUT_SEASONS unless overridden with
+// --holdout-seasons (e.g. 2021-2025). CONVENTION: this splits the SELECTION metric (the season-paired
+// effect + PBO that produce the verdict) into selection-vs-holdout; the golden-master CONSISTENCY
+// check below stays on the FULL set on purpose -- it is a reproducibility check that the dump matches
+// the point backtest, NOT a selection decision, so it is not something a search can tune against.
+const HOLDOUT = parseHoldout(val("--holdout-seasons", null));
 const OUT_DIR = val("--out-dir", "data/trials");
 const BASE_LABEL = val("--baseline-label", `shipped[${BASE_FLAGS}]`);
 const TREAT_LABEL = val("--treatment-label", `shipped[${BASE_FLAGS}] ${TREATMENT}`);
@@ -124,8 +133,15 @@ if (!consistencyOK) {
 // ---- CPCV paths (shared core: scripts/lib/arbiter.mjs) ----------------------------------------
 // Sample the season subsets ONCE (deterministic, path-seed); each metric's OOS/IS lifts are computed on
 // the SAME subsets below. Each path holds out k seasons (TEST) vs the complement (TRAIN).
-const k = K != null ? Number(K) : Math.floor(Ntot / 2);
-const subsets = cpcvSubsets(Ntot, { k, nPaths: N_PATHS, pathSeed: PATH_SEED });
+// SELECTION-BLIND SPLIT (WS2). The verdict-driving effect + PBO are computed on the SELECTION seasons
+// only; the CPCV paths are re-partitions of the SELECTION seasons, so a config search can never tune
+// on the holdout. The holdout seasons are scored separately below as a one-shot CONFIRM.
+const { selection: selSeasonsArr, holdout: cfSeasonsArr } = splitSeasons(seasonsArr, HOLDOUT);
+assertSelectionBlind(selSeasonsArr, HOLDOUT);
+const Nsel = selSeasonsArr.length;
+if (Nsel < 3) { console.log(`\nonly ${Nsel} SELECTION seasons after removing the holdout ${HOLDOUT.join(",")} -- cannot form CPCV paths. Aborting.`); process.exit(1); }
+const k = K != null ? Number(K) : Math.floor(Nsel / 2);
+const subsets = cpcvSubsets(Nsel, { k, nPaths: N_PATHS, pathSeed: PATH_SEED });
 const M = subsets.length;
 
 // TWO INSTRUMENTS, TWO QUESTIONS, from the shared core. We TARGET CHAMPIONSHIPS, but the engine
@@ -133,17 +149,27 @@ const M = subsets.length;
 // the title alongside. seasonEffect = the season-paired bootstrap (effect + CI + power floor, the
 // thin-edge instrument); pboOf = overfitting robustness (does the IS winner transfer OOS -- distinct from
 // the CI). Both defined once in lib/arbiter.mjs so the in-season arbiter cannot diverge.
-const poE = seasonEffect(rateBp, rateAp, seasonsArr, { pathSeed: PATH_SEED }), poR = pboOf(pathLifts(subsets, rateAp, rateBp, seasonsArr));  // PLAYOFFS (target)
-const chE = seasonEffect(rateB, rateA, seasonsArr, { pathSeed: PATH_SEED }),   chR = pboOf(pathLifts(subsets, rateA, rateB, seasonsArr));      // championships (goal)
+const poE = seasonEffect(rateBp, rateAp, selSeasonsArr, { pathSeed: PATH_SEED }), poR = pboOf(pathLifts(subsets, rateAp, rateBp, selSeasonsArr));  // PLAYOFFS (target), SELECTION seasons
+const chE = seasonEffect(rateB, rateA, selSeasonsArr, { pathSeed: PATH_SEED }),   chR = pboOf(pathLifts(subsets, rateA, rateB, selSeasonsArr));      // championships (goal), SELECTION seasons
+// CONFIRM on the held-out block: the honest, once-quoted number the search never tuned on. Underpowered
+// by construction (few seasons); reported for transparency, never gated.
+const poCf = cfSeasonsArr.length >= 2 ? seasonEffect(rateBp, rateAp, cfSeasonsArr, { pathSeed: PATH_SEED }) : null;
 
 // ---- report ---------------------------------------------------------------------------------------
 const fmt = (E, R) => `${E.effect >= 0 ? "+" : ""}${E.effect.toFixed(2)}pp  95% CI [${E.ciLo.toFixed(2)}, ${E.ciHi.toFixed(2)}]  t ${E.t.toFixed(2)}  ${E.wins}/${E.nSeasons} seasons up  PBO ${(100 * R.pbo).toFixed(0)}%   (resolvable >= ~${E.detectable.toFixed(2)}pp)`;
 console.log(`\n================ EFFECT (season-paired bootstrap) + PBO (CPCV robustness) ================`);
 console.log(`  ${BASE_LABEL}`);
 console.log(`  vs ${TREAT_LABEL}`);
-console.log(`  ${M} CPCV paths, k=${k}/${Ntot} seasons, path-seed ${PATH_SEED}; effect over ${poE.nSeasons} seasons, ${poolN / Ntot} trials/season`);
+console.log(`  SELECTION-BLIND (WS2): decision on ${selSeasonsArr[0]}-${selSeasonsArr[selSeasonsArr.length - 1]} (${Nsel} seasons); holdout ${HOLDOUT.join(",")} confirmed separately below.`);
+console.log(`  ${M} CPCV paths, k=${k}/${Nsel} selection seasons, path-seed ${PATH_SEED}; effect over ${poE.nSeasons} seasons, ${poolN / Ntot} trials/season`);
 console.log(`  PLAYOFFS (PRIMARY GATE, D13):  ${fmt(poE, poR)}`);
 console.log(`  titles (SECONDARY/context):   ${fmt(chE, chR)}`);
+if (poCf) {
+  console.log(`  PLAYOFFS CONFIRM on holdout ${cfSeasonsArr[0]}-${cfSeasonsArr[cfSeasonsArr.length - 1]} (${poCf.nSeasons} seasons, once, NOT gated): ` +
+    `${poCf.effect >= 0 ? "+" : ""}${poCf.effect.toFixed(2)}pp  95% CI [${poCf.ciLo.toFixed(2)}, ${poCf.ciHi.toFixed(2)}]  ${poCf.wins}/${poCf.nSeasons} up`);
+} else {
+  console.log(`  PLAYOFFS CONFIRM: ${cfSeasonsArr.length} holdout season(s) in range -- too few to quote a confirm.`);
+}
 
 // ---- ledger append --------------------------------------------------------------------------------
 const configHash = crypto.createHash("sha256").update(JSON.stringify({
@@ -192,6 +218,14 @@ const line = {
   pbo: Number.isNaN(chR.pbo) ? null : Number(chR.pbo.toFixed(4)),
   n_paths: M,
   n_seasons: Ntot,
+  // WS2 selection-blind split: the effect above is the SELECTION-season decision; the holdout is the
+  // once-quoted confirm the search never tuned on.
+  holdout_seasons: HOLDOUT,
+  selection_seasons: Nsel,
+  playoff_confirm_effect: poCf ? Number(poCf.effect.toFixed(4)) : null,
+  playoff_confirm_ci_lo: poCf ? Number(poCf.ciLo.toFixed(4)) : null,
+  playoff_confirm_ci_hi: poCf ? Number(poCf.ciHi.toFixed(4)) : null,
+  playoff_confirm_seasons: poCf ? poCf.nSeasons : cfSeasonsArr.length,
   k_test: k,
   full_set_baseline_pct: Number(fullA.toFixed(3)),
   full_set_treatment_pct: Number(fullB.toFixed(3)),
