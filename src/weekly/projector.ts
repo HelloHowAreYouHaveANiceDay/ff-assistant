@@ -94,9 +94,59 @@ export type WeeklyZeroModel = "quantile" | "two-part";
  *  differently through JSON on the two sides of the seam. */
 export const gridHead = (q: number): string => `q${String(Math.round(q * 100)).padStart(2, "0")}`;
 
+/**
+ * THE BOOSTED HEADS (schema 2 + `learner: "gbm"`; Q1, 2026-09-14). Same machinery as
+ * src/model/projector.ts one horizon up, and the same reason it exists: the weekly model was
+ * ENTIRELY LINEAR, so every weekly feature had only ever been screened by a linear model. A boosted
+ * artifact carries, PER POSITION, the ordered feature names its trees index (the position's POS_GATED
+ * `keep` set) and one ensemble per served head. A head's raw value is `baseline + sum over trees of
+ * the leaf`, which reproduces scikit-learn's predict() for the regressor heads (mean, the quantile
+ * grid) and decision_function() for the `zero` classifier head -- the logit the two-part mixture
+ * consumes. The learning rate is folded into the leaf values on the Python side, and the golden block
+ * carries the trainer's OWN predictions, so this walker is checked against the producer.
+ *
+ * The linear `coef` heads are STILL present for every boosted position (the loader requires them and
+ * they are the fallback); the boosted heads override them at serve for exactly the heads they name.
+ */
+export interface WeeklyBoostedTree {
+  feature: number[]; threshold: number[]; left: number[]; right: number[];
+  value: number[]; leaf: boolean[]; missingLeft: boolean[];
+}
+export interface WeeklyBoostedHead { baseline: number; trees: WeeklyBoostedTree[] }
+export interface WeeklyBoostedPos { features: string[]; heads: Record<string, WeeklyBoostedHead> }
+export interface WeeklyBoostedBlock {
+  learner: "gbm";
+  /** Positions with boosted heads; every one also has linear `coef` heads. */
+  positions: string[];
+  params?: Record<string, number | string>;
+  perPos: Record<string, WeeklyBoostedPos>;
+}
+
+/** One tree's leaf value for a REDUCED design vector (the position's own feature order). */
+export function weeklyTreeValue(t: WeeklyBoostedTree, x: number[]): number {
+  let i = 0;
+  for (;;) {
+    if (t.leaf[i]) return t.value[i];
+    const v = x[t.feature[i]];
+    i = Number.isNaN(v) ? (t.missingLeft[i] ? t.left[i] : t.right[i]) : (v <= t.threshold[i] ? t.left[i] : t.right[i]);
+  }
+}
+
+/** A head's raw (pre-clamp, pre-base) prediction: baseline plus every tree's leaf. */
+export function weeklyBoostedRaw(h: WeeklyBoostedHead, x: number[]): number {
+  let s = h.baseline;
+  for (const t of h.trees) s += weeklyTreeValue(t, x);
+  return s;
+}
+
 export interface WeeklyArtifact {
   schema: number;
   kind: "weekly";
+  /** WHICH LEARNER PRODUCES THE FITTED POSITIONS' SERVED HEADS. Absent or "linear": the linear `coef`
+   *  heads. "gbm": the `boosted` ensembles for the positions they name, linear heads for the rest
+   *  (K/DST stay intercept-only). */
+  learner?: "linear" | "gbm";
+  boosted?: WeeklyBoostedBlock;
   /** Absent means "quantile" -- but a schema-2 artifact always states it. */
   zeroModel?: WeeklyZeroModel;
   /** The quantile levels the SECOND stage was fitted at, ascending. Two-part artifacts only. */
@@ -223,6 +273,34 @@ export function weeklyFeatureValue(
   }
 }
 
+/** The BOOSTED evaluator: identical to weeklyFeatureValue for a PRESENT value, but a MISSING one
+ *  returns NaN instead of spec.missing. HistGradientBoosting's trees have a native per-split missing
+ *  direction, so feeding NaN lets a boosted head treat "no report" as its own case and fall back on
+ *  the always-present anchors -- rather than routing a mean-imputed vector into a leaf that the
+ *  all-imputed live-serve combination never trained (the D19 forward-serve collapse). The linear
+ *  heads still read weeklyFeatureValue (imputation is correct for an additive model); ONLY the boosted
+ *  reduced design uses this. Mirrored, byte-for-byte, by feature_value_nan() in tools/train_weekly.py. */
+export function weeklyFeatureValueBoosted(
+  spec: WeeklyFeatureSpec, row: { f: WeeklyInputRow["f"]; season_line_pg: number | null },
+): number {
+  const raw = row.f[spec.name];
+  if (raw == null || !Number.isFinite(raw)) return NaN;
+  switch (spec.transform) {
+    case "identity": return raw;
+    case "indicator": return raw ? 1 : 0;
+    case "center": {
+      const s = spec.scale ?? 1;
+      return s === 0 ? NaN : (raw - (spec.center ?? 0)) / s;
+    }
+    case "ratio_to_line": {
+      const line = row.season_line_pg;
+      if (line == null || !(line > 0)) return NaN;
+      return raw / line;
+    }
+    default: return NaN;
+  }
+}
+
 /**
  * THE PROJECTOR. Pure: no file reads, no network, no clock.
  *
@@ -235,15 +313,28 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
   const twoPart = a.zeroModel === "two-part";
   const grid = a.quantileGrid ?? DEFAULT_QUANTILE_GRID;
   const out: WeeklyProjRow[] = [];
+  // The boosted heads serve the positions they name; every other position (and any head a boosted
+  // position does not carry) stays linear. `featIdx` maps a feature name to its column in the full
+  // design so a position's reduced vector can be built in the boosted head-set's own `features` order.
+  const boosted = a.learner === "gbm" ? a.boosted ?? null : null;
+  const featIdx = boosted ? new Map<string, number>(a.features.map((s, i) => [s.name, i])) : null;
   for (const row of rows) {
     const line = row.season_line_pg;
     if (line == null || !Number.isFinite(line) || line <= 0) continue;
     const byPos = a.coef[row.pos];
     if (!byPos) continue;
     const x = a.features.map((s) => weeklyFeatureValue(s, row));
-    /** The raw linear predictor of one head. NaN when the head is absent, which the caller turns
+    const bpos = boosted?.perPos[row.pos] ?? null;
+    // The boosted reduced design uses the NaN evaluator (native missing handling), NOT the imputed `x`
+    // the linear heads read. Built in the boosted head-set's own feature order, once per row. Mirrors
+    // tools/train_weekly.py evaluate()'s x_nan/xb.
+    const xNan = bpos ? a.features.map((s) => weeklyFeatureValueBoosted(s, row)) : null;
+    const xb = bpos && xNan ? bpos.features.map((n) => xNan[featIdx!.get(n)!]) : null;
+    /** The raw predictor of one head: the boosted ensemble walk where this position carries a boosted
+     *  head, the linear dot product otherwise. NaN when the head is absent, which the caller turns
      *  into "no projection" rather than into a zero. */
     const lin = (h: string): number => {
+      if (bpos && xb && bpos.heads[h]) return weeklyBoostedRaw(bpos.heads[h], xb);
       const c = byPos[h];
       if (!c) return NaN;
       let v = c.intercept ?? 0;
@@ -397,6 +488,45 @@ export function loadWeeklyArtifact(json: unknown, opts: { checkGolden?: boolean;
     bad(`rowFilter is ${JSON.stringify(a.rowFilter)}, expected "season_line_pg" or "in_population". ` +
       "An artifact that does not say which rows it was fitted on cannot be checked against the rows " +
       "it is scored on, and that mismatch is exactly what failed the weekly gate's zero-share clause.");
+  }
+  // THE BOOSTED BLOCK. A learner that says "gbm" without ensembles, or heads that index outside the
+  // position's declared feature list, or a boosted position with no linear fallback heads, is refused
+  // -- the same discipline the golden block enforces on arithmetic, applied to structure.
+  if (a.learner != null && !["linear", "gbm"].includes(a.learner)) bad(`unknown learner ${JSON.stringify(a.learner)}`);
+  if (a.learner === "gbm") {
+    const bb = a.boosted;
+    if (!bb || bb.learner !== "gbm") bad('learner is "gbm" but the artifact carries no boosted block');
+    if (!Array.isArray(bb!.positions) || !bb!.positions.length) bad("boosted block names no positions");
+    for (const p of bb!.positions) {
+      if (!a.coef[p]) bad(`boosted block names position ${p}, which has no linear fallback heads`);
+      const bp = bb!.perPos?.[p];
+      if (!bp || !Array.isArray(bp.features) || !bp.heads) bad(`boosted position ${p} has no perPos features/heads`);
+      for (const n of bp!.features) if (!seen.has(n)) bad(`boosted position ${p}: feature '${n}' names no declared feature`);
+      const width = bp!.features.length;
+      // Exactly the heads the served model reads: `zero`, `mean`, and one per grid level for two-part.
+      const need = twoPart ? ["zero", "mean", ...grid.map(gridHead)] : (WEEKLY_HEADS as string[]);
+      for (const h of need) {
+        const bh = bp!.heads[h];
+        if (!bh || typeof bh.baseline !== "number" || !Number.isFinite(bh.baseline) || !Array.isArray(bh.trees)) {
+          bad(`boosted position ${p} head '${h}' is missing or has no finite baseline`);
+        }
+        if (!bh.trees.length) bad(`boosted position ${p} head '${h}' has no trees -- a constant wearing a learner's name`);
+        for (const [ti, t] of bh.trees.entries()) {
+          const n = t.leaf?.length;
+          if (!n || [t.feature, t.threshold, t.left, t.right, t.value, t.missingLeft].some((arr) => arr?.length !== n)) {
+            bad(`boosted position ${p} head '${h}' tree ${ti}: node arrays disagree about the node count`);
+          }
+          for (let i = 0; i < n; i++) {
+            if (t.leaf[i]) { if (!Number.isFinite(t.value[i])) bad(`boosted ${p}.${h} tree ${ti} node ${i}: non-finite leaf value`); continue; }
+            if (!(t.feature[i] >= 0 && t.feature[i] < width)) bad(`boosted ${p}.${h} tree ${ti} node ${i}: feature index ${t.feature[i]} outside the ${width}-wide reduced design`);
+            if (!(t.left[i] >= 0 && t.left[i] < n && t.right[i] >= 0 && t.right[i] < n)) bad(`boosted ${p}.${h} tree ${ti} node ${i}: child index out of range`);
+            if (!Number.isFinite(t.threshold[i])) bad(`boosted ${p}.${h} tree ${ti} node ${i}: non-finite threshold`);
+          }
+        }
+      }
+    }
+  } else if (a.boosted) {
+    bad('the artifact carries a boosted block but does not declare learner "gbm" -- one of the two is a leftover');
   }
   if (opts.checkGolden !== false && a.golden?.length) checkWeeklyGolden(a, opts.tol ?? 1e-6);
   return a;

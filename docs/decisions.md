@@ -567,6 +567,101 @@ is seeded yet and every number is byte-identical to before; tomorrow it is not.
   reliability bin stays under-confident late (88.8% -> 97.1% at week 11), so the too-wide late-season
   spread is not the level; the pool's weekly variance for the remaining weeks is the next candidate.
 
+## D19 -- The weekly model is gradient-boosted (dvp dropped), made robust to the 2026 missing-feature serve; injury-horizon HELD (2026-09-14)
+
+> **GATE-7 BLOCKER RESOLVED (2026-09-14) -- missingness augmentation + NaN passthrough.** The first
+> boosted `weekly-artifact.json` served HISTORICAL rows perfectly but COLLAPSED on the 2026 live serve:
+> on any row whose availability/usage block is NULL -- forward/ROS weeks, the current week before the
+> feed is built, and ALL 2025+ weeks (the injury feed stopped publishing report dates) -- the boosted
+> zero-classifier routed the all-imputed vector into a pathological high-P(zero) leaf and projected
+> locked starters at a few points (`ff copilot lineup` week 1: Jared Goff **4.57**, Breece Hall 4.86,
+> Amon-Ra St. Brown 4.31; golden row 4, an all-missing RB, mean 4.11 / pZero 0.63). ROOT CAUSE: trees
+> route on feature COMBINATIONS, and "everything imputed to its mean" is an out-of-distribution
+> combination the historical training rows -- which almost all carry a real availability block -- never
+> contained. The linear model is immune because it is additive (missing -> mean -> ~0 contribution ->
+> the projection reverts to the season-line anchor).
+>
+> THE FIX (`tools/train_weekly.py`, `src/weekly/projector.ts`), applied identically in train and serve:
+> (1) the boosted design feeds a MISSING raw value as **NaN** (`feature_value_nan` / `weeklyFeatureValueBoosted`),
+> engaging HistGradientBoosting's NATIVE per-split missing direction -- not `spec['missing']` (which the
+> linear heads still read); (2) **missingness augmentation** (`--aug-frac 0.5`, `MASKABLE_GROUPS` /
+> `MASK_DROP_P`): a fraction of training rows are duplicated with the availability / usage / odds / form
+> blocks masked to NaN at rates matched to the MEASURED 2026 serve regime, so the trees learn that an
+> all-missing-availability row is a normal healthy player and fall back on the always-present anchors
+> (`season_line_pg`, in every position's keep set, plus home / days_rest / week_no / td_games). The
+> augmented copies keep their source target and are sampled uniformly, so the zero rate and level -- and
+> gate clause (c) -- are preserved. A NaN-only split's `+/-inf` threshold is clamped to a finite
+> sentinel (identical routing for every finite value); `boosted_self_check` proves the clamped walker
+> still reproduces scikit-learn to 1e-9.
+>
+> AFTER: the same serve is sane -- Goff 17.7 (wk1) / 15.2 (wk3 forward) / 17.2 (wk2 with live-context),
+> Hall 9.9, St. Brown 11.6; golden row 4 mean 9.09 / pZero 0.19; K/DST unchanged on the floor. Fault
+> injection confirms the availability lever is still CONNECTED: on a synthetic elite QB (line 24), the
+> availability block absent projects 26.3 (graceful, reverts to anchor) while an injected OUT
+> designation collapses it to 1.4 / pZero 0.95.
+>
+> THE HONEST GAIN UNDER THE 2026 REGIME (`--mask-serve availability`, fit-with / serve-without, the
+> exact state of the live team; paired floor, selection-blind 2021-2025 holdout): boosted STILL beats
+> linear by **+0.110 CRPS, 5/0 seasons** with the availability block masked, versus **+0.126 CRPS, 5/0**
+> full-feature. The boost's edge is NOT primarily an availability effect -- masking availability costs
+> only ~0.015 CRPS of the ~0.126 edge; the rest is the nonlinear use of the anchors, form and odds that
+> the live team always has. (2025, already feed-silent, is identical masked vs full at +0.044, a mask
+> no-op that confirms the measurement.) So the boost, made robust, is a real gain for the live 2026 team,
+> not a historical-only artifact.
+
+
+The weekly serve at QB/RB/WR/TE (`CHALLENGER_WEEKLY_ARTIFACT` = `data/weekly-artifact.json`) is now a
+gradient-boosted two-part model instead of the linear logistic+ridge one. Same machinery the season
+model adopted one horizon up (D16): per fitted position the artifact carries a `boosted` block
+(schema 2, `learner: "gbm"`) -- a HistGradientBoosting classifier for the zero stage and one regressor
+per served head (mean + the quantile grid), depth 3, 300 rounds at 0.05, min-leaf 30, L2 1.0, the
+quantile heads conformally calibrated train-only. K and DST stay intercept-only on the floor. The
+linear `coef` heads remain on the artifact as the required fallback; `src/weekly/projector.ts`
+overrides them with the ensemble walk only for the heads a boosted position names.
+
+- **The seam is checked against the producer, not a second walker.** The trainer's `boosted_self_check`
+  walks each serialised head with the same arithmetic `projector.ts` uses and refuses to write unless
+  it reproduces scikit-learn's `decision_function`/`predict` to 1e-9; the artifact's golden block then
+  carries the trainer's own predictions and the TypeScript loader recomputes them on the boosted path
+  to 1e-6. A perturbed leaf is refused on both sides.
+- **Paired-season floor (the decisive number).** boosted-no-dvp vs the linear shipped model, per-season
+  pooled CRPS across the held-out seasons (`scripts/weekly-paired-floor.mjs`, unit of analysis the
+  SEASON, common-random-number rosters): ADMIT on the selection-blind 2021-2025 holdout, **+0.126 CRPS,
+  5/0 seasons** full-feature. Every gate clause (a) CRPS, (b) coverage-given-positive, (c) zero-share
+  still passes. AND -- the decision-relevant number for the live team -- **+0.110 CRPS, 5/0** with the
+  availability block masked to the 2026 serve regime (`--mask-serve availability`, fit-with / serve-without;
+  see the resolved-blocker note above). The gain survives the regime the 2026 team is actually in.
+- **Robust to the missing-feature serve.** The boosted heads read NaN for a missing feature (native
+  HistGradientBoosting handling) and are fitted with missingness augmentation matched to the 2026 regime,
+  so a locked starter whose availability/usage/odds block is absent falls back on the season-line anchor
+  instead of an out-of-distribution leaf -- the way the linear model always did. `--aug-frac 0` reproduces
+  the pre-robustness (collapsing) heads. The measurement-only `ff evaluate-weekly --mask-serve` /
+  `--reuse-artifacts` flags produce the fit-with / serve-without floor above; they never touch the shipped
+  serve path. See the resolved-blocker note at the top of this decision for the mechanism and the numbers.
+- **dvp (`dvp_mult`/`dvp_n`) is DROPPED** from the weekly feature dictionary and the trainer's
+  CENTER/SELECT_COLS as a neutral-under-boosting simplification: the D16-era rejection of dvp removal
+  was under the LINEAR model (base commit `docs: record dvp_mult removal REJECTED`); under boosting the
+  matchup signal it carried is subsumed and the paired floor is unchanged by its removal. It survives
+  only as a dormant stored column (`schema.sql`, the `feat_player_week_model` storage list) and feeds
+  the scorecard's legacy `shipped_week` comparison arm; the served `weekly` model never reads it. The
+  streaming artifact (`train_streaming.py`, which serves nowhere -- `SHIPPED_STREAMING_POSITIONS` is
+  empty) inherits the dvp-free CENTER/SELECT_COLS and was regenerated so it still loads under the
+  narrowed dictionary.
+- **Injury-horizon ADMITS under boosting but is HELD.** The injury-horizon block (an on-report flag plus
+  the injury-episode tracker's accumulated games-missed) clears the paired floor on the holdout (+0.0078
+  CRPS) once the learner is boosted -- a real signal the linear screen missed. It is NOT shipped because
+  it is DEAD AT SERVE: the nflverse injury feed stopped publishing report DATES from 2025, so the episode
+  table has no rows for 2025-2026 and the live path supplies no horizon column -- a coefficient learned
+  on 2012-2024 would serve zero on every 2026 lineup. Rebuild pointer: it lives intact on branch
+  `explore/weekly-boost` (the boost worktree); shipping it needs a live horizon feed first, then
+  `--learner gbm` already fits it. (No injury-horizon code is in this ship, by design.)
+
+REVERSAL CONDITION: the live 2026 scorecard turning against the boosted model on CRPS over a meaningful
+sample. The one-line revert is `--learner linear` at rebuild and dropping the boosted artifact back to
+the linear one; `src/weekly/projector.ts` serves the retained linear `coef` heads unchanged. Restoring
+dvp is a second, independent revert (re-add `dvp_mult`/`dvp_n` to `WEEKLY_FEATURE_FIELDS` and the
+trainer lists, rebuild).
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

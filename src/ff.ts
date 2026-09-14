@@ -3698,6 +3698,18 @@ async function cmdEvaluateWeekly(rest: string[]) {
     // each fold's own TRAINING rows, added to the stage-one logistic intercept. No coefficient and
     // no feature moves, so this cannot be a way to fit the gate.
     recalibrateZero: rest.includes("--recalibrate-zero"),
+    // `--mask-serve availability|<comma list>` (MEASUREMENT-ONLY): null these fields on the SCORED
+    // rows before projecting, leaving fold TRAINING untouched -- the 2026 live-serve regime (fit with
+    // the availability feed, serve without it). `availability` expands to the block that went dead in
+    // 2025. `--reuse-artifacts` reuses folds already in --keep-artifacts so full and masked scoring
+    // share one trained set.
+    maskServe: (() => {
+      const v = valueOf(rest, "--mask-serve");
+      if (!v) return undefined;
+      const AVAIL = ["inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed", "teammates_out"];
+      return v === "availability" ? AVAIL : v.split(",").map((s) => s.trim()).filter(Boolean);
+    })(),
+    reuseArtifacts: rest.includes("--reuse-artifacts"),
   });
   if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
   else console.log(formatWeeklyReport(res));

@@ -225,7 +225,7 @@ function pointBaselines(season: SeasonRows): Map<string, Record<string, number>>
   for (const [week, rows] of byWeek) {
     const defRatings = new Map<string, number>();
     for (const r of rows) {
-      const d = r.f.dvp_mult;
+      const d = r.dvp_mult;
       if (r.opponent && d != null && Number.isFinite(d)) defRatings.set(`${r.opponent}|${r.pos}`, d);
     }
     // gamesPerSeason 1: season_line_pg is ALREADY per game and makeProjections divides by games.

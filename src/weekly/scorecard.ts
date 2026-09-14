@@ -312,7 +312,7 @@ function weeklyPredictions(
   // per game -- handing it 17 would divide the line a second time.
   const defRatings = new Map<string, number>();
   for (const r of rows) {
-    const d = r.f.dvp_mult;
+    const d = r.dvp_mult;
     if (r.opponent && d != null && Number.isFinite(d)) defRatings.set(`${r.opponent}|${r.pos}`, d);
   }
   const shipped = makeProjections({

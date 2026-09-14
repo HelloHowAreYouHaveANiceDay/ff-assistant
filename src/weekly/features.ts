@@ -56,7 +56,6 @@ export const WEEKLY_POS = ["QB", "RB", "WR", "TE", "K", "DST"];
 export const WEEKLY_FEATURE_FIELDS = [
   "td_games", "td_ppg", "t4_mean", "t4_sd",
   "td_fd", "td_ts", "td_attempts", "td_rush_yards",
-  "dvp_mult", "dvp_n",
   "home", "spread_line", "total_line", "implied_team_total", "days_rest",
   "season_line_pg", "week_no",
   // ---- THE AVAILABILITY BLOCK, from feat_player_week_context (the data track). See CONTEXT_FIELDS
@@ -704,6 +703,11 @@ export interface WeeklyRow {
   feat_key: string; player_sk: string | null; season: number; week: number;
   name: string; pos: string; team: string | null; opponent: string | null;
   season_line_pg: number | null;
+  /** DvP is NO LONGER a weekly-model feature (D19: neutral under boosting, dropped from the feature
+   *  dictionary and the trainer). It survives here as a dormant stored column ONLY so the scorecard's
+   *  legacy `shipped_week` comparison arm (makeProjections + defRatings) is unchanged; the served
+   *  `weekly` model never reads it. */
+  dvp_mult: number | null;
   f: Partial<Record<WeeklyFeatureField, number | null>>;
 }
 
@@ -760,6 +764,7 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
     name: String(r.name ?? ""), pos: String(r.pos ?? ""),
     team: (r.team as string | null) ?? null, opponent: (r.opponent as string | null) ?? null,
     season_line_pg: r.season_line_pg == null ? null : Number(r.season_line_pg),
+    dvp_mult: r.dvp_mult == null ? null : Number(r.dvp_mult),
     f: {
       td_games: r.td_games == null ? null : Number(r.td_games),
       td_ppg: r.td_ppg == null ? null : Number(r.td_ppg),
@@ -769,8 +774,6 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
       td_ts: r.td_ts == null ? null : Number(r.td_ts),
       td_attempts: r.td_attempts == null ? null : Number(r.td_attempts),
       td_rush_yards: r.td_rush_yards == null ? null : Number(r.td_rush_yards),
-      dvp_mult: r.dvp_mult == null ? null : Number(r.dvp_mult),
-      dvp_n: r.dvp_n == null ? null : Number(r.dvp_n),
       home: r.home == null ? null : Number(r.home),
       spread_line: r.spread_line == null ? null : Number(r.spread_line),
       total_line: r.total_line == null ? null : Number(r.total_line),

@@ -1271,3 +1271,49 @@ The redone model reaches the record from the next week frozen. Week 1 has no fro
 snapshot ran after its kickoff and refused, as designed). The live serve reads the artifact from
 disk per call, so `ff copilot lineup` served week 2 through the retrained model immediately
 (checked: 0.8 s, a full lineup).
+
+## 8. The weekly serve is now GRADIENT-BOOSTED (2026-09-14; D19)
+
+Section 7 left the served weekly model LINEAR (logistic first stage, ridge/quantile second). It is now
+gradient-boosted, the same machinery the season projector adopted one horizon up (D16). The served
+`data/weekly-artifact.json` carries a `boosted` block (`learner: "gbm"`, schema 2): per fitted position
+a HistGradientBoosting classifier for the zero stage and one regressor per served head (mean + the
+quantile grid), depth 3, 300 rounds at 0.05, min-leaf 30, L2 1.0, quantile heads conformally calibrated
+train-only. K and DST stay intercept-only on the floor. The linear `coef` heads stay on the artifact as
+the required fallback; `src/weekly/projector.ts` walks the ensemble only for the heads a boosted
+position names. The trainer's `boosted_self_check` reproduces scikit-learn to 1e-9 before writing and
+the loader recomputes the golden block on the boosted path to 1e-6, so the seam is checked against the
+producer on both sides.
+
+**The decision, on the paired-season floor** (`scripts/weekly-paired-floor.mjs`, the season-level
+statistic the season track admits on, common-random-number rosters): boosted-no-dvp vs the linear
+shipped model ADMITs on the selection-blind 2021-2025 holdout, +0.126 CRPS, 5/0 seasons. Pooled CRPS
+2.90 -> 2.78, lineup winShare +6-8pp; gate clauses (a)/(b)/(c) still pass.
+
+**Robust to the 2026 missing-feature serve (the gate-7 fix).** The first boosted artifact collapsed on
+the live serve -- any row whose availability/usage block is NULL (forward/ROS weeks, the current week
+before the feed is built, and every 2025+ week, since the injury feed stopped publishing report dates)
+routed the all-imputed vector into a pathological high-P(zero) leaf, projecting locked starters at a few
+points. Trees route on feature COMBINATIONS, and "everything imputed" is out-of-distribution training
+never saw; the linear model is immune because it is additive. The fix, identical in train and serve: the
+boosted design feeds a MISSING value as NaN (`feature_value_nan` / `weeklyFeatureValueBoosted`, native
+HistGradientBoosting handling -- the linear heads still impute), and the trees are fitted with
+MISSINGNESS AUGMENTATION (`--aug-frac 0.5`, `MASKABLE_GROUPS`/`MASK_DROP_P` in `train_weekly.py`),
+duplicating a fraction of training rows with the availability/usage/odds/form blocks masked to NaN at
+rates matched to the measured 2026 regime, so a locked starter with the block absent falls back on the
+season-line anchor. Honest gain under that regime (`ff evaluate-weekly --mask-serve availability`,
+fit-with / serve-without; the measurement-only `--mask-serve`/`--reuse-artifacts` flags never touch the
+shipped serve): boosted STILL beats linear **+0.110 CRPS, 5/0** on the 2021-2025 holdout -- availability
+carries only ~0.015 of the ~0.126 edge, the rest is the nonlinear use of anchors/form/odds the live team
+always has. `--aug-frac 0` reproduces the collapsing heads. See D19.
+
+**dvp dropped.** `dvp_mult`/`dvp_n` left the weekly feature dictionary and the trainer lists as a
+neutral-under-boosting simplification (the D16-era removal was REJECTED under the linear model; under
+boosting the paired floor is unchanged by it). It remains only as a dormant stored column and feeds the
+scorecard's `shipped_week` comparison arm; the served model never reads it.
+
+**Injury-horizon HELD.** The injury-horizon block (an on-report flag plus the injury-episode tracker's
+accumulated games-missed) ADMITs under boosting (+0.0078 CRPS on the holdout) but is DEAD AT SERVE --
+the injury feed stopped publishing report dates from 2025, so 2026 lineups get no horizon row and a
+learned coefficient would serve zero. Held on branch `explore/weekly-boost`; shipping it needs a live
+horizon feed first. No injury-horizon code is in this ship. See D19.
