@@ -9,6 +9,12 @@
 //
 // USAGE (heavy -- two full nested-CV runs, the Python trainer per fold each):
 //   node --import tsx scripts/admit-feature.mjs --candidate prior_carry_share [--seasons 2008-2025]
+//   node --import tsx scripts/admit-feature.mjs --candidate contract_year --remove   # LEAVE-ONE-OUT
+//
+// --remove flips the gate to leave-one-out for a feature that is ALREADY a default: --add-features on such
+// a feature is a no-op (the trainer refuses to duplicate a column), so the only honest test of its worth is
+// to fit the design WITHOUT it and see whether the loss clears the floor. KEEP = removing it costs > floor;
+// DROP = its contribution is within the floor (noise).
 //
 // The verdict is the number to quote in the admission trace, not a hand-read 12.03->12.02.
 import { evaluateProjection, score } from "../src/model/evaluate.ts";
@@ -18,7 +24,12 @@ import { parseHoldout, splitSeasons, assertSelectionBlind } from "./lib/holdout.
 const argv = process.argv.slice(2);
 const val = (k, d) => { const i = argv.indexOf(k); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
 const candidate = val("--candidate", null);
-if (!candidate) { console.error("usage: node --import tsx scripts/admit-feature.mjs --candidate <feature> [--seasons 2008-2025]"); process.exit(1); }
+// --remove flips the gate to LEAVE-ONE-OUT: measure an ALREADY-SHIPPED default feature's contribution by
+// fitting the shipped design MINUS it (baseline) vs the untouched default (candidate). This is the correct
+// check for a feature that is already in the default lists -- --add-features on such a feature is a no-op
+// (the trainer refuses to duplicate a column), which is why `contract_year` measured 0.0000 under add mode.
+const removeMode = argv.includes("--remove");
+if (!candidate) { console.error("usage: node --import tsx scripts/admit-feature.mjs --candidate <feature> [--remove] [--seasons 2008-2025]"); process.exit(1); }
 const range = val("--seasons", "2008-2025").split("-").map(Number);
 const seasons = []; for (let y = range[0]; y <= (range[1] ?? range[0]); y++) seasons.push(y);
 const dbPath = val("--db", undefined);
@@ -39,12 +50,22 @@ function perSeasonPinball(folds) {
   return m;
 }
 
-console.log(`ADMISSION GATE: ${candidate} over seasons ${seasons[0]}-${seasons[seasons.length - 1]}`);
-console.log("baseline run (no --add-features) ...");
-delete process.env.FF_ADD_FEATURES;
+// In BOTH modes the "candidate" arm is the model that HAS the feature and the "baseline" arm is the model
+// WITHOUT it, so improvement = pinball(without) - pinball(with) = the feature's own contribution, and the
+// verdict semantics (ADMIT = feature clears the floor) are identical. Only which env each arm sets differs:
+//   add mode:    base = no env (feature absent);          cand = FF_ADD_FEATURES    (feature added)
+//   remove mode: base = FF_REMOVE_FEATURES (feature out); cand = no env             (feature present, default)
+delete process.env.FF_ADD_FEATURES; delete process.env.FF_REMOVE_FEATURES;
+console.log(`${removeMode ? "LEAVE-ONE-OUT" : "ADMISSION"} GATE: ${candidate} over seasons ${seasons[0]}-${seasons[seasons.length - 1]}`);
+
+console.log(removeMode ? `baseline run (--remove-features ${candidate}; shipped design MINUS it) ...` : "baseline run (no --add-features) ...");
+delete process.env.FF_ADD_FEATURES; delete process.env.FF_REMOVE_FEATURES;
+if (removeMode) process.env.FF_REMOVE_FEATURES = candidate;
 const base = perSeasonPinball(await evaluateProjection({ dbPath, seasons, log: () => {} }));
-console.log(`candidate run (--add-features ${candidate}) ...`);
-process.env.FF_ADD_FEATURES = candidate;
+
+console.log(removeMode ? `candidate run (full default, ${candidate} present) ...` : `candidate run (--add-features ${candidate}) ...`);
+delete process.env.FF_ADD_FEATURES; delete process.env.FF_REMOVE_FEATURES;
+if (!removeMode) process.env.FF_ADD_FEATURES = candidate;
 const cand = perSeasonPinball(await evaluateProjection({ dbPath, seasons, log: () => {} }));
 
 const shared = seasons.filter((s) => base.has(s) && cand.has(s));
@@ -61,16 +82,22 @@ const pooled = (m, ss) => ss.reduce((a, s) => a + m.get(s), 0) / ss.length;
 const v = admissionVerdict(cand, base, selSeasons);
 console.log(`\n  holdout block (never used to decide): ${holdout.join(", ")}`);
 console.log(`  DECISION seasons: ${selSeasons.length}  (${selSeasons[0]}-${selSeasons[selSeasons.length - 1]})`);
-console.log(`  pinball  baseline ${pooled(base, selSeasons).toFixed(3)}  ->  +${candidate} ${pooled(cand, selSeasons).toFixed(3)}`);
-console.log(`  season-paired improvement ${v.improvement.toFixed(4)} +/- SE ${v.se.toFixed(4)}  (wins ${v.wins}/${v.nSeasons})`);
+console.log(removeMode
+  ? `  pinball  without ${candidate} ${pooled(base, selSeasons).toFixed(3)}  ->  with (default) ${pooled(cand, selSeasons).toFixed(3)}`
+  : `  pinball  baseline ${pooled(base, selSeasons).toFixed(3)}  ->  +${candidate} ${pooled(cand, selSeasons).toFixed(3)}`);
+console.log(`  season-paired improvement ${v.improvement.toFixed(4)} +/- SE ${v.se.toFixed(4)}  (wins ${v.wins}/${v.nSeasons})   [${removeMode ? "the feature's own contribution" : "benefit of adding"}]`);
 console.log(`  effect-size floor (2.9*SE) = ${v.floor.toFixed(4)}`);
-console.log(`  DECISION VERDICT: ${v.pass ? "ADMIT" : "REJECT"} -- improvement ${v.pass ? "clears" : "is within"} the floor.`);
+console.log(removeMode
+  ? `  DECISION VERDICT: ${v.pass ? "KEEP" : "DROP"} -- removing ${candidate} ${v.pass ? "costs more than" : "is within"} the floor${v.pass ? "" : " (its contribution is noise; safe to drop from the default lists)"}.`
+  : `  DECISION VERDICT: ${v.pass ? "ADMIT" : "REJECT"} -- improvement ${v.pass ? "clears" : "is within"} the floor.`);
 
 // --- CONFIRM (held-out seasons, quoted ONCE, not part of the decision) ---------------------------
 if (holdoutSeasons.length >= 3) {
   const c = admissionVerdict(cand, base, holdoutSeasons);
   console.log(`\n  CONFIRM on held-out ${holdoutSeasons[0]}-${holdoutSeasons[holdoutSeasons.length - 1]} (${holdoutSeasons.length} seasons, quoted once):`);
-  console.log(`    pinball  baseline ${pooled(base, holdoutSeasons).toFixed(3)}  ->  +${candidate} ${pooled(cand, holdoutSeasons).toFixed(3)}`);
+  console.log(removeMode
+    ? `    pinball  without ${candidate} ${pooled(base, holdoutSeasons).toFixed(3)}  ->  with (default) ${pooled(cand, holdoutSeasons).toFixed(3)}`
+    : `    pinball  baseline ${pooled(base, holdoutSeasons).toFixed(3)}  ->  +${candidate} ${pooled(cand, holdoutSeasons).toFixed(3)}`);
   console.log(`    improvement ${c.improvement.toFixed(4)} +/- SE ${c.se.toFixed(4)}  (wins ${c.wins}/${c.nSeasons})  floor ${c.floor.toFixed(4)}  -> ${c.pass ? "confirmed" : "NOT confirmed"}`);
 } else {
   console.log(`\n  CONFIRM: only ${holdoutSeasons.length} held-out season(s) scored -- too few for an honest confirm (need >= 3). Report the decision as unconfirmed.`);

@@ -835,6 +835,12 @@ def main():
                          "at a time. Known: " + ", ".join(ALL_EXT) + ". Nothing is admitted by "
                          "default: a column that joined the default list by a code edit would be a "
                          "feature admitted without a gate.")
+    ap.add_argument("--remove-features", default="",
+                    help="comma list of DEFAULT feature columns to REMOVE from the fit (LEAVE-ONE-OUT). "
+                         "The symmetric case of --add-features: it measures an ALREADY-SHIPPED feature's "
+                         "contribution -- the model without it is the baseline, the full default is the "
+                         "candidate (admit-feature.mjs --remove). Removing a column that is in no default "
+                         "list is an error (nothing to remove), so a typo cannot silently measure a no-op.")
     args = ap.parse_args()
 
     # ---- ADMISSION. The lists are extended HERE, from the flag, so the default fit is byte-for-byte
@@ -858,6 +864,23 @@ def main():
             INDICATOR_FEATURES.append(a)
         else:
             CENTER_FEATURES.append(a)
+
+    # ---- LEAVE-ONE-OUT. Remove a named DEFAULT column from whichever list holds it, so the fit is the
+    # shipped design MINUS that one feature. `admit-feature --remove` runs this as the BASELINE arm and
+    # the untouched default as the CANDIDATE arm, so the "improvement" is the feature's own contribution.
+    remove = [s.strip() for s in args.remove_features.split(",") if s.strip()]
+    for r in remove:
+        removed = False
+        if r in INDICATOR_FEATURES:
+            INDICATOR_FEATURES.remove(r); removed = True
+        if r in CENTER_FEATURES:
+            CENTER_FEATURES.remove(r); removed = True
+        if r in RATIO_FEATURES:
+            del RATIO_FEATURES[r]; RATIO_ALLOWED.pop(r, None); removed = True
+        if not removed:
+            sys.exit("train_projection: --remove-features " + r + " is not in any default feature list "
+                     "(CENTER/INDICATOR/RATIO) -- nothing to remove. A leave-one-out of an absent column "
+                     "would measure a no-op, so this is an error rather than a silent 0.")
 
     lo, hi = parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
