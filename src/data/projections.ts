@@ -370,7 +370,27 @@ export async function project(dbPath?: string, outPath = dataPath("points.csv"),
     console.log(`  NOTE: useAge/useOpp are now properties of the ARTIFACT's multiplicative stage, ` +
       `not of this call -- build a different artifact to change them.`);
   }
-  const out = rows.filter((r) => r.mean > 0).map((r) => ({ ...r, mean: Math.round(r.mean * 10) / 10 }));
+  const projected = rows.filter((r) => r.mean > 0).map((r) => ({ ...r, mean: Math.round(r.mean * 10) / 10 }));
+  // ONE ROW PER (name key, position). The board (`assemble`) keys player_value by name key, so a
+  // player the store holds under TWO surrogate keys -- one from history (prior-rank basis), one
+  // from the ECR feed (ECR basis), both of which the board path can price -- would be written twice
+  // and the refresh would die on the unique key (2026-09-14: Andy Borregales, sk 489 and 12097). The
+  // higher projection is kept and the collapse is PRINTED, because the real defect is upstream in
+  // the identity crosswalk and a silent dedupe would hide it forever.
+  const byKey = new Map<string, typeof projected[number]>();
+  const collapsed: string[] = [];
+  for (const r of projected) {
+    const k = `${nameKey(r.name)}|${r.pos}`;
+    const prev = byKey.get(k);
+    if (!prev) { byKey.set(k, r); continue; }
+    collapsed.push(`${r.name} ${r.pos} (sk ${prev.player_sk ?? "?"} ${prev.mean} vs sk ${r.player_sk ?? "?"} ${r.mean})`);
+    if (r.mean > prev.mean) byKey.set(k, r);
+  }
+  if (collapsed.length) {
+    console.warn(`  WARNING: ${collapsed.length} player(s) projected under two surrogate keys, kept the higher: ` +
+      collapsed.join("; ") + " -- an identity-crosswalk duplicate; fix it in staging rather than here");
+  }
+  const out = [...byKey.values()];
   const withSk = out.filter((o) => o.player_sk != null).length;
   console.log(`  player_sk resolved for ${withSk}/${out.length} projections`);
   out.sort((a, b) => b.mean - a.mean);
