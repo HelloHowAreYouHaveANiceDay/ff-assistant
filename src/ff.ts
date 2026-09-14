@@ -2750,7 +2750,11 @@ async function cmdEvaluateProjection(rest: string[]) {
   // fold's training. Default 0 (shipped behaviour). Use --embargo 1 --keep-artifacts
   // data/fold-artifacts-2b-embargo to build the embargoed arbiter fold-artifact set.
   const embargo = Number(valueOf(rest, "--embargo") ?? "0");
-  const folds = evaluateProjection({ dbPath: valueOf(rest, "--db"), seasons, keepArtifacts: keep, embargo });
+  // --concurrency N fans the per-fold trainer subprocesses out (default cores-1, capped by the global
+  // cpu budget). Folds are identity-keyed by season, so this is a wall-clock speedup only -- the output
+  // is byte-identical to N=1 (test/pool.test.ts pins the determinism contract).
+  const concurrency = valueOf(rest, "--concurrency") ? Number(valueOf(rest, "--concurrency")) : undefined;
+  const folds = await evaluateProjection({ dbPath: valueOf(rest, "--db"), seasons, keepArtifacts: keep, embargo, concurrency });
   if (!folds.length) { console.log("no usable folds"); return; }
   if (keep) console.log(`  kept ${folds.filter((f) => f.trainerOk).length} per-fold artifacts in ${keep}`);
 
@@ -2886,7 +2890,8 @@ async function cmdResiduals(rest: string[]) {
   const range = (valueOf(rest, "--seasons") ?? "2011-2025").split("-").map(Number);
   const seasons: number[] = []; for (let y = range[0]; y <= (range[1] ?? range[0]); y++) seasons.push(y);
   const rung = (valueOf(rest, "--rung") ?? "trained") as "carry" | "curve" | "trained";
-  const folds = evaluateProjection({ dbPath: valueOf(rest, "--db"), seasons });
+  const concurrency = valueOf(rest, "--concurrency") ? Number(valueOf(rest, "--concurrency")) : undefined;
+  const folds = await evaluateProjection({ dbPath: valueOf(rest, "--db"), seasons, concurrency });
   let rows = pool(folds, rung);
   if (!rows.length) { console.log(`no ${rung} rows -- falling back to curve-only`); rows = pool(folds, "curve"); }
   if (!rows.length) { console.log("nothing to analyse"); return; }
