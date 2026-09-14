@@ -134,7 +134,7 @@ ZERO_PTS = 0.0
 # published dictionary by the TypeScript loader; this list is the producing half of that contract.
 RATIO_TO_LINE = ["td_ppg", "t4_mean", "t4_sd"]
 CENTER = [
-    "td_games", "dvp_mult", "dvp_n", "spread_line", "total_line",
+    "td_games", "spread_line", "total_line",
     "implied_team_total", "days_rest", "week_no", "season_line_pg",
     "td_fd", "td_ts", "td_attempts", "td_rush_yards",
     # THE AVAILABILITY BLOCK. Every one of these is keyed to this team's own kickoff rather than to
@@ -168,12 +168,45 @@ POS_GATED = {
 # only to-date scoring fits the consequence of an injury rather than the injury.
 AVAILABILITY_REQUIRED = ["inj_out", "depth_rank", "teammates_out", "prior_snap_share"]
 
+# ---- THE 2026 SERVE REGIME, and the missingness augmentation that makes the boosted heads survive it.
+#
+# MEASURED on data/ff.db (scripts characterisation, 2026-09-14). At live serve the feature blocks go
+# absent in a NESTED order that the historical training rows -- which almost all carry every block --
+# never contained as a COMBINATION, and a tree routes on combinations. So the boosted heads collapse:
+# an all-imputed forward row lands in an out-of-distribution leaf and a locked starter is projected at
+# a few points with P(zero) ~ 0.7 (D19's gate-7 blocker). The linear heads are immune because they are
+# additive (missing -> mean -> ~0 contribution -> the projection reverts to the season-line anchor).
+#
+# THE FIX has two halves, applied identically in train and serve:
+#   1. The boosted design feeds a MISSING raw value as NaN (feature_value_nan / boosted_design), so
+#      HistGradientBoosting's NATIVE per-split missing direction handles it -- NOT spec['missing'].
+#   2. MISSINGNESS AUGMENTATION: a fraction of training rows are DUPLICATED with one or more of these
+#      blocks masked to NaN, at rates matched to the measured 2026 regime, so the trees actually SEE
+#      the serve-time all-missing patterns and learn to fall back on the always-present anchors
+#      (season_line_pg, home, days_rest, week_no, td_games -- and the first one is in every position's
+#      keep set, so a high-line locked starter routes to a low P(zero) even with every block gone).
+# The augmented copies keep their source row's TARGET (hiding a report does not change the outcome),
+# and are sampled uniformly, so the population's zero rate and level are preserved in expectation and
+# the mean-calibration gate clause (c) is not moved.
+#
+# What is NEVER masked: the anchors above. What CAN be masked, and the per-copy drop probability
+# (avail is essentially always gone from 2025; odds/usage/form are gone on forward weeks, partly
+# present on the live week with build-live-context):
+MASKABLE_GROUPS = {
+    "avail": ["inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",
+              "teammates_out"],
+    "usage": ["prior_snap_share", "prior_route_share", "depth_rank"],
+    "odds":  ["spread_line", "total_line", "implied_team_total"],
+    "form":  ["td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts", "td_attempts", "td_rush_yards"],
+}
+MASK_DROP_P = {"avail": 0.97, "usage": 0.6, "odds": 0.5, "form": 0.4}
+
 ALL_FEATURES = RATIO_TO_LINE + CENTER + INDICATOR
 
 SELECT_COLS = [
     "feat_key", "player_sk", "season", "week", "name", "pos", "season_line_pg",
     "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts", "td_attempts", "td_rush_yards",
-    "dvp_mult", "dvp_n", "home", "spread_line", "total_line", "implied_team_total", "days_rest",
+    "home", "spread_line", "total_line", "implied_team_total", "days_rest",
     "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
     "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",
 ]
@@ -330,6 +363,45 @@ def design(rows, specs):
     for i, r in enumerate(rows):
         for j, s in enumerate(specs):
             X[i, j] = feature_value(s, r)
+    return X
+
+
+def feature_value_nan(spec, row):
+    """The BOOSTED-ONLY evaluator, mirrored from src/weekly/projector.ts weeklyFeatureValueBoosted().
+
+    Identical to feature_value() for a PRESENT value; the one difference is that a MISSING raw value
+    (or a ratio whose line is gone) returns NaN instead of spec['missing']. HistGradientBoosting has
+    native NaN handling -- it learns a per-split missing DIRECTION -- so feeding NaN lets the boosted
+    trees treat 'no report' as its own case and fall back on the anchors, rather than routing a
+    mean-imputed vector into a leaf that the all-imputed serve combination never trained. The linear
+    heads still read feature_value() (imputation is correct for an additive model); only the boosted
+    reduced design and the boosted golden path use this."""
+    raw = row.get(spec["name"])
+    if raw is None or (isinstance(raw, float) and not math.isfinite(raw)):
+        return float("nan")
+    raw = float(raw)
+    t = spec["transform"]
+    if t == "identity":
+        return raw
+    if t == "indicator":
+        return 1.0 if raw else 0.0
+    if t == "center":
+        s = spec.get("scale", 1.0)
+        return float("nan") if s == 0 else (raw - spec.get("center", 0.0)) / s
+    if t == "ratio_to_line":
+        line = row.get("season_line_pg")
+        if line is None or not (float(line) > 0):
+            return float("nan")
+        return raw / float(line)
+    return float("nan")
+
+
+def boosted_design(rows, specs):
+    """The full boosted design (NaN for missing). Reduced to a position's keep set by the caller."""
+    X = np.empty((len(rows), len(specs)), dtype=float)
+    for i, r in enumerate(rows):
+        for j, s in enumerate(specs):
+            X[i, j] = feature_value_nan(s, r)
     return X
 
 
@@ -580,19 +652,58 @@ def intercept_only(rows, pos, specs, zero_model):
     return out, len(sub)
 
 
+def boosted_raw(head, x):
+    """The Python mirror of projector.ts boostedRaw(): baseline plus every tree's leaf value. `x` is
+    the REDUCED design vector, in the boosted head-set's own `features` order (the position's keep
+    set), NOT the full spec vector. Identical arithmetic to tools/train_projection.py boosted_raw."""
+    s = float(head["baseline"])
+    for t in head["trees"]:
+        i = 0
+        while not t["leaf"][i]:
+            v = x[t["feature"][i]]
+            if v != v:                          # NaN -> the node's missing branch
+                i = t["left"][i] if t["missingLeft"][i] else t["right"][i]
+            elif v <= t["threshold"][i]:
+                i = t["left"][i]
+            else:
+                i = t["right"][i]
+        s += t["value"][i]
+    return s
+
+
 def evaluate(artifact, row):
     """Predict one row with THIS script's own arithmetic -- the golden block's source of truth.
 
     MIRRORED, line for line, by src/weekly/projector.ts projectWeekly(). The mixture is where the two
     sides are most likely to drift, because it is the only part with a branch in it, so the golden
     block carries pZero as well as the four published heads.
+
+    WHEN THE ARTIFACT IS BOOSTED (learner == "gbm" and this position carries boosted heads), a head's
+    raw value is the ensemble walk over the position's REDUCED design instead of the linear dot
+    product. The clamp, the base multiply and the two-part mixture are byte-identical either way --
+    only the raw head value changes -- so the boosted golden block exercises exactly the same
+    downstream arithmetic the linear one does.
     """
     heads = artifact["coef"][row["pos"]]
     specs = artifact["features"]
     x = [feature_value(s, row) for s in specs]
     line = row["season_line_pg"]
 
+    bpos = None
+    if artifact.get("learner") == "gbm":
+        bb = artifact.get("boosted") or {}
+        bpos = (bb.get("perPos") or {}).get(row["pos"])
+    xb = None
+    if bpos is not None:
+        # The boosted reduced design uses the NaN evaluator (native missing handling), NOT the imputed
+        # `x` the linear heads read -- mirrored by src/weekly/projector.ts's xb build.
+        x_nan = [feature_value_nan(s, row) for s in specs]
+        idx = {s["name"]: j for j, s in enumerate(specs)}
+        xb = [x_nan[idx[n]] for n in bpos["features"]]
+
     def lin(h):
+        if bpos is not None and h in bpos["heads"]:
+            return boosted_raw(bpos["heads"][h], xb)
         c = heads[h]
         v = c.get("intercept", 0.0)
         for j, s in enumerate(specs):
@@ -698,6 +809,176 @@ def golden_rows(artifact):
     return out
 
 
+def serialize_boosted_head(m, extra_shift=0.0):
+    """One scikit-learn HistGradientBoosting{Classifier,Regressor} as the artifact carries it:
+    `baseline` plus one tree per boosting round, each tree seven parallel node arrays. Read straight
+    off scikit-learn's own predictor nodes; the walker (boosted_raw here / boostedRaw in
+    src/weekly/projector.ts) reproduces predict() for a regressor and decision_function() for the
+    binary classifier -- both are `baseline + sum over trees of the leaf value`, the learning rate
+    already folded into the leaf values. A conformal shift (quantile heads only) rides in `baseline`,
+    so raw = baseline + sum(trees) is the CALIBRATED value with no extra field to forget."""
+    # A split whose only job is to separate MISSING from present (common once missingness augmentation
+    # feeds NaN) carries a scikit-learn `num_threshold` of +/-inf: every finite value falls on one
+    # side and NaN takes the missing branch. inf is not valid JSON and the loader refuses a non-finite
+    # threshold, so it is clamped to a large FINITE sentinel that gives byte-identical routing for every
+    # finite feature value (all are O(10) centred/ratio units). boosted_self_check then PROVES the
+    # clamped walker still reproduces scikit-learn to 1e-9, so this cannot silently change a prediction.
+    def fin_thresh(t):
+        t = float(t)
+        if math.isinf(t):
+            return 1e30 if t > 0 else -1e30
+        if math.isnan(t):
+            return 1e30
+        return t
+    trees = []
+    for it in m._predictors:
+        nodes = it[0].nodes
+        trees.append({
+            "feature": [int(n["feature_idx"]) for n in nodes],
+            "threshold": [fin_thresh(n["num_threshold"]) for n in nodes],
+            "left": [int(n["left"]) for n in nodes],
+            "right": [int(n["right"]) for n in nodes],
+            "value": [float(n["value"]) for n in nodes],
+            "leaf": [bool(n["is_leaf"]) for n in nodes],
+            "missingLeft": [bool(n["missing_go_to_left"]) for n in nodes],
+        })
+    baseline = float(np.asarray(m._baseline_prediction).ravel()[0]) + float(extra_shift)
+    return {"baseline": baseline, "trees": trees}
+
+
+def fit_position_boosted(rows, specs, pos, args):
+    """THE BOOSTED TWO-PART MODEL FOR ONE POSITION (Q1: does a nonlinear weekly learner help?).
+
+    Stage one is a HistGradientBoostingClassifier on P(zero week) over the whole rostered population;
+    its raw decision_function is the logit the mixture consumes, exactly where the linear stage's
+    logistic score sat. Stage two is a squared-error regressor for E[ratio | played] plus one
+    quantile-loss regressor per QUANTILE_GRID level, fitted on PLAYED weeks only -- the same rows,
+    same reduced design (POS_GATED `keep`) and same split the linear two-part uses, so the ONLY thing
+    that changes versus fit_position_two_part is linear -> trees. Hyperparameters mirror the season
+    model's admitted screen settings (D16): depth 3, 300 rounds at 0.05, 30 rows/leaf, L2 1.0.
+
+    The quantile heads are conformally calibrated TRAIN-ONLY exactly as train_projection.py's
+    fit_boosted does: for head q, shift its prediction by the q-quantile of (y - out-of-fold
+    prediction) over PLAYER-grouped folds on the training rows, folded into the head's baseline. A
+    boosted quantile head is narrower on unseen rows than on its own training rows; this corrects the
+    interval so its out-of-fold coverage is nominal, and the held-out season the harness scores never
+    enters the shift. The mean and the zero classifier are left as fitted (a log-loss classifier is
+    mean-calibrated on its own training rows; clause (c) then MEASURES whether that held out of
+    sample rather than being fitted to pass).
+
+    Returns (feature_names, heads_block, self_check_arrays) or (None, None, None) when a stage cannot
+    be fitted -- the caller then leaves this position linear, which the boosted `positions` list
+    records so no consumer walks a head that was never fitted.
+    """
+    from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
+    from sklearn.model_selection import GroupKFold
+
+    sub = [r for r in rows if r["pos"] == pos]
+    if len(sub) < 500:
+        return None, None, None
+    keep = keep_for(specs, pos)
+    feat_names = [specs[j]["name"] for j in keep]
+    # THE BOOSTED DESIGN FEEDS NaN FOR MISSING (native HistGBM handling), not spec['missing'].
+    X = boosted_design(sub, specs)[:, keep]
+    groups = np.array([("p" + str(r["player_sk"])) if r.get("player_sk") is not None
+                       else ("s" + str(r["season"])) for r in sub])
+    yz = np.array([1 if r["pts"] <= ZERO_PTS else 0 for r in sub], dtype=int)
+    y_ratio = np.array([r["pts"] / r["season_line_pg"] for r in sub], dtype=float)
+    if len(set(yz.tolist())) < 2:
+        return None, None, None
+    if int((yz == 0).sum()) < 500:
+        return None, None, None
+    hp = dict(max_depth=args.gbm_depth, learning_rate=0.05, max_iter=args.gbm_iter,
+              min_samples_leaf=30, l2_regularization=1.0, early_stopping=False, random_state=0)
+
+    # ---- MISSINGNESS AUGMENTATION (MASKABLE_GROUPS / MASK_DROP_P). Duplicate a fraction of rows with
+    # serve-time blocks masked to NaN so the trees learn the 2026 regime and fall back on the anchors.
+    # Duplicates keep the source row's target and group, so the zero rate, level and CV grouping are
+    # preserved. The RNG is seeded per position by a STABLE index (never hash(pos): PYTHONHASHSEED
+    # would make the artifact non-reproducible). ----
+    X_fit, yz_fit, yr_fit, grp_fit = X, yz, y_ratio, groups
+    n_aug = int(round((args.aug_frac or 0.0) * len(sub)))
+    if n_aug > 0:
+        rng = np.random.default_rng(1234 + POS_FITTED.index(pos))
+        col_group = {}
+        for gname, cols in MASKABLE_GROUPS.items():
+            jcols = [j for j, name in enumerate(feat_names) if name in cols]
+            if jcols:
+                col_group[gname] = jcols
+        src = rng.integers(0, len(sub), size=n_aug)
+        Xa = X[src].copy()
+        for ri in range(n_aug):
+            for gname, jcols in col_group.items():
+                if rng.random() < MASK_DROP_P[gname]:
+                    Xa[ri, jcols] = np.nan
+        X_fit = np.vstack([X, Xa])
+        yz_fit = np.concatenate([yz, yz[src]])
+        yr_fit = np.concatenate([y_ratio, y_ratio[src]])
+        grp_fit = np.concatenate([groups, groups[src]])
+
+    clf = HistGradientBoostingClassifier(**hp).fit(X_fit, yz_fit)
+
+    played = yz_fit == 0
+    Xp = X_fit[played]
+    yp = yr_fit[played]
+    gp = grp_fit[played]
+
+    mean_m = HistGradientBoostingRegressor(loss="squared_error", **hp).fit(Xp, yp)
+    qmodels = {}
+    for q in QUANTILE_GRID:
+        qmodels[grid_head(q)] = HistGradientBoostingRegressor(loss="quantile", quantile=q, **hp).fit(Xp, yp)
+
+    # ---- CONFORMAL INTERVAL CALIBRATION (train-only, quantile heads only). ----
+    shift = {h: 0.0 for h in qmodels}
+    if args.conformal_k and args.conformal_k > 0:
+        k = min(int(args.conformal_k), len(set(gp.tolist())))
+        if k >= 2:
+            gkf = GroupKFold(n_splits=k)
+            for name, q in ((grid_head(q), q) for q in QUANTILE_GRID):
+                oof = np.full(len(yp), np.nan)
+                for tr, te in gkf.split(Xp, yp, gp):
+                    mm = HistGradientBoostingRegressor(loss="quantile", quantile=q, **hp).fit(Xp[tr], yp[tr])
+                    oof[te] = mm.predict(Xp[te])
+                ok = np.isfinite(oof)
+                if ok.any():
+                    shift[name] = float(np.quantile(yp[ok] - oof[ok], q))
+
+    heads = {"zero": serialize_boosted_head(clf),
+             "mean": serialize_boosted_head(mean_m)}
+    for name, m in qmodels.items():
+        heads[name] = serialize_boosted_head(m, shift[name])
+    # Self-check on the FIT matrices (X_fit carries the augmented NaN rows), so the walker is proven to
+    # reproduce sklearn on exactly the missing patterns the serve will hit.
+    check = {"X": X_fit, "Xp": Xp, "clf": clf, "mean": mean_m, "qmodels": qmodels, "shift": shift}
+    return feat_names, {"features": feat_names, "heads": heads}, check
+
+
+def boosted_self_check(perpos, checks, tol=1e-9):
+    """The serialised heads, walked by boosted_raw above, must reproduce scikit-learn's own
+    decision_function (the zero classifier) and predict()+shift (the regressors) on the training
+    design. THIS IS THE FAULT INJECTION for Stage 2A: a serialisation that dropped a field ships a
+    model that is wrong everywhere and refused nowhere, and the TypeScript loader runs the same walk
+    against the golden block, so a perturbed leaf is refused on both sides."""
+    for pos, block in perpos.items():
+        ck = checks[pos]
+        for h, head in block["heads"].items():
+            if h == "zero":
+                ref = ck["clf"].decision_function(ck["X"])
+                Xd = ck["X"]
+            elif h == "mean":
+                ref = ck["mean"].predict(ck["Xp"])
+                Xd = ck["Xp"]
+            else:
+                ref = ck["qmodels"][h].predict(ck["Xp"]) + float(ck["shift"][h])
+                Xd = ck["Xp"]
+            mine = np.array([boosted_raw(head, list(map(float, Xd[i]))) for i in range(len(Xd))])
+            worst = float(np.max(np.abs(mine - ref))) if len(Xd) else 0.0
+            if not (worst <= tol):
+                sys.exit("train_weekly: boosted head " + pos + "." + h + " serialisation does not "
+                         "reproduce scikit-learn (max |walk - ref| = " + repr(worst) + ") -- refusing "
+                         "to write an artifact whose TypeScript walker could not possibly agree")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="data/ff.db")
@@ -723,8 +1004,30 @@ def main():
                          "level, which is what the weekly gate's clause (c) measures, and cannot "
                          "change the model's ranking of players. K and DST already use the empirical "
                          "rate and are unaffected.")
+    ap.add_argument("--learner", default="linear", choices=["linear", "gbm"],
+                    help="linear (DEFAULT, nothing changes): the two-part logistic+ridge heads. gbm: "
+                         "additionally fit HistGradientBoosting heads (classifier stage one, regressor "
+                         "mean + quantile stage two) per fitted position and serialise them onto the "
+                         "artifact beside the linear heads; src/weekly/projector.ts walks them at "
+                         "serve. Two-part only; K/DST stay intercept-only.")
+    ap.add_argument("--gbm-depth", type=int, default=3, help="gbm: max tree depth (D16 screen setting).")
+    ap.add_argument("--gbm-iter", type=int, default=300, help="gbm: boosting rounds (D16 screen setting).")
+    ap.add_argument("--conformal-k", type=int, default=5,
+                    help="gbm: player-grouped folds for the train-only conformal calibration of the "
+                         "boosted quantile heads. 0 = off (the pre-calibration heads).")
+    ap.add_argument("--aug-frac", type=float, default=0.5,
+                    help="gbm: MISSINGNESS AUGMENTATION rate -- augmented rows added, as a fraction of "
+                         "the fitted rows, each a duplicate with serve-time feature blocks masked to "
+                         "NaN (MASKABLE_GROUPS / MASK_DROP_P). Teaches the boosted trees the 2026 "
+                         "serve regime so a locked starter with the whole availability/usage block "
+                         "absent falls back on the season-line anchor instead of an OOD leaf. 0 = off "
+                         "(the pre-robustness heads that collapse the live serve).")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
+    if args.learner == "gbm" and args.zero_model != "two-part":
+        sys.exit("train_weekly: --learner gbm is only defined for --zero-model two-part (the shipped "
+                 "serve). The boosted heads mirror the two-part stages; there is no boosted quantile "
+                 "model here.")
 
     lo, hi = parse_seasons(args.seasons)
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
@@ -829,6 +1132,34 @@ def main():
     if not coef:
         sys.exit("train_weekly: nothing fitted")
 
+    # ---- THE BOOSTED HEADS (Q1). Fitted ON TOP of the linear coef, position by position, and only
+    # for the two-part serve. Each boosted position keeps its linear heads (the loader requires them,
+    # and they are the fallback); the boosted block overrides them at serve. A position whose boosted
+    # stages cannot be fitted stays linear and is left off `positions`. ----
+    boosted_block = None
+    if not args.season_line_only and zero_model == "two-part" and args.learner == "gbm":
+        perpos, checks = {}, {}
+        for pos in POS_FITTED:
+            if pos not in coef:
+                continue
+            _names, block, ck = fit_position_boosted(rows, specs, pos, args)
+            if block:
+                perpos[pos] = block
+                checks[pos] = ck
+        if not perpos:
+            sys.exit("train_weekly: --learner gbm fitted no boosted position -- refusing to write a "
+                     "gbm artifact that would silently serve the linear heads everywhere")
+        boosted_self_check(perpos, checks)
+        boosted_block = {
+            "learner": "gbm",
+            "positions": list(perpos.keys()),
+            "params": {"max_depth": args.gbm_depth, "max_iter": args.gbm_iter,
+                       "learning_rate": 0.05, "min_samples_leaf": 30, "l2": 1.0,
+                       "conformalK": int(args.conformal_k or 0),
+                       "augFrac": float(args.aug_frac or 0.0)},
+            "perPos": perpos,
+        }
+
     zero_share = (sum(1 for r in rows if r["pts"] <= ZERO_PTS) / len(rows)) if rows else 0.0
     artifact = {
         "schema": SCHEMA,
@@ -854,10 +1185,20 @@ def main():
     }
     if zero_model == "two-part":
         artifact["quantileGrid"] = QUANTILE_GRID
+    if boosted_block is not None:
+        artifact["learner"] = "gbm"
+        artifact["boosted"] = boosted_block
+    # golden is computed LAST so it reflects the served heads -- boosted where a boosted block exists.
     artifact["golden"] = golden_rows(artifact)
 
     with open(args.out, "w", encoding="ascii") as fh:
-        json.dump(artifact, fh, indent=2)
+        # A boosted block is megabytes of node arrays; pretty-printing it is pointless bulk, but the
+        # linear artifact stays indented so its diffs are readable. Match train_projection.py: compact
+        # only when boosted.
+        if boosted_block is not None:
+            json.dump(artifact, fh)
+        else:
+            json.dump(artifact, fh, indent=2)
     if not args.quiet:
         print("wrote " + args.out)
         print("  seasons " + str(seasons[0]) + "-" + str(seasons[-1]) +
@@ -883,6 +1224,11 @@ def main():
                 print("       P(zero) logit intercept " + format(z["intercept"], ".4f") +
                       "  " + (zt or "(intercept only)"))
         print("  golden rows: " + str(len(artifact["golden"])))
+        if boosted_block is not None:
+            n_trees = len(boosted_block["perPos"][boosted_block["positions"][0]]["heads"]["mean"]["trees"])
+            print("  served learner: gbm for " + ", ".join(boosted_block["positions"]) +
+                  "; trees per head " + str(n_trees) + "; self-check vs sklearn passed (linear heads "
+                  "retained as fallback; K/DST stay intercept-only)")
 
 
 if __name__ == "__main__":

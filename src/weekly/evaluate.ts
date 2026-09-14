@@ -466,7 +466,7 @@ function pointPredictions(season: SeasonRows, artifact: WeeklyArtifact, lineOnly
   for (const [week, rows] of byWeek) {
     const defRatings = new Map<string, number>();
     for (const r of rows) {
-      const d = r.f.dvp_mult;
+      const d = r.dvp_mult;
       if (r.opponent && d != null && Number.isFinite(d)) defRatings.set(`${r.opponent}|${r.pos}`, d);
     }
     // gamesPerSeason 1: season_line_pg is ALREADY per game, and makeProjections divides by games.
@@ -671,20 +671,39 @@ export interface EvalOpts {
    *  convergence check. Cheap: it reuses the one trained set of scored rows and only re-draws rosters,
    *  so it costs no extra training. `undefined` omits the diagnostic entirely. */
   rosterConvergence?: number[];
+  /**
+   * MEASUREMENT-ONLY: null these feature fields on the SCORED (served) rows before projecting, WITHOUT
+   * touching what the folds train on. This reproduces the 2026 live-serve regime -- fit on historical
+   * seasons that carry the availability feed, serve seasons that do not -- so the paired floor can
+   * answer whether a gain survives when the availability block is absent (the state the live 2026 team
+   * is in; the feed stopped publishing report dates from 2025). Off by default; the shipped serve path
+   * never sets it. The mask hits every model equally, so the comparison stays fair. */
+  maskServe?: string[];
+  /** MEASUREMENT-ONLY: when `keepArtifacts` is set, reuse a fold artifact already on disk instead of
+   *  retraining it. The serve-time mask does not change a fold's training, so full and masked scoring
+   *  share one trained set of folds. Off by default (every fold is retrained), so no normal run can
+   *  serve a stale fold. */
+  reuseArtifacts?: boolean;
 }
 
 /** Train one holdout artifact by shelling out to the Python trainer -- the same binary the shipped
  *  artifact came from, so the thing evaluated is the thing that would ship. */
 function trainHoldout(
   dbPath: string, trainSeasons: number[], holdout: number, features: string, out: string,
-  zeroModel: string, recalibrateZero: boolean,
+  zeroModel: string, recalibrateZero: boolean, learner: string, reuse = false,
 ): WeeklyArtifact | null {
   const lo = Math.min(...trainSeasons), hi = Math.max(...trainSeasons);
+  // MEASUREMENT-ONLY reuse: a fold already on disk is the SAME training regardless of any serve-time
+  // mask, so scoring full and masked from one trained set skips a second (identical) fit. Only when
+  // the caller opts in AND the file is loadable; anything wrong falls through to a fresh train.
+  if (reuse && existsSync(out)) {
+    try { return loadWeeklyArtifact(JSON.parse(readFileSync(out, "utf8"))); } catch { /* retrain */ }
+  }
   try {
     execFileSync("uv", [
       "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_weekly.py",
       "--db", dbPath, "--seasons", `${lo}-${hi}`, "--holdout-season", String(holdout),
-      "--features", features, "--zero-model", zeroModel, "--out", out, "--quiet",
+      "--features", features, "--zero-model", zeroModel, "--learner", learner, "--out", out, "--quiet",
       ...(recalibrateZero ? ["--recalibrate-zero"] : []),
     ], { stdio: "pipe" });
   } catch (e) {
@@ -724,6 +743,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   const all: Scored1[] = [];
   let featuresUsed: string[] = [];
   let zeroModel = "quantile";
+  let learner = "linear";
   let shipArt: WeeklyArtifact | null = null;
   try {
     // The spread table for the baselines is measured on the TRAINING seasons, once, with the
@@ -738,6 +758,10 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     // is that thing; taking the model kind from a flag instead would let the folds fit a two-part
     // model while the file on disk was a quantile one, and the report would name neither.
     zeroModel = fullArt.zeroModel ?? "quantile";
+    // WHICH LEARNER THE FOLDS FIT IS READ OFF THE ARTIFACT THAT WOULD SHIP, exactly like zeroModel:
+    // the harness scores the thing that would ship, so a boosted full-data artifact makes every fold
+    // fit boosted, and a linear one makes every fold linear -- the report names neither by a flag.
+    learner = fullArt.learner ?? "linear";
     shipArt = fullArt;
     const trainOnly = opts.trainSeasons.filter((s) => !opts.seasons.includes(s));
     const spreadSeasons = (trainOnly.length ? trainOnly : opts.trainSeasons.slice(0, 2)).map((s) => loadSeason(db, s));
@@ -747,10 +771,14 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     for (const yr of opts.seasons) {
       // The recalibration is chosen INSIDE the fold, by the trainer, on the rows the trainer sees --
       // which are the training seasons with `yr` removed. It never touches the season being scored.
-      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`), zeroModel, !!opts.recalibrateZero);
+      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`), zeroModel, !!opts.recalibrateZero, learner, !!opts.reuseArtifacts);
       if (art && (art.zeroModel ?? "quantile") !== zeroModel) {
         throw new Error(`fold ${yr} produced a "${art.zeroModel}" artifact but the shipping artifact ` +
           `is "${zeroModel}" -- the folds are not measuring the model that would ship`);
+      }
+      if (art && (art.learner ?? "linear") !== learner) {
+        throw new Error(`fold ${yr} produced a "${art.learner ?? "linear"}" artifact but the shipping ` +
+          `artifact is "${learner}" -- the folds are not measuring the learner that would ship`);
       }
       if (!art) throw new Error(`no artifact produced for holdout ${yr}`);
       // The population is a CONTRACT and this is where it is checked. This harness scores every
@@ -780,6 +808,13 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
       }
       const lineOnly = lineOnlyFor(db, opts.trainSeasons, yr);
       const s = loadSeason(db, yr);
+      // MEASUREMENT-ONLY serve mask (opts.maskServe): null these fields on the SCORED rows so every
+      // model projects them as the 2026 live serve would -- from the anchors, with the availability
+      // block absent. The folds above trained on the untouched DB, so this is fit-with / serve-without,
+      // the exact 2026 regime. Applied to `s.rows` only; nothing here writes back to the store.
+      if (opts.maskServe?.length) {
+        for (const r of s.rows) for (const k of opts.maskServe) (r.f as Record<string, number | null>)[k] = null;
+      }
       if (!s.rows.length) continue;
       all.push(...withSpread(s, art, lineOnly, pointPredictions(s, art, lineOnly), spread));
     }
