@@ -85,9 +85,10 @@ export interface LeverSpec {
 }
 
 // Defaults = the shipped, holdout-validated posture: aggr 0.7 / benchDiscount 0.35 / starterReserve 4
-// / maxShare 0.25 / premium 2 / consensusBlend 1, all positional multipliers 1.0. ~42% championships
-// / 97% playoffs on 25 scored seasons -- benchDiscount re-optimised 0.25->0.35 and the FFToday
-// consensus blend are the two edges since the ~38.5% base (docs/edges.md).
+// / maxShare 0.25 / premium 2 / consensusBlend 0, all positional multipliers 1.0. consensusBlend was
+// DEMOTED 1->0 by D14 (2026-09-13): null on the D13 playoff gate and fails family-wide FDR (WS4/WS6),
+// real only on the no-skill title axis. benchDiscount 0.35 is KEPT (holdout-positive on playoffs)
+// pending a powered re-test. See docs/edges.md and docs/decisions.md D13/D14.
 // Do NOT edit a value here without re-reading docs/validation.md -- several of
 // these were measured, rejected, and re-measured, and the reasoning is recorded per lever below.
 export const LEVER_SPECS: readonly LeverSpec[] = [
@@ -192,9 +193,9 @@ export const LEVER_SPECS: readonly LeverSpec[] = [
     help: "Multiplier on OUR TE values. <1 = pay less for TE than raw VOR says.",
   },
   {
-    key: "consensusBlend", kind: "number", default: 1, off: 0, min: 0, max: 1, step: 0.05,
-    label: "FFToday consensus blend", board: true, group: "board", flag: "consensus-blend", status: "shipped",
-    help: "Re-rank the board's ORDERING toward the FFToday consensus (0 = our projection, 1 = the consensus). Validated ~+2.8pp titles.",
+    key: "consensusBlend", kind: "number", default: 0, off: 0, min: 0, max: 1, step: 0.05,
+    label: "FFToday consensus blend", board: true, group: "board", flag: "consensus-blend", status: "experimental",
+    help: "Re-rank the board's ORDERING toward the FFToday consensus (0 = our projection, 1 = the consensus). DEMOTED to default 0 by D14 (2026-09-13): +2.8pp on titles but NULL on the D13 playoff gate and fails family-wide FDR (WS4/WS6). Still available via --consensus-blend 1; re-ship only on a powered playoff-axis re-test.",
   },
 ];
 

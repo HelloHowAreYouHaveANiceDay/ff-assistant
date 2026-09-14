@@ -354,6 +354,27 @@ REVERSAL/RESOLUTION CONDITION: this D-entry is resolved when the owner either (a
 --bench-discount 0.25`, `--golden 96.0`), or (b) records a KEEP-ON override with the title/surrogate rationale.
 Until then both levers stay at their shipped values (`consensusBlend=1`, `benchDiscount=0.35`).
 
+**OWNER DECISION -- PER-EDGE, APPLIED (2026-09-13).**
+- **consensusBlend: DEMOTED.** `DEFAULT_LEVERS.consensusBlend` 1 -> 0 (`src/draft/levers.ts`, status -> experimental)
+  and the stored lever set to 0 (`node scripts/set-lever.mjs consensusBlend 0`; the `1 -> 0` confirmed a
+  STORED 1 was overriding the default -- the config-precedence trap, so the code change alone would have been a
+  no-op). It is null on the D13 playoff gate and fails family-wide FDR (WS4/WS6); its value lived only on the
+  no-skill title axis. Still available via `--consensus-blend 1`; re-ship only on a powered playoff-axis re-test.
+  - CONNECTIVITY FINDING (recorded honestly): on the CURRENT (2026) board the lever is INERT -- `ff board
+    --consensus-blend 1` vs `0` produce an IDENTICAL board, because `raw_fftoday_proj` carries 2008-2024 only
+    (no 2026 rows to blend). So the demotion changes NOTHING for this season's live draft; consensusBlend's
+    measured effect was on the historical backtest, where FFToday IS present. `scripts/lever-connected.mjs`
+    reports DEAD for the same reason (it drafts the inert 2026 board), which is a check/season artifact, not
+    proof the lever is code-dead. DISCOVERED FOLLOW-UP: confirm the arbiter backtest still exercises FFToday
+    for the historical seasons (it should); and note a shipped board-edge that is inert for the live season
+    because its feed stops at 2024 is itself worth a data-freshness fix.
+- **benchDiscount: KEPT at 0.35 (no change).** Its 2021-2024 holdout playoff confirm was +1.67pp (CI [0.67,2.67],
+  4/4 seasons up), so demoting it would discard a signal the selection-blind holdout supports; it is FLAGGED for
+  a properly-powered playoff-axis re-test rather than reverted. (It still fails full-set family FDR -- the re-test
+  is to resolve the holdout-vs-full-set tension, not to ratify it.)
+
+This resolves D14.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
