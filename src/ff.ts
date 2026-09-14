@@ -2746,7 +2746,11 @@ async function cmdEvaluateProjection(rest: string[]) {
   // to its own, which is the only honest way to backtest a TRAINED model.
   const keep = valueOf(rest, "--keep-artifacts");
   if (keep) { const { mkdirSync } = await import("node:fs"); mkdirSync(keep, { recursive: true }); }
-  const folds = evaluateProjection({ dbPath: valueOf(rest, "--db"), seasons, keepArtifacts: keep });
+  // ADJACENT-SEASON EMBARGO (WS3): --embargo N drops the N seasons before each holdout from that
+  // fold's training. Default 0 (shipped behaviour). Use --embargo 1 --keep-artifacts
+  // data/fold-artifacts-2b-embargo to build the embargoed arbiter fold-artifact set.
+  const embargo = Number(valueOf(rest, "--embargo") ?? "0");
+  const folds = evaluateProjection({ dbPath: valueOf(rest, "--db"), seasons, keepArtifacts: keep, embargo });
   if (!folds.length) { console.log("no usable folds"); return; }
   if (keep) console.log(`  kept ${folds.filter((f) => f.trainerOk).length} per-fold artifacts in ${keep}`);
 
@@ -2787,6 +2791,35 @@ async function cmdEvaluateProjection(rest: string[]) {
   show("ALL", () => true);
   for (const p of ["QB", "RB", "WR", "TE"]) show(p, (r) => r.pos === p);
   for (const [b] of RANK_BANDS) show(b, (r) => r.band === b);
+
+  // COLD-START SPLIT (WS3). The pooled figure above averages established veterans with players in
+  // their FIRST projectable season (draft_year == season-1, so their only prior history is a rookie
+  // year). Those cold-start cases are exactly the ones a pooled metric flatters, because the veterans
+  // dominate the count. Reporting the split is honesty about NEW players, not a model change. If the
+  // NEW column ever equals the pooled/returning column the split is not wired -- that is the fault
+  // check, and the two are expected to differ (new players are harder to project).
+  const isNew = (r: { isNew: boolean }) => r.isNew;
+  const isRet = (r: { isNew: boolean }) => !r.isNew;
+  const nNew = pool(folds, "trained").filter(isNew).length;
+  console.log(`\n  COLD-START SPLIT: RETURNING veterans vs NEW (first projectable season, draft_year==season-1)`);
+  if (!nNew) {
+    console.log(`    no NEW players in the scored folds (draft_year coverage?) -- split not meaningful for this range.`);
+  } else {
+    console.log(`  ${"".padEnd(11)}  ${"CARRY-FORWARD".padEnd(21)}  ${"CURVE-ONLY".padEnd(21)}  ${"TRAINED".padEnd(21)}  RMSE won`);
+    console.log(`  ${"".padEnd(11)}  ${"rmse      r2   crps"}   ${"rmse      r2   crps"}   ${"rmse      r2   crps"}`);
+    const showCold = (label: string, sel: (r: { isNew: boolean }) => boolean) => {
+      const line: string[] = [label.padEnd(11)];
+      for (const k of SHOWN) {
+        const s = score(pool(folds, k).filter(sel));
+        line.push(s.n ? `${s.rmse.toFixed(1).padStart(6)} ${s.r2.toFixed(3).padStart(7)} ${s.crps.toFixed(1).padStart(6)} n${String(s.n).padStart(4)}` : "        -");
+      }
+      const c = score(pool(folds, "curve").filter(sel)), t = score(pool(folds, "trained").filter(sel));
+      line.push(t.n && c.n ? `${(c.rmse - t.rmse >= 0 ? "+" : "") + (c.rmse - t.rmse).toFixed(2)}`.padStart(8) : "       -");
+      console.log("  " + line.join("  "));
+    };
+    showCold("returning", isRet);
+    showCold("new", isNew);
+  }
 
   console.log(`\n  COVERAGE of the p10/p90 band (a calibrated 10/90 covers 0.80)`);
   console.log(`  ${"".padEnd(9)}  p10-above   p90-below   inside`);

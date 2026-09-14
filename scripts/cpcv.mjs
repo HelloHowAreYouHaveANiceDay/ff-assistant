@@ -16,13 +16,20 @@
 // OUTPUT per change: `lift = +X pp titles over M paths, P(lift>0)=.., path SD=.., PBO=..` plus a ledger
 // line appended to data/experiments.jsonl.
 //
-// PURGE/EMBARGO STATUS (v1 limit, deliberate). The leak-free per-fold projection artifacts
+// PURGE/EMBARGO STATUS (v2, BUILT -- WS3). The leak-free per-fold projection artifacts
 // (data/fold-artifacts-2b, each season scored by an artifact BLIND to itself) already purge the test
-// season from its own training. The EMBARGO -- also excluding seasons ADJACENT to a test season from
-// that fold's training, because year-N and year-N+1 autocorrelate (career arcs, roster continuity) --
-// is NOT applied here: it needs a per-fold REFIT (an artifact blind to {test, test+/-1}), which is a
-// v2 enhancement. CPCV path construction below is purely a re-partition of already-computed outcomes,
-// so it cannot add an embargo the artifacts do not carry. Noted, not built.
+// season from its own training. The EMBARGO -- also excluding the season ADJACENT to a test season
+// from that fold's training, because year-N and year-N-1 autocorrelate (career arcs, roster
+// continuity) -- is now BUILDABLE via the trainer's `--embargo` flag (tools/train_projection.py) and
+// evaluate.ts's `embargo` param. Because training is walk-forward (season < holdout), year N and N+1
+// are already excluded as future; --embargo 1 additionally excludes N-1, so an embargoed fold is
+// blind to {N-1, N, N+1}. Build the embargoed set once with:
+//     npm run ff -- evaluate-projection --seasons <range> --embargo 1 --keep-artifacts data/fold-artifacts-2b-embargo
+// then point THIS tool at it with --artifact-dir data/fold-artifacts-2b-embargo (effective only when
+// BASE_FLAGS selects the projection artifact). CPCV path construction below is still purely a
+// re-partition of already-computed outcomes, so the embargo lives in the ARTIFACTS it consumes, not
+// in the path sampling. NOTE: the full 18-fold embargoed regen + a cpcv run on it is the WS6/
+// acceptance step; the mechanism is built and unit-/one-fold-tested here, the full regen is heavy.
 //
 // USAGE
 //   node scripts/cpcv.mjs                              # baseline=shipped, treatment=--no-rookies (the reference null)

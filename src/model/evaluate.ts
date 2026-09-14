@@ -34,6 +34,7 @@ import { openDb, type DB } from "../db/db.js";
 import { loadArtifact, projectSeason, type ProjectionArtifact, type ProjRow } from "./projector.js";
 import { loadFeatureRows } from "./features.js";
 import { buildCurveOnlyArtifact } from "./build.js";
+import { embargoedSeasons } from "./embargo.js";
 
 // THE 60+ BAND IS NOT DECORATION. It holds 42% of the scored rows in this store -- prior-year WRs
 // run to rank 225 -- and it was reported nowhere, so a model that was never fitted out there and
@@ -55,6 +56,10 @@ export interface EvalRow {
   actual: number; base: number | null;
   mean: number; p10: number; p50: number; p90: number;
   resid: number;
+  // COLD-START (WS3): true for a player in his FIRST projectable season -- i.e. his only prior-season
+  // history is his rookie year (draft_year === season - 1). These are the cold-start cases the pooled
+  // CV metric over-rewards; `cmdEvaluateProjection` reports them split from returning veterans.
+  isNew: boolean;
 }
 
 /**
@@ -91,19 +96,21 @@ export function score(rows: EvalRow[]): Scored {
   };
 }
 
-/** Actual season points for the holdout, keyed the way the feature rows are keyed. */
-function targets(db: DB, season: number): Map<string, { pts: number; rank: number }> {
-  const m = new Map<string, { pts: number; rank: number }>();
+/** Actual season points for the holdout, keyed the way the feature rows are keyed. `isNew` marks a
+ *  player whose only prior-season history is his rookie year (draft_year === season - 1) -- the
+ *  cold-start regime (WS3). A null draft_year is an established veteran with no coverage, so NOT new. */
+function targets(db: DB, season: number): Map<string, { pts: number; rank: number; isNew: boolean }> {
+  const m = new Map<string, { pts: number; rank: number; isNew: boolean }>();
   for (const r of db.prepare(
-    "SELECT name, pos, pts, prior_pos_rank FROM feat_player_season WHERE season = ? AND pts IS NOT NULL",
-  ).all(season) as { name: string; pos: string; pts: number; prior_pos_rank: number | null }[]) {
+    "SELECT name, pos, pts, prior_pos_rank, draft_year FROM feat_player_season WHERE season = ? AND pts IS NOT NULL",
+  ).all(season) as { name: string; pos: string; pts: number; prior_pos_rank: number | null; draft_year: number | null }[]) {
     if (r.prior_pos_rank == null) continue;
-    m.set(`${r.pos}|${r.name}`, { pts: r.pts, rank: r.prior_pos_rank });
+    m.set(`${r.pos}|${r.name}`, { pts: r.pts, rank: r.prior_pos_rank, isNew: r.draft_year != null && r.draft_year === season - 1 });
   }
   return m;
 }
 
-function toEvalRows(season: number, proj: ProjRow[], tgt: Map<string, { pts: number; rank: number }>, bases: Map<string, number | null>): EvalRow[] {
+function toEvalRows(season: number, proj: ProjRow[], tgt: Map<string, { pts: number; rank: number; isNew: boolean }>, bases: Map<string, number | null>): EvalRow[] {
   const out: EvalRow[] = [];
   for (const p of proj) {
     const t = tgt.get(`${p.pos}|${p.name}`);
@@ -112,6 +119,7 @@ function toEvalRows(season: number, proj: ProjRow[], tgt: Map<string, { pts: num
       season, name: p.name, pos: p.pos, rank: t.rank, band: bandOf(t.rank),
       actual: t.pts, base: bases.get(`${p.pos}|${p.name}`) ?? null,
       mean: p.mean, p10: p.p10, p50: p.p50, p90: p.p90, resid: t.pts - p.mean,
+      isNew: t.isNew,
     });
   }
   return out;
@@ -164,9 +172,15 @@ export function evaluateProjection(opts: {
   dbPath?: string; seasons: number[];
   trainerSeasons?: string;
   keepArtifacts?: string;
+  /** ADJACENT-SEASON EMBARGO (WS3). 0 (default) = the shipped per-fold artifacts (no embargo). N>=1
+   *  passes `--embargo N` to the trainer so each fold's artifact is also blind to the N seasons just
+   *  before its held-out season -- use it to build data/fold-artifacts-2b-embargo for the arbiter. */
+  embargo?: number;
   log?: (s: string) => void;
 }): FoldResult[] {
   const log = opts.log ?? console.log;
+  const embargo = opts.embargo ?? 0;
+  if (embargo > 0) log(`  ADJACENT-SEASON EMBARGO: --embargo ${embargo}; each fold also drops the ${embargo} season(s) before its holdout from training.`);
   // Read ONCE and echoed, so every fold in a run fits the same model and the reader is told which.
   const addFeatures = (process.env.FF_ADD_FEATURES ?? "").trim();
   log(addFeatures
@@ -202,6 +216,9 @@ export function evaluateProjection(opts: {
           "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_projection.py",
           "--db", opts.dbPath ?? "data/ff.db", "--seasons", opts.trainerSeasons ?? "1999-2025",
           "--holdout-season", String(yr), "--out", artPath, "--quiet",
+          // ADJACENT-SEASON EMBARGO (WS3): only added when > 0, so the default fold artifact is
+          // byte-identical to the pre-WS3 one. The produced artifact is guarded below.
+          ...(embargo > 0 ? ["--embargo", String(embargo)] : []),
           // THE ADMISSION LEVER (Phase 2d). One candidate at a time, re-measured under the full
           // nested evaluation rather than on the residuals it was screened against. It is an
           // environment variable rather than a flag because the CLI surface is owned elsewhere this
@@ -210,6 +227,16 @@ export function evaluateProjection(opts: {
           ...(addFeatures ? ["--add-features", addFeatures] : []),
         ], { stdio: ["ignore", "pipe", "pipe"], timeout: 1800000 });
         if (existsSync(artPath)) trained = loadArtifact(JSON.parse(readFileSync(artPath, "utf8")));
+        // EMBARGO GUARD (WS3). Prove the trainer actually applied the embargo, rather than trusting
+        // that the flag was wired: none of the embargoed seasons may appear in the fitted artifact's
+        // training `seasons`. This is the consumer checking the producer's emitted bytes -- a
+        // `--embargo` that the Python side silently dropped fails HERE, loudly, not silently.
+        if (trained && embargo > 0) {
+          const leaked = embargoedSeasons(yr, embargo).filter((s) => trained!.seasons.includes(s));
+          if (leaked.length) {
+            throw new Error(`embargo ${embargo} not honoured for holdout ${yr}: training seasons still include ${leaked.join(",")}`);
+          }
+        }
       } catch (e) { note = `trainer failed: ${(e as Error).message.split("\n")[0]}`; }
 
       let trainedRows: EvalRow[] = [];
