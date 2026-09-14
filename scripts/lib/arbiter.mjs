@@ -97,6 +97,18 @@ export function seasonEffect(rateT, rateBase, seasonsArr, { pathSeed, scale = 10
   };
 }
 
+/** ADMISSION EFFECT-SIZE FLOOR. A feature is admitted to the projection defaults only if its pinball
+ *  improvement clears the smallest effect resolvable at 80% power (`floorK`*SE, the same 2.9*SE bar the
+ *  arbiter uses). `candBySeason`/`baseBySeason` are Map<season, mean pinball> for the +feature and the
+ *  baseline nested-CV runs; LOWER pinball is better, so improvement = base - cand (scale -1). A
+ *  positive-but-sub-floor improvement is noise -- exactly the `contract_year` case (12.03->12.02) the
+ *  trainer's own comment warned "a keep/drop rule with no effect-size floor will eventually admit". */
+export function admissionVerdict(candBySeason, baseBySeason, seasonsArr, { pathSeed = 12345, floorK = 2.9 } = {}) {
+  const eff = seasonEffect(candBySeason, baseBySeason, seasonsArr, { pathSeed, scale: -1 });
+  const floor = floorK * eff.se;
+  return { ...eff, improvement: eff.effect, floor, floorK, pass: eff.effect > 0 && eff.effect > floor };
+}
+
 /** PBO (Probability of Backtest Overfitting), two-config CSCV: fraction of paths where the IS-best config
  *  (higher train lift) is WORSE out of sample. Read RELATIVELY on this two-config engine -- near 1 =
  *  overfit/null (a null runs HIGH here by the complementary-split constraint), near 0 = a real transferable

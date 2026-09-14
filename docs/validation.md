@@ -1,5 +1,17 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## RIGOR PROGRAM WS1: an effect-size floor at feature admission (2026-09-13)
+>
+> The trainer's own comment warned "a keep/drop rule with no effect-size floor will eventually admit
+> noise", and `contract_year` shipped at pinball 12.03->12.02 -- the edge of resolution. Admission is
+> now a MEASURED gate: `scripts/admit-feature.mjs` runs the nested CV baseline vs `--add-features X`,
+> takes the per-SEASON trained pinball of each, and admits ONLY if the season-paired improvement
+> clears **2.9*SE** (the same smallest-resolvable-effect bar the draft arbiter uses;
+> `admissionVerdict` in `scripts/lib/arbiter.mjs`, reusing `seasonEffect`). `test/admission-floor.test.ts`
+> fault-injects it: a clear improvement ADMITS; a sub-floor/null/worse candidate REJECTS.
+> `contract_year` predates the floor and is queued for WS6 re-validation (demote via a recorded
+> decision, not a silent drop). Part of the across-experiment rigor program (plan approved 2026-09-13).
+>
 > ## INTEGRATION PASS 5: the derived Data and Model pages, on the integrated branch (2026-09-09)
 >
 > `redesign/final-4` = `redesign/final-3` (`18cdd08`) + `redesign/derived-ui` (`17f93c0`, Track K),
