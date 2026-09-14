@@ -78,6 +78,10 @@ export interface ExtSeasonRow {
   prior_carries_per_game: number | null; prior_carry_share: number | null;
   depth_rank_sep1: number | null; contract_year: number | null;
   adp: number | null; adp_vs_ecr: number | null; rookie_draft_pick: number | null;
+  // FRONTIER CANDIDATES (2026-09-14) -- read here so the SERVING projector computes them the same way
+  // the trainer fits them. --add-features candidates only; not fitted by default.
+  prior_out_games: number | null; prior_yac_oe: number | null; prior_ryoe: number | null;
+  prior_cpoe: number | null; qb_changed: number | null;
 }
 
 export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow> {
@@ -86,7 +90,8 @@ export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow>
   try {
     rows = db.prepare(
       `SELECT player_sk, pos, draft_year, draft_pick, contract_year, prior_snap_share,
-              prior_route_share, prior_carries_per_game, prior_carry_share, depth_rank_sep1, adp
+              prior_route_share, prior_carries_per_game, prior_carry_share, depth_rank_sep1, adp,
+              prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe, qb_changed
          FROM feat_player_season_ext WHERE season = ?`,
     ).all(season) as Record<string, unknown>[];
   } catch { return out; }                      // a store without the extension table: no columns, not zeros
@@ -120,6 +125,8 @@ export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow>
       adp: num(r.adp),
       adp_vs_ecr: ar != null && er != null ? ar - er : null,
       rookie_draft_pick: num(r.draft_year) === season ? num(r.draft_pick) : null,
+      prior_out_games: num(r.prior_out_games), prior_yac_oe: num(r.prior_yac_oe),
+      prior_ryoe: num(r.prior_ryoe), prior_cpoe: num(r.prior_cpoe), qb_changed: num(r.qb_changed),
     });
   }
   return out;
@@ -129,6 +136,7 @@ const EMPTY_EXT: ExtSeasonRow = {
   prior_snap_share: null, prior_route_share: null, prior_carries_per_game: null,
   prior_carry_share: null, depth_rank_sep1: null, contract_year: null,
   adp: null, adp_vs_ecr: null, rookie_draft_pick: null,
+  prior_out_games: null, prior_yac_oe: null, prior_ryoe: null, prior_cpoe: null, qb_changed: null,
 };
 
 /**

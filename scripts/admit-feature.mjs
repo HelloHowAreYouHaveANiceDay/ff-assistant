@@ -29,7 +29,11 @@ const candidate = val("--candidate", null);
 // check for a feature that is already in the default lists -- --add-features on such a feature is a no-op
 // (the trainer refuses to duplicate a column), which is why `contract_year` measured 0.0000 under add mode.
 const removeMode = argv.includes("--remove");
-if (!candidate) { console.error("usage: node --import tsx scripts/admit-feature.mjs --candidate <feature> [--remove] [--seasons 2008-2025]"); process.exit(1); }
+// --pos <POS> scores pinball on ONE position's rows only. A position-gated feature (an NGS metric,
+// qb_changed) moves only its own position's projections; scored POOLED across all positions its real
+// effect is diluted ~15x and reads as a false NULL. Screen such a feature on its own position.
+const pos = val("--pos", null);
+if (!candidate) { console.error("usage: node --import tsx scripts/admit-feature.mjs --candidate <feature> [--remove] [--pos QB] [--seasons 2008-2025]"); process.exit(1); }
 const range = val("--seasons", "2008-2025").split("-").map(Number);
 const seasons = []; for (let y = range[0]; y <= (range[1] ?? range[0]); y++) seasons.push(y);
 const dbPath = val("--db", undefined);
@@ -40,12 +44,15 @@ const dbPath = val("--db", undefined);
 // change what any model FITS; it only prevents the choice from being made on held-out seasons.
 const holdout = parseHoldout(val("--holdout-seasons", null));
 
-/** Map<season, mean trained pinball> for one nested-CV run. */
+/** Map<season, mean trained pinball> for one nested-CV run. With `pos` set, scores only that
+ *  position's rows -- the right metric for a feature the trainer fits for one position family. */
 function perSeasonPinball(folds) {
   const m = new Map();
   for (const f of folds) {
     if (!f.trainerOk || !f.rows.trained.length) continue;
-    m.set(f.season, score(f.rows.trained).crps);
+    const rows = pos ? f.rows.trained.filter((r) => r.pos === pos) : f.rows.trained;
+    if (!rows.length) continue;
+    m.set(f.season, score(rows).crps);
   }
   return m;
 }
@@ -56,7 +63,7 @@ function perSeasonPinball(folds) {
 //   add mode:    base = no env (feature absent);          cand = FF_ADD_FEATURES    (feature added)
 //   remove mode: base = FF_REMOVE_FEATURES (feature out); cand = no env             (feature present, default)
 delete process.env.FF_ADD_FEATURES; delete process.env.FF_REMOVE_FEATURES;
-console.log(`${removeMode ? "LEAVE-ONE-OUT" : "ADMISSION"} GATE: ${candidate} over seasons ${seasons[0]}-${seasons[seasons.length - 1]}`);
+console.log(`${removeMode ? "LEAVE-ONE-OUT" : "ADMISSION"} GATE: ${candidate}${pos ? ` [${pos} only]` : ""} over seasons ${seasons[0]}-${seasons[seasons.length - 1]}`);
 
 console.log(removeMode ? `baseline run (--remove-features ${candidate}; shipped design MINUS it) ...` : "baseline run (no --add-features) ...");
 delete process.env.FF_ADD_FEATURES; delete process.env.FF_REMOVE_FEATURES;

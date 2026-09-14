@@ -38,6 +38,9 @@ export const FEATURE_FIELDS = [
   // and the admission trace in docs/validation.md records which ones earned one.
   "prior_snap_share", "prior_route_share", "prior_carries_per_game", "prior_carry_share",
   "depth_rank_sep1", "contract_year", "adp", "adp_vs_ecr", "rookie_draft_pick",
+  // ---- FRONTIER CANDIDATES (2026-09-14), also DECLARED-not-fitted. Read in features.ts loadExtSeason
+  // and spread into `f`, so the consumer really can compute each. docs/feature-frontier.md. ----
+  "prior_out_games", "prior_yac_oe", "prior_ryoe", "prior_cpoe", "qb_changed",
 ] as const;
 export type FeatureField = typeof FEATURE_FIELDS[number];
 

@@ -166,8 +166,11 @@ EXT_CENTER = [
     "prior_snap_share", "prior_route_share", "prior_carries_per_game", "prior_carry_share",
     "prior_air_yards_share", "prior_wopr", "depth_rank_sep1", "adp", "adp_vs_ecr",
     "rookie_draft_pick",
+    # FRONTIER CANDIDATES (2026-09-14). Prior-season / Sep-1 columns, screened one at a time via
+    # --add-features; none is a default. docs/feature-frontier.md.
+    "prior_out_games", "prior_yac_oe", "prior_ryoe", "prior_cpoe",
 ]
-EXT_INDICATOR = ["contract_year"]
+EXT_INDICATOR = ["contract_year", "qb_changed"]
 EXT_RATIO = {
     # A carry rate divided by the mean for the player's rank bucket, for the same reason every other
     # ratio feature is: an RB5's raw carry share is high BECAUSE he is an RB5, and the curve has
@@ -183,6 +186,13 @@ EXT_ALLOWED = {
     "prior_air_yards_share": {"WR", "TE"},
     "prior_wopr": {"WR", "TE"},
     "prior_route_share": {"RB", "WR", "TE"},
+    # FRONTIER: each NGS metric is a property of one position family; qb_changed is a skill-player
+    # signal (a QB "changing his own QB" is meaningless -- that is team_changed).
+    "prior_yac_oe": {"WR", "TE"},
+    "prior_ryoe": {"RB"},
+    "prior_cpoe": {"QB"},
+    "qb_changed": {"RB", "WR", "TE"},
+    # prior_out_games is deliberately NOT gated: durability applies at every position.
 }
 ALL_EXT = sorted(set(EXT_CENTER) | set(EXT_INDICATOR))
 # Which positions may carry a non-zero coefficient on each ratio feature. A quarterback has no
@@ -251,7 +261,8 @@ def attach_ext(con, rows):
         ext = con.execute(
             "SELECT player_sk, season, pos, draft_year, draft_pick, contract_year, prior_snap_share,"
             " prior_route_share, prior_carries_per_game, prior_carry_share, prior_air_yards_share,"
-            " prior_wopr, depth_rank_sep1, adp FROM feat_player_season_ext"
+            " prior_wopr, depth_rank_sep1, adp, prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe,"
+            " qb_changed FROM feat_player_season_ext"
         ).fetchall()
     except sqlite3.OperationalError:
         return
@@ -859,12 +870,16 @@ def main():
             continue
         if a in EXT_RATIO:
             RATIO_FEATURES[a] = EXT_RATIO[a]
-            if a in EXT_ALLOWED:
-                RATIO_ALLOWED[a] = EXT_ALLOWED[a]
         elif a in EXT_INDICATOR:
             INDICATOR_FEATURES.append(a)
         else:
             CENTER_FEATURES.append(a)
+        # Position gating applies to ANY added feature, not just ratios: fit_position keeps a spec only
+        # where `s["name"] not in RATIO_ALLOWED or pos in RATIO_ALLOWED[name]`, so a center/indicator
+        # candidate that belongs to one position family (an NGS metric, qb_changed) registers its
+        # allowed positions HERE. Ungated candidates (prior_out_games) simply are not in EXT_ALLOWED.
+        if a in EXT_ALLOWED:
+            RATIO_ALLOWED[a] = EXT_ALLOWED[a]
 
     # ---- LEAVE-ONE-OUT. Remove a named DEFAULT column from whichever list holds it, so the fit is the
     # shipped design MINUS that one feature. `admit-feature --remove` runs this as the BASELINE arm and

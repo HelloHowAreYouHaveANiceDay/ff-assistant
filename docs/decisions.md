@@ -416,6 +416,15 @@ The three heavy acceptance runs the earlier work streams deferred, now executed:
 - **Adjacent-season embargo (WS3) -- CONFIRMED at full scale.** The 18-fold `--embargo 1 --keep-artifacts
   data/fold-artifacts-2b-embargo` regen ran (P5 HELD, coverage 0.752 in band); the 2015 fold artifact EXCLUDES
   2014 and includes 2013 (max 2013). The embargo mechanism works end-to-end at full 18-fold scale.
+- **Feature frontier screened (2026-09-14) -- all five candidates REJECT.** With the admission gate now able
+  to screen new columns (and `--pos` for position-gated ones), the three raw-store signal families the frontier
+  map flagged were wired as opt-in candidates and screened: durability (`prior_out_games`), roster-context
+  (`qb_changed`), and NGS advanced efficiency (`prior_yac_oe`/`prior_ryoe`/`prior_cpoe`). NONE clears the
+  2.9*SE effect-size floor (full table in docs/feature-frontier.md). The workload-share features already hold
+  the resolvable signal; NGS is additionally data-starved (2016+, top players only). No shipped-model change --
+  all five are DECLARED-not-fitted, kept as candidates for re-screening as data accrues. The wiring surfaced a
+  producer-consumer contract bug (a fitted feature must be in projector.ts FEATURE_FIELDS or the loader refuses
+  the artifact) that the loud guard caught -- recorded in feature-frontier.md as the positive-control lesson.
 
 ## D15 -- benchDiscount DEMOTED 0.35 -> 0.25 (2026-09-14, owner decision, APPLIED)
 

@@ -1,12 +1,42 @@
-# Feature frontier -- what the season projector has NOT yet screened (2026-09-14)
+# Feature frontier -- the season projector's candidate features and their screen verdicts (2026-09-14)
 
 The projector (`tools/train_projection.py` + `feat_player_season_ext`) fits a small set of
 prior-season workload-share features (`prior_snap_share`, `prior_route_share`,
 `prior_carries_per_game`, `prior_carry_share`, `prior_air_yards_share`, `prior_wopr`,
-`depth_rank_sep1`, `adp`, `adp_vs_ecr`, `rookie_draft_pick`; indicators `team_changed`,
-`contract_year`). Those cover the **workload-share** frontier well. Three signal families in the raw
-store are NOT yet screened. This page maps them so the answer to "have we exhausted the features?"
-is a list, not a shrug.
+`depth_rank_sep1`, `adp`, `adp_vs_ecr`, `rookie_draft_pick`; indicator `team_changed`). Those cover
+the **workload-share** frontier well. Three more signal families in the raw store were wired as
+opt-in candidates and screened. This page records them so "have we exhausted the features?" is a
+list with verdicts, not a shrug.
+
+## SCREENED 2026-09-14 -- all five candidates REJECT (none clears the 2.9*SE floor)
+
+All five were wired as DECLARED-not-fitted columns of `feat_player_season_ext` (schema.sql + db.ts
+migration + seasonExt.ts extraction + projector.ts `FEATURE_FIELDS`), so screening changed NO shipped
+number. Verdicts on the selection folds (position-gated screens use `admit-feature --pos`):
+
+| candidate | pos | window | improvement (pinball) | floor (2.9*SE) | verdict |
+|---|---|---|---|---|---|
+| `prior_out_games` (durability) | all | 2013-2020 | -0.0024 (holdout -0.0129) | 0.0166 | REJECT |
+| `qb_changed` | WR | 2013-2020 | +0.0044 (holdout +0.122, floor 0.354) | 0.0101 | REJECT |
+| `prior_yac_oe` (NGS YAC-over-exp) | WR | 2019-2023 | +0.0004 | 0.0011 | REJECT |
+| `prior_ryoe` (NGS rush-yds-over-exp) | RB | 2021-2024 | +0.0005 | 0.0015 | REJECT |
+| `prior_cpoe` (NGS completion-over-exp) | QB | 2021-2024 | ~0 (too thin) | -- | REJECT/insufficient |
+
+**Reading:** the workload-share features already capture the resolvable signal; none of the advanced
+(NGS) or roster-context (QB-change) or durability candidates adds value above the noise floor. NGS is
+additionally **data-starved** -- it exists only 2016+ (top ~120 rec / ~48 rush / ~40 pass players a
+season), so a walk-forward fold clears the 200-row coverage floor only in the most recent seasons and
+the screens are underpowered by construction. The columns are KEPT as opt-in candidates (like the
+existing EXT_* set) so re-screening as NGS accrues seasons is one `admit-feature` command.
+
+**A contract bug this surfaced (and the guard caught, loudly):** a new fitted feature must be added to
+`projector.ts` `FEATURE_FIELDS` (the consumer's computable-feature allowlist), or the TS loader REFUSES
+the trained artifact ("not one this evaluator can compute"). Missing that made every *covered* fold
+fail while empty early folds passed -- i.e. it looked like a clean null. The positive control
+(does the feature get a non-zero coefficient at full data, per position?) is what distinguished
+"connected but null" from "never connected." Always run it before trusting a REJECT.
+
+## Screening recipe (for the next candidate)
 
 **The screening path is now cheap and correct** (do NOT hand-read a pinball delta):
 1. Add the prior-season aggregate as a column of `feat_player_season_ext`, anchored at `<season>-09-01`,
@@ -14,16 +44,21 @@ is a list, not a shrug.
    construction because everything there is as-of Sep 1 of season Y and reads only Y-1 and earlier).
 2. Declare it in `EXT_CENTER` / `EXT_RATIO` / `EXT_INDICATOR` (+ `EXT_ALLOWED` positions) in
    `tools/train_projection.py`. Declared != fitted: it changes NO shipped number until admitted.
+   Also add the name to `src/model/projector.ts` `FEATURE_FIELDS` -- the consumer's computable-feature
+   allowlist -- or the TS loader refuses any artifact that fits it (see the contract-bug note above).
 3. `ff build-features-ext --seasons 2013-2025`, then screen:
-   `node --import tsx scripts/admit-feature.mjs --candidate <col> --seasons 2008-2025`
-   (leave-one-out `--remove` for a feature already in the defaults). ~52s for the two nested-CV runs
-   on the parallel fold executor. ADMIT only if it clears the `2.9*SE` effect-size floor (WS1).
+   `node --import tsx scripts/admit-feature.mjs --candidate <col> --seasons 2013-2025`
+   (leave-one-out `--remove` for a feature already in the defaults; `--pos QB` to score ONE position,
+   the right metric for a position-gated feature whose effect is otherwise diluted ~15x by the pool).
+   ~52s for the two nested-CV runs on the parallel fold executor. ADMIT only if it clears the
+   `2.9*SE` effect-size floor (WS1). NB the ext table's canonical range is **2013+** (earlier FFC ADP
+   archives are late-stamped and break the pre-kickoff invariant); do not build it earlier.
 4. If admitted, it is still a **model change** -- re-check on the D13 playoff gate and get owner
    sign-off before it joins the defaults (the D14/D15 no-silent-model-change rule).
 
-## The three unscreened families, ranked
+## The three families, in detail (why-real / why-null, kept for re-screening)
 
-### P1 -- Advanced efficiency lags (NGS). Highest signal, moderate wiring.
+### P1 -- Advanced efficiency lags (NGS). SCREENED -> REJECT (all three, below floor; data-starved).
 - **Source:** `raw_ngs` (26,737 rows, **2016-2026** -- so ~9 training seasons; fewer rows than the
   workload features, which reduces power on the older folds). Per-week, split by `stat_type`
   (passing / receiving / rushing).
@@ -38,7 +73,7 @@ is a list, not a shrug.
 - **Cost:** position-split aggregation + join on `player_gsis_id` -> `player_sk`. One column per
   metric; screen the 2-3 most promising per position, not all of them (multiplicity, WS4).
 
-### P2 -- QB-change flag. Named candidate; full coverage; leakage-careful.
+### P2 -- QB-change flag. SCREENED -> REJECT (+0.0044 WR, floor 0.0101). Full coverage, leakage-careful.
 - **Source:** `raw_nfl_game.away_qb_id/home_qb_id` (starter per game, **1999-2026**) for the Y-1
   primary starter; `raw_depth_chart` (preseason `depth_rank`, as-of Sep 1) for the Y expected QB1.
 - **Candidate:** indicator `qb_changed` -- a skill player whose team's expected QB1 entering Y differs
@@ -51,7 +86,7 @@ is a list, not a shrug.
   `team_changed` already fires for most QB changes that matter (the player moved), and the pure
   same-team QB swap is rare enough to be underpowered.
 
-### P3 -- Durability / prior-season availability. Good coverage, cheapest (partly built).
+### P3 -- Durability / prior-season availability. SCREENED -> REJECT (-0.0024, holdout -0.0129).
 - **Source:** `raw_injury` (90,780 rows, **2009-2026**) and/or `raw_snap_count` games played. Note
   `src/features/sources/injuryDuration.ts` already builds `feat_injury_horizon` -- the plumbing for
   injury features partly exists, so this is the lowest-wiring candidate.

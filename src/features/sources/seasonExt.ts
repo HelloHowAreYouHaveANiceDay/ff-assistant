@@ -232,6 +232,96 @@ function adpFor(db: DB, yr: number, formats: string[], resolver: SourceResolver)
   return out;
 }
 
+/** FRONTIER P3 -- durability. Prior-season count of REG weeks the player was listed report_status
+ *  'Out'. Prior season => safe at the Sep-1 anchor. Keyed by gsis (the strong id in raw_injury). */
+function priorOutGames(db: DB, yr: number, resolver: SourceResolver): Map<number, number> {
+  const out = new Map<number, number>();
+  const rows = db.prepare(
+    `SELECT gsis_id, COUNT(DISTINCT week) n FROM raw_injury
+      WHERE season = ? AND report_status = 'Out' AND game_type = 'REG' AND gsis_id IS NOT NULL
+      GROUP BY gsis_id`,
+  ).all(yr) as { gsis_id: string; n: number }[];
+  for (const r of rows) {
+    const res = resolver.resolve({ gsis: r.gsis_id });
+    resolver.count("nflverse injuries (out-weeks)", res);
+    if (res.sk == null) continue;
+    out.set(res.sk, r.n);
+  }
+  return out;
+}
+
+/** FRONTIER P1 -- NGS advanced-efficiency lags, from the season-aggregate (week 0) row of the prior
+ *  season. One metric per position family, so the trainer gates each to its own positions:
+ *    rec  -> avg_yac_above_expectation (WR/TE)   rush -> ryoe_per_att (RB)   pass -> cpoe (QB)
+ *  NGS only tracks qualifying (high-volume) players, so these are non-null for the top ~120 rec / ~48
+ *  rush / ~40 pass players a season -- a narrow but real slice. Prior season => safe at the anchor. */
+function priorNgs(db: DB, yr: number, resolver: SourceResolver): Map<number, { yac_oe: number | null; ryoe: number | null; cpoe: number | null }> {
+  const out = new Map<number, { yac_oe: number | null; ryoe: number | null; cpoe: number | null }>();
+  const rows = db.prepare(
+    `SELECT player_gsis_id gsis, player_display_name name, player_position pos, team_abbr team,
+            stat_type, avg_yac_above_expectation yac, ryoe_per_att ryoe, cpoe
+       FROM raw_ngs WHERE season = ? AND week = 0 AND season_type = 'REG' AND player_gsis_id IS NOT NULL`,
+  ).all(yr) as { gsis: string; name: string; pos: string; team: string; stat_type: string; yac: number | null; ryoe: number | null; cpoe: number | null }[];
+  for (const r of rows) {
+    const res = resolver.resolve({ gsis: r.gsis, name: r.name, pos: r.pos, team: canonTeam(r.team ?? "") });
+    resolver.count("nflverse ngs", res);
+    if (res.sk == null) continue;
+    const cur = out.get(res.sk) ?? { yac_oe: null, ryoe: null, cpoe: null };
+    if (r.stat_type === "rec" && r.yac != null) cur.yac_oe = num(r.yac);
+    if (r.stat_type === "rush" && r.ryoe != null) cur.ryoe = num(r.ryoe);
+    if (r.stat_type === "pass" && r.cpoe != null) cur.cpoe = num(r.cpoe);
+    out.set(res.sk, cur);
+  }
+  return out;
+}
+
+/** FRONTIER P2 -- QB-change flag, PER TEAM, assigned to each skill player by his team. 1 iff the
+ *  team's Sep-1 expected QB1 differs from its prior-season primary starter.
+ *  LEAKAGE DISCIPLINE: the Y-1 starter is realized past data; the Y QB1 is the PRESEASON depth chart
+ *  (week-1 weekly row or the latest daily snapshot on or before Sep 1) -- NEVER a realized Y start.
+ *  Both QB ids are gsis (verified), so the comparison is one identity space. NULL for a team where
+ *  either side is unknown, so an undetermined case is not silently a 0. */
+function qbChangedByTeam(db: DB, yr: number): Map<string, number> {
+  const asOf = `${yr}-09-01`;
+  // Y-1 primary starter per team: the qb_id that started the most REG games for the team.
+  const startCount = new Map<string, Map<string, number>>();   // team -> qb_gsis -> starts
+  for (const g of db.prepare(
+    `SELECT away_team, home_team, away_qb_id, home_qb_id FROM raw_nfl_game
+      WHERE season = ? AND game_type = 'REG'`,
+  ).all(yr - 1) as { away_team: string; home_team: string; away_qb_id: string | null; home_qb_id: string | null }[]) {
+    for (const [team, qb] of [[g.away_team, g.away_qb_id], [g.home_team, g.home_qb_id]] as [string, string | null][]) {
+      const t = canonTeam(team); if (!t || !qb) continue;
+      const m = startCount.get(t) ?? new Map<string, number>();
+      m.set(qb, (m.get(qb) ?? 0) + 1);
+      startCount.set(t, m);
+    }
+  }
+  const priorStarter = new Map<string, string>();
+  for (const [t, m] of startCount) {
+    let best: string | null = null, bn = 0;
+    for (const [qb, n] of m) if (n > bn) { bn = n; best = qb; }
+    if (best) priorStarter.set(t, best);
+  }
+  // Y expected QB1 per team: preseason depth chart, position QB, depth_rank 1, at or before Sep 1.
+  const qb1 = new Map<string, string>();
+  for (const r of db.prepare(
+    `SELECT team, gsis_id, as_of, source_schema FROM raw_depth_chart
+      WHERE season = ? AND position = 'QB' AND depth_rank = 1 AND gsis_id IS NOT NULL
+        AND ((source_schema = 'weekly' AND week = 1) OR (source_schema = 'daily' AND as_of <= ?))
+      ORDER BY as_of`,
+  ).all(yr, asOf) as { team: string; gsis_id: string; as_of: string | null; source_schema: string }[]) {
+    const t = canonTeam(r.team); if (!t) continue;
+    qb1.set(t, r.gsis_id);                       // ordered by as_of: the latest at/before the anchor wins
+  }
+  const out = new Map<string, number>();
+  for (const [t, expected] of qb1) {
+    const prior = priorStarter.get(t);
+    if (!prior) continue;                        // undetermined: leave NULL rather than assume unchanged
+    out.set(t, expected === prior ? 0 : 1);
+  }
+  return out;
+}
+
 export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[]; adpFormats?: string[] }): Promise<SeasonExtResult> {
   const db = openDb(opts.dbPath);
   const resolver = buildSourceResolver(db);
@@ -243,9 +333,10 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
        draft_pick, contract_year, contract_year_signed, contract_years, contract_apy,
        prior_snap_share, prior_route_share, prior_carries_per_game, prior_carry_share,
        prior_air_yards_share, prior_wopr, depth_rank_sep1, injury_status_sep1, adp, adp_format,
-       adp_as_of, adp_stdev, resolved_by, updated_at)
+       adp_as_of, adp_stdev, prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe, qb_changed,
+       resolved_by, updated_at)
      VALUES (@sk,@season,@asOf,@team,@pos,@dy,@dr,@dp,@cy,@cys,@cyy,@capy,@snap,@route,@cpg,@cshare,
-       @ays,@wopr,@depth,@inj,@adp,@adpFmt,@adpAsOf,@adpSd,@by,@now)
+       @ays,@wopr,@depth,@inj,@adp,@adpFmt,@adpAsOf,@adpSd,@outg,@yacoe,@ryoe,@cpoe,@qbc,@by,@now)
      ON CONFLICT(season, player_sk) DO UPDATE SET
        as_of=excluded.as_of, team=excluded.team, pos=excluded.pos, draft_year=excluded.draft_year,
        draft_round=excluded.draft_round, draft_pick=excluded.draft_pick,
@@ -256,7 +347,10 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
        prior_air_yards_share=excluded.prior_air_yards_share, prior_wopr=excluded.prior_wopr,
        depth_rank_sep1=excluded.depth_rank_sep1, injury_status_sep1=excluded.injury_status_sep1,
        adp=excluded.adp, adp_format=excluded.adp_format, adp_as_of=excluded.adp_as_of,
-       adp_stdev=excluded.adp_stdev, resolved_by=excluded.resolved_by, updated_at=excluded.updated_at`,
+       adp_stdev=excluded.adp_stdev, prior_out_games=excluded.prior_out_games,
+       prior_yac_oe=excluded.prior_yac_oe, prior_ryoe=excluded.prior_ryoe,
+       prior_cpoe=excluded.prior_cpoe, qb_changed=excluded.qb_changed,
+       resolved_by=excluded.resolved_by, updated_at=excluded.updated_at`,
   );
 
   // The NFL draft, by surrogate key, from raw rather than re-fetched.
@@ -288,6 +382,9 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
     const depth = depthAtSep1(db, yr, resolver);
     const injury = injuryAtSep1(db, yr, resolver);
     const adp = adpFor(db, yr, formats, resolver);
+    const outGames = priorOutGames(db, yr - 1, resolver);   // FRONTIER P3: durability (prior season)
+    const ngs = priorNgs(db, yr - 1, resolver);             // FRONTIER P1: NGS efficiency lags (prior season)
+    const qbChg = qbChangedByTeam(db, yr);                  // FRONTIER P2: per-team QB-change flag (Sep-1 vs Y-1)
     const asOf = `${yr}-09-01`;
 
     let n = 0;
@@ -309,8 +406,13 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
         const d = draft.get(sk);
         const c = contract.get(sk);
         const a = adp.get(sk);
+        const team = u.team ?? pu?.team ?? null;
+        const ng = ngs.get(sk);
+        // qb_changed is a TEAM property; assign it by the player's team. canonTeam so the key matches
+        // the map qbChangedByTeam built. undefined (team unknown, or team undetermined) stays NULL.
+        const qbc = team ? qbChg.get(canonTeam(team) ?? "") : undefined;
         ins.run({
-          sk, season: yr, asOf, team: u.team ?? pu?.team ?? null, pos: normPos(u.pos ?? ""),
+          sk, season: yr, asOf, team, pos: normPos(u.pos ?? ""),
           dy: d?.year ?? null, dr: d?.round ?? null, dp: d?.pick ?? null,
           cy: c ? c.flag : null, cys: c?.signed ?? null, cyy: c?.years ?? null, capy: c?.apy ?? null,
           snap: orNull(snap.get(sk) ?? null), route: orNull(route.get(sk) ?? null),
@@ -319,6 +421,9 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
           ays: g ? pu!.ays / g : null, wopr: g ? pu!.wopr / g : null,
           depth: depth.get(sk) ?? null, inj: injury.get(sk) ?? null,
           adp: a?.adp ?? null, adpFmt: a?.format ?? null, adpAsOf: a?.asOf ?? null, adpSd: a?.sd ?? null,
+          outg: orNull(outGames.get(sk) ?? null),
+          yacoe: orNull(ng?.yac_oe ?? null), ryoe: orNull(ng?.ryoe ?? null), cpoe: orNull(ng?.cpoe ?? null),
+          qbc: qbc == null ? null : qbc,
           by: "player_sk from feat_player_season", now,
         });
         n++;
