@@ -383,6 +383,26 @@ Until then both levers stay at their shipped values (`consensusBlend=1`, `benchD
 
 This resolves D14.
 
+## Rigor program -- acceptance runs (2026-09-14)
+
+The three heavy acceptance runs the earlier work streams deferred, now executed:
+
+- **benchDiscount powered playoff re-test (bears on D14).** Fresh full backtests (0.25 -> 38.5%champ/96%playoff;
+  0.35 -> 39.7%/96%) + playoff-primary CPCV with the selection-blind 2021-2025 holdout: **PLAYOFFS +0.51pp
+  CI[-0.03,1.08], PBO 8%, resolvable >=0.85pp -> NULL**; titles +1.43pp CI[0.35,2.48] PBO 1% -> real; **holdout
+  confirm 2021-2024 = -0.83pp (1/4 up)** -- i.e. NEGATIVE, not the +1.67pp WS6 read (from surrogate dumps) that
+  justified KEEPING it. So on a direct powered re-test, benchDiscount is null-to-negative on the playoff gate and
+  real only on the no-skill title axis -- the SAME profile that demoted consensusBlend. **OPEN OWNER DECISION:**
+  the keep-rationale did not survive; benchDiscount now looks demotable (revert `--bench-discount 0.25`). Not
+  applied -- surfaced for sign-off, per the no-silent-revert rule. (Ledger: config_hash e625249e.)
+- **contract_year admission floor (WS1) -- INCONCLUSIVE as run.** `admit-feature.mjs --candidate contract_year`
+  added a feature that is ALREADY a default (INDICATOR_FEATURES), so it measured a no-op (0.0000 improvement,
+  reject). The correct check is LEAVE-ONE-OUT (remove contract_year, measure the loss vs the 2.9*SE floor), which
+  admit-feature does not yet support. FOLLOW-UP: add a `--remove` mode to admit-feature and re-run.
+- **Adjacent-season embargo (WS3) -- CONFIRMED at full scale.** The 18-fold `--embargo 1 --keep-artifacts
+  data/fold-artifacts-2b-embargo` regen ran (P5 HELD, coverage 0.752 in band); the 2015 fold artifact EXCLUDES
+  2014 and includes 2013 (max 2013). The embargo mechanism works end-to-end at full 18-fold scale.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
