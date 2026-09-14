@@ -190,10 +190,14 @@ export async function evaluateProjection(opts: {
   if (embargo > 0) log(`  ADJACENT-SEASON EMBARGO: --embargo ${embargo}; each fold also drops the ${embargo} season(s) before its holdout from training.`);
   // Read ONCE and echoed, so every fold in a run fits the same model and the reader is told which.
   const addFeatures = (process.env.FF_ADD_FEATURES ?? "").trim();
+  // LEAVE-ONE-OUT (admit-feature --remove): the symmetric case -- fit the shipped design MINUS a named
+  // default column, so the difference vs the untouched default is that feature's own contribution.
+  const removeFeatures = (process.env.FF_REMOVE_FEATURES ?? "").trim();
   log(addFeatures
     ? `  ADMISSION RUN: the trainer is fitting with --add-features ${addFeatures}. Every number below ` +
       "is that model's, not the shipped one's."
     : "  baseline run: no --add-features (set FF_ADD_FEATURES to admit an extension column)");
+  if (removeFeatures) log(`  LEAVE-ONE-OUT: the trainer is fitting with --remove-features ${removeFeatures} (shipped design minus that column).`);
   const dir = opts.keepArtifacts ?? mkdtempSync(join(tmpdir(), "ff-eval-"));
   const db = openDb(opts.dbPath);
   // Every fold's db reads are SYNCHRONOUS better-sqlite3 calls, so they cannot interleave across folds
@@ -240,6 +244,8 @@ export async function evaluateProjection(opts: {
         // phase; the report header PRINTS it, so a run cannot quietly be a different model from
         // the one the reader thinks they are looking at -- which is the only property that matters.
         ...(addFeatures ? ["--add-features", addFeatures] : []),
+        // LEAVE-ONE-OUT (symmetric to --add-features; the report header printed it above).
+        ...(removeFeatures ? ["--remove-features", removeFeatures] : []),
       ], {
         timeout: 1800000,
         env: { ...process.env, OMP_NUM_THREADS: "1", OPENBLAS_NUM_THREADS: "1", MKL_NUM_THREADS: "1" },

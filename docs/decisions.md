@@ -395,10 +395,18 @@ The three heavy acceptance runs the earlier work streams deferred, now executed:
   real only on the no-skill title axis -- the SAME profile that demoted consensusBlend. **OPEN OWNER DECISION:**
   the keep-rationale did not survive; benchDiscount now looks demotable (revert `--bench-discount 0.25`). Not
   applied -- surfaced for sign-off, per the no-silent-revert rule. (Ledger: config_hash e625249e.)
-- **contract_year admission floor (WS1) -- INCONCLUSIVE as run.** `admit-feature.mjs --candidate contract_year`
-  added a feature that is ALREADY a default (INDICATOR_FEATURES), so it measured a no-op (0.0000 improvement,
-  reject). The correct check is LEAVE-ONE-OUT (remove contract_year, measure the loss vs the 2.9*SE floor), which
-  admit-feature does not yet support. FOLLOW-UP: add a `--remove` mode to admit-feature and re-run.
+- **contract_year admission floor (WS1) -- RESOLVED: leave-one-out says DROP (2026-09-14).** The earlier run
+  was INCONCLUSIVE because `--candidate contract_year` added a feature already in the defaults (a no-op; the
+  trainer refuses to duplicate a column). The follow-up is done: `admit-feature.mjs` now has a `--remove`
+  (LEAVE-ONE-OUT) mode + a `--remove-features` trainer flag, fault-verified (errors on an absent column; the
+  default artifact carries contract_year in 25 specs, the `--remove-features` artifact in 0). Re-run
+  `--candidate contract_year --remove --seasons 2008-2025`: **the feature's own contribution is +0.0039 pinball
+  (SE 0.0035), floor 0.0100, wins 3/9 -> DROP** (within the floor = noise); holdout 2021-2025 confirm +0.0181,
+  floor 0.0593, NOT confirmed. This matches the trainer's own comment (train_projection.py:132-141: contract_year
+  "PREDATES that floor and would not clear it"). **RECOMMENDATION (owner decision, NOT applied):** remove
+  contract_year from `INDICATOR_FEATURES`/`EXT_INDICATOR` (a one-line drop) -- it is a noise feature the WS1
+  floor was built to catch. Not auto-removed: dropping a default column changes the shipped projection model
+  (draft board + in-season), so it wants a playoff-gate check and sign-off, per the no-silent-model-change rule.
 - **Adjacent-season embargo (WS3) -- CONFIRMED at full scale.** The 18-fold `--embargo 1 --keep-artifacts
   data/fold-artifacts-2b-embargo` regen ran (P5 HELD, coverage 0.752 in band); the 2015 fold artifact EXCLUDES
   2014 and includes 2013 (max 2013). The embargo mechanism works end-to-end at full 18-fold scale.
