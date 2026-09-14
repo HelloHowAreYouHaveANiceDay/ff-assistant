@@ -117,28 +117,27 @@ export const MODELS: ModelSpec[] = [
     // Measured by `ff evaluate-projection --seasons 2008-2025`: the SHIPPED projector, the trainer
     // re-invoked blind to each held-out season and fitted only on seasons BEFORE it, scored against
     // two baselines computed by the same code path, pooled over 14 held-out seasons. R-squared of
-    // the trained artifact 0.542 against carry-forward's 0.432, with curve-only between them at
-    // 0.497. It was 0.520 (lift 0.0880) before Phase 2d admitted `depth_rank_sep1` and
-    // `contract_year`, and the whole of that move is at quarterback: QB R-squared 0.600 against
-    // curve-only's 0.479, an RMSE of 76.8 against 87.9.
-    nestedLift: 0.1100, claimedLift: null,
+    // the D16 artifact 0.580 against carry-forward's 0.432, with curve-only between them at 0.497.
+    // History of this number: 0.520 (lift 0.0880) before Phase 2d admitted `depth_rank_sep1`; 0.542
+    // (lift 0.1100) from Phase 2d to D16; 0.580 now that the served heads are boosted and FFToday's
+    // projection is a feature. QB R-squared 0.655 against curve-only's 0.479 (RMSE 71.3 vs 87.9).
+    nestedLift: 0.1480, claimedLift: null,
     what: "the projection ARTIFACT the board and the backtest both evaluate. It carries its OWN " +
       "curve -- window, monotone repair and ECR level weight selected per position by " +
-      "forward-chaining inner CV -- plus named features with per-position coefficients and " +
-      "p10/p50/p90 heads fitted over ranks 1-60. The TRAINED artifact ships: it passed the " +
-      "pre-registered P5 gate on the pooled 2015-2025 holdouts at " +
-      "RMSE 52.79 vs curve-only 55.54, pinball 12.02 vs 13.16, coverage 0.760 in [0.75, 0.85] " +
-      "with every rank band in [0.70, 0.90]. THOSE ARE THE PHASE 2D NUMBERS and they are quoted " +
-      "here because two features were admitted in that phase and the registry still carried the " +
-      "figures from before them: `depth_rank_sep1` (the September depth-chart rank, the strongest " +
-      "candidate the screen has ever produced at rho -0.186) took RMSE 54.17 -> 52.79 and pinball " +
-      "12.31 -> 12.03, and `contract_year` took pinball 12.03 -> 12.02 with RMSE unchanged. Almost " +
-      "all of the gain is at QUARTERBACK -- 76.8 against 82.4 -- which is where a September depth " +
-      "chart says the most: a starter is a starter, a backup scores nothing, and a curve indexed on " +
-      "last year's finish cannot see a job change. `contract_year` clears the keep-rule by 0.01 of " +
-      "pinball and is recorded that way rather than dressed up; a rule with no effect-size floor " +
-      "will eventually admit noise. The 54.17 line was itself 54.32 / 12.39 / 0.764 before Phase 2c " +
-      "reconciled the surrogate keys",
+      "forward-chaining inner CV -- plus named features on a transformed design. SINCE D16 " +
+      "(2026-09-14, schema 2, learner \"gbm\") the QB/RB/WR/TE heads are gradient-boosted ensembles " +
+      "carried on the artifact and walked by projector.ts (golden-checked against scikit-learn's own " +
+      "predict), with the quantile heads split-conformally calibrated on train-only out-of-fold " +
+      "residuals; K/DST stay on the linear intercept-only heads; FFToday's preseason projection " +
+      "(`fftoday_proj`) is a default feature. It passed the pre-registered P5 gate on the pooled " +
+      "2015-2025 holdouts at RMSE 50.62 vs curve-only 55.54, pinball 11.32 vs 13.16, coverage 0.757 " +
+      "in [0.75, 0.85] with every rank band in [0.70, 0.90] (0.802 / 0.810 / 0.821 / 0.773 / 0.751 / " +
+      "0.716), and the served model re-gated against the linear one with the same features at " +
+      "+0.2485 pinball (9/9 seasons), holdout +0.3317 (5/5). Before D16 the linear Phase 2d artifact " +
+      "shipped at 52.79 / 12.02 / 0.760 (`depth_rank_sep1` took RMSE 54.17 -> 52.79; `contract_year` " +
+      "was later dropped under the WS1 floor). The boosted heads FAILED coverage on first measurement " +
+      "(0.729) and were calibrated per D11's own remedy, not tuned against the gate -- recorded that " +
+      "way rather than dressed up. docs/validation.md (D16 section) and docs/decisions.md D16",
     check: (j) => {
       // Loaded through the SHIPPED loader, not re-validated here. A second validator in the registry
       // would be a second opinion about the same contract, and the two would drift -- which is the
