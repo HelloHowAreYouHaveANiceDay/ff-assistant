@@ -142,6 +142,11 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
     }
     for (const l of Object.values(byPos)) { l.sort((a, b) => b.pts - a.pts); l.forEach((x, i) => poolRank.set(x.name, { rank: i, of: l.length })); }
   }
+  // THE STORED SCHEDULE, read while the handle is open, for the fallback below. `ff league-sync`
+  // writes this league's matchups here; the ids are the same ESPN team ids `ownership` keys on.
+  const storedMatchups = db.prepare(
+    "SELECT week, home_id, away_id, fetched_at FROM raw_league_matchup WHERE season=? AND league_id=? ORDER BY week",
+  ).all(cfg.season, lgRow.league_id) as { week: number; home_id: string; away_id: string; fetched_at: string }[];
   db.close();
 
   // THE FORMAT, from the block that has a source. `cfg.regWeeks ?? 14` used to live here, alongside
@@ -156,6 +161,7 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
    *  GENERATED schedule can supply this; the real one is read back below from the format block. */
   let divisionOf: number[] | undefined;
   if (want !== "generated") {
+    let liveErr: Error | null = null;
     try {
       const { openLeague } = await import("../league/index.js");
       const lg = await openLeague();
@@ -172,7 +178,30 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
         if (weeks.length) syntheticSchedule = false;
       }
     } catch (e) {
-      if (want === "real") throw new Error(`real schedule unavailable: ${(e as Error).message}`, { cause: e });
+      liveErr = e as Error;
+    }
+    // THE STORED FALLBACK (2026-09-14). The live read goes through the app's embedded ESPN page over
+    // its CDP port, and an app instance that did not get the port at launch (another instance had it)
+    // runs fine with no CDP at all -- so "real schedule unavailable" was reporting a transport
+    // problem as a data problem while the league's actual matchups sat in the store from the last
+    // sync. This league's schedule does not change mid-season; the synced copy IS the real one.
+    // Which source served is printed, because a REAL label that could mean two things is a label.
+    if (!weeks.length && storedMatchups.length) {
+      const idx = new Map(teams.map((t, i) => [String(t.id), i]));
+      for (let w = 1; w <= regWeeks; w++) {
+        const g = storedMatchups.filter((x) => x.week === w)
+          .map((x) => [idx.get(String(x.home_id)), idx.get(String(x.away_id))] as [number, number])
+          .filter(([a, b]) => a != null && b != null);
+        if (g.length) weeks.push(g);
+      }
+      if (weeks.length) {
+        syntheticSchedule = false;
+        console.warn(`schedule: REAL, from the store's synced matchups (${storedMatchups.length} games, synced ${storedMatchups[0].fetched_at})` +
+          (liveErr ? ` -- the live read failed: ${liveErr.message.split("\n")[0]}` : " -- the live read returned nothing"));
+      }
+    }
+    if (!weeks.length && want === "real") {
+      throw new Error(`real schedule unavailable: ${liveErr?.message ?? "the provider returned no games"}; and the store holds no synced matchups for this league-season (run ff league-sync)`, { cause: liveErr ?? undefined });
     }
   }
   if (!weeks.length) {
