@@ -55,10 +55,11 @@ test("buildModelPage assembles weeklyServe from STREAM_SERVE_POS/SHIPPED_STREAMI
   const positions = page.weeklyServe.map((r) => r.pos);
   assert.deepEqual(positions, ["QB", "RB", "WR", "TE", "K", "DST"]);
   const shipped = page.weeklyServe.filter((r) => r.shipped).map((r) => r.pos).sort();
-  // `shipped` means "a non-floor model serves this position". Under D17 (2026-09-14, docs/decisions.md)
-  // the per-position gate on honest season lines ships the form model at QB/RB/WR/TE and keeps the
-  // floor at K and DST (a tie to the third decimal), so exactly those four are shipped.
-  assert.deepEqual(shipped, ["QB", "RB", "TE", "WR"]);
+  // `shipped` means "a non-floor model serves this position". D17 (2026-09-14) ships the form model at
+  // QB/RB/WR/TE; D20 (2026-09-14, docs/decisions.md) then ships the DST matchup model at DST (it beats
+  // the floor on the opponent columns absent from the weekly set). K stays on the floor (a NULL), so
+  // exactly five positions are shipped.
+  assert.deepEqual(shipped, ["DST", "QB", "RB", "TE", "WR"]);
   db.close();
 });
 

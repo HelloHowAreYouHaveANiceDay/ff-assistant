@@ -33,6 +33,21 @@ import {
 export const STREAMING_ARTIFACT = "streaming-artifact.json";
 
 /**
+ * THE DST MATCHUP MODEL, from tools/train_dst_stream.py (docs/decisions.md D20).
+ *
+ * A WeeklyArtifact like any other -- schema 2, linear, ratio_to_season_line -- carrying a mean head
+ * and three quantile heads for DST only, fitted on the twelve `feat_player_week_stream` matchup
+ * columns (opponent implied total dominant). It serves through `projectWeekly` unchanged, so nothing
+ * new runs at the serve boundary; the only change is that `WEEKLY_SERVE["DST"]` names this file
+ * instead of the floor. A missing matchup column imputes to its centred mean, so an unknown-matchup
+ * DST degrades to line * intercept ~= the season-line floor -- honest, linear, no tree cliff. The
+ * blind-LOSO gate (tools/train_dst_stream.py --gate) beats the floor on accuracy (MAE holdout +0.126,
+ * 5/5) and, the edge that matters, on the STREAMABLE pick (+2.66 realized pts/wk holdout, 5/5); the
+ * served OOS corr(pred, actual) is 0.25 against the floor's 0.04. K stays on the floor (a NULL).
+ */
+export const DST_STREAM_ARTIFACT = "dst-stream-artifact.json";
+
+/**
  * WHAT SHIPS, PER POSITION. THE SINGLE TABLE, and every consumer reads it.
  *
  * Three artifacts can serve a position. `SHIPPED_WEEKLY_ARTIFACT` is the season-line floor -- every
@@ -69,6 +84,17 @@ export const STREAMING_ARTIFACT = "streaming-artifact.json";
  * (2.4747 vs 2.4725, 3.1334 vs 3.1328) and fail clause (a) by that hair. So K and DST serve the
  * floor, which is what the measurement says and costs nothing either way.
  *
+ * 2026-09-14 -- DST NOW SHIPS THE MATCHUP MODEL (docs/decisions.md D20, docs/validation.md). The
+ * WEEKLY feature set that tied the floor above did not include the point-in-time OPPONENT columns
+ * (`feat_player_week_stream`: what the opponent allows, the stadium, the Vegas implied total). A DST
+ * model fitted on those (`DST_STREAM_ARTIFACT`, tools/train_dst_stream.py) beats the floor MATERIALLY
+ * -- on the blind 2021-2025 holdout, accuracy MAE +0.126 (5/5) and the STREAMABLE pick +2.66 realized
+ * pts/wk (5/5), with served OOS corr(pred, actual) 0.25 vs the floor's 0.04. It is still a
+ * WeeklyArtifact served by `projectWeekly` unchanged, so this is a one-line table move, and reverting
+ * DST to the floor is the one-line move back to `SHIPPED_WEEKLY_ARTIFACT`. K stays on the floor: on
+ * the same features its streamable pick is a NULL and loses the full-pool pick, so there is nothing
+ * to ship.
+ *
  * WHY THIS IS A TABLE AND NOT A LIST OF "POSITIONS WHERE X SHIPS": with candidate models the list
  * form needs lists whose overlap nobody checks, and a position in both is served by whichever list is
  * consulted first. The table cannot express that state.
@@ -79,7 +105,7 @@ export const WEEKLY_SERVE: Record<string, string> = {
   WR: CHALLENGER_WEEKLY_ARTIFACT,
   TE: CHALLENGER_WEEKLY_ARTIFACT,
   K: SHIPPED_WEEKLY_ARTIFACT,
-  DST: SHIPPED_WEEKLY_ARTIFACT,
+  DST: DST_STREAM_ARTIFACT,
 };
 
 /**

@@ -15,7 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { streamRecommend, type AvailabilityMap, type StreamPlayer } from "../src/inseason/copilot.js";
 import { fixtureCtx, key } from "./fixtures/copilot-league.js";
-import { artifactForPos, WEEKLY_SERVE, topStreamPick, type StreamProj } from "../src/weekly/streamingServe.js";
+import { artifactForPos, WEEKLY_SERVE, topStreamPick, DST_STREAM_ARTIFACT, type StreamProj } from "../src/weekly/streamingServe.js";
 import { SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
 
 /** Build a pool row. `ours`/`rostered` are what the caller resolves from the league. */
@@ -175,16 +175,17 @@ test("stream: a position with NO projections says so rather than recommending no
 // =============================================================================================
 
 test("artifactForPos: each position resolves through WEEKLY_SERVE; an UNMAPPED position falls to the FLOOR", () => {
-  // D17 (2026-09-14): the per-position gate on honest season lines -- QB/RB/WR/TE ship the form
-  // model, K and DST tie the floor to the third decimal and serve it. Asserted BY NAME so a position
-  // quietly left on the wrong artifact cannot pass on the table agreeing with itself.
-  const D17: Record<string, string> = {
+  // D17 (2026-09-14) ships the form model at QB/RB/WR/TE; D20 (2026-09-14) then ships the DST matchup
+  // model at DST (it beats the floor on the opponent columns absent from the weekly set). K stays on
+  // the floor. Asserted BY NAME so a position quietly left on the wrong artifact cannot pass on the
+  // table agreeing with itself.
+  const WANT: Record<string, string> = {
     QB: CHALLENGER_WEEKLY_ARTIFACT, RB: CHALLENGER_WEEKLY_ARTIFACT, WR: CHALLENGER_WEEKLY_ARTIFACT,
-    TE: CHALLENGER_WEEKLY_ARTIFACT, K: SHIPPED_WEEKLY_ARTIFACT, DST: SHIPPED_WEEKLY_ARTIFACT,
+    TE: CHALLENGER_WEEKLY_ARTIFACT, K: SHIPPED_WEEKLY_ARTIFACT, DST: DST_STREAM_ARTIFACT,
   };
   for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
     assert.equal(artifactForPos(pos), WEEKLY_SERVE[pos], `${pos} does not resolve through the table`);
-    assert.equal(artifactForPos(pos), D17[pos], `${pos} is served by ${artifactForPos(pos)}, not the D17 measurement's ${D17[pos]}`);
+    assert.equal(artifactForPos(pos), WANT[pos], `${pos} is served by ${artifactForPos(pos)}, not the D20 measurement's ${WANT[pos]}`);
   }
   // FAULT INJECTION on the fallback: a position with NO table entry must fall to the FLOOR, not to
   // whatever the last mapped position returned -- proving the `?? floor` branch is live.

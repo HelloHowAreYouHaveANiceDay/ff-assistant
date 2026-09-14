@@ -1,5 +1,30 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## SHIPPED (D20): DST is served by a matchup model, not the season-line floor (2026-09-14)
+>
+> D17/D19 kept DST an intercept (the floor) because on the WEEKLY feature set it tied the floor to the
+> third decimal. That set omits the point-in-time OPPONENT columns in `feat_player_week_stream` (what the
+> opponent allows, the stadium, the Vegas implied total). A screen found DST weekly points ARE
+> predictable from those columns, and it reproduces end-to-end on the SERVED arithmetic
+> (`tools/train_dst_stream.py --gate`, blind LOSO, unit = season, paired):
+> - **Connection proven:** out-of-sample corr(pred, actual) **0.251 vs the floor's 0.043** (a
+>   fault-injected leak feature dominates the real coefficients; the opponent implied total is dominant).
+> - **Accuracy (the gate the sim can predict):** paired-season MAE **+0.126 on the selection-blind
+>   2021-2025 holdout, 5/5** (SELECTION +0.143, 9/9); CRPS agrees.
+> - **Decision (the edge that matters):** the model's top STREAMABLE DST (excluding the top-12 elites)
+>   beats the season-line pick by **+2.66 realized pts/wk on the holdout, 5/5** (model 8.72 vs floor
+>   6.46). Full-pool pick holdout is a NULL, as in the screen; the streamable tier is the real decision.
+> - **K stays a NULL and stays on the floor:** its streamable pick does not clear the floor and it loses
+>   the full-pool pick (8.20 vs 8.85). Nothing to ship at K.
+> - **Serve-safe forward (the D19 deployed-artifact lesson, verified not assumed):** ridge over a GBM so
+>   a missing matchup column imputes to its mean and routes an unknown-matchup DST to `line * intercept`
+>   ~= the floor -- linear, no tree cliff. `ff copilot stream --pos DST` is sane and matchup-differentiated
+>   for the live 2026 current week AND for forward weeks 10/15 where `opp_implied_total` is entirely
+>   absent (0 non-finite rows; projections narrow to the floor rather than collapse).
+> - Route: one-line `WEEKLY_SERVE["DST"] = DST_STREAM_ARTIFACT`, served by `projectWeekly` unchanged;
+>   both DST consumers read the table. Reversal is the one line back to the floor. Full record:
+>   docs/decisions.md D20, docs/weekly.md section 9; regression guard `test/dst-stream-serve.test.ts`.
+
 > ## SHIPPED (D19): the weekly lineup model is gradient-boosted -- a rung-4 rigor pass found the real edge (2026-09-14)
 >
 > The fan-out below found no NEW predictive feature, but it exposed that the WEEKLY model itself was

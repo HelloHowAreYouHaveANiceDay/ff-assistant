@@ -662,6 +662,50 @@ the linear one; `src/weekly/projector.ts` serves the retained linear `coef` head
 dvp is a second, independent revert (re-add `dvp_mult`/`dvp_n` to `WEEKLY_FEATURE_FIELDS` and the
 trainer lists, rebuild).
 
+## D20 -- DST is served by a matchup (streaming-feature) model, not the season-line floor (2026-09-14, APPLIED)
+
+D17 left K and DST on the season-line floor because on the WEEKLY feature set they tied it to the
+third decimal. That feature set did NOT include the point-in-time OPPONENT columns in
+`feat_player_week_stream` -- what the opponent allows per position, the stadium, and the Vegas implied
+total. A screen (scripts/`kdst-stream-probe.mjs`, `kdst-stream-export.mjs`, `kdst_stream_fit.py`) proved
+DST weekly points ARE predictable from those columns, materially better than the floor. Reproduced
+end-to-end on the SERVED arithmetic (`tools/train_dst_stream.py --gate`, blind LOSO):
+
+- **Connection:** out-of-sample corr(pred, actual) **0.251 vs the floor's 0.043**; the opponent implied
+  total is the dominant feature (a fault-injected leak feature dominates the real coefficients, so the
+  harness can see signal).
+- **Accuracy (the gate the sim can predict):** paired-season MAE improvement **+0.126 on the 2021-2025
+  holdout, 5/5 seasons** (SELECTION +0.143, 9/9); CRPS agrees.
+- **Decision (the edge that matters):** picking the model's top STREAMABLE DST (excluding the top-12
+  always-rostered elites) beats the season-line pick by **+2.66 realized pts/wk on the holdout, 5/5**
+  (model 8.72 vs floor 6.46; SELECTION +2.03, 9/9). The FULL-pool pick holdout is a NULL, as in the
+  screen; the streamable tier is the one a manager actually decides.
+- **K STAYS ON THE FLOOR.** On the same features K's streamable pick is a NULL and it LOSES the
+  full-pool pick (8.20 vs 8.85). Nothing to ship; K is unchanged.
+
+WHAT SHIPPED. `tools/train_dst_stream.py` fits a ridge mean head + three linear quantile heads on the
+ratio `pts / season_line_pg` (so the WeeklyArtifact serve `line * clamp(ratio)` applies) from the twelve
+matchup columns, full-data for `data/dst-stream-artifact.json` and blind per-season for the gate. It
+REUSES `train_weekly.py`'s feature/serve arithmetic (the golden source mirrored in
+`src/weekly/projector.ts`), self-checks `evaluate()` against scikit-learn's own prediction to 1e-9
+before writing, and carries a golden block the TS loader re-checks to 1e-6. The route is a one-line
+table move: `WEEKLY_SERVE["DST"] = DST_STREAM_ARTIFACT` in `src/weekly/streamingServe.ts`. Both DST
+consumers read that table -- `stream_recommend` via `loadStreamingProjection`, and the season
+simulator's weekly DST points via `loadWeeklyProjection` -> `projectStreamingWith` -- so nothing new
+runs at the serve boundary and there is nothing new to collapse.
+
+SERVE ROBUSTNESS (the D19 lesson, verified not assumed). Ridge was chosen over a GBM precisely because a
+linear head cannot have a tree cliff: a missing matchup column imputes to its centred mean (0), routing
+an unknown-matchup DST to `line * intercept` ~= the season-line floor. Verified on the live 2026 board:
+`ff copilot stream --pos DST` for the CURRENT week (week 1: sane, START MIN D/ST 5.51, top free TEN D/ST
+7.26, differentiated by matchup) AND FORWARD weeks 10/15 where `opp_implied_total` is entirely absent
+(0 non-finite rows; projections narrow to 5.4-6.3, i.e. degrade to ~the floor, no NaN/collapse).
+`test/dst-stream-serve.test.ts` locks this in.
+
+REVERSAL CONDITION: the live 2026 scorecard turning against the DST model, or a preference to simplify.
+The one-line revert is `WEEKLY_SERVE["DST"] = SHIPPED_WEEKLY_ARTIFACT` in `src/weekly/streamingServe.ts`
+(back to the floor); the artifact and trainer can stay on disk unused.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

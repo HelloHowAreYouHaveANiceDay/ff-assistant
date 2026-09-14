@@ -27,7 +27,7 @@ import {
 import { seasonLineOnlyArtifact, CHALLENGER_WEEKLY_ARTIFACT, SHIPPED_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
 import {
   WEEKLY_SERVE, STREAM_SERVE_POS, artifactForPos, serveTable, formatServeTable,
-  SHIPPED_STREAMING_POSITIONS, STREAMING_ARTIFACT, SERVE_POSITIONS_FOR,
+  SHIPPED_STREAMING_POSITIONS, STREAMING_ARTIFACT, SERVE_POSITIONS_FOR, DST_STREAM_ARTIFACT,
 } from "../src/weekly/streamingServe.js";
 import type { ScheduleInfo } from "../src/weekly/features.js";
 
@@ -93,23 +93,29 @@ test("the serve table is ONE table: every position resolves through it and the d
   for (const pos of STREAM_SERVE_POS) assert.ok(printed.includes(pos), `${pos} is missing from the printed table`);
 });
 
-test("2026-09-14 D17: the FORM model serves QB/RB/WR/TE, the FLOOR serves K/DST, streaming ships nowhere", () => {
-  // docs/decisions.md D17 (retiring the D11 override): re-gated on season lines blind to their own
-  // season, the form model passes every clause on its own merit and the per-position gate says
-  // QB/RB/WR/TE ship it while K and DST tie the floor (2.4747 vs 2.4725; 3.1334 vs 3.1328) and serve
-  // it. The streaming artifact serves NONE. This asserts the DECISION itself, by name -- the generic
-  // "table agrees with its own derivation" check above would still pass if a position were quietly
-  // left on the wrong artifact, because it never states what the table is SUPPOSED to say.
+test("2026-09-14 D20: the FORM model serves QB/RB/WR/TE, the DST MATCHUP model serves DST, the FLOOR serves K, streaming ships nowhere", () => {
+  // docs/decisions.md D17 shipped the form model at QB/RB/WR/TE and left K and DST on the floor
+  // because on the WEEKLY feature set they tied it. D20 supersedes the DST half: fitted on the
+  // point-in-time OPPONENT columns (feat_player_week_stream, absent from the weekly set), a DST
+  // matchup model beats the floor materially on the blind 2021-2025 holdout -- accuracy MAE +0.126
+  // (5/5) and the STREAMABLE pick +2.66 realized pts/wk (5/5), served OOS corr 0.25 vs the floor's
+  // 0.04 (tools/train_dst_stream.py --gate). So DST now serves DST_STREAM_ARTIFACT. K stays on the
+  // floor (its streamable pick is a NULL). The streaming artifact still serves NONE. This asserts the
+  // DECISION itself, by name -- the generic "table agrees with its own derivation" check above would
+  // still pass if a position were quietly left on the wrong artifact.
   const want: Record<string, string> = {
     QB: CHALLENGER_WEEKLY_ARTIFACT, RB: CHALLENGER_WEEKLY_ARTIFACT, WR: CHALLENGER_WEEKLY_ARTIFACT,
-    TE: CHALLENGER_WEEKLY_ARTIFACT, K: SHIPPED_WEEKLY_ARTIFACT, DST: SHIPPED_WEEKLY_ARTIFACT,
+    TE: CHALLENGER_WEEKLY_ARTIFACT, K: SHIPPED_WEEKLY_ARTIFACT, DST: DST_STREAM_ARTIFACT,
   };
   for (const pos of STREAM_SERVE_POS) {
     assert.equal(WEEKLY_SERVE[pos], want[pos],
-      `${pos} is served by ${WEEKLY_SERVE[pos]}, not ${want[pos]} -- the D17 per-position measurement is not in effect`);
+      `${pos} is served by ${WEEKLY_SERVE[pos]}, not ${want[pos]} -- the D20 per-position measurement is not in effect`);
   }
+  // DST is NOT on the floor any more; K is.
+  assert.equal(WEEKLY_SERVE.DST, DST_STREAM_ARTIFACT, "DST must serve the matchup model after D20");
+  assert.equal(WEEKLY_SERVE.K, SHIPPED_WEEKLY_ARTIFACT, "K must stay on the floor after D20");
   assert.deepEqual([...SHIPPED_STREAMING_POSITIONS].sort(), [],
-    "SHIPPED_STREAMING_POSITIONS is not empty -- the streaming artifact should ship nowhere after D11/D17");
+    "SHIPPED_STREAMING_POSITIONS is not empty -- the streaming artifact should ship nowhere after D11/D17/D20");
 });
 
 test("the snapshot serves the `weekly` model PER POSITION and records which artifact produced each row", async () => {
