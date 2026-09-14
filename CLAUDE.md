@@ -143,8 +143,15 @@ that is defined but not wired reads exactly like a lever that does nothing.
   changed nothing. Use the **Edit/Write tools** for anything with escapes or quotes.
 - Backticks inside a double-quoted `python -c "..."` are **command substitution to bash**.
 - Bash-tool cwd resets between calls — always `cd <repo> && ...` in one call.
-- A backgrounded job survives a tool timeout and stays invisible to `ps`; two concurrent backtests
-  turned a 2-minute job into a 2-hour stall. Run sweeps **sequentially** and check for orphans.
+- A backgrounded job survives a tool timeout and stays invisible to Git Bash `ps`; two concurrent
+  backtests once turned a 2-minute job into a 2-hour stall. That stall was **orphaned background jobs**,
+  NOT CPU oversubscription: a single `ff backtest` is **single-threaded -- MEASURED at 1.03 of 32 cores
+  (3.2%), 2026-09-14** (the `runPool` worker pool in `src/draft/simPool.ts` is used by nothing but its
+  own self-test; the season loop is a plain synchronous `for`). So N concurrent backtests use N cores of
+  32 and do NOT oversubscribe -- the real hazards are orphans invisible to `ps` and the shared `data/ff.db`
+  writer. If you DO want to parallelise a sweep, use the `src/util/pool.ts` primitive (`pMap` +
+  `withCpuSlot`; the global `cpuBudget` bounds the whole tree), each backtest a single-core task -- the
+  same primitive the nested-CV fold loop now uses. Still check for orphans by exact PID after any fan-out.
 
 ## Setup on a new machine
 
