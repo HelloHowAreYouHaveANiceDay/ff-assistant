@@ -100,6 +100,11 @@ objective (playoffs-primary). **No optimum moved -- the shipped posture holds un
   stored). Flagless golden master moved 41.3% -> 42.3% / 97%. It is a SELECTED thin edge (~+1pp, near the
   floor), so the magnitude may be winner's-curse-inflated -- but the 0.3-0.4 plateau + PBO 1% + arbiter
   CI clearing 0 support the direction; treat it as a real but modest improvement, tunable via the lever.
+  - **DEMOTED 0.35 -> 0.25 (D15, 2026-09-14).** The +1.09pp above is TITLE% -- the no-skill axis D13 later
+    demoted from the gate. The rigor program's powered playoff re-test found benchDiscount NULL on the playoff
+    gate (+0.51pp, PBO 8%, res ~0.85pp) with a NEGATIVE holdout playoff confirm (-0.83pp on 2021-24), so the
+    default and stored lever were reverted to 0.25. The title finding here still stands as a TITLE-axis result;
+    it just is not sufficient under D13. See docs/decisions.md D15 and docs/edges.md.
 
 So the answer to "have we re-run the levers under the new model?": yes, on the powered instrument, and
 the consensus edge did not destabilise any lever. The 13 levers are now drift-aware ledger experiments;

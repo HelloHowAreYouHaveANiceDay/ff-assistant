@@ -84,11 +84,14 @@ export interface LeverSpec {
   note?: string;
 }
 
-// Defaults = the shipped, holdout-validated posture: aggr 0.7 / benchDiscount 0.35 / starterReserve 4
-// / maxShare 0.25 / premium 2 / consensusBlend 0, all positional multipliers 1.0. consensusBlend was
-// DEMOTED 1->0 by D14 (2026-09-13): null on the D13 playoff gate and fails family-wide FDR (WS4/WS6),
-// real only on the no-skill title axis. benchDiscount 0.35 is KEPT (holdout-positive on playoffs)
-// pending a powered re-test. See docs/edges.md and docs/decisions.md D13/D14.
+// Defaults = the shipped, holdout-validated posture: aggr 0.7 / benchDiscount 0.25 / starterReserve 4
+// / maxShare 0.25 / premium 2 / consensusBlend 0, all positional multipliers 1.0. Two demotions on the
+// D13 playoff gate: consensusBlend 1->0 (D14, 2026-09-13) and benchDiscount 0.35->0.25 (D15,
+// 2026-09-14). BOTH were title-only edges that are NULL on the playoff gate the sim can actually
+// predict -- benchDiscount's powered re-test measured playoffs +0.51pp [-0.03,1.08] (below the ~0.85pp
+// resolution) and the holdout 2021-24 confirm was NEGATIVE (-0.83pp), real only on titles (+1.43pp).
+// 0.25 is the pre-0.35 value, still a genuine discount (0 collapses depth); the demotion reverts the
+// re-optimisation, not the lever. See docs/edges.md and docs/decisions.md D13/D14/D15.
 // Do NOT edit a value here without re-reading docs/validation.md -- several of
 // these were measured, rejected, and re-measured, and the reasoning is recorded per lever below.
 export const LEVER_SPECS: readonly LeverSpec[] = [
@@ -159,12 +162,15 @@ export const LEVER_SPECS: readonly LeverSpec[] = [
     help: "Min vsECR for the SLEEPERS board filter.",
   },
   {
-    key: "benchDiscount", kind: "number", default: 0.35, off: 1, min: 0.1, max: 1, step: 0.05,
+    key: "benchDiscount", kind: "number", default: 0.25, off: 1, min: 0.1, max: 1, step: 0.05,
     label: "Bench discount", board: false, group: "value", flag: "bench-discount", status: "shipped",
     help: "How much a bench-only player is worth vs his standalone value. 1 = no discount.",
-    note: "Measured 2026-09-04: full-system no-lookahead championships 24.4% -> 28.0% (n=400 x 9 "
-      + "seasons, SE ~0.6). A bench-only player never enters the lineup, so his standalone value "
-      + "overstates him; 0 collapses to 19.6% because depth still matters for byes/injuries.",
+    note: "A bench-only player never enters the lineup, so his standalone value overstates him; 0 "
+      + "collapses to 19.6% titles because depth still matters for byes/injuries, so SOME discount is "
+      + "real. The 0.35 re-optimisation was DEMOTED to 0.25 by D15 (2026-09-14): its powered re-test "
+      + "on the D13 playoff gate was NULL (+0.51pp [-0.03,1.08], below ~0.85pp resolution) with a "
+      + "NEGATIVE holdout confirm (-0.83pp on 2021-24), real only on the no-skill title axis (+1.43pp). "
+      + "The 2026-09-04 24.4->28.0% title finding that justified 0.35 was a title-axis measurement.",
   },
   // All 1.0 by evidence. multQB 0.7 DID measure +1.3 pts (27.6% -> 28.6%, n=800) while aggr was 1.0
   // -- but that gain was the WINNER'S CURSE correction wearing a QB costume. With aggr 0.7 shipped,
