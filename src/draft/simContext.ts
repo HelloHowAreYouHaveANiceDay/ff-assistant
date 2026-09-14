@@ -363,7 +363,11 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
   // The seeded standings, in `teams` order (ascending team id -- the same order the schedule's
   // indices refer to). Empty when no week is settled, which is byte-identical to the old simulator.
   const played = playedWeeks > 0
-    ? { weeks: playedWeeks, wins: teams.map((t) => playedWins.get(t.id) ?? 0), pts: teams.map((t) => playedPts.get(t.id) ?? 0) }
+    ? {
+      weeks: playedWeeks, wins: teams.map((t) => playedWins.get(t.id) ?? 0), pts: teams.map((t) => playedPts.get(t.id) ?? 0),
+      // The same K the lines were blended with: the level uncertainty shrinks by sqrt(K/(K+k)).
+      ...(Number.isFinite(rosBlend.K) ? { priorWeeks: rosBlend.K } : {}),
+    }
     : undefined;
   if (playedWeeks > 0) {
     console.warn(`season so far: ${playedWeeks} settled week(s) seed the standings (${seedSource.join("; ")}); ` +

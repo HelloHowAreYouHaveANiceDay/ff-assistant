@@ -39,14 +39,16 @@
 > Sanity first: 2025 at week 15 (every week settled) -> C Brier **0.0000**, the realised field exactly,
 > shuffled control 0.500. Then:
 >
-> | week | A (from scratch) | B (seeded) | C (seeded + ROS) | uniform | B vs A (season-paired) | C vs B |
-> |---|---|---|---|---|---|---|
-> | 3 | 0.2244 | 0.2202 | 0.2250 | 0.2450 | -0.004 +/- 0.007, 5/8 | +0.005 +/- 0.009, 3/8 |
-> | 5 | 0.2224 | **0.1801** | **0.1782** | 0.2450 | **-0.042 +/- 0.008, 8/8, t -5.4** | -0.002 +/- 0.010, 4/8 |
-> | 8 | 0.2356 | **0.1481** | **0.1391** | 0.2450 | **-0.088 +/- 0.015, 8/8, t -5.9** | -0.009 +/- 0.010, 5/8 |
-> | 11 | 0.2324 | **0.0992** | **0.0913** | 0.2450 | **-0.132 +/- 0.023, 8/8, t -5.8** | -0.008 +/- 0.005, 5/8, t -1.6 |
+> | week | A (from scratch) | B (seeded) | C (+ ROS lines) | D (+ level shrink) | uniform | B vs A (season-paired) | C vs B | D vs C |
+> |---|---|---|---|---|---|---|---|---|
+> | 3 | 0.2244 | 0.2202 | 0.2250 | 0.2259 | 0.2450 | -0.004 +/- 0.007, 5/8 | +0.005 +/- 0.009, 3/8 | +0.001 +/- 0.001, 3/8 |
+> | 5 | 0.2224 | **0.1801** | 0.1782 | **0.1767** | 0.2450 | **-0.042 +/- 0.008, 8/8, t -5.4** | -0.002 +/- 0.010, 4/8 | -0.0015 +/- 0.0014, 5/8 |
+> | 8 | 0.2356 | **0.1481** | 0.1391 | **0.1354** | 0.2450 | **-0.088 +/- 0.015, 8/8, t -5.9** | -0.009 +/- 0.010, 5/8 | **-0.0037 +/- 0.0012, 7/8, t -3.2** |
+> | 11 | 0.2324 | **0.0992** | 0.0913 | **0.0885** | 0.2450 | **-0.132 +/- 0.023, 8/8, t -5.8** | -0.008 +/- 0.005, 5/8, t -1.6 | -0.0028 +/- 0.0011, 6/8, t -2.7 |
 >
-> Shuffled-outcome control loses to the honest arm at every week (e.g. week 8: 0.286 vs 0.139).
+> Everything together (D vs A): -0.045 +/- 0.013 at week 5 (7/8), **-0.100 +/- 0.015 at week 8 (8/8,
+> t -6.9)**, **-0.143 +/- 0.021 at week 11 (8/8, t -6.8)**. Shuffled-outcome control loses to the
+> honest arm at every week (e.g. week 8: 0.294 vs 0.135).
 > **Seeding the standings clears the 2.9*SE floor at weeks 5, 8 and 11 by a wide margin and is a null
 > at week 3** (two games; correct). **The rest-of-season lines are a small further gain from week 8,
 > in 5 of 8 seasons, that does not clear the floor on playoff Brier** and is never a material cost
@@ -56,11 +58,20 @@
 > deleting the file, which is the old behaviour and is reported as such). Recorded rather than
 > dressed up: on the playoff-odds axis the standings are the edge and the lines are the polish.
 >
-> **Reliability of arm C (weeks 8 and 11):** under-confident at the top (predicted 80% -> observed 92%;
-> 89% -> 97%) and over-confident in the 15-30% bin (22% -> 6%). The seeded simulator keeps the full
-> preseason projection uncertainty (`projSd` 0.30) for the remaining weeks; as the season shortens that
-> is too wide. A follow-up, not done here: shrink the remaining-weeks uncertainty with weeks played,
-> gated the same way.
+> **Arm D, the level-uncertainty shrink -- no new parameter.** Arm C keeps each player's whole-season
+> level uncertainty (the bootstrap pool's spread; `projSd` in parametric mode) for the remaining weeks
+> however many have been played, and read under-confident at the top (week 11: predicted 89% ->
+> observed 97%). With a prior worth K weeks and k weeks observed, the posterior spread of the level
+> is sqrt(K/(K+k)) of the prior's, so `played.priorWeeks` (the SAME K = 6 the lines were blended with)
+> scales the parametric projection error by that factor and pulls each drawn bootstrap season toward
+> its target level by it -- one ratio per season so zeros stay zeros and the drawn injury shape is
+> untouched. Two controls in `test/season-played.test.ts`: priorWeeks 0 after one week is EXACTLY
+> `projSd` 0, and pinning the level makes a 40%-stronger roster more certain to make it. Gated as D
+> above: a null at week 3 (k = 2), then consistently positive and clearing the floor at week 8. It
+> ships; it is what `loadSimContext` passes. What it does NOT fix: the top bin is still under-confident
+> (week 11: 88.8% -> 97.1%), so the remaining spread that is too wide late in the season is not the
+> level -- the next candidate is the pool's weekly variance for the remaining weeks, and it is
+> recorded here rather than tuned.
 >
 > Also closed in the same pass: the live schedule read failed silently into a generated schedule
 > whenever the app's CDP port was not bound (this instance never bound it); `loadSimContext` now falls

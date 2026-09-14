@@ -393,11 +393,11 @@ for (let y = LO; y <= HI; y++) seasons.push(y);
 // ---------------------------------------------------------------------------------------------
 if (AT_WEEK != null) {
   console.log(`IN-SEASON CALIBRATION at week ${AT_WEEK} -- ${LO}-${HI}, ${TRIALS} trials, seed ${SEED}, per-fold artifacts from ${FOLD_DIR}\n`);
-  console.log(`  arms: A = from scratch (pre-D18: week-${AT_WEEK} rosters, preseason lines, no standings)   B = A + standings seeded from ${AT_WEEK - 1} settled weeks   C = B + rest-of-season lines\n`);
-  const arms = ["A", "B", "C"];
-  const rows = { A: [], B: [], C: [] };
+  console.log(`  arms: A = from scratch (pre-D18: week-${AT_WEEK} rosters, preseason lines, no standings)   B = A + standings seeded from ${AT_WEEK - 1} settled weeks   C = B + rest-of-season lines   D = C + level uncertainty shrunk by sqrt(K/(K+k))\n`);
+  const arms = ["A", "B", "C", "D"];
+  const rows = { A: [], B: [], C: [], D: [] };
   const perSeasonBrier = [];
-  console.log(`  season teams reg field  played  ros men   Brier A     Brier B     Brier C    uniform    (C - A)`);
+  console.log(`  season teams reg field  played  ros men   Brier A     Brier B     Brier C     Brier D    uniform    (D - A)`);
   for (const season of seasons) {
     const s = buildSeason(season, AT_WEEK);
     if (s.skip) { console.log(`  ${season}  SKIPPED -- ${s.skip}`); continue; }
@@ -417,6 +417,7 @@ if (AT_WEEK != null) {
       A: simulateSeasons(s.teams, s.weeks, useVm, base),
       B: simulateSeasons(s.teams, s.weeks, useVm, { ...base, played: s.played ?? undefined }),
       C: simulateSeasons(withRos, s.weeks, useVm, { ...base, played: s.played ?? undefined }),
+      D: simulateSeasons(withRos, s.weeks, useVm, { ...base, played: s.played ? { ...s.played, priorWeeks: Number.isFinite(s.rosK) ? s.rosK : undefined } : undefined }),
     };
     const b = {};
     for (const arm of arms) {
@@ -427,7 +428,7 @@ if (AT_WEEK != null) {
     }
     const bu = brier(s.teams.map((t) => ({ p: s.field / s.teams.length, y: t.outcome.playoffs ? 1 : 0 })));
     perSeasonBrier.push({ season, ...b, uniform: bu });
-    console.log(`  ${season}  ${String(s.teams.length).padStart(4)} ${String(s.reg).padStart(4)} ${String(s.field).padStart(5)}  ${String(s.played?.weeks ?? 0).padStart(6)}  ${String(s.rosOf.size).padStart(7)}   ${b.A.toFixed(4)}      ${b.B.toFixed(4)}      ${b.C.toFixed(4)}     ${bu.toFixed(4)}    ${(b.C - b.A >= 0 ? "+" : "") + (b.C - b.A).toFixed(4)}`);
+    console.log(`  ${season}  ${String(s.teams.length).padStart(4)} ${String(s.reg).padStart(4)} ${String(s.field).padStart(5)}  ${String(s.played?.weeks ?? 0).padStart(6)}  ${String(s.rosOf.size).padStart(7)}   ${b.A.toFixed(4)}      ${b.B.toFixed(4)}      ${b.C.toFixed(4)}      ${b.D.toFixed(4)}     ${bu.toFixed(4)}    ${(b.D - b.A >= 0 ? "+" : "") + (b.D - b.A).toFixed(4)}`);
   }
   if (!perSeasonBrier.length) { console.log("nothing scored."); process.exit(1); }
   const n = perSeasonBrier.length;
@@ -438,28 +439,30 @@ if (AT_WEEK != null) {
     const sd = Math.sqrt(d.reduce((a, v) => a + (v - m) ** 2, 0) / Math.max(1, n - 1));
     return { m, se: sd / Math.sqrt(n), wins: d.filter((v) => v < 0).length };
   };
-  console.log(`\n  POOLED playoff Brier over ${rows.A.length} team-seasons: A ${brier(rows.A).toFixed(4)}   B ${brier(rows.B).toFixed(4)}   C ${brier(rows.C).toFixed(4)}   uniform ${meanOf((r) => r.uniform).toFixed(4)}`);
-  console.log(`  season-mean Brier:                      A ${meanOf((r) => r.A).toFixed(4)}   B ${meanOf((r) => r.B).toFixed(4)}   C ${meanOf((r) => r.C).toFixed(4)}`);
-  for (const [x, y, label] of [["A", "B", "seeding the standings (B vs A)"], ["B", "C", "rest-of-season lines on top (C vs B)"], ["A", "C", "both (C vs A)"]]) {
+  console.log(`\n  POOLED playoff Brier over ${rows.A.length} team-seasons: A ${brier(rows.A).toFixed(4)}   B ${brier(rows.B).toFixed(4)}   C ${brier(rows.C).toFixed(4)}   D ${brier(rows.D).toFixed(4)}   uniform ${meanOf((r) => r.uniform).toFixed(4)}`);
+  console.log(`  season-mean Brier:                      A ${meanOf((r) => r.A).toFixed(4)}   B ${meanOf((r) => r.B).toFixed(4)}   C ${meanOf((r) => r.C).toFixed(4)}   D ${meanOf((r) => r.D).toFixed(4)}`);
+  for (const [x, y, label] of [["A", "B", "seeding the standings (B vs A)"], ["B", "C", "rest-of-season lines on top (C vs B)"], ["C", "D", "level shrink on top (D vs C)"], ["A", "D", "everything (D vs A)"]]) {
     const p = paired(x, y);
     console.log(`  ${label.padEnd(40)} Brier change ${(p.m >= 0 ? "+" : "") + p.m.toFixed(4)} +/- SE ${p.se.toFixed(4)}  (t ${(p.se > 0 ? p.m / p.se : 0).toFixed(2)}; better in ${p.wins}/${n} seasons)`);
   }
-  // THE POSITIVE CONTROL for arm C, same as the preseason report's: outcomes shuffled within season.
+  // THE POSITIVE CONTROL for the served arm, same as the preseason report's: outcomes shuffled within season.
   {
     let sd = 1234567;
     const rnd = () => ((sd = (sd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-    const out = rows.C.map((r) => ({ ...r }));
+    const out = rows.D.map((r) => ({ ...r }));
     for (const season of new Set(out.map((r) => r.season))) {
       const idx = out.map((r, i) => i).filter((i) => out[i].season === season);
       const ys = idx.map((i) => out[i].y);
       for (let i = ys.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [ys[i], ys[j]] = [ys[j], ys[i]]; }
       idx.forEach((i, k) => { out[i].y = ys[k]; });
     }
-    console.log(`  CONTROL, outcomes shuffled within season: C ${brier(out).toFixed(4)} (honest ${brier(rows.C).toFixed(4)}) -> ${brier(out) > brier(rows.C) ? "the honest arm wins; the join is real" : "WARNING: no better than shuffled"}`);
+    console.log(`  CONTROL, outcomes shuffled within season: D ${brier(out).toFixed(4)} (honest ${brier(rows.D).toFixed(4)}) -> ${brier(out) > brier(rows.D) ? "the honest arm wins; the join is real" : "WARNING: no better than shuffled"}`);
   }
-  console.log(`\n  RELIABILITY, arm C -- what it predicted against what happened`);
-  for (const b of reliability(rows.C)) console.log(`    ${`${(100 * b.lo).toFixed(0)}-${(100 * b.hi).toFixed(0)}%`.padEnd(10)} n ${String(b.n).padStart(4)}  predicted ${(100 * b.predicted).toFixed(1).padStart(5)}%  observed ${(100 * b.observed).toFixed(1).padStart(5)}%`);
-  if (JSON_OUT) console.log(JSON.stringify({ atWeek: AT_WEEK, perSeasonBrier, pooled: { A: brier(rows.A), B: brier(rows.B), C: brier(rows.C) } }, null, 2));
+  for (const arm of ["C", "D"]) {
+    console.log(`\n  RELIABILITY, arm ${arm} -- what it predicted against what happened`);
+    for (const b of reliability(rows[arm])) console.log(`    ${`${(100 * b.lo).toFixed(0)}-${(100 * b.hi).toFixed(0)}%`.padEnd(10)} n ${String(b.n).padStart(4)}  predicted ${(100 * b.predicted).toFixed(1).padStart(5)}%  observed ${(100 * b.observed).toFixed(1).padStart(5)}%`);
+  }
+  if (JSON_OUT) console.log(JSON.stringify({ atWeek: AT_WEEK, perSeasonBrier, pooled: { A: brier(rows.A), B: brier(rows.B), C: brier(rows.C), D: brier(rows.D) } }, null, 2));
   db.close();
   process.exit(0);
 }

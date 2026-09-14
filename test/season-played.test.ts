@@ -65,6 +65,35 @@ test("rosPerGame replaces proj/17 as the per-game strength (positive control: a 
   assert.ok(odds[0].playoffs < ref[0].playoffs);
 });
 
+test("level shrink, parametric: priorWeeks = 0 after one played week is EXACTLY projSd = 0 (positive control), and priorWeeks omitted is the unshrunk run", () => {
+  const seeded = { weeks: 1, wins: new Array(8).fill(0), pts: new Array(8).fill(0) };
+  const withSd = { ...base, projSd: 0.3 };
+  const unshrunk = simulateSeasons(teams, weeks, vm, { ...withSd, played: seeded });
+  const zeroPrior = simulateSeasons(teams, weeks, vm, { ...withSd, played: { ...seeded, priorWeeks: 0 } });
+  const noError = simulateSeasons(teams, weeks, vm, { ...withSd, projSd: 0, played: seeded });
+  assert.deepEqual(zeroPrior, noError, "priorWeeks 0 must collapse the projection error to nothing, exactly");
+  assert.notDeepEqual(unshrunk, noError, "without the shrink the projection error is still drawn -- else the control proves nothing");
+  const inf = simulateSeasons(teams, weeks, vm, { ...withSd, played: { ...seeded, priorWeeks: Infinity } });
+  assert.deepEqual(inf, unshrunk, "an infinite prior is no shrink at all");
+});
+
+test("level shrink, bootstrap: a stronger roster's playoff odds RISE as the level uncertainty shrinks", () => {
+  // A minimal outcome pool: three seasons of 7 weeks per rank, spread around 10/week, so the pool's
+  // per-week mean matches the projection and the season level varies 0.5x..1.5x.
+  const mkPool = (m: number) => [0.5, 1.0, 1.5].map((f) => new Array(7).fill(m * f));
+  const outcomes = { schema: 2, pos: Object.fromEntries(["QB", "RB", "WR", "TE", "K", "DST"].map((p) => [p, Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8].map((r) => [String(r), mkPool(10)]))])) };
+  const corr = { pairs: {} };
+  const strong = teams.map((t, i) => ({ ...t, roster: t.roster.map((p) => ({ ...p, proj: 17 * (i === 0 ? 14 : 10) * (p.pos === "QB" ? 2 : 1) })) }));
+  const poolRank = new Map(strong.flatMap((t) => t.roster.map((p) => [p.name, { rank: 0, of: 1 }])));
+  const seeded = { weeks: 3, wins: [2, 1, 1, 2, 1, 2, 1, 2], pts: [300, 250, 250, 300, 250, 300, 250, 300] };
+  const bootBase = { ...base, poolRank, bootstrap: { outcomes: outcomes as never, corr, calibration: "scale" as const }, trials: 600 };
+  const wide = simulateSeasons(strong, weeks, vm, { ...bootBase, played: seeded })[0].playoffs;
+  const tight = simulateSeasons(strong, weeks, vm, { ...bootBase, played: { ...seeded, priorWeeks: 0.5 } })[0].playoffs;
+  const none = simulateSeasons(strong, weeks, vm, { ...bootBase, played: { ...seeded, priorWeeks: Infinity } })[0].playoffs;
+  assert.equal(none, wide, "an infinite prior must not touch the draw");
+  assert.ok(tight > wide, `the 40%-stronger roster should be MORE certain to make it once its level is pinned (${tight} vs ${wide})`);
+});
+
 test("rosPerGame blend arithmetic: line only at K=Infinity, actual only at K=0, games-weighted between", () => {
   assert.equal(rosPerGame(10, 4, 80, Infinity), 10);
   assert.equal(rosPerGame(10, 4, 80, 0), 20);

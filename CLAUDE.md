@@ -194,8 +194,10 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   per-scheduled-week frame -- the per-game frame is a scale mismatch and the script prints why). A week
   is settled only when its last NFL game day is behind today AND the store has scored rows, so after
   Monday night run `ff sync-actuals` then `ff ingest-raw league-rosters`; every copilot caveat states the
-  seed. Gate: `scripts/season-calibration.mjs --at-week W --artifact-dir data/fold-artifacts-d16`
-  (docs/validation.md D18: seeding is decisive from week 5, 8/8 seasons). `--schedule real` now falls
+  seed. The same K also shrinks each player's level uncertainty for the remaining weeks by sqrt(K/(K+k))
+  (`played.priorWeeks`). Gate: `scripts/season-calibration.mjs --at-week W --artifact-dir data/fold-artifacts-d16`,
+  four arms (docs/validation.md D18: seeding is decisive from week 5, 8/8 seasons; the shrink clears the
+  floor at week 8). `--schedule real` now falls
   back to the store's synced matchups when the app's CDP port is unreachable and says so.
 - Draft-day procedure and machine setup: `docs/draft-day-runbook.md`
 - The MCP control surface (39 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is

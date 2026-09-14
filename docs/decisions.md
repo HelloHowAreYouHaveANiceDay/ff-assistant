@@ -558,9 +558,14 @@ OPERATOR RULE: after the last game of a week, `ff sync-actuals` then `ff ingest-
 the next decision runs from the settled state. Today (2026-09-14) week 1 has a game to play, so nothing
 is seeded yet and every number is byte-identical to before; tomorrow it is not.
 
-FOLLOW-UP, not done: the seeded simulator keeps the full preseason uncertainty for the remaining weeks and
-reads under-confident late (predicted 89% -> observed 97% at week 11); shrinking it with weeks played is
-the next gated change.
+- **Level-uncertainty shrink (applied in the same pass, owner: "go").** `played.priorWeeks` = the same
+  K = 6: the spread of each player's true level for the remaining weeks scales by sqrt(K/(K+k)) --
+  parametric projection error and bootstrap season level alike, zeros untouched. No new parameter.
+  Gated as arm D: null at week 3, -0.0015 at week 5, **-0.0037 +/- 0.0012 at week 8 (7/8, t -3.2)**,
+  -0.0028 +/- 0.0011 at week 11 (6/8, t -2.7). Everything together vs the old from-scratch simulator:
+  -0.100 at week 8 and -0.143 at week 11, better in 8 of 8 seasons. Recorded, not claimed fixed: the top
+  reliability bin stays under-confident late (88.8% -> 97.1% at week 11), so the too-wide late-season
+  spread is not the level; the pool's weekly variance for the remaining weeks is the next candidate.
 
 ## Working mode (2026-08-31)
 

@@ -181,7 +181,19 @@ export interface SeasonOpts {
    * indexed by the real week number, so a seeded run and a from-scratch run meet the same draws for
    * the same future weeks -- the pairing property this simulator exists for.
    */
-  played?: { weeks: number; wins: number[]; pts: number[] };
+  played?: {
+    weeks: number; wins: number[]; pts: number[];
+    /**
+     * HOW MUCH THE UNCERTAINTY ABOUT A PLAYER'S TRUE LEVEL HAS SHRUNK, expressed as the prior's
+     * weight in weeks -- the same K the rest-of-season blend was fitted to. With K weeks of prior
+     * and k weeks observed the posterior spread of the level is sqrt(K / (K + k)) of the prior's, so
+     * that factor scales the projection error (parametric) and each drawn season's deviation from
+     * its target level (bootstrap; zeros stay zeros, the within-season shape is untouched). Omitted
+     * or infinite: no shrink, the pre-D18 spread all season long -- which reads under-confident by
+     * week 11 (predicted 89% -> observed 97%). Gated as arm D in scripts/season-calibration.mjs.
+     */
+    priorWeeks?: number;
+  };
 }
 export interface SeasonOdds {
   id: string; name: string; playoffs: number; champion: number; meanWins: number; meanPoints: number;
@@ -470,6 +482,9 @@ export function simulateSeasons(
     throw new Error(`played standings are for ${played.wins.length}/${played.pts.length} teams but the league has ${N}`);
   }
   if (played && played.weeks > opts.weeks) throw new Error(`played.weeks ${played.weeks} exceeds the regular season (${opts.weeks})`);
+  // The level-uncertainty shrink (see SeasonOpts.played.priorWeeks): 1 = untouched.
+  const K = played?.priorWeeks;
+  const shrink = played && K != null && Number.isFinite(K) && K >= 0 ? Math.sqrt(K / (K + played.weeks)) : 1;
   const boot = opts.bootstrap
     ? teams.map((tm) => {
       const pp: PoolPlayer[] = tm.roster.map((p) => ({
@@ -488,7 +503,8 @@ export function simulateSeasons(
     const trueMean = new Map<SeasonPlayer, number>();
     for (const tm of teams) {
       for (const p of tm.roster) {
-        const err = (!boot && opts.projSd > 0) ? Math.exp(drawGauss(seedNum, trial, 0, pid(p.name), PURPOSE.projErr) * opts.projSd - 0.5 * opts.projSd ** 2) : 1;
+        const sdEff = opts.projSd * shrink;
+        const err = (!boot && sdEff > 0) ? Math.exp(drawGauss(seedNum, trial, 0, pid(p.name), PURPOSE.projErr) * sdEff - 0.5 * sdEff ** 2) : 1;
         trueMean.set(p, Math.max(0, perGame(p) * err));
       }
     }
@@ -511,6 +527,22 @@ export function simulateSeasons(
         // member rather than per group so a roster change does not re-roll a shared stack.
         (m, week, i) => drawGauss(seedNum, trial, week, pid(m.name), PURPOSE.copulaB + i)))
       : null;
+    // LEVEL SHRINK in bootstrap mode (played.priorWeeks): each drawn season is pulled toward the
+    // player's target level by `shrink`, on a COPY -- the pool's trajectories are shared across
+    // trials and players. Every week is multiplied by one ratio, so a zero stays a zero and the
+    // shape of the drawn season (including where its injury falls) is exactly preserved; only its
+    // level moves. With shrink = 1 nothing is touched, and the map is the sampler's own.
+    if (seasonDraw && shrink < 1) {
+      for (const drawn of seasonDraw) {
+        for (const [pp, t] of drawn) {
+          if (!t || !t.weeks.length || pp.projPerGame == null || !(pp.projPerGame > 0)) continue;
+          const level = t.total / t.weeks.length;
+          if (!(level > 0)) continue;
+          const r = (pp.projPerGame + shrink * (level - pp.projPerGame)) / level;
+          drawn.set(pp, { weeks: t.weeks.map((v) => v * r), total: t.total * r });
+        }
+      }
+    }
     // --- one team, one week ------------------------------------------------------------------------
     // ONE scoring path, used by the regular season, the playoff bracket AND the playoff-week strength
     // measure. It used to be written out three times; a quantity meant to be comparable with the
