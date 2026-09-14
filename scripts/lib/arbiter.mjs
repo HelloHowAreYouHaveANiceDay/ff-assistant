@@ -109,6 +109,98 @@ export function admissionVerdict(candBySeason, baseBySeason, seasonsArr, { pathS
   return { ...eff, improvement: eff.effect, floor, floorK, pass: eff.effect > 0 && eff.effect > floor };
 }
 
+// ---- FAMILY-WIDE MULTIPLICITY (WS4) ---------------------------------------------------------------
+// The within-sweep FDR (scripts/feature-sweep.mjs) controls multiplicity inside ONE ~100-candidate run,
+// but nothing accounts for the whole research HISTORY: the ~91 lever cells, the curve searches, and the
+// dozens of arbiter comparisons that accumulate in data/experiments.jsonl. A shipped edge's headline
+// `P(lift>0)=98.5%` is unadjusted for how many configs were tried before it cleared -- it overstates
+// confidence. These primitives add the accounting as a PURE, reporting-only layer (no experiment is
+// re-run). The unit of analysis stays the SEASON via the p-values the arbiter already computed.
+
+/** Normal survival function P(Z > z) via the Abramowitz-Stegun 7.1.26 erf approximation (|err| < 1.5e-7).
+ *  Converts a season-bootstrap t-stat (effect/SE) into a one-sided p-value for H0: effect <= 0. */
+export function normalSf(z) {
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  const erf = z >= 0 ? y : -y;           // erf(z/sqrt2)
+  return 0.5 * (1 - erf);                // P(Z > z)
+}
+
+/** One-sided p-value (H0: effect <= 0) for a ledger row, from whichever significance it carries.
+ *  - Older rows carry `p_gt0` = fraction of CPCV paths with OOS lift > 0 (cpcv.mjs @ d50fe34:168), a
+ *    Bayesian P(effect>0); its frequentist one-sided p is 1 - p_gt0.
+ *  - Newer rows (primary "playoffs") carry `playoff_t` = effect/SE from the season bootstrap; p = SF(t).
+ *  - Failing both, fall back to the championship t (`champ_t`).
+ *  NOTE (limitation): the ledger's primary metric shifted mid-history from championship p_gt0 to playoff
+ *  t (cpcv.mjs commit 23cc330), so a family can mix the two. We use each row's OWN primary and label the
+ *  source, rather than invent a common metric the ledger does not carry. Returns { p, source }. */
+export function rowOneSidedP(row) {
+  if (row.p_gt0 != null) return { p: Math.min(1, Math.max(0, 1 - row.p_gt0)), source: "champ:p_gt0" };
+  if (row.primary === "playoffs" && row.playoff_t != null) return { p: normalSf(row.playoff_t), source: "playoffs:t" };
+  if (row.playoff_t != null) return { p: normalSf(row.playoff_t), source: "playoffs:t" };
+  if (row.champ_t != null) return { p: normalSf(row.champ_t), source: "champ:t" };
+  return { p: null, source: null };
+}
+
+/** BENJAMINI-HOCHBERG step-up over a FAMILY of one-sided p-values. Returns BH-adjusted q-values in the
+ *  INPUT ORDER (the "adjusted significance"): q_i is the smallest FDR level at which comparison i would
+ *  be declared a discovery. As the family grows, every q can only rise -- the multiplicity penalty made
+ *  explicit. Pure and deterministic; the p-vector is the only input. */
+export function familyAdjust(pvalues) {
+  const n = pvalues.length;
+  const q = new Array(n).fill(NaN);
+  if (n === 0) return { q, n };
+  const order = pvalues.map((_, i) => i).sort((a, b) => pvalues[a] - pvalues[b]);
+  // step-up from the LARGEST p (rank n) down to the smallest, carrying the running minimum so q is
+  // monotone non-decreasing in p (the standard BH enforcement).
+  let running = Infinity;
+  for (let rank = n; rank >= 1; rank--) {
+    const i = order[rank - 1];
+    const raw = Math.min(1, (pvalues[i] * n) / rank);
+    running = Math.min(running, raw);
+    q[i] = running;
+  }
+  return { q, n };
+}
+
+/** Indices of the family that survive BH at FDR level `alpha` (default 0.10): their adjusted q <= alpha. */
+export function bhSurvivors(pvalues, alpha = 0.1) {
+  const { q } = familyAdjust(pvalues);
+  return q.map((v, i) => (v <= alpha ? i : -1)).filter((i) => i >= 0);
+}
+
+/** Dedup ledger rows by `config_hash`, keeping the LATEST by timestamp -- the same rule
+ *  experiments-status.mjs --rerun-stale uses, so a config re-measured N times counts ONCE toward the
+ *  multiple-testing family (a re-run is not a new comparison). Rows lacking a config_hash pass through
+ *  untouched (each is its own comparison). */
+export function dedupByConfig(rows) {
+  const latest = new Map();
+  const passthrough = [];
+  for (const r of rows) {
+    const h = r.config_hash;
+    if (!h) { passthrough.push(r); continue; }
+    const prev = latest.get(h);
+    if (!prev || (r.timestamp || "") >= (prev.timestamp || "")) latest.set(h, r);
+  }
+  return [...latest.values(), ...passthrough];
+}
+
+/** Group ledger rows into multiple-testing FAMILIES. GROUPING CHOICE: `baseline_label` -- every config
+ *  compared against the SAME baseline is one family of simultaneous tests (all ~91 lever cells and the
+ *  curve searches share the shipped baseline, so this is exactly the pool a shipped edge was selected
+ *  from). It is the only clean grouping the ledger actually carries; there is no per-edge "family" key,
+ *  so we do NOT invent one. Rows are deduped by config_hash first. Returns Map<familyKey, rows[]>. */
+export function groupLedgerFamilies(rows, { keyField = "baseline_label" } = {}) {
+  const fam = new Map();
+  for (const r of dedupByConfig(rows)) {
+    const k = r[keyField] || "(unlabeled)";
+    if (!fam.has(k)) fam.set(k, []);
+    fam.get(k).push(r);
+  }
+  return fam;
+}
+
 /** PBO (Probability of Backtest Overfitting), two-config CSCV: fraction of paths where the IS-best config
  *  (higher train lift) is WORSE out of sample. Read RELATIVELY on this two-config engine -- near 1 =
  *  overfit/null (a null runs HIGH here by the complementary-split constraint), near 0 = a real transferable
