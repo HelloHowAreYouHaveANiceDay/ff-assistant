@@ -19,6 +19,7 @@ import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
 import { fingerprintDraftArbiter, DRAFT_ARBITER_DEPS } from "./lib/deps.mjs";
+import { rowOneSidedP, familyAdjust, groupLedgerFamilies, dedupByConfig } from "./lib/arbiter.mjs";
 
 const LEDGER = process.argv.includes("--ledger") ? process.argv[process.argv.indexOf("--ledger") + 1] : "data/experiments.jsonl";
 const VERBOSE = process.argv.includes("--verbose");
@@ -88,6 +89,65 @@ if (legacy) {
 }
 console.log(`\n  Fingerprint covers ${DRAFT_ARBITER_DEPS.files.length} data files, ${DRAFT_ARBITER_DEPS.tables.length} tables, ` +
   `${DRAFT_ARBITER_DEPS.dirs.length} artifact dir(s), ${DRAFT_ARBITER_DEPS.code.length} source files, and the stored levers.`);
+console.log("");
+
+// ---- FAMILY-WIDE MULTIPLICITY (WS4) ---------------------------------------------------------------
+// T above is a single count of arbiter runs. This section makes the multiple-testing penalty CONCRETE:
+// it groups the ledger into families (by baseline_label -- the pool of configs sharing one baseline; see
+// groupLedgerFamilies), then reports, for each shipped edge, its RAW one-sided significance next to the
+// BH-adjusted q-value WITHIN its family and the family size N. A raw P(lift>0)=98.5% that cleared out of
+// ~25 configs tried against the same baseline is a very different claim once BH-adjusted -- that gap is
+// exactly what this program (WS4) exists to surface.
+const FDR = 0.10;
+// Shipped edges are matched by treatment_label substring (per CLAUDE.md: consensusBlend=1 and
+// benchDiscount 0.35 are the two shipped edges). If labels drift and nothing matches, we say so and
+// still print the family table -- we never fabricate a match.
+const SHIPPED_EDGES = [
+  { name: "consensusBlend = 1.0", test: (l) => /consensus-blend 1\.0/i.test(l) },
+  { name: "benchDiscount = 0.35", test: (l) => /bench-discount=0\.35/i.test(l) },
+];
+
+const families = groupLedgerFamilies(entries); // Map<baseline_label, deduped rows[]>
+// Per-family BH: attach adjusted q (input order) to each row that has an extractable p-value.
+const rowAdj = new Map(); // row-object -> { p, source, q, familyKey, familyN }
+for (const [fk, frows] of families) {
+  const withP = frows.map((r) => ({ r, ...rowOneSidedP(r) })).filter((x) => x.p != null);
+  const { q } = familyAdjust(withP.map((x) => x.p));
+  withP.forEach((x, i) => rowAdj.set(x.r, { p: x.p, source: x.source, q: q[i], familyKey: fk, familyN: withP.length }));
+}
+
+console.log(`${"=".repeat(92)}`);
+console.log(`FAMILY-WIDE MULTIPLICITY (BH-FDR across the ledger; family = shared baseline_label)`);
+console.log(`${"=".repeat(92)}`);
+console.log(`  Grouping: baseline_label (the pool of configs a shipped edge was selected FROM). Rows deduped`);
+console.log(`  by config_hash (a re-measured config counts once). p = one-sided P(effect<=0) from each row's`);
+console.log(`  OWN primary metric: 1 - p_gt0 (older champ rows) or SF(playoff_t) (newer playoff rows).\n`);
+
+const deduped = dedupByConfig(entries);
+console.log(`  Shipped edges (raw vs BH-adjusted within family, FDR ${FDR.toFixed(2)}):`);
+let anyEdge = false;
+for (const edge of SHIPPED_EDGES) {
+  const hit = deduped.find((r) => edge.test(r.treatment_label || ""));
+  if (!hit) { console.log(`    ${edge.name.padEnd(22)}  no matching ledger row (label drift?) -- not reporting a fabricated match`); continue; }
+  anyEdge = true;
+  const a = rowAdj.get(hit);
+  if (!a || a.p == null) { console.log(`    ${edge.name.padEnd(22)}  row has no extractable significance`); continue; }
+  const rawSig = 100 * (1 - a.p);      // = P(lift>0)-style confidence
+  const adjSig = 100 * (1 - Math.min(1, a.q));
+  const surv = a.q <= FDR ? "SURVIVES" : "does NOT survive";
+  console.log(`    ${edge.name.padEnd(22)}  raw P(lift>0) ${rawSig.toFixed(1)}%  ->  BH-adj ${adjSig.toFixed(1)}%  (raw p ${a.p.toFixed(4)}, q ${a.q.toFixed(4)}; N=${a.familyN} in family; ${surv} @ FDR ${FDR.toFixed(2)})`);
+  console.log(`      family "${a.familyKey.slice(0, 70)}"  [${a.source}]`);
+}
+if (!anyEdge) console.log(`    (no shipped-edge labels matched the ledger -- see the family table below)`);
+
+console.log(`\n  All families (N configs, best raw & BH-adjusted significance):`);
+for (const [fk, frows] of [...families.entries()].sort((a, b) => b[1].length - a[1].length)) {
+  const adj = frows.map((r) => rowAdj.get(r)).filter((a) => a && a.p != null);
+  if (!adj.length) { console.log(`    N=${String(frows.length).padStart(2)}  (no extractable significance)  ${fk.slice(0, 60)}`); continue; }
+  const bestRaw = adj.reduce((m, a) => (a.p < m.p ? a : m));
+  const nSurv = adj.filter((a) => a.q <= FDR).length;
+  console.log(`    N=${String(adj.length).padStart(2)}  bestRaw P(lift>0) ${(100 * (1 - bestRaw.p)).toFixed(1)}% -> BH-adj ${(100 * (1 - Math.min(1, bestRaw.q))).toFixed(1)}%  (${nSurv} survive @ FDR ${FDR.toFixed(2)})  ${fk.slice(0, 52)}`);
+}
 console.log("");
 
 // ---- --rerun-stale: close the loop ----------------------------------------------------------------
