@@ -1,5 +1,27 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## SHIPPED (D19): the weekly lineup model is gradient-boosted -- a rung-4 rigor pass found the real edge (2026-09-14)
+>
+> The fan-out below found no NEW predictive feature, but it exposed that the WEEKLY model itself was
+> still LINEAR (logistic stage one + ridge stage two) while the season projector went boosted in D16.
+> A rung-4 re-screen -- give the weekly model the same gradient-boosted treatment, then re-test its
+> rejected features under the nonlinear model -- was the real edge:
+> - **Boosting the weekly heads beats linear: +0.126 CRPS full-feature holdout (5/0), +6-8pp lineup
+>   winShare, all gate clauses pass.** Per fitted position (QB/RB/WR/TE); K/DST stay intercept-only.
+> - **The deployed-artifact gate earned its keep.** The first boosted artifact was green on the
+>   historical CV but COLLAPSED on the live 2026 serve (all-imputed forward/feed-silent rows -> a
+>   pathological high-P(zero) leaf; a locked-in QB projected ~4.5 instead of ~18). Fixed with NaN
+>   passthrough + missingness augmentation matched to the measured 2026 regime, verified identically in
+>   train and serve. The classic "green where the system is right, broken at the deployed layer."
+> - **The honest test: the gain survives the 2026 feature regime.** With the availability block masked
+>   to what the live team actually has (the feed is largely dead from 2025), boosted still beats linear
+>   **+0.110 CRPS, 5/0** -- availability signal accounts for only ~0.015 of the ~0.126 edge; the rest is
+>   the nonlinear use of the season-line anchor, form and odds. Not a historical-only artifact.
+> - The rung-4 pass also answered the "no signal vs modelled wrong" question for the rejected features:
+>   dvp/matchup is a REAL null even under trees (dropped as a neutral-under-boosting simplification);
+>   injury-horizon was MODELLED WRONG linearly -- it ADMITS under boosting (+0.0078 holdout) but is
+>   HELD because it is dead-at-serve (no 2026 report dates). Full record: docs/decisions.md D19.
+
 > ## Edge fan-out: five fronts screened, NO new predictive edge (draft or in-season); the weekly paired-season floor built (2026-09-14)
 >
 > Five fronts were run in parallel to find any remaining edge. Discipline on each: screen against the
