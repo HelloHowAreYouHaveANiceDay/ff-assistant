@@ -2,7 +2,7 @@
   "schema": 1,
   "kind": "projection",
   "fittedFrom": "tools/train_projection.py",
-  "fittedAt": "2026-09-09",
+  "fittedAt": "2026-09-13",
   "seasons": [
     2000,
     2001,
@@ -578,25 +578,25 @@
       111.2588,
       111.0819,
       108.9826,
-      108.9826,
+      109.8538,
       107.1977,
       105.8324,
       104.4913,
-      104.4913,
-      104.4913,
-      104.4913,
-      104.4913,
+      105.4286,
+      104.7644,
+      105.3121,
+      104.9357,
       104.2384,
       104.1065,
       102.741,
       101.4606,
       100.1801,
-      100.1801,
-      100.1801,
-      100.1801,
+      101.2547,
+      100.7593,
+      100.4969,
       99.8,
-      99.8,
-      99.8,
+      101.4506,
+      102.0,
       98.5166,
       90.7568,
       90.5662,
@@ -656,7 +656,7 @@
       "levelWeight": 0.0,
       "form": "offset",
       "n": 935,
-      "innerPinball": 22.1712
+      "innerPinball": 22.153
     },
     "RB": {
       "window": 1,
@@ -664,7 +664,7 @@
       "levelWeight": 0.0,
       "form": "offset",
       "n": 837,
-      "innerPinball": 17.7769,
+      "innerPinball": 17.7353,
       "formOverriddenFrom": "ratio"
     },
     "WR": {
@@ -673,7 +673,7 @@
       "levelWeight": 0.0,
       "form": "offset",
       "n": 863,
-      "innerPinball": 14.8716
+      "innerPinball": 15.0772
     },
     "TE": {
       "window": 1,
@@ -681,15 +681,15 @@
       "levelWeight": 0.0,
       "form": "offset",
       "n": 808,
-      "innerPinball": 10.0052
+      "innerPinball": 9.9685
     },
     "K": {
       "window": 3,
-      "monotone": true,
+      "monotone": false,
       "levelWeight": 0.0,
       "form": "offset",
       "n": 698,
-      "innerPinball": 10.1912,
+      "innerPinball": 10.1601,
       "formOverriddenFrom": "ratio"
     },
     "DST": {
@@ -742,11 +742,6 @@
     },
     {
       "name": "team_changed",
-      "transform": "indicator",
-      "missing": 0.0
-    },
-    {
-      "name": "contract_year",
       "transform": "indicator",
       "missing": 0.0
     },
@@ -1020,16 +1015,15 @@
   "coef": {
     "QB": {
       "mean": {
-        "intercept": 6.057437437798956,
-        "age": -5.8571195150916,
-        "prior_games": -8.195986246350293,
-        "draft_round": -10.761095183276883,
-        "prior_pos_rank": -4.374021309595686,
-        "depth_rank_sep1": -34.61606673169578,
-        "team_changed": -25.555143986213817,
-        "contract_year": -6.205825868657582,
-        "prior_attempts": 14.72850586902857,
-        "prior_rush_yards": 0.0927320937403955,
+        "intercept": 5.35204358839564,
+        "age": -6.161885469612869,
+        "prior_games": -8.216429082396843,
+        "draft_round": -10.794422609214397,
+        "prior_pos_rank": -4.509408646927347,
+        "depth_rank_sep1": -35.2560369791036,
+        "team_changed": -25.64776291442348,
+        "prior_attempts": 14.475259781739904,
+        "prior_rush_yards": -0.0022792071815834797,
         "prior_fd": 0.0,
         "prior_ts": 0.0
       },
@@ -1041,7 +1035,6 @@
         "prior_pos_rank": 3.614988159433207,
         "depth_rank_sep1": -5.657050323379365,
         "team_changed": -3.43824123897231,
-        "contract_year": 0.0,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0,
         "prior_fd": 0.0,
@@ -1055,7 +1048,6 @@
         "prior_pos_rank": -9.127986037833708,
         "depth_rank_sep1": -26.486248133299696,
         "team_changed": -14.816878628005945,
-        "contract_year": 0.0,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0,
         "prior_fd": 0.0,
@@ -1069,7 +1061,6 @@
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": -50.56952265011415,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_attempts": 0.0,
         "prior_rush_yards": 6.5381816859773805,
         "prior_fd": 0.0,
@@ -1078,16 +1069,15 @@
     },
     "RB": {
       "mean": {
-        "intercept": -39.42502269303946,
-        "age": -12.804967141318846,
-        "prior_games": -2.618555623861601,
-        "draft_round": -8.379738958406598,
-        "prior_pos_rank": 9.231106082411817,
-        "depth_rank_sep1": -10.460462977255403,
-        "team_changed": -15.366034866565197,
-        "contract_year": -1.6184348291119772,
-        "prior_fd": 23.58507114042829,
-        "prior_ts": 9.925576739048363,
+        "intercept": -39.75433690735611,
+        "age": -12.924613476179255,
+        "prior_games": -2.57643473554797,
+        "draft_round": -8.392043091624988,
+        "prior_pos_rank": 9.206733854420746,
+        "depth_rank_sep1": -10.513345511502365,
+        "team_changed": -15.422308230949689,
+        "prior_fd": 23.51700200432678,
+        "prior_ts": 9.90471422035351,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
@@ -1099,7 +1089,6 @@
         "prior_pos_rank": 15.91673584033942,
         "depth_rank_sep1": 0.0,
         "team_changed": -1.5588281786516998,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
@@ -1113,7 +1102,6 @@
         "prior_pos_rank": 1.352554286847702,
         "depth_rank_sep1": -8.247025915347189,
         "team_changed": -22.107843005136193,
-        "contract_year": 0.0,
         "prior_fd": 6.816962057318173,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
@@ -1127,7 +1115,6 @@
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": -11.772008962333983,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 11.997848620697932,
         "prior_attempts": 0.0,
@@ -1136,16 +1123,15 @@
     },
     "WR": {
       "mean": {
-        "intercept": -37.92860226510073,
-        "age": -9.89265798947845,
-        "prior_games": -7.874860760346319,
-        "draft_round": -0.7529874385177819,
-        "prior_pos_rank": -2.869736033521363,
-        "depth_rank_sep1": -8.358359336775433,
-        "team_changed": -15.079204571669601,
-        "contract_year": -18.257921082314255,
-        "prior_fd": 8.683903998687015,
-        "prior_ts": 28.50013445446346,
+        "intercept": -42.897937567788375,
+        "age": -10.622446698401985,
+        "prior_games": -7.801773918023451,
+        "draft_round": -0.5849842745327044,
+        "prior_pos_rank": -3.3293731925181995,
+        "depth_rank_sep1": -8.652981983131776,
+        "team_changed": -14.145949791447189,
+        "prior_fd": 8.433791178850617,
+        "prior_ts": 29.405279196125104,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
@@ -1157,35 +1143,32 @@
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": 0.0,
         "team_changed": -3.6559642961662178,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
       "p50": {
-        "intercept": -9.851809487706054,
-        "age": -9.310225521954147,
-        "prior_games": -8.748792807045085,
+        "intercept": -15.504539182009035,
+        "age": -10.074307022467986,
+        "prior_games": -10.203493576021486,
         "draft_round": 0.0,
-        "prior_pos_rank": -4.991092068028383,
-        "depth_rank_sep1": -9.927292394951992,
-        "team_changed": -14.56201429632658,
-        "contract_year": -13.830524013876703,
+        "prior_pos_rank": -5.282872835321047,
+        "depth_rank_sep1": -9.850560260977034,
+        "team_changed": -15.088366227262492,
         "prior_fd": 0.0,
-        "prior_ts": 11.981798643601799,
+        "prior_ts": 14.538698797406795,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
       "p90": {
-        "intercept": 74.04342662563387,
-        "age": -9.746676547392576,
+        "intercept": 74.01232040406796,
+        "age": -9.50619754655284,
         "prior_games": 0.0,
         "draft_round": 0.0,
-        "prior_pos_rank": -0.3726452139794014,
-        "depth_rank_sep1": -8.167449131978039,
+        "prior_pos_rank": -0.5592301520358862,
+        "depth_rank_sep1": -8.052619392831424,
         "team_changed": 0.0,
-        "contract_year": -3.070632254854221,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
@@ -1194,16 +1177,15 @@
     },
     "TE": {
       "mean": {
-        "intercept": -12.933207028959655,
-        "age": -4.077915382699142,
-        "prior_games": 4.071327156530787,
-        "draft_round": -4.555326346357302,
-        "prior_pos_rank": 5.32479324323729,
-        "depth_rank_sep1": -8.463985361751494,
-        "team_changed": -7.8319339571898805,
-        "contract_year": -4.850785392401905,
-        "prior_fd": 11.0961837741227,
-        "prior_ts": 10.46308948037413,
+        "intercept": -14.027138131192443,
+        "age": -4.404161315520847,
+        "prior_games": 4.11254360897528,
+        "draft_round": -4.451022773262371,
+        "prior_pos_rank": 5.163313632053761,
+        "depth_rank_sep1": -8.561930394518784,
+        "team_changed": -7.789258476339336,
+        "prior_fd": 10.671727033964235,
+        "prior_ts": 10.710526304792257,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
@@ -1215,23 +1197,21 @@
         "prior_pos_rank": 10.822150406802853,
         "depth_rank_sep1": -1.7707517748705752,
         "team_changed": -2.3463405699875466,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
       "p50": {
-        "intercept": -9.117842710152718,
-        "age": -3.1076511890721363,
+        "intercept": -9.334335905722131,
+        "age": -3.172469828473952,
         "prior_games": 0.0,
-        "draft_round": -4.4446087184629235,
+        "draft_round": -4.436516846531209,
         "prior_pos_rank": 0.0,
-        "depth_rank_sep1": -7.593173121317438,
-        "team_changed": -6.251119849182023,
-        "contract_year": -0.24482087744158587,
-        "prior_fd": 3.7669179822826875,
-        "prior_ts": 9.471526586545183,
+        "depth_rank_sep1": -7.533766868287962,
+        "team_changed": -6.438843161568048,
+        "prior_fd": 4.154464770287239,
+        "prior_ts": 9.157426060028161,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
@@ -1243,7 +1223,6 @@
         "prior_pos_rank": -0.20697659243496286,
         "depth_rank_sep1": -14.45451792014244,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.22200217238693612,
         "prior_ts": 3.263308704923148,
         "prior_attempts": 0.0,
@@ -1252,56 +1231,52 @@
     },
     "K": {
       "mean": {
-        "intercept": 7.603092675569755,
+        "intercept": 7.013249986660063,
         "age": 0.0,
         "prior_games": 0.0,
         "draft_round": 0.0,
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": 0.0,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
       "p10": {
-        "intercept": -52.260454250486696,
+        "intercept": -53.34600212089077,
         "age": 0.0,
         "prior_games": 0.0,
         "draft_round": 0.0,
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": 0.0,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
       "p50": {
-        "intercept": 14.39638157894737,
+        "intercept": 13.892251293847039,
         "age": 0.0,
         "prior_games": 0.0,
         "draft_round": 0.0,
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": 0.0,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
         "prior_rush_yards": 0.0
       },
       "p90": {
-        "intercept": 52.82178961748635,
+        "intercept": 52.31307216839294,
         "age": 0.0,
         "prior_games": 0.0,
         "draft_round": 0.0,
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": 0.0,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
@@ -1317,7 +1292,6 @@
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": 0.0,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
@@ -1331,7 +1305,6 @@
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": 0.0,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
@@ -1345,7 +1318,6 @@
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": 0.0,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
@@ -1359,7 +1331,6 @@
         "prior_pos_rank": 0.0,
         "depth_rank_sep1": 0.0,
         "team_changed": 0.0,
-        "contract_year": 0.0,
         "prior_fd": 0.0,
         "prior_ts": 0.0,
         "prior_attempts": 0.0,
@@ -1373,10 +1344,10 @@
   },
   "notes": "Curve construction (window, monotone repair, ECR level weight) and the base form were SELECTED PER POSITION by forward-chaining inner cross-validation on pinball loss; the training set is seasons strictly before 2026. Ridge for the mean with alpha by season-grouped CV; p10/p50/p90 by pinball-loss linear quantile regression over ranks 1-60 with rank in the design. K and DST are intercept-only by MEASUREMENT, not omission (nested CV: K -0.0073, DST -0.0041).",
   "usageLiftRmse": {
-    "QB": 0.0842,
-    "RB": 0.2375,
-    "WR": 0.5488,
-    "TE": 0.3897
+    "QB": 0.0661,
+    "RB": 0.2246,
+    "WR": 0.5769,
+    "TE": 0.3812
   },
   "golden": [
     {
@@ -1392,7 +1363,7 @@
         "team_changed": 0
       },
       "expect": {
-        "mean": 245.28865163257663,
+        "mean": 245.069684749131,
         "p10": 134.06794047134392,
         "p50": 247.24227211697243,
         "p90": 347.96348612584626
@@ -1411,10 +1382,10 @@
         "team_changed": 1
       },
       "expect": {
-        "mean": 156.06450433818216,
+        "mean": 152.9224781332618,
         "p10": 93.18731558189889,
-        "p50": 160.87379095183252,
-        "p90": 244.8412091269158
+        "p50": 156.9333116726738,
+        "p90": 245.08387428067837
       }
     },
     {
@@ -1430,7 +1401,7 @@
         "team_changed": 0
       },
       "expect": {
-        "mean": 257.2389235839491,
+        "mean": 255.8507884388858,
         "p10": 135.30223364342453,
         "p50": 263.57557336096824,
         "p90": 364.92029859137136
@@ -1449,9 +1420,9 @@
         "team_changed": 0
       },
       "expect": {
-        "mean": 115.21190541705491,
+        "mean": 114.1127512463605,
         "p10": 58.90149436670068,
-        "p50": 110.958824098983,
+        "p50": 110.81983980469293,
         "p90": 172.25941102137094
       }
     },
@@ -1461,7 +1432,7 @@
       "rank": 30,
       "f": {},
       "expect": {
-        "mean": 114.0856251864372,
+        "mean": 113.66737931732418,
         "p10": 28.14801461639692,
         "p50": 115.48253852910233,
         "p90": 207.30802860767045
