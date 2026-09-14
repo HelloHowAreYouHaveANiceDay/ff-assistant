@@ -32,6 +32,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { parseCsv, playerWeekUrl, teamWeekUrl, canonTeam, URLS } from "../src/data/nflverse.ts";
 import { nameKey } from "../src/draft/values.ts";
+import { HOLDOUT_SEASONS, splitSeasons, assertSelectionBlind } from "./lib/holdout.mjs";
 
 const REFRESH = process.argv.includes("--refresh");
 const POS = ["QB", "RB", "WR", "TE"];
@@ -101,9 +102,25 @@ for (const line of readFileSync(residArg, "utf8").trim().split(/\r?\n/).slice(1)
     feat: f ?? null,
   });
 }
-const seasons = [...new Set(rows.map((r) => r.season))].sort();
-console.log(`${rows.length} per-fold residual rows over ${seasons.length} seasons (${seasons[0]}-${seasons[seasons.length - 1]})`);
-const scored = rows.filter((r) => Number.isFinite(r.pred) && r.pred > 20 && Number.isFinite(r.residFull));
+// SELECTION-BLIND SCREEN (WS2). A candidate is CHOSEN by looking at these residuals, so the choice
+// must never see the holdout block. We filter the residual rows to the SELECTION seasons here, before
+// any candidate is scored; the holdout seasons are quarantined for a one-shot confirm (admit-feature).
+// The models that PRODUCED these residuals still fit walk-forward (evaluate-projection --dump-residuals
+// trains each fold on seasons < Y) -- that is not selection leakage; only the CHOICE is blinded.
+const allSeasonsSeen = [...new Set(rows.map((r) => r.season))].sort((a, b) => a - b);
+const { selection: screenedSeasons, holdout: heldSeasons } = splitSeasons(allSeasonsSeen, HOLDOUT_SEASONS);
+const holdoutSet = new Set(HOLDOUT_SEASONS);
+const screenedRows = rows.filter((r) => !holdoutSet.has(r.season));
+// RUNTIME GUARD: nothing below may screen a holdout season. Throws (loudly) rather than silently
+// screening on all data, which is the exact failure this workstream exists to prevent.
+assertSelectionBlind(screenedSeasons, HOLDOUT_SEASONS);
+const seasons = screenedSeasons;
+console.log(
+  `selection-blind: screening on ${seasons[0]}-${seasons[seasons.length - 1]} (${screenedRows.length} rows); ` +
+  `${heldSeasons.length ? `${heldSeasons[0]}-${heldSeasons[heldSeasons.length - 1]}` : "none"} held out (never screened)`,
+);
+console.log(`${screenedRows.length} per-fold residual rows over ${seasons.length} screened seasons (${seasons[0]}-${seasons[seasons.length - 1]})`);
+const scored = screenedRows.filter((r) => Number.isFinite(r.pred) && r.pred > 20 && Number.isFinite(r.residFull));
 
 // --- PRIOR-SEASON player features -------------------------------------------------------------------
 // Everything here is measured in season S-1 and screened against the error in season S, which is the
