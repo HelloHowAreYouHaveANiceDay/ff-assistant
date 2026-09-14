@@ -10,6 +10,14 @@ list with verdicts, not a shrug.
 
 ## SCREENED 2026-09-14 -- all five candidates REJECT (none clears the 2.9*SE floor)
 
+> **Re-confirmed under the GBM (2026-09-14 fan-out).** These screens run against the SHIPPED boosted
+> model, not the old linear one: the trainer's `--learner` default is `gbm` and `evaluate.ts` passes no
+> `--learner`, so `admit-feature` fits GBM in both arms (verified by grepping a fresh fold artifact for
+> `"learner":"gbm"`). A separate re-screen of all 12 rejected candidates (these five plus the ladder's
+> lags/basis/`contract_year`) confirmed every one still REJECTs under the GBM -- nothing null-as-a-linear-
+> addition came alive via boosting interactions. `hist_ppg_w` keeps its holdout-only confirm; still a
+> candidate, not a default. docs/validation.md, the edge fan-out entry.
+
 All five were wired as DECLARED-not-fitted columns of `feat_player_season_ext` (schema.sql + db.ts
 migration + seasonExt.ts extraction + projector.ts `FEATURE_FIELDS`), so screening changed NO shipped
 number. Verdicts on the selection folds (position-gated screens use `admit-feature --pos`):

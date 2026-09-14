@@ -40,7 +40,7 @@
  * of ours at all.
  */
 import type { DB } from "../../db/db.js";
-import { loadWeekContext, loadModel, type ModelName } from "./context.js";
+import { loadWeekContext, loadModel, type ModelName, type WeekModel } from "./context.js";
 import { mean, r2, r3 } from "./lineup.js";
 
 export interface AddRow {
@@ -89,9 +89,17 @@ export function roomAdds(db: DB, leagueId: string, season: number): AddRow[] {
 }
 
 export function backtestWaivers(
-  db: DB, leagueId: string, opts: { seasons: number[]; model: ModelName; poolMinLine?: number },
+  db: DB, leagueId: string,
+  opts: {
+    seasons: number[]; model: ModelName; poolMinLine?: number;
+    /** OPTIONAL EXPERIMENT SEAM: score the ranking on a pre-loaded artifact instead of the one
+     *  `model` names on disk. `model` still labels the run. Used by the horizon experiment to feed a
+     *  matchup-neutral (dvp-zeroed) copy of the challenger without adding a ModelName or a data file.
+     *  Nothing in the shipped path passes it, so the default behaviour is byte-identical. */
+    artifactOverride?: WeekModel;
+  },
 ): { weeks: WaiverWeek[]; summary: WaiverSummary } {
-  const artifact = loadModel(opts.model);
+  const artifact = opts.artifactOverride ?? loadModel(opts.model);
   const out: WaiverWeek[] = [];
   let matched = 0, addsTotal = 0;
 

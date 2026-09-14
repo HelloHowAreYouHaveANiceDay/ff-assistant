@@ -485,6 +485,26 @@ export function simulateSeasons(
   // The level-uncertainty shrink (see SeasonOpts.played.priorWeeks): 1 = untouched.
   const K = played?.priorWeeks;
   const shrink = played && K != null && Number.isFinite(K) && K >= 0 ? Math.sqrt(K / (K + played.weeks)) : 1;
+  // EXPERIMENT (explore/sim-variance, 2026-09-14): late-season top-bin under-confidence (D18's
+  // recorded next candidate). Two ENV-gated levers, both no-ops when unset, so the shipped gate is
+  // byte-identical. `FF_SIM_LEVEL_SHRINK` overrides the level factor directly (0 pins each player's
+  // level at its target; 1 removes the shrink) -- the fault-injection control for "is it the level?".
+  // `FF_SIM_WEEKLY_VAR` scales the WITHIN-trajectory week-to-week spread for the remaining weeks (0
+  // flattens every played week to the trajectory's played-week mean; 1 leaves it untouched) -- the
+  // control for the pool's weekly variance. See the transform block below.
+  const _envNum = (k: string): number | null => { const v = Number(process.env[k]); return Number.isFinite(v) && v >= 0 ? v : null; };
+  const levelShrinkOverride = _envNum("FF_SIM_LEVEL_SHRINK");
+  const effShrink = levelShrinkOverride != null && played ? levelShrinkOverride : shrink;
+  const weeklyVarScale = _envNum("FF_SIM_WEEKLY_VAR");
+  // DIAGNOSTIC ONLY: FF_SIM_FILL_ZEROS=1 replaces a drawn trajectory's injury/DNP zeros with its
+  // played-week mean, removing availability variance from the remaining weeks. A positive control to
+  // attribute the late-season too-wide spread to availability rather than to scoring spread.
+  const fillZeros = _envNum("FF_SIM_FILL_ZEROS") === 1;
+  // DIAGNOSTIC ONLY: FF_SIM_DETERMINISTIC=1 sets every remaining week of every drawn trajectory to
+  // the player's target per-game mean -- the fully deterministic ceiling. If the top reliability bin
+  // does NOT reach ~100% here, the residual late-season miscalibration is structural (how well the
+  // seeded standings + projections identify the eventual field), not remaining-week variance at all.
+  const deterministic = _envNum("FF_SIM_DETERMINISTIC") === 1;
   const boot = opts.bootstrap
     ? teams.map((tm) => {
       const pp: PoolPlayer[] = tm.roster.map((p) => ({
@@ -503,7 +523,7 @@ export function simulateSeasons(
     const trueMean = new Map<SeasonPlayer, number>();
     for (const tm of teams) {
       for (const p of tm.roster) {
-        const sdEff = opts.projSd * shrink;
+        const sdEff = opts.projSd * effShrink;
         const err = (!boot && sdEff > 0) ? Math.exp(drawGauss(seedNum, trial, 0, pid(p.name), PURPOSE.projErr) * sdEff - 0.5 * sdEff ** 2) : 1;
         trueMean.set(p, Math.max(0, perGame(p) * err));
       }
@@ -532,14 +552,36 @@ export function simulateSeasons(
     // trials and players. Every week is multiplied by one ratio, so a zero stays a zero and the
     // shape of the drawn season (including where its injury falls) is exactly preserved; only its
     // level moves. With shrink = 1 nothing is touched, and the map is the sampler's own.
-    if (seasonDraw && shrink < 1) {
+    if (seasonDraw && (effShrink < 1 || (weeklyVarScale != null && weeklyVarScale !== 1) || fillZeros || deterministic)) {
       for (const drawn of seasonDraw) {
         for (const [pp, t] of drawn) {
           if (!t || !t.weeks.length || pp.projPerGame == null || !(pp.projPerGame > 0)) continue;
+          if (deterministic) { drawn.set(pp, { weeks: t.weeks.map(() => pp.projPerGame!), total: pp.projPerGame! * t.weeks.length }); continue; }
           const level = t.total / t.weeks.length;
           if (!(level > 0)) continue;
-          const r = (pp.projPerGame + shrink * (level - pp.projPerGame)) / level;
-          drawn.set(pp, { weeks: t.weeks.map((v) => v * r), total: t.total * r });
+          const r = (pp.projPerGame + effShrink * (level - pp.projPerGame)) / level;
+          let weeks = t.weeks.map((v) => v * r);
+          let total = t.total * r;
+          if (fillZeros) {
+            let sum = 0, cnt = 0;
+            for (const v of weeks) if (v > 0) { sum += v; cnt++; }
+            if (cnt >= 1) { const pm = sum / cnt; weeks = weeks.map((v) => (v > 0 ? v : pm)); total = weeks.reduce((a, b) => a + b, 0); }
+          }
+          // WEEKLY-VARIANCE SCALE (experiment): compress each PLAYED (non-zero) week toward the
+          // trajectory's played-week mean. The deviations sum to zero over played weeks, so the
+          // played sum -- hence the total and the level -- is preserved exactly, zeros stay zeros,
+          // and the availability/injury shape is untouched; only the week-to-week spread moves. This
+          // is orthogonal to the level shrink above, which is what lets the two be attributed apart.
+          if (weeklyVarScale != null && weeklyVarScale !== 1) {
+            let sum = 0, cnt = 0;
+            for (const v of weeks) if (v > 0) { sum += v; cnt++; }
+            if (cnt >= 1) {
+              const pm = sum / cnt;
+              weeks = weeks.map((v) => (v > 0 ? Math.max(0, pm + weeklyVarScale * (v - pm)) : 0));
+              total = weeks.reduce((a, b) => a + b, 0);
+            }
+          }
+          drawn.set(pp, { weeks, total });
         }
       }
     }
@@ -587,7 +629,10 @@ export function simulateSeasons(
           const healthy = unitDraw(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffInjury : PURPOSE.injury)
             < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
           const cvBase = m.cv[tier] ?? 0.8;
-          const cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
+          let cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
+          // WEEKLY-VARIANCE SCALE (experiment): the parametric twin of the bootstrap compression --
+          // scale the lognormal CV that governs a single week's spread. No-op when unset.
+          if (weeklyVarScale != null && weeklyVarScale !== 1) cv *= weeklyVarScale;
           const actual = (onBye || !healthy)
             ? null
             : sampleWeek(trueMean.get(p) ?? 0, cv, () => unitDraw(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffPerf : PURPOSE.perf));

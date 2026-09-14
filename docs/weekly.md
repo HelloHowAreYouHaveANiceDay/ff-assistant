@@ -701,7 +701,22 @@ W2's reasoning finally got its actual test. The claim was that availability, not
 large weekly edge; the Phase 2c measurement could not test it because it had no availability column,
 and the gain it found came from in-season form instead. Section 3's W4 is the direct test.
 
-### NEXT WORK, NOT DONE HERE: `feat_injury_horizon` into the weekly first stage
+### `feat_injury_horizon` into the weekly first stage -- SCREENED 2026-09-14, REJECTED (do not ship)
+
+**Done and rejected.** Joined as `ih_on_report` + `ih_weeks_missed` (first-stage/P-zero features, all three
+traps below handled: healthy default = the CENTER transform of zero games-missed, NULL for the 2025+
+dead-feed era, screened against the two-part-WITH-designations baseline). Connected (served pZero moves
+0.213 -> 0.072 -> 0.046 -> 0.018 as the horizon inputs change, so the null is real). On the new weekly
+paired-season floor (`scripts/weekly-paired-floor.mjs`): selection ADMIT (+0.0056 CRPS > floor 0.0032)
+but selection-blind HOLDOUT REJECT (+0.0065 < floor 0.0077), 2025 alone -0.0037, and lineup regret
+slightly worse. And it is STRUCTURALLY DEAD at the live 2026 serve -- no horizon rows exist for 2026 and
+`ff build-live-context` supplies no horizon path -- so a fold gain would never reach a real lineup. The
+signal is real but almost entirely absorbed by the `inj_*`/`prac_*` designations the model already
+fits, exactly as Track I's ablation predicted (0.047 at k=1, mostly practice status). The wiring is NOT
+kept in the default build; rebuild from this spec if the feed ever republishes report dates.
+docs/validation.md, the edge fan-out entry. Original spec (join, coverage, traps) preserved below.
+
+### NEXT WORK (original spec, kept for a possible rebuild): `feat_injury_horizon` into the weekly first stage
 
 Track I built `feat_injury_horizon` and fitted `P(he misses the next k games)` on it. **The weekly
 trainer does not read the table, and integration pass 4 deliberately did not make it.** That is a

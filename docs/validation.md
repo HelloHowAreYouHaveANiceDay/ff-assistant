@@ -1,5 +1,51 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## Edge fan-out: five fronts screened, NO new predictive edge (draft or in-season); the weekly paired-season floor built (2026-09-14)
+>
+> Five fronts were run in parallel to find any remaining edge. Discipline on each: screen against the
+> baseline that would SHIP, fault-inject the lever before trusting a null, quote the selection-blind
+> holdout, pair by season.
+>
+> - **Projector features under the GBM (DRAFT).** All 12 previously-rejected candidates (`qb_changed`,
+>   `prior_yac_oe`/`ryoe`/`cpoe`, `prior_out_games`, `contract_year`, `prior2_pts`/`prior3_pts`,
+>   `hist_ppg_w`, `age_sq`/`age_hinge30`/`log_rank`) RE-SCREENED and REJECT under the shipped GBM.
+>   `admit-feature` already fits GBM in both arms (the trainer `--learner` default is `gbm`,
+>   `evaluate.ts` passes none; verified by grepping a fresh artifact for `"learner":"gbm"`), so nothing
+>   null-as-linear came alive via boosting. `hist_ppg_w` keeps its holdout-only confirm (+0.062 vs floor
+>   0.053) -- candidate, not admit. The frontier is exhausted under the boosted model, not just the linear.
+> - **Weekly injury-horizon into the first stage (IN-SEASON lineup).** `feat_injury_horizon` joined as
+>   `ih_on_report` + `ih_weeks_missed`, all three traps handled (healthy default = transform of
+>   zero-missed, NULL for the dead-feed 2025+ era, screened vs the two-part-WITH-designations baseline).
+>   Connected (pZero 0.213 -> 0.018 as inputs change). Pooled gate PASSES but so does the baseline; the
+>   decisive paired floor: selection ADMIT (+0.0056 > floor 0.0032) but selection-blind HOLDOUT REJECT
+>   (+0.0065 < floor 0.0077), 2025 -0.0037, slightly worse lineup regret. STRUCTURALLY DEAD at the live
+>   2026 serve (no horizon rows; `build-live-context` supplies none). REJECT -- redundant with the
+>   designations/practice status already fitted (Track I: 0.047 at k=1, mostly practice).
+> - **Season-sim remaining-week variance (IN-SEASON odds).** D18's stated next candidate -- the
+>   late-season top-bin under-confidence (88.8% -> 97.1% at wk11) -- DISPROVEN by fault injection:
+>   collapsing the pool's weekly variance moves the top bin <1pp (the wrong way) and WORSENS Brier
+>   (wk11 0.0880 -> 0.0889); the deterministic ceiling (all variance 0) hits 0.1053 with the 100% bin
+>   observed 87.8%. The shipped variance is near the calibration optimum and the injury zeros are
+>   load-bearing; the top-bin gap is a coarse-bin small-sample artifact (n=34, ~1.5 sigma), not a spread
+>   defect. NO model change.
+> - **Streaming/waiver decision layer (IN-SEASON adds).** First measurement of the SHIPPING arm vs the
+>   room: waivers +0.59 ppg rest-of-season (P=100% season-bootstrap; the floor alone LOSES -0.34),
+>   one-week streaming +2.70 pts/pos-week (P=100%; QB +6.99, WR +3.29, TE +3.01, RB +2.89). The
+>   horizon-split idea (route one-week picks to the matchup-adjusted number, multi-week adds to the
+>   matchup-neutral rate) is a clean NULL at both horizons because `dvp_mult` is too weak (+0.036 waiver
+>   P=85%, -0.028 streaming P=28%), reproducing P42 at the decision layer. FAAB is already backtested
+>   (the "untested" frontier note was stale); the playoff-prob-delta bid is point-in-time intractable
+>   (it needs a `SimContext`, which exists only for the live season). Injury-opportunity is already in
+>   the model. No decision-layer edge.
+> - **`dvp_mult` removal (SIMPLIFICATION):** flagged by the streaming front as ~0 at both horizons;
+>   gated separately (see the follow-up entry / `docs/edges.md`).
+>
+> **Net.** No new predictive edge, draft or in-season -- the signature of a model already heavily
+> screened; the shipping tools already beat the room decisively. Durable outputs: `scripts/weekly-paired-floor.mjs`
+> -- the weekly track's FIRST paired-season floor (pairs by season, 2.9*SE, selection-blind holdout;
+> it caught the injury-horizon false positive the pooled gate would have admitted) -- and the baseline
+> quantification above. Nulls recorded so a later session does not re-run them.
+
 > ## D18: the season simulator starts from the season so far -- seeded standings are decisive from week 5, rest-of-season lines a small consistent gain from week 8 (2026-09-14)
 >
 > **What was wrong.** Every in-season number the copilot produced -- playoff odds, the trade check,
