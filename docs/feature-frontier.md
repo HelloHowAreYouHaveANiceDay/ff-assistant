@@ -104,6 +104,24 @@ fail while empty early folds passed -- i.e. it looked like a clean null. The pos
 - `contract_year` -> screened by leave-one-out 2026-09-14: **DROPPED** (contribution +0.0039, floor
   0.0100; docs/decisions.md acceptance block). Removed from the default fit list and the shipped artifact
   regenerated; kept as an --add-features candidate + ext column for later re-admission.
+- **Multi-year history** (`prior2_pts`, `prior3_pts`, `hist_ppg_w` -- lags of `feat_player_season` by
+  `player_sk`, ladder rung 2, 2026-09-14): screened, **all three REJECT** on the 2012-2020 decision block
+  (best `prior2_pts` +0.086 vs floor 0.099; the Marcel blend `hist_ppg_w` +0.062 vs floor 0.190 but
+  CONFIRMED on the 2021-2025 holdout, +0.190 vs floor 0.103). Consistent direction, sub-floor size.
+  Declared as `--add-features` candidates (`LAG_RATIO`), not defaults. docs/validation.md, rung 2.
+- **Nonlinear basis** (`age_sq`, `age_hinge30`, `log_rank` -- derived from age and prior rank in
+  `basisFeatures`, ladder rung 4, 2026-09-14): screened, **all three REJECT** with the sign slightly
+  against (-0.014 / -0.053 / -0.031 on the decision block). The linear age term and the winsorised rank
+  already carry it. Declared as candidates (`BASIS_CENTER`), not defaults. docs/validation.md, rung 4.
+- **External projection** (`fftoday_proj` -- FFToday's preseason season projection, `raw_fftoday_proj`
+  2008-2026, joined on (season, pos, name_key), a ratio to the rank bucket; ladder rung 7, 2026-09-14):
+  **ADMIT** (+0.326 vs floor 0.275 on the decision block; holdout +0.502, 5/5, confirmed) and NOT
+  explained by the market rank (`adp` gated the same way: REJECT, -0.007, holdout 0/5). A candidate
+  (`EXTERNAL_RATIO`) pending owner sign-off + the D13 playoff gate (D14/D15). docs/validation.md, rungs 5+7.
+- **Trainer-variant rungs** (not columns; gated by `scripts/gate-variant.mjs`): games-weighted
+  shrinkage of the usage ratios (`--shrink-k`) and partial pooling across positions
+  (`--pool-dev-mult`), ladder rung 3 -- **both REJECT, both negative on the holdout**. The flags stay,
+  default off. docs/validation.md, rung 3.
 
 ## Discipline reminders (this repo's, applied to the frontier)
 - Screen each candidate against the baseline that would SHIP, on the D13 **playoff** gate, with the

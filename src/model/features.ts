@@ -45,7 +45,7 @@ export function curveAt(curve: Record<string, number[]> | undefined, pos: string
 }
 
 interface Raw {
-  feat_key: string; player_sk: string | null; name: string; pos: string;
+  feat_key: string; player_sk: string | null; name: string; name_key: string | null; pos: string;
   prior_pos_rank: number | null; prior_pts: number | null; prior_games: number | null;
   age: number | null; prior_fd: number | null; prior_ts: number | null;
   prior_attempts: number | null; prior_rush_yards: number | null;
@@ -140,6 +140,89 @@ const EMPTY_EXT: ExtSeasonRow = {
 };
 
 /**
+ * MULTI-YEAR HISTORY (rung 2, 2026-09-14): the Y-2 and Y-3 rows of feat_player_season, by SURROGATE
+ * KEY -- the same key `prior_pts` is keyed on (the Y row's prior_pts equals the Y-1 row's pts for
+ * every resolved pair in the store). Their `pts`/`games` are season Y-2/Y-3 TARGETS, which at the
+ * season-Y anchor are past facts; nothing here reads season Y's own row.
+ *
+ * Mirrored by tools/train_projection.py load_rows() / hist_ppg_w(), and the artifact's golden block
+ * carries fixtures with these keys so the two are checked to agree rather than assumed to.
+ */
+export interface LagSeasonRow { p2: number | null; g2: number | null; p3: number | null; g3: number | null }
+
+export function loadLagSeason(db: DB, season: number): Map<string, LagSeasonRow> {
+  const out = new Map<string, LagSeasonRow>();
+  for (const r of db.prepare(
+    "SELECT player_sk, season, pts, games FROM feat_player_season WHERE season IN (?, ?) AND player_sk IS NOT NULL AND pts IS NOT NULL",
+  ).all(season - 2, season - 3) as { player_sk: string; season: number; pts: number; games: number | null }[]) {
+    const sk = String(r.player_sk);
+    const cur = out.get(sk) ?? { p2: null, g2: null, p3: null, g3: null };
+    if (r.season === season - 2) { cur.p2 = r.pts; cur.g2 = r.games; } else { cur.p3 = r.pts; cur.g3 = r.games; }
+    out.set(sk, cur);
+  }
+  return out;
+}
+
+/** Marcel weights on Y-1, Y-2, Y-3. Applied to BOTH points and games, so a three-game season barely
+ *  moves the blend. Mirrors LAG_WEIGHTS in tools/train_projection.py. */
+const LAG_WEIGHTS = [5, 4, 3] as const;
+
+/** Games-weighted three-season points per game; null when no season has games. Mirrors the Python
+ *  hist_ppg_w() term for term. */
+export function histPpgW(
+  p1: number | null | undefined, g1: number | null | undefined,
+  p2: number | null | undefined, g2: number | null | undefined,
+  p3: number | null | undefined, g3: number | null | undefined,
+): number | null {
+  let num = 0, den = 0;
+  const ps = [p1, p2, p3], gs = [g1, g2, g3];
+  for (let i = 0; i < 3; i++) {
+    const p = ps[i], g = gs[i];
+    if (p == null || g == null || !(g > 0)) continue;
+    num += LAG_WEIGHTS[i] * p;
+    den += LAG_WEIGHTS[i] * g;
+  }
+  return den > 0 ? num / den : null;
+}
+
+function lagFeatures(l: LagSeasonRow | undefined, p1: number | null | undefined, g1: number | null | undefined) {
+  return {
+    prior2_pts: l?.p2 ?? null,
+    prior3_pts: l?.p3 ?? null,
+    hist_ppg_w: histPpgW(p1, g1, l?.p2, l?.g2, l?.p3, l?.g3),
+  };
+}
+
+/** NONLINEAR BASIS (rung 4, 2026-09-14): three terms derived from age and prior rank, so an artifact
+ *  can carry curvature and a hinge without a new evaluator. Mirrors basis_features() in
+ *  tools/train_projection.py term for term; the pivots and the rank clip are the trainer's. */
+const AGE_PIVOT = 27, AGE_HINGE = 30, BASIS_MAX_RANK = 60;
+export function basisFeatures(age: number | null | undefined, rank: number | null | undefined) {
+  return {
+    age_sq: age != null ? (age - AGE_PIVOT) ** 2 : null,
+    age_hinge30: age != null ? Math.max(age - AGE_HINGE, 0) : null,
+    log_rank: rank != null ? Math.log(Math.min(Math.max(rank, 1), BASIS_MAX_RANK)) : null,
+  };
+}
+
+/** EXTERNAL PROJECTION (rung 7, 2026-09-14): FFToday's PRESEASON season projection for `season`,
+ *  keyed `${pos}|${name_key}` -- the same join rule the trainer's load_rows uses. A store without the
+ *  archive yields an empty map, so the column lands NULL and the artifact's `missing` (1.0, "what his
+ *  rank implies") handles it. Verified a projection, not leaked actuals: corr with actual points
+ *  0.60-0.79 by season. */
+export function loadExternalProj(db: DB, season: number): Map<string, number> {
+  const out = new Map<string, number>();
+  try {
+    for (const r of db.prepare(
+      "SELECT pos, name_key, proj_fpts FROM raw_fftoday_proj WHERE season = ? AND proj_fpts IS NOT NULL",
+    ).all(season) as { pos: string; name_key: string; proj_fpts: number }[]) {
+      out.set(`${r.pos}|${r.name_key}`, Number(r.proj_fpts));
+    }
+  } catch { /* no archive table in this store: no column, not zeros */ }
+  return out;
+}
+
+/**
  * NOTHING HERE READS `age-curve.json` OR `opportunity-model.json` ANY MORE (Phase 2b).
  *
  * They were fitted outside every fold, by their own scripts, against their own curves -- and the
@@ -154,7 +237,7 @@ const EMPTY_EXT: ExtSeasonRow = {
  *  accident. */
 export function loadFeatureRows(db: DB, opts: LoadOpts): FeatureRow[] {
   const rows = db.prepare(
-    `SELECT feat_key, player_sk, name, pos, prior_pos_rank, prior_pts, prior_games, age,
+    `SELECT feat_key, player_sk, name, name_key, pos, prior_pos_rank, prior_pts, prior_games, age,
             prior_fd, prior_ts, prior_attempts, prior_rush_yards, prior_air_yards_share, prior_wopr,
             team_changed, draft_year, draft_round, draft_pick, ecr_pos_rank, ecr_sd,
             curve_value_prior, curve_value_ecr, curve_value_orderstat
@@ -164,6 +247,8 @@ export function loadFeatureRows(db: DB, opts: LoadOpts): FeatureRow[] {
   const want = opts.positions ? new Set(opts.positions) : null;
   const baseCol = opts.base ?? "curve_value_ecr";
   const xt = loadExtSeason(db, opts.season);
+  const lag = loadLagSeason(db, opts.season);
+  const ext = loadExternalProj(db, opts.season);
 
   const out: FeatureRow[] = [];
   for (const r of rows) {
@@ -187,6 +272,9 @@ export function loadFeatureRows(db: DB, opts: LoadOpts): FeatureRow[] {
         draft_age: r.draft_year != null && r.age != null ? r.age - (opts.season - r.draft_year) : null,
         ecr_pos_rank: r.ecr_pos_rank, ecr_sd: r.ecr_sd,
         ...(r.player_sk != null ? xt.get(String(r.player_sk)) ?? EMPTY_EXT : EMPTY_EXT),
+        ...lagFeatures(r.player_sk != null ? lag.get(String(r.player_sk)) : undefined, r.prior_pts, r.prior_games),
+        ...basisFeatures(r.age, r.prior_pos_rank),
+        fftoday_proj: r.name_key != null ? ext.get(`${r.pos}|${r.name_key}`) ?? null : null,
       },
     });
   }
@@ -240,12 +328,12 @@ export function backtestFeatureRows(db: DB, season: number, artifact: Projection
   // the players whose fate the projection most needs to price. His season Y-1 row holds all of it:
   // `pts`/`games` are the Y row's `prior_pts`/`prior_games`, and `own_*` is the Y row's `prior_*`.
   const pool = db.prepare(
-    `SELECT feat_key, player_sk, name, pos, pos_rank, pts, games, age, draft_year, draft_round, draft_pick,
+    `SELECT feat_key, player_sk, name, name_key, pos, pos_rank, pts, games, age, draft_year, draft_round, draft_pick,
             own_fd, own_ts, own_attempts, own_rush_yards, own_air_yards_share, own_wopr
        FROM feat_player_season
       WHERE season = ? AND pts IS NOT NULL AND pos_rank IS NOT NULL`,
   ).all(season - 1) as {
-    feat_key: string; player_sk: string | null; name: string; pos: string; pos_rank: number;
+    feat_key: string; player_sk: string | null; name: string; name_key: string | null; pos: string; pos_rank: number;
     pts: number; games: number | null; age: number | null;
     draft_year: number | null; draft_round: number | null; draft_pick: number | null;
     own_fd: number | null; own_ts: number | null; own_attempts: number | null;
@@ -253,6 +341,8 @@ export function backtestFeatureRows(db: DB, season: number, artifact: Projection
   }[];
 
   const xt = loadExtSeason(db, season);
+  const lag = loadLagSeason(db, season);
+  const ext = loadExternalProj(db, season);
   const own = new Map<string, Raw>();
   for (const r of db.prepare(
     `SELECT feat_key, player_sk, name, pos, prior_pos_rank, prior_pts, prior_games, age,
@@ -294,6 +384,14 @@ export function backtestFeatureRows(db: DB, season: number, artifact: Projection
         // are looked up under the Y surrogate key -- the SAME key the trainer reads them under. A
         // man in the pool with no Y row has none of them, which is the honest answer.
         ...(p.player_sk != null ? xt.get(String(p.player_sk)) ?? EMPTY_EXT : EMPTY_EXT),
+        // The lags are keyed on the same surrogate key and are past facts for a man with or without
+        // a season-Y row; his Y-1 points/games come from the same place `prior_pts` above does.
+        ...lagFeatures(p.player_sk != null ? lag.get(String(p.player_sk)) : undefined,
+          r?.prior_pts ?? p.pts, r?.prior_games ?? p.games ?? null),
+        // The basis is a function of the same `age` and rank used above, so the two cannot disagree.
+        ...basisFeatures(age, p.pos_rank),
+        // Season Y's preseason projection for the pool man, by the name key he carries in the pool row.
+        fftoday_proj: p.name_key != null ? ext.get(`${p.pos}|${p.name_key}`) ?? null : null,
       },
     });
   }

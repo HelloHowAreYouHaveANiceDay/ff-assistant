@@ -170,6 +170,12 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
 - Strategy/levers: `src/draft/{strategy,levers,values,sim,backtest}.ts`
 - Findings + every rejected idea with its number: `docs/validation.md`, `docs/edges.md`
 - Unscreened feature candidates (NGS efficiency, QB-change, durability) + the screening recipe: `docs/feature-frontier.md`
+- The pre-deep-learning ladder (multi-year lags, shrinkage, pooling, a spline basis, an external
+  projection, a boosted challenger) and each rung's verdict: `docs/validation.md` ("THE PRE-DEEP-LEARNING
+  LADDER" sections). A rung that is a trainer FLAG rather than a column is gated by
+  `scripts/gate-variant.mjs` (same paired-season 2.9*SE verdict as `admit-feature.mjs`; `--cand-rung
+  challenger` scores a learner's sidecar predictions). Nothing on the ladder is a default until it clears
+  the floor AND gets owner sign-off (D14/D15).
 - Draft-day procedure and machine setup: `docs/draft-day-runbook.md`
 - The MCP control surface (39 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is
   `TOOL_NAMES.length` in `src/agent/agent.ts`, not a number to retype -- `scripts/copilot-mcp-smoke.mjs`

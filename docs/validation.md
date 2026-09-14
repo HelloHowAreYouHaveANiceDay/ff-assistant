@@ -1,5 +1,206 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## THE PRE-DEEP-LEARNING LADDER, rungs 5 and 7: an external projection and a boosted challenger -- the first two ADMITs, both confirmed (2026-09-14)
+>
+> The ladder's premise was that the linear projector had not been exhausted. Rungs 2-4 said the
+> linear model IS exhausted along the axes of more history, more shrinkage, more pooling and more
+> basis. The two rungs that clear the floor are the two that bring something the design did not have:
+> an independent human opinion, and a learner that can see interactions.
+>
+> **Rung 7 -- FFToday's preseason projection as a feature (`fftoday_proj`).** `raw_fftoday_proj`
+> (2008-2026, FFToday's own scoring stored verbatim) joined on (season, pos, name_key) in
+> `src/model/features.ts` (`loadExternalProj`) and the trainer's `load_rows`, as a RATIO to the mean
+> for the player's Y-1 rank bucket, so the scoring scale divides out and the feature reads "does an
+> independent projection see him above or below what his rank implies?". Leakage checked before
+> anything was fitted: corr(projection, actual) is 0.60-0.79 by season (leaked actuals would read
+> ~1.0) and corr(projection, prior points) 0.64-0.82 -- a preseason projection, and one that beats
+> carry-forward, as a human projection should. Coverage: 92% of the fitted rank range on the 2024
+> board; the backtest pool's men with no season-Y row have essentially none (3 of 176), which is the
+> honest answer (nobody projects a retired player). Hand check: one board row equals the archive row.
+>
+> **Rung 5 -- a gradient-boosted challenger (`--challenger gbm`), as a SCREEN.** The artifact schema is
+> a linear predictor and the TypeScript projector evaluates nothing else, so before writing a tree
+> evaluator into the draft engine the question was whether a boosted model beats the ridge on the
+> SAME folds, targets and scoring at all. The trainer fits `HistGradientBoostingRegressor` (depth 3,
+> 300 rounds at 0.05, 30 rows per leaf, L2 1.0, no early stopping -- pre-registered) on the same rows,
+> design and per-row base the linear heads use, pooled across the four fitted positions with a one-hot
+> position block, a squared-error mean head and quantile-loss p10/p50/p90 heads, and writes its
+> HOLDOUT predictions to a sidecar beside the fold artifact. `evaluate.ts` reads the sidecar into a
+> `challenger` field scored by the same `score()` on the same targets, and `gate-variant.mjs
+> --cand-rung challenger` applies the verdict on the INTERSECTION of rows (the challenger predicts the
+> fitted positions only, not K/DST -- 385-472 rows a season), with a built-in consistency check that
+> the candidate arm's linear rung is byte-identical to the baseline's (it was, in every season). Fault
+> injection: `--gbm-iter 1` (one round) scores 13.22 on the 2024 fold against the linear 12.60, so the
+> pipeline responds to the learner and not to the plumbing.
+>
+> | test | arms | decision 2012-2020: improvement +/- SE, wins | floor | verdict | holdout 2021-2025 |
+> |---|---|---|---|---|---|
+> | rung 7 | linear vs linear + `fftoday_proj` | **+0.3257 +/- 0.0948, 7/9** | 0.2750 | **ADMIT** | +0.5024 +/- 0.0555, 5/5, floor 0.161 -> **confirmed** |
+> | broader lever | linear vs linear + `adp` (market rank) | -0.0068 +/- 0.0683, 5/9 | 0.198 | REJECT | -0.1162, 0/5 |
+> | rung 5 | linear vs GBM (3/300) | **+0.3747 +/- 0.0949, 8/9** | 0.2752 | **ADMIT** | +0.7068 +/- 0.1280, 5/5, floor 0.371 -> **confirmed** |
+> | rung 5 sensitivity | linear vs GBM (2/150) | +0.3885 +/- 0.0951, 8/9 | 0.2757 | ADMIT | +0.6895 +/- 0.0784, 5/5 -> confirmed |
+> | cross-check | GBM vs GBM + `fftoday_proj` | +0.2187 +/- 0.0876, 6/9 | 0.254 | REJECT (by 0.04) | +0.2665 +/- 0.0620, 5/5, floor 0.180 -> confirmed |
+> | cross-check | linear + `fftoday_proj` vs GBM + `fftoday_proj` | **+0.2178 +/- 0.0741, 8/9** | 0.2150 | **ADMIT** (by 0.003) | +0.3977 +/- 0.0909, 5/5, floor 0.264 -> confirmed |
+>
+> Baseline pinball 12.486 (decision) / 11.585 (holdout) for the feature rows; 12.871 / 11.974 on the
+> intersected challenger rows. **Reading, in order of confidence.** (1) The external projection is a
+> real feature: the largest single-feature effect this projector has measured (`depth_rank_sep1` was
+> 0.28), confirmed on the holdout by three times its floor, and NOT explained by the market rank --
+> `adp` gated the same way is a null with the wrong sign, so what FFToday carries is judgement, not
+> the crowd. (2) The boosted learner is real and robust to capacity: the two settings agree to 0.01.
+> (3) They are partly additive: each adds ~0.22 on top of the other, each confirmed 5/5 on the
+> holdout, each sitting within a few thousandths of the floor on the decision block in opposite
+> directions -- which is a statement about the floor on nine seasons, not about the two signals.
+> Combined against the shipped linear model on the same rows: 12.871 -> 12.278 on the decision block
+> (+0.59) and 11.974 -> 11.000 on the holdout (+0.97), roughly 5-8% of pinball.
+>
+> **What this does NOT do.** Nothing shipped moved: `fftoday_proj` is a candidate (`EXTERNAL_RATIO`,
+> `--add-features`), the GBM has no serving path (the board cannot read a sidecar), and both are
+> model changes under D14/D15 -- owner sign-off and the D13 playoff gate before either is a default.
+>
+> **The D13 playoff gate for rung 7 (run, not deferred).** Two matched per-fold artifact sets were
+> built for 2012-2025 (`data/fold-artifacts-base`, the shipped design; `data/fold-artifacts-fft`,
+> shipped + `fftoday_proj`; every fold blind to its own season), then the championship backtest ran
+> once on each (`--full --no-lookahead --inflation --projection artifact --artifact-dir <set>
+> --seasons 2012-2024 --n 150`, common random numbers, 1,800 paired trials) and `scripts/cpcv.mjs`
+> arbitrated the dumps (ledger row `config_hash 2388604e481c57d2`). Point estimates: playoffs 95.50% ->
+> 95.17%, titles 38.44% -> 38.00%. **PLAYOFFS (the gate): -0.58pp, 95% CI [-2.08, +0.92], 3/8
+> decision seasons up, PBO 49%, resolvable >= ~2.41pp -> NULL / UNDERPOWERED**; holdout 2021-2024
+> +0.17pp [-3.17, +2.33], 3/4 up. So the projection gain does not show up as a playoff-probability
+> gain, and the reason is stated rather than argued around: the flagless system already makes the
+> playoffs 95-96% of the time, which leaves ~4pp of headroom for ANY projector change, against a
+> resolution of 2.4pp on eight seasons. This is the same shape as every projector feature before it
+> (`contract_year`'s acceptance block: "the correct gate for a projector feature is projection
+> pinball; the downstream championship number does not move"), and `depth_rank_sep1` shipped on the
+> pinball gate without arbitration. The honest status of rung 7 is therefore: **ADMIT on the
+> projector's own gate, confirmed on its holdout, NULL on the draft gate at the draft gate's
+> resolution** -- which is what the owner signs off on or does not. Rung 5's playoff check needs the
+> serving path first (a sidecar cannot draft). For rung 5 the
+> cost of admission is the tree evaluator: a JSON serialisation of the boosted ensembles, a TypeScript
+> walker in `projector.ts`, and a golden block for it -- the same producer/consumer contract the
+> linear artifact carries. That is a bounded job, and this screen is what justifies it.
+>
+> **Rungs not run, and why (so the ladder is a list with verdicts, not a shrug).** Rung 6 (a
+> season-level durability head, points = P(games) x points per game) is subsumed: the durability
+> signal it would carry, `prior_out_games`, was screened by the parallel frontier pass (PR #22) and is
+> a null (-0.0024, holdout -0.0129), so there is nothing for a second head to model. Rungs 8 and 9
+> (conformal recalibration of the weekly intervals; a fitted half-life for weekly form and trees on
+> the weekly table) belong to the WEEKLY track, a different trainer (`tools/train_weekly.py`), a
+> different harness (`ff evaluate-weekly`: lineup regret plus a coverage gate, not pinball) and a
+> different feature table that would need a rebuild; neither has a paired-season floor like
+> `admit-feature`/`gate-variant` yet, and building one is the first step. Not started in this pass.
+
+> ## THE PRE-DEEP-LEARNING LADDER, rung 4: a nonlinear basis -- three terms, three nulls (2026-09-14)
+>
+> Nonlinearity that stays linear in parameters, so the TypeScript projector needs only the basis and
+> no new evaluator. Three pre-registered terms derived from fields already in the row, built once in
+> `src/model/features.ts` (`basisFeatures`) for both loaders and mirrored in the trainer
+> (`basis_features`): `age_sq` = (age-27)^2 (curvature of the age effect), `age_hinge30` =
+> max(age-30, 0) (the late-career cliff, one knot), `log_rank` = ln(clip(rank, 1, 60)) (the elite end
+> of the rank axis). Connected before measured: one fold fits all three with sizeable coefficients
+> (RB `age_hinge30` +11.5, `log_rank` +14.1), the loader accepts the artifact, 95% board coverage, a
+> hand computation matches the loader, and the artifact's training-side centre for `log_rank` equals a
+> direct database computation over the same rows to 1e-6 (the Python derivation is the TS one).
+>
+> | candidate | decision 2012-2020: improvement +/- SE, wins | floor | verdict | holdout 2021-2025 |
+> |---|---|---|---|---|
+> | `age_sq` | -0.0142 +/- 0.0716, 4/9 | 0.208 | REJECT | -0.0018, 2/5 |
+> | `age_hinge30` | -0.0525 +/- 0.0595, 5/9 | 0.173 | REJECT | -0.0010, 3/5 |
+> | `log_rank` | -0.0314 +/- 0.0739, 4/9 | 0.214 | REJECT | +0.0179, 2/5 |
+>
+> Three nulls with the sign slightly against. The linear age term and the winsorised rank already
+> carry what a quadratic, a hinge and a log add at this sample size; under ridge the extra columns buy
+> variance, not fit. Declared as candidates, not defaults.
+
+> ## THE PRE-DEEP-LEARNING LADDER, rung 3: shrinkage and partial pooling -- both REJECTED, both harmful on the holdout (2026-09-14)
+>
+> Rung 3 changes HOW the trainer fits rather than WHICH column it fits, so it is gated by a new script,
+> `scripts/gate-variant.mjs`: the same two nested-CV runs and the same season-paired 2.9*SE verdict as
+> `admit-feature.mjs`, but the arms differ by trainer FLAGS (passed through a new `trainerArgs` option
+> on `evaluateProjection`, echoed in the header). Both mechanisms were fault-injected before any number
+> was read.
+>
+> **3a -- sample-size shrinkage of the Y-1 usage ratios (`--shrink-k K`).** A new transform,
+> `ratio_to_bucket_mean_shrunk`, pulls each usage ratio toward 1.0 ("exactly what his rank implies") by
+> g/(g+K), g = prior games; mirrored in `tools/train_projection.py` and `src/model/projector.ts`, refused
+> by the loader without a positive K, and checked by hand on both the 17-game and 3-game cases.
+>
+> | K | decision 2012-2020: improvement +/- SE, wins | floor | verdict | holdout 2021-2025 |
+> |---|---|---|---|---|
+> | 2 | -0.0706 +/- 0.0556, 1/9 | 0.161 | REJECT | -0.0183, 0/5 |
+> | 4 (primary) | -0.0001 +/- 0.0412, 1/9 | 0.120 | REJECT | -0.0513, 0/5 |
+> | 8 | +0.0062 +/- 0.0498, 2/9 | 0.144 | REJECT | -0.0526, 0/5 |
+>
+> A null, and in hindsight a structural one: nearly everyone in the fitted rank range played 12+
+> games, so g/(g+K) is close to a constant and the coefficient absorbs it. Where it does bite (a
+> short prior season) it is mildly harmful on the holdout (0/5 at every K). Not carried.
+>
+> **3b -- partial pooling of coefficients across positions (`--pool-dev-mult M`).** One ridge over all
+> four positions with shared slopes, per-position intercepts and per-position DEVIATION slopes whose
+> penalty is M times the shared one (column scaling 1/sqrt(M) for L2; 1/M for the L1 quantile heads,
+> where the first cut used 1/sqrt(M) and the quantile heads came out FULLY pooled at M=10 while the mean
+> head was partial -- caught by the fault check, fixed before gating). The artifact shape is unchanged.
+> Fault-injected both ways: M=1e9 collapses every position onto one slope per feature (spread 2e-6);
+> M=1e-6 reproduces the per-position mean fit. Under L1 the quantile deviations die almost at once (M=3
+> leaves 8 of 24 p50 deviations, M=10 none), so the candidates span partial to fully pooled heads.
+>
+> | M | decision 2012-2020: improvement +/- SE, wins | floor | verdict | holdout 2021-2025 |
+> |---|---|---|---|---|
+> | 1 | +0.1028 +/- 0.0603, 6/9 | 0.175 | REJECT | -0.0792, 2/5 |
+> | 3 (primary) | +0.0402 +/- 0.0780, 4/9 | 0.226 | REJECT | -0.1405, 2/5 |
+> | 10 | +0.0284 +/- 0.0771, 4/9 | 0.224 | REJECT | -0.1502, 2/5 |
+>
+> Noisy on the decision block, negative on the holdout at every M. Positions really do differ in how
+> the residual against the curve moves with age, games and depth, and borrowing strength across them
+> costs more than the smaller per-position sample does. Not carried. Both flags stay (default off,
+> byte-identical shipped fit) as the reproducible record of the measurement.
+
+> ## THE PRE-DEEP-LEARNING LADDER, rung 2: multi-year history -- REJECTED at the floor, consistent below it (2026-09-14)
+>
+> Every default projector feature is Y-1 only. Rung 2 asks whether the two seasons before that carry
+> anything the Y-1 rank and usage do not. Three candidates, all lags of `feat_player_season` itself
+> joined by `player_sk` (so they reach back to 2001 and need no extension-table rebuild), all RATIO
+> features divided by the mean for the player's Y-1 rank bucket, so each asks "relative to what his
+> Y-1 rank implies, was his longer history better or worse?":
+>
+> - `prior2_pts` -- season points two seasons back; `prior3_pts` -- three seasons back;
+> - `hist_ppg_w` -- Marcel-style points per game over Y-1..Y-3, weighted 5/4/3 on BOTH points and
+>   games (a three-game season barely moves it); equals Y-1 ppg when no older season exists.
+>
+> Declared as `--add-features` candidates in `tools/train_projection.py` (`LAG_RATIO`), built in one
+> place on the TS side (`src/model/features.ts` `loadLagSeason` / `histPpgW`) for both the board and
+> the backtest pool (a pool man with no season-Y row still gets them: 137 of 176 in 2024), mirrored in
+> the trainer's `load_rows`, and the golden block's first two fixtures now carry the lag keys so the two
+> implementations are checked on the positive path. **Connected before measured:** one fold (holdout
+> 2024) fits all three with non-trivial coefficients (QB `hist_ppg_w` +0.43, WR `prior2_pts` +0.17),
+> the shipped loader accepts the artifact, and a hand computation of `hist_ppg_w` for a real row
+> matches the loader to 1e-9. Board coverage 2024: 64% / 52% / 81%. The default fit is byte-identical
+> (test "the committed fixture is still what the trainer produces TODAY" green).
+>
+> **Gate (`admit-feature.mjs`, seasons 2008-2025; only 2012-2025 score, see below):**
+>
+> | candidate | decision 2012-2020 (9): improvement +/- SE, wins | floor 2.9*SE | verdict | holdout 2021-2025 (5) |
+> |---|---|---|---|---|
+> | `prior2_pts` | +0.0858 +/- 0.0342, 8/9 | 0.0991 | **REJECT** | +0.1312 +/- 0.0458, 5/5, floor 0.1328 -> not confirmed |
+> | `prior3_pts` | +0.0194 +/- 0.0727, 6/9 | 0.2108 | **REJECT** | +0.0814 +/- 0.0369, 4/5, floor 0.1069 -> not confirmed |
+> | `hist_ppg_w` | +0.0617 +/- 0.0656, 8/9 | 0.1902 | **REJECT** | **+0.1902 +/- 0.0353, 5/5, floor 0.1025 -> confirmed** |
+>
+> Baseline pinball 12.486 (decision) / 11.585 (holdout). **All three REJECT on the decision block**, so
+> nothing joins the defaults. The honest reading of the pattern is stated rather than argued around:
+> the direction is consistent (21 of 23 season-pairs improve across the family), the effect is
+> ~0.5-1% of pinball (a third of `depth_rank_sep1`'s 0.28), and the blend is the only one of the three
+> that clears the floor anywhere -- on the holdout, which is quoted once and cannot promote a decision
+> the selection block rejected. This is exactly the sub-floor-but-consistent shape WS1 exists to keep
+> out until a powered test admits it. The three stay declared as candidates; a later re-test with a
+> wider decision block is one flag.
+>
+> **A harness limit surfaced by this gate, not caused by it:** `--seasons 2008-2025` scores only
+> 2012-2025 because the curve-only rung reports "no curve at any rank" for 2008-2011 (the
+> point-in-time curve cannot be built that early), and a fold is skipped when that rung is empty --
+> even though the trainer fits 2012 from 2000-2011 and could fit the four earlier folds. Every WS1
+> gate therefore decides on 9 seasons, and 2.9*SE on 9 seasons is a high bar (floor 0.10-0.21 pinball
+> here). Not changed in this pass; recorded because it caps the power of every rung on the ladder.
+
 > ## RIGOR PROGRAM WS3: adjacent-season embargo + cold-start reporting + player-grouped alpha CV (2026-09-13)
 >
 > Three correct pieces of the "purge done right" -- NOT a naive player purge (removing a returning

@@ -194,7 +194,78 @@ EXT_ALLOWED = {
     "qb_changed": {"RB", "WR", "TE"},
     # prior_out_games is deliberately NOT gated: durability applies at every position.
 }
-ALL_EXT = sorted(set(EXT_CENTER) | set(EXT_INDICATOR))
+# ==================================================================================================
+# MULTI-YEAR HISTORY -- rung 2 of the pre-deep-learning ladder (2026-09-14).
+#
+# Every default feature above is Y-1 only. These three are lags of feat_player_season ITSELF, joined
+# by player_sk in load_rows (Y-2 and Y-3 rows), so they reach back to 2001 and need no extension-table
+# rebuild. All three are RATIO features, divided by the mean for the player's Y-1 rank bucket, so each
+# asks "relative to what his Y-1 rank implies, was his longer history better or worse?" -- the
+# regression-to-a-longer-mean question a Y-1-only design cannot ask. Missing (no older season) is
+# 1.0, "exactly what his rank implies". Candidates only: none is a default until it clears WS1.
+#
+#   prior2_pts   season points two seasons back (the Y-2 row's pts)
+#   prior3_pts   season points three seasons back
+#   hist_ppg_w   Marcel-style points per game over Y-1..Y-3, weighted 5/4/3 on BOTH points and games
+#                (a 3-game Y-2 barely moves it); equals Y-1 ppg when no older season exists.
+# Mirrored in src/model/features.ts (loadLagSeason / histPpgW); the golden block carries fixtures
+# with these keys so the two implementations are checked, not assumed, to agree.
+LAG_RATIO = {"prior2_pts": 20.0, "prior3_pts": 20.0, "hist_ppg_w": 2.0}
+LAG_WEIGHTS = (5.0, 4.0, 3.0)
+
+
+def hist_ppg_w(p1, g1, p2, g2, p3, g3):
+    """Games-weighted three-season points per game. Mirrors histPpgW() in src/model/features.ts."""
+    num = den = 0.0
+    for w, p, g in zip(LAG_WEIGHTS, (p1, p2, p3), (g1, g2, g3)):
+        if p is None or g is None or float(g) <= 0:
+            continue
+        num += w * float(p)
+        den += w * float(g)
+    return (num / den) if den > 0 else None
+
+
+# ==================================================================================================
+# A NONLINEAR BASIS THAT STAYS LINEAR IN PARAMETERS -- rung 4 of the ladder (2026-09-14).
+#
+# Three pre-registered terms, each derived from a field already in the row, so the TypeScript
+# projector needs only the basis (src/model/features.ts basisFeatures) and no new evaluator:
+#   age_sq       (age - 27)^2      curvature of the age effect: the fit above is a straight line in
+#                                  age, and an age curve is not a line
+#   age_hinge30  max(age - 30, 0)  the late-career cliff, as the simplest spline: one knot at 30
+#   log_rank     ln(clip(rank,1,60)) the elite end of the rank axis, where the residual against the
+#                                  curve is steepest and a linear rank term is flattest
+# CENTER features, candidates only (--add-features). Mirrored term for term in basisFeatures().
+BASIS_CENTER = ["age_sq", "age_hinge30", "log_rank"]
+AGE_PIVOT, AGE_HINGE = 27.0, 30.0
+
+
+def basis_features(age, rank):
+    """Mirrors basisFeatures() in src/model/features.ts."""
+    out = {"age_sq": None, "age_hinge30": None, "log_rank": None}
+    if age is not None:
+        a = float(age)
+        out["age_sq"] = (a - AGE_PIVOT) ** 2
+        out["age_hinge30"] = max(a - AGE_HINGE, 0.0)
+    if rank is not None:
+        out["log_rank"] = math.log(min(max(float(rank), 1.0), float(MAX_RANK)))
+    return out
+
+
+# ==================================================================================================
+# AN EXTERNAL PROJECTION AS A FEATURE -- rung 7 of the ladder (2026-09-14).
+#
+# `raw_fftoday_proj` holds FFToday's PRESEASON season projection for 2008-2026 (its own scoring, stored
+# verbatim), joined here on (season, pos, name_key). Verified a projection and not leaked actuals:
+# its correlation with the season's actual points is 0.60-0.79 by season (actuals would be 1.0), and
+# with prior-season points 0.64-0.82. As a RATIO to the mean for the player's Y-1 rank bucket it asks
+# "does an independent human projection see him above or below what his rank implies?" -- the
+# scoring-system scale divides out. A candidate, never a default: the consensus blend at the VALUE
+# layer was demoted under D14; this is a different test, under the projector's own gate.
+EXTERNAL_RATIO = {"fftoday_proj": 20.0}
+
+ALL_EXT = sorted(set(EXT_CENTER) | set(EXT_INDICATOR) | set(LAG_RATIO) | set(BASIS_CENTER)
+                 | set(EXTERNAL_RATIO))
 # Which positions may carry a non-zero coefficient on each ratio feature. A quarterback has no
 # target share and no receiving first downs; scoring him on them measured ~0 for twenty seasons and
 # that null was then written down as a fact about quarterbacks. His workload is attempts and rushing
@@ -232,15 +303,38 @@ def embargo_seasons(as_of, embargo):
 def load_rows(db_path, lo, hi):
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
+    # The Y-2 and Y-3 rows are joined by SURROGATE KEY (the same key prior_pts is keyed on: the Y row's
+    # prior_pts equals the Y-1 row's pts for every one of 8,592 resolved pairs in the store). Their
+    # `pts`/`games` are season Y-2/Y-3 targets, which are past facts at the Y anchor.
+    # The FFToday archive (rung 7) is joined on (season, pos, name_key) -- the same rule
+    # src/model/features.ts loadExternalProj uses -- and only where the store has the table.
+    has_fftoday = con.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'raw_fftoday_proj'"
+    ).fetchone()[0] > 0
     cur = con.execute(
-        "SELECT feat_key, player_sk, season, name, pos, prior_pos_rank, prior_pts, prior_games, age,"
-        " prior_fd, prior_ts, prior_attempts, prior_rush_yards, prior_air_yards_share, prior_wopr,"
-        " team_changed, draft_year, draft_round, draft_pick, ecr_pos_rank, ecr_sd, pts"
-        " FROM feat_player_season"
-        " WHERE season BETWEEN ? AND ? AND pts IS NOT NULL",
+        "SELECT s.feat_key, s.player_sk, s.season, s.name, s.pos, s.prior_pos_rank, s.prior_pts,"
+        " s.prior_games, s.age, s.prior_fd, s.prior_ts, s.prior_attempts, s.prior_rush_yards,"
+        " s.prior_air_yards_share, s.prior_wopr, s.team_changed, s.draft_year, s.draft_round,"
+        " s.draft_pick, s.ecr_pos_rank, s.ecr_sd, s.pts,"
+        " l2.pts AS lag2_pts, l2.games AS lag2_games, l3.pts AS lag3_pts, l3.games AS lag3_games"
+        + (", ff.proj_fpts AS fftoday_proj" if has_fftoday else ", NULL AS fftoday_proj") +
+        " FROM feat_player_season s"
+        " LEFT JOIN feat_player_season l2 ON l2.player_sk = s.player_sk AND l2.season = s.season - 2"
+        " LEFT JOIN feat_player_season l3 ON l3.player_sk = s.player_sk AND l3.season = s.season - 3"
+        + (" LEFT JOIN raw_fftoday_proj ff ON ff.season = s.season AND ff.pos = s.pos"
+           " AND ff.name_key = s.name_key" if has_fftoday else "") +
+        " WHERE s.season BETWEEN ? AND ? AND s.pts IS NOT NULL",
         (lo, hi),
     )
     rows = [dict(r) for r in cur.fetchall()]
+    for r in rows:
+        r["prior2_pts"] = r.pop("lag2_pts")
+        g2 = r.pop("lag2_games")
+        r["prior3_pts"] = r.pop("lag3_pts")
+        g3 = r.pop("lag3_games")
+        r["hist_ppg_w"] = hist_ppg_w(r.get("prior_pts"), r.get("prior_games"),
+                                     r["prior2_pts"], g2, r["prior3_pts"], g3)
+        r.update(basis_features(r.get("age"), r.get("prior_pos_rank")))
     attach_ext(con, rows)
     con.close()
     return rows
@@ -446,7 +540,7 @@ def bucket_means(rows):
     return out
 
 
-def build_specs(rows, bmeans):
+def build_specs(rows, bmeans, shrink_k=0.0):
     """The feature list, with every transform parameter measured here and written onto the artifact.
 
     `missing` is required to be EXPLICIT. A missing input silently becoming 0 means "this player is
@@ -454,6 +548,11 @@ def build_specs(rows, bmeans):
     a guess wearing the costume of a default. For the centred features the explicit choice is
     mean-imputation, which is 0 after centring and is stated as such; for a ratio feature it is 1.0,
     "exactly what his rank implies".
+
+    `shrink_k` > 0 (ladder rung 3a, `--shrink-k`) switches every ratio feature to the SHRUNK transform:
+    the ratio is pulled toward 1.0 by g/(g+K), g = the row's prior_games. A per-game rate from three
+    games is mostly noise and from seventeen mostly signal; K is how many games the prior is worth.
+    0 (the default) emits the shipped transform byte for byte.
     """
     specs = []
     for name in CENTER_FEATURES:
@@ -485,10 +584,15 @@ def build_specs(rows, bmeans):
     for name, floor in RATIO_FEATURES.items():
         if name not in bmeans:
             continue
-        specs.append({
+        spec = {
             "name": name, "transform": "ratio_to_bucket_mean", "bucket": BUCKET,
             "floor": floor, "bucketMeans": bmeans[name], "missing": 1.0,
-        })
+        }
+        if shrink_k and shrink_k > 0:
+            spec["transform"] = "ratio_to_bucket_mean_shrunk"
+            spec["shrinkK"] = float(shrink_k)
+            spec["gamesField"] = "prior_games"
+        specs.append(spec)
     return specs
 
 
@@ -515,7 +619,7 @@ def feature_value(spec, row):
     if t == "center":
         s = spec.get("scale", 1.0)
         return spec["missing"] if s == 0 else (raw - spec.get("center", 0.0)) / s
-    if t == "ratio_to_bucket_mean":
+    if t in ("ratio_to_bucket_mean", "ratio_to_bucket_mean_shrunk"):
         rank = row.get("_rank")
         if rank is None:
             return spec["missing"]
@@ -523,7 +627,15 @@ def feature_value(spec, row):
         m = spec["bucketMeans"].get(row["pos"], {}).get(b)
         if m is None or not (m > spec.get("floor", 0.0)):
             return spec["missing"]
-        return raw / m
+        ratio = raw / m
+        if t == "ratio_to_bucket_mean":
+            return ratio
+        # SHRUNK (rung 3a): mirrored in src/model/projector.ts featureValue() term for term.
+        g = row.get(spec.get("gamesField", "prior_games"))
+        if g is None or not (float(g) > 0):
+            return spec["missing"]
+        w = float(g) / (float(g) + float(spec["shrinkK"]))
+        return 1.0 + w * (ratio - 1.0)
     return spec["missing"]
 
 
@@ -723,6 +835,101 @@ def fit_position(sub, X, specs, pos, base, args, form):
     return coef
 
 
+def fit_pooled(fitted, specs, args, form, dev_mult):
+    """PARTIAL POOLING ACROSS POSITIONS (ladder rung 3b, `--pool-dev-mult M`).
+
+    fit_position fits each position alone: four ridge fits of ~700-900 rows each, and a QB coefficient
+    on `age` that has never seen a running back's age. The hierarchical alternative is ONE fit whose
+    design is [shared slopes | per-position intercepts | per-position DEVIATION slopes], with the
+    deviation block scaled by 1/sqrt(M) so the ridge penalty on a deviation is M times the penalty on
+    the shared slope. M -> infinity is one pooled model with position intercepts; M -> 0 is the
+    per-position fit. Each position's served coefficient is shared + its own deviation, so the
+    ARTIFACT SHAPE IS UNCHANGED and nothing on the TypeScript side moves.
+
+    A column a position may not carry (RATIO_ALLOWED) is ZEROED for that position's rows in every
+    block, so it contributes exactly nothing to the fit and the emitted 0.0 coefficient reproduces the
+    fitted prediction -- the same masking fit_position does by dropping the column, done by value so
+    the shared block can keep it for the positions that are allowed it.
+
+    The quantile heads are fitted on the same augmented design but with the deviation block scaled by
+    1/M rather than 1/sqrt(M): under an L1 penalty the column-scaling trick multiplies the penalty by
+    the inverse scale, not its square, so 1/M is what makes "a deviation is penalised M times harder"
+    true for every head. (Measured before this was fixed: at M=10 with 1/sqrt(M) the quantile heads
+    were already FULLY pooled -- every deviation zeroed -- while the ridge mean head was partial, so
+    the gate would have scored a different model from the one the flag describes.) The alpha search
+    is the same player-grouped CV fit_position uses, over the pooled rows.
+    """
+    from sklearn.linear_model import Ridge, QuantileRegressor
+    from sklearn.model_selection import GroupKFold
+
+    positions = [p for p in POS_FITTED if p in fitted]
+    if len(positions) < 2:
+        return {}
+    nf = len(specs)
+    allowed = {}
+    for p in positions:
+        allowed[p] = np.array([s["name"] not in RATIO_ALLOWED or p in RATIO_ALLOWED[s["name"]] for s in specs])
+    Xs, ys, groups, pos_idx = [], [], [], []
+    for pi, p in enumerate(positions):
+        sub, X, base = fitted[p]
+        pts = np.array([float(r["pts"]) for r in sub])
+        Xs.append(X * allowed[p][None, :].astype(float))
+        ys.append(target(base, pts, form))
+        groups.extend([("p" + str(r["player_sk"])) if r.get("player_sk") is not None
+                       else ("s" + str(r["season"])) for r in sub])
+        pos_idx.extend([pi] * len(sub))
+    X_sh = np.vstack(Xs)
+    y = np.concatenate(ys)
+    pos_idx = np.array(pos_idx)
+    groups = np.array(groups)
+    n, P = len(y), len(positions)
+    D = np.zeros((n, P))
+    D[np.arange(n), pos_idx] = 1.0
+
+    def augmented(scale):
+        dev = np.zeros((n, P * nf))
+        for pi in range(P):
+            rows = np.where(pos_idx == pi)[0]
+            dev[np.ix_(rows, range(pi * nf, (pi + 1) * nf))] = X_sh[rows] * scale
+        return np.hstack([X_sh, D, dev])
+
+    scale = 1.0 / math.sqrt(float(dev_mult))     # L2: penalty x M
+    scale_q = 1.0 / float(dev_mult)              # L1: penalty x M
+    X_aug = augmented(scale)
+    X_aug_q = augmented(scale_q)
+
+    alphas = [0.1, 1.0, 10.0, 100.0]
+    n_splits = min(5, len(set(groups.tolist())))
+    best_alpha, best_err = alphas[0], float("inf")
+    if n_splits >= 2:
+        gkf = GroupKFold(n_splits=n_splits)
+        for a in alphas:
+            err, cnt = 0.0, 0
+            for tr, te in gkf.split(X_aug, y, groups):
+                m = Ridge(alpha=a).fit(X_aug[tr], y[tr])
+                err += float(np.sum((y[te] - m.predict(X_aug[te])) ** 2))
+                cnt += len(te)
+            if cnt and err / cnt < best_err:
+                best_err, best_alpha = err / cnt, a
+    mean_model = Ridge(alpha=best_alpha).fit(X_aug, y)
+
+    def split_coef(w, b, sc):
+        out = {}
+        for pi, p in enumerate(positions):
+            c = {"intercept": float(b + w[nf + pi])}
+            for j, s in enumerate(specs):
+                c[s["name"]] = (float(w[j] + w[nf + P + pi * nf + j] * sc)
+                                if allowed[p][j] else 0.0)
+            out[p] = c
+        return out
+
+    heads = {"mean": split_coef(mean_model.coef_, mean_model.intercept_, scale)}
+    for name, q in (("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
+        qm = QuantileRegressor(quantile=q, alpha=args.quantile_alpha, solver="highs").fit(X_aug_q, y)
+        heads[name] = split_coef(qm.coef_, qm.intercept_, scale_q)
+    return {p: {h: heads[h][p] for h in ("mean", "p10", "p50", "p90")} for p in positions}
+
+
 def intercept_only(sub, base, specs, form):
     pts = np.array([float(r["pts"]) for r in sub])
     y = target(base, pts, form)
@@ -795,10 +1002,16 @@ def evaluate(artifact, row):
 def golden_rows(artifact):
     """Five fixtures, chosen to be the ones most likely to expose a disagreement."""
     fixtures = [
+        # The multi-year lags ride on the first two fixtures so an artifact that FITS them is checked
+        # on the positive path, not only on the missing-value default of the fifth row.
         {"pos": "RB", "base": 250.0, "_rank": 1, "prior_pos_rank": 1,
-         "age": 24.0, "prior_games": 17, "prior_fd": 5.0, "prior_ts": 0.18, "team_changed": 0},
+         "age": 24.0, "prior_games": 17, "prior_fd": 5.0, "prior_ts": 0.18, "team_changed": 0,
+         "prior2_pts": 210.0, "prior3_pts": 96.0, "hist_ppg_w": 15.4,
+         "age_sq": 9.0, "age_hinge30": 0.0, "log_rank": 0.0, "fftoday_proj": 262.0},
         {"pos": "WR", "base": 175.0, "_rank": 12, "prior_pos_rank": 12,
-         "age": 29.5, "prior_games": 15, "prior_fd": 3.1, "prior_ts": 0.22, "team_changed": 1},
+         "age": 29.5, "prior_games": 15, "prior_fd": 3.1, "prior_ts": 0.22, "team_changed": 1,
+         "prior2_pts": 121.0, "hist_ppg_w": 9.8,
+         "age_sq": 6.25, "age_hinge30": 0.0, "log_rank": 2.4849066497880004, "fftoday_proj": 158.0},
         {"pos": "QB", "base": 246.0, "_rank": 12, "prior_pos_rank": 12,
          "age": 33.0, "prior_games": 16, "prior_attempts": 34.0, "prior_rush_yards": 12.0, "team_changed": 0},
         {"pos": "TE", "base": 101.0, "_rank": 24, "prior_pos_rank": 24,
@@ -814,6 +1027,69 @@ def golden_rows(artifact):
         pred = evaluate(artifact, fx)
         f = {k: v for k, v in fx.items() if k not in ("pos", "base", "_rank")}
         out.append({"pos": fx["pos"], "base": fx["base"], "rank": fx["_rank"], "f": f, "expect": pred})
+    return out
+
+
+def fit_challenger_gbm(fitted, specs, form, hold_rows, curves, args):
+    """RUNG 5 -- A GRADIENT-BOOSTED CHALLENGER, AS A SCREEN, NOT A SERVING PATH.
+
+    The artifact schema is a linear predictor, and the TypeScript projector evaluates nothing else.
+    Before writing and golden-testing a tree evaluator in the draft engine, the question is whether a
+    boosted model beats the ridge on the SAME folds, targets and scoring at all -- so this fits one on
+    the same rows, design and per-row base the linear heads were fitted on (pooled across the fitted
+    positions with a one-hot position block), predicts the holdout season's rows, and writes them to a
+    SIDECAR beside the artifact (`<out>.challenger.json`). `src/model/evaluate.ts` reads the sidecar
+    into a `challenger` rung scored by the same function as `trained`, and `gate-variant.mjs
+    --cand-rung challenger` applies the WS1 verdict on the intersection of rows. What this is NOT: a
+    shipped path. Nothing on the board reads it. If it clears the floor, building the evaluator is
+    justified; if it does not, that answer cost no evaluator.
+
+    Hyperparameters are PRE-REGISTERED and modest for ~3,000-6,000 rows: depth 3, 300 rounds at 0.05,
+    30 rows per leaf, L2 1.0, no early stopping (which would need a split the folds already are).
+    Quantile heads use the quantile loss at the same three levels the linear heads publish.
+    """
+    from sklearn.ensemble import HistGradientBoostingRegressor
+
+    positions = [p for p in POS_FITTED if p in fitted]
+    if not positions:
+        return []
+    pidx = {p: i for i, p in enumerate(positions)}
+
+    def onehot(pos_list):
+        M = np.zeros((len(pos_list), len(positions)))
+        for i, p in enumerate(pos_list):
+            M[i, pidx[p]] = 1.0
+        return M
+
+    Xs, ys = [], []
+    for p in positions:
+        sub, X, base = fitted[p]
+        pts = np.array([float(r["pts"]) for r in sub])
+        Xs.append(np.hstack([X, onehot([p] * len(sub))]))
+        ys.append(target(base, pts, form))
+    X_tr = np.vstack(Xs)
+    y_tr = np.concatenate(ys)
+    hp = dict(max_depth=args.gbm_depth, learning_rate=0.05, max_iter=args.gbm_iter,
+              min_samples_leaf=30, l2_regularization=1.0, early_stopping=False, random_state=0)
+    models = {"mean": HistGradientBoostingRegressor(loss="squared_error", **hp).fit(X_tr, y_tr)}
+    for name, q in (("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
+        models[name] = HistGradientBoostingRegressor(loss="quantile", quantile=q, **hp).fit(X_tr, y_tr)
+
+    hold = [r for r in hold_rows if r["pos"] in pidx and r.get("prior_pos_rank") is not None]
+    if not hold:
+        return []
+    base = np.array([(curve_at(curves.get(r["pos"]), r["prior_pos_rank"]) or float("nan")) for r in hold],
+                    dtype=float)
+    ok = np.isfinite(base) & (base > 0)
+    hold = [r for i, r in enumerate(hold) if ok[i]]
+    base = base[ok]
+    X_h = np.hstack([design(hold, specs), onehot([r["pos"] for r in hold])])
+    preds = {h: predict_points(base, m.predict(X_h), form) for h, m in models.items()}
+    out = []
+    for i, r in enumerate(hold):
+        out.append({"name": r["name"], "pos": r["pos"],
+                    "mean": float(preds["mean"][i]), "p10": float(preds["p10"][i]),
+                    "p50": float(preds["p50"][i]), "p90": float(preds["p90"][i])})
     return out
 
 
@@ -842,6 +1118,21 @@ def main():
                     help="w,mono,levelWeight,form -- skip the search. For fault injection and for "
                          "reproducing a recorded run, never for shipping.")
     ap.add_argument("--quiet", action="store_true")
+    # THE PRE-DEEP-LEARNING LADDER (2026-09-14). Each is a change in HOW the fit is made, gated by
+    # scripts/gate-variant.mjs under the same WS1 floor as a feature. Defaults reproduce the shipped
+    # fit byte for byte.
+    ap.add_argument("--shrink-k", type=float, default=0.0,
+                    help="rung 3a: shrink every usage RATIO toward 1.0 by g/(g+K), g = prior_games. "
+                         "0 = off (the shipped transform).")
+    ap.add_argument("--pool-dev-mult", type=float, default=0.0,
+                    help="rung 3b: partial pooling across positions -- one fit with shared slopes and "
+                         "per-position deviations penalised M times harder. 0 = off (per-position fits).")
+    ap.add_argument("--challenger", default="none", choices=["none", "gbm"],
+                    help="rung 5: also fit a gradient-boosted challenger on the same rows and write its "
+                         "HOLDOUT predictions to <out>.challenger.json (a screen; nothing serves it). "
+                         "Requires --holdout-season.")
+    ap.add_argument("--gbm-depth", type=int, default=3)
+    ap.add_argument("--gbm-iter", type=int, default=300)
     ap.add_argument("--add-features", default="",
                     help="comma list of EXTENSION columns to admit into the fit, one admission step "
                          "at a time. Known: " + ", ".join(ALL_EXT) + ". Nothing is admitted by "
@@ -870,6 +1161,10 @@ def main():
             continue
         if a in EXT_RATIO:
             RATIO_FEATURES[a] = EXT_RATIO[a]
+        elif a in LAG_RATIO:
+            RATIO_FEATURES[a] = LAG_RATIO[a]           # every position: history is history
+        elif a in EXTERNAL_RATIO:
+            RATIO_FEATURES[a] = EXTERNAL_RATIO[a]      # every position: the archive covers all four
         elif a in EXT_INDICATOR:
             INDICATOR_FEATURES.append(a)
         else:
@@ -920,7 +1215,7 @@ def main():
     fit_rows = [r for r in rows
                 if r["prior_pos_rank"] is not None and 1 <= r["prior_pos_rank"] <= MAX_RANK]
     bmeans = bucket_means(fit_rows)
-    specs = build_specs(fit_rows, bmeans)
+    specs = build_specs(fit_rows, bmeans, args.shrink_k)
 
     fixed = None
     if args.fixed_variant:
@@ -928,6 +1223,7 @@ def main():
         fixed = (int(parts[0]), parts[1].lower() in ("1", "true", "on", "mono"), float(parts[2]), parts[3])
 
     coef, counts, variants, curves, lifts = {}, {}, {}, {}, {}
+    fitted = {}                                  # pos -> (rows, design, base) for the pooled refit
     for pos in POS_FITTED + POS_INTERCEPT_ONLY:
         sub = [r for r in fit_rows if r["pos"] == pos]
         if len(sub) < 200:
@@ -955,6 +1251,7 @@ def main():
             coef[pos] = intercept_only(sub_ok, base[ok], specs, v[3])
         else:
             coef[pos] = fit_position(sub_ok, X[ok], specs, pos, base[ok], args, v[3])
+            fitted[pos] = (sub_ok, X[ok], base[ok])
             lift = usage_lift(sub_ok, X[ok], specs, pos, base[ok], args, v[3])
             if lift is not None:
                 lifts[pos] = lift
@@ -988,6 +1285,15 @@ def main():
         sub_ok = [r for i, r in enumerate(sub) if ok[i]]
         coef[pos] = (intercept_only(sub_ok, base[ok], specs, form) if pos in POS_INTERCEPT_ONLY
                      else fit_position(sub_ok, X[ok], specs, pos, base[ok], args, form))
+        if pos not in POS_INTERCEPT_ONLY:
+            fitted[pos] = (sub_ok, X[ok], base[ok])
+
+    # PARTIAL POOLING (rung 3b): after every position's form is settled, refit the fitted positions
+    # jointly and replace their heads. The per-position fit above still runs, so the default path is
+    # untouched and usage_lift keeps reporting per position.
+    if args.pool_dev_mult > 0:
+        for p, c in fit_pooled(fitted, specs, args, form, args.pool_dev_mult).items():
+            coef[p] = c
 
     seasons = sorted({r["season"] for r in fit_rows})
     artifact = {
@@ -1022,6 +1328,21 @@ def main():
 
     with open(args.out, "w", encoding="ascii") as fh:
         json.dump(artifact, fh, indent=2)
+
+    # RUNG 5 sidecar: the challenger's predictions for the HOLDOUT season only. Written beside the
+    # artifact and read by evaluate.ts into its own rung; never by the board.
+    if args.challenger == "gbm":
+        if holdout is None:
+            sys.exit("train_projection: --challenger needs --holdout-season (it predicts held-out rows only)")
+        hold_rows = [r for r in all_rows if r["season"] == as_of]
+        ch_rows = fit_challenger_gbm(fitted, specs, form, hold_rows, curves, args)
+        with open(args.out + ".challenger.json", "w", encoding="ascii") as fh:
+            json.dump({"learner": "gbm", "holdoutSeason": holdout, "form": form,
+                       "params": {"max_depth": args.gbm_depth, "max_iter": args.gbm_iter,
+                                  "learning_rate": 0.05, "min_samples_leaf": 30, "l2": 1.0},
+                       "rows": ch_rows}, fh)
+        if not args.quiet:
+            print("  challenger gbm: " + str(len(ch_rows)) + " holdout rows -> " + args.out + ".challenger.json")
     if not args.quiet:
         print("wrote " + args.out)
         print("  train seasons " + str(seasons[0]) + "-" + str(seasons[-1]) +

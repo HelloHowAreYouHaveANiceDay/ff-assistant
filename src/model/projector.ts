@@ -41,6 +41,15 @@ export const FEATURE_FIELDS = [
   // ---- FRONTIER CANDIDATES (2026-09-14), also DECLARED-not-fitted. Read in features.ts loadExtSeason
   // and spread into `f`, so the consumer really can compute each. docs/feature-frontier.md. ----
   "prior_out_games", "prior_yac_oe", "prior_ryoe", "prior_cpoe", "qb_changed",
+  // ---- MULTI-YEAR HISTORY (rung 2, 2026-09-14): lags of feat_player_season itself, by player_sk ----
+  // Y-2 and Y-3 season points, and a Marcel-style games-weighted three-season points-per-game blend.
+  // Built in src/model/features.ts (loadLagSeason / histPpgW), mirrored by tools/train_projection.py.
+  "prior2_pts", "prior3_pts", "hist_ppg_w",
+  // ---- NONLINEAR BASIS (rung 4, 2026-09-14): derived from age and prior rank in basisFeatures() ----
+  "age_sq", "age_hinge30", "log_rank",
+  // ---- EXTERNAL PROJECTION (rung 7, 2026-09-14): FFToday's preseason season projection, joined on
+  // (season, pos, name_key) in features.ts loadExternalProj; a ratio to the rank bucket in the trainer ----
+  "fftoday_proj",
 ] as const;
 export type FeatureField = typeof FEATURE_FIELDS[number];
 
@@ -76,11 +85,17 @@ export interface FeatureRow {
 export type Head = "mean" | "p10" | "p50" | "p90";
 export const HEADS: Head[] = ["mean", "p10", "p50", "p90"];
 
-export type Transform = "identity" | "center" | "ratio_to_bucket_mean" | "indicator";
+export type Transform = "identity" | "center" | "ratio_to_bucket_mean" | "ratio_to_bucket_mean_shrunk" | "indicator";
 
 export interface FeatureSpec {
   name: FeatureField;
   transform: Transform;
+  /** For "ratio_to_bucket_mean_shrunk" (ladder rung 3a): the ratio is pulled toward 1.0 -- "exactly
+   *  what his rank implies" -- by the weight g/(g+K), where g is the row's `gamesField` (default
+   *  `prior_games`). A per-game rate from three games is mostly noise; from seventeen it is mostly
+   *  signal, and K is the number of games the prior is worth. Missing games = the prior. */
+  shrinkK?: number;
+  gamesField?: FeatureField;
   /** center/scale for "center". A scale of 0 is refused rather than dividing by it. */
   center?: number;
   scale?: number;
@@ -182,14 +197,21 @@ export function featureValue(spec: FeatureSpec, row: { f: FeatureRow["f"]; pos: 
       const s = spec.scale ?? 1;
       return s === 0 ? spec.missing : (raw - (spec.center ?? 0)) / s;
     }
-    case "ratio_to_bucket_mean": {
+    case "ratio_to_bucket_mean":
+    case "ratio_to_bucket_mean_shrunk": {
       if (row.rank == null || !spec.bucketMeans || !spec.bucket) return spec.missing;
       const b = Math.floor((row.rank - 1) / spec.bucket);
       const m = spec.bucketMeans[row.pos]?.[String(b)];
       // A bucket whose typical usage is at or below the floor makes the ratio explode, and for a
       // position/rank where nobody sees that kind of work it is meaningless rather than large.
       if (m == null || !(m > (spec.floor ?? 0))) return spec.missing;
-      return raw / m;
+      const ratio = raw / m;
+      if (spec.transform === "ratio_to_bucket_mean") return ratio;
+      // SHRUNK: mirrors feature_value() in tools/train_projection.py term for term.
+      const g = row.f[spec.gamesField ?? "prior_games"];
+      if (g == null || !Number.isFinite(g) || !(g > 0)) return spec.missing;
+      const w = g / (g + (spec.shrinkK ?? 0));
+      return 1 + w * (ratio - 1);
     }
     default: return spec.missing;
   }
@@ -278,10 +300,16 @@ export function loadArtifact(json: unknown, opts: { checkGolden?: boolean; tol?:
     }
     if (seen.has(s.name)) bad(`feature ${s.name} appears twice`);
     seen.add(s.name);
-    if (!["identity", "center", "ratio_to_bucket_mean", "indicator"].includes(s.transform)) bad(`feature ${s.name}: unknown transform ${JSON.stringify(s.transform)}`);
+    if (!["identity", "center", "ratio_to_bucket_mean", "ratio_to_bucket_mean_shrunk", "indicator"].includes(s.transform)) bad(`feature ${s.name}: unknown transform ${JSON.stringify(s.transform)}`);
     if (typeof s.missing !== "number" || !Number.isFinite(s.missing)) bad(`feature ${s.name}: 'missing' must be an explicit finite number`);
     if (s.transform === "center" && !(Number(s.scale) > 0)) bad(`feature ${s.name}: 'center' transform needs a positive scale`);
-    if (s.transform === "ratio_to_bucket_mean" && (!s.bucketMeans || !(Number(s.bucket) > 0))) bad(`feature ${s.name}: 'ratio_to_bucket_mean' needs bucketMeans and a bucket width`);
+    if ((s.transform === "ratio_to_bucket_mean" || s.transform === "ratio_to_bucket_mean_shrunk") && (!s.bucketMeans || !(Number(s.bucket) > 0))) bad(`feature ${s.name}: '${s.transform}' needs bucketMeans and a bucket width`);
+    // A shrunk ratio with no K would silently evaluate as w = g/g = 1, i.e. the UNSHRUNK ratio, and
+    // nothing downstream could tell. K must be present and positive; the games field must be known.
+    if (s.transform === "ratio_to_bucket_mean_shrunk") {
+      if (!(Number(s.shrinkK) > 0)) bad(`feature ${s.name}: 'ratio_to_bucket_mean_shrunk' needs a positive shrinkK`);
+      if (s.gamesField != null && !known.has(s.gamesField)) bad(`feature ${s.name}: gamesField ${JSON.stringify(s.gamesField)} is not a known field`);
+    }
   }
   // THE MULTIPLICATIVE STAGE IS RETIRED, and an artifact that still declares one is REFUSED rather
   // than quietly loaded with its multipliers dropped. The loader can no longer apply them -- the

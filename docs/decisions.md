@@ -451,6 +451,39 @@ only on the no-skill title axis -- and, decisively, the keep-rationale from D14 
 REVERSAL CONDITION: re-ship 0.35 only on a properly-powered playoff-axis re-test that clears the D13 gate and
 family FDR -- the title/surrogate signal alone is explicitly not sufficient (that is what D13 decided).
 
+## D16 -- The pre-deep-learning ladder: two ADMITs surfaced for sign-off, nothing applied (2026-09-14)
+
+The question "what would you try before deep learning?" was worked as a ladder, one rung at a time, each
+rung gated by the WS1 paired-season floor (`admit-feature.mjs` for a column; the new `gate-variant.mjs`
+for a trainer flag), each mechanism fault-injected before its number was read, holdout 2021-2025 quoted
+once. Full record: docs/validation.md ("THE PRE-DEEP-LEARNING LADDER" sections).
+
+- **REJECT (nulls):** rung 2 multi-year lags (consistent, sub-floor; the Marcel blend confirms on the
+  holdout but the decision block rejects), rung 3 games-weighted shrinkage and partial pooling across
+  positions (both negative on the holdout), rung 4 a spline/hinge/log basis. The linear projector is
+  exhausted along "more history, more shrinkage, more pooling, more basis".
+- **ADMIT, pending sign-off:** rung 7, FFToday's preseason projection as a ratio feature
+  (`fftoday_proj`): +0.33 pinball vs floor 0.28, holdout +0.50 (5/5), not explained by the ADP market
+  rank (a null). Rung 5, a gradient-boosted challenger fitted inside the fold on the same rows: +0.37 vs
+  floor 0.28, holdout +0.71 (5/5), robust to capacity; partly additive with rung 7 (each adds ~0.22 on
+  top of the other, both confirmed on the holdout).
+
+**This decision RECORDS the findings and RECOMMENDS two actions. It changes NO shipped number.** Per
+D14/D15: (a) `fftoday_proj` may join the defaults only on owner sign-off. Its D13 playoff-gate check WAS
+run (matched per-fold artifact sets 2012-2024, 1,800 paired trials, ledger `2388604e481c57d2`): playoffs
+-0.58pp, CI [-2.08, +0.92], 3/8 up, resolvable ~2.4pp -> **NULL / underpowered**, holdout +0.17pp (3/4 up).
+The system is already at 95.5% playoffs, so no projector change can resolve there; the precedent
+(`contract_year`, `depth_rank_sep1`) is that a projector feature is gated on pinball with the draft number
+reported. Status: ADMIT on the projector gate, NULL on the draft gate. It also makes the board depend on an
+external archive that must be scraped each preseason (`scripts/scrape-fftoday.mjs`), which is an
+operational commitment the owner should choose; (b) the boosted model has NO serving path and cannot ship
+as it stands -- the recommendation is to build the tree evaluator (JSON ensembles on the artifact, a
+TypeScript walker in `projector.ts`, a golden block), which this screen justifies, then re-gate the
+served path end to end.
+
+REVERSAL CONDITION for either, once shipped: the same WS1 gate re-run on a later season block, or a D13
+playoff-gate null.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

@@ -169,6 +169,11 @@ export interface FoldResult {
   rows: Record<Rung, EvalRow[]>;
   trainerOk: boolean;
   note?: string;
+  /** RUNG 5 (ladder): a CHALLENGER learner's holdout predictions, read from the sidecar the trainer
+   *  writes beside the fold artifact under `--challenger gbm`, scored by the same `score()` on the
+   *  same targets. A screen only -- the board never reads it -- so it is a separate optional field
+   *  rather than a Rung, and absent unless the trainer was asked for it. */
+  challenger?: EvalRow[];
 }
 
 export async function evaluateProjection(opts: {
@@ -183,10 +188,17 @@ export async function evaluateProjection(opts: {
    *  Folds are independent + identity-keyed by season, so concurrency cannot change the output --
    *  pMap returns input order and test/pool.test.ts pins concurrency 1 == concurrency N. */
   concurrency?: number;
+  /** EXTRA TRAINER FLAGS (the pre-deep-learning ladder, 2026-09-14). A rung below the feature queue
+   *  is a change in HOW the trainer fits -- shrinkage, pooling, a basis -- i.e. a flag, not a column.
+   *  `scripts/gate-variant.mjs` passes the two arms' flags here and applies the WS1 verdict to them.
+   *  Echoed in the header like --add-features, so the reader is told which model the numbers are. */
+  trainerArgs?: string[];
   log?: (s: string) => void;
 }): Promise<FoldResult[]> {
   const log = opts.log ?? console.log;
   const embargo = opts.embargo ?? 0;
+  const trainerArgs = opts.trainerArgs ?? [];
+  if (trainerArgs.length) log(`  TRAINER VARIANT: extra trainer args [${trainerArgs.join(" ")}]. Every number below is that model's, not the shipped one's.`);
   if (embargo > 0) log(`  ADJACENT-SEASON EMBARGO: --embargo ${embargo}; each fold also drops the ${embargo} season(s) before its holdout from training.`);
   // Read ONCE and echoed, so every fold in a run fits the same model and the reader is told which.
   const addFeatures = (process.env.FF_ADD_FEATURES ?? "").trim();
@@ -225,6 +237,7 @@ export async function evaluateProjection(opts: {
     // --- rung 3: the TRAINER, as a subprocess, blind to this season ---------------------------
     const artPath = join(dir, `artifact-${yr}.json`);
     let trained: ProjectionArtifact | null = null;
+    let challengerRows: EvalRow[] | undefined;
     let note: string | undefined;
     try {
       // withCpuSlot holds one slot of the process-wide budget for the trainer, so a candidates-x-folds
@@ -246,11 +259,20 @@ export async function evaluateProjection(opts: {
         ...(addFeatures ? ["--add-features", addFeatures] : []),
         // LEAVE-ONE-OUT (symmetric to --add-features; the report header printed it above).
         ...(removeFeatures ? ["--remove-features", removeFeatures] : []),
+        // TRAINER VARIANT flags (gate-variant.mjs); empty by default, so the shipped fold is unchanged.
+        ...trainerArgs,
       ], {
         timeout: 1800000,
         env: { ...process.env, OMP_NUM_THREADS: "1", OPENBLAS_NUM_THREADS: "1", MKL_NUM_THREADS: "1" },
       }));
       if (existsSync(artPath)) trained = loadArtifact(JSON.parse(readFileSync(artPath, "utf8")));
+      // RUNG 5 sidecar (only present when the trainer ran with --challenger): scored exactly like the
+      // linear rung, against the same targets and bases, by the same function.
+      const chPath = artPath + ".challenger.json";
+      if (existsSync(chPath)) {
+        const ch = JSON.parse(readFileSync(chPath, "utf8")) as { rows: Omit<ProjRow, "player_sk">[] };
+        challengerRows = toEvalRows(yr, ch.rows.map((r) => ({ ...r, player_sk: null })), tgt, bases);
+      }
       // EMBARGO GUARD (WS3). Prove the trainer actually applied the embargo, rather than trusting
       // that the flag was wired: none of the embargoed seasons may appear in the fitted artifact's
       // training `seasons`. This is the consumer checking the producer's emitted bytes -- a
@@ -279,7 +301,8 @@ export async function evaluateProjection(opts: {
         .map(([p, v]) => `${p}:w${v.window}${v.monotone ? "m" : "-"}L${v.levelWeight}/${v.form[0]}`).join(" ")
       : "";
     log(`  ${yr}: carry ${carryRows.length}  curve ${curveRows.length}  trained ${trainedRows.length}` + sel + (note ? `  (${note})` : ""));
-    return { season: yr, rows: { carry: carryRows, curve: curveRows, trained: trainedRows }, trainerOk: !!trained, note };
+    return { season: yr, rows: { carry: carryRows, curve: curveRows, trained: trainedRows }, trainerOk: !!trained, note,
+      ...(challengerRows ? { challenger: challengerRows } : {}) };
   };
 
   try {
