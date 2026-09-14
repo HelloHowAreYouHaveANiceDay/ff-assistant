@@ -39,7 +39,7 @@ depend on the bot model, so weigh them as "big / medium / none", not to the deci
 > 2025 champion was the **7 seed at 9-5**. A draft strategy can put you in the bracket. What happens
 > in the bracket is not an edge anybody in this repo has been able to find.
 
-### External expert consensus (FFToday) as a draft-board RANKING -- DEMOTED 2026-09-13 (D14; consensusBlend default 1 -> 0) [was +2.8pp on TITLES; NULL on the D13 playoff gate + fails family FDR; inert on the 2026 board]
+### External expert consensus (FFToday) as a draft-board RANKING -- DEMOTED 2026-09-13 (D14; consensusBlend default 1 -> 0) [was +2.8pp on TITLES; NULL on the D13 playoff gate + fails family FDR; demotion PENDING re-validation on complete FFToday (2025 season is a data gap)]
 The FFToday consensus (`raw_fftoday_proj`, 2008-2024) entered the research funnel and cleared both
 gates. SCREEN (`scripts/feature-sweep.mjs`): its positional rank is the STRONGEST residual signal on
 the whole 102-candidate board -- rho −0.127 vs the shipped TRAINED model (p=1.6e-14), controls clean.

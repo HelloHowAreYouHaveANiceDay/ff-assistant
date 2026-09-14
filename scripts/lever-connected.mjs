@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
-import { DEFAULT_LEVERS } from "../src/draft/levers.ts";
+import { DEFAULT_LEVERS, LEVER_BY_KEY } from "../src/draft/levers.ts";
 
 const [, , lever, aRaw, bRaw] = process.argv;
 if (!lever) { console.error("usage: lever-connected.mjs <lever> <valueA> <valueB>   (values may be JSON)"); process.exit(2); }
@@ -51,7 +51,23 @@ const a = measure(A), b = measure(B);
 console.log(`${lever} = ${A}  ->  avg spend $${a.spend}  ${JSON.stringify(a.per)}`);
 console.log(`${lever} = ${B}  ->  avg spend $${b.spend}  ${JSON.stringify(b.per)}`);
 const changed = JSON.stringify(a.per) !== JSON.stringify(b.per) || a.spend !== b.spend;
-console.log(changed
-  ? `\nCONNECTED: the lever changes what we draft, so a flat championship result is a REAL null.`
-  : `\nDEAD LEVER: identical rosters at both settings -- the backtest sweep measured nothing.`);
-process.exit(changed ? 0 : 1);
+if (changed) {
+  console.log(`\nCONNECTED: the lever changes what we draft, so a flat championship result is a REAL null.`);
+  process.exit(0);
+}
+// A BOARD lever re-ranks the ASSEMBLED board (src/data/assemble.ts / consensusBlend.ts). This check
+// drafts from the STATIC data/values.csv, which is NOT re-assembled here, so it CANNOT see a board
+// lever's effect and would report a FALSE dead (observed for consensusBlend, 2026-09-13: static-draft
+// identical, yet `backtest --consensus-blend 0 vs 1` moves 30%->40% champ). So never claim dead for a
+// board lever -- point the check at the backtest, which re-assembles.
+const meta = LEVER_BY_KEY?.[lever];
+if (meta?.board) {
+  const f = meta.flag ?? lever;
+  console.log(`\nBOARD LEVER (${lever}): a static-values sweep cannot see board re-ranks -- this is NOT evidence of a dead lever.`);
+  console.log(`  Check connectivity via the RE-ASSEMBLING backtest, e.g.:`);
+  console.log(`    npm run ff -- backtest --full --no-lookahead --inflation --seasons 2022-2023 --n 20 --${f} ${A}`);
+  console.log(`    npm run ff -- backtest --full --no-lookahead --inflation --seasons 2022-2023 --n 20 --${f} ${B}`);
+  process.exit(2); // inconclusive here, by construction -- not "dead"
+}
+console.log(`\nDEAD LEVER: identical rosters at both settings -- the backtest sweep measured nothing.`);
+process.exit(1);

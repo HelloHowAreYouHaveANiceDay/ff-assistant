@@ -333,7 +333,7 @@ export const RAW_ASSETS: RawAsset[] = [
   {
     id: "fftoday",
     table: "raw_fftoday_proj",
-    what: "FFToday single-expert preseason projected fantasy points 2008-2024 (QB/RB/WR/TE), scraped to data/fftoday-proj.csv -- a projection signal that predicts finish about as well as ECR, name_key-joined to the player universe",
+    what: "FFToday single-expert preseason projected fantasy points 2008-2026, 2025 currently a gap (QB/RB/WR/TE), scraped to data/fftoday-proj.csv -- a projection signal that predicts finish about as well as ECR, name_key-joined to the player universe",
     defaultSeasons: null,
     reads: ["src_fftoday"],
     writes: ["raw_fftoday_proj"],
