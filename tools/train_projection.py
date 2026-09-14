@@ -135,6 +135,11 @@ RATIO_FEATURES = {
 #                    resolve -- recorded plainly rather than dressed up, because a keep/drop rule with
 #                    no effect-size floor will eventually admit noise and this is the first candidate
 #                    to sit near it.
+# EFFECT-SIZE FLOOR NOW ENFORCED (rigor WS1). Admission no longer reads a hand-noted 12.03->12.02:
+# `scripts/admit-feature.mjs` runs the nested CV baseline vs +candidate, takes the per-SEASON trained
+# pinball, and admits ONLY if the season-paired improvement clears 2.9*SE (the arbiter's floor). The
+# `contract_year` above PREDATES that floor and would not clear it -- it is kept here for now and
+# queued for WS6 re-validation (demote via a recorded decision, not a silent drop).
 CENTER_FEATURES = ["age", "prior_games", "draft_round", "prior_pos_rank", "depth_rank_sep1"]
 INDICATOR_FEATURES = ["team_changed", "contract_year"]
 
