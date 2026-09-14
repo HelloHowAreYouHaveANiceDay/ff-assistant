@@ -242,10 +242,24 @@ RAN this session (reused CRN dumps `data/trials/surrog-base.tsv` = benchDiscount
   14/21 up, PBO 3% -> REAL**; CARRIED full-25 title **+1.09pp CI [0.16, 2.11], PBO 1%** and surrogate index
   **t~5-7** (power-and-surrogate.md:95-96).
 
-**VERDICT:** same shape as consensusBlend -- NULL on the gated playoff axis (effect ~0, PBO 98%), does NOT
-survive family FDR, REAL on titles/surrogate only, with the same near-ceiling-berth explanation. The 2021-2024
-holdout playoff confirm (+1.67pp, 4/4) is the one point in its favour but is 4 seasons and not gated.
-DECISION for the owner (D14); no lever changed by this WS.
+**VERDICT (WS6, 2026-09-13):** same shape as consensusBlend -- NULL on the gated playoff axis (effect ~0,
+PBO 98%), does NOT survive family FDR, REAL on titles/surrogate only, with the same near-ceiling-berth
+explanation. The 2021-2024 holdout playoff confirm (+1.67pp, 4/4) is the one point in its favour but is 4
+seasons and not gated. DECISION for the owner (D14); no lever changed by this WS.
+
+**RESOLVED -- DEMOTED 0.35 -> 0.25 (D15, 2026-09-14).** A DIRECT powered playoff re-test (not the surrogate
+re-scoring WS6 used) settled the one favourable lens against the edge: the 2021-2024 holdout playoff confirm
+came back **-0.83pp (1/4 up)** -- the OPPOSITE sign of the +1.67pp above, which had come from surrogate/dump
+re-scoring rather than a direct backtest. With the keep-rationale reversed, the gated verdict stands on its own:
+playoffs +0.51pp CI [-0.03, 1.08], PBO 8%, resolvable ~0.85pp -> NULL; titles +1.43pp (no-skill axis only);
+fails family FDR. Same profile that demoted consensusBlend, so the owner demoted it: `DEFAULT_LEVERS.benchDiscount`
+and the stored lever are now 0.25 (the pre-re-optimisation value, still a real discount -- 0 collapses depth).
+Ledger config_hash e625249e. Re-ship 0.35 only on a powered playoff-axis re-test that clears the D13 gate.
+
+**GOLDEN-MASTER NOTE (both demotions).** Neither demotion moves the flagless-backtest PRIMARY gate: consensusBlend
+and benchDiscount were BOTH already null on the playoff axis the golden master pins (97.0% playoff), so reverting
+them leaves playoff% at the golden. Only title% (context, ungated) drops -- consensusBlend ~-2.8pp, benchDiscount
+~-1.1pp -- which is the whole point of D13: the demotions remove title-only tuning the gate never credited.
 
 ### 6. A DERIVED bidder instead of tuned levers -- TRIED AND REJECTED (2026-09-09, Phase 3)
 

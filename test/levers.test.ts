@@ -16,7 +16,8 @@ import {
 // in silently and show up as an unexplained backtest delta days later.
 const SHIPPED: Levers = {
   tierBreak: 0.75, maxKDst: 2, starterReserve: 4, benchReserve: 1, maxShare: 0.25,
-  aggr: 0.7, premium: 2, sleeperThreshold: 5, benchDiscount: 0.35,
+  aggr: 0.7, premium: 2, sleeperThreshold: 5,
+  benchDiscount: 0.25, // DEMOTED 2026-09-14 (D15): default 0.35 -> 0.25. The 0.35 re-optimisation was +1.4pp on TITLES but NULL on the D13 playoff gate (+0.51pp, PBO 8%) with a NEGATIVE holdout confirm (-0.83pp); 0.25 keeps a real discount. Old posture via --bench-discount 0.35.
   multQB: 1, multRB: 1, multWR: 1, multTE: 1,
   consensusBlend: 0, // DEMOTED 2026-09-13 (D14): default 1 -> 0. Was +2.8pp on TITLES but NULL on the D13 playoff gate and fails family-wide FDR (WS4/WS6). Available via --consensus-blend 1.
 };

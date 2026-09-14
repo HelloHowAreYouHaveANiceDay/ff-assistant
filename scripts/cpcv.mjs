@@ -52,7 +52,7 @@ const argv = process.argv.slice(2);
 const val = (k, d) => { const i = argv.indexOf(k); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
 const has = (k) => argv.includes(k);
 
-const BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config. GOLDEN MASTER on the PRIMARY axis = 97.0% PLAYOFF (title% ~42.3% is context, D13); consensus blend ON by default; --consensus-blend 0 + --bench-discount 0.25 for the pre-edge base
+const BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config. GOLDEN MASTER on the PRIMARY axis = 96.0% PLAYOFF (title% ~38.5% is context, D13); BOTH title-edges DEMOTED (consensusBlend=0 D14, benchDiscount=0.25 D15), so the shipped flagless config IS the pre-edge base. Pass --consensus-blend 1 --bench-discount 0.35 --golden 97.0 --golden-title 42.3 to reproduce the old title-tuned posture.
 const TREATMENT = val("--treatment", "--no-rookies");                        // the flag(s) to ADD for the treatment arm
 const SEASONS = val("--seasons", "1999-2024");
 const N = val("--n", "150");
@@ -61,9 +61,9 @@ const K = val("--k", null);                       // test-group size; default fl
 const N_PATHS = Number(val("--paths", "200"));
 const PATH_SEED = Number(val("--path-seed", "12345"));
 const LEDGER = val("--ledger", "data/experiments.jsonl");
-const GOLDEN = Number(val("--golden", "97.0"));   // PRIMARY-axis consistency target = shipped-config PLAYOFF% golden master (D13). 97.0% source: data/trials/struct-base.tsv and data/trials/sweep-bench-discount-0.35.tsv both = 42.35% title / 97.04% playoff (the golden 42.3 title reproduced). Pass --golden 96.0 when BASE_FLAGS pins --consensus-blend 0 / --bench-discount 0.25 (pre-edge base ~38.5% title / ~96% playoff).
+const GOLDEN = Number(val("--golden", "96.0"));   // PRIMARY-axis consistency target = shipped-config PLAYOFF% golden master (D13). 96.0% source: ledger config_hash e625249e (benchDiscount 0.25, consensusBlend 0) full_set_baseline_playoff_pct 96.107. Both title-edges demoted (D14/D15) so this pre-edge base IS the shipped posture. Pass --golden 97.0 (with --consensus-blend 1 --bench-discount 0.35) to check the old title-tuned config.
 const GOLDEN_TOL = Number(val("--golden-tol", "3.0")); // +/- pp of Monte-Carlo slack
-const GOLDEN_TITLE = Number(val("--golden-title", "42.3")); // SECONDARY/context only -- NOT a gate (title% is the no-skill axis, P16 FAILED). Printed for reference.
+const GOLDEN_TITLE = Number(val("--golden-title", "38.5")); // SECONDARY/context only -- NOT a gate (title% is the no-skill axis, P16 FAILED). Printed for reference. 38.5% = shipped pre-edge base (ledger e625249e full_set_baseline_pct 38.48); old title-tuned posture was 42.3.
 // SELECTION-BLIND HOLDOUT (WS2). A lever/config search must not TUNE on the holdout block: the effect
 // that drives the verdict is computed on the SELECTION seasons only, and the holdout is reported once
 // as a separate CONFIRM. Locked to the canonical HOLDOUT_SEASONS unless overridden with

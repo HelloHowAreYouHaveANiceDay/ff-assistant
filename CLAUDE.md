@@ -12,14 +12,17 @@ real time. Read it before changing strategy, the sim, or anything that produces 
 0.2370 vs uniform 0.2451). **Title% is reported alongside as CONTEXT, not the gate** -- the sim CANNOT
 predict the single-elim title (title Brier 0.0659 vs uniform 0.0652, P16 FAILED). This is D13
 (`docs/decisions.md`); the arbiter (`scripts/cpcv.mjs`) gates on the playoff column, golden master
-97.0% playoff (`--golden`), and prints title% as secondary (`--golden-title`).
+96.0% playoff (`--golden`, re-pinned by D15 now both title-edges are demoted), and prints title% as
+secondary (`--golden-title` 38.5%).
 
 ```
 npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
-# shipped default: ~97% playoffs (PRIMARY gate) / ~42% championships (context; random 6.3%). Two shipped edges since the ~38.5%
-# base: the FFToday consensus blend (consensusBlend=1, +2.8pp titles; `--consensus-blend 0` reverts) and
-# benchDiscount 0.35 (re-optimised from 0.25, +1.1pp titles; docs/redesign/power-and-surrogate.md). Both
-# CPCV-validated (data/experiments.jsonl, docs/edges.md). Rookies are IN the pool by default (draft
+# shipped default: ~96% playoffs (PRIMARY gate) / ~38.5% championships (context; random 6.3%). The two former
+# "edges" -- consensusBlend=1 and benchDiscount=0.35 -- were BOTH DEMOTED (D14/D15): each was title-only and
+# NULL on the playoff gate the sim can actually predict, and neither survives family FDR. Shipped posture is now
+# consensusBlend=0 and benchDiscount=0.25 (still a real discount; 0 collapses depth). `--consensus-blend 1` /
+# `--bench-discount 0.35` reproduce the old title-tuned posture. History in data/experiments.jsonl, docs/edges.md,
+# docs/decisions.md D13/D14/D15. Rookies are IN the pool by default (draft
 # capital, src/draft/rookieModel.ts;
 # --no-rookies drops them), a NEUTRAL effect (paired ~-0.2pp). (The "~39.7%" effective-format tripwire
 # in docs/validation.md predates both the rookie rebuild and this edge; it is measured under the

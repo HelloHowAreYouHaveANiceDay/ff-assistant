@@ -403,6 +403,31 @@ The three heavy acceptance runs the earlier work streams deferred, now executed:
   data/fold-artifacts-2b-embargo` regen ran (P5 HELD, coverage 0.752 in band); the 2015 fold artifact EXCLUDES
   2014 and includes 2013 (max 2013). The embargo mechanism works end-to-end at full 18-fold scale.
 
+## D15 -- benchDiscount DEMOTED 0.35 -> 0.25 (2026-09-14, owner decision, APPLIED)
+
+The OPEN OWNER DECISION D14 surfaced (the acceptance-run block above) is resolved: **DEMOTE.** benchDiscount's
+powered playoff re-test is the same profile that demoted consensusBlend -- NULL on the D13 playoff gate, real
+only on the no-skill title axis -- and, decisively, the keep-rationale from D14 did NOT survive a direct test.
+
+- **Why the D14 "keep" was withdrawn.** D14 kept benchDiscount at 0.35 on a +1.67pp (4/4 up) 2021-2024 holdout
+  *playoff* confirm. That number came from surrogate/dump re-scoring, not a direct backtest. The direct powered
+  re-test (config_hash e625249e) measured the holdout 2021-2024 playoff confirm at **-0.83pp (1/4 up)** -- the
+  opposite sign. The keep rested on a number a direct measurement reversed, so it does not stand.
+- **The gate verdict.** Playoffs (D13 PRIMARY gate) +0.51pp, CI [-0.03, 1.08], PBO 8%, resolvable >= ~0.85pp
+  -> **NULL/underpowered.** Titles (context) +1.43pp [0.35, 2.48], PBO 1% -> real, but on the no-skill axis D13
+  demoted from the gate. Fails full-set family BH-FDR (WS4). Same shape as consensusBlend under D14.
+- **APPLIED.** `DEFAULT_LEVERS.benchDiscount` 0.35 -> 0.25 (`src/draft/levers.ts`) AND the stored lever set to
+  0.25 (`node scripts/set-lever.mjs benchDiscount 0.25`; config-precedence trap -- a STORED 0.35 was overriding,
+  so the code change alone would have been a no-op). 0.25 is the pre-re-optimisation value, NOT off: some bench
+  discount is real (0 collapses depth to 19.6% titles). The demotion reverts the 0.25 -> 0.35 tuning, not the
+  lever. `status` stays "shipped" (0.25 is the shipped posture); still tunable via `--bench-discount 0.35`.
+- Both title-only draft edges are now demoted off the playoff gate (consensusBlend D14, benchDiscount D15). The
+  golden master is unaffected -- both demotions were already NULL on the playoff axis the golden pins (97.0%),
+  so the flagless backtest playoff% does not move; see the verification note in docs/edges.md.
+
+REVERSAL CONDITION: re-ship 0.35 only on a properly-powered playoff-axis re-test that clears the D13 gate and
+family FDR -- the title/surrogate signal alone is explicitly not sufficient (that is what D13 decided).
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
