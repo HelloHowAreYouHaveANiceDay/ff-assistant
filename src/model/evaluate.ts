@@ -26,8 +26,11 @@
  * WHAT COUNTS AS BEATING SOMETHING. R-squared against the season mean is a soft bar that any model
  * knowing rank clears. The bar that matters is the CURVE, because the curve is free.
  */
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { pMap, withCpuSlot, defaultCpuConcurrency, cpuBudget } from "../util/pool.js";
+const execFileP = promisify(execFile);
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, type DB } from "../db/db.js";
@@ -168,7 +171,7 @@ export interface FoldResult {
   note?: string;
 }
 
-export function evaluateProjection(opts: {
+export async function evaluateProjection(opts: {
   dbPath?: string; seasons: number[];
   trainerSeasons?: string;
   keepArtifacts?: string;
@@ -176,8 +179,12 @@ export function evaluateProjection(opts: {
    *  passes `--embargo N` to the trainer so each fold's artifact is also blind to the N seasons just
    *  before its held-out season -- use it to build data/fold-artifacts-2b-embargo for the arbiter. */
   embargo?: number;
+  /** Max folds whose trainer subprocess runs at once (default cores-1, capped by the global cpuBudget).
+   *  Folds are independent + identity-keyed by season, so concurrency cannot change the output --
+   *  pMap returns input order and test/pool.test.ts pins concurrency 1 == concurrency N. */
+  concurrency?: number;
   log?: (s: string) => void;
-}): FoldResult[] {
+}): Promise<FoldResult[]> {
   const log = opts.log ?? console.log;
   const embargo = opts.embargo ?? 0;
   if (embargo > 0) log(`  ADJACENT-SEASON EMBARGO: --embargo ${embargo}; each fold also drops the ${embargo} season(s) before its holdout from training.`);
@@ -189,79 +196,95 @@ export function evaluateProjection(opts: {
     : "  baseline run: no --add-features (set FF_ADD_FEATURES to admit an extension column)");
   const dir = opts.keepArtifacts ?? mkdtempSync(join(tmpdir(), "ff-eval-"));
   const db = openDb(opts.dbPath);
-  const out: FoldResult[] = [];
-  try {
-    for (const yr of opts.seasons) {
-      const tgt = targets(db, yr);
-      if (!tgt.size) { log(`  ${yr}: no scored rows -- skipped`); continue; }
+  // Every fold's db reads are SYNCHRONOUS better-sqlite3 calls, so they cannot interleave across folds
+  // -- the only await is the trainer subprocess. That is why one shared read handle is safe under the
+  // fan-out, and why concurrency stays a subprocess-level speedup with byte-identical fold outputs.
+  const concurrency = Math.max(1, Math.min(opts.concurrency ?? defaultCpuConcurrency(), opts.seasons.length || 1));
+  if (concurrency > 1) log(`  fold fan-out: up to ${concurrency} trainer subprocesses at once (global cpu budget ${cpuBudget.limit}).`);
 
-      // --- rung 2: the curve-only artifact, fitted on seasons strictly BEFORE this one ----------
-      // Point-in-time, matching the trainer. A baseline fitted on a wider window than the model it
-      // is the baseline for flatters exactly the wrong side of the comparison.
-      const { artifact: curveArt } = buildCurveOnlyArtifact({
-        dbPath: opts.dbPath, from: 1999, to: 2025, base: "curve_value_prior",
-        holdoutSeason: yr, pointInTime: true,
-      });
-      const curveFeat = loadFeatureRows(db, { season: yr, rankBasis: "prior", base: "curve_value_prior" });
-      const bases = new Map(curveFeat.map((f) => [`${f.pos}|${f.name}`, f.base]));
-      const curveRows = toEvalRows(yr, projectSeason({ season: yr, asOf: `${yr}-09-01`, artifact: curveArt, features: curveFeat }), tgt, bases);
-      if (!curveRows.length) { log(`  ${yr}: no curve at any rank -- skipped`); continue; }
+  const runFold = async (yr: number): Promise<FoldResult | null> => {
+    const tgt = targets(db, yr);
+    if (!tgt.size) { log(`  ${yr}: no scored rows -- skipped`); return null; }
 
-      // --- rung 3: the TRAINER, as a subprocess, blind to this season ---------------------------
-      const artPath = join(dir, `artifact-${yr}.json`);
-      let trained: ProjectionArtifact | null = null;
-      let note: string | undefined;
-      try {
-        execFileSync("uv", [
-          "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_projection.py",
-          "--db", opts.dbPath ?? "data/ff.db", "--seasons", opts.trainerSeasons ?? "1999-2025",
-          "--holdout-season", String(yr), "--out", artPath, "--quiet",
-          // ADJACENT-SEASON EMBARGO (WS3): only added when > 0, so the default fold artifact is
-          // byte-identical to the pre-WS3 one. The produced artifact is guarded below.
-          ...(embargo > 0 ? ["--embargo", String(embargo)] : []),
-          // THE ADMISSION LEVER (Phase 2d). One candidate at a time, re-measured under the full
-          // nested evaluation rather than on the residuals it was screened against. It is an
-          // environment variable rather than a flag because the CLI surface is owned elsewhere this
-          // phase; the report header PRINTS it, so a run cannot quietly be a different model from
-          // the one the reader thinks they are looking at -- which is the only property that matters.
-          ...(addFeatures ? ["--add-features", addFeatures] : []),
-        ], { stdio: ["ignore", "pipe", "pipe"], timeout: 1800000 });
-        if (existsSync(artPath)) trained = loadArtifact(JSON.parse(readFileSync(artPath, "utf8")));
-        // EMBARGO GUARD (WS3). Prove the trainer actually applied the embargo, rather than trusting
-        // that the flag was wired: none of the embargoed seasons may appear in the fitted artifact's
-        // training `seasons`. This is the consumer checking the producer's emitted bytes -- a
-        // `--embargo` that the Python side silently dropped fails HERE, loudly, not silently.
-        if (trained && embargo > 0) {
-          const leaked = embargoedSeasons(yr, embargo).filter((s) => trained!.seasons.includes(s));
-          if (leaked.length) {
-            throw new Error(`embargo ${embargo} not honoured for holdout ${yr}: training seasons still include ${leaked.join(",")}`);
-          }
+    // --- rung 2: the curve-only artifact, fitted on seasons strictly BEFORE this one ----------
+    // Point-in-time, matching the trainer. A baseline fitted on a wider window than the model it
+    // is the baseline for flatters exactly the wrong side of the comparison.
+    const { artifact: curveArt } = buildCurveOnlyArtifact({
+      dbPath: opts.dbPath, from: 1999, to: 2025, base: "curve_value_prior",
+      holdoutSeason: yr, pointInTime: true,
+    });
+    const curveFeat = loadFeatureRows(db, { season: yr, rankBasis: "prior", base: "curve_value_prior" });
+    const bases = new Map(curveFeat.map((f) => [`${f.pos}|${f.name}`, f.base]));
+    const curveRows = toEvalRows(yr, projectSeason({ season: yr, asOf: `${yr}-09-01`, artifact: curveArt, features: curveFeat }), tgt, bases);
+    if (!curveRows.length) { log(`  ${yr}: no curve at any rank -- skipped`); return null; }
+
+    // --- rung 3: the TRAINER, as a subprocess, blind to this season ---------------------------
+    const artPath = join(dir, `artifact-${yr}.json`);
+    let trained: ProjectionArtifact | null = null;
+    let note: string | undefined;
+    try {
+      // withCpuSlot holds one slot of the process-wide budget for the trainer, so a candidates-x-folds
+      // nesting (admit-feature over this) can never spawn more python than the machine has cores.
+      // OMP/BLAS pinned to 1 thread: the trainer is single-core by design, so N parallel folds must
+      // stay N single-core processes, not N*cores oversubscribing.
+      await withCpuSlot(() => execFileP("uv", [
+        "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_projection.py",
+        "--db", opts.dbPath ?? "data/ff.db", "--seasons", opts.trainerSeasons ?? "1999-2025",
+        "--holdout-season", String(yr), "--out", artPath, "--quiet",
+        // ADJACENT-SEASON EMBARGO (WS3): only added when > 0, so the default fold artifact is
+        // byte-identical to the pre-WS3 one. The produced artifact is guarded below.
+        ...(embargo > 0 ? ["--embargo", String(embargo)] : []),
+        // THE ADMISSION LEVER (Phase 2d). One candidate at a time, re-measured under the full
+        // nested evaluation rather than on the residuals it was screened against. It is an
+        // environment variable rather than a flag because the CLI surface is owned elsewhere this
+        // phase; the report header PRINTS it, so a run cannot quietly be a different model from
+        // the one the reader thinks they are looking at -- which is the only property that matters.
+        ...(addFeatures ? ["--add-features", addFeatures] : []),
+      ], {
+        timeout: 1800000,
+        env: { ...process.env, OMP_NUM_THREADS: "1", OPENBLAS_NUM_THREADS: "1", MKL_NUM_THREADS: "1" },
+      }));
+      if (existsSync(artPath)) trained = loadArtifact(JSON.parse(readFileSync(artPath, "utf8")));
+      // EMBARGO GUARD (WS3). Prove the trainer actually applied the embargo, rather than trusting
+      // that the flag was wired: none of the embargoed seasons may appear in the fitted artifact's
+      // training `seasons`. This is the consumer checking the producer's emitted bytes -- a
+      // `--embargo` that the Python side silently dropped fails HERE, loudly, not silently.
+      if (trained && embargo > 0) {
+        const leaked = embargoedSeasons(yr, embargo).filter((s) => trained!.seasons.includes(s));
+        if (leaked.length) {
+          throw new Error(`embargo ${embargo} not honoured for holdout ${yr}: training seasons still include ${leaked.join(",")}`);
         }
-      } catch (e) { note = `trainer failed: ${(e as Error).message.split("\n")[0]}`; }
-
-      let trainedRows: EvalRow[] = [];
-      if (trained) {
-        const f = loadFeatureRows(db, {
-          season: yr, rankBasis: "prior", base: trained.base, curve: trained.curve,
-        });
-        trainedRows = toEvalRows(yr, projectSeason({ season: yr, asOf: `${yr}-09-01`, artifact: trained, features: f }), tgt, bases);
       }
+    } catch (e) { note = `trainer failed: ${(e as Error).message.split("\n")[0]}`; }
 
-      // --- rung 1: carry-forward ---------------------------------------------------------------
-      const carryRows = toEvalRows(yr, carryForward(db, yr, carryQuantiles(db, yr)), tgt, bases);
-
-      out.push({ season: yr, rows: { carry: carryRows, curve: curveRows, trained: trainedRows }, trainerOk: !!trained, note });
-      const sel = trained?.curveVariant
-        ? "  variant " + Object.entries(trained.curveVariant)
-          .map(([p, v]) => `${p}:w${v.window}${v.monotone ? "m" : "-"}L${v.levelWeight}/${v.form[0]}`).join(" ")
-        : "";
-      log(`  ${yr}: carry ${carryRows.length}  curve ${curveRows.length}  trained ${trainedRows.length}` + sel + (note ? `  (${note})` : ""));
+    let trainedRows: EvalRow[] = [];
+    if (trained) {
+      const f = loadFeatureRows(db, {
+        season: yr, rankBasis: "prior", base: trained.base, curve: trained.curve,
+      });
+      trainedRows = toEvalRows(yr, projectSeason({ season: yr, asOf: `${yr}-09-01`, artifact: trained, features: f }), tgt, bases);
     }
+
+    // --- rung 1: carry-forward ---------------------------------------------------------------
+    const carryRows = toEvalRows(yr, carryForward(db, yr, carryQuantiles(db, yr)), tgt, bases);
+
+    const sel = trained?.curveVariant
+      ? "  variant " + Object.entries(trained.curveVariant)
+        .map(([p, v]) => `${p}:w${v.window}${v.monotone ? "m" : "-"}L${v.levelWeight}/${v.form[0]}`).join(" ")
+      : "";
+    log(`  ${yr}: carry ${carryRows.length}  curve ${curveRows.length}  trained ${trainedRows.length}` + sel + (note ? `  (${note})` : ""));
+    return { season: yr, rows: { carry: carryRows, curve: curveRows, trained: trainedRows }, trainerOk: !!trained, note };
+  };
+
+  try {
+    // Input-order results (pMap contract); skipped folds come back null and are filtered out, so the
+    // returned array matches the pre-fan-out sequential order exactly.
+    const folds = await pMap(opts.seasons, (yr) => runFold(yr), { concurrency });
+    return folds.filter((f): f is FoldResult => f != null);
   } finally {
     db.close();
     if (!opts.keepArtifacts) rmSync(dir, { recursive: true, force: true });
   }
-  return out;
 }
 
 export const pool = (folds: FoldResult[], rung: Rung): EvalRow[] => folds.flatMap((f) => f.rows[rung]);

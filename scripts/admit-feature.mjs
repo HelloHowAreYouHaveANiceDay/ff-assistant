@@ -42,10 +42,10 @@ function perSeasonPinball(folds) {
 console.log(`ADMISSION GATE: ${candidate} over seasons ${seasons[0]}-${seasons[seasons.length - 1]}`);
 console.log("baseline run (no --add-features) ...");
 delete process.env.FF_ADD_FEATURES;
-const base = perSeasonPinball(evaluateProjection({ dbPath, seasons, log: () => {} }));
+const base = perSeasonPinball(await evaluateProjection({ dbPath, seasons, log: () => {} }));
 console.log(`candidate run (--add-features ${candidate}) ...`);
 process.env.FF_ADD_FEATURES = candidate;
-const cand = perSeasonPinball(evaluateProjection({ dbPath, seasons, log: () => {} }));
+const cand = perSeasonPinball(await evaluateProjection({ dbPath, seasons, log: () => {} }));
 
 const shared = seasons.filter((s) => base.has(s) && cand.has(s));
 // PARTITION the scored seasons into the DECISION set (selection) and the one-shot CONFIRM set
