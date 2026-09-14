@@ -360,14 +360,18 @@ Until then both levers stay at their shipped values (`consensusBlend=1`, `benchD
   STORED 1 was overriding the default -- the config-precedence trap, so the code change alone would have been a
   no-op). It is null on the D13 playoff gate and fails family-wide FDR (WS4/WS6); its value lived only on the
   no-skill title axis. Still available via `--consensus-blend 1`; re-ship only on a powered playoff-axis re-test.
-  - CONNECTIVITY FINDING (recorded honestly): on the CURRENT (2026) board the lever is INERT -- `ff board
-    --consensus-blend 1` vs `0` produce an IDENTICAL board, because `raw_fftoday_proj` carries 2008-2024 only
-    (no 2026 rows to blend). So the demotion changes NOTHING for this season's live draft; consensusBlend's
-    measured effect was on the historical backtest, where FFToday IS present. `scripts/lever-connected.mjs`
-    reports DEAD for the same reason (it drafts the inert 2026 board), which is a check/season artifact, not
-    proof the lever is code-dead. DISCOVERED FOLLOW-UP: confirm the arbiter backtest still exercises FFToday
-    for the historical seasons (it should); and note a shipped board-edge that is inert for the live season
-    because its feed stops at 2024 is itself worth a data-freshness fix.
+  - CONNECTIVITY (CORRECTED 2026-09-13): consensusBlend IS connected -- `backtest --consensus-blend 0` vs `1`
+    moves the outcome (30%->40% champ / 95%->100% playoff on a small n=20/2-season probe; the magnitude is
+    noise, the CONNECTION is real). An earlier draft of this bullet claimed the lever was "inert" and that
+    FFToday "stops at 2024"; BOTH were wrong. `raw_fftoday_proj` has 2026 rows (344), and the
+    `ff board --consensus-blend` / `lever-connected` checks that showed "identical / DEAD" were FLAWED: they
+    draft from the STATIC data/values.csv and never re-assemble the board, so they cannot see a BOARD lever
+    (lever-connected has since been fixed to say so instead of reporting a false dead). The demotion below
+    rests SOLELY on WS6's powered playoff-null + family-FDR-fail, never on any inertness.
+  - DATA GAP (real, pending): `raw_fftoday_proj` is missing SEASON 2025 (0 rows; 2024 and 2026 present), so the
+    2025 backtest fold had no consensus -- consensusBlend's WS6 measurement carried a hole in 1 of 25 seasons.
+    ACTION: fill 2025 FFToday, then RE-VALIDATE consensusBlend on complete data before treating this demotion
+    as final. Until then the demotion is APPLIED but marked pending-confirmation.
 - **benchDiscount: KEPT at 0.35 (no change).** Its 2021-2024 holdout playoff confirm was +1.67pp (CI [0.67,2.67],
   4/4 seasons up), so demoting it would discard a signal the selection-blind holdout supports; it is FLAGGED for
   a properly-powered playoff-axis re-test rather than reverted. (It still fails full-set family FDR -- the re-test
