@@ -175,7 +175,14 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   LADDER" sections). A rung that is a trainer FLAG rather than a column is gated by
   `scripts/gate-variant.mjs` (same paired-season 2.9*SE verdict as `admit-feature.mjs`; `--cand-rung
   challenger` scores a learner's sidecar predictions). Nothing on the ladder is a default until it clears
-  the floor AND gets owner sign-off (D14/D15).
+  the floor AND gets owner sign-off (D14/D15). **Two did, and shipped (D16, 2026-09-14): the projector's
+  served heads for QB/RB/WR/TE are now gradient-boosted ensembles carried ON the artifact (schema 2,
+  `learner: "gbm"`, walked by `projector.ts`, golden-checked against scikit-learn's own predict), and
+  FFToday's preseason projection (`fftoday_proj`) is a default feature -- so the board needs the FFToday
+  archive scraped each preseason.** `--learner ridge` reproduces the pre-D16 linear model. The weekly
+  track's season-line anchor is projected from this artifact at rebuild time: rebuilding
+  `feat_player_week_model` after D16 moves every season's `season_line_pg` and the weekly model must be
+  retrained + re-gated (docs/weekly.md) before that rebuild is trusted.
 - Draft-day procedure and machine setup: `docs/draft-day-runbook.md`
 - The MCP control surface (39 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is
   `TOOL_NAMES.length` in `src/agent/agent.ts`, not a number to retype -- `scripts/copilot-mcp-smoke.mjs`

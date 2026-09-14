@@ -116,8 +116,10 @@ fail while empty early folds passed -- i.e. it looked like a clean null. The pos
 - **External projection** (`fftoday_proj` -- FFToday's preseason season projection, `raw_fftoday_proj`
   2008-2026, joined on (season, pos, name_key), a ratio to the rank bucket; ladder rung 7, 2026-09-14):
   **ADMIT** (+0.326 vs floor 0.275 on the decision block; holdout +0.502, 5/5, confirmed) and NOT
-  explained by the market rank (`adp` gated the same way: REJECT, -0.007, holdout 0/5). A candidate
-  (`EXTERNAL_RATIO`) pending owner sign-off + the D13 playoff gate (D14/D15). docs/validation.md, rungs 5+7.
+  explained by the market rank (`adp` gated the same way: REJECT, -0.007, holdout 0/5). **ADMITTED to the
+  defaults 2026-09-14 (owner decision D16)** -- now in `RATIO_FEATURES`; the D13 playoff gate was run and
+  is NULL/underpowered at a system already 95.5% playoffs. It makes the board depend on the FFToday
+  archive: `node scripts/scrape-fftoday.mjs --season <Y>` each preseason. docs/validation.md, rungs 5+7.
 - **Trainer-variant rungs** (not columns; gated by `scripts/gate-variant.mjs`): games-weighted
   shrinkage of the usage ratios (`--shrink-k`) and partial pooling across positions
   (`--pool-dev-mult`), ladder rung 3 -- **both REJECT, both negative on the holdout**. The flags stay,

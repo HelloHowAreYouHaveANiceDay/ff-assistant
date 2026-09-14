@@ -1,5 +1,78 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## D16 APPLIED: the shipped projector is now the boosted model with FFToday's projection, conformally calibrated -- P5 HELD (2026-09-14)
+>
+> Owner decision, on the rungs 5+7 findings below: "admit the two admits". What shipped, and what it
+> was measured against, in order.
+>
+> **The artifact (schema 2).** `data/projection-artifact.json` and `test/fixtures/trained-artifact.json`
+> are regenerated (byte-identical to each other apart from `fittedAt`; 2.8 MB each). `fftoday_proj` is
+> a default `RATIO_FEATURES` member (11 fitted features). The artifact declares `learner: "gbm"` and
+> carries a `boosted` block: four HistGradientBoosting heads (depth 3, 300 rounds, pre-registered) for
+> QB/RB/WR/TE, serialised as per-node arrays straight off scikit-learn's predictor nodes, on the same
+> transformed design as the linear heads plus a one-hot position block. K and DST stay on the linear
+> intercept-only heads. `--learner ridge` reproduces the pre-D16 linear artifact.
+>
+> **The seam, checked three ways rather than assumed.** (1) `boosted_self_check` in the trainer walks
+> the serialised block in Python over the whole training design and refuses to write an artifact
+> unless it reproduces `predict()` to 1e-9 (it does, to ~1e-15). (2) The golden block's five expected
+> values now come from scikit-learn's OWN `predict()`, so the TypeScript walker (`treeValue` /
+> `boostedRaw` in `src/model/projector.ts`) is checked against the producer, not against a second
+> walker; the loader recomputes all five on the boosted path and accepts. (3) Fault injection on the
+> loader: a perturbed leaf value is refused by the golden check, `learner: "gbm"` without a block is
+> refused, a tree naming a feature index past the design width is refused. Board and backtest paths
+> both project (530 board rows for 2026; 648 pool rows for 2024); a kicker still comes off the linear head.
+>
+> **Coverage, and the calibration it forced.** The first nested-CV run of the boosted default PASSED
+> RMSE and pinball and FAILED the pre-registered P5 coverage clause: 10/90 band 0.729 pooled against
+> [0.75, 0.85], with the 41-60 and 60+ bands at 0.697. A boosted quantile head is sharper on its own
+> training rows than on unseen ones. The remedy is the one D11 names ("a calibrated refit that passes
+> on its own merit"), not a tune against the gate: split-conformal calibration, TRAIN-ONLY --
+> player-grouped 5-fold out-of-fold predictions on the training rows, each quantile head shifted by
+> the q-quantile of (y - oof) so its out-of-fold coverage is nominal, the constant folded into the
+> head's `baseline` so nothing on the artifact or the walker changes shape (`--conformal-k`, default
+> 5; shipped shifts p10 -3.49, p50 -0.16, p90 +7.51 points). Then the nested CV was run again:
+>
+> | nested CV 2012-2025 (14 folds) | curve-only | pre-D16 trained (linear) | **D16 (boosted + fftoday, calibrated)** |
+> |---|---|---|---|
+> | RMSE (P5 pool 2015-2025) | 55.54 | 52.79 | **50.62** |
+> | pinball (P5 pool) | 13.16 | 12.03 | **11.32** |
+> | 10/90 coverage pooled | 0.584 | 0.761 | **0.757** (band [0.75, 0.85]) |
+> | per rank band 1-6 / 7-12 / 13-24 / 25-40 / 41-60 / 60+ | -- | all in | **0.802 / 0.810 / 0.821 / 0.773 / 0.751 / 0.716** (band [0.70, 0.90]) |
+> | RMSE by position QB / RB / WR / TE | 87.9 / 63.0 / 50.5 / 36.7 | 76.8 / 61.9 / 49.7 / 36.5 | **71.3 / 59.6 / 47.8 / 35.1** |
+> | cold-start (first projectable season) RMSE | 64.8 | -- | **56.9** (vs 62.8 carry-forward) |
+>
+> **P5 HELD** -- every clause. The 41-60 band sits at 0.751 against a 0.70 floor and 60+ at 0.716,
+> which is where the calibration bought its margin and where it is thinnest; both are recorded so the
+> next re-measure can see whether they drift.
+>
+> **The admission gate, re-run on the SERVED model** (`gate-variant.mjs --base "--learner ridge"`,
+> both arms with `fftoday_proj`, the full trained rung incl. K/DST): **+0.2485 +/- 0.0628 pinball, 9/9
+> decision seasons, floor 0.182 -> ADMIT; holdout 2021-2025 +0.3317 +/- 0.0748, 5/5, floor 0.217 ->
+> confirmed.** Smaller than the screen's +0.37 because the baseline here already has the projection
+> feature (the two admits overlap by ~0.1, as the cross-checks below said) and because K/DST rows,
+> identical in both arms, dilute the pooled number.
+>
+> **The board (2026, 530 players).** Startable-tier points share QB 21.2% -> 19.7%, RB 32.5% -> 35.0%,
+> WR 36.5% -> 35.6%, TE 9.8% -> 9.7%: the quarterback over-allocation the Phase 2c value finding named
+> moves toward the room's real share for the first time. Backup quarterbacks collapse to the clamp
+> floor (a depth-chart-aware learner says a QB2 scores ~nothing); the top of the board is unchanged in
+> composition (12 QBs). The championship backtest's flagless arbiter does not read this artifact; its
+> `--projection artifact` arm does, and rung 7's D13 check (null/underpowered at 95.5% playoffs) is the
+> best measurement of what a projector change can show there.
+>
+> **What this does to the WEEKLY track, stated so it is not discovered.** `src/weekly/features.ts`
+> projects the weekly `season_line_pg` anchor from the shipped projection artifact AT REBUILD TIME.
+> Rebuilding `feat_player_week_model` after D16 moves every season's anchor -- including the live 2026
+> rows the frozen scorecard is graded against -- and the shipped weekly model (D11) was fitted to the
+> OLD lines. Nothing weekly was rebuilt in this pass. The consequent job is: rebuild the weekly table,
+> retrain `tools/train_weekly.py`, re-run `ff evaluate-weekly` and its gate, then decide; until then the
+> weekly table on disk is the pre-D16 one and remains internally consistent.
+>
+> Operational commitment accepted with rung 7: the board now needs FFToday's preseason projection each
+> year (`node scripts/scrape-fftoday.mjs --season <Y>` -> `raw_fftoday_proj`); a season without it
+> projects from the artifact's declared `missing` (1.0, "what his rank implies") for that column.
+
 > ## THE PRE-DEEP-LEARNING LADDER, rungs 5 and 7: an external projection and a boosted challenger -- the first two ADMITs, both confirmed (2026-09-14)
 >
 > The ladder's premise was that the linear projector had not been exhausted. Rungs 2-4 said the

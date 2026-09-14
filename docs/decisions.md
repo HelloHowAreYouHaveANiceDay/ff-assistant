@@ -484,6 +484,25 @@ served path end to end.
 REVERSAL CONDITION for either, once shipped: the same WS1 gate re-run on a later season block, or a D13
 playoff-gate null.
 
+**APPLIED (owner decision, 2026-09-14): "admit the two admits".**
+- `fftoday_proj` is a default `RATIO_FEATURES` member of `tools/train_projection.py`.
+- The served heads for QB/RB/WR/TE are the boosted ensembles, carried ON the artifact (schema 2,
+  `learner: "gbm"`, `boosted` block) and walked by `src/model/projector.ts`; the golden block's expected
+  values are scikit-learn's own `predict()`, the trainer self-checks its serialisation against `predict()`
+  before writing, and the loader refuses a perturbed leaf, a missing block or an out-of-range feature.
+  `--learner ridge` reproduces the pre-D16 linear artifact.
+- The boosted quantile heads FAILED the pre-registered P5 coverage clause on first measurement (0.729
+  pooled vs [0.75, 0.85]); per D11's own remedy they are now split-conformally calibrated on TRAIN-ONLY
+  out-of-fold residuals (`--conformal-k 5`, the shift folded into each head's baseline), and the re-run
+  nested CV holds every P5 clause: RMSE 50.62 vs 55.54 curve, pinball 11.32 vs 13.16, coverage 0.757,
+  bands 0.802 / 0.810 / 0.821 / 0.773 / 0.751 / 0.716. The served model re-gated against the linear one:
+  +0.2485 pinball (9/9), holdout +0.3317 (5/5), confirmed.
+- Regenerated: `data/projection-artifact.json`, `test/fixtures/trained-artifact.json`, `data/points.csv`
+  (2026 board: QB startable share 21.2% -> 19.7%).
+- NOT done, deliberately: the weekly track. Its season-line anchor is projected from this artifact at
+  rebuild time, so `feat_player_week_model` must be rebuilt, the weekly model retrained and re-gated
+  before the weekly table is touched (docs/validation.md D16 section; CLAUDE.md).
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

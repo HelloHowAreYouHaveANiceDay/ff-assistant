@@ -161,6 +161,58 @@ export interface ProjectionArtifact {
   clamps: { lo: number; hi: number };
   golden?: GoldenRow[];
   notes?: string;
+  /** WHICH LEARNER PRODUCES THE FITTED POSITIONS' HEADS (schema 2, 2026-09-14). Absent or "ridge":
+   *  the linear `coef` heads. "gbm": the `boosted` ensembles for every position they name, and the
+   *  linear heads for the rest (K/DST stay intercept-only). Owner decision D16 admitted the boosted
+   *  challenger after it cleared the WS1 gate and confirmed on the holdout. */
+  learner?: "ridge" | "gbm";
+  boosted?: BoostedBlock;
+}
+
+/**
+ * THE BOOSTED ENSEMBLES, serialised from scikit-learn's HistGradientBoostingRegressor by the trainer
+ * and walked here. One tree is five parallel arrays indexed by node: an internal node tests
+ * `x[feature] <= threshold` and goes left on true (missing values go where `missingLeft` says);
+ * a leaf (`leaf[i]` true) contributes `value[i]`. A head's raw prediction is
+ * `baseline + sum over trees of the leaf value`, which is exactly `predict()` on the Python side --
+ * the learning rate is already folded into the leaf values there, and the golden block carries
+ * scikit-learn's OWN predictions so this walker is checked against the producer, not against a
+ * second walker.
+ *
+ * The design a tree indexes is the artifact's transformed feature vector (`featureValue` over
+ * `features`, in order) FOLLOWED BY a one-hot block over `positions`, in that order. `featureValue`
+ * never emits NaN (a missing input becomes the spec's declared `missing`), so the missing branch is
+ * reachable only by a caller handing the walker a NaN directly, and it is implemented anyway so the
+ * two sides agree on every input scikit-learn would accept.
+ */
+export interface BoostedTree {
+  feature: number[]; threshold: number[]; left: number[]; right: number[];
+  value: number[]; leaf: boolean[]; missingLeft: boolean[];
+}
+export interface BoostedHead { baseline: number; trees: BoostedTree[] }
+export interface BoostedBlock {
+  learner: "gbm";
+  /** Positions the ensembles were fitted for and are used for; the one-hot block is in this order. */
+  positions: string[];
+  params?: Record<string, number | string>;
+  heads: Record<Head, BoostedHead>;
+}
+
+/** One tree's leaf value for an augmented design vector. Exported for tests. */
+export function treeValue(t: BoostedTree, x: number[]): number {
+  let i = 0;
+  for (;;) {
+    if (t.leaf[i]) return t.value[i];
+    const v = x[t.feature[i]];
+    i = Number.isNaN(v) ? (t.missingLeft[i] ? t.left[i] : t.right[i]) : (v <= t.threshold[i] ? t.left[i] : t.right[i]);
+  }
+}
+
+/** A head's raw (pre-clamp, pre-base) prediction: baseline plus every tree's leaf. */
+export function boostedRaw(h: BoostedHead, x: number[]): number {
+  let s = h.baseline;
+  for (const t of h.trees) s += treeValue(t, x);
+  return s;
 }
 
 export interface GoldenRow {
@@ -181,7 +233,10 @@ export interface ProjRow {
   p90: number;
 }
 
-const SCHEMA = 1;
+/** Schema 2 (2026-09-14) adds the optional `learner` + `boosted` block; schema 1 artifacts are
+ *  linear-only and still load. Emitted artifacts declare 2. */
+const SCHEMA = 2;
+const ACCEPTED_SCHEMAS = new Set([1, 2]);
 
 /** Evaluate one feature spec against one row. Exported so the golden check and the projector cannot
  *  drift into two implementations of the same transform. */
@@ -233,16 +288,30 @@ export function projectSeason(opts: {
   const { artifact: a, features } = opts;
   const form: BaseForm = a.form ?? "ratio";
   const out: ProjRow[] = [];
+  // The boosted ensembles serve the positions they name; everything else stays linear.
+  const boosted = a.learner === "gbm" ? a.boosted ?? null : null;
+  const boostedPos = boosted ? new Map(boosted.positions.map((p, i) => [p, i])) : null;
   for (const row of features) {
     if (row.base == null || !Number.isFinite(row.base) || row.base <= 0) continue;
     const byPos = a.coef[row.pos];
     if (!byPos) continue;                       // the artifact has no opinion about this position
     const x = a.features.map((s) => featureValue(s, row));
+    const bi = boostedPos?.get(row.pos);
+    let xAug: number[] | null = null;
+    if (boosted && bi != null) {
+      xAug = x.slice();
+      for (let i = 0; i < boosted.positions.length; i++) xAug.push(i === bi ? 1 : 0);
+    }
     const head = (h: Head): number => {
       const c = byPos[h];
       if (!c) return NaN;
-      let lin = c.intercept ?? 0;
-      for (let i = 0; i < a.features.length; i++) lin += (c[a.features[i].name] ?? 0) * x[i];
+      let lin: number;
+      if (xAug) {
+        lin = boostedRaw(boosted!.heads[h], xAug);
+      } else {
+        lin = c.intercept ?? 0;
+        for (let i = 0; i < a.features.length; i++) lin += (c[a.features[i].name] ?? 0) * x[i];
+      }
       const b = row.base!;
       return form === "offset"
         ? Math.min(b * a.clamps.hi, Math.max(b * a.clamps.lo, b + lin))
@@ -271,7 +340,7 @@ export function loadArtifact(json: unknown, opts: { checkGolden?: boolean; tol?:
   const a = json as ProjectionArtifact;
   if (!a || typeof a !== "object") bad("not an object");
   if (a.kind !== "projection") bad(`kind is ${JSON.stringify(a.kind)}, expected "projection"`);
-  if (Number(a.schema) !== SCHEMA) bad(`schema ${a.schema}, this evaluator understands ${SCHEMA}`);
+  if (!ACCEPTED_SCHEMAS.has(Number(a.schema))) bad(`schema ${a.schema}, this evaluator understands ${[...ACCEPTED_SCHEMAS].join(", ")}`);
   if (!["curve_value_prior", "curve_value_ecr", "curve_value_orderstat", "artifact_curve"].includes(a.base)) bad(`unknown base column ${JSON.stringify(a.base)}`);
   if (a.base === "artifact_curve") {
     if (!a.curve || typeof a.curve !== "object" || !Object.keys(a.curve).length) {
@@ -336,6 +405,37 @@ export function loadArtifact(json: unknown, opts: { checkGolden?: boolean; tol?:
     }
   }
   if (!a.clamps || !(a.clamps.lo > 0) || !(a.clamps.hi >= a.clamps.lo)) bad("clamps must be a positive [lo, hi]");
+  // THE BOOSTED BLOCK. A learner that says "gbm" without ensembles, or ensembles for a position the
+  // artifact has no linear heads for, or a tree whose arrays disagree about how many nodes it has,
+  // would each degrade to "some position quietly served by the wrong model" -- refused instead.
+  if (a.learner != null && a.learner !== "ridge" && a.learner !== "gbm") bad(`unknown learner ${JSON.stringify(a.learner)}`);
+  if (a.learner === "gbm") {
+    const bb = a.boosted;
+    if (!bb || bb.learner !== "gbm") bad("learner is \"gbm\" but the artifact carries no boosted block");
+    if (!Array.isArray(bb!.positions) || !bb!.positions.length) bad("boosted block names no positions");
+    for (const p of bb!.positions) if (!a.coef[p]) bad(`boosted block names position ${p}, which has no linear heads (K/DST-style fallback is impossible)`);
+    const width = a.features.length + bb!.positions.length;
+    for (const h of HEADS) {
+      const bh = bb!.heads?.[h];
+      if (!bh || typeof bh.baseline !== "number" || !Number.isFinite(bh.baseline) || !Array.isArray(bh.trees)) bad(`boosted head '${h}' is missing or has no finite baseline`);
+      if (!bh.trees.length) bad(`boosted head '${h}' has no trees -- an empty ensemble is a constant wearing a learner's name`);
+      bh.trees.forEach((t, ti) => {
+        const n = t.value?.length ?? 0;
+        if (!n || [t.feature, t.threshold, t.left, t.right, t.leaf, t.missingLeft].some((arr) => !Array.isArray(arr) || arr.length !== n)) {
+          bad(`boosted head '${h}' tree ${ti}: node arrays disagree about the node count`);
+        }
+        for (let i = 0; i < n; i++) {
+          if (!Number.isFinite(t.value[i])) bad(`boosted head '${h}' tree ${ti} node ${i}: non-finite value`);
+          if (t.leaf[i]) continue;
+          if (!(t.feature[i] >= 0 && t.feature[i] < width)) bad(`boosted head '${h}' tree ${ti} node ${i}: feature index ${t.feature[i]} outside the ${width}-wide design`);
+          if (!(t.left[i] >= 0 && t.left[i] < n && t.right[i] >= 0 && t.right[i] < n)) bad(`boosted head '${h}' tree ${ti} node ${i}: child index out of range`);
+          if (!Number.isFinite(t.threshold[i])) bad(`boosted head '${h}' tree ${ti} node ${i}: non-finite threshold`);
+        }
+      });
+    }
+  } else if (a.boosted) {
+    bad("the artifact carries a boosted block but does not declare learner \"gbm\" -- one of the two is a leftover");
+  }
   if (opts.checkGolden !== false && a.golden?.length) checkGolden(a, opts.tol ?? 1e-6);
   return a;
 }

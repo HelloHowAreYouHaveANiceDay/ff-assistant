@@ -122,6 +122,22 @@ until Phase 2d: it was written when the trained artifact failed on coverage in P
 updated when Phase 2b's re-fit passed. A stale claim in a doc is a claim like any other.) See
 `docs/validation.md`, Phases 2a-2c.
 
+### Which artifact ships NOW (D16, 2026-09-14): boosted heads + FFToday's projection, schema 2
+
+The paragraphs above describe the linear model as it shipped from Phase 2b to D16. Since D16 the
+artifact is **schema 2** and declares `learner: "gbm"`: the served heads for QB/RB/WR/TE are four
+gradient-boosted ensembles (scikit-learn `HistGradientBoostingRegressor`, depth 3, 300 rounds; a
+squared-error mean head and quantile-loss p10/p50/p90 heads, the quantile heads split-conformally
+calibrated on train-only out-of-fold residuals) fitted on the SAME transformed design as the linear
+heads plus a one-hot position block, and serialised onto the artifact as a `boosted` block of per-node
+arrays. The linear `coef` heads are still fitted and carried: they serve K and DST, and
+`--learner ridge` reproduces the pre-D16 artifact exactly. `fftoday_proj` -- FFToday's preseason
+projection, joined on (season, pos, name_key) as a ratio to the rank bucket -- is a default feature.
+The nested-CV record (RMSE 50.62 vs 55.54 curve-only, pinball 11.32 vs 13.16, coverage 0.757, every
+rank band inside [0.70, 0.90], P5 HELD) and the admission gates are in `docs/validation.md`; the
+decision is `docs/decisions.md` D16. Why this and not more history, shrinkage, pooling or a spline
+basis: those were tried first, one rung at a time, and each was a null.
+
 ### The train/serve contract
 
 The artifact carries a **golden block**: five fixture feature rows together with the TRAINER'S OWN
@@ -130,6 +146,17 @@ disagree by more than 1e-6. `featureValue()` exists in both Python and TypeScrip
 that is not duplication to refactor away, it is what makes the comparison mean anything. A producer
 that ships its own validator grades its own homework and passes forever while every consumer rejects
 its output; this repo has that scar already.
+
+For the boosted block the contract is held at two seams, because a tree walker can disagree with its
+producer in ways a dot product cannot. The trainer walks its OWN serialised JSON in Python over the
+entire training design and refuses to write an artifact unless the walk reproduces `predict()` to
+1e-9. The golden block's expected values are then scikit-learn's `predict()` itself (plus the
+conformal shift), so `treeValue`/`boostedRaw` in `projector.ts` are checked against the producer
+rather than against a second walker. The walk is: go left on `x[feature] <= threshold`, missing
+values per the node's flag, leaf values already carry the learning rate, raw = baseline + sum of
+leaves. The loader additionally refuses `learner: "gbm"` without a block, a block naming a position
+with no linear heads, node arrays that disagree about their length, a feature index outside the
+design width, or a non-finite threshold or value.
 
 The loader also refuses an artifact naming a feature it cannot compute, missing a quantile head, or
 carrying a coefficient for an undeclared feature. Each of those degrades, without the guard, to "that

@@ -73,7 +73,9 @@ from datetime import date
 
 import numpy as np
 
-SCHEMA = 1
+# Schema 2 (2026-09-14, D16): the artifact may carry a `learner` and a `boosted` block (serialised
+# gradient-boosted ensembles) beside the linear heads. src/model/projector.ts accepts 1 and 2.
+SCHEMA = 2
 POS_FITTED = ["QB", "RB", "WR", "TE"]
 # K and DST are intercept-only ON PURPOSE, not by omission. scripts/fit-kdst.mjs screened the
 # fg_*/pat_*/def_* columns and NOTHING survived nested cross-validation (K -0.0073, DST -0.0041);
@@ -120,6 +122,12 @@ RATIO_FEATURES = {
     "prior_ts": 0.005,
     "prior_attempts": 1.0,
     "prior_rush_yards": 0.5,
+    # ADMITTED 2026-09-14 (owner decision D16, ladder rung 7): FFToday's preseason projection as a
+    # ratio to the rank bucket. Gate: +0.3257 pinball vs floor 0.2750 on 2012-2020, holdout 2021-2025
+    # +0.5024 (5/5, confirmed); the ADP market rank gated the same way is a null, so this is judgement,
+    # not the crowd. D13 playoff gate NULL/underpowered (-0.58pp, CI [-2.08, +0.92]) at a system already
+    # 95.5% playoffs. Joined in load_rows on (season, pos, name_key); see EXTERNAL_RATIO below.
+    "fftoday_proj": 20.0,
 }
 # `prior_pos_rank` is here for the QUANTILE heads above all. Dispersion around the curve widens
 # sharply with rank -- a WR50's season is far less predictable in proportional terms than a WR3's --
@@ -980,17 +988,30 @@ def usage_lift(sub, X, specs, pos, base, args, form):
     return math.sqrt(err["without"] / n) - math.sqrt(err["with"] / n)
 
 
-def evaluate(artifact, row):
-    """Predict one row with THIS script's own arithmetic -- the golden block's source of truth."""
+def evaluate(artifact, row, fb=None):
+    """Predict one row with THIS script's own arithmetic -- the golden block's source of truth.
+
+    For a boosted artifact the raw head value comes from scikit-learn's OWN predict() (`fb`, the
+    fitted models), not from the Python walk: the golden block then checks the TypeScript walker
+    against the producer itself, and boosted_self_check separately checks the Python walk against
+    the same producer. Two independent checks on the seam, neither grading its own homework."""
     heads = artifact["coef"][row["pos"]]
     x = [feature_value(s, row) for s in artifact["features"]]
     form = artifact.get("form", "ratio")
+    bb = artifact.get("boosted") if artifact.get("learner") == "gbm" else None
+    x_aug = None
+    if bb is not None and row["pos"] in bb["positions"]:
+        x_aug = np.array([list(x) + [1.0 if p == row["pos"] else 0.0 for p in bb["positions"]]], dtype=float)
     out = {}
     for h in ("mean", "p10", "p50", "p90"):
-        c = heads[h]
-        lin = c.get("intercept", 0.0)
-        for j, s in enumerate(artifact["features"]):
-            lin += c.get(s["name"], 0.0) * x[j]
+        if x_aug is not None:
+            lin = (float(fb["models"][h].predict(x_aug)[0]) + float(fb["shift"][h])) if fb is not None \
+                else boosted_raw(bb["heads"][h], list(x_aug[0]))
+        else:
+            c = heads[h]
+            lin = c.get("intercept", 0.0)
+            for j, s in enumerate(artifact["features"]):
+                lin += c.get(s["name"], 0.0) * x[j]
         b = row["base"]
         if form == "offset":
             out[h] = min(b * artifact["clamps"]["hi"], max(b * artifact["clamps"]["lo"], b + lin))
@@ -999,7 +1020,7 @@ def evaluate(artifact, row):
     return out
 
 
-def golden_rows(artifact):
+def golden_rows(artifact, fb=None):
     """Five fixtures, chosen to be the ones most likely to expose a disagreement."""
     fixtures = [
         # The multi-year lags ride on the first two fixtures so an artifact that FITS them is checked
@@ -1024,10 +1045,145 @@ def golden_rows(artifact):
     for fx in fixtures:
         if fx["pos"] not in artifact["coef"]:
             continue
-        pred = evaluate(artifact, fx)
+        pred = evaluate(artifact, fx, fb)
         f = {k: v for k, v in fx.items() if k not in ("pos", "base", "_rank")}
         out.append({"pos": fx["pos"], "base": fx["base"], "rank": fx["_rank"], "f": f, "expect": pred})
     return out
+
+
+def fit_boosted(fitted, specs, form, args):
+    """THE BOOSTED LEARNER (rung 5; ADMITTED 2026-09-14, owner decision D16).
+
+    Four HistGradientBoostingRegressor heads -- squared-error mean, quantile-loss p10/p50/p90 -- fitted
+    on the SAME rows, transformed design and per-row base the linear heads use, pooled across the
+    fitted positions with a one-hot position block appended to the design. Hyperparameters are the
+    pre-registered screen settings (depth 3, 300 rounds at 0.05, 30 rows per leaf, L2 1.0, no early
+    stopping); the gate measured +0.37 pinball vs floor 0.28 on 2012-2020 and +0.71 (5/5) on the
+    2021-2025 holdout, and depth 2 / 150 rounds agreed to 0.01, so the choice is not a tuning artefact.
+
+    Returns None when nothing is fitted. The curve variant, the transform centres and the bucket
+    means are still selected/measured by the linear pipeline; the ensembles sit on top of that
+    design, which is exactly what was screened.
+    """
+    from sklearn.ensemble import HistGradientBoostingRegressor
+
+    positions = [p for p in POS_FITTED if p in fitted]
+    if not positions:
+        return None
+    pidx = {p: i for i, p in enumerate(positions)}
+
+    def onehot(pos_list):
+        M = np.zeros((len(pos_list), len(positions)))
+        for i, p in enumerate(pos_list):
+            M[i, pidx[p]] = 1.0
+        return M
+
+    Xs, ys, groups = [], [], []
+    for p in positions:
+        sub, X, base = fitted[p]
+        pts = np.array([float(r["pts"]) for r in sub])
+        Xs.append(np.hstack([X, onehot([p] * len(sub))]))
+        ys.append(target(base, pts, form))
+        groups.extend([("p" + str(r["player_sk"])) if r.get("player_sk") is not None
+                       else ("s" + str(r["season"])) for r in sub])
+    X_tr = np.vstack(Xs)
+    y_tr = np.concatenate(ys)
+    groups = np.array(groups)
+    hp = dict(max_depth=args.gbm_depth, learning_rate=0.05, max_iter=args.gbm_iter,
+              min_samples_leaf=30, l2_regularization=1.0, early_stopping=False, random_state=0)
+    models = {"mean": HistGradientBoostingRegressor(loss="squared_error", **hp).fit(X_tr, y_tr)}
+    qlevels = (("p10", 0.10), ("p50", 0.50), ("p90", 0.90))
+    for name, q in qlevels:
+        models[name] = HistGradientBoostingRegressor(loss="quantile", quantile=q, **hp).fit(X_tr, y_tr)
+
+    # CONFORMAL INTERVAL CALIBRATION (train-only). A boosted quantile head is fitted to its own
+    # training rows and is narrower on unseen ones -- measured before this existed: pooled 10/90
+    # coverage 0.729 under nested CV against the [0.75, 0.85] ship band, with the deep-rank bands
+    # under 0.70. The correction is the standard split-conformal one, done with player-grouped
+    # out-of-fold predictions on the TRAINING rows only: for head q, shift its raw prediction by the
+    # q-quantile of (y - oof prediction), so that its out-of-fold coverage on training rows is nominal.
+    # The shift is a constant in target units, folded into the head's `baseline`, so the artifact
+    # shape and the TypeScript walker are untouched. Nothing here sees a held-out season; the nested
+    # CV then measures whether it was enough. Precedent: D11's "calibrated refit that passes on its
+    # own merit". --conformal-k 0 turns it off (the pre-calibration heads, for the record).
+    shift = {h: 0.0 for h in models}
+    if args.conformal_k and args.conformal_k > 0:
+        from sklearn.model_selection import GroupKFold
+        k = min(int(args.conformal_k), len(set(groups.tolist())))
+        if k >= 2:
+            gkf = GroupKFold(n_splits=k)
+            for name, q in qlevels:
+                oof = np.full(len(y_tr), np.nan)
+                for tr, te in gkf.split(X_tr, y_tr, groups):
+                    m = HistGradientBoostingRegressor(loss="quantile", quantile=q, **hp).fit(X_tr[tr], y_tr[tr])
+                    oof[te] = m.predict(X_tr[te])
+                ok = np.isfinite(oof)
+                shift[name] = float(np.quantile(y_tr[ok] - oof[ok], q))
+    return {"positions": positions, "pidx": pidx, "onehot": onehot, "models": models, "shift": shift,
+            "X_tr": X_tr, "params": {"max_depth": args.gbm_depth, "max_iter": args.gbm_iter,
+                                     "learning_rate": 0.05, "min_samples_leaf": 30, "l2": 1.0,
+                                     "conformalK": int(args.conformal_k or 0),
+                                     "conformalShift": {h: round(s, 6) for h, s in shift.items()}}}
+
+
+def serialize_boosted(fb):
+    """The ensembles as the artifact carries them: per head, `baseline` plus one tree per boosting
+    round as parallel node arrays. Read straight off scikit-learn's own predictor nodes; the walker
+    in src/model/projector.ts (treeValue/boostedRaw) mirrors predict() -- go left on
+    x <= threshold, missing values per the node's flag, leaf values already carry the learning rate.
+    Verified against predict() to 1e-15 on synthetic data before this was written, and re-verified
+    on every fit by boosted_self_check below."""
+    heads = {}
+    for h, m in fb["models"].items():
+        trees = []
+        for it in m._predictors:
+            nodes = it[0].nodes
+            trees.append({
+                "feature": [int(n["feature_idx"]) for n in nodes],
+                "threshold": [float(n["num_threshold"]) for n in nodes],
+                "left": [int(n["left"]) for n in nodes],
+                "right": [int(n["right"]) for n in nodes],
+                "value": [float(n["value"]) for n in nodes],
+                "leaf": [bool(n["is_leaf"]) for n in nodes],
+                "missingLeft": [bool(n["missing_go_to_left"]) for n in nodes],
+            })
+        # The conformal shift rides in the baseline: raw = baseline + sum(trees) is then the CALIBRATED
+        # prediction on the TypeScript side with no extra field to forget.
+        heads[h] = {"baseline": float(np.asarray(m._baseline_prediction).ravel()[0]) + float(fb["shift"][h]),
+                    "trees": trees}
+    return {"learner": "gbm", "positions": list(fb["positions"]), "params": dict(fb["params"]), "heads": heads}
+
+
+def boosted_raw(head, x):
+    """The Python mirror of projector.ts boostedRaw(): baseline plus every tree's leaf value."""
+    s = float(head["baseline"])
+    for t in head["trees"]:
+        i = 0
+        while not t["leaf"][i]:
+            v = x[t["feature"][i]]
+            if v != v:                         # NaN
+                i = t["left"][i] if t["missingLeft"][i] else t["right"][i]
+            elif v <= t["threshold"][i]:
+                i = t["left"][i]
+            else:
+                i = t["right"][i]
+        s += t["value"][i]
+    return s
+
+
+def boosted_self_check(block, fb, tol=1e-9):
+    """The serialised block, walked by the mirror above, must reproduce scikit-learn's predict() on
+    the whole training design. A serialisation that dropped a field would otherwise ship a model
+    that is wrong everywhere and refused nowhere."""
+    X = fb["X_tr"]
+    for h, m in fb["models"].items():
+        ref = m.predict(X) + float(fb["shift"][h])
+        mine = np.array([boosted_raw(block["heads"][h], list(map(float, X[i]))) for i in range(len(X))])
+        worst = float(np.max(np.abs(mine - ref)))
+        if not (worst <= tol):
+            sys.exit("train_projection: boosted head " + h + " serialisation does not reproduce predict() "
+                     "(max |walk - predict| = " + repr(worst) + ") -- refusing to write an artifact "
+                     "whose TypeScript walker could not possibly agree with the model")
 
 
 def fit_challenger_gbm(fitted, specs, form, hold_rows, curves, args):
@@ -1048,32 +1204,10 @@ def fit_challenger_gbm(fitted, specs, form, hold_rows, curves, args):
     30 rows per leaf, L2 1.0, no early stopping (which would need a split the folds already are).
     Quantile heads use the quantile loss at the same three levels the linear heads publish.
     """
-    from sklearn.ensemble import HistGradientBoostingRegressor
-
-    positions = [p for p in POS_FITTED if p in fitted]
-    if not positions:
+    fb = fit_boosted(fitted, specs, form, args)
+    if fb is None:
         return []
-    pidx = {p: i for i, p in enumerate(positions)}
-
-    def onehot(pos_list):
-        M = np.zeros((len(pos_list), len(positions)))
-        for i, p in enumerate(pos_list):
-            M[i, pidx[p]] = 1.0
-        return M
-
-    Xs, ys = [], []
-    for p in positions:
-        sub, X, base = fitted[p]
-        pts = np.array([float(r["pts"]) for r in sub])
-        Xs.append(np.hstack([X, onehot([p] * len(sub))]))
-        ys.append(target(base, pts, form))
-    X_tr = np.vstack(Xs)
-    y_tr = np.concatenate(ys)
-    hp = dict(max_depth=args.gbm_depth, learning_rate=0.05, max_iter=args.gbm_iter,
-              min_samples_leaf=30, l2_regularization=1.0, early_stopping=False, random_state=0)
-    models = {"mean": HistGradientBoostingRegressor(loss="squared_error", **hp).fit(X_tr, y_tr)}
-    for name, q in (("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
-        models[name] = HistGradientBoostingRegressor(loss="quantile", quantile=q, **hp).fit(X_tr, y_tr)
+    pidx, onehot, models = fb["pidx"], fb["onehot"], fb["models"]
 
     hold = [r for r in hold_rows if r["pos"] in pidx and r.get("prior_pos_rank") is not None]
     if not hold:
@@ -1127,12 +1261,19 @@ def main():
     ap.add_argument("--pool-dev-mult", type=float, default=0.0,
                     help="rung 3b: partial pooling across positions -- one fit with shared slopes and "
                          "per-position deviations penalised M times harder. 0 = off (per-position fits).")
+    ap.add_argument("--learner", default="gbm", choices=["gbm", "ridge"],
+                    help="which heads serve the fitted positions (D16, 2026-09-14). gbm (the default): the "
+                         "boosted ensembles, serialised onto the artifact beside the linear heads. ridge: "
+                         "the linear heads only -- the pre-D16 model, for A/B and for the arbiter's floor.")
     ap.add_argument("--challenger", default="none", choices=["none", "gbm"],
                     help="rung 5: also fit a gradient-boosted challenger on the same rows and write its "
                          "HOLDOUT predictions to <out>.challenger.json (a screen; nothing serves it). "
                          "Requires --holdout-season.")
     ap.add_argument("--gbm-depth", type=int, default=3)
     ap.add_argument("--gbm-iter", type=int, default=300)
+    ap.add_argument("--conformal-k", type=int, default=5,
+                    help="player-grouped folds for the train-only conformal calibration of the boosted "
+                         "quantile heads (see fit_boosted). 0 = off.")
     ap.add_argument("--add-features", default="",
                     help="comma list of EXTENSION columns to admit into the fit, one admission step "
                          "at a time. Known: " + ", ".join(ALL_EXT) + ". Nothing is admitted by "
@@ -1324,10 +1465,29 @@ def main():
     }
     if lifts:
         artifact["usageLiftRmse"] = {k: round(v, 4) for k, v in lifts.items()}
-    artifact["golden"] = golden_rows(artifact)
 
+    # THE SERVED LEARNER (D16). The ensembles are fitted on the final per-position design and base,
+    # serialised, checked against scikit-learn's own predict() on the whole training design, and only
+    # then declared. `--learner ridge` leaves the artifact linear (schema 2, no block).
+    fb = None
+    if args.learner == "gbm":
+        fb = fit_boosted(fitted, specs, form, args)
+        if fb is not None:
+            block = serialize_boosted(fb)
+            boosted_self_check(block, fb)
+            artifact["learner"] = "gbm"
+            artifact["boosted"] = block
+            artifact["notes"] += (" SERVED HEADS (D16): gradient-boosted ensembles (HistGradientBoosting, "
+                                  "depth " + str(args.gbm_depth) + ", " + str(args.gbm_iter) + " rounds) on the "
+                                  "same design for " + ", ".join(fb["positions"]) + "; the linear heads remain "
+                                  "for K/DST and as the --learner ridge floor.")
+    artifact["golden"] = golden_rows(artifact, fb)
+
+    # COMPACT, not pretty-printed (D16): the boosted block is ~2.5 MB of node arrays, and an indented
+    # dump puts every number on its own line -- a 250,000-line diff per regeneration. One line diffs as
+    # one line; nothing reads this file by line.
     with open(args.out, "w", encoding="ascii") as fh:
-        json.dump(artifact, fh, indent=2)
+        json.dump(artifact, fh, separators=(",", ":"))
 
     # RUNG 5 sidecar: the challenger's predictions for the HOLDOUT season only. Written beside the
     # artifact and read by evaluate.ts into its own rung; never by the board.
@@ -1364,6 +1524,11 @@ def main():
             m = coef[pos]["mean"]
             terms = ", ".join(k + " " + format(v, ".4f") for k, v in m.items() if k != "intercept" and abs(v) > 1e-9)
             print("  " + pos.ljust(4) + "  intercept " + format(m["intercept"], ".4f") + "  " + (terms or "(intercept only)"))
+        if artifact.get("learner") == "gbm":
+            bb = artifact["boosted"]
+            print("  served learner: gbm for " + ", ".join(bb["positions"]) + "; trees per head " +
+                  str(len(bb["heads"]["mean"]["trees"])) + "; self-check vs predict() passed; conformal shift " +
+                  json.dumps(bb["params"].get("conformalShift")))
         print("  golden rows: " + str(len(artifact["golden"])))
 
 
