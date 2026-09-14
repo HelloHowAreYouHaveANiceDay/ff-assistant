@@ -309,6 +309,51 @@ title Brier (beating uniform by a margin that survives the season-bootstrap), ti
 co-primary or primary gate; until then, playoff% is the gate. Reverting is one edit: set the
 `--golden` default back and re-key `consistencyOK` on `fullA` in `scripts/cpcv.mjs`.
 
+## D14 -- Re-validation of the two shipped edges under the new regime; RECOMMENDATION pending owner sign-off (2026-09-13, rigor program WS6)
+
+WS6 re-validated the two shipped draft edges -- `consensusBlend=1` and `benchDiscount=0.35` -- through the
+four lenses the earlier work streams built: the effect-size floor (WS1, 2.9*SE), the selection-blind holdout
+(WS2, confirm on 2021-2025), family-wide multiplicity (WS4, BH-FDR across the baseline_label family), and the
+D13 playoff-primary gate (WS5). **This decision RECORDS the finding and RECOMMENDS an action. It changes NO
+lever or default** (mirroring how D11 recorded an override honestly rather than dressing a miss as a pass).
+
+**FINDING (per-edge four-lens verdict; full numbers + RAN-vs-CARRIED provenance in docs/edges.md):**
+
+| edge | playoff (GATE) vs floor | family BH-FDR 0.10 | holdout confirm (2021-2024) | title% (context) |
+|---|---|---|---|---|
+| consensusBlend=1 | +0.73pp, res ~1.56pp -> NULL/underpowered | 98.5% -> 70.0% -- FAILS | +0.33pp [-3.33,4.67], 2/4 | +2.84pp [0.22,5.56] REAL; surrogate t=3.72 |
+| benchDiscount=0.35 | +0.00pp, PBO 98%, res ~0.78pp -> NULL | 83.6% -> 18.2% -- FAILS | +1.67pp [0.67,2.67], 4/4 | +1.09pp [0.16,2.11] REAL; surrogate t~5-7 |
+
+Both edges are **NULL on the D13-gated playoff axis and neither survives family-wide FDR at 0.10.** Both are
+**REAL on the title/roster-ceiling** (the title% and the higher-powered surrogate index). This is the exact
+tension edges.md already records: at this roster's ~96-97% playoff-berth rate the seed has almost no headroom,
+so a playoff-null is EXPECTED and is not evidence the edge is fake; the value, if real, lives on the
+title/roster-ceiling axis -- which is the no-skill axis D13 deliberately demoted from the gate.
+
+**RECOMMENDATION (an OWNER DECISION, NOT YET APPLIED).** Under a strict reading of D13 (playoff% is THE gate),
+both edges fail the gate and family FDR, so the mechanical new-regime action is to **DEMOTE both**, each a
+one-line revert:
+- consensusBlend: `--consensus-blend 0` (and set the stored lever / default back to 0)
+- benchDiscount: `--bench-discount 0.25` (revert the 0.25 -> 0.35 re-optimisation)
+
+The honest counter-case, which the owner should weigh before reverting: the playoff-null is a ceiling artifact,
+not an absence of value; the title-aligned surrogate resolves both edges decisively (consensus t=3.72,
+bench t~5-7); and edges.md's own D13 corollary states that for a team at a ~96% berth the title/roster-ceiling
+is the operative objective. If the owner accepts that reasoning, the alternative to demotion is to **KEEP both
+ON as explicitly recorded overrides** (the D11 pattern): kept on the title/surrogate axis, with the standing
+acknowledgement that they do NOT clear the playoff gate D13 makes primary. benchDiscount has the marginally
+stronger case (its 2021-2024 holdout playoff confirm was +1.67pp, 4/4 up, vs consensus's flat +0.33pp, 2/4).
+
+Recommended path: surface both to the owner as one decision. Default lean, absent an override, is DEMOTE (it
+is what D13's gate mechanically says); but this is genuinely a judgement about whether the playoff gate or the
+title/roster-ceiling is the operative objective for THIS near-ceiling roster, so it is the owner's to make.
+Neither revert has been applied.
+
+REVERSAL/RESOLUTION CONDITION: this D-entry is resolved when the owner either (a) authorises the reverts above
+(then a follow-up commit flips the levers + re-pins the golden master via `--consensus-blend 0
+--bench-discount 0.25`, `--golden 96.0`), or (b) records a KEEP-ON override with the title/surrogate rationale.
+Until then both levers stay at their shipped values (`consensusBlend=1`, `benchDiscount=0.35`).
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
