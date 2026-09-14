@@ -7,11 +7,16 @@ real time. Read it before changing strategy, the sim, or anything that produces 
 ## The one rule
 
 **The championship backtest is the only arbiter of a VALUE or STRATEGY change.** Not `ff sim`
-(season-points proxy, over-rewards top-heavy rosters), not a live mock draft, not intuition.
+(season-points proxy, over-rewards top-heavy rosters), not a live mock draft, not intuition. The
+**PRIMARY gate metric is PLAYOFF probability** (the axis the sim has measured skill on: playoff Brier
+0.2370 vs uniform 0.2451). **Title% is reported alongside as CONTEXT, not the gate** -- the sim CANNOT
+predict the single-elim title (title Brier 0.0659 vs uniform 0.0652, P16 FAILED). This is D13
+(`docs/decisions.md`); the arbiter (`scripts/cpcv.mjs`) gates on the playoff column, golden master
+97.0% playoff (`--golden`), and prints title% as secondary (`--golden-title`).
 
 ```
 npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
-# shipped default: ~42% championships / 97% playoffs (random 6.3%). Two shipped edges since the ~38.5%
+# shipped default: ~97% playoffs (PRIMARY gate) / ~42% championships (context; random 6.3%). Two shipped edges since the ~38.5%
 # base: the FFToday consensus blend (consensusBlend=1, +2.8pp titles; `--consensus-blend 0` reverts) and
 # benchDiscount 0.35 (re-optimised from 0.25, +1.1pp titles; docs/redesign/power-and-surrogate.md). Both
 # CPCV-validated (data/experiments.jsonl, docs/edges.md). Rookies are IN the pool by default (draft

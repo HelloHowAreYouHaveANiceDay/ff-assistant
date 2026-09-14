@@ -44,7 +44,7 @@ const argv = process.argv.slice(2);
 const val = (k, d) => { const i = argv.indexOf(k); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
 const has = (k) => argv.includes(k);
 
-const BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config (golden master = 42.3%, consensus blend ON by default; --consensus-blend 0 + --bench-discount 0.25 for the pre-edge base)
+const BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config. GOLDEN MASTER on the PRIMARY axis = 97.0% PLAYOFF (title% ~42.3% is context, D13); consensus blend ON by default; --consensus-blend 0 + --bench-discount 0.25 for the pre-edge base
 const TREATMENT = val("--treatment", "--no-rookies");                        // the flag(s) to ADD for the treatment arm
 const SEASONS = val("--seasons", "1999-2024");
 const N = val("--n", "150");
@@ -53,8 +53,9 @@ const K = val("--k", null);                       // test-group size; default fl
 const N_PATHS = Number(val("--paths", "200"));
 const PATH_SEED = Number(val("--path-seed", "12345"));
 const LEDGER = val("--ledger", "data/experiments.jsonl");
-const GOLDEN = Number(val("--golden", "42.3"));   // consistency-check target (shipped-config golden master, consensus blend ON; pass --golden 38.5 when BASE_FLAGS pins --consensus-blend 0)
+const GOLDEN = Number(val("--golden", "97.0"));   // PRIMARY-axis consistency target = shipped-config PLAYOFF% golden master (D13). 97.0% source: data/trials/struct-base.tsv and data/trials/sweep-bench-discount-0.35.tsv both = 42.35% title / 97.04% playoff (the golden 42.3 title reproduced). Pass --golden 96.0 when BASE_FLAGS pins --consensus-blend 0 / --bench-discount 0.25 (pre-edge base ~38.5% title / ~96% playoff).
 const GOLDEN_TOL = Number(val("--golden-tol", "3.0")); // +/- pp of Monte-Carlo slack
+const GOLDEN_TITLE = Number(val("--golden-title", "42.3")); // SECONDARY/context only -- NOT a gate (title% is the no-skill axis, P16 FAILED). Printed for reference.
 const OUT_DIR = val("--out-dir", "data/trials");
 const BASE_LABEL = val("--baseline-label", `shipped[${BASE_FLAGS}]`);
 const TREAT_LABEL = val("--treatment-label", `shipped[${BASE_FLAGS}] ${TREATMENT}`);
@@ -103,14 +104,19 @@ const rateA = chA.rate, rateB = chB.rate, rateAp = poA.rate, rateBp = poB.rate;
 const poolN = chA.poolN;
 const fullA = 100 * chA.full, fullB = 100 * chB.full;
 const fullAp = 100 * poA.full, fullBp = 100 * poB.full;
-const consistencyOK = Math.abs(fullA - GOLDEN) <= GOLDEN_TOL;
-console.log(`\n================ CONSISTENCY CHECK ================`);
-console.log(`  baseline full-set title%%: ${fullA.toFixed(2)}%  (golden master ${GOLDEN}% +/- ${GOLDEN_TOL}pp)  -> ${consistencyOK ? "PASS" : "FAIL"}`);
-console.log(`  treatment full-set title%: ${fullB.toFixed(2)}%   point delta ${(fullB - fullA >= 0 ? "+" : "")}${(fullB - fullA).toFixed(2)}pp (untrustworthy alone -- see distribution below)`);
-console.log(`  baseline / treatment PLAYOFF%: ${fullAp.toFixed(2)}% / ${fullBp.toFixed(2)}%   point delta ${(fullBp - fullAp >= 0 ? "+" : "")}${(fullBp - fullAp).toFixed(2)}pp  <- PRIMARY`);
+// PRIMARY GATE = PLAYOFF% (D13). The season sim has MEASURED skill on the playoff berth (Brier 0.2370
+// vs uniform 0.2451) and ~NONE on the champion (title Brier 0.0659 vs uniform 0.0652 -- P16 FAILED,
+// docs/validation.md). So the ship/no-ship golden-master consistency check keys on the PLAYOFF column;
+// title% is reproduced and printed as SECONDARY/context only, never gated.
+const consistencyOK = Math.abs(fullAp - GOLDEN) <= GOLDEN_TOL;
+const titleConsistent = Math.abs(fullA - GOLDEN_TITLE) <= GOLDEN_TOL;
+console.log(`\n================ CONSISTENCY CHECK (PRIMARY GATE = playoff%) ================`);
+console.log(`  baseline full-set PLAYOFF%: ${fullAp.toFixed(2)}%  (golden master ${GOLDEN}% +/- ${GOLDEN_TOL}pp)  -> ${consistencyOK ? "PASS" : "FAIL"}  <- GATE (D13)`);
+console.log(`  treatment full-set PLAYOFF%: ${fullBp.toFixed(2)}%   point delta ${(fullBp - fullAp >= 0 ? "+" : "")}${(fullBp - fullAp).toFixed(2)}pp (untrustworthy alone -- see distribution below)`);
+console.log(`  baseline / treatment title% (SECONDARY/context, NOT gated): ${fullA.toFixed(2)}% / ${fullB.toFixed(2)}%   point delta ${(fullB - fullA >= 0 ? "+" : "")}${(fullB - fullA).toFixed(2)}pp   (title golden ~${GOLDEN_TITLE}% -> ${titleConsistent ? "consistent" : "MOVED"}; informational, no gate)`);
 console.log(`  ${Ntot} seasons, ${poolN / Ntot} trials/season, ${poolN} paired trials`);
 if (!consistencyOK) {
-  console.log(`\n  CONSISTENCY CHECK FAILED -- the dump aggregation does not reproduce the point backtest.`);
+  console.log(`\n  CONSISTENCY CHECK FAILED -- the dump aggregation does not reproduce the point backtest on the PRIMARY (playoff) axis.`);
   console.log(`  Fix this before trusting any distribution below. Aborting.`);
   process.exit(1);
 }
@@ -136,8 +142,8 @@ console.log(`\n================ EFFECT (season-paired bootstrap) + PBO (CPCV rob
 console.log(`  ${BASE_LABEL}`);
 console.log(`  vs ${TREAT_LABEL}`);
 console.log(`  ${M} CPCV paths, k=${k}/${Ntot} seasons, path-seed ${PATH_SEED}; effect over ${poE.nSeasons} seasons, ${poolN / Ntot} trials/season`);
-console.log(`  PLAYOFFS (proximate target):  ${fmt(poE, poR)}`);
-console.log(`  championships (the GOAL):     ${fmt(chE, chR)}`);
+console.log(`  PLAYOFFS (PRIMARY GATE, D13):  ${fmt(poE, poR)}`);
+console.log(`  titles (SECONDARY/context):   ${fmt(chE, chR)}`);
 
 // ---- ledger append --------------------------------------------------------------------------------
 const configHash = crypto.createHash("sha256").update(JSON.stringify({
@@ -198,9 +204,10 @@ fs.appendFileSync(LEDGER, JSON.stringify(line) + "\n", "utf8");
 console.log(`\nledger += ${LEDGER}`);
 console.log(JSON.stringify(line));
 
-// one-line human summary -- PLAYOFFS is the proximate target read for the verdict, title the goal.
-// A verdict needs the CI to clear 0 AND the effect to be transferable (PBO not high). "underpowered"
-// distinguishes a true ~0 from an effect below what this many seasons can resolve.
+// one-line human summary -- PLAYOFFS is the PRIMARY GATE for the verdict (D13, the axis with measured
+// skill); title is SECONDARY/context (the goal we cannot reliably predict, P16 FAILED). A verdict needs
+// the CI to clear 0 AND the effect to be transferable (PBO not high). "underpowered" distinguishes a
+// true ~0 from an effect below what this many seasons can resolve.
 const verdict = (E, R) => {
   if (E.ciLo > 0) return R.pbo <= 0.4 ? "REAL (CI clears 0, PBO low)" : "CI clears 0 but PBO HIGH -- not transferable";
   if (E.ciHi < 0) return "REJECT (CI below 0)";
@@ -208,5 +215,5 @@ const verdict = (E, R) => {
 };
 const shortLabel = TREAT_LABEL.replace(BASE_LABEL, "").trim() || TREATMENT;
 console.log(`\nSUMMARY: ${shortLabel}`);
-console.log(`  PLAYOFFS ${poE.effect >= 0 ? "+" : ""}${poE.effect.toFixed(2)}pp [${poE.ciLo.toFixed(2)}, ${poE.ciHi.toFixed(2)}] PBO ${(100 * poR.pbo).toFixed(0)}% (res ~${poE.detectable.toFixed(2)}pp) -> ${verdict(poE, poR)}`);
-console.log(`  titles   ${chE.effect >= 0 ? "+" : ""}${chE.effect.toFixed(2)}pp [${chE.ciLo.toFixed(2)}, ${chE.ciHi.toFixed(2)}] PBO ${(100 * chR.pbo).toFixed(0)}% (res ~${chE.detectable.toFixed(2)}pp) -> ${verdict(chE, chR)}`);
+console.log(`  PLAYOFFS (GATE) ${poE.effect >= 0 ? "+" : ""}${poE.effect.toFixed(2)}pp [${poE.ciLo.toFixed(2)}, ${poE.ciHi.toFixed(2)}] PBO ${(100 * poR.pbo).toFixed(0)}% (res ~${poE.detectable.toFixed(2)}pp) -> ${verdict(poE, poR)}`);
+console.log(`  titles (context) ${chE.effect >= 0 ? "+" : ""}${chE.effect.toFixed(2)}pp [${chE.ciLo.toFixed(2)}, ${chE.ciHi.toFixed(2)}] PBO ${(100 * chR.pbo).toFixed(0)}% (res ~${chE.detectable.toFixed(2)}pp) -> ${verdict(chE, chR)}`);
