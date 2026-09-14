@@ -1,524 +1,530 @@
 Rank,Player,Pos,Us_Pos,ECR_Pos,ESPN_Pos,Tier,Team,Bye,Age,Exp,Ht,Wt,40yd,OurValue$,vsECR,ADP,vsADP,Mkt30d,ProjPts,P10,P50,P90,2025Pts,2025Gms,ECR,ECR_Best,ECR_Worst,ESPN_Rank,ESPN_ADP,Rostered%,SleeperBuzz,Depth,Latest News,NewsURL,Eligible
-1,Jahmyr Gibbs,RB,RB1,RB1,RB1,RB-T1,DET,6,24.5,4,5'9",202,4.36,91,1,1.5,1,-312,236.5,83.2,230.1,391.4,328.4,17,2.43,1,5,1,1.4,100,,,Jahmyr Gibbs needs one TD on Sunday to join 50-in-50 club (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/jahmyr-gibbs-needs-one-td-on-sunday-to-join-50-in-50-club,RB
-2,Bijan Robinson,RB,RB2,RB2,RB2,RB-T1,ATL,11,24.6,4,5'11",215,4.46,86,2,2.2,0,-44,229.7,84.9,226.1,363.2,331.3,17,4.19,2,5,2,2.5,100,,,,,RB
-3,Puka Nacua,WR,WR1,WR2,WR1,WR-T1,LAR,11,25.3,4,6'2",216,,80,0,2.8,0,-519,226.8,133.8,239.1,306,310.5,16,3.43,1,9,3,5.2,100,,,,,WR
-4,Ja'Marr Chase,WR,WR2,WR1,WR2,WR-T1,CIN,6,26.5,6,6'0",205,4.34,78,-3,3.9,0,-249,224.6,106.4,236.1,317.5,251.1,16,1.49,1,4,4,4.3,100,,,,,WR
-5,Christian McCaffrey,RB,RB3,RB3,RB3,RB-T1,SF,8,30.2,10,5'11",210,4.48,77,5,5.5,1,449,218.1,81.9,213.8,337.7,365.6,17,9.58,5,24,6,7.6,100,,,,,RB
-6,Jaxon Smith-Njigba,WR,WR3,WR3,WR3,WR-T1,SEA,11,24.5,4,6'0",197,,76,-1,5.9,0,-111,222,124.8,233.7,309.6,300.4,17,4.61,1,9,5,6.4,100,,,,,WR
-7,Amon-Ra St. Brown,WR,WR4,WR4,WR4,WR-T1,DET,6,26.9,6,6'0",202,4.51,66,-2,7.9,1,-170,207.7,101.7,208.5,292.4,265.5,17,5.4,3,9,8,8.6,100,,,Lions restructure two contracts: What salary cap flexibility means for Sam LaPorta  Brian Branch extensions (rss:cbs),https://www.cbssports.com/nfl/news/lions-restructure-two-contracts-salary-cap-flexibility/,WR
-8,Jonathan Taylor,RB,RB4,RB4,RB4,RB-T2,IND,13,27.6,7,5'10",226,4.39,65,4,5.9,-2,219,201,73.4,190.7,310.9,339.3,17,11.82,6,33,7,6.3,100,,,,,RB
-9,Drake London,WR,WR5,WR7,WR7,WR-T1,ATL,11,25.1,5,6'4",215,,64,4,13.9,5,-743,205.8,110.6,208.7,299.6,167.9,12,13.17,8,26,14,20.9,100,,,,,WR
-10,Brock Bowers,TE,TE1,TE2,TE2,TE-T1,LV,13,23.7,3,6'3",235,,64,11,40.1,30,-272,182.5,95.9,181.3,265.5,144.2,12,21.2,11,57,21,24.4,100,,,Sources: Raiders TE Mayer lands $45M extension as Bowers sidelined (rss:espn),https://www.espn.com/nfl/story/_/id/49914437/raiders-te-michael-mayer-gets-3-year-45m-extension-sources-say,TE
-11,Josh Allen,QB,QB1,QB1,QB1,QB-T1,BUF,7,30.3,9,6'5",237,4.75,63,15,29.7,19,-368,303,132.1,318.9,427.3,364.6,16,25.77,21,43,36,18.6,100,,,14 more NFL Week 1 games  14 matchup previews: We have predictions  picks and wild stats (rss:espn),https://www.espn.com/nfl/story/_/id/49805531/week-1-picks-predictions-schedule-fantasy-odds-2026,QB
-12,Derrick Henry,RB,RB5,RB12,RB5,RB-T2,BAL,13,32.7,11,6'3",252,4.54,63,26,9.8,-2,450,199.1,94.9,192.3,302.9,272,17,37.64,20,50,11,16.7,100,,,,,RB
-13,Drake Maye,QB,QB2,QB3,QB4,QB-T1,NE,11,24,3,6'4",225,,62,24,52.1,39,-74,301.6,135.2,318.9,432,351.5,17,37.1,27,79,60,46.7,100,,,,,QB
-14,James Cook III,RB,RB6,RB5,RB6,RB-T2,BUF,7,26.9,5,5'11",190,4.42,60,1,9.5,-4,480,194.5,93.5,191.6,298,285.7,17,14.97,7,31,12,10.3,100,,,,,RB
-15,Saquon Barkley,RB,RB7,RB8,RB8,RB-T2,PHI,10,29.6,9,6'0",232,4.4,58,9,16.7,2,282,191.8,87.1,188.6,303.7,213.8,16,23.6,10,41,15,14.3,100,,,Eagles' Saquon Barkley is 'going back to a little kid again' to recapture his 2024 dominance (rss:espn),https://www.espn.com/nfl/story/_/id/49893820/can-philadelphia-eagles-saquon-barkley-recapture-2024-dominance,RB
-16,Justin Jefferson,WR,WR6,WR6,WR6,WR-T2,MIN,6,27.2,,6'0",223,4.43,57,-7,13.1,-3,63,195.6,99.7,195.5,286.7,159.5,17,9.17,4,29,10,12.3,100,,,,,WR
-17,Trey McBride,TE,TE2,TE1,TE1,TE-T1,ARI,14,26.8,5,6'4",246,,55,2,42.8,26,-952,171,83.9,172.8,259.3,252.9,17,18.5,16,35,20,23.3,100,,,,,TE
-18,Lamar Jackson,QB,QB3,QB2,QB3,QB-T1,BAL,13,29.6,,6'2",212,4.58,54,14,55.6,38,-105,290.2,133.7,304.9,421.4,214.9,13,31.84,25,66,58,32.4,100,,,Sources: Jackson won't have deal with Ravens before start of season (rss:espn),https://www.espn.com/nfl/story/_/id/49915181/sources-lamar-jackson-reluctant-talk-deal-ravens,QB
-19,Kenneth Walker III,RB,RB8,RB9,RB11,RB-T2,KC,5,25.9,5,5'9",211,4.38,52,6,20.3,1,191,184.3,73.2,187.9,307.7,176.4,17,24.95,11,50,18,24.8,100,,,,,RB
-20,Omarion Hampton,RB,RB9,RB10,RB12,RB-T2,LAC,7,23.5,2,6'0",220,4.46,52,5,22.5,3,177,183.2,76,186.2,305.3,119.7,9,25.4,7,43,19,18.1,100,,,,,RB
-21,Kyren Williams,RB,RB10,RB15,RB17,RB-T2,LAR,11,26,5,5'9",207,4.65,51,21,29.7,9,612,182.2,67.6,186.4,310.9,245.3,17,42.04,24,58,38,35.5,99,,,,,RB
-22,CeeDee Lamb,WR,WR7,WR5,WR5,WR-T2,DAL,14,27.4,7,6'2",198,4.5,48,-13,12.1,-10,35,183,102.6,183.4,266.2,163.4,13,9.03,6,15,9,11.5,100,,,,,WR
-23,Jayden Daniels,QB,QB4,QB5,QB2,QB-T2,WAS,7,25.7,3,6'4",210,,47,34,72.4,49,-722,281.3,132.5,294.3,409.4,114.3,7,56.6,27,101,56,52,99,,,14 more NFL Week 1 games  14 matchup previews: We have predictions  picks and wild stats (rss:espn),https://www.espn.com/nfl/story/_/id/49805531/week-1-picks-predictions-schedule-fantasy-odds-2026,QB
-24,Nico Collins,WR,WR8,WR9,WR9,WR-T2,HOU,8,27.5,6,6'4",222,4.43,47,-8,21,-3,446,181.7,100.2,187,255.1,190.7,15,16,9,28,25,26.1,100,,,,,WR
-25,Jalen Hurts,QB,QB5,QB6,QB5,QB-T2,PHI,10,28.1,7,6'1",223,4.59,46,32,77.2,52,118,279.6,127.1,294.4,417.3,301.1,16,57.19,30,81,62,53.7,99,,,Will Brinson's NFL Week 1 predictions and picks: Best bets  player props  anytime touchdown scorers (rss:cbs),https://www.cbssports.com/betting/news/will-brinsons-nfl-week-1-predictions-and-picks-best-bets-player-props-anytime-touchdown-scorers/,QB
-26,A.J. Brown,WR,WR9,WR8,WR10,WR-T2,NE,11,29.2,8,6'1",226,4.49,45,-12,17,-9,722,179.8,96.4,185.1,254.8,181.3,15,13.73,6,40,26,22.1,100,,,Patriots place WR A.J. Brown on IR  officially sign DT DaQuan Jones (rss:yahoo),https://sports.yahoo.com/articles/patriots-place-wr-j-brown-001208590.html,WR
-27,De'Von Achane,RB,RB11,RB7,RB7,RB-T3,MIA,6,24.9,4,5'9",191,4.32,45,-6,10.5,-16,656,174.6,52.6,178,296.3,289.3,16,21.49,11,39,13,13.6,100,,,,,RB
-28,Joe Burrow,QB,QB6,QB4,QB6,QB-T2,CIN,6,29.7,7,6'4",215,,44,17,54.6,27,-438,277.1,130,287.8,409.8,134.5,8,44.89,27,74,81,52.6,99,,,,,QB
-29,Chris Olave,WR,WR10,WR10,WR13,WR-T2,NO,8,26.2,5,6'0",187,4.39,44,-12,22.2,-7,434,177.6,86.1,189.6,255.3,218,16,17.37,9,36,29,30.1,99,,,,,WR
-30,Jameson Williams,WR,WR11,WR26,WR24,WR-T2,DET,6,25.4,5,6'1",184,,44,23,37.4,7,-100,177.4,72.5,188.3,258.9,187.4,17,52.92,35,88,49,65.9,96,,,,,WR
-31,Zay Flowers,WR,WR12,WR15,WR15,WR-T2,BAL,13,26,4,5'9",183,4.42,43,-1,23.9,-7,469,176.6,70.6,182,269.1,200.3,17,29.64,12,48,33,44.4,99,,,,,WR
-32,Bo Nix,QB,QB7,QB13,QB10,QB-T2,DEN,10,26.5,3,6'2",217,,42,67,110.4,78,-188,274.6,127.6,284.7,406.7,304.8,17,98.53,70,120,97,105.3,90,,,,,QB
-33,Brock Purdy,QB,QB8,QB11,QB11,QB-T2,SF,8,26.7,5,6'1",220,4.84,42,63,88.5,56,-187,274.4,128.1,290.8,410.5,177.4,9,96.42,63,119,99,109,86,,,,,QB
-34,Chase Brown,RB,RB12,RB6,RB14,RB-T3,CIN,6,26.4,4,5'10",211,4.43,42,-17,13.6,-20,687,170.2,50.6,171.4,285.3,248.1,17,17.05,7,34,23,18.3,100,,,,,RB
-35,Dak Prescott,QB,QB9,QB10,QB9,QB-T2,DAL,14,33.1,11,6'2",230,4.79,41,43,63.4,28,18,273.6,97.1,285.8,409.8,313.8,17,77.92,37,108,95,72.6,95,,,,,QB
-36,George Pickens,WR,WR13,WR11,WR12,WR-T3,DAL,14,25.5,5,6'3",205,4.47,41,-16,19.9,-16,-98,174.5,83.4,175,259.3,245.4,17,20.43,9,40,28,28.3,100,,,,,WR
-37,Javonte Williams,RB,RB13,RB16,RB15,RB-T3,DAL,14,26.4,6,5'10",220,4.55,41,6,28.5,-8,540,169.2,51.6,169,287.5,225.3,16,43.43,24,61,30,33.2,99,,,,,RB
-38,Colston Loveland,TE,TE3,TE3,TE3,TE-T2,CHI,10,22.4,2,6'6",241,,41,-2,59.8,22,-574,151.3,72.3,155,236.1,136.1,16,36.28,22,85,50,42,100,,,,,TE
-39,Davante Adams,WR,WR14,WR24,WR14,WR-T3,LAR,11,33.7,13,6'1",204,4.56,37,12,37.8,-1,99,168.3,80.2,163.9,248.1,192.9,14,50.83,35,74,31,46.8,97,,,,,WR
-40,Rashee Rice,WR,WR15,WR14,WR8,WR-T3,KC,5,26.4,4,6'1",203,4.51,36,-13,18.3,-22,135,167.3,81.5,164.1,242.3,123.6,8,27.1,11,68,24,29.4,99,,,,,WR
-41,Tyler Warren,TE,TE4,TE4,TE4,TE-T2,IND,13,24.3,2,6'6",256,,35,12,70.2,29,33,143.5,69.6,146.1,219.3,150.5,17,53.36,22,73,51,51,99,,,,,TE
-42,Malik Nabers,WR,WR16,WR13,WR11,WR-T3,NYG,8,23.1,3,6'0",200,,32,-18,26.1,-16,-39,161.6,89.8,163.6,232,48.1,4,24.25,11,48,27,36.4,99,,,Is Malik Nabers playing vs. the Cowboys? Latest status update for Giants WR (rss:yahoo),https://sports.yahoo.com/articles/malik-nabers-playing-vs-cowboys-100427516.html,WR
-43,Ashton Jeanty,RB,RB14,RB11,RB9,RB-T4,LV,13,22.7,2,5'8",208,,31,-14,23.1,-20,-961,154.7,46.7,152.7,264.3,217.6,17,28.95,7,53,16,21.7,100,,,,,RB
-44,DeVonta Smith,WR,WR17,WR12,WR19,WR-T4,PHI,10,27.8,,5'11",195,,30,-21,30.9,-13,77,159,84.7,164.6,232.1,163.3,17,22.72,8,45,44,36.5,99,,,15 predictions for NFL Week 1: Upset picks  fantasy sleepers  projected stat lines and more (rss:espn),https://www.espn.com/nfl/story/_/id/49872076/week-1-predictions-upsets-fantasy-sleepers-stats-2026,WR
-45,Emeka Egbuka,WR,WR18,WR21,WR16,WR-T4,TB,10,23.9,2,6'1",205,,29,-4,34.2,-11,-356,157.4,73.9,162.9,244.5,164.2,17,40.74,14,68,34,46,98,,,NFL anytime TD best bets: Our favorite picks for Week 1  including Emeka Egbuka (rss:cbs),https://www.cbssports.com/nfl/news/nfl-anytime-td-best-bets-week-1/,WR
-46,Jeremiyah Love,RB,RB15,RB14,RB10,RB-T4,ARI,14,21.3,R,6'0",212,4.36,29,-6,27.7,-18,-746,152.1,47.3,149.6,263.4,,,40.1,23,65,17,25.6,99,,,Jeremiyah Love expected to play in Week 1 but questions remain about his workload (rss:cbs),https://www.cbssports.com/nfl/news/jeremiyah-love-injury-update-cardinals-chargers/,RB
-47,Harold Fannin Jr.,TE,TE5,TE5,TE6,TE-T3,CLE,11,22.1,2,6'4",241,4.71,29,29,76.1,29,-72,135.9,69.5,133.6,209.5,150.4,16,76.23,57,111,79,71.3,97,,,,,TE
-48,Breece Hall,RB,RB16,RB13,RB13,RB-T4,NYJ,13,25.3,5,5'11",217,4.39,28,-8,31.4,-17,-470,151.5,54.2,151,258.4,189.7,16,39.52,30,53,22,36,98,,,,,RB
-49,Garrett Wilson,WR,WR19,WR16,WR18,WR-T4,NYJ,13,26.1,5,6'0",183,4.38,27,-19,28.3,-21,-85,155.5,71.1,160.9,240.4,81.5,7,30.28,12,52,43,37.3,98,,,,,WR
-50,Tetairoa McMillan,WR,WR20,WR19,WR17,WR-T4,CAR,5,23.4,2,6'5",212,,26,-14,31.8,-18,48,153.7,71.1,156.9,230.6,178.4,17,35.88,15,52,35,43.7,99,,,,,WR
-51,Kyle Pitts Sr.,TE,TE6,TE7,TE5,TE-T3,ATL,11,25.9,6,6'6",250,4.44,26,28,94.5,44,-337,132.1,56.6,127.8,210.9,166.8,17,78.83,60,110,78,69.4,97,,,,,TE
-52,Jared Goff,QB,QB10,QB15,QB18,QB-T3,DET,6,31.9,11,6'4",217,4.82,24,54,97.6,46,162,249.5,99.2,260.3,372.7,297.1,17,105.55,63,132,168,138.6,76,,,,,QB
-53,Christian Watson,WR,WR21,WR27,WR33,WR-T4,GB,11,27.3,5,6'4",215,4.36,24,3,53,0,408,151.4,62.7,150.3,235.1,114.9,10,55.73,38,88,76,91.7,93,,,,,WR
-54,Cam Skattebo,RB,RB17,RB20,RB19,RB-T4,NYG,8,24.6,2,5'11",215,,24,3,37.7,-16,-609,145.9,50.9,152.5,235.2,115.7,8,57,39,80,40,46.3,99,,,,,RB
-55,Bhayshul Tuten,RB,RB18,RB23,RB22,RB-T4,JAC,7,23.5,,5'9",209,4.32,24,11,52,-3,23,145.6,54.9,148.8,241.6,83.6,15,65.97,43,89,64,64.4,95,,,,,RB
-56,Tee Higgins,WR,WR22,WR20,WR21,WR-T4,CIN,6,27.6,7,6'4",219,,23,-19,35.1,-21,-725,150,71.9,148.3,231.7,182.1,15,36.7,19,51,46,53.7,99,,,,,WR
-57,Mike Evans,WR,WR23,WR30,WR35,WR-T4,SF,8,33,13,6'5",231,4.53,23,3,55.5,-1,-683,149.1,61.2,147.9,228.9,69.8,8,59.7,36,109,87,84.3,93,,,,,WR
-58,Rome Odunze,WR,WR24,WR29,WR20,WR-T4,CHI,10,24.2,3,6'3",215,4.45,23,1,48.1,-10,-575,148.9,56.1,149.8,229.7,124.1,12,58.87,40,91,45,70.7,96,,,NFL Week 1 injuries: Giants' Malik Nabers  Bears' Rome Odunze listed as questionable (rss:cbs),https://www.cbssports.com/nfl/news/nfl-week-1-injuries-tracker-rome-odunze-alvin-kamara/,WR
-59,Travis Etienne Jr.,RB,RB19,RB17,RB16,RB-T5,NO,8,27.6,6,5'10",215,4.45,23,-14,36.7,-22,982,144.6,40.6,154.4,244.5,235.9,17,45.04,33,61,32,40.2,98,,,,,RB
-60,Caleb Williams,QB,QB11,QB7,QB13,QB-T3,CHI,10,24.8,3,6'1",226,,22,5,87.5,28,-369,247.7,85.1,260.9,363.1,317.7,17,65.14,31,98,104,86.6,96,,,,,QB
-61,DJ Moore,WR,WR25,WR25,WR26,WR-T5,BUF,7,29.4,9,6'0",213,4.56,22,-9,45.8,-15,316,148.4,56.2,143.9,229.9,147.2,17,52.35,19,107,53,60.1,96,,,,,WR
-62,Jaylen Waddle,WR,WR26,WR18,WR25,WR-T5,DEN,10,27.8,6,5'10",185,,22,-28,45.1,-17,505,148.3,58.8,148.2,233.2,162.1,16,33.99,18,60,52,55.1,98,,,,,WR
-63,D'Andre Swift,RB,RB20,RB18,RB21,RB-T5,CHI,10,27.6,7,5'8",204,4.48,21,-11,39.9,-23,614,141.1,39.9,140.7,242.1,211.6,16,52.39,37,77,42,54.9,96,,,Bears extend RB D'Andre Swift to three-year  $33.75 million deal  per report (rss:cbs),https://www.cbssports.com/nfl/news/bears-re-sign-dandre-swift-to-three-year-deal/,RB
-64,Luther Burden III,WR,WR27,WR22,WR27,WR-T5,CHI,10,22.7,2,6'0",210,4.41,19,-17,51.3,-13,-662,144.4,53.6,135.8,234.1,104.4,15,46.7,26,71,54,76.8,95,,,,,WR
-65,Ladd McConkey,WR,WR28,WR17,WR22,WR-T5,LAC,7,24.8,,6'0",185,4.39,19,-31,40.1,-25,-296,143.7,56.7,129.8,233.2,147.9,16,33.83,15,52,47,47.5,98,,,,,WR
-66,Quinshon Judkins,RB,RB21,RB22,RB18,RB-T5,CLE,11,22.8,2,6'0",221,4.48,19,-5,50,-16,-495,139.5,39,134.5,239.7,156.8,14,60.62,43,84,39,49,97,,,,,RB
-67,Bucky Irving,RB,RB22,RB19,RB20,RB-T5,TB,10,24,3,5'10",194,4.55,19,-11,44.7,-22,-14,138.5,37.4,131.5,255.1,123.5,10,56.3,41,89,41,58.1,97,,,,,RB
-68,David Montgomery,RB,RB23,RB21,RB23,RB-T5,HOU,8,29.2,8,5'11",230,4.63,18,-8,55.5,-12,63,138.2,36.8,135.1,257.4,154.9,17,60.31,41,78,65,64.5,96,,,,,RB
-69,George Kittle,TE,TE7,TE9,TE8,TE-T4,SF,8,32.9,10,6'4",250,4.52,16,29,90.4,21,135,117.7,46.9,115.4,187.5,133,11,97.7,66,144,122,69.3,94,,,,,TE
-70,Justin Herbert,QB,QB12,QB8,QB14,QB-T4,LAC,7,28.5,7,6'6",236,4.68,15,2,103,33,-94,237.6,83.4,255.6,335.4,286.9,16,71.81,37,104,111,87.1,94,,,Jim Harbaugh: Justin Herbert will be remembered as the greatest quarterback ever (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/jim-harbaugh-justin-herbert-will-be-remembered-as-the-greatest-quarterback-ever,QB
-71,Sam LaPorta,TE,TE8,TE8,TE7,TE-T4,DET,6,25.6,4,6'3",245,4.59,15,15,99.8,29,28,116.9,50,110.9,189.8,86.9,9,86.19,55,131,80,75.4,97,,,,,TE
-72,Trevor Lawrence,QB,QB13,QB9,QB8,QB-T4,JAC,7,26.9,6,6'6",220,,14,4,86.4,14,-604,236.2,77,257.2,341.9,338.2,17,76.37,37,114,93,104.7,92,,,,,QB
-73,Jaxson Dart,QB,QB14,QB12,QB7,QB-T5,NYG,8,23.3,2,6'2",223,,11,25,125.9,53,-31,232.7,77.2,252.3,345.4,241.6,14,98.35,59,126,85,82.3,93,,,,,QB
-74,Tony Pollard,RB,RB24,RB28,RB29,RB-T6,TEN,9,29.3,8,6'0",209,4.52,11,11,69.6,-4,293,128.5,28.4,119.5,225.1,169.3,17,84.99,65,120,117,88.5,90,,,,,RB
-75,DK Metcalf,WR,WR29,WR34,WR30,WR-T6,PIT,9,28.7,8,6'4",229,4.33,10,4,63.6,-11,-481,131.6,50.1,123,217.9,157.7,15,79.37,49,115,73,87.6,92,,,,,WR
-76,Terry McLaurin,WR,WR30,WR23,WR23,WR-T6,WAS,7,31,8,6'0",210,4.35,9,-28,45.1,-31,-461,130.7,52.7,116.7,226.2,95.2,10,47.68,28,68,48,62.6,96,,,,,WR
-77,Marvin Harrison Jr.,WR,WR31,WR32,WR31,WR-T6,ARI,14,24.1,3,6'3",220,,8,-8,66,-11,-184,129.3,47,126.5,220.3,107.3,12,69.24,40,110,74,81.9,93,,,,,WR
-78,Courtland Sutton,WR,WR32,WR38,WR28,WR-T7,DEN,10,30.9,9,6'4",216,4.54,7,8,61,-17,-184,128.3,40.6,125.4,216.4,182.7,17,86.25,55,121,55,84.7,91,,,Broncos captains show what leadership means in Denver (rss:yahoo),https://sports.yahoo.com/articles/broncos-captains-show-leadership-means-100000833.html,WR
-79,Alec Pierce,WR,WR33,WR43,WR32,WR-T7,IND,13,26.3,5,6'3",211,4.41,7,21,61.7,-17,-269,127.4,41,125.3,213.8,159.8,15,100.28,52,142,75,106.9,86,,,,,WR
-80,Jayden Reed,WR,WR34,WR44,WR46,WR-T7,GB,11,26.3,4,5'11",187,4.45,7,23,85.3,5,64,127.3,43.8,124.4,209.6,39,5,103.17,64,140,137,141.3,81,,,,,WR
-81,Tyler Shough,QB,QB15,QB20,QB17,QB-T6,NO,8,26.9,2,6'5",219,4.63,6,44,142.2,61,-200,224.9,55.4,247.4,341.2,158,11,125.2,98,183,164,153,45,,,,,QB
-82,Michael Pittman Jr.,WR,WR35,WR36,WR36,WR-T7,PIT,9,28.9,7,6'4",223,4.52,6,0,81.1,-1,-173,126.9,42.3,125.3,213.3,162.4,17,81.63,52,116,88,92.5,84,,,Aaron Rodgers' favorite target? Michael Pittman Jr. debut. Things to watch in Steelers opener (rss:yahoo),https://sports.yahoo.com/articles/aaron-rodgers-favorite-target-michael-100438512.html,WR
-83,Tucker Kraft,TE,TE9,TE6,TE9,TE-T5,GB,11,25.8,4,6'5",259,4.69,6,-4,104.5,22,0,104.9,48.8,102.3,166.9,101.2,8,78.75,32,131,123,92.2,95,,,Sources: Packers  TE Kraft reach 4-year extension worth up to $92M (rss:espn),https://www.espn.com/nfl/story/_/id/49914334/sources-packers-tucker-kraft-agree-4-year-extension,TE
-84,Carnell Tate,WR,WR36,WR31,WR29,WR-T8,TEN,9,21.6,R,6'2",192,4.53,5,-16,77,-7,-830,124.7,40.6,120.1,211.1,,,68.19,45,136,72,83.3,93,,,,,WR
-85,Travis Kelce,TE,TE10,TE10,TE11,TE-T5,KC,5,36.9,14,6'5",250,4.63,5,13,129.6,45,-283,103.3,44,99.6,166.2,155.2,17,98.18,57,138,125,94.5,93,,,,,TE
-86,Mark Andrews,TE,TE11,TE16,TE12,TE-T5,BAL,13,31,9,6'5",250,4.67,5,48,135.1,49,-115,102.5,44.8,98.6,173,107,17,133.61,87,236,132,127.6,84,,,,,TE
-87,Dallas Goedert,TE,TE12,TE13,TE10,TE-T5,PHI,10,31.7,9,6'5",256,,5,32,113.8,27,106,102.4,50.4,99.7,166.7,155.1,15,119.37,85,158,124,103,88,,,,,TE
-88,Matthew Stafford,QB,QB16,QB16,QB12,QB-T7,LAR,11,38.6,18,6'3",214,4.81,4,18,72.7,-15,-471,223.2,65,247.3,338.8,350.4,17,105.93,74,129,102,94.6,93,,,,,QB
-89,Parker Washington,WR,WR37,WR28,WR34,WR-T8,JAC,7,24.4,4,5'10",204,,4,-30,62.9,-26,603,123.1,40.8,121.2,205.6,143.7,16,58.52,36,109,77,93.3,92,,,Source: Jags  WR Washington unlikely to agree to deal before season (rss:espn),https://www.espn.com/nfl/story/_/id/49920927/source-jaguars-parker-washington-unlikely-agree-deal,WR
-90,Brian Thomas Jr.,WR,WR38,WR35,WR37,WR-T9,JAC,7,23.9,3,6'2",209,4.33,3,-9,68.8,-21,-719,122.6,36.6,120.7,211.2,114.8,14,81.16,51,126,89,115.3,90,,,,,WR
-91,Xavier Worthy,WR,WR39,WR54,WR44,WR-T9,KC,5,23.3,3,5'11",165,4.21,3,39,95.1,4,-66,122.3,34.2,123.4,215.5,88.9,14,129.83,100,180,109,134.8,68,DROP,,,,WR
-92,Brandon Aubrey,K,K1,K1,K1,K-T1,DAL,14,31.5,4,6'3",218,,2,94,129,37,,130.5,91.5,132.7,170.2,0.6,17,185.55,137,192,240,81.4,100,,,,,K
-93,Ka'imi Fairbairn,K,K2,K2,K5,K-T1,HOU,8,32.6,11,6'0",183,4.96,2,99,128,35,,128.8,87.1,132.7,168.8,0,15,192.36,136,211,246,125.1,96,,,,,K
-94,Cam Little,K,K3,K4,K8,K-T1,JAC,7,23,3,6'1",172,,2,104,156.4,62,,125.4,76,128.3,166.7,0,17,198.39,168,236,250,140.8,93,,,,,K
-95,Cameron Dicker,K,K4,K3,K2,K-T1,LAC,7,26.3,5,6'1",216,,2,100,139.4,44,,125.4,75.8,130.8,167.1,0,17,194.55,151,333,241,109.5,98,,,,,K
-96,Jason Myers,K,K5,K5,K3,K-T1,SEA,11,35.3,12,5'10",190,,2,104,125.1,29,,123.7,71,131.9,168.5,0,17,200.45,171,253,242,112.7,98,,,,,K
-97,Jordan Addison,WR,WR40,WR46,WR39,WR-T10,MIN,6,24.6,4,5'11",179,4.49,2,11,88.9,-8,137,121,36.8,115.8,213.5,114.1,14,107.99,68,150,91,127,83,,,,,WR
-98,Eddy Pineiro,K,K6,K6,K6,K-T1,SF,8,31,9,5'11",190,,2,111,,,,120.8,70.1,128.3,160.6,0,14,209.07,173,253,248,143.3,61,,,,,K
-99,Tyler Loop,K,K7,K7,K10,K-T1,BAL,13,25.1,2,5'11",191,,2,114,162.3,63,,118.6,67.9,126.2,156.4,0,17,212.52,181,328,255,165.3,59,,,,,K
-100,Evan McPherson,K,K8,K8,K15,K-T1,CIN,6,27.1,6,5'11",185,,2,117,164.9,65,,118.5,71.3,122.8,159,0,17,217.15,175,333,362,169.1,42,,,,,K
-101,HOU D/ST,DST,DST1,DST1,,DST-T1,HOU,8,,,,,,2,53,,,,118.2,78.6,114.2,170.5,,,153.67,143,175,,,98,,,,,DST
-102,Cairo Santos,K,K9,K9,K11,K-T1,CHI,10,34.8,13,5'8",173,4.76,2,117,160.2,58,,116.6,66.8,125.2,154.9,0,15,218.57,193,333,256,168.5,29,,,,,K
-103,Jake Bates,K,K10,K10,K9,K-T1,DET,6,27.5,3,5'10",205,,2,118,146.5,44,,116.6,67.9,127.2,156.3,0,17,220.72,192,282,252,156.7,72,,,,,K
-104,DEN D/ST,DST,DST2,DST2,,DST-T1,DEN,10,,,,,,2,60,,,,115.9,78.1,114.8,160.6,,,164.44,149,209,,,98,,,,,DST
-105,LAR D/ST,DST,DST3,DST3,,DST-T1,LAR,11,,,,,,2,60,,,,114.1,73.4,112.3,159.9,,,164.96,145,186,,,88,,,,,DST
-106,PHI D/ST,DST,DST4,DST5,,DST-T1,PHI,10,,,,,,2,69,,,,111.2,67.8,109.7,156.7,,,175.18,156,235,,,87,,,,,DST
-107,SEA D/ST,DST,DST5,DST4,,DST-T1,SEA,11,,,,,,2,60,,,,111.2,67.8,107.1,152.9,,,167.18,151,194,,,97,,,,,DST
-108,MIN D/ST,DST,DST6,DST6,,DST-T1,MIN,6,,,,,,2,79,,,,110,65.5,106.9,152.6,,,186.53,162,251,,,67,,,,,DST
-109,PIT D/ST,DST,DST7,DST7,,DST-T1,PIT,9,,,,,,2,78,,,,109.8,65.3,104,162.8,,,186.75,164,224,,,73,,,,,DST
-110,BAL D/ST,DST,DST8,DST11,,DST-T1,BAL,13,,,,,,2,87,,,,109,64.1,103,159.9,,,196.77,171,280,,,63,,,,,DST
-111,JAC D/ST,DST,DST9,DST9,,DST-T1,JAC,7,,,,,,2,78,,,,109,63.5,106.2,160.8,,,188.99,153,279,,,76,,,,,DST
-112,LAC D/ST,DST,DST10,DST10,,DST-T1,LAC,7,,,,,,2,80,,,,109,63.1,103.3,161.1,,,191.65,171,280,,,51,,,,,DST
-113,NE D/ST,DST,DST11,DST8,,DST-T1,NE,11,,,,,,2,74,,,,109,63.1,105.6,160.5,,,187.17,161,356,,,85,,,,,DST
-114,GB D/ST,DST,DST12,DST12,,DST-T1,GB,11,,,,,,2,93,,,,108.4,62.8,105.9,153.3,,,207.26,183,280,,,28,,,,,DST
-115,KC D/ST,DST,DST13,DST13,,DST-T1,KC,5,,,,,,2,95,,,,104.7,62.9,101.5,146.5,,,209.61,183,280,,,20,,,,,DST
-116,Dalton Kincaid,TE,TE13,TE11,TE14,TE-T6,BUF,7,26.9,4,6'3",246,,2,-5,145.2,29,406,99.3,39.5,91.8,169.8,106.6,12,111.01,85,144,136,133.7,87,,,,,TE
-117,Hunter Henry,TE,TE14,TE20,TE16,TE-T6,NE,11,31.7,11,6'5",249,4.79,2,50,158.9,42,-70,98.7,30.5,93,174,148.8,17,167.1,112,236,144,153.8,60,,,,,TE
-118,Patrick Mahomes II,QB,QB17,QB14,QB15,QB-T8,KC,5,31,10,6'2",225,4.8,1,-15,102.9,-15,-425,218.7,56.7,232.8,338.8,285.2,14,103.11,70,142,113,109.9,88,,,,,QB
-119,Kyler Murray,QB,QB18,QB17,QB16,QB-T8,MIN,6,29.1,8,5'10",207,,1,-5,129.1,10,18,212.4,43.5,228,323.6,77.8,5,113.74,98,147,162,138.1,69,ADD,,Kyler Murray will be the ninth Vikings' starting QB since 2023 (rss:yahoo),https://sports.yahoo.com/articles/kyler-murray-ninth-vikings-starting-024545927.html,QB
-120,Jordan Love,QB,QB19,QB18,QB22,QB-T8,GB,11,27.8,7,6'4",219,4.74,1,-4,142.5,23,0,206.8,28,221.8,332.1,235.1,15,116.43,98,145,273,155.8,57,,,,,QB
-121,Sam Darnold,QB,QB20,QB22,QB24,QB-T8,SEA,11,29.2,9,6'3",225,4.85,1,17,152.7,32,60,190.1,25.2,199.3,330.5,235.4,17,138.31,113,212,280,162.8,38,,,Seahawks' Sam Darnold is dealing with an 'unusual' injury (rss:yardbarker),https://www.yardbarker.com/nfl/articles/seahawks_sam_darnold_is_dealing_with_an_unusual_injury/s1_13132_44290806,QB
-122,Baker Mayfield,QB,QB21,QB19,QB20,QB-T8,TB,10,31.4,9,6'1",215,4.84,1,-4,134.5,13,128,178.7,10.9,193.5,341.2,271.9,17,118.46,92,144,189,147.8,61,,,,,QB
-123,Malik Willis,QB,QB22,QB21,QB21,QB-T8,MIA,6,27.3,5,6'1",225,,1,6,161.4,38,-31,177.1,11,186.6,354.5,51.2,4,128.78,104,255,192,167.3,33,,,,,QB
-124,Daniel Jones,QB,QB23,QB24,QB19,QB-T8,IND,13,29.3,8,6'5",230,4.81,1,22,160.3,36,-83,176.6,23.1,152,364.1,226.4,13,146.36,119,255,170,161.2,30,,,,,QB
-125,C.J. Stroud,QB,QB24,QB23,QB23,QB-T8,HOU,8,24.9,4,6'3",218,,1,18,161,36,-112,176.4,7.1,155.6,356.5,208.5,14,143.15,108,208,276,165.2,28,,,Sources: Stroud  Texans to table extension talks amid looming QB market (rss:espn),https://www.espn.com/nfl/story/_/id/49917836/sources-cj-stroud-texans-table-extension-talks,QB
-126,Bryce Young,QB,QB25,QB26,QB25,QB-T8,CAR,5,25.1,4,5'10",204,,1,44,,,-146,172.7,23.1,162.6,342.8,218,16,169.51,134,326,313,168.6,16,,,,,QB
-127,Geno Smith,QB,QB26,QB29,QB28,QB-T8,NYJ,13,35.9,14,6'3",221,4.58,1,101,,,-36,159.4,22.4,147.3,311.5,173.9,15,227.97,147,342,378,170,7,,,Cade Klubnik ready for his Jets turn at QB — whenever it comes (rss:yahoo),https://sports.yahoo.com/articles/cade-klubnik-ready-jets-turn-233131973.html,QB
-128,Cam Ward,QB,QB27,QB25,QB26,QB-T8,TEN,9,24.3,2,6'2",219,,1,31,,,-88,157.2,22,126.2,324.3,186.7,17,158.85,119,255,315,169.1,15,,,,,QB
-129,Aaron Rodgers,QB,QB28,QB28,QB30,QB-T8,PIT,9,42.7,22,6'2",223,4.71,1,84,,,29,153,22.3,124.6,315.5,226.6,16,213.2,139,341,384,169,11,,,Steelers vs Falcons live updates: TV info  live stream  odds for NFL Week 1 game (rss:yahoo),https://sports.yahoo.com/articles/steelers-vs-falcons-live-updates-100053404.html,QB
-130,Jacoby Brissett,QB,QB29,QB27,QB27,QB-T8,ARI,14,33.7,11,6'4",235,4.94,1,67,172.1,42,-35,142.5,14,114.4,319.6,227.4,14,196.67,139,338,317,169.8,9,,,,,QB
-131,Fernando Mendoza,QB,QB30,QB30,QB29,QB-T8,LV,13,22.9,R,6'5",225,,1,130,,,-42,134.9,4.5,101.4,309.4,,,261.28,159,343,382,168.7,19,,,,,QB
-132,Tua Tagovailoa,QB,QB31,QB31,QB32,QB-T8,ATL,11,28.5,7,6'1",225,,1,150,,,-8,134.3,3.3,100.1,324.6,160.7,14,281.77,153,344,421,170,6,,,Falcons rule out Tua Tagovailoa against Steelers  Cooper Rush to start at quarterback (rss:cbs),https://www.cbssports.com/nfl/news/falcons-rule-out-tua-tagovailoa-vs-steelers-cooper-rush-to-start/,QB
-133,Deshaun Watson,QB,QB32,QB34,QB31,QB-T8,CLE,11,31,10,6'3",223,4.66,1,159,,,,126.3,1.6,89.1,333.4,,,291.93,179,346,386,170.1,5,,,Agent's Take: Jayden Daniels  C.J. Stroud and other quarterbacks who are at a crossroads entering 2026 season (rss:cbs),https://www.cbssports.com/nfl/news/jayden-daniels-c-j-stroud-quarterbacks-at-crossroads-2026-nfl-season/,QB
-134,Quentin Johnston,WR,WR41,WR42,WR43,WR-T11,LAC,7,25,4,6'2",208,,1,-40,84.8,-49,334,119.6,34.8,119,207.7,145.7,13,93.76,68,149,108,137,79,,,,,WR
-135,Chris Godwin Jr.,WR,WR42,WR33,WR52,WR-T11,TB,10,30.5,10,6'1",209,4.42,1,-61,78.4,-57,182,117,30.5,116.2,202.7,66.5,9,74.37,45,123,155,127.5,84,,,,,WR
-136,Stefon Diggs,WR,WR43,WR41,WR49,WR-T11,WAS,7,32.8,12,6'0",191,4.46,1,-42,100.9,-35,-119,116.1,30.3,108.9,201.5,167.8,17,93.69,55,224,152,106.5,85,,,,,WR
-137,Andy Borregales,K,K11,K11,K25,K-T2,NE,11,23.7,2,5'11",202,,1,87,,,,114.8,42.5,122.1,158,0,17,223.71,194,282,494,170,16,,,,,K
-138,Jaylen Warren,RB,RB25,RB27,RB27,RB-T7,PIT,9,27.8,5,5'8",215,4.55,1,-64,68.4,-70,-234,114.6,24.8,109.1,203.5,197.1,16,74.43,56,99,70,87.8,92,,,,,RB
-139,J.K. Dobbins,RB,RB26,RB34,RB31,RB-T7,DEN,10,27.7,7,5'10",212,,1,-37,78.4,-61,128,114,26.8,106,207,110.4,10,102.38,72,132,119,113.9,87,,,,,RB
-140,Chase McLaughlin,K,K12,K12,K14,K-T2,TB,10,30.4,8,6'0",190,,1,88,150.1,10,,113.5,38.4,120.8,159.3,0,17,228.08,192,333,338,170,14,,,,,K
-141,Shedeur Sanders,QB,QB33,QB35,QB33,QB-T8,CLE,11,24.6,2,6'2",212,,1,160,,,,113.3,0.8,68.2,325.7,84.9,8,301.37,214,359,428,169.8,5,,,Shedeur Sanders may not get a chance with Browns for a long time (rss:yardbarker),https://www.yardbarker.com/nfl/articles/shedeur_sanders_may_not_get_a_chance_with_browns_for_a_long_time/s1_13132_44296543,QB
-142,Michael Penix Jr.,QB,QB34,QB32,QB35,QB-T8,ATL,11,26.3,3,6'3",220,,1,140,,,3,112.4,0,68.1,272.7,120.3,9,282.37,174,345,439,170.1,4,,,,,QB
-143,Michael Wilson,WR,WR44,WR40,WR41,WR-T11,ARI,14,26.5,4,6'2",213,4.58,1,-55,73.3,-70,-162,112.4,32.6,105.4,199,181.6,17,88.1,55,131,106,107.7,88,,,,,WR
-144,Rhamondre Stevenson,RB,RB27,RB26,RB26,RB-T7,NE,11,28.5,6,6'0",227,4.64,1,-70,63.6,-80,463,112.2,21.7,105.5,213.4,162.8,14,74.02,56,118,69,78.4,92,,,,,RB
-145,Chris Boswell,K,K13,K15,K13,K-T2,PIT,9,35.5,12,6'2",185,4.93,1,99,,,,112.1,44.6,118.9,153.9,0,17,244.39,200,329,337,164.8,40,,,,,K
-146,Harrison Butker,K,K14,K14,K7,K-T2,KC,5,31.1,10,6'4",205,,1,98,149.5,4,,112.1,39.8,118.4,159,0,17,243.9,207,333,249,144,50,,,,,K
-147,Harrison Mevis,K,K15,K13,K4,K-T2,LAR,11,24.4,2,6'0",245,,1,83,141.1,-6,,112.1,51.9,118.2,156.9,0,9,229.98,193,333,243,128.2,80,,,,,K
-148,Wil Lutz,K,K16,K17,K21,K-T2,DEN,10,32.2,11,5'11",184,,1,118,172.6,25,,112.1,52.1,117.1,157.3,0,17,265.87,182,333,489,169.5,12,,,Broncos captains show what leadership means in Denver (rss:yahoo),https://sports.yahoo.com/articles/broncos-captains-show-leadership-means-100000833.html,K
-149,Will Reichard,K,K17,K16,K12,K-T2,MIN,6,25.6,3,6'1",190,,1,103,148.9,0,,112.1,55.9,119.3,155.9,0,17,251.58,198,331,259,167.7,49,,,,,K
-150,Daniel Carlson,K,K18,K18,K20,K-T2,NO,8,31.6,9,6'5",222,,1,116,,,,111.9,39.1,121.7,156.4,0,17,266.18,209,402,488,170.1,1,,,,,K
-151,Nick Folk,K,K19,K19,K16,K-T2,ATL,11,41.8,19,6'1",225,4.95,1,116,,,,111.7,45,120.1,154.4,0,16,266.63,187,365,363,170.1,3,,,,,K
-152,Romeo Doubs,WR,WR45,WR53,WR54,WR-T11,NE,11,26.4,5,6'2",210,,1,-25,96.4,-56,101,111.3,32.9,100.5,198.9,137.9,16,126.88,90,180,157,149.6,63,DROP,,,,WR
-153,Jadarian Price,RB,RB28,RB24,RB24,RB-T7,SEA,11,22.9,R,5'11",209,4.49,1,-86,56.2,-97,120,110.9,20.4,106.7,216.5,,,67.49,43,99,67,68.6,94,,,,,RB
-154,Jakobi Meyers,WR,WR46,WR45,WR42,WR-T11,JAC,7,29.8,8,6'2",200,4.63,1,-46,93.5,-60,-153,110.7,32.8,99.8,199.2,138.3,16,107.87,71,150,107,122.6,71,,,,,WR
-155,Spencer Shrader,K,K20,K20,K18,K-T2,IND,13,27.3,3,6'2",201,,1,113,,,,110.4,43.9,119.2,151.7,0,5,267.56,216,325,410,170,3,,,,,K
-156,Khalil Shakir,WR,WR47,WR50,WR45,WR-T11,BUF,7,26.6,5,6'0",190,4.43,1,-33,107.8,-48,-99,109.6,32.5,98,199.1,130.4,16,122.63,69,168,110,139.3,60,,,,,WR
-157,Matthew Golden,WR,WR48,WR51,WR38,WR-T11,GB,11,23.1,2,5'11",191,4.29,1,-32,96,-61,53,109.3,32.5,100.4,188.5,55.5,14,124.75,81,202,90,117.7,79,,,,,WR
-158,Trey Smack,K,K21,K21,K17,K-T2,GB,11,23.1,R,6'1",188,,1,112,168,10,,109.1,22.3,124.7,158.1,,,269.91,212,352,409,168.3,13,,,,,K
-159,Kenny Gainwell,RB,RB29,RB32,RB35,RB-T7,TB,10,27.5,6,5'9",200,,1,-61,108,-51,186,108,27.9,108.5,205.7,184.8,17,98.34,67,143,129,102.5,82,,,,,RB
-160,Blake Grupe,K,K22,K23,K29,K-T2,NYJ,13,27.8,4,5'7",156,,1,120,,,,107.8,22.1,118.5,155,0,16,279.5,205,363,503,169.9,1,,,,,K
-161,Charlie Smyth,K,K23,K25,,K-T2,NO,8,25.2,2,6'4",210,,1,124,,,,107.8,21.8,113.3,155.7,0,6,284.75,192,359,,,1,,,,,K
-162,Ryan Fitzgerald,K,K24,K24,K26,K-T2,CAR,5,26.1,2,5'11",193,,1,121,,,,107.8,35.4,114.7,153.3,0,17,282.57,203,406,497,169.8,1,,,,,K
-163,Tyler Bass,K,K25,K22,K22,K-T2,BUF,7,29.5,7,5'10",183,,1,112,,,,107.8,31.7,116.9,156.2,,,275.3,216,407,490,169.4,7,,,,,K
-164,Ben Sauls,K,K26,K28,,K-T2,FA,,25.1,R,5'10",185,,1,126,,,,107.4,51.8,114.2,152.2,0,3,290.4,192,450,,,1,,,,,K
-165,Brandon McManus,K,K27,K27,K32,K-T2,FA,,35.1,12,6'3",201,,1,125,,,,107.4,39.8,114.2,150.9,0,14,290.2,198,392,1769,169.9,1,,,,,K
-166,Zane Gonzalez,K,K28,K26,K31,K-T2,FA,,31.3,8,6'0",200,,1,124,,,,107.4,38.3,115.9,152,0,9,290.18,203,405,1745,170,2,,,,,K
-167,Wan'Dale Robinson,WR,WR49,WR37,WR47,WR-T11,TEN,9,25.7,5,5'8",185,4.44,1,-81,92.9,-74,-94,107.2,31.2,100.5,177.5,171.9,16,85.64,49,128,138,113.4,75,,,,,WR
-168,KC Concepcion,WR,WR50,WR48,WR48,WR-T11,CLE,11,21.9,R,6'0",190,,1,-60,113.5,-54,313,107.2,31.2,100.4,177.4,,,108.19,71,150,139,150.1,72,DROP,,,,WR
-169,Joey Slye,K,K29,K29,K27,K-T2,TEN,9,30.4,8,5'11",228,,1,126,,,,106.1,36.2,115.3,154.8,0,16,295.14,203,401,499,169.8,1,,,,,K
-170,TreVeyon Henderson,RB,RB30,RB25,RB30,RB-T7,NE,11,23.9,2,5'10",202,4.43,1,-99,65.2,-105,-978,104.4,22.2,97.7,210.8,188.7,17,70.95,50,93,118,82.1,94,,,,,RB
-171,MarShawn Lloyd,RB,RB31,RB35,RB34,RB-T7,GB,11,25.7,3,5'9",220,4.46,1,-65,113.3,-58,1249,103.9,17.1,88.6,218,,,106.21,58,284,128,107.9,77,,,,,RB
+1,Jahmyr Gibbs,RB,RB1,RB1,RB1,RB-T1,DET,6,24.5,4,5'9",202,4.36,87,1,1.5,1,-312,211.3,74.3,205.6,349.7,328.4,17,2.43,1,5,1,1.4,100,,,Jahmyr Gibbs needs one TD on Sunday to join 50-in-50 club (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/jahmyr-gibbs-needs-one-td-on-sunday-to-join-50-in-50-club,RB
+2,Ja'Marr Chase,WR,WR1,WR1,WR2,WR-T1,CIN,6,26.5,6,6'0",205,4.34,83,-1,3.9,2,-249,206.7,122,217.9,278.9,251.1,16,1.49,1,4,4,4.4,100,,,,,WR
+3,Bijan Robinson,RB,RB2,RB2,RB2,RB-T1,ATL,11,24.6,4,5'11",215,4.46,82,1,2.2,-1,-44,206.1,76.2,202,325.9,331.3,17,4.19,2,5,2,2.6,100,,,,,RB
+4,Ashton Jeanty,RB,RB3,RB11,RB9,RB-T1,LV,13,22.7,2,5'8",208,,78,25,23.1,19,-961,201.5,84.2,197.6,314.9,217.6,17,28.95,7,53,16,21.7,100,,,,,RB
+5,Brock Bowers,TE,TE1,TE2,TE2,TE-T1,LV,13,23.7,3,6'3",235,,78,16,40.1,35,-272,175.7,92.3,174.5,255.6,144.2,12,21.2,11,57,21,24.8,100,,,Sources: Raiders TE Mayer lands $45M extension as Bowers sidelined (rss:espn),https://www.espn.com/nfl/story/_/id/49914437/raiders-te-michael-mayer-gets-3-year-45m-extension-sources-say,TE
+6,Saquon Barkley,RB,RB4,RB8,RB8,RB-T1,PHI,10,29.6,9,6'0",232,4.4,77,18,16.7,11,282,200.6,75.5,190.4,311.3,213.8,16,23.6,10,41,15,14.5,100,,,Eagles' Saquon Barkley is 'going back to a little kid again' to recapture his 2024 dominance (rss:espn),https://www.espn.com/nfl/story/_/id/49893820/can-philadelphia-eagles-saquon-barkley-recapture-2024-dominance,RB
+7,De'Von Achane,RB,RB5,RB7,RB7,RB-T1,MIA,6,24.9,4,5'9",191,4.32,76,14,10.5,4,656,199.4,95,192,303.2,289.3,16,21.49,11,39,13,13.8,100,,,,,RB
+8,Drake London,WR,WR2,WR7,WR7,WR-T1,ATL,11,25.1,5,6'4",215,,71,5,13.9,6,-743,193.4,75.8,203.3,273.4,167.9,12,13.17,8,26,14,21.1,100,,,,,WR
+9,Colston Loveland,TE,TE2,TE3,TE3,TE-T1,CHI,10,22.4,2,6'6",241,,68,27,59.8,51,-574,163.9,80.5,165.7,248.5,136.1,16,36.28,22,85,50,42,100,,,,,TE
+10,Christian McCaffrey,RB,RB6,RB3,RB3,RB-T1,SF,8,30.2,10,5'11",210,4.48,67,0,5.5,-4,449,189,90.8,186.2,288.9,365.6,17,9.58,5,24,6,7.5,100,,,,,RB
+11,Breece Hall,RB,RB7,RB13,RB13,RB-T2,NYJ,13,25.3,5,5'11",217,4.39,65,29,31.4,20,-470,187,85,186.5,296.1,189.7,16,39.52,30,53,22,36.2,98,,,,,RB
+12,James Cook III,RB,RB8,RB5,RB6,RB-T2,BUF,7,26.9,5,5'11",190,4.42,64,3,9.5,-2,480,185.8,74.4,189.9,310.7,285.7,17,14.97,7,31,12,10.5,100,,,,,RB
+13,Trey McBride,TE,TE3,TE1,TE1,TE-T1,ARI,14,26.8,5,6'4",246,,64,6,42.8,30,-952,159.4,76.2,163.3,248.7,252.9,17,18.5,16,35,20,23.2,100,,,,,TE
+14,Josh Allen,QB,QB1,QB1,QB1,QB-T1,BUF,7,30.3,9,6'5",237,4.75,62,12,29.7,16,-368,283.3,123.5,294.1,399.5,364.6,16,25.77,21,43,36,18.4,100,,,14 more NFL Week 1 games  14 matchup previews: We have predictions  picks and wild stats (rss:espn),https://www.espn.com/nfl/story/_/id/49805531/week-1-picks-predictions-schedule-fantasy-odds-2026,QB
+15,Kenneth Walker III,RB,RB9,RB9,RB11,RB-T2,KC,5,25.9,5,5'9",211,4.38,62,10,20.3,5,191,183.9,75.3,186.9,306.5,176.4,17,24.95,11,50,18,25.4,100,,,,,RB
+16,Omarion Hampton,RB,RB10,RB10,RB12,RB-T2,LAC,7,23.5,2,6'0",220,4.46,62,9,22.5,7,177,183.8,68.2,187.7,313.6,119.7,9,25.4,7,43,19,18.5,100,,,,,RB
+17,Justin Jefferson,WR,WR3,WR6,WR6,WR-T2,MIN,6,27.2,,6'0",223,4.43,61,-8,13.1,-4,63,182.5,100.4,192.1,254.5,159.5,17,9.17,4,29,10,12.3,100,,,,,WR
+18,Puka Nacua,WR,WR4,WR2,WR1,WR-T2,LAR,11,25.3,4,6'2",216,,61,-15,2.8,-15,-519,181.9,86.5,185.2,257.1,310.5,16,3.43,1,9,3,5.1,100,,,,,WR
+19,Jaxon Smith-Njigba,WR,WR5,WR3,WR3,WR-T2,SEA,11,24.5,4,6'0",197,,60,-14,5.9,-13,-111,180.9,97.2,183.4,257.5,300.4,17,4.61,1,9,5,6.5,100,,,,,WR
+20,CeeDee Lamb,WR,WR6,WR5,WR5,WR-T2,DAL,14,27.4,7,6'2",198,4.5,60,-11,12.1,-8,35,180.8,96.8,180.6,265,163.4,13,9.03,6,15,9,11.6,100,,,,,WR
+21,Jeremiyah Love,RB,RB11,RB14,RB10,RB-T2,ARI,14,21.3,R,6'0",212,4.36,58,19,27.7,7,-746,179.9,54.2,184.3,305.3,,,40.1,23,65,17,26,99,,,Jeremiyah Love expected to play in Week 1 but questions remain about his workload (rss:cbs),https://www.cbssports.com/nfl/news/jeremiyah-love-injury-update-cardinals-chargers/,RB
+22,Emeka Egbuka,WR,WR7,WR21,WR16,WR-T2,TB,10,23.9,2,6'1",205,,58,19,34.2,12,-356,179,100.3,179.4,260.4,164.2,17,40.74,14,68,34,46.6,98,,,NFL anytime TD best bets: Our favorite picks for Week 1  including Emeka Egbuka (rss:cbs),https://www.cbssports.com/nfl/news/nfl-anytime-td-best-bets-week-1/,WR
+23,Tetairoa McMillan,WR,WR8,WR19,WR17,WR-T2,CAR,5,23.4,2,6'5",212,,56,13,31.8,9,48,176.9,96.5,178.3,249.5,178.4,17,35.88,15,52,35,44.4,99,,,,,WR
+24,Jonathan Taylor,RB,RB12,RB4,RB4,RB-T2,IND,13,27.6,7,5'10",226,4.39,53,-12,5.9,-18,219,174.3,63.6,175.5,293.4,339.3,17,11.82,6,33,7,6.5,100,,,,,RB
+25,Malik Nabers,WR,WR9,WR13,WR11,WR-T2,NYG,8,23.1,3,6'0",200,,53,-1,26.1,1,-39,172.7,92.6,177.7,244.7,48.1,4,24.25,11,48,27,36.9,99,,,Is Malik Nabers playing vs. the Cowboys? Latest status update for Giants WR (rss:yahoo),https://sports.yahoo.com/articles/malik-nabers-playing-vs-cowboys-100427516.html,WR
+26,Javonte Williams,RB,RB13,RB16,RB15,RB-T2,DAL,14,26.4,6,5'10",220,4.55,52,17,28.5,3,540,172.9,52.7,172.7,293.8,225.3,16,43.43,24,61,30,33.9,99,,,,,RB
+27,Amon-Ra St. Brown,WR,WR10,WR4,WR4,WR-T2,DET,6,26.9,6,6'0",202,4.51,52,-22,7.9,-19,-170,171.8,83.3,183.4,247,265.5,17,5.4,3,9,8,8.7,100,,,Lions restructure two contracts: What salary cap flexibility means for Sam LaPorta  Brian Branch extensions (rss:cbs),https://www.cbssports.com/nfl/news/lions-restructure-two-contracts-salary-cap-flexibility/,WR
+28,Derrick Henry,RB,RB14,RB12,RB5,RB-T2,BAL,13,32.7,11,6'3",252,4.54,51,10,9.8,-18,450,172.2,52,171.3,294.2,272,17,37.64,20,50,11,16.8,100,,,,,RB
+29,Cam Skattebo,RB,RB15,RB20,RB19,RB-T2,NYG,8,24.6,2,5'11",215,,50,28,37.7,9,-609,171,53.2,168.2,296.2,115.7,8,57,39,80,40,47.1,99,,,,,RB
+30,Nico Collins,WR,WR11,WR9,WR9,WR-T2,HOU,8,27.5,6,6'4",222,4.43,49,-14,21,-9,446,168.5,68.8,178.9,245.9,190.7,15,16,9,28,25,26.3,100,,,,,WR
+31,Rashee Rice,WR,WR12,WR14,WR8,WR-T2,KC,5,26.4,4,6'1",203,4.51,47,-4,18.3,-13,135,166.8,66.7,171.9,254.2,123.6,8,27.1,11,68,24,29.6,99,,,,,WR
+32,Travis Etienne Jr.,RB,RB16,RB17,RB16,RB-T3,NO,8,27.6,6,5'10",215,4.45,45,13,36.7,5,982,165.3,59.2,164.8,281.8,235.9,17,45.04,33,61,32,41.2,98,,,,,RB
+33,Jameson Williams,WR,WR13,WR26,WR24,WR-T3,DET,6,25.4,5,6'1",184,,45,20,37.4,4,-100,164.3,78.5,160.5,244.1,187.4,17,52.92,35,88,49,67.3,96,,,,,WR
+34,Kyren Williams,RB,RB17,RB15,RB17,RB-T3,LAR,11,26,5,5'9",207,4.65,42,8,29.7,-4,612,162.3,56.6,169.6,261.6,245.3,17,42.04,24,58,38,36.4,99,,,,,RB
+35,Chase Brown,RB,RB18,RB6,RB14,RB-T3,CIN,6,26.4,4,5'10",211,4.43,42,-18,13.6,-21,687,162.1,61.1,163.4,269,248.1,17,17.05,7,34,23,18.6,100,,,,,RB
+36,Christian Watson,WR,WR14,WR27,WR33,WR-T3,GB,11,27.3,5,6'4",215,4.36,42,20,53,17,408,161,85.7,161.1,237.3,114.9,10,55.73,38,88,76,93.5,93,,,,,WR
+37,Lamar Jackson,QB,QB2,QB2,QB3,QB-T2,BAL,13,29.6,,6'2",212,4.58,37,-5,55.6,19,-105,255.7,114.6,270.4,366.2,214.9,13,31.84,25,66,58,31.9,100,,,Sources: Jackson won't have deal with Ravens before start of season (rss:espn),https://www.espn.com/nfl/story/_/id/49915181/sources-lamar-jackson-reluctant-talk-deal-ravens,QB
+38,Zay Flowers,WR,WR15,WR15,WR15,WR-T3,BAL,13,26,4,5'9",183,4.42,37,-8,23.9,-14,469,155.5,75.7,152.3,225.2,200.3,17,29.64,12,48,33,44.7,99,,,,,WR
+39,George Kittle,TE,TE4,TE9,TE8,TE-T2,SF,8,32.9,10,6'4",250,4.52,34,59,90.4,51,135,126.6,61.4,128.9,193.4,133,11,97.7,66,144,122,69.8,94,,,,,TE
+40,TreVeyon Henderson,RB,RB19,RB25,RB30,RB-T4,NE,11,23.9,2,5'10",202,4.43,32,31,65.2,25,-978,150.9,42.4,164.4,255.2,188.7,17,70.95,50,93,118,85.3,94,,,,,RB
+41,Garrett Wilson,WR,WR16,WR16,WR18,WR-T4,NYJ,13,26.1,5,6'0",183,4.38,30,-11,28.3,-13,-85,147.8,82.2,149.6,212.2,81.5,7,30.28,12,52,43,37.5,98,,,,,WR
+42,Jadarian Price,RB,RB20,RB24,RB24,RB-T4,SEA,11,22.9,R,5'11",209,4.49,28,25,56.2,14,120,146.2,41.3,144.2,240.9,,,67.49,43,99,67,70.7,94,,,,,RB
+43,Luther Burden III,WR,WR17,WR22,WR27,WR-T4,CHI,10,22.7,2,6'0",210,4.41,28,4,51.3,8,-662,145.2,78.2,150.4,211.9,104.4,15,46.7,26,71,54,78.4,95,,,,,WR
+44,D'Andre Swift,RB,RB21,RB18,RB21,RB-T4,CHI,10,27.6,7,5'8",204,4.48,26,8,39.9,-4,614,144.1,42.5,139.2,247.6,211.6,16,52.39,37,77,42,55.6,96,,,Bears extend RB D'Andre Swift to three-year  $33.75 million deal  per report (rss:cbs),https://www.cbssports.com/nfl/news/bears-re-sign-dandre-swift-to-three-year-deal/,RB
+45,DeVonta Smith,WR,WR18,WR12,WR19,WR-T4,PHI,10,27.8,,5'11",195,,26,-22,30.9,-14,77,143.2,67.2,148.2,222.4,163.3,17,22.72,8,45,44,36.7,99,,,15 predictions for NFL Week 1: Upset picks  fantasy sleepers  projected stat lines and more (rss:espn),https://www.espn.com/nfl/story/_/id/49872076/week-1-predictions-upsets-fantasy-sleepers-stats-2026,WR
+46,Joe Burrow,QB,QB3,QB4,QB6,QB-T3,CIN,6,29.7,7,6'4",215,,25,-1,54.6,9,-438,242.5,111.7,254.8,352.1,134.5,8,44.89,27,74,81,52.9,99,,,,,QB
+47,A.J. Brown,WR,WR19,WR8,WR10,WR-T4,NE,11,29.2,8,6'1",226,4.49,25,-33,17,-30,722,142.2,66.5,147.2,219.9,181.3,15,13.73,6,40,26,23.1,100,,,Patriots place WR A.J. Brown on IR  officially sign DT DaQuan Jones (rss:yahoo),https://sports.yahoo.com/articles/patriots-place-wr-j-brown-001208590.html,WR
+48,Jared Goff,QB,QB4,QB15,QB18,QB-T3,DET,6,31.9,11,6'4",217,4.82,23,58,97.6,50,162,240.2,113.2,252.2,349.6,297.1,17,105.55,63,132,168,139.8,76,,,,,QB
+49,Sam LaPorta,TE,TE5,TE8,TE7,TE-T3,DET,6,25.6,4,6'3",245,4.59,23,37,99.8,51,28,114.8,58.5,112.8,176.9,86.9,9,86.19,55,131,80,76,97,,,,,TE
+50,Bhayshul Tuten,RB,RB22,RB23,RB22,RB-T5,JAC,7,23.5,,5'9",209,4.32,22,16,52,2,23,139.7,37.7,132.6,257.3,83.6,15,65.97,43,89,64,66,95,,,,,RB
+51,Marvin Harrison Jr.,WR,WR20,WR32,WR31,WR-T5,ARI,14,24.1,3,6'3",220,,22,18,66,15,-184,138.5,64,143.8,207.8,107.3,12,69.24,40,110,74,84.1,93,,,,,WR
+52,Brock Purdy,QB,QB5,QB11,QB11,QB-T3,SF,8,26.7,5,6'1",220,4.84,21,44,88.5,37,-187,237.2,107.8,249.9,354,177.4,9,96.42,63,119,99,109.3,86,,,,,QB
+53,Jaylen Waddle,WR,WR21,WR18,WR25,WR-T5,DEN,10,27.8,6,5'10",185,,21,-19,45.1,-8,505,138.1,57.2,137.1,214.5,162.1,16,33.99,18,60,52,56.6,98,,,,,WR
+54,Khalil Shakir,WR,WR22,WR50,WR45,WR-T5,BUF,7,26.6,5,6'0",190,4.43,21,69,107.8,54,-99,137.6,66,135.5,212.5,130.4,16,122.63,69,168,110,139.4,60,,,,,WR
+55,George Pickens,WR,WR23,WR11,WR12,WR-T5,DAL,14,25.5,5,6'3",205,4.47,20,-35,19.9,-35,-98,137.1,56.3,136,210.5,245.4,17,20.43,9,40,28,28.5,100,,,,,WR
+56,Tee Higgins,WR,WR24,WR20,WR21,WR-T5,CIN,6,27.6,7,6'4",219,,20,-19,35.1,-21,-725,137,66.9,138.3,211.3,182.1,15,36.7,19,51,46,54.3,99,,,,,WR
+57,Chris Olave,WR,WR25,WR10,WR13,WR-T5,NO,8,26.2,5,6'0",187,4.39,19,-40,22.2,-35,434,135.4,51.3,131.3,209.8,218,16,17.37,9,36,29,30.3,99,,,,,WR
+58,Tyler Warren,TE,TE6,TE4,TE4,TE-T3,IND,13,24.3,2,6'6",256,,19,-5,70.2,12,33,110.8,47.5,107.2,176.9,150.5,17,53.36,22,73,51,50.7,99,,,,,TE
+59,Jayden Daniels,QB,QB6,QB5,QB2,QB-T4,WAS,7,25.7,3,6'4",210,,17,-2,72.4,13,-722,232.8,109.2,239.3,344.3,114.3,7,56.6,27,101,56,51.9,99,,,14 more NFL Week 1 games  14 matchup previews: We have predictions  picks and wild stats (rss:espn),https://www.espn.com/nfl/story/_/id/49805531/week-1-picks-predictions-schedule-fantasy-odds-2026,QB
+60,Bucky Irving,RB,RB23,RB19,RB20,RB-T5,TB,10,24,3,5'10",194,4.55,17,-4,44.7,-15,-14,134.5,35.8,128.6,241,123.5,10,56.3,41,89,41,59.7,97,,,,,RB
+61,Rome Odunze,WR,WR26,WR29,WR20,WR-T6,CHI,10,24.2,3,6'3",215,4.45,16,-2,48.1,-13,-575,132.7,52.6,132.6,208.6,124.1,12,58.87,40,91,45,72.5,96,,,NFL Week 1 injuries: Giants' Malik Nabers  Bears' Rome Odunze listed as questionable (rss:cbs),https://www.cbssports.com/nfl/news/nfl-week-1-injuries-tracker-rome-odunze-alvin-kamara/,WR
+62,Jaylen Warren,RB,RB24,RB27,RB27,RB-T6,PIT,9,27.8,5,5'8",215,4.55,15,12,68.4,6,-234,132.5,29.6,124.9,233.1,197.1,16,74.43,56,99,70,89.8,92,,,,,RB
+63,Rhamondre Stevenson,RB,RB25,RB26,RB26,RB-T6,NE,11,28.5,6,6'0",227,4.64,15,11,63.6,1,463,132.1,29,126.3,246.1,162.8,14,74.02,56,118,69,79.5,92,,,,,RB
+64,DK Metcalf,WR,WR27,WR34,WR30,WR-T6,PIT,9,28.7,8,6'4",229,4.33,15,15,63.6,0,-481,131.2,48.7,123.4,212.7,157.7,15,79.37,49,115,73,88.8,92,,,,,WR
+65,Kyle Pitts Sr.,TE,TE7,TE7,TE5,TE-T4,ATL,11,25.9,6,6'6",250,4.44,15,14,94.5,30,-337,105.6,42.1,103.5,168.2,166.8,17,78.83,60,110,78,70.6,97,,,,,TE
+66,Harold Fannin Jr.,TE,TE8,TE5,TE6,TE-T4,CLE,11,22.1,2,6'4",241,4.71,15,10,76.1,10,-72,105.4,45.1,99.5,170.9,150.4,16,76.23,57,111,79,72.2,97,,,,,TE
+67,Bo Nix,QB,QB7,QB13,QB10,QB-T4,DEN,10,26.5,3,6'2",217,,14,32,110.4,43,-188,230,106.9,238.5,340.6,304.8,17,98.53,70,120,97,106.8,90,,,,,QB
+68,Carnell Tate,WR,WR28,WR31,WR29,WR-T6,TEN,9,21.6,R,6'2",192,4.53,13,0,77,9,-830,128.8,52.9,121.2,209.1,,,68.19,45,136,72,84.9,93,,,,,WR
+69,Terry McLaurin,WR,WR29,WR23,WR23,WR-T7,WAS,7,31,8,6'0",210,4.35,11,-21,45.1,-24,-461,127.1,48.4,117.8,210.4,95.2,10,47.68,28,68,48,64.2,96,,,,,WR
+70,AJ Barner,TE,TE9,TE23,TE26,TE-T5,SEA,11,24.3,3,6'6",251,,11,141,,,-6,101.4,47.2,98.9,161.4,121.3,17,211.33,144,261,312,169.4,19,,,,,TE
+71,Justin Herbert,QB,QB8,QB8,QB14,QB-T5,LAC,7,28.5,7,6'6",236,4.68,10,1,103,32,-94,225.9,105.4,239.4,334.4,286.9,16,71.81,37,104,111,88.8,94,,,Jim Harbaugh: Justin Herbert will be remembered as the greatest quarterback ever (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/jim-harbaugh-justin-herbert-will-be-remembered-as-the-greatest-quarterback-ever,QB
+72,Quinshon Judkins,RB,RB26,RB22,RB18,RB-T7,CLE,11,22.8,2,6'0",221,4.48,10,-11,50,-22,-495,126.3,29.7,118.4,229.3,156.8,14,60.62,43,84,39,50.3,97,,,,,RB
+73,DJ Moore,WR,WR30,WR25,WR26,WR-T7,BUF,7,29.4,9,6'0",213,4.56,10,-21,45.8,-27,316,125.6,50.7,111.6,217.3,147.2,17,52.35,19,107,53,61.6,96,,,,,WR
+74,Davante Adams,WR,WR31,WR24,WR14,WR-T7,LAR,11,33.7,13,6'1",204,4.56,9,-23,37.8,-36,99,124.3,40,120.1,211.8,192.9,14,50.83,35,74,31,47.8,97,,,,,WR
+75,Mark Andrews,TE,TE10,TE16,TE12,TE-T5,BAL,13,31,9,6'5",250,4.67,9,59,135.1,60,-115,99.1,42.2,95.5,159.4,107,17,133.61,87,236,132,128.8,84,,,,,TE
+76,Tyler Shough,QB,QB9,QB20,QB17,QB-T5,NO,8,26.9,2,6'5",219,4.63,8,49,142.2,66,-200,223.6,89,235.4,334.9,158,11,125.2,98,183,164,153.1,45,,,,,QB
+77,Baker Mayfield,QB,QB10,QB19,QB20,QB-T5,TB,10,31.4,9,6'1",215,4.84,8,41,134.5,58,128,223.3,98,233,333.6,271.9,17,118.46,92,144,189,148.4,61,,,,,QB
+78,Rachaad White,RB,RB27,RB37,RB41,RB-T7,WAS,7,27.6,5,6'0",214,4.48,8,34,128,50,57,124.6,24.1,119.4,237,123,17,112.32,75,148,150,130.9,69,,,,,RB
+79,Tony Pollard,RB,RB28,RB28,RB29,RB-T7,TEN,9,29.3,8,6'0",209,4.52,8,6,69.6,-9,293,124.1,22.8,118.7,242.3,169.3,17,84.99,65,120,117,90.4,90,,,,,RB
+80,Ladd McConkey,WR,WR32,WR17,WR22,WR-T8,LAC,7,24.8,,6'0",185,4.39,8,-46,40.1,-40,-296,123.4,39,120.7,208.1,147.9,16,33.83,15,52,47,48.7,98,,,,,WR
+81,Isaiah Likely,TE,TE11,TE12,TE15,TE-T6,NYG,8,26.4,5,6'4",241,,8,38,132.8,52,139,98.4,43,94.6,164.6,48.2,12,118.57,87,226,143,125.6,85,,,,,TE
+82,Caleb Williams,QB,QB11,QB7,QB13,QB-T6,CHI,10,24.8,3,6'1",226,,7,-17,87.5,6,-369,222.2,76.3,233.8,325.7,317.7,17,65.14,31,98,104,87.2,96,,,,,QB
+83,J.K. Dobbins,RB,RB29,RB34,RB31,RB-T8,DEN,10,27.7,7,5'10",212,,7,19,78.4,-5,128,123.4,31.8,124,235.1,110.4,10,102.38,72,132,119,115.7,87,,,,,RB
+84,Tucker Kraft,TE,TE12,TE6,TE9,TE-T6,GB,11,25.8,4,6'5",259,4.69,7,-5,104.5,21,0,97.3,47.9,94.6,158.4,101.2,8,78.75,32,131,123,93.1,95,,,Sources: Packers  TE Kraft reach 4-year extension worth up to $92M (rss:espn),https://www.espn.com/nfl/story/_/id/49914334/sources-packers-tucker-kraft-agree-4-year-extension,TE
+85,Jalen Hurts,QB,QB12,QB6,QB5,QB-T6,PHI,10,28.1,7,6'1",223,4.59,6,-28,77.2,-8,118,220.7,77.4,237.4,311.5,301.1,16,57.19,30,81,62,53.9,99,,,Will Brinson's NFL Week 1 predictions and picks: Best bets  player props  anytime touchdown scorers (rss:cbs),https://www.cbssports.com/betting/news/will-brinsons-nfl-week-1-predictions-and-picks-best-bets-player-props-anytime-touchdown-scorers/,QB
+86,Patrick Mahomes II,QB,QB13,QB14,QB15,QB-T7,KC,5,31,10,6'2",225,4.8,5,17,102.9,17,-425,219.9,71.7,239.5,318.3,285.2,14,103.11,70,142,113,110.6,88,,,,,QB
+87,De'Zhaun Stribling,WR,WR33,WR49,WR40,WR-T9,SF,8,23.7,R,6'2",207,,5,34,124.6,38,234,120,38.6,120.8,201.3,,,121.47,62,303,92,140.3,67,,,,,WR
+88,Kyler Murray,QB,QB14,QB17,QB16,QB-T7,MIN,6,29.1,8,5'10",207,,4,26,129.1,41,18,219.4,66.9,238.1,324.3,77.8,5,113.74,98,147,162,139.1,69,ADD,,Kyler Murray will be the ninth Vikings' starting QB since 2023 (rss:yahoo),https://sports.yahoo.com/articles/kyler-murray-ninth-vikings-starting-024545927.html,QB
+89,Jordan Love,QB,QB15,QB18,QB22,QB-T7,GB,11,27.8,7,6'4",219,4.74,4,27,142.5,54,0,219.2,63,240.7,330.3,235.1,15,116.43,98,145,273,156.3,57,,,,,QB
+90,Trevor Lawrence,QB,QB16,QB9,QB8,QB-T7,JAC,7,26.9,6,6'6",220,,4,-14,86.4,-4,-604,218.5,64.1,237.6,332.7,338.2,17,76.37,37,114,93,105.5,92,,,,,QB
+91,Rico Dowdle,RB,RB30,RB29,RB25,RB-T9,PIT,9,28.2,7,6'0",215,4.54,3,-4,79,-12,9,118.5,23,117.3,244.1,196.8,17,87.26,66,120,68,102.4,90,,,,,RB
+92,KC Concepcion,WR,WR34,WR48,WR48,WR-T10,CLE,11,21.9,R,6'0",190,,3,16,113.5,22,313,117.7,40.5,113.8,193.8,,,108.19,71,150,139,150.8,72,DROP,,,,WR
+93,Jake Ferguson,TE,TE13,TE14,TE13,TE-T7,DAL,14,27.6,5,6'5",250,4.81,3,27,146.5,54,-91,92.5,36.8,87.4,158.2,147.1,17,119.93,81,181,133,118.6,84,,,,,TE
+94,Dalton Kincaid,TE,TE14,TE11,TE14,TE-T7,BUF,7,26.9,4,6'3",246,,3,17,145.2,51,406,92.2,28.5,86.9,162.6,106.6,12,111.01,85,144,136,134.7,87,,,,,TE
+95,Brandon Aubrey,K,K1,K1,K1,K-T1,DAL,14,31.5,4,6'3",218,,2,91,129,34,,129.9,91,132.1,169.4,0.6,17,185.55,137,192,240,82.3,100,,,,,K
+96,Ka'imi Fairbairn,K,K2,K2,K5,K-T1,HOU,8,32.6,11,6'0",183,4.96,2,96,128,32,,128.6,86.9,132.5,168.5,0,15,192.36,136,211,246,127.3,96,,,,,K
+97,Cameron Dicker,K,K3,K3,K2,K-T1,LAC,7,26.3,5,6'1",216,,2,98,139.4,42,,125.1,75.8,128,166.3,0,17,194.55,151,333,241,109.7,98,,,,,K
+98,Cam Little,K,K4,K4,K8,K-T1,JAC,7,23,3,6'1",172,,2,100,156.4,58,,125,75.6,130.4,166.6,0,17,198.39,168,236,250,141.1,93,,,,,K
+99,Jason Myers,K,K5,K5,K3,K-T1,SEA,11,35.3,12,5'10",190,,2,101,125.1,26,,123.4,69.7,131.6,168.1,0,17,200.45,171,253,242,113.3,98,,,,,K
+100,Eddy Pineiro,K,K6,K6,K6,K-T1,SF,8,31,9,5'11",190,,2,109,,,,120.4,69.8,127.9,160.1,0,14,209.07,173,253,248,144.3,61,,,,,K
+101,Tyler Loop,K,K7,K7,K10,K-T1,BAL,13,25.1,2,5'11",191,,2,112,162.3,61,,118.3,67.8,125.8,156,0,17,212.52,181,328,255,165,59,,,,,K
+102,HOU D/ST,DST,DST1,DST1,,DST-T1,HOU,8,,,,,,2,52,,,,118.2,78.6,114.2,170.5,,,153.67,143,175,,,98,,,,,DST
+103,Evan McPherson,K,K8,K8,K15,K-T1,CIN,6,27.1,6,5'11",185,,2,114,164.9,62,,118.1,71,122.4,158.4,0,17,217.15,175,333,362,168.9,42,,,,,K
+104,Andy Borregales,K,K9,K11,K25,K-T1,NE,11,23.7,2,5'11",202,,2,120,,,,116.9,69.1,125.5,155.3,0,17,223.71,194,282,494,170,16,,,,,K
+105,Jake Bates,K,K10,K10,K9,K-T1,DET,6,27.5,3,5'10",205,,2,116,146.5,42,,116.9,68.1,124.3,156.8,0,17,220.72,192,282,252,157.1,72,,,,,K
+106,Cairo Santos,K,K11,K9,K11,K-T1,CHI,10,34.8,13,5'8",173,4.76,2,113,160.2,54,,116,38.5,123.3,159.7,0,15,218.57,193,333,256,168.2,29,,,,,K
+107,DEN D/ST,DST,DST2,DST2,,DST-T1,DEN,10,,,,,,2,57,,,,115.9,78.1,114.8,160.6,,,164.44,149,209,,,98,,,,,DST
+108,LAR DST,DST,DST3,DST3,,DST-T1,LAR,11,,,,,,2,57,,,,114.1,75.1,112.8,159.9,,,164.96,145,186,,,88,,,,,DST
+109,PHI D/ST,DST,DST4,DST5,,DST-T1,PHI,10,,,,,,2,66,,,,111.2,68.1,109.7,162,,,175.18,156,235,,,87,,,,,DST
+110,SEA DST,DST,DST5,DST4,,DST-T1,SEA,11,,,,,,2,57,,,,111.2,67.8,107,149.4,,,167.18,151,194,,,97,,,,,DST
+111,MIN D/ST,DST,DST6,DST6,,DST-T1,MIN,6,,,,,,2,76,,,,110,64.8,105.5,152.6,,,186.53,162,251,,,67,,,,,DST
+112,PIT D/ST,DST,DST7,DST7,,DST-T1,PIT,9,,,,,,2,75,,,,109.8,65.3,104,162.7,,,186.75,164,224,,,73,,,,,DST
+113,BAL D/ST,DST,DST8,DST11,,DST-T1,BAL,13,,,,,,2,84,,,,109,64.1,105.8,159.9,,,196.77,171,280,,,63,,,,,DST
+114,JAC D/ST,DST,DST9,DST9,,DST-T1,JAC,7,,,,,,2,75,,,,109,63.9,106.4,161.6,,,188.99,153,279,,,76,,,,,DST
+115,LAC D/ST,DST,DST10,DST10,,DST-T1,LAC,7,,,,,,2,77,,,,109,62.6,103.3,161.1,,,191.65,171,280,,,51,,,,,DST
+116,NE DST,DST,DST11,DST8,,DST-T1,NE,11,,,,,,2,71,,,,109,62.9,105.6,159.7,,,187.17,161,356,,,85,,,,,DST
+117,GB D/ST,DST,DST12,DST12,,DST-T1,GB,11,,,,,,2,90,,,,108.4,62.8,105.2,151.4,,,207.26,183,280,,,28,,,,,DST
+118,KC D/ST,DST,DST13,DST13,,DST-T1,KC,5,,,,,,2,92,,,,104.7,61.7,102,146.5,,,209.61,183,280,,,20,,,,,DST
+119,T.J. Hockenson,TE,TE15,TE21,TE19,TE-T8,MIN,6,29.2,8,6'5",248,4.7,2,69,139.2,20,-34,91.6,34.6,84.4,163.3,87.3,15,188.02,87,299,207,155.7,44,,,,,TE
+120,Jaxson Dart,QB,QB17,QB12,QB7,QB-T8,NYG,8,23.3,2,6'2",223,,1,-22,125.9,6,-31,215.6,65.1,229.5,334.4,241.6,14,98.35,59,126,85,82.9,93,,,,,QB
+121,Malik Willis,QB,QB18,QB21,QB21,QB-T8,MIA,6,27.3,5,6'1",225,,1,8,161.4,40,-31,214.8,44,230.6,327.3,51.2,4,128.78,104,255,192,167.3,33,,,,,QB
+122,Drake Maye,QB,QB19,QB3,QB4,QB-T8,NE,11,24,3,6'4",225,,1,-85,52.1,-70,-74,211,28.6,226.3,338.9,351.5,17,37.1,27,79,60,47.3,100,,,,,QB
+123,Dak Prescott,QB,QB20,QB10,QB9,QB-T8,DAL,14,33.1,11,6'2",230,4.79,1,-45,63.4,-60,18,204.2,27.1,215.5,355,313.8,17,77.92,37,108,95,74,95,,,,,QB
+124,Jacoby Brissett,QB,QB21,QB27,QB27,QB-T8,ARI,14,33.7,11,6'4",235,4.94,1,73,172.1,48,-35,190.9,11.7,202.6,364.5,227.4,14,196.67,139,338,317,169.8,9,,,,,QB
+125,Bryce Young,QB,QB22,QB26,QB25,QB-T8,CAR,5,25.1,4,5'10",204,,1,45,,,-146,189.9,11.8,199.7,380.1,218,16,169.51,134,326,313,168.4,16,,,,,QB
+126,Cam Ward,QB,QB23,QB25,QB26,QB-T8,TEN,9,24.3,2,6'2",219,,1,33,,,-88,185.1,12.1,159.3,386.3,186.7,17,158.85,119,255,315,169.1,15,,,,,QB
+127,Matthew Stafford,QB,QB24,QB16,QB12,QB-T8,LAR,11,38.6,18,6'3",214,4.81,1,-21,72.7,-54,-471,182.9,12.2,167.5,369.7,350.4,17,105.93,74,129,102,96.9,93,,,,,QB
+128,Daniel Jones,QB,QB25,QB24,QB19,QB-T8,IND,13,29.3,8,6'5",230,4.81,1,18,160.3,32,-83,180.1,24.1,169,357.4,226.4,13,146.36,119,255,170,161.5,30,,,,,QB
+129,Aaron Rodgers,QB,QB26,QB28,QB30,QB-T8,PIT,9,42.7,22,6'2",223,4.71,1,84,,,29,179.7,25.2,162.5,351.2,226.6,16,213.2,139,341,384,169,11,,,Steelers vs Falcons live updates: TV info  live stream  odds for NFL Week 1 game (rss:yahoo),https://sports.yahoo.com/articles/steelers-vs-falcons-live-updates-100053404.html,QB
+130,Sam Darnold,QB,QB27,QB22,QB24,QB-T8,SEA,11,29.2,9,6'3",225,4.85,1,8,152.7,23,60,176.6,24.7,141.8,362,235.4,17,138.31,113,212,280,163.4,38,,,Seahawks' Sam Darnold is dealing with an 'unusual' injury (rss:yardbarker),https://www.yardbarker.com/nfl/articles/seahawks_sam_darnold_is_dealing_with_an_unusual_injury/s1_13132_44290806,QB
+131,C.J. Stroud,QB,QB28,QB23,QB23,QB-T8,HOU,8,24.9,4,6'3",218,,1,12,161,30,-112,174.8,25.5,142.3,363.1,208.5,14,143.15,108,208,276,165.4,28,,,Sources: Stroud  Texans to table extension talks amid looming QB market (rss:espn),https://www.espn.com/nfl/story/_/id/49917836/sources-cj-stroud-texans-table-extension-talks,QB
+132,Fernando Mendoza,QB,QB29,QB30,QB29,QB-T8,LV,13,22.9,R,6'5",225,,1,129,,,-42,161.8,15.9,132.4,369.6,,,261.28,159,343,382,168.7,19,,,,,QB
+133,Geno Smith,QB,QB30,QB29,QB28,QB-T8,NYJ,13,35.9,14,6'3",221,4.58,1,95,,,-36,161.5,16.4,126.3,370.5,173.9,15,227.97,147,342,378,170,7,,,Cade Klubnik ready for his Jets turn at QB — whenever it comes (rss:yahoo),https://sports.yahoo.com/articles/cade-klubnik-ready-jets-turn-233131973.html,QB
+134,Tua Tagovailoa,QB,QB31,QB31,QB32,QB-T8,ATL,11,28.5,7,6'1",225,,1,148,,,-8,139.1,3.5,103.6,336.2,160.7,14,281.77,153,344,421,170,6,,,Falcons rule out Tua Tagovailoa against Steelers  Cooper Rush to start at quarterback (rss:cbs),https://www.cbssports.com/nfl/news/falcons-rule-out-tua-tagovailoa-vs-steelers-cooper-rush-to-start/,QB
+135,Deshaun Watson,QB,QB32,QB34,QB31,QB-T8,CLE,11,31,10,6'3",223,4.66,1,157,,,,117.2,0.8,73.5,309.4,,,291.93,179,346,386,170,5,,,Agent's Take: Jayden Daniels  C.J. Stroud and other quarterbacks who are at a crossroads entering 2026 season (rss:cbs),https://www.cbssports.com/nfl/news/jayden-daniels-c-j-stroud-quarterbacks-at-crossroads-2026-nfl-season/,QB
+136,Jordan Mason,RB,RB31,RB38,RB38,RB-T10,MIN,6,27.3,5,5'11",230,,1,-22,112.7,-23,367,116.8,19.2,99.9,228.6,121.9,16,113.61,75,148,142,144.2,77,,,,,RB
+137,Quentin Johnston,WR,WR35,WR42,WR43,WR-T11,LAC,7,25,4,6'2",208,,1,-43,84.8,-52,334,115.9,38.7,114.9,194.8,145.7,13,93.76,68,149,108,138,79,,,,,WR
+138,Jonathon Brooks,RB,RB32,RB30,RB28,RB-T10,CAR,5,23.1,3,6'0",207,,1,-49,89.2,-49,49,114.7,19.7,99.4,229.7,,,88.71,56,182,116,109.4,86,,,NFL Week 1 injuries: Giants' Malik Nabers  Bears' Rome Odunze listed as questionable (rss:cbs),https://www.cbssports.com/nfl/news/nfl-week-1-injuries-tracker-rome-odunze-alvin-kamara/,RB
+139,Jakobi Meyers,WR,WR36,WR45,WR42,WR-T11,JAC,7,29.8,8,6'2",200,4.63,1,-31,93.5,-45,-153,114,37.1,110,193,138.3,16,107.87,71,150,107,123.3,71,,,,,WR
+140,Michael Wilson,WR,WR37,WR40,WR41,WR-T11,ARI,14,26.5,4,6'2",213,4.58,1,-52,73.3,-67,-162,113.1,37.5,111.4,188.9,181.6,17,88.1,55,131,106,109.6,88,,,,,WR
+141,Chase McLaughlin,K,K12,K12,K14,K-T2,TB,10,30.4,8,6'0",190,,1,87,150.1,9,,112.8,38.2,121.2,158.3,0,17,228.08,192,333,338,169.9,14,,,,,K
+142,Mike Evans,WR,WR38,WR30,WR35,WR-T11,SF,8,33,13,6'5",231,4.53,1,-82,55.5,-86,-683,112.8,33.7,111.1,194.3,69.8,8,59.7,36,109,87,84.6,93,,,,,WR
+143,Harrison Butker,K,K13,K14,K7,K-T2,KC,5,31.1,10,6'4",205,,1,101,149.5,7,,112.4,44.7,119.2,154.3,0,17,243.9,207,333,249,144.7,50,,,,,K
+144,Will Reichard,K,K14,K16,K12,K-T2,MIN,6,25.6,3,6'1",190,,1,108,148.9,5,,112.3,39.8,118.6,157.1,0,17,251.58,198,331,259,167.5,49,,,,,K
+145,Alec Pierce,WR,WR39,WR43,WR32,WR-T11,IND,13,26.3,5,6'3",211,4.41,1,-45,61.7,-83,-269,112.3,31.4,109.4,197.9,159.8,15,100.28,52,142,75,109,86,,,,,WR
+146,MarShawn Lloyd,RB,RB33,RB35,RB34,RB-T10,GB,11,25.7,3,5'9",220,4.46,1,-40,113.3,-33,1249,112.1,14.6,92.1,251.2,,,106.21,58,284,128,109.8,77,,,,,RB
+147,Wil Lutz,K,K15,K17,K21,K-T2,DEN,10,32.2,11,5'11",184,,1,119,172.6,26,,111.9,51.8,118,156.6,0,17,265.87,182,333,489,169.5,12,,,Broncos captains show what leadership means in Denver (rss:yahoo),https://sports.yahoo.com/articles/broncos-captains-show-leadership-means-100000833.html,K
+148,Chris Boswell,K,K16,K15,K13,K-T2,PIT,9,35.5,12,6'2",185,4.93,1,96,,,,111.8,51.9,116.8,156.8,0,17,244.39,200,329,337,164.9,40,,,,,K
+149,Matthew Golden,WR,WR40,WR51,WR38,WR-T11,GB,11,23.1,2,5'11",191,4.29,1,-24,96,-53,53,111.8,33.5,107,197.3,55.5,14,124.75,81,202,90,118.7,79,,,,,WR
+150,Harrison Mevis,K,K17,K13,K4,K-T2,LAR,11,24.4,2,6'0",245,,1,80,141.1,-9,,111.5,55.6,118.7,155,0,9,229.98,193,333,243,128.1,80,,,,,K
+151,Daniel Carlson,K,K18,K18,K20,K-T2,NO,8,31.6,9,6'5",222,,1,115,,,,111.3,38.9,119.9,155.6,0,17,266.18,209,402,488,170,1,,,,,K
+152,Brian Thomas Jr.,WR,WR41,WR35,WR37,WR-T11,JAC,7,23.9,3,6'2",209,4.33,1,-71,68.8,-83,-719,111.3,32.4,110.7,192.9,114.8,14,81.16,51,126,89,116.7,90,,,,,WR
+153,Nick Folk,K,K19,K19,K16,K-T2,ATL,11,41.8,19,6'1",225,4.95,1,114,,,,111.1,44.8,119.4,154.6,0,16,266.63,187,365,363,170.1,3,,,,,K
+154,Chris Godwin Jr.,WR,WR42,WR33,WR52,WR-T11,TB,10,30.5,10,6'1",209,4.42,1,-80,78.4,-76,182,111.1,28.9,110.3,192.5,66.5,9,74.37,45,123,155,128.4,84,,,,,WR
+155,David Montgomery,RB,RB34,RB21,RB23,RB-T10,HOU,8,29.2,8,5'11",230,4.63,1,-95,55.5,-99,63,111,13.2,92.1,254.5,154.9,17,60.31,41,78,65,66.2,96,,,,,RB
+156,Spencer Shrader,K,K20,K20,K18,K-T2,IND,13,27.3,3,6'2",201,,1,112,,,,109.8,43.7,118.6,152.9,0,5,267.56,216,325,410,170,3,,,,,K
+157,Blake Corum,RB,RB35,RB36,RB39,RB-T10,LAR,11,25.8,3,5'8",202,4.53,1,-47,115.3,-42,36,109.7,16.5,91.6,235.4,118.2,17,109.75,78,141,148,130.6,83,,,,,RB
+158,Stefon Diggs,WR,WR43,WR41,WR49,WR-T11,WAS,7,32.8,12,6'0",191,4.46,1,-64,100.9,-57,-119,109.7,28.6,102.9,190.4,167.8,17,93.69,55,224,152,107.9,85,,,,,WR
+159,Ben Sauls,K,K21,K28,,K-T2,FA,,25.1,R,5'10",185,,1,131,,,,109,22.3,124.6,158,0,3,290.4,192,450,,,1,,,,,K
+160,Brandon McManus,K,K22,K27,K32,K-T2,FA,,35.1,12,6'3",201,,1,130,,,,108.5,22.3,119.2,156,0,14,290.2,198,392,1769,169.9,1,,,,,K
+161,Trey Smack,K,K23,K21,K17,K-T2,GB,11,23.1,R,6'1",188,,1,109,168,7,,108.5,21.9,114,156.7,,,269.91,212,352,409,168.2,13,,,,,K
+162,Blake Grupe,K,K24,K23,K29,K-T2,NYJ,13,27.8,4,5'7",156,,1,118,,,,108.3,35.5,115.2,154,0,16,279.5,205,363,503,169.9,1,,,,,K
+163,Courtland Sutton,WR,WR44,WR38,WR28,WR-T11,DEN,10,30.9,9,6'4",216,4.54,1,-77,61,-102,-184,108.2,31.5,105.5,191.6,182.7,17,86.25,55,121,55,86.9,91,,,Broncos captains show what leadership means in Denver (rss:yahoo),https://sports.yahoo.com/articles/broncos-captains-show-leadership-means-100000833.html,WR
+164,Ryan Fitzgerald,K,K25,K24,K26,K-T2,CAR,5,26.1,2,5'11",193,,1,119,,,,107.8,31.7,116.9,156.2,0,17,282.57,203,406,497,169.8,1,,,,,K
+165,Charlie Smyth,K,K26,K25,,K-T2,NO,8,25.2,2,6'4",210,,1,120,,,,107.5,50.8,113.2,151.3,0,6,284.75,192,359,,,1,,,,,K
+166,Tyler Bass,K,K27,K22,K22,K-T2,BUF,7,29.5,7,5'10",183,,1,109,,,,107.2,39.7,115,150.6,,,275.3,216,407,490,169.3,7,,,,,K
+167,Zane Gonzalez,K,K28,K26,K31,K-T2,FA,,31.3,8,6'0",200,,1,123,,,,106.8,38,115.2,151.1,0,9,290.18,203,405,1745,170,2,,,,,K
+168,Aaron Jones Sr.,RB,RB36,RB40,RB40,RB-T10,MIN,6,31.7,10,5'9",208,4.56,1,-50,101.5,-66,-135,106.4,15.8,87.6,230.1,104.7,12,117.76,86,152,149,120.6,76,,,,,RB
+169,Jordyn Tyson,WR,WR45,WR55,WR64,WR-T11,NO,8,22.1,R,6'2",200,,1,-30,,,-998,105.9,31.3,96.3,189.3,,,138.63,71,232,195,168.1,60,,,,,WR
+170,Joey Slye,K,K29,K29,K27,K-T2,TEN,9,30.4,8,5'11",228,,1,125,,,,105.5,36,114.6,153.9,0,16,295.14,203,401,499,169.8,1,,,,,K
+171,Parker Washington,WR,WR46,WR28,WR34,WR-T11,JAC,7,24.4,4,5'10",204,,1,-112,62.9,-108,603,105.5,31.1,93.9,189.8,143.7,16,58.52,36,109,77,95,92,,,Source: Jags  WR Washington unlikely to agree to deal before season (rss:espn),https://www.espn.com/nfl/story/_/id/49920927/source-jaguars-parker-washington-unlikely-agree-deal,WR
 172,DET D/ST,DST,DST14,DST14,,DST-T2,DET,6,,,,,,1,48,,,,103.6,62.5,100.1,146.6,,,220.28,185,355,,,62,,,,,DST
-173,Josh Downs,WR,WR51,WR39,WR50,WR-T11,IND,13,25.1,4,5'9",171,4.48,1,-85,97.9,-75,-187,103.1,29.7,94.7,173.8,109.4,16,88,52,133,153,139.1,80,,,,,WR
-174,Rashid Shaheed,WR,WR52,WR57,WR56,WR-T11,SEA,11,28,5,6'0",180,,1,-27,117.7,-56,32,103,26.3,94.6,180.1,115.1,18,146.98,115,205,160,160.7,51,,,,,WR
-175,Makai Lemon,WR,WR53,WR47,WR51,WR-T11,PHI,10,22.2,R,5'11",192,,1,-67,122.7,-52,-325,102.8,21.6,94.7,185.8,,,108.06,68,180,154,137.5,79,,,Makai Lemon appreciates guidance from DeVonta Smith as his NFL career begins (rss:yahoo),https://sports.yahoo.com/articles/makai-lemon-appreciates-guidance-devonta-050000905.html,WR
-176,De'Zhaun Stribling,WR,WR54,WR49,WR40,WR-T11,SF,8,23.7,R,6'2",207,,1,-55,124.6,-51,234,102.4,23.1,99,192.5,,,121.47,62,303,92,139.5,67,,,,,WR
-177,Kaleb Johnson,RB,RB32,RB72,RB82,RB-T7,GB,11,23,2,6'0",225,4.57,1,72,,,127,102.1,18,88.5,205.1,8.3,10,248.63,145,381,375,170.1,15,,,,,RB
-178,Chuba Hubbard,RB,RB33,RB33,RB37,RB-T7,CAR,5,27.2,6,6'1",210,4.48,1,-78,86.3,-92,-453,101.8,13.3,83.6,227.7,110.4,15,99.84,67,145,131,113.6,88,,,,,RB
-179,CLE D/ST,DST,DST15,DST15,,DST-T2,CLE,11,,,,,,1,42,,,,101.3,62.1,100.3,137,,,220.74,185,325,,,20,,,,,DST
-180,Rico Dowdle,RB,RB34,RB29,RB25,RB-T7,PIT,9,28.2,7,6'0",215,4.54,1,-93,79,-101,9,100.8,13.4,83.7,231.1,196.8,17,87.26,66,120,68,100.1,90,,,,,RB
-181,Kirk Cousins,QB,QB35,QB33,QB34,QB-T8,LV,13,38,15,6'3",209,4.84,1,108,,,50,100.2,0,59.5,248.6,103.5,10,289.05,211,347,429,169.9,5,,,How Kirk Cousins is approaching Year 15 as a starter -- and mentor to the Raiders' young core (rss:espn),https://www.espn.com/nfl/story/_/id/49904333/las-vegas-raiders-quarterback-kirk-cousins-year-15-mentor-starter,QB
-182,Jacory Croskey-Merritt,RB,RB35,RB39,RB36,RB-T7,WAS,7,25.4,2,5'11",208,,1,-67,103.3,-79,61,100.2,15.1,83.7,215,135.8,17,114.54,67,141,130,139.7,79,,,,,RB
-183,BUF D/ST,DST,DST16,DST16,,DST-T2,BUF,7,,,,,,1,44,,,,99.6,57.7,97.4,141.5,,,227.03,189,343,,,31,,,,,DST
-184,DAL D/ST,DST,DST17,DST18,,DST-T2,DAL,14,,,,,,1,64,,,,99.6,57.7,97.2,143.8,,,247.62,166,364,,,25,,,,,DST
-185,NO D/ST,DST,DST18,DST19,,DST-T2,NO,8,,,,,,1,77,,,,99.6,51.8,97.6,149.6,,,261.57,172,353,,,17,,,,,DST
-186,SF D/ST,DST,DST19,DST20,,DST-T2,SF,8,,,,,,1,78,,,,99.6,52.1,98.2,148.1,,,264.07,194,356,,,17,,,,,DST
-187,TEN D/ST,DST,DST20,DST17,,DST-T2,TEN,9,,,,,,1,49,,,,99.6,52.4,99.7,147.5,,,235.78,188,354,,,10,,,,,DST
-188,Chad Ryland,K,K30,K30,K28,K-T2,ARI,14,26.9,4,6'0",195,,1,108,,,,98.4,29.4,108.3,148.2,0,17,296.33,197,391,501,169.9,1,,,,,K
-189,Jordyn Tyson,WR,WR55,WR55,WR64,WR-T11,NO,8,22.1,R,6'2",200,,1,-50,,,-998,98.3,17.5,91.6,188,,,138.63,71,232,195,168.2,60,,,,,WR
-190,Jake Elliott,K,K31,K31,K19,K-T2,PHI,10,31.6,10,5'9",167,4.79,1,113,,,,98.2,25.5,109.6,156.1,0,17,303.27,197,380,487,168.9,8,,,,,K
-191,Jake Ferguson,TE,TE15,TE14,TE13,TE-T7,DAL,14,27.6,5,6'5",250,4.81,1,-71,146.5,-44,-91,98,37,90.3,174.7,147.1,17,119.93,81,181,133,116.7,84,,,,,TE
-192,Isaiah Likely,TE,TE16,TE12,TE15,TE-T7,NYG,8,26.4,5,6'4",241,,1,-73,132.8,-59,139,98,32.9,95.4,170.3,48.2,12,118.57,87,226,143,124.3,85,,,,,TE
-193,Pat Freiermuth,TE,TE17,TE28,TE22,TE-T7,PIT,9,27.9,6,6'5",258,,1,41,,,,97.5,31.9,96,188.7,93.1,15,233.5,138,332,296,169.6,11,,,,,TE
-194,Chig Okonkwo,TE,TE18,TE19,TE24,TE-T7,WAS,7,27,5,6'3",238,,1,-31,,,-174,97.4,30.2,94.3,179.7,96,17,163.01,112,226,310,170.1,29,,,,,TE
-195,CIN D/ST,DST,DST21,DST21,,DST-T2,CIN,6,,,,,,1,73,,,,96.7,51.1,93.7,146.5,,,268,190,353,,,3,,,,,DST
-196,Deebo Samuel Sr.,WR,WR56,WR56,WR53,WR-T11,SF,8,30.6,8,6'0",215,4.48,1,-55,111.2,-85,207,96.6,16.9,89.1,197,152.2,16,140.72,83,241,156,145.9,63,,,,,WR
-197,Drew Stevens,K,K32,K32,K24,K-T2,WAS,7,22.7,R,6'1",213,,1,107,,,,96.5,21.2,109.5,162,,,304,253,362,493,169.9,1,,,,,K
-198,Tre Tucker,WR,WR57,WR59,WR65,WR-T11,LV,13,25.5,4,5'8",182,4.4,1,-39,131,-67,80,95.8,16.7,89.2,188.4,133.2,17,159.03,115,247,196,169.3,28,ADD,,,,WR
-199,Carson Beck,QB,QB36,QB37,QB37,QB-T8,ARI,14,24.8,R,6'4",233,,1,124,,,,95.7,0.7,56.9,254.9,,,322.53,271,376,450,170,3,,,,,QB
-200,Jerry Jeudy,WR,WR58,WR62,WR59,WR-T11,CLE,11,27.4,7,6'1",195,4.45,1,-30,127.8,-72,-33,95,16.6,89.3,183.1,95.7,17,170.19,115,272,181,168.7,22,,,,,WR
-201,Rachaad White,RB,RB36,RB37,RB41,RB-T7,WAS,7,27.6,5,6'0",214,4.48,1,-89,128,-73,57,94.9,14.1,78.1,205.2,123,17,112.32,75,148,150,130.6,69,,,,,RB
-202,Trey Benson,RB,RB37,RB89,RB100,RB-T7,ARI,14,24.1,3,6'0",225,4.39,1,89,,,,94.2,10.2,85.8,201.7,28.9,4,290.52,212,352,456,170,2,,,,,RB
-203,Blake Corum,RB,RB38,RB36,RB39,RB-T7,LAR,11,25.8,3,5'8",202,4.53,1,-93,115.3,-88,36,93.9,13.3,84.3,194.4,118.2,17,109.75,78,141,148,129.7,83,,,,,RB
-204,Jordan Mason,RB,RB39,RB38,RB38,RB-T7,MIN,6,27.3,5,5'11",230,,1,-90,112.7,-91,367,93.4,14.1,78.8,202,121.9,16,113.61,75,148,142,143.1,77,,,,,RB
-205,Rashod Bateman,WR,WR59,WR85,WR68,WR-T11,BAL,13,26.8,6,6'1",193,4.39,1,23,142.3,-63,,93.4,16.4,84.9,181.4,45.9,13,227.62,150,321,213,171.2,7,,,,,WR
-206,Jalen Coker,WR,WR60,WR52,WR55,WR-T11,CAR,5,24.8,3,6'3",213,4.57,1,-81,114.4,-92,38,93.1,21.7,85.5,190.8,73.9,11,124.94,91,176,159,155.1,57,,,,,WR
-207,Jalen McMillan,WR,WR61,WR64,WR57,WR-T11,TB,10,24.7,3,6'1",192,4.47,1,-31,132.2,-75,,92.9,14.6,84.2,176,23.9,4,175.82,137,296,161,163.3,22,,,,,WR
-208,Calvin Ridley,WR,WR62,WR77,WR60,WR-T11,TEN,9,31.7,8,6'1",190,4.43,1,2,134.6,-73,,92.8,23.5,81.1,194.4,38.8,7,209.81,136,302,184,170.2,12,,,,,WR
-209,ATL D/ST,DST,DST22,DST23,,DST-T2,ATL,11,,,,,,1,62,,,,92.7,50.3,91.3,143.8,,,271.34,183,356,,,9,,,,,DST
-210,CHI D/ST,DST,DST23,DST22,,DST-T2,CHI,10,,,,,,1,59,,,,92.7,53,92.4,135.7,,,268.72,167,354,,,13,,,,,DST
-211,Kyle Monangai,RB,RB40,RB41,RB33,RB-T7,CHI,10,24.2,2,5'8",207,4.6,1,-91,103.5,-107,-308,92.6,14.6,75.7,206.1,137.7,17,120.02,86,162,121,126.8,81,,,,,RB
-212,Jameis Winston,QB,QB37,QB53,QB42,QB-T8,NYG,8,32.7,12,6'4",231,4.97,1,144,,,,92.5,2.1,55.2,241.9,42.8,3,356.46,319,398,476,170,1,,,,,QB
-213,Jonathon Brooks,RB,RB41,RB30,RB28,RB-T7,CAR,5,23.1,3,6'0",207,,1,-124,89.2,-124,49,92.4,14.9,74.5,200.6,,,88.71,56,182,116,107.7,86,,,NFL Week 1 injuries: Giants' Malik Nabers  Bears' Rome Odunze listed as questionable (rss:cbs),https://www.cbssports.com/nfl/news/nfl-week-1-injuries-tracker-rome-odunze-alvin-kamara/,RB
-214,IND D/ST,DST,DST24,DST26,,DST-T2,IND,13,,,,,,1,66,,,,92.4,50.8,90.8,143.8,,,280.47,190,356,,,15,,,,,DST
-215,LV D/ST,DST,DST25,DST27,,DST-T2,LV,13,,,,,,1,67,,,,92.4,48.3,88.7,144.7,,,281.5,188,359,,,9,,,,,DST
-216,NYG D/ST,DST,DST26,DST24,,DST-T2,NYG,8,,,,,,1,56,,,,92.4,46.3,89.1,143.8,,,271.9,172,384,,,14,,,,,DST
-217,WAS D/ST,DST,DST27,DST25,,DST-T2,WAS,7,,,,,,1,60,,,,92.4,48.5,87.4,141.8,,,276.5,190,400,,,6,,,,,DST
-218,Juwan Johnson,TE,TE19,TE15,TE21,TE-T7,NO,8,30,7,6'4",245,4.58,1,-90,149,-69,212,92.2,28.5,89.7,162.2,141.4,17,127.67,87,173,262,157.5,49,,,,,TE
-219,Riley Leonard,QB,QB38,QB51,QB50,QB-T8,IND,13,24,2,6'4",213,,1,134,,,,91.4,0.9,48.2,263.5,31,5,353.25,320,375,1226,170,1,,,,,QB
-220,Dominic Zvada,K,K33,K33,K23,K-T2,NYG,8,22.9,R,6'3",187,,1,122,,,,90.6,19.5,110.3,156.8,,,342,324,371,491,169.8,2,,,,,K
-221,Greg Dulcich,TE,TE20,TE24,TE28,TE-T7,MIA,6,26.4,5,6'4",245,4.69,1,-6,,,7,90.4,25.9,85.9,160.1,49.8,9,215.31,131,306,365,170.4,9,,,,,TE
-222,Aaron Jones Sr.,RB,RB42,RB40,RB40,RB-T7,MIN,6,31.7,10,5'9",208,4.56,1,-104,101.5,-120,-135,90,14.9,68.6,208.4,104.7,12,117.76,86,152,149,119.5,76,,,,,RB
-223,Keenan Allen,WR,WR63,WR71,WR67,WR-T11,IND,13,34.3,14,6'2",211,4.58,1,-31,145.3,-78,135,90,10.1,79,194.6,142.2,17,192.19,110,293,212,166,27,,,,,WR
-224,J.J. McCarthy,QB,QB39,QB38,QB36,QB-T8,MIN,6,23.6,3,6'3",219,,1,106,,,,89.5,0.9,43.2,275.6,125.4,10,330.44,269,386,446,169.9,2,,,,,QB
-225,Germie Bernard,WR,WR64,WR88,WR75,WR-T11,PIT,9,22.7,R,6'1",206,4.48,1,12,,,,89.4,6.6,79.2,178.5,,,236.65,168,329,287,171.1,7,,,,,WR
-226,Adonai Mitchell,WR,WR65,WR60,WR61,WR-T11,NYJ,13,23.9,3,6'2",205,4.34,1,-57,159.8,-66,-3,89.4,5,76.2,178.5,71.4,16,169.01,126,258,186,171,15,,,,,WR
-227,RJ Harvey,RB,RB43,RB31,RB44,RB-T7,DEN,10,25.6,2,5'8",205,4.4,1,-132,103.9,-123,193,89.1,15.7,81.5,179.2,183.1,17,94.71,61,143,173,131.1,84,,,,,RB
-228,Justin Fields,QB,QB40,QB43,QB38,QB-T8,KC,5,27.5,6,6'3",227,4.45,1,116,,,,89.1,0.6,33.9,293.1,142.7,9,344.12,300,388,452,170,2,,,,,QB
-229,Elijah Sarratt,WR,WR66,WR98,WR129,WR-T11,BAL,13,23.3,R,6'2",215,,1,39,,,,88.8,5.4,75.6,184.9,,,268.32,202,370,1094,170,3,,,,,WR
-230,Dalton Schultz,TE,TE21,TE18,TE23,TE-T7,HOU,8,30.1,9,6'5",242,4.75,1,-68,,,-11,88.6,22.4,84.3,154.9,136.7,17,162.07,111,206,297,168.8,31,,,,,TE
-231,Josh Jacobs,RB,RB44,RB46,RB32,RB-T7,GB,11,28.6,8,5'10",223,,1,-83,84.8,-146,-2907,88.2,8.4,79.1,177,219.1,15,147.99,39,394,120,102.6,94,,,Judge seals video in Josh Jacobs case (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/judge-seals-video-in-josh-jacobs-case,RB
-232,Woody Marks,RB,RB45,RB42,RB42,RB-T7,HOU,8,25.7,2,5'10",208,4.54,1,-96,134.8,-97,84,88.1,5.2,78.3,172,133.1,16,135.81,102,189,151,152.9,55,,,,,RB
-233,ARI D/ST,DST,DST28,DST30,,DST-T2,ARI,14,,,,,,1,71,,,,87.8,44.7,82.8,137.7,,,304,212,361,,,5,,,,,DST
-234,CAR D/ST,DST,DST29,DST28,,DST-T2,CAR,5,,,,,,1,60,,,,87.8,44.8,84.6,131.8,,,294.18,185,365,,,3,,,,,DST
-235,MIA D/ST,DST,DST30,DST32,,DST-T2,MIA,6,,,,,,1,95,,,,87.8,47.2,86.6,123.9,,,329.71,206,390,,,6,,,,,DST
-236,NYJ D/ST,DST,DST31,DST31,,DST-T2,NYJ,13,,,,,,1,83,,,,87.8,46,87,119.1,,,319.2,191,428,,,4,,,,,DST
-237,TB D/ST,DST,DST32,DST29,,DST-T2,TB,10,,,,,,1,66,,,,87.8,47.8,90,119.5,,,303.05,188,383,,,14,,,,,DST
-238,Jalen Nailor,WR,WR67,WR72,WR66,WR-T11,LV,13,27.5,5,6'0",190,4.5,1,-44,150.3,-88,-143,86.8,7.4,76,169.3,86.2,17,194.41,128,302,199,171.1,24,ADD,,,,WR
-239,Zach Charbonnet,RB,RB46,RB51,RB43,RB-T7,SEA,11,25.6,4,6'1",220,4.53,1,-83,141.7,-97,-193,85.9,4.4,76.8,169.4,171.4,16,156.22,117,292,172,156.6,56,,,,,RB
-240,Brenton Strange,TE,TE22,TE17,TE20,TE-T7,JAC,7,25.7,4,6'4",253,4.7,1,-79,160.6,-79,-103,85.4,15.1,79.7,156.2,95,12,160.94,111,236,210,168.9,38,DROP,,,,TE
-241,Drew Allar,QB,QB41,QB39,QB46,QB-T8,PIT,9,22.5,R,6'5",228,,1,91,,,,85,0.5,32.3,279.6,,,332,320,344,1221,169.9,1,,,,,QB
-242,Jason Sanders,K,K34,K34,K30,K-T2,FA,,30.8,9,5'11",195,,1,120,,,,84.7,19.9,97.5,151.7,,,362.25,333,403,1743,169.9,1,,,,,K
-243,Malik Washington,WR,WR68,WR70,WR81,WR-T11,MIA,6,25.7,,5'8",195,4.47,1,-54,148.4,-95,32,84.6,10.2,75.7,163.1,87.7,17,189.21,83,296,305,169.9,19,DROP,,,,WR
-244,Davis Mills,QB,QB42,QB56,QB51,QB-T8,HOU,8,27.9,6,6'4",225,4.82,1,119,,,,84.5,0.5,32.1,278,68.6,6,363,332,392,1253,170,1,,,,,QB
-245,Ryan Flournoy,WR,WR69,WR69,WR77,WR-T11,DAL,14,26.8,3,6'1",205,4.44,1,-59,166.7,-78,,84.5,10.7,76.5,174.4,94,15,185.74,126,327,293,170.9,8,,,,,WR
-246,Jaydon Blue,RB,RB47,RB82,,RB-T7,PHI,10,22.6,2,5'9",198,4.38,1,26,,,,84.5,3.1,81.4,175.2,19.9,5,272.35,175,412,,,4,DROP,,,,RB
-247,Jalen Royals,WR,WR70,WR134,WR138,WR-T11,KC,5,23.5,2,6'0",195,4.42,1,76,,,,84.5,11.5,76.2,168.6,1.4,2,323.19,270,386,1141,170,1,,,,,WR
-248,Terrance Ferguson,TE,TE23,TE22,TE17,TE-T7,LAR,11,23.5,2,6'5",252,4.63,1,-42,173,-75,38,84.2,15,78.9,156.3,46.6,11,205.53,112,287,145,167.1,21,DROP,,,,TE
-249,Joe Milton III,QB,QB43,QB55,,QB-T8,DAL,14,26.5,3,6'5",236,,1,111,,,,84,0.5,31.9,276.3,10.3,4,360.44,330,386,,,1,,,,,QB
-250,Chris Rodriguez Jr.,RB,RB48,RB45,RB45,RB-T7,JAC,7,25.9,,5'11",224,,1,-109,157.4,-93,188,83.5,3.1,68.8,181.7,90.5,12,141.1,102,234,174,164.6,51,DROP,,,,RB
-251,Tyson Bagent,QB,QB44,QB47,QB45,QB-T8,CHI,10,26.2,4,6'3",213,4.79,1,99,,,,82.6,0.5,31.4,271.7,2.6,2,350.33,333,372,483,170,1,,,Bears sign QB Miller Moss to practice squad  elevate him for Sunday's game (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/bears-sign-qb-miller-moss-to-practice-squad-elevate-him-for-sundays-game,QB
-252,Brandon Aiyuk,WR,WR71,WR105,WR150,WR-T11,SF,8,28.5,6,6'0",200,4.5,1,27,,,,82.2,12.4,76,166.3,,,279.1,142,397,1341,170,3,,,Brandon Aiyuk might still land with one of two desperate teams (rss:yardbarker),https://www.yardbarker.com/nfl/articles/brandon_aiyuk_might_still_land_with_one_of_two_desperate_teams/s1_13132_44281688,WR
-253,T.J. Hockenson,TE,TE24,TE21,TE19,TE-T7,MIN,6,29.2,8,6'5",248,4.7,1,-65,139.2,-114,-34,82,14,70.7,159.6,87.3,15,188.02,87,299,207,155,44,,,,,TE
-254,Jauan Jennings,WR,WR72,WR63,WR73,WR-T11,MIN,6,29.1,6,6'3",212,4.72,1,-78,151.4,-103,-43,81.9,11.2,74.2,164,145.8,15,175.56,115,307,283,171,15,,,,,WR
-255,Bryce Lance,WR,WR73,WR110,WR114,WR-T11,NO,8,24,R,6'3",204,4.34,1,30,,,,81.4,12.9,70.2,163.3,,,285.32,174,385,1011,170,1,,,,,WR
-256,AJ Barner,TE,TE25,TE23,TE26,TE-T7,SEA,11,24.3,3,6'6",251,,1,-45,,,-6,81.2,11.7,70.3,168.5,121.3,17,211.33,144,261,312,169.6,19,,,,,TE
-257,Jake Browning,QB,QB45,QB36,,QB-T8,FA,,30.4,3,6'2",210,4.74,1,60,,,,80.8,0.5,30.7,265.8,48.7,5,316.5,308,325,,,1,,,,,QB
-258,Tyjae Spears,RB,RB49,RB44,RB46,RB-T7,TEN,9,25.2,4,5'11",200,,1,-118,144.6,-113,71,80.4,3.9,66.7,176.1,89.2,13,140.39,89,182,177,152.3,46,,,,,RB
-259,Denzel Boston,WR,WR74,WR58,WR58,WR-T11,CLE,11,22.7,R,6'4",215,,1,-105,137.1,-122,-42,80.4,12.1,75.2,157.9,,,153.85,107,299,180,168.8,35,,,,,WR
-260,Adam Randall,RB,RB50,RB92,RB96,RB-T7,BAL,13,22.1,R,6'3",232,4.5,1,32,,,,80.4,3.9,57.3,185,,,292.06,231,338,435,170.1,2,,,,,RB
-261,Brian Robinson Jr.,RB,RB51,RB56,RB48,RB-T7,ATL,11,27.4,3,6'1",225,4.53,1,-79,165.9,-95,-8,80.4,3.8,61.1,200.3,58.5,17,182.38,141,263,179,168,34,,,,,RB
-262,Skyler Bell,WR,WR75,WR112,WR120,WR-T11,BUF,7,24.2,R,5'11",192,4.4,1,28,,,,80.2,11.5,76.1,163.9,,,289.88,218,371,1047,170,3,,,,,WR
-263,Kenyon Sadiq,TE,TE26,TE26,TE18,TE-T7,NYJ,13,21.5,R,6'3",241,4.39,1,-39,,,-162,79.9,8.6,62.3,182.1,,,223.91,144,295,146,167.1,38,DROP,,,,TE
-264,Dylan Sampson,RB,RB52,RB47,RB55,RB-T7,CLE,11,22,2,5'8",201,,1,-115,175.6,-88,11,79.2,4.9,61.9,184.7,71.1,15,148.97,89,231,221,169.5,21,,,,,RB
-265,Alvin Kamara,RB,RB53,RB52,RB57,RB-T7,NO,8,31.1,10,5'10",215,4.56,1,-97,151.9,-113,-114,78.5,5.6,62.4,170.2,84.2,11,168.28,102,317,260,163.9,39,ADD,,,,RB
-266,Caleb Douglas,WR,WR76,WR75,WR63,WR-T11,MIA,6,23,R,6'4",205,4.39,1,-60,175.2,-91,44,77.8,12,73.5,154.9,,,205.67,126,327,188,170.8,15,ADD,,,,WR
-267,Cade Otton,TE,TE27,TE29,TE29,TE-T7,TB,10,27.4,5,6'5",247,,1,-28,,,-13,77.8,9.1,64.1,160.8,92.7,15,239.02,181,295,367,170.3,7,,,,,TE
-268,Cooper Kupp,WR,WR77,WR82,WR82,WR-T11,SEA,11,33.2,10,6'2",205,4.62,1,-43,155.5,-112,0,77.8,10,73.5,149.5,92.8,16,225.03,149,298,322,169.1,13,,,,,WR
-269,Mike Gesicki,TE,TE28,TE35,TE33,TE-T7,CIN,6,30.9,9,6'6",245,4.54,1,9,,,,77.7,9.7,64.3,154.6,56.7,12,277.84,236,357,416,170.2,3,,,,,TE
-270,Barion Brown,WR,WR78,WR126,WR134,WR-T11,NO,8,22.7,R,5'11",177,4.4,1,46,,,,76.8,9.5,72.7,150.1,,,316,262,396,1120,170,1,,,,,WR
-271,Evan Engram,TE,TE29,TE31,TE31,TE-T7,DEN,10,32,10,6'3",240,4.42,1,-16,,,,76.7,13.4,63.7,161.8,77.8,16,255.13,181,336,413,170,4,,,,,TE
-272,Devaughn Vele,WR,WR79,WR92,WR70,WR-T11,NO,8,28.7,3,6'5",210,4.47,1,-27,,,47,76.1,7.9,69,154.7,53.8,9,245.27,163,312,215,171.4,8,ADD,,,,WR
-273,Cade Klubnik,QB,QB46,QB50,QB52,QB-T8,NYJ,13,22.9,R,6'2",207,,1,80,,,,75.9,0.5,28.9,249.7,,,352.76,297,388,1259,170,1,,,Cade Klubnik ready for his Jets turn at QB — whenever it comes (rss:yahoo),https://sports.yahoo.com/articles/cade-klubnik-ready-jets-turn-233131973.html,QB
-274,Audric Estime,RB,RB54,RB103,RB116,RB-T7,NO,8,23,,,,,1,37,,,,75.9,5.6,61.8,166.6,,,310.65,251,359,1389,170,2,,,Saints put RB Audric Estime on IR (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/saints-put-rb-audric-estime-on-ir,RB
-275,Brenen Thompson,WR,WR80,WR130,WR128,WR-T11,LAC,7,23.1,R,5'9",170,4.26,1,43,,,,75,10.2,62.7,166.4,,,318.05,234,382,1079,170,1,,,,,WR
-276,Darren Waller,TE,TE30,TE33,TE27,TE-T7,CAR,5,34,9,6'6",245,4.46,1,-8,,,,74.9,16.2,66.2,154,76.7,9,268.11,209,345,364,170.4,5,ADD,,,,TE
-277,Tyler Allgeier,RB,RB55,RB43,RB49,RB-T7,ARI,14,26.4,5,5'10",225,4.6,1,-140,155.9,-121,343,74.7,3.8,63.1,162.7,116,17,136.5,99,182,200,163.6,48,,,,,RB
-278,Mac Jones,QB,QB47,QB41,QB40,QB-T8,SF,8,28,6,6'3",220,4.72,1,62,,,,74.5,0.5,28.3,245.1,130,11,339.65,293,440,454,170,2,,,,,QB
-279,Isaac TeSlaa,WR,WR81,WR80,WR91,WR-T11,DET,6,24.5,2,6'4",214,4.43,1,-59,182.4,-97,,74.2,6.4,59.8,172.3,67.9,14,219.56,168,282,368,170.3,7,,,,,WR
-280,Reggie Virgil,WR,WR82,WR154,WR145,WR-T11,ARI,14,22.3,R,6'2",187,4.57,1,61,,,,73.4,6.6,52.8,176.8,,,341.25,287,391,1261,170,1,,,,,WR
-281,Josh Williams,RB,RB56,RB111,,RB-T7,TB,10,25.2,,5'8",210,4.9,1,40,,,,73.2,3.9,58,158,1.1,2,321.25,278,360,,,0,,,,,RB
-282,Gunnar Helm,TE,TE31,TE25,TE25,TE-T7,TEN,9,24,2,6'5",241,4.84,1,-62,,,,73,16.2,64,142,69.7,16,220.35,143,305,311,170.6,7,,,,,TE
-283,Justice Hill,RB,RB57,RB65,RB58,RB-T7,BAL,13,28.8,8,5'10",195,4.4,1,-49,,,,73,4,55.6,160.7,54.7,10,233.86,132,317,265,170.1,10,ADD,,,,RB
-284,Devin Neal,RB,RB58,RB83,,RB-T7,FA,,23.1,R,5'11",213,4.58,1,-8,,,,72.6,3.9,62.8,154,51.5,9,276.42,201,382,,,2,,,,,RB
-285,Braelon Allen,RB,RB59,RB55,RB52,RB-T7,NYJ,13,22.6,3,6'1",235,,1,-107,155.2,-130,14,72.5,4.2,62.2,154.6,14.3,4,177.59,132,292,205,170.9,17,,,,,RB
-286,Michael Mayer,TE,TE32,TE40,TE35,TE-T7,LV,13,25.2,4,6'4",256,4.7,1,11,,,,72.5,14.7,60.2,141.9,56.3,13,297.21,209,351,440,170.2,2,ADD,,Tucker Kraft  Michael Mayer join highest-paid tight ends with contract extensions (rss:cbs),https://www.cbssports.com/nfl/news/tucker-kraft-agrees-to-contract-extension-packers/,TE
-287,Ty Simpson,QB,QB48,QB46,QB41,QB-T8,LAR,11,23.7,R,6'1",211,,1,63,,,,72.3,0.5,27.5,237.8,,,350.1,301,400,475,170,3,,,,,QB
-288,Xavier Legette,WR,WR83,WR99,WR83,WR-T11,CAR,5,25.6,3,6'3",227,4.39,1,-18,,,,72.3,6.7,51.7,177.8,71.8,15,269.99,197,335,326,170.8,2,,,,,WR
-289,Dohnte Meyers,WR,WR84,WR116,WR141,WR-T11,CIN,6,26.2,1,5'11",186,,1,9,,,,72.1,6.5,51.9,172.7,,,298.2,239,376,1206,170,1,,,,,WR
-290,Tank Bigsby,RB,RB60,RB53,RB53,RB-T7,PHI,10,25,,5'11",215,4.56,1,-119,167.6,-122,76,71.8,5.6,62.2,159,52.3,15,170.74,131,257,206,169.7,30,DROP,,,,RB
-291,Tyrod Taylor,QB,QB49,QB58,QB48,QB-T8,GB,11,37.1,16,6'1",217,4.47,1,86,,,,71.5,0.5,27.2,235.2,59.5,6,376.5,323,419,1223,170,1,,,,,QB
-292,Jaylin Noel,WR,WR85,WR74,WR71,WR-T11,HOU,8,24,2,5'11",200,4.39,1,-92,,,,71,6.4,51.9,154.3,55.4,17,200.36,141,289,219,171.4,7,,,,,WR
-293,Cole Kmet,TE,TE33,TE46,TE43,TE-T7,CHI,10,27.5,7,6'6",257,4.7,1,31,,,,71,14.2,55.2,159.5,63.7,16,324.18,256,380,465,169.7,2,,,,,TE
-294,David Njoku,TE,TE34,TE30,TE30,TE-T7,LAC,7,30.1,12,6'4",246,4.64,1,-40,,,,69.8,13.6,53.6,153,69.8,11,254.16,155,355,411,169.8,9,,,,,TE
-295,Samaje Perine,RB,RB61,RB76,RB63,RB-T7,CIN,6,31,10,5'10",240,4.65,1,-36,,,,69.8,4.7,55.5,162.5,69.4,15,259,157,408,319,170.4,5,ADD,,,,RB
-296,Bam Knight,RB,RB62,RB102,RB92,RB-T7,ARI,14,25.4,4,5'11",209,,1,15,,,,69.6,3.2,51.1,166.5,81.9,12,310.5,237,383,430,170.1,1,,,,,RB
-297,Najee Harris,RB,RB63,RB67,RB56,RB-T7,NYG,8,28.5,6,6'1",232,,1,-61,,,26,69.5,3,44,173.2,10.1,3,235.92,141,327,222,169.9,11,,,,,RB
-298,Jack Strand,QB,QB50,QB54,QB56,QB-T8,ATL,11,22.2,R,6'5",240,,1,59,,,,69.1,0.4,26.3,227.3,,,356.5,347,366,1449,170,0,,,,,QB
-299,Ty Johnson,RB,RB64,RB80,RB64,RB-T7,BUF,7,29,8,5'10",210,,1,-34,,,,69,2.9,50.5,188.6,88.3,17,265.44,160,381,320,170.7,2,,,,,RB
-300,Hollywood Brown,WR,WR86,WR113,WR119,WR-T11,PHI,10,,,,,,1,-8,,,,68.6,7.1,52.9,154.5,,,291.83,241,363,1046,170,1,,,,,WR
-301,Marvin Mims Jr.,WR,WR87,WR101,WR93,WR-T11,DEN,10,24.5,4,5'11",182,4.38,1,-29,,,,68.4,6.9,58.1,145.5,70.5,15,271.92,221,340,370,170.1,3,,,,,WR
-302,Ray Davis,RB,RB65,RB58,RB54,RB-T7,BUF,7,26.8,,5'8",211,,1,-112,,,,67.7,3.1,47.5,191,53.1,17,190.37,134,263,220,170.7,13,,,,,RB
-303,Kayshon Boutte,WR,WR88,WR61,WR80,WR-T11,HOU,8,24.3,4,5'11",203,4.5,1,-133,150.1,-153,88,67.2,8.7,61.7,147.3,107.6,14,169.75,121,277,304,170.5,18,,,,,WR
-304,Dontayvion Wicks,WR,WR89,WR67,WR69,WR-T11,PHI,10,25.2,4,6'1",206,4.62,1,-121,165.2,-139,41,66.1,6.5,58.5,141.5,60.8,13,182.79,109,272,214,170.9,12,,,,,WR
-305,Jaleel McLaughlin,RB,RB66,RB98,,RB-T7,CLE,11,26,4,5'9",183,,1,-1,,,,66,3.1,38.7,184.2,29.4,8,303.86,242,379,,,1,,,,,RB
-306,Ja'Kobi Lane,WR,WR90,WR76,WR72,WR-T11,BAL,13,22.1,R,6'4",205,4.47,1,-96,157,-149,245,65.9,5.4,58.5,149.9,,,209.7,128,331,270,169.1,29,,,,,WR
-307,Keaton Mitchell,RB,RB67,RB50,RB50,RB-T7,LAC,7,24.6,4,5'8",191,4.37,1,-154,148.3,-159,-43,65.5,4.3,44.6,170,50.9,13,152.54,102,314,202,169,33,ADD,,,,RB
-308,Dont'e Thornton Jr.,WR,WR91,WR151,WR154,WR-T11,LV,13,23.8,2,6'5",205,4.3,1,30,,,,65.5,5.2,55.3,153.6,18.5,11,338.3,286,397,1405,170,1,,,,,WR
-309,Sione Vaki,RB,RB68,RB110,RB90,RB-T7,DET,6,25.1,3,5'11",216,4.62,1,11,,,,65.1,4.9,45.9,150.1,0.4,8,320.1,194,381,403,170.1,1,,,,,RB
-310,Mike Washington Jr.,RB,RB69,RB49,RB47,RB-T7,LV,13,23.2,,6'2",197,4.33,1,-157,161.7,-148,597,64.8,5,43.1,153.8,,,152.53,103,248,178,163.7,52,,,,,RB
-311,Mason Taylor,TE,TE35,TE34,TE41,TE-T7,NYJ,13,22.3,2,6'5",251,,1,-35,,,,64.8,13.5,52.4,140.4,66.9,13,276.24,203,342,463,170,3,,,,,TE
-312,Miles Sanders,RB,RB70,RB132,RB119,RB-T7,FA,,29.3,7,5'11",211,4.49,1,34,,,,64.7,3.4,42.8,161.4,22.7,4,345.67,297,442,1718,170,1,,,,,RB
-313,Tyrone Tracy Jr.,RB,RB71,RB54,RB75,RB-T7,NYG,8,26.8,3,5'11",210,4.48,1,-139,,,-169,64.5,3.9,46.7,158.1,142.8,15,173.85,120,311,348,170.3,24,,,,,RB
-314,KaVontae Turpin,WR,WR92,WR135,WR96,WR-T11,DAL,14,30.1,5,5'7",158,,1,9,,,,64.1,5.1,54.2,154.1,71.5,15,323.38,216,430,390,169.7,3,,,,,WR
-315,Trey Lance,QB,QB51,QB57,QB47,QB-T8,LAC,7,26.3,6,6'4",226,,1,49,,,,63.9,0.4,24.3,210.2,13.5,4,364,356,372,1222,170,1,,,,,QB
-316,Oronde Gadsden II,TE,TE36,TE27,TE32,TE-T7,LAC,7,23.2,2,6'5",236,,1,-92,,,-237,63.2,13.2,46.2,140.1,106.9,15,224.17,131,306,415,170.3,24,DROP,,,,TE
-317,Antonio Williams,RB,RB72,RB93,RB68,RB-T7,FA,,28.9,,5'11",195,4.41,1,-24,,,,63,3,40.5,167.2,,,292.8,252,366,332,170.4,1,,,,,RB
-318,Malik Davis,RB,RB73,RB69,RB67,RB-T7,DAL,14,27.8,3,5'11",205,,1,-80,,,48,62.9,3.2,42.7,162.7,39.6,10,237.71,146,315,325,170.4,9,DROP,,Cowboys place RB Malik Davis on injured reserve (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/cowboys-place-rb-malik-davis-on-injured-reserve,RB
-319,Zavion Thomas,WR,WR93,WR143,WR117,WR-T11,CHI,10,22.5,R,5'10",190,4.28,1,12,,,,61.8,3.4,49.6,147,,,331.31,262,438,1029,169.9,2,,,,,WR
-320,Corey Kiner,RB,RB74,RB123,RB107,RB-T7,NE,11,24.6,2,5'9",210,4.57,1,14,,,,61.7,3.2,42.1,159.3,8.3,4,334,288,389,1293,170,1,,,,,RB
-321,Omar Cooper Jr.,WR,WR94,WR65,WR79,WR-T11,NYJ,13,22.7,R,6'0",199,4.42,1,-139,,,-56,61.6,4.2,48.4,134.5,,,181.61,123,302,302,171,16,,,,,WR
-322,Dawson Knox,TE,TE37,TE48,TE37,TE-T7,BUF,7,29.8,8,6'4",254,,1,7,,,,61.6,13.4,49.5,132.5,85.7,16,329.24,260,413,442,169.9,2,,,,,TE
-323,Emmett Johnson,RB,RB75,RB57,RB69,RB-T7,KC,5,22.9,R,5'10",202,4.45,1,-139,165.4,-158,95,61.5,3.4,43.1,138.1,,,183.79,132,329,339,169.9,16,DROP,,,,RB
-324,Isiah Pacheco,RB,RB76,RB59,RB70,RB-T7,DET,6,27.5,5,5'10",210,4.37,1,-132,,,-83,60.7,3.4,39.9,149,77.8,13,192.34,143,311,340,166.3,33,,,,,RB
-325,Colby Parkinson,TE,TE38,TE32,TE34,TE-T7,LAR,11,27.6,,6'7",265,4.77,1,-59,,,,60.7,13.8,46.5,129.6,108.3,14,266.14,215,309,417,170.2,4,,,,,TE
-326,Christian Kirk,WR,WR95,WR103,WR147,WR-T11,SF,8,29.8,9,5'11",200,4.47,1,-53,,,,59.3,4.8,43.9,126.6,43.9,11,273.41,205,383,1334,169.9,2,,,,,WR
-327,Darnell Washington,TE,TE39,TE41,TE39,TE-T7,PIT,9,25,4,6'7",265,4.64,1,-29,,,,59.2,11.6,43.4,133.4,57.9,13,298.26,226,394,458,169.9,3,,,,,TE
-328,Isaac Guerendo,RB,RB77,RB97,RB115,RB-T7,SF,8,26.2,3,6'0",221,4.33,1,-25,,,,59.2,1,40.3,150.5,0,7,303,234,364,1388,170,1,,,,,RB
-329,Ben Sinnott,TE,TE40,TE58,TE65,TE-T7,WAS,7,24.2,3,6'4",245,4.68,1,27,,,,58.6,4.5,44.3,127.4,22.9,9,355.95,331,388,1088,170,1,,,,,TE
-330,Theo Johnson,TE,TE41,TE37,TE42,TE-T7,NYG,8,25.5,3,6'6",264,,1,-45,,,,58.5,3.1,46.2,131.3,105.3,15,285.13,203,345,464,170.1,3,,,,,TE
-331,Theo Wease Jr.,WR,WR96,WR155,,WR-T11,LAC,7,25.2,1,6'2",210,4.56,1,10,,,,58.5,7.7,44.8,127.2,22.9,3,341.33,246,416,,,1,,,,,WR
-332,Tre' Harris,WR,WR97,WR66,WR76,WR-T11,LAC,7,24.5,2,6'3",210,,1,-150,,,,58.2,4.8,44,134.4,54.4,16,182.09,123,303,290,171,7,,,,,WR
-333,Tyler Goodson,RB,RB78,RB116,,RB-T7,ATL,11,25.8,4,5'9",197,4.42,1,-3,,,,58.2,1.1,35.5,158.7,4.2,10,330.14,258,370,,,1,,,,,RB
-334,Noah Fant,TE,TE42,TE53,TE56,TE-T7,NO,8,28.8,8,6'4",249,4.5,1,16,,,,57.9,3.5,40.9,131.8,57.8,13,349.73,281,393,1021,170,1,,,,,TE
-335,Kimani Vidal,RB,RB79,RB60,RB60,RB-T7,LAC,7,25,3,5'8",215,4.46,1,-135,,,,57.8,0.3,29.2,159,109.9,13,200.45,152,297,306,170.9,5,,,,,RB
-336,Max Klare,TE,TE43,TE50,TE48,TE-T7,LAR,11,23.2,R,6'4",246,,1,-4,,,,57.4,4.9,39.9,133.2,,,332.08,274,394,470,170,2,,,,,TE
-337,Jordan Watkins,WR,WR98,WR138,WR155,WR-T11,SF,8,24.5,2,5'11",196,4.37,1,-10,,,,57.2,3.6,43.8,136.6,3.6,2,327.33,316,345,1408,170,1,,,,,WR
-338,Terrell Jennings,RB,RB80,RB130,,RB-T7,FA,,25.5,,6'0",217,,1,6,,,,57,0.4,29.2,134.4,14.7,6,344.17,285,398,,,1,,,,,RB
-339,Sean Tucker,RB,RB81,RB61,RB76,RB-T7,TB,10,24.9,4,5'10",205,,1,-126,,,,56.9,0.6,31,153.5,87.4,17,213.05,154,304,349,170.3,4,,,,,RB
-340,Tyquan Thornton,WR,WR99,WR97,WR89,WR-T11,KC,5,26.1,5,6'2",185,4.28,1,-74,,,,56,4,45.4,138.1,71.3,12,265.74,166,341,356,170.3,2,,,,,WR
-341,AJ Dillon,RB,RB82,RB121,RB110,RB-T7,CAR,5,28.3,7,6'0",247,4.53,1,-9,,,,56,0.6,38.4,129.6,7.6,6,332.2,263,393,1342,170,1,,,,,RB
-342,Chris Brazzell II,WR,WR100,WR117,WR156,WR-T11,CAR,5,22.9,,6'2",193,4.37,1,-43,,,,55.9,3.7,44.9,134.9,,,299.1,229,378,1430,170,2,,,,,WR
-343,Travis Hunter,WR,WR101,WR73,WR62,WR-T11,JAC,7,23.3,2,6'1",185,,1,-145,,,,55.8,3.3,48.5,135.8,49.8,7,197.59,128,347,187,132.9,65,DROP,,,,WR
-344,Kevin Coleman Jr.,WR,WR102,WR142,WR95,WR-T11,MIA,6,23,R,5'10",180,4.49,1,-13,,,,54.6,3.2,46.4,132.6,,,330.81,241,417,389,170.2,1,,,,,WR
-345,Jerome Ford,RB,RB83,RB95,RB127,RB-T7,WAS,7,27,4,5'10",210,4.46,1,-49,,,,54.6,6.2,37.9,154.6,30.6,13,295.87,231,365,2019,170,2,,,,,RB
-346,Eli Raridon,TE,TE44,TE44,TE50,TE-T7,NE,11,22.6,R,6'6",245,,1,-30,,,,54.2,6,37.5,121.3,,,315.54,203,410,472,170,1,,,,,TE
-347,Austin Hooper,TE,TE45,TE65,TE52,TE-T7,ATL,11,31.8,11,6'4",254,4.72,1,16,,,,53.6,7.4,38.9,102,48.8,13,362.83,309,395,1006,170,1,,,,,TE
-348,Xavier Hutchinson,WR,WR103,WR111,WR85,WR-T11,HOU,8,26.3,4,6'3",210,4.53,1,-60,,,,53.4,3.6,46.2,118.2,80.5,16,287.55,205,384,328,170.5,2,,,,,WR
-349,Jonah Coleman,RB,RB84,RB48,RB51,RB-T7,DEN,10,23,R,5'8",220,,1,-200,157.1,-192,79,53.3,3.7,36.3,152.2,,,149.36,116,221,204,163.4,33,,,,,RB
-350,Colbie Young,WR,WR104,WR149,WR125,WR-T11,CIN,6,24.1,R,6'4",218,4.49,1,-12,,,,53.2,2.2,48.8,125.1,,,337.79,287,385,1065,170,1,,,,,WR
-351,Pat Bryant,WR,WR105,WR68,WR92,WR-T11,DEN,10,23.7,2,6'2",204,4.61,1,-166,,,,53.1,1.3,45.9,132.5,59.3,13,184.61,115,293,369,170.4,7,,,,,WR
-352,Xavier Restrepo,WR,WR106,WR144,,WR-T11,TEN,9,24.4,1,5'10",202,,1,-20,,,,53,1.4,38.8,127.4,5.6,2,332,313,349,,,1,,,,,WR
-353,Jalen Tolbert,WR,WR107,WR114,WR86,WR-T11,MIA,6,27.5,5,6'1",195,4.49,1,-59,,,,52.2,1.4,41.5,127.1,37.3,12,294.16,180,387,329,170.5,1,,,,,WR
-354,Dyami Brown,WR,WR108,WR175,WR111,WR-T11,WAS,7,26.8,6,6'0",195,4.46,1,20,,,,52.2,1.4,38.7,126.2,39.7,11,374.09,341,452,990,170,1,,,,,WR
-355,Olamide Zaccheaus,WR,WR109,WR124,WR121,WR-T11,ATL,11,29.1,8,5'8",194,,1,-40,,,,51.6,1.5,34.4,121.7,65.3,14,315.45,234,376,1050,170,1,,,,,WR
-356,Oscar Delp,TE,TE46,TE43,TE67,TE-T7,NO,8,23.1,R,6'5",245,,1,-42,,,,51.5,7.1,37.3,110.7,,,313.96,254,382,1146,170,1,,,,,TE
-357,Khalil Herbert,RB,RB85,RB86,RB125,RB-T7,FA,,28.4,5,5'9",212,4.46,1,-78,,,,51.4,3.5,35.1,145.2,6.1,5,279.2,219,380,1927,170,1,,,,,RB
-358,Marcus Mariota,QB,QB52,QB49,QB44,QB-T8,WAS,7,32.8,12,6'4",222,4.52,1,-6,,,,51.3,0.3,19.5,168.8,125.5,10,351.89,290,407,482,170,1,,,,,QB
-359,Anthony Richardson Sr.,QB,QB53,QB45,QB43,QB-T8,IND,13,24.3,4,6'4",244,4.43,1,-12,,,,51.3,0.3,19.5,168.8,1.7,2,347.16,291,386,477,170,2,,,,,QB
-360,Tez Johnson,WR,WR110,WR127,WR132,WR-T11,TB,10,24.3,2,5'10",165,4.51,1,-44,,,,51.2,3,41.8,115.1,78.4,15,316.19,221,391,1118,170,1,,,,,WR
-361,Taylen Green,QB,QB54,QB40,QB55,QB-T8,CLE,11,23.9,R,6'6",230,4.36,1,-23,,,,50.6,0.3,19.2,166.5,,,338.33,324,353,1436,170,2,,,,,QB
-362,Chris Blair,WR,WR111,WR123,WR153,WR-T11,ATL,11,28.9,2,6'2",215,,1,-48,,,,50.4,2.9,45.5,114.7,0,1,314.33,261,350,1383,170,0,,,,,WR
-363,Tyler Higbee,TE,TE47,TE47,TE47,TE-T7,LAR,11,33.7,11,6'6",253,4.77,1,-38,,,,50.2,8.2,36.4,107.9,58.6,10,325.16,274,375,469,169.9,2,,,,,TE
-364,Noah Gray,TE,TE48,TE49,TE45,TE-T7,KC,5,27.3,6,6'3",240,4.55,1,-34,,,,50.1,8.2,36.3,95.4,28.3,14,330.02,274,387,467,169.9,1,,,,,TE
-365,Jaylen Wright,RB,RB86,RB70,RB61,RB-T7,MIA,6,23.4,3,5'10",208,4.38,1,-126,,,,49.9,1.8,36,122.5,45.7,9,238.65,164,310,307,170.6,4,,,,,RB
-366,George Holani,RB,RB87,RB71,RB74,RB-T7,SEA,11,26.7,3,5'10",210,4.52,1,-124,,,,49.9,0.9,33.4,133.3,13.8,10,241.81,154,329,345,170.3,4,,,,,RB
-367,Antonio Gibson,RB,RB88,RB141,RB123,RB-T7,FA,,28.2,,6'3",206,4.39,1,1,,,,49.9,0.7,32.9,118,16.2,5,368.33,313,431,1864,170,1,,,,,RB
-368,Lew Nichols III,RB,RB89,RB112,RB128,RB-T7,PIT,9,25,1,5'10",220,,1,-46,,,,49.9,0,33.4,112.3,0,1,321.5,311,332,2138,170,2,,,,,RB
-369,Darius Slayton,WR,WR112,WR102,WR160,WR-T11,NYG,8,29.6,7,6'1",198,4.39,1,-96,,,,49.3,1.8,40.2,112.2,80.3,14,272.71,209,371,1676,170.3,2,DROP,,,,WR
-370,Brashard Smith,RB,RB90,RB87,RB66,RB-T7,KC,5,23.4,2,5'10",196,4.39,1,-84,,,,49.3,0,31.9,158.2,50.8,17,286.05,206,379,324,170.5,2,,,,,RB
-371,DeMario Douglas,WR,WR113,WR100,WR88,WR-T11,NE,11,25.7,4,5'8",185,4.44,1,-99,,,,48.8,2.8,44.1,111.1,80.3,16,271.61,166,420,331,170.5,2,,,,,WR
-372,Kaden Wetjen,WR,WR114,WR139,WR146,WR-T11,PIT,9,24.5,R,5'9",193,4.47,1,-44,,,,48.8,2.8,39.8,109.7,,,327.5,305,350,1297,170,1,,,,,WR
-373,Kaelon Black,RB,RB91,RB64,RB59,RB-T7,SF,8,24.9,R,5'9",208,,1,-145,160,-213,241,48.7,0,31.5,156.3,,,227.97,132,338,269,169.8,16,ADD,,,,RB
-374,Tyreek Hill,WR,WR115,WR107,WR163,WR-T11,FA,,32.5,10,5'10",191,,1,-91,,,,48.5,1.8,39.6,109,43,4,283.42,154,378,1728,169.8,8,DROP,,,,WR
-375,Malachi Fields,WR,WR116,WR81,WR74,WR-T11,NYG,8,23,R,6'4",222,4.61,1,-152,,,23,48.4,2.8,39.5,108.8,,,222.55,133,354,286,170.9,9,ADD,,,,WR
-376,Elijah Arroyo,TE,TE49,TE42,TE40,TE-T7,SEA,11,23.4,2,6'5",254,,1,-66,,,,48.4,7.9,35.1,92.1,29.4,13,310.25,259,363,459,169.9,2,,,,,TE
-377,Eli Heidenreich,RB,RB92,RB106,RB98,RB-T7,PIT,9,23.2,,6'0",198,4.44,1,-61,,,,48.4,0,30.5,155.4,,,315.83,242,367,437,170,2,,,,,RB
-378,Jack Bech,WR,WR117,WR91,WR98,WR-T11,LV,13,23.7,2,6'1",214,,1,-133,,,,48.2,1.8,43.5,109.7,32.4,14,244.66,180,376,392,170.2,2,,,,,WR
-379,Darnell Mooney,WR,WR118,WR83,WR101,WR-T11,NYG,8,28.8,7,5'11",177,4.38,1,-153,,,,47.8,1.8,39,107.5,66.3,15,226.23,165,299,418,170.4,4,ADD,,,,WR
-380,Elijah Moore,WR,WR119,WR150,WR151,WR-T11,PHI,10,26.4,6,5'10",178,4.35,1,-42,,,,47.7,1.8,38.9,107.2,24.1,9,338.25,300,374,1345,170,1,,,,,WR
-381,Nate Boerkircher,TE,TE50,TE59,TE66,TE-T7,JAC,7,25,R,6'5",250,,1,-24,,,,47.7,7.8,34.6,90.8,,,356.5,336,369,1139,170,1,,,,,TE
-382,Troy Franklin,WR,WR120,WR78,WR106,WR-T11,DEN,10,23.6,3,6'3",180,4.41,1,-163,,,,47.4,1.7,42.8,106.6,144.6,17,218.75,163,347,980,170,3,,,,,WR
-383,Cedric Tillman,WR,WR121,WR129,WR171,WR-T11,NO,8,26.4,4,6'3",215,4.54,1,-65,,,,47.3,1.7,42.7,106.3,49.5,12,317.74,270,379,2130,170,1,,,,,WR
-384,Keon Coleman,WR,WR122,WR93,WR90,WR-T11,BUF,7,23.3,3,6'3",213,4.61,1,-137,,,,47.2,1.7,42.6,107.4,83.4,12,246.62,149,307,357,170.2,4,,,,,WR
-385,Joshua Palmer,WR,WR123,WR122,WR108,WR-T11,BUF,7,26.9,,,,,1,-72,,,,47.1,1.7,38.5,105.9,,,312.54,244,378,981,170,1,,,,,WR
-386,Quinn Ewers,QB,QB55,QB44,QB49,QB-T8,JAC,7,23.3,,6'2",209,,1,-39,,,,46.6,0.3,17.7,153.3,32.7,4,346.5,346,347,1225,170,1,,,,,QB
-387,Jacob Saylors,RB,RB93,RB88,RB72,RB-T7,DET,6,25.5,,5'11",195,,1,-101,,,,46.3,0,30,148.6,1.1,11,286.24,156,370,343,170.3,4,,,,,RB
-388,Luke McCaffrey,WR,WR124,WR137,WR137,WR-T11,WAS,7,25.4,3,6'2",195,4.46,1,-63,,,,46.3,1.7,37.8,104.1,45.8,9,325.41,269,401,1140,169.9,1,,,,,WR
-389,Kendrick Bourne,WR,WR125,WR119,WR109,WR-T11,ARI,14,31.1,10,6'1",203,4.68,1,-87,,,,46.1,1.7,37.6,104.9,73.6,14,302,223,443,982,170,1,,,,,WR
-390,Ronnie Rivers,RB,RB94,RB118,RB113,RB-T7,LAR,11,27.6,5,5'9",198,4.6,1,-59,,,,45.7,0,29.6,157.3,4.6,6,331.14,257,364,1366,170,1,,,,,RB
-391,Cyrus Allen,WR,WR126,WR79,WR107,WR-T11,KC,5,23.6,R,5'11",180,,1,-172,,,115,45.5,1.7,37.1,102.3,,,219.45,133,435,980,169.9,14,DROP,,,,WR
-392,J'Mari Taylor,RB,RB95,RB120,,RB-T7,JAC,7,24.6,,5'9",204,,1,-60,,,,45.5,0,29.4,146,,,332.13,301,365,,,2,,,,,RB
-393,Tommy Tremble,TE,TE51,TE54,TE51,TE-T7,CAR,5,26.2,6,6'4",250,4.6,1,-42,,,,45.4,7.4,32.9,86.4,50.4,15,350.79,290,400,1004,170,1,,,,,TE
-394,Jordan James,RB,RB96,RB78,RB78,RB-T7,SF,8,22.4,2,5'9",208,4.55,1,-130,,,,45,0,29.1,144.4,,,264.32,164,397,351,170.4,4,,,,,RB
-395,Scotty Miller,WR,WR127,WR136,WR161,WR-T11,CHI,10,29.1,,,,,1,-70,,,,44.8,1.6,36.6,100.7,,,325,271,379,1695,170,0,,,,,WR
-396,Andrei Iosivas,WR,WR128,WR108,WR94,WR-T11,CIN,6,26.9,4,6'3",210,4.43,1,-112,,,,44.7,1.6,36.5,100.5,73.4,15,283.65,168,389,371,170.1,2,,,,,WR
-397,Jalen Reagor,WR,WR129,WR146,WR168,WR-T11,FA,,27.7,6,5'11",197,4.47,1,-62,,,,44.7,2.6,40.4,101.8,,,334.5,260,387,1810,170,0,,,,,WR
-398,Mack Hollins,WR,WR130,WR106,WR102,WR-T11,NE,11,33,10,6'4",221,4.53,1,-116,,,,43.9,1.6,35.8,98.7,90.4,14,282.35,198,390,420,170.1,1,ADD,,,,WR
-399,Michael Woods II,WR,WR131,WR156,WR170,WR-T11,DEN,10,,,,,,1,-55,,,,43.8,1.6,39.5,98.5,,,344,293,395,2018,170,1,,,,,WR
-400,Jalen Milroe,QB,QB56,QB42,QB54,QB-T8,SEA,11,23.7,2,6'2",216,,1,-59,,,,43.6,0.3,16.6,143.4,-1.6,3,341,326,356,1404,170,1,,,,,QB
-401,Erick All Jr.,TE,TE52,TE45,TE38,TE-T7,CIN,6,26,3,6'5",255,,1,-83,,,,43.5,6,31.5,82.8,,,317.64,209,408,444,170,1,,,,,TE
-402,Zavier Scott,RB,RB97,RB100,,RB-T7,CHI,10,27.1,2,6'1",221,,1,-97,,,,43.2,0,27.2,138.7,32.2,11,305.25,264,338,,,1,,,,,RB
-403,Jahan Dotson,WR,WR132,WR109,WR84,WR-T11,ATL,11,26.4,5,5'11",184,4.43,1,-119,,,,43,2.5,35.1,97.9,41.2,15,284.48,170,369,327,170.6,2,,,,,WR
-404,Charlie Kolar,TE,TE53,TE36,TE59,TE-T7,LAC,7,27.6,5,6'6",250,,1,-120,,,,42.9,5.9,31.1,81.6,31.2,13,283.6,196,361,1031,170,1,,,,,TE
-405,Jaydn Ott,RB,RB98,RB117,,RB-T7,KC,5,23.7,R,5'11",208,,1,-74,,,,41.5,0,26.2,133.2,,,331,291,365,,,1,,,,,RB
-406,Kendrick Law,WR,WR133,WR171,WR158,WR-T11,DET,6,23.2,,5'11",203,4.45,1,-41,,,,41.3,1.5,33.7,94,,,365,352,378,1434,170,2,,,,,WR
-407,Tory Horton,WR,WR134,WR96,WR99,WR-T11,SEA,11,23.8,2,6'2",196,4.41,1,-143,,,,41,1.5,37,92.2,52.6,8,263.77,197,351,394,170.2,3,,,,,WR
-408,Mitchell Evans,TE,TE54,TE67,TE74,TE-T7,CAR,5,23.5,,6'5",258,4.74,1,-43,,,,41,5.7,29.7,88.2,38.7,14,365.15,298,404,1407,170,1,,,,,TE
-409,Isaiah Davis,RB,RB99,RB77,RB71,RB-T7,NYJ,13,24.5,3,6'1",220,4.57,1,-147,,,,40.9,0,25.8,131.3,60.7,16,262.01,201,317,342,170.4,1,,,,,RB
-410,Kalel Mullings,RB,RB100,RB122,,RB-T7,TEN,9,23.9,2,6'2",226,,1,-76,,,,40.7,0,26.3,140.1,0.7,4,333.67,294,384,,,1,,,,,RB
-411,CJ Daniels,WR,WR135,WR159,WR157,WR-T11,LAR,11,24.7,R,6'2",202,,1,-64,,,,40.4,1.5,36.5,92,,,347.32,288,415,1431,170,1,,,,,WR
-412,Seth McGowan,RB,RB101,RB81,RB77,RB-T7,IND,13,24.9,R,6'1",223,4.49,1,-146,,,,40,0,25.9,128.4,,,266.32,169,338,350,170.3,2,ADD,,,,RB
-413,Josh Oliver,TE,TE55,TE66,TE57,TE-T7,MIN,6,29.4,8,6'5",264,4.63,1,-50,,,,39.9,6.5,32.1,85.8,47.5,12,363.4,350,392,1024,170,1,,,,,TE
-414,Jarquez Hunter,RB,RB102,RB105,,RB-T7,FA,,23.7,2,5'10",211,4.44,1,-99,,,,39.8,0,25.8,127.7,,,315.09,271,383,,,1,,,,,RB
-415,Kalif Raymond,WR,WR136,WR125,WR110,WR-T11,CHI,10,32.1,10,5'9",160,,1,-99,,,,39.7,1.5,32.4,90.4,48.8,15,315.83,225,380,983,170,1,,,,,WR
-416,Justin Joly,TE,TE56,TE56,TE75,TE-T7,MIA,6,22.1,R,6'3",263,,1,-64,,,,39,5.4,28.3,74.2,,,352.09,313,377,1442,170,1,,,,,TE
-417,Chris Brooks,RB,RB103,RB73,RB65,RB-T7,GB,11,26.6,4,6'1",219,,1,-166,,,,38.9,0,25.2,124.9,26.2,17,250.89,145,327,321,170.8,5,,,,,RB
-418,Deion Burks,WR,WR137,WR173,WR159,WR-T11,IND,13,23.6,R,5'9",180,4.3,1,-50,,,,38.9,2.3,35.1,88.6,,,367.56,316,451,1443,170,2,,,,,WR
-419,Dameon Pierce,RB,RB104,RB139,RB126,RB-T7,PHI,10,26.5,5,5'10",215,4.59,1,-57,,,,38.8,0,24.5,124.5,3.6,5,361.9,326,394,1995,170,2,,,,,RB
-420,Isaiah Bond,WR,WR138,WR115,WR118,WR-T11,CLE,11,22.5,2,5'11",180,4.39,1,-124,,,,38.3,1.4,31.3,86.1,45.7,15,295.52,244,373,1038,170,1,,,,,WR
-421,Luke Musgrave,TE,TE57,TE62,TE73,TE-T7,GB,11,26,4,6'6",253,4.61,1,-61,,,,38,6.2,27.5,72.3,37.2,13,359.94,328,390,1369,170,1,,,,,TE
-422,John Metchie III,WR,WR139,WR147,WR152,WR-T11,CAR,5,26.1,4,5'11",187,,1,-86,,,,37.7,1.4,30.8,84.8,55.4,13,335.59,287,413,1356,170,1,,,,,WR
-423,Kevin Austin Jr.,WR,WR140,WR165,,WR-T11,NO,8,26.4,3,6'2",200,4.43,1,-68,,,,37.3,2.2,33.7,84.9,26.5,5,355,319,391,,,1,,,,,WR
-424,Ollie Gordon II,RB,RB105,RB75,RB62,RB-T7,MIA,6,22.6,2,6'2",225,4.61,1,-166,,,,37,0,23.3,118.8,50.6,17,258.43,177,322,308,170.7,2,,,,,RB
-425,Adam Trautman,TE,TE58,TE71,TE58,TE-T7,DEN,10,29.6,7,6'5",253,4.8,1,-55,,,,36.9,6,26.7,70.2,35.5,13,369.6,352,412,1025,170,1,,,,,TE
-426,Devin Singletary,RB,RB106,RB91,RB109,RB-T7,NYG,8,29,8,5'7",203,4.66,1,-134,,,,36.7,0,23.7,117.8,99.8,17,291.66,160,362,1333,170,1,,,,,RB
-427,Malik Benson,WR,WR141,WR128,WR104,WR-T11,LV,13,23.9,R,6'1",195,4.37,1,-110,,,,36.6,2.1,33,83.3,,,317.06,232,432,978,170,1,,,,,WR
-428,Jimmy Horn Jr.,WR,WR142,WR174,WR133,WR-T11,CAR,5,24,2,5'8",174,4.46,1,-55,,,,36.6,1.3,29.9,82.3,23.2,10,372.67,369,380,1119,170,1,,,,,WR
-429,Matt Hibner,TE,TE59,TE55,,TE-T7,BAL,13,,,,,,1,-78,,,,36.5,5.9,26.5,69.5,,,350.89,306,392,,,1,,,,,TE
-430,Chris Bell,WR,WR143,WR86,WR87,WR-T11,MIA,6,22.2,R,6'2",220,4.5,1,-202,160.2,-270,28,36.2,1.3,32.7,82.4,,,227.67,150,305,330,170.6,6,ADD,,,,WR
-431,Elijah Higgins,TE,TE60,TE69,TE53,TE-T7,ARI,14,25.8,4,6'3",245,4.54,1,-64,,,,36,5.9,26.1,68.5,43.1,17,367.33,336,425,1010,169.9,1,,,,,TE
-432,Jonnu Smith,TE,TE61,TE61,TE54,TE-T7,GB,11,31,10,6'3",248,4.62,1,-74,,,,35.9,5,26,68.3,66.2,17,358.18,285,426,1016,170,1,,,,,TE
-433,Josh Cameron,WR,WR144,WR162,WR143,WR-T11,JAC,7,23.5,R,6'1",224,,1,-84,,,,35.9,2.1,32.4,81.7,,,349,328,385,1234,170,1,,,,,WR
-434,Jake Tonges,TE,TE62,TE39,TE36,TE-T7,SF,8,27.2,4,6'4",240,,1,-141,,,,35.8,5.8,26,68.1,76.3,10,292.55,158,356,441,170,3,,,,,TE
-435,Julius Chestnut,RB,RB107,RB125,RB112,RB-T7,TEN,9,25.8,5,5'11",228,,1,-96,,,,35.8,0,23.2,114.9,4,16,339.33,288,393,1364,170,1,,,,,RB
-436,Tommy Myers,TE,TE63,TE57,,TE-T7,FA,,,,,,,1,-81,,,,35.1,5.7,25.4,75.5,,,355.2,304,423,,,0,,,,,TE
-437,LeQuint Allen Jr.,RB,RB108,RB79,RB73,RB-T7,JAC,7,22.1,2,6'0",201,,1,-173,,,,35,0,22.6,112.3,19.8,16,264.39,145,337,344,170.3,1,,,,,RB
-438,Zachariah Branch,WR,WR145,WR87,WR78,WR-T11,ATL,11,22.4,R,5'10",180,4.35,1,-205,,,-5,34.9,1.3,31.5,79.4,,,233.38,140,312,300,170.6,10,,,,,WR
-439,Phil Mafah,RB,RB109,RB135,,RB-T7,FA,,23.9,R,6'1",232,,1,-89,,,,34.9,0,22.6,112,9.9,1,350.3,297,396,,,1,,,,,RB
-440,Will Shipley,RB,RB110,RB101,RB79,RB-T7,PHI,10,24,3,5'11",210,,1,-133,,,,33.9,0,21.4,108.8,15,14,306.94,233,363,352,170.2,1,,,,,RB
-441,Tutu Atwell,WR,WR146,WR158,WR124,WR-T11,LAR,11,26.9,6,5'9",165,4.42,1,-95,,,,33.7,2,30.4,76.7,28.2,8,345.96,261,421,1058,170,1,,,,,WR
-442,Isaiah Williams,WR,WR147,WR152,WR123,WR-T11,FA,,,,5'10",185,4.63,1,-104,,,,33.3,1.2,27.2,74.9,35.7,15,338.33,299,397,1056,170,0,,,,,WR
-443,Marlin Klein,TE,TE64,TE70,TE70,TE-T7,HOU,8,24,R,6'6",250,4.61,1,-74,,,,33.1,5.4,24,63,,,369.18,321,402,1237,170,1,,,,,TE
-444,Odell Beckham Jr.,WR,WR148,WR132,WR103,WR-T11,NYG,8,33.8,11,5'11",198,4.38,1,-123,,,,32.9,1.9,26.9,74.9,,,321.36,224,384,977,169.4,4,ADD,,,,WR
-445,Cade Stover,TE,TE65,TE64,TE60,TE-T7,HOU,8,26.2,3,6'4",251,4.65,1,-83,,,,32.9,5.4,23.8,70.7,13.9,6,361.5,347,376,1043,170,1,,,,,TE
-446,Will Kacmarek,TE,TE66,TE60,TE55,TE-T7,MIA,6,23.6,R,6'6",258,4.74,1,-89,,,,32.7,5.3,23.7,62.2,,,357.33,335,385,1020,170,1,,,,,TE
-447,Hunter Luepke,RB,RB111,RB131,RB102,RB-T7,DAL,14,26.5,4,6'1",250,,1,-101,,,,32.5,0,21,104.3,30.5,14,345.63,259,393,1095,170,1,,,,,RB
-448,Daniel Bellinger,TE,TE67,TE68,TE64,TE-T7,TEN,9,25.9,5,6'6",255,4.63,1,-81,,,,32.4,5.3,23.5,69.7,50.1,13,367.05,338,405,1086,170,2,,,,,TE
-449,Ashton Dulin,WR,WR149,WR148,WR122,WR-T11,IND,13,29.3,8,6'2",215,4.43,1,-112,,,,32.2,1.9,26.3,73.3,17.5,12,337.47,295,391,1053,169.9,1,,,,,WR
-450,Juice Wells Jr.,WR,WR150,WR169,,WR-T11,FA,,,,,,,1,-89,,,,32.2,1.2,26.3,72.4,,,360.5,266,455,,,1,,,,,WR
-451,James Conner,RB,RB112,RB63,RB97,RB-T7,ARI,14,31.3,10,6'1",233,4.65,1,-231,,,,31.7,0,20.5,101.7,29.3,3,219.9,144,330,436,170,9,,,,,RB
-452,Sam Roush,TE,TE68,TE77,TE71,TE-T7,CHI,10,23,R,6'5",267,4.7,1,-74,,,,31.5,5.1,22.8,67.7,,,378,374,382,1241,170,1,,,,,TE
-453,Joe Flacco,QB,QB57,QB48,QB39,QB-T8,CIN,6,41.6,19,6'6",245,4.84,1,-101,,,,31.3,,,,146.7,13,351.79,288,401,453,170,1,,,,,QB
-454,Kendre Miller,RB,RB113,RB84,RB84,RB-T7,NO,8,24.2,4,6'0",220,,1,-176,,,,31.3,0,20.3,100.5,30.8,7,278.05,189,381,395,170.2,2,,,,,RB
-455,Damien Martinez,RB,RB114,RB142,,RB-T7,FA,,22.6,R,6'0",237,4.51,1,-81,,,,31.3,0,20.3,100.5,,,374.17,358,404,,,1,,,,,RB
-456,Luke Schoonmaker,TE,TE69,TE79,TE62,TE-T7,DAL,14,27.9,4,6'5",250,4.63,1,-75,,,,31.2,5.1,22.6,67.1,20.2,14,381,371,395,1077,169.9,1,,,,,TE
-457,Kaytron Allen,RB,RB115,RB66,RB88,RB-T7,WAS,7,23.6,R,5'11",217,,1,-221,,,,30.9,0,20,99.2,,,235.83,152,324,401,170.1,5,,,,,RB
-458,Devontez Walker,WR,WR151,WR157,WR113,WR-T11,BAL,13,25.2,3,6'1",198,4.36,1,-112,,,,30.8,1.1,27.8,70.1,34.6,8,345.92,286,448,1002,170,1,,,,,WR
-459,Michael Trigg,TE,TE70,TE81,,TE-T7,DAL,14,24.2,R,6'4",250,,1,-46,,,,30.5,5,22.1,65.6,,,413,390,436,,,1,,,,,TE
-460,Jordan Whittington,WR,WR152,WR170,WR131,WR-T11,LAR,11,25.9,3,6'1",202,,1,-99,,,,30.5,1.1,24.9,68.6,27.3,15,361.13,319,439,1114,170,1,,,,,WR
-461,Austin Ekeler,RB,RB116,RB136,RB122,RB-T7,FA,,31.3,9,5'10",200,,1,-106,,,,30.4,0,19.2,97.6,10.6,2,354.9,309,394,1742,170,1,,,,,RB
-462,Drew Sample,TE,TE71,TE63,TE49,TE-T7,CIN,6,30.4,8,6'5",260,4.71,1,-101,,,,30.1,4.9,21.8,57.3,24.4,12,361,355,367,471,170,1,,,,,TE
-463,Jacob Cowing,WR,WR153,WR161,WR140,WR-T11,SF,8,25.6,3,5'9",170,4.38,1,-114,,,,29.8,1.7,26.9,67.8,,,349,251,446,1204,170,1,,,,,WR
-464,Jawhar Jordan,RB,RB117,RB127,,RB-T7,HOU,8,27,1,5'10",186,4.56,1,-122,,,,29.8,0,19.3,95.7,26.2,4,342.43,283,406,,,1,,,,,RB
-465,Konata Mumpfield,WR,WR154,WR121,WR135,WR-T11,LAR,11,23.9,2,6'1",188,4.59,1,-153,,,,29.7,1.7,26.8,67.6,20.2,10,311.95,247,383,1133,170,1,,,,,WR
-466,Marquez Valdes-Scantling,WR,WR155,WR153,WR164,WR-T11,FA,,31.9,8,6'4",206,4.37,1,-126,,,,29.4,1.1,24,66.9,25,9,339.6,197,427,1752,170,1,,,,,WR
-467,Eli Stowers,TE,TE72,TE38,TE46,TE-T7,PHI,10,23.4,R,6'4",239,4.51,1,-178,,,,29.2,4.8,21.2,62.8,,,288.95,209,371,468,170,4,,,Eagles place second-round pick Eli Stowers on IR (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/eagles-place-second-round-pick-eli-stowers-on-ir,TE
-468,Jackson Hawes,TE,TE73,TE73,TE63,TE-T7,BUF,7,25.7,2,6'4",253,4.82,1,-97,,,,29.1,4.7,21.1,55.4,44.7,13,371.33,353,395,1083,170,1,,,,,TE
-469,Kyle Juszczyk,RB,RB118,RB90,RB101,RB-T7,SF,8,35.4,14,6'2",235,,1,-178,,,,29.1,0,18.8,100.2,45,16,290.8,228,338,1001,169.9,1,,,,,RB
-470,Patrick Ricard,RB,RB119,RB115,RB106,RB-T7,NYG,8,32.3,10,6'3",300,,1,-140,,,,28.9,0,18.7,92.8,1.6,5,330,290,370,1272,170,1,,,,,RB
-471,Elic Ayomanor,WR,WR156,WR95,WR130,WR-T11,TEN,9,23.2,2,6'2",206,4.44,1,-217,,,,28.5,1.7,25.7,64.9,96,16,254.04,184,333,1101,170,2,,,,,WR
-472,Ja'Tavion Sanders,TE,TE74,TE51,TE44,TE-T7,CAR,5,23.4,3,6'4",252,4.69,1,-135,,,,28.4,4.6,20.6,54.1,39.5,12,336.64,246,398,466,169.9,1,,,,,TE
-473,Brandin Cooks,WR,WR157,WR133,WR167,WR-T11,FA,,32.9,12,5'10",190,4.33,1,-150,,,,28.2,1,25.5,64.2,39.9,13,322.5,282,363,1766,170,1,,,,,WR
-474,Demond Claiborne,RB,RB120,RB74,RB86,RB-T7,MIN,6,22.9,R,5'10",188,4.37,1,-221,,,,28,0,18.1,89.9,,,253.21,156,323,397,170.2,4,,,,,RB
-475,Lan Larison,RB,RB121,RB137,,RB-T7,NE,11,24.9,2,5'11",209,,1,-117,,,,28,0,18.1,89.9,,,358,358,358,,,1,,,,,RB
-476,Treylon Burks,WR,WR158,WR131,WR112,WR-T11,WAS,7,26.4,5,6'2",225,4.55,1,-157,,,,27.8,1.6,25.1,63.3,24,8,318.97,222,407,999,170,2,,,,,WR
-477,Greg Dortch,WR,WR159,WR167,WR162,WR-T11,BUF,7,28.3,6,5'7",180,,1,-119,,,,27.6,1.6,22.5,62.1,60.6,12,357.88,326,391,1703,170,1,,,,,WR
-478,Michael Carter,RB,RB122,RB113,RB124,RB-T7,TEN,9,27.3,,6'2",281,4.5,1,-152,,,,27.5,0,17.8,88.3,82.5,17,325.71,282,410,1902,170,1,,,,,RB
-479,Savion Williams,WR,WR160,WR160,WR115,WR-T11,GB,11,24.8,2,6'4",222,4.48,1,-131,,,,26.9,1.6,24.3,60.5,20.5,12,347.5,290,441,1014,170,1,,,,,WR
-480,Tanner Koziol,TE,TE75,TE72,TE68,TE-T7,JAC,7,23.6,,6'7",250,4.7,1,-110,,,,26.9,4.4,19.5,57.8,,,370.17,351,382,1228,170,1,,,,,TE
-481,Raheim Sanders,RB,RB123,RB119,RB118,RB-T7,CLE,11,24.2,2,6'0",230,4.46,1,-149,,,,26.8,0,17.3,86,18.8,4,331.7,274,387,1417,170,1,,,,,RB
-482,Gardner Minshew II,QB,QB58,QB52,QB53,QB-T8,ARI,14,30.3,8,6'1",225,4.97,1,-126,,,,26.4,,,,-0.3,4,356.25,328,381,1275,170,1,,,,,QB
-483,Xavier Smith,WR,WR161,WR141,WR139,WR-T11,LAR,11,28.9,3,5'9",180,,1,-152,,,,25.9,1.5,21.1,59,39.3,16,330.67,229,385,1192,170,1,,,,,WR
-484,Jaylin Lane,WR,WR162,WR164,WR127,WR-T11,WAS,7,24.3,2,5'10",196,,1,-129,,,,25.5,1.5,23,57.3,31.2,15,354.67,298,409,1076,170,1,,,,,WR
-485,Tank Dell,WR,WR163,WR84,WR97,WR-T11,HOU,8,26.8,4,5'10",165,,1,-259,,,-26,25.2,1.5,22.8,56.7,,,226.41,166,312,391,164.8,27,,,,,WR
-486,Kyle Williams,WR,WR164,WR104,WR105,WR-T11,NE,11,23.8,2,5'11",190,4.4,1,-211,,,,25.1,1.5,22.7,56.5,44.2,14,275.04,202,341,979,170,2,,,,,WR
-487,Kene Nwangwu,RB,RB124,RB133,RB91,RB-T7,NYJ,13,28.6,6,6'1",210,,1,-137,,,,25,0,15.8,80.2,4.9,10,349.75,287,383,404,170.1,0,,,,,RB
-488,Tanner Hudson,TE,TE76,TE78,TE78,TE-T7,CIN,6,31.8,7,6'5",241,,1,-108,,,,24.6,4,17.8,46.8,38.3,10,379.5,375,384,1793,170,2,,,,,TE
-489,Ted Hurst III,WR,WR165,WR90,WR100,WR-T11,TB,10,22.2,R,6'3",195,4.42,1,-247,,,,24.3,,,,,,242.11,150,344,405,170.2,4,,,,,WR
-490,Emari Demercado,RB,RB125,RB94,RB81,RB-T7,DAL,14,27.6,4,5'9",215,,1,-196,,,,24.1,0,15.6,77.4,51.8,12,293.96,169,379,355,170.2,1,,,,,RB
-491,Lil'Jordan Humphrey,WR,WR166,WR177,WR149,WR-T11,DEN,10,28.4,7,6'4",225,4.75,1,-96,,,,23.4,,,,28.1,7,394.5,384,405,1339,169.9,1,,,,,WR
-492,Chimere Dike,WR,WR167,WR94,WR116,WR-T11,TEN,9,24.7,2,6'1",196,4.34,1,-240,,,,23.3,,,,92.1,17,252.17,174,346,1022,169.9,4,,,,,WR
-493,Brittain Brown,RB,RB126,RB140,RB111,RB-T7,CHI,10,28.9,3,6'1",205,,1,-129,,,,23.2,0,14.6,74.5,9.7,2,364,358,370,1363,170,3,,,,,RB
-494,Demarcus Robinson,WR,WR168,WR140,WR136,WR-T11,SF,8,31.9,11,6'1",203,4.59,1,-164,,,,22.9,,,,47.2,14,330.17,244,411,1136,170,1,ADD,,,,WR
-495,John Bates,TE,TE77,TE52,TE61,TE-T7,WAS,7,28.8,6,6'6",256,4.84,1,-155,,,,22.7,3.7,16.5,43.2,21.8,10,340,300,429,1045,170,1,,,,,TE
-496,Jahdae Walker,WR,WR169,WR145,WR144,WR-T11,CHI,10,24.2,2,6'3",206,,1,-164,,,,22.5,,,,23.7,6,332.25,301,365,1242,170,1,,,,,WR
-497,Reggie Gilliam,RB,RB127,RB138,RB105,RB-T7,NE,11,29,7,6'1",255,,1,-137,,,,22.4,,,,3.8,11,360.2,301,394,1268,170,0,,,,,RB
-498,DJ Giddens,RB,RB128,RB85,RB89,RB-T7,IND,13,23,2,6'1",212,4.43,1,-219,,,,21.9,,,,9.6,5,278.91,213,338,402,170.1,1,,,,,RB
-499,Nick Westbrook-Ikhine,WR,WR170,WR168,WR169,WR-T11,FA,,29.4,7,6'2",211,,1,-141,,,,21.8,,,,14.4,13,357.93,312,411,1885,170,1,,,,,WR
-500,Taysom Hill,TE,TE78,TE80,TE76,TE-T7,FA,,36,9,6'2",221,,1,-87,,,,21.7,3.5,15.7,41.3,36.3,13,412.5,388,437,1675,170,1,,,,,TE
-501,Max Bredeson,RB,RB129,RB109,RB104,RB-T7,MIN,6,23.9,R,6'2",252,,1,-182,,,,21.5,,,,,,319.33,279,365,1216,170,0,,,,,RB
-502,Jam Miller,RB,RB130,RB134,RB99,RB-T7,FA,,22.3,R,5'10",209,4.42,1,-152,,,,21.4,,,,,,350.27,304,383,455,170,1,,,,,RB
-503,Rasheen Ali,RB,RB131,RB114,RB87,RB-T7,BAL,13,25.5,3,5'11",210,,1,-176,,,,20.7,,,,19.7,15,326.53,257,366,398,170.1,1,,,,,RB
-504,Tyler Badie,RB,RB132,RB143,RB94,RB-T7,DEN,10,26.6,,5'8",197,4.45,1,-129,,,,20.4,,,,25.9,16,374.6,357,381,432,170.1,1,,,,,RB
-505,Trevor Etienne,RB,RB133,RB96,RB117,RB-T7,CAR,5,22.1,2,5'9",204,4.42,1,-204,,,,20,,,,12.2,17,301.12,237,354,1402,169.9,1,,,,,RB
-506,Jelani Woods,TE,TE79,TE74,TE72,TE-T7,NYJ,13,27.9,5,6'7",253,4.61,1,-134,,,,19.4,,,,0.9,2,371.5,371,372,1357,170,4,,,,,TE
-507,Tim Patrick,WR,WR171,WR163,WR148,WR-T11,NYJ,13,32.8,9,6'5",210,,1,-156,,,,19,,,,44.2,13,351,317,396,1335,170,2,,,,,WR
-508,Dylan Laube,RB,RB134,RB126,RB93,RB-T7,LV,13,26.7,3,5'10",206,4.54,1,-168,,,,18.5,,,,4.2,17,339.78,284,394,431,170.1,1,,,,,RB
-509,Roschon Johnson,RB,RB135,RB104,RB114,RB-T7,CHI,10,25.6,4,6'0",227,4.58,1,-195,,,,17.3,,,,1.7,6,313.63,233,387,1368,170,1,DROP,,,,RB
-510,Zach Ertz,TE,TE80,TE76,TE77,TE-T7,FA,,35.8,13,6'5",250,4.76,1,-137,,,,15.8,,,,101.4,13,372.6,344,422,1764,170,1,,,,,TE
-511,Tyler Conklin,TE,TE81,TE75,TE69,TE-T7,DET,6,31.1,9,6'3",245,4.8,1,-138,,,,15.1,,,,13.8,6,372.5,367,378,1229,170,1,,,,,TE
-512,Ameer Abdullah,RB,RB136,RB128,RB95,RB-T7,JAC,7,33.2,12,5'9",203,4.6,1,-169,,,,14.3,,,,29.9,13,343.4,304,389,434,170.1,1,,,,,RB
-513,Emanuel Wilson,RB,RB137,RB68,RB80,RB-T7,SEA,11,27.3,4,5'10",226,,1,-276,,,,13,,,,87,17,237.18,146,326,354,170.2,2,,,,,RB
-514,Joe Mixon,RB,RB138,RB108,RB120,RB-T7,FA,,30.1,9,6'1",220,,1,-196,,,,9.9,,,,,,318.14,256,370,1727,170,3,,,,,RB
-515,Tai Felton,WR,WR172,WR166,WR142,WR-T11,MIN,6,23.5,2,6'1",186,4.37,1,-157,,,,8.5,,,,4,12,357.88,298,453,1233,170,1,,,,,WR
-516,DeAndre Hopkins,WR,WR173,WR176,WR166,WR-T11,BAL,13,34.2,13,6'1",210,4.57,1,-127,,,,5.7,,,,56,17,389,337,447,1761,170,1,,,,,WR
-517,Tahj Brooks,RB,RB139,RB99,RB85,RB-T7,CIN,6,24.3,2,5'9",220,4.52,1,-213,,,,4.4,,,,5.9,12,304.38,259,394,396,170.1,1,,,,,RB
-518,Kareem Hunt,RB,RB140,RB107,RB121,RB-T7,FA,,31.1,9,5'11",216,4.62,1,-201,,,,4.4,,,,136.4,17,317.31,251,418,1740,170,1,,,,,RB
-519,Roman Wilson,WR,WR174,WR118,WR126,WR-T11,PIT,9,25.2,3,5'10",186,4.39,1,-218,,,,2.6,,,,32.6,9,301.1,225,375,1074,170,1,,,,,WR
-520,Tyler Lockett,WR,WR175,WR172,WR165,WR-T11,LV,13,33.9,11,5'10",182,4.4,1,-154,,,,1,,,,51.1,17,366.33,328,409,1754,170,1,,,,,WR
-521,Jeremy McNichols,RB,RB141,RB124,RB108,RB-T7,WAS,7,30.7,6,5'9",205,4.49,1,-187,,,,0.9,,,,60.2,16,334,304,370,1332,170,1,,,,,RB
-522,Nicholas Singleton,RB,RB142,RB62,RB83,RB-T7,TEN,9,22.7,R,6'0",219,,1,-303,,,,0.8,,,,,,218.92,148,321,377,170.2,9,,,,,RB
-523,Alec Ingold,RB,RB143,RB129,RB103,RB-T7,LAC,7,30.1,8,6'1",240,4.89,1,-179,,,,0.6,,,,10.1,9,344,301,387,1161,170,1,,,,,RB
+173,RJ Harvey,RB,RB37,RB31,RB44,RB-T10,DEN,10,25.6,2,5'8",205,4.4,1,-78,103.9,-69,193,103.4,11.2,84.3,221.4,183.1,17,94.71,61,143,173,132.1,84,,,,,RB
+174,CLE D/ST,DST,DST15,DST15,,DST-T2,CLE,11,,,,,,1,47,,,,101.3,62.1,100.8,137,,,220.74,185,325,,,20,,,,,DST
+175,Adonai Mitchell,WR,WR47,WR60,WR61,WR-T11,NYJ,13,23.9,3,6'2",205,4.34,1,-6,159.8,-15,-3,100.5,29.9,89.9,182.5,71.4,16,169.01,126,258,186,170.7,15,,,,,WR
+176,BUF D/ST,DST,DST16,DST16,,DST-T2,BUF,7,,,,,,1,51,,,,99.6,58.2,97.5,143.2,,,227.03,189,343,,,31,,,,,DST
+177,DAL D/ST,DST,DST17,DST18,,DST-T2,DAL,14,,,,,,1,71,,,,99.6,58.6,97.7,144.3,,,247.62,166,364,,,25,,,,,DST
+178,NO D/ST,DST,DST18,DST19,,DST-T2,NO,8,,,,,,1,84,,,,99.6,51.8,97.6,149.6,,,261.57,172,353,,,17,,,,,DST
+179,SF DST,DST,DST19,DST20,,DST-T2,SF,8,,,,,,1,85,,,,99.6,51.5,98.2,150.1,,,264.07,194,356,,,17,,,,,DST
+180,TEN D/ST,DST,DST20,DST17,,DST-T2,TEN,9,,,,,,1,56,,,,99.6,52.4,99.8,147.5,,,235.78,188,354,,,10,,,,,DST
+181,Makai Lemon,WR,WR48,WR47,WR51,WR-T11,PHI,10,22.2,R,5'11",192,,1,-73,122.7,-58,-325,99.2,29.7,91.1,171.1,,,108.06,68,180,154,138.2,79,,,Makai Lemon appreciates guidance from DeVonta Smith as his NFL career begins (rss:yahoo),https://sports.yahoo.com/articles/makai-lemon-appreciates-guidance-devonta-050000905.html,WR
+182,Chad Ryland,K,K30,K30,K28,K-T2,ARI,14,26.9,4,6'0",195,,1,114,,,,97.8,29.3,107.6,147.3,0,17,296.33,197,391,501,169.9,1,,,,,K
+183,Jake Elliott,K,K31,K31,K19,K-T2,PHI,10,31.6,10,5'9",167,4.79,1,120,,,,97.6,25.3,108.9,155.1,0,17,303.27,197,380,487,168.8,8,,,,,K
+184,Chuba Hubbard,RB,RB38,RB33,RB37,RB-T10,CAR,5,27.2,6,6'1",210,4.48,1,-84,86.3,-98,-453,97.6,13.8,87.6,202.1,110.4,15,99.84,67,145,131,114.3,88,,,,,RB
+185,Josh Downs,WR,WR49,WR39,WR50,WR-T11,IND,13,25.1,4,5'9",171,4.48,1,-97,97.9,-87,-187,97.5,28.4,91.4,161.4,109.4,16,88,52,133,153,139.2,80,,,,,WR
+186,CIN D/ST,DST,DST21,DST21,,DST-T2,CIN,6,,,,,,1,82,,,,96.7,52,93.7,146.5,,,268,190,353,,,3,,,,,DST
+187,Jordan Addison,WR,WR50,WR46,WR39,WR-T11,MIN,6,24.6,4,5'11",179,4.49,1,-79,88.9,-98,137,96.2,28,89.2,159.2,114.1,14,107.99,68,150,91,128,83,,,,,WR
+188,Drew Stevens,K,K32,K32,K24,K-T2,WAS,7,22.7,R,6'1",213,,1,116,,,,95.9,21.1,109.9,161,,,304,253,362,493,169.9,1,,,,,K
+189,Jayden Reed,WR,WR51,WR44,WR46,WR-T11,GB,11,26.3,4,5'11",187,4.45,1,-86,85.3,-104,64,95.7,23.5,86.7,161.3,39,5,103.17,64,140,137,141.8,81,,,,,WR
+190,Michael Pittman Jr.,WR,WR52,WR36,WR36,WR-T11,PIT,9,28.9,7,6'4",223,4.52,1,-108,81.1,-109,-173,94.9,23.3,87.2,163.5,162.4,17,81.63,52,116,88,93.9,84,,,Aaron Rodgers' favorite target? Michael Pittman Jr. debut. Things to watch in Steelers opener (rss:yahoo),https://sports.yahoo.com/articles/aaron-rodgers-favorite-target-michael-100438512.html,WR
+191,Romeo Doubs,WR,WR53,WR53,WR54,WR-T11,NE,11,26.4,5,6'2",210,,1,-64,96.4,-95,101,93.6,18.6,86.2,169.1,137.9,16,126.88,90,180,157,149.8,63,DROP,,,,WR
+192,Jacory Croskey-Merritt,RB,RB39,RB39,RB36,RB-T10,WAS,7,25.4,2,5'11",208,,1,-77,103.3,-89,61,93,14.1,78.5,201.1,135.8,17,114.54,67,141,130,140.4,79,,,,,RB
+193,ATL D/ST,DST,DST22,DST23,,DST-T2,ATL,11,,,,,,1,78,,,,92.7,50.1,91.3,144.2,,,271.34,183,356,,,9,,,,,DST
+194,CHI D/ST,DST,DST23,DST22,,DST-T2,CHI,10,,,,,,1,75,,,,92.7,53,90.3,133.6,,,268.72,167,354,,,13,,,,,DST
+195,IND D/ST,DST,DST24,DST26,,DST-T2,IND,13,,,,,,1,85,,,,92.4,50.2,88.8,141.8,,,280.47,190,356,,,15,,,,,DST
+196,LV D/ST,DST,DST25,DST27,,DST-T2,LV,13,,,,,,1,86,,,,92.4,46.5,88.7,143.7,,,281.5,188,359,,,9,,,,,DST
+197,NYG D/ST,DST,DST26,DST24,,DST-T2,NYG,8,,,,,,1,75,,,,92.4,46.3,89.1,143.8,,,271.9,172,384,,,14,,,,,DST
+198,WAS D/ST,DST,DST27,DST25,,DST-T2,WAS,7,,,,,,1,79,,,,92.4,48.5,86.6,141.8,,,276.5,190,400,,,6,,,,,DST
+199,Chris Rodriguez Jr.,RB,RB40,RB45,RB45,RB-T10,JAC,7,25.9,,5'11",224,,1,-58,157.4,-42,188,91.7,14.5,75,204.1,90.5,12,141.1,102,234,174,164.4,51,DROP,,,,RB
+200,Tre Tucker,WR,WR54,WR59,WR65,WR-T11,LV,13,25.5,4,5'8",182,4.4,1,-41,131,-69,80,91.3,21.6,88.2,171.6,133.2,17,159.03,115,247,196,169.1,28,ADD,,,,WR
+201,Josh Jacobs,RB,RB41,RB46,RB32,RB-T10,GB,11,28.6,8,5'10",223,,1,-53,84.8,-116,-2907,90.7,14.6,73.1,196.9,219.1,15,147.99,39,394,120,104.1,94,,,Judge seals video in Josh Jacobs case (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/judge-seals-video-in-josh-jacobs-case,RB
+202,Dallas Goedert,TE,TE16,TE13,TE10,TE-T9,PHI,10,31.7,9,6'5",256,,1,-83,113.8,-88,106,90.5,30.4,88.6,157.3,155.1,15,119.37,85,158,124,104.5,88,,,,,TE
+203,Michael Mayer,TE,TE17,TE40,TE35,TE-T9,LV,13,25.2,4,6'4",256,4.7,1,94,,,,90.5,29.6,89.1,170.9,56.3,13,297.21,209,351,440,170.2,2,ADD,,Tucker Kraft  Michael Mayer join highest-paid tight ends with contract extensions (rss:cbs),https://www.cbssports.com/nfl/news/tucker-kraft-agrees-to-contract-extension-packers/,TE
+204,Kayshon Boutte,WR,WR55,WR61,WR80,WR-T11,HOU,8,24.3,4,5'11",203,4.5,1,-34,150.1,-54,88,90.2,16.1,84.3,172.5,107.6,14,169.75,121,277,304,170.3,18,,,,,WR
+205,Dominic Zvada,K,K33,K33,K23,K-T2,NYG,8,22.9,R,6'3",187,,1,137,,,,90,19.3,109.5,155.7,,,342,324,371,491,169.7,2,,,,,K
+206,Rashid Shaheed,WR,WR56,WR57,WR56,WR-T11,SEA,11,28,5,6'0",180,,1,-59,117.7,-88,32,89.7,15.8,82.8,182.9,115.1,18,146.98,115,205,160,161,51,,,,,WR
+207,Travis Kelce,TE,TE18,TE10,TE11,TE-T9,KC,5,36.9,14,6'5",250,4.63,1,-109,129.6,-77,-283,89.6,26.4,86.8,165.3,155.2,17,98.18,57,138,125,95.7,93,,,,,TE
+208,Wan'Dale Robinson,WR,WR57,WR37,WR47,WR-T11,TEN,9,25.7,5,5'8",185,4.44,1,-122,92.9,-115,-94,89.6,14.8,83.5,176.2,171.9,16,85.64,49,128,138,114.4,75,,,,,WR
+209,Mike Gesicki,TE,TE19,TE35,TE33,TE-T9,CIN,6,30.9,9,6'6",245,4.54,1,69,,,,88.9,27.5,86.5,156.4,56.7,12,277.84,236,357,416,170.1,3,,,,,TE
+210,ARI D/ST,DST,DST28,DST30,,DST-T2,ARI,14,,,,,,1,94,,,,87.8,44.7,82.8,138.6,,,304,212,361,,,5,,,,,DST
+211,CAR D/ST,DST,DST29,DST28,,DST-T2,CAR,5,,,,,,1,83,,,,87.8,44.8,84.6,131.8,,,294.18,185,365,,,3,,,,,DST
+212,MIA D/ST,DST,DST30,DST32,,DST-T2,MIA,6,,,,,,1,118,,,,87.8,47.2,86.6,123.9,,,329.71,206,390,,,6,,,,,DST
+213,NYJ D/ST,DST,DST31,DST31,,DST-T2,NYJ,13,,,,,,1,106,,,,87.8,46,87,119.1,,,319.2,191,428,,,4,,,,,DST
+214,TB D/ST,DST,DST32,DST29,,DST-T2,TB,10,,,,,,1,89,,,,87.8,47.8,90,119.5,,,303.05,188,383,,,14,,,,,DST
+215,Terrance Ferguson,TE,TE20,TE22,TE17,TE-T9,LAR,11,23.5,2,6'5",252,4.63,1,-9,173,-42,38,87,25,83,154.1,46.6,11,205.53,112,287,145,166.8,21,DROP,,,,TE
+216,Tyjae Spears,RB,RB42,RB44,RB46,RB-T10,TEN,9,25.2,4,5'11",200,,1,-76,144.6,-71,71,86.9,14.4,66.3,201.2,89.2,13,140.39,89,182,177,152.4,46,,,,,RB
+217,Juwan Johnson,TE,TE21,TE15,TE21,TE-T9,NO,8,30,7,6'4",245,4.58,1,-89,149,-68,212,86.8,21.9,82.6,151.8,141.4,17,127.67,87,173,262,157.6,49,,,,,TE
+218,Hunter Henry,TE,TE22,TE20,TE16,TE-T9,NE,11,31.7,11,6'5",249,4.79,1,-51,158.9,-59,-70,84.8,15,79.2,155.2,148.8,17,167.1,112,236,144,154.7,60,,,,,TE
+219,Jason Sanders,K,K34,K34,K30,K-T2,FA,,30.8,9,5'11",195,,1,143,,,,84.1,19.8,95.7,150.7,,,362.25,333,403,1743,169.9,1,,,,,K
+220,Gunnar Helm,TE,TE23,TE25,TE25,TE-T9,TEN,9,24,2,6'5",241,4.84,1,0,,,,83.4,14.8,76.1,148.3,69.7,16,220.35,143,305,311,170.5,7,,,,,TE
+221,Xavier Worthy,WR,WR58,WR54,WR44,WR-T11,KC,5,23.3,3,5'11",165,4.21,1,-91,95.1,-126,-66,82.3,13.6,77.4,158.6,88.9,14,129.83,100,180,109,135.6,68,DROP,,,,WR
+222,Pat Freiermuth,TE,TE24,TE28,TE22,TE-T9,PIT,9,27.9,6,6'5",258,,1,12,,,,82.1,15.5,70.7,159.8,93.1,15,233.5,138,332,296,169.5,11,,,,,TE
+223,Greg Dulcich,TE,TE25,TE24,TE28,TE-T9,MIA,6,26.4,5,6'4",245,4.69,1,-8,,,7,82,11.9,72.4,170.1,49.8,9,215.31,131,306,365,170.3,9,,,,,TE
+224,Kyle Monangai,RB,RB43,RB41,RB33,RB-T10,CHI,10,24.2,2,5'8",207,4.6,1,-104,103.5,-120,-308,81.6,14.4,74.7,170.9,137.7,17,120.02,86,162,121,127.2,81,,,,,RB
+225,Cade Otton,TE,TE26,TE29,TE29,TE-T9,TB,10,27.4,5,6'5",247,,1,14,,,-13,81.5,8.8,63.5,185.7,92.7,15,239.02,181,295,367,170.2,7,,,,,TE
+226,Deebo Samuel Sr.,WR,WR59,WR56,WR53,WR-T11,SF,8,30.6,8,6'0",215,4.48,1,-85,111.2,-115,207,81.4,14.3,74,154.7,152.2,16,140.72,83,241,156,146.2,63,,,,,WR
+227,Brenton Strange,TE,TE27,TE17,TE20,TE-T9,JAC,7,25.7,4,6'4",253,4.7,1,-66,160.6,-66,-103,80.9,9.5,66.7,167.2,95,12,160.94,111,236,210,168.9,38,DROP,,,,TE
+228,Michael Penix Jr.,QB,QB33,QB32,QB35,QB-T8,ATL,11,26.3,3,6'3",220,,1,54,,,3,80.4,0.6,45.2,231.1,120.3,9,282.37,174,345,439,170.1,4,,,,,QB
+229,Kenyon Sadiq,TE,TE28,TE26,TE18,TE-T9,NYJ,13,21.5,R,6'3",241,4.39,1,-5,,,-162,80.1,10,67.2,166.1,,,223.91,144,295,146,167,38,DROP,,,,TE
+230,Jerry Jeudy,WR,WR60,WR62,WR59,WR-T11,CLE,11,27.4,7,6'1",195,4.45,1,-60,127.8,-102,-33,78.5,18.3,68.3,160.9,95.7,17,170.19,115,272,181,168.6,22,,,,,WR
+231,Denzel Boston,WR,WR61,WR58,WR58,WR-T11,CLE,11,22.7,R,6'4",215,,1,-77,137.1,-94,-42,77,13.5,69.7,145.9,,,153.85,107,299,180,168.5,35,,,,,WR
+232,Zach Charbonnet,RB,RB44,RB51,RB43,RB-T10,SEA,11,25.6,4,6'1",220,4.53,1,-76,141.7,-90,-193,76.1,7.3,68.3,157.7,171.4,16,156.22,117,292,172,156.5,56,,,,,RB
+233,Cole Kmet,TE,TE29,TE46,TE43,TE-T9,CHI,10,27.5,7,6'6",257,4.7,1,91,,,,75.6,11.3,63,159.4,63.7,16,324.18,256,380,465,169.7,2,,,,,TE
+234,Braelon Allen,RB,RB45,RB55,RB52,RB-T10,NYJ,13,22.6,3,6'1",235,,1,-56,155.2,-79,14,75.3,4.4,66.9,145.7,14.3,4,177.59,132,292,205,170.7,17,,,,,RB
+235,Shedeur Sanders,QB,QB34,QB35,QB33,QB-T8,CLE,11,24.6,2,6'2",212,,1,66,,,,75.2,0,45.6,182.5,84.9,8,301.37,214,359,428,169.8,5,,,Shedeur Sanders may not get a chance with Browns for a long time (rss:yardbarker),https://www.yardbarker.com/nfl/articles/shedeur_sanders_may_not_get_a_chance_with_browns_for_a_long_time/s1_13132_44296543,QB
+236,Kenny Gainwell,RB,RB46,RB32,RB35,RB-T10,TB,10,27.5,6,5'9",200,,1,-138,108,-128,186,75,3.8,67.1,147.9,184.8,17,98.34,67,143,129,104,82,,,,,RB
+237,Jaylin Noel,WR,WR62,WR74,WR71,WR-T11,HOU,8,24,2,5'11",200,4.39,1,-37,,,,73.6,17.7,64.3,154.2,55.4,17,200.36,141,289,219,171.3,7,,,,,WR
+238,Omar Cooper Jr.,WR,WR63,WR65,WR79,WR-T11,NYJ,13,22.7,R,6'0",199,4.42,1,-56,,,-56,72.4,8.1,62.9,156.5,,,181.61,123,302,302,171,16,,,,,WR
+239,Keaton Mitchell,RB,RB47,RB50,RB50,RB-T10,LAC,7,24.6,4,5'8",191,4.37,1,-86,148.3,-91,-43,71.6,2.6,69,148.5,50.9,13,152.54,102,314,202,168.7,33,ADD,,,,RB
+240,Dalton Schultz,TE,TE30,TE18,TE23,TE-T9,HOU,8,30.1,9,6'5",242,4.75,1,-78,,,-11,71.5,15.5,62.8,138.4,136.7,17,162.07,111,206,297,168.7,31,,,,,TE
+241,Brian Robinson Jr.,RB,RB48,RB56,RB48,RB-T10,ATL,11,27.4,3,6'1",225,4.53,1,-59,165.9,-75,-8,71.2,2.7,63.9,154.9,58.5,17,182.38,141,263,179,167.9,34,,,,,RB
+242,Dylan Sampson,RB,RB49,RB47,RB55,RB-T10,CLE,11,22,2,5'8",201,,1,-93,175.6,-66,11,71.2,3.5,59,156,71.1,15,148.97,89,231,221,169.2,21,,,,,RB
+243,Chig Okonkwo,TE,TE31,TE19,TE24,TE-T9,WAS,7,27,5,6'3",238,,1,-80,,,-174,71,15.8,58.8,138.1,96,17,163.01,112,226,310,170,29,,,,,TE
+244,Jalen Coker,WR,WR64,WR52,WR55,WR-T11,CAR,5,24.8,3,6'3",213,4.57,1,-119,114.4,-130,38,70.8,5.2,62.7,141.4,73.9,11,124.94,91,176,159,154.4,57,,,,,WR
+245,Troy Franklin,WR,WR65,WR78,WR106,WR-T11,DEN,10,23.6,3,6'3",180,4.41,1,-26,,,,70.6,4,63.2,143.9,144.6,17,218.75,163,347,980,170,3,,,,,WR
+246,Jalen McMillan,WR,WR66,WR64,WR57,WR-T11,TB,10,24.7,3,6'1",192,4.47,1,-70,132.2,-114,,70.4,4.3,59.2,146.6,23.9,4,175.82,137,296,161,163.2,22,,,,,WR
+247,Drew Allar,QB,QB35,QB39,QB46,QB-T8,PIT,9,22.5,R,6'5",228,,1,85,,,,69.3,-0.2,41.1,172,,,332,320,344,1221,169.9,1,,,,,QB
+248,Jake Browning,QB,QB36,QB36,,QB-T8,FA,,30.4,3,6'2",210,4.74,1,69,,,,68.8,0.8,41.1,183.3,48.7,5,316.5,308,325,,,1,,,,,QB
+249,Jack Bech,WR,WR67,WR91,WR98,WR-T11,LV,13,23.7,2,6'1",214,,1,-4,,,,67.2,5.7,58.8,131.1,32.4,14,244.66,180,376,392,170.2,2,,,,,WR
+250,Dontayvion Wicks,WR,WR68,WR67,WR69,WR-T11,PHI,10,25.2,4,6'1",206,4.62,1,-67,165.2,-85,41,66.3,8,59.7,129,60.8,13,182.79,109,272,214,170.7,12,,,,,WR
+251,Pat Bryant,WR,WR69,WR68,WR92,WR-T11,DEN,10,23.7,2,6'2",204,4.61,1,-66,,,,65,8.2,58.7,134.1,59.3,13,184.61,115,293,369,170.4,7,,,,,WR
+252,Evan Engram,TE,TE32,TE31,TE31,TE-T9,DEN,10,32,10,6'3",240,4.42,1,3,,,,64.5,14.4,53.5,126.2,77.8,16,255.13,181,336,413,170,4,,,,,TE
+253,Calvin Ridley,WR,WR70,WR77,WR60,WR-T11,TEN,9,31.7,8,6'1",190,4.43,1,-43,134.6,-118,,64.4,8.8,57.9,128.5,38.8,7,209.81,136,302,184,170.1,12,,,,,WR
+254,Zachariah Branch,WR,WR71,WR87,WR78,WR-T11,ATL,11,22.4,R,5'10",180,4.35,1,-21,,,-5,64,8.9,59.1,125.9,,,233.38,140,312,300,170.5,10,,,,,WR
+255,Woody Marks,RB,RB50,RB42,RB42,RB-T10,HOU,8,25.7,2,5'10",208,4.54,1,-119,134.8,-120,84,63.2,3.1,45.6,145.4,133.1,16,135.81,102,189,151,153.1,55,,,,,RB
+256,Caleb Douglas,WR,WR72,WR75,WR63,WR-T11,MIA,6,23,R,6'4",205,4.39,1,-50,175.2,-81,44,62.8,8.6,56.9,127,,,205.67,126,327,188,170.7,15,ADD,,,,WR
+257,Isaac TeSlaa,WR,WR73,WR80,WR91,WR-T11,DET,6,24.5,2,6'4",214,4.43,1,-37,182.4,-75,,62.7,10,54.1,125.8,67.9,14,219.56,168,282,368,170.3,7,,,,,WR
+258,Tre' Harris,WR,WR74,WR66,WR76,WR-T11,LAC,7,24.5,2,6'3",210,,1,-76,,,,62.7,9.5,57.7,123.1,54.4,16,182.09,123,303,290,171,7,,,,,WR
+259,Oronde Gadsden II,TE,TE33,TE27,TE32,TE-T9,LAC,7,23.2,2,6'5",236,,1,-35,,,-237,62.4,12.5,49.1,140.2,106.9,15,224.17,131,306,415,170.4,24,DROP,,,,TE
+260,Ollie Gordon II,RB,RB51,RB75,RB62,RB-T10,MIA,6,22.6,2,6'2",225,4.61,1,-2,,,,62,2.9,46.6,154.5,50.6,17,258.43,177,322,308,170.6,2,,,,,RB
+261,Darren Waller,TE,TE34,TE33,TE27,TE-T9,CAR,5,34,9,6'6",245,4.46,1,7,,,,62,12.1,47.6,135.9,76.7,9,268.11,209,345,364,170.4,5,ADD,,,,TE
+262,Travis Hunter,WR,WR75,WR73,WR62,WR-T11,JAC,7,23.3,2,6'1",185,,1,-64,,,,62,8.9,58.8,126.7,49.8,7,197.59,128,347,187,142.4,65,DROP,,,,WR
+263,Germie Bernard,WR,WR76,WR88,WR75,WR-T11,PIT,9,22.7,R,6'1",206,4.48,1,-26,,,,61.8,9.5,58.3,123,,,236.65,168,329,287,171.1,7,,,,,WR
+264,Ryan Flournoy,WR,WR77,WR69,WR77,WR-T11,DAL,14,26.8,3,6'1",205,4.44,1,-78,166.7,-97,,61.3,7.9,57.9,122.1,94,15,185.74,126,327,293,170.8,8,,,,,WR
+265,Ja'Kobi Lane,WR,WR78,WR76,WR72,WR-T11,BAL,13,22.1,R,6'4",205,4.47,1,-55,157,-108,245,61,7.6,59.7,119.2,,,209.7,128,331,270,169.1,29,,,,,WR
+266,Jalen Milroe,QB,QB37,QB42,QB55,QB-T8,SEA,11,23.7,2,6'2",216,,1,75,,,,60.8,1.4,36.3,158.7,-1.6,3,341,326,356,1404,170,1,,,,,QB
+267,Mike Washington Jr.,RB,RB52,RB49,RB47,RB-T10,LV,13,23.2,,6'2",197,4.33,1,-114,161.7,-105,597,60.5,4.1,47.2,135.8,,,152.53,103,248,178,164.3,52,,,,,RB
+268,Noah Fant,TE,TE35,TE53,TE56,TE-T9,NO,8,28.8,8,6'4",249,4.5,1,82,,,,60.3,12.6,47.5,130.7,57.8,13,349.73,281,393,1021,170,1,,,,,TE
+269,Dawson Knox,TE,TE36,TE48,TE37,TE-T9,BUF,7,29.8,8,6'4",254,,1,60,,,,59.5,12.4,43.5,131.9,85.7,16,329.24,260,413,442,169.9,2,,,,,TE
+270,Tyrone Tracy Jr.,RB,RB53,RB54,RB75,RB-T10,NYG,8,26.8,3,5'11",210,4.48,1,-96,,,-169,59.3,4.3,47.1,126.6,142.8,15,173.85,120,311,348,170.2,24,,,,,RB
+271,Tank Bigsby,RB,RB54,RB53,RB53,RB-T10,PHI,10,25,,5'11",215,4.56,1,-100,167.6,-103,76,59.1,4.4,48.3,129.7,52.3,15,170.74,131,257,206,169.5,30,DROP,,,,RB
+272,Tyler Allgeier,RB,RB55,RB43,RB49,RB-T10,ARI,14,26.4,5,5'10",225,4.6,1,-135,155.9,-116,343,59,3,49.8,128.5,116,17,136.5,99,182,200,163.2,48,,,,,RB
+273,Alvin Kamara,RB,RB56,RB52,RB57,RB-T10,NO,8,31.1,10,5'10",215,4.56,1,-105,151.9,-121,-114,58.7,3.1,46.5,126.7,84.2,11,168.28,102,317,260,164.2,39,ADD,,,,RB
+274,Cyrus Allen,WR,WR79,WR79,WR107,WR-T11,KC,5,23.6,R,5'11",180,,1,-55,,,115,58.5,6.1,51.8,119,,,219.45,133,435,980,170,14,DROP,,,,WR
+275,Rashod Bateman,WR,WR80,WR85,WR68,WR-T11,BAL,13,26.8,6,6'1",193,4.39,1,-47,142.3,-133,,58,7.9,48.5,128.7,45.9,13,227.62,150,321,213,171,7,,,,,WR
+276,Mason Taylor,TE,TE37,TE34,TE41,TE-T9,NYJ,13,22.3,2,6'5",251,,1,0,,,,57.3,12.5,46,123.3,66.9,13,276.24,203,342,463,170,3,,,,,TE
+277,Chris Bell,WR,WR81,WR86,WR87,WR-T11,MIA,6,22.2,R,6'2",220,4.5,1,-49,160.2,-117,28,56.6,4.9,45.6,131.4,,,227.67,150,305,330,170.6,6,ADD,,,,WR
+278,Isiah Pacheco,RB,RB57,RB59,RB70,RB-T10,DET,6,27.5,5,5'10",210,4.37,1,-86,,,-83,56.3,3.2,42.9,124.8,77.8,13,192.34,143,311,340,165.9,33,,,,,RB
+279,Charlie Kolar,TE,TE38,TE36,TE59,TE-T9,LAC,7,27.6,5,6'6",250,,1,5,,,,56.2,12.7,43.1,120,31.2,13,283.6,196,361,1031,170,1,,,,,TE
+280,Tank Dell,WR,WR82,WR84,WR97,WR-T11,HOU,8,26.8,4,5'10",165,,1,-54,,,-26,55.9,5,40.2,134.7,,,226.41,166,312,391,164.7,27,,,,,WR
+281,Nicholas Singleton,RB,RB58,RB62,RB83,RB-T10,TEN,9,22.7,R,6'0",219,,1,-62,,,,55.3,2.9,47.8,113.5,,,218.92,148,321,377,170.2,9,,,,,RB
+282,Ted Hurst III,WR,WR83,WR90,WR100,WR-T11,TB,10,22.2,R,6'3",195,4.42,1,-40,,,,55.1,5.1,39.4,135.5,,,242.11,150,344,405,170.2,4,,,,,WR
+283,Keon Coleman,WR,WR84,WR93,WR90,WR-T11,BUF,7,23.3,3,6'3",213,4.61,1,-36,,,,53.8,4.9,38.7,128.8,83.4,12,246.62,149,307,357,170.2,4,,,,,WR
+284,Elic Ayomanor,WR,WR85,WR95,WR130,WR-T11,TEN,9,23.2,2,6'2",206,4.44,1,-30,,,,53.7,4.8,38.8,125.8,96,16,254.04,184,333,1101,170,2,,,,,WR
+285,Demond Claiborne,RB,RB59,RB74,RB86,RB-T10,MIN,6,22.9,R,5'10",188,4.37,1,-32,,,,53.5,3.1,45.9,114.1,,,253.21,156,323,397,170.1,4,,,,,RB
+286,Cooper Kupp,WR,WR86,WR82,WR82,WR-T11,SEA,11,33.2,10,6'2",205,4.62,1,-61,155.5,-130,0,53,5.4,40.2,110,92.8,16,225.03,149,298,322,168.8,13,,,,,WR
+287,Malachi Fields,WR,WR87,WR81,WR74,WR-T11,NYG,8,23,R,6'4",222,4.61,1,-64,,,23,52.9,5.3,45.2,112.5,,,222.55,133,354,286,170.8,9,ADD,,,,WR
+288,Isaiah Bond,WR,WR88,WR115,WR118,WR-T11,CLE,11,22.5,2,5'11",180,4.39,1,8,,,,52.4,5.9,47.4,111.3,45.7,15,295.52,244,373,1038,170,1,,,,,WR
+289,Jalen Nailor,WR,WR89,WR72,WR66,WR-T11,LV,13,27.5,5,6'0",190,4.5,1,-95,150.3,-139,-143,52.1,4.5,45.8,111.6,86.2,17,194.41,128,302,199,170.9,24,ADD,,,,WR
+290,Emmett Johnson,RB,RB60,RB57,RB69,RB-T10,KC,5,22.9,R,5'10",202,4.45,1,-106,165.4,-125,95,51.4,4,44.6,113.8,,,183.79,132,329,339,169.9,16,DROP,,,,RB
+291,Emari Demercado,RB,RB61,RB94,RB81,RB-T10,DAL,14,27.6,4,5'9",215,,1,3,,,,50.9,3.4,40.4,118.5,51.8,12,293.96,169,379,355,170.2,1,,,,,RB
+292,Anthony Richardson Sr.,QB,QB38,QB45,QB43,QB-T8,IND,13,24.3,4,6'4",244,4.43,1,55,,,,50.4,0.5,29.1,145.3,1.7,2,347.16,291,386,477,170,2,,,,,QB
+293,Taylen Green,QB,QB39,QB40,QB56,QB-T8,CLE,11,23.9,R,6'6",230,4.36,1,45,,,,50.4,0.5,23.3,155.2,,,338.33,324,353,1436,170,2,,,,,QB
+294,Kirk Cousins,QB,QB40,QB33,QB34,QB-T8,LV,13,38,15,6'3",209,4.84,1,-5,,,50,50.1,0.3,19.1,164.8,103.5,10,289.05,211,347,429,169.9,5,,,How Kirk Cousins is approaching Year 15 as a starter -- and mentor to the Raiders' young core (rss:espn),https://www.espn.com/nfl/story/_/id/49904333/las-vegas-raiders-quarterback-kirk-cousins-year-15-mentor-starter,QB
+295,Kyle Williams,WR,WR90,WR104,WR105,WR-T11,NE,11,23.8,2,5'11",190,4.4,1,-20,,,,50.1,3.9,44.4,114,44.2,14,275.04,202,341,979,170,2,,,,,WR
+296,Jalen Royals,WR,WR91,WR134,WR138,WR-T11,KC,5,23.5,2,6'0",195,4.42,1,27,,,,50,4,43.3,117.3,1.4,2,323.19,270,386,1141,170,1,,,,,WR
+297,Malik Washington,WR,WR92,WR70,WR81,WR-T11,MIA,6,25.7,,5'8",195,4.47,1,-108,148.4,-149,32,50,2.6,42.1,120.2,87.7,17,189.21,83,296,305,170,19,DROP,,,,WR
+298,Chimere Dike,WR,WR93,WR94,WR116,WR-T11,TEN,9,24.7,2,6'1",196,4.34,1,-46,,,,49.3,2.7,39.6,117.3,92.1,17,252.17,174,346,1022,170,4,,,,,WR
+299,Devaughn Vele,WR,WR94,WR92,WR70,WR-T11,NO,8,28.7,3,6'5",210,4.47,1,-54,,,47,49.2,3.4,40.8,118.2,53.8,9,245.27,163,312,215,171.2,8,ADD,,,,WR
+300,J.J. McCarthy,QB,QB41,QB38,QB36,QB-T8,MIN,6,23.6,3,6'3",219,,1,30,,,,47.5,0.3,18.1,156.3,125.4,10,330.44,269,386,446,169.8,2,,,,,QB
+301,Jauan Jennings,WR,WR95,WR63,WR73,WR-T11,MIN,6,29.1,6,6'3",212,4.72,1,-125,151.4,-150,-43,47.5,3.8,35.2,106.9,145.8,15,175.56,115,307,283,170.9,15,,,,,WR
+302,Ray Davis,RB,RB62,RB58,RB54,RB-T10,BUF,7,26.8,,5'8",211,,1,-112,,,,47.3,2.2,31.2,113.1,53.1,17,190.37,134,263,220,170.6,13,,,,,RB
+303,Darnell Mooney,WR,WR96,WR83,WR101,WR-T11,NYG,8,28.8,7,5'11",177,4.38,1,-77,,,,47.1,6.2,36.1,102.4,66.3,15,226.23,165,299,418,170.4,4,ADD,,,,WR
+304,Tyquan Thornton,WR,WR97,WR97,WR89,WR-T11,KC,5,26.1,5,6'2",185,4.28,1,-38,,,,46.7,4.2,35.3,107.4,71.3,12,265.74,166,341,356,170.3,2,,,,,WR
+305,David Njoku,TE,TE39,TE30,TE30,TE-T9,LAC,7,30.1,12,6'4",246,4.64,1,-51,,,,46.1,9,33.8,103.8,69.8,11,254.16,155,355,411,169.8,9,,,,,TE
+306,Gardner Minshew II,QB,QB42,QB52,QB54,QB-T8,ARI,14,30.3,8,6'1",225,4.97,1,50,,,,43.8,0.3,16.7,144.1,-0.3,4,356.25,328,381,1275,170,1,,,,,QB
+307,Tory Horton,WR,WR98,WR96,WR99,WR-T11,SEA,11,23.8,2,6'2",196,4.41,1,-43,,,,43.2,2.7,33.1,103.2,52.6,8,263.77,197,351,394,170.1,3,,,,,WR
+308,Tyson Bagent,QB,QB43,QB47,QB45,QB-T8,CHI,10,26.2,4,6'3",213,4.79,1,42,,,,43.1,0.3,16.4,141.8,2.6,2,350.33,333,372,483,170,1,,,Bears sign QB Miller Moss to practice squad  elevate him for Sunday's game (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/bears-sign-qb-miller-moss-to-practice-squad-elevate-him-for-sundays-game,QB
+309,Sean Tucker,RB,RB63,RB61,RB76,RB-T10,TB,10,24.9,4,5'10",205,,1,-96,,,,42.9,1.8,27.1,106.9,87.4,17,213.05,154,304,349,170.3,4,,,,,RB
+310,Kimani Vidal,RB,RB64,RB60,RB60,RB-T10,LAC,7,25,3,5'8",215,4.46,1,-110,,,,42.5,1.8,28.2,116.2,109.9,13,200.45,152,297,306,170.8,5,,,,,RB
+311,Keenan Allen,WR,WR99,WR71,WR67,WR-T11,IND,13,34.3,14,6'2",211,4.58,1,-119,145.3,-166,135,42.4,2.9,34.8,104.5,142.2,17,192.19,110,293,212,166.2,27,,,,,WR
+312,Kaleb Johnson,RB,RB65,RB72,RB82,RB-T10,GB,11,23,2,6'0",225,4.57,1,-63,,,127,41.6,1.9,29.2,117.4,8.3,10,248.63,145,381,375,170.1,15,,,,,RB
+313,Trey Benson,RB,RB66,RB89,RB100,RB-T10,ARI,14,24.1,3,6'0",225,4.39,1,-22,,,,41.2,1.9,24.1,115,28.9,4,290.52,212,352,456,170,2,,,,,RB
+314,Tommy Tremble,TE,TE40,TE54,TE51,TE-T9,CAR,5,26.2,6,6'4",250,4.6,1,37,,,,40.6,4,30.7,94.3,50.4,15,350.79,290,400,1004,169.9,1,,,,,TE
+315,Marvin Mims Jr.,WR,WR100,WR101,WR93,WR-T11,DEN,10,24.5,4,5'11",182,4.38,1,-43,,,,40.6,2.7,32.6,97.9,70.5,15,271.92,221,340,370,170.1,3,,,,,WR
+316,Samaje Perine,RB,RB67,RB76,RB63,RB-T10,CIN,6,31,10,5'10",240,4.65,1,-57,,,,39.9,2.6,27.2,103.6,69.4,15,259,157,408,319,170.2,5,ADD,,,,RB
+317,Kaelon Black,RB,RB68,RB64,RB59,RB-T10,SF,8,24.9,R,5'9",208,,1,-89,160,-157,241,39.8,3,28.6,91.8,,,227.97,132,338,269,169.5,16,ADD,,,,RB
+318,James Conner,RB,RB69,RB63,RB97,RB-T10,ARI,14,31.3,10,6'1",233,4.65,1,-98,,,,39.6,3,26.3,94,29.3,3,219.9,144,330,436,170,9,,,,,RB
+319,Elijah Sarratt,WR,WR101,WR98,WR129,WR-T11,BAL,13,23.3,R,6'2",215,,1,-51,,,,39.6,2.3,34.2,93.6,,,268.32,202,370,1094,170,3,,,,,WR
+320,Adam Randall,RB,RB70,RB92,RB96,RB-T10,BAL,13,22.1,R,6'3",232,4.5,1,-28,,,,39.2,2.1,26.5,103.8,,,292.06,231,338,435,170.1,2,,,,,RB
+321,Jordan James,RB,RB71,RB78,RB78,RB-T10,SF,8,22.4,2,5'9",208,4.55,1,-57,,,,39.1,2.4,28.3,95.8,,,264.32,164,397,351,170.4,4,,,,,RB
+322,Barion Brown,WR,WR102,WR126,WR134,WR-T11,NO,8,22.7,R,5'11",177,4.4,1,-6,,,,39.1,2.3,33.2,95,,,316,262,396,1120,170,1,,,,,WR
+323,Christian Kirk,WR,WR103,WR103,WR147,WR-T11,SF,8,29.8,9,5'11",200,4.47,1,-50,,,,39.1,2.6,35.3,86.5,43.9,11,273.41,205,383,1334,169.9,2,,,,,WR
+324,Eli Raridon,TE,TE41,TE44,TE50,TE-T9,NE,11,22.6,R,6'6",245,,1,-8,,,,39,3,30.8,87.5,,,315.54,203,410,472,170,1,,,,,TE
+325,Jack Strand,QB,QB44,QB54,QB57,QB-T8,ATL,11,22.2,R,6'5",240,,1,32,,,,38.7,0.2,14.7,127.3,,,356.5,347,366,1449,170,0,,,,,QB
+326,Jaydon Blue,RB,RB72,RB82,,RB-T10,PHI,10,22.6,2,5'9",198,4.38,1,-54,,,,38.7,1.7,24.9,95.7,19.9,5,272.35,175,412,,,4,DROP,,,,RB
+327,Tyreek Hill,WR,WR104,WR107,WR164,WR-T11,FA,,32.5,10,5'10",191,,1,-44,,,,38.7,1.6,35.5,91,43,4,283.42,154,378,1728,169.8,8,DROP,,,,WR
+328,Justice Hill,RB,RB73,RB65,RB58,RB-T10,BAL,13,28.8,8,5'10",195,4.4,1,-94,,,,38.6,1.4,26.2,88.6,54.7,10,233.86,132,317,265,169.9,10,ADD,,,,RB
+329,Kaytron Allen,RB,RB74,RB66,RB88,RB-T10,WAS,7,23.6,R,5'11",217,,1,-93,,,,38.1,1.9,25.6,87.3,,,235.83,152,324,401,170.1,5,,,,,RB
+330,Jalen Tolbert,WR,WR105,WR114,WR86,WR-T11,MIA,6,27.5,5,6'1",195,4.49,1,-36,,,,37.4,0.9,30.9,93.4,37.3,12,294.16,180,387,329,170.4,1,,,,,WR
+331,Darnell Washington,TE,TE42,TE41,TE39,TE-T9,PIT,9,25,4,6'7",265,4.64,1,-33,,,,37.2,2.2,26,84.7,57.9,13,298.26,226,394,458,169.9,3,,,,,TE
+332,Mack Hollins,WR,WR106,WR106,WR102,WR-T11,NE,11,33,10,6'4",221,4.53,1,-50,,,,37.1,1,27.2,89.2,90.4,14,282.35,198,390,420,170.1,1,ADD,,,,WR
+333,Malik Benson,WR,WR107,WR128,WR104,WR-T11,LV,13,23.9,R,6'1",195,4.37,1,-16,,,,37.1,1,32.6,90.3,,,317.06,232,432,978,170,1,,,,,WR
+334,Xavier Legette,WR,WR108,WR99,WR83,WR-T11,CAR,5,25.6,3,6'3",227,4.39,1,-64,,,,37,1,27.5,89.5,71.8,15,269.99,197,335,326,170.8,2,,,,,WR
+335,Colby Parkinson,TE,TE43,TE32,TE34,TE-T9,LAR,11,27.6,,6'7",265,4.77,1,-69,,,,36.8,3.2,25.2,80.4,108.3,14,266.14,215,309,417,170.3,4,,,,,TE
+336,Theo Johnson,TE,TE44,TE37,TE42,TE-T9,NYG,8,25.5,3,6'6",264,,1,-51,,,,36.3,4,25.1,86.1,105.3,15,285.13,203,345,464,170.1,3,,,,,TE
+337,Kendre Miller,RB,RB75,RB84,RB84,RB-T10,NO,8,24.2,4,6'0",220,,1,-59,,,,35.7,1.9,24,80.1,30.8,7,278.05,189,381,395,170.2,2,,,,,RB
+338,Elijah Arroyo,TE,TE45,TE42,TE40,TE-T9,SEA,11,23.4,2,6'5",254,,1,-28,,,,35.7,4.9,25.9,67.9,29.4,13,310.25,259,363,459,169.9,2,,,,,TE
+339,George Holani,RB,RB76,RB71,RB74,RB-T10,SEA,11,26.7,3,5'10",210,4.52,1,-97,,,,35.3,2,22.4,86.6,13.8,10,241.81,154,329,345,170.3,4,,,,,RB
+340,Chris Brooks,RB,RB77,RB73,RB65,RB-T10,GB,11,26.6,4,6'1",219,,1,-89,,,,35.2,0.9,24,89.5,26.2,17,250.89,145,327,321,170.8,5,,,,,RB
+341,Jonah Coleman,RB,RB78,RB48,RB51,RB-T10,DEN,10,23,R,5'8",220,,1,-192,157.1,-184,79,35.2,0.6,21.3,101.1,,,149.36,116,221,204,163.5,33,,,,,RB
+342,Andrei Iosivas,WR,WR109,WR108,WR94,WR-T11,CIN,6,26.9,4,6'3",210,4.43,1,-58,,,,35.2,1,23.5,83.1,73.4,15,283.65,168,389,371,170.1,2,,,,,WR
+343,Darius Slayton,WR,WR110,WR102,WR161,WR-T11,NYG,8,29.6,7,6'1",198,4.39,1,-70,,,,34.9,2,31.5,79.4,80.3,14,272.71,209,371,1676,170.2,2,DROP,,,,WR
+344,Xavier Hutchinson,WR,WR111,WR111,WR85,WR-T11,HOU,8,26.3,4,6'3",210,4.53,1,-56,,,,34.8,1.3,28.4,79.2,80.5,16,287.55,205,384,328,170.5,2,,,,,WR
+345,Noah Gray,TE,TE46,TE49,TE45,TE-T9,KC,5,27.3,6,6'3",240,4.55,1,-15,,,,34.3,5.6,26.2,73.8,28.3,14,330.02,274,387,467,169.9,1,,,,,TE
+346,Xavier Restrepo,WR,WR112,WR144,,WR-T11,TEN,9,24.4,1,5'10",202,,1,-14,,,,33.6,2,30.3,75.5,5.6,2,332,313,349,,,1,,,,,WR
+347,Jaylen Wright,RB,RB79,RB70,RB61,RB-T10,MIA,6,23.4,3,5'10",208,4.38,1,-108,,,,32.9,0.2,16.6,91.1,45.7,9,238.65,164,310,307,170.5,4,,,,,RB
+348,Jahan Dotson,WR,WR113,WR109,WR84,WR-T11,ATL,11,26.4,5,5'11",184,4.43,1,-64,,,,32.9,1.9,26.9,74.9,41.2,15,284.48,170,369,327,170.6,2,,,,,WR
+349,Jake Tonges,TE,TE47,TE39,TE36,TE-T9,SF,8,27.2,4,6'4",240,,1,-56,,,,32.5,5.3,23.6,61.9,76.3,10,292.55,158,356,441,170,3,,,,,TE
+350,Brandin Cooks,WR,WR114,WR133,WR168,WR-T11,FA,,32.9,12,5'10",190,4.33,1,-27,,,,32.5,1.2,26.5,74,39.9,13,322.5,282,363,1766,170,1,,,,,WR
+351,Jordan Watkins,WR,WR115,WR138,WR155,WR-T11,SF,8,24.5,2,5'11",196,4.37,1,-24,,,,32.3,1.2,29.2,73.5,3.6,2,327.33,316,345,1408,170,1,,,,,WR
+352,Dohnte Meyers,WR,WR116,WR116,WR141,WR-T11,CIN,6,26.2,1,5'11",186,,1,-54,,,,31.4,1.2,25.6,71.5,,,298.2,239,376,1206,170,1,,,,,WR
+353,Dont'e Thornton Jr.,WR,WR117,WR151,WR154,WR-T11,LV,13,23.8,2,6'5",205,4.3,1,-15,,,,31.4,1.8,25.6,70.6,18.5,11,338.3,286,397,1405,170,1,,,,,WR
+354,Skyler Bell,WR,WR118,WR112,WR120,WR-T11,BUF,7,24.2,R,5'11",192,4.4,1,-64,,,,31.1,1.1,25.4,69.9,,,289.88,218,371,1047,169.9,3,,,,,WR
+355,Brandon Aiyuk,WR,WR119,WR105,WR150,WR-T11,SF,8,28.5,6,6'0",200,4.5,1,-76,,,,31,1.8,25.3,69.7,,,279.1,142,397,1341,170,3,,,Brandon Aiyuk might still land with one of two desperate teams (rss:yardbarker),https://www.yardbarker.com/nfl/articles/brandon_aiyuk_might_still_land_with_one_of_two_desperate_teams/s1_13132_44281688,WR
+356,DJ Giddens,RB,RB80,RB85,RB89,RB-T10,IND,13,23,2,6'1",212,4.43,1,-77,,,,30.9,0.2,15.8,84.2,9.6,5,278.91,213,338,402,170.1,1,,,,,RB
+357,Tyler Higbee,TE,TE48,TE47,TE47,TE-T9,LAR,11,33.7,11,6'6",253,4.77,1,-32,,,,30.6,5,22.2,58.2,58.6,10,325.16,274,375,469,169.9,2,,,,,TE
+358,Antonio Williams,RB,RB81,RB93,RB68,RB-T10,FA,,28.9,,5'11",195,4.41,1,-65,,,,30.5,0.3,16.6,71.2,,,292.8,252,366,332,170.4,1,,,,,RB
+359,DeMario Douglas,WR,WR120,WR100,WR88,WR-T11,NE,11,25.7,4,5'8",185,4.44,1,-87,,,,30.1,1.1,27.2,68.5,80.3,16,271.61,166,420,331,170.5,2,,,,,WR
+360,Isaiah Davis,RB,RB82,RB77,RB71,RB-T10,NYJ,13,24.5,3,6'1",220,4.57,1,-98,,,,30,0.3,20.6,68.8,60.7,16,262.01,201,317,342,170.4,1,,,,,RB
+361,Zavion Thomas,WR,WR121,WR143,WR117,WR-T11,CHI,10,22.5,R,5'10",190,4.28,1,-30,,,,30,1.1,27.1,68.3,,,331.31,262,438,1029,169.9,2,,,,,WR
+362,Chris Blair,WR,WR122,WR123,WR153,WR-T11,ATL,11,28.9,2,6'2",215,,1,-48,,,,29.8,1.7,26.9,67.8,0,1,314.33,261,350,1383,170,0,,,,,WR
+363,Chris Brazzell II,WR,WR123,WR117,WR156,WR-T11,CAR,5,22.9,,6'2",193,4.37,1,-64,,,,29.6,1.7,24.2,67.4,,,299.1,229,378,1430,170,2,,,,,WR
+364,Joshua Palmer,WR,WR124,WR122,WR108,WR-T11,BUF,7,26.9,,,,,1,-51,,,,29.3,1.1,26.5,65.9,,,312.54,244,378,981,169.9,1,,,,,WR
+365,Riley Leonard,QB,QB45,QB51,QB50,QB-T8,IND,13,24,2,6'4",213,,1,-12,,,,29.2,,,,31,5,353.25,320,375,1226,170,1,,,,,QB
+366,Jacob Saylors,RB,RB83,RB88,RB72,RB-T10,DET,6,25.5,,5'11",195,,1,-80,,,,28.9,3.3,20.1,78.3,1.1,11,286.24,156,370,343,170.3,4,,,,,RB
+367,Mitchell Evans,TE,TE49,TE67,TE77,TE-T9,CAR,5,23.5,,6'5",258,4.74,1,-2,,,,28.9,4.7,20.9,55,38.7,14,365.15,298,404,1407,170,1,,,,,TE
+368,Roman Wilson,WR,WR125,WR118,WR126,WR-T11,PIT,9,25.2,3,5'10",186,4.39,1,-67,,,,28.9,1.7,23.6,65,32.6,9,301.1,225,375,1074,170,1,,,,,WR
+369,Joe Milton III,QB,QB46,QB55,,QB-T8,DAL,14,26.5,3,6'5",236,,1,-9,,,,28.7,,,,10.3,4,360.44,330,386,,,1,,,,,QB
+370,Ben Sinnott,TE,TE50,TE58,TE65,TE-T9,WAS,7,24.2,3,6'4",245,4.68,1,-14,,,,28.4,4.6,22.8,54.1,22.9,9,355.95,331,388,1088,170,1,,,,,TE
+371,Malik Davis,RB,RB84,RB69,RB67,RB-T10,DAL,14,27.8,3,5'11",205,,1,-133,,,48,28.1,1.7,18.6,82.5,39.6,10,237.71,146,315,325,170.4,9,DROP,,Cowboys place RB Malik Davis on injured reserve (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/cowboys-place-rb-malik-davis-on-injured-reserve,RB
+372,Oscar Delp,TE,TE51,TE43,TE68,TE-T9,NO,8,23.1,R,6'5",245,,1,-58,,,,27.9,4.5,20.2,53.1,,,313.96,254,382,1146,170,1,,,,,TE
+373,Max Klare,TE,TE52,TE50,TE48,TE-T9,LAR,11,23.2,R,6'4",246,,1,-41,,,,27.8,4.5,20.2,59.8,,,332.08,274,394,470,170,2,,,,,TE
+374,Najee Harris,RB,RB85,RB67,RB56,RB-T10,NYG,8,28.5,6,6'1",232,,1,-138,,,26,27.5,1.9,18.8,77.7,10.1,3,235.92,141,327,222,169.8,11,,,,,RB
+375,Jameis Winston,QB,QB47,QB53,QB42,QB-T8,NYG,8,32.7,12,6'4",231,4.97,1,-19,,,,27.1,,,,42.8,3,356.46,319,398,476,169.9,1,,,,,QB
+376,Drew Lock,QB,QB48,,QB53,QB-T8,,,29.8,,,,,1,,,,,26.9,,,,0.1,3,,,,1267,169.9,,,,,,QB
+377,Bryce Lance,WR,WR126,WR110,WR114,WR-T11,NO,8,24,R,6'3",204,4.34,1,-92,,,,26.9,1,24.3,61.2,,,285.32,174,385,1011,170,1,,,,,WR
+378,Elijah Moore,WR,WR127,WR150,WR151,WR-T11,PHI,10,26.4,6,5'10",178,4.35,1,-40,,,,26.2,1,21.4,58.9,24.1,9,338.25,300,374,1345,170,1,,,,,WR
+379,Davis Allen,TE,TE53,,TE66,TE-T9,,,25.6,,,,,1,,,,,25.9,4.2,18.8,49.3,50.8,15,,,,1132,170,,,,,,TE
+380,Hollywood Brown,WR,WR128,WR113,WR119,WR-T11,PHI,10,,,,,,1,-88,,,,25.8,0.9,21.1,58,,,291.83,241,363,1046,169.9,1,,,,,WR
+381,John Bates,TE,TE54,TE52,TE61,TE-T9,WAS,7,28.8,6,6'6",256,4.84,1,-41,,,,25.4,4.1,18.4,48.3,21.8,10,340,300,429,1045,170,1,,,,,TE
+382,Devin Neal,RB,RB86,RB83,,RB-T10,FA,,23.1,R,5'11",213,4.58,1,-106,,,,25,0.9,17.8,70.8,51.5,9,276.42,201,382,,,2,,,,,RB
+383,Audric Estime,RB,RB87,RB103,RB117,RB-T10,NO,8,23,,,,,1,-72,,,,24.9,0.5,16.5,66.5,,,310.65,251,359,1389,170,2,,,Saints put RB Audric Estime on IR (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/saints-put-rb-audric-estime-on-ir,RB
+384,Kendrick Bourne,WR,WR129,WR119,WR109,WR-T11,ARI,14,31.1,10,6'1",203,4.68,1,-82,,,,24.9,0.9,20.3,56,73.6,14,302,223,443,982,170,1,,,,,WR
+385,Jerome Ford,RB,RB88,RB95,RB128,RB-T10,WAS,7,27,4,5'10",210,4.46,1,-89,,,,24.7,0.4,16.7,58.4,30.6,13,295.87,231,365,2019,170,2,,,,,RB
+386,Marquez Valdes-Scantling,WR,WR130,WR153,WR165,WR-T11,FA,,31.9,8,6'4",206,4.37,1,-46,,,,24.7,0.9,22.3,55.5,25,9,339.6,197,427,1752,170,1,,,,,WR
+387,Justin Joly,TE,TE55,TE56,TE78,TE-T9,MIA,6,22.1,R,6'3",263,,1,-35,,,,24.2,3.9,17.5,46.1,,,352.09,313,377,1442,170,1,,,,,TE
+388,LeQuint Allen Jr.,RB,RB89,RB79,RB73,RB-T10,JAC,7,22.1,2,6'0",201,,1,-124,,,,24.1,0,15.9,54.2,19.8,16,264.39,145,337,344,170.3,1,,,,,RB
+389,Davis Mills,QB,QB49,QB56,QB51,QB-T8,HOU,8,27.9,6,6'4",225,4.82,1,-26,,,,23.9,,,,68.6,6,363,332,392,1253,170,1,,,,,QB
+390,Jahdae Walker,WR,WR131,WR145,WR144,WR-T11,CHI,10,24.2,2,6'3",206,,1,-58,,,,23.9,,,,23.7,6,332.25,301,365,1242,170,1,,,,,WR
+391,Brenen Thompson,WR,WR132,WR130,WR128,WR-T11,LAC,7,23.1,R,5'9",170,4.26,1,-73,,,,23.8,,,,,,318.05,234,382,1079,170,1,,,,,WR
+392,Austin Hooper,TE,TE56,TE65,TE52,TE-T9,ATL,11,31.8,11,6'4",254,4.72,1,-29,,,,23.1,3.8,16.7,44,48.8,13,362.83,309,395,1006,170,1,,,,,TE
+393,KaVontae Turpin,WR,WR133,WR135,WR96,WR-T11,DAL,14,30.1,5,5'7",158,,1,-70,,,,22.9,,,,71.5,15,323.38,216,430,390,169.8,3,,,,,WR
+394,Reggie Virgil,WR,WR134,WR154,WR145,WR-T11,ARI,14,22.3,R,6'2",187,4.57,1,-53,,,,22.9,,,,,,341.25,287,391,1261,170,1,,,,,WR
+395,Luke Musgrave,TE,TE57,TE62,TE76,TE-T9,GB,11,26,4,6'6",253,4.61,1,-35,,,,22.4,3.6,16.2,42.6,37.2,13,359.94,328,390,1369,170,1,,,,,TE
+396,Bam Knight,RB,RB90,RB102,RB92,RB-T10,ARI,14,25.4,4,5'11",209,,1,-85,,,,22,,,,81.9,12,310.5,237,383,430,170.1,1,,,,,RB
+397,Treylon Burks,WR,WR135,WR131,WR112,WR-T11,WAS,7,26.4,5,6'2",225,4.55,1,-78,,,,22,,,,24,8,318.97,222,407,999,170,2,,,,,WR
+398,Trevor Etienne,RB,RB91,RB96,RB118,RB-T10,CAR,5,22.1,2,5'9",204,4.42,1,-97,,,,21.8,,,,12.2,17,301.12,237,354,1402,169.9,1,,,,,RB
+399,Tez Johnson,WR,WR136,WR127,WR132,WR-T11,TB,10,24.3,2,5'10",165,4.51,1,-83,,,,21.8,,,,78.4,15,316.19,221,391,1118,170,1,,,,,WR
+400,Raheim Sanders,RB,RB92,RB119,RB119,RB-T10,CLE,11,24.2,2,6'0",230,4.46,1,-68,,,,21.7,,,,18.8,4,331.7,274,387,1417,170,1,,,,,RB
+401,Jelani Woods,TE,TE58,TE74,TE75,TE-T9,NYJ,13,27.9,5,6'7",253,4.61,1,-29,,,,21.7,3,15.7,41.3,0.9,2,371.5,371,372,1357,170,4,,,,,TE
+402,Ty Johnson,RB,RB93,RB80,RB64,RB-T10,BUF,7,29,8,5'10",210,,1,-137,,,,21.3,,,,88.3,17,265.44,160,381,320,170.6,2,,,,,RB
+403,Cade Stover,TE,TE59,TE64,TE60,TE-T9,HOU,8,26.2,3,6'4",251,4.65,1,-41,,,,21,2.9,15.2,40,13.9,6,361.5,347,376,1043,170,1,,,,,TE
+404,Isaiah Williams,WR,WR137,WR152,WR123,WR-T11,FA,,,,5'10",185,4.63,1,-66,,,,20.9,,,,35.7,15,338.33,299,397,1056,170,0,,,,,WR
+405,Josh Williams,RB,RB94,RB111,,RB-T10,TB,10,25.2,,5'8",210,4.9,1,-84,,,,20.8,,,,1.1,2,321.25,278,360,,,0,,,,,RB
+406,Khalil Herbert,RB,RB95,RB86,RB126,RB-T10,FA,,28.4,5,5'9",212,4.46,1,-127,,,,20.8,,,,6.1,5,279.2,219,380,1927,170,1,,,,,RB
+407,Kyle Juszczyk,RB,RB96,RB90,RB101,RB-T10,SF,8,35.4,14,6'2",235,,1,-116,,,,20.8,,,,45,16,290.8,228,338,1001,169.9,1,,,,,RB
+408,Will Kacmarek,TE,TE60,TE60,TE55,TE-T9,MIA,6,23.6,R,6'6",258,4.74,1,-51,,,,20.8,3.4,15.1,44.7,,,357.33,335,385,1020,170,1,,,,,TE
+409,Matt Hibner,TE,TE61,TE55,,TE-T9,BAL,13,,,,,,1,-58,,,,20.7,3.4,15,44.5,,,350.89,306,392,,,1,,,,,TE
+410,Drew Sample,TE,TE62,TE63,TE49,TE-T9,CIN,6,30.4,8,6'5",260,4.71,1,-49,,,,20.5,3.3,14.9,39,24.4,12,361,355,367,471,170,1,,,,,TE
+411,Luke Farrell,TE,TE63,,TE72,TE-T9,,,28.9,,,,,1,,,,,20.5,3.3,14.9,44.1,24,13,,,,1238,170,,,,,,TE
+412,Demarcus Robinson,WR,WR138,WR140,WR136,WR-T11,SF,8,31.9,11,6'1",203,4.59,1,-82,,,,20,,,,47.2,14,330.17,244,411,1136,169.9,1,ADD,,,,WR
+413,Daniel Bellinger,TE,TE64,TE68,TE64,TE-T9,TEN,9,25.9,5,6'6",255,4.63,1,-46,,,,19.8,3.2,14.4,37.7,50.1,13,367.05,338,405,1086,170,2,,,,,TE
+414,Josh Oliver,TE,TE65,TE66,TE57,TE-T9,MIN,6,29.4,8,6'5",264,4.63,1,-51,,,,19.8,2.7,14.4,37.7,47.5,12,363.4,350,392,1024,169.9,1,,,,,TE
+415,Cedric Tillman,WR,WR139,WR129,WR172,WR-T11,NO,8,26.4,4,6'3",215,4.54,1,-97,,,,19.8,,,,49.5,12,317.74,270,379,2130,170,1,,,,,WR
+416,Carson Beck,QB,QB50,QB37,QB37,QB-T8,ARI,14,24.8,R,6'4",233,,1,-93,,,,19.7,,,,,,322.53,271,376,450,170,3,,,,,QB
+417,Konata Mumpfield,WR,WR140,WR121,WR135,WR-T11,LAR,11,23.9,2,6'1",188,4.59,1,-105,,,,19.6,,,,20.2,10,311.95,247,383,1133,170,1,,,,,WR
+418,Roschon Johnson,RB,RB97,RB104,RB114,RB-T10,CHI,10,25.6,4,6'0",227,4.58,1,-104,,,,19.4,,,,1.7,6,313.63,233,387,1368,170,1,DROP,,,,RB
+419,Kaden Wetjen,WR,WR141,WR139,WR146,WR-T11,PIT,9,24.5,R,5'9",193,4.47,1,-91,,,,19.3,,,,,,327.5,305,350,1297,170,1,,,,,WR
+420,Luke Schoonmaker,TE,TE66,TE79,TE62,TE-T9,DAL,14,27.9,4,6'5",250,4.63,1,-39,,,,18.9,,,,20.2,14,381,371,395,1077,169.9,1,,,,,TE
+421,Theo Wease Jr.,WR,WR142,WR155,,WR-T11,LAC,7,25.2,1,6'2",210,4.56,1,-80,,,,18.7,,,,22.9,3,341.33,246,416,,,1,,,,,WR
+422,Erick All Jr.,TE,TE67,TE45,TE38,TE-T9,CIN,6,26,3,6'5",255,,1,-104,,,,18.6,,,,,,317.64,209,408,444,170,1,,,,,TE
+423,Tommy Myers,TE,TE68,TE57,,TE-T9,FA,,,,,,,1,-68,,,,18.6,,,,,,355.2,304,423,,,0,,,,,TE
+424,John Metchie III,WR,WR143,WR147,WR152,WR-T11,CAR,5,26.1,4,5'11",187,,1,-88,,,,18.5,,,,55.4,13,335.59,287,413,1356,170,1,,,,,WR
+425,Kevin Coleman Jr.,WR,WR144,WR142,WR95,WR-T11,MIA,6,23,R,5'10",180,4.49,1,-94,,,,18.5,,,,,,330.81,241,417,389,170.2,1,,,,,WR
+426,Tutu Atwell,WR,WR145,WR158,WR124,WR-T11,LAR,11,26.9,6,5'9",165,4.42,1,-80,,,,18.5,,,,28.2,8,345.96,261,421,1058,169.9,1,,,,,WR
+427,Xavier Smith,WR,WR146,WR141,WR139,WR-T11,LAR,11,28.9,3,5'9",180,,1,-96,,,,18.2,,,,39.3,16,330.67,229,385,1192,170,1,,,,,WR
+428,Colbie Young,WR,WR147,WR149,WR125,WR-T11,CIN,6,24.1,R,6'4",218,4.49,1,-90,,,,17.4,,,,,,337.79,287,385,1065,170,1,,,,,WR
+429,Taysom Hill,TE,TE69,TE80,TE79,TE-T9,FA,,36,9,6'2",221,,1,-16,,,,17,,,,36.3,13,412.5,388,437,1675,170,1,,,,,TE
+430,Tai Felton,WR,WR148,WR166,WR142,WR-T11,MIN,6,23.5,2,6'1",186,4.37,1,-72,,,,16.9,,,,4,12,357.88,298,453,1233,170,1,,,,,WR
+431,Nate Boerkircher,TE,TE70,TE59,TE67,TE-T9,JAC,7,25,R,6'5",250,,1,-74,,,,16.7,,,,,,356.5,336,369,1139,170,1,,,,,TE
+432,Devontez Walker,WR,WR149,WR157,WR113,WR-T11,BAL,13,25.2,3,6'1",198,4.36,1,-86,,,,16.7,,,,34.6,8,345.92,286,448,1002,170,1,,,,,WR
+433,Jalen Reagor,WR,WR150,WR146,WR169,WR-T11,FA,,27.7,6,5'11",197,4.47,1,-98,,,,16.4,,,,,,334.5,260,387,1810,170,0,,,,,WR
+434,Kalif Raymond,WR,WR151,WR125,WR110,WR-T11,CHI,10,32.1,10,5'9",160,,1,-118,,,,16.4,,,,48.8,15,315.83,225,380,983,169.9,1,,,,,WR
+435,Olamide Zaccheaus,WR,WR152,WR124,WR121,WR-T11,ATL,11,29.1,8,5'8",194,,1,-120,,,,16.4,,,,65.3,14,315.45,234,376,1050,170,1,,,,,WR
+436,Ashton Dulin,WR,WR153,WR148,WR122,WR-T11,IND,13,29.3,8,6'2",215,4.43,1,-99,,,,16.3,,,,17.5,12,337.47,295,391,1053,169.9,1,,,,,WR
+437,Ja'Tavion Sanders,TE,TE71,TE51,TE44,TE-T9,CAR,5,23.4,3,6'4",252,4.69,1,-100,,,,16,,,,39.5,12,336.64,246,398,466,169.9,1,,,,,TE
+438,Marlin Klein,TE,TE72,TE70,TE71,TE-T9,HOU,8,24,R,6'6",250,4.61,1,-69,,,,16,,,,,,369.18,321,402,1237,170,1,,,,,TE
+439,Jaylin Lane,WR,WR154,WR164,WR127,WR-T11,WAS,7,24.3,2,5'10",196,,1,-84,,,,15.8,,,,31.2,15,354.67,298,409,1076,170,1,,,,,WR
+440,Miles Sanders,RB,RB98,RB132,RB120,RB-T10,FA,,29.3,7,5'11",211,4.49,1,-94,,,,15.6,,,,22.7,4,345.67,297,442,1718,170,1,,,,,RB
+441,Adam Trautman,TE,TE73,TE71,TE58,TE-T9,DEN,10,29.6,7,6'5",253,4.8,1,-71,,,,15.6,,,,35.5,13,369.6,352,412,1025,170,1,,,,,TE
+442,Tanner Hudson,TE,TE74,TE78,TE81,TE-T9,CIN,6,31.8,7,6'5",241,,1,-62,,,,15.5,,,,38.3,10,379.5,375,384,1793,170,2,,,,,TE
+443,Kevin Austin Jr.,WR,WR155,WR165,,WR-T11,NO,8,26.4,3,6'2",200,4.43,1,-88,,,,15.2,,,,26.5,5,355,319,391,,,1,,,,,WR
+444,Jackson Hawes,TE,TE75,TE73,TE63,TE-T9,BUF,7,25.7,2,6'4",253,4.82,1,-73,,,,15.1,,,,44.7,13,371.33,353,395,1083,170,1,,,,,TE
+445,Sam Roush,TE,TE76,TE77,TE73,TE-T9,CHI,10,23,R,6'5",267,4.7,1,-67,,,,15.1,,,,,,378,374,382,1241,170,1,,,,,TE
+446,Greg Dortch,WR,WR156,WR167,WR163,WR-T11,BUF,7,28.3,6,5'7",180,,1,-88,,,,14.9,,,,60.6,12,357.88,326,391,1703,170,1,,,,,WR
+447,Tanner Koziol,TE,TE77,TE72,TE69,TE-T9,JAC,7,23.6,,6'7",250,4.7,1,-77,,,,14.7,,,,,,370.17,351,382,1228,170,1,,,,,TE
+448,Eli Stowers,TE,TE78,TE38,TE46,TE-T9,PHI,10,23.4,R,6'4",239,4.51,1,-159,,,,14.6,,,,,,288.95,209,371,468,170,4,,,Eagles place second-round pick Eli Stowers on IR (rss:pft),https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/eagles-place-second-round-pick-eli-stowers-on-ir,TE
+449,Jimmy Horn Jr.,WR,WR157,WR174,WR133,WR-T11,CAR,5,24,2,5'8",174,4.46,1,-76,,,,14.6,,,,23.2,10,372.67,369,380,1119,170,1,,,,,WR
+450,Devin Singletary,RB,RB99,RB91,RB109,RB-T10,NYG,8,29,8,5'7",203,4.66,1,-158,,,,14.5,,,,99.8,17,291.66,160,362,1333,169.9,1,,,,,RB
+451,Elijah Higgins,TE,TE79,TE69,TE53,TE-T9,ARI,14,25.8,4,6'3",245,4.54,1,-84,,,,14.5,,,,43.1,17,367.33,336,425,1010,169.9,1,,,,,TE
+452,Brashard Smith,RB,RB100,RB87,RB66,RB-T10,KC,5,23.4,2,5'10",196,4.39,1,-166,,,,14.1,,,,50.8,17,286.05,206,379,324,170.4,2,,,,,RB
+453,Isaac Guerendo,RB,RB101,RB97,RB116,RB-T10,SF,8,26.2,3,6'0",221,4.33,1,-150,,,,14.1,,,,0,7,303,234,364,1388,170,1,,,,,RB
+454,Luke McCaffrey,WR,WR158,WR137,WR137,WR-T11,WAS,7,25.4,3,6'2",195,4.46,1,-129,,,,13.9,,,,45.8,9,325.41,269,401,1140,169.9,1,,,,,WR
+455,Jonnu Smith,TE,TE80,TE61,TE54,TE-T9,GB,11,31,10,6'3",248,4.62,1,-97,,,,13.8,,,,66.2,17,358.18,285,426,1016,169.9,1,,,,,TE
+456,Dyami Brown,WR,WR159,WR175,WR111,WR-T11,WAS,7,26.8,6,6'0",195,4.46,1,-82,,,,13.8,,,,39.7,11,374.09,341,452,990,170,1,,,,,WR
+457,Jaleel McLaughlin,RB,RB102,RB98,,RB-T10,CLE,11,26,4,5'9",183,,1,-153,,,,13.5,,,,29.4,8,303.86,242,379,,,1,,,,,RB
+458,Will Shipley,RB,RB103,RB101,RB79,RB-T10,PHI,10,24,3,5'11",210,,1,-151,,,,13.3,,,,15,14,306.94,233,363,352,170.1,1,,,,,RB
+459,Tyler Conklin,TE,TE81,TE75,TE70,TE-T9,DET,6,31.1,9,6'3",245,4.8,1,-86,,,,13.3,,,,13.8,6,372.5,367,378,1229,170,1,,,,,TE
+460,Michael Woods II,WR,WR160,WR156,WR171,WR-T11,DEN,10,,,,,,1,-116,,,,12.8,,,,,,344,293,395,2018,170,1,,,,,WR
+461,Antonio Gibson,RB,RB104,RB141,RB124,RB-T10,FA,,28.2,,6'3",206,4.39,1,-93,,,,12.7,,,,16.2,5,368.33,313,431,1864,170,1,,,,,RB
+462,Scotty Miller,WR,WR161,WR136,WR162,WR-T11,CHI,10,29.1,,,,,1,-137,,,,12.5,,,,,,325,271,379,1695,170,0,,,,,WR
+463,Tahj Brooks,RB,RB105,RB99,RB85,RB-T10,CIN,6,24.3,2,5'9",220,4.52,1,-159,,,,11.8,,,,5.9,12,304.38,259,394,396,170.1,1,,,,,RB
+464,Sione Vaki,RB,RB106,RB110,RB90,RB-T10,DET,6,25.1,3,5'11",216,4.62,1,-144,,,,11.6,,,,0.4,8,320.1,194,381,403,170.1,1,,,,,RB
+465,Mac Jones,QB,QB51,QB41,QB40,QB-T8,SF,8,28,6,6'3",220,4.72,1,-125,,,,11.5,,,,130,11,339.65,293,440,454,170,2,,,,,QB
+466,Nick Westbrook-Ikhine,WR,WR162,WR168,WR170,WR-T11,FA,,29.4,7,6'2",211,,1,-108,,,,11.5,,,,14.4,13,357.93,312,411,1885,170,1,,,,,WR
+467,Michael Trigg,TE,TE82,TE81,,TE-T9,DAL,14,24.2,R,6'4",250,,1,-54,,,,11,,,,,,413,390,436,,,1,,,,,TE
+468,Savion Williams,WR,WR163,WR160,WR115,WR-T11,GB,11,24.8,2,6'4",222,4.48,1,-120,,,,10.9,,,,20.5,12,347.5,290,441,1014,170,1,,,,,WR
+469,Emanuel Wilson,RB,RB107,RB68,RB80,RB-T10,SEA,11,27.3,4,5'10",226,,1,-232,,,,10.5,,,,87,17,237.18,146,326,354,170.2,2,,,,,RB
+470,Jarquez Hunter,RB,RB108,RB105,,RB-T10,FA,,23.7,2,5'10",211,4.44,1,-155,,,,10.5,,,,,,315.09,271,383,,,1,,,,,RB
+471,Odell Beckham Jr.,WR,WR164,WR132,WR103,WR-T11,NYG,8,33.8,11,5'11",198,4.38,1,-150,,,,10.3,,,,,,321.36,224,384,977,169.3,4,ADD,,,,WR
+472,Eric Saubert,TE,TE83,,TE74,TE-T9,,,32.3,,,,,1,,,,,10,,,,7.1,9,,,,1246,170,,,,,,TE
+473,Quinn Ewers,QB,QB52,QB44,QB49,QB-T8,JAC,7,23.3,,6'2",209,,1,-126,,,,9.2,,,,32.7,4,346.5,346,347,1225,170,1,,,,,QB
+474,AJ Dillon,RB,RB109,RB121,RB110,RB-T10,CAR,5,28.3,7,6'0",247,4.53,1,-142,,,,9.2,,,,7.6,6,332.2,263,393,1342,170,1,,,,,RB
+475,Juice Wells Jr.,WR,WR165,WR169,,WR-T11,FA,,,,,,,1,-114,,,,8.9,,,,,,360.5,266,455,,,1,,,,,WR
+476,Michael Carter,RB,RB110,RB113,RB125,RB-T10,TEN,9,27.3,,6'2",281,4.5,1,-150,,,,8.4,,,,82.5,17,325.71,282,410,1902,170,1,,,,,RB
+477,Patrick Ricard,RB,RB111,RB115,RB106,RB-T10,NYG,8,32.3,10,6'3",300,,1,-147,,,,8.4,,,,1.6,5,330,290,370,1272,170,1,,,,,RB
+478,Eli Heidenreich,RB,RB112,RB106,RB98,RB-T10,PIT,9,23.2,,6'0",198,4.44,1,-162,,,,8.3,,,,,,315.83,242,367,437,170,2,,,,,RB
+479,Kalel Mullings,RB,RB113,RB122,,RB-T10,TEN,9,23.9,2,6'2",226,,1,-145,,,,8.3,,,,0.7,4,333.67,294,384,,,1,,,,,RB
+480,Lil'Jordan Humphrey,WR,WR166,WR177,WR149,WR-T11,DEN,10,28.4,7,6'4",225,4.75,1,-85,,,,8.3,,,,28.1,7,394.5,384,405,1339,169.9,1,,,,,WR
+481,Jordan Whittington,WR,WR167,WR170,WR131,WR-T11,LAR,11,25.9,3,6'1",202,,1,-120,,,,8,,,,27.3,15,361.13,319,439,1114,170,1,,,,,WR
+482,Austin Ekeler,RB,RB114,RB136,RB123,RB-T10,FA,,31.3,9,5'10",200,,1,-127,,,,7.9,,,,10.6,2,354.9,309,394,1742,170,1,,,,,RB
+483,Zavier Scott,RB,RB115,RB100,,RB-T10,CHI,10,27.1,2,6'1",221,,1,-178,,,,7.8,,,,32.2,11,305.25,264,338,,,1,,,,,RB
+484,Tyler Goodson,RB,RB116,RB116,,RB-T10,ATL,11,25.8,4,5'9",197,4.42,1,-154,,,,7.4,,,,4.2,10,330.14,258,370,,,1,,,,,RB
+485,Ronnie Rivers,RB,RB117,RB118,RB113,RB-T10,LAR,11,27.6,5,5'9",198,4.6,1,-154,,,,7.2,,,,4.6,6,331.14,257,364,1366,170,1,,,,,RB
+486,Kendrick Law,WR,WR168,WR171,WR158,WR-T11,DET,6,23.2,,5'11",203,4.45,1,-121,,,,7.2,,,,,,365,352,378,1434,170,2,,,,,WR
+487,Jaydn Ott,RB,RB118,RB117,,RB-T10,KC,5,23.7,R,5'11",208,,1,-156,,,,6.8,,,,,,331,291,365,,,1,,,,,RB
+488,Zach Ertz,TE,TE84,TE76,TE80,TE-T9,FA,,35.8,13,6'5",250,4.76,1,-115,,,,6.8,,,,101.4,13,372.6,344,422,1764,170,1,,,,,TE
+489,Josh Cameron,WR,WR169,WR162,WR143,WR-T11,JAC,7,23.5,R,6'1",224,,1,-140,,,,6.8,,,,,,349,328,385,1234,170,1,,,,,WR
+490,J'Mari Taylor,RB,RB119,RB120,,RB-T10,JAC,7,24.6,,5'9",204,,1,-158,,,,6.6,,,,,,332.13,301,365,,,2,,,,,RB
+491,Tyler Badie,RB,RB120,RB143,RB94,RB-T10,DEN,10,26.6,,5'8",197,4.45,1,-116,,,,6.3,,,,25.9,16,374.6,357,381,432,170,1,,,,,RB
+492,Rasheen Ali,RB,RB121,RB114,RB87,RB-T10,BAL,13,25.5,3,5'11",210,,1,-165,,,,5.8,,,,19.7,15,326.53,257,366,398,170.1,1,,,,,RB
+493,Trey Lance,QB,QB53,QB57,QB47,QB-T8,LAC,7,26.3,6,6'4",226,,1,-129,,,,5.6,,,,13.5,4,364,356,372,1222,170,1,,,,,QB
+494,Lew Nichols III,RB,RB122,RB112,RB129,RB-T10,PIT,9,25,1,5'10",220,,1,-172,,,,5.3,,,,0,1,321.5,311,332,2138,170,2,,,,,RB
+495,Max Bredeson,RB,RB123,RB109,RB104,RB-T10,MIN,6,23.9,R,6'2",252,,1,-176,,,,5.3,,,,,,319.33,279,365,1216,170,0,,,,,RB
+496,Damien Martinez,RB,RB124,RB142,,RB-T10,FA,,22.6,R,6'0",237,4.51,1,-122,,,,4.9,,,,,,374.17,358,404,,,1,,,,,RB
+497,CJ Daniels,WR,WR170,WR159,WR157,WR-T11,LAR,11,24.7,R,6'2",202,,1,-150,,,,4.8,,,,,,347.32,288,415,1431,170,1,,,,,WR
+498,Brady Russell,RB,RB125,,RB115,RB-T10,,,28,,,,,1,,,,,4.4,,,,0,10,,,,1382,170,,,,,,RB
+499,Jawhar Jordan,RB,RB126,RB127,,RB-T10,HOU,8,27,1,5'10",186,4.56,1,-157,,,,4.4,,,,26.2,4,342.43,283,406,,,1,,,,,RB
+500,Hunter Luepke,RB,RB127,RB131,RB102,RB-T10,DAL,14,26.5,4,6'1",250,,1,-154,,,,4,,,,30.5,14,345.63,259,393,1095,170,1,,,,,RB
+501,Julius Chestnut,RB,RB128,RB125,RB112,RB-T10,TEN,9,25.8,5,5'11",228,,1,-162,,,,3.6,,,,4,16,339.33,288,393,1364,170,1,,,,,RB
+502,Tyrod Taylor,QB,QB54,QB58,QB48,QB-T8,GB,11,37.1,16,6'1",217,4.47,1,-125,,,,2.9,,,,59.5,6,376.5,323,419,1223,170,1,,,,,QB
+503,Cade Klubnik,QB,QB55,QB50,QB52,QB-T8,NYJ,13,22.9,R,6'2",207,,1,-150,,,,2.3,,,,,,352.76,297,388,1259,170,1,,,Cade Klubnik ready for his Jets turn at QB — whenever it comes (rss:yahoo),https://sports.yahoo.com/articles/cade-klubnik-ready-jets-turn-233131973.html,QB
+504,Joe Flacco,QB,QB56,QB48,QB39,QB-T8,CIN,6,41.6,19,6'6",245,4.84,1,-152,,,,2.3,,,,146.7,13,351.79,288,401,453,170,1,,,,,QB
+505,Justin Fields,QB,QB57,QB43,QB38,QB-T8,KC,5,27.5,6,6'3",227,4.45,1,-161,,,,2.3,,,,142.7,9,344.12,300,388,452,169.9,2,,,,,QB
+506,Marcus Mariota,QB,QB58,QB49,QB44,QB-T8,WAS,7,32.8,12,6'4",222,4.52,1,-154,,,,2.3,,,,125.5,10,351.89,290,407,482,170,1,,,,,QB
+507,Ty Simpson,QB,QB59,QB46,QB41,QB-T8,LAR,11,23.7,R,6'1",211,,1,-157,,,,2.3,,,,,,350.1,301,400,475,170,3,,,,,QB
+508,Tim Patrick,WR,WR171,WR163,WR148,WR-T11,NYJ,13,32.8,9,6'5",210,,1,-157,,,,2.3,,,,44.2,13,351,317,396,1335,170,2,,,,,WR
+509,Dameon Pierce,RB,RB129,RB139,RB127,RB-T10,PHI,10,26.5,5,5'10",215,4.59,1,-147,,,,2.1,,,,3.6,5,361.9,326,394,1995,170,2,,,,,RB
+510,Seth McGowan,RB,RB130,RB81,RB77,RB-T10,IND,13,24.9,R,6'1",223,4.49,1,-244,,,,2,,,,,,266.32,169,338,350,170.3,2,ADD,,,,RB
+511,Phil Mafah,RB,RB131,RB135,,RB-T10,FA,,23.9,R,6'1",232,,1,-161,,,,1.8,,,,9.9,1,350.3,297,396,,,1,,,,,RB
+512,Kene Nwangwu,RB,RB132,RB133,RB91,RB-T10,NYJ,13,28.6,6,6'1",210,,1,-162,,,,1.7,,,,4.9,10,349.75,287,383,404,170.1,0,,,,,RB
+513,Terrell Jennings,RB,RB133,RB130,,RB-T10,FA,,25.5,,6'0",217,,1,-169,,,,1.4,,,,14.7,6,344.17,285,398,,,1,,,,,RB
+514,Brittain Brown,RB,RB134,RB140,RB111,RB-T10,CHI,10,28.9,3,6'1",205,,1,-150,,,,1.2,,,,9.7,2,364,358,370,1363,170,3,,,,,RB
+515,DeAndre Hopkins,WR,WR172,WR176,WR167,WR-T11,BAL,13,34.2,13,6'1",210,4.57,1,-126,,,,1.1,,,,56,17,389,337,447,1761,170,1,,,,,WR
+516,Deion Burks,WR,WR173,WR173,WR159,WR-T11,IND,13,23.6,R,5'9",180,4.3,1,-148,,,,1.1,,,,,,367.56,316,451,1443,170,2,,,,,WR
+517,Jam Miller,RB,RB135,RB134,RB99,RB-T10,FA,,22.3,R,5'10",209,4.42,1,-167,,,,1,,,,,,350.27,304,383,455,170,1,,,,,RB
+518,Dylan Laube,RB,RB136,RB126,RB93,RB-T10,LV,13,26.7,3,5'10",206,4.54,1,-178,,,,0.9,,,,4.2,17,339.78,284,394,431,170.1,1,,,,,RB
+519,Kareem Hunt,RB,RB137,RB107,RB122,RB-T10,FA,,31.1,9,5'11",216,4.62,1,-202,,,,0.9,,,,136.4,17,317.31,251,418,1740,170,1,,,,,RB
+520,Jacob Cowing,WR,WR174,WR161,WR140,WR-T11,SF,8,25.6,3,5'9",170,4.38,1,-171,,,,0.9,,,,,,349,251,446,1204,170,1,,,,,WR
+521,Tyler Lockett,WR,WR175,WR172,WR166,WR-T11,LV,13,33.9,11,5'10",182,4.4,1,-155,,,,0.9,,,,51.1,17,366.33,328,409,1754,170,1,,,,,WR
+522,Ameer Abdullah,RB,RB138,RB128,RB95,RB-T10,JAC,7,33.2,12,5'9",203,4.6,1,-179,,,,0.8,,,,29.9,13,343.4,304,389,434,170.1,1,,,,,RB
+523,Corey Kiner,RB,RB139,RB123,RB107,RB-T10,NE,11,24.6,2,5'9",210,4.57,1,-189,,,,0.8,,,,8.3,4,334,288,389,1293,170,1,,,,,RB
+524,Jeremy McNichols,RB,RB140,RB124,RB108,RB-T10,WAS,7,30.7,6,5'9",205,4.49,1,-190,,,,0.8,,,,60.2,16,334,304,370,1332,170,1,,,,,RB
+525,Joe Mixon,RB,RB141,RB108,RB121,RB-T10,FA,,30.1,9,6'1",220,,1,-207,,,,0.8,,,,,,318.14,256,370,1727,170,3,,,,,RB
+526,Lan Larison,RB,RB142,RB137,,RB-T10,NE,11,24.9,2,5'11",209,,1,-168,,,,0.8,,,,,,358,358,358,,,1,,,,,RB
+527,Reggie Gilliam,RB,RB143,RB138,RB105,RB-T10,NE,11,29,7,6'1",255,,1,-167,,,,0.8,,,,3.8,11,360.2,301,394,1268,170,0,,,,,RB
+528,KhaDarel Hodge,WR,WR176,,WR160,WR-T11,,,31.7,,,,,1,,,,,0.8,,,,4.6,8,,,,1630,170,,,,,,WR
+529,Alec Ingold,RB,RB144,RB129,RB103,RB-T10,LAC,7,30.1,8,6'1",240,4.89,1,-185,,,,0.6,,,,10.1,9,344,301,387,1161,170,1,,,,,RB
