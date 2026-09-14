@@ -1,5 +1,17 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## RIGOR PROGRAM WS5: the draft-arbiter gate moves to PLAYOFF% (D13, 2026-09-13)
+>
+> The draft arbiter (`scripts/cpcv.mjs`) now GATES on the **playoff** column, not title%: the
+> golden-master consistency check, the pass/fail verdict and the headline all key on playoffs; title%
+> is printed as SECONDARY/context. Rationale (P15/P16, per-season format): playoff Brier 0.2370 vs
+> uniform 0.2451 (skill), title Brier 0.0659 vs uniform 0.0652 (**P16 FAILED**, no skill). The
+> golden master is re-pinned to **97.0% playoff** (`--golden 97.0`; source
+> `data/trials/struct-base.tsv` and `data/trials/sweep-bench-discount-0.35.tsv`, both 42.35% title /
+> 97.04% playoff -- the old 42.3% title golden reproduced), with title 42.3% surviving only as
+> `--golden-title` for context. Fault-injected both ways: an impossible playoff golden ABORTS the
+> gate; an impossible title golden does NOT (title is de-gated). See `docs/decisions.md` D13.
+>
 > ## RIGOR PROGRAM WS1: an effect-size floor at feature admission (2026-09-13)
 >
 > The trainer's own comment warned "a keep/drop rule with no effect-size floor will eventually admit

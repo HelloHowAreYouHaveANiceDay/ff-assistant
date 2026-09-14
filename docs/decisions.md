@@ -276,6 +276,39 @@ REVERSAL CONDITION: revisit only if a broad read/interact tool is shown to cause
 league-visible side effect that the write gate did not catch -- then gate that specific tool, don't
 blanket-narrow.
 
+## D13 -- The draft arbiter's gate is PLAYOFF probability, not title% (2026-09-13, rigor program WS5)
+
+The championship backtest stays the ONLY arbiter of a draft value/strategy change (the "one rule"),
+but the PRIMARY gate metric moves from title% to **playoff probability**. The golden-master
+consistency check, the pass/fail verdict, and the headline line in `scripts/cpcv.mjs` now key on the
+playoff column; title% is still computed and printed, explicitly labelled SECONDARY/context.
+
+**Why:** the simulator's own calibration says it CANNOT predict titles but CAN predict the playoff
+berth (`docs/validation.md`, P15/P16, per-season format):
+- **title Brier 0.0659 vs uniform 0.0652 -- P16 FAILED** (1.0% WORSE than a coin flip). The single-elim
+  championship is a lottery the sim has no measured skill on. Gating ship/no-ship on this axis was
+  gating on the no-skill dimension.
+- **playoff Brier 0.2370 vs uniform 0.2451 -- P15 HELD** (+3.3% skill). The berth is the LEARNABLE
+  proximate target, and it is what a value edge can actually move.
+
+The golden master was re-pinned on the primary axis: **97.0% playoff** (default `--golden 97.0`),
+reproduced from two shipped-config dumps (`data/trials/struct-base.tsv`,
+`data/trials/sweep-bench-discount-0.35.tsv`, both 42.35% title / 97.04% playoff -- the old 42.3% title
+golden reproduced). The old title golden (42.3%) survives only as `--golden-title`, printed for
+context and never gated.
+
+**Interplay with D11 (they do NOT conflict -- different surfaces):** D11 ships the WEEKLY FORM model
+on lineup ACCURACY (CRPS) and is the in-season start/sit surface. D13 sets the DRAFT arbiter's GATE
+axis (playoff probability) and is the auction-value/strategy surface. Different models, different
+metrics, different decisions -- D13 does not touch the weekly serve and D11 does not touch the draft
+arbiter. Both share the same underlying honesty rule: gate on the axis the model has measured skill
+on, and record an override rather than dress a miss as a pass.
+
+REVERSAL CONDITION: if a future calibration shows the sim gaining real, out-of-sample skill on the
+title Brier (beating uniform by a margin that survives the season-bootstrap), title% may return as a
+co-primary or primary gate; until then, playoff% is the gate. Reverting is one edit: set the
+`--golden` default back and re-key `consistencyOK` on `fullA` in `scripts/cpcv.mjs`.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
