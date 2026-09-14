@@ -203,6 +203,21 @@ def parse_seasons(s):
     return lo, hi
 
 
+def embargo_seasons(as_of, embargo):
+    """The seasons IMMEDIATELY BEFORE `as_of` that an ADJACENT-SEASON EMBARGO removes (WS3).
+
+    Training is already walk-forward (`season < as_of`), so `as_of` and every later season are
+    excluded as future. The embargo ALSO removes the `embargo` seasons just below `as_of`, because
+    year N-1 autocorrelates with year N (career arcs, roster continuity), so a fold that trains on
+    N-1 and tests on N overstates generalisation to a genuinely unseen season. `embargo=0` removes
+    nothing and reproduces the pre-WS3 training set byte-for-byte. Pure and unit-testable: the whole
+    of the season-exclusion decision lives here.
+    """
+    if embargo < 0:
+        raise ValueError("embargo must be >= 0, got " + str(embargo))
+    return set(range(as_of - embargo, as_of))
+
+
 def load_rows(db_path, lo, hi):
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
@@ -627,9 +642,12 @@ def select_variant(sub, X, specs, source, pos, args):
 def fit_position(sub, X, specs, pos, base, args, form):
     """Ridge for the mean, pinball-loss linear fits for the three quantiles.
 
-    Regularised, and the alpha is chosen by SEASON-GROUPED cross-validation inside the training data.
-    Grouping by season matters: player-seasons within a year share the scoring era, the schedule and
-    the injury luck, so a random split leaks between folds and every alpha looks better than it is.
+    Regularised, and the alpha is chosen by PLAYER-GROUPED cross-validation inside the training data
+    (WS3). Grouping matters: a random split leaks between folds and every alpha looks better than it
+    is. Grouping by PLAYER (not season) is the conservative choice -- a single player's seasons are
+    autocorrelated (his own career arc), so letting the same player sit in both the alpha-fit and the
+    alpha-scoring fold flatters the regularisation exactly the way season-grouping fixed the era leak
+    but player-grouping additionally fixes. Falls back to season when player_sk is missing.
     """
     from sklearn.linear_model import Ridge, QuantileRegressor
     from sklearn.model_selection import GroupKFold
@@ -642,7 +660,10 @@ def fit_position(sub, X, specs, pos, base, args, form):
     Xk = X[:, keep]
     pts = np.array([float(r["pts"]) for r in sub])
     y = target(base, pts, form)
-    groups = np.array([r["season"] for r in sub])
+    # PLAYER-GROUPED (WS3): one player never spans two inner alpha folds. Fall back to season for a
+    # row with no player_sk, which is the pre-WS3 grouping for exactly those rows.
+    groups = np.array([("p" + str(r["player_sk"])) if r.get("player_sk") is not None
+                       else ("s" + str(r["season"])) for r in sub])
 
     alphas = [0.1, 1.0, 10.0, 100.0]
     n_splits = min(5, len(set(groups.tolist())))
@@ -798,6 +819,13 @@ def main():
                     help="ridge alpha used INSIDE the variant search, where an alpha search per "
                          "variant would multiply the cost by four and change no ordering")
     ap.add_argument("--inner-folds", type=int, default=3)
+    ap.add_argument("--embargo", type=int, default=0,
+                    help="ADJACENT-SEASON EMBARGO (WS3): also drop the N seasons immediately before "
+                         "the holdout/as-of from the training rows, because year N-1 autocorrelates "
+                         "with year N. Default 0 = the shipped behaviour (byte-identical training "
+                         "set). Set 1+ only to build the embargoed ARBITER fold artifacts; NOT for "
+                         "the shipped artifact, where it would silently drop the most recent real "
+                         "season for no leakage benefit (there is no future season to protect).")
     ap.add_argument("--fixed-variant", default=None,
                     help="w,mono,levelWeight,form -- skip the search. For fault injection and for "
                          "reproducing a recorded run, never for shipping.")
@@ -840,9 +868,14 @@ def main():
     # the curve is fitted on season pairs, so a training row from a season AFTER the holdout carries
     # a base built from a window that contains the holdout. Excluding the holdout row while keeping
     # the rows whose curve saw it is lookahead that no row-level filter can catch.
-    rows = [r for r in all_rows if r["season"] < as_of]
+    if args.embargo < 0:
+        sys.exit("train_projection: --embargo must be >= 0, got " + str(args.embargo))
+    emb = embargo_seasons(as_of, args.embargo)
+    rows = [r for r in all_rows if r["season"] < as_of and r["season"] not in emb]
     if not rows:
-        sys.exit("train_projection: no training rows -- has `ff build-features` been run?")
+        sys.exit("train_projection: no training rows"
+                 + (" after embargo of seasons " + str(sorted(emb)) if emb else "")
+                 + " -- has `ff build-features` been run (or is the embargo too wide)?")
     source = CurveSource(rows)
 
     fit_rows = [r for r in rows

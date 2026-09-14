@@ -1,5 +1,46 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## RIGOR PROGRAM WS3: adjacent-season embargo + cold-start reporting + player-grouped alpha CV (2026-09-13)
+>
+> Three correct pieces of the "purge done right" -- NOT a naive player purge (removing a returning
+> player's own history is the task, not leakage).
+>
+> **(1) Adjacent-season embargo.** `tools/train_projection.py` gains `--embargo N`. Training is
+> already walk-forward (`season < as_of`), so the held-out season Y and every later season are
+> excluded as future; `--embargo 1` ALSO drops Y-1, the single most-autocorrelated adjacent season
+> (career arcs, roster continuity), so an embargoed fold is blind to `{Y-1, Y, Y+1}`. The
+> season-exclusion is a pure helper (`embargo_seasons`, mirrored in `src/model/embargo.ts` for the TS
+> side) and is unit-fault-injected in `test/embargo.test.ts` (embargo 1 excludes `{Y-1,Y}` and keeps
+> Y-2; embargo 0 = the old set; an embargo that would empty training THROWS). **Default is 0**, a
+> deliberate deviation from the plan's "default 1": a default of 1 would silently drop the most recent
+> real season from the SHIPPED artifact's training (no future to protect there), a model change the
+> plan does not intend. `evaluate.ts` gains an `embargo` param (`--embargo` on `ff
+> evaluate-projection`) and a RUNTIME GUARD that re-reads each fold's emitted artifact and throws if
+> any embargoed season still appears in its training `seasons` -- the consumer checking the producer's
+> bytes, so a `--embargo` the Python side silently dropped fails loudly. `scripts/cpcv.mjs`'s
+> "noted, not built" caveat is now "BUILT (v2)". **Proved on real folds:** trainer holdout 2015
+> embargo 0 -> "train seasons 2000-2014"; embargo 1 -> "train seasons 2000-2013" (2014 dropped, 2013
+> kept); artifact `seasons` confirms it; and `ff evaluate-projection --seasons 2020 --embargo 1` ran
+> the guard end-to-end with no violation. The full 18-fold embargoed regen into
+> `data/fold-artifacts-2b-embargo` + a cpcv run on it is the WS6/acceptance step (heavy); the
+> mechanism is built and tested here, not the full regen.
+>
+> **(2) Cold-start reporting.** `ff evaluate-projection` now splits its trained-rung metrics
+> RETURNING (established) vs NEW (first projectable season, `draft_year == season-1`, so the only
+> prior history is a rookie year). Reporting only -- the model is unchanged. Measured 2018-2025
+> (TRAINED rung): returning RMSE 51.4 / crps 11.6 (n=3570) vs **new RMSE 59.8 / crps 13.7 (n=469)** --
+> new players are markedly harder, and curve-only is actually WORSE than carry-forward for them (67.1
+> vs 64.9 RMSE), so the trained model helps most exactly there (+7.29 RMSE won vs +2.04 for
+> returning). The split differing from the returning-dominated pool is the fault check that it is
+> wired.
+>
+> **(3) Player-grouped alpha CV.** The inner ridge-alpha `GroupKFold` in `fit_position` grouped by
+> SEASON; it now groups by `player_sk` (fall back to season when missing), so a player's autocorrelated
+> seasons never span the alpha-fit and alpha-scoring folds -- a small, conservative refinement to the
+> regularisation choice. Confirmed the trainer still fits (the one-fold runs above).
+>
+> Part of the across-experiment rigor program (plan approved 2026-09-13).
+>
 > ## RIGOR PROGRAM WS5: the draft-arbiter gate moves to PLAYOFF% (D13, 2026-09-13)
 >
 > The draft arbiter (`scripts/cpcv.mjs`) now GATES on the **playoff** column, not title%: the
