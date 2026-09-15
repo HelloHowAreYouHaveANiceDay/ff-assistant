@@ -37,7 +37,20 @@
 > `--conformal-mode cqr` machinery + the rung-9 screen).
 >
 > **Net:** the projector/sim is mature enough that the return is now one real win per several honest
-> nulls. The open lead worth a build is rung-9's EWMA form feature.
+> nulls. The open lead worth a build was rung-9's EWMA form feature.
+>
+> **UPDATE (2026-09-15): rung-9 EWMA form feature BUILT and GATED -- HOLD, null under the GBM.** The
+> lead was followed: an `ewma_pts` feature (games-ago-decayed EWMA of played-week points, half-life 3.0
+> fit selection-only, leak-audited, wired into BOTH the historical builder AND buildForwardWeeks so it is
+> serve-robust -- 81% populated at 2026 wk1, 0 non-finite, no collapse) REPLACING the fixed-4 window,
+> retrained on the boosted GBM with the golden self-check holding. It does NOT clear the weekly paired
+> floor: selection-blind holdout improvement -0.00014 CRPS vs floor 0.00623 (ALL +0.00044/floor 0.00340,
+> 8/6). Connected (large fitted coefficients, non-zero mixed-sign per-season deltas) -- not a dead lever;
+> the GBM simply already extracts the trailing-window signal nonlinearly, so a longer-memory restatement
+> of the same recent-form axis is redundant. The linear screen's R^2 lift did not survive the real GBM
+> gate. NOT shipped; machinery default-off (`--form-feature t4` = byte-identical). REBUILD POINTER:
+> branch `explore/weekly-ewma` (commit e5a6b06). This closes the last open model-improvement lead of the
+> pass -- every candidate is now resolved.
 
 > ## Sim self-audit, projector-vs-market adjudication, and the K/DST decides-games study (2026-09-15)
 >
