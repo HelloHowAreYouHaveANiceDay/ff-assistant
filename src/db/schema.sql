@@ -998,6 +998,25 @@ CREATE TABLE IF NOT EXISTS raw_participation (
   PRIMARY KEY (season, week, gsis_id, team));
 CREATE INDEX IF NOT EXISTS idx_raw_part_gsis ON raw_participation (gsis_id, season, week);
 
+-- SITUATIONAL OPPORTUNITY, aggregated at ingest from nflverse play-by-play (1999+). We do NOT store the
+-- ~50k plays x ~370 cols per season; this is the fantasy-relevant rollup the frozen box score cannot
+-- give: HIGH-VALUE touches (red-zone / inside-10 / inside-5 / goal-to-go carries and targets), air yards
+-- (the aDOT ingredient), EPA and first downs. One row per (season, week, gsis_id), all weeks REG+POST
+-- (POST weeks are >= 19 so they never collide). Joins to feat_player_week by gsis_id in the feature layer.
+-- `as_of` = the game day (from raw_nfl_game), so a point-in-time reader knows when the week became known.
+-- Counts only -- rates (aDOT = air_yards/targets, red-zone share) are derived where the denominators live.
+CREATE TABLE IF NOT EXISTS raw_pbp_player_week (
+  season INTEGER NOT NULL, week INTEGER NOT NULL, gsis_id TEXT NOT NULL,
+  team TEXT, as_of TEXT, name TEXT,
+  carries INTEGER, rush_yards REAL, rush_tds INTEGER, rush_epa REAL, rush_first_downs INTEGER,
+  rz_carries INTEGER, i10_carries INTEGER, i5_carries INTEGER, gtg_carries INTEGER,
+  targets INTEGER, receptions INTEGER, rec_yards REAL, rec_tds INTEGER, air_yards REAL, rec_epa REAL, rec_first_downs INTEGER,
+  rz_targets INTEGER, i10_targets INTEGER, ez_targets INTEGER, gtg_targets INTEGER,
+  pass_att INTEGER, completions INTEGER, pass_yards REAL, pass_tds INTEGER, pass_air_yards REAL, pass_epa REAL, rz_pass_att INTEGER,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, week, gsis_id));
+CREATE INDEX IF NOT EXISTS idx_raw_pbp_gsis ON raw_pbp_player_week (gsis_id, season, week);
+
 -- OverTheCap contracts by way of nflverse. ONE ROW PER CONTRACT.
 --
 -- THERE IS NO GSIS ID IN THIS FEED. Its identity columns are a display name, `otc_id`,

@@ -396,6 +396,20 @@ export const RAW_ASSETS: RawAsset[] = [
     },
   },
   {
+    id: "pbp",
+    table: "raw_pbp_player_week",
+    what: "nflverse play-by-play (1999+), AGGREGATED to player-week: red-zone/inside-10/inside-5/goal-to-go carries and targets, air yards, EPA and first downs -- high-value opportunity the frozen box score cannot give",
+    defaultSeasons: [1999, new Date().getFullYear()],
+    reads: ["src_nflverse"],
+    writes: ["raw_pbp_player_week"],
+    async run(dbPath, seasons) {
+      const { ingestRawPbp } = await import("./rawSources.js");
+      const r = await ingestRawPbp({ dbPath, seasons });
+      reportSeasons(r);
+      return r.total;
+    },
+  },
+  {
     id: "adp-history",
     table: "raw_adp_history",
     what: "FantasyFootballCalculator ADP archive by format and year (standard 2008+, ppr 2010+, half-ppr 2018+; the API ignores `teams`)",

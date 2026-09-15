@@ -122,6 +122,9 @@ export const injuriesUrl = (season: number) => `${NFLVERSE}/injuries/injuries_${
 export const depthChartsUrl = (season: number) => `${NFLVERSE}/depth_charts/depth_charts_${season}.csv`;
 export const snapCountsUrl = (season: number) => `${NFLVERSE}/snap_counts/snap_counts_${season}.csv`;
 export const participationUrl = (season: number) => `${NFLVERSE}/pbp_participation/pbp_participation_${season}.csv`;
+/** Full play-by-play, one file per season (1999+, ~10-25MB gz / ~50k plays each). We do NOT store the
+ *  raw plays -- the ingester aggregates each season to one row per player-week (see raw_pbp_player_week). */
+export const pbpUrl = (season: number) => `${NFLVERSE}/pbp/play_by_play_${season}.csv`;
 export const contractsUrl = `${NFLVERSE}/contracts/historical_contracts.csv.gz`;
 /** Cache tags for the per-season raw feeds. Same rule as `cacheTag`: never type a tag twice. */
 export const rawTag = {
@@ -129,6 +132,7 @@ export const rawTag = {
   depthCharts: (s: number) => `depth-charts-${s}`,
   snapCounts: (s: number) => `snap-counts-${s}`,
   participation: (s: number) => `participation-${s}`,
+  pbp: (s: number) => `pbp-${s}`,
   contracts: "contracts",
   ngs: (phase: string) => `ngs-${phase}`,
 } as const;

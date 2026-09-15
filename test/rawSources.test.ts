@@ -217,7 +217,7 @@ test("raw_depth_chart: both source schemas land, and the weekly/daily split is r
 // raw_snap_count
 // ==================================================================================================
 
-test("raw_snap_count: 2013-2025 land, 2012 is a header and nothing else, and as_of comes from the game", { skip: !tableHasRows("raw_snap_count") ? "raw_snap_count not built" : false }, () => {
+test("raw_snap_count: 2013-current land, 2012 is a header and nothing else, and as_of comes from the game", { skip: !tableHasRows("raw_snap_count") ? "raw_snap_count not built" : false }, () => {
   const db = open();
   const rows = db.prepare(
     "SELECT season, COUNT(*) n, SUM(pfr_player_id IS NOT NULL) p, SUM(as_of IS NOT NULL) a FROM raw_snap_count GROUP BY season ORDER BY season",
@@ -229,8 +229,12 @@ test("raw_snap_count: 2013-2025 land, 2012 is a header and nothing else, and as_
   // because "the feed has no 2012" and "our fetch broke" are different facts.
   assert.ok(!rows.some((r) => r.season <= 2012), "2012 has no snap rows -- the asset is a bare header");
   assert.equal(rows[0].season, 2013);
+  // The in-progress CURRENT season is legitimately partial -- an in-season refresh lands only the weeks
+  // played so far -- so the ~20k full-season volume floor applies to COMPLETE seasons only. Integrity
+  // (a pfr id and a game day on every row) still holds for the partial season and is asserted for all.
+  const currentSeason = new Date().getFullYear();
   for (const r of rows) {
-    assert.ok(r.n > 20000, `${r.season}: ${r.n} snap rows`);
+    assert.ok(r.n > (r.season < currentSeason ? 20000 : 0), `${r.season}: ${r.n} snap rows`);
     // The feed's ONLY player id is the PFR one. If this ever drops, the feature layer's route to
     // player_sk (player_xref, source 'pfr') is gone and every snap feature silently unresolves.
     assert.equal(r.p, r.n, `${r.season}: ${r.n - r.p} rows without a pfr id`);

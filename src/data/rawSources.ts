@@ -28,7 +28,7 @@
 import { openDb, nowIso, type DB } from "../db/db.js";
 import {
   fetchCsvCached, cacheTag, rawTag, URLS, NFLVERSE, canonTeam, pick,
-  injuriesUrl, depthChartsUrl, snapCountsUrl, draftPicksUrl, participationUrl, contractsUrl,
+  injuriesUrl, depthChartsUrl, snapCountsUrl, draftPicksUrl, participationUrl, pbpUrl, contractsUrl,
 } from "./nflverse.js";
 
 /** One season's outcome. `rows` is what LANDED, not what was parsed -- the two differ when a feed
@@ -765,6 +765,147 @@ export async function ingestRawParticipation(opts: { dbPath?: string; seasons?: 
   });
   db.close();
   return { table: "raw_participation", seasons, total: totalOf(seasons) };
+}
+
+// ==================================================================================================
+// raw_pbp_player_week -- SITUATIONAL OPPORTUNITY, aggregated at ingest from nflverse play-by-play.
+//
+// The raw pbp is ~50k plays x ~370 columns per season and we do NOT store it. What models can use and
+// the frozen box score cannot give is HIGH-VALUE OPPORTUNITY: red-zone / inside-10 / inside-5 / goal-to-go
+// touches and targets, air yards and aDOT ingredients, EPA, and first downs -- the "who is getting the
+// carries that score" signal. Aggregated here to one row per (season, week, gsis_id), which joins to
+// feat_player_week by gsis_id in the feature layer (this file only lands the raw opportunity totals).
+//
+// The aggregator is a PURE function (aggregatePbp) so it is unit-tested on synthetic plays without a
+// network or a db -- the ingester wraps it with the fetch/cache loop and the as_of lookup.
+// ==================================================================================================
+
+/** One player's aggregated opportunity for one (season implied) week. Counts, not rates -- a rate like
+ *  aDOT = air_yards/targets is derived in the feature layer where the denominators live together. */
+export interface PbpPlayerWeek {
+  week: number; gsis: string; team: string | null; name: string | null; gameId: string;
+  // rushing
+  carries: number; rushYds: number; rushTds: number; rushEpa: number; rushFd: number;
+  rzCarries: number; i10Carries: number; i5Carries: number; gtgCarries: number;
+  // receiving (target-based: a target is a pass_attempt aimed at this receiver)
+  targets: number; receptions: number; recYds: number; recTds: number; airYards: number; recEpa: number; recFd: number;
+  rzTargets: number; i10Targets: number; ezTargets: number; gtgTargets: number;
+  // passing
+  passAtt: number; completions: number; passYds: number; passTds: number; passAirYards: number; passEpa: number; rzPassAtt: number;
+}
+
+const emptyPbp = (week: number, gsis: string): PbpPlayerWeek => ({
+  week, gsis, team: null, name: null, gameId: "",
+  carries: 0, rushYds: 0, rushTds: 0, rushEpa: 0, rushFd: 0, rzCarries: 0, i10Carries: 0, i5Carries: 0, gtgCarries: 0,
+  targets: 0, receptions: 0, recYds: 0, recTds: 0, airYards: 0, recEpa: 0, recFd: 0, rzTargets: 0, i10Targets: 0, ezTargets: 0, gtgTargets: 0,
+  passAtt: 0, completions: 0, passYds: 0, passTds: 0, passAirYards: 0, passEpa: 0, rzPassAtt: 0,
+});
+
+/** PURE: play rows -> Map keyed `${week}|${gsis}` of aggregated opportunity. All weeks (REG + POST) are
+ *  kept; POST weeks are >= 19 so they never collide with REG in the (week, gsis) key. */
+export function aggregatePbp(rows: Record<string, string>[]): Map<string, PbpPlayerWeek> {
+  const out = new Map<string, PbpPlayerWeek>();
+  const get = (week: number, gsis: string, team: string | null, name: string | null, gameId: string): PbpPlayerWeek => {
+    const k = `${week}|${gsis}`;
+    let a = out.get(k);
+    if (!a) { a = emptyPbp(week, gsis); out.set(k, a); }
+    if (team) a.team = team;
+    if (name && !a.name) a.name = name;
+    if (gameId) a.gameId = gameId;
+    return a;
+  };
+  for (const r of rows) {
+    const week = num(pick(r, "week"));
+    if (week == null) continue;
+    const gameId = pick(r, "game_id");
+    const team = canonTeam(pick(r, "posteam")) || null;
+    const yl = num(pick(r, "yardline_100"));
+    const gtg = pick(r, "goal_to_go") === "1";
+    const yards = num(pick(r, "yards_gained")) ?? 0;
+    const epa = num(pick(r, "epa")) ?? 0;
+    const airYards = num(pick(r, "air_yards"));
+    const complete = pick(r, "complete_pass") === "1";
+    const rushId = str(pick(r, "rusher_player_id"));
+    const recId = str(pick(r, "receiver_player_id"));
+    const passId = str(pick(r, "passer_player_id"));
+
+    if (pick(r, "rush_attempt") === "1" && rushId) {
+      const a = get(week, rushId, team, str(pick(r, "rusher_player_name")), gameId);
+      a.carries++; a.rushYds += yards; a.rushEpa += epa;
+      if (pick(r, "rush_touchdown") === "1") a.rushTds++;
+      if (pick(r, "first_down_rush") === "1") a.rushFd++;
+      if (yl != null) { if (yl <= 20) a.rzCarries++; if (yl <= 10) a.i10Carries++; if (yl <= 5) a.i5Carries++; }
+      if (gtg) a.gtgCarries++;
+    }
+    if (pick(r, "pass_attempt") === "1" && recId) {
+      const a = get(week, recId, team, str(pick(r, "receiver_player_name")), gameId);
+      a.targets++; a.recEpa += epa;
+      if (airYards != null) a.airYards += airYards;
+      if (complete) { a.receptions++; a.recYds += yards; if (pick(r, "pass_touchdown") === "1") a.recTds++; if (pick(r, "first_down_pass") === "1") a.recFd++; }
+      if (yl != null) { if (yl <= 20) a.rzTargets++; if (yl <= 10) a.i10Targets++; }
+      if (airYards != null && yl != null && airYards >= yl) a.ezTargets++; // ball thrown to/through the goal line
+      if (gtg) a.gtgTargets++;
+    }
+    if (pick(r, "pass_attempt") === "1" && passId) {
+      const a = get(week, passId, team, str(pick(r, "passer_player_name")), gameId);
+      a.passAtt++; a.passEpa += epa;
+      if (airYards != null) a.passAirYards += airYards;
+      if (complete) { a.completions++; a.passYds += num(pick(r, "passing_yards")) ?? yards; if (pick(r, "pass_touchdown") === "1") a.passTds++; }
+      if (yl != null && yl <= 20) a.rzPassAtt++;
+    }
+  }
+  return out;
+}
+
+export async function ingestRawPbp(opts: { dbPath?: string; seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
+  const db = openDb(opts.dbPath);
+  const now = nowIso();
+  const gameday = new Map<string, string | null>();
+  for (const g of db.prepare("SELECT game_id, gameday FROM raw_nfl_game").all() as { game_id: string; gameday: string | null }[]) {
+    gameday.set(g.game_id, g.gameday);
+  }
+  const ins = db.prepare(
+    `INSERT INTO raw_pbp_player_week (season, week, gsis_id, team, as_of, name,
+       carries, rush_yards, rush_tds, rush_epa, rush_first_downs, rz_carries, i10_carries, i5_carries, gtg_carries,
+       targets, receptions, rec_yards, rec_tds, air_yards, rec_epa, rec_first_downs, rz_targets, i10_targets, ez_targets, gtg_targets,
+       pass_att, completions, pass_yards, pass_tds, pass_air_yards, pass_epa, rz_pass_att, fetched_at)
+     VALUES (@season,@week,@gsis,@team,@asOf,@name,
+       @carries,@rushYds,@rushTds,@rushEpa,@rushFd,@rzCarries,@i10Carries,@i5Carries,@gtgCarries,
+       @targets,@receptions,@recYds,@recTds,@airYards,@recEpa,@recFd,@rzTargets,@i10Targets,@ezTargets,@gtgTargets,
+       @passAtt,@completions,@passYds,@passTds,@passAirYards,@passEpa,@rzPassAtt,@now)
+     ON CONFLICT(season, week, gsis_id) DO UPDATE SET
+       team=excluded.team, as_of=excluded.as_of, name=excluded.name,
+       carries=excluded.carries, rush_yards=excluded.rush_yards, rush_tds=excluded.rush_tds, rush_epa=excluded.rush_epa,
+       rush_first_downs=excluded.rush_first_downs, rz_carries=excluded.rz_carries, i10_carries=excluded.i10_carries,
+       i5_carries=excluded.i5_carries, gtg_carries=excluded.gtg_carries,
+       targets=excluded.targets, receptions=excluded.receptions, rec_yards=excluded.rec_yards, rec_tds=excluded.rec_tds,
+       air_yards=excluded.air_yards, rec_epa=excluded.rec_epa, rec_first_downs=excluded.rec_first_downs,
+       rz_targets=excluded.rz_targets, i10_targets=excluded.i10_targets, ez_targets=excluded.ez_targets, gtg_targets=excluded.gtg_targets,
+       pass_att=excluded.pass_att, completions=excluded.completions, pass_yards=excluded.pass_yards, pass_tds=excluded.pass_tds,
+       pass_air_yards=excluded.pass_air_yards, pass_epa=excluded.pass_epa, rz_pass_att=excluded.rz_pass_att, fetched_at=excluded.fetched_at`,
+  );
+
+  const seasons = await perSeasonFeed(db, seasonRange(opts.seasons, 1999), pbpUrl, rawTag.pbp, opts.refresh ?? false, (season, rows) => {
+    const agg = aggregatePbp(rows);
+    let n = 0;
+    db.transaction(() => {
+      for (const a of agg.values()) {
+        ins.run({
+          season, week: a.week, gsis: a.gsis, team: a.team, asOf: gameday.get(a.gameId) ?? null, name: a.name,
+          carries: a.carries, rushYds: a.rushYds, rushTds: a.rushTds, rushEpa: a.rushEpa, rushFd: a.rushFd,
+          rzCarries: a.rzCarries, i10Carries: a.i10Carries, i5Carries: a.i5Carries, gtgCarries: a.gtgCarries,
+          targets: a.targets, receptions: a.receptions, recYds: a.recYds, recTds: a.recTds, airYards: a.airYards,
+          recEpa: a.recEpa, recFd: a.recFd, rzTargets: a.rzTargets, i10Targets: a.i10Targets, ezTargets: a.ezTargets, gtgTargets: a.gtgTargets,
+          passAtt: a.passAtt, completions: a.completions, passYds: a.passYds, passTds: a.passTds,
+          passAirYards: a.passAirYards, passEpa: a.passEpa, rzPassAtt: a.rzPassAtt, now,
+        });
+        n++;
+      }
+    })();
+    return n;
+  });
+  db.close();
+  return { table: "raw_pbp_player_week", seasons, total: totalOf(seasons) };
 }
 
 // ==================================================================================================

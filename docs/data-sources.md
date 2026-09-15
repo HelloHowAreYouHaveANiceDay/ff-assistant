@@ -146,6 +146,37 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
 - **Feeds.** `prior_route_share` in both new feature tables.
 - **Status.** ingested (this branch).
 
+### 1.5a Play-by-play (situational opportunity) -- `pbp/play_by_play_<season>.csv`
+
+- **What.** The full play-by-play: one row per PLAY with `yardline_100`, `goal_to_go`, `air_yards`,
+  `epa`, `rusher_player_id` / `receiver_player_id` / `passer_player_id`, the touchdown/first-down flags,
+  and ~360 other columns. We use it for the one thing the frozen box score cannot give: **high-value
+  opportunity** -- red-zone / inside-10 / inside-5 / goal-to-go carries and targets -- plus air yards
+  (the aDOT ingredient), EPA and first downs.
+- **Grain / key.** (game_id, play_id) in the source; **aggregated at ingest to (season, week, gsis_id)**.
+  The raw plays are NOT stored (see the ingester header): ~50k plays x ~370 cols per season is far too
+  wide to keep, and every fantasy-relevant slice is a count over it.
+- **As-of.** The game day, joined from `raw_nfl_game` -- prior-only, like participation.
+- **Seasons.** 1999+. `yardline_100`/carries/targets are present every year; `air_yards` begins 2006 and
+  `epa` is all years, so the red-zone buckets backfill fully while the air-yards columns are null for
+  1999-2005 (handled as 0 in the sums).
+- **Cost.** ~10-25MB gz per season, ~50k plays; the whole 1999-2026 backfill is a few minutes, cached to
+  `data/cache/pbp-<season>.csv.gz`. The aggregation is a real computation (like participation), not a
+  column rename.
+- **Raw table.** `raw_pbp_player_week`: rushing (`carries`, `rush_yards`, `rush_tds`, `rush_epa`,
+  `rush_first_downs`, `rz_carries`, `i10_carries`, `i5_carries`, `gtg_carries`), receiving (`targets`,
+  `receptions`, `rec_yards`, `rec_tds`, `air_yards`, `rec_epa`, `rec_first_downs`, `rz_targets`,
+  `i10_targets`, `ez_targets`, `gtg_targets`), passing (`pass_att`, `completions`, `pass_yards`,
+  `pass_tds`, `pass_air_yards`, `pass_epa`, `rz_pass_att`). All weeks REG+POST (POST >= 19, no key
+  collision). Counts only -- rates (aDOT, red-zone share) are derived where the denominators live.
+- **Face validity, 2024 (REG+POST):** S.Barkley 439 carries / 79 rz / 18 rush TD; J.Chase 127 rec / 17
+  rec TD; J.Burrow 43 pass TD -- all match the real season. `as_of` resolves on 100%. Aggregator is a
+  pure function (`aggregatePbp`) with a hermetic fault-injection test (`test/pbpAggregate.test.ts`).
+- **Feeds.** Nothing yet -- this branch lands the RAW opportunity substrate; the feature-layer columns
+  (red-zone touch share, aDOT, high-value-touch rate) that join it into `feat_player_week` are the next
+  step and must clear the paired-season floor before anything ships.
+- **Status.** ingested (this branch).
+
 ### 1.6 FTN charting -- `ftn_charting_<season>.csv`
 
 - **What.** Play-level charting: `is_play_action`, `is_screen_pass`, `is_rpo`, `is_motion`,
