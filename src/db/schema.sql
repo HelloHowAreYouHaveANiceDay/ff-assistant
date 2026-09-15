@@ -1149,6 +1149,10 @@ CREATE TABLE IF NOT EXISTS feat_player_season_ext (
   -- volume-ORTHOGONAL pbp candidates (2026-09-15), built to sidestep the collinearity that nulled the shares
   prior_td_oe            REAL,        -- Y-1 (rush_tds+rec_tds) MINUS expected from red-zone opportunity at league rates -- the TD-regression residual
   prior_adot             REAL,        -- Y-1 air_yards / targets -- average depth of target (a target-quality style signal)
+  -- team-environment candidates (2026-09-15): the scheme a player sits in, from his CURRENT team's Y-1 pbp
+  prior_team_pass_rate   REAL,        -- Y-1 team pass attempts / (pass + rush)
+  prior_team_plays_pg    REAL,        -- Y-1 team offensive plays per game (pace)
+  prior_team_rz_pg       REAL,        -- Y-1 team red-zone opportunities per game (scoring environment)
   -- the draft market, from the FFC archive. adp_as_of is the archive's own window end and is NOT
   -- always inside the season: standard 2008 and 2009 are both stamped 2010-06-20.
   adp             REAL,
@@ -1205,6 +1209,7 @@ CREATE TABLE IF NOT EXISTS feat_player_week_model (
   td_attempts     REAL,
   td_rush_yards   REAL,
   rz_share_td     REAL,              -- rolling season-to-date red-zone touch share (pbp), weeks < w -- 2026-09-15 candidate
+  prior_vol_cv    REAL,              -- prior-season weekly CV (volatility), always known -- 2026-09-15 candidate
   dvp_mult        REAL,              -- opponent defence-vs-position multiplier, weeks < w + prior yr
   dvp_n           INTEGER,           -- opponent games inside season Y that fed it
   spread_line     REAL,

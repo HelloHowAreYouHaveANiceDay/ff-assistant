@@ -58,6 +58,7 @@ export const WEEKLY_FEATURE_FIELDS = [
   "td_games", "td_ppg", "t4_mean", "t4_sd",
   "td_fd", "td_ts", "td_attempts", "td_rush_yards",
   "rz_share_td",   // rolling season-to-date red-zone touch share (pbp), point-in-time -- 2026-09-15 candidate
+  "prior_vol_cv",  // prior-season weekly CV (volatility), always-present -- 2026-09-15 candidate
   "home", "spread_line", "total_line", "implied_team_total", "days_rest",
   "season_line_pg", "week_no",
   // ---- THE AVAILABILITY BLOCK, from feat_player_week_context (the data track). See CONTEXT_FIELDS
@@ -494,6 +495,31 @@ export function rzShareTable(db: DB, season: number): {
 }
 
 /**
+ * PRIOR-SEASON VOLATILITY (2026-09-15 candidate), scale-free: the player's Y-1 weekly coefficient of
+ * variation (SD/mean of his played weeks), keyed by surrogate key. Constant across season Y and known
+ * before it starts, so leak-safe and ALWAYS present at serve (unlike the form block) -- it exists to
+ * inform the SPREAD the quantile heads predict, especially early when `t4_sd` is still empty. CV, not
+ * SD, so it is a pure boom/bust signal rather than a level proxy (the pre-filter showed raw SD is
+ * 0.58-correlated with the level the model already carries).
+ */
+export function priorSeasonVol(db: DB, season: number): Map<string, number> {
+  const rows = db.prepare(
+    "SELECT player_sk, pts FROM feat_player_week WHERE season = ? AND player_sk IS NOT NULL AND pts IS NOT NULL AND pts > 0",
+  ).all(season - 1) as { player_sk: string; pts: number }[];
+  const by = new Map<string, number[]>();
+  for (const r of rows) (by.get(String(r.player_sk)) ?? by.set(String(r.player_sk), []).get(String(r.player_sk))!).push(r.pts);
+  const out = new Map<string, number>();
+  for (const [sk, arr] of by) {
+    if (arr.length < 6) continue;                         // too few games for a stable CV
+    const m = arr.reduce((s, x) => s + x, 0) / arr.length;
+    if (!(m > 0)) continue;
+    const sd = Math.sqrt(arr.reduce((s, x) => s + (x - m) ** 2, 0) / arr.length);
+    out.set(sk, sd / m);
+  }
+  return out;
+}
+
+/**
  * THE UPSERT, GENERATED FROM ONE COLUMN LIST rather than typed out twice.
  *
  * There were two copies of this statement -- the historical builder's and the forward builder's --
@@ -504,7 +530,7 @@ export function rzShareTable(db: DB, season: number): {
 const WEEK_MODEL_BASE_COLS = [
   "feat_key", "player_sk", "season", "week", "as_of", "name", "pos", "team", "opponent", "home",
   "is_bye", "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
-  "td_attempts", "td_rush_yards", "rz_share_td", "dvp_mult", "dvp_n", "spread_line", "total_line",
+  "td_attempts", "td_rush_yards", "rz_share_td", "prior_vol_cv", "dvp_mult", "dvp_n", "spread_line", "total_line",
   "implied_team_total", "days_rest", "pts",
 ];
 /** The three columns the conflict target keys on, which must not appear in the SET clause. */
@@ -615,6 +641,7 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
     const line = art ? preseasonLinePerGame(db, season, art, sched, current) : new Map<string, number>();
     const dvp = dvpTable(db, season);
     const rzShare = rzShareTable(db, season);
+    const priorVol = priorSeasonVol(db, season);
     const ctx = contextFor(db, season);
     const raw = db.prepare(
       `SELECT feat_key, player_sk, season, week, name, pos, team, opponent, home, is_bye,
@@ -694,6 +721,8 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
           td_attempts: finite(r.td_attempts), td_rush_yards: finite(r.td_rush_yards),
           // rolling red-zone touch share to date (weeks < w), point-in-time via the prefix-sum bound.
           rz_share_td: finite(rzShare.get(r.week, r.player_sk, r.team)),
+          // prior-season weekly CV (volatility), constant across the season and always known.
+          prior_vol_cv: finite(r.player_sk != null ? priorVol.get(String(r.player_sk)) ?? null : null),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           // schedule and market columns as published preseason / pre-kickoff.
           spread_line: finite(r.spread_line), total_line: finite(r.total_line),
@@ -800,7 +829,7 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
   const rows = db.prepare(
     `SELECT m.feat_key, m.player_sk, m.season, m.week, m.name, m.pos, m.team, m.opponent, m.home,
             m.season_line_pg, m.td_games, m.td_ppg, m.t4_mean, m.t4_sd, m.td_fd, m.td_ts,
-            m.td_attempts, m.td_rush_yards, m.rz_share_td, m.dvp_mult, m.dvp_n, m.spread_line, m.total_line,
+            m.td_attempts, m.td_rush_yards, m.rz_share_td, m.prior_vol_cv, m.dvp_mult, m.dvp_n, m.spread_line, m.total_line,
             m.implied_team_total, m.days_rest
             ${present.length ? ", " + present.map((c) => `m.${c.name}`).join(", ") : ""}
             ${stream.length ? ", " + stream.map((c) => `s.${c}`).join(", ") : ""}
@@ -828,6 +857,7 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
       td_attempts: r.td_attempts == null ? null : Number(r.td_attempts),
       td_rush_yards: r.td_rush_yards == null ? null : Number(r.td_rush_yards),
       rz_share_td: r.rz_share_td == null ? null : Number(r.rz_share_td),
+      prior_vol_cv: r.prior_vol_cv == null ? null : Number(r.prior_vol_cv),
       home: r.home == null ? null : Number(r.home),
       spread_line: r.spread_line == null ? null : Number(r.spread_line),
       total_line: r.total_line == null ? null : Number(r.total_line),
@@ -943,6 +973,7 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
 
   const dvp = dvpTable(db, season);
   const rzShare = rzShareTable(db, season);
+  const priorVol = priorSeasonVol(db, season);
 
   ensureContextColumns(db);
   const ins = db.prepare(weekModelInsertSql());
@@ -997,6 +1028,7 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
           td_fd: finite(td?.td_fd ?? null), td_ts: finite(td?.td_ts ?? null),
           td_attempts: finite(td?.td_attempts ?? null), td_rush_yards: finite(td?.td_rush_yards ?? null),
           rz_share_td: finite(rzShare.get(week, p.player_sk, p.team)),
+          prior_vol_cv: finite(p.player_sk != null ? priorVol.get(String(p.player_sk)) ?? null : null),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           spread_line: spread, total_line: total, implied_team_total: implied,
           days_rest: daysRest,

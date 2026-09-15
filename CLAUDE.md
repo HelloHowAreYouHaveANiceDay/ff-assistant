@@ -31,6 +31,42 @@ npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n
 
 A materially different number means an input drifted — find it before doing anything else.
 
+## Charter — how to work in this repo (standing rules, 2026-09-15)
+
+Distilled from a long session that kept producing plausible-looking-but-wrong conclusions, and the
+discipline that caught them (three of them were caught by the owner, not by any green check). These
+govern HOW to apply everything below.
+
+1. **No ship without a stop-and-confirm.** A change to a deployed artifact, a shipped value/lever, or
+   anything outward-facing gets explicit owner sign-off BEFORE it lands — never as a side effect of a
+   long autonomous chain. Refit/generate to a TEMP path, gate + serve-check, present the before/after,
+   THEN swap. (The D23 weekly re-pin was done exactly this way; the sign-off IS the "safe stopping"
+   that makes persistence safe rather than dangerous.)
+
+2. **Pre-filter before the expensive screen.** Every candidate feature earns a full paired-floor screen
+   only after a cheap orthogonality/predictiveness check (correlation, and partial-corr against the
+   incumbent AND the level). It kills level-in-disguise and redundant candidates in minutes instead of
+   hours — it caught that raw `prior_vol` was 0.58-correlated with the level the model already carries,
+   which a naive screen would have ADMITTED for the wrong reason. Fail the pre-filter, skip the screen.
+
+3. **Explain a surprising number before acting on it.** A delta, an anomaly, a "regression" is
+   diagnosed to its input first, never trusted or shipped on face. The population-hash drift (benign
+   2026-live-sync + build-method, NOT data loss) and the cja 17% outlier (real division-of-death +
+   roster variance, NOT a bug) were both resolved this way. The one-rule's "a different number means an
+   input drifted" applies to EVERY number, not just the backtest.
+
+4. **A plausible-looking output is the default failure mode; positive controls + domain judgment are
+   the defense.** Green tests, a passing golden block, and a strong-looking correlation can all be wrong
+   in sophisticated ways (the "regression" that was a forward small-sample artifact; the level-proxy
+   that looked orthogonal). Before believing a null, prove the lever is CONNECTED (positive control);
+   before believing a gain, prove a broader lever doesn't already explain it; and keep the owner's
+   domain read as the final arbiter — automation cannot tell "surprising-but-real" from "bug" as well.
+
+5. **Persist through diagnosis, stop at boundaries.** Persistence is an asset for tracing a bug to its
+   root, reproducing a store deterministically, or exhausting a feature frontier. It becomes a liability
+   the instant it would cross an irreversible or outward-facing boundary without a checkpoint. Persist
+   on the analysis; stop at the deploy.
+
 ## How to know a result is real (this repo's hard-won checklist)
 
 Most wrong conclusions here came from a measurement, not from the code under test.

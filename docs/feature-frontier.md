@@ -109,6 +109,46 @@ snap/route usage) already cover. `rz_share_td` stays a declared candidate on the
 `ff evaluate-weekly --features all` includes it only in a screen, never in the shipped serve. No shipped
 number changed on either grain.
 
+### Round 3 (2026-09-15): team-environment (season) + volatility (weekly), all REJECT -- one with a twist
+
+Screened the two remaining axes in full (not just the pre-filter), for learning. Both reject on the gate.
+
+**Team-environment** (a player's CURRENT team's Y-1 pbp scheme, assigned by team; season projector):
+
+| candidate | pos | improvement (pinball) | floor | verdict |
+|---|---|---|---|---|
+| `prior_team_pass_rate` | WR | -0.041 | 0.089 | REJECT |
+| `prior_team_pass_rate` | RB | +0.009 | 0.212 | REJECT |
+| `prior_team_plays_pg` | WR | -0.063 | 0.153 | REJECT |
+| `prior_team_rz_pg` | RB | -0.057 | 0.160 | REJECT |
+
+Face-valid (WAS/CIN/MIN top pass-rate, BAL/CHI/SF run-heavy). Nulls because a player's OWN prior usage
+already encodes his team's pie x share, and ADP/ECR prices team context.
+
+**Volatility** (`prior_vol_cv` = prior-season weekly CV, always-present, weekly CRPS). Positive control
+strong (St. Brown among the steadiest; committee/low-volume types most volatile).
+
+| arm | improvement (CRPS) | floor | verdict |
+|---|---|---|---|
+| SELECTION (2012-2020, the gate) | -0.0016 (2/7) | 0.0023 | **REJECT** (negative) |
+| holdout (2021-2025) | +0.0019 (5/0) | 0.0016 | ADMIT (confirm only) |
+| all 14 seasons | -0.0004 (7/7) | 0.0021 | REJECT |
+
+**A REGIME SPLIT, and a pre-filter blind spot worth remembering.** The gate REJECTS (selection seasons
+negative), but the feature HELPS consistently in the recent regime (2021-2025, 5/0, clears the floor) --
+same category as `hist_ppg_w` (rejected on the gate, holdout-only positive, kept as a candidate). And the
+lesson for the screening recipe: the CHEAP pooled pre-filter (Round-2 measured `prior_vol_cv`'s pure
+signal at ~0.05 and called it a flat reject) **averaged this regime split away** -- the full
+season-partitioned screen is what surfaced the recent-era signal. So the pre-filter is a sound FIRST cut
+but does NOT replace the partitioned screen for a feature that may be regime-dependent; a pre-filter null
+on a plausibly regime-sensitive feature still earns a full screen. `prior_vol_cv` and `rz_share_td` stay
+declared candidates on the weekly view, unfitted; no shipped number changed.
+
+**Tally after 2026-09-15: ~10 pbp/volatility/team candidates screened, all REJECT on the gate.** The
+projection model is well-saturated; the pbp substrate has not yielded an orthogonal-and-predictive
+feature. The likely remaining edge is in the DECISION/roster-construction layer (where the sim already
+shows variance and RB-scarcity move outcomes -- the cja-vs-ARI power-ranking split), not the projection.
+
 ## Screening recipe (for the next candidate)
 
 **The screening path is now cheap and correct** (do NOT hand-read a pinball delta):

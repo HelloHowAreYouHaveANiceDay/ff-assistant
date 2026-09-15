@@ -210,6 +210,32 @@ function priorPbpOpportunity(db: DB, yr: number, resolver: SourceResolver): Map<
   return out;
 }
 
+/**
+ * FRONTIER (2026-09-15) -- TEAM ENVIRONMENT from raw_pbp_player_week, per TEAM-season: the scheme a
+ * player sits in, orthogonal to his own share. Assigned to each player by his CURRENT team, read off
+ * that team's PRIOR season (the environment he is walking into -- handles team-changers, unlike his
+ * own prior usage). `pass_rate` = team pass attempts / (pass + rush), `plays_pg` = plays per game (a
+ * pace proxy), `rz_pg` = red-zone opportunities per game (the scoring-environment size).
+ */
+function teamEnvironment(db: DB, yr: number): Map<string, { passRate: number; playsPg: number; rzPg: number }> {
+  const out = new Map<string, { passRate: number; playsPg: number; rzPg: number }>();
+  const rows = db.prepare(
+    `SELECT team, SUM(pass_att) pass, SUM(carries) rush,
+            SUM(rz_carries + rz_targets) rz, COUNT(DISTINCT week) games
+       FROM raw_pbp_player_week WHERE season = ? AND team IS NOT NULL GROUP BY team`,
+  ).all(yr) as { team: string; pass: number; rush: number; rz: number; games: number }[];
+  for (const r of rows) {
+    const team = canonTeam(r.team); if (!team || !r.games) continue;
+    const plays = (r.pass ?? 0) + (r.rush ?? 0);
+    out.set(team, {
+      passRate: plays > 0 ? r.pass / plays : 0,
+      playsPg: r.games ? plays / r.games : 0,
+      rzPg: r.games ? r.rz / r.games : 0,
+    });
+  }
+  return out;
+}
+
 /** The contract in force during `yr`, and whether `yr` is its last season. NULL where we have no
  *  contract at all, which is not the same as a zero. */
 function contracts(db: DB, yr: number, resolver: SourceResolver): Map<number, { flag: number; signed: number; years: number; apy: number | null }> {
@@ -398,10 +424,11 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
        prior_air_yards_share, prior_wopr, depth_rank_sep1, injury_status_sep1, adp, adp_format,
        adp_as_of, adp_stdev, prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe, qb_changed,
        prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share, prior_td_oe, prior_adot,
+       prior_team_pass_rate, prior_team_plays_pg, prior_team_rz_pg,
        resolved_by, updated_at)
      VALUES (@sk,@season,@asOf,@team,@pos,@dy,@dr,@dp,@cy,@cys,@cyy,@capy,@snap,@route,@cpg,@cshare,
        @ays,@wopr,@depth,@inj,@adp,@adpFmt,@adpAsOf,@adpSd,@outg,@yacoe,@ryoe,@cpoe,@qbc,
-       @rzTouch,@gtgCarry,@ezTarget,@tdOe,@adot,@by,@now)
+       @rzTouch,@gtgCarry,@ezTarget,@tdOe,@adot,@teamPass,@teamPlays,@teamRz,@by,@now)
      ON CONFLICT(season, player_sk) DO UPDATE SET
        as_of=excluded.as_of, team=excluded.team, pos=excluded.pos, draft_year=excluded.draft_year,
        draft_round=excluded.draft_round, draft_pick=excluded.draft_pick,
@@ -419,6 +446,8 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
        prior_gtg_carry_share=excluded.prior_gtg_carry_share,
        prior_ez_target_share=excluded.prior_ez_target_share,
        prior_td_oe=excluded.prior_td_oe, prior_adot=excluded.prior_adot,
+       prior_team_pass_rate=excluded.prior_team_pass_rate, prior_team_plays_pg=excluded.prior_team_plays_pg,
+       prior_team_rz_pg=excluded.prior_team_rz_pg,
        resolved_by=excluded.resolved_by, updated_at=excluded.updated_at`,
   );
 
@@ -455,6 +484,7 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
     const ngs = priorNgs(db, yr - 1, resolver);             // FRONTIER P1: NGS efficiency lags (prior season)
     const qbChg = qbChangedByTeam(db, yr);                  // FRONTIER P2: per-team QB-change flag (Sep-1 vs Y-1)
     const pbpOpp = priorPbpOpportunity(db, yr - 1, resolver); // FRONTIER: prior-season red-zone/goal-line opportunity shares
+    const teamEnv = teamEnvironment(db, yr - 1);            // FRONTIER: prior-season team scheme/pace/RZ environment
     const asOf = `${yr}-09-01`;
 
     let n = 0;
@@ -499,6 +529,9 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
           ezTarget: orNull(pbpOpp.get(sk)?.ezTarget ?? null),
           tdOe: orNull(pbpOpp.get(sk)?.tdOe ?? null),
           adot: orNull(pbpOpp.get(sk)?.adot ?? null),
+          teamPass: orNull(team ? teamEnv.get(canonTeam(team) ?? "")?.passRate ?? null : null),
+          teamPlays: orNull(team ? teamEnv.get(canonTeam(team) ?? "")?.playsPg ?? null : null),
+          teamRz: orNull(team ? teamEnv.get(canonTeam(team) ?? "")?.rzPg ?? null : null),
           by: "player_sk from feat_player_season", now,
         });
         n++;

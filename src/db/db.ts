@@ -175,8 +175,13 @@ function addColumns(db: DB): void {
     // average depth of target. Built to sidestep the collinearity that nulled the share candidates.
     ["feat_player_season_ext", "prior_td_oe", "REAL"],
     ["feat_player_season_ext", "prior_adot", "REAL"],
-    // WEEKLY candidate (2026-09-15): rolling season-to-date red-zone touch share, on the weekly model view.
+    // TEAM-ENVIRONMENT candidates (2026-09-15): the scheme/pace/RZ environment a player sits in.
+    ["feat_player_season_ext", "prior_team_pass_rate", "REAL"],
+    ["feat_player_season_ext", "prior_team_plays_pg", "REAL"],
+    ["feat_player_season_ext", "prior_team_rz_pg", "REAL"],
+    // WEEKLY candidates (2026-09-15): rolling season-to-date red-zone touch share, and prior-season volatility.
     ["feat_player_week_model", "rz_share_td", "REAL"],
+    ["feat_player_week_model", "prior_vol_cv", "REAL"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];

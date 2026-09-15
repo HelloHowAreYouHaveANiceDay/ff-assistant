@@ -136,7 +136,7 @@ RATIO_TO_LINE = ["td_ppg", "t4_mean", "t4_sd"]
 CENTER = [
     "td_games", "spread_line", "total_line",
     "implied_team_total", "days_rest", "week_no", "season_line_pg",
-    "td_fd", "td_ts", "td_attempts", "td_rush_yards", "rz_share_td",
+    "td_fd", "td_ts", "td_attempts", "td_rush_yards", "rz_share_td", "prior_vol_cv",
     # THE AVAILABILITY BLOCK. Every one of these is keyed to this team's own kickoff rather than to
     # the league week's first kickoff; src/weekly/features.ts CONTEXT_FIELDS carries each column's
     # as-of rule and the reason the anchor is different.
@@ -162,6 +162,8 @@ POS_GATED = {
     # rolling red-zone touch share: a scorer's high-value role. QBs are excluded (their red-zone value
     # is pass attempts, already in td_attempts), like the other skill-usage columns.
     "rz_share_td": {"RB", "WR", "TE"},
+    # prior-season volatility applies to every skill scorer's spread.
+    "prior_vol_cv": {"RB", "WR", "TE"},
     # A quarterback runs no routes. The charted route share is a receiver's workload column and
     # fitting it for QB measures the participation feed's coverage, not his job.
     "prior_route_share": {"RB", "WR", "TE"},
@@ -209,7 +211,7 @@ ALL_FEATURES = RATIO_TO_LINE + CENTER + INDICATOR
 SELECT_COLS = [
     "feat_key", "player_sk", "season", "week", "name", "pos", "season_line_pg",
     "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts", "td_attempts", "td_rush_yards",
-    "rz_share_td",
+    "rz_share_td", "prior_vol_cv",
     "home", "spread_line", "total_line", "implied_team_total", "days_rest",
     "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
     "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",

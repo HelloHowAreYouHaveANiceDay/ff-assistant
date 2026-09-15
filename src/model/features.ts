@@ -86,6 +86,7 @@ export interface ExtSeasonRow {
   // them the same way the trainer fits them. --add-features candidates only; not fitted by default.
   prior_rz_touch_share: number | null; prior_gtg_carry_share: number | null; prior_ez_target_share: number | null;
   prior_td_oe: number | null; prior_adot: number | null;
+  prior_team_pass_rate: number | null; prior_team_plays_pg: number | null; prior_team_rz_pg: number | null;
 }
 
 export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow> {
@@ -97,7 +98,7 @@ export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow>
               prior_route_share, prior_carries_per_game, prior_carry_share, depth_rank_sep1, adp,
               prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe, qb_changed,
               prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share,
-              prior_td_oe, prior_adot
+              prior_td_oe, prior_adot, prior_team_pass_rate, prior_team_plays_pg, prior_team_rz_pg
          FROM feat_player_season_ext WHERE season = ?`,
     ).all(season) as Record<string, unknown>[];
   } catch { return out; }                      // a store without the extension table: no columns, not zeros
@@ -136,6 +137,8 @@ export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow>
       prior_rz_touch_share: num(r.prior_rz_touch_share), prior_gtg_carry_share: num(r.prior_gtg_carry_share),
       prior_ez_target_share: num(r.prior_ez_target_share),
       prior_td_oe: num(r.prior_td_oe), prior_adot: num(r.prior_adot),
+      prior_team_pass_rate: num(r.prior_team_pass_rate), prior_team_plays_pg: num(r.prior_team_plays_pg),
+      prior_team_rz_pg: num(r.prior_team_rz_pg),
     });
   }
   return out;
@@ -148,6 +151,7 @@ const EMPTY_EXT: ExtSeasonRow = {
   prior_out_games: null, prior_yac_oe: null, prior_ryoe: null, prior_cpoe: null, qb_changed: null,
   prior_rz_touch_share: null, prior_gtg_carry_share: null, prior_ez_target_share: null,
   prior_td_oe: null, prior_adot: null,
+  prior_team_pass_rate: null, prior_team_plays_pg: null, prior_team_rz_pg: null,
 };
 
 /**
