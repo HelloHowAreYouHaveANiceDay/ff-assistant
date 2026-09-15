@@ -147,6 +147,46 @@ function priorRouteShare(db: DB, yr: number, resolver: SourceResolver): Map<numb
   return out;
 }
 
+/**
+ * FRONTIER (2026-09-15) -- prior-season SITUATIONAL-OPPORTUNITY shares from raw_pbp_player_week: the
+ * TD-equity signal the volume shares (wopr, carry_share) dilute. Three shares, each his total over his
+ * team's total, SUMMED SEPARATELY over the weeks he played and divided once -- the same traded-player
+ * discipline as priorRouteShare (a per-team-per-week team denominator is joined to his own weeks, so a
+ * man split across two offences is bounded by construction rather than summing two shares past 1.0).
+ *
+ *   prior_rz_touch_share   (rz_carries + rz_targets) / team's -- the broad red-zone role
+ *   prior_gtg_carry_share  goal-to-go carries / team's        -- the goal-line back (RB TD equity)
+ *   prior_ez_target_share  end-zone targets / team's          -- the end-zone target (WR/TE TD equity)
+ */
+function priorPbpOpportunity(db: DB, yr: number, resolver: SourceResolver): Map<number, { rzTouch: number | null; gtgCarry: number | null; ezTarget: number | null }> {
+  const out = new Map<number, { rzTouch: number | null; gtgCarry: number | null; ezTarget: number | null }>();
+  const rows = db.prepare(
+    `SELECT p.gsis_id gsis,
+            SUM(p.rz_carries + p.rz_targets) hv, SUM(tt.team_hv) team_hv,
+            SUM(p.gtg_carries) gtg,               SUM(tt.team_gtg) team_gtg,
+            SUM(p.ez_targets) ez,                 SUM(tt.team_ez) team_ez
+       FROM raw_pbp_player_week p
+       JOIN (SELECT season, week, team,
+                    SUM(rz_carries + rz_targets) team_hv,
+                    SUM(gtg_carries) team_gtg,
+                    SUM(ez_targets) team_ez
+               FROM raw_pbp_player_week WHERE season = ? GROUP BY season, week, team) tt
+         ON tt.season = p.season AND tt.week = p.week AND tt.team = p.team
+      WHERE p.season = ? GROUP BY p.gsis_id`,
+  ).all(yr, yr) as { gsis: string; hv: number; team_hv: number; gtg: number; team_gtg: number; ez: number; team_ez: number }[];
+  for (const r of rows) {
+    const res = resolver.resolve({ gsis: r.gsis });
+    resolver.count("nflverse pbp opportunity", res);
+    if (res.sk == null) continue;
+    out.set(res.sk, {
+      rzTouch: r.team_hv ? r.hv / r.team_hv : null,
+      gtgCarry: r.team_gtg ? r.gtg / r.team_gtg : null,
+      ezTarget: r.team_ez ? r.ez / r.team_ez : null,
+    });
+  }
+  return out;
+}
+
 /** The contract in force during `yr`, and whether `yr` is its last season. NULL where we have no
  *  contract at all, which is not the same as a zero. */
 function contracts(db: DB, yr: number, resolver: SourceResolver): Map<number, { flag: number; signed: number; years: number; apy: number | null }> {
@@ -334,9 +374,11 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
        prior_snap_share, prior_route_share, prior_carries_per_game, prior_carry_share,
        prior_air_yards_share, prior_wopr, depth_rank_sep1, injury_status_sep1, adp, adp_format,
        adp_as_of, adp_stdev, prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe, qb_changed,
+       prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share,
        resolved_by, updated_at)
      VALUES (@sk,@season,@asOf,@team,@pos,@dy,@dr,@dp,@cy,@cys,@cyy,@capy,@snap,@route,@cpg,@cshare,
-       @ays,@wopr,@depth,@inj,@adp,@adpFmt,@adpAsOf,@adpSd,@outg,@yacoe,@ryoe,@cpoe,@qbc,@by,@now)
+       @ays,@wopr,@depth,@inj,@adp,@adpFmt,@adpAsOf,@adpSd,@outg,@yacoe,@ryoe,@cpoe,@qbc,
+       @rzTouch,@gtgCarry,@ezTarget,@by,@now)
      ON CONFLICT(season, player_sk) DO UPDATE SET
        as_of=excluded.as_of, team=excluded.team, pos=excluded.pos, draft_year=excluded.draft_year,
        draft_round=excluded.draft_round, draft_pick=excluded.draft_pick,
@@ -350,6 +392,9 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
        adp_stdev=excluded.adp_stdev, prior_out_games=excluded.prior_out_games,
        prior_yac_oe=excluded.prior_yac_oe, prior_ryoe=excluded.prior_ryoe,
        prior_cpoe=excluded.prior_cpoe, qb_changed=excluded.qb_changed,
+       prior_rz_touch_share=excluded.prior_rz_touch_share,
+       prior_gtg_carry_share=excluded.prior_gtg_carry_share,
+       prior_ez_target_share=excluded.prior_ez_target_share,
        resolved_by=excluded.resolved_by, updated_at=excluded.updated_at`,
   );
 
@@ -385,6 +430,7 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
     const outGames = priorOutGames(db, yr - 1, resolver);   // FRONTIER P3: durability (prior season)
     const ngs = priorNgs(db, yr - 1, resolver);             // FRONTIER P1: NGS efficiency lags (prior season)
     const qbChg = qbChangedByTeam(db, yr);                  // FRONTIER P2: per-team QB-change flag (Sep-1 vs Y-1)
+    const pbpOpp = priorPbpOpportunity(db, yr - 1, resolver); // FRONTIER: prior-season red-zone/goal-line opportunity shares
     const asOf = `${yr}-09-01`;
 
     let n = 0;
@@ -424,6 +470,9 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
           outg: orNull(outGames.get(sk) ?? null),
           yacoe: orNull(ng?.yac_oe ?? null), ryoe: orNull(ng?.ryoe ?? null), cpoe: orNull(ng?.cpoe ?? null),
           qbc: qbc == null ? null : qbc,
+          rzTouch: orNull(pbpOpp.get(sk)?.rzTouch ?? null),
+          gtgCarry: orNull(pbpOpp.get(sk)?.gtgCarry ?? null),
+          ezTarget: orNull(pbpOpp.get(sk)?.ezTarget ?? null),
           by: "player_sk from feat_player_season", now,
         });
         n++;

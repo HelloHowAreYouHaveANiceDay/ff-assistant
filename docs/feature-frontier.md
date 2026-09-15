@@ -44,6 +44,34 @@ fail while empty early folds passed -- i.e. it looked like a clean null. The pos
 (does the feature get a non-zero coefficient at full data, per position?) is what distinguished
 "connected but null" from "never connected." Always run it before trusting a REJECT.
 
+## SCREENED 2026-09-15 -- PBP situational-opportunity (red-zone / goal-line / end-zone), all REJECT
+
+Built a new raw source, `raw_pbp_player_week` (nflverse play-by-play aggregated to player-week; 140,116
+rows, 1999-2026; docs/data-sources.md 1.5a), for the one signal class the box score cannot give:
+HIGH-VALUE TOUCHES. Three prior-season shares were wired as declared-not-fitted candidates of
+`feat_player_season_ext` (the same path as the 2026-09-14 set) and screened position-gated on 2013-2025.
+
+| candidate | pos | improvement (pinball) | floor (2.9*SE) | holdout confirm | verdict |
+|---|---|---|---|---|---|
+| `prior_rz_touch_share` (rz carries+targets / team) | RB | +0.0157 +/- 0.0224 (4/8) | 0.0650 | +0.0084, not confirmed | REJECT |
+| `prior_gtg_carry_share` (goal-to-go carries / team) | RB | -0.0506 +/- 0.0384 (2/8) | 0.1114 | -0.0407, not confirmed | REJECT (negative) |
+| `prior_rz_touch_share` | WR | +0.0383 +/- 0.0336 (4/8) | 0.0975 | +0.0307, not confirmed | REJECT |
+| `prior_ez_target_share` (end-zone targets / team) | WR | +0.0283 +/- 0.0414 (4/8) | 0.1201 | -0.2560, not confirmed | REJECT |
+
+**The positive control PASSED** (so these are true nulls, not dead levers): the 2024 leaders in
+`prior_rz_touch_share` are exactly the 2023 goal-line bell-cows (Kyren Williams 0.511, McCaffrey 0.492,
+Barkley 0.485), and `prior_gtg_carry_share` shows the real goal-line monopolies (Barkley 0.833, Jacobs
+0.818, Mixon 0.816). The features are connected and face-valid; they simply add nothing resolvable.
+
+**Reading:** same shape as edge #14 (docs/edges.md) -- prior-season red-zone role is nearly collinear
+with prior rank and the volume shares (`carry_share`, `wopr`) already fitted: a bell-cow has high carries
+AND high red-zone touches, so once the rank curve and volume shares are in, the high-value slice is
+already paid for. The TD-equity hoped for is the least rank-predictable part of scoring, but at the
+SEASON grain it does not separate from volume. The raw substrate is KEPT (valuable per se; feeds nothing
+yet), and the three columns stay declared-not-fitted candidates -- re-screenable in one `admit-feature`
+command if a future model class or the WEEKLY grain (untested here; edges #7/#14 make it a long shot) is
+tried. No shipped number changed.
+
 ## Screening recipe (for the next candidate)
 
 **The screening path is now cheap and correct** (do NOT hand-read a pinball delta):

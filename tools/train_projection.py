@@ -177,6 +177,8 @@ EXT_CENTER = [
     # FRONTIER CANDIDATES (2026-09-14). Prior-season / Sep-1 columns, screened one at a time via
     # --add-features; none is a default. docs/feature-frontier.md.
     "prior_out_games", "prior_yac_oe", "prior_ryoe", "prior_cpoe",
+    # FRONTIER (2026-09-15): prior-season red-zone/goal-line opportunity shares from raw_pbp_player_week.
+    "prior_rz_touch_share", "prior_gtg_carry_share", "prior_ez_target_share",
 ]
 EXT_INDICATOR = ["contract_year", "qb_changed"]
 EXT_RATIO = {
@@ -187,6 +189,12 @@ EXT_RATIO = {
     "prior_carry_share": 0.02,
     "prior_air_yards_share": 0.02,
     "prior_wopr": 0.02,
+    # A red-zone share is high BECAUSE the man is a lead back / alpha receiver, i.e. already high-rank;
+    # dividing by the rank-bucket mean isolates whatever TD-equity signal sits ABOVE the rank the curve
+    # is already paid for -- the same reason the volume shares are ratios.
+    "prior_rz_touch_share": 0.02,
+    "prior_gtg_carry_share": 0.02,
+    "prior_ez_target_share": 0.02,
 }
 EXT_ALLOWED = {
     "prior_carries_per_game": {"QB", "RB"},
@@ -201,6 +209,11 @@ EXT_ALLOWED = {
     "prior_cpoe": {"QB"},
     "qb_changed": {"RB", "WR", "TE"},
     # prior_out_games is deliberately NOT gated: durability applies at every position.
+    # PBP opportunity: red-zone touches accrue to backs and receivers; goal-to-go carries are the
+    # goal-line back (RB); end-zone targets are a receiver signal (WR/TE).
+    "prior_rz_touch_share": {"RB", "WR", "TE"},
+    "prior_gtg_carry_share": {"RB"},
+    "prior_ez_target_share": {"WR", "TE"},
 }
 # ==================================================================================================
 # MULTI-YEAR HISTORY -- rung 2 of the pre-deep-learning ladder (2026-09-14).
@@ -364,7 +377,8 @@ def attach_ext(con, rows):
             "SELECT player_sk, season, pos, draft_year, draft_pick, contract_year, prior_snap_share,"
             " prior_route_share, prior_carries_per_game, prior_carry_share, prior_air_yards_share,"
             " prior_wopr, depth_rank_sep1, adp, prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe,"
-            " qb_changed FROM feat_player_season_ext"
+            " qb_changed, prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share"
+            " FROM feat_player_season_ext"
         ).fetchall()
     except sqlite3.OperationalError:
         return

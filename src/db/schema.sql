@@ -1141,6 +1141,11 @@ CREATE TABLE IF NOT EXISTS feat_player_season_ext (
   prior_ryoe       REAL,             -- Y-1 season NGS rush yards over expected PER ATTEMPT (backs)
   prior_cpoe       REAL,             -- Y-1 season NGS completion % over expected (quarterbacks)
   qb_changed       INTEGER,          -- 1 if the player's team's Sep-1 expected QB1 differs from its Y-1 primary starter (skill players)
+  -- PBP SITUATIONAL-OPPORTUNITY candidates (2026-09-15), Y-1 high-value-touch shares from raw_pbp_player_week.
+  -- Shares are summed over the weeks he played, against his team's same-week totals (traded-player-safe).
+  prior_rz_touch_share   REAL,        -- Y-1 (rz_carries + rz_targets) / team's, the broad red-zone role
+  prior_gtg_carry_share  REAL,        -- Y-1 goal-to-go carries / team's -- the goal-line back signal (RB TD equity)
+  prior_ez_target_share  REAL,        -- Y-1 end-zone targets / team's -- the end-zone target signal (WR/TE TD equity)
   -- the draft market, from the FFC archive. adp_as_of is the archive's own window end and is NOT
   -- always inside the season: standard 2008 and 2009 are both stamped 2010-06-20.
   adp             REAL,

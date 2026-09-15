@@ -165,6 +165,12 @@ function addColumns(db: DB): void {
     ["feat_player_season_ext", "prior_ryoe", "REAL"],
     ["feat_player_season_ext", "prior_cpoe", "REAL"],
     ["feat_player_season_ext", "qb_changed", "INTEGER"],
+    // PBP SITUATIONAL-OPPORTUNITY candidates (2026-09-15). Prior-season high-value-touch shares from
+    // raw_pbp_player_week -- the TD-equity signal the volume shares (wopr/carry_share) dilute. Declared
+    // as --add-features candidates only, never default until each clears the paired-season floor.
+    ["feat_player_season_ext", "prior_rz_touch_share", "REAL"],
+    ["feat_player_season_ext", "prior_gtg_carry_share", "REAL"],
+    ["feat_player_season_ext", "prior_ez_target_share", "REAL"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
