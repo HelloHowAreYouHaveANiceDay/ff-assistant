@@ -44,6 +44,16 @@ export interface Levers {
   // (~+2.8pp championships; docs/edges.md, docs/redesign/experimentation-redesign.md). Applied to the
   // projection before computeValues, so it does not feed V2Config.
   consensusBlend: number;
+  // PER-POSITION consensus blend (explore/perpos-blend). Each overrides `consensusBlend` for its own
+  // position when > 0; a position left at 0 falls back to the scalar `consensusBlend`. Motivation: an
+  // out-of-sample adjudication found the projector's divergence from the market is EDGE at WR (+0.25
+  // OOS slope) but ANTI-PREDICTIVE at QB (b_proj -0.016 over 12 ADP seasons) -- so the principled
+  // shape is to blend QB toward the market while leaving WR on the projector. Same shared transform,
+  // same board layer as the scalar, so both the draft board and the in-season sim reflect it.
+  consensusBlendQB: number;
+  consensusBlendRB: number;
+  consensusBlendWR: number;
+  consensusBlendTE: number;
 }
 
 /** What a lever ACTS ON. Drives grouping in the UI and tells an agent which harness can see it:
@@ -203,7 +213,49 @@ export const LEVER_SPECS: readonly LeverSpec[] = [
     label: "FFToday consensus blend", board: true, group: "board", flag: "consensus-blend", status: "experimental",
     help: "Re-rank the board's ORDERING toward the FFToday consensus (0 = our projection, 1 = the consensus). DEMOTED to default 0 by D14 (2026-09-13): +2.8pp on titles but NULL on the D13 playoff gate and fails family-wide FDR (WS4/WS6). Still available via --consensus-blend 1; re-ship only on a powered playoff-axis re-test.",
   },
+  // PER-POSITION consensus blend (explore/perpos-blend). Each defaults 0 -> falls back to the scalar
+  // `consensusBlend`, so all-zero is byte-identical to the shipped posture. Set one > 0 to blend just
+  // that position (e.g. QB toward market, WR left on the projector). Flags: --consensus-blend-<pos>.
+  {
+    key: "consensusBlendQB", kind: "number", default: 0.5, off: 0, min: 0, max: 1, step: 0.05,
+    label: "FFToday blend (QB)", board: true, group: "board", flag: "consensus-blend-qb", status: "shipped",
+    help: "Blend QB ordering toward the FFToday consensus. SHIPPED DEFAULT 0.5 (D21, 2026-09-14): the projector is anti-predictive at QB out of sample (b_proj -0.016), so blending toward the market improves QB projection accuracy (Spearman +0.024, CI excl 0, 10/12) and lifts the in-season playoff gate (season-cal Brier 0.228->0.223, skill 6.9->9.0%, 7/8 seasons); draft-null (-0.24pp, harmless). 0 = fall back to the scalar consensusBlend (reverses D21).",
+  },
+  {
+    key: "consensusBlendRB", kind: "number", default: 0, off: 0, min: 0, max: 1, step: 0.05,
+    label: "FFToday blend (RB)", board: true, group: "board", flag: "consensus-blend-rb", status: "experimental",
+    help: "Blend RB ordering toward the FFToday consensus (0 = fall back to the scalar consensusBlend).",
+  },
+  {
+    key: "consensusBlendWR", kind: "number", default: 0, off: 0, min: 0, max: 1, step: 0.05,
+    label: "FFToday blend (WR)", board: true, group: "board", flag: "consensus-blend-wr", status: "experimental",
+    help: "Blend WR ordering toward the FFToday consensus (0 = fall back to the scalar consensusBlend). The projector has real OOS edge at WR (+0.25 slope), so this should stay 0.",
+  },
+  {
+    key: "consensusBlendTE", kind: "number", default: 0, off: 0, min: 0, max: 1, step: 0.05,
+    label: "FFToday blend (TE)", board: true, group: "board", flag: "consensus-blend-te", status: "experimental",
+    help: "Blend TE ordering toward the FFToday consensus (0 = fall back to the scalar consensusBlend).",
+  },
 ];
+
+/** The effective per-position blend weight map from a lever set: each position's own lever when > 0,
+ *  else the scalar `consensusBlend` (so the scalar still applies uniformly, and the per-position keys
+ *  override it one position at a time). All-zero returns all-zero, i.e. identity. This is the ONE
+ *  place the fallback rule lives; both the arbiter and the live board read it, so they cannot drift. */
+export function consensusWeights(lv: Levers): Record<string, number> {
+  const base = lv.consensusBlend ?? 0;
+  const per: Record<string, number> = {
+    QB: lv.consensusBlendQB, RB: lv.consensusBlendRB, WR: lv.consensusBlendWR, TE: lv.consensusBlendTE,
+  };
+  const out: Record<string, number> = {};
+  for (const pos of ["QB", "RB", "WR", "TE"]) out[pos] = per[pos] > 0 ? per[pos] : base;
+  return out;
+}
+
+/** Does any position get a non-zero blend? Lets a caller skip the whole transform when it is identity. */
+export function anyConsensusBlend(lv: Levers): boolean {
+  return Object.values(consensusWeights(lv)).some((w) => w > 0);
+}
 
 /** Registry indexed by key. */
 export const LEVER_BY_KEY = Object.fromEntries(LEVER_SPECS.map((s) => [s.key, s])) as Record<keyof Levers, LeverSpec>;

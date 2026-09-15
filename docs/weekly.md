@@ -1226,6 +1226,12 @@ D16 changed the projector the season line is projected from, and the owner asked
 track to be redone on top of it. Three things were done, in order, and the third is the one the
 first two exist for.
 
+> **D21 (2026-09-14) then reshaped the QB end of the board.** `consensusBlendQB` now defaults to 0.5:
+> the QB board ordering (and the `proj_pts` the live 2026 season line is projected from through the
+> board path) is blended halfway toward the FFToday consensus, because the projector is anti-predictive
+> at QB out of sample. It is null/harmless on the draft gate and improves the season simulator's playoff
+> Brier (0.2294->0.2244, 7/8 seasons); WR/RB/TE stay 0. Full record: D21 in docs/decisions.md.
+
 **7.1 The lines.** Section 1's "inherited limit" was closed rather than inherited (see that
 paragraph): the historical seasons' `season_line_pg` is now projected by an artifact BLIND to each
 season (`data/fold-artifacts-d16/artifact-<Y>.json`, Y = 2012-2025, one `train_projection.py

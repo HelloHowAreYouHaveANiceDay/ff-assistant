@@ -244,6 +244,19 @@
 > whenever the app's CDP port was not bound (this instance never bound it); `loadSimContext` now falls
 > back to the store's synced matchups and prints which source served.
 
+> ## D21 APPLIED: per-position consensus blend -- consensusBlendQB default 0.5, measured on the SAME season-cal harness (2026-09-14)
+>
+> The season-calibration harness above (the D18 gate) also settled the per-position FFToday blend. The
+> projector is anti-predictive at QB out of sample (b_proj -0.016), so blending the QB board ordering
+> halfway toward the FFToday consensus is a principled accuracy fix. On blind d16 artifacts (2018-2025,
+> 3000 trials, seed 7): baseline (blend 0) playoff Brier **0.2294**, skill 6.4%; QB=0.5 (`BLEND_QB=0.5`)
+> playoff Brier **0.2244**, skill 8.4% -- better in **7/8 seasons** (only 2020 regresses +0.003), title
+> flat both arms. It is NULL/harmless on the D13 draft playoff gate (flagless golden holds 96% playoff /
+> 39.5% title; paired -0.24pp) and lifts QB projection accuracy OOS (Spearman +0.024, CI excl 0, 10/12).
+> **WR stays 0** (real OOS WR edge a blend would destroy); RB/TE stay 0 -- hence the lever is
+> per-position, not the scalar `consensusBlend` D14 demoted. Full record: D21 in docs/decisions.md;
+> board layer src/data/assemble.ts + shared transform src/draft/consensusBlend.ts.
+
 > ## D16 APPLIED: the shipped projector is now the boosted model with FFToday's projection, conformally calibrated -- P5 HELD (2026-09-14)
 >
 > Owner decision, on the rungs 5+7 findings below: "admit the two admits". What shipped, and what it

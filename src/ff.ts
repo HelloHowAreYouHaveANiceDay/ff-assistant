@@ -2222,16 +2222,20 @@ async function cmdBacktest(rest: string[]) {
   // levers: with lookahead the "projection" is the season's own truth and there is nothing for a
   // consensus to improve. FFToday is preseason (knowable at draft time) and covers 2008+, so a pre-2008
   // season is simply absent and the blend is identity there.
-  const consensusBlend = noLookahead ? (lvEff.consensusBlend ?? 0) : 0;
+  // PER-POSITION now (explore/perpos-blend): the effective weight is a per-position map (each position's
+  // own lever, falling back to the scalar consensusBlend). No-lookahead only, as before.
+  const { consensusWeights, anyConsensusBlend } = await import("./draft/levers.js");
+  const blendWeights = consensusWeights(lvEff);
   let applyConsensus: ((rows: { name: string; pos: string; points: number }[], yr: number) => { name: string; pos: string; points: number }[]) | null = null;
-  if (consensusBlend > 0) {
+  if (noLookahead && anyConsensusBlend(lvEff)) {
     const { nameKey } = await import("./draft/values.js");
     const { loadConsensusPct, blendConsensus } = await import("./draft/consensusBlend.js");
     const cdb = openDb(valueOf(rest, "--db"));
     const pct = loadConsensusPct(cdb);
     cdb.close();
-    applyConsensus = (rows, yr) => blendConsensus(rows, (pos, name) => pct.get(`${yr}|${pos}|${nameKey(name)}`) ?? null, consensusBlend);
-    console.log(`  consensus-blend ${consensusBlend}: re-rank the board toward FFToday (${pct.size} player-seasons)`);
+    applyConsensus = (rows, yr) => blendConsensus(rows, (pos, name) => pct.get(`${yr}|${pos}|${nameKey(name)}`) ?? null, blendWeights);
+    const shown = Object.entries(blendWeights).filter(([, w]) => w > 0).map(([p, w]) => `${p}=${w}`).join(" ") || "none";
+    console.log(`  consensus-blend [${shown}]: re-rank the board toward FFToday (${pct.size} player-seasons)`);
   }
   const seasons = [...pts.keys()].sort();
   let champ = 0, playoffs = 0, total = 0;

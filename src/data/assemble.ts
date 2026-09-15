@@ -148,13 +148,18 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
   // proj_pts reflect it. The transform is shared with the arbiter (src/draft/consensusBlend.ts), so the
   // live board gets exactly what the CPCV backtest validated (~+2.8pp titles). A no-op when the lever is
   // 0, and identity for any player FFToday does not rank (or a season it does not cover).
-  const consensusBlend = cfg.levers.consensusBlend ?? 0;
-  if (consensusBlend > 0) {
+  // PER-POSITION (explore/perpos-blend): the effective weight is a per-position map (each position's own
+  // lever, falling back to the scalar consensusBlend). Persisted into the board's proj_pts here, so the
+  // in-season sim (loadSimContext reads board.ProjPts) inherits exactly the same posture the draft used.
+  const { consensusWeights, anyConsensusBlend } = await import("../draft/levers.js");
+  const blendWeights = consensusWeights(cfg.levers);
+  if (anyConsensusBlend(cfg.levers)) {
     const { loadConsensusPct, blendConsensus } = await import("../draft/consensusBlend.js");
     const pct = loadConsensusPct(db);
     const ranked = points.filter((p) => pct.has(`${season}|${p.pos}|${nameKey(p.name)}`)).length;
-    points = blendConsensus(points, (pos, name) => pct.get(`${season}|${pos}|${nameKey(name)}`) ?? null, consensusBlend);
-    console.log(`  consensus-blend ${consensusBlend}: re-ranked the board toward FFToday (${ranked}/${points.length} players ranked, season ${season})`);
+    points = blendConsensus(points, (pos, name) => pct.get(`${season}|${pos}|${nameKey(name)}`) ?? null, blendWeights);
+    const shown = Object.entries(blendWeights).filter(([, w]) => w > 0).map(([p, w]) => `${p}=${w}`).join(" ") || "none";
+    console.log(`  consensus-blend [${shown}]: re-ranked the board toward FFToday (${ranked}/${points.length} players ranked, season ${season})`);
   }
   const projByName = new Map(points.map((p) => [p.name, p.points]));
   // ESPN'S OWN ELIGIBILITY, when it has been ingested. `loadEligibilityMap` carries only players who
