@@ -217,9 +217,9 @@ export const LEVER_SPECS: readonly LeverSpec[] = [
   // `consensusBlend`, so all-zero is byte-identical to the shipped posture. Set one > 0 to blend just
   // that position (e.g. QB toward market, WR left on the projector). Flags: --consensus-blend-<pos>.
   {
-    key: "consensusBlendQB", kind: "number", default: 0, off: 0, min: 0, max: 1, step: 0.05,
-    label: "FFToday blend (QB)", board: true, group: "board", flag: "consensus-blend-qb", status: "experimental",
-    help: "Blend QB ordering toward the FFToday consensus (0 = fall back to the scalar consensusBlend). The projector is anti-predictive at QB out of sample (b_proj -0.016), so blending toward the market is the principled fix.",
+    key: "consensusBlendQB", kind: "number", default: 0.5, off: 0, min: 0, max: 1, step: 0.05,
+    label: "FFToday blend (QB)", board: true, group: "board", flag: "consensus-blend-qb", status: "shipped",
+    help: "Blend QB ordering toward the FFToday consensus. SHIPPED DEFAULT 0.5 (D21, 2026-09-14): the projector is anti-predictive at QB out of sample (b_proj -0.016), so blending toward the market improves QB projection accuracy (Spearman +0.024, CI excl 0, 10/12) and lifts the in-season playoff gate (season-cal Brier 0.228->0.223, skill 6.9->9.0%, 7/8 seasons); draft-null (-0.24pp, harmless). 0 = fall back to the scalar consensusBlend (reverses D21).",
   },
   {
     key: "consensusBlendRB", kind: "number", default: 0, off: 0, min: 0, max: 1, step: 0.05,

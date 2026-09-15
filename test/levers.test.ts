@@ -22,9 +22,11 @@ const SHIPPED: Levers = {
   benchDiscount: 0.25, // DEMOTED 2026-09-14 (D15): default 0.35 -> 0.25. The 0.35 re-optimisation was +1.4pp on TITLES but NULL on the D13 playoff gate (+0.51pp, PBO 8%) with a NEGATIVE holdout confirm (-0.83pp); 0.25 keeps a real discount. Old posture via --bench-discount 0.35.
   multQB: 1, multRB: 1, multWR: 1, multTE: 1,
   consensusBlend: 0, // DEMOTED 2026-09-13 (D14): default 1 -> 0. Was +2.8pp on TITLES but NULL on the D13 playoff gate and fails family-wide FDR (WS4/WS6). Available via --consensus-blend 1.
-  // PER-POSITION consensus blend (explore/perpos-blend). All 0 by default -> byte-identical to the
-  // scalar posture; each falls back to `consensusBlend` when 0. Gated experiment, not shipped.
-  consensusBlendQB: 0, consensusBlendRB: 0, consensusBlendWR: 0, consensusBlendTE: 0,
+  // PER-POSITION consensus blend. QB=0.5 SHIPPED 2026-09-14 (D21): the projector is anti-predictive at
+  // QB out of sample, so blending QB toward the FFToday consensus improves QB accuracy (Spearman +0.024,
+  // 10/12) and the in-season playoff Brier (0.2294->0.2244, 7/8 seasons), NULL on the draft gate.
+  // RB/WR/TE stay 0 (WR has a real OOS edge a blend would destroy); each falls back to `consensusBlend`.
+  consensusBlendQB: 0.5, consensusBlendRB: 0, consensusBlendWR: 0, consensusBlendTE: 0,
 };
 
 test("regression lock: DEFAULT_LEVERS is the shipped, holdout-validated posture", () => {
@@ -98,14 +100,19 @@ test("FAULT: --lever-off refuses a lever that has no no-op value, rather than wr
 });
 
 test("consensusWeights: per-position lever overrides the scalar, else falls back to it", () => {
-  // All zero -> identity.
-  assert.deepEqual(consensusWeights(DEFAULT_LEVERS), { QB: 0, RB: 0, WR: 0, TE: 0 });
-  assert.equal(anyConsensusBlend(DEFAULT_LEVERS), false);
-  // Scalar alone applies uniformly (backward compatible with the old scalar meaning).
-  assert.deepEqual(consensusWeights({ ...DEFAULT_LEVERS, consensusBlend: 1 }), { QB: 1, RB: 1, WR: 1, TE: 1 });
+  // A fully zeroed set -> identity (this is no longer DEFAULT_LEVERS after D21 shipped QB=0.5).
+  const allZero: Levers = { ...DEFAULT_LEVERS, consensusBlend: 0, consensusBlendQB: 0, consensusBlendRB: 0, consensusBlendWR: 0, consensusBlendTE: 0 };
+  assert.deepEqual(consensusWeights(allZero), { QB: 0, RB: 0, WR: 0, TE: 0 });
+  assert.equal(anyConsensusBlend(allZero), false);
+  // SHIPPED default (D21): QB=0.5 toward market, RB/WR/TE on the projector.
+  assert.deepEqual(consensusWeights(DEFAULT_LEVERS), { QB: 0.5, RB: 0, WR: 0, TE: 0 });
+  assert.equal(anyConsensusBlend(DEFAULT_LEVERS), true);
+  // Scalar alone applies uniformly (backward compatible with the old scalar meaning). From `allZero`,
+  // not DEFAULT_LEVERS, because the shipped QB=0.5 would otherwise override the scalar at QB.
+  assert.deepEqual(consensusWeights({ ...allZero, consensusBlend: 1 }), { QB: 1, RB: 1, WR: 1, TE: 1 });
   // Per-position overrides its own position; others fall back to the scalar.
   assert.deepEqual(
-    consensusWeights({ ...DEFAULT_LEVERS, consensusBlend: 0.3, consensusBlendQB: 0.8, consensusBlendWR: 0 }),
+    consensusWeights({ ...allZero, consensusBlend: 0.3, consensusBlendQB: 0.8, consensusBlendWR: 0 }),
     { QB: 0.8, RB: 0.3, WR: 0.3, TE: 0.3 },
   );
   // The experiment's posture: QB toward market, WR left on the projector, scalar 0.

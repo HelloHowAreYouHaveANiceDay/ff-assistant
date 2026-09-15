@@ -40,6 +40,15 @@ depend on the bot model, so weigh them as "big / medium / none", not to the deci
 > in the bracket is not an edge anybody in this repo has been able to find.
 
 ### External expert consensus (FFToday) as a draft-board RANKING -- DEMOTED 2026-09-13 (D14; consensusBlend default 1 -> 0) [was +2.8pp on TITLES; NULL on the D13 playoff gate + fails family FDR; demotion CONFIRMED 2026-09-14 on complete FFToday (2025 filled): playoff +0.22pp, PBO 57%, still null]
+
+> **PER-POSITION REVIVAL AT QB -- SHIPPED 2026-09-14 (D21; `consensusBlendQB` default 0.5).** The scalar
+> blend below was title-only and demoted. The PER-POSITION lever is a different, principled edge: the
+> projector is anti-predictive at QB out of sample (b_proj -0.016), so QB->market IMPROVES QB projection
+> accuracy (Spearman +0.024, CI excl 0, 10/12 folds), is NULL/harmless on the D13 draft playoff gate
+> (flagless golden holds at 96% playoff / 39.5% title; paired -0.24pp), and is a REAL in-season win
+> (season-cal playoff Brier 0.2294->0.2244, skill 6.4%->8.4%, 7/8 seasons on blind d16 artifacts).
+> **WR stays 0** -- the projector has a real OOS WR edge (+0.25 slope) a blend would destroy; RB/TE stay 0.
+> This is why the lever is per-position, not the old scalar. Full record: D21 in docs/decisions.md.
 The FFToday consensus (`raw_fftoday_proj`, 2008-2024) entered the research funnel and cleared both
 gates. SCREEN (`scripts/feature-sweep.mjs`): its positional rank is the STRONGEST residual signal on
 the whole 102-candidate board -- rho −0.127 vs the shipped TRAINED model (p=1.6e-14), controls clean.

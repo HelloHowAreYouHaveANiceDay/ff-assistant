@@ -706,6 +706,48 @@ REVERSAL CONDITION: the live 2026 scorecard turning against the DST model, or a 
 The one-line revert is `WEEKLY_SERVE["DST"] = SHIPPED_WEEKLY_ARTIFACT` in `src/weekly/streamingServe.ts`
 (back to the floor); the artifact and trainer can stay on disk unused.
 
+## D21 -- Per-position consensus blend: consensusBlendQB DEFAULT 0.5 (QB toward market); RB/WR/TE stay 0 (2026-09-14, APPLIED)
+
+The projector is anti-predictive at QB out of sample (b_proj -0.016), so its QB ORDERING is worse than
+the FFToday preseason consensus. `consensusBlendQB` now defaults to **0.5** -- the QB board ordering (and
+the proj_pts persisted from it) is blended halfway toward the FFToday consensus. RB/WR/TE stay at 0.
+The transform is the existing per-position one (`consensusWeights` in `src/draft/levers.ts`, applied at
+board assembly `src/data/assemble.ts` and, identically, in the draft arbiter `cmdBacktest`), so the same
+posture reaches the draft board AND the in-season simulator (`loadSimContext` reads `board.ProjPts`).
+
+WHY QB, AND WHY 0.5. Three measurements, on the axes the sim can actually predict:
+
+- **Projection accuracy (OOS, per-fold):** QB->market lifts Spearman **+0.024, CI excludes 0, 10/12
+  folds**. This is the direct evidence the projector's QB ordering is the weak link and the market is
+  better.
+- **Draft playoff gate (D13 primary axis): NULL, i.e. HARMLESS.** The flagless golden-master draft
+  backtest with QB=0.5 default reproduces **96% playoffs (golden 96.0% +/- 3.0pp) / 39.5% titles**
+  (`npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150`) -- unchanged
+  from the pre-blend golden. Paired, the draft effect is -0.24pp (within noise). So this ships on a NULL
+  draft gate, exactly as a change justified by projection accuracy + in-season calibration should.
+- **In-season simulator calibration (the real gain):** `scripts/season-calibration.mjs
+  --artifact-dir data/fold-artifacts-d16` (2018-2025, 3000 trials, seed 7, per-fold artifacts blind to
+  each season). Baseline (blend 0) playoff Brier **0.2294**, skill vs uniform **6.4%**; with QB=0.5 (env
+  `BLEND_QB=0.5`) playoff Brier **0.2244**, skill **8.4%** -- better in **7/8 seasons** (only 2020
+  regresses, +0.003). Title stays no-skill both arms (0.064), as expected on the axis P16 failed.
+
+WR MUST STAY 0. The projector has a REAL out-of-sample edge at WR (+0.25 slope); blending WR toward the
+market destroys it. RB/TE showed no reason to blend. This is why the lever is PER-POSITION rather than
+the old scalar `consensusBlend` (demoted to 0 by D14): a single global blend cannot help QB without
+hurting WR.
+
+WHAT SHIPPED. `consensusBlendQB` spec default 0->0.5, status experimental->shipped, in
+`src/draft/levers.ts` (DEFAULT_LEVERS derives from the spec). The stored `data/ff.db` config carries
+`consensusBlend: 0` but no per-position key, so the deep-merge (`{...DEFAULT_LEVERS, ...stored}` in
+`getConfig`) leaves QB=0.5 live flagless -- confirmed by `node scripts/read-config.mjs` +
+`consensusWeights` returning `{QB:0.5,RB:0,WR:0,TE:0}`. The 2026 board was rebuilt (`ff assemble`): Goff
+moves QB4->QB6 (ProjPts 240.2->232.8), pulled toward his market ECR (QB15); `ff copilot power-rankings`
+and `ff copilot lineup` serve clean (no NaN/Inf, finite projections).
+
+REVERSAL CONDITION: the live 2026 scorecard turning against the QB blend, or a powered re-test failing.
+The one-line revert is `consensusBlendQB` default back to 0 in `src/draft/levers.ts` (falls back to the
+scalar `consensusBlend`, i.e. off) -- then rebuild the board with `ff assemble`.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
