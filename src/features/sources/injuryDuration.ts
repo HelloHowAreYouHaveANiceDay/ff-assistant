@@ -116,13 +116,31 @@ const shiftDays = (iso: string, days: number): string => {
 
 interface Filing { week: number; team: string; pos: string; asOf: string; status: string; practice: string; primary: string; secondary: string }
 
-/** Every dated injury filing for the season, by (week, player_sk), earliest first. */
+/**
+ * Every injury filing for the season, by (week, player_sk), earliest first.
+ *
+ * DATELESS FALLBACK (2025+). From 2025 nflverse dropped `date_modified`, so `raw_injury.as_of` is
+ * NULL for every row and the dated query below (`as_of IS NOT NULL`) would return nothing -- which
+ * is why `feat_injury_horizon` was empty for 2025+. When a season has rows but not one is dated, the
+ * weekly file is itself the consolidated FINAL pre-game report for each week (knowable before that
+ * week's kickoff), so those rows are read with a synthetic `asOf = ""` that sorts before every Friday
+ * cutoff, letting `at()` select the one filing per week exactly as it would a dated one. The dated
+ * path (<=2024) is byte-identical: `dateless` is false and the original query and `asOf` run unchanged.
+ */
 function filings(db: DB, season: number, resolver: SourceResolver): Map<string, Filing[]> {
   const out = new Map<string, Filing[]>();
+  const dm = db.prepare(
+    "SELECT COUNT(*) AS n, SUM(as_of IS NOT NULL AND as_of <> '') AS dated FROM raw_injury WHERE season = ?",
+  ).get(season) as { n: number; dated: number | null };
+  const dateless = dm.n > 0 && (dm.dated ?? 0) === 0;
   for (const r of db.prepare(
-    `SELECT week, gsis_id, full_name, position, team, report_status, practice_status, as_of,
+    dateless
+      ? `SELECT week, gsis_id, full_name, position, team, report_status, practice_status, as_of,
             report_primary_injury, report_secondary_injury, practice_primary_injury, practice_secondary_injury
-     FROM raw_injury WHERE season = ? AND as_of IS NOT NULL ORDER BY as_of`,
+         FROM raw_injury WHERE season = ? ORDER BY week`
+      : `SELECT week, gsis_id, full_name, position, team, report_status, practice_status, as_of,
+            report_primary_injury, report_secondary_injury, practice_primary_injury, practice_secondary_injury
+         FROM raw_injury WHERE season = ? AND as_of IS NOT NULL ORDER BY as_of`,
   ).all(season) as Record<string, string | number | null>[]) {
     const res = resolver.resolve({
       gsis: r.gsis_id as string | null, name: r.full_name as string | null,
@@ -139,7 +157,8 @@ function filings(db: DB, season: number, resolver: SourceResolver): Map<string, 
     const k = `${r.week}|${res.sk}`;
     (out.get(k) ?? out.set(k, []).get(k)!).push({
       week: Number(r.week), team: String(r.team ?? ""), pos: normPos(String(r.position ?? "")),
-      asOf: String(r.as_of), status, practice, primary, secondary,
+      // Dateless rows sort before every Friday cutoff so `at()` selects the one filing per week.
+      asOf: dateless ? "" : String(r.as_of), status, practice, primary, secondary,
     });
   }
   return out;

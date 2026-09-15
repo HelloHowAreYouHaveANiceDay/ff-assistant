@@ -144,6 +144,66 @@ function reports(db: DB, season: number, resolver: SourceResolver): Map<string, 
   return out;
 }
 
+/**
+ * Which date mode a season's injury feed is in.
+ *
+ * From 2025 nflverse dropped `date_modified`, so `raw_injury.as_of` is NULL for every row and the
+ * dated readers above (`reports`, and `at`) match nothing -- which is why `report_status_fri` and
+ * every availability column downstream read NULL for 2025+ even though the report itself is present.
+ * A season is DATELESS when it has rows but not one carries a date; it is DATED when any row does.
+ * A season with no rows at all is DATED (the dated path then simply produces nothing, byte-identical
+ * to before this fallback existed).
+ */
+function seasonInjuryDateless(db: DB, season: number): boolean {
+  const r = db.prepare(
+    "SELECT COUNT(*) AS n, SUM(as_of IS NOT NULL AND as_of <> '') AS dated FROM raw_injury WHERE season = ?",
+  ).get(season) as { n: number; dated: number | null };
+  return r.n > 0 && (r.dated ?? 0) === 0;
+}
+
+/**
+ * (week|player_sk) -> the week's CONSOLIDATED report, for a DATELESS season.
+ *
+ * The nflverse weekly injuries file holds one row per player-week: the FINAL pre-game report for
+ * that week, which is knowable before that week's kickoff (POINT-IN-TIME SAFE -- it is the report a
+ * lineup decision that week would have read). Without per-filing dates there is no Wednesday/Friday
+ * split, so this is read as the FRIDAY snapshot only; `report_status_wed` / `practice_status_wed`
+ * stay NULL exactly as they already are for a dated season whose Wednesday filings are sparse. Rows
+ * naming no status on either side are skipped, matching the dated path where such a row never wins
+ * `at()`.
+ */
+function weekReports(db: DB, season: number, resolver: SourceResolver): Map<string, Report> {
+  const out = new Map<string, Report>();
+  for (const r of db.prepare(
+    `SELECT week, gsis_id, full_name, position, team, report_status, practice_status
+     FROM raw_injury WHERE season = ? ORDER BY week`,
+  ).all(season) as { week: number; gsis_id: string | null; full_name: string | null; position: string; team: string; report_status: string | null; practice_status: string | null }[]) {
+    if (!r.report_status && !r.practice_status) continue;
+    const res = resolver.resolve({ gsis: r.gsis_id, name: r.full_name, pos: r.position, team: r.team });
+    resolver.count("nflverse injuries", res);
+    if (res.sk == null) continue;
+    out.set(`${r.week}|${res.sk}`, {
+      status: r.report_status, practice: r.practice_status, team: r.team,
+      pos: normPos(r.position ?? ""), asOf: "",
+    });
+  }
+  return out;
+}
+
+/** (week|team|pos) -> the surrogate keys listed Out that week, from a DATELESS season's consolidated
+ *  weekly reports. The dateless twin of `outCounts`; the count and the per-player status come from
+ *  the same map, so they cannot disagree. */
+function outCountsDateless(wReports: Map<string, Report>): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const [k, r] of wReports) {
+    if (r.status !== "Out") continue;
+    const [wk, skStr] = k.split("|");
+    const key = `${Number(wk)}|${r.team}|${r.pos}`;
+    (out.get(key) ?? out.set(key, new Set()).get(key)!).add(Number(skStr));
+  }
+  return out;
+}
+
 /** The latest report at or before `cutoff`, or null. */
 function at(list: Report[] | undefined, cutoff: string): Report | null {
   if (!list) return null;
@@ -246,8 +306,13 @@ export function buildWeekContext(opts: { dbPath?: string; seasons: number[] }): 
 
     const snap = priorWeekSnap(db, season, resolver, maxWeek);
     const route = priorWeekRoute(db, season, resolver, maxWeek);
-    const reps = reports(db, season, resolver);
-    const outs = outCounts(reps, friOf);
+    // DATELESS FALLBACK (2025+). When the feed carries no per-filing dates, the dated readers below
+    // match nothing, so the week's consolidated report is read directly as the Friday snapshot.
+    // The dated path (<=2024) is untouched: `dateless` is false and every line below is unchanged.
+    const dateless = seasonInjuryDateless(db, season);
+    const reps = dateless ? new Map<string, Report[]>() : reports(db, season, resolver);
+    const wReps = dateless ? weekReports(db, season, resolver) : null;
+    const outs = dateless ? outCountsDateless(wReps!) : outCounts(reps, friOf);
     const depth = depthByWeek(db, season, resolver, asOfOf);
 
     let n = 0, withSnap = 0, withRoute = 0, withReport = 0, withDepth = 0;
@@ -265,8 +330,10 @@ export function buildWeekContext(opts: { dbPath?: string; seasons: number[] }): 
         const fri = friOf(u.week, team);
         const wed = wedOf(u.week, team);
         const list = reps.get(`${u.week}|${sk}`);
-        const rFri = fri ? at(list, fri) : null;
-        const rWed = wed ? at(list, wed) : null;
+        // Dateless: the consolidated weekly report is the Friday snapshot; Wednesday stays NULL for
+        // want of a per-filing date to place it on (the same emptiness the dated Wed column carries).
+        const rFri = dateless ? (wReps!.get(`${u.week}|${sk}`) ?? null) : (fri ? at(list, fri) : null);
+        const rWed = dateless ? null : (wed ? at(list, wed) : null);
         const pos = normPos(u.pos ?? "");
         // Same team, same position, listed Out on Friday -- excluding himself, which is why the
         // count is over a SET of surrogate keys rather than an integer accumulated as we go.

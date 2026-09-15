@@ -35,9 +35,23 @@ const model = db.prepare(
 const games = db.prepare(
   "SELECT week, home_team, away_team, gameday FROM raw_nfl_game WHERE season = ? AND game_type = 'REG'",
 ).all(season);
+// DATELESS FALLBACK (2025+): from 2025 nflverse dropped date_modified, so raw_injury.as_of is NULL
+// for every row and the dated recomputation below (as_of <= Friday cutoff) matches nothing -- which
+// would make this INDEPENDENT check "expect" inj_out = 0 everywhere and flag the builder's correct
+// dateless placement as a leak. When the season carries no dated row, the weekly file is itself the
+// consolidated FINAL pre-game report per week, so it is compared directly (there is no Wed/Fri
+// cutoff to move, so the leaked-cutoff control below is inapplicable and the injury-leak-guard.mjs
+// next-week-leak injection is what proves point-in-time safety for these seasons instead).
+const dm = db.prepare(
+  "SELECT COUNT(*) AS n, SUM(as_of IS NOT NULL AND as_of <> '') AS dated FROM raw_injury WHERE season = ?",
+).get(season);
+const injuriesDateless = dm.n > 0 && (dm.dated ?? 0) === 0;
 const injuries = db.prepare(
-  `SELECT week, gsis_id, report_status, as_of, team, position FROM raw_injury
-    WHERE season = ? AND as_of IS NOT NULL AND gsis_id IS NOT NULL ORDER BY as_of`,
+  injuriesDateless
+    ? `SELECT week, gsis_id, report_status, as_of, team, position FROM raw_injury
+        WHERE season = ? AND gsis_id IS NOT NULL ORDER BY week`
+    : `SELECT week, gsis_id, report_status, as_of, team, position FROM raw_injury
+        WHERE season = ? AND as_of IS NOT NULL AND gsis_id IS NOT NULL ORDER BY as_of`,
 ).all(season);
 const skOf = new Map(
   db.prepare("SELECT gsis_id, player_sk FROM stg_player WHERE gsis_id IS NOT NULL AND COALESCE(ambiguous, 0) = 0")
@@ -191,6 +205,12 @@ for (const r of injuries) {
 function statusAt(week, sk, team, slackDays) {
   const day = gameday.get(`${team}|${week}`);
   if (!day) return undefined;
+  // Dateless: the one consolidated weekly filing IS the Friday snapshot; moving the cutoff cannot
+  // change it, so slackDays is inert here (see the leaked-control note below).
+  if (injuriesDateless) {
+    const list = filings.get(`${week}|${sk}`) ?? [];
+    return list.length ? (list[0].report_status ?? null) : null;
+  }
   const cutoff = shift(day, -2 + slackDays);
   let best;
   for (const r of filings.get(`${week}|${sk}`) ?? []) {
@@ -236,7 +256,12 @@ if (!avail.length) {
       "identity resolution can explain -- either the table is stale or the column is reading a " +
       "filing the builder claims it cannot see.");
   }
-  if (!(leakedA.bad >= 2 * Math.max(1, honestA.bad))) {
+  if (injuriesDateless) {
+    console.log("\n  (dateless season: the feed carries no per-filing date, so there is no Wed->Fri " +
+      "cutoff to move -- the leaked-cutoff control is inapplicable. Point-in-time safety for the " +
+      "consolidated weekly report is proven by scripts/injury-leak-guard.mjs's next-week-leak " +
+      "injection, which DOES move features when it fires.)");
+  } else if (!(leakedA.bad >= 2 * Math.max(1, honestA.bad))) {
     failed = true;
     console.log("\nFAIL: moving the injury cutoff from kickoff-minus-two to kickoff barely changed " +
       `anything (${honestA.bad} -> ${leakedA.bad}). This comparison cannot see a late-week downgrade ` +

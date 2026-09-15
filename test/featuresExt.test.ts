@@ -159,6 +159,10 @@ test("feat_player_week_context: every ARCHIVE Friday injury status is backed by 
   // `as_of`: the builder stamps `source`, so a row that claims the archive guarantee is held to it
   // whatever season it is in. The live rows get their own, different assertion in the next test --
   // they are not exempted, they are checked against the guarantee they actually carry.
+  // DATED SEASONS (<=2024): a Friday status must be backed by a DATED filing at or before the Friday
+  // cutoff. The `EXISTS ... as_of IS NOT NULL` clause on the season restricts this strict check to
+  // seasons the feed actually dates; dateless seasons (2025+) carry a different guarantee, checked
+  // separately below.
   const bad = db.prepare(
     `SELECT COUNT(*) c FROM feat_player_week_context ctx
      JOIN stg_player s ON s.player_sk = ctx.player_sk
@@ -166,6 +170,7 @@ test("feat_player_week_context: every ARCHIVE Friday injury status is backed by 
        AND (g.home_team = ctx.team OR g.away_team = ctx.team)
      WHERE ctx.report_status_fri IS NOT NULL AND s.gsis_id IS NOT NULL
        AND COALESCE(ctx.source, 'archive') = 'archive'
+       AND EXISTS (SELECT 1 FROM raw_injury id WHERE id.season = ctx.season AND id.as_of IS NOT NULL)
        AND NOT EXISTS (
          SELECT 1 FROM raw_injury i
          WHERE i.season = ctx.season AND i.week = ctx.week AND i.gsis_id = s.gsis_id
@@ -182,6 +187,23 @@ test("feat_player_week_context: every ARCHIVE Friday injury status is backed by 
            AND i2.report_status = ctx.report_status_fri
            AND i2.as_of IS NOT NULL AND i2.as_of <= date(g.gameday, '-2 day'))`,
   ).get() as { c: number };
+  // DATELESS SEASONS (2025+): nflverse dropped `date_modified`, so no filing carries a date and the
+  // dated back-join above cannot apply. The guarantee that DOES hold is that every archive Friday
+  // status is backed by that week's CONSOLIDATED weekly report -- one row per player-week, which is
+  // the FINAL pre-game report for that week and therefore knowable before its kickoff. So the backing
+  // report is the same-week, same-status raw_injury row (undated), by gsis or by name.
+  const badDateless = db.prepare(
+    `SELECT COUNT(*) c FROM feat_player_week_context ctx
+     JOIN stg_player s ON s.player_sk = ctx.player_sk
+     WHERE ctx.report_status_fri IS NOT NULL AND s.gsis_id IS NOT NULL
+       AND COALESCE(ctx.source, 'archive') = 'archive'
+       AND NOT EXISTS (SELECT 1 FROM raw_injury id WHERE id.season = ctx.season AND id.as_of IS NOT NULL)
+       AND NOT EXISTS (
+         SELECT 1 FROM raw_injury i
+         WHERE i.season = ctx.season AND i.week = ctx.week
+           AND (i.gsis_id = s.gsis_id OR i.full_name = s.name)
+           AND i.report_status = ctx.report_status_fri)`,
+  ).get() as { c: number };
   const have = db.prepare(
     "SELECT COUNT(*) c FROM feat_player_week_context WHERE report_status_fri IS NOT NULL AND COALESCE(source, 'archive') = 'archive'",
   ).get() as { c: number };
@@ -191,7 +213,8 @@ test("feat_player_week_context: every ARCHIVE Friday injury status is backed by 
   // exactly that -- a scope that quietly matches nothing -- so the count is asserted INSIDE the
   // scope rather than over the whole table.
   assert.ok(have.c > 5000, `only ${have.c} ARCHIVE rows carry a Friday status -- the guard would be vacuous`);
-  assert.equal(bad.c, 0, "a Friday status not backed by a report filed by Friday");
+  assert.equal(bad.c, 0, "a Friday status not backed by a DATED report filed by Friday (dated season)");
+  assert.equal(badDateless.c, 0, "a Friday status not backed by that week's consolidated report (dateless season)");
 });
 
 test("feat_player_week_context: every LIVE row precedes its week's first kickoff", { skip: skipIf("feat_player_week_context") }, () => {
@@ -291,16 +314,17 @@ test("feat_coverage: no column silently drops to zero in a season it should cove
       assert.ok(r!.non_null > 0, `feat_player_week_context.${col} is EMPTY in ${s} (${r!.rows} rows)`);
     }
   }
-  // The injury report is the exception, and it is a fact about the FEED rather than about us: from
-  // 2025 nflverse stopped publishing `date_modified`, so no report can be placed before a Friday
-  // cutoff and the column is correctly empty. Asserted explicitly so the day it comes back is a
-  // test failure someone reads rather than a silent change.
-  for (let s = 2013; s <= 2024; s++) {
+  // The injury report needs a word on the FEED, not just on us: from 2025 nflverse stopped
+  // publishing `date_modified`, so no filing carries a per-report date. That used to leave
+  // report_status_fri empty for 2025+ (the dated builder dropped every undated row). The dateless
+  // fallback now reads the CONSOLIDATED weekly report -- the final pre-game report for each week,
+  // knowable before its kickoff -- directly as the Friday snapshot, so the column is populated for
+  // every season through the present. Asserted for 2025 explicitly so the day the fallback stops
+  // firing is a test failure someone reads rather than a silent return to empty.
+  for (let s = 2013; s <= 2025; s++) {
     const r = get("feat_player_week_context", "report_status_fri", s)!;
     assert.ok(r.non_null > 0, `report_status_fri empty in ${s}`);
   }
-  const y2025 = get("feat_player_week_context", "report_status_fri", 2025);
-  if (y2025) assert.equal(y2025.non_null, 0, "2025 injuries carry no report date -- see docs/data-sources.md");
 
   const SEASON: [string, number][] = [
     ["draft_round", 2013], ["draft_pick", 2013], ["draft_year", 2013],
