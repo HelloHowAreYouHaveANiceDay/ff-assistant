@@ -748,6 +748,38 @@ REVERSAL CONDITION: the live 2026 scorecard turning against the QB blend, or a p
 The one-line revert is `consensusBlendQB` default back to 0 in `src/draft/levers.ts` (falls back to the
 scalar `consensusBlend`, i.e. off) -- then rebuild the board with `ff assemble`.
 
+## D22 -- Injury availability restored for the dateless (2025+) feed; weekly model refit on it; injury-horizon HELD (2026-09-15, APPLIED)
+
+The "injury feed is dead from 2025" limitation (weekly.md section 5, D17) was NOT true -- it was the same
+class of error as the DST-release bug: nflverse dropped the `date_modified` column in its 2025 injuries
+file, so `raw_injury` held week-keyed `report_status`/`practice_status` but empty `report_date`, and the
+availability builder (which places each filing at its Friday date) dropped every undated row. So
+`feat_player_week_model`'s availability block (`inj_out`/`prac_*`) and `feat_injury_horizon` were NULL for
+all of 2025 and the live 2026 serve -- which is WHY D19's boosted weekly model had to be made NULL-robust.
+
+- **The fix (data pipeline).** A dateless fallback in `src/features/sources/weekContext.ts`/`injuryDuration.ts`:
+  when a season's injury rows carry no usable date, read the week-keyed report directly (the nflverse
+  weekly file IS the consolidated FINAL pre-game report -- point-in-time-safe for a week-w feature).
+  Historical dated path (<=2024) byte-identical (SHA-256 verified); the leak guard HELD on both dated
+  (2019) and dateless (2025) and is provably connected (fault injection moves 9868 cells). 2025 now
+  populated (inj_out 429 Out; feat_injury_horizon 1781 rows), spot-checks pass (Kirk/Godwin/Likely Out).
+- **Frontier test A -- refit the boosted weekly model on restored availability: SHIPPED.** Retrained on
+  the fixed data; 2025 CRPS 2.94->2.78 (+0.16), other 13 seasons flat, lineup regret better; golden
+  self-check holds. The paired floor "rejects" only because the gain is concentrated in the one broken
+  season -- not a regression. **The real win is live: the 2026 serve now READS real injuries** (a player
+  marked Out is downweighted -- Tua 9.1->1.85 -- instead of NULL-imputed). Shipped as `data/weekly-artifact.json`.
+- **Frontier test B -- injury-horizon into the weekly first stage: HELD.** It ADMITS the paired floor
+  historically (+0.00546 CRPS, 5/0) even against the availability-restored baseline -- genuinely not
+  redundant on past data -- but it is DEAD at the live serve and serving it empty ACTIVELY HURTS: the
+  live horizon path (`build-live-context`) supplies no horizon rows for the current week, and in that
+  empty regime the ih model is -0.0095 CRPS WORSE. The fix restored the ARCHIVE feed (training +
+  backtests), not the LIVE horizon path. Wiring stays dormant (off by default; branch `explore/ih-weekly`).
+
+Also scoped a hindsight leak-guard (featuresExt "ADP before first kickoff") to COMPLETED seasons only --
+the live 2026 season legitimately anchors its ADP at the 09-09 opener; the guard still fires for every
+finished season. REVERSAL: the fix is a pure addition (dateless branch); to revert the refit, restore the
+prior `weekly-artifact.json` and `--learner`/config are unchanged.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

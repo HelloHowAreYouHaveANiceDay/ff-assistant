@@ -272,11 +272,19 @@ test("feat_player_season_ext: the anchor is September 1 and nothing is stamped l
   // FIRST KICKOFF -- the moment after which any market number is contaminated by results. That is
   // the boundary a consumer actually cares about, and it is the one asserted. `adp_as_of` is stored
   // on every row so a consumer wanting the stricter rule can apply it.
+  // This is a HINDSIGHT invariant: an ADP whose window closed on/after the first game is contaminated
+  // by results -- but only for a COMPLETED season. For the season still in progress, the latest
+  // available ADP legitimately anchors at the season's first-game day (drafts are preseason; the board
+  // needs the freshest preseason market snapshot), so exclude any season whose REG slate is not yet
+  // over. Added 2026-09-15 when the live 2026 season entered feat_player_season_ext (adp_as_of = the
+  // 09-09 opener); the guard still fires for every completed season.
   const adpAfterKickoff = db.prepare(
     `SELECT COUNT(*) c FROM feat_player_season_ext e
      WHERE e.adp_as_of IS NOT NULL
        AND e.adp_as_of >= (SELECT MIN(g.gameday) FROM raw_nfl_game g
-                           WHERE g.season = e.season AND g.game_type = 'REG' AND g.gameday IS NOT NULL)`,
+                           WHERE g.season = e.season AND g.game_type = 'REG' AND g.gameday IS NOT NULL)
+       AND (SELECT MAX(g2.gameday) FROM raw_nfl_game g2
+            WHERE g2.season = e.season AND g2.game_type = 'REG' AND g2.gameday IS NOT NULL) < date('now')`,
   ).get() as { c: number };
   const adpAfterAnchor = db.prepare("SELECT COUNT(*) c FROM feat_player_season_ext WHERE adp_as_of IS NOT NULL AND adp_as_of > as_of").get() as { c: number };
   db.close();

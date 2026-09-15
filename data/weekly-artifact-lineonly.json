@@ -3,8 +3,10 @@
   "kind": "weekly",
   "zeroModel": "quantile",
   "fittedFrom": "tools/train_weekly.py",
-  "fittedAt": "2026-09-14",
+  "fittedAt": "2026-09-15",
   "seasons": [
+    2010,
+    2011,
     2012,
     2013,
     2014,
@@ -25,8 +27,8 @@
   "population": "rostered",
   "trainMinLine": 0.0,
   "rowFilter": "in_population",
-  "populationHash": "7ca2e2be49fc5aa7",
-  "populationRows": 84582,
+  "populationHash": "3898c9dacbc5ae40",
+  "populationRows": 84436,
   "features": [],
   "coef": {
     "QB": {
@@ -37,10 +39,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.8712245778635987
+        "intercept": 0.8899318073811137
       },
       "p90": {
-        "intercept": 2.2562121741286973
+        "intercept": 2.2776893756380843
       }
     },
     "RB": {
@@ -51,10 +53,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.7386725377543634
+        "intercept": 0.7332813925871361
       },
       "p90": {
-        "intercept": 2.9572254700400715
+        "intercept": 2.85710283176259
       }
     },
     "WR": {
@@ -65,10 +67,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.813280860780307
+        "intercept": 0.828220011378354
       },
       "p90": {
-        "intercept": 2.6281246885754195
+        "intercept": 2.6002091545972954
       }
     },
     "TE": {
@@ -79,10 +81,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.6732247284009638
+        "intercept": 0.6965728987146549
       },
       "p90": {
-        "intercept": 2.599050369985647
+        "intercept": 2.614537461658191
       }
     },
     "K": {
@@ -93,10 +95,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.928088769472885
+        "intercept": 0.9159817651293374
       },
       "p90": {
-        "intercept": 2.0273781984204993
+        "intercept": 1.9927304171158258
       }
     },
     "DST": {
@@ -104,13 +106,13 @@
         "intercept": 1.0
       },
       "p10": {
-        "intercept": -0.15639256947333266
+        "intercept": -0.17512846749275243
       },
       "p50": {
-        "intercept": 0.8784976385821481
+        "intercept": 0.8448774629396583
       },
       "p90": {
-        "intercept": 2.5168075124768245
+        "intercept": 2.4601872739128505
       }
     }
   },
@@ -118,7 +120,7 @@
     "lo": 0.0,
     "hi": 4.0
   },
-  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 0) are 24.6% of the training rows.",
+  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 0) are 24.4% of the training rows.",
   "golden": [
     {
       "pos": "RB",
@@ -153,8 +155,8 @@
       "expect": {
         "mean": 14.5,
         "p10": 0.0,
-        "p50": 10.710751797438268,
-        "p90": 42.879769315581036
+        "p50": 10.632580192513473,
+        "p90": 41.42799106055756
       }
     },
     {
@@ -190,8 +192,8 @@
       "expect": {
         "mean": 11.0,
         "p10": 0.0,
-        "p50": 8.946089468583377,
-        "p90": 28.909371574329615
+        "p50": 9.110420125161895,
+        "p90": 28.60230070057025
       }
     },
     {
@@ -226,8 +228,8 @@
       "expect": {
         "mean": 19.5,
         "p10": 0.0,
-        "p50": 16.988879268340174,
-        "p90": 43.9961373955096
+        "p50": 17.353670243931717,
+        "p90": 44.41494282494264
       }
     },
     {
@@ -263,8 +265,8 @@
       "expect": {
         "mean": 7.5,
         "p10": 0.0,
-        "p50": 5.049185463007229,
-        "p90": 19.492877774892353
+        "p50": 5.224296740359912,
+        "p90": 19.609030962436435
       }
     },
     {
@@ -278,8 +280,8 @@
       "expect": {
         "mean": 9.0,
         "p10": 0.0,
-        "p50": 6.64805283978927,
-        "p90": 26.615029230360644
+        "p50": 6.599532533284225,
+        "p90": 25.71392548586331
       }
     },
     {
@@ -315,8 +317,8 @@
       "expect": {
         "mean": 13.0,
         "p10": 0.0,
-        "p50": 10.572651190143992,
-        "p90": 34.165620951480456
+        "p50": 10.766860147918601,
+        "p90": 33.80271900976484
       }
     }
   ]
