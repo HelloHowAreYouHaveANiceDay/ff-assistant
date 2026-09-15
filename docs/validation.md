@@ -1,5 +1,44 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## Four-front model-improvement pass: 1 shipped, 3 held (2026-09-15)
+>
+> Prompted by "what's next to improve the models" after the sim self-audit. Four candidates, each gated;
+> only one cleared. The three holds are recorded so a later session does not re-run them blind.
+>
+> **① Odds-shrinkage -- NO-OP.** The audit's ~14pp playoff over-confidence was an IN-SAMPLE artifact
+> (the shipped model graded on seasons it trained on). The TRUE out-of-sample calibration is good: the
+> 50-70% bin is predicted 56.0% / observed 56.3% (+0.3pp; jitters to +2.4 with the RNG seed = MC noise),
+> playoff skill +6.4%, and an LOSO shrink-toward-uniform picks lambda=0 in every fold (shrinking title
+> odds is WORSE OOS). No shrink warranted; a 63.7% is accurate to ~2pp. Nothing shipped.
+>
+> **② Per-position consensusBlend (QB->market, 0.5) -- SHIPPED (D21).** The one winner. See the D21 entry.
+>
+> **③ Opportunity-aware in-season ROS update -- HELD (null on the decision metric).** Blend the observed
+> POINTS rate with the weekly model's USAGE-based projection so a role change moves the rest-of-season
+> line faster (the points-blend under-reacts to regime changes). PASSES gate 1 (ROS per-week RMSE -0.209
+> blind-GBM, 14/14 seasons, K=3/A=0.7) and the mechanism is provably connected under the GBM (role risers
+> move up, lucky-flat pulled down, 200/0 invariant). But FAILS the ship gate: playoff Brier is a WASH at
+> weeks 5/8/11 (E-D = -0.0016 / +0.0032 / +0.0022, all |t|<1). Tested first under the LINEAR weekly model
+> (week-5 looked significantly worse) then RE-gated under the GBM (that week-5 failure was a
+> disconnected-lever artifact -- the GBM flipped it neutral -- but no reliable gain anywhere). Same shape
+> as dvp: a real per-player accuracy gain that the team-level decision metric does not see. NOT shipped;
+> flag-gated (no flag = byte-identical). REBUILD POINTER: branch `explore/oppo-ros` (`rosPerGameOppo` in
+> src/draft/rosBlend.ts, `fit-ros-blend-oppo.mjs`, season-calibration arm E).
+>
+> **④ Weekly ladder rungs 8-9 -- rung 8 HELD, rung 9 a SCREENED-POSITIVE follow-up.** Rung 8 (conformal
+> recalibration of the weekly quantile intervals, CQR): connected (pulls coverage to 0.80 exactly) but
+> the CRPS gain is SUB-FLOOR on every split (holdout +0.0013 vs floor 0.0017, REJECT) -- the shipped
+> per-head conformal is already good. Rung 9 (fitted form half-life): the trees-on-form half shipped in
+> D19; the novel EWMA memory REPLACING the fixed 4-game window SCREENS OOS-POSITIVE (ratio R^2 RB
+> 0.053->0.077, WR 0.025->0.040 -- the 4-game window is too short). It is a linear-proxy screen; a real
+> gate needs a feature-table rebuild (an EWMA column in feat_player_week_model AND buildForwardWeeks, or
+> the live serve NULL-collapses -- the D19 lesson), retrain, re-golden, paired floor. NOT shipped; the
+> screen justifies that follow-up. REBUILD POINTER: branch `explore/weekly-intervals` (dormant
+> `--conformal-mode cqr` machinery + the rung-9 screen).
+>
+> **Net:** the projector/sim is mature enough that the return is now one real win per several honest
+> nulls. The open lead worth a build is rung-9's EWMA form feature.
+
 > ## Sim self-audit, projector-vs-market adjudication, and the K/DST decides-games study (2026-09-15)
 >
 > Three read-only studies (scripts committed under scripts/), prompted by our team "8==3" showing a
