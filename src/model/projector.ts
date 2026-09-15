@@ -44,6 +44,7 @@ export const FEATURE_FIELDS = [
   // ---- PBP SITUATIONAL-OPPORTUNITY CANDIDATES (2026-09-15), DECLARED-not-fitted: prior-season
   // red-zone/goal-line/end-zone opportunity shares from raw_pbp_player_week. docs/feature-frontier.md. ----
   "prior_rz_touch_share", "prior_gtg_carry_share", "prior_ez_target_share",
+  "prior_td_oe", "prior_adot",   // volume-orthogonal pbp candidates (2026-09-15)
   // ---- MULTI-YEAR HISTORY (rung 2, 2026-09-14): lags of feat_player_season itself, by player_sk ----
   // Y-2 and Y-3 season points, and a Marcel-style games-weighted three-season points-per-game blend.
   // Built in src/model/features.ts (loadLagSeason / histPpgW), mirrored by tools/train_projection.py.

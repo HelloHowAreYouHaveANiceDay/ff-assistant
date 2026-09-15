@@ -69,8 +69,45 @@ AND high red-zone touches, so once the rank curve and volume shares are in, the 
 already paid for. The TD-equity hoped for is the least rank-predictable part of scoring, but at the
 SEASON grain it does not separate from volume. The raw substrate is KEPT (valuable per se; feeds nothing
 yet), and the three columns stay declared-not-fitted candidates -- re-screenable in one `admit-feature`
-command if a future model class or the WEEKLY grain (untested here; edges #7/#14 make it a long shot) is
-tried. No shipped number changed.
+command. No shipped number changed.
+
+### Follow-ups the same day: a volume-ORTHOGONAL season family, and the WEEKLY grain -- all REJECT
+
+Because the shares nulled on collinearity, two further angles were tried to be thorough. Both REJECT,
+which together with the shares makes the pbp opportunity substrate a comprehensive null on every tested
+surface -- a real result, not a shrug: high-value-opportunity does not beat the shipped models anywhere.
+
+**Volume-orthogonal season family** (built as residuals so collinearity cannot be the excuse):
+
+| candidate | pos | improvement (pinball) | floor (2.9*SE) | holdout | verdict |
+|---|---|---|---|---|---|
+| `prior_td_oe` (TDs MINUS expected-from-opportunity, the regression residual) | RB | -0.0458 (2/8) | 0.1942 | -0.0554 | REJECT (neg) |
+| `prior_td_oe` | WR | -0.0233 (2/8) | 0.1179 | +0.1072 (4/5) | REJECT |
+| `prior_adot` (air_yards / targets) | WR | -0.0493 (2/8) | 0.0911 | +0.0105 | REJECT (neg) |
+
+Positive control passed loudly (`prior_td_oe`'s biggest 2023 over-performer is Raheem Mostert +10.4, the
+textbook regression case; biggest under-performer Tony Pollard -9.4). **Why it still nulls:** the season
+projector's dominant anchor is the MARKET (ECR/ADP/FFToday), and the market already prices TD regression
+-- it ranks Mostert down on its own -- so a mechanical residual is redundant with the anchor. Columns kept
+as declared-not-fitted candidates.
+
+**WEEKLY grain** (`rz_share_td` = rolling season-to-date red-zone touch share on `feat_player_week_model`,
+D19 serve-contract compliant -- explicit missing, NaN passthrough, `form` mask group; point-in-time
+verified: week-1 is null). Screened via `scripts/weekly-paired-floor.mjs` (pooled CRPS, 2.9*SE), baseline =
+every weekly feature EXCEPT it vs `--features all`:
+
+| arm | improvement (CRPS) | floor | verdict |
+|---|---|---|---|
+| selection (2012-2020) | -0.0031 (2/7) | 0.0048 | REJECT (neg) |
+| holdout (2021-2025) | -0.0011 (1/4) | 0.0018 | REJECT (neg) |
+| all 14 seasons | -0.0024, CI [-0.0046, -0.0002] | 0.0032 | REJECT (mildly harmful) |
+
+Same shape as edges #7/#14: an in-season usage LEVEL that is real and face-valid (2024 wk-10 leaders are
+the actual goal-line backs -- Kyren Williams .55, Conner, Jones, Kamara, Barkley) but does not convert --
+here it is marginally NEGATIVE, the GBM slightly overfitting a column the anchors (season line + form +
+snap/route usage) already cover. `rz_share_td` stays a declared candidate on the weekly view, unfitted;
+`ff evaluate-weekly --features all` includes it only in a screen, never in the shipped serve. No shipped
+number changed on either grain.
 
 ## Screening recipe (for the next candidate)
 

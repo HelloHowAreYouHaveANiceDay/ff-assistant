@@ -158,13 +158,26 @@ function priorRouteShare(db: DB, yr: number, resolver: SourceResolver): Map<numb
  *   prior_gtg_carry_share  goal-to-go carries / team's        -- the goal-line back (RB TD equity)
  *   prior_ez_target_share  end-zone targets / team's          -- the end-zone target (WR/TE TD equity)
  */
-function priorPbpOpportunity(db: DB, yr: number, resolver: SourceResolver): Map<number, { rzTouch: number | null; gtgCarry: number | null; ezTarget: number | null }> {
-  const out = new Map<number, { rzTouch: number | null; gtgCarry: number | null; ezTarget: number | null }>();
+interface PbpOpp { rzTouch: number | null; gtgCarry: number | null; ezTarget: number | null; tdOe: number | null; adot: number | null }
+function priorPbpOpportunity(db: DB, yr: number, resolver: SourceResolver): Map<number, PbpOpp> {
+  const out = new Map<number, PbpOpp>();
+  // League TD-per-red-zone-touch rates for THIS prior season, computed SEPARATELY for carries and
+  // targets (a goal-line carry converts far more often than a red-zone target, so one blended rate
+  // would bias RBs against WRs). Both are from year `yr`, strictly before the projection season yr+1.
+  const lg = db.prepare(
+    `SELECT SUM(rush_tds) rtd, SUM(rz_carries) rzc, SUM(rec_tds) etd, SUM(rz_targets) rzt
+       FROM raw_pbp_player_week WHERE season = ?`,
+  ).get(yr) as { rtd: number; rzc: number; etd: number; rzt: number };
+  const rushRate = lg && lg.rzc ? lg.rtd / lg.rzc : 0;   // rush TDs per red-zone carry
+  const recRate = lg && lg.rzt ? lg.etd / lg.rzt : 0;    // rec  TDs per red-zone target
   const rows = db.prepare(
     `SELECT p.gsis_id gsis,
             SUM(p.rz_carries + p.rz_targets) hv, SUM(tt.team_hv) team_hv,
             SUM(p.gtg_carries) gtg,               SUM(tt.team_gtg) team_gtg,
-            SUM(p.ez_targets) ez,                 SUM(tt.team_ez) team_ez
+            SUM(p.ez_targets) ez,                 SUM(tt.team_ez) team_ez,
+            SUM(p.rush_tds) rush_tds, SUM(p.rec_tds) rec_tds,
+            SUM(p.rz_carries) rzc,    SUM(p.rz_targets) rzt,
+            SUM(p.air_yards) air,     SUM(p.targets) tgt
        FROM raw_pbp_player_week p
        JOIN (SELECT season, week, team,
                     SUM(rz_carries + rz_targets) team_hv,
@@ -173,15 +186,25 @@ function priorPbpOpportunity(db: DB, yr: number, resolver: SourceResolver): Map<
                FROM raw_pbp_player_week WHERE season = ? GROUP BY season, week, team) tt
          ON tt.season = p.season AND tt.week = p.week AND tt.team = p.team
       WHERE p.season = ? GROUP BY p.gsis_id`,
-  ).all(yr, yr) as { gsis: string; hv: number; team_hv: number; gtg: number; team_gtg: number; ez: number; team_ez: number }[];
+  ).all(yr, yr) as {
+    gsis: string; hv: number; team_hv: number; gtg: number; team_gtg: number; ez: number; team_ez: number;
+    rush_tds: number; rec_tds: number; rzc: number; rzt: number; air: number; tgt: number;
+  }[];
   for (const r of rows) {
     const res = resolver.resolve({ gsis: r.gsis });
     resolver.count("nflverse pbp opportunity", res);
     if (res.sk == null) continue;
+    // td_oe: TDs scored MINUS the TDs his red-zone opportunity implies at league rates. Positive =
+    // over-performed his opportunity (a regression-DOWN flag); the residual is orthogonal to volume
+    // by construction. NULL if he had no red-zone opportunity at all (nothing to be over/under).
+    const expTd = rushRate * r.rzc + recRate * r.rzt;
+    const hadOpp = r.rzc + r.rzt > 0;
     out.set(res.sk, {
       rzTouch: r.team_hv ? r.hv / r.team_hv : null,
       gtgCarry: r.team_gtg ? r.gtg / r.team_gtg : null,
       ezTarget: r.team_ez ? r.ez / r.team_ez : null,
+      tdOe: hadOpp ? (r.rush_tds + r.rec_tds) - expTd : null,
+      adot: r.tgt ? r.air / r.tgt : null,
     });
   }
   return out;
@@ -374,11 +397,11 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
        prior_snap_share, prior_route_share, prior_carries_per_game, prior_carry_share,
        prior_air_yards_share, prior_wopr, depth_rank_sep1, injury_status_sep1, adp, adp_format,
        adp_as_of, adp_stdev, prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe, qb_changed,
-       prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share,
+       prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share, prior_td_oe, prior_adot,
        resolved_by, updated_at)
      VALUES (@sk,@season,@asOf,@team,@pos,@dy,@dr,@dp,@cy,@cys,@cyy,@capy,@snap,@route,@cpg,@cshare,
        @ays,@wopr,@depth,@inj,@adp,@adpFmt,@adpAsOf,@adpSd,@outg,@yacoe,@ryoe,@cpoe,@qbc,
-       @rzTouch,@gtgCarry,@ezTarget,@by,@now)
+       @rzTouch,@gtgCarry,@ezTarget,@tdOe,@adot,@by,@now)
      ON CONFLICT(season, player_sk) DO UPDATE SET
        as_of=excluded.as_of, team=excluded.team, pos=excluded.pos, draft_year=excluded.draft_year,
        draft_round=excluded.draft_round, draft_pick=excluded.draft_pick,
@@ -395,6 +418,7 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
        prior_rz_touch_share=excluded.prior_rz_touch_share,
        prior_gtg_carry_share=excluded.prior_gtg_carry_share,
        prior_ez_target_share=excluded.prior_ez_target_share,
+       prior_td_oe=excluded.prior_td_oe, prior_adot=excluded.prior_adot,
        resolved_by=excluded.resolved_by, updated_at=excluded.updated_at`,
   );
 
@@ -473,6 +497,8 @@ export async function buildSeasonExt(opts: { dbPath?: string; seasons: number[];
           rzTouch: orNull(pbpOpp.get(sk)?.rzTouch ?? null),
           gtgCarry: orNull(pbpOpp.get(sk)?.gtgCarry ?? null),
           ezTarget: orNull(pbpOpp.get(sk)?.ezTarget ?? null),
+          tdOe: orNull(pbpOpp.get(sk)?.tdOe ?? null),
+          adot: orNull(pbpOpp.get(sk)?.adot ?? null),
           by: "player_sk from feat_player_season", now,
         });
         n++;

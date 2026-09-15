@@ -85,6 +85,7 @@ export interface ExtSeasonRow {
   // PBP situational-opportunity candidates (2026-09-15) -- read here so the serving projector computes
   // them the same way the trainer fits them. --add-features candidates only; not fitted by default.
   prior_rz_touch_share: number | null; prior_gtg_carry_share: number | null; prior_ez_target_share: number | null;
+  prior_td_oe: number | null; prior_adot: number | null;
 }
 
 export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow> {
@@ -95,7 +96,8 @@ export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow>
       `SELECT player_sk, pos, draft_year, draft_pick, contract_year, prior_snap_share,
               prior_route_share, prior_carries_per_game, prior_carry_share, depth_rank_sep1, adp,
               prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe, qb_changed,
-              prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share
+              prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share,
+              prior_td_oe, prior_adot
          FROM feat_player_season_ext WHERE season = ?`,
     ).all(season) as Record<string, unknown>[];
   } catch { return out; }                      // a store without the extension table: no columns, not zeros
@@ -133,6 +135,7 @@ export function loadExtSeason(db: DB, season: number): Map<string, ExtSeasonRow>
       prior_ryoe: num(r.prior_ryoe), prior_cpoe: num(r.prior_cpoe), qb_changed: num(r.qb_changed),
       prior_rz_touch_share: num(r.prior_rz_touch_share), prior_gtg_carry_share: num(r.prior_gtg_carry_share),
       prior_ez_target_share: num(r.prior_ez_target_share),
+      prior_td_oe: num(r.prior_td_oe), prior_adot: num(r.prior_adot),
     });
   }
   return out;
@@ -144,6 +147,7 @@ const EMPTY_EXT: ExtSeasonRow = {
   adp: null, adp_vs_ecr: null, rookie_draft_pick: null,
   prior_out_games: null, prior_yac_oe: null, prior_ryoe: null, prior_cpoe: null, qb_changed: null,
   prior_rz_touch_share: null, prior_gtg_carry_share: null, prior_ez_target_share: null,
+  prior_td_oe: null, prior_adot: null,
 };
 
 /**

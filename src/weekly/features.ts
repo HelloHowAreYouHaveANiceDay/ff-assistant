@@ -43,6 +43,7 @@ import { loadArtifact, type ProjectionArtifact } from "../model/projector.js";
 import { backtestProjection, boardProjection } from "../model/features.js";
 import { fitRookieCurve, rookieProjections } from "../draft/rookieModel.js";
 import { STREAM_FIELD_NAMES, presentStreamFields } from "./streamingFields.js";
+import { buildSourceResolver } from "../features/sources/resolve.js";
 
 /** The positions a weekly model has an opinion about. Same list src/features/build.ts uses. */
 export const WEEKLY_POS = ["QB", "RB", "WR", "TE", "K", "DST"];
@@ -56,6 +57,7 @@ export const WEEKLY_POS = ["QB", "RB", "WR", "TE", "K", "DST"];
 export const WEEKLY_FEATURE_FIELDS = [
   "td_games", "td_ppg", "t4_mean", "t4_sd",
   "td_fd", "td_ts", "td_attempts", "td_rush_yards",
+  "rz_share_td",   // rolling season-to-date red-zone touch share (pbp), point-in-time -- 2026-09-15 candidate
   "home", "spread_line", "total_line", "implied_team_total", "days_rest",
   "season_line_pg", "week_no",
   // ---- THE AVAILABILITY BLOCK, from feat_player_week_context (the data track). See CONTEXT_FIELDS
@@ -444,6 +446,54 @@ export function dvpTable(db: DB, season: number): {
 }
 
 /**
+ * ROLLING RED-ZONE TOUCH SHARE, point-in-time. From raw_pbp_player_week: the player's season-to-date
+ * (weeks STRICTLY BEFORE w) red-zone touches (rz_carries + rz_targets) over his team's, i.e. "is he
+ * CURRENTLY the red-zone option" -- a role LEVEL orthogonal to the total snap/route usage already in
+ * the model (a back can lead the backfield in snaps yet not get the goal-line work, and vice versa).
+ *
+ * Same `week - 1` prefix-sum discipline as dvpTable -- the bound is the only thing between this column
+ * and a leak. Keyed by SURROGATE KEY (via the source resolver, gsis -> sk), the same key feat_player_week
+ * uses; the team denominator is that week's team, cumulative (a traded player's early touches sit under
+ * his old team, a small and rare imprecision, as with the season route-share).
+ */
+export function rzShareTable(db: DB, season: number): {
+  get(week: number, sk: string | number | null, team: string | null): number | null;
+} {
+  const resolver = buildSourceResolver(db);
+  const rows = db.prepare(
+    `SELECT gsis_id, week, team, (rz_carries + rz_targets) rz FROM raw_pbp_player_week WHERE season = ?`,
+  ).all(season) as { gsis_id: string; week: number; team: string | null; rz: number }[];
+  let maxWeek = 1;
+  const bySk = new Map<string, number[]>();     // sk  -> weekly rz touches (index = week)
+  const byTeam = new Map<string, number[]>();   // team-> weekly rz touches
+  const ensure = (m: Map<string, number[]>, k: string) => (m.get(k) ?? m.set(k, []).get(k)!);
+  for (const r of rows) {
+    if (r.week == null || !(r.rz > 0)) continue;
+    if (r.week > maxWeek) maxWeek = r.week;
+    const team = canonTeam(r.team ?? "");
+    if (team) { const a = ensure(byTeam, team); a[r.week] = (a[r.week] ?? 0) + r.rz; }
+    const res = resolver.resolve({ gsis: r.gsis_id });
+    if (res.sk == null) continue;
+    const a = ensure(bySk, String(res.sk)); a[r.week] = (a[r.week] ?? 0) + r.rz;
+  }
+  // prefix-sum in place: a[w] becomes the cumulative through week w.
+  const cum = (m: Map<string, number[]>) => {
+    for (const a of m.values()) for (let w = 1; w <= maxWeek; w++) a[w] = (a[w] ?? 0) + (a[w - 1] ?? 0);
+  };
+  cum(bySk); cum(byTeam);
+  return {
+    get(week, sk, team) {
+      const upTo = Math.min(Math.max(week - 1, 0), maxWeek);   // STRICTLY BEFORE week w.
+      if (upTo <= 0 || sk == null || !team) return null;
+      const t = byTeam.get(canonTeam(team)); const den = t ? (t[upTo] ?? 0) : 0;
+      if (!(den > 0)) return null;                             // team has no red-zone snaps yet -> unknown, not 0
+      const p = bySk.get(String(sk)); const num = p ? (p[upTo] ?? 0) : 0;
+      return num / den;
+    },
+  };
+}
+
+/**
  * THE UPSERT, GENERATED FROM ONE COLUMN LIST rather than typed out twice.
  *
  * There were two copies of this statement -- the historical builder's and the forward builder's --
@@ -454,7 +504,7 @@ export function dvpTable(db: DB, season: number): {
 const WEEK_MODEL_BASE_COLS = [
   "feat_key", "player_sk", "season", "week", "as_of", "name", "pos", "team", "opponent", "home",
   "is_bye", "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
-  "td_attempts", "td_rush_yards", "dvp_mult", "dvp_n", "spread_line", "total_line",
+  "td_attempts", "td_rush_yards", "rz_share_td", "dvp_mult", "dvp_n", "spread_line", "total_line",
   "implied_team_total", "days_rest", "pts",
 ];
 /** The three columns the conflict target keys on, which must not appear in the SET clause. */
@@ -564,6 +614,7 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
     const art = artifactFor(season);
     const line = art ? preseasonLinePerGame(db, season, art, sched, current) : new Map<string, number>();
     const dvp = dvpTable(db, season);
+    const rzShare = rzShareTable(db, season);
     const ctx = contextFor(db, season);
     const raw = db.prepare(
       `SELECT feat_key, player_sk, season, week, name, pos, team, opponent, home, is_bye,
@@ -641,6 +692,8 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
           t4_mean: finite(t4mean), t4_sd: finite(t4sd),
           td_fd: finite(r.td_fd), td_ts: finite(r.td_ts),
           td_attempts: finite(r.td_attempts), td_rush_yards: finite(r.td_rush_yards),
+          // rolling red-zone touch share to date (weeks < w), point-in-time via the prefix-sum bound.
+          rz_share_td: finite(rzShare.get(r.week, r.player_sk, r.team)),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           // schedule and market columns as published preseason / pre-kickoff.
           spread_line: finite(r.spread_line), total_line: finite(r.total_line),
@@ -747,7 +800,7 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
   const rows = db.prepare(
     `SELECT m.feat_key, m.player_sk, m.season, m.week, m.name, m.pos, m.team, m.opponent, m.home,
             m.season_line_pg, m.td_games, m.td_ppg, m.t4_mean, m.t4_sd, m.td_fd, m.td_ts,
-            m.td_attempts, m.td_rush_yards, m.dvp_mult, m.dvp_n, m.spread_line, m.total_line,
+            m.td_attempts, m.td_rush_yards, m.rz_share_td, m.dvp_mult, m.dvp_n, m.spread_line, m.total_line,
             m.implied_team_total, m.days_rest
             ${present.length ? ", " + present.map((c) => `m.${c.name}`).join(", ") : ""}
             ${stream.length ? ", " + stream.map((c) => `s.${c}`).join(", ") : ""}
@@ -774,6 +827,7 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
       td_ts: r.td_ts == null ? null : Number(r.td_ts),
       td_attempts: r.td_attempts == null ? null : Number(r.td_attempts),
       td_rush_yards: r.td_rush_yards == null ? null : Number(r.td_rush_yards),
+      rz_share_td: r.rz_share_td == null ? null : Number(r.rz_share_td),
       home: r.home == null ? null : Number(r.home),
       spread_line: r.spread_line == null ? null : Number(r.spread_line),
       total_line: r.total_line == null ? null : Number(r.total_line),
@@ -888,6 +942,7 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
   const playedWeeks = [...new Set(playedRows.map((r) => r.week))].sort((a, b) => a - b);
 
   const dvp = dvpTable(db, season);
+  const rzShare = rzShareTable(db, season);
 
   ensureContextColumns(db);
   const ins = db.prepare(weekModelInsertSql());
@@ -941,6 +996,7 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
           t4_mean: finite(t4mean), t4_sd: finite(t4sd),
           td_fd: finite(td?.td_fd ?? null), td_ts: finite(td?.td_ts ?? null),
           td_attempts: finite(td?.td_attempts ?? null), td_rush_yards: finite(td?.td_rush_yards ?? null),
+          rz_share_td: finite(rzShare.get(week, p.player_sk, p.team)),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           spread_line: spread, total_line: total, implied_team_total: implied,
           days_rest: daysRest,

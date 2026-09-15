@@ -171,6 +171,12 @@ function addColumns(db: DB): void {
     ["feat_player_season_ext", "prior_rz_touch_share", "REAL"],
     ["feat_player_season_ext", "prior_gtg_carry_share", "REAL"],
     ["feat_player_season_ext", "prior_ez_target_share", "REAL"],
+    // Volume-ORTHOGONAL pbp candidates (2026-09-15): TD-over-expected (the regression residual) and
+    // average depth of target. Built to sidestep the collinearity that nulled the share candidates.
+    ["feat_player_season_ext", "prior_td_oe", "REAL"],
+    ["feat_player_season_ext", "prior_adot", "REAL"],
+    // WEEKLY candidate (2026-09-15): rolling season-to-date red-zone touch share, on the weekly model view.
+    ["feat_player_week_model", "rz_share_td", "REAL"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];

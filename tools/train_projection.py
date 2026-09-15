@@ -179,6 +179,10 @@ EXT_CENTER = [
     "prior_out_games", "prior_yac_oe", "prior_ryoe", "prior_cpoe",
     # FRONTIER (2026-09-15): prior-season red-zone/goal-line opportunity shares from raw_pbp_player_week.
     "prior_rz_touch_share", "prior_gtg_carry_share", "prior_ez_target_share",
+    # Volume-ORTHOGONAL pbp candidates (2026-09-15): TD-over-expected (regression residual) and aDOT.
+    # These are CENTERED, not ratio-to-bucket: td_oe is already a residual orthogonal to volume/rank, and
+    # aDOT is a per-target style depth, neither "high because high-rank".
+    "prior_td_oe", "prior_adot",
 ]
 EXT_INDICATOR = ["contract_year", "qb_changed"]
 EXT_RATIO = {
@@ -214,6 +218,9 @@ EXT_ALLOWED = {
     "prior_rz_touch_share": {"RB", "WR", "TE"},
     "prior_gtg_carry_share": {"RB"},
     "prior_ez_target_share": {"WR", "TE"},
+    # td_oe (TD regression) applies to every scorer; aDOT is a receiver depth signal.
+    "prior_td_oe": {"RB", "WR", "TE"},
+    "prior_adot": {"WR", "TE"},
 }
 # ==================================================================================================
 # MULTI-YEAR HISTORY -- rung 2 of the pre-deep-learning ladder (2026-09-14).
@@ -377,7 +384,8 @@ def attach_ext(con, rows):
             "SELECT player_sk, season, pos, draft_year, draft_pick, contract_year, prior_snap_share,"
             " prior_route_share, prior_carries_per_game, prior_carry_share, prior_air_yards_share,"
             " prior_wopr, depth_rank_sep1, adp, prior_out_games, prior_yac_oe, prior_ryoe, prior_cpoe,"
-            " qb_changed, prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share"
+            " qb_changed, prior_rz_touch_share, prior_gtg_carry_share, prior_ez_target_share,"
+            " prior_td_oe, prior_adot"
             " FROM feat_player_season_ext"
         ).fetchall()
     except sqlite3.OperationalError:

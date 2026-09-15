@@ -1146,6 +1146,9 @@ CREATE TABLE IF NOT EXISTS feat_player_season_ext (
   prior_rz_touch_share   REAL,        -- Y-1 (rz_carries + rz_targets) / team's, the broad red-zone role
   prior_gtg_carry_share  REAL,        -- Y-1 goal-to-go carries / team's -- the goal-line back signal (RB TD equity)
   prior_ez_target_share  REAL,        -- Y-1 end-zone targets / team's -- the end-zone target signal (WR/TE TD equity)
+  -- volume-ORTHOGONAL pbp candidates (2026-09-15), built to sidestep the collinearity that nulled the shares
+  prior_td_oe            REAL,        -- Y-1 (rush_tds+rec_tds) MINUS expected from red-zone opportunity at league rates -- the TD-regression residual
+  prior_adot             REAL,        -- Y-1 air_yards / targets -- average depth of target (a target-quality style signal)
   -- the draft market, from the FFC archive. adp_as_of is the archive's own window end and is NOT
   -- always inside the season: standard 2008 and 2009 are both stamped 2010-06-20.
   adp             REAL,
@@ -1201,6 +1204,7 @@ CREATE TABLE IF NOT EXISTS feat_player_week_model (
   td_ts           REAL,              -- target share per game through w-1
   td_attempts     REAL,
   td_rush_yards   REAL,
+  rz_share_td     REAL,              -- rolling season-to-date red-zone touch share (pbp), weeks < w -- 2026-09-15 candidate
   dvp_mult        REAL,              -- opponent defence-vs-position multiplier, weeks < w + prior yr
   dvp_n           INTEGER,           -- opponent games inside season Y that fed it
   spread_line     REAL,
