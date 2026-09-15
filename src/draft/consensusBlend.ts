@@ -36,21 +36,42 @@ export function loadConsensusPct(db: Database): Map<string, number> {
   return pct;
 }
 
+/** A per-position blend weight. A plain number is UNIFORM across positions (the historical scalar
+ *  meaning); a map gives each position its own weight, with any position it omits treated as 0. This
+ *  is the ONE shape both the arbiter and the live board pass, so a per-position posture is validated
+ *  by exactly the transform that ships. */
+export type BlendWeight = number | Readonly<Record<string, number>>;
+
+/** The weight this blend will use for `pos`. Exported so a caller can report the resolved per-position
+ *  posture (and so a test can assert the resolution) without re-deriving the rule. */
+export function weightForPos(w: BlendWeight, pos: string): number {
+  const v = typeof w === "number" ? w : (w[pos] ?? 0);
+  return v > 0 ? v : 0;
+}
+
 /**
  * Re-rank `rows` toward the consensus. `consensusPctOf(pos, name)` returns the consensus percentile in
- * [0,1] for that player (0 = best) or null if unranked. `w` in [0,1]: 0 = identity, 1 = order purely by
- * the consensus where it ranks a player. Returns a NEW array (rows are not mutated); the returned rows
- * carry the same fields with `points` reassigned. Keyed by NAME within position, matching the arbiter
- * that validated the effect.
+ * [0,1] for that player (0 = best) or null if unranked. `w` in [0,1] (per position via a map, or a
+ * uniform scalar): 0 = identity, 1 = order purely by the consensus where it ranks a player. Returns a
+ * NEW array (rows are not mutated); the returned rows carry the same fields with `points` reassigned.
+ * Keyed by NAME within position, matching the arbiter that validated the effect.
+ *
+ * The blend has ALWAYS operated one position at a time (a QB percentile is never compared with a TE's,
+ * and each position reassigns only its own points by slot) -- the ONLY change a map introduces is that
+ * the weight can now differ by position. A position whose weight resolves to 0 is left byte-identical
+ * to its input, so `{QB: 0.5, WR: 0}` moves QB and leaves WR exactly as the projector ranked it.
  */
 export function blendConsensus<T extends { name: string; pos: string; points: number }>(
-  rows: T[], consensusPctOf: (pos: string, name: string) => number | null, w: number,
+  rows: T[], consensusPctOf: (pos: string, name: string) => number | null, w: BlendWeight,
 ): T[] {
-  if (!(w > 0) || rows.length === 0) return rows;
+  if (rows.length === 0) return rows;
+  if (typeof w === "number" && !(w > 0)) return rows;
   const byPos = new Map<string, T[]>();
   for (const r of rows) (byPos.get(r.pos) ?? byPos.set(r.pos, []).get(r.pos)!).push(r);
   const reassigned = new Map<string, number>();            // name -> reassigned points
   for (const [pos, players] of byPos) {
+    const wPos = weightForPos(w, pos);
+    if (!(wPos > 0)) continue;                              // this position stays exactly as projected
     const n = players.length;
     if (n < 2) continue;
     const ourSorted = players.slice().sort((a, b) => b.points - a.points);
@@ -60,7 +81,7 @@ export function blendConsensus<T extends { name: string; pos: string; points: nu
     const keyed = players.map((r) => {
       const op = ourPct.get(r.name)!;
       const fp = consensusPctOf(pos, r.name);
-      return { name: r.name, key: fp != null ? (1 - w) * op + w * fp : op };
+      return { name: r.name, key: fp != null ? (1 - wPos) * op + wPos * fp : op };
     });
     keyed.sort((a, b) => a.key - b.key);
     keyed.forEach((x, i) => reassigned.set(x.name, slots[i]));

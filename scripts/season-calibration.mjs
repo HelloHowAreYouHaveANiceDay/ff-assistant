@@ -50,6 +50,15 @@ import { boardProjection } from "../src/model/features.ts";
 import { nameKey, dstAliasKey } from "../src/draft/values.ts";
 import { playoffFieldFor } from "../src/features/picks.ts";
 import { rosPerGame, loadRosBlend } from "../src/draft/rosBlend.ts";
+import { loadConsensusPct, blendConsensus } from "../src/draft/consensusBlend.ts";
+
+// PER-POSITION CONSENSUS BLEND (explore/perpos-blend), env-gated so the default gate is untouched.
+// BLEND_QB / BLEND_RB / BLEND_WR / BLEND_TE in [0,1] re-rank that position's projector means toward
+// the FFToday consensus, exactly as the board does -- so this measures whether the same posture that
+// the draft board would carry improves the IN-SEASON simulator's calibration. Applied to proj.mean
+// before rosters, pool ranks and the free-agent floor are built, so every downstream input sees it.
+const BLEND_W = { QB: Number(process.env.BLEND_QB ?? 0), RB: Number(process.env.BLEND_RB ?? 0), WR: Number(process.env.BLEND_WR ?? 0), TE: Number(process.env.BLEND_TE ?? 0) };
+const BLEND_ANY = Object.values(BLEND_W).some((w) => w > 0);
 
 const argv = process.argv.slice(2);
 const val = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : d; };
@@ -178,6 +187,12 @@ function buildSeason(season, atWeek = null) {
   const art = loadArtifact(JSON.parse(readFileSync(path, "utf8")));
   const proj = boardProjection(db, season, art, `${season}-09-01`).filter((r) => r.mean > 0);
   if (!proj.length) return { skip: "no projections" };
+  if (BLEND_ANY) {
+    const pct = loadConsensusPct(db);
+    const input = proj.map((p) => ({ name: p.name_key ?? nameKey(p.name), pos: p.pos, points: p.mean }));
+    const out = blendConsensus(input, (pos, name) => pct.get(`${season}|${pos}|${name}`) ?? null, BLEND_W);
+    for (let i = 0; i < proj.length; i++) proj[i].mean = out[i].points;
+  }
 
   // NFL team per player, for the bye. From the season's own feature rows -- the same table the
   // projection was built from, so a player cannot be projected as one man and given another's bye.
