@@ -1,5 +1,54 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## Sim self-audit, projector-vs-market adjudication, and the K/DST decides-games study (2026-09-15)
+>
+> Three read-only studies (scripts committed under scripts/), prompted by our team "8==3" showing a
+> preseason sim #1 (1292 pts, 63.7% playoff, 16.1% title) that looked too strong.
+>
+> **1. K/DST decide games but symmetrically -- variance to ride, not a lever (`scripts/kdst-analysis.mjs`).**
+> Leak-free accounting on the league's real matchups 2018-2025. K+DST is 16.3% of a team's weekly score
+> and DECIDES ~13% of games (the winner's K/DST advantage exceeded the final margin: 121/937, CI
+> [12.1,13.8]%). But it is SYMMETRIC: per team-week, K/DST WON the week 4.4% of the time vs CAUSED a loss
+> 4.3% (ratio 1.04:1). The distribution is right-skewed (DST skew 1.0, floor near 0, tail to +40) but big
+> booms (14.7% of team-weeks) approx-equal big busts (15.0%), so the skew does not create a decision
+> asymmetry. Reconciles the "wins weeks, rarely causes losses" intuition as salience bias, and squares
+> with K/DST being served the floor for the START/SIT decision. (Separate from D20, which shows DST
+> projections ARE modelable from matchup features for the STREAMING pick.)
+>
+> **2. The sim self-audit: 8==3's #1 is SOFT (`scripts/audit-selfref.mjs`/`audit-market.mjs`/`audit-goff.mjs`).**
+> Rosters rebuilt from ownership reproduce the sim's startPts row-for-row (0 unmatched of 192). Under
+> INDEPENDENT format-matched valuations (FantasyPros ECR, half-PPR ADP) 8==3 is #2/#3, not #1; TOTR is
+> the independent #1 (FFToday, ECR, ADP all agree) yet our projector ranks TOTR #5. Our projector rates
+> OUR players above market (+4.4 FFToday / +3.2 ECR / +8.2 ADP position-pctpts vs a field mean ~0),
+> concentrated in Goff + the Detroit passing game (a correlated single-offense bet the point-sum ignores).
+> Re-anchoring Goff from our-QB4 to market-QB15 (our own scale) drops 8==3 to a tie for #2 -- the "clear
+> #1 by 21" is essentially one player. CALIBRATION: 63.7% playoff sits in the 50-70% reliability bin the
+> sim historically OVER-predicts by ~14pp (predicted 57.4%, realized 43.3%, 2018-2025 LOSO, n=30); true
+> odds high-40s/low-50s, and the harness's own LOSO says shrinking predictions 15-30% toward uniform
+> improves Brier -- a league-wide over-confidence affecting every copilot playoff number. The 16.1% title
+> is on the no-skill axis (title Brier 0.066 vs 0.065 uniform). CANDIDATE FIX (not yet gated): shrink the
+> reported playoff odds toward uniform.
+>
+> **3. Projector-vs-market divergence: EDGE at WR, BIAS at QB (`scripts/adjudicate-assemble.mjs` +
+> `adjudicate-stats.py`).** Out-of-sample on BLIND fold artifacts (`fold-artifacts-d16`, each asserted
+> `holdoutSeason==Y`, 5443 player-seasons 2013-2024), realized `feat_player_season.pts` as the neutral
+> judge, controlling for the market. Slope of (realized - market) on (projector - market):
+> - **WR +0.253** [0.18, 0.33] vs ADP, robust across ECR/ADP/FFToday -> a REAL edge (the projector
+>   correctly sees WR value the market underrates).
+> - **QB -0.016** [-0.20, 0.14] over 12 ADP seasons -> NULL/BIAS. The Goff profile (proj QB<=6, market
+>   QB>=12; n=12) realizes mean QB rank 19.4; the projector was closer than the market in 1/12 (Goff 2020
+>   himself: proj QB5, market QB13, realized QB19). QB compression is UNjustified -- realized QB SD 122 >
+>   projector's 103, so QBs are differentiable and the projector under-spreads them AND bets the wrong
+>   direction on which mid-market QB breaks out.
+> - In ABSOLUTE accuracy the market beats the projector's divergences in every bucket; the projector adds
+>   value only as a minority weight in a market-anchored blend.
+>
+> **What it means.** Trust the market where the projector diverges on QB; trust the projector on WR.
+> 8==3's #1 rests on the projector's LEAST trustworthy divergence (the QB/Goff call). The indicated fix is
+> a PER-POSITION consensus blend (QB->market, WR->projector) -- D14's UNIFORM consensusBlend demotion
+> stands (it was playoff-gate null), but the per-position shape is a distinct candidate; gate in progress
+> (branch `explore/perpos-blend`, judged on the IN-SEASON calibration axis now that the draft is done).
+
 > ## SHIPPED (D20): DST is served by a matchup model, not the season-line floor (2026-09-14)
 >
 > D17/D19 kept DST an intercept (the floor) because on the WEEKLY feature set it tied the floor to the
