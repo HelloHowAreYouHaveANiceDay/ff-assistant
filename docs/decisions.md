@@ -780,6 +780,38 @@ the live 2026 season legitimately anchors its ADP at the 09-09 opener; the guard
 finished season. REVERSAL: the fix is a pure addition (dateless branch); to revert the refit, restore the
 prior `weekly-artifact.json` and `--learner`/config are unchanged.
 
+## D23 -- Weekly artifacts re-pinned to the D17-blind decision population (2026-09-15, APPLIED)
+
+After a session that pulled in new raw data (pbp backfill, injury/snap/depth-chart refreshes) and rebuilt
+`feat_player_week_model`, the three pinned weekly artifacts (`weekly-artifact.json`, `-lineonly`,
+`streaming-artifact.json`) failed their population-guard tests: the store's `populationHash` had moved
+`3898c9dacbc5ae40` -> `7ca2e2be49fc5aa7` and the D22 pin no longer matched, so the live weekly serve was
+falling back to the season-line floor.
+
+- **The drift is BENIGN, verified, not a data regression.** Every historical input is stable
+  (`feat_player_week` 09-10, `feat_player_season` 09-12, projection + `fold-artifacts-d16` 09-14,
+  `fact_roster_week` unchanged). The delta is two small pieces: (a) ~99 rows of 2026 LIVE drift (the
+  board/roster legitimately changed this session), and (b) ~245 rows of historical build-method -- the D22
+  pin was built with a higher-coverage (no-blind) line population; the D17-correct **blind**
+  (`--artifact-dir data/fold-artifacts-d16`) build gives 79,567 historical. The 2026 component drifted
+  irreversibly, so `3898` cannot be reproduced -- the artifact MUST be re-pinned.
+- **Fix: refit the three artifacts on the D17-blind store and re-pin to `7ca2`.** Feature set UNCHANGED
+  (weekly 25, streaming 37). A trap was caught and avoided: `rz_share_td` had been added to
+  `train_weekly.py` `ALL_FEATURES`, so `--features all` would have silently shipped the rejected weekly
+  candidate -- the refit pins the explicit shipped feature lists instead. Serve-check passed (consumer
+  probe golden block to 1e-6; boosted heads self-check vs sklearn to 1e-9).
+- **The re-pin changes nothing material (measured).** Refit vs shipped over all 2026 player-weeks: mean
+  |Δmean| 0.39 settled / 0.44 forward, no systematic bias, p95 |Δ| ~2 pts, across every position. The
+  blind refit is serve-equivalent AND removes the latent no-blind line inconsistency the D22 build carried.
+- **Two known follow-ups (not blockers):** (1) `populationHash` includes the volatile LIVE season, so it
+  goes stale on every in-season roster sync -- the pin should exclude the live season (a `population.ts`
+  change) so a routine sync stops breaking the guard. (2) Rare extreme-form forward outliers: a hot-start
+  player with one big game (e.g. Bijan post-27-pt week) is projected aggressively on FORWARD weeks (mean
+  ~2.7x line) -- a forward small-sample regression issue, present in both artifacts, worse in the refit, an
+  edge case only.
+- REVERSAL: restore the prior `weekly-artifact.json` / `-lineonly` / `streaming-artifact.json` (the pre-swap
+  copies are in the session scratchpad and git history). Feature set and `--learner gbm` config unchanged.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
