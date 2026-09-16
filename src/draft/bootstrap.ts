@@ -194,6 +194,19 @@ export const weeklyCoupling = (): number => {
 };
 
 /**
+ * M2d KNOB (c), 2026-09-16. How hard the SEASON-level copula couples NFL teammates, as a multiple of
+ * the fitted pairwise correlation. 1 (unset) is the shipped model exactly -- the multiplier is
+ * applied to the off-diagonals only, so a value of 1 leaves every entry as `teammateCorr` returned
+ * it. The WEEKLY stage has its own multiple (`weeklyCoupling`, calibrated to 1.8) and is untouched
+ * by this, so the two stages can be attributed apart. Read at CALL time, for the same reason.
+ */
+export const SEASON_COUPLING_DEFAULT = 1;
+export const seasonCoupling = (): number => {
+  const v = Number(process.env.FF_SIM_CORR_SCALE);
+  return Number.isFinite(v) && v >= 0 ? v : SEASON_COUPLING_DEFAULT;
+};
+
+/**
  * How to reconcile the pool's level with our own projection, since the rank join keeps our ORDERING
  * but discards our MAGNITUDES.
  *
@@ -264,11 +277,12 @@ export function prepare(players: PoolPlayer[], outcomes: RankOutcomes, corr: Cor
     byTeam.get(p.team)!.push(p);
   }
   const wk = weeklyCoupling();
+  const sc = seasonCoupling();
   for (const [, members] of byTeam) {
     if (members.length < 2) continue;
     // `a === b` is IDENTITY, not position equality: the diagonal is the man with himself. Every
     // off-diagonal goes through `teammateCorr`, which never returns 1 for two different men.
-    const M = members.map((a) => members.map((b) => (a === b ? 1 : teammateCorr(corr, a.pos, b.pos))));
+    const M = members.map((a) => members.map((b) => (a === b ? 1 : teammateCorr(corr, a.pos, b.pos) * sc)));
     // A SECOND factor, for the WITHIN-WEEK stage. Same pairwise structure, scaled: the season-level
     // copula already delivers part of the same-week co-movement, so imposing the full measured
     // correlation again inside the season would double-count it. See WEEKLY_COUPLING.

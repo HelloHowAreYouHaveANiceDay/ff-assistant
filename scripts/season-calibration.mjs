@@ -432,6 +432,179 @@ const seasons = [];
 for (let y = LO; y <= HI; y++) seasons.push(y);
 
 // ---------------------------------------------------------------------------------------------
+// THE SWEEP AXIS (M2d, 2026-09-16). `--sweep KNOB=v1,v2,...` runs the SAME season, the SAME rosters
+// and the SAME seeds once per value of one env-gated dispersion knob, so every arm of a calibration
+// experiment comes from ONE version of this script rather than from a script edited between runs --
+// the difference that turns a pipeline change into a "result". The first value is the CONTROL and
+// MUST be the knob's shipped default, which is asserted by reproducing the flagless number: a sweep
+// whose control does not match the recorded figure is measuring something else.
+//
+// Nothing here writes a default. The knobs are read at call time by src/draft/season.ts and
+// src/draft/bootstrap.ts and are no-ops at their default values, so an unswept run of this script is
+// byte-identical to the one that produced the D25 record.
+//
+//   FF_SIM_LEVEL_SCALE  (default 1)    spread of a player's SEASON LEVEL about his target
+//   FF_SIM_TEAM_SD      (default 0)    sd of a per-fantasy-roster season-long common factor
+//   FF_SIM_WEEKLY_VAR   (default 1)    week-to-week spread WITHIN a drawn season (level preserved)
+//   FF_WEEKLY_COUPLING  (default 1.8)  within-week teammate copula multiple
+//   FF_SIM_CORR_SCALE   (default 1)    season-level teammate copula multiple
+//   FF_SIM_LEVEL_SHRINK (default: the D18 sqrt(K/(K+k)))  in-season level shrink override
+// ---------------------------------------------------------------------------------------------
+const SWEEP = val("--sweep", null);
+const SWEEP_OUT = val("--sweep-out", null);
+const SWEEP_DEFAULTS = {
+  FF_SIM_LEVEL_SCALE: "1", FF_SIM_TEAM_SD: "0", FF_SIM_WEEKLY_VAR: "1",
+  FF_WEEKLY_COUPLING: "1.8", FF_SIM_CORR_SCALE: "1", FF_SIM_LEVEL_SHRINK: null,
+};
+if (SWEEP) {
+  const eq = SWEEP.indexOf("=");
+  const knob = eq < 0 ? SWEEP : SWEEP.slice(0, eq);
+  if (!(knob in SWEEP_DEFAULTS)) {
+    throw new Error(`--sweep "${knob}" is not a knob this simulator has -- use one of ${Object.keys(SWEEP_DEFAULTS).join(", ")}.`);
+  }
+  const values = SWEEP.slice(eq + 1).split(",").map((s) => s.trim()).filter(Boolean);
+  if (!values.length) throw new Error("--sweep needs at least one value");
+  const restore = process.env[knob];
+  const setKnob = (v) => { if (v === "unset") delete process.env[knob]; else process.env[knob] = v; };
+
+  // Per value: one row per team-season (playoff, and title in the preseason mode), plus the UNSEEDED
+  // arm A at every value in the in-season mode -- the D18 dominance assertion has to be re-checked
+  // under any change, not assumed to survive it.
+  const rows = {}, titleRows = {}, rowsA = {};
+  for (const v of values) { rows[v] = []; titleRows[v] = []; rowsA[v] = []; }
+
+  console.log(`SWEEP ${knob} = ${values.join(", ")} -- ${AT_WEEK == null ? "PRESEASON" : `week ${AT_WEEK}`}, ${LO}-${HI}, ${TRIALS} trials, seed ${SEED}, artifacts ${FOLD_DIR}, replacement frame ${REPLACEMENT_FRAME}`);
+  console.log(`  control (first value) ${values[0]}; the knob's shipped default is ${SWEEP_DEFAULTS[knob] ?? "the D18 sqrt(K/(K+k))"}\n`);
+
+  for (const season of seasons) {
+    const s = buildSeason(season, AT_WEEK);
+    if (s.skip) { console.log(`  ${season}  SKIPPED -- ${s.skip}`); continue; }
+    if (AT_WEEK != null && AT_WEEK > s.reg + 1) { console.log(`  ${season}  SKIPPED -- week ${AT_WEEK} is past the regular season (${s.reg} weeks)`); continue; }
+    const useVm = UNLEAK ? (foldModel("variance", season) ?? vm) : vm;
+    const useOutcomes = UNLEAK ? (foldModel("outcomes", season) ?? outcomes) : outcomes;
+    const useCorr = UNLEAK ? (foldModel("correlation", season) ?? corr) : corr;
+    const base = {
+      weeks: s.weeks.length, playoffTeams: s.field, slots: s.slots, flexOk: ["RB", "WR", "TE"],
+      seeding: s.seasonSeeding, divisionOf: s.divisionOf, playoffReseed: s.seasonReseed,
+      projSd: 0.30, replacement: s.replacement, trials: TRIALS, seed: SEED, poolRank: s.poolRank,
+      bootstrap: { outcomes: useOutcomes, corr: useCorr, calibration: "scale" },
+      allowIncompleteRosters: true,
+    };
+    const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (s.rosOf.has(p.name) ? { ...p, rosPerGame: s.rosOf.get(p.name) } : { ...p })) }));
+    const servedOpts = AT_WEEK == null
+      ? base
+      : { ...base, played: s.played ? { ...s.played, priorWeeks: Number.isFinite(s.rosK) ? s.rosK : undefined } : undefined };
+    const cells = [];
+    for (const v of values) {
+      setKnob(v);
+      const odds = simulateSeasons(AT_WEEK == null ? s.teams : withRos, s.weeks, useVm, servedOpts);
+      const byId = new Map(odds.map((o) => [o.id, o]));
+      const seasonRows = s.teams.map((t) => ({ season, team: t.name, p: byId.get(t.id)?.playoffs ?? s.field / s.teams.length, y: t.outcome.playoffs ? 1 : 0 }));
+      rows[v].push(...seasonRows);
+      if (AT_WEEK == null) {
+        titleRows[v].push(...s.teams.map((t) => ({ season, team: t.name, p: byId.get(t.id)?.champion ?? 1 / s.teams.length, y: t.outcome.champion ? 1 : 0 })));
+      } else {
+        const oddsA = simulateSeasons(s.teams, s.weeks, useVm, base);   // unseeded, SAME knob value
+        const byA = new Map(oddsA.map((o) => [o.id, o]));
+        rowsA[v].push(...s.teams.map((t) => ({ season, team: t.name, p: byA.get(t.id)?.playoffs ?? s.field / s.teams.length, y: t.outcome.playoffs ? 1 : 0 })));
+      }
+      cells.push(brier(seasonRows));
+    }
+    setKnob(restore === undefined ? "unset" : restore);
+    console.log(`  ${season}  teams ${String(s.teams.length).padStart(2)} reg ${s.reg} field ${s.field}   ` +
+      values.map((v, i) => `${v}: ${cells[i].toFixed(4)}`).join("   "));
+  }
+  if (!rows[values[0]].length) { console.log("nothing scored."); process.exit(1); }
+
+  const seasonsIn = [...new Set(rows[values[0]].map((r) => r.season))].sort();
+  const brierOf = (rs) => brier(rs);
+  const perSeason = (rs, y) => brier(rs.filter((r) => r.season === y));
+  // Season-level paired bootstrap, deterministic: resample the eight seasons with replacement and
+  // recompute the mean paired delta. The unit of analysis is the SEASON, per the repo checklist.
+  const bootCI = (deltas) => {
+    let sd = 987654321;
+    const rnd = () => ((sd = (sd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const means = [];
+    for (let b = 0; b < 4000; b++) {
+      let sum = 0;
+      for (let i = 0; i < deltas.length; i++) sum += deltas[Math.floor(rnd() * deltas.length)];
+      means.push(sum / deltas.length);
+    }
+    means.sort((a, b) => a - b);
+    return [means[Math.floor(0.025 * means.length)], means[Math.floor(0.975 * means.length)]];
+  };
+
+  console.log(`\n  POOLED playoff Brier by ${knob} (${rows[values[0]].length} team-seasons), paired against the control ${values[0]}`);
+  console.log(`    ${"value".padEnd(10)} ${"playoff".padStart(8)} ${AT_WEEK == null ? `${"title".padStart(8)} ` : ""}${"paired d".padStart(10)} ${"SE".padStart(8)} ${"t".padStart(6)}  ${"95% CI (season bootstrap)".padStart(24)}  wins`);
+  for (const v of values) {
+    const d = seasonsIn.map((y) => perSeason(rows[v], y) - perSeason(rows[values[0]], y));
+    const m = d.reduce((a, x) => a + x, 0) / d.length;
+    const sdv = Math.sqrt(d.reduce((a, x) => a + (x - m) ** 2, 0) / Math.max(1, d.length - 1));
+    const se = sdv / Math.sqrt(d.length);
+    const [lo, hi] = bootCI(d);
+    console.log(`    ${String(v).padEnd(10)} ${brierOf(rows[v]).toFixed(4).padStart(8)} ` +
+      (AT_WEEK == null ? `${brierOf(titleRows[v]).toFixed(4).padStart(8)} ` : "") +
+      `${((m >= 0 ? "+" : "") + m.toFixed(4)).padStart(10)} ${se.toFixed(4).padStart(8)} ${(se > 0 ? m / se : 0).toFixed(2).padStart(6)}  ` +
+      `[${lo.toFixed(4)}, ${hi.toFixed(4)}]`.padStart(24) + `  ${d.filter((x) => x < 0).length}/${d.length}`);
+  }
+
+  // LEAVE-ONE-SEASON-OUT over the swept values: pick the best value on seven seasons, score the
+  // eighth with it, pool. The in-sample best of eight is a winner's curse; this is the number.
+  {
+    let held = 0, heldN = 0; const picked = [];
+    for (const ho of seasonsIn) {
+      let best = { v: values[0], b: Infinity };
+      for (const v of values) {
+        const tr = rows[v].filter((r) => r.season !== ho);
+        const b = brier(tr);
+        if (b < best.b) best = { v, b };
+      }
+      picked.push(best.v);
+      const te = rows[best.v].filter((r) => r.season === ho);
+      held += brier(te) * te.length; heldN += te.length;
+    }
+    console.log(`\n  LEAVE-ONE-SEASON-OUT over these values: held-out playoff Brier ${(held / heldN).toFixed(4)} ` +
+      `(control ${brierOf(rows[values[0]]).toFixed(4)}), value chosen per fold: ${picked.join(", ")}`);
+  }
+
+  // The shuffled-outcome control, at every value: a Brier computed against permuted outcomes looks
+  // exactly like an honest one.
+  for (const v of values) {
+    let sd = 1234567;
+    const rnd = () => ((sd = (sd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const out = rows[v].map((r) => ({ ...r }));
+    for (const season of new Set(out.map((r) => r.season))) {
+      const idx = out.map((r, i) => i).filter((i) => out[i].season === season);
+      const ys = idx.map((i) => out[i].y);
+      for (let i = ys.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [ys[i], ys[j]] = [ys[j], ys[i]]; }
+      idx.forEach((i, k) => { out[i].y = ys[k]; });
+    }
+    console.log(`  CONTROL ${knob}=${v}: shuffled ${brier(out).toFixed(4)} vs honest ${brierOf(rows[v]).toFixed(4)} -> ${brier(out) > brierOf(rows[v]) ? "honest wins" : "WARNING: no better than shuffled"}`);
+  }
+  if (AT_WEEK != null) {
+    console.log(`\n  SEEDED vs UNSEEDED (D18) at every value -- the seeded arm must still dominate`);
+    for (const v of values) {
+      const d = seasonsIn.map((y) => perSeason(rows[v], y) - perSeason(rowsA[v], y));
+      const m = d.reduce((a, x) => a + x, 0) / d.length;
+      console.log(`    ${String(v).padEnd(10)} seeded ${brierOf(rows[v]).toFixed(4)}  unseeded ${brierOf(rowsA[v]).toFixed(4)}  paired ${(m >= 0 ? "+" : "") + m.toFixed(4)}  better in ${d.filter((x) => x < 0).length}/${d.length}`);
+    }
+  }
+
+  for (const v of values) {
+    console.log(`\n  RELIABILITY, ${knob}=${v} -- PLAYOFFS`);
+    for (const b of reliability(rows[v])) {
+      console.log(`    ${`${(100 * b.lo).toFixed(0)}-${(100 * b.hi).toFixed(0)}%`.padEnd(10)} n ${String(b.n).padStart(4)}  predicted ${(100 * b.predicted).toFixed(1).padStart(5)}%  observed ${(100 * b.observed).toFixed(1).padStart(5)}%  gap ${((b.observed - b.predicted) >= 0 ? "+" : "") + (100 * (b.observed - b.predicted)).toFixed(1)}`);
+    }
+  }
+  if (SWEEP_OUT) {
+    writeFileSync(SWEEP_OUT, JSON.stringify({ knob, values, atWeek: AT_WEEK, rows, titleRows, rowsA }), "utf8");
+    console.log(`\n  wrote per-team-season rows for every value -> ${SWEEP_OUT}`);
+  }
+  db.close();
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------------------------
 // THE IN-SEASON GATE (--at-week). Three arms per season on the same week-W rosters, scored against
 // the same outcomes, paired by season. Exits when done; the preseason report below is untouched.
 // ---------------------------------------------------------------------------------------------

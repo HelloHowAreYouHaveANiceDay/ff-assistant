@@ -388,11 +388,17 @@ recorded here.
   out-of-sample signal** — re-measured in Phase 2c on 112 team-seasons from nine real drafts, they
   are still no better than assuming league-average (11.51pp against 11.43pp, winning 56/112) — so
   per-owner targeting advice is not trustworthy; the sim's price curve is least reliable at the very
-  top, which is what `maxShare` governs; and the **season simulator is over-confident**, measured
-  against 114 real team-seasons: its playoff Brier beats a uniform baseline (0.2370 against 0.2451)
-  but its TITLE Brier does not (0.0659 against 0.0652), and the 50-70% predicted playoff band
-  realises 46% (`scripts/season-calibration.mjs`). Shrinking toward uniform does not fix it — chosen
-  leave-one-season-out the held-out Brier gets worse — so no correction is applied.
+  top, which is what `maxShare` governs; and the **season simulator is under-resolved, not
+  over-confident** (re-measured 2026-09-16 on the D16/D25 stack, `docs/season-sim-calibration-2026-09-16.md`):
+  against 114 real team-seasons its preseason playoff Brier is 0.2297 against uniform 0.2451 and its
+  TITLE Brier 0.0636 against 0.0652; 102 of 114 team-seasons sit in the 30-70% band, no team is ever
+  predicted above 70%, and the 50-70% band realises 59% against 56% predicted. The earlier "50-70%
+  realises 46%" was an over-sharpened configuration that no longer ships. Four dispersion knobs (level
+  spread, a roster-level common factor, weekly variance, both copula stages) are leave-one-season-out
+  nulls at their shipped values with provably connected levers; the roster-level factor is the rejected
+  shrink in disguise. One in-season correction is PENDING sign-off: the played-weeks shrink on the
+  level's spread borrows the ROS blend's K=6, and with its own weight of 1 the week-8 and week-11
+  playoff Brier improve (0.1336 -> 0.1297, CI excluding zero, 7/8 seasons) as a sharpening.
 
 ## The decision layer (Phase 3, 2026-09-09)
 

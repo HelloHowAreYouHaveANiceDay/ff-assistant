@@ -519,7 +519,24 @@ export function simulateSeasons(
   const _envNum = (k: string): number | null => { const v = Number(process.env[k]); return Number.isFinite(v) && v >= 0 ? v : null; };
   const levelShrinkOverride = _envNum("FF_SIM_LEVEL_SHRINK");
   const effShrink = levelShrinkOverride != null && played ? levelShrinkOverride : shrink;
+  // M2d KNOB (a), 2026-09-16. `FF_SIM_LEVEL_SCALE` multiplies the spread of a player's SEASON LEVEL
+  // about its target -- the quantity `priorWeeks` shrinks in-season, here exposed for the PRESEASON
+  // arm too, where `played` is absent and `FF_SIM_LEVEL_SHRINK` is therefore inert. 1 (unset) is
+  // byte-identical: the factor below is exactly `effShrink`, and the transform block fires on the
+  // same condition it fired on before. >1 widens the level distribution (the candidate mechanism for
+  // the preseason over-confidence), <1 narrows it. It scales the parametric `projSd` by the same
+  // factor, so the two sampling paths carry one definition of "how unsure are we about his level".
+  const levelScale = _envNum("FF_SIM_LEVEL_SCALE");
+  const levelFactor = effShrink * (levelScale ?? 1);
   const weeklyVarScale = _envNum("FF_SIM_WEEKLY_VAR");
+  // M2d KNOB (new dependence), 2026-09-16. `FF_SIM_TEAM_SD` is the sd of a per-FANTASY-TEAM, per-trial
+  // lognormal (mean 1) multiplier applied to every man on that roster for the whole season. The
+  // copula couples NFL teammates only, so a sixteen-man roster's season total is very nearly a sum of
+  // independent draws and the spread of TEAM strength is correspondingly narrow -- the shape that
+  // produces over-confident berth probabilities. This is the missing roster-level common factor
+  // (manager skill at setting lineups, waiver activity, a season's injury luck concentrating on one
+  // roster), stated as one number. 0 (unset) is byte-identical: no draw is taken and no value moves.
+  const teamSd = _envNum("FF_SIM_TEAM_SD") ?? 0;
   // DIAGNOSTIC ONLY: FF_SIM_FILL_ZEROS=1 replaces a drawn trajectory's injury/DNP zeros with its
   // played-week mean, removing availability variance from the remaining weeks. A positive control to
   // attribute the late-season too-wide spread to availability rather than to scoring spread.
@@ -545,11 +562,18 @@ export function simulateSeasons(
     // In bootstrap mode this is only the LINEUP-SETTING estimate (a manager picks starters on what he
     // thinks they are worth); the scores themselves come from the resampled pools.
     const trueMean = new Map<SeasonPlayer, number>();
-    for (const tm of teams) {
+    // The roster-level common factor (FF_SIM_TEAM_SD), one draw per fantasy team per trial. Keyed on
+    // a name no player can have, at purpose 0x9000, which no PURPOSE uses -- so with the knob unset
+    // nothing is drawn and every other stream keeps the values it had.
+    const teamShock = teamSd > 0
+      ? teams.map((tm) => Math.exp(drawGauss(seedNum, trial, 0, pid(`__roster__${tm.id}`), 0x9000) * teamSd - 0.5 * teamSd ** 2))
+      : null;
+    for (let ti = 0; ti < teams.length; ti++) {
+      const tm = teams[ti];
       for (const p of tm.roster) {
-        const sdEff = opts.projSd * effShrink;
+        const sdEff = opts.projSd * levelFactor;
         const err = (!boot && sdEff > 0) ? Math.exp(drawGauss(seedNum, trial, 0, pid(p.name), PURPOSE.projErr) * sdEff - 0.5 * sdEff ** 2) : 1;
-        trueMean.set(p, Math.max(0, perGame(p) * err));
+        trueMean.set(p, Math.max(0, perGame(p) * err * (teamShock ? teamShock[ti] : 1)));
       }
     }
     // --- draw each player's whole SEASON once, then read weeks out of it ---------------------------
@@ -576,14 +600,19 @@ export function simulateSeasons(
     // trials and players. Every week is multiplied by one ratio, so a zero stays a zero and the
     // shape of the drawn season (including where its injury falls) is exactly preserved; only its
     // level moves. With shrink = 1 nothing is touched, and the map is the sampler's own.
-    if (seasonDraw && (effShrink < 1 || (weeklyVarScale != null && weeklyVarScale !== 1) || fillZeros || deterministic)) {
-      for (const drawn of seasonDraw) {
+    if (seasonDraw && (levelFactor !== 1 || teamShock || (weeklyVarScale != null && weeklyVarScale !== 1) || fillZeros || deterministic)) {
+      for (let si = 0; si < seasonDraw.length; si++) {
+        const drawn = seasonDraw[si];
+        const shock = teamShock ? teamShock[si] : 1;
         for (const [pp, t] of drawn) {
           if (!t || !t.weeks.length || pp.projPerGame == null || !(pp.projPerGame > 0)) continue;
           if (deterministic) { drawn.set(pp, { weeks: t.weeks.map(() => pp.projPerGame!), total: pp.projPerGame! * t.weeks.length }); continue; }
           const level = t.total / t.weeks.length;
           if (!(level > 0)) continue;
-          const r = (pp.projPerGame + effShrink * (level - pp.projPerGame)) / level;
+          // One ratio per drawn season: the level moved toward (or away from) the target by
+          // `levelFactor`, then the whole roster's common factor. Zeros stay zeros and the drawn
+          // injury shape is untouched, exactly as the D18 shrink intended.
+          const r = shock * (pp.projPerGame + levelFactor * (level - pp.projPerGame)) / level;
           let weeks = t.weeks.map((v) => v * r);
           let total = t.total * r;
           if (fillZeros) {
