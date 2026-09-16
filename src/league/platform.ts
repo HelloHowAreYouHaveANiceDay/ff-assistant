@@ -73,6 +73,14 @@ export interface LeagueSettings {
   kicker: KickerRules | null;
   defense: DefenseRules | null;
   format: LeagueFormat;
+  /**
+   * OUR TEAM in this league, when the adaptor can identify it from the same read (ESPN matches the
+   * logged-in SWID against each team's owners). `null` = "this read cannot tell", which is NOT the
+   * same as "we have no team": the caller must then KEEP whatever the store already knows rather than
+   * blanking `league.team_id`, because a sync that quietly forgets our seat breaks every verb that
+   * needs it and looks like a successful sync.
+   */
+  teamId: string | null;
   acquisition: AcquisitionRules;
   /** The platform's OWN settings table, verbatim, as label -> value. Provenance, not a consumer
    *  surface: it is what makes a stored config auditable against the page it was read from. */
@@ -95,14 +103,30 @@ export interface PlatformIO {
   get(url: string, headers?: Record<string, string>): Promise<string>;
 }
 
+/** What the CALLER knows and the platform's own pages do not publish. See `Platform.syncSettings`. */
+export interface SyncHints {
+  /** Our identity on the platform (ESPN's SWID cookie), so the sync can name OUR team. */
+  swid?: string | null;
+  /** What the store holds today, for fields a platform genuinely does not publish. */
+  prevBudget?: number;
+  prevTeams?: number;
+}
+
 export interface Platform {
   readonly id: PlatformId;
   readonly urls: PlatformUrls;
   readonly webview: WebviewSpec;
   /** The leagues this login can see. */
   discover(io: PlatformIO, wantSeason: number): Promise<DiscoveredLeague[]>;
-  /** The league's rules, in our vocabulary. THROWS on anything it cannot read -- never defaults. */
-  syncSettings(io: PlatformIO, leagueId: string, season: number): Promise<LeagueSettings>;
+  /**
+   * The league's rules, in our vocabulary. THROWS on anything it cannot read -- never defaults.
+   *
+   * `hints` carries the two things only the CALLER can know: who we are on this platform (`swid` for
+   * ESPN), and the values the store already holds for fields the platform does not publish (a
+   * non-auction league has no `auctionBudget`). They are hints, never substitutes: an adaptor that
+   * cannot read a field still throws rather than reaching for `prevX`.
+   */
+  syncSettings(io: PlatformIO, leagueId: string, season: number, hints?: SyncHints): Promise<LeagueSettings>;
   /** Every team's roster. */
   syncRosters(io: PlatformIO, leagueId: string, season: number): Promise<PlatformRoster[]>;
   /** ONE team, as the platform-agnostic type. `proj` is 0 -- valuation is attached by openLeague. */

@@ -2,6 +2,13 @@
 // assign the best legal starting lineup and say who to bench + why. Availability is the big lever
 // (docs/projections.md): a player on a bye or ruled OUT is NOT startable, so depth covers them.
 // Pure + testable; the copresent read/submit (src/inseason/espnTeam.ts) wraps this for the live app.
+//
+// SLOT MATCHING IS NOT DECIDED HERE (I-2/I-3). It used to be: a literal `slot === "FLEX"` test and a
+// literal `BE|BENCH` filter, both of which are blind to any token they were not typed with. A Yahoo
+// `SUPERFLEX` slot matched nobody, so the optimizer quietly assigned it "(empty)", scored it 0 and
+// returned a lineup that looks full; two `IR` slots became two permanent "no available player to
+// fill IR" flags. Both now come from src/draft/slots.ts, the one module that knows what a slot is.
+import { eligibilityOf, isBenchSlot, slotAdmits } from "../draft/slots.js";
 
 export interface RosterPlayer {
   name: string;
@@ -59,11 +66,18 @@ const FLEX_OK = new Set(["RB", "WR", "TE"]);
 export function optimalLineup(players: RosterPlayer[], slots: string[], flexOk?: Iterable<string>): LineupResult {
   const flex = flexOk ? new Set(flexOk) : FLEX_OK;
   const flexOrder = [...flex];
-  const startSlots = slots.filter((s) => s !== "BE" && s !== "BENCH");
+  const startSlots = slots.filter((s) => !isBenchSlot(s));
 
-  const eligOf = (p: RosterPlayer): string[] => (p.eligible && p.eligible.length ? p.eligible : [p.pos]);
-  const accepts = (slot: string, p: RosterPlayer): boolean =>
-    slot === "FLEX" ? eligOf(p).some((e) => flex.has(e)) : eligOf(p).includes(slot);
+  // ONE eligibility rule, from src/draft/slots.ts. `flex` (the league's `flex_ok`) still overrides
+  // the literal `FLEX` token and nothing else, so this league -- whose flex_ok IS [RB,WR,TE] -- is
+  // byte-identical, while `SUPERFLEX`, `OP` and the slash-forms now admit whom they say they do.
+  const admits = new Map<string, string[]>();
+  for (const s of startSlots) if (!admits.has(s)) admits.set(s, slotAdmits(s, flex));
+  const eligOf = (p: RosterPlayer): string[] => eligibilityOf(p);
+  const accepts = (slot: string, p: RosterPlayer): boolean => {
+    const ok = admits.get(slot) ?? slotAdmits(slot, flex);
+    return eligOf(p).some((e) => ok.includes(e));
+  };
 
   const rank = (p: RosterPlayer) => { const i = flexOrder.indexOf(p.pos); return i < 0 ? flexOrder.length : i; };
   const order = players.filter((p) => p.available).map((p, i) => ({ p, i }))

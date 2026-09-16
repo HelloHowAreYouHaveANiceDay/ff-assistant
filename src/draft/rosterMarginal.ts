@@ -42,6 +42,7 @@
  * noise is several times the effect.
  */
 import { simulateSeasons, type SeasonOpts, type SeasonPlayer, type SeasonTeamInput, type VarianceModel } from "./season.js";
+import { isBenchSlot, isFlexSlot, slotAdmits } from "./slots.js";
 
 export type MarginalPlayer = SeasonPlayer;
 
@@ -127,14 +128,13 @@ export interface MarginalResult {
   objective: "playoffs";
 }
 
-const FLEX_KEYS = new Set(["FLEX", "OP", "RB/WR", "WR/TE"]);
-const isBenchSlot = (s: string) => /^(BE|BENCH|IR|ER)$/i.test(s);
-
-/** Can `pos` legally occupy slot `slot`? */
+/** Can `pos` legally occupy slot `slot`? Through the ONE slot parser (I-2): the hand-typed
+ *  `FLEX_KEYS = {FLEX, OP, RB/WR, WR/TE}` set could not see `SUPERFLEX`, so a Yahoo superflex slot
+ *  was treated as a DEDICATED slot for a position called "SUPERFLEX" and accepted nobody. For this
+ *  league (whose only flex is `FLEX` and whose `flex_ok` is [RB,WR,TE]) the answer is unchanged. */
 export function slotAccepts(slot: string, pos: string, flexOk?: readonly string[]): boolean {
   if (isBenchSlot(slot)) return true;
-  if (FLEX_KEYS.has(slot)) return (flexOk ?? ["RB", "WR", "TE"]).includes(pos);
-  return slot === pos;
+  return slotAdmits(slot, flexOk ?? ["RB", "WR", "TE"]).includes(pos);
 }
 
 /**
@@ -195,7 +195,7 @@ export function fillRoster(state: MarginalState, env: MarginalEnv, budget: numbe
   // Scarcest slot first for the cheap pass, so a dedicated RB slot is not left empty because FLEX
   // took the last $1 back.
   const order = slots.map((_s, i) => i).sort((a, b) => {
-    const rank = (s: string) => (isBenchSlot(s) ? 2 : FLEX_KEYS.has(s) ? 1 : 0);
+    const rank = (s: string) => (isBenchSlot(s) ? 2 : isFlexSlot(s) ? 1 : 0);
     return rank(slots[a]) - rank(slots[b]);
   });
   for (const i of order) {
@@ -385,8 +385,8 @@ export class MarginalBook {
     const base = this.baselineAt(budget, this.trials, exclude);
     // He occupies the best slot he is eligible for; the fill then has one fewer slot to cover.
     const slots = [...this.state.openSlots];
-    let idx = slots.findIndex((s) => !isBenchSlot(s) && !FLEX_KEYS.has(s) && slotAccepts(s, player.pos, this.env.flexOk));
-    if (idx < 0) idx = slots.findIndex((s) => FLEX_KEYS.has(s) && slotAccepts(s, player.pos, this.env.flexOk));
+    let idx = slots.findIndex((s) => !isBenchSlot(s) && !isFlexSlot(s) && slotAccepts(s, player.pos, this.env.flexOk));
+    if (idx < 0) idx = slots.findIndex((s) => isFlexSlot(s) && slotAccepts(s, player.pos, this.env.flexOk));
     if (idx < 0) idx = slots.findIndex((s) => isBenchSlot(s));
     if (idx < 0) {
       // No slot he can fill: he is worth exactly nothing to this roster, and that is an answer.

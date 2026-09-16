@@ -8,7 +8,6 @@ import { z } from "zod";
 import { openDb, getConfig, setConfig, getMyRoster, setMyRoster, logAction, completeAction, recentActions, activeLeagueId, assertBoardFor, localDraftId, type RosterEntry } from "../db/db.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { nameKey } from "../draft/values.js";
-import { scoringFromEspn, type ScoringRules } from "../draft/scoring.js";
 import { LEVER_META, clampLever, applyLevers } from "../draft/levers.js";
 import { browserTools } from "./browserTools.js";
 import { ESPN_READS_BASE } from "../data/espnApi.js";
@@ -16,16 +15,43 @@ import { ESPN_READS_BASE } from "../data/espnApi.js";
 // ESPN fantasy id maps (defaultPositionId / lineupSlotId)
 const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
 const ESPN_SLOT: Record<number, string> = { 0: "QB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 16: "DST", 17: "K", 20: "BE", 21: "IR", 23: "FLEX", 24: "ER" };
-// Build the app's ordered slots array (starters, then DST/K, then bench) from ESPN's lineupSlotCounts.
-const SLOT_ORDER = [0, 2, 3, 4, 5, 6, 23, 7, 16, 17, 20, 21, 24];
-function espnSlotsToConfig(counts: Record<string, number>): string[] {
-  const out: string[] = [];
-  for (const id of SLOT_ORDER) { const n = Number(counts[id] ?? 0); for (let i = 0; i < n; i++) out.push(ESPN_SLOT[id] ?? String(id)); }
-  return out;
-}
+// The slot-order -> config-array builder that used to live here is now `espnSlotsToConfig` in
+// src/league/espnPlatform.ts, where `league_sync` reaches it through the adaptor (P-1).
 const espnLeagueUrl = (season: number, leagueId: string, views: string[]) =>
   `${ESPN_READS_BASE}/seasons/${season}/segments/0/leagues/${leagueId}?` + views.map((v) => `view=${v}`).join("&");
-const normSwid = (s: string) => (s || "").replace(/[{}]/g, "").toUpperCase();
+
+/**
+ * A `PlatformIO` over the app bridge -- ONE authenticated GET inside the guest that holds `host`'s
+ * login (P-6). This is what lets `league_sync` and `discover_leagues` DISPATCH on the league's
+ * platform instead of building ESPN URLs for whatever id they resolved: the adaptor is handed an IO
+ * and never learns which browser it is talking to.
+ */
+function platformIO(host: string): import("../league/platform.js").PlatformIO {
+  return { get: async (url, headers) => (await import("../browser/appBridge.js")).bridgeFetch(url, headers, 25000, { host }) };
+}
+
+/**
+ * WHICH EMBEDDED GUEST THE GENERIC BROWSE TOOLS DRIVE (P-6).
+ *
+ * `navigate` / `read_page` / `click_page` addressed `#espnview` unconditionally. The app mounts one
+ * webview PER PLATFORM (each on its own persistent partition, both signed in at once), so with a
+ * Yahoo active league those three drove the ESPN browser and reported what they found there as the
+ * answer -- an ESPN-shaped answer about a league that is not on ESPN, with nothing saying so.
+ *
+ * The element id now comes from the ACTIVE league's platform adaptor. ESPN is the fallback for a
+ * store with no league / an unreadable store, which is exactly the old behaviour where it was right.
+ */
+async function activeGuest(dbPath: string | undefined): Promise<{ id: string; elementId: string }> {
+  try {
+    const db = openDb(dbPath);
+    let raw: string | null;
+    try { raw = resolveLeagueContext(db, undefined).platformRaw; } finally { db.close(); }
+    if (!raw) return { id: "espn", elementId: "espnview" };
+    const { platformFor } = await import("../league/platform.js");
+    const p = await platformFor(raw);
+    return { id: p.id, elementId: p.webview.elementId };
+  } catch { return { id: "espn", elementId: "espnview" }; }
+}
 
 // One row per player joining our value + both consensus sources, for the tools to format.
 const BOARD_SQL = `
@@ -263,24 +289,27 @@ function buildTools(dbPath: string | undefined, season: number) {
       // (persistent, always a CDP target). No bro; everything goes through the logged-in app session.
       tool(
         "navigate",
-        "Navigate the embedded ESPN browser (my logged-in session) to a URL; shows it in Live Draft and returns the resulting URL + title. Browse my fantasy home / team / league pages.",
+        "Navigate THE ACTIVE LEAGUE'S embedded browser (my logged-in session on that league's platform -- espn or yahoo; the app holds one signed-in webview per platform) to a URL; shows it in Live Draft and returns the platform, resulting URL and title. Browse my fantasy home / team / league pages.",
         { url: z.string().describe("full URL, e.g. https://fantasy.espn.com/football/") },
         async (args) => {
           const { browser, page } = await rendererPage();
           if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "app not available (open the desktop app)" }] }; }
-          try { const info = await wvNavigate(page, args.url); await browser?.close().catch(() => {}); return { content: [{ type: "text", text: `at ${info.url || args.url} | ${info.title || ""}` }] }; }
+          // THE ACTIVE LEAGUE'S GUEST, not always ESPN's (P-6).
+          const g = await activeGuest(dbPath);
+          try { const info = await wvNavigate(page, args.url, g.elementId); await browser?.close().catch(() => {}); return { content: [{ type: "text", text: `[${g.id}] at ${info.url || args.url} | ${info.title || ""}` }] }; }
           catch (e) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "nav error: " + String(e).slice(0, 120) }] }; }
         },
       ),
       tool(
         "read_page",
-        "Read the visible text of the current embedded ESPN page (optionally only lines containing a keyword). Use after navigate to see what's there.",
+        "Read the visible text of the ACTIVE LEAGUE'S embedded page (its platform's webview, not always ESPN's), optionally only lines containing a keyword. Use after navigate to see what's there.",
         { contains: z.string().optional().describe("filter to lines containing this text") },
         async (args) => {
           const { browser, page } = await rendererPage();
           if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "app not available" }] }; }
           try {
-            const text = await wvEval(page, "(document.body&&document.body.innerText||'').slice(0,6000)");
+            const g = await activeGuest(dbPath);
+            const text = await wvEval(page, "(document.body&&document.body.innerText||'').slice(0,6000)", g.elementId);
             await browser?.close().catch(() => {});
             const filtered = args.contains ? (text.split("\n").filter((l) => l.toLowerCase().includes(args.contains!.toLowerCase())).join("\n") || "(no matching lines)") : text;
             return { content: [{ type: "text", text: filtered.slice(0, 3500) || "(empty)" }] };
@@ -289,7 +318,7 @@ function buildTools(dbPath: string | undefined, season: number) {
       ),
       tool(
         "click_page",
-        "Click an element in the embedded ESPN page by its visible TEXT (or a CSS selector). Use after navigate/read_page to actually operate the site -- e.g. entering a mock draft room from the lobby. Returns what was clicked and the resulting URL/title.",
+        "Click an element in the ACTIVE LEAGUE'S embedded page (its platform's webview) by its visible TEXT (or a CSS selector). Use after navigate/read_page to actually operate the site -- e.g. entering a mock draft room from the lobby. Returns what was clicked and the resulting URL/title.",
         {
           text: z.string().optional().describe("visible text of the button/link, e.g. 'Practice Draft'"),
           selector: z.string().optional().describe("CSS selector, used instead of text when given"),
@@ -337,25 +366,26 @@ function buildTools(dbPath: string | undefined, season: number) {
               // still fire for components that open on those instead of click.
               "try{if(typeof el.click==='function')el.click();}catch(e){}" +
               "return 'CLICKED:'+label;})()";
-            const res = await wvEval(page, js);
+            const g = await activeGuest(dbPath);
+            const res = await wvEval(page, js, g.elementId);
             if (res === "NOMATCH") { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: `no visible element matched ${args.selector ? "selector " + args.selector : `text "${args.text}"`}` }] }; }
             await page.waitForTimeout(2000);
             // If the click tried to pop a window, follow it in-place.
-            const popped = await wvEval(page, "String(window.__ffOpen||'')");
+            const popped = await wvEval(page, "String(window.__ffOpen||'')", g.elementId);
             let followed = "";
             if (popped && popped !== "null") {
-              const abs = popped.startsWith("http") ? popped : new URL(popped, await wvEval(page, "location.href")).href;
-              await wvNavigate(page, abs);
+              const abs = popped.startsWith("http") ? popped : new URL(popped, await wvEval(page, "location.href", g.elementId)).href;
+              await wvNavigate(page, abs, g.elementId);
               followed = ` (followed blocked popup -> ${abs})`;
             }
             await page.waitForTimeout(1500);
-            const after = await page.evaluate(() => { const wv = document.getElementById("espnview") as unknown as { getURL?: () => string; getTitle?: () => string }; return { url: wv?.getURL ? wv.getURL() : "", title: wv?.getTitle ? wv.getTitle() : "" }; });
+            const after = await page.evaluate((el) => { const wv = document.getElementById(el) as unknown as { getURL?: () => string; getTitle?: () => string }; return { url: wv?.getURL ? wv.getURL() : "", title: wv?.getTitle ? wv.getTitle() : "" }; }, g.elementId);
             await browser?.close().catch(() => {});
             return { content: [{ type: "text", text: `${res}${followed} -> ${after.url || "(same page)"} | ${after.title || ""}` }] };
           } catch (e) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "click error: " + String(e).slice(0, 140) }] }; }
         },
       ),
-      ...(browserTools(tool as never) as never[]),
+      ...(browserTools(tool as never, dbPath) as never[]),
       tool(
         "discover_leagues",
         "Browse MY ESPN fantasy home and list my leagues/teams (leagueId, season, team) by reading page links -- more reliable than guessing IDs. Saves them to the store.",
@@ -372,137 +402,138 @@ function buildTools(dbPath: string | undefined, season: number) {
             const raw = await wvEval(page, "JSON.stringify(Array.prototype.slice.call(document.querySelectorAll('a')).map(function(a){return {h:a.href,t:(a.textContent||'').trim().slice(0,80)}}).filter(function(x){return x.h.indexOf('leagueId')>=0}).concat([{h:location.href,t:''}]))");
             await browser?.close().catch(() => {});
             let links: { h: string; t: string }[] = []; try { links = JSON.parse(raw || "[]"); } catch { /* empty */ }
-            const seen: Record<string, boolean> = {}; const found: { leagueId: string; seasonId: string; teamId: string; name: string }[] = [];
-            for (const x of links) { try { const u = new URL(x.h); const lg = u.searchParams.get("leagueId"); if (!lg) continue; const se = u.searchParams.get("seasonId") || ""; const k = lg + "|" + se; if (!seen[k]) { seen[k] = true; found.push({ leagueId: lg, seasonId: se, teamId: u.searchParams.get("teamId") || "", name: x.t }); } } catch { /* skip */ } }
             const db = openDb(dbPath); const now = new Date().toISOString();
             // SEASON FILTER. A fantasy-home scrape picks up next season's placeholder links, and each
             // one used to become a `league` row of its own -- that is where the junk 211696/2027 stub
             // with a NULL name came from. A league whose season is not the config season is not a
             // league this store can do anything with yet, so it is reported and not written.
             const wantSeason = getConfig(db).season;
-            const skipped = found.filter((l) => Number(l.seasonId) && Number(l.seasonId) !== wantSeason);
-            const keep = found.filter((l) => !Number(l.seasonId) || Number(l.seasonId) === wantSeason);
-            // `platform='espn'` is CORRECT here and deliberate: this verb browses ESPN's fantasy home,
-            // so every league it can possibly find is an ESPN league.
-            for (const l of keep) db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?, 'espn', ?, ?, ?, ?) ON CONFLICT(league_id) DO UPDATE SET name=COALESCE(excluded.name, league.name), season=excluded.season, team_id=excluded.team_id, last_synced_at=excluded.last_synced_at").run(l.leagueId, l.name || null, Number(l.seasonId) || null, l.teamId || null, now);
+            // THE PARSER IS THE PLATFORM'S, NOT THIS TOOL'S (P-1). `espnDiscoverFromLinks` is the same
+            // logic this tool used to inline, lifted into src/league/espnPlatform.ts where it is unit
+            // tested against a saved payload -- so the live tool and the tested parser cannot drift.
+            const { espnDiscoverFromLinks } = await import("../league/espnPlatform.js");
+            const { espnPlatform } = await import("../league/espnPlatform.js");
+            const { keep, skipped } = espnDiscoverFromLinks(links, wantSeason);
+            // `platform` comes from the ADAPTOR that found them, not from a literal. It is still
+            // "espn" here and that is correct -- this verb browses ESPN's own fantasy home -- but it
+            // is now a fact the platform states about itself rather than a string typed at the call
+            // site, which is what made `discover_leagues` unable to ever produce a Yahoo row.
+            const platform = espnPlatform.id;
+            for (const l of keep) db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(league_id) DO UPDATE SET platform=excluded.platform, name=COALESCE(excluded.name, league.name), season=excluded.season, team_id=excluded.team_id, last_synced_at=excluded.last_synced_at").run(l.leagueId, platform, l.name || null, l.season ?? null, l.teamId || null, now);
             db.close();
-            const skipLine = skipped.length ? `\n(skipped ${skipped.length} link(s) for another season: ${skipped.map((l) => `${l.leagueId}/${l.seasonId}`).join(", ")})` : "";
-            return { content: [{ type: "text", text: keep.length ? `found ${keep.length} league(s):\n` + keep.map((l) => `leagueId ${l.leagueId}, season ${l.seasonId || "?"}, team ${l.teamId || "?"}${l.name ? `, "${l.name}"` : ""}`).join("\n") + skipLine : "no league links on the fantasy home -- navigate into a team page + read_page, or confirm I'm logged in" + skipLine }] };
+            const skipLine = skipped.length ? `\n(skipped ${skipped.length} link(s) for another season: ${skipped.map((l) => `${l.leagueId}/${l.season ?? "?"}`).join(", ")})` : "";
+            return { content: [{ type: "text", text: keep.length ? `found ${keep.length} ${platform} league(s):\n` + keep.map((l) => `leagueId ${l.leagueId}, season ${l.season ?? "?"}, team ${l.teamId || "?"}${l.name ? `, "${l.name}"` : ""}`).join("\n") + skipLine : "no league links on the fantasy home -- navigate into a team page + read_page, or confirm I'm logged in" + skipLine }] };
           } catch (e) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "discover error: " + String(e).slice(0, 120) }] }; }
         },
       ),
       tool(
         "league_sync",
-        "Sync my REAL ESPN league into the app from my logged-in session: name, size, scoring (auto-detects PPR/Half/Standard from the league's rules), roster slots, and which team is mine. Run discover_leagues first. If it changes the scoring format, tell me to run `ff refresh` so tiers/ADP rebuild for that format.",
+        "Sync my REAL league into the app from my logged-in session: name, size, scoring (the whole per-stat model, not just the PPR bucket), roster slots, calendar/playoff format, acquisition rules, and which team is mine. DISPATCHES ON THE LEAGUE'S PLATFORM (espn or yahoo) -- a platform with no adaptor is refused by name, never synced with another platform's URLs. Run discover_leagues first. If it changes the scoring format, tell me to run `ff refresh` so tiers/ADP rebuild for that format.",
         {},
         async () => {
-          const { browser, page } = await rendererPage();
-          if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "app not available (open the desktop app)" }] }; }
+          // PLATFORM DISPATCH (P-1/P-6). This verb used to build an ESPN URL for whatever league id it
+          // resolved and parse ESPN's payload inline -- so on a Yahoo league it would have written ESPN
+          // data under the Yahoo id. The parsing now lives in the adaptor (src/league/<platform>.ts,
+          // unit-tested against saved payloads); this handler only resolves the league, picks the
+          // adaptor, and maps the returned `LeagueSettings` onto the row + the config.
           const db = openDb(dbPath); let closed = false; const shut = () => { if (!closed) { closed = true; try { db.close(); } catch { /* already closed */ } } };
           try {
             const ctx = resolveLeagueContext(db, undefined);
-            if (!ctx.leagueId) { shut(); await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "no league known -- run discover_leagues first" }] }; }
-            if (ctx.platform !== "espn") {
-              shut(); await browser?.close().catch(() => {});
-              return { content: [{ type: "text", text: `league ${ctx.leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} sync adaptor exists yet.` }] };
+            if (!ctx.leagueId) { shut(); return { content: [{ type: "text", text: "no league known -- run discover_leagues first" }] }; }
+            const { platformFor } = await import("../league/platform.js");
+            let plat;
+            try { plat = await platformFor(ctx.platformRaw); }
+            catch (e) { shut(); return { content: [{ type: "text", text: `league_sync REFUSED: league ${ctx.leagueId} -- ${(e as Error).message}` }] }; }
+
+            const season = ctx.rowSeason ?? ctx.config.season;
+            const before = getConfig(db, ctx.leagueId);
+            // OUR IDENTITY ON THE PLATFORM, read from the guest that holds ITS login. ESPN matches the
+            // SWID cookie against each team's owners; a platform that does not need one ignores the hint.
+            let swid: string | null = null;
+            if (plat.id === "espn") {
+              const { browser, page } = await rendererPage();
+              if (!page) { await browser?.close().catch(() => {}); shut(); return { content: [{ type: "text", text: "app not available (open the desktop app)" }] }; }
+              try { swid = await espnSwid(page); } finally { await browser?.close().catch(() => {}); }
             }
-            const lg = { league_id: ctx.leagueId, season: ctx.rowSeason ?? ctx.config.season, team_id: ctx.teamId };
-            const swid = await espnSwid(page);
-            const j = await espnGet<any>(page, espnLeagueUrl(lg.season, lg.league_id, ["mSettings", "mTeam"]));
-            await browser?.close().catch(() => {});
-            if (!j) { shut(); return { content: [{ type: "text", text: "could not read league (not logged in, or wrong league id)" }] }; }
-            // IDENTITY BEFORE ANY WRITE. Emptiness was already checked below; this checks WHOSE.
-            const idProblem = leagueSyncIdentityProblem(j, lg.league_id);
-            if (idProblem) { shut(); return { content: [{ type: "text", text: idProblem }] }; }
-            const s = j.settings ?? {}; const rs = s.rosterSettings ?? {}; const sc = s.scoringSettings ?? {}; const ds = s.draftSettings ?? {};
-            const mine = (j.teams ?? []).find((t: any) => (t.owners ?? []).some((o: string) => swid && normSwid(o) === normSwid(swid)));
-            const slots = rs.lineupSlotCounts ?? {};
-            const slotSummary = Object.entries(slots).filter(([, n]) => Number(n) > 0).map(([id, n]) => `${n}x${ESPN_SLOT[Number(id)] ?? id}`).join(", ");
-            // auto-detect PPR from the receptions scoring item (statId 53)
-            const rec = (sc.scoringItems ?? []).find((it: any) => it.statId === 53);
-            const recPts = rec ? Number(rec.points ?? 0) : 0;
-            const scoring = recPts >= 1 ? "PPR" : recPts >= 0.5 ? "HALF" : "STD";
-            const mineName = mine ? (mine.name ?? `${mine.location ?? ""} ${mine.nickname ?? ""}`.trim()) : null;
-            const configSlots = espnSlotsToConfig(slots);
-            const budget = ds.type === "AUCTION" && ds.auctionBudget ? Number(ds.auctionBudget) : getConfig(db, lg.league_id).budget;
-            const teams = Number(s.size) || getConfig(db, lg.league_id).teams;
-            // The DRAFT TYPE, from ESPN's own draftSettings rather than assumed. An auction-only verb
-            // can then refuse a snake league by name instead of pricing a draft that has no dollars.
-            const draftType: "auction" | "snake" = ds.type === "AUCTION" ? "auction" : "snake";
-            // Build the actual per-stat scoring model from the league's real scoringItems -- this is
-            // what tailors OUR points/values (not just the HALF/PPR consensus bucket).
-            // Build the WHOLE model -- offence, kicking AND defence. Only the offensive third used to
-            // be synced, so a league with different K/DST scoring kept ours and nothing failed.
-            const model = scoringFromEspn(sc.scoringItems ?? []);
-            const rules: ScoringRules = model.rules;
-            db.prepare("UPDATE league SET name=@n, season=@se, scoring_json=@sj, team_id=@tid, last_synced_at=@now WHERE league_id=@lid")
-              .run({ n: s.name ?? null, se: lg.season, sj: JSON.stringify({ scoringType: sc.scoringType, ppr: recPts, draftType: ds.type, auctionBudget: ds.auctionBudget, slots, size: s.size, rules, kicker: model.kicker, defense: model.defense }), tid: mine ? String(mine.id) : lg.team_id, now: new Date().toISOString(), lid: lg.league_id });
-            // THE FORMAT BLOCK, built from the SAME payload the rest of this sync reads.
-            //
-            // This used to write only the two flat numbers, each with a `|| <whatever is stored>`
-            // fallback -- so a sync against a league whose settings had changed could leave the
-            // calendar at the old value with nothing to show for it. `formatFromEspnSettings`
-            // refuses to default any field, and it carries the seeding rule, the divisions and the
-            // reseed flag that the flat pair cannot express. The flat keys are still written, but
-            // FROM the block, so the two cannot disagree.
-            const { formatFromEspnSettings } = await import("../league/index.js");
-            const format = formatFromEspnSettings({ settings: s, teams: j.teams ?? [] });
-            const playoffTeams = format.playoffTeams;
-            const regWeeks = format.regWeeks;
-            const before = getConfig(db, lg.league_id);
-            // align the app's format + scoring MODEL to the real league (values recompute on next `ff refresh`)
-            //
-            // KICKER AND DEFENCE GO IN TOO, and leaving them out was the whole bug this line already
-            // describes one comment above. `scoringFromEspn` builds the WHOLE model, the league row
-            // stores the whole model -- and this call propagated only `rules`, the offensive third,
-            // into `settings.config`. `ff build-history` reads CONFIG, not the league row, so it
-            // scored every kicker and defence in 27 seasons of history under OUR defaults while
-            // announcing "DEFAULTS (league has not synced K/DST scoring)" to a log nobody reads.
-            // That history is what `fit-bootstrap` turns into the rank pools the season simulator
-            // resamples every week from, and this league starts a K and a DST every week -- two of
-            // its eight starting slots -- with a defensive TD worth 8 rather than the usual 6.
-            //
-            // Fixing the league row and not this call is the same half-fix the comment above warns
-            // about, one layer down.
-            // REFUSE A DEGENERATE CONFIG. formatFromEspnSettings already throws on a missing format
-            // field, but a settings pull that parsed to empty LINEUP SLOTS or no scoring rules would
-            // overwrite the working config with a hollow one and read as a successful sync. Guard
-            // before the write; the existing config is kept if the pull came back degenerate.
-            if (!configSlots.length || !(teams > 0) || !Object.keys(rules).length) {
+            const io = platformIO(plat.webview.host);
+            let st;
+            try {
+              st = await plat.syncSettings(io, ctx.leagueId, season, { swid, prevBudget: before.budget, prevTeams: before.teams });
+            } catch (e) {
+              // Every refusal the adaptor makes -- wrong league id, no id at all, a hollow settings
+              // pull, a calendar field it could not read -- arrives here as a throw and is REPORTED
+              // rather than written. Nothing above this line has written anything.
               shut();
-              return { content: [{ type: "text", text: `league_sync REFUSED: the settings pull was degenerate (${configSlots.length} lineup slots, ${teams} teams, ${Object.keys(rules).length} scoring rules) -- not overwriting the working config with an empty read. Re-run once the app's ESPN session is live.` }] };
+              return { content: [{ type: "text", text: `league_sync REFUSED (${plat.id}): ${(e as Error).message}` }] };
             }
+
+            // --- map LeagueSettings onto the store. One shape for every platform. -----------------
+            const slotSummary = (() => {
+              const n: Record<string, number> = {};
+              for (const s of st.slots) n[s] = (n[s] ?? 0) + 1;
+              return Object.entries(n).map(([k, v]) => `${v}x${k}`).join(", ");
+            })();
+            // `teamId: null` means THIS READ CANNOT TELL, not "we have no team" -- keep what we know.
+            const teamId = st.teamId ?? ctx.teamId;
+            db.prepare("UPDATE league SET name=@n, season=@se, platform=@pf, scoring_json=@sj, team_id=@tid, last_synced_at=@now WHERE league_id=@lid")
+              .run({
+                n: st.name, se: st.season, pf: st.platform,
+                sj: JSON.stringify({
+                  platform: st.platform, scoringType: st.scoringBucket, ppr: st.scoring.rec,
+                  draftType: st.draftType, auctionBudget: st.budget, slots: st.slots, size: st.teams,
+                  rules: st.scoring, kicker: st.kicker, defense: st.defense,
+                  // The FAAB scale, from the league's OWN acquisition rules rather than inferred from
+                  // its transaction history (I-4). `null` = waiver order, not "unknown".
+                  faabBudget: st.acquisition.faabBudget, acquisition: st.acquisition,
+                  provenance: st.provenance,
+                }),
+                tid: teamId, now: new Date().toISOString(), lid: ctx.leagueId,
+              });
             // EXPLICITLY THIS LEAGUE. `setConfig(db, ...)` with no id landed on whatever league was
             // ACTIVE -- which is how a sync of league A rewrote league B's config (S-3).
-            setConfig(db, { scoring, slots: configSlots, budget, teams, scoring_rules: rules,
-              kicker: model.kicker, defense: model.defense, draftType,
-              playoffTeams, regWeeks, format, formatEspn: format } as never, lg.league_id);
+            //
+            // `budget` stays a NUMBER in the config (a snake league's `null` budget would break every
+            // reader that does arithmetic on it); `draftType: "snake"` is what makes the auction-only
+            // verbs refuse, and `requireAuction` is the one place that decides. `formatEspn` is written
+            // only by the ESPN adaptor -- it is "what ESPN said", and a Yahoo read is not that.
+            setConfig(db, {
+              scoring: st.scoringBucket, slots: st.slots, budget: st.budget ?? before.budget, teams: st.teams,
+              scoring_rules: st.scoring, kicker: st.kicker, defense: st.defense, draftType: st.draftType,
+              playoffTeams: st.format.playoffTeams, regWeeks: st.format.regWeeks,
+              format: st.format, acquisition: st.acquisition,
+              ...(st.platform === "espn" ? { formatEspn: st.format } : {}),
+            } as never, ctx.leagueId);
             // Record the write, reading back the config that landed (proves setConfig persisted a
             // non-degenerate slot list rather than trusting the call returned).
             const { auditIngest } = await import("../data/validatedIngest.js");
-            auditIngest(db, { source: "league-sync-config", season: lg.season, rowsWritten: configSlots.length, readback: () => getConfig(db, lg.league_id).slots.length });
-            const changed = scoring !== before.scoring || budget !== before.budget || teams !== before.teams || JSON.stringify(configSlots) !== JSON.stringify(before.slots) || JSON.stringify(rules) !== JSON.stringify(before.scoring_rules);
+            auditIngest(db, { source: "league-sync-config", season: st.season, rowsWritten: st.slots.length, readback: () => getConfig(db, ctx.leagueId as string).slots.length });
+            const changed = st.scoringBucket !== before.scoring || (st.budget ?? before.budget) !== before.budget || st.teams !== before.teams
+              || JSON.stringify(st.slots) !== JSON.stringify(before.slots) || JSON.stringify(st.scoring) !== JSON.stringify(before.scoring_rules);
             shut();
-            return { content: [{ type: "text", text: `synced "${s.name}" (league ${lg.league_id}, ${lg.season}): ${s.size} teams, ${ds.type ?? "?"} draft${ds.auctionBudget ? ` $${ds.auctionBudget}` : ""}, ${sc.scoringType}, ${scoring} scoring. My team: "${mineName ?? "?"}" (id ${mine?.id ?? "?"}). Roster: ${slotSummary}.${changed ? " Config updated to match -- run `ff refresh` to recompute values/tiers for this format." : ""}` }] };
-          } catch (e) { await browser?.close().catch(() => {}); shut(); return { content: [{ type: "text", text: "sync error: " + String(e).slice(0, 140) }] }; }
+            return { content: [{ type: "text", text: `synced "${st.name}" (${st.platform} league ${ctx.leagueId}, ${st.season}): ${st.teams} teams, ${st.draftType} draft${st.budget ? ` $${st.budget}` : ""}, ${st.scoringBucket} scoring. My team: id ${teamId ?? "?"}${st.teamId == null ? " (kept -- this platform's settings read does not name it)" : ""}. Roster: ${slotSummary}. Provenance: ${st.provenance}.${changed ? " Config updated to match -- run `ff refresh` to recompute values/tiers for this format." : ""}` }] };
+          } catch (e) { shut(); return { content: [{ type: "text", text: "sync error: " + String(e).slice(0, 200) }] }; }
         },
       ),
       tool(
         "read_league",
-        "Read my REAL ESPN league live (not the local draft board): my roster with lineup slots, the standings, and draft status. Before the draft this shows an empty roster and 'draft not started'.",
+        "Read my REAL league live (not the local draft board): my roster with lineup slots, the standings, and draft status. Works on any platform this build has a read adaptor for (espn, yahoo) and refuses any other BY NAME. Before the draft this shows an empty roster and 'draft not started'.",
         {},
         async () => {
+          const db0 = openDb(dbPath);
+          let platform: string | null, leagueId: string | null;
+          try { const c = resolveLeagueContext(db0, undefined); platform = c.platformRaw; leagueId = c.leagueId; } finally { db0.close(); }
+          if (!leagueId) return { content: [{ type: "text", text: "no league known -- run discover_leagues then league_sync" }] };
+          // NON-ESPN GOES THROUGH THE READ-SIDE ADAPTOR (`openLeague`), which dispatches on the league
+          // ROW's platform and refuses an unknown one by name. The ESPN body below is left exactly as
+          // it was -- it reads `mStandings`/`mDraftDetail`, which `LeagueProvider` does not expose, and
+          // WP5's rule is that ESPN behaviour does not move. Both paths answer the same question.
+          if (platform !== "espn") return await readLeagueViaProvider(dbPath, leagueId, platform);
           const { browser, page } = await rendererPage();
           if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "app not available" }] }; }
           const db = openDb(dbPath); let closed = false; const shut = () => { if (!closed) { closed = true; try { db.close(); } catch { /* already closed */ } } };
           try {
             const ctx = resolveLeagueContext(db, undefined);
-            if (!ctx.leagueId) { shut(); await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "no league known -- run discover_leagues then league_sync" }] }; }
-            if (ctx.platform !== "espn") {
-              shut(); await browser?.close().catch(() => {});
-              return { content: [{ type: "text", text: `league ${ctx.leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} read adaptor exists yet.` }] };
-            }
-            const lg = { league_id: ctx.leagueId, season: ctx.rowSeason ?? ctx.config.season, team_id: ctx.teamId, name: ctx.name };
+            const lg = { league_id: ctx.leagueId as string, season: ctx.rowSeason ?? ctx.config.season, team_id: ctx.teamId, name: ctx.name };
             const j = await espnGet<any>(page, espnLeagueUrl(lg.season, lg.league_id, ["mTeam", "mRoster", "mSettings", "mStandings", "mDraftDetail"]));
             await browser?.close().catch(() => {});
             if (!j) { shut(); return { content: [{ type: "text", text: "could not read league (auth?)" }] }; }
@@ -704,14 +735,15 @@ async function rendererPage(): Promise<{ browser: import("playwright-core").Brow
   } catch { return { browser: null, page: null }; }
 }
 // Show Live Draft (attaches the webview) and navigate it to url; returns the guest's url+title.
-async function wvNavigate(page: import("playwright-core").Page, url: string): Promise<{ url: string; title: string }> {
-  await page.evaluate((u) => { const w = window as unknown as { setView?: (v: string) => void }; if (w.setView) w.setView("live"); const wv = document.getElementById("espnview") as unknown as { loadURL?: (u: string) => void }; if (wv?.loadURL) wv.loadURL(u); }, url);
+async function wvNavigate(page: import("playwright-core").Page, url: string, elementId = "espnview"): Promise<{ url: string; title: string }> {
+  await page.evaluate(([u, el]) => { const w = window as unknown as { setView?: (v: string) => void }; if (w.setView) w.setView("live"); const wv = document.getElementById(el) as unknown as { loadURL?: (u: string) => void }; if (wv?.loadURL) wv.loadURL(u); }, [url, elementId]);
   await page.waitForTimeout(4500);
-  return await page.evaluate(() => { const wv = document.getElementById("espnview") as unknown as { getURL?: () => string; getTitle?: () => string }; return { url: wv?.getURL ? wv.getURL() : "", title: wv?.getTitle ? wv.getTitle() : "" }; });
+  return await page.evaluate((el) => { const wv = document.getElementById(el) as unknown as { getURL?: () => string; getTitle?: () => string }; return { url: wv?.getURL ? wv.getURL() : "", title: wv?.getTitle ? wv.getTitle() : "" }; }, elementId);
 }
-// Run JS inside the webview guest and return the result (string).
-async function wvEval(page: import("playwright-core").Page, js: string): Promise<string> {
-  return await page.evaluate(async (code) => { const wv = document.getElementById("espnview") as unknown as { executeJavaScript?: (c: string) => Promise<string> }; if (!wv?.executeJavaScript) return ""; try { return await wv.executeJavaScript(code); } catch { return ""; } }, js);
+// Run JS inside the webview guest and return the result (string). `elementId` names WHICH guest --
+// the app mounts one per platform, and defaulting to ESPN is what made every browse tool ESPN-only.
+async function wvEval(page: import("playwright-core").Page, js: string, elementId = "espnview"): Promise<string> {
+  return await page.evaluate(async ([code, el]) => { const wv = document.getElementById(el) as unknown as { executeJavaScript?: (c: string) => Promise<string> }; if (!wv?.executeJavaScript) return ""; try { return await wv.executeJavaScript(code); } catch { return ""; } }, [js, elementId]);
 }
 // Authenticated ESPN fantasy READ through the app's logged-in webview: the fetch runs in the guest's
 // fantasy.espn.com page context, so its espn_s2/SWID cookies ride along (credentials:'include'). The
@@ -731,6 +763,43 @@ async function espnSwid(page: import("playwright-core").Page): Promise<string> {
 // preferred), disagreeing with `activeLeagueId` and with `currentLeagueId`. On the live store it
 // returned the Yahoo row while `league_sync` then fetched an ESPN URL for it. Deleted 2026-09-16;
 // `resolveLeagueContext` is the only resolver.
+
+/**
+ * `read_league` FOR A NON-ESPN PLATFORM, through the read-side adaptor (P-6).
+ *
+ * `openLeague` dispatches on the league ROW's platform and REFUSES an unknown one by name, so a
+ * platform with no adaptor produces a refusal naming it rather than an ESPN-shaped answer about a
+ * league that is not on ESPN. What it can report is what `LeagueProvider` publishes: the teams, our
+ * roster, the calendar, and -- where the adaptor implements the optional capability -- the draft.
+ * Anything it cannot report SAYS SO rather than being omitted.
+ */
+async function readLeagueViaProvider(dbPath: string | undefined, leagueId: string, platform: string | null): Promise<{ content: { type: "text"; text: string }[] }> {
+  try {
+    const { openLeague } = await import("../league/index.js");
+    const lg = await openLeague({ dbPath, leagueId });
+    try {
+      const mine = lg.teams.find((t) => t.mine);
+      const draftLine = lg.provider.draftPicks
+        ? await (async () => {
+          try { const p = await lg.provider.draftPicks!(); return p.length ? `draft complete (${p.length} picks)` : "draft not started"; }
+          catch (e) { return `draft status unreadable: ${(e as Error).message.slice(0, 120)}`; }
+        })()
+        : `draft status not published by the ${platform ?? "?"} adaptor`;
+      const rosterBlock = mine
+        ? (mine.roster.length
+          ? `My roster (${mine.roster.length}) -- "${mine.name}":\n` + mine.roster.map((p) => `${p.pos}: ${p.name}${p.team ? ` (${p.team})` : ""}`).join("\n")
+          : `My roster: empty ("${mine.name}")`)
+        : `My roster: UNKNOWN -- league ${leagueId} has no team_id in the store, so this store does not know which team is ours.`;
+      // NOT "standings": `LeagueProvider` publishes no win/loss record, and printing a team list under
+      // that heading would be a label the data does not support. The teams are what it does publish.
+      const teamBlock = `Teams (${lg.teams.length}):\n` + lg.teams.map((t, i) => `${i + 1}. ${t.name}${t.mine ? " (US)" : ""} -- ${t.roster.length} rostered`).join("\n");
+      const cal = `Calendar: ${lg.regWeeks} regular-season weeks, playoff weeks ${lg.playoffWeeks.join("/") || "?"} (${lg.format.playoffTeams} teams, source ${lg.format.source})`;
+      return { content: [{ type: "text" as const, text: `${platform ?? "?"} league ${leagueId} -- ${lg.teams.length} teams -- ${draftLine}\n${cal}\n\n${rosterBlock}\n\n${teamBlock}\n(no win/loss record: the ${platform ?? "?"} read adaptor does not publish standings)` }] };
+    } finally { await lg.close(); }
+  } catch (e) {
+    return { content: [{ type: "text" as const, text: `read_league failed for ${platform ?? "unknown-platform"} league ${leagueId}: ${(e as Error).message.slice(0, 400)}` }] };
+  }
+}
 
 /**
  * THE IDENTITY GUARD for `league_sync` (S-3), as a pure function so it is unit-testable.

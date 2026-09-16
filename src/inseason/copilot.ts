@@ -42,15 +42,46 @@ import { handcuffBoard, loadInjuryOutlook, type DepthEntry, type HandcuffRow, ty
 import { rosterGaps, rosterOverfills, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
 import { nameKey } from "../draft/values.js";
 import {
-  loadFaabModel, liveFaabState, featureRow, recommendBid, FAAB_ARTIFACT_PATH,
+  loadFaabModel, liveFaabState, featureRow, recommendBid, faabArtifactFor,
   type FaabModel, type FaabLiveState, type FaabRow,
 } from "./faab.js";
+import type { AcquisitionRules } from "../league/types.js";
 import type { SimContext } from "../draft/simContext.js";
 import { round3 as r3 } from "../round3.js";
 
-/** NFL weeks a season projection is spread over. Season projections in the board are FULL-SEASON
- *  totals; every weekly quantity below divides by this, and says so in `assumptions.basis`. */
+/**
+ * NFL weeks a season projection is spread over. Season projections in the board are FULL-SEASON
+ * totals; every weekly quantity below divides by this, and says so in `assumptions.basis`.
+ *
+ * THERE ARE TWO DIFFERENT "WEEKS" IN THIS REPO AND THEY ARE NOT INTERCHANGEABLE (I-7).
+ *
+ *   NFL_WEEKS = 17   the frame a SEASON PROJECTION is in. A board line is a 17-game total, so
+ *                    `proj / 17` is points per SCHEDULED NFL week. simContext.ts:254/273 uses the
+ *                    same frame, deliberately, and says why.
+ *   regWeeks         the length of THIS LEAGUE's regular season (ESPN 462233: 13; Yahoo 129048: 14).
+ *                    The right divisor only for a quantity that is "per week of the league's season".
+ *
+ * `leagueSeasonWeeks` below is the second one, from the league's own format block. Use it whenever
+ * the question is about the league's calendar and NOT about spreading a season projection.
+ *
+ * KNOWN DISAGREEMENT, NOT FIXED HERE: `simContext.ts:399` builds the streaming `replacement` level as
+ * `seasonPts / regWeeks` while every consumer of it compares against `proj / 17` quantities, so the
+ * streaming floor is high by 17/regWeeks (~1.31x for this league). That file is WP3's and the change
+ * moves live ESPN in-season numbers, so it is reported rather than taken unilaterally.
+ */
 export const NFL_WEEKS = 17;
+
+/**
+ * HOW MANY WEEKS THIS LEAGUE'S SEASON ACTUALLY RUNS -- through its last playoff week, from the format
+ * block that has a provenance. ESPN 462233 ends week 16; Yahoo 129048 ends week 17. Falls back to
+ * `NFL_WEEKS` only when the context carries no format at all (a hand-built fixture).
+ */
+export function leagueSeasonWeeks(ctx: SimContext): number {
+  const po = ctx.format?.playoffWeeks ?? [];
+  if (po.length) return Math.max(...po);
+  const rw = ctx.format?.regWeeks;
+  return rw && rw > 0 ? rw : NFL_WEEKS;
+}
 
 // ---------------------------------------------------------------------------------------------
 // ASSUMPTIONS -- the thing that travels with every number.
@@ -59,6 +90,20 @@ export const NFL_WEEKS = 17;
 /** What data produced an answer. Filled by `loadProvenance` (copilotStore.ts) where a store is
  *  available; the pure default below carries only what the context itself knows. */
 export interface Provenance {
+  /**
+   * WHICH LEAGUE, WHICH PLATFORM, WHICH SCORING (I-7). Every number this file produces is about one
+   * league, and until this pass none of them said which: with two leagues in one store a playoff
+   * probability, a FAAB dollar figure and a lineup were all quotable with no way to tell whose they
+   * were. `scoringKey` is the content hash of the rules the board under the number was built from --
+   * the same key `data/formats/<key>/` is named by -- so "this is the Yahoo number" is checkable
+   * rather than asserted.
+   *
+   * `null` only where the caller built a context by hand and named no league (the pure fixtures in
+   * test/ do this); every path through `copilotActions.runCopilot` fills all three.
+   */
+  leagueId: string | null;
+  platform: string | null;
+  scoringKey: string | null;
   season: number;
   /** Rows on the value board the rosters were resolved against. */
   boardRows: number;
@@ -199,7 +244,9 @@ export interface Assumptions {
 }
 
 export function defaultProvenance(ctx: SimContext): Provenance {
-  return { season: ctx.season, boardRows: ctx.board.size, varianceSeasons: null, sampler: "bootstrap", projectionArtifact: null };
+  // A pure context carries no league (SimContext is built from a config, not from a league row), so
+  // these are NULL rather than guessed -- a wrong league id on a number is worse than no league id.
+  return { leagueId: null, platform: null, scoringKey: null, season: ctx.season, boardRows: ctx.board.size, varianceSeasons: null, sampler: "bootstrap", projectionArtifact: null };
 }
 
 interface BaseOpts {
@@ -884,6 +931,12 @@ export interface FaabAssumption {
   targetWinPct: number;
   remaining: number | null;
   budget: number;
+  /** WHICH LEAGUE these dollars are that league's (I-4). `null` only when the caller did not name one. */
+  leagueId: string | null;
+  /** From `config.acquisition`, when the league published it. `null` = this store has no acquisition
+   *  rules for the league, so the budget is an inference and the process day is unknown. */
+  waivers: boolean | null;
+  processDays: string[] | null;
   week: number | null;
   /** The `log_bid` interval crossing zero is the caveat the whole recommendation rests on. */
   bidEffectSignificant: boolean | null;
@@ -960,6 +1013,11 @@ export function waiverTargets(
     faabState?: FaabLiveState | null;
     faabWeek?: number;
     dbPath?: string;
+    /** WHICH LEAGUE (I-4). Decides which fitted artifact is this league's, and filters every live
+     *  read. Omitted = the active league, which is what the callers did implicitly before. */
+    leagueId?: string | null;
+    /** The league's own acquisition rules (`config.acquisition`), for the budget and the process day. */
+    acquisition?: AcquisitionRules | null;
   } = {},
 ): WaiverResult {
   const trials = o.trials ?? 800;
@@ -973,22 +1031,34 @@ export function waiverTargets(
   // Both halves can be absent -- no artifact on disk, or a store with no rows for this season -- and
   // when either is, the row falls back to the rule of thumb AND SAYS SO. A degraded number that
   // looks identical to a measured one is the failure this whole file is organised against.
+  //
+  // THE ARTIFACT IS RESOLVED PER LEAGUE (I-4). `data/faab-model.json` is league 462233's, fitted on
+  // ITS 794 claims; handing it to another room and printing `faabBasis: "model"` would be a guess
+  // wearing a measurement's label. `faabArtifactFor` returns a MISS with a reason, and the reason is
+  // what lands in `assumptions.faab.note`.
   let model: FaabModel | null = null;
   let live: FaabLiveState | null = null;
   let faabNote = "";
+  const artifact = faabArtifactFor(o.leagueId);
   try {
-    model = o.faabModel !== undefined ? o.faabModel : loadFaabModel();
-    if (!model) faabNote = `no fitted artifact at ${FAAB_ARTIFACT_PATH} -- falling back to the rule of thumb`;
+    if (o.faabModel !== undefined) model = o.faabModel;
+    else if (!artifact.exists) model = null;
+    else model = loadFaabModel(artifact.path);
+    if (!model) faabNote = `${artifact.reason ?? `no fitted artifact at ${artifact.path}`} -- falling back to the rule of thumb`;
   } catch (e) { faabNote = `the FAAB artifact would not load (${(e as Error).message}) -- falling back to the rule of thumb`; }
   if (model) {
     try {
       live = o.faabState !== undefined ? o.faabState : liveFaabState({
         dbPath: o.dbPath, season: ctx.season, week: o.faabWeek,
         teamId: ctx.teams[ctx.meIdx].id, fallbackBudget: o.faabBudget,
+        leagueId: o.leagueId, acquisition: o.acquisition,
       });
     } catch (e) { faabNote = `the live FAAB state is unreadable (${(e as Error).message}) -- falling back to the rule of thumb`; }
   }
-  const budget = o.faabBudget ?? live?.budget ?? 100;
+  // The league's own budget outranks the caller's default AND the store inference, so a rule-basis
+  // row on a $100 FAB league is priced against $100 rather than against an ESPN assumption.
+  const acqBudget = o.acquisition?.faabBudget ?? null;
+  const budget = (acqBudget && acqBudget > 0 ? acqBudget : null) ?? o.faabBudget ?? live?.budget ?? 100;
   const remaining = o.faabRemaining ?? live?.remaining ?? null;
   const usingModel = !!(model && live);
   if (usingModel) faabNote = live!.note;
@@ -1102,10 +1172,15 @@ export function waiverTargets(
       ...assumptionsOf(ctx, "simulation", o, trials, seeds, objective),
       faab: {
         basis: usingModel ? "model" : "rule",
-        artifact: usingModel ? FAAB_ARTIFACT_PATH : null,
+        artifact: usingModel ? artifact.path : null,
         builtAt: model?.builtAt ?? null,
         targetWinPct: Math.round(target * 1000) / 10,
         remaining, budget,
+        // WHOSE RULES PRODUCED THE DOLLARS. A budget with no league beside it is the same trap as a
+        // probability with no assumptions beside it.
+        leagueId: o.leagueId ?? null,
+        waivers: o.acquisition ? o.acquisition.waivers : null,
+        processDays: o.acquisition ? [...o.acquisition.processDays] : null,
         week: live?.week ?? null,
         bidEffectSignificant: model ? model.bidEffect.significant : null,
         note: usingModel

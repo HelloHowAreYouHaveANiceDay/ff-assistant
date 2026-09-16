@@ -197,7 +197,7 @@ export async function ingestLeagueTransactions(opts: { dbPath?: string; seasons:
   const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
   const db = openDb(opts.dbPath);
   try {
-    const leagueId = requirePlatform(resolveLeagueContext(db, opts.leagueId), "espn", "ingest league-transactions");
+    const leagueId = requirePlatform(resolveLeagueContext(db, opts.leagueId), "espn", "ingest league-transactions", "syncTransactions");
     const pause = opts.pauseMs ?? 400;
     const fetched: TransactionWeekFetch[] = [];
     for (const season of opts.seasons) {
@@ -227,7 +227,7 @@ export async function ingestPendingTrades(opts: { dbPath?: string; leagueId?: st
   const db = openDb(opts.dbPath);
   try {
     const ctx = resolveLeagueContext(db, opts.leagueId);
-    const leagueId = requirePlatform(ctx, "espn", "sync-pending-trades");
+    const leagueId = requirePlatform(ctx, "espn", "sync-pending-trades", "syncTransactions");
     const season = ctx.config.season;
     const url = `${HOST}/seasons/${season}/segments/0/leagues/${leagueId}?view=mPendingTransactions`;
     let payload: unknown;

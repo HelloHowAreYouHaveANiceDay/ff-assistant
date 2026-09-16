@@ -20,9 +20,11 @@ import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
 import { getConfig, activeLeagueId, assertBoardFor, type AppConfig } from "../db/db.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
+import { scoringKey } from "../data/formatKey.js";
 import { nameKey } from "../draft/values.js";
 import type { VarianceModel } from "../draft/season.js";
 import type { DepthEntry } from "./handcuff.js";
+import type { AcquisitionRules } from "../league/types.js";
 import { lineupNameKey, normalizeStatus, type AvailabilityMap, type GameRow, type Provenance } from "./copilot.js";
 import { effectiveFormat } from "../league/index.js";
 import { loadWeeklyRows } from "../weekly/features.js";
@@ -183,13 +185,21 @@ export function loadTeamOf(dbPath?: string): Map<string, string> {
  * standing between the Assistant and quoting the first as the second is this stamp.
  */
 export function loadProvenance(dbPath?: string, leagueId?: string | null): Provenance {
-  const db = open(dbPath);
-  let season = 0, boardRows = 0;
-  try {
-    season = configOf(db, leagueId).season;
-    boardGuard(db, leagueId, "loadProvenance");
-    boardRows = (db.prepare("SELECT count(*) n FROM board WHERE season=?").get(season) as { n: number }).n;
-  } finally { db.close(); }
+  // THE LEAGUE STAMP (I-7). Read from the league ROW and from this league's own config, so a number
+  // cannot be quoted without saying which league and which scoring rules produced it. The scoring key
+  // is the same content hash `data/formats/<key>/` is named by, which makes the claim checkable.
+  const { lgId, platform, scoring, season, boardRows } = (() => {
+    const db = open(dbPath);
+    try {
+      const lctx = resolveLeagueContext(db as unknown as import("../db/db.js").DB, leagueId);
+      let key: string | null;
+      try { key = scoringKey(lctx.config.scoring_rules); } catch { key = null; }
+      const s = configOf(db, leagueId).season;
+      boardGuard(db, leagueId, "loadProvenance");
+      const rows = (db.prepare("SELECT count(*) n FROM board WHERE season=?").get(s) as { n: number }).n;
+      return { lgId: lctx.leagueId, platform: lctx.platform as string | null, scoring: key, season: s, boardRows: rows };
+    } finally { db.close(); }
+  })();
   let varianceSeasons: number | null = null;
   try {
     const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8")) as { seasons?: unknown[] };
@@ -200,7 +210,7 @@ export function loadProvenance(dbPath?: string, leagueId?: string | null): Prove
     const a = JSON.parse(readFileSync(dataPath("projection-artifact.json"), "utf8")) as { fittedAt?: string; fittedFrom?: string };
     projectionArtifact = a.fittedAt ? `${a.fittedFrom ?? "projection-artifact"}@${a.fittedAt}` : null;
   } catch { /* likewise */ }
-  return { season, boardRows, varianceSeasons, sampler: "bootstrap", projectionArtifact };
+  return { leagueId: lgId, platform, scoringKey: scoring, season, boardRows, varianceSeasons, sampler: "bootstrap", projectionArtifact };
 }
 
 /** FAAB budget, when the league recorded one. Defaults to a $100 scale (percentage-style bidding),
@@ -210,13 +220,45 @@ export function loadFaabBudget(dbPath?: string, leagueId?: string | null): numbe
   try {
     // THIS league's recorded budget, not "whichever league synced most recently and happens to have a
     // scoring_json". A second league in the store used to be able to set our FAAB scale.
-    const id = resolveLeagueContext(db as unknown as import("../db/db.js").DB, leagueId).leagueId;
+    const lctx = resolveLeagueContext(db as unknown as import("../db/db.js").DB, leagueId);
+    const id = lctx.leagueId;
     if (!id) return 100;
+    // THE LEAGUE'S OWN ACQUISITION RULES FIRST (I-4). `config.acquisition.faabBudget` is a READ off
+    // the platform's settings page (Yahoo 129048: $100 FAB); the `scoring_json` path below is ESPN's
+    // own settings blob and stays as the fallback for a league synced before `acquisition` existed.
+    const acq = (lctx.config as unknown as { acquisition?: AcquisitionRules }).acquisition;
+    if (acq && Number(acq.faabBudget) > 0) return Number(acq.faabBudget);
     const row = db.prepare("SELECT scoring_json FROM league WHERE league_id = ? AND scoring_json IS NOT NULL").get(id) as { scoring_json: string } | undefined;
     if (!row) return 100;
     const j = JSON.parse(row.scoring_json) as { faabBudget?: number };
     return Number(j.faabBudget) > 0 ? Number(j.faabBudget) : 100;
   } catch { return 100; } finally { db.close(); }
+}
+
+/**
+ * THE LEAGUE'S ACQUISITION RULES, or `null` when this store has none for it.
+ *
+ * `AcquisitionRules` has existed in src/league/types.ts since the platform seam and had ZERO
+ * consumers (I-4): the FAAB budget was inferred from ESPN transaction history and the process day
+ * was nowhere at all. `null` means UNKNOWN and is passed on as unknown -- it is never replaced by a
+ * default set of rules, because a league whose rules we do not have and a league whose rules happen
+ * to match ESPN's must not produce the same output.
+ */
+export function loadAcquisition(dbPath?: string, leagueId?: string | null): AcquisitionRules | null {
+  const db = open(dbPath);
+  try {
+    const cfg = resolveLeagueContext(db as unknown as import("../db/db.js").DB, leagueId).config;
+    const a = (cfg as unknown as { acquisition?: AcquisitionRules }).acquisition;
+    if (!a || typeof a !== "object") return null;
+    return {
+      waivers: a.waivers === true,
+      faabBudget: Number(a.faabBudget) > 0 ? Number(a.faabBudget) : null,
+      processDays: Array.isArray(a.processDays) ? a.processDays.map(String) : [],
+      processHour: Number.isFinite(a.processHour as number) ? Number(a.processHour) : null,
+      seasonLimit: Number.isFinite(a.seasonLimit as number) ? Number(a.seasonLimit) : null,
+      weeklyLimit: Number.isFinite(a.weeklyLimit as number) ? Number(a.weeklyLimit) : null,
+    };
+  } catch { return null; } finally { db.close(); }
 }
 
 /**

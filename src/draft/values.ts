@@ -1,5 +1,11 @@
 // Compute OUR independent auction $ values from a projected-points table, via VOR -> $ (the
 // standard VBD auction formula; see docs/value-methods.md). Pure + unit-testable.
+//
+// SLOT VOCABULARY LIVES IN ./slots.ts (I-2/I-3). `slotEligibility` used to be defined HERE and the
+// bench test was a fifth hand-typed regex; both now come from the one module every consumer shares,
+// and `slotEligibility` is re-exported so the dozen existing importers are unchanged.
+import { isBenchSlot, slotEligibility } from "./slots.js";
+export { slotEligibility, isBenchSlot, slotAdmits, slotAccepts, startingSlots, splitTemplate, isFlexSlot, eligibilityOf } from "./slots.js";
 
 export interface PointsRow { name: string; pos: string; points: number; }
 export interface ValueRow {
@@ -98,30 +104,6 @@ export interface ValueLeague {
   flexGroups?: { elig: string[]; count: number }[];
 }
 
-// A slot token -> the position it admits. Q/W/R/T slash-forms (Yahoo) and W(R)/T are parsed by these.
-const SLOT_TOKEN: Record<string, string> = { Q: "QB", W: "WR", R: "RB", T: "TE", K: "K", D: "DST" };
-const FULL_POS = new Set(["QB", "RB", "WR", "TE", "K", "DST"]);
-
-/** The positions a roster SLOT admits. Handles dedicated positions, the keyword flexes
- *  (FLEX/OP/SUPERFLEX), and generic slash-forms ("Q/W/R/T" -> [QB,WR,RB,TE], "RB/WR" -> [RB,WR]).
- *  Unknown -> the slot as its own single position, so nothing silently becomes a full flex. */
-export function slotEligibility(slot: string): string[] {
-  const s = slot.trim().toUpperCase();
-  if (FULL_POS.has(s)) return [s];
-  if (s === "DEF" || s === "D/ST") return ["DST"];
-  if (s === "FLEX" || s === "W/R/T" || s === "RB/WR/TE" || s === "WRT") return ["RB", "WR", "TE"];
-  if (s === "OP" || s === "SUPERFLEX" || s === "SF" || s === "Q/W/R/T" || s === "QB/RB/WR/TE") return ["QB", "RB", "WR", "TE"];
-  if (s.includes("/")) {
-    const out: string[] = [];
-    for (const tok of s.split("/").map((t) => t.trim())) {
-      const p = FULL_POS.has(tok) ? tok : SLOT_TOKEN[tok];
-      if (p && !out.includes(p)) out.push(p);
-    }
-    if (out.length) return out;
-  }
-  return [s];
-}
-
 /** Split a ValueLeague into per-team dedicated counts + flex groups, from the new fields when present
  *  and reconstructed from the legacy `starters` map otherwise (so DEFAULT_VALUE_LEAGUE still works). */
 function resolveSlots(lg: ValueLeague): { dedicated: Record<string, number>; flexGroups: { elig: string[]; count: number }[] } {
@@ -151,7 +133,7 @@ export function resolveValueLeague(cfg: { teams: number; budget: number; slots: 
   const dedicated: Record<string, number> = {};
   const flexByKey = new Map<string, { elig: string[]; count: number }>();
   for (const s of cfg.slots) {
-    if (/^(BE|BENCH|IR|ER)$/i.test(s)) continue;
+    if (isBenchSlot(s)) continue;
     const elig = slotEligibility(s);
     if (elig.length === 1) {
       dedicated[elig[0]] = (dedicated[elig[0]] ?? 0) + 1;

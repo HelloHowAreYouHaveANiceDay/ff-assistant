@@ -116,8 +116,15 @@ export function espnSettingsFromPayload(
   const draftType: "auction" | "snake" = ds.type === "AUCTION" ? "auction" : "snake";
   const budget = draftType === "auction" ? (Number(ds.auctionBudget) || opts.prevBudget) : null;
   const format = formatFromEspnSettings({ settings: s, teams: j.teams ?? [] }, opts.now ?? new Date());
+  // OUR TEAM, from the SAME payload: the team whose owners include the logged-in SWID. `null` without
+  // a swid -- the caller then KEEPS what the store holds rather than blanking it.
+  const swid = normSwid(opts.swid ?? "");
+  const mine = swid
+    ? (j.teams ?? []).find((t) => (t.owners ?? []).some((o: string) => normSwid(o) === swid))
+    : undefined;
   return {
     leagueId: opts.leagueId, platform: "espn", season: opts.season, name: (s.name as string) ?? null,
+    teamId: mine && mine.id != null ? String(mine.id) : null,
     teams, slots, draftType, budget,
     scoring: model.rules, scoringBucket,
     // ESPN publishes kicking and defensive scoring whether or not the league rosters them, and this
@@ -176,10 +183,15 @@ export const espnPlatform: Platform = {
     return espnDiscoverFromLinks(links, wantSeason).keep;
   },
 
-  async syncSettings(io, leagueId, season) {
+  async syncSettings(io, leagueId, season, hints) {
     const raw = await io.get(espnLeagueApiUrl(season, leagueId, ["mSettings", "mTeam"]));
     const payload = JSON.parse(raw);
-    return espnSettingsFromPayload(payload, { leagueId, season, prevBudget: 200, prevTeams: 0 });
+    return espnSettingsFromPayload(payload, {
+      leagueId, season,
+      swid: hints?.swid ?? null,
+      prevBudget: hints?.prevBudget ?? 200,
+      prevTeams: hints?.prevTeams ?? 0,
+    });
   },
 
   async syncRosters(io, leagueId, season) {

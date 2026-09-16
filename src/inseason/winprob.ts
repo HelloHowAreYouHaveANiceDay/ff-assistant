@@ -47,6 +47,7 @@
  * one-week question it is given and says so.
  */
 import { optimalLineup, type RosterPlayer } from "./lineup.js";
+import { startingSlots } from "../draft/slots.js";
 import { cholesky, normalCdf, teammateCorr, type CorrelationModel } from "../draft/bootstrap.js";
 import { round3 as r3 } from "../round3.js";
 
@@ -473,7 +474,9 @@ export function winProbLineup(
   // reason -- applied to the worst-case binomial standard error at p = 0.5.
   const minGainPp = o.minGainPp ?? r3(100 * 0.5 / Math.sqrt(sims) * 1.4);
 
-  const startSlots = slots.filter((s) => s !== "BE" && s !== "BENCH");
+  // ONE bench test (I-3), from src/draft/slots.ts. The literal `BE|BENCH` here did not know about
+  // `IR`/`ER`/`BN`, so a Yahoo roster's two IR slots were counted as starting slots to be filled.
+  const startSlots = startingSlots(slots);
   const availOurs = ours.filter((p) => p.available);
 
   // ONE sample matrix over both rosters, so a shared NFL team couples across the matchup.

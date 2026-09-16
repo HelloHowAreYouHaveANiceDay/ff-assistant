@@ -27,8 +27,18 @@ export interface LeagueContext {
   /** The league this computation is for. `null` only on a store that has never synced a league (a fresh
    *  clone before `league_sync`); config-only callers still work, league-history callers must guard. */
   leagueId: string | null;
-  /** From the league ROW, not from the config -- one fact, one home. `null` on a fresh store. */
+  /** From the league ROW, not from the config -- one fact, one home. `null` on a fresh store, AND
+   *  `null` for a platform string this build does not know (see `platformRaw`). */
   platform: LeaguePlatform | null;
+  /**
+   * THE PLATFORM STRING EXACTLY AS THE ROW CARRIES IT, before it is narrowed to the known union.
+   *
+   * `platform` is `null` both for "no league row" and for "a platform this build has never heard of",
+   * and those are different facts: a refusal that says `league 129048 is on an unknown platform` when
+   * the row plainly says `sleeper` has thrown away the one piece of information the reader needs.
+   * Every refusal below prefers this, so an unknown platform is named rather than anonymised.
+   */
+  platformRaw: string | null;
   /** OUR team in this league. `null` when the league is known but our seat is not (a discovered-but-
    *  unsynced league, or Yahoo today) -- every verb that needs a team must say so by name. */
   teamId: string | null;
@@ -65,17 +75,18 @@ const asPlatform = (p: string | null | undefined): LeaguePlatform | null =>
 export function resolveLeagueContext(db: DB, leagueId?: string | null): LeagueContext {
   const explicit = typeof leagueId === "string" && leagueId.length > 0;
   const id = explicit ? (leagueId as string) : activeLeagueId(db);
-  if (id == null) return { leagueId: null, platform: null, teamId: null, rowSeason: null, name: null, config: getConfig(db) };
+  if (id == null) return { leagueId: null, platform: null, platformRaw: null, teamId: null, rowSeason: null, name: null, config: getConfig(db) };
   const row = leagueRow(db, id);
   if (!row) {
     if (explicit) throw new Error(`no league "${id}" in the store -- \`ff app-data\`/the app's league tabs list the leagues this store knows.`);
     // The active id came from `activeLeagueId`, which only returns an id it has already seen in the
     // league table, so this is unreachable in practice; degrade rather than throw.
-    return { leagueId: null, platform: null, teamId: null, rowSeason: null, name: null, config: getConfig(db) };
+    return { leagueId: null, platform: null, platformRaw: null, teamId: null, rowSeason: null, name: null, config: getConfig(db) };
   }
   return {
     leagueId: String(row.league_id),
     platform: asPlatform(row.platform),
+    platformRaw: row.platform ?? null,
     teamId: row.team_id == null ? null : String(row.team_id),
     rowSeason: row.season == null ? null : Number(row.season),
     name: row.name ?? null,
@@ -102,10 +113,19 @@ export function requireTeamId(ctx: LeagueContext, verb: string): string {
  * DELETE (S-2/S-3/P-1). The old code built ESPN URLs for whatever league id it resolved and wrote the
  * results under that id -- so a Yahoo league would have been filled with another league's ESPN data.
  */
-export function requirePlatform(ctx: LeagueContext, want: LeaguePlatform, what: string): string {
+export function requirePlatform(ctx: LeagueContext, want: LeaguePlatform, what: string, adaptorMethod?: string): string {
   const id = requireLeagueId(ctx, what);
   if (ctx.platform !== want) {
-    throw new Error(`${what}: league ${id} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} sync adaptor exists yet (this path is ${want}-only).`);
+    // NAME THE PLATFORM THE ROW ACTUALLY CARRIES, not the narrowed union (which is null for any
+    // string this build does not know, turning "sleeper" into "an unknown platform").
+    const got = ctx.platformRaw ?? ctx.platform;
+    // NAME THE MISSING PIECE, not just the platform. "no yahoo sync adaptor exists" is not actionable;
+    // "nothing wires yahooPlatform.syncRosters into this writer" says exactly what has to be built and
+    // where, and stops a reader concluding the adaptor is absent when only the WIRING is.
+    const missing = adaptorMethod
+      ? ` This path needs \`platformFor("${got ?? "<platform>"}").${adaptorMethod}\` wired into it; until that exists it refuses rather than writing ${want}-shaped rows under league ${id}.`
+      : "";
+    throw new Error(`${what}: league ${id} is on ${got ? `"${got}"` : "an unknown platform"}; no ${got ? `"${got}"` : "such"} sync adaptor exists yet (this path is ${want}-only).${missing}`);
   }
   return id;
 }

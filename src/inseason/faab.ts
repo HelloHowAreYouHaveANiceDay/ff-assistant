@@ -33,8 +33,47 @@ import Database from "better-sqlite3";
 import { nameKey } from "../draft/values.js";
 import { latestScoredWeek } from "./regWeeks.js";
 import { activeLeagueId } from "../db/db.js";
+import type { AcquisitionRules } from "../league/types.js";
 
 export const FAAB_ARTIFACT_PATH = process.env.FF_FAAB_MODEL ?? "data/faab-model.json";
+
+/**
+ * THE LEAGUE `data/faab-model.json` WAS FITTED ON (I-4).
+ *
+ * The artifact carries no league stamp -- it predates there being more than one league -- so the
+ * incumbent is PINNED here, the same shape as the format resolver's incumbent alias: one constant,
+ * asserted, rather than a silent fallback. The alternative is what the code did before: hand every
+ * league the same artifact, so a Yahoo FAB recommendation would have been priced off 794 claims made
+ * in a different room, under different scoring, with a different budget -- and printed as `basis:
+ * "model"`, i.e. as a measurement.
+ */
+export const FAAB_INCUMBENT_LEAGUE = "462233";
+
+/** Where THIS league's fitted artifact lives, and whether it is there.
+ *
+ *  Order: `FF_FAAB_MODEL` (an explicit override, for a test or a re-fit) > `data/faab-model.<id>.json`
+ *  (the per-league convention) > the incumbent alias above. A league with none gets `exists: false`
+ *  and a `reason` naming the path it would need, which travels all the way onto the waiver row as
+ *  `faabBasis: "rule"`. A MISS IS NEVER THE INCUMBENT'S FILE. */
+export function faabArtifactFor(leagueId?: string | null): { path: string; exists: boolean; reason: string | null } {
+  const env = process.env.FF_FAAB_MODEL;
+  if (env) return { path: env, exists: existsSync(env), reason: existsSync(env) ? null : `FF_FAAB_MODEL points at ${env}, which does not exist` };
+  const id = leagueId == null ? null : String(leagueId);
+  if (id) {
+    const per = `data/faab-model.${id}.json`;
+    if (existsSync(per)) return { path: per, exists: true, reason: null };
+    if (id !== FAAB_INCUMBENT_LEAGUE) {
+      return {
+        path: per, exists: false,
+        reason: `no FAAB model fitted for league ${id} (looked for ${per}); data/faab-model.json is league ${FAAB_INCUMBENT_LEAGUE}'s and pricing another room's claims with it would be a guess wearing a measurement's label`,
+      };
+    }
+  }
+  const inc = "data/faab-model.json";
+  return existsSync(inc)
+    ? { path: inc, exists: true, reason: null }
+    : { path: inc, exists: false, reason: `no fitted artifact at ${inc}` };
+}
 
 export interface FeatureSpec { name: string; center: number; scale: number; missing: number }
 export interface LinearHead { intercept: number; coef: Record<string, number> }
@@ -242,6 +281,16 @@ export function liveFaabState(o: {
    *  budgets into one. Omitted = the ACTIVE league -- the only caller that does not pass it yet is
    *  `waiverTargets` in copilot.ts, which is WP5's to thread from its SimContext. */
   leagueId?: string | null;
+  /**
+   * THE LEAGUE'S OWN ACQUISITION RULES (I-4), from `config.acquisition` -- the budget and the day
+   * claims process. `AcquisitionRules` existed in src/league/types.ts with ZERO consumers, so the
+   * budget was inferred from `MAX(faab_spent)` under an ESPN assumption and the process day was
+   * nowhere: Yahoo's "$100 FAB, continual, 2-day, Tuesday" had no representation at all.
+   *
+   * `faabBudget === null` means the league uses waiver ORDER rather than bidding, and is NOT the same
+   * as "unknown" -- it is reported in the note rather than replaced by 100.
+   */
+  acquisition?: AcquisitionRules | null;
 }): FaabLiveState {
   const db = new Database(o.dbPath ?? (process.env.FF_DB ?? "data/ff.db"), { readonly: true });
   try {
@@ -253,11 +302,24 @@ export function liveFaabState(o: {
       weekSource = "the week after the last one with settled points";
       if (week < 1) { week = 1; weekSource = "no settled week in the store -- week 1"; }
     }
-    const budget = (() => {
-      const r = db.prepare(`SELECT MAX(faab_spent) mx FROM fact_team_season WHERE league_id = ? AND season = ?`).get(lg, o.season) as { mx: number | null };
-      const fb = o.fallbackBudget ?? 100;
-      return (r?.mx ?? 0) >= fb ? Math.round(r!.mx as number) : fb;
-    })();
+    // THE LEAGUE'S OWN RULE FIRST. `config.acquisition.faabBudget` is a READ off the platform's
+    // settings page; `MAX(faab_spent)` is an inference from this league's transaction history and is
+    // only a floor (a room where nobody spent everything understates the budget). The rule wins where
+    // it exists, the inference is kept where it does not, and `budgetSource` says which.
+    const acqBudget = o.acquisition ? o.acquisition.faabBudget : null;
+    const spentMax = (db.prepare(`SELECT MAX(faab_spent) mx FROM fact_team_season WHERE league_id = ? AND season = ?`).get(lg, o.season) as { mx: number | null })?.mx ?? 0;
+    const fallback = o.fallbackBudget ?? 100;
+    const budget = acqBudget && acqBudget > 0
+      ? Math.round(acqBudget)
+      : (spentMax >= fallback ? Math.round(spentMax) : fallback);
+    const budgetSource = acqBudget && acqBudget > 0
+      ? `the league's own acquisition rules ($${Math.round(acqBudget)})`
+      : (spentMax >= fallback ? `the most any team has spent this season ($${Math.round(spentMax)})` : `the $${fallback} default scale (this league publishes no FAAB budget)`);
+    const processNote = o.acquisition
+      ? (o.acquisition.faabBudget == null
+        ? "; this league uses waiver ORDER, not bidding -- a dollar figure here is a rule-of-thumb URGENCY, not a price"
+        : (o.acquisition.processDays.length ? `; claims process ${o.acquisition.processDays.join("/")}` : ""))
+      : "";
     const teams = (db.prepare(`SELECT COUNT(*) n FROM fact_team_season WHERE league_id = ? AND season = ?`).get(lg, o.season) as { n: number }).n || 12;
     const spend = db.prepare(
       `SELECT COALESCE(SUM(bid_amount),0) tot,
@@ -315,7 +377,7 @@ export function liveFaabState(o: {
       remaining, leagueRemaining,
       teamFaabShare: remaining / budget, leagueFaabShare: leagueRemaining / (teams * budget),
       byPlayer, needByPos,
-      note: `week ${week} (${weekSource}); $${remaining} of $${budget} left to us, ` +
+      note: `league ${lg}; budget from ${budgetSource}${processNote}; week ${week} (${weekSource}); $${remaining} of $${budget} left to us, ` +
         `$${leagueRemaining} of $${teams * budget} left in the room; ` +
         `${byPlayer.size} players carry point-in-time columns for this week; ` +
         `${needByPos.size ? `positional need read off the week-${rw} rosters` : "NO roster rows for the prior week, so positional need is unknown and reads as missing"}`,

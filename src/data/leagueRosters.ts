@@ -313,7 +313,7 @@ export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: numb
   try {
     // The id the ESPN URLs are built from IS the id every row is stamped with -- and a non-ESPN
     // league is refused here, before the first fetch.
-    const leagueId = requirePlatform(resolveLeagueContext(db, opts.leagueId), "espn", "ingest league-rosters");
+    const leagueId = requirePlatform(resolveLeagueContext(db, opts.leagueId), "espn", "ingest league-rosters", "syncRosters");
     const pause = opts.pauseMs ?? 600;
     const fetched: RosterWeekFetch[] = [];
     for (const season of opts.seasons) {

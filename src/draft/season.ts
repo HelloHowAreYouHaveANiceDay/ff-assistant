@@ -47,6 +47,7 @@ import { optimalLineup } from "../inseason/lineup.js";
 import { draw as unitDraw, drawGauss, PURPOSE, PlayerIds } from "./rng.js";
 import { prepare as prepBootstrap, sampleSeason as bootstrapSeason, weekOf, type RankOutcomes, type CorrelationModel, type PoolPlayer } from "./bootstrap.js";
 import { seedField } from "./schedule.js";
+import { slotAdmits, splitTemplate } from "./slots.js";
 import type { SeedingRule } from "../league/types.js";
 
 export interface VarianceModel {
@@ -246,11 +247,12 @@ export function sampleWeek(mean: number, cv: number, rng: () => number): number 
 function emptySlotPoints(slot: string, opts: SeasonOpts): number {
   const rep = opts.replacement;
   if (!rep) return 0;
-  if (slot === "FLEX") {
-    const flex = opts.flexOk ?? ["RB", "WR", "TE"];
-    return Math.max(0, ...flex.map((p) => rep[p] ?? 0));
-  }
-  return rep[slot] ?? 0;
+  // `slotAdmits`, not `slot === "FLEX"` (I-2). For a dedicated slot this is `[slot]` and the answer
+  // is `rep[slot]` exactly as before; for any flex -- FLEX, SUPERFLEX, a slash-form -- it is the best
+  // replacement among the positions that slot actually admits, which the literal could not see.
+  const elig = slotAdmits(slot, opts.flexOk ?? ["RB", "WR", "TE"]);
+  if (elig.length === 1) return rep[elig[0]] ?? 0;
+  return Math.max(0, ...elig.map((p) => rep[p] ?? 0));
 }
 
 /**
@@ -358,11 +360,13 @@ export function rosterGaps(
   slots: string[],
   flexOk?: Iterable<string>,
 ): string[] {
-  const flex = new Set(flexOk ?? ["RB", "WR", "TE"]);
-  const start = slots.filter((s) => s !== "BE" && s !== "BENCH" && s !== "IR");
-  const need: Record<string, number> = {};
-  let flexN = 0;
-  for (const s of start) { if (s === "FLEX") flexN++; else need[s] = (need[s] ?? 0) + 1; }
+  // THE TEMPLATE, THROUGH THE ONE SLOT MODULE (I-2/I-3). `s !== "BE" && s !== "BENCH" && s !== "IR"`
+  // did not know `BN`/`ER`, and `s === "FLEX"` did not know `SUPERFLEX` -- so a Yahoo template made a
+  // `SUPERFLEX` slot a DEDICATED requirement for a position literally named "SUPERFLEX", which no
+  // roster on earth holds, and `assertRostersCanFillLineup` refused every Yahoo roster.
+  const { dedicated: need, flex: groups } = splitTemplate(slots, flexOk ?? ["RB", "WR", "TE"]);
+  // Every position any flex group admits -- the "is he worth counting at all" filter below.
+  const flex = new Set<string>(groups.flatMap((g) => g.elig));
 
   const problems: string[] = [];
   for (const t of teams) {
@@ -391,10 +395,30 @@ export function rosterGaps(
     for (const [pos, n] of Object.entries(need)) {
       if ((have[pos] ?? 0) < n) problems.push(`${t.name || t.id}: has ${have[pos] ?? 0} ${pos} but the lineup starts ${n}`);
     }
-    // FLEX needs players SPARE of the dedicated slots, not merely present.
-    let spare = 0;
-    for (const pos of flex) spare += Math.max(0, (have[pos] ?? 0) - (need[pos] ?? 0));
-    if (spare < flexN) problems.push(`${t.name || t.id}: ${spare} flex-eligible players spare of the fixed slots but the lineup starts ${flexN} FLEX`);
+    // A FLEX GROUP needs players SPARE of the dedicated slots, not merely present -- and with more
+    // than one group (Yahoo starts 3x FLEX plus 1x SUPERFLEX) they COMPETE for the same spares. The
+    // groups are filled NARROWEST FIRST, which is exactly optimal here because the eligibility sets
+    // are laminar (FLEX [RB,WR,TE] sits inside SUPERFLEX [QB,RB,WR,TE]); `splitTemplate` returns them
+    // in that order. With one group this is arithmetically the old single-FLEX check, unchanged.
+    const spareAt: Record<string, number> = {};
+    for (const pos of flex) spareAt[pos] = Math.max(0, (have[pos] ?? 0) - (need[pos] ?? 0));
+    for (const g of groups) {
+      let spare = 0;
+      for (const pos of g.elig) spare += spareAt[pos] ?? 0;
+      if (spare < g.count) {
+        problems.push(`${t.name || t.id}: ${spare} flex-eligible players spare of the fixed slots but the lineup starts ${g.count} ${g.label}`);
+        continue;
+      }
+      // Consume the spares this group uses, cheapest position first, so the next (wider) group is
+      // asked about what is genuinely left rather than about the same men twice.
+      let take = g.count;
+      for (const pos of g.elig) {
+        if (take <= 0) break;
+        const use = Math.min(take, spareAt[pos] ?? 0);
+        spareAt[pos] = (spareAt[pos] ?? 0) - use;
+        take -= use;
+      }
+    }
   }
   return problems;
 }

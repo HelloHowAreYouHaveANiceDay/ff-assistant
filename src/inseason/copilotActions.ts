@@ -103,6 +103,12 @@ const poWks = (a: C.Assumptions): string => {
  *  drops this is quoting a number without its assumptions, which is the whole failure mode. */
 export function caveat(a: C.Assumptions): string {
   const bits = [
+    // WHICH LEAGUE, FIRST (I-7). With two leagues in one store the headline number was quotable with
+    // nothing anywhere saying whose it was; the scoring key makes "this is the Yahoo number" checkable
+    // against `data/formats/<key>/` rather than merely asserted.
+    a.artifact.leagueId
+      ? `league ${a.artifact.leagueId}${a.artifact.platform ? ` (${a.artifact.platform})` : ""}${a.artifact.scoringKey ? ` scoring ${a.artifact.scoringKey}` : ""}`
+      : "league UNSTAMPED (a hand-built context)",
     a.schedule === "real" ? "REAL schedule" : "GENERATED schedule (not this league's actual matchups)",
     a.basis === "simulation" ? `${a.trials} trials x ${a.seeds?.length ?? 0} seed(s)` : a.basis === "market" ? "solved from posted betting lines" : "point projections, no simulation",
     `board ${a.artifact.season} (${a.artifact.boardRows} rows)`,
@@ -235,7 +241,11 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       };
     }
     case "waiver_targets":
-      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId) });
+      // `leagueId` + `acquisition` (I-4): the fitted artifact is resolved for THIS league, every live
+      // FAAB read is filtered to it, and the budget/process day come from the league's OWN rules
+      // rather than from an ESPN assumption. A league with no fitted model gets `faabBasis: "rule"`
+      // naming the artifact it would need, instead of another room's measurement.
+      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId), leagueId: leagueId ?? provenance.leagueId, acquisition: S.loadAcquisition(dbPath, leagueId), dbPath });
     case "trade_check":
       return C.tradeCheck(ctx, { give: a.give ?? [], get: a.get ?? [] }, { provenance, trials: a.trials ?? 1600, seeds: a.seed != null ? [a.seed] : [7, 101] });
     case "trade_finder":
@@ -327,7 +337,11 @@ export async function runCopilot(
 ): Promise<CopilotRun> {
   if (!COPILOT_VERBS.includes(verb)) throw new Error(`unknown copilot verb "${verb}". Valid: ${COPILOT_VERBS.join(", ")}`);
   const db = openDb(opts.dbPath);
-  const logId = logAction(db, { runType: "copilot", action: verb, detail: { args } });
+  // THE ACTION LOG ROW CARRIES THE LEAGUE (I-7). `action_log.league_id` exists since WP2 and
+  // `logAction` defaults it to the ACTIVE league -- which is wrong for exactly the call this file
+  // exists to make possible, `--league <other>`. Naming it here means the audit trail says which
+  // league a recommendation was about even when it was not the active one.
+  const logId = logAction(db, { runType: "copilot", action: verb, detail: { args }, leagueId: args.league ?? undefined });
   try {
     // RESOLVE THE LEAGUE ONCE, HERE, and thread it: the context, the provenance stamp, the current
     // week, the FAAB scale and the consensus values all now come from the same id. An unknown

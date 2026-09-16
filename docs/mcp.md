@@ -21,9 +21,26 @@ Two guards keep it that way (`test/mcp-surface.test.ts`):
 ## Setup
 
 The app must be **running** for the browser/league tools (`navigate`, `read_page`,
-`discover_leagues`, `league_sync`, `read_league`) -- they drive the app's own logged-in ESPN
-webview over CDP (`FF_CDP_PORT`, default 9223). The board/roster/lever tools read SQLite directly
-and work with the app closed.
+`discover_leagues`, `league_sync`, `read_league`) -- they drive the app's own logged-in webview over
+CDP (`FF_CDP_PORT`, default 9223) and the app bridge. The board/roster/lever tools read SQLite
+directly and work with the app closed.
+
+**WHICH LEAGUE, AND WHICH PLATFORM (WP5, 2026-09-16).** The app mounts ONE webview per platform
+(`espnview` / `yahooview`, each on its own persistent partition, both signed in at once), and the
+column below says how each tool behaves on a multi-platform store:
+
+- *league-aware* -- takes an optional `league` argument; omitted = the ACTIVE league
+  (`settings.active_league`, what the app's league tabs set). An id naming no league row THROWS.
+  All ten in-season copilot tools are league-aware, and every result's `assumptions.artifact` now
+  carries `leagueId`, `platform` and `scoringKey`, so a number cannot be quoted without its league.
+- *platform-dispatched* -- resolves the league's platform from the league ROW and calls that
+  platform's adaptor (`platformFor`); a platform with no adaptor is refused BY NAME, never handed
+  ESPN's.
+- *active-platform guest* -- drives the webview belonging to the ACTIVE league's platform rather
+  than always ESPN's.
+- *ESPN-only (refuses by name)* -- speaks ESPN's auction-draft DOM; on a non-ESPN active league it
+  returns a refusal naming the platform, instead of driving the ESPN room and reporting the result
+  as an answer about a league that is not on ESPN.
 
 Register the server with Claude Code, from anywhere:
 
@@ -77,25 +94,25 @@ call left a row in `action_log`.
 | `drop_player` | remove a player from my roster | **yes** (logged) |
 | `set_price` | change a roster entry's price | **yes** (logged) |
 | `set_lever` | tune one strategy knob (clamped, logged) | **yes** (logged) |
-| `navigate` | point the app's embedded ESPN browser at a URL | app state |
-| `read_page` | read the visible text of the embedded page | no |
-| `click_page` | click an element by visible text or CSS selector; follows popups the webview blocks | app state |
-| `discover_leagues` | find my real leagues/teams by reading my ESPN home | writes store |
-| `league_sync` | read real league rules (size, scoring, slots, my team) into the store | writes store |
-| `read_league` | live roster, standings, draft status | no |
+| `navigate` | point the ACTIVE LEAGUE'S embedded browser at a URL (*active-platform guest*) | app state |
+| `read_page` | read the visible text of the active league's embedded page (*active-platform guest*) | no |
+| `click_page` | click an element by visible text or CSS selector; follows popups the webview blocks (*active-platform guest*) | app state |
+| `discover_leagues` | find my real leagues/teams by reading my ESPN home; the link parser and the `platform` it stamps both come from the ESPN ADAPTOR (`espnDiscoverFromLinks`), not from a literal | writes store |
+| `league_sync` | read real league rules (size, scoring, slots, calendar, acquisition rules, my team) into the store (*platform-dispatched*: espn + yahoo; any other platform refuses by name and writes nothing) | writes store |
+| `read_league` | live roster, standings, draft status (*platform-dispatched*: ESPN keeps its own `mStandings`/`mDraftDetail` read; every other platform goes through `openLeague`, which refuses an unknown one by name and SAYS which facts its adaptor does not publish) | no |
 | `fill_page` | type into an input (React-safe native setter) | page |
 | `scroll_page` | scroll the page or a scrollable element; wheel-event aware | page |
 | `read_dom` | structured elements (tag/text/class/disabled/href), not flat text | no |
 | `wait_for` | poll until text or a selector appears | no |
-| `read_frame` | read text from a NESTED cross-origin iframe (e.g. Fantasy Chat) the top-document readers cannot reach; lists frames, takes a selector, `scrollUp` loads a virtualized message list | no |
-| `press` | hardened click (full pointer/mouse sequence) for a React control a plain `click_page` misses; `frame` clicks INSIDE a nested iframe; fires exactly one click so toggles are not double-toggled | app state |
+| `read_frame` | read text from a NESTED cross-origin iframe (e.g. Fantasy Chat) the top-document readers cannot reach; lists frames, takes a selector, `scrollUp` loads a virtualized message list (*active-platform guest* -- the `host` is passed to the bridge) | no |
+| `press` | hardened click (full pointer/mouse sequence) for a React control a plain `click_page` misses; `frame` clicks INSIDE a nested iframe; fires exactly one click so toggles are not double-toggled (*active-platform guest*) | app state |
 | `refresh` | re-run the data pipeline (ingest → project → assemble), same as `ff refresh`, so the numbers every read/decision tool returns are current | writes store |
 | `propose_trade` | PROPOSE A TRADE to another manager. **Dry-run by default** (resolves + validates + shows the transaction); `confirm: true` submits it. Same gated path as `ff propose-trade [--send]` | **ESPN write (gated)** |
-| `read_block` | live auction: player, offer, your legal max, canBid | no |
-| `read_turn` | is it OUR nomination turn | no |
-| `read_draft_roster` | your roster AS ESPN SEES IT in the live room | no |
-| `place_bid` | **places a REAL bid** (quick bid, or a guarded jump bid) | **LIVE $** |
-| `nominate_player` | nominate a player in the live room | **LIVE** |
+| `read_block` | live auction: player, offer, your legal max, canBid (*ESPN-only, refuses by name*) | no |
+| `read_turn` | is it OUR nomination turn (*ESPN-only, refuses by name*) | no |
+| `read_draft_roster` | your roster AS ESPN SEES IT in the live room (*ESPN-only, refuses by name*) | no |
+| `place_bid` | **places a REAL bid** (quick bid, or a guarded jump bid) (*ESPN-only, refuses by name* -- the guard sits in front of an irreversible act, not only a read) | **LIVE $** |
+| `nominate_player` | nominate a player in the live room (*ESPN-only, refuses by name*) | **LIVE** |
 | `season_odds` | playoff + title odds for all sixteen teams, ours flagged, with conservation checks AND the current objective regime | no |
 | `lineup_recommend` | this week's best legal lineup + who cannot play and why. It maximises EXPECTED POINTS by default, which is the right objective only when the game is close -- an underdog wants variance and a favourite wants the floor. A second objective that maximises P(beating this week's opponent) is selectable with `objective: "winprob"`; it is NOT the default, deliberately, because it measured -0.59pp of team-weeks won over 2018-2025 (docs/validation.md, Track H) | no |
 | `waiver_targets` | each add+drop scored by the change in OUR PLAYOFF probability, with playoff-week points and title delta beside it, and a FITTED bid: the dollars needed for a target win probability (0.7, exposed), the predicted clearing price, and P(win) at three levels. Since Track J the dollar figure comes from `data/faab-model.json`, fitted on this league's own 794 waiver claims *including the 145 losing bids ESPN publishes*; `faabBasis` reads `"model"` or `"rule"` so a fallback to the old rule of thumb cannot be mistaken for a measurement, and `assumptions.faab` carries the artifact, the target, our remaining FAAB and the caveat that the bid's effect on P(win) is not separable from zero at the season level. A bid above the budget is FLAGGED (`faabOverBudget`/`faabOverRemaining`), never silently capped | no |

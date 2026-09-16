@@ -28,8 +28,19 @@ export const SNAPSHOT_VERBS: CopilotVerb[] = ["season_odds", "waiver_targets", "
  */
 export async function refreshDecisionSnapshot(opts: {
   dbPath?: string; actualsHash?: string | null; schedule?: "real" | "generated" | "auto";
-} = {}): Promise<{ rows: number; schedule: string; week: number | null; verbs: string[] }> {
-  const ctx = await copilotContext(opts.schedule ?? "auto");
+  /** WHICH LEAGUE this snapshot is of. Omitted = the ACTIVE league, resolved ONCE below. */
+  leagueId?: string | null;
+} = {}): Promise<{ rows: number; schedule: string; week: number | null; verbs: string[]; leagueId: string }> {
+  // RESOLVE THE LEAGUE ONCE, BEFORE THE CONTEXT IS BUILT, AND STAMP FROM THAT (I-7). It used to build
+  // the context against the active league and then re-read `activeLeagueId(db)` AFTER the three
+  // simulations had run -- so a league switch during the refresh (the app's league tab writes that
+  // setting) stamped one league's rows with another league's numbers. Nothing would have failed; the
+  // snapshot would simply have been about the wrong team, which is the whole failure class.
+  const lg = (() => {
+    const db0 = openDb(opts.dbPath);
+    try { return opts.leagueId ?? activeLeagueId(db0) ?? ""; } finally { db0.close(); }
+  })();
+  const ctx = await copilotContext(opts.schedule ?? "auto", lg || undefined);
   const db = openDb(opts.dbPath);
   try {
     const ins = db.prepare(
@@ -39,13 +50,12 @@ export async function refreshDecisionSnapshot(opts: {
          actuals_hash=excluded.actuals_hash, summary=excluded.summary, result_json=excluded.result_json,
          updated_at=excluded.updated_at`,
     );
-    const lg = activeLeagueId(db) ?? "";
     const now = nowIso();
     const done: string[] = [];
     let schedule = "unknown";
     for (const verb of SNAPSHOT_VERBS) {
       // Share the one context; runCopilot still logs each run to action_log at "recommended" (D3).
-      const run = await runCopilot(verb, { schedule: opts.schedule ?? "auto" }, { dbPath: opts.dbPath, ctx });
+      const run = await runCopilot(verb, { schedule: opts.schedule ?? "auto", ...(lg ? { league: lg } : {}) }, { dbPath: opts.dbPath, ctx });
       const a = (run.result as { assumptions?: { schedule?: string } }).assumptions;
       schedule = a?.schedule ?? schedule;
       ins.run({
@@ -55,6 +65,6 @@ export async function refreshDecisionSnapshot(opts: {
       });
       done.push(verb);
     }
-    return { rows: done.length, schedule, week: (ctx as { week?: number }).week ?? null, verbs: done };
+    return { rows: done.length, schedule, week: (ctx as { week?: number }).week ?? null, verbs: done, leagueId: lg };
   } finally { db.close(); }
 }

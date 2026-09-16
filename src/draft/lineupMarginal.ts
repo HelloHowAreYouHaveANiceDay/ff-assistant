@@ -45,6 +45,7 @@
  * `scripts/marginal-agreement.mjs` measures the whole disagreement against the simulated marginal,
  * which is the check that matters.
  */
+import { isBenchSlot, isFlexSlot, slotAdmits } from "./slots.js";
 
 export interface LmPlayer {
   name: string; pos: string; proj: number; bye?: number | null;
@@ -97,8 +98,11 @@ export interface LmOpts {
 /** Positions whose alternative really is the waiver wire, so a last-starter baseline does not apply. */
 const STREAMED = new Set(["K", "DST"]);
 
-const isBench = (s: string) => /^(BE|BENCH|IR|ER)$/i.test(s);
-const FLEX_KEYS = new Set(["FLEX", "OP", "RB/WR", "WR/TE"]);
+// THE ONE SLOT MODULE (I-2/I-3). `isBench` was a fourth hand-typed regex and `FLEX_KEYS` a
+// hand-typed set that could not see `SUPERFLEX`; both now come from src/draft/slots.ts. For this
+// league the answers are identical -- `isFlexSlot` is true for exactly {FLEX, OP, RB/WR, WR/TE}
+// among the tokens that set held, and `isBenchSlot` adds only Yahoo's `BN`.
+const isBench = isBenchSlot;
 const DEFAULT_FLEX = ["RB", "WR", "TE"];
 
 /**
@@ -178,7 +182,7 @@ export function starterBaselines(
   for (const l of byPos.values()) l.sort((a, b) => b - a);
 
   const dedicatedSlots = (pos: string) => lg.slots.filter((s) => s === pos).length;
-  const flexSlots = lg.slots.filter((s) => FLEX_KEYS.has(s)).length;
+  const flexSlots = lg.slots.filter((s) => isFlexSlot(s)).length;
   const dedicated = (pos: string) => Math.round(dedicatedSlots(pos) * lg.teams * frac);
   const flexTotal = Math.round(flexSlots * lg.teams * frac);
 
@@ -237,7 +241,7 @@ export function expectedWeekPoints(roster: readonly LmPlayer[], week: number, o:
   // share a cutoff (a league that gives TE zero flex slots has a TE baseline well above the flex
   // margin, so taking the max over positions would price the flex against the wrong man).
   const floorFor = (slot: string): number => {
-    if (FLEX_KEYS.has(slot)) {
+    if (isFlexSlot(slot)) {
       const b = o.baseline?.FLEX;
       if (b != null) return b;
       return Math.max(0, ...flex.map((p) => o.replacement?.[p] ?? 0));
@@ -252,10 +256,13 @@ export function expectedWeekPoints(roster: readonly LmPlayer[], week: number, o:
   let total = 0;
   for (const slot of start) {
     const rep = floorFor(slot);
-    if (FLEX_KEYS.has(slot)) {
+    if (isFlexSlot(slot)) {
       // The flex queue is whatever is LEFT across the eligible positions, merged by points.
       const merged: { pg: number; a: number; pos: string }[] = [];
-      for (const pos of flex) {
+      // The positions THIS flex slot admits (slotAdmits), not one league-wide list: a SUPERFLEX
+      // slot must reach quarterbacks and a W/R/T slot must not. `flex_ok` still overrides the literal
+      // `FLEX` token, so this league is unchanged.
+      for (const pos of slotAdmits(slot, flex)) {
         const l = q.get(pos) ?? [];
         for (let i = ptr[pos] ?? 0; i < l.length; i++) merged.push({ ...l[i], pos });
       }
@@ -339,7 +346,7 @@ export function budgetPath(
   limits: { poolSize?: number; steps?: number } = {},
 ): PathPoint[] {
   const flex = o.flexOk ?? DEFAULT_FLEX;
-  const accepts = (slot: string, pos: string) => isBench(slot) || (FLEX_KEYS.has(slot) ? flex.includes(pos) : slot === pos);
+  const accepts = (slot: string, pos: string) => isBench(slot) || slotAdmits(slot, flex).includes(pos);
   const price = (p: LmPlayer) => Math.max(1, Math.round(priceOf(p)));
   const wproj = (slot: string, p: LmPlayer) => (isBench(slot) ? (BENCH_WEIGHT[p.pos] ?? 0.2) : 1) * p.proj;
   // THE CANDIDATE SET NEEDS BOTH ENDS OF THE MARKET. Truncating the pool to the top N by projection
@@ -361,7 +368,7 @@ export function budgetPath(
   let money = budget, spent = 0;
   // Cheapest legal body first, scarcest slot first.
   const order = openSlots.map((_s, i) => i).sort((a, b) => {
-    const rank = (s: string) => (isBench(s) ? 2 : FLEX_KEYS.has(s) ? 1 : 0);
+    const rank = (s: string) => (isBench(s) ? 2 : isFlexSlot(s) ? 1 : 0);
     return rank(openSlots[a]) - rank(openSlots[b]);
   });
   for (const i of order) {

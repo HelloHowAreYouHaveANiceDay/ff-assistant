@@ -174,6 +174,10 @@ export function yahooSettingsFromHtml(
   return {
     leagueId: opts.leagueId, platform: "yahoo", season: opts.season,
     name: t["League Name"] ?? null,
+    // Yahoo's settings page names the league's rules, not WHICH of the twelve teams is ours -- that
+    // is on the Managers page and is read separately. `null` = "this read cannot tell", so the caller
+    // keeps the stored `team_id` rather than blanking our seat.
+    teamId: null,
     teams, slots, draftType,
     // A snake draft has no dollars. `null` rather than a number is the whole point: `requireAuction`
     // already refuses the auction-only verbs by name, and a budget here would be a value with no referent.

@@ -41,7 +41,48 @@ async function guestEval(js: string): Promise<unknown> {
   return await withPage(async (page) => (page as unknown as { evaluate: (s: string) => Promise<unknown> }).evaluate(js));
 }
 
-export function browserTools(tool: Tool): unknown[] {
+/**
+ * THE ACTIVE LEAGUE'S PLATFORM AND THE GUEST THAT HOLDS ITS LOGIN (P-6).
+ *
+ * The app mounts ONE webview per platform, each on its own persistent partition, so both stay signed
+ * in at once. Every tool below used to address the ESPN one unconditionally: on a Yahoo active league
+ * `read_frame`/`press` read and clicked ESPN's pages and returned the result as the answer about a
+ * league that is not on ESPN. Passing the host from the league row is what makes that impossible.
+ *
+ * Falls back to ESPN when the store cannot be read or names no league, which is exactly the old
+ * behaviour for the one case where the old behaviour was right.
+ */
+async function activePlatform(dbPath?: string): Promise<{ id: string; host: string; known: boolean }> {
+  try {
+    const { openDb } = await import("../db/db.js");
+    const { resolveLeagueContext } = await import("../data/leagueContext.js");
+    const db = openDb(dbPath);
+    let raw: string | null;
+    try { raw = resolveLeagueContext(db, undefined).platformRaw; } finally { db.close(); }
+    if (!raw) return { id: "espn", host: "espn.com", known: true };
+    const { platformFor } = await import("../league/platform.js");
+    try { const p = await platformFor(raw); return { id: p.id, host: p.webview.host, known: true }; }
+    catch { return { id: raw, host: "", known: false }; }
+  } catch { return { id: "espn", host: "espn.com", known: true }; }
+}
+
+/**
+ * REFUSE AN ESPN-DRAFT-ROOM TOOL ON A NON-ESPN LEAGUE, BY NAME.
+ *
+ * `read_block`/`read_turn`/`read_draft_roster`/`place_bid`/`nominate_player` speak ESPN's auction DOM
+ * through `src/draft/espnAuction.ts`. There is no platform-neutral version of them and there cannot
+ * be one until another platform's draft room is read; pointing them at a Yahoo league would return
+ * ESPN's room, or nothing, with no way for the reader to tell which. `place_bid` is the one that
+ * spends money, so this guard is in front of an irreversible act, not only a read.
+ */
+async function draftRoomRefusal(dbPath: string | undefined, toolName: string): Promise<string | null> {
+  const p = await activePlatform(dbPath);
+  if (p.id === "espn") return null;
+  return `${toolName} REFUSED: the active league is on "${p.id}" and this tool drives the ESPN auction draft room (src/draft/espnAuction.ts). ` +
+    `There is no ${p.id} draft-room adaptor. Switch the active league to an ESPN one (the app's league tabs) or read the room by hand.`;
+}
+
+export function browserTools(tool: Tool, dbPath?: string): unknown[] {
   return [
     tool(
       "fill_page",
@@ -151,7 +192,10 @@ export function browserTools(tool: Tool): unknown[] {
       (async (args: { match?: string; selector?: string; scrollUp?: boolean }) => {
         try {
           const { bridgeReadFrame } = await import("../browser/appBridge.js");
-          const r = await bridgeReadFrame({ match: args.match, selector: args.selector, scrollUp: args.scrollUp });
+          // THE GUEST THAT HOLDS THE ACTIVE LEAGUE'S LOGIN, not always ESPN's (P-6).
+          const plat = await activePlatform(dbPath);
+          if (!plat.known) return text(`read_frame REFUSED: the active league is on "${plat.id}", which this build has no webview for -- there is nothing to read.`);
+          const r = await bridgeReadFrame({ match: args.match, selector: args.selector, scrollUp: args.scrollUp, host: plat.host });
           if (r.frames) return text("frames (" + r.frames.length + "):\n" + r.frames.map((f) => `- ${f.name || "(top)"}: ${f.url}`).join("\n"));
           if (r.text === "__NOSEL__") return text(`frame ${r.url}: no element matched ${args.selector}`);
           return text(`[${r.url}]\n` + String(r.text ?? "").slice(0, 8000));
@@ -173,7 +217,9 @@ export function browserTools(tool: Tool): unknown[] {
         if (!args.selector && !args.text) return text("give a selector or text");
         try {
           const { bridgeClick } = await import("../browser/appBridge.js");
-          const r = await bridgeClick({ selector: args.selector, text: args.text, nth: args.nth, frame: args.frame });
+          const plat = await activePlatform(dbPath);
+          if (!plat.known) return text(`press REFUSED: the active league is on "${plat.id}", which this build has no webview for -- there is nothing to click.`);
+          const r = await bridgeClick({ selector: args.selector, text: args.text, nth: args.nth, frame: args.frame, host: plat.host });
           if (!r.ok) return text(`press: ${r.err === "NOMATCH" ? `no visible element matched ${args.selector ?? `"${args.text}"`}` : (r.err ?? "failed")}`);
           return text(`pressed: ${r.clicked}${r.popup ? ` (captured popup -> ${r.popup})` : ""}`);
         } catch (e) {
@@ -188,6 +234,8 @@ export function browserTools(tool: Tool): unknown[] {
       "Read the player currently ON THE BLOCK in the live auction: name, position, current offer, ESPN's pre-draft value, your legal max bid, and whether you can bid right now. This is the engine's own reader (espnAuction.readBlock), not a text scrape.",
       {},
       (async () => {
+        const refuse = await draftRoomRefusal(dbPath, "read_block");
+        if (refuse) return text(refuse);
         const r = await withPage(async (page) => {
           const { readBlock } = await import("../draft/espnAuction.js");
           return await readBlock(page);
@@ -200,6 +248,8 @@ export function browserTools(tool: Tool): unknown[] {
       "Is it OUR turn to nominate? Reads the live draft room (espnAuction.readTurn): whether a player is on the block, whether a nomination control is enabled, and which team is nominating.",
       {},
       (async () => {
+        const refuse = await draftRoomRefusal(dbPath, "read_turn");
+        if (refuse) return text(refuse);
         const r = await withPage(async (page) => {
           const { readTurn } = await import("../draft/espnAuction.js");
           return await readTurn(page);
@@ -212,6 +262,8 @@ export function browserTools(tool: Tool): unknown[] {
       "Read MY roster AS ESPN SEES IT in the live draft room -- filled/open slots, spend, and who occupies each slot. Distinct from read_my_team, which reads our own local store; use this one to check what actually happened in the room.",
       {},
       (async () => {
+        const refuse = await draftRoomRefusal(dbPath, "read_draft_roster");
+        if (refuse) return text(refuse);
         const r = await withPage(async (page) => {
           const { readRoster } = await import("../draft/espnAuction.js");
           const x = await readRoster(page);
@@ -232,6 +284,8 @@ export function browserTools(tool: Tool): unknown[] {
         confirm: z.boolean().optional().describe("must be true to place a jump bid above the quick-bid amount"),
       },
       (async (args: { amount?: number; confirm?: boolean }) => {
+        const refuse = await draftRoomRefusal(dbPath, "place_bid");
+        if (refuse) return text(refuse);
         const r = await withPage(async (page) => {
           const { readBlock, quickBid, jumpBid } = await import("../draft/espnAuction.js");
           const b = await readBlock(page);
@@ -260,6 +314,8 @@ export function browserTools(tool: Tool): unknown[] {
       "Nominate a player in the live draft room (clicks their board Select). Only works on our nomination turn and only for a player currently VISIBLE on the virtualised board -- scroll_page the board first if they are not. Check read_turn before calling.",
       { name: z.string().describe("exact player name as ESPN shows it") },
       (async (args: { name: string }) => {
+        const refuse = await draftRoomRefusal(dbPath, "nominate_player");
+        if (refuse) return text(refuse);
         const r = await withPage(async (page) => {
           const { nominate } = await import("../draft/espnAuction.js");
           const ok = await nominate(page, args.name);

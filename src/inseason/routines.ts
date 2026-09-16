@@ -14,6 +14,27 @@ export interface Routine {
   /** True if the routine needs the desktop app's ESPN webview (the app bridge); false = self-contained
    *  (nflverse / local sim), so a headless poller can run it. */
   needsApp: boolean;
+  /**
+   * WHICH PLATFORMS THIS ROUTINE'S STEPS HAVE AN ADAPTOR FOR (I-7 / P-1).
+   *
+   * `null` = platform-neutral (nflverse results, the local simulator, the scorecard -- none of them
+   * touch a fantasy provider). A list = the steps are provider-specific, and a league on any other
+   * platform is SKIPPED BY NAME rather than run against an adaptor that does not exist. `sync-league`
+   * builds ESPN URLs, so `roster` is `["espn"]` and a Yahoo league is told so.
+   */
+  platforms: string[] | null;
+  /**
+   * DOES EVERY STEP ACCEPT `--league <id>`?
+   *
+   * `false` today for all four, and that is a statement about `src/ff.ts`, not about the routine:
+   * `sync-actuals`, `scorecard`, `refresh-decisions` and `sync-league` resolve the ACTIVE league and
+   * take no `--league` flag. Appending one anyway would be SILENTLY IGNORED -- the routine would look
+   * per-league and run the active league's work N times -- which is the exact failure shape this
+   * whole pass exists to remove. So `planRoutines` runs them for the ACTIVE league only and REPORTS
+   * every other league it could not run, naming the verb. Flipping this to `true` is one line once
+   * those verbs take the flag.
+   */
+  leagueScoped: boolean;
 }
 
 /**
@@ -28,24 +49,32 @@ export const ROUTINES: Record<string, Routine> = {
     what: "ingest nflverse results, rebuild the forward board (trailing form), refresh decisions on a change",
     steps: [["sync-actuals", []]],
     needsApp: false,
+    platforms: null,          // nflverse results -- no fantasy provider involved
+    leagueScoped: false,
   },
   scorecard: {
     name: "scorecard",
     what: "freeze the imminent week's weekly predictions and score any settled week",
     steps: [["scorecard", ["--no-forward", "--no-odds"]]],
     needsApp: false,
+    platforms: null,
+    leagueScoped: false,
   },
   decisions: {
     name: "decisions",
     what: "recompute and store the waiver / trade / odds recommendations (decision_snapshot)",
     steps: [["refresh-decisions", ["--schedule", "auto"]]],
     needsApp: false,
+    platforms: null,
+    leagueScoped: false,
   },
   roster: {
     name: "roster",
     what: "pull the league's roster + transaction + pending-trade state (needs the app's ESPN session)",
     steps: [["sync-league", ["--tier", "fast"]]],
     needsApp: true,
+    platforms: ["espn"],      // cmdSyncLeague builds ESPN URLs; there is no yahoo syncRosters wiring yet
+    leagueScoped: false,
   },
 };
 
@@ -65,9 +94,21 @@ export interface ScheduleConfig {
 export const DEFAULT_SCHEDULE: ScheduleConfig = { enabled: false, everyMinutes: 15, routines: DEFAULT_ROUTINES };
 const SCHEDULE_KEY = "scheduler";
 
-/** The stored schedule, merged over defaults so a partial or absent row is always a complete config. */
-export function getSchedule(db: DB): ScheduleConfig {
-  const raw = getSetting(db, SCHEDULE_KEY);
+/**
+ * THE SCHEDULE IS PER LEAGUE, with the old single-slot row as the shared default (I-7 / S-13).
+ *
+ * `settings.scheduler` was ONE global row for a store that now holds two leagues, so turning the
+ * timer on for a Yahoo league turned it on for the ESPN one too. `scheduler:<leagueId>` is read when
+ * a league is named and it EXISTS; otherwise the global row is used unchanged, which is what keeps
+ * every existing caller (the app timer, `ff schedule`) byte-identical on a one-league store.
+ */
+const scheduleKey = (leagueId?: string | null): string =>
+  leagueId ? `${SCHEDULE_KEY}:${leagueId}` : SCHEDULE_KEY;
+
+/** The stored schedule, merged over defaults so a partial or absent row is always a complete config.
+ *  `leagueId` omitted (or naming a league with no row of its own) reads the shared global row. */
+export function getSchedule(db: DB, leagueId?: string | null): ScheduleConfig {
+  const raw = (leagueId ? getSetting(db, scheduleKey(leagueId)) : undefined) ?? getSetting(db, SCHEDULE_KEY);
   if (!raw) return { ...DEFAULT_SCHEDULE };
   try {
     const p = JSON.parse(raw) as Partial<ScheduleConfig>;
@@ -81,8 +122,8 @@ export function getSchedule(db: DB): ScheduleConfig {
 
 /** Write a partial change over the stored schedule, validate it, and return the result. Unknown
  *  routine names are dropped here so a bad name can never reach the app's timer. */
-export function setSchedule(db: DB, patch: Partial<ScheduleConfig>): { config: ScheduleConfig; droppedRoutines: string[] } {
-  const cur = getSchedule(db);
+export function setSchedule(db: DB, patch: Partial<ScheduleConfig>, leagueId?: string | null): { config: ScheduleConfig; droppedRoutines: string[] } {
+  const cur = getSchedule(db, leagueId);
   const wantRoutines = patch.routines ?? cur.routines;
   const dropped = wantRoutines.filter((r) => !(r in ROUTINES));
   const routines = wantRoutines.filter((r) => r in ROUTINES);
@@ -91,7 +132,7 @@ export function setSchedule(db: DB, patch: Partial<ScheduleConfig>): { config: S
     everyMinutes: clampMinutes(patch.everyMinutes ?? cur.everyMinutes),
     routines,
   };
-  setSetting(db, SCHEDULE_KEY, JSON.stringify(next));
+  setSetting(db, scheduleKey(leagueId), JSON.stringify(next));
   return { config: next, droppedRoutines: dropped };
 }
 
@@ -107,6 +148,89 @@ export function stepsFor(routineNames: string[]): { steps: [string, string[]][];
   const ran = Object.keys(ROUTINES).filter((r) => routineNames.includes(r)); // registry order, de-duped
   const steps = ran.flatMap((r) => ROUTINES[r].steps);
   return { steps, ran, unknown };
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE ROUTINE SET, PER LEAGUE (I-7)
+// ---------------------------------------------------------------------------------------------
+
+/** One league the routine set could be run for: a row with a seat we actually hold. */
+export interface RoutineLeague { leagueId: string; platform: string | null; name: string | null }
+
+/**
+ * THE LEAGUES A ROUTINE SET APPLIES TO: every league row with a `team_id`.
+ *
+ * `team_id IS NULL` means the sync never identified our seat, so there is nothing in that league to
+ * pull actuals for or set a lineup in; running routines against it would produce rows attributed to
+ * a league we are not in. Ordered by id so a plan is deterministic and diffable.
+ */
+export function routineLeagues(db: DB): RoutineLeague[] {
+  try {
+    return (db.prepare(
+      "SELECT league_id, platform, name FROM league WHERE team_id IS NOT NULL ORDER BY league_id",
+    ).all() as { league_id: string; platform: string | null; name: string | null }[])
+      .map((r) => ({ leagueId: String(r.league_id), platform: r.platform ?? null, name: r.name ?? null }));
+  } catch { return []; }            // a fresh store, before the league table exists
+}
+
+/** One league's worth of work, and why a league/routine pair was left out. */
+export interface RoutinePlan {
+  runs: { leagueId: string; platform: string | null; routine: string; steps: [string, string[]][] }[];
+  skipped: { leagueId: string; platform: string | null; routine: string; why: string }[];
+  unknown: string[];
+}
+
+/**
+ * WHAT THE ROUTINE SET WOULD RUN, PER LEAGUE, AND WHAT IT WOULD NOT -- with a reason for every miss.
+ *
+ * Three rules, and the third is the one that keeps this honest:
+ *   1. A routine whose `platforms` list excludes the league's platform is SKIPPED BY NAME. `roster`
+ *      runs `sync-league`, which builds ESPN URLs; pointing it at the Yahoo league would have pulled
+ *      ESPN data and written it under the Yahoo league id (S-2), which is the failure this names.
+ *   2. A league with an unknown/absent platform is skipped, naming the platform string it carries.
+ *   3. A routine that is NOT `leagueScoped` can only be run for the ACTIVE league, because its verbs
+ *      take no `--league` flag. It is NOT quietly run N times with an ignored flag: every other
+ *      league is reported with the verb that would have to accept the flag first.
+ */
+export function planRoutines(db: DB, routineNames: string[], activeLeagueId: string | null): RoutinePlan {
+  const unknown = routineNames.filter((r) => !(r in ROUTINES));
+  const ran = Object.keys(ROUTINES).filter((r) => routineNames.includes(r));   // registry order, de-duped
+  const leagues = routineLeagues(db);
+  const plan: RoutinePlan = { runs: [], skipped: [], unknown };
+  // No league rows at all: keep the pre-multi-league behaviour exactly -- run the set once, for
+  // whatever the verbs resolve themselves. A fresh clone must not silently do nothing.
+  if (!leagues.length) {
+    for (const r of ran) plan.runs.push({ leagueId: activeLeagueId ?? "", platform: null, routine: r, steps: ROUTINES[r].steps });
+    return plan;
+  }
+  for (const lg of leagues) {
+    for (const r of ran) {
+      const rt = ROUTINES[r];
+      if (rt.platforms && !(lg.platform && rt.platforms.includes(lg.platform))) {
+        plan.skipped.push({
+          leagueId: lg.leagueId, platform: lg.platform, routine: r,
+          why: `routine "${r}" has no ${lg.platform ?? "unknown-platform"} adaptor -- its step(s) ${rt.steps.map((s) => `\`${s[0]}\``).join(", ")} are ${rt.platforms.join("/")}-only`,
+        });
+        continue;
+      }
+      if (!rt.leagueScoped) {
+        if (activeLeagueId != null && lg.leagueId === activeLeagueId) {
+          plan.runs.push({ leagueId: lg.leagueId, platform: lg.platform, routine: r, steps: rt.steps });
+        } else {
+          plan.skipped.push({
+            leagueId: lg.leagueId, platform: lg.platform, routine: r,
+            why: `routine "${r}" is not league-scoped yet: ${rt.steps.map((s) => `\`ff ${s[0]}\``).join(", ")} take no --league flag, so they can only run for the ACTIVE league (${activeLeagueId ?? "none"})`,
+          });
+        }
+        continue;
+      }
+      plan.runs.push({
+        leagueId: lg.leagueId, platform: lg.platform, routine: r,
+        steps: rt.steps.map(([verb, args]) => [verb, [...args, "--league", lg.leagueId]] as [string, string[]]),
+      });
+    }
+  }
+  return plan;
 }
 
 export function withDb<T>(dbPath: string | undefined, fn: (db: DB) => T): T {
