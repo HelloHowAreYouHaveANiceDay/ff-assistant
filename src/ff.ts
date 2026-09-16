@@ -121,6 +121,8 @@ async function main() {
       return cmdBuildProspect(rest);
     case "refresh-gameday-status":
       return cmdRefreshGamedayStatus(rest);
+    case "sunday-refresh":
+      return cmdSundayRefresh(rest);
     case "sync-rosters":
       return cmdSyncRosters(rest);
     case "sync-schedule":
@@ -2081,6 +2083,10 @@ async function cmdInseasonTick(rest: string[]) {
     // SKIPPED SILENTLY -- it would sit in the schedule looking enabled and never run, which is
     // exactly the failure `test/routines.test.ts` exists to catch.
     "ingest-source": cmdIngestSource,
+    // The `sunday` routine (M2c). Same reason as `ingest-source` above: a verb this map does not
+    // hold is skipped SILENTLY, and a Sunday re-read that never fires is indistinguishable from one
+    // that fired and found nothing -- which is the failure this whole workflow is about.
+    "sunday-refresh": cmdSundayRefresh,
   };
   const passThrough = dbPath ? ["--db", dbPath] : [];
   const t0 = Date.now();
@@ -4621,6 +4627,70 @@ async function cmdRefreshGamedayStatus(rest: string[]) {
   const wk = valueOf(rest, "--week"); const yr = valueOf(rest, "--year");
   const r = await ingestGamedayStatus({ dbPath: valueOf(rest, "--db"), week: wk ? Number(wk) : undefined, year: yr ? Number(yr) : undefined });
   console.log(`raw_gameday_status: season ${r.season} week ${r.week} -- ${r.rows} fantasy players across ${r.events} games (${r.out} OUT)`);
+}
+
+/**
+ * `ff sunday-refresh [--season Y] [--now 2026-09-20T11:45] [--dry-run] [--fixture <path>]
+ *                    [--save-fixture <path>] [--no-feed] [--league <id>]`
+ *
+ * THE SECOND READ (M2c, 2026-09-16). `scripts/availability-gap.mjs` measures why it exists: the
+ * largest recoverable class of zero-scoring starts in our lineup is the GAME-DAY INACTIVE -- no
+ * Friday designation, zero snaps -- and the only thing that catches one is reading the inactive list
+ * on Sunday morning. This verb does that and FREEZES what it found, write-once, under the
+ * `weekly_sunday` scorecard kind, so the season accrues paired evidence (Friday lineup, Sunday
+ * lineup, actual) rather than an opinion about whether the re-read helped.
+ *
+ * THE WINDOW IS A REFUSAL AND IT IS EVALUATED FIRST, BEFORE THE FEED IS TOUCHED. Outside the two
+ * windows -- 90 minutes before the early wave and 90 before the late one -- nothing is fetched and
+ * nothing is written, and the verb says which windows it was outside of. That refusal IS the control:
+ * on a Wednesday the correct behaviour is to do nothing and explain, and a run that quietly froze a
+ * "Sunday re-read" on a Wednesday would look identical in the table to an honest one.
+ *
+ * `--fixture` replays a saved feed instead of calling ESPN (see src/data/gamedayStatus.ts), which is
+ * how the Sunday path is exercised on a day that is not Sunday. It still obeys the window, so a
+ * fixture run needs `--now` as well -- the replay relaxes the NETWORK, never the point-in-time rule.
+ */
+async function cmdSundayRefresh(rest: string[]) {
+  const { openDb, getConfig } = await import("./db/db.js");
+  const { resolveSundayWindow, freezeSundayKind, formatSunday } = await import("./weekly/scorecard.js");
+  const dbPath = valueOf(rest, "--db");
+  const leagueId = leagueArg(rest);
+  const now = valueOf(rest, "--now");
+  const dryRun = rest.includes("--dry-run");
+  let season = Number(valueOf(rest, "--season"));
+  const db = openDb(dbPath);
+  try {
+    if (!Number.isFinite(season)) season = getConfig(db, leagueId).season;
+    // THE WINDOW FIRST. A refused run must not reach the network: a fetch is a side effect, and one
+    // taken outside the window writes raw_gameday_status rows stamped with a week whose inactive
+    // list does not exist yet.
+    const v = resolveSundayWindow(db, season, { now });
+    if (v.refused) {
+      console.log(`SUNDAY RE-READ ${season} -- ${v.day} ${v.hm} ET`);
+      console.log(`  REFUSED: ${v.refused}`);
+      console.log("  Nothing was fetched and nothing was written. This is the expected outcome on every " +
+        "day that is not an NFL Sunday, and inside a Sunday outside the two waves' lead time.");
+      return;
+    }
+    const fixture = valueOf(rest, "--fixture");
+    if (!rest.includes("--no-feed")) {
+      const { ingestGamedayStatus } = await import("./data/gamedayStatus.js");
+      const g = await ingestGamedayStatus({
+        dbPath, week: v.week ?? undefined, year: season,
+        fixture: fixture ?? undefined, saveFixture: valueOf(rest, "--save-fixture") ?? undefined,
+      });
+      console.log(`  feed (${g.source}): season ${g.season} week ${g.week} -- ${g.rows} designations stored ` +
+        `(${g.out} OUT, ${g.unresolved} unresolved) across ${g.events} games`);
+      if (g.season !== season || (v.week != null && g.week !== v.week)) {
+        // A fixture carries its own season/week. One that disagrees with the window would be scored
+        // against a different week's actuals, so it is named rather than silently used.
+        console.log(`  WARNING: the feed is for ${g.season} week ${g.week} but the open window is ` +
+          `${season} week ${v.week} -- the re-read below will use the WINDOW's week, so a mismatched ` +
+          "fixture benches nobody.");
+      }
+    }
+    console.log(formatSunday(freezeSundayKind(db, { season, now, leagueId, dryRun })));
+  } finally { db.close(); }
 }
 
 /** `ff build-prospect` -- derive feat_player_prospect (athletic RAS score + college Dominator/Breakout

@@ -3,7 +3,7 @@
 // name or a silly cadence from reaching the timer.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../src/db/db.js";
@@ -74,11 +74,25 @@ test("every registry routine names verbs that the tick's handler map can run", (
   // The tick maps these verbs to handlers; a routine that named anything else would SKIP silently.
   // `ingest-source` joined the map with the M2b `rankings` routine -- and this assertion is what
   // caught that the routine had originally named `ingest-raw`, which `cmdIngestRaw` refuses for any
-  // id outside RAW_ASSETS. THE LIST IS A MIRROR OF `HANDLERS` IN src/ff.ts AND ROTS IF THAT MAP
-  // GROWS: it is kept because the map lives inside a function that cannot be imported without
-  // running the CLI, so a derived check is not available. Adding a verb here without adding it there
-  // reinstates exactly the silent skip this test exists to prevent.
-  const known = new Set(["sync-actuals", "scorecard", "refresh-decisions", "sync-league", "ingest-source"]);
+  // id outside RAW_ASSETS.
+  //
+  // THE LIST IS NOW DERIVED FROM src/ff.ts, NOT RETYPED (M2c, 2026-09-16). It used to be a hand-kept
+  // mirror of `HANDLERS`, which is coverage-by-enumeration: it is a snapshot of the day it was
+  // written, and the failure mode is not that it breaks but that somebody keeps it in step with the
+  // registry and NOT with the map -- adding a verb here without adding it there reinstates exactly
+  // the silent skip this test exists to prevent. The map lives inside a function that cannot be
+  // imported without running the CLI, so it is read out of the SOURCE instead.
+  const src = readFileSync(join(import.meta.dirname, "..", "src", "ff.ts"), "utf8");
+  // NOT `Record<[^>]*>`: the value type is itself generic (`=> Promise<void>>`), so a lazy
+  // angle-bracket match stops early and finds nothing. The control below is what caught that.
+  const block = /const HANDLERS:[\s\S]*?=\s*\{([\s\S]*?)\n {2}\};/.exec(src);
+  assert.ok(block, "could not find the HANDLERS map in src/ff.ts -- this check parses it, so a miss is a BROKEN check, not a pass");
+  const known = new Set([...block![1].matchAll(/"([a-z-]+)":/g)].map((m) => m[1]));
+  // THE POSITIVE CONTROL. A regex that matched nothing would leave an empty set, every routine would
+  // fail loudly -- but a regex that matched the WRONG block would leave a set that passes for the
+  // wrong reason. So assert the extraction really found the map.
+  assert.ok(known.size >= 5, `parsed only ${known.size} handler verbs -- the extraction is wrong`);
+  assert.ok(known.has("sync-actuals") && known.has("scorecard"), "the parsed set must contain the verbs the map demonstrably has");
   for (const [name, r] of Object.entries(ROUTINES)) {
     for (const [verb] of r.steps) {
       assert.ok(known.has(verb), `routine ${name} names verb "${verb}" that inseason-tick has no handler for`);

@@ -44,6 +44,13 @@ import {
   STREAM_SERVE_POS, WEEKLY_SERVE_SWITCHED_ON,
 } from "./streamingServe.js";
 import { POOL_DEPTH } from "./streamingEvaluate.js";
+// THE SUNDAY RE-READ (M2c) reuses the two rules it must not fork: `normalizeStatus` decides who is
+// startable everywhere in this repo (DOUBTFUL is OUT, QUESTIONABLE is not), and `optimalLineup` is
+// the assignment the copilot serves. A second copy of either here would let the scorecard and the
+// lineup surface disagree about the same week.
+import { normalizeStatus } from "../inseason/copilot.js";
+import { optimalLineup } from "../inseason/lineup.js";
+import { startingTemplate, buildEspnResolver } from "../features/sources/rosterState.js";
 
 export const SCORECARD_MODELS = ["weekly", "season_line", "shipped_week", "trailing4", "espn"] as const;
 export type ScorecardModel = typeof SCORECARD_MODELS[number];
@@ -69,7 +76,7 @@ export const SC_BASELINE: ScorecardModel = "shipped_week";
  * choose from. Mixing an unshipped model into `weekly` would make its lineup column read as a
  * lineup somebody could have set.
  */
-export const SCORECARD_KINDS = ["weekly", "weekly_challenger", "weekly_ecr_candidate", "stream"] as const;
+export const SCORECARD_KINDS = ["weekly", "weekly_challenger", "weekly_ecr_candidate", "weekly_sunday", "stream"] as const;
 export type ScorecardKind = typeof SCORECARD_KINDS[number];
 
 /**
@@ -903,6 +910,10 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           if (kind === "weekly") notes.push(`week ${week} is settled but was never snapshotted -- nothing to score`);
           else if (kind === "stream") notes.push(`week ${week} has no frozen streaming picks -- nothing to score for ${kind}`);
           else if (kind === "weekly_ecr_candidate") notes.push(`week ${week} has no ECR-candidate snapshot -- nothing to score for ${kind}`);
+          // A week with no Sunday re-read is the NORMAL case for every week before the routine
+          // existed, and for any week the window was missed. It is said once and plainly rather than
+          // left as a gap a reader has to interpret.
+          else if (kind === "weekly_sunday") notes.push(`week ${week} has no Sunday re-read (kind weekly_sunday) -- nothing to score for it`);
           else if (week >= CHALLENGER_FIRST_WEEK) notes.push(`week ${week} has no challenger snapshot -- nothing to score for ${kind}`);
           continue;
         }
@@ -925,7 +936,11 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         // `weekly_ecr_candidate` needs them for the SAME reason the challenger does and on the same
         // terms: it holds exactly one model, so without the shipped kind's rows beside it its lineup
         // column has nothing to be regret against and is left NaN.
-        const WHOLE_FIELD_KINDS = new Set<ScorecardKind>(["weekly_challenger", "weekly_ecr_candidate"]);
+        // `weekly_sunday` is in this set for the SAME reason and with the same consequence: it holds
+        // one model per window and its lineup column only means something against the Friday rows it
+        // is a re-read OF. Without the companions its `lineup_pts` would be NaN, which is exactly the
+        // number the whole M2c workflow exists to produce.
+        const WHOLE_FIELD_KINDS = new Set<ScorecardKind>(["weekly_challenger", "weekly_ecr_candidate", "weekly_sunday"]);
         const companions = !WHOLE_FIELD_KINDS.has(kind) ? [] : db.prepare(
           "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE format_key = ? AND season = ? AND week = ? AND kind = 'weekly'",
         ).all(fmtKey, opts.season, week) as typeof frozen;
@@ -1116,5 +1131,391 @@ export function formatScorecard(r: ScorecardResult): string {
     out.push("NOTES");
     for (const n of r.notes) out.push(`  ${n}`);
   }
+  return out.join("\n");
+}
+
+// ==================================================================================================
+// THE SUNDAY RE-READ: kind `weekly_sunday` (M2c, 2026-09-16)
+// ==================================================================================================
+//
+// WHAT IT IS FOR. `scripts/availability-gap.mjs` measures the gap this closes: of the zero-scoring
+// men our lineup starts, the largest recoverable class is the GAME-DAY INACTIVE -- no Friday
+// designation, zero snaps. The managers beat us there because they read the 11:30 ET inactive list
+// and our board is a Friday snapshot. The remedy is not a better model, it is a SECOND READ.
+//
+// WHY IT IS A NEW KIND RATHER THAN A REWRITE. The `weekly` rows for the week are already frozen and
+// `scorecard_prediction` is INSERT OR IGNORE by design, so "update the projection with Sunday news"
+// is not available and must not be: a record that can be improved after the fact is not a record.
+// The Sunday read is therefore a SEPARATE, equally write-once series, on the SAME players, in the
+// SAME week, whose only difference from the Friday rows is the availability information. When the
+// week settles, `ff scorecard` scores both against the same actuals and the season accrues the
+// paired evidence -- Friday lineup, Sunday lineup, actual -- one week at a time.
+//
+// THE ROWS ARE COPIED FROM THE FROZEN `weekly` ROWS, NOT RE-PROJECTED. That is deliberate and it is
+// what makes the comparison mean anything: if the Sunday rows were re-projected, a difference
+// between the two series could be the re-read OR a week's worth of new feature rows, and nothing in
+// the table would say which. Copying the frozen value and zeroing exactly the men the game-day feed
+// rules out isolates the one variable. A man with a game-day OUT gets value 0, which is what
+// "benched" means to `lineupRegret`: it will never pick him, and he cannot flatter the series by
+// scoring after being written off.
+//
+// THE WINDOW RULE, and it is a REFUSAL, not a preference. The read is only worth taking inside the
+// short interval where the inactive list exists and the lineup can still be changed: from
+// `SUNDAY_LEAD_MINUTES` before a Sunday kickoff until that kickoff. Two windows, because the league
+// plays in two waves -- the early games (the 13:00 ET block) and the late ones (16:00 ET and after)
+// -- and a man in the late wave is still benchable at 15:00 when the early wave has already kicked
+// off. Outside both, `resolveSundayWindow` refuses BY NAME and says what the windows were. A freeze
+// taken at any other time would be a "Sunday re-read" that read nothing new, filed under a name that
+// claims it did.
+//
+// CLOCK. Everything here is AMERICA/NEW_YORK, because `raw_nfl_game.gametime` is, and because a
+// football kickoff is an ET fact rather than a UTC one. The machine's own timezone is never used;
+// `etClock` converts explicitly and `opts.now` injects an ET wall clock for tests and dry-runs.
+// This is the same failure the `iso()` helper above documents, one timezone further out.
+
+/** The kind, its two models, and the lead time, named once so nothing retypes a string. */
+export const SUNDAY_KIND = "weekly_sunday" as const;
+export type SundayWindowName = "early" | "late";
+export const SUNDAY_MODEL: Record<SundayWindowName, string> = { early: "sunday_early", late: "sunday_late" };
+/** How long before a kickoff the window opens. 90 minutes puts the early read at 11:30 ET against a
+ *  13:00 ET first kickoff, which is when the league-wide inactive list is published. */
+export const SUNDAY_LEAD_MINUTES = 90;
+/** The boundary between the two waves, in ET. A game at or after this is "late". */
+export const SUNDAY_LATE_FROM = "16:00";
+
+const hm2min = (hm: string): number => {
+  const [h, m] = hm.split(":").map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+};
+const min2hm = (t: number): string => {
+  const w = ((t % 1440) + 1440) % 1440;
+  return `${String(Math.floor(w / 60)).padStart(2, "0")}:${String(w % 60).padStart(2, "0")}`;
+};
+
+/**
+ * NOW, IN ET, as a calendar day and a wall clock. Never `toISOString`, never the machine's local
+ * time: this machine is not guaranteed to be in ET and the schedule table is.
+ */
+export function etClock(now: Date = new Date()): { day: string; hm: string } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
+  const hour = get("hour") === "24" ? "00" : get("hour");          // en-CA emits 24 for midnight
+  return { day: `${get("year")}-${get("month")}-${get("day")}`, hm: `${hour}:${get("minute")}` };
+}
+
+/** One re-read opportunity: when the wave kicks off and when reading it becomes worth doing. */
+export interface SundayWindow { name: SundayWindowName; kickoff: string; opens: string; games: number }
+
+/**
+ * THE WINDOWS FOR ONE ET CALENDAR DAY, from the schedule the store already holds.
+ *
+ * Returns `week: null` when the day carries no REG Sunday game, which is the honest answer on a
+ * Wednesday and the one the routine's refusal is built on. The weekday test is against
+ * `raw_nfl_game.weekday`, not against a date computation, so a Saturday slate late in the season
+ * cannot be silently treated as a Sunday.
+ */
+export function sundayWindowsFor(db: DB, season: number, day: string): { week: number | null; windows: SundayWindow[] } {
+  const rows = db.prepare(
+    `SELECT week, gametime, COUNT(*) AS n FROM raw_nfl_game
+      WHERE season = ? AND game_type = 'REG' AND gameday = ? AND weekday = 'Sunday'
+        AND gametime IS NOT NULL AND gametime <> ''
+      GROUP BY week, gametime ORDER BY gametime`,
+  ).all(season, day) as { week: number; gametime: string; n: number }[];
+  if (!rows.length) return { week: null, windows: [] };
+  const week = rows[0].week;
+  const boundary = hm2min(SUNDAY_LATE_FROM);
+  const pick = (late: boolean): SundayWindow | null => {
+    const sub = rows.filter((r) => (hm2min(r.gametime) >= boundary) === late);
+    if (!sub.length) return null;
+    const kickoff = sub[0].gametime;                                 // ordered by gametime already
+    return {
+      name: late ? "late" : "early", kickoff,
+      opens: min2hm(hm2min(kickoff) - SUNDAY_LEAD_MINUTES),
+      games: sub.filter((r) => r.gametime === kickoff).reduce((s, r) => s + r.n, 0),
+    };
+  };
+  return { week, windows: [pick(false), pick(true)].filter((w): w is SundayWindow => w != null) };
+}
+
+export interface SundayWindowVerdict {
+  day: string; hm: string;
+  week: number | null;
+  windows: SundayWindow[];
+  window: SundayWindow | null;
+  /** Null when a window is open. Otherwise the reason, naming the windows that exist. */
+  refused: string | null;
+}
+
+/**
+ * IS A RE-READ DUE RIGHT NOW? The one gate, so the CLI verb, the routine and the test all ask the
+ * same question of the same schedule.
+ */
+export function resolveSundayWindow(
+  db: DB, season: number, opts: { now?: string; nowDate?: Date } = {},
+): SundayWindowVerdict {
+  // `now` is an ET wall clock, injected. "2026-09-20T11:45" and "2026-09-20 11:45" both parse; a
+  // bare date is midnight, which is outside every window and refuses, correctly.
+  let day: string, hm: string;
+  if (opts.now) {
+    const m = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?/.exec(opts.now.trim());
+    if (!m) throw new Error(`--now must be an ET wall clock like 2026-09-20T11:45, got "${opts.now}"`);
+    day = m[1]; hm = m[2] ?? "00:00";
+  } else {
+    const c = etClock(opts.nowDate);
+    day = c.day; hm = c.hm;
+  }
+  const { week, windows } = sundayWindowsFor(db, season, day);
+  const v: SundayWindowVerdict = { day, hm, week, windows, window: null, refused: null };
+  if (week == null) {
+    v.refused = `${day} is not an NFL Sunday in season ${season} -- raw_nfl_game carries no dated REG ` +
+      "Sunday game that day, so there is no inactive list to re-read and nothing to freeze.";
+    return v;
+  }
+  const t = hm2min(hm);
+  v.window = windows.find((w) => t >= hm2min(w.opens) && t < hm2min(w.kickoff)) ?? null;
+  if (!v.window) {
+    v.refused = `${day} ${hm} ET is outside every re-read window for week ${week}. The windows are ` +
+      windows.map((w) => `${w.name} ${w.opens}-${w.kickoff} ET`).join(" and ") +
+      ` (${SUNDAY_LEAD_MINUTES} minutes before each wave's first kickoff). A freeze taken outside them ` +
+      "would be filed as a Sunday re-read having read nothing the Friday rows did not already have.";
+  }
+  return v;
+}
+
+/** One slot that changed hands between the Friday lineup and the Sunday one. `outPos` is the SLOT
+ *  (QB, FLEX, ...), because the question is which hole opened, not which position the man plays. */
+export interface SundaySwap { out: string; outPos: string; in: string | null; inPos: string | null; deltaProj: number }
+
+export interface SundayFreezeResult {
+  season: number;
+  week: number | null;
+  day: string; hm: string;
+  window: SundayWindowName | null;
+  /** The frozen `as_of`: the ET moment the re-read was taken. Not the week's Friday anchor. */
+  asOf: string | null;
+  /** Rows written. Zero on a re-run: the kind is written once, like every other prediction here. */
+  taken: number;
+  /** How many of those rows were zeroed by a game-day OUT, and who. */
+  benched: { subject: string; name: string; pos: string; status: string }[];
+  /** What the re-read does to OUR lineup, computed on the same frozen projections. Empty when the
+   *  league has no roster rows for the week -- said, never inferred. */
+  swaps: SundaySwap[];
+  swapNote: string | null;
+  skipped: string | null;
+  windows: SundayWindow[];
+}
+
+/**
+ * WHO THE GAME-DAY FEED RULES OUT, as `feat_key` (the subject a frozen row is keyed by).
+ *
+ * `normalizeStatus` is imported from the copilot rather than re-implemented: it is the rule that
+ * decides who is startable everywhere else in this repo (DOUBTFUL counts as OUT, QUESTIONABLE stays
+ * startable), and a second copy here would let the scorecard and the lineup disagree about who can
+ * play -- which is the exact defect the whole availability path exists to prevent.
+ */
+export function gamedayOutSubjects(db: DB, season: number, week: number): Map<string, { name: string; status: string }> {
+  const out = new Map<string, { name: string; status: string }>();
+  const rows = db.prepare(
+    `SELECT g.status AS status, COALESCE(g.name, m.name) AS name, m.feat_key AS feat_key
+       FROM raw_gameday_status g
+       JOIN feat_player_week_model m
+         ON m.season = g.season AND m.week = g.week AND CAST(m.player_sk AS TEXT) = CAST(g.player_sk AS TEXT)
+      WHERE g.season = ? AND g.week = ? AND g.status IS NOT NULL AND m.feat_key IS NOT NULL`,
+  ).all(season, week) as { status: string; name: string | null; feat_key: string }[];
+  for (const r of rows) {
+    if (normalizeStatus(r.status) !== "OUT") continue;               // QUESTIONABLE stays startable
+    out.set(r.feat_key, { name: r.name ?? r.feat_key, status: r.status });
+  }
+  return out;
+}
+
+/**
+ * OUR LINEUP, BEFORE AND AFTER THE RE-READ, on the frozen projections.
+ *
+ * This is the part a reader cares about: not "23 rows were written" but "it benches Smith and starts
+ * Jones". It is computed from the league's OWN roster rows and starting template, through the same
+ * `optimalLineup` the copilot serves from -- so a swap printed here is a swap the lineup surface
+ * would make, not a second implementation's opinion.
+ */
+function sundaySwaps(
+  db: DB, leagueId: string | null, season: number, week: number,
+  proj: Map<string, number>, posOf: Map<string, string>, outSubjects: Map<string, { name: string; status: string }>,
+): { swaps: SundaySwap[]; note: string | null } {
+  if (!leagueId) return { swaps: [], note: "no league resolved -- the lineup swap was not computed" };
+  const lg = db.prepare("SELECT team_id FROM league WHERE league_id = ?").get(leagueId) as { team_id: string | null } | undefined;
+  if (!lg?.team_id) return { swaps: [], note: `league ${leagueId} has no team_id -- we hold no seat in it, so there is no lineup to move` };
+  const roster = db.prepare(
+    `SELECT espn_player_id, name, position, lineup_slot_id FROM raw_league_roster_week
+      WHERE league_id = ? AND season = ? AND week = ? AND team_id = ?`,
+  ).all(leagueId, season, week, lg.team_id) as { espn_player_id: string; name: string; position: string; lineup_slot_id: number }[];
+  if (!roster.length) {
+    return { swaps: [], note: `no raw_league_roster_week rows for league ${leagueId} ${season} week ${week} -- the swap was not computed rather than computed on an empty roster` };
+  }
+  const template = startingTemplate(db, leagueId, season);
+  if (!template.length) return { swaps: [], note: `league ${leagueId} has no derivable starting template for ${season}` };
+
+  // espn id -> player_sk -> feat_key, through `buildEspnResolver` -- the SAME four-stage resolver the
+  // roster-state builder uses, not a hand-rolled xref lookup. That matters for exactly the case a
+  // hand-rolled one gets wrong: a team defence has no xref row at all, because ESPN keys it under a
+  // negative id (-16000 minus the proTeamId), and the resolver turns that into the `DST:ABBR` key the
+  // frozen rows are subjects of. A roster that half-resolves would silently build a lineup out of the
+  // half that did, so an unmatched man is COUNTED and named in the note.
+  const resolver = buildEspnResolver(db);
+  const keyOfSk = new Map<string, string>();
+  for (const r of db.prepare(
+    "SELECT CAST(player_sk AS TEXT) sk, feat_key FROM feat_player_week_model WHERE season = ? AND week = ? AND player_sk IS NOT NULL",
+  ).all(season, week) as { sk: string; feat_key: string }[]) keyOfSk.set(r.sk, r.feat_key);
+
+  let unmatched = 0;
+  const build = (applyOut: boolean) => {
+    const players: { name: string; pos: string; proj: number; available: boolean }[] = [];
+    for (const r of roster) {
+      if (r.lineup_slot_id === 21) continue;                        // IR is not startable
+      const sk = resolver.resolve(String(r.espn_player_id), r.name, r.position)?.sk;
+      // A DST resolves straight to its own `DST:ABBR` feat_key; everyone else goes through the week's
+      // feature rows. `proj.has` is the final gate: a man with no frozen row has no projection and
+      // must not enter either lineup at zero, which would read as a benching.
+      let key = sk ? keyOfSk.get(sk) : undefined;
+      if (!key && sk && proj.has(sk)) key = sk;
+      if (!key) { if (!applyOut) unmatched++; continue; }
+      players.push({
+        name: `${r.name}#${key}`, pos: posOf.get(key) ?? r.position,
+        proj: proj.get(key) ?? 0,
+        available: !(applyOut && outSubjects.has(key)),
+      });
+    }
+    return optimalLineup(players, template, ["RB", "WR", "TE"]);
+  };
+  const before = build(false), after = build(true);
+  const nameOf = (s: { name: string }) => s.name.split("#")[0];
+  // DIFFED PER SLOT, not by zipping the dropped list against the added list. Both lineups come from
+  // the same template in the same order, so slot i is the same slot on both sides; pairing by list
+  // index instead reports "OUT the quarterback -> IN a receiver", which is not what happened and
+  // reads as a rule that swaps across positions. The slot says which hole the replacement filled.
+  const swaps: SundaySwap[] = [];
+  for (let i = 0; i < before.starters.length && i < after.starters.length; i++) {
+    const b = before.starters[i], a = after.starters[i];
+    if (b.name === a.name) continue;
+    swaps.push({
+      out: b.name === "(empty)" ? `(empty ${b.slot})` : nameOf(b), outPos: b.slot,
+      in: a.name === "(empty)" ? null : nameOf(a), inPos: a.name === "(empty)" ? null : a.pos,
+      deltaProj: Math.round(((a.name === "(empty)" ? 0 : a.proj) - (b.name === "(empty)" ? 0 : b.proj)) * 100) / 100,
+    });
+  }
+  const note = unmatched ? `${unmatched} rostered player(s) matched no frozen row and were left out of BOTH lineups` : null;
+  return { swaps, note };
+}
+
+export interface SundayFreezeOpts {
+  season: number;
+  /** The ET wall clock. Injected by tests and by `--now`; omitted, the real clock in ET. */
+  now?: string;
+  leagueId?: string | null;
+  /** Take the window's verdict but write nothing. The refusal is evaluated either way. */
+  dryRun?: boolean;
+}
+
+/**
+ * FREEZE THE SUNDAY RE-READ. Write-once, windowed, and a no-op on a second call in the same window.
+ *
+ * The order of the refusals is the order of the reasons: no window -> nothing to re-read; no Friday
+ * rows -> nothing to re-read AGAINST. Neither is an error, both are reported, and a caller that
+ * treats a skip as a failure is wrong about what this is: most invocations, on most days, correctly
+ * do nothing.
+ */
+export function freezeSundayKind(db: DB, opts: SundayFreezeOpts): SundayFreezeResult {
+  const v = resolveSundayWindow(db, opts.season, { now: opts.now });
+  const res: SundayFreezeResult = {
+    season: opts.season, week: v.week, day: v.day, hm: v.hm,
+    window: v.window?.name ?? null, asOf: null, taken: 0, benched: [], swaps: [], swapNote: null,
+    skipped: v.refused, windows: v.windows,
+  };
+  if (v.refused || !v.window || v.week == null) return res;
+  const week = v.week;
+  const { formatKey, leagueId } = scorecardScope(db, { leagueId: opts.leagueId });
+
+  const frozen = db.prepare(
+    `SELECT subject, name, pos, value, p10, p90 FROM scorecard_prediction
+      WHERE format_key = ? AND season = ? AND week = ? AND kind = 'weekly' AND model = 'weekly'`,
+  ).all(formatKey, opts.season, week) as { subject: string; name: string; pos: string; value: number; p10: number | null; p90: number | null }[];
+  if (!frozen.length) {
+    res.skipped = `week ${week} has no frozen \`weekly\` rows for format ${formatKey} -- a Sunday re-read is ` +
+      "a re-read OF the Friday snapshot, and there is nothing to re-read against. Run `ff scorecard` before kickoff.";
+    return res;
+  }
+
+  const outSubjects = gamedayOutSubjects(db, opts.season, week);
+  const asOf = `${v.day}T${v.hm}:00`;                                // ET wall clock, the re-read moment
+  res.asOf = asOf;
+  const model = SUNDAY_MODEL[v.window.name];
+
+  const proj = new Map<string, number>(), posOf = new Map<string, string>();
+  for (const f of frozen) { proj.set(f.subject, f.value); posOf.set(f.subject, f.pos); }
+  for (const f of frozen) {
+    const o = outSubjects.get(f.subject);
+    if (o) res.benched.push({ subject: f.subject, name: f.name, pos: f.pos, status: o.status });
+  }
+  const sw = sundaySwaps(db, leagueId, opts.season, week, proj, posOf, outSubjects);
+  res.swaps = sw.swaps; res.swapNote = sw.note;
+
+  if (opts.dryRun) {
+    res.skipped = `--dry-run: ${frozen.length} row(s) WOULD be frozen under kind ${SUNDAY_KIND} model ${model} at ${asOf} ET; nothing was written.`;
+    return res;
+  }
+
+  ensureScorecardMetaColumn(db);
+  const ins = db.prepare(
+    `INSERT OR IGNORE INTO scorecard_prediction
+       (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at, ${SCORECARD_META_COLUMN})
+     VALUES (@fk,@season,@week,'${SUNDAY_KIND}',@model,@subject,@name,@pos,@value,@p10,@p90,@asOf,@now,@meta)`,
+  );
+  const now = nowIso();
+  db.transaction(() => {
+    for (const f of frozen) {
+      const o = outSubjects.get(f.subject);
+      const info = ins.run({
+        fk: formatKey, season: opts.season, week, model,
+        subject: f.subject, name: f.name, pos: f.pos,
+        // ZEROED, not omitted. An omitted row would shrink the population the lineup is drawn from
+        // and make the Sunday series look better by having fewer men to get wrong.
+        value: o ? 0 : f.value,
+        p10: o ? 0 : f.p10, p90: o ? 0 : f.p90,
+        asOf, now,
+        meta: JSON.stringify({
+          window: v.window!.name, kickoff: v.window!.kickoff, opens: v.window!.opens, tz: "America/New_York",
+          rereadOf: "weekly/weekly", benched: o ? o.status : null, source: o ? "gameday(espn)" : null,
+        }),
+      });
+      if (info.changes) res.taken++;
+    }
+  })();
+  if (!res.taken) {
+    res.skipped = `week ${week}'s ${v.window.name} Sunday re-read was already frozen -- it is written once, ` +
+      "so a second call in the same window is a no-op rather than a rewrite.";
+  }
+  return res;
+}
+
+export function formatSunday(r: SundayFreezeResult): string {
+  const out: string[] = [];
+  out.push(`SUNDAY RE-READ ${r.season} -- ${r.day} ${r.hm} ET`);
+  if (r.windows.length) {
+    out.push(`  week ${r.week} windows: ` + r.windows.map((w) => `${w.name} ${w.opens}-${w.kickoff} ET (${w.games} games)`).join(", "));
+  }
+  out.push(`  window: ${r.window ?? "NONE -- outside every re-read window"}`);
+  if (r.skipped) out.push(`  SKIPPED: ${r.skipped}`);
+  else out.push(`  froze ${r.taken} row(s) under kind ${SUNDAY_KIND} at as_of ${r.asOf} (write-once)`);
+  out.push(`  game-day OUT on the frozen population: ${r.benched.length}` +
+    (r.benched.length ? ` -- ${r.benched.slice(0, 12).map((b) => `${b.name} (${b.pos}, ${b.status})`).join(", ")}` : ""));
+  if (r.swaps.length) {
+    out.push("  OUR LINEUP MOVES:");
+    for (const s of r.swaps) out.push(`    OUT ${s.out} (${s.outPos})  ->  IN ${s.in ?? "(empty)"} (${s.inPos ?? "-"})  proj ${s.deltaProj >= 0 ? "+" : ""}${s.deltaProj}`);
+  } else {
+    out.push("  OUR LINEUP MOVES: none" + (r.swapNote ? ` -- ${r.swapNote}` : ""));
+  }
+  if (r.swaps.length && r.swapNote) out.push(`  note: ${r.swapNote}`);
   return out.join("\n");
 }

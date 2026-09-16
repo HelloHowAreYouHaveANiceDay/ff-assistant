@@ -101,6 +101,42 @@ export const ROUTINES: Record<string, Routine> = {
     platforms: null,
     leagueScoped: true,
   },
+  /**
+   * THE SUNDAY RE-READ (M2c, 2026-09-16) -- the availability information gap, closed as a routine.
+   *
+   * WHY IT IS ON THE DEFAULT SET AND WHY THAT IS SAFE. `scripts/availability-gap.mjs` measures the
+   * gap it closes: the largest recoverable class of zero-scoring starts in our lineup is the
+   * GAME-DAY INACTIVE, and the only thing that catches one is reading the inactive list on Sunday
+   * morning. A routine that fires only when a human remembers is a routine that does not fire, and
+   * the whole point is that the window is 90 minutes wide, twice a week, at a time nobody is at a
+   * terminal. So it rides the ordinary tick.
+   *
+   * IT IS SAFE TO RUN EVERY TICK BECAUSE THE WINDOW IS A REFUSAL, NOT A PREFERENCE. `ff
+   * sunday-refresh` resolves the window BEFORE it touches the feed: outside it, nothing is fetched
+   * and nothing is written, and it says which windows it was outside of. Inside it, the freeze is
+   * `INSERT OR IGNORE` under `weekly_sunday`, so the second tick of the same window is a no-op
+   * rather than a rewrite. Over-running is therefore a no-op by construction, exactly as `rankings`
+   * is, and a SINGLE scheduled Sunday run would be the fragile design -- one missed tick and the
+   * week has no second read at all, with no second chance before kickoff.
+   *
+   * IT MUST RUN AFTER `scorecard`, and the registry order is what guarantees that. The Sunday kind
+   * is a re-read OF the frozen Friday rows -- it copies their values and zeroes the men the game-day
+   * feed rules out -- so a week whose `weekly` rows were never frozen has nothing to re-read against
+   * and the freeze refuses by name.
+   *
+   * `leagueScoped` because the rows are stamped with a format key and the lineup swap is computed on
+   * one league's roster; `platforms: null` because the feed itself is ESPN's PUBLIC, keyless NFL
+   * scoreboard -- an NFL fact, not a fantasy-provider one -- so a Yahoo league re-reads the same
+   * inactive list against its own frozen rows.
+   */
+  sunday: {
+    name: "sunday",
+    what: "re-read the game-day inactive list inside its window and FREEZE the Sunday lineup (kind weekly_sunday)",
+    steps: [["sunday-refresh", []]],
+    needsApp: false,          // site.api.espn.com is public and keyless; no ESPN session involved
+    platforms: null,
+    leagueScoped: true,
+  },
   decisions: {
     name: "decisions",
     what: "recompute and store the waiver / trade / odds recommendations (decision_snapshot)",
@@ -121,7 +157,7 @@ export const ROUTINES: Record<string, Routine> = {
 
 /** What the app schedules by default in-season: everything self-contained, on one cadence. `roster`
  *  is left off the default because it needs the app bridge and moves slower; the copilot can add it. */
-export const DEFAULT_ROUTINES = ["rankings", "actuals", "scorecard", "decisions"];
+export const DEFAULT_ROUTINES = ["rankings", "actuals", "scorecard", "sunday", "decisions"];
 
 export interface ScheduleConfig {
   /** The master switch. Off means the app runs no routines on a timer. */
