@@ -28,6 +28,9 @@ import { PRESEASON_WINDOW_SQL } from "./preseasonWindow.js";
  * curve[pos][k] = mean across the last `nSeasons` completed seasons of the k-th best player's season
  * total at that position, in LEAGUE points. Built from history-points.csv.
  */
+// JUSTIFIED dataPath (WP3 grep), here and on the three curve builders below: `path` is a parameter
+// whose INCUMBENT default these four share. `project` no longer reaches them -- it runs off the
+// artifact -- and every format-aware caller passes the format's history-points.csv.
 export function buildCurveFromHistory(season: number, nSeasons = 6, path = dataPath("history-points.csv")): Record<string, number[]> {
   if (!existsSync(path)) {
     throw new Error(`${path} missing -- the projection curve is built from it.
@@ -343,21 +346,48 @@ export function buildConditionalCurve(
  */
 export const ARTIFACT_FILE = "projection-artifact.json";
 
-export async function project(dbPath?: string, outPath = dataPath("points.csv"), useAge = true, useOpp = true, _curveKind: CurveKind = "conditional"): Promise<number> {
+/**
+ * WHICH FORMAT'S PROJECTION TO PRODUCE (WP3).
+ *
+ * Omitted = the INCUMBENT: the artifact, the feature rows and the output file are all the `data/`
+ * root's, byte-for-byte the behaviour that shipped. A `format` whose provenance is `format-dir`
+ * switches all three to that format's directory at once -- and that is the point of passing ONE
+ * handle rather than three paths: an artifact from one format scoring feature rows from another is a
+ * number that renders perfectly and means nothing.
+ */
+export interface ProjectFormatOpts {
+  format?: import("./formatResolve.js").ResolvedFormat;
+  /** The season to project. Defaults to the store's config season -- pass it explicitly when the
+   *  feature rows come from a format's `features.db`, whose own config copy may be stale. */
+  season?: number;
+}
+
+export async function project(
+  dbPath?: string, outPath?: string, useAge = true, useOpp = true, _curveKind: CurveKind = "conditional",
+  fmt: ProjectFormatOpts = {},
+): Promise<number> {
   const { loadArtifact } = await import("../model/projector.js");
   const { boardProjection } = await import("../model/features.js");
-  const ap = dataPath(ARTIFACT_FILE);
+  const { INCUMBENT_MODEL } = await import("./formatResolve.js");
+  const model = fmt.format?.model ?? INCUMBENT_MODEL;
+  const out0 = outPath ?? model.path("points");
+  // The feature rows must come from the SAME format as the artifact. For the incumbent that is the
+  // store itself; for a format directory it is its `features.db` (a copy of the store whose
+  // scoring-derived tables were rebuilt under this format's target).
+  const featPath = dbPath ?? (model.provenance === "format-dir" ? model.path("features-db") : undefined);
+  const ap = model.path("projection");
   if (!existsSync(ap)) {
     throw new Error(
       `${ap} missing -- the projection is produced by an ARTIFACT, not by a curve lookup.\n` +
       `  build the honest floor with:  npm run ff -- build-artifact --curve-only\n` +
-      `  or train one with:            uv run --with scikit-learn --with numpy tools/train_projection.py --db data/ff.db --out ${ap}\n` +
+      `  or train one with:            uv run --with scikit-learn --with numpy tools/train_projection.py --db ${featPath ?? dataPath("ff.db")} --out ${ap}\n` +
       `  There is deliberately no fallback: a projection that quietly degrades to something else ` +
       `looks exactly like one that works.`);
   }
   const artifact = loadArtifact(JSON.parse(readFileSync(ap, "utf8")));
-  const db = openDb(dbPath);
-  const season = getConfig(db).season;
+  const db = openDb(featPath);
+  const season = fmt.season ?? getConfig(db).season;
+  const outPathFinal = out0;
   const rows = boardProjection(db, season, artifact);
   const featCount = db.prepare("SELECT COUNT(*) c FROM feat_player_season WHERE season = ?").get(season) as { c: number };
   db.close();
@@ -399,7 +429,7 @@ export async function project(dbPath?: string, outPath = dataPath("points.csv"),
   // (`const [name, pos, pts] = line.split(",")`), so a new column at the end is invisible to them
   // and a new column in the middle would silently shift every value they read.
   const r1 = (x: number) => Math.round(x * 10) / 10;
-  writeFileSync(outPath,
+  writeFileSync(outPathFinal,
     "player,pos,points,player_sk,p10,p50,p90\n" +
     out.map((o) => `${o.name},${o.pos},${o.mean},${o.player_sk ?? ""},${r1(o.p10)},${r1(o.p50)},${r1(o.p90)}`).join("\n") + "\n",
     "utf8");

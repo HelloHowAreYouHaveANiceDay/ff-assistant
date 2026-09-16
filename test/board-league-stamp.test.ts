@@ -112,35 +112,37 @@ test("league-set-active CLEARS the board and stamps it pending when the rebuild 
   });
 });
 
-test("assemble REFUSES a league whose scoring is not the incumbent format's", async () => {
+test("assemble REFUSES a league whose format has not been built -- it does NOT read the incumbent's files", async () => {
   await withStore(async (db, path) => {
-    // Give B a genuinely different scoring rule, so its key is not the ESPN one. Every artifact the
-    // assembler reads belongs to the incumbent format, and there is no resolver yet (WP3) -- so the
-    // ONLY correct outcome is a named refusal. This is not hypothetical: on the live store this path
-    // silently produced 529 ESPN rows stamped with the Yahoo scoring key.
+    // Give B a genuinely different scoring rule, so its key is neither the ESPN one nor any built
+    // format's. WP2 refused every non-incumbent league here; WP3 replaced that blanket refusal with
+    // the resolver, so the refusal is now narrower AND stronger -- it names the key and the build
+    // command, and a league whose format HAS been built proceeds. This is not hypothetical: on the
+    // live store this path silently produced 529 ESPN rows stamped with the Yahoo scoring key.
     db.prepare("UPDATE settings SET value = ? WHERE key = ?")
-      .run(JSON.stringify({ season: SEASON, scoring_rules: { rec: 1.0, passTd: 6 } }), `config:${B}`);
+      .run(JSON.stringify({ season: SEASON, scoring_rules: { rec: 1.0, passTD: 8, passYd: 0.07 } }), `config:${B}`);
     const { assemble } = await import("../src/data/assemble.js");
     await assert.rejects(() => assemble(path, join(path, "points.csv"), B),
-      /every artifact this builder reads .* belongs to the incumbent format/);
+      /scores as sc-[0-9a-f]{12}, and no model has been built for that format/);
     // ...and the switch reports THAT reason rather than a missing-file one.
     const r = await switchActiveLeague(db, B, { dbPath: path });
-    assert.match(r.reason ?? "", /incumbent format/);
+    assert.match(r.reason ?? "", /no model has been built for that format/);
     assert.equal(r.rebuilt, false);
     assert.deepEqual(getBoardStamp(db), { leagueId: B, pending: true });
   });
 });
 
-test("player_value_position is NOT cleared -- nothing in src rebuilds it, so clearing is pure loss", () => {
+test("player_value_position IS cleared now that WP3 restored its producer", () => {
   withStore((db, path) => {
-    // The table is NOT in schema.sql (see the note there): it exists on the live store only. Created
-    // here in its live shape so the test exercises the real situation rather than a hypothetical.
-    db.exec(`CREATE TABLE IF NOT EXISTS player_value_position (player_id TEXT, season INTEGER,
-      board_pos TEXT, value_pos TEXT, eligible_json TEXT, updated_at TEXT, PRIMARY KEY (player_id, season))`);
+    // WP2 deliberately left this table alone: it had a CREATE on the live store, no producer in
+    // `src/`, and clearing a table nothing can rebuild is irreversible loss (it cost 523 rows once).
+    // WP3 restored the producer (`assemble`'s `upValPos`), its CREATE in schema.sql and its lineage
+    // entry, so it joins board/player_value -- leaving another league's value POSITIONS behind is
+    // the same defect as leaving its dollars behind.
     db.prepare("INSERT INTO player_value_position (player_id, season, board_pos, value_pos, updated_at) VALUES ('p0',?,'RB','RB','now')").run(SEASON);
     return switchActiveLeague(db, B, { dbPath: path }).then(() => {
-      assert.equal((db.prepare("SELECT COUNT(*) c FROM player_value_position").get() as { c: number }).c, 1,
-        "a table with no producer must survive a switch: 523 live rows were lost this way once");
+      assert.equal((db.prepare("SELECT COUNT(*) c FROM player_value_position").get() as { c: number }).c, 0,
+        "the previous league's value positions must be cleared with its board");
     });
   });
 });

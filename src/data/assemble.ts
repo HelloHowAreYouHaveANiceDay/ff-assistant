@@ -7,8 +7,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fetchCsv, pick, NFLVERSE } from "./nflverse.js";
 import { nameKey, computeValues, resolveValueLeague, type PointsRow } from "../draft/values.js";
 import { scoreWeek, type ScoringRules } from "../draft/scoring.js";
-import { openDb, nowIso, setBoardStamp, getBoardStamp, setActiveLeagueId, ESPN_SCORING_KEY, type DB, type BoardStamp } from "../db/db.js";
-import { scoringKey } from "./formatKey.js";
+import { openDb, nowIso, setBoardStamp, getBoardStamp, setActiveLeagueId, type DB, type BoardStamp } from "../db/db.js";
 import { dataPath } from "./paths.js";
 import { boardSpreads } from "../draft/spread.js";
 import { loadEligibilityMap } from "./eligibility.js";
@@ -142,9 +141,9 @@ const header = (lastYr: number) => ["Rank", "Player", "Pos", "Us_Pos", "ECR_Pos"
  * code existed.
  *
  * So: clear the three tables, write a PENDING stamp, and attempt the rebuild. If the rebuild cannot
- * run for that league (the format resolver for a non-ESPN league is WP3's), the board stays cleared
- * and pending, the reason is returned and printed, and every reader refuses BY NAME -- which is the
- * only acceptable failure mode. Never the other league's dollars.
+ * run for that league -- the format resolver refuses an unbuilt format BY NAME (WP3) -- the board
+ * stays cleared and pending, the reason is returned and printed, and every reader refuses BY NAME,
+ * which is the only acceptable failure mode. Never the other league's dollars.
  */
 export async function switchActiveLeague(
   db: DB, leagueId: string, opts: { dbPath?: string; pointsPath?: string; rebuild?: boolean } = {},
@@ -155,13 +154,11 @@ export async function switchActiveLeague(
     return { active: leagueId, stamp: prev, rebuilt: false, cleared: false };
   }
   db.transaction(() => {
-    // `player_value_position` is DELIBERATELY NOT CLEARED. schema.sql says it is "written by the
-    // assembler alongside player_value" and that is no longer true -- no code in `src/` writes it
-    // (only the stale `app/engine/ff.cjs` build artifact does) and no code reads it. Clearing a table
-    // with no producer is irreversible loss with no reader to protect; it stays until WP3 restores
-    // its producer, at which point it joins the two above. Measured 2026-09-16: clearing it here cost
-    // 523 rows that nothing could rebuild.
-    for (const t of ["board", "player_value"]) {
+    // All THREE now, because `player_value_position` has a producer again (WP3 restored it into
+    // `assemble` below, with its CREATE in schema.sql and its lineage entry). WP2 deliberately left
+    // it behind -- clearing a table with no producer is irreversible loss with no reader to protect,
+    // and doing it once cost 523 unrebuildable rows.
+    for (const t of ["board", "player_value", "player_value_position"]) {
       try { db.prepare(`DELETE FROM "${t}"`).run(); } catch { /* table absent on a bare store */ }
     }
     setBoardStamp(db, { leagueId, pending: true });
@@ -170,7 +167,7 @@ export async function switchActiveLeague(
     return { active: leagueId, stamp: getBoardStamp(db), rebuilt: false, cleared: true, reason: "rebuild not requested" };
   }
   try {
-    await assemble(opts.dbPath, opts.pointsPath ?? dataPath("points.csv"), leagueId);
+    await assemble(opts.dbPath, opts.pointsPath, leagueId);
     return { active: leagueId, stamp: getBoardStamp(db), rebuilt: true, cleared: true };
   } catch (e) {
     return {
@@ -180,7 +177,7 @@ export async function switchActiveLeague(
   }
 }
 
-export async function assemble(dbPath?: string, pointsPath = dataPath("points.csv"), leagueId?: string | null): Promise<number> {
+export async function assemble(dbPath?: string, pointsPath?: string, leagueId?: string | null): Promise<number> {
   const db = openDb(dbPath);
   // WHOSE BOARD THIS IS (S-8). `board`/`player_value`/`player_value_position` are single-slot by
   // design -- regenerable, read everywhere -- but "single-slot" and "belongs to nobody" are not the
@@ -191,31 +188,40 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
   const lctx = resolveLeagueContext(db, leagueId);
   const cfg = lctx.config;
   const season = cfg.season;
-  // REFUSE TO BUILD A BOARD OUT OF ANOTHER FORMAT'S ARTIFACTS (S-8, measured 2026-09-16).
+  // WHICH FORMAT'S ARTIFACTS THIS BOARD IS BUILT FROM (F-2/F-3, WP3 -- this REPLACED WP2's interim
+  // blanket refusal of every non-incumbent league).
   //
-  // Every input below comes from the ESPN data ROOT -- `points.csv` above all -- and there is no
-  // format resolver yet (F-2/F-3, WP3). So `assemble` on a non-incumbent league does not fail: it
-  // happily builds the ESPN projection pool, prices it with the new league's budget and slots, and
-  // stamps the result as that league's board. That is the exact "silently ESPN-shaped" outcome this
-  // pass exists to make impossible, and it HAPPENED on the live store: a league switch to the Yahoo
-  // league produced 529 rows of ESPN projections stamped `sc-a845f67652fb`.
+  // Every input below used to come from the ESPN data ROOT -- `points.csv` above all -- so `assemble`
+  // on a non-incumbent league did not fail: it built the ESPN projection pool, priced it with the new
+  // league's budget and slots, and stamped the result as that league's board. That HAPPENED on the
+  // live store (529 rows of ESPN projections stamped `sc-a845f67652fb`).
   //
-  // Until WP3 lands, a league whose scoring does not hash to the incumbent key gets a NAMED refusal
-  // and a cleared, pending board. `assertBoardFor` then refuses every reader by name.
-  const key = scoringKey(cfg.scoring_rules);
-  if (key !== ESPN_SCORING_KEY) {
-    throw new Error(
-      `assemble: league ${lctx.leagueId ?? "?"} scores as ${key}, but every artifact this builder reads ` +
-      `(points.csv, values.csv, the ESPN ranks) belongs to the incumbent format ${ESPN_SCORING_KEY}. ` +
-      "There is no per-format resolver yet (WP3, docs/architecture-review-2026-09-16.md F-2/F-3), so a " +
-      "board built here would be the ESPN projection pool wearing this league's dollar signs. Refusing.",
-    );
-  }
+  // Now the pool comes from the LEAGUE'S OWN format. `resolveFormat` maps the incumbent key to the
+  // `data/` root -- so the ESPN path is byte-for-byte what shipped -- and any other key to a built,
+  // preimage-verified `data/formats/<key>/`, or THROWS naming the build command. There is no fallback
+  // to the root, so the silently-ESPN-shaped outcome is now unreachable rather than merely refused.
+  const { resolveFormat } = await import("./formatResolve.js");
+  const fmt = resolveFormat(db, lctx.leagueId);
+  const key = fmt.scoringKey;
   const asof = Date.UTC(season, 8, 1); // Sep 1
 
   // 1. projections -> our values (existing TS computeValues)
-  if (!existsSync(pointsPath)) throw new Error(`missing ${pointsPath} (run build_projections first)`);
-  let points: PointsRow[] = readFileSync(pointsPath, "utf8").trim().split(/\r?\n/).slice(1).map((l) => {
+  //
+  // A format directory may hold a trained projector but no SERVED pool yet (`points.csv` is produced
+  // by `project`, not by the trainer). Rather than refuse, generate it THROUGH THE SAME `project`
+  // path the incumbent uses, against this format's artifact and this format's feature rows -- one
+  // implementation, so the two pools cannot drift.
+  const resolvedPoints = pointsPath ?? fmt.model.path("points");
+  if (!existsSync(resolvedPoints)) {
+    if (pointsPath) throw new Error(`missing ${pointsPath} (run build_projections first)`);
+    console.log(`  ${resolvedPoints} absent -- projecting format ${key} from ${fmt.model.require("projection")}`);
+    const { project } = await import("./projections.js");
+    const n = await project(undefined, resolvedPoints, true, true, "conditional", { format: fmt, season });
+    console.log(`  projected ${n} players -> ${resolvedPoints}`);
+  }
+  const pointsFile = resolvedPoints;
+  if (!existsSync(pointsFile)) throw new Error(`missing ${pointsFile} (run build_projections first)`);
+  let points: PointsRow[] = readFileSync(pointsFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => {
     const [name, pos, pts] = l.split(","); return { name: (name || "").trim(), pos: (pos || "").trim().toUpperCase(), points: Number(pts) };
   }).filter((p) => p.name && Number.isFinite(p.points));
   // CONSENSUS BLEND (the shipped FFToday edge). Re-rank the board's ORDERING toward the FFToday expert
@@ -345,8 +351,8 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
   // every player and hand back one identical band for the entire board. A uniform band is exactly
   // the kind of wrong answer that looks like a working feature.
   try {
-    const outcomes = JSON.parse(readFileSync(dataPath("rank-outcomes.json"), "utf8"));
-    const corrModel = JSON.parse(readFileSync(dataPath("correlation-model.json"), "utf8"));
+    const outcomes = JSON.parse(readFileSync(fmt.model.require("rank-outcomes"), "utf8"));
+    const corrModel = JSON.parse(readFileSync(fmt.model.require("correlation"), "utf8"));
     const inputs = rows.map((r) => ({
       name: r.player as string, pos: r.pos as string, team: (r.team as string) || undefined,
       posRank: Number(String(r.pos_rank).replace(/^[A-Z]+/, "")) || 0,
@@ -386,6 +392,7 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     db.prepare("DELETE FROM player_value WHERE season=@s").run({ s: season });
     db.prepare("DELETE FROM ranking WHERE source='espn' AND season=@s").run({ s: season });
     db.prepare("DELETE FROM board WHERE season=@s").run({ s: season });
+    db.prepare("DELETE FROM player_value_position WHERE season=@s").run({ s: season });
     const upPlayer = db.prepare("INSERT INTO player (player_id, name, position, updated_at) VALUES (?,?,?,?) ON CONFLICT(player_id) DO NOTHING");
     // player_sk comes from STAGING, looked up by (name_key, position). Consumers get the stable id so
     // they can stop joining on names; player_id stays for the callers not yet migrated.
@@ -397,6 +404,10 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
     const upVal = db.prepare("INSERT INTO player_value (player_id, player_sk, season, our_value, our_rank, pos_rank, tier, proj_pts, last_pts, last_gms, updated_at) VALUES (@id,@sk,@s,@v,@rk,@pr,@t,@pp,@lp,@lg,@now)");
     const upRank = db.prepare("INSERT INTO ranking (player_id, source, season, overall_rank, pos_rank, adp, fetched_at) VALUES (@id,'espn',@s,@rank,@pos,@adp,@now) ON CONFLICT(player_id,source,season) DO UPDATE SET overall_rank=excluded.overall_rank, pos_rank=excluded.pos_rank, adp=excluded.adp, fetched_at=excluded.fetched_at");
     const upBoard = db.prepare("INSERT INTO board (player_id, player_sk, season, row_json, updated_at) VALUES (@id,@sk,@s,@json,@now)");
+    // WHICH POSITION THE DOLLAR VALUE WAS TAKEN AT. Written only when eligibility has actually been
+    // ingested, so an EMPTY table means "not measured" rather than "everyone is single-eligible" --
+    // the same distinction the `eligible` board column makes, and for the same reason.
+    const upValPos = db.prepare("INSERT INTO player_value_position (player_id, season, board_pos, value_pos, eligible_json, updated_at) VALUES (@id,@s,@bp,@vp,@ej,@now)");
     const numOrNull = (x: unknown) => typeof x === "number" ? x : null;
     for (const r of rows) {
       const id = nameKey(r.player as string); if (!id) continue;
@@ -412,6 +423,10 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
       if (typeof r.espn_rank === "number") upRank.run({ id, s: season, rank: r.espn_rank, pos: r.espn_pos || null, adp: numOrNull(r.espn_adp), now });
       const obj: Record<string, unknown> = {}; COLS.forEach((c, i) => (obj[HEAD[i]] = r[c]));
       upBoard.run({ id, sk, s: season, json: JSON.stringify(obj), now });
+      if (eligKnown) {
+        upValPos.run({ id, s: season, bp: String(r.pos), vp: String(r.value_pos ?? r.pos),
+          ej: JSON.stringify(elig.get(id) ?? [String(r.pos)]), now });
+      }
     }
   });
   tx();
@@ -429,7 +444,7 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
   // build that threw halfway and claim a board that is not there.
   if (lctx.leagueId) {
     setBoardStamp(db, {
-      leagueId: lctx.leagueId, season, scoringKey: scoringKey(cfg.scoring_rules), builtAt: nowIso(),
+      leagueId: lctx.leagueId, season, scoringKey: key, builtAt: nowIso(),
     });
   }
   db.close();

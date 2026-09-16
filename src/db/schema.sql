@@ -1321,17 +1321,25 @@ CREATE TABLE IF NOT EXISTS player_eligibility (
 -- A SIDECAR rather than a column on player_value because schema.sql only reaches a FRESH store
 -- (every statement is CREATE ... IF NOT EXISTS), so a new column would also need an ALTER in
 -- src/db/db.ts; a new table needs neither and lands on an existing store unchanged. One row per
--- valued player per season.
+-- valued player per season, written by the assembler alongside player_value.
 --
--- KNOWN GAP, FOUND 2026-09-16 (WP2), DELIBERATELY NOT CLOSED HERE. There is no `CREATE` under this
--- comment and there has not been one for some time: the table exists on the LIVE store (523 rows,
--- DDL `player_id, season, board_pos, value_pos, eligible_json, updated_at`, PK `(player_id, season)`)
--- and on no fresh clone. "Written by the assembler" is no longer true either -- nothing in `src/`
--- writes it and nothing reads it; only the stale `app/engine/ff.cjs` build artifact still does.
--- Adding the CREATE back without its producer would put a table in the lineage graph that no producer
--- declares, so the fix is to restore the WRITE (a values-layer change, WP3) and the CREATE together.
--- Until then `switchActiveLeague` deliberately does NOT clear it: clearing a table nothing can
--- rebuild is irreversible loss, and it cost 523 live rows once before this note existed.
+-- THE GAP WP2 FOUND, AND HOW IT IS CLOSED (2026-09-16, WP3). Between commits 31e1c7f ("remove dead
+-- code") and this one, this table had a CREATE on the LIVE store (523 rows) and on no fresh clone,
+-- and no producer in `src/` at all -- only the stale `app/engine/ff.cjs` build artifact still wrote
+-- it. A dead-code sweep removed the write and the CREATE together, which is why nothing failed.
+-- Restoring one without the other would put a node in the lineage graph that no producer declares,
+-- so BOTH come back here: this CREATE, the `upValPos` insert in src/data/assemble.ts, and the
+-- `player_value_position` entry on the `assemble` row of src/lineage/registry.ts. `switchActiveLeague`
+-- now clears it with the other two, which it could not safely do while nothing could rebuild it.
+CREATE TABLE IF NOT EXISTS player_value_position (
+  player_id      TEXT,               -- name_key, the same key player_value uses
+  season         INTEGER,
+  board_pos      TEXT,               -- the position the projection carried
+  value_pos      TEXT,               -- the eligible position the VOR was taken at
+  eligible_json  TEXT,               -- the full eligible set, for audit
+  updated_at     TEXT,
+  PRIMARY KEY (player_id, season)
+);
 -- ================= RAW LAYER: this league's week-by-week rosters and transaction log =============
 --
 -- Added by the in-season backtest track. The store already held this league's auction, finish and

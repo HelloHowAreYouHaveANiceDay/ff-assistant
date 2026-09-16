@@ -36,7 +36,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDb, nowIso, type DB } from "../db/db.js";
 import { buildPopulation } from "./population.js";
-import { dataPath } from "../data/paths.js";
 import { nameKey } from "../draft/values.js";
 import { fetchCsvCached, URLS, cacheTag, canonTeam, pick } from "../data/nflverse.js";
 import { loadArtifact, type ProjectionArtifact } from "../model/projector.js";
@@ -44,6 +43,12 @@ import { backtestProjection, boardProjection } from "../model/features.js";
 import { fitRookieCurve, rookieProjections } from "../draft/rookieModel.js";
 import { STREAM_FIELD_NAMES, presentStreamFields } from "./streamingFields.js";
 import { buildSourceResolver } from "../features/sources/resolve.js";
+// TYPE-ONLY, and it must stay that way: formatResolve.ts imports projector.ts (for the two weekly
+// artifact filename constants) and projector.ts imports THIS file, so a VALUE import here closes a
+// runtime cycle and the artifact table hits a TDZ error at module load. A type import is erased.
+import type { ModelHandle } from "../data/formatResolve.js";
+import { dataPath } from "../data/paths.js";
+import { ARTIFACT_FILE } from "../data/projections.js";
 
 /** The positions a weekly model has an opinion about. Same list src/features/build.ts uses. */
 export const WEEKLY_POS = ["QB", "RB", "WR", "TE", "K", "DST"];
@@ -562,6 +567,11 @@ export interface BuildOpts {
    *  and the build SAYS SO, loudly, per season. The live season always uses the shipped artifact,
    *  which has not seen it. */
   artifactDir?: string;
+  /** WHICH FORMAT's projector anchors the season line, when `artifactPath` is not given outright.
+   *  Omitted = the incumbent, so every existing caller is unchanged. `artifactDir` is deliberately
+   *  NOT defaulted from this handle: the blind fold set is a deliberate, named choice at the call
+   *  site (D17), and quietly supplying one would change the incumbent's weekly table. */
+  model?: ModelHandle;
   log?: (s: string) => void;
   /** A pre-loaded schedule, so a test can be hermetic. Production callers omit it and the feed is
    *  read from the nflverse cache. */
@@ -582,9 +592,19 @@ export interface BuildResult {
   perSeason: { season: number; rows: number; withLine: number; withDvp: number; withPts: number }[];
 }
 
-/** Load the artifact the season line is projected with. Same file the board ships. */
-export function loadWeeklyBaseArtifact(path?: string): ProjectionArtifact {
-  const p = path ?? dataPath("projection-artifact.json");
+/**
+ * Load the artifact the season line is projected with. Same file the board ships -- FOR THIS FORMAT.
+ *
+ * The default used to be `dataPath("projection-artifact.json")`, i.e. the incumbent ESPN projector,
+ * whichever format's weekly table was being built (F-4). Building a Yahoo weekly table anchored on a
+ * half-PPR season line is a column that looks right, has full coverage, and is wrong for every row.
+ * `model` names the format; omitted, it is still the incumbent, so the ESPN path is unchanged.
+ */
+export function loadWeeklyBaseArtifact(path?: string, model?: ModelHandle): ProjectionArtifact {
+  // JUSTIFIED dataPath (WP3 grep): the INCUMBENT default when no format handle is passed -- the
+  // same file `INCUMBENT_MODEL.path("projection")` resolves to, written this way only because the
+  // value import would close the cycle described above. A format handle overrides it.
+  const p = path ?? (model ? model.require("projection") : dataPath(ARTIFACT_FILE));
   return loadArtifact(JSON.parse(readFileSync(p, "utf8")));
 }
 
@@ -600,7 +620,7 @@ export async function buildWeekModelFeatures(opts: BuildOpts): Promise<BuildResu
 export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
   const seasons = [...opts.seasons].sort((a, b) => a - b);
   const current = opts.currentSeason ?? Math.max(...seasons);
-  const artifact = opts.noSeasonLine ? null : loadWeeklyBaseArtifact(opts.artifactPath);
+  const artifact = opts.noSeasonLine ? null : loadWeeklyBaseArtifact(opts.artifactPath, opts.model);
   const sched = opts.sched ?? await loadSchedule(seasons);
   const now = nowIso();
   const log = opts.log ?? ((s: string) => console.log(s));
@@ -894,6 +914,8 @@ export interface ForwardOpts {
   dbPath?: string;
   season: number;
   artifactPath?: string;
+  /** The format whose projector anchors the season line. Omitted = the incumbent (unchanged). */
+  model?: ModelHandle;
   sched?: ScheduleInfo;
   /** Read the live spread/total for the imminent week from `team_odds` where the schedules feed has
    *  not published one. Off by default because team_odds carries ONE week -- whichever was last
@@ -920,7 +942,7 @@ export async function buildForwardWeeks(opts: ForwardOpts): Promise<ForwardResul
 
 export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<ForwardResult> {
   const season = opts.season;
-  const artifact = loadWeeklyBaseArtifact(opts.artifactPath);
+  const artifact = loadWeeklyBaseArtifact(opts.artifactPath, opts.model);
   const sched = opts.sched ?? await loadSchedule([season]);
   const now = nowIso();
 

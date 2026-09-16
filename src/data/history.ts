@@ -155,6 +155,8 @@ export async function buildHistory(
   // Default target is the active-league working set (data/history-*.csv) -- byte-identical to before.
   // A format target (multi-format design) passes its own outDir, e.g. data/formats/<scoringKey>/, so a
   // second format's re-scored history never clobbers the active league's.
+  // JUSTIFIED dataPath (WP3 grep): the INCUMBENT default of `outDir`, which the format builders
+  // always pass (scripts/build-format-{target,features}.mjs). No caller can reach the root by accident.
   const ptPath = outDir ? join(outDir, "history-points.csv") : dataPath("history-points.csv");
   const wkPath = outDir ? join(outDir, "history-weekly.csv") : dataPath("history-weekly.csv");
   if (outDir) mkdirSync(outDir, { recursive: true });
@@ -178,6 +180,7 @@ export async function buildHistory(
  */
 export async function ingestCurrentSeasonActuals(
   season: number, scoring: ScoringRules | LeagueScoring, resolver?: SkResolver | null,
+  outPath?: string,
 ): Promise<{ ok: boolean; weekly: number; weeks: number[]; hash: string; path: string }> {
   const model: LeagueScoring = "rules" in scoring
     ? scoring as LeagueScoring
@@ -187,7 +190,12 @@ export async function ingestCurrentSeasonActuals(
 
   // Same column order as history-weekly.csv (season,name,pos,week,points,team,player_sk) so the forward
   // board reads it with the identical parser. A standalone file holding ONLY the current season.
-  const path = dataPath("current-actuals.csv");
+  // PER FORMAT (F-7). There was ONE current-actuals.csv, scored under whichever league happened to be
+  // active when `ff sync-actuals` last ran, and read by the forward board of every league. Two formats
+  // sharing one file means the second one to poll silently re-scores the first one's board. The caller
+  // passes its format's path (`ctx.format.model.path("current-actuals")`); omitted, it is the
+  // incumbent root, byte-for-byte what shipped.
+  const path = outPath ?? dataPath("current-actuals.csv");
   const header = "season,name,pos,week,points,team,player_sk";
   writeFileSync(path, [header, ...wk].join("\n") + "\n", "utf8");
 

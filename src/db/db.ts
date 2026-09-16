@@ -6,9 +6,9 @@ import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nameKey } from "../draft/values.js";
-import { DEFAULT_SCORING, type ScoringRules } from "../draft/scoring.js";
+import { DEFAULT_SCORING, type ScoringRules, type KickerRules, type DefenseRules } from "../draft/scoring.js";
 import { DEFAULT_LEVERS, type Levers } from "../draft/levers.js";
-import { scoringKey } from "../data/formatKey.js";
+import { scoringKey, INCUMBENT_SCORING_KEY } from "../data/formatKey.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_DB_PATH = process.env.FF_DB ?? "data/ff.db";
@@ -206,10 +206,12 @@ function migrateLocalDraftId(db: DB): void {
   } finally { db.pragma("foreign_keys = ON"); }
 }
 
-/** The incumbent ESPN league's scoring key. `scoringKey(DEFAULT_SCORING)` -- pinned as a constant so a
- *  migration that backfills "the scoring these rows were written under" can PROVE it rather than
- *  assume it. Asserted below and in test/format-key.test.ts. */
-export const ESPN_SCORING_KEY = "sc-f6143a8dfb13";
+/** The incumbent ESPN league's scoring key -- an ALIAS of the single source, `INCUMBENT_SCORING_KEY`
+ *  in src/data/formatKey.ts, which pins it AND asserts it against `DEFAULT_SCORING` at module load
+ *  (WP3). It was a second literal here; two literals for one fact is how a re-key half-lands. Kept
+ *  under its old name because the storage migrations below read as "the key these rows were written
+ *  under", which is what it means to them. */
+export const ESPN_SCORING_KEY: string = INCUMBENT_SCORING_KEY;
 
 /**
  * I-5: `scorecard_prediction` / `scorecard_result` gain `format_key` at the head of the PRIMARY KEY.
@@ -531,6 +533,15 @@ export const DEFAULT_CONFIG = {
   draftType: "auction" as "auction" | "snake",
   // the actual per-stat scoring model that tailors OUR points/values (populated by league_sync)
   scoring_rules: DEFAULT_SCORING as ScoringRules,
+  // K AND DST SCORING, DECLARED (WP3). These were being WRITTEN by `league_sync` and READ by the
+  // format scripts while being absent from this type, so every reader reached them through a cast and
+  // the compiler could not tell a typo from a field. They matter now because `scoringKeyFor` folds
+  // them into the format key when a league overrides them: an undeclared field cannot be part of an
+  // identity. `null` means "this league declares none" -- Yahoo 129048 rosters no K and no DST -- and
+  // is elided from the key exactly like a value equal to the default, because both produce the same
+  // target (history.ts scores K/DST rows under the defaults either way).
+  kicker: null as KickerRules | null,
+  defense: null as DefenseRules | null,
   // tunable knobs (tiers, K/DST cap, bidding, sleeper cutoff) -- visible + assistant-writable
   levers: DEFAULT_LEVERS as Levers,
 };

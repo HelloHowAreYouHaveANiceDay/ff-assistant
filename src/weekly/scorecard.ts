@@ -29,8 +29,7 @@
  */
 import { readFileSync } from "node:fs";
 import { openDb, nowIso, activeLeagueId, getConfig, type DB } from "../db/db.js";
-import { dataPath } from "../data/paths.js";
-import { scoringKey } from "../data/formatKey.js";
+import { scoringKeyFor } from "../data/formatKey.js";
 import {
   loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact,
   CHALLENGER_WEEKLY_ARTIFACT, type WeeklyArtifact,
@@ -40,7 +39,7 @@ import { makeProjections } from "../projections.js";
 import { score, lineupRegret, type Scored1, type Pred } from "./evaluate.js";
 import { fetchEspnWeekly, storeEspnWeekly } from "./espnProjections.js";
 import {
-  projectStreamingWith, topStreamPick, serveTable,
+  projectStreamingWith, topStreamPick, serveTable, weeklyArtifactPath,
   STREAM_SERVE_POS, WEEKLY_SERVE_SWITCHED_ON,
 } from "./streamingServe.js";
 import { POOL_DEPTH } from "./streamingEvaluate.js";
@@ -128,7 +127,10 @@ export function scorecardScope(
   db: DB, scope?: { formatKey?: string; leagueId?: string | null },
 ): { formatKey: string; leagueId: string | null } {
   const leagueId = scope?.leagueId ?? activeLeagueId(db);
-  const formatKey = scope?.formatKey ?? scoringKey(getConfig(db, leagueId).scoring_rules);
+  // `scoringKeyFor`, not `scoringKey(rules)`: the same function the resolver keys directories by, so a
+  // league that overrides its kicker or defense table cannot be stamped with the default format's key.
+  const cfg = getConfig(db, leagueId);
+  const formatKey = scope?.formatKey ?? scoringKeyFor({ rules: cfg.scoring_rules, kicker: cfg.kicker, defense: cfg.defense });
   return { formatKey, leagueId };
 }
 
@@ -509,7 +511,13 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
   // `INSERT OR IGNORE` and every read mixed two models' accuracy under one name.
   const { resolveLeagueContext } = await import("../data/leagueContext.js");
   const lctx = resolveLeagueContext(db, opts.leagueId);
-  const fmtKey = scoringKey(lctx.config.scoring_rules);
+  // AND THE ARTIFACTS THAT PRODUCE THE PREDICTIONS COME FROM THE SAME FORMAT (F-4/WP3). They were
+  // read through `dataPath`, so a second format's scorecard would have stamped `format_key` with ITS
+  // key while scoring the INCUMBENT's models -- a provenance label on somebody else's numbers, which
+  // is worse than no label at all.
+  const { resolveFormat } = await import("../data/formatResolve.js");
+  const fmt = resolveFormat(db, lctx.leagueId);
+  const fmtKey = fmt.scoringKey;
   const today = opts.today ?? iso(new Date());
   const notes: string[] = [];
   const res: ScorecardResult = {
@@ -535,7 +543,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
     } else {
       for (const file of new Set(Object.values(serveTable()))) {
         try {
-          served.set(file, loadWeeklyArtifact(JSON.parse(readFileSync(dataPath(file), "utf8"))));
+          served.set(file, loadWeeklyArtifact(JSON.parse(readFileSync(weeklyArtifactPath(fmt.model, file), "utf8"))));
         } catch (e) {
           // NAMED, never silently skipped: a position whose artifact will not load must not fall
           // through to another model's numbers under the same `weekly` label.
@@ -554,7 +562,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
     let challenger: WeeklyArtifact | null = null;
     let challengerWhy: string | null = null;
     try {
-      challenger = loadWeeklyArtifact(JSON.parse(readFileSync(opts.challengerArtifactPath ?? dataPath(CHALLENGER_WEEKLY_ARTIFACT), "utf8")));
+      challenger = loadWeeklyArtifact(JSON.parse(readFileSync(opts.challengerArtifactPath ?? fmt.model.path("weekly"), "utf8")));
     } catch (e) {
       challengerWhy = `no challenger artifact to snapshot (${(e as Error).message})`;
     }
@@ -664,7 +672,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
 
         // ---- the `stream` kind: one pick per position, out of the approximate free-agent pool. ----
         res.stream.week = week;
-        const proj = projectStreamingWith(db, opts.season, week);
+        const proj = projectStreamingWith(db, opts.season, week, fmt.model);
         if (!proj) {
           res.stream.skipped = `no weekly feature rows for ${opts.season} week ${week} -- nothing to pick from`;
         } else {

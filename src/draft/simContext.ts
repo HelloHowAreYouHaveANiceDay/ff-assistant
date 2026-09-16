@@ -94,9 +94,6 @@ export async function loadSimContext(opts: {
   leagueId?: string | null;
 } = {}): Promise<SimContext> {
   const want = opts.schedule ?? "auto";
-  const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8")) as VarianceModel;
-  const outcomes = JSON.parse(readFileSync(dataPath("rank-outcomes.json"), "utf8"));
-  const corr = JSON.parse(readFileSync(dataPath("correlation-model.json"), "utf8"));
 
   const db = new Database(dataPath("ff.db"), { readonly: true });
   // ONE RESOLVER, ONE CONFIG. This read the legacy `config` mirror (whichever league was active last)
@@ -120,6 +117,16 @@ export async function loadSimContext(opts: {
   // it priced -- so this refuses by name instead.
   const { assertBoardFor } = await import("../db/db.js");
   assertBoardFor(db as unknown as import("../db/db.js").DB, ctx.leagueId, "loadSimContext");
+  // I-1 (artifact side, WP3). The three fitted models below and the pool-rank pool further down were
+  // read from `dataPath(...)` -- i.e. the incumbent ESPN format -- for whatever league this context
+  // was for. A superflex league seeded with half-PPR variance, half-PPR rank-outcome pools and a
+  // half-PPR projection pool produces a confident title probability about a league that does not
+  // exist. They come from the league's OWN format now, and an unbuilt format REFUSES by name.
+  const { resolveFormat } = await import("../data/formatResolve.js");
+  const fmt = resolveFormat(db as unknown as import("../db/db.js").DB, ctx.leagueId);
+  const vm = JSON.parse(readFileSync(fmt.model.require("variance"), "utf8")) as VarianceModel;
+  const outcomes = JSON.parse(readFileSync(fmt.model.require("rank-outcomes"), "utf8"));
+  const corr = JSON.parse(readFileSync(fmt.model.require("correlation"), "utf8"));
   const board = new Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[] }>();
   for (const r of db.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(cfg.season) as { player_id: string; row_json: string }[]) {
     const j = JSON.parse(r.row_json) as Record<string, unknown>;
@@ -163,7 +170,7 @@ export async function loadSimContext(opts: {
   const poolRank = new Map<string, { rank: number; of: number }>();
   {
     const byPos: Record<string, { name: string; pts: number }[]> = {};
-    for (const line of readFileSync(dataPath("points.csv"), "utf8").trim().split(/\r?\n/).slice(1)) {
+    for (const line of readFileSync(fmt.model.require("points"), "utf8").trim().split(/\r?\n/).slice(1)) {
       const f = line.split(",");
       if (!f[0] || !f[2]) continue;
       (byPos[f[1].trim().toUpperCase()] ??= []).push({ name: f[0].trim(), pts: Number(f[2]) });

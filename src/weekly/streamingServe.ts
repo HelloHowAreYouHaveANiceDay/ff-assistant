@@ -23,6 +23,8 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
+import { resolveFormat, INCUMBENT_MODEL, type ModelHandle, type ArtifactName } from "../data/formatResolve.js";
+import { resolveLeagueContext } from "../data/leagueContext.js";
 import { loadWeeklyRows } from "./features.js";
 import {
   loadWeeklyArtifact, projectWeekly, SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT,
@@ -202,8 +204,40 @@ export interface StreamProjections {
 
 const open = (dbPath?: string) => new Database(dbPath ?? dataPath("ff.db"), { readonly: true });
 
-function tryLoad(file: string): WeeklyArtifact | null {
-  try { return loadWeeklyArtifact(JSON.parse(readFileSync(dataPath(file), "utf8"))); } catch { return null; }
+/**
+ * THE SERVE RULE, PER FORMAT (F-4, WP3).
+ *
+ * `WEEKLY_SERVE` names FILES, and those files were resolved through `dataPath` -- the incumbent ESPN
+ * root -- whatever league was being served. A superflex full-PPR league would have been handed
+ * half-PPR weekly means at every position with nothing anywhere saying so.
+ *
+ * Now the four weekly artifacts are resolved through the FORMAT's `ModelHandle`. A format that has no
+ * weekly artifact yet gets `null` from every load, `projectStreamingWith` returns null, and the
+ * consumer's existing named fallback fires (copilot.ts: `basis: "projection"`, the season projection
+ * divided by the week count, with `assumptions.basisNote` saying how many players fell back) -- off
+ * the FORMAT's own season line, because the board and `points.csv` behind it are the format's too.
+ * Null here means "fall back to the season line and SAY SO", never "read the root's copy".
+ */
+const ARTIFACT_OF: Record<string, ArtifactName> = {
+  [CHALLENGER_WEEKLY_ARTIFACT]: "weekly",
+  [SHIPPED_WEEKLY_ARTIFACT]: "weekly-lineonly",
+  [STREAMING_ARTIFACT]: "streaming",
+  [DST_STREAM_ARTIFACT]: "dst-stream",
+};
+
+/** Where ONE weekly artifact FILE lives for a given format. The single translation from the
+ *  `WEEKLY_SERVE` table's filenames to a format's directory, so the scorecard and the serve path
+ *  cannot resolve the same file to two different places. */
+export function weeklyArtifactPath(model: ModelHandle, file: string): string {
+  const name = ARTIFACT_OF[file];
+  // A file the table names but the artifact registry does not know is a programming error, not a
+  // missing model -- say so rather than silently returning "unavailable".
+  if (!name) throw new Error(`streamingServe: "${file}" is not in the format artifact table (${Object.keys(ARTIFACT_OF).join(", ")})`);
+  return model.path(name);
+}
+
+function tryLoad(file: string, model: ModelHandle): WeeklyArtifact | null {
+  try { return loadWeeklyArtifact(JSON.parse(readFileSync(weeklyArtifactPath(model, file), "utf8"))); } catch { return null; }
 }
 
 /**
@@ -213,9 +247,28 @@ function tryLoad(file: string): WeeklyArtifact | null {
  * difference between serving the model that was measured and serving it on its missing-value
  * defaults, and it is asserted in test/streaming-features.test.ts because nothing else would notice.
  */
-export function loadStreamingProjection(season: number, week: number, dbPath?: string): StreamProjections | null {
+export function loadStreamingProjection(season: number, week: number, dbPath?: string, model?: ModelHandle): StreamProjections | null {
   const db = open(dbPath);
-  try { return projectStreamingWith(db as unknown as StreamDb, season, week); } finally { db.close(); }
+  try { return projectStreamingWith(db as unknown as StreamDb, season, week, model); } finally { db.close(); }
+}
+
+/**
+ * The format whose weekly artifacts serve a store, when the caller did not name one: the store's
+ * ACTIVE league's format.
+ *
+ * A store with NO league at all (a fixture, a bare temp DB) gets the incumbent -- that is what such a
+ * caller has always been served and there is no league whose format could disagree. A store that DOES
+ * name a league gets that league's format and any refusal it carries: swallowing a "format sc-xxxx is
+ * not built" here and quietly handing back the root's artifacts is precisely the failure this seam
+ * exists to remove.
+ */
+function modelFor(db: StreamDb, model?: ModelHandle): ModelHandle {
+  if (model) return model;
+  const handle = db as unknown as import("../db/db.js").DB;
+  let ctxLeague: string | null;
+  try { ctxLeague = resolveLeagueContext(handle).leagueId; } catch { return INCUMBENT_MODEL; }
+  if (ctxLeague == null) return INCUMBENT_MODEL;
+  return resolveFormat(handle, ctxLeague).model;
 }
 
 /** The narrow slice of a database handle this module needs. Taking a HANDLE rather than a path is
@@ -223,12 +276,13 @@ export function loadStreamingProjection(season: number, week: number, dbPath?: s
  *  projections without opening a second connection to the same file mid-transaction. */
 export type StreamDb = Parameters<typeof loadWeeklyRows>[0];
 
-export function projectStreamingWith(db: StreamDb, season: number, week: number): StreamProjections | null {
+export function projectStreamingWith(db: StreamDb, season: number, week: number, model?: ModelHandle): StreamProjections | null {
+  const mh = modelFor(db, model);
   const files = [...new Set(STREAM_SERVE_POS.map(artifactForPos))];
   const arts = new Map<string, WeeklyArtifact>();
   const missing: string[] = [];
   for (const f of files) {
-    const a = tryLoad(f);
+    const a = tryLoad(f, mh);
     if (a) arts.set(f, a);
   }
   const artifactByPos: Record<string, string> = {};

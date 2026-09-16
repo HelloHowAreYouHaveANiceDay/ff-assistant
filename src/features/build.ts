@@ -206,6 +206,10 @@ export async function buildFeatures(opts: {
   const cfg = getConfig(db);
   const now = nowIso();
   const resolver = buildSkResolver(db);
+  // JUSTIFIED dataPath (WP3 grep): the INCUMBENT default of `opts.pointsPath`/`opts.weeklyPath`.
+  // scripts/build-format-features.mjs passes the format's pair explicitly, which is what retargets
+  // feat_player_season; a format build that forgot them would read the half-PPR target and the
+  // script's own positive control (feat.pts == the format target CSV) fails loudly.
   const pointsPath = opts.pointsPath ?? dataPath("history-points.csv");
   const weeklyPath = opts.weeklyPath ?? dataPath("history-weekly.csv");
   if (!existsSync(pointsPath)) throw new Error(`${pointsPath} missing -- run \`ff build-history\` first`);

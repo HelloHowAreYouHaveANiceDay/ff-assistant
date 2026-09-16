@@ -358,3 +358,53 @@ offline", not "format-native end to end" -- three things a reader should not tak
   half-PPR, not Yahoo-scored (finding F-4).
 
 See that review's work packages WP1-WP7 for the fix plan.
+
+## The Resolver (WP3, 2026-09-16) -- all three bullets above are now CLOSED
+
+`src/data/formatResolve.ts` is the single map from "which league" to "which model's files". Read its
+header for the full argument; the contract in short:
+
+**The three keys are real functions** (`src/data/formatKey.ts`). `scoringKeyFor({rules, kicker,
+defense})` is the projection layer, `valueKey(cfg)` the value book (the eligibility structure
+`resolveValueLeague` emits + teams + budget + draftType), `formatKey(cfg)` the gate (valueKey + the
+playoff calendar). All three canonicalize first, so key order, float noise below 1e-6, tier-array
+order and slot order cannot fork a key, and provenance fields (`source`/`fetchedAt`/`note`/divisions)
+are excluded so a re-sync does not fork the gate. The live leagues:
+`462233 -> sc-f6143a8dfb13 / vk-c1a75ecab6fc / fk-57c2d3d5bfa2`,
+`129048 -> sc-a845f67652fb / vk-93b577871e68 / fk-3a298dfdeb32`.
+
+**Kicker and defense fold in by DEFAULT-ELISION.** They enter the scoring hash only when a league
+declares a table DIFFERENT from `DEFAULT_KICKER`/`DEFAULT_DEFENSE`. That keeps both live keys (ESPN
+stores the defaults; Yahoo stores `null` because it rosters neither) while a league with its own K or
+DST rules gets its own format -- which matters because `history.ts` bakes K and DST rows into the
+target. "kicker null" and "kicker at the default" deliberately share a key: both produce the same
+target, and whether a league STARTS a kicker is a roster fact carried by `valueKey` one layer down.
+The alternative -- a full re-key hashing `{rules, kicker, defense}` unconditionally -- would have
+renamed `data/formats/sc-a845f67652fb/` and migrated every `scorecard_*.format_key` row for no
+behavioural gain.
+
+**Two rules, both refusals.** (1) The incumbent key aliases the `data/` ROOT, pinned as
+`INCUMBENT_SCORING_KEY` and asserted at module load against `DEFAULT_SCORING`. (2) Every other key
+must have `data/formats/<key>/` AND a `scoring.json` whose canonical re-hash equals the directory
+name -- the preimage that makes a directory NAME falsifiable -- or the resolve THROWS, naming the
+build command. There is no fallback to the root, because a fallback serves every unbuilt format the
+incumbent's numbers and every one of them renders perfectly.
+
+**Availability is per artifact.** `model.has(name)` / `model.require(name)` over the artifact table
+(history CSVs, current-actuals, features db, projection, fold dir, four weekly artifacts,
+variance/rank-outcomes/correlation, points/values/def-ratings, golden, scoring, manifest), so a
+consumer refuses BY NAME -- "format sc-a845f67652fb has no weekly artifact" -- instead of reading the
+root's copy. SHARED-NFL artifacts (injury duration, opponent correlation, age curve, opportunity
+model, the ros-blend K, the nflverse cache, `ff.db`) stay at the root by design: they are fitted on
+facts about football, not about a ruleset.
+
+**The serve rule.** A format with no weekly artifact yields `null` from `projectStreamingWith`, which
+is what the in-season copilot already reads as "no weekly projector was supplied": it falls back to
+`basis: "projection"` -- that FORMAT's season line divided by the week count -- and says so in
+`assumptions.basisNote`. Never the root artifact.
+
+**What a second format still needs before it is gated end to end:** its own `current-actuals` (`ff
+sync-actuals --league <id>`), a weekly artifact, variance/rank-outcomes/correlation fits, a blind
+fold set (`manifest.weekly.seasonLineBlind` records honestly when the weekly season line is not
+blind), and a `golden.json` -- `cpcv.mjs` has no `--league` axis yet, so the championship gate is
+still the incumbent's (F-9, WP7).

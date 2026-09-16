@@ -561,8 +561,14 @@ async function cmdProjections(rest: string[]) {
   // --curve orderstat restores the pre-2026-09-08 order-statistic curve, for A/B only. The default
   // is the conditional curve; see the header of src/data/projections.ts for why they differ.
   const curve = valueOf(rest, "--curve") === "orderstat" ? "orderstat" : "conditional";
-  const n = await project(valueOf(rest, "--db"), valueOf(rest, "--out") ?? dataPath("points.csv"), true, true, curve);
-  console.log(`wrote points.csv (${n} players)`);
+  const { openDb: openDbP } = await import("./db/db.js");
+  const pdb = openDbP(valueOf(rest, "--db"));
+  const pFmt = await formatCtx(rest, pdb);
+  const pSeason = (await leagueCtx(rest, pdb)).config.season;
+  pdb.close();
+  const pOut = valueOf(rest, "--out") ?? pFmt.model.path("points");
+  const n = await project(valueOf(rest, "--db"), pOut, true, true, curve, { format: pFmt, season: pSeason });
+  console.log(`wrote ${pOut} (${n} players, format ${pFmt.scoringKey} ${pFmt.provenance})`);
 }
 
 // The full data refresh, ALL TS (no Python): ingest reference+news -> project curve -> assemble value/board.
@@ -577,7 +583,7 @@ async function cmdRefresh(rest: string[]) {
 // + points.csv, fetches ESPN/last-year, computes derived fields, writes the value/board tables.
 async function cmdAssemble(rest: string[]) {
   const { assemble } = await import("./data/assemble.js");
-  const n = await assemble(valueOf(rest, "--db"), valueOf(rest, "--points") ?? dataPath("points.csv"), leagueArg(rest));
+  const n = await assemble(valueOf(rest, "--db"), valueOf(rest, "--points"), leagueArg(rest));
   const { openDb, getBoardStamp } = await import("./db/db.js");
   const sdb = openDb(valueOf(rest, "--db"));
   const stamp = getBoardStamp(sdb);
@@ -1144,7 +1150,7 @@ async function cmdHandcuffs(rest: string[]) {
   const { readFileSync } = await import("node:fs");
   const db = openDb(valueOf(rest, "--db"));
   const season = (await leagueCtx(rest, db)).config.season;
-  const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8"));
+  const vm = JSON.parse(readFileSync((await formatCtx(rest, db)).model.require("variance"), "utf8"));
   const positions = (valueOf(rest, "--pos") ?? "RB").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
   const weeks = Number(valueOf(rest, "--weeks") ?? 17);
 
@@ -1221,6 +1227,10 @@ async function cmdLineup(rest: string[]) {
 
 async function cmdProject(rest: string[]) {
   const { loadProjections } = await import("./projections.js");
+  // JUSTIFIED dataPath (WP3 grep): `src/projections.ts` is the LEGACY read-only lookup behind two
+  // display verbs (`ff project <name>`, `ff lineup --roster <csv>`). It takes explicit paths, has no
+  // store handle and writes nothing; a `--points` flag already redirects it at a format's pool. It is
+  // listed in the WP3 report as knowingly incumbent-default rather than silently so.
   const name = rest.find((r) => !r.startsWith("--"));
   const opp = valueOf(rest, "--vs");
   const proj = loadProjections(valueOf(rest, "--points") ?? dataPath("points.csv"), valueOf(rest, "--def") ?? dataPath("def-ratings.csv"));
@@ -1254,7 +1264,13 @@ async function loadValueBook(rest: string[]): Promise<{ name: string; pos: strin
     } catch { /* fall through to the CSV seed */ }
   }
   const { readFileSync } = await import("node:fs");
-  const file = explicit ?? dataPath("values.csv");
+  // The CSV SEED is per FORMAT: values.csv is a priced pool, and the incumbent's is half-PPR auction
+  // dollars. Resolved through the context so a second league's cheatsheet cannot quote ESPN prices.
+  const { openDb: openDbV } = await import("./db/db.js");
+  const vbDb = openDbV(valueOf(rest, "--db"));
+  const vbFmt = await formatCtx(rest, vbDb);
+  vbDb.close();
+  const file = explicit ?? vbFmt.model.require("values");
   if (!explicit) console.log(`  (player_value empty for ${season} -- using the ${file} seed; run 'ff refresh')`);
   return readFileSync(file, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","))
     .map((f) => ({ name: (f[0] ?? "").trim(), pos: (f[1] ?? "").trim().toUpperCase(), value: Number(f[2]) }))
@@ -1417,8 +1433,11 @@ async function cmdValues(rest: string[]) {
   const { computeValues, resolveValueLeague } = await import("./draft/values.js");
   const { openDb } = await import("./db/db.js");
   const { readFileSync, writeFileSync } = await import("node:fs");
-  const src = valueOf(rest, "--points") ?? dataPath("points.csv");
-  const out = valueOf(rest, "--out") ?? dataPath("values.csv");
+  const vdb0 = openDb(valueOf(rest, "--db"));
+  const vFmt = await formatCtx(rest, vdb0);
+  vdb0.close();
+  const src = valueOf(rest, "--points") ?? vFmt.model.require("points");
+  const out = valueOf(rest, "--out") ?? vFmt.model.path("values");
   const [, ...lines] = readFileSync(src, "utf8").trim().split(/\r?\n/);
   const points = lines.map((l) => { const f = l.split(","); return { name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) }; }).filter((p) => p.name && p.points);
   // config-driven so values.csv matches the board (same league shape + K/DST cap)
@@ -1445,9 +1464,13 @@ async function cmdCalibrate(rest: string[]) {
   const { loadManagers } = await import("./draft/managers.js");
   const { readFileSync } = await import("node:fs");
   const readCsv = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
-  const points = readCsv(valueOf(rest, "--points") ?? dataPath("points.csv")).map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
+  const { openDb: openDbC } = await import("./db/db.js");
+  const cdb0 = openDbC(valueOf(rest, "--db"));
+  const cFmt = await formatCtx(rest, cdb0);
+  cdb0.close();
+  const points = readCsv(valueOf(rest, "--points") ?? cFmt.model.require("points")).map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
   const ourValues = new Map<string, number>();
-  for (const f of readCsv(valueOf(rest, "--values") ?? dataPath("values.csv"))) ourValues.set(f[0].trim(), Number(f[2]));
+  for (const f of readCsv(valueOf(rest, "--values") ?? cFmt.model.require("values"))) ourValues.set(f[0].trim(), Number(f[2]));
   const n = Number(valueOf(rest, "--n") ?? 300);
   const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
   const { profiles } = loadManagers();
@@ -1491,8 +1514,11 @@ async function cmdSim(rest: string[]) {
   const { openDb } = await import("./db/db.js");
   const { readFileSync } = await import("node:fs");
   const readCsv = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
-  const pointsFile = valueOf(rest, "--points") ?? dataPath("points.csv");
-  const valuesFile = valueOf(rest, "--values") ?? dataPath("values.csv");
+  const sdb0 = openDb(valueOf(rest, "--db"));
+  const sFmt = await formatCtx(rest, sdb0);
+  sdb0.close();
+  const pointsFile = valueOf(rest, "--points") ?? sFmt.model.require("points");
+  const valuesFile = valueOf(rest, "--values") ?? sFmt.model.require("values");
   const n = Number(valueOf(rest, "--n") ?? 100);
   const points = readCsv(pointsFile).map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
   const ourValues = new Map<string, number>();
@@ -1930,6 +1956,7 @@ async function cmdSyncActuals(rest: string[]) {
   const dbPath = valueOf(rest, "--db");
   const force = rest.includes("--force");
   const db = openDb(dbPath); const conf = getConfig(db);
+  const actualsFmt = await formatCtx(rest, db);
   const season = Number(process.env.FF_SEASON ?? conf.season);
   const resolver = buildSkResolver(db);
   const c = conf as unknown as { kicker?: unknown; defense?: unknown };
@@ -1945,7 +1972,7 @@ async function cmdSyncActuals(rest: string[]) {
     ? JSON.parse(readFileSync(statePath, "utf8")) : {};
 
   console.log(`sync-actuals: re-scoring ${season} from nflverse (cache-bypassed)...`);
-  const r = await ingestCurrentSeasonActuals(season, model, resolver);
+  const r = await ingestCurrentSeasonActuals(season, model, resolver, actualsFmt.model.path("current-actuals"));
   if (!r.ok || r.weekly === 0) {
     console.log(`  nflverse has no ${season} weekly rows yet -- nothing to ingest (the season's feed is not published or empty).`);
     return;
@@ -2262,6 +2289,10 @@ async function cmdBacktest(rest: string[]) {
   // league shape, bidding levers, and playoff format all come from the SYNCED config (per league)
   const db = openDb(valueOf(rest, "--db"));
   const btCtx = await leagueCtx(rest, db);
+  // WHICH FORMAT'S TARGET THE ARBITER RUNS ON (F-9, partial). The two history CSVs below defaulted to
+  // the incumbent root, so `ff backtest --league <other>` would have gated a second format's levers on
+  // the ESPN target. They come from the league's format now; an unbuilt one refuses by name.
+  const btFmt = await formatCtx(rest, db);
   const conf = btCtx.config; db.close();
   // The championship arbiter prices an AUCTION. It has no meaning for a snake league, and printing a
   // playoff percentage off auction values for one would be a number with no referent.
@@ -2289,12 +2320,12 @@ async function cmdBacktest(rest: string[]) {
   const range = (valueOf(rest, "--seasons") ?? `2014-${new Date().getFullYear() - 1}`).split("-").map(Number);
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const pts = new Map<number, { name: string; pos: string; points: number }[]>();
-  for (const f of rows(valueOf(rest, "--points") ?? dataPath("history-points.csv"))) {
+  for (const f of rows(valueOf(rest, "--points") ?? btFmt.model.require("history-points"))) {
     const yr = Number(f[0]); if (yr < lo || yr > hi) continue;
     (pts.get(yr) ?? pts.set(yr, []).get(yr)!).push({ name: f[1].trim(), pos: f[2].trim().toUpperCase(), points: Number(f[3]) });
   }
   const wk = new Map<number, Map<string, Map<number, number>>>();
-  for (const f of rows(valueOf(rest, "--weekly") ?? dataPath("history-weekly.csv"))) {
+  for (const f of rows(valueOf(rest, "--weekly") ?? btFmt.model.require("history-weekly"))) {
     const yr = Number(f[0]); if (yr < lo || yr > hi) continue;
     const m = wk.get(yr) ?? wk.set(yr, new Map()).get(yr)!;
     const name = f[1].trim(); (m.get(name) ?? m.set(name, new Map()).get(name)!).set(Number(f[3]), Number(f[4]));
@@ -2441,6 +2472,9 @@ async function cmdBacktest(rest: string[]) {
     // <dir>` writes artifact-<season>.json per outer fold, each blind to its own season, and that is
     // the directory to point here.
     const artDir = valueOf(rest, "--artifact-dir");
+    // JUSTIFIED dataPath (WP3 grep): an EVALUATION verb whose subject is named by --artifact /
+    // --artifact-dir. Defaulting it to a resolved format would silently change which model a
+    // reported R-squared belongs to.
     const ap = valueOf(rest, "--artifact") ?? dataPath("projection-artifact.json");
     if (!artDir && !ex(ap)) throw new Error(`${ap} missing -- build one with \`npm run ff -- build-artifact --curve-only\``);
     const perYear = new Map<number, ReturnType<typeof loadArtifact>>();
@@ -2820,6 +2854,10 @@ async function cmdBuildArtifact(rest: string[]) {
   const { writeFileSync } = await import("node:fs");
   const range = (valueOf(rest, "--seasons") ?? "1999-2025").split("-").map(Number);
   const hold = valueOf(rest, "--holdout-season");
+  // JUSTIFIED dataPath (WP3 grep): `build-artifact` is a TRAINER verb. The format workflow always
+  // names its own `--out` (scripts/build-format-features.mjs prints the exact command), and defaulting
+  // this to a resolved format would let a bare `ff build-artifact` overwrite a trained format model
+  // with a curve-only floor. The incumbent default is the safe one.
   const out = valueOf(rest, "--out") ?? dataPath("projection-artifact.json");
   const base = (valueOf(rest, "--base") ?? "curve_value_ecr") as "curve_value_prior" | "curve_value_ecr" | "curve_value_orderstat";
   const { artifact, quantiles } = buildCurveOnlyArtifact({
@@ -3209,6 +3247,9 @@ async function cmdAutoDraft(rest: string[]) {
   const csvArg = valueOf(rest, "--csv");
   const csvExplicit = csvArg !== undefined;
   let csv = csvArg;
+  // JUSTIFIED dataPath (WP3 grep): the DRAFT-ROOM seed. The room is auction-only and ESPN-only
+  // (`requireAuction` + the ESPN webview), so the incumbent file is the only one it can mean; a
+  // format with a snake draft refuses upstream rather than arriving here.
   if (csv === undefined) csv = existsSync(dataPath("values.csv")) ? dataPath("values.csv") : undefined;
 
   // OUR value overrides (nameKey -> $) + pos. Both sides of the join are keyed by nameKey so ESPN
@@ -3658,6 +3699,21 @@ function leagueArg(args: string[]): string | undefined {
 async function leagueCtx(args: string[], db: import("./db/db.js").DB): Promise<import("./data/leagueContext.js").LeagueContext> {
   const { resolveLeagueContext } = await import("./data/leagueContext.js");
   return resolveLeagueContext(db, leagueArg(args));
+}
+
+/**
+ * Resolve WHICH FORMAT'S ARTIFACTS a verb reads, honouring `--league` (WP3).
+ *
+ * Every `dataPath("points.csv" | "values.csv" | "history-*.csv" | "current-actuals.csv")` default in
+ * this file named the INCUMBENT's file regardless of the league the verb was for. A second league's
+ * `ff values` would have priced the ESPN projection pool with its own slots and printed the result as
+ * its value book. Defaults now come from the resolved format, and an unbuilt format REFUSES by name
+ * rather than reading the root's copy. An explicit `--points/--values/--out` still wins, so every
+ * scripted call site is unchanged.
+ */
+async function formatCtx(args: string[], db: import("./db/db.js").DB): Promise<import("./data/formatResolve.js").ResolvedFormat> {
+  const { resolveFormat } = await import("./data/formatResolve.js");
+  return resolveFormat(db, leagueArg(args));
 }
 
 // ==================================================================================================

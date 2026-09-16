@@ -86,6 +86,9 @@ export async function buildForwardBoardInto(db: DB, opts: {
   season?: number; actualsPath?: string;
 }): Promise<{ season: number; weekRows: number; modelRows: number; keys: number; maxWeek: number; withPts: number }> {
   const season = opts.season ?? getConfig(db).season;
+  // JUSTIFIED dataPath (WP3 grep): the INCUMBENT default of `opts.actualsPath`. `ff sync-actuals`
+  // now writes the FORMAT's current-actuals and hands this function that exact path, so the live
+  // board is rebuilt from the same file the same format just scored.
   const actualsPath = opts.actualsPath ?? dataPath("current-actuals.csv");
   const now = nowIso();
 
