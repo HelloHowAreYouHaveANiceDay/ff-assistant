@@ -234,7 +234,7 @@ async function cmdAppData(rest: string[]) {
 // SQLite in Electron. Methods are additive; agent-ask stays its own streamed spawn.
 async function cmdServe(rest: string[]) {
   const readline = await import("node:readline");
-  const { openDb, getConfig, setMyRoster, getMyRoster, setConfig } = await import("./db/db.js");
+  const { openDb, getConfig, setMyRoster, getMyRoster, setConfig, activeLeagueId, setActiveLeagueId } = await import("./db/db.js");
   const { appDataPayload } = await import("./data/appdata.js");
   const { authStatus } = await import("./agent/auth.js");
   const { applyLevers, DEFAULT_LEVERS } = await import("./draft/levers.js");
@@ -458,9 +458,26 @@ async function cmdServe(rest: string[]) {
         }
         case "league-info": {
           const cfg = getConfig(db);
-          const lg = db.prepare("SELECT league_id, name, season, team_id, scoring_json FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; name: string; season: number; team_id: string; scoring_json: string } | undefined;
+          const aId = activeLeagueId(db);
+          const lg = (aId
+            ? db.prepare("SELECT league_id, name, season, team_id, scoring_json FROM league WHERE league_id = ?").get(aId)
+            : db.prepare("SELECT league_id, name, season, team_id, scoring_json FROM league ORDER BY last_synced_at DESC LIMIT 1").get()) as { league_id: string; name: string; season: number; team_id: string; scoring_json: string } | undefined;
           const nPlayers = (db.prepare("SELECT count(*) c FROM player_value WHERE season = ?").get(cfg.season) as { c: number }).c;
           result = { config: cfg, league: lg ?? null, players: nPlayers, onboarded: nPlayers > 0 && !!lg };
+          break;
+        }
+        case "league-list": {
+          const leagues = db.prepare(
+            "SELECT league_id, platform, name, season, team_id FROM league ORDER BY last_synced_at DESC",
+          ).all();
+          result = { leagues, active: activeLeagueId(db) };
+          break;
+        }
+        case "league-set-active": {
+          const lid = String(params.leagueId ?? "");
+          if (!lid || !db.prepare("SELECT 1 FROM league WHERE league_id = ?").get(lid)) throw new Error(`unknown league ${lid}`);
+          setActiveLeagueId(db, lid);
+          result = { active: activeLeagueId(db) };
           break;
         }
         case "auth-status": result = authStatus(); break;

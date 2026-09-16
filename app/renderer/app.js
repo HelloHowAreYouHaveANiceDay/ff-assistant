@@ -76,13 +76,31 @@ function renderPageTabs() {
   el.innerHTML = PAGES.map(p => `<button class="tab ${p.id === curPage ? "on" : ""}" data-page="${p.id}">${esc(p.name)}</button>`).join("");
   el.querySelectorAll(".tab").forEach(b => b.onclick = () => setPage(b.dataset.page));
 }
+// Top row = one tab PER LEAGUE (ESPN + Yahoo + …), the active one highlighted. Clicking a tab makes
+// that league active (engine `league-set-active` -> per-league config becomes the store's active config)
+// AND switches the embedded browser to that platform's webview, navigated to the league. So one click
+// moves both the app's league CONTEXT and the visible browser together.
+const LEAGUE_URL = { espn: () => "https://fantasy.espn.com/football/", yahoo: (id) => "https://football.fantasysports.yahoo.com/f1/" + id };
 async function renderLeagueTabs() {
   const el = document.getElementById("leaguetabs"); if (!el) return;
-  let lg = null;
-  try { const info = await window.mc?.leagueInfo?.(); lg = info && info.league; if (lg) ACTIVE_LEAGUE = { leagueId: lg.league_id, season: lg.season, teamId: lg.team_id, name: lg.name }; } catch (e) { /* none synced */ }
-  el.innerHTML = (lg ? `<button class="tab league on" data-lg="${esc(lg.league_id)}">${esc(lg.name || "My League")}</button>` : `<button class="tab league on">Set up a league →</button>`)
+  let list = { leagues: [], active: null };
+  try { list = (await window.mc?.leagueList?.()) || list; } catch (e) { /* none */ }
+  const leagues = list.leagues || [];
+  const act = leagues.find((l) => l.league_id === list.active) || leagues[0] || null;
+  if (act) ACTIVE_LEAGUE = { leagueId: act.league_id, season: act.season, teamId: act.team_id, name: act.name, platform: act.platform || "espn" };
+  el.innerHTML = (leagues.length
+    ? leagues.map((l) => `<button class="tab league${l.league_id === (act && act.league_id) ? " on" : ""}" data-lg="${esc(l.league_id)}" data-plat="${esc(l.platform || "espn")}">${esc(l.name || "League")} <span class="platbadge">${esc((l.platform || "espn").toUpperCase())}</span></button>`).join("")
+    : `<button class="tab league on">Set up a league →</button>`)
     + `<button class="tab league addleague" id="lg-add">+ league</button>`;
+  for (const b of el.querySelectorAll(".tab.league[data-lg]")) b.onclick = () => switchLeague(b.dataset.lg, b.dataset.plat);
   const add = document.getElementById("lg-add"); if (add) add.onclick = () => setPage("settings");
+}
+async function switchLeague(leagueId, platform) {
+  try { await window.mc?.leagueSetActive?.(leagueId); } catch (e) { /* keep going -- UI switch still useful */ }
+  if (typeof setView === "function") setView("live");                 // show the embedded browser
+  if (typeof setBrowserPlatform === "function") setBrowserPlatform(platform || "espn");
+  const wv = activeWv(); const mk = LEAGUE_URL[platform || "espn"]; if (wv && wv.loadURL && mk) wv.loadURL(mk(leagueId));
+  await renderLeagueTabs();
 }
 
 /* ---------- DRAFT BOARD ---------- */

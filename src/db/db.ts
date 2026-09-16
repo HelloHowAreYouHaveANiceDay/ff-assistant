@@ -251,9 +251,18 @@ export type AppConfig = typeof DEFAULT_CONFIG;
  *  Inlined here (not imported from leagueHistory) to avoid a db<->leagueHistory import cycle. */
 export function activeLeagueId(db: DB): string | null {
   try {
+    // Explicit selection (set by a league-tab click) wins, if it names a real league; otherwise fall
+    // back to the most-recently-synced one. Kept separate from `last_synced_at` so switching the active
+    // league in the UI does not masquerade as a fresh sync (which ingest/staleness logic keys on).
+    const sel = getSetting(db, "active_league");
+    if (sel && db.prepare("SELECT 1 FROM league WHERE league_id = ?").get(sel)) return String(sel);
     const r = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id?: string } | undefined;
     return r?.league_id ? String(r.league_id) : null;
   } catch { return null; }   // fresh store before the league table exists
+}
+export function setActiveLeagueId(db: DB, leagueId: string): void {
+  setSetting(db, "active_league", leagueId);
+  setActiveLeagueConfig(db, leagueId);   // point the legacy config mirror at the newly-active league
 }
 
 const configKey = (leagueId: string | null): string => (leagueId ? `config:${leagueId}` : "config");

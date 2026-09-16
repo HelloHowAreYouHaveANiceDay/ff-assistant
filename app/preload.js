@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld("mc", {
   teamGet: () => ipcRenderer.invoke("mc:teamGet"),
   // onboarding: synced-league status (config + league row + player count), and a one-shot league sync
   leagueInfo: () => ipcRenderer.invoke("mc:leagueInfo"),
+  // multi-league: list all known leagues (+ which is active) and switch the active one
+  leagueList: () => ipcRenderer.invoke("mc:leagueList"),
+  leagueSetActive: (leagueId) => ipcRenderer.invoke("mc:leagueSetActive", leagueId),
   dataSources: () => ipcRenderer.invoke("mc:dataSources"),
   modelGraph: () => ipcRenderer.invoke("mc:modelGraph"),
   // THE DERIVED LINEAGE GRAPH and MODEL PAGE (src/lineage/dag.ts, src/lineage/modelPage.ts) -- what

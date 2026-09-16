@@ -371,6 +371,8 @@ ipcMain.handle("mc:isPaused", () => {
 });
 ipcMain.handle("mc:openExternal", (e, url) => { if (/^https?:/.test(url)) shell.openExternal(url); });
 ipcMain.handle("mc:leagueInfo", () => rpc("league-info").catch(() => null));
+ipcMain.handle("mc:leagueList", () => rpc("league-list").catch(() => ({ leagues: [], active: null })));
+ipcMain.handle("mc:leagueSetActive", (e, leagueId) => rpc("league-set-active", { leagueId }).catch((err) => ({ error: String(err) })));
 ipcMain.handle("mc:dataSources", () => rpc("data-sources").catch(() => null));
 ipcMain.handle("mc:modelGraph", () => rpc("model-graph").catch(() => null));
 // THE DERIVED LINEAGE GRAPH (src/lineage/dag.ts) and THE MODEL PAGE (src/lineage/modelPage.ts) --

@@ -92,6 +92,33 @@ Getting `league_id` into the derived tables is NOT all cheap `ALTER ADD COLUMN`.
   REBUILD (create new, copy, drop, rename) under a transaction, with `data/ff.db` backed up first. This
   is the hard-to-reverse core of Phase 2 and gets its own run + owner sign-off + a verified backup.
 
+## Yahoo recon (2026-09-15, live read of league 129048 via the app's yahooview + raw CDP)
+
+"Fappening World Cup Edition", Yahoo id 129048, 12-team Head-to-Head. Read from the live logged-in
+webview. It is structurally FAR from the ESPN league, which is the point of doing B first -- it enumerates
+what the per-league layer must actually vary:
+
+- **DRAFT TYPE: snake/standard, NOT auction.** The whole draft engine (values.ts VOR->$, sim.ts, backtest,
+  cpcv) assumes an AUCTION with a budget. A snake league needs rank/ADP-based draft logic instead. This is
+  the single biggest scope item the smoke test surfaced -- per-league draft FORMAT, not just scoring.
+- **ROSTER: superflex + triple flex** -- `QB, WR, WR, RB, RB, TE, W/R/T x3, Q/W/R/T x1, BN x7, IR x2`.
+  Superflex (a QB-eligible flex) changes QB replacement level dramatically; resolveValueLeague already
+  reads slots, but the flex/superflex handling and the value model must reflect it.
+- **SCORING: bonuses our model does not compute** -- yardage milestones (2pt @300 pass yds, 2pt @100
+  rush/rec, 3pt at the next tier), 40+ yard completions/runs/receptions, passing/rushing/receiving 1st
+  downs; fractional + negative points on. Reception and passing-TD point values need a precise scoring-table
+  re-read (the flat text grab missed the cell values). scoring.ts is per-stat but has no milestone/1st-down/
+  big-play terms -- the scoring model needs extending for Yahoo.
+- **FORMAT: 8 playoff teams, weeks 15-17, reseeding** (ESPN league: 7 teams, weeks 14-16). Per-league format
+  block already exists (LeagueFormat); just needs Yahoo's values.
+- **Waivers: FAB (FAAB), 2-day, continual rolling.**
+
+Implication for the plan: the per-league layer must carry draft FORMAT (auction|snake) and an extended
+scoring model, not only scoring numbers + slots. The projection model retrain per league (decision #2)
+already covers the scoring/target; snake-draft VALUE logic is net-new draft work beyond the 2b store
+migration. Read path that works today with no app restart: raw CDP (Node built-in WebSocket) to the
+yahooview target's ws url from http://127.0.0.1:9223/json/list.
+
 ## Invariants (do not break)
 
 - The one rule (D13) still gates every value/strategy change — now per league.
