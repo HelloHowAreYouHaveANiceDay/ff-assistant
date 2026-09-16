@@ -30,10 +30,17 @@
           <button class="pbtn" id="lv-back" title="Back">&#8592;</button>
           <button class="pbtn" id="lv-reload" title="Reload">&#8635;</button>
           <button class="pbtn" id="lv-home" title="Fantasy home">Home</button>
+          <!-- PLATFORM TABS: each platform is a SEPARATE webview on its own persistent partition, so
+               both stay logged in at once. Toggling shows one and hides the other; neither reloads. -->
+          <span class="lv-plat" id="lv-plat">
+            <button class="pbtn plat on" id="lv-espn" data-plat="espn">ESPN</button>
+            <button class="pbtn plat" id="lv-yahoo" data-plat="yahoo">Yahoo</button>
+          </span>
           <span class="lv-url mono mut" id="lv-url"></span>
           <span class="lv-status mut" id="lv-status"></span>
         </div>
         <webview id="espnview" partition="persist:espn" src="https://fantasy.espn.com/football/" allowpopups></webview>
+        <webview id="yahooview" partition="persist:yahoo" src="https://football.fantasysports.yahoo.com/" allowpopups class="off"></webview>
       </div>
     </div>
   </main>

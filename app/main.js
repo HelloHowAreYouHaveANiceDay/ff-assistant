@@ -440,18 +440,26 @@ ipcMain.handle("mc:pushSheet", async (e, id) => {
 // full webContents list is the source of truth: take the <webview> guests, prefer those on espn.com,
 // and among those the MOST SPECIFIC url (longest -- a clubhouse with a query string beats the bare
 // home), or the one matching `urlIncludes` when the caller names it.
-function espnGuestWebContents(urlIncludes) {
+// Resolve a <webview> GUEST by HOST (platform). Each platform is its own webview on its own partition,
+// so the bridge must say WHICH -- host defaults to espn.com for backward compatibility. Among the
+// guests on that host, take the one matching `urlIncludes` if named, else the MOST SPECIFIC url
+// (longest -- a clubhouse with a query beats the bare home). See the 2026-09-13 note: the full
+// webContents list is the source of truth, not getElementById on the win.
+function guestWebContents({ host = "espn.com", urlIncludes } = {}) {
   const { webContents } = require("electron");
   let guests;
   try { guests = webContents.getAllWebContents().filter((wc) => { try { return wc.getType && wc.getType() === "webview" && !wc.isDestroyed(); } catch (_) { return false; } }); }
   catch (_) { return null; }
   const url = (wc) => { try { return wc.getURL() || ""; } catch (_) { return ""; } };
-  const onEspn = guests.filter((wc) => /espn\.com/.test(url(wc)));
-  const pool = onEspn.length ? onEspn : guests;
+  const re = new RegExp(host.replace(/[.]/g, "\\."));
+  const onHost = guests.filter((wc) => re.test(url(wc)));
+  const pool = onHost.length ? onHost : guests;
   if (urlIncludes) { const m = pool.find((wc) => url(wc).includes(urlIncludes)); if (m) return m; }
   pool.sort((a, b) => url(b).length - url(a).length);
   return pool[0] || null;
 }
+// Back-compat wrapper: the existing ESPN routes call this with a bare urlIncludes.
+function espnGuestWebContents(urlIncludes) { return guestWebContents({ host: "espn.com", urlIncludes }); }
 
 function startBridge() {
   const http = require("http");

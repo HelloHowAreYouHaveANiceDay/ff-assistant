@@ -563,20 +563,38 @@ function views_live() {
   const view = document.getElementById("view");
   if (view) view.innerHTML = `<div class="pad mut">The embedded browser runs only in the desktop app.</div>`;
 }
-// Wire the ONE persistent webview's toolbar + status (called once at boot). The webview stays mounted
-// across view switches, so it's always a CDP target the engine/agent can navigate.
+// Wire the persistent webviews' toolbar + status (called once at boot). Each PLATFORM is a separate
+// <webview> on its own persistent partition (persist:espn / persist:yahoo), so both stay logged in at
+// once; the toolbar acts on whichever is active, and the platform tabs toggle which is shown. Both stay
+// mounted (never reload on switch), so each is always a CDP target the engine/agent can navigate.
+const PLATFORM_HOME = { espn: "https://fantasy.espn.com/football/", yahoo: "https://football.fantasysports.yahoo.com/" };
+let ACTIVE_PLATFORM = "espn";
+function activeWv() { return document.getElementById(ACTIVE_PLATFORM === "yahoo" ? "yahooview" : "espnview"); }
+function setBrowserPlatform(plat) {
+  if (!PLATFORM_HOME[plat]) return;
+  ACTIVE_PLATFORM = plat;
+  const esp = document.getElementById("espnview"), yah = document.getElementById("yahooview");
+  if (esp) esp.classList.toggle("off", plat !== "espn");
+  if (yah) yah.classList.toggle("off", plat !== "yahoo");
+  for (const b of document.querySelectorAll("#lv-plat .plat")) b.classList.toggle("on", b.dataset.plat === plat);
+  const wv = activeWv(), urlEl = document.getElementById("lv-url");
+  if (wv && urlEl && wv.getURL) urlEl.textContent = wv.getURL();
+}
 function wireWebview() {
-  const wv = document.getElementById("espnview"); if (!wv) return;
   const st = document.getElementById("lv-status"), urlEl = document.getElementById("lv-url");
-  const showUrl = () => { if (urlEl && wv.getURL) urlEl.textContent = wv.getURL(); };
-  wv.addEventListener("did-start-loading", () => { wv.dataset.status = "loading"; if (st) st.textContent = "loading…"; });
-  wv.addEventListener("dom-ready", () => { wv.dataset.status = "ready"; if (st) st.textContent = ""; showUrl(); });
-  wv.addEventListener("did-stop-loading", () => { if (st) st.textContent = ""; showUrl(); });
-  wv.addEventListener("did-navigate", showUrl);
-  wv.addEventListener("did-fail-load", (e) => { if (e.errorCode === -3) return; wv.dataset.status = "failed:" + e.errorCode; if (st) st.textContent = "load failed (" + e.errorCode + ")"; });
-  const rl = document.getElementById("lv-reload"); if (rl) rl.onclick = () => wv.reload();
-  const bk = document.getElementById("lv-back"); if (bk) bk.onclick = () => { if (wv.canGoBack && wv.canGoBack()) wv.goBack(); };
-  const hm = document.getElementById("lv-home"); if (hm) hm.onclick = () => wv.loadURL("https://fantasy.espn.com/football/");
+  const showUrl = (wv) => { if (urlEl && wv === activeWv() && wv.getURL) urlEl.textContent = wv.getURL(); };
+  for (const id of ["espnview", "yahooview"]) {
+    const wv = document.getElementById(id); if (!wv) continue;
+    wv.addEventListener("did-start-loading", () => { wv.dataset.status = "loading"; if (st && wv === activeWv()) st.textContent = "loading…"; });
+    wv.addEventListener("dom-ready", () => { wv.dataset.status = "ready"; if (st && wv === activeWv()) st.textContent = ""; showUrl(wv); });
+    wv.addEventListener("did-stop-loading", () => { if (st && wv === activeWv()) st.textContent = ""; showUrl(wv); });
+    wv.addEventListener("did-navigate", () => showUrl(wv));
+    wv.addEventListener("did-fail-load", (e) => { if (e.errorCode === -3) return; wv.dataset.status = "failed:" + e.errorCode; if (st && wv === activeWv()) st.textContent = "load failed (" + e.errorCode + ")"; });
+  }
+  const rl = document.getElementById("lv-reload"); if (rl) rl.onclick = () => activeWv().reload();
+  const bk = document.getElementById("lv-back"); if (bk) bk.onclick = () => { const wv = activeWv(); if (wv.canGoBack && wv.canGoBack()) wv.goBack(); };
+  const hm = document.getElementById("lv-home"); if (hm) hm.onclick = () => activeWv().loadURL(PLATFORM_HOME[ACTIVE_PLATFORM]);
+  for (const b of document.querySelectorAll("#lv-plat .plat")) b.onclick = () => setBrowserPlatform(b.dataset.plat);
 }
 
 /* ---------- COPILOT (agent chat + app-control tool belt) ---------- */
