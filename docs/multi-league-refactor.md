@@ -1,0 +1,80 @@
+# Multi-league refactor — shared NFL core + per-league layers
+
+**Goal (owner, 2026-09-15):** run models for multiple leagues/teams. The NFL is the same; each league has
+different scoring / roster structure / draft. Share one NFL layer; build a per-league layer for each
+league we calculate for.
+
+## Approved decisions (2026-09-15)
+
+1. **Storage: single `data/ff.db` + `league_id` namespacing.** Not separate DBs. 18 tables already carry
+   `league_id`; the refactor adds it to the ~15 derived tables that are per-league but single-slot today.
+2. **Scoring: RE-TARGET the projection model per scoring format.** A projection variant per format
+   (half-PPR / PPR / standard, plus superflex/roster where it changes the target), not one half-PPR model
+   with a scoring map. Components live in `raw_pbp_player_week`, so any format's target is computable.
+3. **Calibration: per-league golden master, lazily.** Each league gets its own backtest gate number,
+   computed when first needed. The current 96%-playoff golden stays valid for the current league.
+
+## The layer boundary (grounded in the current table inventory)
+
+**Layer 1 — SHARED NFL core (no `league_id`, one copy):**
+- Raw NFL feeds: `raw_pbp_player_week`, `raw_nfl_game`, `raw_injury`, `raw_ngs`, `raw_snap_count`,
+  `raw_participation`, `raw_depth_chart`, `raw_combine`, `raw_contract`, `raw_college_*`,
+  `raw_nfl_draft_pick`, `raw_gameday_status`.
+- Identity: `player`, `player_bio`, `player_xref`, `player_ids*`, `player_identity`.
+- Production features (component stats): `feat_player_season(_ext)`, `feat_player_week(_context/_model/
+  _stream)`, `feat_curve`, `feat_coverage`, `feat_player_prospect`, `feat_injury_horizon`, `team_bye`,
+  `game`. NOTE: these carry a baked `pts` (half-PPR) today — see the scoring note below.
+- Market: `raw_adp_history`, `raw_fftoday_proj`, `raw_espn_projection`, `boris_tier`, `ranking*`,
+  `weekly_rank`, `adp`, `market_value`, `trade_value`, `trending`, `news`.
+- The projection MODEL (rank curve + trained artifacts of production).
+
+**Layer 2 — PER-LEAGUE (one per league, all `league_id`-keyed):**
+- Already keyed (18): `league`, `raw_league_*`, `fact_matchup`, `fact_team_season`, `fact_draft_pick`,
+  `draft`, `roster`, `ownership`, `projection`, `matchup`.
+- MUST ADD `league_id` (~15 single-slot today): `settings` (the config!), `board`, `player_value`,
+  `player_value_position`, `draft_state`, `draft_pick`, `my_roster` (draft-keyed today), `fact_lineup_week`,
+  `fact_roster_week`, `fact_fa_pool_week`, `fact_waiver_claim`, `scorecard_prediction`, `scorecard_result`,
+  `decision_snapshot`, `team_odds`, `fact_prediction`.
+
+## The scoring boundary (the one real subtlety)
+
+`feat_player_week/season.pts` is baked **half-PPR** — scoring-specific. The **components**
+(rush/rec yds, receptions, rush/rec TDs, pass yds/TDs) live in the shared `raw_pbp_player_week`. Under the
+approved decision #2, the projection is **re-targeted per format**: the target `pts` is recomputed from
+components under each league's scoring, and a model variant is trained per format. The value/board layer
+already parameterizes scoring (`scoringFromEspn`) and roster (`resolveValueLeague(cfg)`) — those become
+per-league-context driven rather than global.
+
+## Mechanism
+
+- **`LeagueContext`** — `{ leagueId, season, scoring, slots, teams, budget, format, config }`, resolved from
+  the store for a league. Replaces implicit `currentLeagueId()` (12 sites) and global `getConfig(db)`
+  (~15 sites). Threaded through the verbs; `--league <id>` flag selects it, default = current
+  (most-recently-synced), so existing behavior is byte-identical until a second league is added.
+- **Config becomes per-league** — `settings` key `config` → per-league (`config:<leagueId>` or a
+  `league_id`-keyed column). `getConfig(db, ctx)` / `setConfig(db, ctx, ...)`.
+- **Board/values recompute per context** — apply the league's scoring+roster to the shared projections.
+
+## Phases (each independently shippable + reversible; STOP-POINTS marked)
+
+- **Phase 1 — `LeagueContext` scaffolding (behavior-preserving).** Introduce the type +
+  `resolveLeagueContext(db, leagueId=currentLeagueId(db))` reading the current global config; swap the
+  `currentLeagueId()` / `getConfig(db)` call sites to take the context. No storage change; output
+  byte-identical. Add `--league` flag parsing (no-op with one league). REVERSIBLE.
+- **Phase 2 — STORE MIGRATION (the hard-to-reverse boundary; CONFIRM before running).** Add `league_id`
+  to the ~15 derived tables (backfill = current league); make config per-league. Additive columns via
+  db.ts's ALTER path; a backfill migration; a reversal note.
+- **Phase 3 — per-format model retargeting.** Compute the projection/weekly target from components under a
+  league's scoring; train + store a variant per format; the served artifact selected by
+  `LeagueContext.format`. Its own gate.
+- **Phase 4 — per-league calibration.** Lazy golden master per league/format; `cpcv`/`season-calibration`
+  keyed by league.
+- **Phase 5 — verb threading + UX.** `--league` through every in-season/draft verb; the copilot/MCP takes a
+  league; `league_sync` no longer overwrites — it adds/updates a league's layer.
+
+## Invariants (do not break)
+
+- The one rule (D13) still gates every value/strategy change — now per league.
+- The charter (CLAUDE.md): no ship without stop-and-confirm; Phase 2 (migration) and Phase 3 (model) are
+  boundaries that get owner sign-off before landing.
+- Single-league behavior must stay byte-identical until a second league is actually added.
