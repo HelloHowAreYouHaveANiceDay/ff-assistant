@@ -203,6 +203,16 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
 
 ## Where things live
 
+- **Multi-league / multi-format (D24, `docs/multi-format-design.md`):** the model is tailored per league
+  and keyed by FORMAT, not league. Scoring model (incl. Yahoo's non-linear/positional rules — milestone
+  bonuses, per-position receptions, first downs, 40+ plays): `src/draft/scoring.ts` (`YAHOO_129048_SCORING`
+  is ground-truthed 8/8 vs Yahoo's applied points). Format content-hash keys: `src/data/formatKey.ts`.
+  Per-format target/model builders: `scripts/build-format-{target,features}.mjs` → `data/formats/<key>/`
+  (gitignored; each has a ~1GB `features.db`, trained by `train_projection.py --db <that>`). Superflex
+  value (slots as eligibility sets + laminar flex fill): `src/draft/values.ts` (`slotEligibility`,
+  `resolveValueLeague` emits `flexGroups`). Yahoo waiver/trade/lineup analysis:
+  `scripts/yahoo-{analysis,waiver-trade,ros-analysis}.mjs`. Open: snake-draft value, per-format gate.
+  **The one rule (D13) now applies PER FORMAT** — a value/strategy change is gated by that format's golden.
 - Strategy/levers: `src/draft/{strategy,levers,values,sim,backtest}.ts`
 - Findings + every rejected idea with its number: `docs/validation.md`, `docs/edges.md`
 - Unscreened feature candidates (NGS efficiency, QB-change, durability) + the screening recipe: `docs/feature-frontier.md`

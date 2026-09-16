@@ -21,9 +21,15 @@ app a non-technical friend can run; the engine underneath is deterministic and v
   live scorecard, and the pre-registered prediction ledger -- so registering a table or an artifact is
   the whole of making it visible on either page. Both push-notify the open page when the engine's
   lineage or model stamp moves (`ff lineage --json`, `ff models --json`, `ff ledger sync`).
-- **Config-driven.** Everything the ranking depends on — scoring, roster slots, budget, playoff
-  format, levers — lives in one per-league `settings.config`. The sim, backtest, and values all read
-  it, so the app can be handed to a friend with a different league and it re-tailors itself.
+- **Config-driven, and now multi-format (D24).** Everything the ranking depends on — scoring, roster
+  slots, budget, playoff format, levers — lives in one per-league `settings.config`, and the sim,
+  backtest, and values all read it. Beyond parameters, the **model itself is tailored per format**: the
+  scoring model expresses non-linear/positional rules (milestone bonuses, per-position receptions,
+  first downs, 40+ yard plays), the projection is retargeted and retrained per scoring, and the value
+  book understands superflex. Two leagues with the same rules share one model (it's keyed by a content
+  hash of the format, not by league). A second league — Yahoo, superflex/full-PPR/bonus scoring — runs
+  format-native end to end. Design + verification: `docs/multi-format-design.md`. Open items: a
+  snake-draft value path and a per-format championship gate.
 - **In-season copilot — working, read-only.** Ten decisions (season odds, weekly lineup, waivers,
   trade check, trade finder, handcuffs, depth risk, power rankings, playoff SOS, and streaming --
   whom to start or add at ONE position out of the free-agent pool) as callable

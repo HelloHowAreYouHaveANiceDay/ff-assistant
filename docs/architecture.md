@@ -6,8 +6,14 @@ behind each choice lives in `docs/decisions.md`.
 > **Status (2026-09).** The packaged app described here (Electron + Claude Agent SDK + SQLite) is
 > BUILT and running -- the `ff` engine, the desktop cockpit, and the in-season copilot all ship. For
 > the current stack, layout, and per-component status, read `README.md`. This one-pager is the shape of
-> the system; a few forward-looking details below (e.g. multi-league fan-out, the lineup writer) remain
+> the system; a few forward-looking details below (the lineup writer, and the snake-draft path) remain
 > aspirational and are marked where they appear.
+>
+> **Multi-league / multi-format is now BUILT for the model spine (D24).** The system runs more than one
+> league, and each league's model is tailored to its rules (scoring, roster, superflex). The design keys
+> the trained model by FORMAT, not league -- see `docs/multi-format-design.md`. A second league (Yahoo:
+> superflex, full-PPR, bonus scoring) is format-native end to end for scoring, projection, value, and the
+> in-season analysis; the snake-draft value path and per-format championship gate are the open items.
 
 ## The problem being solved
 
@@ -239,7 +245,9 @@ a cheap stamp compared against what was last seen, not a per-command emit list t
 
 ## What is explicitly out of scope (v1)
 
-- Multiple leagues per user (design for one; leave room for N).
+- ~~Multiple leagues per user (design for one; leave room for N).~~ **DONE (D24):** multiple leagues run,
+  each with a format-tailored model keyed by ruleset (`docs/multi-format-design.md`). Remaining: snake-draft
+  value and the per-format championship gate.
 - Platforms beyond Yahoo + ESPN (Sleeper is a cheap later add via its public API).
 - Any server the developer must run -- the app is fully local; the only remote call is to
   Anthropic (via the user's subscription) and to the fantasy sites (via the user's browser).

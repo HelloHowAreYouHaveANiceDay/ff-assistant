@@ -812,6 +812,43 @@ falling back to the season-line floor.
 - REVERSAL: restore the prior `weekly-artifact.json` / `-lineonly` / `streaming-artifact.json` (the pre-swap
   copies are in the session scratchpad and git history). Feature set and `--learner gbm` config unchanged.
 
+## D24 -- Multi-format architecture: the model is keyed by FORMAT, not league (2026-09-16, owner: "make it multi league... the edge comes from customizing config to each league", APPLIED for scoring/projection/value)
+
+The system runs more than one league, and the edge is a model TAILORED to each league's rules, not one
+model stretched across formats. The design separates three identities that had been one -- **League** (an
+account you manage, keyed by `league_id`), **Format** (the ruleset), and **Model** (the trained artifacts +
+values) -- and keys the Model by the FORMAT, so two leagues with the same rules share one model. Full design
++ verification ledger: `docs/multi-format-design.md`. The second league (Yahoo 129048: superflex, full-PPR,
+bonus scoring) is the proving ground and is now format-native end to end.
+
+What is APPLIED (each with an ESPN-byte-exact positive control, so single-format behavior is unchanged):
+
+- **Scoring generalized** (`src/draft/scoring.ts`). `ScoringRules` gained OPTIONAL non-linear/positional
+  terms -- yardage milestone bonuses, per-position receptions (TE premium), first-down points, 40+ yard-play
+  points. A ruleset that omits them scores byte-for-byte as the old linear model. `YAHOO_129048_SCORING` was
+  ground-truthed **8/8 exact** against Yahoo's own applied points. Every component was already in the
+  nflverse feed, so no re-ingest was needed. `scoreWeek(r, s, pos?)` is now position-aware.
+- **Layered format keys** (`src/data/formatKey.ts`): `scoringKey` (projection target + heads), `valueKey`
+  (value book), `formatKey` (strategy + gate), each a canonical content hash so identical rules reuse a model.
+- **Per-format target + model**: `buildHistory` gained an `outDir`; a format's re-scored history + trained
+  projector live under `data/formats/<scoringKey>/` (a copy of the store with `feat_player_season` rebuilt
+  under the format's scoring), trained by the SAME `train_projection.py --db <that>` -- no python change. The
+  ESPN active files are never touched. `data/formats/` is gitignored (regenerable; each holds a ~1GB db).
+- **Superflex valuation** (`src/draft/values.ts`): roster slots are modeled as ELIGIBILITY SETS
+  (`slotEligibility`) and filled by a laminar greedy that reduces byte-for-byte to the old single-flex fill
+  for ESPN and correctly pulls QBs into a `Q/W/R/T` slot -- deepening QB replacement from ~QB13 to ~QB25.
+  QBs go from **2/24 to 8/24** of top value under Yahoo. K/DST reserve is now per actual slot (0 for a
+  skill-only league). `resolveValueLeague` emits `dedicated` + `flexGroups` beside the legacy `starters`.
+- **In-season**: the D18 rest-of-season blend (`rosPerGame`, K=6) is applied per format to fold the season
+  so far into the value (`scripts/yahoo-ros-analysis.mjs`). K is currently a shared NFL-level constant.
+
+NOT yet done (tracked in `docs/multi-format-design.md`): per-format championship GATE (each format's own
+golden number, lazily); a SNAKE-draft value/backtest path (the draft engine is auction-only -- not needed
+for the in-season analysis, which starts from the current roster per D18); Yahoo-native market anchors
+(`fftoday_proj`/`ecr` are half-PPR-scaled features the model rescales); refitting the ROS blend K per format;
+verb/UX threading of `--league` through every surface. The one rule (D13) still gates every value/strategy
+change -- now PER FORMAT, against that format's golden.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
