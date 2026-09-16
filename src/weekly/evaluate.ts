@@ -43,6 +43,8 @@ import { openDb, type DB } from "../db/db.js";
 import { dataPath } from "../data/paths.js";
 import { makeProjections } from "../projections.js";
 import { optimalLineup, type RosterPlayer } from "../inseason/lineup.js";
+import { startingSlots, slotEligibility, slotAdmits, isFlexSlot } from "../draft/slots.js";
+import type { ModelHandle } from "../data/formatResolve.js";
 import { mulberry32 } from "../draft/sim.js";
 import {
   loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact, CHALLENGER_WEEKLY_ARTIFACT,
@@ -59,13 +61,75 @@ export const BASELINE: ModelName = "shipped_week";
 const POS_SCORED = ["QB", "RB", "WR", "TE", "K", "DST"];
 
 /** Roster shapes the lineup metric is drawn over. `min` is the positional minimum a legal random
- *  roster must contain; the remainder is filled from RB/WR/TE, which is what a real bench is. */
-export const SCENARIOS: { name: string; size: number; slots: string[]; min: Record<string, number> }[] = [
+ *  roster must contain; the remainder is filled from the FLEX-eligible positions, which is what a
+ *  real bench is. */
+export interface LineupScenario { name: string; size: number; slots: string[]; min: Record<string, number> }
+
+export const SCENARIOS: LineupScenario[] = [
   { name: "standard-15", size: 15, slots: ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DST"],
     min: { QB: 2, RB: 4, WR: 4, TE: 2, K: 1, DST: 1 } },
   { name: "deep-18", size: 18, slots: ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DST"],
     min: { QB: 2, RB: 5, WR: 5, TE: 2, K: 1, DST: 1 } },
 ];
+
+/**
+ * THE SAME TWO SHAPES, FOR A LEAGUE THAT IS NOT THIS ONE (WP8).
+ *
+ * The constant above is the ESPN league's starting template written out by hand, and it was the only
+ * one -- so evaluating a superflex league through this harness would have measured a lineup decision
+ * nobody in that league ever makes: no SUPERFLEX slot, two FLEX fewer, a kicker and a defence the
+ * league does not roster. A lineup metric run on the wrong template is not slightly off, it answers a
+ * different question and reports it under the same column heading.
+ *
+ * So the template is DERIVED from the league's own starting slots, through the one eligibility
+ * function the serving path uses (`slotEligibility`, src/draft/slots.ts):
+ *   - a DEDICATED slot (QB, RB, TE, ...) contributes to that position's minimum;
+ *   - a FLEX slot (FLEX / SUPERFLEX / OP / `W/R/T`) contributes to the FILLER pool, i.e. which
+ *     positions a random bench is drawn from, through its eligibility set;
+ *   - the minimum at each skill position is twice its dedicated count (so there is a real choice to
+ *     get right at every slot -- a roster with exactly one startable QB makes the QB decision
+ *     vacuous), and once for K/DST, exactly as the hand-written ESPN shapes above.
+ *
+ * `scenariosForSlots(ESPN's starters)` does NOT reproduce SCENARIOS (that template carries RB2/WR2
+ * where the stored config says RB1/WR1), and it is not supposed to: SCENARIOS is pre-registered and
+ * pinned, and test/weekly-scenarios.test.ts asserts it is still exactly what it was. This function is
+ * for a format that has no pinned shape yet.
+ */
+export function scenariosForSlots(slots: readonly string[], flexOk?: Iterable<string>): LineupScenario[] {
+  const starting = startingSlots(slots);
+  const dedicated: Record<string, number> = {};
+  const fillerSet = new Set<string>();
+  for (const s of starting) {
+    if (isFlexSlot(s)) { for (const p of slotAdmits(s, flexOk)) fillerSet.add(p); continue; }
+    for (const p of slotEligibility(s)) dedicated[p] = (dedicated[p] ?? 0) + 1;
+  }
+  const min: Record<string, number> = {};
+  for (const [pos, n] of Object.entries(dedicated)) min[pos] = pos === "K" || pos === "DST" ? n : n * 2;
+  // A position that is only reachable through a flex slot still needs bodies to draw.
+  for (const p of fillerSet) if (min[p] == null) min[p] = 2;
+  const bench = [5, 8];                                   // the same two bench depths as SCENARIOS
+  return bench.map((b, i) => ({
+    name: i === 0 ? "standard" : "deep",
+    size: starting.length + b,
+    slots: [...starting],
+    min,
+  })).map((sc) => ({ ...sc, name: `${sc.name}-${sc.size}` }));
+}
+
+/** Which positions a scenario's random bench is filled from: the union of its flex slots'
+ *  eligibility, or RB/WR/TE when it has none. Derived rather than hardcoded, so a superflex template
+ *  draws quarterbacks onto the bench and the ESPN template (whose only flex admits RB/WR/TE) draws
+ *  exactly what it always did. */
+function fillerFor(sc: LineupScenario, flexOk?: Iterable<string>): string[] {
+  const out = new Set<string>();
+  for (const s of sc.slots) if (isFlexSlot(s)) for (const p of slotAdmits(s, flexOk)) out.add(p);
+  // ORDER IS PART OF THE MEASUREMENT, not a detail: the draw indexes this array with the seeded RNG,
+  // so re-ordering it re-draws every roster and every ESPN number in docs/ moves. Fixed canonical
+  // order, filtered -- which for the ESPN FLEX (RB/WR/TE) is exactly the literal it replaced.
+  const CANON = ["QB", "RB", "WR", "TE", "K", "DST"];
+  const list = CANON.filter((p) => out.has(p));
+  return list.length ? list : ["RB", "WR", "TE"];
+}
 
 export interface Scored {
   n: number;
@@ -131,6 +195,11 @@ export function predZeroProb(p: Pred): number {
 export interface WeeklyEvalResult {
   seasons: number[];
   trainSeasons: number[];
+  /** Which format/league this run scored, when it was not the incumbent. On the result because a
+   *  number quoted without its format is a number nobody can place. */
+  label?: string;
+  /** The roster template the decision metric was drawn over. */
+  scenarios?: LineupScenario[];
   features: string;
   featuresUsed: string[];
   pendingDataTrack: string[];
@@ -575,7 +644,8 @@ function withSpread(
  * a re-draw.
  */
 export function lineupRegret(
-  scored: Scored1[], rosters: number, opts: { models?: string[]; baseline?: string } = {},
+  scored: Scored1[], rosters: number,
+  opts: { models?: string[]; baseline?: string; scenarios?: LineupScenario[]; flexOk?: Iterable<string> } = {},
 ): Record<string, Record<string, { meanCaptured: number; winShare: number; drawnRosters: number }>> {
   // The model list is DERIVED FROM THE DATA, not read off the MODELS constant. A metric hardcoded to
   // the production model names is one a test cannot exercise with a control model, and a metric no
@@ -586,7 +656,8 @@ export function lineupRegret(
   for (const s of scored) (byWeek.get(`${s.season}|${s.week}`) ?? byWeek.set(`${s.season}|${s.week}`, []).get(`${s.season}|${s.week}`)!).push(s);
   const out: Record<string, Record<string, { meanCaptured: number; winShare: number; drawnRosters: number }>> = {};
 
-  for (const sc of SCENARIOS) {
+  for (const sc of opts.scenarios ?? SCENARIOS) {
+    const filler = fillerFor(sc, opts.flexOk);
     const totals: Record<string, number> = {};
     const wins: Record<string, number> = {};
     let drawn = 0;
@@ -612,7 +683,6 @@ export function lineupRegret(
           }
         };
         for (const [pos, n] of Object.entries(sc.min)) drawFrom(pos, n);
-        const filler = ["RB", "WR", "TE"];
         while (roster.length < sc.size) {
           const before = roster.length;
           drawFrom(filler[Math.floor(rng() * filler.length)], 1);
@@ -627,7 +697,7 @@ export function lineupRegret(
             .filter((r) => r.by[m])
             .map((r) => ({ name: r.key + "|" + r.week, pos: r.pos, proj: r.by[m].mean, available: true }));
           if (players.length < sc.slots.length) continue;
-          const res = optimalLineup(players, sc.slots);
+          const res = optimalLineup(players, sc.slots, opts.flexOk);
           let pts = 0;
           for (const st of res.starters) pts += actualOf.get(st.name) ?? 0;
           captured[m] = pts;
@@ -684,6 +754,23 @@ export interface EvalOpts {
    *  share one trained set of folds. Off by default (every fold is retrained), so no normal run can
    *  serve a stale fold. */
   reuseArtifacts?: boolean;
+  /**
+   * WHICH FORMAT IS BEING EVALUATED (WP8). The harness reads the CANDIDATE artifact -- the file the
+   * trainer last produced -- to learn which model kind and learner every fold must fit. That file was
+   * `dataPath(CHALLENGER_WEEKLY_ARTIFACT)` unconditionally, i.e. the ESPN half-PPR candidate, whatever
+   * `dbPath` pointed at. Evaluating a second format that way reads one format's recipe while scoring
+   * another format's rows, and every number comes out looking fine. Omitted = the incumbent, so the
+   * ESPN path is unchanged.
+   */
+  model?: ModelHandle;
+  /** The roster template the DECISION metric is drawn over. Omitted = `SCENARIOS`, the pinned ESPN
+   *  shapes. A second format passes `scenariosForSlots(its slots)`; see that function for why a
+   *  superflex league scored on the ESPN template is answering a different question. */
+  scenarios?: LineupScenario[];
+  /** The league's own `flex_ok`, threaded to `optimalLineup` exactly as the serving path does. */
+  flexOk?: string[];
+  /** A label for the report header, e.g. "league 129048 -> format sc-a845f67652fb". */
+  label?: string;
 }
 
 /** Train one holdout artifact by shelling out to the Python trainer -- the same binary the shipped
@@ -751,7 +838,8 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     // The CANDIDATE artifact, not the shipped one: this harness exists to decide whether the
     // candidate may ship, so it reads what the trainer last produced. Named by the constant so the
     // filename lives in one place -- see SHIPPED_WEEKLY_ARTIFACT for what that cost when it did not.
-    const fullArt = loadWeeklyArtifact(JSON.parse(readFileSync(dataPath(CHALLENGER_WEEKLY_ARTIFACT), "utf8")));
+    const candidatePath = opts.model ? opts.model.require("weekly") : dataPath(CHALLENGER_WEEKLY_ARTIFACT);
+    const fullArt = loadWeeklyArtifact(JSON.parse(readFileSync(candidatePath, "utf8")));
     featuresUsed = fullArt.features.map((f) => f.name);
     // WHICH MODEL THE FOLDS FIT IS READ OFF THE ARTIFACT THAT WOULD SHIP, not passed in.
     // The harness's job is to score the thing that would actually ship, and the full-data artifact
@@ -833,7 +921,12 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   for (const b of ["1-12", "13-24", "25-48", "49+"]) { const r = all.filter((x) => x.band === b); if (r.length) byBand[b] = cut(r); }
   const bySeason: Record<string, Record<string, Scored>> = {};
   for (const yr of opts.seasons) { const r = all.filter((x) => x.season === yr); if (r.length) bySeason[String(yr)] = cut(r); }
-  const lineup = lineupRegret(all, rosters);
+  const scenarios = opts.scenarios ?? SCENARIOS;
+  // The two shapes by NAME, read off the template rather than typed as literals -- a second
+  // format's scenarios are named for their own roster sizes, and a hardcoded "standard-15" would
+  // silently make every gain below NaN while the report still rendered.
+  const stdName = scenarios[0]?.name, deepName = scenarios[scenarios.length - 1]?.name;
+  const lineup = lineupRegret(all, rosters, { scenarios, flexOk: opts.flexOk });
 
   // ---- MONTE-CARLO CONVERGENCE. Recompute the decision metric at a ladder of roster counts from the
   // SAME scored rows -- no extra training -- so the sim-noise component of the gain is visible. ----
@@ -847,15 +940,15 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
       };
     };
     rosterConvergence = opts.rosterConvergence.map((r) => {
-      const lr = lineupRegret(all, r);
-      const s15 = gainOf(lr, "standard-15"), d18 = gainOf(lr, "deep-18");
+      const lr = lineupRegret(all, r, { scenarios, flexOk: opts.flexOk });
+      const s15 = gainOf(lr, stdName), d18 = gainOf(lr, deepName);
       return { rosters: r, std15Gain: s15.gain, deep18Gain: d18.gain, std15WinShare: s15.winShare, deep18WinShare: d18.winShare };
     });
   }
 
   // ---- PRE-REGISTERED PREDICTIONS. Recorded as held or failed, not quietly re-stated. ----
   const w1Fails = POS_SCORED.filter((p) => byPos[p] && !(byPos[p].weekly.crps < byPos[p][BASELINE].crps));
-  const std = lineup["standard-15"];
+  const std = lineup[stdName];
   const gain = std ? std.weekly.meanCaptured - std[BASELINE].meanCaptured : NaN;
   const predictions = [
     {
@@ -870,7 +963,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
       id: "W2",
       claim: "its lineup-regret gain over the shipped baseline is under 2 points per week",
       held: Number.isFinite(gain) ? gain < 2 : null,
-      evidence: Number.isFinite(gain) ? `${gain.toFixed(2)} points per lineup (standard-15)` : "no rosters drawn",
+      evidence: Number.isFinite(gain) ? `${gain.toFixed(2)} points per lineup (${stdName})` : "no rosters drawn",
     },
     {
       id: "W3",
@@ -884,7 +977,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   // failed and never restated. They are UNMEASURED against a quantile artifact rather than being
   // quietly evaluated against the wrong model. ----
   if (zeroModel === "two-part") {
-    const deep = lineup["deep-18"];
+    const deep = lineup[deepName];
     const gain18 = deep ? deep.weekly.meanCaptured - deep[BASELINE].meanCaptured : NaN;
     const zBad = Object.entries(byPos)
       .filter(([, m]) => m.weekly?.n)
@@ -907,7 +1000,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
         claim: "the two-part model's lineup-regret gain over the shipped baseline is at least 5 points per lineup on deep-18",
         held: Number.isFinite(gain18) ? gain18 >= 5 : null,
         evidence: Number.isFinite(gain18)
-          ? `${gain18.toFixed(2)} points per lineup (deep-18: ${deep.weekly.meanCaptured.toFixed(2)} vs ${deep[BASELINE].meanCaptured.toFixed(2)})`
+          ? `${gain18.toFixed(2)} points per lineup (${deepName}: ${deep.weekly.meanCaptured.toFixed(2)} vs ${deep[BASELINE].meanCaptured.toFixed(2)})`
           : "no rosters drawn",
       },
       {
@@ -937,6 +1030,8 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
 
   return {
     seasons: opts.seasons, trainSeasons: opts.trainSeasons, features,
+    ...(opts.label ? { label: opts.label } : {}),
+    scenarios,
     featuresUsed,
     // What the data track STILL owes this model. The Wednesday injury pair is the surprise of Phase
     // 2d: the columns exist, they are built with a cutoff of kickoff minus four days, and they are
@@ -967,6 +1062,10 @@ export function formatWeeklyReport(r: WeeklyEvalResult): string {
   const out: string[] = [];
   out.push(`weekly evaluation -- holdout seasons ${r.seasons[0]}-${r.seasons[r.seasons.length - 1]}, ` +
     `trained on ${r.trainSeasons[0]}-${r.trainSeasons[r.trainSeasons.length - 1]} minus the holdout`);
+  if (r.label) out.push(`format: ${r.label}`);
+  if (r.scenarios) {
+    out.push("lineup template: " + r.scenarios.map((s) => `${s.name} [${s.slots.join(",")}]`).join("  |  "));
+  }
   out.push(`features measured with: ${r.featuresUsed.join(", ")}`);
   out.push(`waiting on the data track: ${r.pendingDataTrack.join(", ")}`);
   out.push("");

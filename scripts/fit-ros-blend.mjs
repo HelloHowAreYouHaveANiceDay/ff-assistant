@@ -23,8 +23,15 @@
 // SELECTION IS SEASON-GROUPED: leave-one-season-out, held-out RMSE reported beside the pooled curve.
 // Two controls: K = infinity (line only, the pre-D18 behaviour) and K = 0 (the rate alone). The
 // fitted K has to beat both or it is not doing anything.
+//
+// WP8: `--league <id>` fits K on THAT FORMAT's weekly table and writes THAT format's
+// `ros-blend.json`. K is not a constant of football: it is chosen by minimising RMSE in points, on a
+// given format's season lines and a given format's weekly scores, so a full-PPR superflex league gets
+// its own number. Without the flag the two literals below are used and the incumbent's fit is
+// unchanged by construction.
 import { writeFileSync } from "node:fs";
 import Database from "better-sqlite3";
+import { fitDbPaths } from "./lib/format-paths.mjs";
 
 const argv = process.argv.slice(2);
 const val = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : d; };
@@ -32,11 +39,13 @@ const [LO, HI] = val("--seasons", "2012-2025").split("-").map(Number);
 const MIN_LINE = Number(val("--min-line", "3"));
 const MIN_REMAINING = Number(val("--min-remaining", "3"));
 const FRAME = val("--frame", "scheduled");
-const OUT = val("--out", "data/ros-blend.json");
+const paths = fitDbPaths("ros-blend", "data/ff.db", "data/ros-blend.json", argv);
+const OUT = val("--out", paths.out);
 if (FRAME !== "scheduled" && FRAME !== "played") throw new Error(`--frame must be scheduled or played, got ${FRAME}`);
 const KS = [0, 0.5, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 50, Infinity];
 
-const db = new Database("data/ff.db", { readonly: true });
+console.log(`${paths.label}: reading ${paths.db}, writing ${OUT}`);
+const db = new Database(paths.db, { readonly: true });
 
 const rows = [];
 for (let season = LO; season <= HI; season++) {

@@ -48,6 +48,17 @@ export function rosPerGame(line: number | null, tdGames: number | null, tdPts: n
   return (K * line + k * ppg) / (K + k);
 }
 
+/**
+ * THE BLEND FOR A FORMAT (WP8). K is fitted by minimising RMSE in POINTS on a format's own season
+ * lines and weekly scores, so it is not a constant of football the way the age curve is: refitting
+ * the Yahoo (full-PPR superflex) table moves it. `model.path` resolves to the `data/` root for the
+ * incumbent, so the ESPN path is unchanged; a format with no fit of its own reports `absent` rather
+ * than borrowing the root's number, which is the resolver's standing no-fallback rule.
+ */
+export function loadRosBlendFor(model: { path(name: "ros-blend"): string }): { blend: RosBlend; source: "fitted" | "absent" } {
+  return loadRosBlend(model.path("ros-blend"));
+}
+
 /** Load the fitted blend. Absent -> K = infinity (the old behaviour), reported through `source`. */
 export function loadRosBlend(path?: string): { blend: RosBlend; source: "fitted" | "absent" } {
   const p = path ?? dataPath(ROS_BLEND_FILE);

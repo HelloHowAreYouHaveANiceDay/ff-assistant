@@ -77,6 +77,13 @@ const FORMAT_ARTIFACTS = {
   points: { root: "points.csv", fmt: "points.csv", what: "the served season projection pool" },
   values: { root: "values.csv", fmt: "values.csv", what: "the served value book" },
   "def-ratings": { root: "def-ratings.csv", fmt: "def-ratings.csv", what: "per-defense strength ratings" },
+  // WP8: the ROS blend moved OUT of SHARED_ARTIFACTS. D18 called K "an NFL-level stabilization
+  // constant", and the fit is indeed about football -- but it is fitted BY MINIMISING RMSE IN POINTS,
+  // on that format's season lines and that format's weekly scores. A full-PPR superflex week is on a
+  // different scale from a half-PPR one, so the same football produces a different K, and it does:
+  // refitting on the Yahoo table moves it (see docs/multi-format-design.md, "Yahoo weekly track").
+  // The root file stays exactly where it is and the incumbent still reads it, byte-identical.
+  "ros-blend": { root: "ros-blend.json", fmt: "ros-blend.json", what: "the rest-of-season blend weight K (D18)" },
   golden: { root: "golden.json", fmt: "golden.json", what: "this format's championship gate number" },
   scoring: { root: "scoring.json", fmt: "scoring.json", what: "the scoring preimage of the format key" },
   manifest: { root: "manifest.json", fmt: "manifest.json", what: "what built this format dir, and how honestly" },
@@ -91,16 +98,17 @@ export const ARTIFACT_NAMES = Object.keys(FORMAT_ARTIFACTS) as ArtifactName[];
  *
  * Each of these was checked individually rather than assumed (F-7): injury duration is games missed;
  * opponent correlation and the age curve are in RATIO form; the opportunity model is a usage factor;
- * `ros-blend.json`'s K is asserted to be an NFL-level stabilization constant (D18, and the design doc
- * says so explicitly); the nflverse cache is raw feed bytes; `ff.db` is the shared component substrate
- * plus every per-LEAGUE table, which is keyed by `league_id`, not by format.
+ * the nflverse cache is raw feed bytes; `ff.db` is the shared component substrate plus every
+ * per-LEAGUE table, which is keyed by `league_id`, not by format.
+ *
+ * `ros-blend.json` USED TO BE ON THIS LIST and is not any more (WP8) -- see its entry in
+ * FORMAT_ARTIFACTS for why the argument that put it here was wrong.
  */
 const SHARED_ARTIFACTS = {
   "injury-duration": "injury-duration-artifact.json",
   "opponent-correlation": "opponent-correlation.json",
   "age-curve": "age-curve.json",
   "opportunity-model": "opportunity-model.json",
-  "ros-blend": "ros-blend.json",
   "nflverse-cache": "cache",
   store: "ff.db",
 } as const;

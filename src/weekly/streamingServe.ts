@@ -276,6 +276,32 @@ function modelFor(db: StreamDb, model?: ModelHandle): ModelHandle {
  *  projections without opening a second connection to the same file mid-transaction. */
 export type StreamDb = Parameters<typeof loadWeeklyRows>[0];
 
+/**
+ * WHERE THE FEATURE ROWS COME FROM (WP8), which is the other half of the serve rule above.
+ *
+ * Resolving the ARTIFACTS per format and then reading the ROWS from whatever handle the caller
+ * happened to open is a half-fix, and the half that is missing is the one that decides the number.
+ * The weekly model's target is `pts / season_line_pg`, so its mean is (ratio) x (that row's season
+ * line): serving a Yahoo artifact on the incumbent store's rows multiplies a full-PPR superflex ratio
+ * by a half-PPR line, at every position, with full coverage and no error anywhere -- the same shape
+ * as F-4, one table further down.
+ *
+ * A format's rows live in ITS features.db (the incumbent's live in the store itself), so a
+ * non-incumbent model reads there. The incumbent keeps the caller's handle untouched, which is what
+ * makes `ff scorecard` -- holding an open read-write transaction on the store -- still work, and what
+ * makes the ESPN path byte-identical by construction rather than by agreement.
+ *
+ * A format whose features.db has no rows for the week returns null, i.e. the named fallback: the
+ * format's own season line divided by the week count, with the consumer saying so. That is the
+ * honest answer when a format's live weekly table has not been rebuilt, and it is strictly better
+ * than a confident number computed off another ruleset's line.
+ */
+function rowsDbFor(db: StreamDb, mh: ModelHandle): { rdb: StreamDb; close: () => void } {
+  if (mh.provenance === "incumbent-root" || !mh.has("features-db")) return { rdb: db, close: () => {} };
+  const h = open(mh.path("features-db"));
+  return { rdb: h as unknown as StreamDb, close: () => h.close() };
+}
+
 export function projectStreamingWith(db: StreamDb, season: number, week: number, model?: ModelHandle): StreamProjections | null {
   const mh = modelFor(db, model);
   const files = [...new Set(STREAM_SERVE_POS.map(artifactForPos))];
@@ -293,12 +319,13 @@ export function projectStreamingWith(db: StreamDb, season: number, week: number,
   }
   if (!arts.size) return null;
 
-  {
-    const rows = loadWeeklyRows(db, season, week);
+  const { rdb, close } = rowsDbFor(db, mh);
+  try {
+    const rows = loadWeeklyRows(rdb, season, week);
     if (!rows.length) return null;
     // The preseason-line rank, within position, for THIS season. Point-in-time by construction: the
     // line is frozen at Y-09-01, so a rank computed from it says nothing about how the season went.
-    const lineOf = db.prepare(
+    const lineOf = rdb.prepare(
       `SELECT feat_key, pos, MAX(season_line_pg) AS line FROM feat_player_week_model
         WHERE season = ? AND season_line_pg IS NOT NULL GROUP BY feat_key`,
     ).all(season) as { feat_key: string; pos: string; line: number }[];
@@ -327,7 +354,7 @@ export function projectStreamingWith(db: StreamDb, season: number, week: number,
       }
     }
     return { season, week, rows: out, artifactByPos, missing };
-  }
+  } finally { close(); }
 }
 
 /**
