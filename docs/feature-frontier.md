@@ -1,12 +1,17 @@
 # Feature frontier -- the season projector's candidate features and their screen verdicts (2026-09-14)
 
-The projector (`tools/train_projection.py` + `feat_player_season_ext`) fits a small set of
-prior-season workload-share features (`prior_snap_share`, `prior_route_share`,
-`prior_carries_per_game`, `prior_carry_share`, `prior_air_yards_share`, `prior_wopr`,
-`depth_rank_sep1`, `adp`, `adp_vs_ecr`, `rookie_draft_pick`; indicator `team_changed`). Those cover
-the **workload-share** frontier well. Three more signal families in the raw store were wired as
-opt-in candidates and screened. This page records them so "have we exhausted the features?" is a
-list with verdicts, not a shrug.
+The projector (`tools/train_projection.py` + `feat_player_season_ext`) fits **eleven** features by
+default -- enumerated from the trainer and confirmed against the shipped artifact's coefficient keys on
+2026-09-16 (`docs/contribution-ledger-2026-09-16.md`), because an earlier version of this paragraph
+listed ten "fitted workload shares" of which only two are actually fitted: ratio features `prior_fd`,
+`prior_ts` (RB/WR/TE), `prior_attempts`, `prior_rush_yards` (QB), `fftoday_proj` (all); centered
+features `age`, `prior_games`, `draft_round`, `prior_pos_rank`, `depth_rank_sep1`; indicator
+`team_changed`. The usage shares (`prior_snap_share`, `prior_route_share`, `prior_carries_per_game`,
+`prior_carry_share`, `prior_air_yards_share`, `prior_wopr`, `adp`, `adp_vs_ecr`, `rookie_draft_pick`)
+are DECLARED candidates, not defaults. The ledger's reading: `fftoday_proj` alone carries 53% of what
+the fitted set adds over the rank curve, and the four production ratios jointly add nothing. Three more
+signal families in the raw store were wired as opt-in candidates and screened. This page records them
+so "have we exhausted the features?" is a list with verdicts, not a shrug.
 
 ## SCREENED 2026-09-14 -- all five candidates REJECT (none clears the 2.9*SE floor)
 
