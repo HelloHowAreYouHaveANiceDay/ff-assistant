@@ -119,6 +119,27 @@ already covers the scoring/target; snake-draft VALUE logic is net-new draft work
 migration. Read path that works today with no app restart: raw CDP (Node built-in WebSocket) to the
 yahooview target's ws url from http://127.0.0.1:9223/json/list.
 
+## Phase 2b EXECUTED (2026-09-15)
+
+Ran on the live store (verified backup `data/ff.db.bak-premultileague` taken first). `league_id` prepended
+to the PRIMARY KEY of the genuinely per-league HISTORY/state tables, via an idempotent create-copy-drop-
+rename in `migrate()` (`migrateLeagueIdPk`), existing rows backfilled to the active ESPN league (462233):
+- **Migrated (per-league):** `fact_roster_week`, `fact_lineup_week`, `fact_fa_pool_week`,
+  `fact_waiver_claim`, `decision_snapshot`. Row counts preserved, integrity ok.
+- **Classification correction:** `team_odds` (NFL game spreads/totals -- same for every league) and
+  `scorecard_prediction`/`scorecard_result` (measure the shared MODEL's accuracy, not a league) are
+  SHARED. They were wrongly migrated first, then reverted (rebuilt without `league_id`). Lesson: classify
+  each table as league-data vs NFL/model-data before migrating; the tell was `DELETE FROM team_odds`
+  wiping all leagues.
+- **Kept single-slot (active-league cache):** `board`, `player_value`, `player_value_position` -- they are
+  regenerable and read pervasively, so they stay the active league's working set (rebuilt on switch),
+  avoiding a pervasive reader cascade. This is the hybrid decided during execution.
+- **Writers updated** to write `league_id` (= `activeLeagueId(db)`) and key `ON CONFLICT` on it:
+  `rosterState.ts` (the 3 positional inserts -- `@lg` prepended), `faab.ts`, `decisionSnapshot.ts`.
+- **Readers** are NOT yet league-filtered; harmless while only one league's data exists, and to be added
+  as the Yahoo reader lands (before a second league's rows exist). The gate to catch a missed reader is
+  the moment Yahoo history is ingested.
+
 ## Invariants (do not break)
 
 - The one rule (D13) still gates every value/strategy change — now per league.

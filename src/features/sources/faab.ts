@@ -42,7 +42,7 @@
  * the claim bought and are targets; `competing_bids` is knowable only afterwards and is stored for
  * reporting, never as a feature. `scripts/faab-leakage.mjs` is the guard, and it fault-injects.
  */
-import { nowIso, type DB } from "../../db/db.js";
+import { nowIso, activeLeagueId, type DB } from "../../db/db.js";
 
 /** ESPN's Integer.MIN_VALUE null sentinel, which appears as a team id on unresolved claims. */
 export const NULL_TEAM = "-2147483648";
@@ -260,6 +260,7 @@ export function buildWaiverClaimsOn(db: DB, seasons?: number[]): BuildFaabResult
   }
 
   const cols = [
+    "league_id",
     "season", "week", "transaction_id", "team_id", "espn_player_id", "player_sk", "name", "pos",
     "bid_amount", "status", "won", "competing_bids", "executed_at", "proposed_at_ms",
     "season_line_pg", "pos_line_rank", "td_ppg", "td_games", "t4_mean", "prior_pts",
@@ -268,9 +269,10 @@ export function buildWaiverClaimsOn(db: DB, seasons?: number[]): BuildFaabResult
   ];
   const ins = db.prepare(
     `INSERT INTO fact_waiver_claim (${cols.join(",")}) VALUES (${cols.map((c) => "@" + c).join(",")})
-     ON CONFLICT(season, transaction_id, espn_player_id) DO UPDATE SET
-       ${cols.filter((c) => !["season", "transaction_id", "espn_player_id"].includes(c)).map((c) => `${c}=excluded.${c}`).join(", ")}`);
-  db.transaction(() => { for (const r of out) ins.run(r); })();
+     ON CONFLICT(league_id, season, transaction_id, espn_player_id) DO UPDATE SET
+       ${cols.filter((c) => !["league_id", "season", "transaction_id", "espn_player_id"].includes(c)).map((c) => `${c}=excluded.${c}`).join(", ")}`);
+  const lg = activeLeagueId(db) ?? "";
+  db.transaction(() => { for (const r of out) ins.run({ league_id: lg, ...r }); })();
 
   return { rows: out.length, ...coverage(db, seasonsPresent) };
 }

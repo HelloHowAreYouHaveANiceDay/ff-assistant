@@ -61,10 +61,61 @@ export function openDb(path: string = DEFAULT_DB_PATH): DB {
 }
 
 /** Apply schema.sql. CREATE ... IF NOT EXISTS throughout, so re-running is a no-op. */
+// Phase 2b (2026-09-15): the per-league HISTORY/state tables that must COEXIST across leagues get
+// `league_id` prepended to their PK. board/player_value/player_value_position are deliberately NOT here
+// -- they are regenerable, read pervasively, and stay single-slot "active-league cache" (rebuilt on a
+// league switch), which avoids a pervasive reader cascade. docs/multi-league-refactor.md.
+// GENUINELY per-league (a second league writes its own rows here). NOT team_odds (NFL game odds are
+// the same for every fantasy league) and NOT scorecard_* (they measure the shared MODEL's accuracy,
+// not a league) -- those are SHARED and must NOT be partitioned by league.
+const LEAGUE_ID_PK_TABLES = [
+  "fact_roster_week", "fact_lineup_week", "fact_fa_pool_week", "fact_waiver_claim", "decision_snapshot",
+];
+
 export function migrate(db: DB): void {
   db.exec(readFileSync(join(HERE, "schema.sql"), "utf8"));
   addColumns(db);
   backfillLeagueConfig(db);
+  migrateLeagueIdPk(db);
+}
+
+/**
+ * Phase 2b: rebuild each history table with `league_id` prepended to its PRIMARY KEY, backfilling the
+ * existing rows to the active league (all existing data is the one ESPN league's). SQLite cannot add a
+ * PK column in place, so this is a create-copy-drop-rename per table, under one transaction with FKs
+ * off. IDEMPOTENT: a table that already has `league_id` is skipped, so this is a no-op after the first
+ * run and on a fresh store (schema.sql already creates the new shape).
+ */
+function migrateLeagueIdPk(db: DB): void {
+  const backfill = activeLeagueId(db);                  // null on a fresh store -> only empty tables get rebuilt
+  const todo = LEAGUE_ID_PK_TABLES.filter((t) => {
+    const cols = db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[];
+    if (!cols.length || cols.some((c) => c.name === "league_id")) return false;   // absent or already migrated
+    if (backfill) return true;
+    // no active league: only safe to rebuild an EMPTY table (a fresh store); rows with no league to
+    // attribute them to are left for the next open once a league exists.
+    return (db.prepare(`SELECT COUNT(*) c FROM "${t}"`).get() as { c: number }).c === 0;
+  });
+  if (!todo.length) return;
+  const tag = backfill ?? "__unknown__";               // only ever applied to 0 rows when backfill is null
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      for (const t of todo) {
+        const cols = db.prepare(`PRAGMA table_info(${t})`).all() as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[];
+        const pk = cols.filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
+        const colDDL = cols.map((c) => `"${c.name}" ${c.type}${c.notnull ? " NOT NULL" : ""}${c.dflt_value != null ? ` DEFAULT ${c.dflt_value}` : ""}`);
+        const idx = db.prepare(`SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`).all(t) as { sql: string }[];
+        const names = cols.map((c) => `"${c.name}"`).join(", ");
+        const newPk = ["league_id", ...pk].map((c) => `"${c}"`).join(", ");
+        db.exec(`CREATE TABLE "${t}__ml" ("league_id" TEXT NOT NULL, ${colDDL.join(", ")}, PRIMARY KEY (${newPk}))`);
+        db.prepare(`INSERT INTO "${t}__ml" ("league_id", ${names}) SELECT ?, ${names} FROM "${t}"`).run(tag);
+        db.exec(`DROP TABLE "${t}"`);
+        db.exec(`ALTER TABLE "${t}__ml" RENAME TO "${t}"`);
+        for (const ix of idx) { try { db.exec(ix.sql); } catch { /* index may already be recreated by schema.sql on next open */ } }
+      }
+    })();
+  } finally { db.pragma("foreign_keys = ON"); }
 }
 
 /** Phase 2a backfill: copy the legacy single `config` into the active league's per-league key

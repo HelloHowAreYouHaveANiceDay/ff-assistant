@@ -201,18 +201,20 @@ export function buildRosterState(db: DB, leagueId: string, seasons: number[], op
   const cut = opts.throughAsOf ?? localDate();
   const built = nowIso();
   const res = buildEspnResolver(db);
+  // league_id is the first PK column (Phase 2b): it is prepended to every positional VALUES and to
+  // each ON CONFLICT target. @lg is bound from this function's `leagueId` arg on every .run below.
   const upRoster = db.prepare(
-    `INSERT INTO fact_roster_week VALUES (@s,@w,@t,@sk,@eid,@n,@p,@slot,@lsid,@st,@pts,@aof,@now)
-     ON CONFLICT(season,week,team_id,player_sk) DO UPDATE SET espn_player_id=excluded.espn_player_id,
+    `INSERT INTO fact_roster_week VALUES (@lg,@s,@w,@t,@sk,@eid,@n,@p,@slot,@lsid,@st,@pts,@aof,@now)
+     ON CONFLICT(league_id,season,week,team_id,player_sk) DO UPDATE SET espn_player_id=excluded.espn_player_id,
        name=excluded.name, pos=excluded.pos, slot=excluded.slot, lineup_slot_id=excluded.lineup_slot_id,
        is_starter=excluded.is_starter, actual_pts=excluded.actual_pts, as_of=excluded.as_of, built_at=excluded.built_at`);
   const upFa = db.prepare(
-    `INSERT INTO fact_fa_pool_week VALUES (@s,@w,@sk,@p,@n,@pts,@ros,@g,@now)
-     ON CONFLICT(season,week,player_sk) DO UPDATE SET pos=excluded.pos, name=excluded.name,
+    `INSERT INTO fact_fa_pool_week VALUES (@lg,@s,@w,@sk,@p,@n,@pts,@ros,@g,@now)
+     ON CONFLICT(league_id,season,week,player_sk) DO UPDATE SET pos=excluded.pos, name=excluded.name,
        actual_pts=excluded.actual_pts, ros_pts=excluded.ros_pts, ros_games=excluded.ros_games, built_at=excluded.built_at`);
   const upLineup = db.prepare(
-    `INSERT INTO fact_lineup_week VALUES (@s,@w,@t,@st,@op,@bl,@ns,@nr,@sj,@oj,@now)
-     ON CONFLICT(season,week,team_id) DO UPDATE SET started_pts=excluded.started_pts, optimal_pts=excluded.optimal_pts,
+    `INSERT INTO fact_lineup_week VALUES (@lg,@s,@w,@t,@st,@op,@bl,@ns,@nr,@sj,@oj,@now)
+     ON CONFLICT(league_id,season,week,team_id) DO UPDATE SET started_pts=excluded.started_pts, optimal_pts=excluded.optimal_pts,
        bench_left=excluded.bench_left, starters=excluded.starters, roster_n=excluded.roster_n,
        slots_json=excluded.slots_json, optimal_json=excluded.optimal_json, built_at=excluded.built_at`);
 
@@ -258,6 +260,7 @@ export function buildRosterState(db: DB, leagueId: string, seasons: number[], op
             const pts = hit?.pts ?? 0;
             if (e.isStarter) started += pts;
             upRoster.run({
+              lg: leagueId,
               s: season, w: week, t: teamId, sk: e.playerSk, eid: e.espnPlayerId, n: e.name, p: e.pos,
               slot: e.slot, lsid: e.lineupSlotId, st: e.isStarter ? 1 : 0, pts, aof: asOf?.d ?? null, now: built,
             });
@@ -268,6 +271,7 @@ export function buildRosterState(db: DB, leagueId: string, seasons: number[], op
           }
           const opt = optimalLineup(players, template, ["RB", "WR", "TE"]);
           upLineup.run({
+            lg: leagueId,
             s: season, w: week, t: teamId,
             st: round2(started), op: round2(opt.totalProj), bl: round2(opt.totalProj - started),
             ns: entries.filter((e) => e.isStarter).length, nr: entries.length,
@@ -297,7 +301,7 @@ export function buildRosterState(db: DB, leagueId: string, seasons: number[], op
           // available would put phantom players in the pool a waiver policy chooses from.
           if (p.player_sk == null || p.player_sk === "") continue;
           if (state.rostered.has(p.player_sk)) continue;
-          upFa.run({ s: season, w: week, sk: p.player_sk, p: p.pos, n: p.name, pts: p.pts ?? 0, ros: round2(p.ros), g: p.games, now: built });
+          upFa.run({ lg: leagueId, s: season, w: week, sk: p.player_sk, p: p.pos, n: p.name, pts: p.pts ?? 0, ros: round2(p.ros), g: p.games, now: built });
           counts.faRows++;
         }
       }

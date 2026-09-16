@@ -36,8 +36,8 @@ function fixture(db: DB, specs: TxSpec[]): void {
   for (let w = 1; w <= 6; w++) {
     for (let t = 1; t <= 4; t++) {
       for (let k = 0; k < 3; k++) {
-        db.prepare(`INSERT INTO fact_roster_week (season, week, team_id, player_sk, espn_player_id, name, pos)
-                    VALUES (?,?,?,?,?,?,'RB')`).run(SEASON, w, String(t), `r${t}${k}`, `9${t}${k}`, `Body ${t}${k}`);
+        db.prepare(`INSERT INTO fact_roster_week (league_id, season, week, team_id, player_sk, espn_player_id, name, pos)
+                    VALUES ('L',?,?,?,?,?,?,'RB')`).run(SEASON, w, String(t), `r${t}${k}`, `9${t}${k}`, `Body ${t}${k}`);
       }
     }
   }

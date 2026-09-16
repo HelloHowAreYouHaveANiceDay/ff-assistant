@@ -8,7 +8,7 @@
 // The snapshot is keyed by verb (one current row each), stamped with the actuals hash that triggered
 // the refresh, so "is this stale?" is a hash comparison, exactly as sync-actuals decides whether to
 // rebuild at all.
-import { openDb, nowIso, type DB } from "../db/db.js";
+import { openDb, nowIso, activeLeagueId, type DB } from "../db/db.js";
 import { runCopilot, copilotContext, type CopilotVerb } from "./copilotActions.js";
 
 /** The decision surfaces a continuous refresh materialises. Odds first (context), then the two the
@@ -44,12 +44,13 @@ export async function refreshDecisionSnapshot(opts: {
   try {
     ensureSnapshotTable(db);
     const ins = db.prepare(
-      `INSERT INTO decision_snapshot (verb, season, week, schedule, actuals_hash, summary, result_json, updated_at)
-       VALUES (@verb,@season,@week,@schedule,@hash,@summary,@json,@now)
-       ON CONFLICT(verb) DO UPDATE SET season=excluded.season, week=excluded.week, schedule=excluded.schedule,
+      `INSERT INTO decision_snapshot (league_id, verb, season, week, schedule, actuals_hash, summary, result_json, updated_at)
+       VALUES (@lg,@verb,@season,@week,@schedule,@hash,@summary,@json,@now)
+       ON CONFLICT(league_id,verb) DO UPDATE SET season=excluded.season, week=excluded.week, schedule=excluded.schedule,
          actuals_hash=excluded.actuals_hash, summary=excluded.summary, result_json=excluded.result_json,
          updated_at=excluded.updated_at`,
     );
+    const lg = activeLeagueId(db) ?? "";
     const now = nowIso();
     const done: string[] = [];
     let schedule = "unknown";
@@ -59,7 +60,7 @@ export async function refreshDecisionSnapshot(opts: {
       const a = (run.result as { assumptions?: { schedule?: string } }).assumptions;
       schedule = a?.schedule ?? schedule;
       ins.run({
-        verb, season: ctx.season, week: (ctx as { week?: number }).week ?? null,
+        lg, verb, season: ctx.season, week: (ctx as { week?: number }).week ?? null,
         schedule: a?.schedule ?? null, hash: opts.actualsHash ?? null,
         summary: run.summary.slice(0, 4000), json: JSON.stringify(run.result), now,
       });
