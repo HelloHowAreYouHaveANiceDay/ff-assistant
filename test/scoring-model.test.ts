@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   scoreWeek, scoreKickerWeek, scoreDefenseWeek, scoringFromEspn,
   DEFAULT_LEAGUE_SCORING, DEFAULT_SCORING, DEFAULT_KICKER, DEFAULT_DEFENSE,
+  YAHOO_129048_SCORING,
 } from "../src/draft/scoring.js";
 
 // "League-driven" is a CLAIM until a different league's rules demonstrably produce different
@@ -29,6 +30,71 @@ test("2-point conversions are scored, and driven by the rules", () => {
   const r = row({ rushing_yards: 50, rushing_2pt_conversions: 1 });
   assert.equal(scoreWeek(r, DEFAULT_SCORING), 7);                       // 5 + 2
   assert.equal(scoreWeek(r, { ...DEFAULT_SCORING, twoPt: 0 }), 5);      // league that ignores 2pt
+});
+
+// ==================================================================================================
+// EXTENDED SCORING (multi-format design, Phase 3a). The load-bearing property is the POSITIVE CONTROL:
+// a ruleset with none of the extended fields must score byte-for-byte as the old linear model, so that
+// generalizing the scorer cannot silently move the shipped ESPN number. Then the Yahoo case proves the
+// new terms actually fire and compose.
+// ==================================================================================================
+
+// The linear formula, written out independently of scoreWeek, so "byte-exact" is checked against a
+// SECOND implementation rather than against scoreWeek comparing to itself.
+const linearOnly = (r: Record<string, string>, s = DEFAULT_SCORING) =>
+  (Number(r.passing_yards || 0)) * s.passYd + (Number(r.passing_tds || 0)) * s.passTD + (Number(r.passing_interceptions || 0)) * s.int
+  + (Number(r.rushing_yards || 0)) * s.rushYd + (Number(r.rushing_tds || 0)) * s.rushTD
+  + (Number(r.receiving_yards || 0)) * s.recYd + (Number(r.receiving_tds || 0)) * s.recTD + (Number(r.receptions || 0)) * s.rec
+  + (Number(r.rushing_fumbles_lost || 0) + Number(r.receiving_fumbles_lost || 0) + Number(r.sack_fumbles_lost || 0)) * s.fumble
+  + (Number(r.passing_2pt_conversions || 0) + Number(r.rushing_2pt_conversions || 0) + Number(r.receiving_2pt_conversions || 0)) * (s.twoPt ?? 2);
+
+test("POSITIVE CONTROL: half-PPR is byte-exact even when the row carries extended-stat columns", () => {
+  // The row deliberately populates first-down and 40+ columns Yahoo would score. Under DEFAULT_SCORING
+  // (no extended fields) every one of them must contribute exactly zero -> identical to the linear model.
+  const r = row({
+    position: "TE", passing_yards: 410, passing_tds: 3, passing_interceptions: 1,
+    rushing_yards: 120, rushing_tds: 1, receiving_yards: 115, receiving_tds: 1, receptions: 9,
+    passing_first_downs: 15, rushing_first_downs: 6, receiving_first_downs: 5,
+    passing_40: 1, rushing_40: 1, receiving_40: 1, receiving_2pt_conversions: 1,
+  });
+  assert.equal(scoreWeek(r, DEFAULT_SCORING), linearOnly(r), "extended columns must not change a linear ruleset");
+  assert.equal(scoreWeek(r, DEFAULT_SCORING, "TE"), linearOnly(r), "an explicit position must not change it either");
+});
+
+test("YAHOO: a QB week scores 6-pt TDs, the 300-yd milestone, first downs and a 40+ completion", () => {
+  const r = row({
+    position: "QB", passing_yards: 305, passing_tds: 3, passing_interceptions: 1,
+    passing_first_downs: 18, passing_40: 1, rushing_yards: 10,
+  });
+  // 12.2 pass yd + 18 TD - 2 int + 1.0 rush yd + 2 (>=300) + 3.6 (18*0.2 1D) + 2 (40+ cmp) = 36.8
+  assert.equal(Math.round(scoreWeek(r, YAHOO_129048_SCORING) * 10) / 10, 36.8);
+});
+
+test("YAHOO: the 300 AND 400 milestones are cumulative", () => {
+  const r = row({ position: "QB", passing_yards: 410 });
+  // 410/25 = 16.4, plus +2 (>=300) +3 (>=400) = 21.4
+  assert.equal(Math.round(scoreWeek(r, YAHOO_129048_SCORING) * 10) / 10, 21.4);
+});
+
+test("YAHOO: TE premium (1.5/rec) applies to TE only, not to a WR on the same line", () => {
+  const line = { receptions: 8, receiving_yards: 110, receiving_tds: 1, receiving_first_downs: 5, receiving_40: 1 };
+  const te = scoreWeek(row({ ...line, position: "TE" }), YAHOO_129048_SCORING);
+  const wr = scoreWeek(row({ ...line, position: "WR" }), YAHOO_129048_SCORING);
+  // TE: 11 recYd + 6 TD + 12 (8*1.5) + 2 (>=100) + 2.5 (5*0.5 1D) + 2 (40+) = 35.5
+  assert.equal(Math.round(te * 10) / 10, 35.5);
+  // WR is the same minus the 0.5/rec premium on 8 catches = 4 points
+  assert.equal(Math.round((te - wr) * 10) / 10, 4);
+});
+
+test("FAULT INJECTION: zeroing a Yahoo extended term must change a score that depends on it", () => {
+  const r = row({ position: "WR", receiving_yards: 115, receptions: 6, receiving_first_downs: 5, receiving_40: 1 });
+  const full = scoreWeek(r, YAHOO_129048_SCORING);
+  const noFd = scoreWeek(r, { ...YAHOO_129048_SCORING, recFirstDown: 0 });
+  const no40 = scoreWeek(r, { ...YAHOO_129048_SCORING, rec40: 0 });
+  const noMilestone = scoreWeek(r, { ...YAHOO_129048_SCORING, recYdBonus: [] });
+  assert.equal(Math.round((full - noFd) * 10) / 10, 2.5, "5 first downs * 0.5 must be live");
+  assert.equal(Math.round((full - no40) * 10) / 10, 2, "the 40+ reception bonus must be live");
+  assert.equal(Math.round((full - noMilestone) * 10) / 10, 2, "the 100-yd milestone must be live");
 });
 
 test("KICKER responds to the league's rules, per distance tier", () => {

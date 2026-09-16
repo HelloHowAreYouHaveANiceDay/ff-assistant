@@ -18,13 +18,79 @@ export interface ScoringRules {
    *  Omitting this was worth a flat -2.0 on any player-week containing one, and it was invisible
    *  until our totals were compared against ESPN's own applied points. */
   twoPt: number;
+
+  // ---------------------------------------------------------------------------------------------
+  // EXTENDED, NON-LINEAR / POSITIONAL TERMS (all OPTIONAL). A ruleset that omits every field below
+  // scores EXACTLY as the linear model above -- so a half-PPR ESPN ruleset is byte-identical whether
+  // it is read through the old code or the new (the positive control the multi-format design requires,
+  // docs/multi-format-design.md Phase 3a). They exist because a format like Yahoo 129048 is not
+  // expressible as linear per-stat weights: it pays yardage milestones, per-position receptions
+  // (TE premium), first downs, and 40+ yard plays. Every field maps to a column ALREADY PRESENT in
+  // the nflverse stats_player_week feed (verified 2026-09-15): first downs are passing/rushing/
+  // receiving_first_downs; 40+ plays are passing_40 / rushing_40 / receiving_40 (counts of plays that
+  // gained 40+ yards). So no new ingest is needed -- only this scorer reads more of the same row.
+  //
+  // Non-linearity note: milestone bonuses BREAK "per-week sums == season". They must be applied at the
+  // WEEK level and only then summed (which scoreSeasonWeekly already does), never scored on a season
+  // aggregate. tierBonus is intentionally per-week.
+
+  /** Per-position reception override (e.g. TE premium 1.5). Falls back to `rec` for any position not
+   *  listed, so `{ TE: 1.5 }` leaves QB/RB/WR at the flat `rec`. */
+  recByPos?: Partial<Record<string, number>>;
+  /** Yardage MILESTONE bonuses as `[threshold, points]` tiers, cumulative and independent: a 410-yd
+   *  passing game under `[[300,2],[400,3]]` scores +5 (both tiers fire). Applied per week. */
+  passYdBonus?: [number, number][];
+  rushYdBonus?: [number, number][];
+  recYdBonus?: [number, number][];
+  /** Points per first down (from passing/rushing/receiving_first_downs). */
+  passFirstDown?: number;
+  rushFirstDown?: number;
+  recFirstDown?: number;
+  /** Points per 40+ yard play (from passing_40 = 40+ yd completions, rushing_40, receiving_40). */
+  cmp40?: number;
+  rush40?: number;
+  rec40?: number;
 }
 
 // Default = seacaptaindate.com half-PPR (also a sane generic default until league_sync runs).
 export const DEFAULT_SCORING: ScoringRules = { passYd: 1 / 25, passTD: 4, int: -2, rushYd: 0.1, rushTD: 6, recYd: 0.1, recTD: 6, rec: 0.5, fumble: -2, twoPt: 2 };
 
+/**
+ * Yahoo league 129048 ("Fappening World Cup Edition") OFFENSE scoring, read verbatim from its live
+ * settings page (2026-09-15). A superflex, full-PPR, TE-premium format with 6-pt passing TDs, yardage
+ * milestones, first downs, and 40+ yard-play bonuses -- none of which the linear ESPN model expresses.
+ * This league rosters NO K and NO DST (roster is QB/WR/WR/RB/RB/TE/W-R-T x3/Q-W-R-T + bench/IR), so
+ * only the offensive rules matter; kicker/defense stay at their (unused) defaults.
+ *
+ * MILESTONE SEMANTICS (cumulative tiers) and 40+ semantics are TO BE GROUND-TRUTHED against Yahoo's own
+ * applied points before this target is trusted (multi-format design Phase 3b acceptance gate).
+ */
+export const YAHOO_129048_SCORING: ScoringRules = {
+  passYd: 1 / 25, passTD: 6, int: -2, rushYd: 0.1, rushTD: 6, recYd: 0.1, recTD: 6, rec: 1, fumble: -2, twoPt: 2,
+  recByPos: { TE: 1.5 },
+  passYdBonus: [[300, 2], [400, 3]],
+  rushYdBonus: [[100, 2], [200, 3]],
+  recYdBonus: [[100, 2], [200, 3]],
+  passFirstDown: 0.2, rushFirstDown: 0.5, recFirstDown: 0.5,
+  cmp40: 2, rush40: 2, rec40: 2,
+};
+
+/** Sum of the `points` of every `[threshold, points]` tier whose threshold `value` has reached. Tiers
+ *  are cumulative and independent (see ScoringRules.passYdBonus). Order-insensitive. */
+function tierBonus(value: number, tiers: [number, number][] | undefined): number {
+  if (!tiers) return 0;
+  let b = 0;
+  for (const [thr, pts] of tiers) if (value >= thr) b += pts;
+  return b;
+}
+
+// The per-stat NUMERIC scoring knobs -- the subset of ScoringRules that ESPN's flat scoringItems can
+// populate. The extended (bonus/positional) fields are NOT ESPN-syncable and are excluded here so that
+// `out.rules[rk] = <number>` in scoringFromEspn stays type-safe.
+export type NumericScoringKey = "passYd" | "passTD" | "int" | "rushYd" | "rushTD" | "recYd" | "recTD" | "rec" | "fumble" | "twoPt";
+
 // ESPN scoringItems statId -> our ScoringRules key (for league_sync to build the rules from a league).
-export const ESPN_STAT_TO_RULE: Record<number, keyof ScoringRules> = {
+export const ESPN_STAT_TO_RULE: Record<number, NumericScoringKey> = {
   3: "passYd", 4: "passTD", 20: "int", 24: "rushYd", 25: "rushTD", 42: "recYd", 43: "recTD", 53: "rec", 72: "fumble",
   19: "twoPt", 26: "twoPt", 44: "twoPt",
 };
@@ -265,11 +331,34 @@ export function scoreDefenseWeek(r: Record<string, string>, pointsAllowed: numbe
   return base + pa;
 }
 
-/** One nflverse stats_player_week row -> fantasy points under `s`. Linear, so per-week sums == season. */
-export function scoreWeek(r: Record<string, string>, s: ScoringRules): number {
-  return nz(r, "passing_yards") * s.passYd + nz(r, "passing_tds") * s.passTD + nz(r, "passing_interceptions") * s.int
+/**
+ * One nflverse stats_player_week row -> fantasy points under `s`.
+ *
+ * The LINEAR core (per-stat weights) sums per-week == season. The EXTENDED terms (milestone bonuses,
+ * per-position receptions, first downs, 40+ plays) are all guarded on OPTIONAL fields of `s`: when a
+ * ruleset omits them -- as every ESPN half-PPR ruleset does -- their contribution is exactly zero and
+ * this returns byte-for-byte what the old linear scorer did. `pos` defaults to the row's own position
+ * column so both call sites get per-position receptions (TE premium) without threading it. Milestone
+ * bonuses are non-linear, so this MUST be called per week and summed (see scoreSeasonWeekly), never on
+ * a season aggregate.
+ */
+export function scoreWeek(r: Record<string, string>, s: ScoringRules, pos?: string): number {
+  const p = (pos ?? r["position"] ?? "").toUpperCase();
+  const recRate = s.recByPos?.[p] ?? s.rec;
+  let pts = nz(r, "passing_yards") * s.passYd + nz(r, "passing_tds") * s.passTD + nz(r, "passing_interceptions") * s.int
     + nz(r, "rushing_yards") * s.rushYd + nz(r, "rushing_tds") * s.rushTD
-    + nz(r, "receiving_yards") * s.recYd + nz(r, "receiving_tds") * s.recTD + nz(r, "receptions") * s.rec
+    + nz(r, "receiving_yards") * s.recYd + nz(r, "receiving_tds") * s.recTD + nz(r, "receptions") * recRate
     + (nz(r, "rushing_fumbles_lost") + nz(r, "receiving_fumbles_lost") + nz(r, "sack_fumbles_lost")) * s.fumble
     + (nz(r, "passing_2pt_conversions") + nz(r, "rushing_2pt_conversions") + nz(r, "receiving_2pt_conversions")) * (s.twoPt ?? 2);
+  // Extended terms -- each a no-op unless the ruleset opts in (byte-exact backward compat).
+  pts += tierBonus(nz(r, "passing_yards"), s.passYdBonus)
+    + tierBonus(nz(r, "rushing_yards"), s.rushYdBonus)
+    + tierBonus(nz(r, "receiving_yards"), s.recYdBonus);
+  if (s.passFirstDown) pts += nz(r, "passing_first_downs") * s.passFirstDown;
+  if (s.rushFirstDown) pts += nz(r, "rushing_first_downs") * s.rushFirstDown;
+  if (s.recFirstDown) pts += nz(r, "receiving_first_downs") * s.recFirstDown;
+  if (s.cmp40) pts += nz(r, "passing_40") * s.cmp40;
+  if (s.rush40) pts += nz(r, "rushing_40") * s.rush40;
+  if (s.rec40) pts += nz(r, "receiving_40") * s.rec40;
+  return pts;
 }

@@ -3,7 +3,7 @@
 // wins; the weighted fill (default) allocates them by projected points. Run: npm test.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baselines, computeValues, resolveValueLeague, type PointsRow, type ValueLeague } from "../src/draft/values.ts";
+import { baselines, computeValues, resolveValueLeague, slotEligibility, type PointsRow, type ValueLeague } from "../src/draft/values.ts";
 
 // 4 teams, 1 RB / 1 WR / 1 TE dedicated + 1 FLEX each => 4 dedicated per pos, 4 flex slots.
 const LG: ValueLeague = {
@@ -21,6 +21,58 @@ function fixture(): PointsRow[] {
   for (let i = 0; i < 12; i++) rows.push({ name: `TE${i + 1}`, pos: "TE", points: i < 4 ? 280 - i * 5 : 100 - i });
   return rows;
 }
+
+// ---- SUPERFLEX (Layer 2, multi-format design) --------------------------------------------------
+// A Q/W/R/T slot admits QB, so QBs compete for it and QB replacement level must deepen. The control
+// is the SAME points table under a non-superflex league: there QBs stay shallow. QBs are the highest
+// scorers (Yahoo 6-pt/PPR), so under superflex they claim the superflex slots.
+function superflexFixture(): PointsRow[] {
+  const rows: PointsRow[] = [];
+  for (let i = 0; i < 20; i++) rows.push({ name: `QB${i + 1}`, pos: "QB", points: 400 - i * 8 });   // QBs highest
+  for (let i = 0; i < 20; i++) rows.push({ name: `RB${i + 1}`, pos: "RB", points: 240 - i * 8 });
+  for (let i = 0; i < 20; i++) rows.push({ name: `WR${i + 1}`, pos: "WR", points: 235 - i * 8 });
+  for (let i = 0; i < 20; i++) rows.push({ name: `TE${i + 1}`, pos: "TE", points: 150 - i * 6 });
+  return rows;
+}
+
+test("slotEligibility parses dedicated, keyword and slash-form flex slots", () => {
+  assert.deepEqual(slotEligibility("QB"), ["QB"]);
+  assert.deepEqual(slotEligibility("FLEX"), ["RB", "WR", "TE"]);
+  assert.deepEqual(slotEligibility("SUPERFLEX"), ["QB", "RB", "WR", "TE"]);
+  assert.deepEqual(slotEligibility("Q/W/R/T"), ["QB", "RB", "WR", "TE"]);   // keyword form, canonical order
+  assert.deepEqual(slotEligibility("W/R/T"), ["RB", "WR", "TE"]);
+  assert.deepEqual(slotEligibility("RB/WR"), ["RB", "WR"]);
+  assert.deepEqual(slotEligibility("W/T"), ["WR", "TE"]);                    // generic slash parse
+});
+
+test("SUPERFLEX deepens QB replacement level; a non-superflex league keeps it shallow", () => {
+  const pts = superflexFixture();
+  // 4 teams. Non-superflex: QB,RB,WR,TE,FLEX. Superflex: same + one SUPERFLEX slot.
+  const base = { teams: 4, budget: 200, slots: ["QB", "RB", "WR", "TE", "FLEX"] };
+  const sf = { teams: 4, budget: 200, slots: ["QB", "RB", "WR", "TE", "FLEX", "SUPERFLEX"] };
+  const bNo = baselines(pts, resolveValueLeague(base));
+  const bSf = baselines(pts, resolveValueLeague(sf));
+  // Non-superflex: QB dedicated = 4 -> baseline is QB5 (400 - 4*8 = 368).
+  assert.equal(bNo.QB, 368);
+  // Superflex: 4 SUPERFLEX slots go to QB5..QB8 (they outscore leftover flex), so QB startable = 8 ->
+  // baseline is QB9 (400 - 8*8 = 336). Strictly deeper => higher QB VOR.
+  assert.equal(bSf.QB, 336);
+  assert.ok(bSf.QB < bNo.QB, "superflex must lower (deepen) QB replacement points");
+  // And the top QB is worth more under superflex.
+  const vNo = computeValues(pts, resolveValueLeague(base)).find((v) => v.name === "QB1").value;
+  const vSf = computeValues(pts, resolveValueLeague(sf)).find((v) => v.name === "QB1").value;
+  assert.ok(vSf > vNo, `QB1 must be worth more under superflex (${vSf} vs ${vNo})`);
+});
+
+test("FAULT INJECTION: without the SUPERFLEX slot, QBs win zero flex and QB1 value collapses toward it", () => {
+  // Prove the superflex effect is DRIVEN BY THE SLOT, not the points: drop the slot, QB baseline jumps
+  // back to the dedicated-only level and QB1's surplus shrinks.
+  const pts = superflexFixture();
+  const withSf = resolveValueLeague({ teams: 4, budget: 200, slots: ["QB", "RB", "WR", "TE", "FLEX", "SUPERFLEX"] });
+  const noSf = resolveValueLeague({ teams: 4, budget: 200, slots: ["QB", "RB", "WR", "TE", "FLEX", "FLEX"] });
+  assert.equal(baselines(pts, withSf).QB, 336);   // superflex pulls QBs in
+  assert.equal(baselines(pts, noSf).QB, 368);      // two plain FLEX admit no QB -> shallow again
+});
 
 test("weighted FLEX fill: leftover TEs lose every flex slot; RB+WR shares sum to flexTotal", () => {
   const pts = fixture();

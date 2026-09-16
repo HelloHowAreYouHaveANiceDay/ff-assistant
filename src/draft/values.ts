@@ -88,6 +88,48 @@ export interface ValueLeague {
   budget: number;
   rosterSpots: number; // total roster size (for the $1 min-bid reserve)
   starters: Record<string, number>; // dedicated starters per team (QB/RB/WR/TE/K/DST), plus FLEX
+  /** Dedicated (single-position) starters per team, keyed by position. Same numbers `starters` carries
+   *  minus the flex buckets. Optional so a hand-built ValueLeague (DEFAULT_VALUE_LEAGUE) still works --
+   *  `resolveSlots` reconstructs these from `starters` when absent. */
+  dedicated?: Record<string, number>;
+  /** Flex slot GROUPS per team, each with the positions it admits. This is what makes SUPERFLEX real:
+   *  a `Q/W/R/T` group admits QB, so QBs compete for it and QB replacement level reflects it. ESPN's
+   *  single `[RB,WR,TE]` group reproduces the old single-FLEX behavior exactly. */
+  flexGroups?: { elig: string[]; count: number }[];
+}
+
+// A slot token -> the position it admits. Q/W/R/T slash-forms (Yahoo) and W(R)/T are parsed by these.
+const SLOT_TOKEN: Record<string, string> = { Q: "QB", W: "WR", R: "RB", T: "TE", K: "K", D: "DST" };
+const FULL_POS = new Set(["QB", "RB", "WR", "TE", "K", "DST"]);
+
+/** The positions a roster SLOT admits. Handles dedicated positions, the keyword flexes
+ *  (FLEX/OP/SUPERFLEX), and generic slash-forms ("Q/W/R/T" -> [QB,WR,RB,TE], "RB/WR" -> [RB,WR]).
+ *  Unknown -> the slot as its own single position, so nothing silently becomes a full flex. */
+export function slotEligibility(slot: string): string[] {
+  const s = slot.trim().toUpperCase();
+  if (FULL_POS.has(s)) return [s];
+  if (s === "DEF" || s === "D/ST") return ["DST"];
+  if (s === "FLEX" || s === "W/R/T" || s === "RB/WR/TE" || s === "WRT") return ["RB", "WR", "TE"];
+  if (s === "OP" || s === "SUPERFLEX" || s === "SF" || s === "Q/W/R/T" || s === "QB/RB/WR/TE") return ["QB", "RB", "WR", "TE"];
+  if (s.includes("/")) {
+    const out: string[] = [];
+    for (const tok of s.split("/").map((t) => t.trim())) {
+      const p = FULL_POS.has(tok) ? tok : SLOT_TOKEN[tok];
+      if (p && !out.includes(p)) out.push(p);
+    }
+    if (out.length) return out;
+  }
+  return [s];
+}
+
+/** Split a ValueLeague into per-team dedicated counts + flex groups, from the new fields when present
+ *  and reconstructed from the legacy `starters` map otherwise (so DEFAULT_VALUE_LEAGUE still works). */
+function resolveSlots(lg: ValueLeague): { dedicated: Record<string, number>; flexGroups: { elig: string[]; count: number }[] } {
+  if (lg.dedicated && lg.flexGroups) return { dedicated: lg.dedicated, flexGroups: lg.flexGroups };
+  const dedicated: Record<string, number> = {};
+  for (const [k, v] of Object.entries(lg.starters)) if (k !== "FLEX") dedicated[k] = v;
+  const flexGroups = (lg.starters.FLEX ?? 0) > 0 ? [{ elig: FLEX_ELIGIBLE.slice(), count: lg.starters.FLEX }] : [];
+  return { dedicated, flexGroups };
 }
 
 // rosterSpots MUST equal SIM_LEAGUE.slots.length (12) -- the real league is 16 teams x 12 slots.
@@ -106,12 +148,26 @@ const FLEX_ELIGIBLE = ["RB", "WR", "TE"];
  *  the league's roster in config actually moves replacement levels and therefore the $ values. */
 export function resolveValueLeague(cfg: { teams: number; budget: number; slots: string[] }): ValueLeague {
   const starters: Record<string, number> = {};
+  const dedicated: Record<string, number> = {};
+  const flexByKey = new Map<string, { elig: string[]; count: number }>();
   for (const s of cfg.slots) {
     if (/^(BE|BENCH|IR|ER)$/i.test(s)) continue;
-    const key = s === "FLEX" || s === "OP" || s === "RB/WR" || s === "WR/TE" ? "FLEX" : s;
-    starters[key] = (starters[key] ?? 0) + 1;
+    const elig = slotEligibility(s);
+    if (elig.length === 1) {
+      dedicated[elig[0]] = (dedicated[elig[0]] ?? 0) + 1;
+      starters[elig[0]] = (starters[elig[0]] ?? 0) + 1;      // legacy map: dedicated under its position
+    } else {
+      // Flex group, keyed by its (sorted) eligibility so W/R/T and Q/W/R/T are distinct buckets.
+      const key = [...elig].sort().join("/");
+      const g = flexByKey.get(key) ?? { elig, count: 0 };
+      g.count++; flexByKey.set(key, g);
+      starters.FLEX = (starters.FLEX ?? 0) + 1;              // legacy map: all flex collapse to FLEX
+    }
   }
-  return { teams: cfg.teams, budget: cfg.budget, rosterSpots: cfg.slots.length, starters };
+  return {
+    teams: cfg.teams, budget: cfg.budget, rosterSpots: cfg.slots.length,
+    starters, dedicated, flexGroups: [...flexByKey.values()],
+  };
 }
 
 /** Replacement baseline points per position = the points of the first NON-startable player at
@@ -138,7 +194,11 @@ export function baselines(
   const byPos: Record<string, { name: string; pts: number }[]> = {};
   for (const p of points) (byPos[p.pos] ??= []).push({ name: p.name, pts: p.points });
   for (const k of Object.keys(byPos)) byPos[k].sort((a, b) => b.pts - a.pts);
-  const flexTotal = (lg.starters.FLEX ?? 0) * lg.teams;
+  const { dedicated, flexGroups } = resolveSlots(lg);
+  // The positions any flex group admits (RB/WR/TE for ESPN; +QB when a SUPERFLEX group exists).
+  const flexElig = new Set<string>();
+  for (const g of flexGroups) for (const p of g.elig) flexElig.add(p);
+  const flexTotal = flexGroups.reduce((s, g) => s + g.count, 0) * lg.teams;
 
   // WHICH POSITION CLAIMS A DUAL-ELIGIBLE MAN IN THE FLEX FILL. Decided against the baselines
   // computed WITHOUT eligibility, because the question "where is he worth most" needs an answer
@@ -160,27 +220,40 @@ export function baselines(
 
   let flexCount: Record<string, number> | null = null;
   if (flexWeighted) {
-    // Pool = every FLEX-eligible player beyond his position's DEDICATED starters, league-wide.
+    // Pool = every flex-eligible player beyond his position's DEDICATED starters, league-wide, tagged
+    // with the position he is COUNTED under (his own, or a dual-eligible claim).
     const pool: { pos: string; pts: number }[] = [];
-    for (const pos of FLEX_ELIGIBLE) {
-      const dedicated = (lg.starters[pos] ?? 0) * lg.teams;
+    for (const pos of flexElig) {
+      const ded = (dedicated[pos] ?? 0) * lg.teams;
       const arr = byPos[pos] ?? [];
-      for (let i = dedicated; i < arr.length; i++) {
+      for (let i = ded; i < arr.length; i++) {
         const claim = claimOf?.get(arr[i].name);
-        pool.push({ pos: claim && FLEX_ELIGIBLE.includes(claim) ? claim : pos, pts: arr[i].pts });
+        pool.push({ pos: claim && flexElig.has(claim) ? claim : pos, pts: arr[i].pts });
       }
     }
     pool.sort((a, b) => b.pts - a.pts);
-    flexCount = { RB: 0, WR: 0, TE: 0 };
-    for (const p of pool.slice(0, flexTotal)) flexCount[p.pos]++;
+    // Fill flex slots by a LAMINAR GREEDY: each player (best first) takes the MOST-CONSTRAINED open
+    // group that admits him. For nested eligibilities (W/R/T subset of Q/W/R/T) this maximizes total
+    // starter points and puts QBs into SUPERFLEX only where they beat the available flex bodies --
+    // which, under Yahoo's 6-pt/superflex scoring, is essentially all of them, taking QB replacement
+    // level from ~QB13 to ~QB25. With a single [RB,WR,TE] group it reduces to "take the top flexTotal",
+    // i.e. byte-for-byte the previous behavior (test/values.test.ts asserts the no-superflex case).
+    const groups = flexGroups
+      .map((g) => ({ elig: new Set(g.elig), size: g.elig.length, remaining: g.count * lg.teams }))
+      .sort((a, b) => a.size - b.size);
+    flexCount = {};
+    for (const pos of flexElig) flexCount[pos] = 0;
+    for (const p of pool) {
+      const g = groups.find((grp) => grp.remaining > 0 && grp.elig.has(p.pos));
+      if (g) { g.remaining--; flexCount[p.pos]++; }
+    }
   }
+  const evenShare = flexElig.size ? Math.round(flexTotal / flexElig.size) : 0;
   const out: Record<string, number> = {};
   for (const pos of Object.keys(byPos)) {
-    const dedicated = (lg.starters[pos] ?? 0) * lg.teams;
-    const flexShare = FLEX_ELIGIBLE.includes(pos)
-      ? (flexCount ? flexCount[pos] : Math.round(flexTotal / FLEX_ELIGIBLE.length))
-      : 0;
-    const startable = dedicated + flexShare;
+    const ded = (dedicated[pos] ?? 0) * lg.teams;
+    const flexShare = flexElig.has(pos) ? (flexCount ? flexCount[pos] : evenShare) : 0;
+    const startable = ded + flexShare;
     const arr = byPos[pos];
     out[pos] = (arr[startable] ?? arr[arr.length - 1])?.pts ?? 0; // first non-starter's points
   }
@@ -231,7 +304,11 @@ export function computeValues(
   // than only that it does.
   const totalVor = withVor.reduce((s, p) => s + (streamed(p.pos) ? 0 : p.vor), 0) || 1;
   const kdstVor = withVor.reduce((s, p) => s + (streamed(p.pos) ? p.vor : 0), 0) || 1;
-  const kdstSlots = lg.teams * 2;   // one K + one DST per team
+  // Reserve is per ACTUAL K/DST starter slot -- teams*2 for a league with a K and a DST (ESPN,
+  // unchanged), but ZERO for a skill-only league (Yahoo rosters no K/DST), so no phantom money is
+  // reserved out of the discretionary pool for positions that cannot be started.
+  const ded = resolveSlots(lg).dedicated;
+  const kdstSlots = ((ded.K ?? 0) + (ded.DST ?? 0)) * lg.teams;
   const reserved = kdstSlots * Math.max(0, maxKDst - 1);   // above the $1 floor everyone already gets
   const discretionary = lg.teams * lg.budget - lg.teams * lg.rosterSpots * 1 - reserved;
   const rate = discretionary / totalVor;

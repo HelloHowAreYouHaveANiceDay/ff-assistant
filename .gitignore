@@ -5,6 +5,8 @@ dist/
 .env.*
 data/*.db
 data/*.sqlite
+data/ff.db.bak*
+data/formats/                 # per-format model working sets (regenerable; each has a ~1GB features.db)
 data/draft-log-*.json
 data/cheatsheet.md
 data/*-dom.json

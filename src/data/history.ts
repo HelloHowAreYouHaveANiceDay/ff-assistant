@@ -2,7 +2,8 @@
 // LEAGUE's scoring model, so the championship backtest validates the strategy on the SAME ruleset the
 // league uses (half-PPR, PPR, standard...). Was a Python one-off (build_history.py) hardcoded to
 // No-PPR; this is the config-driven TS port. Fetches nflverse stats_player_week per season.
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { fetchCsvCached, pick, URLS, playerWeekUrl, teamWeekUrl, canonTeam, cacheTag } from "./nflverse.js";
 import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, scoreIdpWeek, idpGroup, espnPointsAllowed, DEFAULT_LEAGUE_SCORING, type LeagueScoring, type ScoringRules } from "../draft/scoring.js";
@@ -76,7 +77,7 @@ async function scoreSeasonWeekly(
     if (!SKILL_POS.has(rawPos) && !isK && !idp) continue;
     const pos = idp ?? rawPos;
     const week = Number(pick(r, "week")); if (!week) continue;
-    const raw = idp ? scoreIdpWeek(r, model.idp) : isK ? scoreKickerWeek(r, model.kicker) : scoreWeek(r, model.rules);
+    const raw = idp ? scoreIdpWeek(r, model.idp) : isK ? scoreKickerWeek(r, model.kicker) : scoreWeek(r, model.rules, pos);
     const pts = Math.round(raw * 10) / 10;
     const team = canonTeam(pick(r, "team"));
     // `player_id` in this feed IS the gsis id, which is the strongest evidence the resolver has.
@@ -132,6 +133,7 @@ export async function buildHistory(
   seasons: number[],
   scoring: ScoringRules | LeagueScoring,
   resolver?: SkResolver | null,
+  outDir?: string | null,
 ): Promise<{ points: number; weekly: number; seasons: number[]; resolved: number; unresolved: number }> {
   const model: LeagueScoring = "rules" in scoring
     ? scoring as LeagueScoring
@@ -150,8 +152,14 @@ export async function buildHistory(
     if (!s.ok) continue;
     got.push(yr); nW += s.nW; nP += s.nP; resolved += s.resolved; unresolved += s.unresolved;
   }
-  writeFileSync(dataPath("history-points.csv"), ptLines.join("\n") + "\n", "utf8");
-  writeFileSync(dataPath("history-weekly.csv"), wkLines.join("\n") + "\n", "utf8");
+  // Default target is the active-league working set (data/history-*.csv) -- byte-identical to before.
+  // A format target (multi-format design) passes its own outDir, e.g. data/formats/<scoringKey>/, so a
+  // second format's re-scored history never clobbers the active league's.
+  const ptPath = outDir ? join(outDir, "history-points.csv") : dataPath("history-points.csv");
+  const wkPath = outDir ? join(outDir, "history-weekly.csv") : dataPath("history-weekly.csv");
+  if (outDir) mkdirSync(outDir, { recursive: true });
+  writeFileSync(ptPath, ptLines.join("\n") + "\n", "utf8");
+  writeFileSync(wkPath, wkLines.join("\n") + "\n", "utf8");
   return { points: nP, weekly: nW, seasons: got, resolved, unresolved };
 }
 
