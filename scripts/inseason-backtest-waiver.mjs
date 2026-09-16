@@ -1,19 +1,33 @@
 // BACKTEST 2 -- WAIVER POLICY AGAINST THE ROOM'S ACTUAL CLAIMS.
 //
-//   node --import tsx scripts/inseason-backtest-waiver.mjs [--seasons 2018-2025]
+//   node --import tsx scripts/inseason-backtest-waiver.mjs [--seasons 2018-2025] [--league <id>]
+//
+// WHICH LEAGUE (D-2, 2026-09-16 -- D25.2's fix applied to this sibling). `ORDER BY last_synced_at DESC
+// LIMIT 1` returns the last-SYNCED league, not the ACTIVE one; on a two-league store that is Yahoo
+// 129048, which holds no `fact_waiver_claim` rows at all -- so the PRE-REGISTERED P38 verdict below was
+// decided over zero claims. Now: the one resolver, `--league <id>`, and a refusal on an empty set.
 import Database from "better-sqlite3";
 import { backtestWaivers } from "../src/inseason/backtest/waiver.ts";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const [lo, hi] = arg("--seasons", "2018-2025").split("-").map(Number);
 const seasons = []; for (let y = lo; y <= hi; y++) seasons.push(y);
 
 const db = new Database("data/ff.db");
-const leagueId = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get().league_id;
+const leagueId = requireLeagueId(resolveLeagueContext(db, arg("--league", undefined)), "inseason-backtest-waiver");
 
 const res = {};
 for (const model of ["floor", "challenger"]) {
   const { summary: s } = backtestWaivers(db, leagueId, { seasons, model });
+  // AN EMPTY DECISION SET IS A REFUSAL, NOT A ZERO (D25.2). With no claim weeks every per-dollar figure
+  // is 0/0 and the P38 line still prints HELD or FAILED -- a verdict about nothing.
+  if (s.weeks === 0) {
+    console.error(`\nREFUSED: league ${leagueId} has ZERO waiver-claim weeks over ${seasons[0]}-${seasons[seasons.length - 1]} ` +
+      "(no fact_waiver_claim / fact_fa_pool_week rows for it). Nothing was measured, so no P38 verdict " +
+      "is printed. Pass --league <id> for a league with in-season history.");
+    process.exit(3);
+  }
   res[model] = s;
   console.log(`\n=== ${model}`);
   console.log(`  weeks with a claim ${s.weeks}   room adds scored ${s.roomAdds}   our adds scored ${s.ourAdds}`);

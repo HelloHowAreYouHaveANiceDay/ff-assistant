@@ -13,7 +13,10 @@
 //   node scripts/face-validity.mjs [--bot-book rank]
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
-import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
+// Its own header documents `node scripts/face-validity.mjs`, so the TypeScript goes through WP1's
+// one-hop bootstrap (plain node cannot parse this repo's TS).
+import { importTs } from "./lib/ensure-tsx.mjs";
+const { draftFieldSeats, SIM_LEAGUE } = await importTs("../src/draft/sim.ts", import.meta.url);
 
 const botBook = process.argv.includes("rank") ? "rank" : process.argv.includes("price") ? "price" : "vor";
 const argOf = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };

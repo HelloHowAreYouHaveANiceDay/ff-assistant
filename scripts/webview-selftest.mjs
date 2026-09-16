@@ -3,7 +3,10 @@
 // drives the shim against DOM we know exists and asserts it comes back non-empty, exercising every
 // operation espnAuction depends on: evaluate, locator+css, hasText, has, first, count, isDisabled,
 // boundingBox, and goto.
-import { attachWebview } from "../src/browser/webviewPage.ts";
+// `node scripts/webview-selftest.mjs` is the documented invocation (docs/draft-day-runbook.md), so the
+// TypeScript goes through WP1's one-hop bootstrap instead of a static import plain node cannot parse.
+import { importTs } from "./lib/ensure-tsx.mjs";
+const { attachWebview } = await importTs("../src/browser/webviewPage.ts", import.meta.url);
 
 let bad = 0;
 const gate = (ok, msg, extra = "") => { console.log((ok ? "PASS  " : "FAIL  ") + msg + (extra ? "  " + extra : "")); if (!ok) bad++; };

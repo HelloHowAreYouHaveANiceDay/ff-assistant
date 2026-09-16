@@ -8,7 +8,10 @@
 // model built on that history is calibrated to a format that no longer exists.
 //
 // Read-only. The desktop app must be open and logged in.
-import { openLeague } from "../src/league/index.ts";
+// `node scripts/scoring-history.mjs` is documented too, so the TypeScript goes through WP1's one-hop
+// bootstrap (plain node cannot parse this repo's TS).
+import { importTs } from "./lib/ensure-tsx.mjs";
+const { openLeague } = await importTs("../src/league/index.ts", import.meta.url);
 
 const lg = await openLeague();
 if (!lg.provider.history) {

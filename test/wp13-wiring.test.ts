@@ -111,10 +111,42 @@ test("item 3: every routine is leagueScoped now, and the plan carries --league o
       assert.ok(run, `league ${lg} runs actuals`);
       assert.deepEqual(run!.steps, [["sync-actuals", ["--league", lg]]]);
     }
-    // THE OTHER GATE IS STILL THERE: `roster` is espn-only and the Yahoo league is skipped BY NAME.
+    // THE OTHER GATE IS STILL THERE: `roster` is ESPN-only, so the Yahoo league must not run it.
+    //
+    // THIS USED TO BE `assert.match(skip.why, /no yahoo adaptor/)` -- a NAME-KEYED assertion on a
+    // human-readable sentence, which keeps passing if the reason's MEANING changes (and which says
+    // nothing at all about whether the step runs). What matters is the STRUCTURAL outcome: the step
+    // is not in the plan, and a runner that executes the plan makes ZERO calls for that league.
+    //
+    // The expectation is DERIVED from the routine definition rather than retyped, so it cannot go
+    // stale the way an enumerated one does.
+    const rosterSteps = ROUTINES.roster.steps.map((s) => s[0]);
+    assert.ok(ROUTINES.roster.platforms && !ROUTINES.roster.platforms.includes("yahoo"),
+      "the premise: `roster` declares itself ESPN-only");
     const skip = plan.skipped.find((x) => x.leagueId === "BBB" && x.routine === "roster");
     assert.ok(skip, "the Yahoo league's roster routine is still skipped");
-    assert.match(skip!.why, /no yahoo adaptor/);
+
+    // A RECORDING RUNNER: execute the plan the way the scheduler does and record every (verb, league)
+    // it would invoke. Nothing may be recorded for the Yahoo league's ESPN-only steps -- that is the
+    // fact the prose was standing in for.
+    const called: { verb: string; leagueId: string }[] = [];
+    for (const run of plan.runs) for (const [verb, args] of run.steps) {
+      const i = args.indexOf("--league");
+      called.push({ verb, leagueId: i >= 0 ? args[i + 1] : run.leagueId });
+    }
+    assert.equal(called.filter((c) => c.leagueId === "BBB" && rosterSteps.includes(c.verb)).length, 0,
+      `the ESPN-only step(s) ${rosterSteps.join(", ")} must never be invoked for the Yahoo league`);
+    // POSITIVE CONTROL: the recorder is not simply empty -- the SAME steps DO run for the ESPN league,
+    // and the platform-neutral routine runs for both. A recorder that can only ever be empty would
+    // pass this test with the whole planner deleted.
+    assert.equal(called.filter((c) => c.leagueId === "AAA" && rosterSteps.includes(c.verb)).length,
+      rosterSteps.length, "positive control: the ESPN league DOES run every roster step");
+    assert.deepEqual(called.filter((c) => c.verb === "sync-actuals").map((c) => c.leagueId).sort(),
+      ["AAA", "BBB"], "positive control: the platform-neutral routine runs for BOTH leagues");
+    // The reason still has to NAME the platform it refused and the steps it refused to run -- checked
+    // against the data, not against a remembered sentence.
+    assert.ok(skip!.why.includes("yahoo"), "the refusal names the platform the row actually carries");
+    for (const v of rosterSteps) assert.ok(skip!.why.includes(v), `the refusal names the step \`${v}\``);
     assert.equal(plan.skipped.filter((x) => /--league/.test(x.why)).length, 0, "nothing is skipped for want of the flag any more");
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });

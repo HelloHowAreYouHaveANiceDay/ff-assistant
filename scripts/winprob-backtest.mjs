@@ -1,6 +1,11 @@
 // BACKTEST 1b -- THE WIN-PROBABILITY LINEUP AGAINST THIS LEAGUE'S REAL MATCHUPS.
 //
-//   node --import tsx scripts/winprob-backtest.mjs [--seasons 2018-2025] [--sims 1200] [--no-search]
+//   node --import tsx scripts/winprob-backtest.mjs [--seasons 2018-2025] [--sims 1200] [--no-search] [--league <id>]
+//
+// WHICH LEAGUE (D-2, 2026-09-16): this resolved with `ORDER BY last_synced_at DESC LIMIT 1` -- the
+// last-SYNCED league, not the ACTIVE one -- which on a two-league store holds no matchups at all, so
+// the FAULT INJECTION below ("every gain must then be exactly 0.000") would have PASSED on an empty
+// set. One resolver, `--league <id>`, and a refusal on zero scored team-weeks.
 //
 // Every team-week with a named opponent, under BOTH weekly artifacts: what the manager started,
 // what the expected-points lineup would have scored, what the win-probability lineup would have
@@ -13,6 +18,7 @@
 // something other than the search.
 import Database from "better-sqlite3";
 import { backtestWinProbLineups, seasonBootstrapWins } from "../src/inseason/backtest/winprobLineup.ts";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const [lo, hi] = arg("--seasons", "2018-2025").split("-").map(Number);
@@ -23,12 +29,21 @@ const noSearch = process.argv.includes("--no-search");
 const signed = (x) => `${x >= 0 ? "+" : ""}${x.toFixed(2)}`;
 
 const db = new Database("data/ff.db");
-const leagueId = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get().league_id;
+const leagueId = requireLeagueId(resolveLeagueContext(db, arg("--league", undefined)), "winprob-backtest");
 
 const out = {};
 for (const model of ["floor", "challenger"]) {
   const t0 = Date.now();
   const { rows, summary } = backtestWinProbLineups(db, leagueId, { seasons, model, sims, noSearch });
+  // AN EMPTY SET IS A REFUSAL, NOT A ZERO (D25.2). Worse here than elsewhere: this file's own fault
+  // injection asserts every gain is exactly 0.000, and an empty league satisfies that trivially -- the
+  // check would pass while proving nothing at all.
+  if (summary.teamWeeks === 0) {
+    console.error(`\nREFUSED: league ${leagueId} has ZERO scored team-weeks over ${lo}-${hi} (no fact_matchup / ` +
+      "fact_lineup_week rows for it). Nothing was measured -- and --no-search would have 'passed' on the " +
+      "empty set. Pass --league <id> for a league with in-season history.");
+    process.exit(3);
+  }
   const boot = seasonBootstrapWins(rows);
   out[model] = { summary, boot };
 

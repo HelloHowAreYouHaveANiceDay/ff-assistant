@@ -757,3 +757,259 @@ honest answer while the verbs took no flag.
   `ingestPlatformRosterWeeks` ignores `--seasons`: it writes the SETTLED weeks of the current season,
   which is the only window a Yahoo team page can be read for safely (partial in-progress points are
   indistinguishable from final ones in the store).
+
+## WP14 -- the minimal UI (2026-09-16)
+
+**Owner direction:** *"update the UI. there's a lot of dead code/old modules that aren't used. UI
+buttons don't work correctly. we probably don't need as many buttons in the new paradigm where we are
+running it as a claude code agent cli/mcp"* -> *"go ahead with the minimal UI once the audit lands."*
+The audit landed as `docs/ui-audit-2026-09-16.md` (755 lines, a verdict + evidence per control,
+reached twice: by reading the chain and by driving the running renderer over CDP). This package
+implements its section 5.4 proposal and appends a **Result** section to it.
+
+**The decision that had to come first.** The audit's one unsettled finding (5.3) was that the in-app
+Assistant had been removed in code, recorded NOWHERE, while README, `docs/mcp.md` and
+`docs/architecture.md` all still described it as live -- and that the panel returned at its second
+line. That is now **D26**: *the in-app Assistant is retired; Claude Code + MCP is the agent surface;
+the app is the login/bridge/board cockpit.* All four documents were made to agree.
+
+**What shipped.** Three pages -- **Board** (the dense read surface), **Browser** (the two logged-in
+guests + the livebar, with the four ex-page-tabs demoted to a link row), **Status** (active league +
+platform + scoring key + board stamp, lineage freshness, the in-app scheduler's last tick WITH
+failures in red, both guests' current url and whether each is on its platform, the bridge port/pid,
+the store path, and `claude mcp add ff-draft -- npx tsx <repo>/src/ff.ts mcp`). `app/renderer/app.js`
+1,416 -> 780 lines, `app.css` 321 -> 168, `main.js` 735 -> 594, preload 36 APIs -> 15,
+`ipcMain.handle` 31 -> 12, `data.js` (291 KB) and the vendored dagre (49 KB) deleted.
+
+**Two defects fixed, both of which had been running silently.**
+1. `src/weekly/scorecard.ts:696` -- the `stream` kind's INSERT bound no `fk`, so the scheduler's
+   `scorecard --no-forward --no-odds` routine threw `RangeError: Missing named parameter "fk"` every
+   15 minutes, into an app with no surface on which `ok:false` could appear. WP2's `format_key`
+   migration fixed five of six call sites. `test/scorecard-stream-fk.test.ts` was written first and
+   reproduced the exact RangeError; after the fix the live tick reads
+   `ok   scorecard --no-forward --no-odds     0.5s` / `3/3 steps ok in 59.0s`, and Status shows
+   `stream: 1 week frozen, 12 models` -- rows the broken insert could never write.
+2. `/write-transaction` was the last bridge route resolving its guest by
+   `getElementById("espnview")` -- the pattern the P-3 no-fallback fix converted its five siblings
+   off on 2026-09-16. Now `guestWebContents({host:"espn.com"})` with a named 503. Not exercised live
+   (it writes to a league).
+
+Also applied: FIX 1 from the audit (nine `.catch(() => null)` handlers -> one `rpcOr()` returning
+`{error}`, rendered), and a FOURTH broken control the audit did not find -- `.off` on a `<webview>`
+had no CSS rule at all, so both guests were laid out simultaneously and the platform toggle only
+changed which one the toolbar acted on. Fixed with an off-screen shift (never `display:none`, which
+detaches the guest and drops its CDP target).
+
+**A regression this package caused and the live pass caught**, recorded because it is the house
+failure mode: deleting `data.js` deleted `window.LAST_YR`, the only setter of the prior-season column
+KEY, so two columns were keyed on fields no row has and rendered BLANK. Nothing threw; an empty cell
+reads as "no data for this player". Found only by clicking every sort header against the live app,
+not by any test. `setLastYr(d.lastYr)` takes it from the engine payload now, locked both ways.
+
+**The bridge contract is untouched**, which was the hard constraint: `data/app-bridge.json`, the five
+routes, the host-keyed guest resolution and CDP 9223 all keep their shape.
+
+- **Live click-through** (raw CDP on 9223, one instance asserted, console + exception capture): every
+  surviving control clicked. **Zero console errors and zero exceptions** -- only the two pre-existing
+  Electron security warnings (CSP, allowpopups) that the audit also recorded. Notably the three
+  `ERR_ABORTED (-3)` unhandled rejections the audit captured on every probe are GONE (`platformGo`
+  now catches). Board: pills ALL/RB/QB 529/144/59, search "mahomes" 1, Sleepers 152, **all 24 sort
+  headers move and reverse from a clean Rank baseline** (including **Owner**, which the audit
+  measured as `NO-REORDER`), 529 band cells with 135 correct blanks. Browser: the tab reveals without
+  navigating (the audit's "every league switch lands on the Draft Room" is gone), the platform toggle
+  shows/hides with neither guest reloading or losing its url, the Standings link drives the right
+  guest to the right league, back/home/reload work. League switch both ways: `129048` ->
+  `sc-a845f67652fb` / 505 rows / 207 owners, `462233` -> **`sc-f6143a8dfb13`** / 529 rows / 192
+  owners, the ESPN guest untouched by the Yahoo switch (P-4 holds), the page unchanged. Status: no
+  empty sections.
+- **Positive controls.** `scripts/copilot-mcp-smoke.mjs` **PASSED** (39 tools, `TOOL_NAMES` assertion,
+  a real `season_odds` call with its invariants OK). `bridgeFetch` of the ESPN league settings through
+  the ESPN guest returned 9,126 bytes with `id=462233`, `name=seacaptaindate.com`,
+  `scoringType=H2H_POINTS`; `bridgeReadFrame` on the YAHOO guest enumerated 34 frames and read 5,899
+  bytes of the top frame. `scripts/webview-selftest.mjs` fails 1 of 8 -- **environmental, not
+  WP14**, proven by a live probe rather than a git diff: the lobby page carries the text "Practice
+  Draft" but exactly ONE `<button>` ELEMENT (`hsb.accessibility.skipContent`), so the selector has
+  nothing to match; the other seven checks pass including the resolver's negative control, and
+  `src/browser/webviewPage.ts` is not a WP14 file. (A CONCURRENT executor has since modified that
+  script's import to WP1's `ensure-tsx` bootstrap -- not WP14's edit, and not the selector.)
+- **Gates.** `tsc` clean. `npm test` **965 tests, 963 pass, 0 fail, 2 skip**. `npx eslint .` **0
+  errors, 46 warnings** (WP13's baseline was 46; none in a WP14 line). `npm run build:engine` clean.
+  Golden `backtest --league 462233 --full --no-lookahead --inflation --seasons 1999-2024 --n 150`:
+  **`CHAMPIONSHIPS: 39.5%  (random 6.3%)  |  playoffs: 96%`**, with the per-season line
+  BYTE-IDENTICAL to the baseline recorded at line 718 of this file (compared programmatically, not
+  by eye). The scorecard fix touches `src/weekly/`, which the draft path never loads.
+- **Tests.** Added `test/app-ipc-map.test.ts` (the audit's hand-built IPC map, now mechanical: six
+  directions across the real bytes of main/preload/renderer, plus two fault injections) and
+  `test/scorecard-stream-fk.test.ts`. Updated `test/stale-banner.test.ts` (the banner now says NO
+  LIVE BOARD rather than SNAPSHOT DATA, because there is no snapshot to fall back to; it asserts
+  data.js STAYS deleted), `test/board-stamp.test.ts` (one slice boundary), `test/model-page.test.ts`
+  (two renderers instead of three; the ledger's engine-side test is untouched),
+  `test/dag-derivation.test.ts` and `test/model-graph-derivation.test.ts` (the renderer pass-through
+  halves went with the DAG canvases they protected; every ENGINE assertion, including the anti-rot
+  guard, stays). No test was deleted to make anything pass.
+
+**Not done, with the reason.** `tools/push_sheet.py` is left on disk -- its button and IPC are gone,
+but it is a directly runnable script and both it and `tools/README.md` are outside this package's
+ownership. The `webview-selftest` selector belongs to `scripts/` + `src/draft/`. And the app cannot
+onboard a non-terminal user any more: that is D26's accepted constraint, with `app/README.md`
+carrying the control-to-verb map.
+
+## WP15 -- the independent QA pass's findings, fixed (2026-09-16)
+
+An independent reviewer ran the wave end to end and filed eight discrepancies and five weak tests.
+Four of the eight were mine to close (D-1, D-2, D-5, D-6) plus the weak tests; the rest are doc lines
+in files another executor held this pass and are handed back in the report.
+
+**D-1 -- `node scripts/cpcv.mjs` was DEAD, and the arbiter is the thing that died.** WP7 added an
+unconditional `await import("../src/data/formatResolve.ts")`, so the invocation printed in the file's
+own USAGE block and twice in `docs/edges.md` crashed at startup with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`
+before parsing an argument. It now loads TypeScript through WP1's `scripts/lib/ensure-tsx.mjs`
+one-hop re-exec. A grep for every other `.mjs` that statically imports a `.ts` module found 84; the
+seven whose OWN header or the docs document a plain-`node` invocation were given the same bootstrap
+(`cpcv`, `value-gates`, `scoring-history`, `webview-selftest`, `face-validity`, `lever-connected`,
+`roster-strength`, plus `format-fetch` which was fixed for D-2 anyway). The other 77 document
+`node --import tsx` and are correct as they stand; converting them would be churn with no defect
+behind it. **New `--resolve-only`**, because there was no cheap way to exercise the gate wiring: every
+other invocation starts two 150-trial backtests and APPENDS to `data/experiments.jsonl`, and the
+reviewer accidentally began a real run by passing `--help` (also now handled, printing usage and
+stopping). **Controls, all under plain `node`:** `node scripts/cpcv.mjs --resolve-only` ->
+`no --league (THE INCUMBENT) -> scoring sc-f6143a8dfb13 ... golden 96% playoffs (+/-3pp) from
+data\golden.json`; `--league 129048 --resolve-only` -> drops `--inflation` as auction-only, then
+`scoring sc-a845f67652fb, format fk-3a298dfdeb32, draft snake; golden 99.2% ... from
+data\formats\sc-a845f67652fb\golden.json`; `node --import tsx scripts/cpcv.mjs --league 462233
+--resolve-only` still works (the import succeeds, nothing re-execs). `value-gates`,
+`scoring-history`, `face-validity` and `roster-strength` were each run to completion under plain
+`node`; `webview-selftest` needs the desktop app and was not run (same mechanism, one line).
+
+**D-2 -- fourteen dead-arbiter resolvers, the D25.2 shape left in thirteen siblings.** Every one of
+`scripts/inseason-backtest-{bench,drop,lineup,stream,trade,trade-package,waiver,waiver-value}.mjs`,
+`faab-replay`, `faab-leakage` (its FAAB-budget read), `format-fetch`, `waiver-horizon`,
+`weekly-espn-probe` and `winprob-backtest` picked its league with `ORDER BY last_synced_at DESC
+LIMIT 1`. On this store that is YAHOO 129048 -- zero `fact_roster_week` rows -- so each scored an
+EMPTY SET and printed a confident `0.000` beside a `0.0` positive control. All fourteen now resolve
+through `resolveLeagueContext` (ACTIVE league by default, `--league <id>` to override), thread the
+league into the readers that take one (`makeCeilingFn`, `makeSimExpectedScorer`), and the two
+ESPN-only fetchers (`format-fetch`, `weekly-espn-probe`) additionally go through `requirePlatform`
+so they cannot build ESPN URLs under a Yahoo id. **Every one of the eight arbiters now REFUSES an
+empty decision set BY NAME with exit 3**, as `inseason-backtest-handcuff.mjs` does.
+
+*Controls (`--seasons 2024-2024` where the script allows a window).* `--league 129048`: all eight
+refuse by name, exit 3 (`bench`/`lineup` verified by exit code directly), as do `faab-replay`,
+`waiver-horizon` and `winprob-backtest`. FLAGLESS vs `--league 462233`, headline for headline:
+bench `REALIZED diff/decision 0.327 CI [0.33, 0.33] P(upside better) 100% (differed 5)`; drop
+`protect {TE} -0.159 ... (differed 26)` and `QB 4 -6.45`; stream `QB 17.90/18.07/0.16 ... 196` and
+`TE 7.91/7.25/-0.66 ... 196`; trade `our diff/decision 7.707 where-traded 7.84 ... (traded 180/182)`;
+trade-package `1-for-1 (#10) 7.707 [7.71, 7.71] 100% 180 -0.87`; waiver `pool 89.9% ... room 6.81
+ours 7.7`; waiver-value `add-best-FA REALIZED 2.685 ... (claimed 182 of 182)`; lineup `our lineup,
+scored 86.04 / 90.5 / 90.95`. IDENTICAL in both columns -- flagless is the active ESPN league, which
+is what it always should have been. **A pre-change flagless headline is deliberately NOT quoted: on
+this store the pre-change flagless run resolved YAHOO and scored nothing, so "the same number as
+before" is not available and its absence IS the finding.** The `--league 129048` refusal is exactly
+what the old flagless run used to print as `0.000`.
+
+**D-5 -- `--seasons 2024-2025` scoring only 2025.** Documented behaviour (the first season supplies
+the book the draft is built from), not a bug, and now said out loud: `ff backtest --help` exists
+(it used to fall through and start a full run) and its `--seasons` paragraph names the rule and
+points the reader at the `per season:` line rather than the flag.
+
+**D-6 -- `player_value_position` at 0 rows. ROOT CAUSE: not a disconnected producer.** Verified
+read-only on the live store: `board`, `player_value` and `player_value_position` all hold 529 rows
+for 2026 and share ONE `updated_at` to the millisecond (`2026-09-16T15:03:46.639Z`, stamped
+`builtAt ...:46.651Z`) -- they are written in a single transaction in `assemble`, so a completed
+build cannot produce a full board beside an empty value-position table. The ONLY branch that can is
+`eligKnown === false`, i.e. `raw_espn_eligibility` holding no row for the board's season; that table
+holds 1036 rows for 2026 with `fetched_at` 2026-09-10 and was not re-ingested at any point today, so
+that branch is excluded for the 14:09:53Z snapshot as well. I could not reproduce the observed state
+and will not invent a mechanism for it; the live round trip the reviewer asked for has since happened
+twice (14:23:44Z and 15:03:46Z, both by the concurrent app executor) and repopulated 529 rows each
+time. **What WAS a real defect is the silence**, and that is fixed: `assemble` now STATES the outcome
+on every build -- `player_value_position: 529 rows for season 2026 (N players ESPN lists as
+multi-eligible)`, or, on the empty branch, a named line saying eligibility was never ingested for that
+season and that the position is therefore NOT MEASURED, with the ingest command. Both branches were
+observed in the new test's output. `test/board-league-stamp.test.ts` gains a real A -> B -> A round
+trip through `assemble` (network stubbed, report CSV redirected) asserting REPOPULATION: one
+`player_value_position` row per board row, the same `updated_at` as the board, and the dual-eligible
+man carrying `["RB","WR"]` from `player_eligibility` rather than his board position. **Fault
+injection:** with the `upValPos.run` suppressed, the new test fails (`must have one row per board row
+after a rebuild`) and the old clearing test still PASSES -- which is precisely the W-2 gap. `assemble`
+and `switchActiveLeague` take an optional `reportPath` purely so a test can run a real rebuild
+without overwriting the repo's `data/player-report.csv` (which the pre-existing clearing test was
+doing silently on every `npm test`).
+
+**Weak tests.** `test/league-isolation-readers.test.ts` gains the six readers the enumeration missed
+-- `backtest/{waiver,lineup,winprobLineup,harness,streaming}.ts` and `weekly/population.ts` -- on the
+same two-store differential, and each is asserted to have MEASURED something (A: 6 lineup and
+win-prob team-weeks, 1 waiver-claim week, 6 streaming team-weeks, a non-zero harness decision count,
+and a population membership that can only come from league A's own roster feed). Making them
+non-trivial needed three fixture additions, each of which is a fact about the system worth recording:
+the availability columns are added by the feature BUILDER not by `schema.sql`; the as-of roster feed
+resolves through `player_identity`/`player_xref`, which are GLOBAL tables (so the fixture now has one
+man rostered in BOTH leagues, as two real leagues do); and the win-probability backtest needs BOTH
+sides of a matchup to have a lineup row. `scored`/`inPopulation` are deliberately excluded from the
+differential with the reason stated -- `feat_player_week_model` has no league dimension, so its raw
+counts move with the fixture, not with a leak. **Fault injection:** weakening `league_id=?` to
+`(league_id=? OR 1=1)` in `backtest/lineup.ts`'s per-week read fails the file by name; weakening its
+`SELECT DISTINCT week` read does NOT, and that is recorded in the header because it says exactly how
+far the fixture reaches. `test/wp13-wiring.test.ts`'s name-keyed `/no yahoo adaptor/` is replaced by
+the structural outcome: the expectation is DERIVED from `ROUTINES.roster.steps`, the plan is driven
+through a recording runner, and zero calls may be recorded for the Yahoo league's ESPN-only steps --
+with two positive controls (the ESPN league DOES run every roster step; the platform-neutral routine
+runs for BOTH) so the recorder cannot pass by being empty. New `test/wp15-yahoo-golden-gate.test.ts`
+closes W-4: a league whose config carries this format's own scoring rules (read from the directory's
+`scoring.json`, never retyped) walks the same two calls `cpcv` makes and lands on 99.2 / 39.8 in
+`data/formats/sc-a845f67652fb/golden.json`, asserts it is NOT the incumbent's 96.0, asserts the
+CANDIDATE-GOLDEN provenance travels with the number, and carries a PERMANENT fault injection -- one
+changed scoring rule must move the hash and be REFUSED by name rather than still arriving at this
+golden.
+
+**Gates.** `npx tsc --noEmit` clean. `npx eslint .` 0 errors, 46 warnings (16 `no-useless-assignment`,
+30 `no-explicit-any`) -- unchanged. `npm test` 970 tests, 968 pass, 0 fail, 2 skipped, 219 s. The one
+arbiter run, `backtest --league 462233 --full --no-lookahead --inflation --seasons 1999-2024 --n 150`:
+**CHAMPIONSHIPS 39.5% | playoffs 96%**, per-season line byte-for-byte the pinned baseline.
+
+**Not done, with the reason.** `scripts/webview-selftest.mjs`'s bootstrap is unverified (it needs the
+desktop app, which another executor is driving). `scripts/waiver-horizon.mjs` prints `zeroed 0
+dvp_mult coefficients ... DISCONNECTED` on a flagless run -- PRE-EXISTING and unrelated to the league
+fix: `data/weekly-artifact.json` is a schema-2 gbm artifact with no linear `coef` block for the
+experiment to zero, so that harness cannot express its own lever any more. It is a real dead
+experiment and wants its own package. `src/inseason/backtest/trades.ts:68` calls `getConfig(db)` with
+no league, so a trade backtest for a named league still reads the ACTIVE league's flex rules; that
+file is outside this package's ownership. [Orchestrator, same day: fixed -- `getConfig(db, opts.leagueId)`.]
+
+## 6. Status at the end of the second wave (2026-09-16, "close the gaps; the goal is an accurate edge")
+
+Owner sign-off given for the three D25 corrections and for closing the open list; the in-app Assistant
+retired (D26). Packages, in commit order after section 5: WP12 (trainer/script filters), WP9 (Yahoo
+started lineups + applied points, real FA pool, discovery, FAB transactions), WP10 (D25), WP8 (Yahoo
+model track: blind fold set, blind weekly table, gated weekly artifact, K per format), WP11 (DraftModel
+seam + snake model + the Yahoo candidate golden, with the summation-order regression bisected and fixed),
+WP13 (the handed-off verbs, Yahoo lineup facts in Yahoo's currency, per-league fingerprint), WP14 (the
+minimal UI: three pages, 12 IPC handlers from 31, the renderer roughly halved, the invisible scorecard
+routine failure fixed at its root), WP15 (the engine-QA findings: cpcv under plain node, the 14 dead
+arbiter resolvers, pvp repopulation test, strengthened tests), plus the UI-QA fixes (the renderer now
+follows an out-of-band `ff league-set-active` within the 60 s backstop poll; electronmon ignores
+`app/engine/**` so a bundle rebuild cannot spawn a second instance).
+
+Two INDEPENDENT QA passes ran against the intents, not the reports (engine-side 10 items, UI 8 items):
+every intent held; every finding either fixed above or recorded here. The incumbent golden reproduced
+byte-identical after every package; the ESPN board's values are byte-identical to the pre-session
+backup (only the live `ESPN_ADP` column moves); the Yahoo league runs end to end from its own config,
+its own artifacts, its own weekly model and its own seeded standings (12/12 teams matching Yahoo's page).
+
+**Still open (recorded, not started):**
+- Model: no superflex ADP archive (the honest-arbiter arm for Yahoo cannot run format-natively); no
+  Yahoo draft history in the store (the snake room is a generic field, not this league's managers); the
+  Yahoo golden is a CANDIDATE tripwire with a nearly saturated playoff axis (read the title column for
+  direction); one duplicate surrogate key (Gainwell) explains the single Yahoo team whose lineup facts miss
+  Yahoo's published total; `scripts/waiver-horizon.mjs` is a dead experiment (the gbm artifact has no
+  linear coefficients to zero); `data/values.csv` (the auto-draft CSV seed, last regenerated Sep 8) no
+  longer matches the board rebuilt Sep 15 -- `scripts/value-gates.mjs` fails on it and it PREDATES this
+  session; regenerate it deliberately before any auction use.
+- Engine: `ff scorecard --league 129048` is wired but unexercised (write-once rows; needs its own run);
+  `runScorecard` reads weekly ROWS from the main store for a format league; `ingest-source` has no
+  `--league`; `cpcv.mjs` calls the fingerprint without a league (reached via the argv default);
+  `tools/push_sheet.py` is orphaned by the UI cut but directly runnable, left in place.
+- UI: the Board's "Hide OUT" was removed rather than fixed (the board carries no availability column);
+  `webview-selftest`'s Practice Draft check fails environmentally (ESPN moved the control off a button).
+- The `ff-draft` MCP server of any EXTERNAL Claude Code session keeps the process it started with;
+  restart it to see the new tools and the platform-dispatched sync.

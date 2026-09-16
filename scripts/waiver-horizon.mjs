@@ -1,7 +1,12 @@
 // HORIZON-CORRECT WAIVER RANKING -- does a matchup-NEUTRAL projection rank rest-of-season value
 // better than the one-week matchup-adjusted challenger?
 //
-//   node --import tsx scripts/waiver-horizon.mjs [--seasons 2018-2025]
+//   node --import tsx scripts/waiver-horizon.mjs [--seasons 2018-2025] [--league <id>]
+//
+// WHICH LEAGUE (D-2, 2026-09-16): this resolved with `ORDER BY last_synced_at DESC LIMIT 1` -- the
+// last-SYNCED league, not the ACTIVE one. On a two-league store that is a league with no waiver rows,
+// so every paired season bootstrap below would have been taken over an empty set. One resolver,
+// `--league <id>`, and a refusal on an empty set.
 //
 // THE QUESTION (frontier #1). The waiver backtest ranks free agents by the WEEK-w projection and
 // scores them on realised REST-OF-SEASON points per game from week w forward. The challenger's
@@ -21,6 +26,7 @@
 import Database from "better-sqlite3";
 import { backtestWaivers } from "../src/inseason/backtest/waiver.ts";
 import { loadWeeklyArtifact } from "../src/weekly/projector.ts";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 import { readFileSync } from "node:fs";
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
@@ -28,7 +34,7 @@ const [lo, hi] = arg("--seasons", "2018-2025").split("-").map(Number);
 const seasons = []; for (let y = lo; y <= hi; y++) seasons.push(y);
 
 const db = new Database("data/ff.db", { readonly: true });
-const leagueId = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get().league_id;
+const leagueId = requireLeagueId(resolveLeagueContext(db, arg("--league", undefined)), "waiver-horizon");
 
 // --- build the matchup-neutral challenger: zero every dvp_mult coefficient ---
 const raw = JSON.parse(readFileSync("data/weekly-artifact.json", "utf8"));
@@ -57,6 +63,19 @@ function run(model, override) {
   const perSeason = new Map();
   for (const s of summary.seasons) perSeason.set(s.season, { ours: s.ours, room: s.room });
   return { weeks, summary, perSeason };
+}
+
+// AN EMPTY DECISION SET IS A REFUSAL, NOT A ZERO (D25.2). With no claim weeks the fault-injection line
+// below reports "changed 0 of 0 picks ... DISCONNECTED", which blames the lever for an empty league.
+{
+  const probe = backtestWaivers(db, leagueId, { seasons, model: "floor" });
+  if (probe.summary.weeks === 0) {
+    console.error(`\nREFUSED: league ${leagueId} has ZERO waiver-claim weeks over ${lo}-${hi} (no ` +
+      "fact_waiver_claim / fact_fa_pool_week rows for it). Nothing was measured -- and the connection " +
+      "proof would read DISCONNECTED for a lever that was never exercised. Pass --league <id> for a " +
+      "league with in-season history.");
+    process.exit(3);
+  }
 }
 
 const arms = {

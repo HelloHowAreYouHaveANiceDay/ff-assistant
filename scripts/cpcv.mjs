@@ -36,6 +36,12 @@
 //   node scripts/cpcv.mjs --treatment "--scarcity"     # flip a different flag
 //   node scripts/cpcv.mjs --baseline-dump A.tsv --treatment-dump B.tsv --treatment "--no-rookies"  # reuse dumps (fast iteration)
 //   node scripts/cpcv.mjs --k 12 --paths 200 --n 150 --seasons 1999-2024
+//   node scripts/cpcv.mjs --league 129048 --resolve-only   # resolve the format + golden, run NOTHING
+//
+// `--resolve-only` exists because there was no cheap way to check the gate wiring: every other
+// invocation starts TWO 150-trial backtests and APPENDS to data/experiments.jsonl, and an unrecognised
+// flag (`--help` used to be one) silently began a real run. It stops immediately after the format
+// block below, so it is also the control for "does this file still run under plain `node`".
 //
 // Run from the repo root (better-sqlite3 only resolves there).
 
@@ -47,11 +53,36 @@ import { fingerprintDraftArbiter } from "./lib/deps.mjs";
 import { loadDump, sharedSeeds, perSeasonRates, cpcvSubsets, pathLifts, seasonEffect, pboOf } from "./lib/arbiter.mjs";
 import { parseHoldout, splitSeasons, assertSelectionBlind } from "./lib/holdout.mjs";
 import { loadGolden, NoGoldenError } from "./lib/golden.mjs";
+// PLAIN `node scripts/cpcv.mjs` MUST KEEP WORKING (D-1, 2026-09-16). WP7 added an unconditional
+// `await import("../src/data/formatResolve.ts")` below, and node's own type stripping cannot load this
+// repo's TypeScript (parameter properties, and `./x.js` specifiers against `./x.ts` files). So the
+// documented invocation -- this file's own USAGE block above, docs/edges.md:86 and :243 -- died at
+// startup with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX before parsing a single argument. `importTs` is WP1's
+// one-hop re-exec under `node --import tsx`; `node --import tsx scripts/cpcv.mjs` is unaffected (the
+// import succeeds and nothing re-execs).
+import { importTs } from "./lib/ensure-tsx.mjs";
 
 // ---- args -------------------------------------------------------------------------------------
 const argv = process.argv.slice(2);
 const val = (k, d) => { const i = argv.indexOf(k); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
 const has = (k) => argv.includes(k);
+
+// AN UNRECOGNISED FLAG MUST NOT START A 150-TRIAL RUN. `--help` was not recognised, so asking for help
+// began the real thing (and appended to the ledger). Print the usage block and stop.
+if (has("--help") || has("-h")) {
+  console.log([
+    "node scripts/cpcv.mjs [--league <id>] [--treatment \"<flags>\"] [--seasons A-B] [--n 150]",
+    "                      [--k K] [--paths 200] [--path-seed 12345] [--holdout-seasons A-B]",
+    "                      [--baseline-dump A.tsv --treatment-dump B.tsv] [--artifact-dir DIR]",
+    "                      [--golden PCT] [--golden-title PCT] [--golden-tol PP] [--ledger PATH]",
+    "                      [--resolve-only]",
+    "",
+    "  --resolve-only   resolve the league's format + golden master, print the gate line, run NOTHING.",
+    "  no --league      THE INCUMBENT (data/ root + data/golden.json), which is every historical row.",
+    "  Any other invocation runs TWO full backtests and APPENDS one row to data/experiments.jsonl.",
+  ].join("\n"));
+  process.exit(0);
+}
 
 let BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config. GOLDEN MASTER on the PRIMARY axis = 96.0% PLAYOFF (title% ~38.5% is context, D13); BOTH title-edges DEMOTED (consensusBlend=0 D14, benchDiscount=0.25 D15), so the shipped flagless config IS the pre-edge base. Pass --consensus-blend 1 --bench-discount 0.35 --golden 97.0 --golden-title 42.3 to reproduce the old title-tuned posture.
 const TREATMENT = val("--treatment", "--no-rookies");                        // the flag(s) to ADD for the treatment arm
@@ -96,9 +127,8 @@ let FORMAT_KEY;
 let DRAFT_TYPE;   // set unconditionally in the format block below (the incumbent path included)
 let GOLDEN_EFF = GOLDEN, GOLDEN_TITLE_EFF = GOLDEN_TITLE, GOLDEN_TOL_EFF = GOLDEN_TOL, GOLDEN_SRC = "cpcv.mjs defaults (the incumbent's pinned D15 numbers)";
 {
-  const { INCUMBENT_MODEL, INCUMBENT_SCORING_KEY, resolveFormat } = await import("../src/data/formatResolve.ts").then(async (m) => ({
-    ...m, INCUMBENT_SCORING_KEY: (await import("../src/data/formatKey.ts")).INCUMBENT_SCORING_KEY,
-  }));
+  const { INCUMBENT_MODEL, resolveFormat } = await importTs("../src/data/formatResolve.ts", import.meta.url);
+  const { INCUMBENT_SCORING_KEY } = await importTs("../src/data/formatKey.ts", import.meta.url);
   // NO `--league` MEANS THE INCUMBENT, EXPLICITLY -- not "whichever league is active". Resolving the
   // active league here would stamp the ledger row with a second league's format key for a run whose
   // child backtest read the incumbent's target, which is precisely the mislabelling this stamp exists
@@ -155,6 +185,11 @@ let GOLDEN_EFF = GOLDEN, GOLDEN_TITLE_EFF = GOLDEN_TITLE, GOLDEN_TOL_EFF = GOLDE
   }
   console.log(`format gate: ${LEAGUE != null ? `league ${LEAGUE}` : "no --league (THE INCUMBENT)"} -> scoring ${fmt.scoringKey}, format ${fmt.formatKey ?? "(not resolved -- no league named)"}, draft ${DRAFT_TYPE}; ` +
     `golden ${GOLDEN_EFF}% playoffs (+/-${GOLDEN_TOL_EFF}pp) from ${GOLDEN_SRC}`);
+  if (has("--resolve-only")) {
+    console.log(`  title golden (context, not gated) ${GOLDEN_TITLE_EFF}%; base flags "${BASE_FLAGS}"`);
+    console.log("  --resolve-only: nothing was run and nothing was appended to the ledger.");
+    process.exit(0);
+  }
 }
 
 // ---- run the two arms (unless dumps are supplied) ---------------------------------------------

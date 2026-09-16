@@ -2,11 +2,18 @@
 // scored by realized rest-of-season lineup value under common random numbers, season-as-unit.
 // See src/inseason/backtest/{harness,policies}.ts. Usage:
 //   node --import tsx scripts/inseason-backtest-drop.mjs [--seasons 2018-2025] [--model served|floor]
-//     [--protect QB,TE,K,DST]   (omit to run the per-position diagnostic + tuned policy)
+//     [--protect QB,TE,K,DST]   (omit to run the per-position diagnostic + tuned policy) [--league <id>]
+//
+// WHICH LEAGUE (D-2, 2026-09-16 -- D25.2's fix applied to this sibling). This picked its league with
+// `ORDER BY last_synced_at DESC LIMIT 1`, which on a two-league store returns whichever league synced
+// last (Yahoo 129048, zero `fact_roster_week` rows for these seasons) -- so the harness scored ZERO
+// decisions and printed a confident `0.000`. It now resolves the ACTIVE league through the one
+// resolver, takes `--league <id>`, and REFUSES an empty decision set rather than scoring it.
 import { openDb } from "../src/db/db.ts";
 import { backtestPolicies } from "../src/inseason/backtest/harness.ts";
 import { makeSimExpectedScorer } from "../src/inseason/backtest/scorers.ts";
 import { valueMinDrop, depthAwareDrop, dropBest, hasRealDrop } from "../src/inseason/backtest/policies.ts";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i >= 0 ? process.argv[i + 1] : d; };
 const seasonsArg = arg("--seasons", "2018-2025");
@@ -14,14 +21,22 @@ const [lo, hi] = seasonsArg.split("-").map(Number);
 const seasons = []; for (let y = lo; y <= (hi ?? lo); y++) seasons.push(y);
 const model = arg("--model", "served");
 const db = openDb(arg("--db", undefined));
-const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
-if (!lg) { console.error("no league synced"); process.exit(2); }
+const leagueId = requireLeagueId(resolveLeagueContext(db, arg("--league", undefined)), "inseason-backtest-drop");
 
-const scorer = arg("--scorer", "realized") === "sim" ? makeSimExpectedScorer(db, { trials: 200 }) : undefined;
+const scorer = arg("--scorer", "realized") === "sim" ? makeSimExpectedScorer(db, { trials: 200, leagueId }) : undefined;
 const run = (protect, control) => backtestPolicies(db, {
-  leagueId: lg.league_id, seasons, model, scorer,
+  leagueId, seasons, model, scorer,
   baseline: valueMinDrop, variant: depthAwareDrop(protect), control, admit: hasRealDrop,
 });
+// AN EMPTY DECISION SET IS A REFUSAL, NOT A ZERO (D25.2) -- `evaluated 0` prints as `0.000` beside a
+// `0.0` positive control, which is indistinguishable from "protecting depth does nothing".
+const refuseIfEmpty = (r) => {
+  if (r.evaluated !== 0) return r;
+  console.error(`\nREFUSED: league ${leagueId} produced ZERO evaluated decisions over ${seasonsArg} ` +
+    `(no fact_roster_week / fact_lineup_week rows for it). Nothing was measured -- a printed 0.000 here ` +
+    `would be an empty set, not a null result. Pass --league <id> for a league with in-season history.`);
+  process.exit(3);
+};
 const line = (r, label) =>
   `  ${label.padEnd(24)} diff/decision ${r.meanDiff.toFixed(3).padStart(7)}  CI [${r.bootstrap.lo.toFixed(2)}, ${r.bootstrap.hi.toFixed(2)}]  P(better) ${(100 * r.bootstrap.pVariantBetter).toFixed(0)}%  (differed ${r.differed})`;
 
@@ -32,9 +47,9 @@ console.log(`\nDEPTH-AWARE DROP -- on the decision harness, ${model} model, seas
 const explicit = arg("--protect", null);
 if (explicit) {
   const set = new Set(explicit.split(",").map((s) => s.trim().toUpperCase()));
-  console.log(line(run(set, dropBest), `protect {${[...set].join(",")}}`));
+  console.log(line(refuseIfEmpty(run(set, dropBest)), `protect {${[...set].join(",")}}`));
 } else {
-  const diag = run(new Set(ALL), dropBest);
+  const diag = refuseIfEmpty(run(new Set(ALL), dropBest));
   const byPos = new Map();
   for (const d of diag.decisions) { const p = d.meta?.protectedPos; if (!p) continue; const a = byPos.get(p) ?? []; a.push(d.diff); byPos.set(p, a); }
   const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;

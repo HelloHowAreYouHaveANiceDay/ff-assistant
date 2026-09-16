@@ -4,8 +4,11 @@
 // spends. Fails loudly (exit 1) so it cannot be read as green by accident.
 import fs from "node:fs";
 import Database from "better-sqlite3";
-import { loadPriceModel, priceFor } from "../src/model/price.ts";
-import { resolveLeagueContext } from "../src/data/leagueContext.ts";
+// `node scripts/value-gates.mjs` is the documented invocation (README/docs), so the TypeScript is
+// loaded through WP1's one-hop bootstrap rather than a static import that plain `node` cannot parse.
+import { importTs } from "./lib/ensure-tsx.mjs";
+const { loadPriceModel, priceFor } = await importTs("../src/model/price.ts", import.meta.url);
+const { resolveLeagueContext } = await importTs("../src/data/leagueContext.ts", import.meta.url);
 /** `--league <id>`; absent = the ACTIVE league. */
 const leagueFlag = (argv) => { const i = argv.indexOf("--league"); return i >= 0 ? argv[i + 1] : undefined; };
 

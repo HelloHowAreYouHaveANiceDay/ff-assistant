@@ -146,7 +146,12 @@ const header = (lastYr: number) => ["Rank", "Player", "Pos", "Us_Pos", "ECR_Pos"
  * which is the only acceptable failure mode. Never the other league's dollars.
  */
 export async function switchActiveLeague(
-  db: DB, leagueId: string, opts: { dbPath?: string; pointsPath?: string; rebuild?: boolean } = {},
+  db: DB, leagueId: string,
+  // `reportPath` overrides where the compatibility CSV is written. It exists so a TEST can drive a real
+  // clear-and-rebuild round trip without overwriting the repo's `data/player-report.csv` -- the board
+  // stamp's whole point is that a rebuild is the only proof a clear is recoverable, and a test that
+  // cannot run the rebuild can only ever assert the clear (which is exactly the W-2 gap).
+  opts: { dbPath?: string; pointsPath?: string; rebuild?: boolean; reportPath?: string } = {},
 ): Promise<{ active: string; stamp: BoardStamp | null; rebuilt: boolean; cleared: boolean; reason?: string }> {
   const prev = getBoardStamp(db);
   setActiveLeagueId(db, leagueId);
@@ -167,7 +172,7 @@ export async function switchActiveLeague(
     return { active: leagueId, stamp: getBoardStamp(db), rebuilt: false, cleared: true, reason: "rebuild not requested" };
   }
   try {
-    await assemble(opts.dbPath, opts.pointsPath, leagueId);
+    await assemble(opts.dbPath, opts.pointsPath, leagueId, { reportPath: opts.reportPath });
     return { active: leagueId, stamp: getBoardStamp(db), rebuilt: true, cleared: true };
   } catch (e) {
     return {
@@ -177,7 +182,10 @@ export async function switchActiveLeague(
   }
 }
 
-export async function assemble(dbPath?: string, pointsPath?: string, leagueId?: string | null): Promise<number> {
+export async function assemble(
+  dbPath?: string, pointsPath?: string, leagueId?: string | null,
+  opts: { reportPath?: string } = {},
+): Promise<number> {
   const db = openDb(dbPath);
   // WHOSE BOARD THIS IS (S-8). `board`/`player_value`/`player_value_position` are single-slot by
   // design -- regenerable, read everywhere -- but "single-slot" and "belongs to nobody" are not the
@@ -388,6 +396,16 @@ export async function assemble(dbPath?: string, pointsPath?: string, leagueId?: 
   // of nulls and a column of confident wrong ids look identical downstream, and only one of them
   // announces itself.
   const unresolved: string[] = [];
+  // HOW MANY VALUE-POSITION ROWS THIS BUILD WROTE, and if none, WHY (D-6, 2026-09-16).
+  //
+  // `player_value_position` is written in the same transaction as `board`/`player_value`, so the three
+  // cannot disagree -- except through the one branch below: `eligKnown` false clears the table and
+  // writes nothing, deliberately, because an EMPTY table means "not measured". The trouble is that it
+  // said so NOWHERE: an independent QA pass found the table at 0 rows on a live store that had 1036
+  // ingested eligibility rows and could not tell "a switch cleared it and the rebuild did not restore
+  // it" from "the producer is disconnected" -- the two are indistinguishable from the stored state
+  // alone, which is this repo's most expensive bug shape. So every build now STATES the outcome.
+  let valPosWritten = 0;
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM player_value WHERE season=@s").run({ s: season });
     db.prepare("DELETE FROM ranking WHERE source='espn' AND season=@s").run({ s: season });
@@ -426,10 +444,21 @@ export async function assemble(dbPath?: string, pointsPath?: string, leagueId?: 
       if (eligKnown) {
         upValPos.run({ id, s: season, bp: String(r.pos), vp: String(r.value_pos ?? r.pos),
           ej: JSON.stringify(elig.get(id) ?? [String(r.pos)]), now });
+        valPosWritten++;
       }
     }
   });
   tx();
+  // SAY WHAT HAPPENED TO player_value_position, every build, in both directions. A silent empty table
+  // is the failure this line exists to end; a counted one is a measurement.
+  if (valPosWritten > 0) {
+    console.log(`  player_value_position: ${valPosWritten} rows for season ${season}` +
+      ` (${elig.size} players ESPN lists as multi-eligible)`);
+  } else {
+    console.log(`  player_value_position: 0 rows -- \`raw_espn_eligibility\` holds nothing for season ${season},` +
+      " so the value position was NOT MEASURED (it is not inferred from the board position: that would be" +
+      " a single position wearing eligibility's name). Run `ff ingest-raw eligibility` and rebuild.");
+  }
   if (unresolved.length) {
     console.log(`  player_sk: ${rows.length - unresolved.length}/${rows.length} board rows resolved into staging;` +
       ` ${unresolved.length} unresolved (kept, with a NULL key): ${unresolved.slice(0, 8).join(", ")}${unresolved.length > 8 ? " ..." : ""}`);
@@ -439,7 +468,7 @@ export async function assemble(dbPath?: string, pointsPath?: string, leagueId?: 
   const san = (x: unknown) => String(x ?? "").replace(/,/g, " ").replace(/\n/g, " ").trim();
   const lines = [HEAD.join(",")];
   for (const r of rows) lines.push(COLS.map((c) => san(r[c])).join(","));
-  writeFileSync(dataPath("player-report.csv"), lines.join("\n") + "\n", "utf8");
+  writeFileSync(opts.reportPath ?? dataPath("player-report.csv"), lines.join("\n") + "\n", "utf8");
   // THE STAMP, written LAST -- after the rows it describes. A stamp written first would survive a
   // build that threw halfway and claim a board that is not there.
   if (lctx.leagueId) {

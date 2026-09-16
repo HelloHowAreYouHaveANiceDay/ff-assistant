@@ -1,6 +1,11 @@
 // BACKTEST 4 -- OUR BID, REPLAYED AGAINST WHAT THE ROOM ACTUALLY PAID.
 //
-//   node --import tsx scripts/faab-replay.mjs [--seasons 2018-2025] [--target 0.70]
+//   node --import tsx scripts/faab-replay.mjs [--seasons 2018-2025] [--target 0.70] [--league <id>]
+//
+// WHICH LEAGUE (D-2, 2026-09-16): this resolved with `ORDER BY last_synced_at DESC LIMIT 1` -- the
+// last-SYNCED league, not the ACTIVE one -- so on a two-league store it replayed a league with no
+// `fact_waiver_claim` rows and reported "adds priced 0" as a result. One resolver, `--league <id>`,
+// and a refusal on an empty set.
 //
 // Track B could not price our own claims -- `faabFor` wanted a playoff-probability delta no past
 // season can supply. The fitted model does not need one, so this closes that gap: every add our
@@ -9,6 +14,7 @@
 // limits are in the header of src/inseason/backtest/faab.ts.
 import Database from "better-sqlite3";
 import { backtestFaab } from "../src/inseason/backtest/faab.ts";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const [lo, hi] = arg("--seasons", "2018-2025").split("-").map(Number);
@@ -16,8 +22,15 @@ const seasons = []; for (let y = lo; y <= hi; y++) seasons.push(y);
 const target = Number(arg("--target", "0.70"));
 
 const db = new Database("data/ff.db");
-const leagueId = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get().league_id;
+const leagueId = requireLeagueId(resolveLeagueContext(db, arg("--league", undefined)), "faab-replay");
 const { rows, summary: s } = backtestFaab(db, leagueId, { seasons, target });
+// AN EMPTY SET IS A REFUSAL, NOT A ZERO (D25.2): "adds priced 0, realised win rate 0%" reads exactly
+// like a model that never wins a claim.
+if (s.rows === 0) {
+  console.error(`\nREFUSED: league ${leagueId} priced ZERO adds over ${lo}-${hi} (no fact_waiver_claim rows ` +
+    "for it). Nothing was measured. Pass --league <id> for a league with a FAAB history.");
+  process.exit(3);
+}
 
 console.log(`=== OUR BID AT A ${(target * 100).toFixed(0)}% TARGET, ${lo}-${hi}`);
 console.log(`  adds priced ${s.rows}   of which CONTESTED (somebody else claimed him that week) ${s.contested}`);

@@ -5,9 +5,12 @@
 //   node scripts/lever-connected.mjs benchNonFlex 1 0.2
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
-import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
-import { DEFAULT_LEVERS, LEVER_BY_KEY } from "../src/draft/levers.ts";
-import { resolveLeagueContext } from "../src/data/leagueContext.ts";
+// Its own header documents `node scripts/lever-connected.mjs`, so the TypeScript goes through WP1's
+// one-hop bootstrap (plain node cannot parse this repo's TS).
+import { importTs } from "./lib/ensure-tsx.mjs";
+const { draftFieldSeats, SIM_LEAGUE } = await importTs("../src/draft/sim.ts", import.meta.url);
+const { DEFAULT_LEVERS, LEVER_BY_KEY } = await importTs("../src/draft/levers.ts", import.meta.url);
+const { resolveLeagueContext } = await importTs("../src/data/leagueContext.ts", import.meta.url);
 /** `--league <id>`; absent = the ACTIVE league. */
 const leagueFlag = (argv) => { const i = argv.indexOf("--league"); return i >= 0 ? argv[i + 1] : undefined; };
 

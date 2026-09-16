@@ -1,6 +1,12 @@
 // BACKTEST 1 -- LINEUP REGRET AGAINST REAL MANAGERS.
 //
-//   node --import tsx scripts/inseason-backtest-lineup.mjs [--seasons 2018-2025]
+//   node --import tsx scripts/inseason-backtest-lineup.mjs [--seasons 2018-2025] [--league <id>]
+//
+// WHICH LEAGUE (D-2, 2026-09-16 -- D25.2's fix applied to this sibling). `ORDER BY last_synced_at DESC
+// LIMIT 1` returns whichever league synced last, not the ACTIVE one; on this store that is Yahoo
+// 129048, which holds no `fact_roster_week` rows for these seasons, so every number below would have
+// been computed over ZERO team-weeks and printed as a result. Now: the one resolver, `--league <id>`,
+// and a refusal on an empty set.
 //
 // Prints, under THREE models, what the room started, what hindsight says was available on the same
 // rosters, and what our lineup rule would have scored on the same real results.
@@ -17,17 +23,26 @@ import Database from "better-sqlite3";
 import { backtestLineups, seasonBootstrap } from "../src/inseason/backtest/lineup.ts";
 import { MODEL_FILES } from "../src/inseason/backtest/context.ts";
 import { formatServeTable, WEEKLY_SERVE, STREAM_SERVE_POS, STREAMING_ARTIFACT } from "../src/weekly/streamingServe.ts";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const [lo, hi] = arg("--seasons", "2018-2025").split("-").map(Number);
 const seasons = []; for (let y = lo; y <= hi; y++) seasons.push(y);
 
 const db = new Database("data/ff.db");
-const leagueId = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get().league_id;
+const leagueId = requireLeagueId(resolveLeagueContext(db, arg("--league", undefined)), "inseason-backtest-lineup");
 
 const out = {};
 for (const model of ["floor", "challenger", "served"]) {
   const { rows, summary } = backtestLineups(db, leagueId, { seasons, model });
+  // AN EMPTY DECISION SET IS A REFUSAL, NOT A ZERO (D25.2). With no team-weeks every mean below is
+  // NaN/0 and the PRE-REGISTERED lines print HELD/FAILED verdicts about nothing at all.
+  if (summary.teamWeeks === 0) {
+    console.error(`\nREFUSED: league ${leagueId} has ZERO scored team-weeks over ${seasons[0]}-${seasons[seasons.length - 1]} ` +
+      "(no fact_lineup_week / fact_roster_week rows for it). Nothing was measured, so nothing is printed. " +
+      "Pass --league <id> for a league with in-season history.");
+    process.exit(3);
+  }
   out[model] = { summary, boot: seasonBootstrap(rows) };
   console.log(`\n=== ${model} (${MODEL_FILES[model]})`);
   if (model === "served") console.log(formatServeTable().split("\n").map((l) => "  " + l).join("\n"));

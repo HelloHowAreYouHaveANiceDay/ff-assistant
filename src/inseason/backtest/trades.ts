@@ -65,7 +65,10 @@ export function backtestTrades(db: DB, opts: {
   const mutual = opts.mutual ?? true;   // require the deal to not hurt the counterparty (acceptable)
   const maxGive = opts.maxGive ?? 1;    // 1 = one-for-one (#10); 2 enables 2-for-1 / 1-for-2 packages
   const maxGet = opts.maxGet ?? 1;
-  const cfg = getConfig(db);
+  // THE NAMED LEAGUE'S config, not the active league's (QA finding, 2026-09-16): every read below is
+  // filtered by opts.leagueId, so the flex rules must come from the same league or a trade backtest
+  // for one league prices its packages under the other's roster.
+  const cfg = getConfig(db, opts.leagueId);
   const flexOk = new Set<string>(cfg.flex_ok as string[]);
 
   const perSeasonDiffs = new Map<number, number[]>();

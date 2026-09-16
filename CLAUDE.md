@@ -211,7 +211,14 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   (gitignored; each has a ~1GB `features.db`, trained by `train_projection.py --db <that>`). Superflex
   value (slots as eligibility sets + laminar flex fill): `src/draft/values.ts` (`slotEligibility`,
   `resolveValueLeague` emits `flexGroups`). Yahoo waiver/trade/lineup analysis:
-  `scripts/yahoo-{analysis,waiver-trade,ros-analysis}.mjs`. Open: snake-draft value, per-format gate.
+  `scripts/yahoo-{analysis,waiver-trade,ros-analysis}.mjs`. Snake-draft value and the per-format gate are
+  both CLOSED (2026-09-16): the snake `DraftModel` is `src/draft/draftModel.ts` (WP11, reached by
+  `ff backtest --league <id>` when the format's `draftType` is snake), and the gate is a per-format
+  `golden.json` read by `scripts/cpcv.mjs --league <id>` (WP7) -- `data/golden.json` 96.0/38.5 for the
+  incumbent, `data/formats/sc-a845f67652fb/golden.json` 99.2/39.8 for Yahoo 129048. CAVEAT, and it is on
+  the file itself: the Yahoo number is a **CANDIDATE GOLDEN** -- an executor-pinned regression tripwire,
+  not an owner-signed posture like D13/D14/D15 -- and its playoff axis is nearly saturated (8-of-12
+  field), so read it as a downward tripwire and the title column for direction.
   **The one rule (D13) now applies PER FORMAT** — a value/strategy change is gated by that format's golden.
 - Strategy/levers: `src/draft/{strategy,levers,values,sim,backtest}.ts`
 - Findings + every rejected idea with its number: `docs/validation.md`, `docs/edges.md`

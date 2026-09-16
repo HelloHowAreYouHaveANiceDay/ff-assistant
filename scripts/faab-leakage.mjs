@@ -36,7 +36,11 @@ const LEAGUE = requireLeagueId(
 // FAAB budget from the league's OWN settings, not hardcoded -- a leak guard that assumes the wrong
 // budget on a different league silently cannot fire. Same source as loadFaabBudget (copilotStore.ts).
 const FAAB_BUDGET = (() => {
-  const r = db.prepare("SELECT scoring_json FROM league WHERE scoring_json IS NOT NULL ORDER BY last_synced_at DESC LIMIT 1").get();
+  // THIS LEAGUE's budget, not the last-synced league's (D-2). `ORDER BY last_synced_at DESC LIMIT 1`
+  // reached past the `--league` the guards are running for and could hand them another league's FAAB
+  // budget -- the exact "assumes the wrong budget, so the guard silently cannot fire" failure the
+  // comment above warns about, arrived at from the resolver rather than from a hardcode.
+  const r = db.prepare("SELECT scoring_json FROM league WHERE league_id = ?").get(LEAGUE);
   try { const b = Number(JSON.parse(r?.scoring_json ?? "{}").faabBudget); return b > 0 ? b : 100; } catch { return 100; }
 })();
 

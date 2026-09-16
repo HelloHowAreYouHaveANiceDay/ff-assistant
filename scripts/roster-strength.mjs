@@ -4,9 +4,12 @@
 //
 //   node scripts/roster-strength.mjs '{"aggr":1}' '{"aggr":0.7}'
 import { readFileSync } from "node:fs";
-import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
-import { optimalLineup } from "../src/inseason/lineup.ts";
-import { computeValues } from "../src/draft/values.ts";
+// Its own header documents `node scripts/roster-strength.mjs`, so the TypeScript goes through WP1's
+// one-hop bootstrap (plain node cannot parse this repo's TS).
+import { importTs } from "./lib/ensure-tsx.mjs";
+const { draftFieldSeats, SIM_LEAGUE } = await importTs("../src/draft/sim.ts", import.meta.url);
+const { optimalLineup } = await importTs("../src/inseason/lineup.ts", import.meta.url);
+const { computeValues } = await importTs("../src/draft/values.ts", import.meta.url);
 
 const A = JSON.parse(process.argv[2] || "{}"), B = JSON.parse(process.argv[3] || "{}");
 // OUR projection error. This is the whole ballgame: with ourSd=0 our values ARE the truth we score

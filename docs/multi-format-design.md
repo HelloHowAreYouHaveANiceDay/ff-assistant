@@ -151,10 +151,32 @@ per-format features + seeded playoff-odds gate) is reachable before any snake wo
 
 ## The two hard walls (net-new, called out honestly)
 
-1. **Superflex valuation.** `FLEX_ELIGIBLE` excludes QB (values.ts:102), so an OP/superflex slot is valued
-   as an RB/WR/TE flex and QB replacement level is wrong — which is the *entire* point of superflex. Fix:
-   make flex-eligibility part of the format (`slot → eligible positions`), and let `baselines()`
-   (values.ts:135) fill a superflex slot from QB+RB+WR+TE. Surgical, but it moves numbers → re-gate.
+1. **Superflex valuation. CLOSED (D24 for the value book, D25.3 for the marginal book, 2026-09-16).**
+   The wall as it was originally stated, kept because it is what landed: `FLEX_ELIGIBLE` excludes QB
+   (values.ts:102), so an OP/superflex slot is valued as an RB/WR/TE flex and QB replacement level is
+   wrong — which is the *entire* point of superflex. Fix: make flex-eligibility part of the format
+   (`slot → eligible positions`), and let `baselines()` (values.ts:135) fill a superflex slot from
+   QB+RB+WR+TE. Surgical, but it moves numbers → re-gate.
+
+   **What landed.** `src/draft/values.ts` now carries `slotEligibility` and `resolveValueLeague` emits
+   `flexGroups`, so a slot is an ELIGIBILITY SET and `baselines()` fills the flex slots laminarly by
+   group (D24). `src/draft/lineupMarginal.ts`'s `starterBaselines` was the second, separate copy of the
+   same mistake and was fixed the same way, via `splitTemplate` from the one slot module (D25.3).
+
+   **The numbers, both directions.** Yahoo 129048 superflex: the QB baseline moved 12.935294 →
+   **10.594118** pts/wk (a deeper replacement, so QB VOR rises — the point of the format); the FLEX
+   cutoff moved 5.370588 → 5.835294 (the three FLEX slots no longer absorb the superflex slot); RB/WR/TE
+   5.335/5.371/5.324 → 5.741/5.835/5.441; a `SUPERFLEX` cutoff exists where there was no entry at all.
+   ESPN 462233, the incumbent, at openFraction 1 / 0.5 / 0.25: **0 differing keys**, all seven baselines
+   identical — the generalisation is identity for a non-superflex template. FAULT INJECTION: with the
+   `SUPERFLEX` token removed from the Yahoo template, every key returns to the old answer, which is what
+   separates "the superflex slot did this" from "something else changed". Locked in
+   `test/marginal-superflex.test.ts` (5 tests, itself fault-injected). The championship backtest is
+   unmoved: **39.5% titles / 96% playoffs**.
+
+   **Still open inside the closed wall:** the laminar fill now exists TWICE (`values.ts baselines()` and
+   `lineupMarginal.ts`), with `test/marginal-superflex.test.ts`'s agreement check as the only thing
+   stopping them drifting. One exported `laminarFlexFill(pool, groups)` in `slots.ts` retires it.
 2. **Snake draft engine. CLOSED (WP11, 2026-09-16) -- see "Wall 2 -- the snake DraftModel" at the end
    of this document.** The wall as it was originally stated, kept because it is what landed:
    None exists; the auction path (VOR→$, second-price sim, nomination) is
@@ -341,25 +363,16 @@ identified: the analysis is now format-native AND in-season-aware.
 - No ship without stop-and-confirm; 3a and 5 are the boundaries that most need it (a scoring change moves
   every number; the draft engine is net-new logic).
 
-## Status 2026-09-16
+## Status 2026-09-16 (morning) -- superseded the same day
 
 The 2026-09-16 architecture review (`docs/architecture-review-2026-09-16.md`) read this design against
-the live tree and found the phases above landed the ARTIFACTS but not the plumbing that would make a
-reader actually use them. Read this document as "the format-native model exists and is verified
-offline", not "format-native end to end" -- three things a reader should not take literally:
-
-- **Nothing in `src/` reads `data/formats/` yet.** No resolver computes a format key or maps
-  `config -> format -> artifact paths`; the Yahoo model is reachable only from five `scripts/yahoo-*.mjs`
-  that hardcode the key and the league id (finding F-2).
-- **The Yahoo model is script-only.** There is no Yahoo platform adaptor in `src/league/` (`src/league/`
-  has ESPN only) and no verb dispatches on it; `config:129048` itself is a byte-copy of the ESPN config
-  with a few fields edited by hand, not synced from Yahoo's own settings (findings F-1, P-5).
-- **The format DB's weekly table is a half-PPR copy.** `feat_player_week_model` inside
-  `data/formats/sc-a845f67652fb/features.db` is a row-for-row copy of the ESPN half-PPR table
-  (`build-format-features.mjs` never rebuilds it), so any weekly serve off it today would silently be
-  half-PPR, not Yahoo-scored (finding F-4).
-
-See that review's work packages WP1-WP7 for the fix plan.
+the live tree that morning and found the phases above had landed the ARTIFACTS but not the plumbing:
+nothing in `src/` read `data/formats/`, the Yahoo model was script-only with a hand-copied config, and the
+format DB's weekly table was a half-PPR copy (findings F-1, F-2, F-4, P-5). Every one of those was closed
+by the end of the day -- the sections that follow (the Resolver, the Yahoo in-season first run, the Yahoo
+weekly track, wall 1 and wall 2) are the current state, and section 5 of the review is the ledger. What
+remains open is listed there: no superflex ADP archive, no Yahoo draft history in the store, the
+`manifest.weekly` blindness caveats named per section.
 
 ## The Resolver (WP3, 2026-09-16) -- all three bullets above are now CLOSED
 

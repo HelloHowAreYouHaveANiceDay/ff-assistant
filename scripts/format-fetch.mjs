@@ -6,21 +6,37 @@
  * kept so a later analysis can be re-run without the app being up. Everything written here lands in
  * data/cache/espn/ and nothing is ever POSTed to ESPN.
  *
- * Usage: node scripts/format-fetch.mjs [season ...]     (default 2018..2026)
+ * Usage: node scripts/format-fetch.mjs [--league <id>] [season ...]     (default 2018..2026)
+ *
+ * WHICH LEAGUE (D-2, 2026-09-16): this resolved with `ORDER BY last_synced_at DESC LIMIT 1` -- the
+ * last-SYNCED league, not the ACTIVE one -- and then built ESPN URLs for it. On a two-league store
+ * that meant fetching ESPN settings under a YAHOO league id and caching the result as this league's
+ * format block. It now goes through the one resolver, takes `--league <id>`, and REFUSES a non-ESPN
+ * league by name before any fetch (`requirePlatform`, the S-2/S-3 rule).
+ *
+ * The TypeScript is loaded through WP1's bootstrap because the usage line above is plain `node`.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { bridgeFetch } from "../src/browser/appBridge.ts";
+import { importTs } from "./lib/ensure-tsx.mjs";
+
+const { bridgeFetch } = await importTs("../src/browser/appBridge.ts", import.meta.url);
+const { resolveLeagueContext, requirePlatform } = await importTs("../src/data/leagueContext.ts", import.meta.url);
 
 const require = createRequire(import.meta.url);
 const Database = require("better-sqlite3");
 const db = new Database("data/ff.db", { readonly: true });
-const leagueId = String(db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get().league_id);
+const lgFlagIdx = process.argv.indexOf("--league");
+const leagueId = requirePlatform(
+  resolveLeagueContext(db, lgFlagIdx >= 0 ? process.argv[lgFlagIdx + 1] : undefined), "espn", "format-fetch");
 db.close();
 
 const HOST = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
-const seasons = process.argv.slice(2).length
-  ? process.argv.slice(2).map(Number)
+// Positional seasons, with `--league <id>` and its value removed -- otherwise a league id would be
+// read as a season and fetched as one.
+const positional = process.argv.slice(2).filter((a, i, xs) => a !== "--league" && xs[i - 1] !== "--league");
+const seasons = positional.length
+  ? positional.map(Number)
   : [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026];
 
 mkdirSync("data/cache/espn", { recursive: true });
