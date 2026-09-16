@@ -35,8 +35,8 @@ deterministic and validated.
   first downs, 40+ yard plays), the projection is retargeted and retrained per scoring, and the value
   book understands superflex. Two leagues with the same rules share one model (it's keyed by a content
   hash of the format, not by league). A second league — Yahoo, superflex/full-PPR/bonus scoring — runs
-  format-native end to end. Design + verification: `docs/multi-format-design.md`. Open items: a
-  snake-draft value path and a per-format championship gate.
+  format-native end to end. Design + verification: `docs/multi-format-design.md`. The snake-draft
+  value path and the per-format championship gate both landed 2026-09-16 (next bullet).
 - **In-season copilot — working, read-only.** Ten decisions (season odds, weekly lineup, waivers,
   trade check, trade finder, handcuffs, depth risk, power rankings, playoff SOS, and streaming --
   whom to start or add at ONE position out of the free-agent pool) as callable
@@ -396,9 +396,11 @@ recorded here.
   realises 46%" was an over-sharpened configuration that no longer ships. Four dispersion knobs (level
   spread, a roster-level common factor, weekly variance, both copula stages) are leave-one-season-out
   nulls at their shipped values with provably connected levers; the roster-level factor is the rejected
-  shrink in disguise. One in-season correction is PENDING sign-off: the played-weeks shrink on the
-  level's spread borrows the ROS blend's K=6, and with its own weight of 1 the week-8 and week-11
-  playoff Brier improve (0.1336 -> 0.1297, CI excluding zero, 7/8 seasons) as a sharpening.
+  shrink in disguise. One in-season correction was APPLIED (D28, 2026-09-16, owner sign-off): the
+  played-weeks shrink on the level's spread used to borrow the ROS blend's K=6; it now carries its
+  own weight `LEVEL_PRIOR_WEEKS = 1`, and the week-8 and week-11 playoff Brier improve as a
+  sharpening (0.1336 -> 0.1297, CI [-0.0067, -0.0007], 7/8 seasons; 0.0867 -> 0.0850, 6/8), with
+  preseason unchanged by construction. Rollback: `FF_SIM_LEVEL_PRIOR_WEEKS=6`.
 
 ## The decision layer (Phase 3, 2026-09-09)
 
