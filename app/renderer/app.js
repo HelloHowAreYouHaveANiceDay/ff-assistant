@@ -45,27 +45,72 @@ let cur = "board", curPage = "board";
 let ACTIVE_LEAGUE = null; // { leagueId, season, teamId, name }
 // Pages under the active league. ESPN pages drive the embedded (logged-in) webview to a league URL;
 // the rest render into #view.
+// A browser page's URL is PER PLATFORM (P-4). It used to be one ESPN template used for every league,
+// so opening "My Team" on the Yahoo league navigated the ESPN webview to
+// `fantasy.espn.com/football/team?leagueId=129048` -- a different, REAL ESPN league -- and that url,
+// being the longest espn.com one open, then became the page the bridge preferred. Each entry is the
+// same shape as LEAGUE_URL below: one builder per platform, taking the active league.
+const PAGE_URL = {
+  myteam: {
+    espn: l => `https://fantasy.espn.com/football/team?leagueId=${l.leagueId}&seasonId=${l.season}${l.teamId ? `&teamId=${l.teamId}` : ""}`,
+    yahoo: l => `https://football.fantasysports.yahoo.com/f1/${l.leagueId}${l.teamId ? `/${l.teamId}` : ""}`,
+  },
+  scoreboard: {
+    espn: l => `https://fantasy.espn.com/football/league/scoreboard?leagueId=${l.leagueId}&seasonId=${l.season}`,
+    yahoo: l => `https://football.fantasysports.yahoo.com/f1/${l.leagueId}`,
+  },
+  standings: {
+    espn: l => `https://fantasy.espn.com/football/league/standings?leagueId=${l.leagueId}&seasonId=${l.season}`,
+    yahoo: l => `https://football.fantasysports.yahoo.com/f1/${l.leagueId}/standings`,
+  },
+  draft: {
+    espn: l => `https://fantasy.espn.com/football/draft?leagueId=${l.leagueId}&seasonId=${l.season}${l.teamId ? `&teamId=${l.teamId}` : ""}`,
+    yahoo: l => `https://football.fantasysports.yahoo.com/f1/${l.leagueId}/draftresults`,
+  },
+};
 const PAGES = [
   { id: "board", name: "Board", kind: "view" },
-  { id: "myteam", name: "My Team", kind: "espn", path: l => `team?leagueId=${l.leagueId}&seasonId=${l.season}${l.teamId ? `&teamId=${l.teamId}` : ""}` },
-  { id: "scoreboard", name: "Scoreboard", kind: "espn", path: l => `league/scoreboard?leagueId=${l.leagueId}&seasonId=${l.season}` },
-  { id: "standings", name: "Standings", kind: "espn", path: l => `league/standings?leagueId=${l.leagueId}&seasonId=${l.season}` },
-  { id: "draft", name: "Draft Room", kind: "espn", path: l => `draft?leagueId=${l.leagueId}&seasonId=${l.season}${l.teamId ? `&teamId=${l.teamId}` : ""}` },
+  { id: "myteam", name: "My Team", kind: "browser" },
+  { id: "scoreboard", name: "Scoreboard", kind: "browser" },
+  { id: "standings", name: "Standings", kind: "browser" },
+  { id: "draft", name: "Draft Room", kind: "browser" },
   { id: "news", name: "News", kind: "view" },
   { id: "sources", name: "Data", kind: "view" },
   { id: "model", name: "Model", kind: "view" },
   { id: "settings", name: "Setup", kind: "view" },
 ];
 const PAGE_VIEWS = { board: () => views_board(), news: () => views_news(), sources: () => views_sources(), model: () => views_model(), settings: () => views_settings() };
-function espnGo(path) { const wv = document.getElementById("espnview"); if (wv && wv.loadURL) wv.loadURL("https://fantasy.espn.com/football/" + path); }
+/** The url for `pageId` on the ACTIVE league's platform, or null when that platform has no such page. */
+function pageUrlFor(pageId, l) {
+  const byPlat = PAGE_URL[pageId];
+  if (!byPlat || !l || !l.leagueId) return null;
+  const mk = byPlat[l.platform || "espn"];
+  return mk ? mk(l) : null;
+}
+/** Navigate the ACTIVE platform's webview -- never `#espnview` unconditionally. */
+function platformGo(url) { const wv = activeWv(); if (wv && wv.loadURL && url) wv.loadURL(url); }
+/** Set while switchLeague is running, so setPage does not race it with a second loadURL. */
+let suppressPageNav = false;
 function setPage(id) {
   if (roomTimer) { clearInterval(roomTimer); roomTimer = null; }
   const pg = PAGES.find(p => p.id === id) || PAGES[0];
   curPage = cur = pg.id;
   document.querySelectorAll("#pagetabs .tab").forEach(b => b.classList.toggle("on", b.dataset.page === pg.id));
-  const isEspn = pg.kind === "espn" && !!window.mc;
-  const wl = document.getElementById("webview-layer"); if (wl) wl.classList.toggle("off", !isEspn);
-  if (isEspn) { if (ACTIVE_LEAGUE && ACTIVE_LEAGUE.leagueId) espnGo(pg.path(ACTIVE_LEAGUE)); }
+  const isBrowser = pg.kind === "browser" && !!window.mc;
+  const wl = document.getElementById("webview-layer"); if (wl) wl.classList.toggle("off", !isBrowser);
+  if (isBrowser) {
+    // The visible webview must be the ACTIVE LEAGUE's platform before anything is navigated.
+    if (ACTIVE_LEAGUE && typeof setBrowserPlatform === "function") setBrowserPlatform(ACTIVE_LEAGUE.platform || "espn");
+    // During a LEAGUE SWITCH the caller does the one navigation itself (to the league home, as it
+    // always has). Navigating here too raced it -- two loadURLs on the same guest, and whichever
+    // settled last won -- so the landing page depended on timing.
+    if (suppressPageNav) { /* switchLeague navigates once, after this */ }
+    else {
+      const url = pageUrlFor(pg.id, ACTIVE_LEAGUE);
+      if (url) platformGo(url);
+      else if (ACTIVE_LEAGUE) leagueToast(`no "${pg.name}" page for ${(ACTIVE_LEAGUE.platform || "espn").toUpperCase()}`, "warn");
+    }
+  }
   else (PAGE_VIEWS[pg.id] || views_board)();
 }
 // legacy: agent tools + the copilot call setView(viewName); map old view names onto pages
@@ -95,12 +140,70 @@ async function renderLeagueTabs() {
   for (const b of el.querySelectorAll(".tab.league[data-lg]")) b.onclick = () => switchLeague(b.dataset.lg, b.dataset.plat);
   const add = document.getElementById("lg-add"); if (add) add.onclick = () => setPage("settings");
 }
+/** A small corner message for what the ENGINE said about a league switch -- the board stamp it
+ *  rebuilt, or the refusal it returned. Rendering nothing there is how a stale board gets read as
+ *  the new league's (S-8). */
+function leagueToast(msg, kind) {
+  if (!msg) return;
+  let t = document.getElementById("league-toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "league-toast";
+    t.style.cssText = "position:fixed;bottom:16px;left:16px;z-index:9999;max-width:520px;color:#fff;" +
+      "font:600 12px/1.5 system-ui,sans-serif;padding:8px 14px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
+    document.body.appendChild(t);
+  }
+  t.style.background = kind === "error" ? "#7f1d1d" : kind === "warn" ? "#78350f" : "#065f46";
+  t.textContent = msg;
+  t.style.opacity = "1";
+  clearTimeout(t._h);
+  t._h = setTimeout(() => { t.style.opacity = "0"; }, kind === "error" ? 12000 : 5000);
+}
+
+/**
+ * What the ENGINE said about the switch, as [text, kind] -- the same sentence `ff league-set-active`
+ * prints. The engine returns `{active, cleared, rebuilt, stamp, reason}` (S-8: the switch clears the
+ * single-slot board and rebuilds it under the new league; when the rebuild cannot run the board stays
+ * CLEARED and stamped pending, and every board reader then refuses by name). A cleared-but-not-rebuilt
+ * board is the case that MUST be visible: rendering nothing there leaves the previous league's dollars
+ * on screen under the new league's heading, which is the failure S-8 exists to stop.
+ */
+function leagueSwitchMessage(res, leagueId) {
+  if (!res) return [`league ${leagueId}: the engine returned nothing -- the app's board may still be the previous league's.`, "error"];
+  if (res.error) return [String(res.error), "error"];
+  const parts = [`active league: ${res.active || leagueId}`];
+  if (res.cleared) parts.push(res.rebuilt ? "board rebuilt" : "board CLEARED and PENDING");
+  else parts.push("board unchanged");
+  if (res.stamp) parts.push("stamp " + (typeof res.stamp === "string" ? res.stamp : JSON.stringify(res.stamp)));
+  if (res.reason) parts.push(res.reason);
+  return [parts.join(" | "), res.cleared && !res.rebuilt ? "warn" : "ok"];
+}
+
 async function switchLeague(leagueId, platform) {
-  try { await window.mc?.leagueSetActive?.(leagueId); } catch (e) { /* keep going -- UI switch still useful */ }
-  if (typeof setView === "function") setView("live");                 // show the embedded browser
-  if (typeof setBrowserPlatform === "function") setBrowserPlatform(platform || "espn");
-  const wv = activeWv(); const mk = LEAGUE_URL[platform || "espn"]; if (wv && wv.loadURL && mk) wv.loadURL(mk(leagueId));
-  await renderLeagueTabs();
+  // ORDER MATTERS, and it was wrong (P-4). `setView("live")` ran FIRST, and setPage then navigated
+  // whatever webview was still active -- the ESPN one -- to a URL built from the NEW league's id. So
+  // every switch to the Yahoo league first drove the hidden ESPN guest to a real, unrelated ESPN
+  // league. The platform is now set before anything navigates, and ACTIVE_LEAGUE is updated before
+  // setView so setPage builds the url for the right platform.
+  const plat = platform || "espn";
+  if (typeof setBrowserPlatform === "function") setBrowserPlatform(plat);
+  if (ACTIVE_LEAGUE && ACTIVE_LEAGUE.leagueId === leagueId) ACTIVE_LEAGUE.platform = plat;
+  else ACTIVE_LEAGUE = { leagueId, season: (ACTIVE_LEAGUE && ACTIVE_LEAGUE.season) || null, teamId: null, name: null, platform: plat };
+
+  // The ENGINE owns the switch: it stamps/clears/rebuilds the value board for the new league and
+  // tells us what it did. Whatever it says is SHOWN -- a refusal ("board not built for league X") is
+  // the answer, not something to swallow while leaving the previous league's board on screen.
+  let res = null;
+  try { res = await window.mc?.leagueSetActive?.(leagueId); } catch (e) { res = { error: String(e) }; }
+  leagueToast(...leagueSwitchMessage(res, leagueId));
+
+  await renderLeagueTabs();                                           // ACTIVE_LEAGUE from the engine
+  suppressPageNav = true;
+  try { if (typeof setView === "function") setView("live"); }         // show the embedded browser
+  finally { suppressPageNav = false; }
+  // EXACTLY ONE navigation, to the league HOME -- the landing page this has always used.
+  const url = LEAGUE_URL[plat] ? LEAGUE_URL[plat](leagueId) : null;
+  if (url) platformGo(url);
 }
 
 /* ---------- DRAFT BOARD ---------- */
@@ -1184,10 +1287,16 @@ function watchForRebuild(seenAt) {
         byName = new Map(DATA.map(p => [p.Player, p]));
         const sp = document.getElementById("s-players"); if (sp) sp.textContent = DATA.length;
         seenAt = d.builtAt || stamp;              // adopt the new baseline; do not re-fire on it
-        // Re-render the current page -- EXCEPT an ESPN page, whose setPage re-navigates the webview
+        // Re-render the current page -- EXCEPT a BROWSER page, whose setPage re-navigates the webview
         // and would yank the draft room out from under whoever is watching it.
+        //
+        // THE KIND IS "browser", NOT "espn" (renamed 2026-09-16 when page urls became per-platform).
+        // This guard still said "espn" for one build, so it stopped matching anything and the board
+        // watcher re-navigated the guest on every rebuild -- observed right after a league switch,
+        // which fires a rebuild: the Yahoo guest jumped from the league home to /draftresults. A guard
+        // keyed on a NAME keeps passing after the name changes, and nothing anywhere reports it.
         const pg = PAGES.find(p => p.id === curPage);
-        if (!pg || pg.kind !== "espn") setPage(curPage);
+        if (!pg || pg.kind !== "browser") setPage(curPage);
         toastRebuild(`Board updated -- ${DATA.length} players reloaded`);
       } else {
         showRebuiltBar();                          // engine answered with nothing; let the user decide

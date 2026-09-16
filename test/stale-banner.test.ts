@@ -115,8 +115,11 @@ test("a rebuild is applied in place, not merely announced", () => {
   assert.match(w, /byName = new Map/, "the name index must be rebuilt with it or lookups go stale");
   assert.match(w, /setPage\(curPage\)/, "must re-render the current page so the new values are visible");
   assert.match(w, /seenAt = d\.builtAt/, "must adopt the new stamp as baseline or it re-fires forever");
-  // The webview carve-out: setPage on an ESPN page re-navigates the embedded draft room.
-  assert.match(w, /pg\.kind !== "espn"/, "must not re-render an ESPN page out from under the user");
+  // The webview carve-out: setPage on a platform browser page (ESPN or Yahoo) re-navigates the
+  // embedded page. The page kind was "espn" until the 2026-09-16 multi-platform renderer; the guard
+  // is on the platform-neutral "browser" kind now, and a guard on the OLD name is exactly the
+  // silently-disabled check the rename produced (caught by WP4 of the architecture review).
+  assert.match(w, /pg\.kind !== "browser"/, "must not re-render a platform browser page out from under the user");
   // The manual bar survives only as the failure path.
   assert.match(w, /catch \(e\) \{\s*showRebuiltBar\(\)/, "a failed fetch must fall back to the manual reload");
 });

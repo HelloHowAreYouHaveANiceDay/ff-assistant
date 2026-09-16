@@ -65,7 +65,18 @@ test("FAULT INJECTION: the legacy mirror is still WRITTEN (nothing external brea
   assert.equal(getConfig(db, "B").teams, DEFAULT_CONFIG.teams, "B reads defaults, not the corrupted mirror");
 });
 
-test("openLeague REFUSES a yahoo league BY NAME -- the branch that used to be unreachable", async (t) => {
+/**
+ * openLeague REFUSES a league whose platform has NO ADAPTOR, by name.
+ *
+ * This used to name YAHOO, because on 2026-09-16 there was no Yahoo adaptor and the Yahoo league was
+ * silently handed the ESPN one (S-12: the dispatch read `cfg.platform`, a field AppConfig has never
+ * had, so `?? "espn"` was unconditional and the refusal below was unreachable). WP4 built that
+ * adaptor, so yahoo now resolves -- and the property under test was never "yahoo is refused", it is
+ * "an ABSENT adaptor is refused rather than substituted". So the subject moves to a platform that
+ * genuinely has none. Substituting an adaptor is the defect; which platform happens to lack one is a
+ * fact about today.
+ */
+test("openLeague REFUSES a platform with NO adaptor BY NAME -- the branch that used to be unreachable", async (t) => {
   // A temp store on disk, because openLeague opens the file itself.
   const { mkdtempSync } = await import("node:fs");
   const { join } = await import("node:path");
@@ -73,15 +84,20 @@ test("openLeague REFUSES a yahoo league BY NAME -- the branch that used to be un
   const path = join(mkdtempSync(join(tmpdir(), "ff-platform-")), "ff.db");
   const { openDb } = await import("../src/db/db.js");
   const db = openDb(path);
-  db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES ('129048','yahoo','yahoo league',2026,'3','2026-09-16T00:00:00Z')").run();
-  setActiveLeagueId(db, "129048");
-  setConfig(db, { teams: 12, slots: ["QB", "RB", "WR", "TE", "FLEX", "BE"] }, "129048");
+  db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES ('777777','sleeper','sleeper league',2026,'3','2026-09-16T00:00:00Z')").run();
+  setActiveLeagueId(db, "777777");
+  setConfig(db, { teams: 12, slots: ["QB", "RB", "WR", "TE", "FLEX", "BE"] }, "777777");
   db.close();
 
   await assert.rejects(
     () => openLeague({ dbPath: path }),
-    /no adaptor for platform "yahoo" \(league 129048\)/,
-    "the yahoo league must be refused by name, not handed the ESPN adaptor",
+    // The LEAGUE is named; the platform reads "unknown" rather than "sleeper" because
+    // `LeaguePlatform` in src/data/leagueContext.ts is a CLOSED union (espn|yahoo) and `asPlatform`
+    // maps anything else to null. That is the safe direction -- an unrecognized platform cannot be
+    // mistaken for a recognized one -- but the raw string would make the refusal more useful, and
+    // carrying it is noted for WP5.
+    /no adaptor for platform "unknown" \(league 777777\)/,
+    "a league on a platform with no adaptor must be refused by name, not handed the ESPN adaptor",
   );
   void t;
 });

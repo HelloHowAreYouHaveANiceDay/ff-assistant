@@ -40,11 +40,23 @@ export function bridgeInfo(): BridgeInfo | null {
   return info;
 }
 
-/** Fetch an ESPN URL through the app's logged-in webview. Throws with an actionable message. */
-export async function bridgeFetch(url: string, headers?: Record<string, string>, timeoutMs = 20000): Promise<string> {
+/**
+ * WHICH GUEST a bridge call acts on. The app mounts one webview PER PLATFORM, each on its own
+ * persistent partition, so "the webview" is no longer a thing (P-3). Omitting `host` keeps the
+ * historical behaviour exactly -- espn.com -- so every existing caller is unchanged.
+ *
+ * There is NO fallback to another guest. The route used to take "any guest" when none was on the
+ * requested host, which meant that with the ESPN view closed a `/read-frame` or `/click` meant for
+ * ESPN silently acted on the YAHOO webview. A wrong-site read is not a degraded read.
+ */
+export interface GuestTarget { host?: string }
+
+/** Fetch a URL through the app's logged-in webview for `host` (default espn.com). Throws with an
+ *  actionable message; a host with no guest is a named refusal, never another platform's page. */
+export async function bridgeFetch(url: string, headers?: Record<string, string>, timeoutMs = 20000, target: GuestTarget = {}): Promise<string> {
   const info = bridgeInfo();
   if (!info) throw new Error("app bridge not available (app not running, or started before the bridge existed -- restart it)");
-  const payload = JSON.stringify({ url, headers: headers ?? {} });
+  const payload = JSON.stringify({ url, headers: headers ?? {}, host: target.host });
   const body = await new Promise<string>((resolve, reject) => {
     const req = request({
       host: "127.0.0.1", port: info.port, path: "/fetch", method: "POST",
@@ -63,7 +75,7 @@ export async function bridgeFetch(url: string, headers?: Record<string, string>,
   let parsed: { status?: number; body?: string; error?: string };
   try { parsed = JSON.parse(body); } catch { throw new Error(`app bridge returned non-JSON: ${body.slice(0, 120)}`); }
   if (parsed.error) throw new Error(`app bridge: ${parsed.error}`);
-  if (parsed.status && parsed.status >= 400) throw new Error(`ESPN returned HTTP ${parsed.status} through the app session`);
+  if (parsed.status && parsed.status >= 400) throw new Error(`${target.host ?? "espn.com"} returned HTTP ${parsed.status} through the app session`);
   if (typeof parsed.body !== "string") throw new Error("app bridge returned no body");
   return parsed.body;
 }
@@ -112,7 +124,7 @@ export interface FrameRead { frames?: FrameInfo[]; url?: string; name?: string; 
  * of the frame URL) to get that frame's text, optionally scoped to a CSS `selector`.
  */
 export async function bridgeReadFrame(
-  opts: { match?: string; selector?: string; waitMs?: number; scrollUp?: boolean } = {},
+  opts: { match?: string; selector?: string; waitMs?: number; scrollUp?: boolean; host?: string } = {},
   timeoutMs = 20000,
 ): Promise<FrameRead> {
   const info = bridgeInfo();
@@ -144,7 +156,7 @@ export interface ClickResult { ok: boolean; clicked?: string; err?: string; popu
  * The main process does the dispatch; this is only the loopback client. Mirrors bridgeFetch's shape.
  */
 export async function bridgeClick(
-  opts: { selector?: string; text?: string; nth?: number; frame?: string },
+  opts: { selector?: string; text?: string; nth?: number; frame?: string; host?: string },
   timeoutMs = 15000,
 ): Promise<ClickResult> {
   const info = bridgeInfo();

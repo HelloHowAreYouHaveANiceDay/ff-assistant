@@ -219,6 +219,13 @@ export async function openLeague(opts: { dbPath?: string; points?: string; leagu
       provider = await EspnLeague.open(db, leagueId);
       break;
     }
+    case "yahoo": {
+      // Net-new in WP4. Reads Yahoo's own server-rendered pages through the app's `yahooview` guest
+      // (the bridge's /fetch now takes a host), and normalizes Yahoo's slot tokens to ours.
+      const { YahooLeague } = await import("./yahoo.js");
+      provider = await YahooLeague.open(db, leagueId);
+      break;
+    }
     default:
       db.close();
       throw new Error(`no adaptor for platform "${platform ?? "unknown"}" (league ${leagueId}). Implement LeagueProvider in src/league/${platform ?? "<platform>"}.ts and add a case here.`);

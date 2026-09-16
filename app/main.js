@@ -447,21 +447,34 @@ ipcMain.handle("mc:pushSheet", async (e, id) => {
 // guests on that host, take the one matching `urlIncludes` if named, else the MOST SPECIFIC url
 // (longest -- a clubhouse with a query beats the bare home). See the 2026-09-13 note: the full
 // webContents list is the source of truth, not getElementById on the win.
+//
+// NO FALLBACK TO ANOTHER GUEST (P-3, fixed 2026-09-16). This used to end
+// `const pool = onHost.length ? onHost : guests`, so with no guest on the requested host it picked
+// ANY webview -- which, now that the app mounts one guest per platform, means a /read-frame or /click
+// meant for ESPN silently acted on the YAHOO webview, and vice versa. A wrong-SITE read is not a
+// degraded read: it returns a plausible page from the wrong league on the wrong platform, and nothing
+// anywhere reports an error. So a host with no guest returns null and the route says so by name.
 function guestWebContents({ host = "espn.com", urlIncludes } = {}) {
   const { webContents } = require("electron");
   let guests;
   try { guests = webContents.getAllWebContents().filter((wc) => { try { return wc.getType && wc.getType() === "webview" && !wc.isDestroyed(); } catch (_) { return false; } }); }
   catch (_) { return null; }
   const url = (wc) => { try { return wc.getURL() || ""; } catch (_) { return ""; } };
-  const re = new RegExp(host.replace(/[.]/g, "\\."));
-  const onHost = guests.filter((wc) => re.test(url(wc)));
-  const pool = onHost.length ? onHost : guests;
+  const re = new RegExp(String(host).replace(/[.]/g, "\\."));
+  const pool = guests.filter((wc) => re.test(url(wc)));
+  if (!pool.length) return null;
   if (urlIncludes) { const m = pool.find((wc) => url(wc).includes(urlIncludes)); if (m) return m; }
   pool.sort((a, b) => url(b).length - url(a).length);
   return pool[0] || null;
 }
 // Back-compat wrapper: the existing ESPN routes call this with a bare urlIncludes.
 function espnGuestWebContents(urlIncludes) { return guestWebContents({ host: "espn.com", urlIncludes }); }
+
+// THE PER-PLATFORM ALLOWLIST lives in its own dependency-free module so it is unit-testable without
+// Electron (app/bridgeHosts.js, test/platform-bridge-allowlist.test.ts). A `host` that is not a key
+// there is refused before any guest is resolved; an omitted one means espn.com, so every pre-existing
+// caller is unchanged.
+const { BRIDGE_HOSTS, resolveBridgeHost } = require("./bridgeHosts.js");
 
 function startBridge() {
   const http = require("http");
@@ -518,15 +531,17 @@ function startBridge() {
       let fbody = "";
       req.on("data", (d) => { fbody += d; if (fbody.length > 1e6) req.destroy(); });
       req.on("end", async () => {
-        let match, selector, waitMs, scrollUp, anchorText;
-        try { const j = JSON.parse(fbody); match = j.match; selector = j.selector; waitMs = Math.min(10000, Number(j.waitMs) || 0); scrollUp = !!j.scrollUp; anchorText = j.anchorText; }
+        let match, selector, waitMs, scrollUp, anchorText, host;
+        try { const j = JSON.parse(fbody); match = j.match; selector = j.selector; waitMs = Math.min(10000, Number(j.waitMs) || 0); scrollUp = !!j.scrollUp; anchorText = j.anchorText; host = j.host; }
         catch { return reply(400, { error: "bad json" }); }
+        const fhost = resolveBridgeHost(host);
+        if (!fhost) return reply(400, { error: `unknown host "${host}" -- known: ${Object.keys(BRIDGE_HOSTS).join(", ")}` });
         if (anchorText != null && typeof anchorText !== "string") return reply(400, { error: "anchorText must be a string" });
         if (selector != null && typeof selector !== "string") return reply(400, { error: "selector must be a string" });
         if (match != null && typeof match !== "string") return reply(400, { error: "match must be a string" });
         try {
-          const guest = espnGuestWebContents();
-          if (!guest || guest.isDestroyed()) return reply(200, { error: "no ESPN webview guest found (open the Live Draft view first)" });
+          const guest = guestWebContents({ host: fhost });
+          if (!guest || guest.isDestroyed()) return reply(200, { error: `no guest on ${fhost} (open that platform's browser tab first) -- refusing to read another platform's webview instead` });
           if (waitMs) await new Promise((r) => setTimeout(r, waitMs));
           const frames = guest.mainFrame.framesInSubtree.map((f) => ({ url: f.url, name: f.name }));
           if (!match) return reply(200, { frames });
@@ -574,16 +589,18 @@ function startBridge() {
       let cbody = "";
       req.on("data", (d) => { cbody += d; if (cbody.length > 1e6) req.destroy(); });
       req.on("end", async () => {
-        let selector, textMatch, nth, frameMatch;
-        try { const j = JSON.parse(cbody); selector = j.selector; textMatch = j.text; nth = Math.max(0, Number(j.nth) || 0); frameMatch = j.frame; }
+        let selector, textMatch, nth, frameMatch, chost;
+        try { const j = JSON.parse(cbody); selector = j.selector; textMatch = j.text; nth = Math.max(0, Number(j.nth) || 0); frameMatch = j.frame; chost = j.host; }
         catch { return reply(400, { error: "bad json" }); }
+        const clickHost = resolveBridgeHost(chost);
+        if (!clickHost) return reply(400, { error: `unknown host "${chost}" -- known: ${Object.keys(BRIDGE_HOSTS).join(", ")}` });
         if (selector != null && typeof selector !== "string") return reply(400, { error: "selector must be a string" });
         if (textMatch != null && typeof textMatch !== "string") return reply(400, { error: "text must be a string" });
         if (frameMatch != null && typeof frameMatch !== "string") return reply(400, { error: "frame must be a string" });
         if (!selector && !textMatch) return reply(400, { error: "give a selector or text" });
         try {
-          const guest = espnGuestWebContents();
-          if (!guest || guest.isDestroyed()) return reply(503, { error: "no ESPN webview guest found (open the Live Draft view first)" });
+          const guest = guestWebContents({ host: clickHost });
+          if (!guest || guest.isDestroyed()) return reply(503, { error: `no guest on ${clickHost} (open that platform's browser tab first) -- refusing to click in another platform's webview instead` });
           // Click in a NESTED frame when asked (the chat lives in a cross-origin iframe); else the top document.
           let targetFrame = guest.mainFrame;
           if (frameMatch) {
@@ -663,24 +680,28 @@ function startBridge() {
     let body = "";
     req.on("data", (d) => { body += d; if (body.length > 1e6) req.destroy(); });
     req.on("end", async () => {
-      let url, headers;
-      try { const j = JSON.parse(body); url = j.url; headers = j.headers || {}; } catch { return reply(400, { error: "bad json" }); }
-      // Only ESPN. The bridge exists to reuse ONE login, not to become a general-purpose proxy that
-      // any local process can point anywhere with the app's cookies attached.
-      if (!/^https:\/\/[a-z0-9.-]*espn\.com\//i.test(String(url))) return reply(400, { error: "url must be https and on espn.com" });
-      if (!win || win.isDestroyed()) return reply(503, { error: "no window" });
+      let url, headers, host;
+      try { const j = JSON.parse(body); url = j.url; headers = j.headers || {}; host = j.host; } catch { return reply(400, { error: "bad json" }); }
+      // ONE LOGIN PER PLATFORM, and a url allowlist PER PLATFORM. The bridge exists to reuse a login,
+      // not to become a general-purpose proxy that any local process can point anywhere with the app's
+      // cookies attached -- and now that there are two logins, "allowed" is a per-host question: a
+      // Yahoo url must not be requested with the ESPN guest's cookies or the other way round.
+      // `host` omitted = espn.com, so every pre-existing caller behaves exactly as before.
+      const fetchHost = resolveBridgeHost(host);
+      if (!fetchHost) return reply(400, { error: `unknown host "${host}" -- known: ${Object.keys(BRIDGE_HOSTS).join(", ")}` });
+      if (!BRIDGE_HOSTS[fetchHost].test(String(url))) return reply(400, { error: `url must be https and on ${fetchHost}` });
       try {
+        // Resolve the GUEST by host (never `win` + getElementById -- see the 2026-09-13 note above),
+        // with no fallback: if that platform's webview is not mounted, say so.
+        const guest = guestWebContents({ host: fetchHost });
+        if (!guest || guest.isDestroyed()) return reply(503, { error: `no guest on ${fetchHost} (open that platform's browser tab and sign in) -- refusing to fetch with another platform's session` });
         // Built by JSON-encoding the url and init separately so nothing the caller sends can break
         // out of the string literal it lands in -- this is code being assembled, not data.
         const initJson = JSON.stringify({ credentials: "include", headers: headers || {} });
         const inner = `fetch(${JSON.stringify(url)},${initJson})` +
           `.then(function(r){ return r.text().then(function(t){ return { status: r.status, body: t }; }); })` +
           `.catch(function(e){ return { error: String((e && e.message) || e) }; })`;
-        const out = await win.webContents.executeJavaScript(
-          `(async () => { const wv = document.getElementById("espnview");` +
-          `  if (!wv || !wv.executeJavaScript) return { error: "webview not mounted" };` +
-          `  return await wv.executeJavaScript(${JSON.stringify(inner)});` +
-          `})()`);
+        const out = await guest.executeJavaScript(inner);
         return reply(200, out ?? { error: "no result" });
       } catch (e) { return reply(500, { error: String((e && e.message) || e) }); }
     });
