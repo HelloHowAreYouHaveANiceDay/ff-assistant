@@ -64,6 +64,19 @@ export function openDb(path: string = DEFAULT_DB_PATH): DB {
 export function migrate(db: DB): void {
   db.exec(readFileSync(join(HERE, "schema.sql"), "utf8"));
   addColumns(db);
+  backfillLeagueConfig(db);
+}
+
+/** Phase 2a backfill: copy the legacy single `config` into the active league's per-league key
+ *  (`config:<leagueId>`) once, so an existing store's current league keeps its config. Idempotent. */
+function backfillLeagueConfig(db: DB): void {
+  try {
+    const id = activeLeagueId(db);
+    if (!id) return;                                   // no league synced yet -> legacy `config` still serves
+    const perLeague = getSetting(db, `config:${id}`);
+    const legacy = getSetting(db, "config");
+    if (!perLeague && legacy) setSetting(db, `config:${id}`, legacy);
+  } catch { /* league table not present on a bare store */ }
 }
 
 /**
@@ -234,8 +247,26 @@ export const DEFAULT_CONFIG = {
   levers: DEFAULT_LEVERS as Levers,
 };
 export type AppConfig = typeof DEFAULT_CONFIG;
-export function getConfig(db: DB): AppConfig {
-  const raw = getSetting(db, "config");
+/** The active league = the most-recently-synced one, or null on a store that has never synced a league.
+ *  Inlined here (not imported from leagueHistory) to avoid a db<->leagueHistory import cycle. */
+export function activeLeagueId(db: DB): string | null {
+  try {
+    const r = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id?: string } | undefined;
+    return r?.league_id ? String(r.league_id) : null;
+  } catch { return null; }   // fresh store before the league table exists
+}
+
+const configKey = (leagueId: string | null): string => (leagueId ? `config:${leagueId}` : "config");
+
+/**
+ * MULTI-LEAGUE CONFIG (2026-09-15, Phase 2a). Source of truth is per-league key `config:<leagueId>`.
+ * The legacy `config` key is kept as a MIRROR of the ACTIVE league's config, so the handful of direct
+ * `settings WHERE key='config'` readers keep working unchanged. `getConfig(db)` with no id resolves the
+ * active league; an explicit id reads that league. Falls back to the legacy key, then DEFAULT_CONFIG.
+ */
+export function getConfig(db: DB, leagueId?: string | null): AppConfig {
+  const id = leagueId === undefined ? activeLeagueId(db) : leagueId;
+  const raw = (id ? getSetting(db, configKey(id)) : undefined) ?? getSetting(db, "config");
   if (raw) {
     try {
       const s = JSON.parse(raw);
@@ -245,8 +276,19 @@ export function getConfig(db: DB): AppConfig {
   }
   return { ...DEFAULT_CONFIG };
 }
-export function setConfig(db: DB, cfg: Partial<AppConfig>): void {
-  setSetting(db, "config", JSON.stringify({ ...getConfig(db), ...cfg }));
+export function setConfig(db: DB, cfg: Partial<AppConfig>, leagueId?: string | null): void {
+  const id = leagueId === undefined ? activeLeagueId(db) : leagueId;
+  const merged = JSON.stringify({ ...getConfig(db, id), ...cfg });
+  if (id) setSetting(db, configKey(id), merged);
+  // Keep the legacy `config` mirror pointed at the ACTIVE league (or write it directly when no league).
+  if (!id || id === activeLeagueId(db)) setSetting(db, "config", merged);
+}
+
+/** Point the legacy `config` mirror at a league's config -- called when the active league changes
+ *  (a new `league_sync`), so the direct `WHERE key='config'` readers follow the switch. */
+export function setActiveLeagueConfig(db: DB, leagueId: string): void {
+  const raw = getSetting(db, configKey(leagueId));
+  if (raw) setSetting(db, "config", raw);
 }
 
 // --- my roster (the drafted team) -- keyed by draft_id ('local' for the app's working team) ---
