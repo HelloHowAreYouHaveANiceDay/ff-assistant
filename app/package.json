@@ -11,6 +11,9 @@
     "dist": "npm run build:engine && electron-builder --dir",
     "dist:installer": "npm run build:engine && electron-builder"
   },
+  "electronmon": {
+    "patterns": ["!engine/**"]
+  },
   "devDependencies": {
     "electron": "^32.2.0",
     "electron-builder": "^26.15.3",

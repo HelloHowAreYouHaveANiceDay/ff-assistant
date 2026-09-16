@@ -71,7 +71,10 @@ test("main sends the STAMP, so the renderer decides rather than trusting the pin
 
 test("the renderer keeps an independent poll as a backstop to the push", () => {
   const src = readFileSync("app/renderer/app.js", "utf8");
-  const fn = src.slice(src.indexOf("function watchForRebuild"), src.indexOf("function showStaleBanner"));
+  // WP14: the banner that bounds this slice is `showNoBoardBanner` now -- data.js is deleted, so
+  // there is no snapshot to fall back to and the bar states "NO LIVE BOARD" instead of "SNAPSHOT
+  // DATA from <date>". The function it bounds is unchanged.
+  const fn = src.slice(src.indexOf("function watchForRebuild"), src.indexOf("function showNoBoardBanner"));
   assert.match(fn, /onBoardChanged/, "must subscribe to the push");
   assert.match(fn, /setInterval\(/, "must ALSO poll -- push depends on main being wired, which is the bug class here");
   assert.match(fn, /stamp === seenAt/, "both paths must compare the same stamp so either can win");

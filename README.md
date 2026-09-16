@@ -2,25 +2,32 @@
 
 A full-auto fantasy football co-manager. It has two faces: a **TypeScript engine** (`ff`) that
 runs an ESPN auction draft end-to-end and backtests strategies against real NFL history, and a
-**desktop app** ("Fantasy Mission Control") that wraps that engine with a live, per-league board,
-authenticated ESPN browsing, and an always-present AI **Assistant**. The end goal is a double-click
-app a non-technical friend can run; the engine underneath is deterministic and validated.
+**desktop app** ("Fantasy Mission Control") that holds the logged-in ESPN and Yahoo sessions the
+engine reaches the platforms through, and shows a live, per-league board. The agent that drives it is
+**Claude Code**, over the `ff` CLI and the `ff-draft` MCP server (D26). The engine underneath is
+deterministic and validated.
 
 ## Status (2026-09)
 
 - **Engine — working.** `ff auto-draft` fills a full legal roster in budget against a live ESPN
   auction, bidding our independent values with budget discipline and live inflation repricing. The
   strategy is validated against a realistic, per-manager-modelled field (below).
-- **App — working.** The Electron app runs: a persistent Assistant, a league-synced value **Board**
-  with live ownership, authenticated ESPN pages (My Team / Scoreboard / Standings / Draft Room), a
-  **News** feed, a **Data** page and a **Model** page. Both are DERIVED, not hand-maintained: the Data
-  page's DAG (nodes, edges, and per-asset "materialize" buttons) is computed by `src/lineage/dag.ts`
-  from two registries (the ingest sources in `src/data/ingest.ts`, the feature builders and trainers
-  in `src/lineage/registry.ts`) and served whole to the renderer, and the Model page renders
-  `src/lineage/modelPage.ts`'s assembly of the model registry, the weekly/streaming serve table, the
-  live scorecard, and the pre-registered prediction ledger -- so registering a table or an artifact is
-  the whole of making it visible on either page. Both push-notify the open page when the engine's
-  lineage or model stamp moves (`ff lineage --json`, `ff models --json`, `ff ledger sync`).
+- **App -- working, and deliberately minimal (D26).** The Electron app is the LOGIN / BRIDGE /
+  BOARD cockpit, not a control panel: two logged-in `<webview>` guests (ESPN + Yahoo, each on its own
+  persistent partition) plus the loopback **app bridge** that 12+ engine modules and the 11 browser
+  MCP tools reach the platforms through, a stable CDP target on 9223, a league-synced value **Board**
+  with live ownership, and one **Status** page (active league + scoring key + board stamp, data
+  freshness, the in-app scheduler's last tick WITH failures in red, bridge health, and the one-liner
+  that connects Claude Code). There is no in-app Assistant, no Setup/News/Data/Model page and no
+  button that shells a CLI verb -- each had an `ff`/MCP equivalent, and `app/README.md` maps every
+  removed control to the verb that replaces it. Evidence, control by control:
+  `docs/ui-audit-2026-09-16.md`. The Data and Model pages' content is still DERIVED and still served
+  -- `src/lineage/dag.ts` computes the lineage graph from two registries (ingest sources in
+  `src/data/ingest.ts`, feature builders and trainers in `src/lineage/registry.ts`) and
+  `src/lineage/modelPage.ts` assembles the model registry, the weekly/streaming serve table, the live
+  scorecard and the prediction ledger -- but it is read from a terminal (`ff lineage --json`,
+  `ff model-page --json`, `ff ledger`), with the freshness and serve/scorecard tables folded into
+  Status. Status push-refreshes when the engine's lineage or model stamp moves.
 - **Config-driven, and now multi-format (D24).** Everything the ranking depends on — scoring, roster
   slots, budget, playoff format, levers — lives in one per-league `settings.config`, and the sim,
   backtest, and values all read it. Beyond parameters, the **model itself is tailored per format**: the
@@ -34,7 +41,7 @@ app a non-technical friend can run; the engine underneath is deterministic and v
   trade check, trade finder, handcuffs, depth risk, power rankings, playoff SOS, and streaming --
   whom to start or add at ONE position out of the free-agent pool) as callable
   functions over one sim context, reached identically from `ff copilot <verb>` and from the
-  Assistant's MCP surface, almost all scored as a change in our PLAYOFF probability -- the factor the
+  MCP surface, almost all scored as a change in our PLAYOFF probability -- the factor the
   simulator has measured skill on -- with playoff-week strength as the secondary and the title
   reported alongside (Phase 3, 2026-09-09). Verified end to end against the live league. See
   `docs/in-season-design.md`.
@@ -46,15 +53,17 @@ app a non-technical friend can run; the engine underneath is deterministic and v
   `fact_matchup`), reproducible by re-fetching, and they now feed the price model, the bot field, the
   positional gates and the season simulator's calibration. `docs/data-layers.md`.
 - **Not yet built:** the in-season lineup *writer* (the recommend path works; the ESPN write tools
-  are deferred until after the live draft); a snake-draft value path (the draft engine is auction-only
-  today); a per-format championship gate (`cpcv`/`backtest --format`, a lazy per-format golden master);
-  a Yahoo platform adaptor (`src/league/` has ESPN only -- the live Yahoo league is read through ad hoc
-  `scripts/yahoo-*.mjs`, not the platform seam); and multi-league/format threading through storage and
-  the read layer (one active-league resolver, per-league-filtered readers). See
-  `docs/architecture-review-2026-09-16.md` for the full finding list and work plan. The
-  SCORING half of the preseason odds accrual was the third item here and is now built: `ff scorecard`
-  grades the frozen playoff/title rows with Brier, log loss and a reliability table once a season
-  resolves, and refuses an unsettled one.
+  are deferred until after the live draft). Built on 2026-09-16 (`docs/architecture-review-2026-09-16.md`
+  section 5 has the ledger): a snake-draft value path (`src/draft/draftModel.ts`, reached by
+  `ff backtest --league <id>`), a per-format championship gate (`cpcv --league`; the incumbent's golden
+  in `data/golden.json`, the Yahoo format's CANDIDATE golden in `data/formats/<key>/golden.json`), the
+  Yahoo platform adaptor (`src/league/{platform,espnPlatform,yahoo,yahooDom}.ts`), and multi-league
+  threading (one active-league resolver, per-league-filtered readers, a per-format artifact resolver).
+  Still open there: a superflex ADP archive (the honest-arbiter arm cannot run format-natively), Yahoo
+  history in the store (the snake room is a generic field, not this league's managers), and one duplicate
+  identity key. The SCORING half of the preseason odds accrual is built: `ff scorecard` grades the frozen
+  playoff/title rows with Brier, log loss and a reliability table once a season resolves, and refuses an
+  unsettled one.
 
 ## The three things it is
 
@@ -67,8 +76,10 @@ app a non-technical friend can run; the engine underneath is deterministic and v
 2. **A validation harness.** Every strategy idea runs through a season+playoffs backtest on real
    historical NFL data before it ships. This has rejected more features than it shipped — see
    `docs/edges.md`, `docs/validation.md`. `src/draft/backtest.ts`.
-3. **A desktop cockpit.** An Electron shell (`app/`) over the engine + a SQLite store, with a Claude
-   Agent SDK Assistant that reads the live value board to answer draft questions. `src/agent/`.
+3. **A desktop cockpit.** An Electron shell (`app/`) over the engine + a SQLite store: it holds the
+   ESPN and Yahoo logins, opens the loopback bridge the engine calls back through, and shows the
+   board. The agent surface it exposes -- the same Claude Agent SDK tool registry -- is served over
+   stdio MCP to Claude Code (`ff mcp`), not as an in-app chat (D26). `src/agent/`.
 
 ## Stack
 
@@ -77,8 +88,9 @@ app a non-technical friend can run; the engine underneath is deterministic and v
 - **`better-sqlite3`** — a layered store (`src/db/`, `schema.sql`) is the single source of truth;
   every data source ingests into it (`src/data/`) and the board/values are marts over it.
 - **Electron + electron-builder** — the packaged app (`app/`); vanilla-JS renderer, no UI framework.
-- **`@anthropic-ai/claude-agent-sdk`** — the Assistant (`src/agent/`); the agent has read tools over
-  the board/players/league, but the *bid loop itself is deterministic TS, no LLM* (decision D10).
+- **`@anthropic-ai/claude-agent-sdk`** -- the agent tool surface (`src/agent/`), served to Claude Code
+  over stdio MCP (`ff mcp`) and to `ff agent-ask`; read tools over the board/players/league, but the
+  *bid loop itself is deterministic TS, no LLM* (decision D10).
 - **`playwright-core` over CDP** — attaches to bro's persistent ESPN session; never launches or
   authenticates a browser itself.
 - **Python via `uv` — legacy, superseded.** The original nflverse/FantasyPros pipeline; ported to
@@ -89,7 +101,8 @@ app a non-technical friend can run; the engine underneath is deterministic and v
 ```
 src/
   ff.ts              # the `ff` CLI: every command dispatches from here
-  agent/             # the Assistant: Claude Agent SDK tools over the board/league (agent.ts, auth.ts)
+  agent/             # the agent tool surface: Claude Agent SDK tools over the board/league, served
+                     #   to Claude Code over stdio MCP (agent.ts, mcp-stdio.ts, browserTools.ts, auth.ts)
   browser/           # playwright-core CDP attach to bro's logged-in ESPN session
   db/                # better-sqlite3 store (db.ts) + schema.sql
   data/              # TS ingesters -> the store: ingest, assemble, news, projections, history,
@@ -97,8 +110,13 @@ src/
   features/          # point-in-time feature pipeline (build.ts), this league's own draft/result/
                      #   matchup facts (picks.ts), and unconsumed rookie-prospect features (prospect.ts)
   league/            # platform-agnostic league interface (types.ts) + openLeague() (index.ts); the
-                     #   ESPN adaptor (espn.ts, espnSlots.ts, settingsDom.ts) is the only ESPN-aware file
-  lineage/           # the Data/Model pages' graphs, computed from the ingest + producer registries
+                     #   Platform seam (platform.ts: discover/syncSettings/syncRosters/urls/webview) with
+                     #   the ESPN adaptor (espn.ts, espnPlatform.ts, espnSlots.ts, settingsDom.ts) and
+                     #   the Yahoo adaptor (yahoo.ts, yahooDom.ts -- DOM readers over the app's guest)
+                     # data/leagueContext.ts is the ONE league resolver; data/formatKey.ts + formatResolve.ts
+                     #   map a league's config to its format keys and artifact paths (incumbent = data/ root);
+                     #   draft/slots.ts is the one slot-eligibility module; draft/draftModel.ts the auction|snake seam
+  lineage/           # the data/model lineage registries (freshness + model stamps; the app's Status page reads them)
                      #   (dag.ts, registry.ts, modelGraph.ts, modelPage.ts) + the prediction ledger (ledger.ts)
   model/             # the season projection artifact: builder (build.ts), embargo rule (embargo.ts),
                      #   nested-CV evaluator (evaluate.ts), feature loader (features.ts), the price
@@ -127,7 +145,7 @@ src/
 app/
   main.js            # Electron main: window, IPC handlers (each shells the `ff` engine bundle)
   preload.js         # the IPC bridge exposed to the renderer
-  renderer/          # the UI: app.js/app.css/index.html (two tab rows: leagues / pages) + dagre DAG
+  renderer/          # the UI: app.js/app.css/index.html (league tabs + three pages: Board / Browser / Status)
   package.json       # electron-builder config (NSIS installer -> ../dist-app)
 test/                # node --test fault-injection suites
 tools/               # legacy Python pipeline, superseded by src/data/* (see tools/README.md)
@@ -298,14 +316,14 @@ docs/                # architecture, decisions (D0-D24), specs, and the harness 
   the gate is that K and DST are fitted at all instead of being two intercepts. Observed weather is
   NOT a feature and a test asserts its absence -- `raw_nfl_game`'s `temp` and `wind` are measured
   after the fact, and this store has no forecast feed.
-- **BYO agent:** `mcp` serves the Assistant's own control surface over stdio MCP (`TOOL_NAMES.length`
+- **The agent surface (D26):** `mcp` serves the whole control surface over stdio MCP (`TOOL_NAMES.length`
   in `src/agent/agent.ts`, asserted by `scripts/copilot-mcp-smoke.mjs` -- 39 tools as of 2026-09-16, not
   a number to retype), so Claude
   Code (or any MCP client) can drive the draft and the season. `docs/mcp.md`; `claude mcp add
   ff-draft -- npx tsx <repo>/src/ff.ts mcp`.
 - **In-season copilot (`ff copilot <verb>`)** — the decision surface, READ-ONLY, and the same ten
-  functions the Assistant reaches as MCP tools (`src/inseason/copilot.ts`, one dispatcher in
-  `copilotActions.ts`, so a terminal and the Assistant cannot quote different numbers):
+  functions Claude Code reaches as MCP tools (`src/inseason/copilot.ts`, one dispatcher in
+  `copilotActions.ts`, so a terminal and an MCP client cannot quote different numbers):
 
   ```
   npm run ff -- copilot season-odds --schedule real --trials 3000
@@ -465,7 +483,7 @@ integration pass 3) for what each choice is worth: 13 weeks moves the championsh
 ## Where planning lives
 
 Roadmap, phases, and issue tracking are in the wiki (`wiki/projects/project--ff-assistant.md` +
-`roadmap--ff-assistant.md`). Design rationale is `docs/decisions.md` (D0-D24, incl. **D10**: the
+`roadmap--ff-assistant.md`). Design rationale is `docs/decisions.md` (D0-D26, incl. **D10**: the
 engine is deterministic TS, no LLM in the bid loop). The draft-day procedure is
 `docs/draft-day-runbook.md`.
 

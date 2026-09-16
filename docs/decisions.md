@@ -1036,6 +1036,54 @@ both are other executors' files this pass, so the duplication is recorded rather
 fix is one exported `laminarFlexFill(pool, groups)` in `slots.ts` with both call sites on it; until
 then `test/marginal-superflex.test.ts`'s agreement check is what stops the two drifting.
 
+## D26 -- The in-app Assistant is retired; Claude Code + MCP is the agent surface; the app is the login/bridge/board cockpit (2026-09-16, owner)
+
+**Decision:** The in-app chat Assistant is **RETIRED**. The agent surface is **Claude Code driving
+the `ff` CLI and the `ff-draft` MCP server** (`ff mcp` -> `src/agent/mcp-stdio.ts`, tool registry
+`src/agent/agent.ts`). The desktop app keeps exactly the three jobs a terminal cannot do: the two
+logged-in `<webview>` guests plus the loopback **app bridge**, a stable **CDP target** on 9223, and
+the **board + one Status page**. Every control that merely shelled an `ff` verb is cut.
+
+**Why this needed a decision at all.** The removal had been happening for weeks, in code, recorded
+NOWHERE -- a comment in `index.html` said the Assistant was "redundant now that Claude Code drives
+the app directly over CDP", while `README.md` listed "persistent Assistant" under **App -- working**,
+`docs/mcp.md:3` framed MCP as a way to drive the draft "**instead of** the in-app chat" (an
+alternative, not a replacement), and `docs/architecture.md` described the panel as live. Meanwhile
+the panel itself returned at its second line (`initCopilot()` -> `#cop-q` absent) and ~350 lines of
+its remains, two live IPC channels, an OAuth path and a probe harness were kept alive to serve it.
+The 2026-09-16 UI audit (`docs/ui-audit-2026-09-16.md` 5.3) refused to settle it and flagged it for
+an owner call; this is that call. The half-state was the worst of the three options.
+
+**Why retire rather than restore.** It needed nothing it lacked -- `mc.authStatus()` returned
+`{authenticated:true, source:"subscription", subscriptionType:"max"}` and `ff agent-ask` was wired
+and demonstrably working -- so this is not a capitulation to a broken feature. It is that rebuilding
+a chat box inside the app rebuilds a **worse Claude Code**: the same Agent SDK, the same 39-tool MCP
+surface, the same engine, but without a transcript, interruption, file access or a second opinion.
+D12 (2026-09-13) kept the agent surface deliberately BROAD (35 -> 39 tools) and pointed all of it
+through our own authenticated webview; this decision does not narrow that surface by one tool. It
+moves the *client*.
+
+**What this decision does NOT touch.** `src/agent/agent.ts`'s tool registry, `mcp-stdio.ts`,
+`browserTools.ts`, `src/agent/auth.ts` and `ff agent-ask` all stay: `auth.ts` is reached from the
+`ff auth` CLI verb and the `auth-status` serve method, and `agentAsk` from the `ff agent-ask` verb,
+so none of them is reachable only from the removed UI (grepped, WP14). Exactly ONE engine surface
+died with the buttons: the `data-sources` serve method, whose only consumer anywhere was a UI handler
+the Data page stopped calling (audit 4.3).
+
+**The constraint accepted:** a non-terminal user can no longer onboard, set a lever, or rebuild the
+board by clicking. That is deliberate -- this is a tool for an operator with a terminal, and the
+alternative was three buttons sharing one handler plus a Setup page that duplicated `ff league-sync`
+/ `ff refresh` / `ff set-lever`. `app/README.md` carries the one-to-one map from each removed control
+to the verb that replaces it.
+
+**Applied by WP14** (the minimal UI): 3 pages (Board / Browser / Status), 15 preload channels (was
+36), `app/renderer/app.js` 1,416 -> ~700 lines, `data.js` (284 KB) and the vendored dagre deleted.
+Two defects fixed in the same pass, both of which had been running silently: the scheduler's
+scorecard routine (`RangeError: Missing named parameter "fk"`, every 15 minutes, with no surface in
+the app on which `ok:false` could appear -- now `ok`, and Status renders a failing tick in red), and
+`/write-transaction`'s guest resolution (the last bridge route still using
+`getElementById("espnview")`, the pattern the P-3 no-fallback fix converted its five siblings off).
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

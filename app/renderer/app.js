@@ -1,55 +1,43 @@
-// Fantasy Mission Control renderer. In Electron the data is read LIVE from the SQLite store via
-// window.mc.appData() (the ff engine reads the DB); data.js is the fallback for browser preview.
-let DATA = window.PLAYERS || [];
-let NEWS = window.NEWS || [];
-let CFG = window.CONFIG || { budget: 200, slots: ["QB","RB","RB","WR","WR","TE","FLEX","K","DST","BE","BE","BE"], flex_ok: ["RB","WR","TE"] };
-const YR = window.LAST_YR || "LastYr";
-let byName = new Map(DATA.map(p => [p.Player, p]));
-{ const sp = document.getElementById("s-players"); if (sp) sp.textContent = DATA.length; }
+// Fantasy Mission Control renderer -- THE MINIMAL UI (WP14, 2026-09-16).
+//
+// WHAT THIS FILE IS NOW. Three pages: BOARD (the dense read surface), BROWSER (the two logged-in
+// <webview> guests plus the chrome to drive them), STATUS (is the system healthy, and what will
+// Claude Code see). Nothing else. The audit (docs/ui-audit-2026-09-16.md) found ~40% of the previous
+// file unreachable -- five whole view functions kept alive only by a registry object nothing indexed
+// -- and three controls that were broken rather than merely unused. The rest duplicated an `ff` verb
+// or an MCP tool, and the in-app Assistant it was built around is retired (D26).
+//
+// THE RULE THAT DECIDES WHAT LIVES HERE: keep what a terminal cannot be, cut what a terminal already
+// is. The guests and the loopback bridge are irreplaceable (12+ engine modules reach ESPN/Yahoo only
+// through the login a human performed in this window). A button that shells `ff refresh` is not.
+//
+// There is NO data.js fallback any more. It was a 284 KB checked-in snapshot nothing regenerated,
+// which rendered identically to live data -- so every failure of the live path degraded silently into
+// plausible, old dollar values. Deleting it deletes that whole failure class; a live path that fails
+// now says so on screen and the board is empty, which is the honest answer.
+let DATA = [];
+let CFG = {};   // the engine's config payload; only `levers.sleeperThreshold` is read here
+// WHICH SEASON THE "last year" COLUMNS NAME. The board serves them as `<year>Pts` / `<year>Gms`, so
+// the column KEY is data-dependent and the engine hands the year over with the payload (`appData`'s
+// `lastYr`). This used to read `window.LAST_YR`, a global that only data.js set -- so deleting
+// data.js left it on the literal fallback "LastYr", two columns keyed on fields no row has, and a
+// header that renders blank and cannot sort. Caught by clicking every sort header live, not by any
+// test: the cells were EMPTY, which looks like "no data for these players" rather than "wrong key".
+// Hence `setLastYr` below, and hence COLS being built rather than declared.
+let YR = "LastYr";
 
 const num = v => (v === "" || v == null || isNaN(v)) ? null : +v;
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 window.openUrl = u => { if (window.mc) window.mc.openExternal(u); else window.open(u, "_blank"); return false; };
 
-/* ---------- my team (persisted) ---------- */
-let TEAM = (() => { try { return JSON.parse(localStorage.getItem("mc_team") || "[]"); } catch { return []; } })();
-const saveTeam = () => { localStorage.setItem("mc_team", JSON.stringify(TEAM)); if (window.mc && window.mc.teamSet) window.mc.teamSet(TEAM); };
-const onTeam = n => TEAM.some(t => t.name === n);
-const spent = () => TEAM.reduce((s, t) => s + (+t.price || 0), 0);
-function draft(n) { const p = byName.get(n); if (!p || onTeam(n)) return; TEAM.push({ name: n, price: +p["OurValue$"] || 1 }); saveTeam(); syncTeam(); }
-function undraft(n) { TEAM = TEAM.filter(t => t.name !== n); saveTeam(); syncTeam(); }
-function setPrice(n, v) { const t = TEAM.find(x => x.name === n); if (t) { t.price = Math.max(0, +v || 0); saveTeam(); syncTeam(); } }
-function syncTeam() {
-  const sr = document.getElementById("s-roster"); if (sr) sr.textContent = `${TEAM.length}/${CFG.slots.length}  $${spent()}`;
-  if (cur === "board") drawBody();
-  if (cur === "team") views.team();
-}
-// assign drafted players to roster slots (dedicated -> FLEX -> bench)
-function rosterSlots() {
-  const slots = CFG.slots.map(s => ({ slot: s, p: null }));
-  const players = TEAM.map(t => ({ ...t, pos: (byName.get(t.name) || {}).Pos })).sort((a, b) => (b.price) - (a.price));
-  const take = (pred) => { const i = slots.findIndex(s => !s.p && pred(s.slot)); return i; };
-  for (const pl of players) {
-    let i = take(s => s === pl.pos);
-    if (i < 0 && CFG.flex_ok.includes(pl.pos)) i = take(s => s === "FLEX");
-    if (i < 0) i = take(s => s === "BE");
-    if (i < 0) i = take(() => true);
-    if (i >= 0) slots[i].p = pl;
-  }
-  return slots;
-}
+/* ---------- page switching ---------- */
+let curPage = "board";
+let ACTIVE_LEAGUE = null; // { leagueId, season, teamId, name, platform }
 
-/* ---------- view switching ---------- */
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-let cur = "board", curPage = "board";
-let ACTIVE_LEAGUE = null; // { leagueId, season, teamId, name }
-// Pages under the active league. ESPN pages drive the embedded (logged-in) webview to a league URL;
-// the rest render into #view.
-// A browser page's URL is PER PLATFORM (P-4). It used to be one ESPN template used for every league,
-// so opening "My Team" on the Yahoo league navigated the ESPN webview to
-// `fantasy.espn.com/football/team?leagueId=129048` -- a different, REAL ESPN league -- and that url,
-// being the longest espn.com one open, then became the page the bridge preferred. Each entry is the
-// same shape as LEAGUE_URL below: one builder per platform, taking the active league.
+// A browser link's URL is PER PLATFORM (P-4). It used to be one ESPN template used for every league,
+// so opening "My Team" on the Yahoo league navigated the ESPN webview to a different, REAL ESPN
+// league -- and that url, being the longest espn.com one open, then became the page the bridge
+// preferred. One builder per platform, taking the active league.
 const PAGE_URL = {
   myteam: {
     espn: l => `https://fantasy.espn.com/football/team?leagueId=${l.leagueId}&seasonId=${l.season}${l.teamId ? `&teamId=${l.teamId}` : ""}`,
@@ -68,63 +56,65 @@ const PAGE_URL = {
     yahoo: l => `https://football.fantasysports.yahoo.com/f1/${l.leagueId}/draftresults`,
   },
 };
+const BROWSER_LINKS = [["myteam","My Team"],["scoreboard","Scoreboard"],["standings","Standings"],["draft","Draft Room"]];
 const PAGES = [
   { id: "board", name: "Board", kind: "view" },
-  { id: "myteam", name: "My Team", kind: "browser" },
-  { id: "scoreboard", name: "Scoreboard", kind: "browser" },
-  { id: "standings", name: "Standings", kind: "browser" },
-  { id: "draft", name: "Draft Room", kind: "browser" },
-  { id: "news", name: "News", kind: "view" },
-  { id: "sources", name: "Data", kind: "view" },
-  { id: "model", name: "Model", kind: "view" },
-  { id: "settings", name: "Setup", kind: "view" },
+  { id: "browser", name: "Browser", kind: "browser" },
+  { id: "status", name: "Status", kind: "view" },
 ];
-const PAGE_VIEWS = { board: () => views_board(), news: () => views_news(), sources: () => views_sources(), model: () => views_model(), settings: () => views_settings() };
-/** The url for `pageId` on the ACTIVE league's platform, or null when that platform has no such page. */
-function pageUrlFor(pageId, l) {
-  const byPlat = PAGE_URL[pageId];
+const PAGE_VIEWS = { board: () => views_board(), status: () => views_status() };
+/** The url for `linkId` on the ACTIVE league's platform, or null when that platform has no such page. */
+function pageUrlFor(linkId, l) {
+  const byPlat = PAGE_URL[linkId];
   if (!byPlat || !l || !l.leagueId) return null;
   const mk = byPlat[l.platform || "espn"];
   return mk ? mk(l) : null;
 }
-/** Navigate the ACTIVE platform's webview -- never `#espnview` unconditionally. */
-function platformGo(url) { const wv = activeWv(); if (wv && wv.loadURL && url) wv.loadURL(url); }
-/** Set while switchLeague is running, so setPage does not race it with a second loadURL. */
-let suppressPageNav = false;
+/** Navigate the ACTIVE platform's webview -- never `#espnview` unconditionally.
+ *  The `.catch` is not decoration: a superseded navigation rejects with ERR_ABORTED (-3), and with no
+ *  handler each one surfaced as an uncaught rejection in the console (three were captured during the
+ *  audit, 3.1). Noise that masks a real load failure is worse than no noise. */
+function platformGo(url) {
+  const wv = activeWv();
+  if (!wv || !wv.loadURL || !url) return;
+  const p = wv.loadURL(url);
+  if (p && p.catch) p.catch((e) => { if (!/ERR_ABORTED/.test(String(e))) console.warn("navigation failed:", String(e)); });
+}
 function setPage(id) {
-  if (roomTimer) { clearInterval(roomTimer); roomTimer = null; }
   const pg = PAGES.find(p => p.id === id) || PAGES[0];
-  curPage = cur = pg.id;
+  curPage = pg.id;
   document.querySelectorAll("#pagetabs .tab").forEach(b => b.classList.toggle("on", b.dataset.page === pg.id));
   const isBrowser = pg.kind === "browser" && !!window.mc;
   const wl = document.getElementById("webview-layer"); if (wl) wl.classList.toggle("off", !isBrowser);
   if (isBrowser) {
-    // The visible webview must be the ACTIVE LEAGUE's platform before anything is navigated.
-    if (ACTIVE_LEAGUE && typeof setBrowserPlatform === "function") setBrowserPlatform(ACTIVE_LEAGUE.platform || "espn");
-    // During a LEAGUE SWITCH the caller does the one navigation itself (to the league home, as it
-    // always has). Navigating here too raced it -- two loadURLs on the same guest, and whichever
-    // settled last won -- so the landing page depended on timing.
-    if (suppressPageNav) { /* switchLeague navigates once, after this */ }
-    else {
-      const url = pageUrlFor(pg.id, ACTIVE_LEAGUE);
-      if (url) platformGo(url);
-      else if (ACTIVE_LEAGUE) leagueToast(`no "${pg.name}" page for ${(ACTIVE_LEAGUE.platform || "espn").toUpperCase()}`, "warn");
-    }
+    // SHOW the active league's platform; do NOT navigate. Opening the browser page used to force a
+    // url on the guest, which is how every league switch landed on the out-of-season Draft Room
+    // (audit 1.2). The link row navigates; the tab only reveals what is already there.
+    if (ACTIVE_LEAGUE) setBrowserPlatform(ACTIVE_LEAGUE.platform || "espn");
+    renderBrowserLinks();
   }
   else (PAGE_VIEWS[pg.id] || views_board)();
 }
-// legacy: agent tools + the copilot call setView(viewName); map old view names onto pages
-const VIEW_TO_PAGE = { board: "board", players: "board", team: "myteam", news: "news", room: "draft", live: "draft", sources: "sources", settings: "settings", copilot: "board" };
-function setView(v) { setPage(VIEW_TO_PAGE[v] || "board"); }
 function renderPageTabs() {
   const el = document.getElementById("pagetabs"); if (!el) return;
   el.innerHTML = PAGES.map(p => `<button class="tab ${p.id === curPage ? "on" : ""}" data-page="${p.id}">${esc(p.name)}</button>`).join("");
   el.querySelectorAll(".tab").forEach(b => b.onclick = () => setPage(b.dataset.page));
 }
-// Top row = one tab PER LEAGUE (ESPN + Yahoo + …), the active one highlighted. Clicking a tab makes
-// that league active (engine `league-set-active` -> per-league config becomes the store's active config)
-// AND switches the embedded browser to that platform's webview, navigated to the league. So one click
-// moves both the app's league CONTEXT and the visible browser together.
+function renderBrowserLinks() {
+  const el = document.getElementById("lv-links"); if (!el) return;
+  el.innerHTML = BROWSER_LINKS.map(([id, name]) =>
+    `<button class="pbtn lnk" data-link="${id}">${esc(name)}</button>`).join("");
+  el.querySelectorAll("[data-link]").forEach(b => b.onclick = () => {
+    const url = pageUrlFor(b.dataset.link, ACTIVE_LEAGUE);
+    if (url) platformGo(url);
+    else leagueToast(`no "${b.textContent}" page for ${((ACTIVE_LEAGUE && ACTIVE_LEAGUE.platform) || "espn").toUpperCase()}`, "warn");
+  });
+}
+
+// Top row = one tab PER LEAGUE (ESPN + Yahoo + ...), the active one highlighted. Clicking a tab makes
+// that league active (engine `league-set-active` -> per-league config becomes the store's active
+// config) AND switches the embedded browser to that platform's webview, navigated to the league. So
+// one click moves both the app's league CONTEXT and the visible browser together.
 const LEAGUE_URL = { espn: () => "https://fantasy.espn.com/football/", yahoo: (id) => "https://football.fantasysports.yahoo.com/f1/" + id };
 async function renderLeagueTabs() {
   const el = document.getElementById("leaguetabs"); if (!el) return;
@@ -135,10 +125,8 @@ async function renderLeagueTabs() {
   if (act) ACTIVE_LEAGUE = { leagueId: act.league_id, season: act.season, teamId: act.team_id, name: act.name, platform: act.platform || "espn" };
   el.innerHTML = (leagues.length
     ? leagues.map((l) => `<button class="tab league${l.league_id === (act && act.league_id) ? " on" : ""}" data-lg="${esc(l.league_id)}" data-plat="${esc(l.platform || "espn")}">${esc(l.name || "League")} <span class="platbadge">${esc((l.platform || "espn").toUpperCase())}</span></button>`).join("")
-    : `<button class="tab league on">Set up a league →</button>`)
-    + `<button class="tab league addleague" id="lg-add">+ league</button>`;
+    : `<button class="tab league on">No league synced -- run <code>ff league-sync</code></button>`);
   for (const b of el.querySelectorAll(".tab.league[data-lg]")) b.onclick = () => switchLeague(b.dataset.lg, b.dataset.plat);
-  const add = document.getElementById("lg-add"); if (add) add.onclick = () => setPage("settings");
 }
 /** A small corner message for what the ENGINE said about a league switch -- the board stamp it
  *  rebuilt, or the refusal it returned. Rendering nothing there is how a stale board gets read as
@@ -180,13 +168,11 @@ function leagueSwitchMessage(res, leagueId) {
 }
 
 async function switchLeague(leagueId, platform) {
-  // ORDER MATTERS, and it was wrong (P-4). `setView("live")` ran FIRST, and setPage then navigated
-  // whatever webview was still active -- the ESPN one -- to a URL built from the NEW league's id. So
-  // every switch to the Yahoo league first drove the hidden ESPN guest to a real, unrelated ESPN
-  // league. The platform is now set before anything navigates, and ACTIVE_LEAGUE is updated before
-  // setView so setPage builds the url for the right platform.
+  // ORDER MATTERS, and it was wrong once (P-4). The platform is set BEFORE anything navigates, and
+  // ACTIVE_LEAGUE is updated before any url is built, so a switch to the Yahoo league can never drive
+  // the hidden ESPN guest to a real, unrelated ESPN league.
   const plat = platform || "espn";
-  if (typeof setBrowserPlatform === "function") setBrowserPlatform(plat);
+  setBrowserPlatform(plat);
   if (ACTIVE_LEAGUE && ACTIVE_LEAGUE.leagueId === leagueId) ACTIVE_LEAGUE.platform = plat;
   else ACTIVE_LEAGUE = { leagueId, season: (ACTIVE_LEAGUE && ACTIVE_LEAGUE.season) || null, teamId: null, name: null, platform: plat };
 
@@ -198,31 +184,51 @@ async function switchLeague(leagueId, platform) {
   leagueToast(...leagueSwitchMessage(res, leagueId));
 
   await renderLeagueTabs();                                           // ACTIVE_LEAGUE from the engine
-  suppressPageNav = true;
-  try { if (typeof setView === "function") setView("live"); }         // show the embedded browser
-  finally { suppressPageNav = false; }
-  // EXACTLY ONE navigation, to the league HOME -- the landing page this has always used.
+  renderBrowserLinks();
+  // EXACTLY ONE navigation, to the league HOME. The PAGE does not change: a switch moves the league
+  // context, and yanking the user onto a different page (it used to land on the Draft Room, in
+  // September) is a second thing they did not ask for.
   const url = LEAGUE_URL[plat] ? LEAGUE_URL[plat](leagueId) : null;
   if (url) platformGo(url);
+  // The new league's ownership overlay -- the previous league's owners on the new board would be a
+  // quieter version of exactly the S-8 failure above.
+  loadOwnership();
+  if (curPage === "status") views_status();
 }
 
 /* ---------- DRAFT BOARD ---------- */
-const COLS = [
- ["act","","act"],["Rank","#","num"],["Player","Player","player"],["Pos","Pos","pos"],
- ["Us_Pos","Us","t"],["ECR_Pos","ECR","t"],["ESPN_Pos","ESPN","t"],["Tier","Tier","t"],
- ["Team","Team","team"],["Owner","Owner","owner"],["Bye","Bye","num"],["Age","Age","num"],
- ["OurValue$","Val$","val"],["vsECR","vsECR","delta"],
- ["ADP","ADP","num1"],["vsADP","vsADP","delta"],["Mkt30d","Mkt30d","delta"],
- ["ProjPts","Proj","num1"],["band","Range p10-p90","band"],
- [YR+"Pts",YR+"Pts","num1"],[YR+"Gms",YR+"G","gms"],
- ["ECR","ECR","num1"],["ESPN_Rank","ESPN#","num"],["ESPN_ADP","eADP","num1"],["Rostered%","Own%","num"],
- ["flags","News / Flags","flags"]
-];
-const LEFT = new Set(["player","pos","flags","t","act","owner"]);
+const LEFT = new Set(["player","pos","flags","t","team","owner"]);
+function buildCols() {
+  return [
+   ["Rank","#","num"],["Player","Player","player"],["Pos","Pos","pos"],
+   ["Us_Pos","Us","t"],["ECR_Pos","ECR","t"],["ESPN_Pos","ESPN","t"],["Tier","Tier","t"],
+   ["Team","Team","team"],["Owner","Owner","owner"],["Bye","Bye","num"],["Age","Age","num"],
+   ["OurValue$","Val$","val"],["vsECR","vsECR","delta"],
+   ["ADP","ADP","num1"],["vsADP","vsADP","delta"],["Mkt30d","Mkt30d","delta"],
+   ["ProjPts","Proj","num1"],["band","Range p10-p90","band"],
+   [YR+"Pts",YR+"Pts","num1"],[YR+"Gms",YR+"G","gms"],
+   ["ECR","ECR","num1"],["ESPN_Rank","ESPN#","num"],["ESPN_ADP","eADP","num1"],["Rostered%","Own%","num"],
+   ["flags","News / Flags","flags"]
+  ];
+}
 // columns where higher = better -> first click sorts descending (best first); everything else ascending
-const DESC_FIRST = new Set(["OurValue$","vsECR","vsADP","Mkt30d","ProjPts","band",YR+"Pts",YR+"Gms","Rostered%"]);
+function buildDescFirst() { return new Set(["OurValue$","vsECR","vsADP","Mkt30d","ProjPts","band",YR+"Pts",YR+"Gms","Rostered%"]); }
+let COLS = buildCols();
+let DESC_FIRST = buildDescFirst();
+/** Adopt the season the engine says the "last year" columns are keyed on, and rebuild the two
+ *  tables that embed it. A no-op when it has not changed, so calling it on every board load is free. */
+function setLastYr(lastYr) {
+  const v = lastYr == null || lastYr === "" ? null : String(lastYr);
+  if (!v || v === YR) return;
+  YR = v; COLS = buildCols(); DESC_FIRST = buildDescFirst();
+  if (bst.sort === "Rank" || !COLS.some(c => c[0] === bst.sort)) bst.sort = "Rank";
+}
 const POS = ["ALL","QB","RB","WR","TE","K","DST"];
-let bst = { q:"", pos:"ALL", sleep:false, avail:false, hideDrafted:false, sort:"Rank", dir:1 };
+// `avail` ("Hide OUT") and `hideDrafted` are GONE, not disabled. The first tested `r.Injury`, a field
+// absent from all 529 served rows, so the checkbox was a proven no-op that read as a working filter
+// (audit 1.5/3.4); the second filtered against a manual localStorage draft tally that is empty all
+// season and is orthogonal to the real synced roster (MCP `read_my_team` / the Owner overlay).
+let bst = { q:"", pos:"ALL", sleep:false, sort:"Rank", dir:1 };
 let OWNERSHIP = {}; // player name -> {owner, team, slot} for the active league (empty = all free agents)
 
 // NFL primary team colors for the Team chips. Aliases fold old/relocated abbreviations onto the current one.
@@ -241,6 +247,13 @@ function contrastText(hex) { const h = hex.replace("#",""); const r=parseInt(h.s
 function teamChip(t) { t = (t||"").toUpperCase(); if (!t) return ""; const c = TEAM_COLORS[t] || "#6b6b6b";
   return `<span class="team-chip" style="background:${c};color:${contrastText(c)}">${esc(t)}</span>`; }
 
+/** Who owns a player in the active league, as the string the Owner cell shows -- "" for a free agent.
+ *  ONE function, read by both `cell()` and `sortVal()`. The Owner column used to sort on `r.Owner`,
+ *  a field the board has never served (ownership is an overlay), so `sortVal` returned the missing
+ *  sentinel for all 529 rows and the header sorted the table to itself (audit 1.5, verified
+ *  NO-REORDER live). Deriving both the cell and the sort key here is what makes that impossible. */
+function ownerOf(r) { const o = OWNERSHIP[r.Player]; return o ? String(o.team || o.owner || "") : ""; }
+
 function views_board() {
   const view = document.getElementById("view");
   view.innerHTML = `
@@ -248,8 +261,6 @@ function views_board() {
      <input type="search" id="q" placeholder="Search player..." value="${esc(bst.q)}">
      <div class="pills" id="pos"></div>
      <label class="tg"><input type="checkbox" id="sleep" ${bst.sleep?"checked":""}> Sleepers</label>
-     <label class="tg"><input type="checkbox" id="avail" ${bst.avail?"checked":""}> Hide OUT</label>
-     <label class="tg"><input type="checkbox" id="hd" ${bst.hideDrafted?"checked":""}> Hide drafted</label>
      <span class="count" id="count"></span>
    </div>
    <div class="tblwrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>`;
@@ -258,23 +269,22 @@ function views_board() {
     b.onclick = () => { bst.pos = p; [...posEl.children].forEach(c => c.classList.toggle("on", c.textContent===p)); drawBody(); }; posEl.appendChild(b); });
   let qt; document.getElementById("q").oninput = e => { const v = e.target.value.toLowerCase(); clearTimeout(qt); qt = setTimeout(() => { bst.q = v; drawBody(); }, 90); };
   document.getElementById("sleep").onchange = e => { bst.sleep = e.target.checked; drawBody(); };
-  document.getElementById("avail").onchange = e => { bst.avail = e.target.checked; drawBody(); };
-  document.getElementById("hd").onchange = e => { bst.hideDrafted = e.target.checked; drawBody(); };
-  document.getElementById("tbody").onclick = e => { const b = e.target.closest("[data-add]"); if (b) { const n = b.dataset.add; onTeam(n) ? undraft(n) : draft(n); } };
   thead(); drawBody();
-  if (window.mc && window.mc.ownership) window.mc.ownership().then(o => { OWNERSHIP = (o && o.ownership) || {}; drawBody(); }).catch(() => {});
 }
 function thead() {
-  const tr = COLS.map(([k,l,kind]) => { const isL = LEFT.has(kind) || k==="Team" || k==="Tier";
-    const ar = bst.sort===k ? (bst.dir>0?" ▲":" ▼") : "";
+  const tr = COLS.map(([k,l,kind]) => { const isL = LEFT.has(kind) || k==="Tier";
+    const ar = bst.sort===k ? (bst.dir>0?" &#9650;":" &#9660;") : "";
     return `<th class="${isL?'l':''}" data-k="${k}">${esc(l)}<span class="ar">${ar}</span></th>`; }).join("");
   document.getElementById("thead").innerHTML = "<tr>" + tr + "</tr>";
-  document.querySelectorAll("thead th").forEach(th => th.onclick = () => { const k = th.dataset.k; if (k==="flags"||k==="act") return;
+  document.querySelectorAll("thead th").forEach(th => th.onclick = () => { const k = th.dataset.k; if (k==="flags") return;
     // first click on a "higher = better" column sorts DESCENDING (best first); rank-like columns ascending
     if (bst.sort===k) bst.dir *= -1; else { bst.sort = k; bst.dir = DESC_FIRST.has(k) ? -1 : 1; } thead(); drawBody(); });
 }
 function sortVal(r,k) {
-  if (k==="flags"||k==="act") return 0;
+  if (k==="flags") return 0;
+  // Owner is an OVERLAY, not a row field -- sort it by what the cell actually shows. A free agent
+  // sorts last rather than first, because "unowned" is the default state, not a name.
+  if (k==="Owner") { const o = ownerOf(r); return o || "zzzz"; }
   // The band column holds no field of its own, so sort it by what it actually shows: WIDTH. That is
   // the useful question ("who is most uncertain?") and without this the header would compare
   // undefined for every row and appear to do nothing when clicked.
@@ -338,11 +348,10 @@ function bandCell(r) {
 }
 function cell(r,k,kind) {
   if (kind==="band") return bandCell(r);
-  if (kind==="act") { const on = onTeam(r.Player); return `<td class="l"><button class="add ${on?'on':''}" data-add="${esc(r.Player)}" title="${on?'Drafted (click to remove)':'Draft to my team'}">${on?'&#10003;':'+'}</button></td>`; }
   if (kind==="player") return `<td class="l pl">${esc(r.Player)}</td>`;
   if (kind==="pos") return `<td class="l"><span class="pos ${r.Pos}">${esc(r.Pos)}</span></td>`;
   if (kind==="team") return `<td class="l">${teamChip(r.Team)}</td>`;
-  if (kind==="owner") { const o = OWNERSHIP[r.Player]; return `<td class="l">${o ? `<span class="owner-chip" title="${esc(o.owner||"")}${o.slot?" · "+esc(o.slot):""}">${esc(o.team||o.owner||"?")}</span>` : '<span class="mut fa">FA</span>'}</td>`; }
+  if (kind==="owner") { const o = OWNERSHIP[r.Player]; return `<td class="l">${o ? `<span class="owner-chip" title="${esc(o.owner||"")}${o.slot?" - "+esc(o.slot):""}">${esc(ownerOf(r)||"?")}</span>` : '<span class="mut fa">FA</span>'}</td>`; }
   if (kind==="val") return `<td class="val">$${esc(r["OurValue$"])}</td>`;
   if (kind==="delta") { const v = num(r[k]); return `<td class="${v>0?'pos-hi':(v<0?'neg-hi':'')}">${v==null?"":(v>0?"+"+v:v)}</td>`; }
   if (kind==="gms") { const v = num(r[YR+"Gms"]); return `<td class="${(v!=null&&v<10)?'neg-hi':''}">${v==null?"":v}</td>`; }
@@ -365,8 +374,6 @@ function drawBody() {
     if (bst.q && !r.Player.toLowerCase().includes(bst.q)) return false;
     if (bst.pos!=="ALL" && r.Pos!==bst.pos) return false;
     if (bst.sleep && !(num(r.vsECR) > (CFG.levers?.sleeperThreshold ?? 5))) return false;
-    if (bst.avail && /Out/i.test(r.Injury||"")) return false;
-    if (bst.hideDrafted && onTeam(r.Player)) return false;
     return true;
   });
   const isNum = !LEFT.has((COLS.find(c=>c[0]===bst.sort)||[])[2]);
@@ -378,316 +385,21 @@ function drawBody() {
   });
   buildAxis();   // shared per-position scale + replacement line, recomputed from the current DATA
   const tb = document.getElementById("tbody"); if (!tb) return;
-  tb.innerHTML = rs.map(r => `<tr${onTeam(r.Player)?' class="mine"':''}>` + COLS.map(([k,l,kind]) => cell(r,k,kind)).join("") + "</tr>").join("");
+  tb.innerHTML = rs.map(r => "<tr>" + COLS.map(([k,l,kind]) => cell(r,k,kind)).join("") + "</tr>").join("");
   const c = document.getElementById("count"); if (c) c.textContent = rs.length + " of " + DATA.length;
 }
-
-/* ---------- MY TEAM ---------- */
-function views_team() {
-  const slots = rosterSlots();
-  const budget = CFG.budget, sp = spent(), rem = budget - sp;
-  const open = slots.filter(s => !s.p).length;
-  const proj = TEAM.reduce((s, t) => s + (num((byName.get(t.name)||{}).ProjPts) || 0), 0);
-  const maxBid = rem - Math.max(0, open - 1); // $1 reserve per other open slot
-  const need = {}; slots.filter(s => !s.p).forEach(s => need[s.slot] = (need[s.slot]||0)+1);
-  const rowFor = s => {
-    if (!s.p) return `<tr class="empty"><td class="slot">${s.slot}</td><td colspan="3" class="mut">— open —</td></tr>`;
-    const p = byName.get(s.p.name) || {};
-    return `<tr><td class="slot">${s.slot}</td><td class="l pl">${esc(s.p.name)} <span class="pos ${p.Pos}">${esc(p.Pos)}</span></td>
-      <td><input class="price" type="number" value="${s.p.price}" data-name="${esc(s.p.name)}"></td>
-      <td class="l"><button class="rm" data-rm="${esc(s.p.name)}">remove</button></td></tr>`;
-  };
-  document.getElementById("view").innerHTML = `
-    <div class="team-wrap">
-      <div class="team-stats">
-        ${stat("Budget", "$"+budget)}${stat("Spent", "$"+sp)}${stat("Remaining", "$"+rem, rem<0?"bad":"")}
-        ${stat("Max bid", "$"+Math.max(0,maxBid), "", "$"+rem+" − $1/open slot")}
-        ${stat("Slots", (CFG.slots.length-open)+"/"+CFG.slots.length)}${stat("Proj pts", Math.round(proj))}
-      </div>
-      <div class="team-body">
-        <div class="roster">
-          <div class="sec"><h2>Roster</h2><span class="lbl">${open} open</span></div>
-          <table class="rtbl">${slots.map(rowFor).join("")}</table>
-        </div>
-        <div class="needs">
-          <div class="sec"><h2>Needs</h2><span class="lbl">open by slot</span></div>
-          ${Object.keys(need).length ? Object.entries(need).map(([k,v])=>`<div class="needrow"><span>${k}</span><b>${v}</b></div>`).join("") : '<div class="mut">Roster full.</div>'}
-          <div class="sec" style="margin-top:20px"><h2>Best available</h2><span class="lbl">by our value</span></div>
-          ${bestAvail(need).map(p=>`<div class="needrow"><span class="l"><span class="pos ${p.Pos}">${p.Pos}</span> ${esc(p.Player)}</span><button class="add" data-add="${esc(p.Player)}">+ $${p["OurValue$"]}</button></div>`).join("") || '<div class="mut">—</div>'}
-        </div>
-      </div>
-      ${TEAM.length? "" : '<div class="hint mut">Add players from the Players tab (the + button) to build your roster here.</div>'}
-    </div>`;
-  const view = document.getElementById("view");
-  view.querySelectorAll(".rm").forEach(b => b.onclick = () => undraft(b.dataset.rm));
-  view.querySelectorAll("[data-add]").forEach(b => b.onclick = () => draft(b.dataset.add));
-  view.querySelectorAll(".price").forEach(i => i.onchange = () => setPrice(i.dataset.name, i.value));
-}
-function stat(label, val, cls="", sub="") { return `<div class="tile"><div class="lbl">${label}</div><div class="tval ${cls}">${val}</div>${sub?`<div class="tsub mut">${sub}</div>`:""}</div>`; }
-function bestAvail(need) {
-  const wantPos = new Set(Object.keys(need).flatMap(s => s==="FLEX"?CFG.flex_ok : s==="BE"?["QB","RB","WR","TE","K","DST"] : [s]));
-  return DATA.filter(p => !onTeam(p.Player) && (wantPos.size?wantPos.has(p.Pos):true))
-    .sort((a,b)=>(+b["OurValue$"])-(+a["OurValue$"])).slice(0,8);
+/** The per-league ownership overlay, then a repaint if the board is what is on screen. */
+function loadOwnership() {
+  if (!window.mc || !window.mc.ownership) return;
+  window.mc.ownership().then(o => { OWNERSHIP = (o && o.ownership) || {}; if (curPage === "board") drawBody(); }).catch(() => {});
 }
 
-/* ---------- NEWS ---------- */
-let nst = { cat: "all", q: "" };
-function views_news() {
-  const cats = [["all","All"],["headline","Headlines"],["injury","Injuries"],["trending","Buzz"]];
-  document.getElementById("view").innerHTML = `
-    <div class="toolbar">
-      <input type="search" id="nq" placeholder="Search news…" value="${esc(nst.q)}">
-      <div class="pills" id="ncat"></div>
-      <span class="count" id="ncount"></span>
-    </div>
-    <div class="newsfeed" id="feed"></div>`;
-  const el = document.getElementById("ncat");
-  cats.forEach(([k,l]) => { const b = document.createElement("div"); b.className = "pill"+(k===nst.cat?" on":""); b.textContent = l;
-    b.onclick = () => { nst.cat = k; [...el.children].forEach(c=>c.classList.toggle("on",c.textContent===l)); drawFeed(); }; el.appendChild(b); });
-  let qt; document.getElementById("nq").oninput = e => { const v = e.target.value.toLowerCase(); clearTimeout(qt); qt = setTimeout(() => { nst.q = v; drawFeed(); }, 90); };
-  drawFeed();
-  function drawFeed() {
-    let items = NEWS.filter(n => (nst.cat==="all" || n.category===nst.cat)
-      && (!nst.q || `${n.player} ${n.detail} ${n.source}`.toLowerCase().includes(nst.q)));
-    items.sort((a,b) => (Date.parse(b.asof) || 0) - (Date.parse(a.asof) || 0)); // latest first
-    const cnt = document.getElementById("ncount"); if (cnt) cnt.textContent = `${items.length} items`;
-    document.getElementById("feed").innerHTML = items.slice(0, 600).map(n => {
-      const val = (byName.get(n.player)||{})["OurValue$"];
-      const tag = n.category==="injury"?`<span class="badge b-out">${esc((n.detail||"").split(" - ")[0])}</span>`
-        : n.category==="trending"?`<span class="badge ${/add/.test(n.source)?'b-add':'b-drop'}">${/add/.test(n.source)?'+ADD':'-DROP'}</span>` : "";
-      const body = n.url ? `<a href="#" onclick="return openUrl('${esc(n.url)}')">${esc(n.detail)}</a>` : esc(n.detail);
-      return `<div class="newsrow"><span class="ntime mut" title="${esc(n.asof)}">${esc(relTime(n.asof))}</span>`
-        + `<span class="pos ${n.pos}">${esc(n.pos)}</span><span class="pl">${esc(n.player)}</span>`
-        + `${val?`<span class="nval mut">$${val}</span>`:""}${tag}`
-        + `<span class="ntext">${body}</span><span class="nsrc mut">${esc(n.source)}</span></div>`;
-    }).join("") || '<div class="placeholder"><p>No items.</p></div>';
-  }
-}
-
-/* ---------- DRAFT ROOM (live cockpit / agent copilot) ---------- */
-let roomTimer = null;
-const valOf = n => { const p = byName.get(n); return p ? ` · our $${p["OurValue$"]}` : ""; };
-function views_room() {
-  document.getElementById("view").innerHTML = `<div id="room" class="roomwrap"></div>`;
-  drawRoom();
-  if (window.mc) roomTimer = setInterval(drawRoom, 2000);
-}
-function ctrlBar(live, paused, running) {
-  return `<div class="ctrlbar">
-    <span class="astatus"><i class="dot ${live?(paused?'amber':'green'):'red'}"></i> ${live?(paused?'AGENT PAUSED':'AGENT LIVE'):(running?'starting…':'agent idle')}</span>
-    <span class="ctrl-sp"></span>
-    <button class="pbtn" data-act="practice">Launch practice room</button>
-    <button class="pbtn" data-act="${running?'stop':'start'}">${running?'Stop agent':'Start agent'}</button>
-    <button class="pbtn" data-act="pause" ${live?'':'disabled'}>${paused?'Resume':'Pause (take the wheel)'}</button>
-  </div>`;
-}
-function wireCtrl(el) {
-  el.querySelectorAll(".ctrlbar [data-act]").forEach(b => b.onclick = async () => {
-    const a = b.dataset.act; b.disabled = true;
-    if (a === "practice") await window.mc.agentStart("practice");
-    else if (a === "start") await window.mc.agentStart("auto");
-    else if (a === "stop") await window.mc.agentStop();
-    else if (a === "pause") { const p = await window.mc.isPaused(); await window.mc.pause(!p); }
-    setTimeout(drawRoom, 400);
-  });
-}
-async function drawRoom() {
-  const el = document.getElementById("room"); if (!el) return;
-  if (!window.mc) {
-    setStatus("amber", "Draft: open in the app");
-    el.innerHTML = `<div class="placeholder"><div class="big">&#9889;</div><h2>Draft Room</h2>
-      <p>The live cockpit runs inside the desktop app — it reads the agent's live decisions and can start/stop/pause it. Launch with <code>cd app &amp;&amp; npm start</code>.</p></div>`;
-    return;
-  }
-  const ls = await window.mc.liveState();
-  const status = await window.mc.agentStatus();
-  const d = ls && ls.data;
-  const live = !!(d && ls.ageSec < 30);
-  const paused = !!(d && d.paused);
-  const log = await window.mc.draftState();
-  const drafted = new Set(((log && log.data && log.data.picks) || (d && d.recentPicks) || []).map(p => p.name));
-  const avail = DATA.filter(p => !drafted.has(p.Player)).sort((a,b) => (+b["OurValue$"]) - (+a["OurValue$"]));
-
-  if (!live) {
-    setStatus(status.running ? "amber" : "red", status.running ? "Draft: starting" : "Draft: not connected");
-    el.innerHTML = ctrlBar(false, false, status.running) + `<div class="placeholder"><div class="big">&#9889;</div><h2>No live draft yet</h2>
-      <p>Launch a practice room (or enter the real draft), then Start agent. This panel then shows the agent's live recommended bid, our roster and budget, and the board of best-available players.</p></div>`;
-    wireCtrl(el); return;
-  }
-  setStatus(paused ? "amber" : "green", paused ? "Draft: PAUSED" : `Draft: LIVE (${d.league.picksMade} picks)`);
-  const ob = d.onBlock, dec = d.decision || {};
-  const ACT = { bid:["BID","a-bid"], pass:["PASS","a-pass"], skip:["SKIP","a-mut"], watch:["WATCH","a-mut"], leading:["HIGH BIDDER","a-lead"], idle:["—","a-mut"], paused:["PAUSED","a-mut"] };
-  const [actLabel, actCls] = ACT[dec.action] || ["—","a-mut"];
-  const pick = ob ? `
-    <div class="pick">
-      <div class="pick-l">
-        <div class="lbl">On the block</div>
-        <div class="pick-name"><span class="pos ${ob.pos||''}">${esc(ob.pos||"")}</span> ${esc(ob.player)}</div>
-        <div class="mut">current bid <b>$${ob.currentOffer||0}</b> · ESPN max $${ob.myMax==null?"—":ob.myMax}${valOf(ob.player)}</div>
-      </div>
-      <div class="pick-r">
-        <div class="lbl">Agent recommends</div>
-        <div class="pick-bid">$${dec.cap==null?"—":dec.cap} <span class="act ${actCls}">${actLabel}</span></div>
-        <div class="mut">${esc(dec.reason||"")}</div>
-      </div>
-    </div>`
-    : `<div class="pick"><div class="pick-l"><div class="lbl">Between nominations</div><div class="pick-name mut">waiting for the next player…</div></div><div class="pick-r"><div class="lbl">Agent</div><div class="pick-bid mut">idle</div></div></div>`;
-  const us = d.us || {}, budget = us.budget||0, infl = d.liveInflation ? d.liveInflation.toFixed(2) : "—";
-  const roster = (us.roster||[]);
-  const openSummary = Object.entries(us.openByBase||{}).filter(([k,v])=>v>0).map(([k,v])=>`${k}×${v}`).concat((us.flexOpen?[`FLEX×${us.flexOpen}`]:[]),(us.benchOpen?[`BE×${us.benchOpen}`]:[])).join("  ");
-  const maxBid = budget - Math.max(0, (us.open||1) - 1);
-  el.innerHTML = ctrlBar(true, paused, status.running) + pick + `
-    <div class="team-stats">
-      ${stat("Our budget","$"+budget)}${stat("Spent","$"+(us.spent||0))}${stat("Max bid","$"+Math.max(0,maxBid))}
-      ${stat("Inflation",infl,+infl<0.9?"bad":"")}${stat("Filled",(us.filled||0)+"/"+((us.filled||0)+(us.open||0)))}${stat("League $",(d.league.remainingDollars? "$"+d.league.remainingDollars : "—"))}
-    </div>
-    <div class="team-body">
-      <div class="roster"><div class="sec"><h2>Our roster</h2><span class="lbl">${openSummary?("open  "+openSummary):"full"}</span></div>
-        <table class="rtbl">${roster.length? roster.map(s=>`<tr><td class="slot">${esc(s.slot)}</td><td class="l pl">${esc(s.player)}</td><td class="val">$${s.price==null?"":s.price}</td></tr>`).join("") : '<tr><td class="mut">no players won yet</td></tr>'}</table>
-        <div class="sec" style="margin-top:20px"><h2>Recent picks</h2><span class="lbl">league feed</span></div>
-        ${(d.recentPicks||[]).slice().reverse().map(p=>`<div class="needrow"><span class="l">${esc(p.name)} <span class="mut">${esc(p.pos||"")}</span></span><b>$${p.price}</b></div>`).join("")||'<div class="mut">—</div>'}
-      </div>
-      <div class="needs"><div class="sec"><h2>Best available</h2><span class="lbl">undrafted · our value</span></div>
-        <table class="rtbl">${avail.slice(0,20).map(p=>`<tr><td class="l"><span class="pos ${p.Pos}">${p.Pos}</span> <b>${esc(p.Player)}</b></td><td class="val">$${p["OurValue$"]}</td><td class="mut">ECR ${p.ECR}</td></tr>`).join("")}</table>
-      </div>
-    </div>`;
-  wireCtrl(el);
-}
-
-/* ---------- SETTINGS / SETUP ---------- */
-function views_settings() {
-  document.getElementById("view").innerHTML = `
-    <div class="settings">
-      <div class="sec"><h2>Setup</h2><span class="lbl">connect your ESPN league</span></div>
-      <div id="setup-status" class="setupbanner mut">Checking your setup…</div>
-      <ol class="setupsteps">
-        <li><b>1 · Connect ESPN</b> <button class="pbtn sm" id="su-connect">Open ESPN login</button> <span class="mut">log into your ESPN account in the Live Draft tab</span></li>
-        <li><b>2 · Sync your league</b> <button class="pbtn sm" id="su-sync">Sync my league</button> <span class="mut">reads your teams, roster + scoring rules</span></li>
-        <li><b>3 · Build your board</b> <button class="pbtn sm" id="su-build">Build board</button> <span class="mut">~5s — values tailored to your league</span></li>
-      </ol>
-      <pre class="cmd" id="log">Ready.</pre>
-      <div class="sec" style="margin-top:24px"><h2>Detected league</h2><span class="lbl">from ESPN sync</span></div>
-      <div id="league-kv"><div class="mut">—</div></div>
-      <div class="sec" style="margin-top:24px"><h2>Levers</h2><span class="lbl">tuning — the assistant can set these too</span></div>
-      <div id="levers-box"><div class="mut">—</div></div>
-      <div class="btnrow"><button class="pbtn" id="save-levers">Save levers</button><button class="pbtn" id="reset-levers">Reset to defaults</button></div>
-      <div class="sec" style="margin-top:24px"><h2>Data</h2><span class="lbl">refresh</span></div>
-      <div class="btnrow">
-        <button class="pbtn" id="refresh">Refresh values + news</button>
-        <button class="pbtn" id="reteam">Clear my team</button>
-      </div>
-      ${window.mc?"":'<p class="mut">Setup + refresh run the engine — available when running inside the app.</p>'}
-    </div>`;
-  const log = document.getElementById("log");
-  const build = async () => {
-    if (!window.mc) return log.textContent = "Run inside the app to build.";
-    log.textContent = "Building your board (nflverse fetch + values, ~5s)...";
-    const r = await window.mc.refreshData(); log.textContent = r.out || "done";
-    if (r.ok) { log.textContent += "\nReloading..."; setTimeout(() => location.reload(), 900); }
-  };
-  document.getElementById("su-connect").onclick = () => { setView("live"); };
-  document.getElementById("su-sync").onclick = async () => {
-    if (!window.mc) return log.textContent = "Run inside the app to sync.";
-    log.textContent = "Syncing your league from ESPN (make sure you're logged in)...";
-    const r = await window.mc.syncLeague(); log.textContent = r.out || "sync done";
-    loadLeagueStatus();
-  };
-  document.getElementById("su-build").onclick = build;
-  document.getElementById("refresh").onclick = build;
-  document.getElementById("reteam").onclick = () => { if (confirm("Clear your drafted team?")) { TEAM = []; saveTeam(); syncTeam(); log.textContent = "Team cleared."; } };
-  renderLevers();
-  document.getElementById("save-levers").onclick = async () => {
-    if (!window.mc?.setLevers) return log.textContent = "Run inside the app to save levers.";
-    const patch = {}; let boardChanged = false;
-    for (const s of LEVER_SPECS_UI) {
-      const el = document.getElementById("lv-" + s.key); if (!el) continue;
-      const v = Number(el.value); patch[s.key] = v;
-      if (s.board && v !== (CFG.levers?.[s.key])) boardChanged = true;
-    }
-    const next = await window.mc.setLevers(patch);
-    if (next) CFG.levers = next;
-    log.textContent = "Levers saved." + (boardChanged ? " Board levers changed — rebuilding..." : " Bidding/UI levers apply now.");
-    if (boardChanged) return build();
-    renderLevers(); drawBody && drawBody();
-  };
-  document.getElementById("reset-levers").onclick = async () => {
-    // Ask the ENGINE for its defaults -- never hardcode them here. This list used to be duplicated
-    // in the renderer and went stale (aggr 1.0 / reserve 15 / maxShare 0.35, missing benchDiscount
-    // and the positional multipliers), so "Reset levers" would have quietly undone the tuning.
-    const next = await window.mc?.setLevers?.({ reset: true }); if (next) CFG.levers = next;
-    renderLevers(); log.textContent = "Levers reset to defaults. Run Refresh to rebuild the board.";
-  };
-  loadLeagueStatus();
-}
-
-// The lever rows are GENERATED from the engine's registry (src/draft/levers.ts), delivered by
-// appData() as `leverSpecs`. Never hardcode a lever table here: this file used to carry its own,
-// and it silently drifted to 8 of the 13 levers -- benchDiscount and every positional multiplier
-// were missing, so the app could not show or edit the largest measured lever in the config.
-let LEVER_SPECS_UI = [];
-
-function renderLevers() {
-  const box = document.getElementById("levers-box"); if (!box) return;
-  const lv = CFG.levers || {};
-  if (!LEVER_SPECS_UI.length) { box.innerHTML = '<span class="mut">Levers load with the board — click Refresh.</span>'; return; }
-  // Group so a long list stays readable, in the registry's own order within each group.
-  const GROUPS = [["value", "Value"], ["bidding", "Bidding"], ["board", "Board"]];
-  box.innerHTML = GROUPS.map(([g, title]) => {
-    const rows = LEVER_SPECS_UI.filter((s) => s.group === g);
-    if (!rows.length) return "";
-    return `<div class="leverGroup"><h3 class="mut">${title}</h3>` + rows.map((s) => {
-      const off = Number(lv[s.key]) === Number(s.off);
-      return `<div class="leverrow"><label for="lv-${s.key}"><b>${esc(s.label)}</b>` +
-        `${s.board ? ' <span class="tag">board</span>' : ""}` +
-        `${off ? ' <span class="tag">off</span>' : ""}` +
-        `<span class="mut"> ${esc(s.help)}</span></label>` +
-        `<input id="lv-${s.key}" type="number" min="${s.min}" max="${s.max}" step="${s.step}" value="${lv[s.key] ?? ""}"></div>`;
-    }).join("") + "</div>";
-  }).join("");
-}
-
-async function loadLeagueStatus() {
-  const banner = document.getElementById("setup-status"), kv = document.getElementById("league-kv");
-  if (!banner || !window.mc?.leagueInfo) { if (banner) banner.textContent = "Open inside the app to set up."; return; }
-  const info = await window.mc.leagueInfo().catch(() => null);
-  if (!info) { banner.textContent = "Could not read setup status."; return; }
-  const c = info.config || {}, lg = info.league;
-  let sr = {}; try { sr = JSON.parse(lg?.scoring_json || "{}"); } catch (_) {}
-  if (info.onboarded) {
-    banner.className = "setupbanner ok";
-    banner.innerHTML = `&#10003; <b>${esc(lg.name || "your league")}</b> synced — ${info.players} players on your board. You're ready to draft.`;
-  } else if (lg) {
-    banner.className = "setupbanner mut";
-    banner.innerHTML = `League <b>${esc(lg.name || "?")}</b> synced — now click <b>Build board</b> (step 3).`;
-  } else {
-    banner.className = "setupbanner mut";
-    banner.innerHTML = `Not set up yet — follow steps 1 → 3 to connect your league.`;
-  }
-  const rules = c.scoring_rules || {};
-  const row = (k, v) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`;
-  kv.innerHTML = lg
-    ? row("League", esc(lg.name || "?")) + row("Season", c.season) + row("Teams", c.teams) + row("Budget", "$" + c.budget)
-      + row("Scoring", `${c.scoring} (rec ${rules.rec ?? "?"}, passTD ${rules.passTD ?? "?"})`)
-      + row("Roster", (c.slots || []).join(" · ")) + row("My team", esc(lg.team_id ? "id " + lg.team_id : "?")) + row("Players loaded", info.players)
-    : `<div class="mut">Sync your league to see its settings here.</div>`;
-}
-
-function setStatus(dot, text) { const el = document.getElementById("draftstatus"); if (el) el.innerHTML = `<i class="dot ${dot}"></i> ${esc(text)}`; }
-
-/* ---------- LIVE DRAFT (embedded ESPN) ---------- */
-// A real logged-in ESPN session inside the app -- a <webview> (separate WebContents, so ESPN's
-// X-Frame-Options don't apply) on a persistent partition, so the login is held across launches
-// (the role bro plays today). The ff engine will later attach to this page over CDP to drive it.
-// Live Draft renders the persistent #webview-layer (handled by setView). This fn only covers the
-// browser-preview case (no window.mc, so no webview).
-function views_live() {
-  const view = document.getElementById("view");
-  if (view) view.innerHTML = `<div class="pad mut">The embedded browser runs only in the desktop app.</div>`;
-}
-// Wire the persistent webviews' toolbar + status (called once at boot). Each PLATFORM is a separate
-// <webview> on its own persistent partition (persist:espn / persist:yahoo), so both stay logged in at
-// once; the toolbar acts on whichever is active, and the platform tabs toggle which is shown. Both stay
-// mounted (never reload on switch), so each is always a CDP target the engine/agent can navigate.
+/* ---------- THE EMBEDDED BROWSER (two logged-in guests) ---------- */
+// Each PLATFORM is a separate <webview> on its own persistent partition (persist:espn /
+// persist:yahoo), so both stay logged in at once; the toolbar acts on whichever is active, and the
+// platform tabs toggle which is shown. Both stay mounted (never reload on switch), so each is always
+// a CDP target the engine/agent can navigate -- which is what `ff <verb> --app` and the 11 browser
+// MCP tools depend on.
 const PLATFORM_HOME = { espn: "https://fantasy.espn.com/football/", yahoo: "https://football.fantasysports.yahoo.com/" };
 let ACTIVE_PLATFORM = "espn";
 function activeWv() { return document.getElementById(ACTIVE_PLATFORM === "yahoo" ? "yahooview" : "espnview"); }
@@ -706,7 +418,7 @@ function wireWebview() {
   const showUrl = (wv) => { if (urlEl && wv === activeWv() && wv.getURL) urlEl.textContent = wv.getURL(); };
   for (const id of ["espnview", "yahooview"]) {
     const wv = document.getElementById(id); if (!wv) continue;
-    wv.addEventListener("did-start-loading", () => { wv.dataset.status = "loading"; if (st && wv === activeWv()) st.textContent = "loading…"; });
+    wv.addEventListener("did-start-loading", () => { wv.dataset.status = "loading"; if (st && wv === activeWv()) st.textContent = "loading..."; });
     wv.addEventListener("dom-ready", () => { wv.dataset.status = "ready"; if (st && wv === activeWv()) st.textContent = ""; showUrl(wv); });
     wv.addEventListener("did-stop-loading", () => { if (st && wv === activeWv()) st.textContent = ""; showUrl(wv); });
     wv.addEventListener("did-navigate", () => showUrl(wv));
@@ -714,222 +426,21 @@ function wireWebview() {
   }
   const rl = document.getElementById("lv-reload"); if (rl) rl.onclick = () => activeWv().reload();
   const bk = document.getElementById("lv-back"); if (bk) bk.onclick = () => { const wv = activeWv(); if (wv.canGoBack && wv.canGoBack()) wv.goBack(); };
-  const hm = document.getElementById("lv-home"); if (hm) hm.onclick = () => activeWv().loadURL(PLATFORM_HOME[ACTIVE_PLATFORM]);
+  const hm = document.getElementById("lv-home"); if (hm) hm.onclick = () => platformGo(PLATFORM_HOME[ACTIVE_PLATFORM]);
   for (const b of document.querySelectorAll("#lv-plat .plat")) b.onclick = () => setBrowserPlatform(b.dataset.plat);
+  renderBrowserLinks();
 }
 
-/* ---------- COPILOT (agent chat + app-control tool belt) ---------- */
-// The tool belt: everything the agent can do to drive the app. This is the SAME surface the real
-// Agent SDK session (child process) will call as tools; the stub planner below exercises it end-to-
-// end. Deliberately NO real auto-draft tool here -- the agent must not start real bidding.
-function findPlayer(name) {
-  const q = (name || "").toLowerCase().trim();
-  return byName.get(name) || DATA.find(p => p.Player.toLowerCase() === q) || DATA.find(p => p.Player.toLowerCase().includes(q));
-}
-const AGENT_TOOLS = {
-  set_view:        { desc: "Navigate to a view (board|team|news|room|copilot|live|settings)", run: async ({ view }) => { setView(view); return `switched to ${view}`; } },
-  search_players:  { desc: "Search the board by player name", run: async ({ query }) => { setView("board"); bst.q = (query || "").toLowerCase(); drawBody(); const el = document.getElementById("q"); if (el) el.value = query || ""; return `${DATA.filter(p => p.Player.toLowerCase().includes(bst.q)).length} match "${query}"`; } },
-  filter_position: { desc: "Filter the board to a position", run: async ({ pos }) => { setView("board"); bst.pos = (pos || "ALL").toUpperCase(); drawBody(); return `board filtered to ${bst.pos}`; } },
-  read_board:      { desc: "Read the top available players (optionally by position)", run: async ({ pos, limit }) => { let rs = DATA.filter(p => !onTeam(p.Player)); if (pos && pos.toUpperCase() !== "ALL") rs = rs.filter(p => p.Pos === pos.toUpperCase()); rs = rs.sort((a, b) => num(b["OurValue$"]) - num(a["OurValue$"])).slice(0, limit || 8); return rs.map(p => `${p.Player} (${p.Pos} $${p["OurValue$"]})`).join(" | ") || "none available"; } },
-  draft_player:    { desc: "Draft a player to my team at a price", run: async ({ name, price }) => { const p = findPlayer(name); if (!p) return `no player matching "${name}"`; draft(p.Player); if (price != null) setPrice(p.Player, price); return `drafted ${p.Player}${price != null ? " for $" + price : ""}`; } },
-  read_my_team:    { desc: "Read my roster, budget, and open slots", run: async () => { const sp = spent(), rem = CFG.budget - sp, open = rosterSlots().filter(s => !s.p).length; return `${TEAM.length} drafted, $${sp} spent, $${rem} left, ${open} slots open`; } },
-  read_live_state: { desc: "Read the live draft state (on-block player + recommendation)", run: async () => { if (!window.mc) return "desktop app only"; const ls = await window.mc.liveState(); if (!ls || !ls.data) return "engine not running"; const d = ls.data; return d.onBlock ? `on block: ${(d.decision && d.decision.player) || "?"} -- ${(d.decision && d.decision.action) || "?"} up to $${(d.decision && d.decision.cap) ?? "?"}` : "no player on the block"; } },
-  start_practice:  { desc: "Open a practice draft room (safe -- never the real league)", run: async () => { if (!window.mc) return "desktop app only"; await window.mc.agentStart("practice"); return "launching a practice room"; } },
-};
-function fmtArgs(a) { return Object.entries(a || {}).map(([k, v]) => `${k}=${v}`).join(", "); }
-
-// Stub planner: maps a plain-English message to tool calls and streams the turn. The real Agent SDK
-// session replaces THIS function; the tool belt and the chat sink stay identical.
-async function stubAgentTurn(msg, sink) {
-  const m = msg.toLowerCase().trim();
-  const calls = []; let d;
-  if (d = m.match(/^(?:draft|add|buy|get)\s+(.+?)(?:\s+for\s+\$?(\d+))?$/)) calls.push(["draft_player", { name: d[1].trim(), price: d[2] ? +d[2] : null }]);
-  else if (d = m.match(/best (?:available )?(qb|rb|wr|te|k|dst)?/)) calls.push(["read_board", { pos: d[1] ? d[1].toUpperCase() : "ALL", limit: 8 }]);
-  else if (d = m.match(/^(?:search|find|look up)\s+(.+)/)) calls.push(["search_players", { query: d[1].trim() }]);
-  else if (/(my team|my roster|budget|how much.*left)/.test(m)) calls.push(["read_my_team", {}]);
-  else if (/(on the block|recommend|what should i bid|nomination|live state)/.test(m)) calls.push(["read_live_state", {}]);
-  else if (d = m.match(/(?:go to|open|show)\s+(board|players|team|news|room|copilot|live|settings|draft room|live draft)/)) { const v = { players: "board", "draft room": "room", "live draft": "live" }[d[1]] || d[1]; calls.push(["set_view", { view: v }]); }
-  else if (/practice/.test(m)) calls.push(["start_practice", {}]);
-  else if (d = m.match(/^(qb|rb|wr|te|k|dst)s?$/)) calls.push(["filter_position", { pos: d[1].toUpperCase() }]);
-
-  if (!calls.length) {
-    await sink.text('I can drive the draft for you. Try: "best available RB", "search Gibbs", "draft Bijan for $90", "show my team", "who’s on the block", "open live draft", or "start practice".');
-    return sink.done();
-  }
-  await sink.text("On it.");
-  for (const [name, args] of calls) { sink.tool(name, args); const res = await AGENT_TOOLS[name].run(args); await sink.result(res); }
-  sink.done();
-}
-
-let copilotLog = [{ role: "assistant", parts: [{ t: "text", s: "Hi — I’m your draft assistant. Ask me anything about the board: “best available RB”, “is Josh Jacobs a value?”, “who should I target at WR?”. I read the live value board to answer." }] }];
-// ---------- DRAFT COCKPIT (replaces the chat Assistant in the left rail) ----------
-// One job: show, at a glance, whether the agent is alive and what it is about to do -- so a human
-// can decide to step in. Everything here is READ-ONLY; intervening means bidding yourself in the
-// draft room, changing a lever in Setup (auto-draft re-reads them every tick), or `touch data/PAUSE`.
-const money = (n) => "$" + (Number(n) || 0);
-function cockpitAlerts(d, ageSec) {
-  const a = [];
-  // Staleness is the alarm that matters: if auto-draft died or lost the room, this panel is the ONLY
-  // on-screen sign -- ESPN's own UI looks completely normal while our bidder is gone.
-  // Thresholds are set off MEASURED cadence, not the tick rate: the state file is rewritten only on
-  // ticks that see a block, so ~11s between writes is normal and quiet stretches happen between
-  // nominations. 25s = worth a glance, 45s = something is actually wrong. Tuned deliberately high --
-  // a panel that cries wolf gets ignored, and this one has to be believed at 10am.
-  if (ageSec == null) a.push(["bad", "No agent data -- auto-draft has not started"]);
-  else if (ageSec > 45) a.push(["bad", `Agent silent ${ageSec}s -- likely dead or out of the room. CHECK IT.`]);
-  else if (ageSec > 25) a.push(["warn", `No update for ${ageSec}s (normal between nominations)`]);
-  if (d && d.paused) a.push(["warn", "PAUSED (data/PAUSE present) -- not bidding; delete the file to resume"]);
-  const us = d && d.us;
-  if (us && us.open === 0) a.push(["ok", `Roster complete -- ${us.filled} slots, ${money(us.spent)} spent`]);
-  // Late and rich: the room is nearly out of money and we still hold most of ours. Not a fault --
-  // it is the shape of this strategy -- but it is the moment a human might want to spend faster.
-  if (us && d && d.league && us.open > 0) {
-    const ourLeft = 200 - (us.spent || 0);
-    if ((d.league.remainingDollars || 0) < 600 && ourLeft > 80) {
-      a.push(["warn", `${money(ourLeft)} unspent with ${us.open} slots open and the room down to ${money(d.league.remainingDollars)}`]);
-    }
-  }
-  // Click health: the agent can be deciding perfectly and still not land bids (button re-render
-  // race). Nothing else on screen would show it -- the roster just mysteriously fails to grow.
-  const ck = d && d.clicks;
-  if (ck && ck.attempts >= 5) {
-    const pct = Math.round((ck.fails / ck.attempts) * 100);
-    if (pct >= 25) a.push(["bad", `${ck.fails}/${ck.attempts} bid clicks FAILED (${pct}%) -- bid manually if this keeps up`]);
-    else if (pct >= 10) a.push(["warn", `${ck.fails}/${ck.attempts} bid clicks failed (${pct}%)`]);
-  }
-  return a;
-}
-function renderCockpit() {
-  const el = document.getElementById("cockpit"); if (!el) return;
-  const st = COCKPIT, d = st && st.data, ageSec = st ? st.ageSec : null;
-  const alerts = cockpitAlerts(d, ageSec);
-  const badge = ageSec == null ? `<span class="ck-dot bad"></span>OFFLINE`
-    : ageSec > 45 ? `<span class="ck-dot bad"></span>STALE ${ageSec}s`
-    : (d && d.paused) ? `<span class="ck-dot warn"></span>PAUSED`
-    : ageSec > 25 ? `<span class="ck-dot warn"></span>${ageSec}s`
-    : `<span class="ck-dot ok"></span>LIVE`;
-  if (!d) {
-    el.innerHTML = `<div class="ck-status">${badge}</div>` +
-      alerts.map(([k, t]) => `<div class="ck-alert ${k}">${esc(t)}</div>`).join("") +
-      `<div class="ck-empty mut">Start the draft:<br><code>ff enter-draft --app</code><br><code>ff auto-draft --app</code></div>`;
-    return;
-  }
-  const b = d.onBlock, dec = d.decision, us = d.us || {}, lg = d.league || {};
-  const ourLeft = 200 - (us.spent || 0);
-  // The single most useful line: what is up, what we think it is worth, and are we in or out.
-  const blockHtml = b && b.player ? `
-    <div class="ck-block ${dec && dec.action === "bid" ? "in" : "out"}">
-      <div class="ck-name">${esc(b.player)} <span class="mut">${esc(b.pos || "")}</span></div>
-      <div class="ck-row"><span>offer</span><b>${money(b.currentOffer)}</b></div>
-      <div class="ck-row"><span>our cap</span><b>${dec ? money(dec.cap) : "--"}</b></div>
-      <div class="ck-verdict">${dec ? (dec.action === "bid" ? "BIDDING" : "PASS") : "--"}</div>
-      <div class="ck-why mut">${dec ? esc(dec.reason || "") : ""}</div>
-    </div>` : `<div class="ck-block idle mut">nobody on the block</div>`;
-  const rosterHtml = (us.roster || []).length
-    ? `<table class="ck-tbl">${us.roster.map(p => `<tr><td class="mut">${esc(p.pos || "")}</td><td>${esc(p.name || "")}</td><td class="r">${money(p.price)}</td></tr>`).join("")}</table>`
-    : `<div class="mut">no players won yet</div>`;
-  const recent = (d.recentPicks || []).slice(-6).reverse().map(p =>
-    `<tr><td>${esc(p.name)}</td><td class="mut">${esc(p.pos || "")}</td><td class="r">${money(p.price)}</td></tr>`).join("");
-  el.innerHTML = `
-    <div class="ck-status">${badge} <span class="mut">r${d.round ?? "--"} &middot; infl ${d.liveInflation != null ? d.liveInflation.toFixed(2) : "--"}</span></div>
-    ${alerts.map(([k, t]) => `<div class="ck-alert ${k}">${esc(t)}</div>`).join("")}
-    ${blockHtml}
-    <div class="ck-h">Us</div>
-    <div class="ck-row"><span>budget left</span><b>${money(ourLeft)}</b></div>
-    <div class="ck-row"><span>max legal bid</span><b>${b && b.myMax != null ? money(b.myMax) : "--"}</b></div>
-    <div class="ck-row"><span>roster</span><b>${us.filled ?? 0}/${(us.filled ?? 0) + (us.open ?? 0)}</b></div>
-    ${rosterHtml}
-    <div class="ck-h">Room</div>
-    <div class="ck-row"><span>money left</span><b>${money(lg.remainingDollars)}</b></div>
-    <div class="ck-row"><span>picks made</span><b>${lg.picksMade ?? 0}</b></div>
-    <div class="ck-h">Recent picks</div>
-    <table class="ck-tbl">${recent || `<tr><td class="mut">none yet</td></tr>`}</table>`;
-}
-let COCKPIT = null;
-async function pollCockpit() {
-  try { if (window.mc && window.mc.liveState) COCKPIT = await window.mc.liveState(); } catch (e) { COCKPIT = null; }
-  renderCockpit();
-}
-// 1.5s ~= the agent's own tick, so the panel is never more than one decision behind.
-setInterval(pollCockpit, 1500);
-pollCockpit();
-
-function renderCopilot() { /* Assistant retired -- Claude Code drives the app over CDP instead. */ }
-// While a real-agent turn streams, its events route to this message. Set up ONE persistent listener.
-let curAgent = null;
-if (window.mc && window.mc.onAgentEvent) window.mc.onAgentEvent((e) => {
-  if (!curAgent) return;
-  const a = curAgent.a; a.pending = false;
-  if (e.t === "text") a.parts.push({ t: "text", s: e.s });
-  else if (e.t === "tool") a.parts.push({ t: "tool", name: e.name, args: e.args, res: "called" });
-  renderCopilot(); // "done" is handled by the agentAsk promise resolving
-});
-
-async function sendCopilot(text) {
-  copilotLog.push({ role: "user", text });
-  const a = { role: "assistant", parts: [] }; copilotLog.push(a);
-  renderCopilot();
-  if (window.mc && window.mc.agentAsk) { // real Agent SDK session (desktop app)
-    a.pending = true; renderCopilot();
-    await new Promise((resolve) => {
-      curAgent = { a, resolve };
-      const fin = () => { a.pending = false; curAgent = null; renderCopilot(); resolve(); };
-      window.mc.agentAsk(text).then(fin).catch((err) => { a.parts.push({ t: "text", s: "error: " + String(err) }); fin(); });
-    });
-    return;
-  }
-  // stub fallback (browser preview -- no Electron bridge)
-  const sink = {
-    text: async (s) => { a.parts.push({ t: "text", s }); renderCopilot(); await sleep(120); },
-    tool: (name, args) => { a.parts.push({ t: "tool", name, args, res: null }); renderCopilot(); },
-    result: async (res) => { const p = [...a.parts].reverse().find(x => x.t === "tool" && x.res === null); if (p) p.res = res; renderCopilot(); await sleep(180); },
-    done: () => renderCopilot(),
-  };
-  try { await stubAgentTurn(text, sink); } catch (e) { a.parts.push({ t: "text", s: "error: " + String(e) }); renderCopilot(); }
-}
-let MC_AUTH = { authenticated: true }; // default true so browser preview shows the (stub) chat
-async function recheckAuth() {
-  if (window.mc && window.mc.authStatus) { try { MC_AUTH = await window.mc.authStatus(); } catch (e) { /* keep */ } }
-  renderCopilot(); // the copilot is always mounted in the left bar
-}
-function renderConnect() {
-  const view = document.getElementById("view");
-  const sub = MC_AUTH.source === "expired" ? "Your Claude login has expired." : "The Assistant runs on your Claude subscription.";
-  view.innerHTML = `
-    <div class="connect"><div class="connect-card">
-      <div class="connect-h">Connect Claude</div>
-      <p class="mut">${sub} Log in with your Claude account (Max or Pro) to enable the draft assistant — it runs locally on your subscription, nothing is sent anywhere else.</p>
-      <div class="connect-actions">
-        <button class="pbtn primary" id="cn-login">Log in with Claude</button>
-        <button class="pbtn" id="cn-check">Check again</button>
-      </div>
-      <p class="connect-note mut">A terminal opens — complete the login there, then click “Check again”.</p>
-    </div></div>`;
-  document.getElementById("cn-login").onclick = () => { if (window.mc && window.mc.authLogin) window.mc.authLogin(); };
-  document.getElementById("cn-check").onclick = () => recheckAuth();
-}
-function views_copilot() {
-  if (window.mc && !MC_AUTH.authenticated) return renderConnect(); // gate the Copilot behind auth
-  const view = document.getElementById("view");
-  view.innerHTML = `
-    <div class="copilot">
-      <div class="cop-msgs" id="cop-msgs"></div>
-      <div class="cop-input">
-        <input id="cop-q" placeholder="Ask the assistant…  (e.g. best available RB)" autocomplete="off">
-        <button class="pbtn" id="cop-send">Send</button>
-      </div>
-    </div>`;
-  renderCopilot();
-  const q = document.getElementById("cop-q");
-  const send = () => { const t = q.value.trim(); if (!t) return; q.value = ""; sendCopilot(t); };
-  document.getElementById("cop-send").onclick = send;
-  q.onkeydown = e => { if (e.key === "Enter") send(); };
-  q.focus();
-}
-
-const views = { board: views_board, team: views_team, news: views_news, room: views_room, copilot: views_copilot, live: views_live, sources: views_sources, model: views_model, settings: views_settings };
-
-/* ---------- DATA SOURCES ---------- */
+/* ---------- STATUS ---------- */
+// THE PAGE THE AUDIT SAID WAS MISSING. Three background facts were true and unsayable in this window:
+// the in-app scheduler had been failing every 15 minutes with `RangeError: Missing named parameter
+// "fk"` and no surface existed on which `ok:false` could appear (audit 3.7); the model page's three
+// registry sections rendered as empty headers because main.js's `.catch(() => null)` and the
+// renderer's `if (!page) return` discarded the engine's error twice (audit 1.8); and nothing said
+// which store, league, format or bridge port Claude Code would be talking to.
+//
+// So every read on this page renders its ERROR when it has one. A blank section is the failure mode
+// this page exists to remove -- "no data" and "the call failed" must never look the same.
 function relTime(iso) {
   if (!iso) return "never";
   const t = Date.parse(iso); if (Number.isNaN(t)) return String(iso).slice(0, 10);
@@ -944,181 +455,126 @@ function freshDot(iso) {
   const d = (Date.now() - Date.parse(iso)) / 86400000;
   return d < 2 ? "green" : d < 7 ? "amber" : "red";
 }
-// --- Data-warehouse lineage: RENDERED FROM THE ENGINE'S OWN COMPUTED GRAPH, NOT A CURATED LIST ---
-//
-// Phase 2d made the node LIST derived (from `data-sources`' served table names); this pass finishes
-// the job by making the GRAPH itself -- every node, every edge, every layer grouping, and the
-// click-to-rebuild id on each node -- come from `window.mc.lineage()`, which is
-// `src/lineage/dag.ts`'s `computeLineage()` computed from the ingest registry (src/data/ingest.ts)
-// and the feature/trainer registry (src/lineage/registry.ts). There is no WH_CURATED, WH_DERIVE or
-// WH_EDGES here any more: this file does not know what a table is FOR, only how to lay out and label
-// whatever the engine hands it. Register a producer's reads/writes in one of those two registries and
-// the node, its layer, its freshness, and (for an ingest-source asset) its rebuild button all appear
-// here with no renderer change.
-//
-// `lineageNodes`/`lineageEdges` are pure pass-throughs (with a defensive dangling-edge filter) so
-// test/dag-derivation.test.ts can prove nothing here silently drops what the engine served.
-const LINEAGE_LAYERS = ["external", "raw", "staging", "identity", "feature", "artifact", "table", "consumer", "mart", "scorecard", "model"];
-function lineageLayerRank(kind) { const i = LINEAGE_LAYERS.indexOf(kind); return i < 0 ? LINEAGE_LAYERS.length : i; }
-
-/** The served nodes, unmodified. A top-level function (not an inline `d.nodes`) so the test can
- *  assert against it directly and a future change here cannot quietly start filtering. */
+/** The served lineage nodes, unmodified. A top-level function (not an inline `d.nodes`) so
+ *  test/dag-derivation.test.ts can assert against it directly and a future change here cannot
+ *  quietly start filtering what the engine served. */
 function lineageNodes(graph) { return (graph && graph.nodes) || []; }
 
-/** The served edges, dropping only an edge that names a node NOT in `nodes` (defensive against a
- *  partial/fixture graph) -- never dropping one both of whose endpoints exist. */
-function lineageEdges(graph, nodes) {
-  const ids = new Set((nodes || lineageNodes(graph)).map((n) => n.id));
-  return ((graph && graph.edges) || [])
-    .filter((e) => ids.has(e.from) && ids.has(e.to))
-    .map((e) => [e.from, e.to]);
-}
-
-function views_sources() {
+function views_status() {
   document.getElementById("view").innerHTML = `<div class="settings">
-    <div class="sec"><h2>Data Warehouse</h2><span class="lbl">lineage DAG, computed from the ingest + feature registries — click a table to re-materialize it</span></div>
-    <div id="src-banner" class="setupbanner mut">Loading…</div>
-    <div class="btnrow"><button class="pbtn primary" id="src-update">Rebuild all</button><span class="mut" id="src-status"></span></div>
-    <div id="dag-wrap"><svg id="dag"></svg></div>
-  </div>`;
-  document.getElementById("src-update").onclick = async () => {
-    if (!window.mc) return; document.getElementById("src-status").textContent = "rebuilding the whole warehouse (~5s)…";
-    const r = await window.mc.refreshData();
-    document.getElementById("src-status").textContent = r.ok ? "rebuilt — reloading…" : "rebuild failed";
-    if (r.ok) setTimeout(() => location.reload(), 900);
-  };
-  loadDag();
-}
-async function loadDag() {
-  const banner = document.getElementById("src-banner"), svg = document.getElementById("dag");
-  if (!banner || !window.mc?.lineage || typeof dagre === "undefined") { if (banner) banner.textContent = "Open inside the app to see the warehouse."; return; }
-  const d = await window.mc.lineage().catch(() => null);
-  if (!d) { banner.textContent = "Could not read the warehouse."; return; }
-  const nodes = lineageNodes(d);
-  const edges = lineageEdges(d, nodes);
-  const nTables = nodes.filter((n) => n.kind !== "external" && n.kind !== "artifact").length;
-  const nSources = nodes.filter((n) => n.kind === "external").length;
-  const maxUpdated = nodes.reduce((m, n) => (n.updated && n.updated > m ? n.updated : m), "");
-  banner.className = "setupbanner ok";
-  banner.innerHTML = `${(d.producers || []).length} declared producers · ${nSources} sources → ${nTables} tables/artifacts → board`
-    + (maxUpdated ? ` · freshest write <b>${relTime(maxUpdated)}</b>` : "");
-  const W = 156, H = 42;
-  const g = new dagre.graphlib.Graph(); g.setGraph({ rankdir: "LR", nodesep: 10, ranksep: 58, marginx: 10, marginy: 10 }); g.setDefaultEdgeLabel(() => ({}));
-  const ordered = nodes.slice().sort((a, b) => lineageLayerRank(a.kind) - lineageLayerRank(b.kind) || a.id.localeCompare(b.id));
-  for (const n of ordered) g.setNode(n.id, { width: W, height: H });
-  for (const [a, b] of edges) g.setEdge(a, b);
-  dagre.layout(g);
-  const gw = Math.ceil(g.graph().width), gh = Math.ceil(g.graph().height);
-  svg.setAttribute("width", gw); svg.setAttribute("height", gh); svg.setAttribute("viewBox", `0 0 ${gw} ${gh}`);
-  let h = "";
-  for (const e of g.edges()) h += `<polyline points="${g.edge(e).points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" class="dag-edge"/>`;
-  for (const n of ordered) {
-    const p = g.node(n.id); if (!p) continue;
-    const hasDot = n.kind !== "external" && n.kind !== "artifact";
-    const dot = hasDot ? freshDot(n.updated) : "";
-    const sub = hasDot
-      ? `${n.rows == null ? "?" : n.rows} rows${n.updated ? ` · ${relTime(n.updated)}` : ""}`
-      : n.kind;
-    h += `<g class="dag-node ${n.kind}${n.materialize ? " clickable" : ""}" data-mat="${n.materialize || ""}" data-id="${n.id}" transform="translate(${(p.x - W / 2).toFixed(1)},${(p.y - H / 2).toFixed(1)})">`
-      + `<rect width="${W}" height="${H}" rx="6"/>`
-      + (dot ? `<circle cx="12" cy="13" r="3.5" class="dot-${dot}"/>` : "")
-      + `<text x="${dot ? 22 : 11}" y="17" class="dag-name">${esc(n.id)}</text>`
-      + `<text x="11" y="32" class="dag-sub">${esc(String(sub || ""))}</text></g>`;
-  }
-  svg.innerHTML = h;
-  svg.querySelectorAll(".dag-node.clickable").forEach(el => el.onclick = () => materialize(el.dataset.mat, el.dataset.id));
-}
-// --- MODEL: how a projection is built, and what every fitted piece is worth -----------------------
-//
-// The Data page shows where a ROW came from and stops at the board -- which is where the interesting
-// part starts. A projection is a rank-curve value multiplied by fitted factors, and that product is
-// then fed to a simulator that turns points into a title probability. None of it was visible, so a
-// number on the board had to be taken on trust.
-//
-// Trust was misplaced three times in one week. A quarterback was scored on receiving columns for
-// twenty seasons and measured ~0 as a result. Sixteen rosters silently lost their defense to a
-// nickname-vs-abbreviation join. An unfillable slot scored zero, charging a penalty nobody pays.
-// Each was invisible on every screen this app had. That is the argument for the page: a model you
-// cannot see is a model nobody checks.
-// THE GRAPH IS SERVED, NOT HARDCODED HERE. The engine's src/lineage/modelGraph.ts derives the node
-// list from the model registry (so a new model gets a box with no renderer change) and carries the
-// curated edges; these two functions are pure pass-throughs, the same contract the Data page's
-// lineageNodes/lineageEdges hold. The previous hardcoded MODEL_NODES/MODEL_EDGES drew the pre-Phase-2b
-// topology -- age-curve and opportunity feeding a `proj` box labelled "curve x age x opportunity",
-// with no node for the trained projection or any weekly/pricing model -- and stayed that way because
-// nothing tied it to the registry. See test/model-graph-derivation.test.ts.
-function modelGraphNodes(d) { return (d && d.graph && d.graph.nodes) || []; }
-
-/** The served edges, dropping only an edge naming a node NOT in `nodes` (defensive against a
- *  partial/fixture graph) -- never one both of whose endpoints exist. Edges arrive as [from, to]. */
-function modelGraphEdges(d, nodes) {
-  const ids = new Set((nodes || modelGraphNodes(d)).map((n) => n.id));
-  return ((d && d.graph && d.graph.edges) || [])
-    .filter((e) => ids.has(e[0]) && ids.has(e[1]))
-    .map((e) => [e[0], e[1]]);
-}
-
-function views_model() {
-  document.getElementById("view").innerHTML = `<div class="settings">
-    <div class="sec"><h2>Model</h2><span class="lbl">how a projection is built, and what each fitted piece measured</span></div>
-    <div id="mdl-banner" class="setupbanner mut">Loading…</div>
-    <div id="mdl-dag-wrap"><svg id="mdl-dag"></svg></div>
-    <div class="sec"><h2>Fitted models</h2><span class="lbl">out-of-sample lift under NESTED cross-validation — the honest number</span></div>
-    <div id="mdl-table"></div>
-    <div class="sec"><h2>Value trace</h2><span class="lbl">the multiplication behind a projection, per player</span></div>
-    <div class="btnrow" id="mdl-postabs"></div>
-    <div id="mdl-trace"></div>
-    <div class="sec"><h2>What serves each position</h2><span class="lbl">the weekly/streaming split -- which artifact answers a start/sit or stream question</span></div>
+    <div class="sec"><h2>Status</h2><span class="lbl">is the system healthy, and what will Claude Code see</span></div>
+    <div id="st-league"><div class="mut">Loading...</div></div>
+    <div class="sec" style="margin-top:22px"><h2>Scheduled routines</h2><span class="lbl">the in-app timer -- failures shown, not swallowed</span></div>
+    <div id="st-sched"><div class="mut">Loading...</div></div>
+    <div class="sec" style="margin-top:22px"><h2>Data freshness</h2><span class="lbl">the lineage graph's newest writes</span></div>
+    <div id="st-lineage"><div class="mut">Loading...</div></div>
+    <div class="sec" style="margin-top:22px"><h2>Models</h2><span class="lbl">what is fitted, what serves each position, what is frozen</span></div>
+    <div id="st-models"><div class="mut">Loading...</div></div>
     <div id="mdl-serve"></div>
-    <div class="sec"><h2>Scorecard</h2><span class="lbl">the forward record: predictions frozen before kickoff, and what has been scored so far</span></div>
     <div id="mdl-scorecard"></div>
-    <div class="sec"><h2>Prediction ledger</h2><span class="lbl">every pre-registered P&lt;n&gt;/W&lt;n&gt; prediction, transcribed from docs/redesign-2026-09.md</span></div>
-    <div id="mdl-ledger"></div>
+    <div class="sec" style="margin-top:22px"><h2>Bridge + Claude Code</h2><span class="lbl">the loopback door the engine knocks on, and how to connect</span></div>
+    <div id="st-bridge"><div class="mut">Loading...</div></div>
   </div>`;
-  loadModel();
+  loadStatus();
 }
-let MODEL_DATA = null, MODEL_POS = "QB";
-async function loadModel() {
-  const banner = document.getElementById("mdl-banner");
-  if (!window.mc?.modelGraph) { banner.textContent = "Open inside the app to see the model."; return; }
-  const d = await window.mc.modelGraph().catch(() => null);
-  if (!d) { banner.textContent = "Could not read the model."; return; }
-  MODEL_DATA = d;
-  const bad = (d.models || []).filter(m => m.problem);
-  // A page about the model must say when the model is BROKEN, not merely draw it. A failing check is
-  // the whole reason the registry exists.
-  banner.className = "setupbanner " + (bad.length ? "warn" : "ok");
-  banner.innerHTML = bad.length
-    ? `<b>${bad.length} model(s) failing their own check:</b> ${bad.map(m => `${esc(m.key)} — ${esc(m.problem)}`).join(" · ")}`
-    : `${(d.models || []).filter(m => m.present).length} fitted models present and passing · ${esc(String(d.sim?.scoring || ""))} scoring · ${d.sim?.teams || "?"} teams · ${d.sim?.playoffTeams || "?"} make the playoffs`;
-  drawModelDag(d);
-  drawModelTable(d);
-  const positions = [...new Set((d.trace || []).map(t => t.pos))];
-  document.getElementById("mdl-postabs").innerHTML = positions
-    .map(p => `<button class="pbtn${p === MODEL_POS ? " primary" : ""}" data-pos="${esc(p)}">${esc(p)}</button>`).join("");
-  document.querySelectorAll("#mdl-postabs .pbtn").forEach(b => b.onclick = () => {
-    MODEL_POS = b.dataset.pos;
-    document.querySelectorAll("#mdl-postabs .pbtn").forEach(x => x.classList.toggle("primary", x.dataset.pos === MODEL_POS));
-    drawTrace(MODEL_DATA);
-  });
-  if (!positions.includes(MODEL_POS)) MODEL_POS = positions[0];
-  drawTrace(d);
-  loadModelPage();
+/** Render an engine error where its section's content would be. The whole point of the page. */
+function statusError(id, what, err) {
+  const el = document.getElementById(id); if (!el) return;
+  el.innerHTML = `<div class="setupbanner warn"><b>${esc(what)} failed:</b> <span class="mono">${esc(String(err))}</span>
+    <div class="mut" style="margin-top:4px">If you just updated the engine, fully restart the app -- a reload keeps the old <code>ff serve</code> process.</div></div>`;
+}
+const kvRow = (k, v) => `<div class="kv"><span>${esc(k)}</span><b>${v}</b></div>`;
+
+async function loadStatus() {
+  loadStatusLeague();
+  loadStatusScheduler();
+  loadStatusLineage();
+  loadStatusModels();
+  loadStatusBridge();
 }
 
-// --- THE REGISTRY SECTIONS: serve table, scorecard, ledger -- entirely from window.mc.modelPage() ---
-//
-// Written 2026-09-08 as static prose describing "a curve times two multipliers", which fell behind
-// the moment the projection became a trained artifact with five siblings, a per-position serve table,
-// a live scorecard, and a prediction ledger. These three renderers carry NO number of their own: every
-// figure comes from the `page` argument (src/lineage/modelPage.ts's JSON). See test/model-page.test.ts.
-async function loadModelPage() {
-  if (!window.mc?.modelPage) return;
-  const page = await window.mc.modelPage().catch(() => null);
-  if (!page) return;
+async function loadStatusLeague() {
+  const el = document.getElementById("st-league"); if (!el || !window.mc) return;
+  const info = await window.mc.leagueInfo().catch((e) => ({ error: String(e) }));
+  if (!info || info.error) return statusError("st-league", "league-info", (info && info.error) || "no result");
+  const stamp = await window.mc.boardStamp().catch((e) => ({ error: String(e) }));
+  const c = info.config || {}, lg = info.league;
+  const s = (stamp && !stamp.error && stamp.stamp) || null;
+  el.innerHTML =
+    kvRow("Active league", lg ? `${esc(lg.name || "?")} <span class="mut">${esc(lg.league_id)}</span>` : '<span class="mut">none</span>') +
+    kvRow("Platform", esc(String((ACTIVE_LEAGUE && ACTIVE_LEAGUE.platform) || "espn").toUpperCase())) +
+    kvRow("Season / teams / budget", `${esc(String(c.season ?? "?"))} &middot; ${esc(String(c.teams ?? "?"))} &middot; $${esc(String(c.budget ?? "?"))}`) +
+    kvRow("Scoring", esc(String(c.scoring ?? "?"))) +
+    kvRow("Scoring key", s ? `<span class="mono">${esc(String(s.scoringKey ?? "?"))}</span>` : '<span class="mut">no board stamp</span>') +
+    kvRow("Board", stamp && stamp.error
+      ? `<span class="bad">${esc(String(stamp.error))}</span>`
+      : `${esc(String((stamp && stamp.players) ?? 0))} players &middot; built ${esc(relTime((stamp && stamp.builtAt) || (s && s.builtAt)))}`) +
+    kvRow("Board league", s ? `<span class="mono">${esc(String(s.leagueId ?? "?"))}</span>${lg && String(s.leagueId) !== String(lg.league_id) ? ' <span class="bad">does not match the active league</span>' : ""}` : '<span class="mut">--</span>') +
+    kvRow("Rows this window is showing", `${DATA.length}${DATA_SOURCE.live ? "" : ' <span class="bad">not live: ' + esc(DATA_SOURCE.why) + "</span>"}`);
+}
+
+async function loadStatusScheduler() {
+  const el = document.getElementById("st-sched"); if (!el || !window.mc) return;
+  const r = await window.mc.scheduleGet().catch((e) => ({ error: String(e) }));
+  if (!r || r.error) return statusError("st-sched", "schedule-get", (r && r.error) || "no result");
+  renderSchedulerTick(r.config, r.lastTick);
+}
+/** The tick, with `ok:false` IMPOSSIBLE to miss. This ran red for days behind no surface at all. */
+function renderSchedulerTick(config, lastTick) {
+  const el = document.getElementById("st-sched"); if (!el) return;
+  const cfg = config || {};
+  const head = cfg.enabled
+    ? `every ${esc(String(cfg.everyMinutes ?? "?"))} min &middot; ${esc((cfg.routines || []).join(", ") || "no routines")}`
+    : `<span class="mut">disabled</span>`;
+  if (!lastTick) {
+    el.innerHTML = kvRow("Schedule", head) + kvRow("Last tick", '<span class="mut">none since this window opened</span>');
+    return;
+  }
+  const ok = !!lastTick.ok;
+  el.innerHTML = kvRow("Schedule", head) +
+    kvRow("Last tick", `${esc(relTime(lastTick.at))} <span class="${ok ? "ok-hi" : "bad"}">${ok ? "OK" : "FAILED"}</span>`) +
+    `<pre class="cmd ${ok ? "" : "bad"}">${esc(String(lastTick.out || "").trim() || "(no output)")}</pre>`;
+}
+
+async function loadStatusLineage() {
+  const el = document.getElementById("st-lineage"); if (!el || !window.mc) return;
+  const d = await window.mc.lineage().catch((e) => ({ error: String(e) }));
+  if (!d || d.error) return statusError("st-lineage", "lineage", (d && d.error) || "no result");
+  const nodes = lineageNodes(d);
+  const dated = nodes.filter((n) => n.updated).sort((a, b) => (a.updated < b.updated ? 1 : -1));
+  const nSources = nodes.filter((n) => n.kind === "external").length;
+  const nTables = nodes.filter((n) => n.kind !== "external" && n.kind !== "artifact").length;
+  const rows = dated.slice(0, 14).map((n) =>
+    `<tr><td><span class="ck-dot ${freshDot(n.updated)}"></span> <b>${esc(n.id)}</b></td>
+      <td class="mut">${esc(n.kind)}</td><td class="num">${esc(String(n.rows == null ? "?" : n.rows))}</td>
+      <td class="num">${esc(relTime(n.updated))}</td></tr>`).join("");
+  el.innerHTML = `<div class="setupbanner mut">${(d.producers || []).length} declared producers &middot; ${nSources} sources &middot; ${nTables} tables/artifacts
+      &middot; oldest of the ${Math.min(14, dated.length)} shown: ${esc(relTime(dated[Math.min(13, dated.length - 1)] && dated[Math.min(13, dated.length - 1)].updated))}</div>
+    <div class="mdl-scroll"><table class="tbl"><thead><tr><th>asset</th><th>layer</th><th class="num">rows</th><th class="num">written</th></tr></thead>
+    <tbody>${rows || '<tr><td class="mut" colspan="4">the graph carried no dated node</td></tr>'}</tbody></table></div>
+    <div class="mut">Re-materialize from a terminal: <code>ff ingest-source &lt;id&gt;</code>, or the whole warehouse with <code>ff refresh</code>.</div>`;
+}
+
+async function loadStatusModels() {
+  const el = document.getElementById("st-models"); if (!el || !window.mc) return;
+  const d = await window.mc.modelGraph().catch((e) => ({ error: String(e) }));
+  if (!d || d.error) statusError("st-models", "model-graph", (d && d.error) || "no result");
+  else {
+    const models = d.models || [];
+    const bad = models.filter((m) => m.problem);
+    el.innerHTML = `<div class="setupbanner ${bad.length ? "warn" : "ok"}">` + (bad.length
+      ? `<b>${bad.length} model(s) failing their own check:</b> ${bad.map((m) => `${esc(m.key)} -- ${esc(m.problem)}`).join(" &middot; ")}`
+      : `${models.filter((m) => m.present).length} fitted models present and passing &middot; ${esc(String(d.sim?.scoring || "?"))} scoring &middot; ${esc(String(d.sim?.teams ?? "?"))} teams &middot; ${esc(String(d.sim?.playoffTeams ?? "?"))} make the playoffs`)
+      + `</div><div class="mut">The full fitted-models table, nested lift and value trace live in <code>ff model-page --json</code> and docs/validation.md.</div>`;
+  }
+  // The two registry sections that used to render as EMPTY HEADERS because the error was discarded
+  // twice. They are here because they answer "what will Claude Code's weekly/stream answers come
+  // from" and "is the forward record still being written" -- and the second is exactly what the
+  // scheduler's scorecard routine was failing to do.
+  const page = await window.mc.modelPage().catch((e) => ({ error: String(e) }));
+  if (!page || page.error) return statusError("mdl-serve", "model-page", (page && page.error) || "no result");
   renderWeeklyServe(page);
   renderScorecardSection(page);
-  renderLedgerSection(page);
 }
 function renderWeeklyServe(page) {
   const el = document.getElementById("mdl-serve");
@@ -1126,7 +582,8 @@ function renderWeeklyServe(page) {
   const rows = (page.weeklyServe || []).map(r => `<tr class="${r.shipped ? "" : "mut"}">
       <td><b>${esc(r.pos)}</b></td><td>${esc(r.artifact)}</td>
       <td class="prose">${r.shipped ? "shipped -- passed its gate" : "not shipped -- serves the floor"}</td></tr>`).join("");
-  el.innerHTML = `<div class="mdl-scroll"><table class="tbl"><thead><tr><th>position</th><th>artifact</th><th>status</th></tr></thead>
+  el.innerHTML = `<div class="lbl" style="margin:10px 0 4px">What serves each position</div>
+    <div class="mdl-scroll"><table class="tbl"><thead><tr><th>position</th><th>artifact</th><th>status</th></tr></thead>
     <tbody>${rows}</tbody></table></div>
     <div class="mut" style="margin-top:6px">challenger series starts week ${esc(String(page.challengerFirstWeek ?? "?"))}</div>`;
 }
@@ -1142,133 +599,52 @@ function renderScorecardSection(page) {
     }).join("; ") || '<span class="mut">none frozen</span>';
     return `<tr><td><b>${esc(k.kind)}</b></td><td class="num">${esc(String(k.weeksFrozen))}</td><td class="num">${esc(String(k.weeksScored))}</td><td class="prose">${models}</td></tr>`;
   }).join("");
-  el.innerHTML = `<div class="mdl-scroll"><table class="tbl"><thead><tr><th>kind</th><th class="num">weeks frozen</th><th class="num">weeks scored</th><th>models &amp; live scores</th></tr></thead>
+  el.innerHTML = `<div class="lbl" style="margin:14px 0 4px">Scorecard -- the forward record</div>
+    <div class="mdl-scroll"><table class="tbl"><thead><tr><th>kind</th><th class="num">weeks frozen</th><th class="num">weeks scored</th><th>models &amp; live scores</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
-function renderLedgerSection(page) {
-  const el = document.getElementById("mdl-ledger");
-  if (!el) return;
-  const ledger = page.ledger || { rows: [], counts: {} };
-  const counts = ledger.counts || {};
-  const summary = Object.entries(counts).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(" · ");
-  const rows = (ledger.rows || []).map(r => `<tr class="${r.outcome === "failed" ? "bad" : ""}">
-      <td><b>${esc(r.id)}</b></td><td class="prose">${esc(r.claim)}</td><td>${esc(r.outcome)}</td><td class="prose">${esc(r.measured)}</td></tr>`).join("");
-  el.innerHTML = `<div class="mut" style="margin-bottom:6px">${summary}</div>
-    <div class="mdl-scroll"><table class="tbl"><thead><tr><th>id</th><th>claim</th><th>outcome</th><th>measured</th></tr></thead>
-    <tbody>${rows}</tbody></table></div>`;
-}
-function drawModelDag(d) {
-  const svg = document.getElementById("mdl-dag");
-  if (typeof dagre === "undefined") { svg.outerHTML = '<div class="mut">Graph library unavailable.</div>'; return; }
-  const nodes = modelGraphNodes(d);
-  const edges = modelGraphEdges(d, nodes);
-  // An EMPTY graph is not a blank canvas -- it means the engine served no topology (an older `ff
-  // serve` process still running from before the graph was added, most often). Say so, rather than
-  // painting nothing and leaving the reader to guess whether the page or the model is broken.
-  if (!nodes.length) {
-    svg.outerHTML = '<div class="mut" id="mdl-dag">The engine returned no model graph. If you just updated, fully restart the app (a reload keeps the old engine process).</div>';
-    return;
-  }
-  const byKey = Object.fromEntries((d.models || []).map(m => [m.key, m]));
-  const W = 158, H = 44;
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "LR", nodesep: 12, ranksep: 62, marginx: 10, marginy: 10 });
-  g.setDefaultEdgeLabel(() => ({}));
-  for (const n of nodes) g.setNode(n.id, { width: W, height: H });
-  for (const [a, b] of edges) g.setEdge(a, b);
-  dagre.layout(g);
-  const gw = Math.ceil(g.graph().width), gh = Math.ceil(g.graph().height);
-  svg.setAttribute("width", gw); svg.setAttribute("height", gh); svg.setAttribute("viewBox", `0 0 ${gw} ${gh}`);
-  let h = "";
-  for (const e of g.edges()) h += `<polyline points="${g.edge(e).points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" class="dag-edge"/>`;
-  for (const n of nodes) {
-    const p = g.node(n.id); if (!p) continue;
-    const m = byKey[n.id];
-    // A model node shows its OWN measured lift, so the graph cannot show a confident box for a
-    // component that measured nothing.
-    let sub = n.sub;
-    if (m) sub = m.problem ? "FAILING CHECK" : (m.nestedLift != null ? `nested R2 +${m.nestedLift.toFixed(4)}` : n.sub);
-    const cls = m && m.problem ? "failing" : n.kind;
-    h += `<g class="dag-node ${cls}" transform="translate(${(p.x - W / 2).toFixed(1)},${(p.y - H / 2).toFixed(1)})">`
-      + `<rect width="${W}" height="${H}" rx="6"/>`
-      + `<text x="11" y="17" class="dag-name">${esc(n.name)}</text>`
-      + `<text x="11" y="32" class="dag-sub">${esc(String(sub || ""))}</text></g>`;
-  }
-  svg.innerHTML = h;
-}
-function drawModelTable(d) {
-  const rows = (d.models || []).map(m => {
-    // CLAIMED vs MEASURED side by side, permanently. Both shipped models were described at roughly
-    // double their real lift for weeks, because the loop that scored them had also chosen them.
-    const lift = m.nestedLift != null
-      ? `+${m.nestedLift.toFixed(4)}${m.claimedLift != null && Math.abs(m.claimedLift - m.nestedLift) > 1e-6 ? ` <span class="mut">(claimed +${m.claimedLift.toFixed(4)})</span>` : ""}`
-      : `<span class="mut">n/a — not a predictive model</span>`;
-    return `<tr class="${m.problem ? "bad" : ""}">
-      <td><b>${esc(m.key)}</b>${m.required ? "" : ' <span class="mut">optional</span>'}</td>
-      <td class="prose">${esc(m.what)}</td>
-      <td class="num">${lift}</td>
-      <td class="num">${m.present ? `${m.sizeKb}kb · ${m.ageDays}d old${m.seasons ? ` · ${esc(m.seasons)}` : ""}` : '<span class="mut">missing</span>'}</td>
-      <td>${m.problem ? `<b>${esc(m.problem)}</b>` : "ok"}</td></tr>`;
-  }).join("");
-  // Negative results belong on the page too. Without them "K and DST are unfitted" reads as an
-  // unfinished task, and the next person spends the same week finding the same nothing.
-  const rej = (d.rejected || []).map(r => `<tr class="mut">
-      <td><b>${esc(r.key)}</b> <span class="mut">not shipped</span></td>
-      <td class="prose">${esc(r.positions.join(" · "))} — screened, fitted, rejected. ${esc(r.why.slice(0, 160))}…</td>
-      <td class="num">${Object.entries(r.nestedLift).map(([k, v]) => `${esc(k)} ${v > 0 ? "+" : ""}${v.toFixed(4)}`).join(" · ")}</td>
-      <td class="num">${esc(r.date)}</td>
-      <td>—</td></tr>`).join("");
-  document.getElementById("mdl-table").innerHTML =
-    `<div class="mdl-scroll"><table class="tbl"><thead><tr><th>model</th><th>what it measures</th><th class="num">nested lift</th><th class="num">artifact</th><th>check</th></tr></thead>
-     <tbody>${rows}${rej}</tbody></table></div>`;
-}
-function drawTrace(d) {
-  const t = (d.trace || []).filter(x => x.pos === MODEL_POS);
-  if (!t.length) { document.getElementById("mdl-trace").innerHTML = '<div class="mut">No trace for this position.</div>'; return; }
-  const pct = (f) => `${f >= 1 ? "+" : ""}${((f - 1) * 100).toFixed(1)}%`;
-  const cell = (f) => `<td class="num ${Math.abs(f - 1) < 0.0005 ? "mut" : f > 1 ? "up" : "down"}">${f.toFixed(3)} <span class="mut">${pct(f)}</span></td>`;
-  document.getElementById("mdl-trace").innerHTML =
-    `<div class="mdl-scroll"><table class="tbl"><thead><tr><th class="num">#</th><th>player</th><th class="num">rank curve</th><th class="num">age</th><th class="num">opportunity</th><th class="num">projection</th><th class="num">net</th></tr></thead><tbody>` +
-    t.map(x => `<tr><td class="num mut">${x.rank}</td><td><b>${esc(x.name)}</b></td>
-      <td class="num">${x.base.toFixed(1)}</td>${cell(x.age)}${cell(x.opp)}
-      <td class="num"><b>${x.final.toFixed(1)}</b></td>
-      <td class="num ${x.final >= x.base ? "up" : "down"}">${(x.final - x.base >= 0 ? "+" : "")}${(x.final - x.base).toFixed(1)}</td></tr>`).join("") +
-    `</tbody></table></div>
-     <div class="mut" style="margin-top:8px">
-       A factor of exactly 1.000 means the model had no opinion — an unknown birth date, a rookie with
-       no prior usage, or a position it measured no signal for. That is deliberate: a missing input
-       produces no adjustment rather than a guess.
-     </div>`;
+
+async function loadStatusBridge() {
+  const el = document.getElementById("st-bridge"); if (!el || !window.mc) return;
+  const b = await window.mc.bridgeInfo().catch((e) => ({ error: String(e) }));
+  if (!b || b.error) return statusError("st-bridge", "bridge-info", (b && b.error) || "no result");
+  // Each guest's CURRENT url, and whether it is on the platform it is supposed to be. A guest that
+  // has drifted off its own host is exactly what the bridge's no-fallback refusal reports as "no
+  // guest on <host>" -- better to see it here than as a failed engine call.
+  const guest = (id, host) => {
+    const wv = document.getElementById(id);
+    let url = ""; try { url = (wv && wv.getURL && wv.getURL()) || ""; } catch (e) { url = ""; }
+    const on = url.includes(host);
+    return kvRow(id, url
+      ? `<span class="mono">${esc(url.slice(0, 96))}</span> <span class="${on ? "ok-hi" : "bad"}">${on ? "on " + esc(host) : "OFF " + esc(host)}</span>`
+      : '<span class="bad">not mounted</span>');
+  };
+  const mcpLine = `claude mcp add ff-draft -- npx tsx ${(b.repo || "<repo>").replace(/\\/g, "/")}/src/ff.ts mcp`;
+  el.innerHTML =
+    kvRow("Bridge", b.port ? `127.0.0.1:${esc(String(b.port))} <span class="mut">pid ${esc(String(b.pid))}</span>` : '<span class="bad">not listening</span>') +
+    kvRow("CDP port", b.cdpPort ? `<span class="mono">${esc(String(b.cdpPort))}</span>` : '<span class="bad">off (MC_NO_CDP)</span>') +
+    kvRow("Store", `<span class="mono">${esc(String(b.db || "?"))}</span>`) +
+    guest("espnview", "espn.com") +
+    guest("yahooview", "fantasysports.yahoo.com") +
+    `<div class="lbl" style="margin:14px 0 4px">Connect Claude Code</div>
+     <pre class="cmd">${esc(mcpLine)}</pre>
+     <div class="mut">Then <code>ff-draft</code>'s tools drive THIS window's guests. Only ONE app instance may run: the
+     MCP browser tools attach to a fixed CDP port and the bridge file is whatever the newest instance wrote.</div>`;
 }
 
-async function materialize(mat, nodeId) {
-  if (!window.mc?.ingestSource || !mat) return;
-  document.querySelectorAll(`.dag-node[data-mat="${mat}"]`).forEach(el => el.classList.add("running"));
-  const st = document.getElementById("src-status"); if (st) st.textContent = `materializing ${nodeId} → rebuilding board…`;
-  const r = await window.mc.ingestSource(mat).catch(() => ({ ok: false }));
-  if (st) st.textContent = r.ok ? `${nodeId} + board re-materialized` : `failed to materialize ${nodeId}`;
-  await loadDag(); // refresh freshness across the warehouse
-  try { const ad = await window.mc.appData(); if (ad?.players?.length) { DATA = ad.players; byName = new Map(DATA.map(p => [p.Player, p])); } } catch (e) { /* keep */ }
-}
-
-// Boot: in Electron, pull the live board + news from the SQLite store (via the ff engine) before
-// the first paint; otherwise render the embedded data.js fallback. Either way, paint the board.
-//
-// THE FALLBACK MUST ANNOUNCE ITSELF. data.js is a checked-in snapshot that nothing regenerates any
-// more (the engine replaced it -- see the note at src/ff.ts `app-data`), and it renders IDENTICALLY
-// to live data. So every way the live path can fail -- opened in a browser with no window.mc, engine
-// crash, empty board, a season in config that the board has no rows for -- used to degrade in
-// silence to a snapshot whose numbers are entirely plausible and simply old. That is how a rebuilt
-// board "does not update": it did update, and the UI was never reading it. The stale numbers even
-// look right, which is what makes it expensive. Record WHICH source won and say so on screen.
-let DATA_SOURCE = { live: false, why: "not attempted", stamp: window.DATA_JS_STAMP || "unknown" };
+/* ---------- BOOT ---------- */
+// In Electron, pull the live board + news from the SQLite store (via the ff engine) before the first
+// paint. There is no snapshot fallback any more (see the file header): if the live path loses, the
+// board is EMPTY and a banner says which way it lost. An empty board is legible; a plausible old one
+// is not.
+let DATA_SOURCE = { live: false, why: "not attempted" };
 
 // THE OTHER HALF OF THE SAME PROBLEM. The banner below catches "the renderer never had live data".
 // This catches "the renderer HAD live data and it went out of date underneath it": the board is
-// loaded once at boot, so a `ff refresh` run from a terminal rewrites SQLite while the window keeps
-// serving the numbers it read at startup. Nothing was broken in that case and nothing said anything
-// -- which is exactly why a rebuilt board appears not to have rebuilt. Poll the engine's cheap
-// builtAt stamp and offer a reload when it moves.
+// loaded once at boot, so a `ff refresh` run from a terminal (or an MCP tool call) rewrites SQLite
+// while the window keeps serving the numbers it read at startup. Nothing was broken in that case and
+// nothing said anything -- which is exactly why a rebuilt board appears not to have rebuilt. Poll the
+// engine's cheap builtAt stamp and apply the new board when it moves.
 function watchForRebuild(seenAt) {
   if (!seenAt || !window.mc || !window.mc.appData) return;
   let applying = false;
@@ -1283,18 +659,22 @@ function watchForRebuild(seenAt) {
     try {
       const d = await window.mc.appData();
       if (d && Array.isArray(d.players) && d.players.length) {
-        DATA = d.players; NEWS = Array.isArray(d.news) ? d.news : []; CFG = d.config || CFG;
-        byName = new Map(DATA.map(p => [p.Player, p]));
-        const sp = document.getElementById("s-players"); if (sp) sp.textContent = DATA.length;
+        DATA = d.players; CFG = d.config || CFG; setLastYr(d.lastYr);
         seenAt = d.builtAt || stamp;              // adopt the new baseline; do not re-fire on it
-        // Re-render the current page -- EXCEPT a BROWSER page, whose setPage re-navigates the webview
-        // and would yank the draft room out from under whoever is watching it.
+        // FOLLOW AN OUT-OF-BAND LEAGUE SWITCH (QA finding, 2026-09-16). `ff league-set-active` from a
+        // terminal or an MCP call rebuilds the board, which lands here -- but ACTIVE_LEAGUE was only
+        // ever assigned by a tab CLICK, so the tab row and the Status page's Platform row kept naming
+        // the previous league while every engine-sourced field named the new one. Under D26 the CLI
+        // switch is the primary path, so re-read the active league from the engine before re-rendering.
+        await renderLeagueTabs();
+        // Re-render the current page -- EXCEPT the BROWSER page, whose setPage would re-reveal the
+        // webview layer and re-run its platform switch under whoever is watching it.
         //
         // THE KIND IS "browser", NOT "espn" (renamed 2026-09-16 when page urls became per-platform).
         // This guard still said "espn" for one build, so it stopped matching anything and the board
         // watcher re-navigated the guest on every rebuild -- observed right after a league switch,
-        // which fires a rebuild: the Yahoo guest jumped from the league home to /draftresults. A guard
-        // keyed on a NAME keeps passing after the name changes, and nothing anywhere reports it.
+        // which fires a rebuild. A guard keyed on a NAME keeps passing after the name changes, and
+        // nothing anywhere reports it.
         const pg = PAGES.find(p => p.id === curPage);
         if (!pg || pg.kind !== "browser") setPage(curPage);
         toastRebuild(`Board updated -- ${DATA.length} players reloaded`);
@@ -1346,14 +726,18 @@ function watchForRebuild(seenAt) {
 }
 
 // A persistent, unmissable bar. Not a toast and not a console line: the whole failure mode is that
-// nobody notices, so it must survive on screen for as long as the stale data does.
-function showStaleBanner(src) {
-  if (document.getElementById("stale-banner")) return;
+// nobody notices, so it must survive on screen for as long as the empty board does.
+//
+// It used to say "SNAPSHOT DATA from <date>", because a 284 KB checked-in data.js silently took over
+// when the live path lost. That file is gone (WP14), so this states the simpler and more useful
+// thing: there is NO board on screen, and here is exactly which way the engine call failed.
+function showNoBoardBanner(src) {
+  if (document.getElementById("no-board-banner")) return;
   const b = document.createElement("div");
-  b.id = "stale-banner";
+  b.id = "no-board-banner";
   b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fff;" +
     "font:600 12px/1.5 system-ui,sans-serif;padding:6px 12px;text-align:center;letter-spacing:.02em";
-  b.textContent = `SNAPSHOT DATA from ${src.stamp} -- NOT the live board. Rebuilds will not appear here. Reason: ${src.why}`;
+  b.textContent = `NO LIVE BOARD -- this window is showing nothing, not old values. Reason: ${src.why}`;
   document.body.appendChild(b);
   document.body.style.paddingTop = "28px";
 }
@@ -1362,17 +746,17 @@ async function boot() {
     try {
       const d = await window.mc.appData();
       if (d && Array.isArray(d.players) && d.players.length) {
-        DATA = d.players; NEWS = Array.isArray(d.news) ? d.news : []; CFG = d.config || CFG;
-        if (Array.isArray(d.leverSpecs)) LEVER_SPECS_UI = d.leverSpecs; // engine owns the lever table
-        byName = new Map(DATA.map(p => [p.Player, p]));
-        const sp = document.getElementById("s-players"); if (sp) sp.textContent = DATA.length;
-        DATA_SOURCE = { live: true, why: "", stamp: "", builtAt: d.builtAt || null };
+        DATA = d.players; CFG = d.config || CFG; setLastYr(d.lastYr);
+        DATA_SOURCE = { live: true, why: "", builtAt: d.builtAt || null };
         watchForRebuild(d.builtAt || null);
       } else {
         // The call SUCCEEDED and returned nothing. Distinct from a throw, and the likelier bug:
         // appDataPayload queries `board` for config.season, so a season with no rows yields an
-        // empty array rather than an error.
-        DATA_SOURCE.why = `engine returned ${d && d.players ? d.players.length : 0} players for season ${(d && d.config && d.config.season) || "?"}`;
+        // empty array rather than an error. `d.error` is main.js's rpc failure, now surfaced
+        // instead of collapsing to null (audit FIX 1).
+        DATA_SOURCE.why = (d && d.error)
+          ? `engine error: ${d.error}`
+          : `engine returned ${d && d.players ? d.players.length : 0} players for season ${(d && d.config && d.config.season) || "?"}`;
       }
     } catch (e) {
       DATA_SOURCE.why = `engine call failed: ${e && e.message ? e.message : e}`;
@@ -1380,37 +764,23 @@ async function boot() {
   } else {
     DATA_SOURCE.why = "no engine bridge (window.mc) -- this is a browser preview, not the app";
   }
-  if (!DATA_SOURCE.live) showStaleBanner(DATA_SOURCE);
-  // team source of truth is the store (my_roster via the helper); localStorage is the browser fallback
-  if (window.mc && window.mc.teamGet) {
-    try { const t = await window.mc.teamGet(); if (Array.isArray(t)) TEAM = t; } catch (e) { /* keep localStorage */ }
-  }
-  if (window.mc && window.mc.authStatus) { try { MC_AUTH = await window.mc.authStatus(); } catch (e) { /* keep default */ } }
-  // PUSH for the Data/Model pages, same principle as watchForRebuild's board push: refresh the page
-  // in place if it happens to be the one open when the engine's lineage/model stamp moves, rather
-  // than making the user notice it went stale and reload.
-  if (window.mc.onLineageChanged) window.mc.onLineageChanged(() => { if (curPage === "sources") loadDag(); });
-  if (window.mc.onModelsChanged) window.mc.onModelsChanged(() => { if (curPage === "model") loadModel(); });
-  wireWebview(); // the persistent ESPN browsing surface (always mounted, always CDP-navigable)
-  syncTeam();
-  initCopilot();          // the Copilot lives in the left bar now -- always present
-  await renderLeagueTabs(); // top row: the league(s); sets ACTIVE_LEAGUE for the ESPN pages
-  renderPageTabs();       // second row: Board + ESPN pages for the active league
-  // sync who-owns-what for the active league (empty pre-draft), then refresh the board overlay
-  if (window.mc && window.mc.syncRosters && ACTIVE_LEAGUE) {
-    window.mc.syncRosters().then(() => window.mc.ownership()).then(o => { OWNERSHIP = (o && o.ownership) || {}; if (cur === "board") drawBody(); }).catch(() => {});
-  }
-  // (Assistant subtitle stays "Mission Control" -- it's app-wide, not tied to one league.)
-  // Fresh install (no board yet) lands on Setup so the user onboards; otherwise the Board.
-  const fresh = window.mc && (!DATA || DATA.length === 0);
-  setPage(fresh ? "settings" : "board");
-}
-// The Copilot chat is mounted once in #agent (always present). Wire its input + paint the log.
-function initCopilot() {
-  renderCopilot();
-  const q = document.getElementById("cop-q"); if (!q) return;
-  const send = () => { const t = q.value.trim(); if (!t) return; q.value = ""; sendCopilot(t); };
-  const sb = document.getElementById("cop-send"); if (sb) sb.onclick = send;
-  q.onkeydown = e => { if (e.key === "Enter") send(); };
+  if (!DATA_SOURCE.live) showNoBoardBanner(DATA_SOURCE);
+  // PUSH for the Status page, same principle as watchForRebuild's board push: refresh it in place if
+  // it happens to be the one open when the engine's lineage/model stamp moves.
+  if (window.mc && window.mc.onLineageChanged) window.mc.onLineageChanged(() => { if (curPage === "status") loadStatusLineage(); });
+  if (window.mc && window.mc.onModelsChanged) window.mc.onModelsChanged(() => { if (curPage === "status") loadStatusModels(); });
+  // THE SCHEDULER TICK, LIVE. main has pushed this on every tick since the scheduler was written,
+  // into a renderer that never listened -- which is why a routine could fail every 15 minutes for
+  // days with nothing on screen (audit 3.7).
+  if (window.mc && window.mc.onSchedulerTick) window.mc.onSchedulerTick((t) => {
+    // main holds the tick, so re-reading scheduleGet is the single source rather than a second copy.
+    if (curPage === "status") loadStatusScheduler();
+    if (t && !t.ok) leagueToast(`scheduled routine FAILED -- see Status`, "error");
+  });
+  wireWebview();          // the persistent browsing surface (always mounted, always CDP-navigable)
+  await renderLeagueTabs(); // top row: the league(s); sets ACTIVE_LEAGUE
+  renderPageTabs();       // second row: Board / Browser / Status
+  loadOwnership();        // who-owns-what for the active league (empty pre-draft)
+  setPage("board");
 }
 boot();

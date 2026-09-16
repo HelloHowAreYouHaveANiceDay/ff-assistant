@@ -1,5 +1,12 @@
-// Electron main process for Fantasy Mission Control. Window + IPC to the ff engine (draft-log,
-// data refresh, sheet push). Renderer is sandboxed (contextIsolation, no nodeIntegration).
+// Electron main process for Fantasy Mission Control. Window, the loopback APP BRIDGE the engine
+// reaches the logged-in webviews through, the in-season scheduler, and a small read-only IPC surface
+// for the renderer. Renderer is sandboxed (contextIsolation, no nodeIntegration).
+//
+// WP14 (2026-09-16, D26): the in-app Assistant is retired and the minimal UI shipped, so the agent
+// control channels (agentAsk/agentStart/agentStop/pause/authLogin/...), the draft-log reader, the
+// sheet push and the data-sources reader are gone with the buttons that called them. What remains is
+// what a terminal cannot be: the two logged-in guests, the bridge, the league switch, and the reads
+// the Board and Status pages render.
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -32,10 +39,6 @@ function ensureDb() {
   // (Setup: log into ESPN -> Sync league -> Build board). The engine's openDb creates the schema +
   // default config on first open, so we only need the directory to exist.
   if (app.isPackaged) { try { fs.mkdirSync(path.dirname(DB_PATH), { recursive: true }); } catch (_) { /* created on open */ } }
-}
-// True until the user has synced a league AND built a board (used to show the Setup/onboarding flow).
-async function isOnboarded() {
-  try { const ad = await rpc("app-data"); return !!(ad && ad.players && ad.players.length > 0); } catch (_) { return false; }
 }
 function ffSpawn(args, opts = {}) {
   // packaged: NODE_PATH points at the engine's bundled deps (copied as "deps" since electron-builder
@@ -82,10 +85,6 @@ function startScheduler() {
   if (schedulerTimer) return;
   // First cycle after a short delay so serve + bridge have settled; then it self-schedules.
   schedulerTimer = setTimeout(schedulerCycle, 30000);
-}
-function kickSchedulerSoon() {
-  if (schedulerTimer) { clearTimeout(schedulerTimer); }
-  schedulerTimer = setTimeout(schedulerCycle, 1500);
 }
 
 // BOARD-CHANGE NOTIFICATION, hung on the CHOKEPOINTS rather than on a list of commands.
@@ -160,27 +159,17 @@ function createWindow() {
     if (/^https?:/.test(url)) { shell.openExternal(url); return { action: "deny" }; }
     return { action: "allow" };
   });
-  if (process.env.MC_AGENT_PROBE) {
-    // Drive the Copilot through a REAL agent turn end-to-end (renderer -> IPC -> ff agent-ask -> SDK).
-    win.webContents.on("did-finish-load", async () => {
-      await new Promise((r) => setTimeout(r, 3000));
-      const res = await win.webContents.executeJavaScript(
-        "(async()=>{const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
-        "document.querySelector('.nv[data-view=\"copilot\"]').click();await sleep(300);" +
-        "document.getElementById('cop-q').value='Give me the single best WR value in one line.';document.getElementById('cop-send').click();" +
-        "for(let i=0;i<75;i++){await sleep(1000);const b=[...document.querySelectorAll('.cmsg.casst')].pop();if(b&&!b.textContent.includes('thinking')&&b.querySelector('.ctext'))break;}" +
-        "const b=[...document.querySelectorAll('.cmsg.casst')].pop();" +
-        "return{chips:[...b.querySelectorAll('.chip')].map(c=>c.textContent.trim()),text:[...b.querySelectorAll('.ctext')].map(c=>c.textContent.trim()).join(' | ').slice(0,240),err:window.__err||null};})()");
-      console.error("AGENTPROBE " + JSON.stringify(res));
-      app.quit();
-    });
-    return;
-  }
+  // MC_AGENT_PROBE and MC_CAPTURE were removed with the Assistant (WP14): no script, test or doc in
+  // the repo set either variable, and both drove DOM (`.nv[data-view=copilot]`, `#cop-q`, `#s-roster`)
+  // that had already been deleted -- so they were harnesses for a surface that no longer existed.
+  // MC_CDP_PROBE stays because the question it answers is still load-bearing: whether the embedded
+  // guest shows up as an attachable CDP target is exactly what `ff <verb> --app` and the 11 browser
+  // MCP tools depend on.
   if (process.env.MC_CDP_PROBE) {
     // Does the embedded ESPN webview show up as an attachable CDP target? Report BOTH the raw CDP
     // target list (with types) and what Playwright's connectOverCDP enumerates as pages.
     win.webContents.on("did-finish-load", async () => {
-      await win.webContents.executeJavaScript("setView('live')").catch(() => {});
+      await win.webContents.executeJavaScript("setPage('browser')").catch(() => {});
       await new Promise((r) => setTimeout(r, 13000)); // let the webview navigate to ESPN
       const out = { rawTargets: [], pwPages: [], espnRaw: false, espnPw: false, error: null };
       try {
@@ -198,51 +187,9 @@ function createWindow() {
     });
     return;
   }
-  if (process.env.MC_CAPTURE) {
-    win.webContents.on("did-finish-load", async () => {
-      await new Promise((r) => setTimeout(r, 4000)); // let boot() pull appData from the DB via the engine
-      const probe = await win.webContents.executeJavaScript(
-        "(async()=>{const sleep=ms=>new Promise(r=>setTimeout(r,ms));const ad=window.mc&&window.mc.appData?await window.mc.appData():null;" +
-        "const rows=document.querySelectorAll('tbody tr').length;" +
-        "document.querySelector('.nv[data-view=\"live\"]').click();await sleep(13000);" +
-        "const wv=document.getElementById('espnview');" +
-        "return{rows,sRoster:document.getElementById('s-roster').textContent,nav:document.querySelectorAll('.nv').length,appDataPlayers:ad?ad.players.length:null," +
-        "hasWebview:!!wv,wvStatus:wv?wv.dataset.status:null,wvUrl:wv&&wv.getURL?wv.getURL():null,wvTitle:wv&&wv.getTitle?wv.getTitle():null,err:window.__err||null};})()");
-      console.error("CAPTURE " + JSON.stringify(probe));
-      app.quit();
-    });
-  }
 }
 
-// --- IPC to the engine (data-sources returns per-table warehouse freshness) ---
-function newestDraftLog() {
-  const dir = DATA_DIR;
-  let files = [];
-  try {
-    files = fs.readdirSync(dir)
-      .filter((f) => /^draft-log-.*\.json$/.test(f))
-      .map((f) => ({ f, m: fs.statSync(path.join(dir, f)).mtimeMs }));
-  } catch (e) { return null; }
-  if (!files.length) return null;
-  files.sort((a, b) => b.m - a.m);
-  const age = Date.now() - files[0].m;
-  try {
-    const data = JSON.parse(fs.readFileSync(path.join(dir, files[0].f), "utf8"));
-    return { file: files[0].f, ageSec: Math.round(age / 1000), data };
-  } catch (e) { return null; }
-}
-
-function run(cmd, args) {
-  return new Promise((res) => {
-    const p = cp.spawn(cmd, args, { cwd: REPO, shell: true });
-    let out = "";
-    p.stdout.on("data", (d) => (out += d));
-    p.stderr.on("data", (d) => (out += d));
-    p.on("close", (c) => res({ ok: c === 0, out: out.slice(-1800) }));
-    p.on("error", (e) => res({ ok: false, out: String(e) }));
-  });
-}
-
+// --- IPC to the engine ---
 // Run an `ff` subcommand that prints one JSON line to stdout, and parse it. The engine (native
 // better-sqlite3, WAL-correct) owns DB reads; Electron just consumes the JSON. Full stdout is
 // captured (run() truncates, so it can't be reused for a large payload).
@@ -293,134 +240,38 @@ function debouncedNotice() {
   noticeTimer = setTimeout(() => { noticeTimer = null; noticeBoardChange(); }, 400);
 }
 
-ipcMain.handle("mc:appData", () => rpc("app-data").catch(() => null));
-ipcMain.handle("mc:authStatus", () => rpc("auth-status").catch(() => ({ authenticated: false, source: "none" })));
-// Best-effort: open a terminal to complete the Claude subscription login; the user then re-checks.
-// (A full in-app OAuth flow ships with the packaged build; dev-run uses the CLI login.)
-ipcMain.handle("mc:authLogin", () => {
-  try { cp.spawn("cmd", ["/c", "start", "\"Claude Login\"", "cmd", "/k", "claude"], { cwd: REPO, shell: true, detached: true }); } catch (_) { /* best-effort */ }
-  return { ok: true };
-});
+// SURFACE THE ERROR, do not collapse it to null. Nine handlers used to end `.catch(() => null)`, and
+// the renderer's matching `if (!page) return` discarded it a second time -- which is how a live
+// engine fault rendered as three EMPTY SECTION HEADERS with no message for days (audit 1.8). A
+// failed read now returns `{error}` and the Status page prints it. "No data" and "the call failed"
+// must never look the same.
+const rpcOr = (method, params) => rpc(method, params).catch((e) => ({ error: String((e && e.message) || e) }));
 
-// Mirror the app's team into SQLite (my_roster) so the agent can read it. Through the helper now.
-ipcMain.handle("mc:teamSet", (e, team) => rpc("my-roster-set", { roster: Array.isArray(team) ? team : [] }).then(() => ({ ok: true })).catch(() => ({ ok: false })));
-
-// Real Copilot: spawn the Agent SDK session (ff agent-ask, subscription auth via `claude`), pipe the
-// question in on stdin, and stream its JSON events to the renderer as they arrive. Resolves on close.
-ipcMain.handle("mc:agentAsk", (e, message) => new Promise((resolve) => {
-  const p = ffSpawn(["agent-ask", "--json"]);
-  let buf = "";
-  p.stdout.on("data", (d) => {
-    buf += d;
-    let i;
-    while ((i = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-      if (line.startsWith("{")) { try { if (win && !win.isDestroyed()) win.webContents.send("mc:agentEvent", JSON.parse(line)); } catch (_) { /* ignore */ } }
-    }
-  });
-  p.on("close", () => resolve({ ok: true }));
-  p.on("error", (err) => resolve({ ok: false, out: String(err) }));
-  p.stdin.write(String(message) + "\n");
-  p.stdin.end();
-}));
-ipcMain.handle("mc:draftState", () => newestDraftLog());
-ipcMain.handle("mc:teamGet", () => rpc("my-roster-get").catch(() => []));
-ipcMain.handle("mc:liveState", async () => {
-  // prefer the store (via the helper); fall back to the file if the engine hasn't written the DB yet
-  try { const r = await rpc("live-state"); if (r) return r; } catch (_) { /* fall back */ }
-  const f = path.join(DATA_DIR, "live-state.json");
-  try {
-    const m = fs.statSync(f).mtimeMs;
-    return { ageSec: Math.round((Date.now() - m) / 1000), data: JSON.parse(fs.readFileSync(f, "utf8")) };
-  } catch (e) { return null; }
-});
-
-// --- agent control: start (auto-draft / practice), pause via the PAUSE file, stop (kill tree) ---
-let agent = null;
-ipcMain.handle("mc:agentStatus", () => ({ running: !!agent, pid: agent ? agent.pid : null }));
-ipcMain.handle("mc:agentStart", (e, mode) => {
-  const portArgs = CDP_PORT ? ["--port", CDP_PORT] : []; // drive the EMBEDDED webview, not bro
-  if (mode === "practice") { // quick launcher: drives the embedded webview into an ESPN mock room
-    ffSpawn(["launch-practice", ...portArgs]);
-    return { ok: true, mode };
-  }
-  if (agent) return { ok: false, out: "agent already running" };
-  // No --csv, so the engine reads values from the SQLite store (player_value).
-  agent = ffSpawn(["auto-draft", ...portArgs]);
-  agent.on("close", () => { agent = null; });
-  agent.on("error", () => { agent = null; });
-  return { ok: true, mode, pid: agent.pid };
-});
-ipcMain.handle("mc:agentStop", () => {
-  if (!agent) return { ok: false, out: "not running" };
-  const pid = agent.pid;
-  try { cp.execSync(`taskkill /F /T /PID ${pid}`); } catch (e) { /* may already be gone */ }
-  agent = null;
-  return { ok: true };
-});
-ipcMain.handle("mc:pause", (e, on) => {
-  const f = path.join(DATA_DIR, "PAUSE");
-  try {
-    if (on) fs.writeFileSync(f, "paused");
-    else if (fs.existsSync(f)) fs.unlinkSync(f);
-    return { ok: true, paused: !!on };
-  } catch (err) { return { ok: false, out: String(err) }; }
-});
-ipcMain.handle("mc:isPaused", () => {
-  try { return fs.existsSync(path.join(DATA_DIR, "PAUSE")); } catch (e) { return false; }
-});
-ipcMain.handle("mc:openExternal", (e, url) => { if (/^https?:/.test(url)) shell.openExternal(url); });
-ipcMain.handle("mc:leagueInfo", () => rpc("league-info").catch(() => null));
+ipcMain.handle("mc:appData", () => rpcOr("app-data"));
+ipcMain.handle("mc:boardStamp", () => rpcOr("board-stamp"));
+ipcMain.handle("mc:leagueInfo", () => rpcOr("league-info"));
 ipcMain.handle("mc:leagueList", () => rpc("league-list").catch(() => ({ leagues: [], active: null })));
 ipcMain.handle("mc:leagueSetActive", (e, leagueId) => rpc("league-set-active", { leagueId }).catch((err) => ({ error: String(err) })));
-ipcMain.handle("mc:dataSources", () => rpc("data-sources").catch(() => null));
-ipcMain.handle("mc:modelGraph", () => rpc("model-graph").catch(() => null));
+ipcMain.handle("mc:modelGraph", () => rpcOr("model-graph"));
 // THE DERIVED LINEAGE GRAPH (src/lineage/dag.ts) and THE MODEL PAGE (src/lineage/modelPage.ts) --
-// what the Data page and Model page now render, in place of dataSources/modelGraph's curated lists.
-ipcMain.handle("mc:lineage", () => rpc("lineage").catch(() => null));
-ipcMain.handle("mc:modelPage", () => rpc("model-page").catch(() => null));
-ipcMain.handle("mc:ownership", () => rpc("ownership").catch(() => null));
-// The in-season scheduler surface for the renderer (a settings panel) and, through it, the copilot.
-ipcMain.handle("mc:scheduleGet", async () => { try { return { config: await rpc("schedule-get"), lastTick }; } catch (_) { return { config: null, lastTick }; } });
-ipcMain.handle("mc:scheduleSet", async (e, patch) => {
-  let res = null; try { res = await rpc("schedule-set", { patch: patch || {} }); } catch (_) { /* return null */ }
-  kickSchedulerSoon(); // a just-enabled schedule (or a cadence change) starts promptly, not next period
-  return res;
-});
-ipcMain.handle("mc:tickNow", () => ffRun(["inseason-tick", "--json"])); // run the routine set once, on demand
-ipcMain.handle("mc:syncRosters", () => ffRun(["sync-rosters"]));
-// materialize one source (asset) + its downstream -- a separate process so the serve helper isn't blocked
-ipcMain.handle("mc:ingestSource", (e, id) => ffRun(["ingest-source", String(id)]));
-ipcMain.handle("mc:setLevers", (e, patch) => rpc("levers-set", { patch: patch || {} }).catch(() => null));
-// Onboarding sync: discover the user's ESPN leagues + sync the active one (format, scoring model, my
-// team) into config. Runs the existing agent tools (discover_leagues -> league_sync) as one turn and
-// resolves when it finishes, so the Setup UI can then refresh status + build the board.
-ipcMain.handle("mc:syncLeague", () => new Promise((resolve) => {
-  const p = ffSpawn(["agent-ask", "--json"]);
-  let buf = "", lastText = "";
-  p.stdout.on("data", (d) => {
-    buf += d; let i;
-    while ((i = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-      if (!line.startsWith("{")) continue;
-      try { const o = JSON.parse(line); if (o.t === "text" && o.text) lastText = String(o.text); } catch (_) { /* ignore */ }
-    }
-  });
-  p.on("close", () => resolve({ ok: true, out: lastText }));
-  p.on("error", (err) => resolve({ ok: false, out: String(err) }));
-  p.stdin.write("Run discover_leagues, then league_sync. Reply with ONLY the one-line result from league_sync.\n");
-  p.stdin.end();
+// Status renders their freshness and their registry tables as read-only text. The clickable DAG
+// canvas and its per-asset materialize buttons were cut: `ff ingest-source <id>` does the same thing
+// and does not need a window open (audit 5.2).
+ipcMain.handle("mc:lineage", () => rpcOr("lineage"));
+ipcMain.handle("mc:modelPage", () => rpcOr("model-page"));
+ipcMain.handle("mc:ownership", () => rpcOr("ownership"));
+// THE IN-SEASON SCHEDULER, READ-ONLY. The renderer shows the config and the LAST TICK (including a
+// failure and its error text); `schedule-set`/`inseason-tick` stay engine verbs the copilot drives,
+// because a button for them would be a fourth way to do something `ff` already does.
+ipcMain.handle("mc:scheduleGet", async () => { try { return { config: await rpc("schedule-get"), lastTick }; } catch (e) { return { config: null, lastTick, error: String((e && e.message) || e) }; } });
+// What Claude Code will be talking to: the loopback bridge, the CDP port, and the store. NO TOKEN --
+// the renderer never needs it and publishing it into the page would widen the bridge's surface from
+// "a local process that can read data/app-bridge.json" to "anything running in the renderer".
+ipcMain.handle("mc:bridgeInfo", () => ({
+  port: bridgePort, pid: process.pid, cdpPort: CDP_PORT, db: DB_PATH, repo: REPO,
+  file: path.join(DATA_DIR, "app-bridge.json"),
 }));
-ipcMain.handle("mc:refreshData", async () => {
-  // ALL TS now, no Python: ingest reference+news -> project curve -> assemble value/board.
-  const r = await ffRun(["refresh"]);
-  return { ok: r.ok, out: r.out };
-});
-ipcMain.handle("mc:pushSheet", async (e, id) => {
-  const args = ["run", "python", "tools/push_sheet.py", "--no-rebuild"];
-  if (id) args.push("--spreadsheet", id);
-  return await run("uv", args);
-});
+ipcMain.handle("mc:openExternal", (e, url) => { if (/^https?:/.test(url)) shell.openExternal(url); });
 
 // --- THE APP BRIDGE: a door the engine can knock on -------------------------------------------
 //
@@ -467,8 +318,9 @@ function guestWebContents({ host = "espn.com", urlIncludes } = {}) {
   pool.sort((a, b) => url(b).length - url(a).length);
   return pool[0] || null;
 }
-// Back-compat wrapper: the existing ESPN routes call this with a bare urlIncludes.
-function espnGuestWebContents(urlIncludes) { return guestWebContents({ host: "espn.com", urlIncludes }); }
+// (A back-compat `espnGuestWebContents(urlIncludes)` wrapper lived here. Its own comment claimed
+// "the existing ESPN routes call this", and a grep found ZERO call sites -- every route had already
+// been converted to guestWebContents({host}). Removed in WP14, audit 2.3.)
 
 // THE PER-PLATFORM ALLOWLIST lives in its own dependency-free module so it is unit-testable without
 // Electron (app/bridgeHosts.js, test/platform-bridge-allowlist.test.ts). A `host` that is not a key
@@ -476,6 +328,9 @@ function espnGuestWebContents(urlIncludes) { return guestWebContents({ host: "es
 // caller is unchanged.
 const { BRIDGE_HOSTS, resolveBridgeHost } = require("./bridgeHosts.js");
 
+// The listening port, so `mc:bridgeInfo` can tell the Status page what the engine is knocking on
+// (the token stays here and in data/app-bridge.json; it never reaches the renderer).
+let bridgePort = null;
 function startBridge() {
   const http = require("http");
   const crypto = require("crypto");
@@ -660,17 +515,21 @@ function startBridge() {
           return reply(400, { error: "url must be the ESPN league-transactions write endpoint" });
         }
         if (typeof tbody !== "string" || tbody.length > 1e5) return reply(400, { error: "body must be a JSON string" });
-        if (!win || win.isDestroyed()) return reply(503, { error: "no window" });
         try {
+          // RESOLVE THE GUEST BY HOST, like every sibling route (fixed WP14; audit 2.3). This was the
+          // LAST route still doing `win.webContents.executeJavaScript(... getElementById("espnview"))`
+          // -- exactly the pattern the 2026-09-13 note above says resolved the WRONG guest, and the
+          // one route the P-3 no-fallback fix missed when its five siblings were converted. Same
+          // shape as "two of three callers fixed". It stays ESPN-ONLY on purpose: the url allowlist
+          // below is a single ESPN write endpoint, so there is no Yahoo write to serve and a `host`
+          // parameter here would only invite one.
+          const guest = guestWebContents({ host: "espn.com" });
+          if (!guest || guest.isDestroyed()) return reply(503, { error: "no guest on espn.com (open the ESPN browser tab and sign in) -- refusing to write with another platform's session" });
           const initJson = JSON.stringify({ method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: tbody });
           const inner = `fetch(${JSON.stringify(url)},${initJson})` +
             `.then(function(r){ return r.text().then(function(t){ return { status: r.status, body: t }; }); })` +
             `.catch(function(e){ return { error: String((e && e.message) || e) }; })`;
-          const out = await win.webContents.executeJavaScript(
-            `(async () => { const wv = document.getElementById("espnview");` +
-            `  if (!wv || !wv.executeJavaScript) return { error: "webview not mounted" };` +
-            `  return await wv.executeJavaScript(${JSON.stringify(inner)});` +
-            `})()`);
+          const out = await guest.executeJavaScript(inner);
           return reply(200, out ?? { error: "no result" });
         } catch (e) { return reply(500, { error: String((e && e.message) || e) }); }
       });
@@ -707,7 +566,7 @@ function startBridge() {
     });
   });
   server.listen(0, "127.0.0.1", () => {
-    const port = server.address().port;
+    const port = bridgePort = server.address().port;
     const f = path.join(DATA_DIR, "app-bridge.json");
     try {
       fs.mkdirSync(DATA_DIR, { recursive: true });

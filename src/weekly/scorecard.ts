@@ -694,6 +694,11 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
               ] as [string, typeof p.model, number | undefined][]) {
                 if (!r || v == null || !Number.isFinite(v)) continue;
                 const info = insP.run({
+                  // `fk` is not optional: the statement above binds @fk, and WP2 made format_key
+                  // part of the PK. This call site was the one of six the migration missed, so the
+                  // whole scorecard routine threw `Missing named parameter "fk"` -- invisibly, every
+                  // 15 minutes, from the in-app scheduler (WP14, test/scorecard-stream-fk.test.ts).
+                  fk: fmtKey,
                   season: opts.season, week, model, subject: r.feat_key, name: r.name, pos: r.pos,
                   value: v, p10: Number.isFinite(r.p10) ? r.p10 : null,
                   p90: Number.isFinite(r.p90) ? r.p90 : null, asOf, now: nowP,

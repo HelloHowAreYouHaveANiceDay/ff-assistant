@@ -78,9 +78,10 @@ function kindFor(id: string, writtenBy: Set<string>, readBy: Set<string>): Linea
   return "table";
 }
 
-/** Freshness column candidates, in the order the existing `data-sources` serve method tries them
- *  (see src/ff.ts `case "data-sources"`). Not every table has one; a table with none just gets a
- *  row count. */
+/** Freshness column candidates, in the order the retired `data-sources` serve method tried them.
+ *  (That method was removed in WP14, 2026-09-16 -- it enumerated its tables by hand and its only
+ *  consumer was a UI button that no longer exists; this order is all that outlived it.) Not every
+ *  table has one; a table with none just gets a row count. */
 const FRESH_COLS = ["updated_at", "fetched_at", "scraped", "created_at", "scored_at", "as_of"];
 
 function tableStats(db: DB, table: string): { rows: number; updated: string | null } | null {

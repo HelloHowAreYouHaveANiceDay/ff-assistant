@@ -1,16 +1,17 @@
-# BYO agent: driving ff-assistant from Claude Code (stdio MCP)
+# Driving ff-assistant from Claude Code (stdio MCP)
 
-The desktop app has a built-in copilot (Claude Agent SDK, `ff agent-ask`). `ff mcp` exposes **the
-same control surface** over stdio MCP so you can drive the draft from Claude Code -- or any other
-MCP client -- instead of the in-app chat.
+**This is THE agent surface, not an alternative to one (D26, 2026-09-16).** The in-app chat
+Assistant is retired; the desktop app is now the login / bridge / board cockpit, and the agent that
+drives it is Claude Code over the `ff` CLI and `ff mcp`. (This page used to say MCP let you drive the
+draft "instead of the in-app chat" -- an alternative -- for weeks after the chat had stopped working.)
 
-## Why this is the same surface, not a copy of it
+## Why this is the same surface the engine has always had
 
 `boardServer()` in `src/agent/agent.ts` builds a real `McpServer` (from
-`@modelcontextprotocol/sdk`) out of `buildTools()`. The in-app copilot hands **that instance** to
-the Agent SDK in-process; `src/agent/mcp-stdio.ts` connects **that same instance** to a stdio
-transport. There is no second tool list, so the two surfaces cannot drift apart: add a tool to
-`buildTools()` and both get it.
+`@modelcontextprotocol/sdk`) out of `buildTools()`. `src/agent/mcp-stdio.ts` connects **that
+instance** to a stdio transport, and `ff agent-ask` (still a CLI verb, used by scripts) hands the
+SAME instance to the Agent SDK in-process. There is no second tool list, so the surfaces cannot
+drift apart: add a tool to `buildTools()` and both get it.
 
 Two guards keep it that way (`test/mcp-surface.test.ts`):
 - the server's actual registry must equal `TOOL_NAMES` (catches a duplicate name silently
@@ -130,7 +131,7 @@ Ten READ-ONLY verbs over ONE sim context (`src/inseason/copilot.ts`), reached th
 (`src/inseason/copilotActions.ts`) that `ff copilot <verb>` also uses. That single path is the point:
 six scripts used to hand-build the same context, three on the real schedule and three on a generated
 one, and the same roster returned a base title probability of 4.17%, 4.56% or 5.1% depending on which
-tool you asked. A terminal and the Assistant now cannot disagree, because there is one place the
+tool you asked. A terminal and an MCP client cannot disagree, because there is one place the
 number is computed.
 
 **ONE UNIT OF MEASURE, AND IT CHANGED IN PHASE 3 (2026-09-09).** Everything that can be is scored
@@ -148,7 +149,7 @@ never used alone), plus `rankValue` -- whichever the active regime ranks on. Abo
 probability, derived from the calibration reliability table, the primary becomes playoff-week
 strength; `season_odds` returns the regime and the threshold. Every result carries an `objective`
 block naming all of it, and the caveat sentence each summary ends with names the primary quantity, so
-an Assistant cannot quote a delta without saying what it is a delta IN.
+an agent cannot quote a delta without saying what it is a delta IN.
 
 **EVERY ANSWER CARRIES ITS ASSUMPTIONS.** Every result has an `assumptions` block:
 
@@ -173,7 +174,7 @@ availability pipeline cannot satisfy. `waiver_targets` refuses a drop that would
 slot unfillable and says which, rather than simulating an empty slot nobody would ever field.
 
 **THE ACTION LOG COVERS ADVICE (D3).** No ESPN write exists among these ten, and the instinct is
-therefore that there is nothing to log. That is backwards: what the Assistant DOES here is give
+therefore that there is nothing to log. That is backwards: what the agent DOES here is give
 advice, and advice a human acts on is still the agent driving the team. So every call writes an
 `action_log` row -- verb, arguments, and the summary -- at status `recommended`, BEFORE the answer is
 returned, and a call that throws leaves the row at `failed`. The one ESPN write tool that now exists,
@@ -258,7 +259,7 @@ bid and every guard fired. `auto-draft --app` re-verified afterwards in a clean 
 It now walks to a scrollable ancestor AND dispatches a real wheel event. Verified by CONTENT, not by
 return value -- the top board row changed and rendered rows went 30 -> 54.
 
-Every mutation goes through the same `action_log` the in-app copilot uses, so the two agents share
+Every mutation goes through the same `action_log` `ff copilot` writes, so the CLI and MCP share
 one audit trail. Writing to ESPN itself (lineups, waivers, trades) is **not** exposed -- reads only.
 
 ## Notes

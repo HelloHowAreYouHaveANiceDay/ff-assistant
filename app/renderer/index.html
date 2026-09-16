@@ -5,47 +5,53 @@
 <script>window.onerror=(m,s,l,c)=>{window.__err=(m+" @"+l+":"+c)};</script>
 </head>
 <body>
+<!-- THE MINIMAL UI (WP14, 2026-09-16 -- docs/ui-audit-2026-09-16.md section 5.4, decision D26).
+     The agent surface is Claude Code driving `ff` + the `ff-draft` MCP server; this window is the
+     LOGIN / BRIDGE / BOARD COCKPIT and nothing else. Three pages, because three things here cannot
+     be done from a terminal: the two logged-in <webview> guests (and the loopback bridge 12+ engine
+     modules reach through them), a dense board you scan rather than query, and one honest answer to
+     "is the system healthy and what will Claude Code see". Every control that merely shelled a CLI
+     verb was cut -- it had an `ff`/MCP equivalent and three of them shared one handler. -->
 <div id="app">
-  <!-- DRAFT COCKPIT. Lives in the persistent left rail so it stays on screen while the main area
-       shows the real ESPN draft room: you watch what the agent is deciding and what the room is
-       doing at the same time. Replaced the chat Assistant, which is redundant now that Claude Code
-       drives the app directly over CDP. Fed by mc.liveState() (data/live-state.json + the store),
-       which auto-draft rewrites every few ticks. -->
-  <aside id="agent">
-    <div class="brand"><span class="logo">&#127944;</span><div><div class="bt">Draft Cockpit</div><div class="bs lbl" id="brand-season">Mission Control</div></div></div>
-    <div id="cockpit"></div>
-  </aside>
-
   <main id="main">
     <div id="leaguetabs" class="tabrow leagues"></div>
     <div id="pagetabs" class="tabrow pages"></div>
     <!-- content region below the two tab rows; the webview-layer fills THIS (not the tabs) -->
     <div id="content">
       <section id="view"></section>
-      <!-- Persistent authenticated ESPN browsing surface: mounted once so it survives page switches
-           and is ALWAYS a CDP target the engine/agent can navigate (through the app's own session,
-           never bro). Shown for ESPN pages; hidden elsewhere. -->
+      <!-- Persistent authenticated browsing surface: one <webview> PER PLATFORM, each on its own
+           persistent partition, mounted once so both stay logged in and both stay CDP targets the
+           engine/agent can navigate (through the app's own session, never bro). Shown on the Browser
+           page; moved off-screen (never display:none, which would detach the guest) elsewhere. -->
       <div id="webview-layer" class="off">
         <div class="livebar">
           <button class="pbtn" id="lv-back" title="Back">&#8592;</button>
           <button class="pbtn" id="lv-reload" title="Reload">&#8635;</button>
           <button class="pbtn" id="lv-home" title="Fantasy home">Home</button>
-          <!-- PLATFORM TABS: each platform is a SEPARATE webview on its own persistent partition, so
-               both stay logged in at once. Toggling shows one and hides the other; neither reloads. -->
+          <!-- PLATFORM TABS: toggling shows one guest and hides the other; neither reloads. -->
           <span class="lv-plat" id="lv-plat">
             <button class="pbtn plat on" id="lv-espn" data-plat="espn">ESPN</button>
             <button class="pbtn plat" id="lv-yahoo" data-plat="yahoo">Yahoo</button>
           </span>
+          <!-- THE LINK ROW. These were four page TABS, which made an out-of-season Draft Room look
+               like a first-class view. They do exactly one thing -- navigate the active guest to a
+               url built for the active league's platform -- so they are links, not pages. -->
+          <span class="lv-links" id="lv-links"></span>
           <span class="lv-url mono mut" id="lv-url"></span>
           <span class="lv-status mut" id="lv-status"></span>
         </div>
-        <webview id="espnview" partition="persist:espn" src="https://fantasy.espn.com/football/" allowpopups></webview>
-        <webview id="yahooview" partition="persist:yahoo" src="https://football.fantasysports.yahoo.com/" allowpopups class="off"></webview>
+        <!-- Both guests are absolutely stacked here and the INACTIVE one is shifted off-screen, never
+             display:none -- a hidden <webview> is not attached, and an unattached guest is not a CDP
+             target, which is the one property the engine and the MCP browser tools depend on. (The
+             stack is new in WP14: `.off` had no CSS rule at all, so both guests were laid out at once
+             and the platform toggle only ever changed which one the toolbar acted on.) -->
+        <div id="wvstack">
+          <webview id="espnview" partition="persist:espn" src="https://fantasy.espn.com/football/" allowpopups></webview>
+          <webview id="yahooview" partition="persist:yahoo" src="https://football.fantasysports.yahoo.com/" allowpopups class="off"></webview>
+        </div>
       </div>
     </div>
   </main>
 </div>
-<script src="vendor/dagre.js"></script>
-<script src="data.js"></script>
 <script src="app.js"></script>
 </body></html>

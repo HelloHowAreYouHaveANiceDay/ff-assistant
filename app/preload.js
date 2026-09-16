@@ -1,65 +1,46 @@
 // Safe bridge from the renderer to the ff engine (contextIsolation on). The renderer never touches
 // Node directly; it calls window.mc.* which the main process fulfils.
+//
+// WP14 (2026-09-16): 36 APIs -> 16 (12 invoke + 4 push). Six were invoked by NOTHING and nine only by renderer code that
+// had become unreachable (docs/ui-audit-2026-09-16.md 2.4). The rest went with the pages the minimal
+// UI cut -- every one of them had an `ff` verb or an MCP tool behind it, which is the whole point of
+// D26: Claude Code is the control surface, this window is the login/bridge/board cockpit.
+//
+// EVERY CHANNEL HERE MUST HAVE A HANDLER IN main.js AND BE INVOKED BY THE RENDERER. Both directions
+// are asserted mechanically by test/app-ipc-map.test.ts -- the audit built that map by hand once, and
+// a hand-built map is a snapshot of the day it was written.
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("mc", {
-  // live draft state: the newest data/draft-log-*.json the `ff auto-draft` engine writes (or null)
-  draftState: () => ipcRenderer.invoke("mc:draftState"),
-  // the agent's per-tick decision (on-block, recommended max bid + reason, our roster/budget)
-  liveState: () => ipcRenderer.invoke("mc:liveState"),
-  // agent control
-  agentStatus: () => ipcRenderer.invoke("mc:agentStatus"),
-  agentStart: (mode) => ipcRenderer.invoke("mc:agentStart", mode),
-  agentStop: () => ipcRenderer.invoke("mc:agentStop"),
-  pause: (on) => ipcRenderer.invoke("mc:pause", on),
-  isPaused: () => ipcRenderer.invoke("mc:isPaused"),
-  // live board + news + config, read from the SQLite store by the ff engine (replaces data.js)
+  // live board + config, read from the SQLite store by the ff engine
   appData: () => ipcRenderer.invoke("mc:appData"),
-  // Copilot auth (subscription via the `claude` login): status check + best-effort login trigger
-  authStatus: () => ipcRenderer.invoke("mc:authStatus"),
-  authLogin: () => ipcRenderer.invoke("mc:authLogin"),
-  // Copilot: ask the real Agent SDK session; agentAsk resolves when the turn ends, onAgentEvent
-  // streams its turns ({t:"text"|"tool"|"done", ...}) as they arrive.
-  agentAsk: (message) => ipcRenderer.invoke("mc:agentAsk", message),
-  onAgentEvent: (cb) => ipcRenderer.on("mc:agentEvent", (_e, data) => cb(data)),
-  // Pushed by main after any engine invocation whose board stamp differs from the last one seen.
-  // Carries the stamp itself so the renderer decides, rather than trusting "something happened".
-  onBoardChanged: (cb) => ipcRenderer.on("mc:boardChanged", (_e, data) => cb(data)),
-  // The in-season scheduler: read the config + last tick, write a partial change (enable/disable,
-  // cadence, which routines), run the routine set once now, and hear each tick as it lands. The copilot
-  // drives the same config through the engine (`ff schedule`), so a change from either side is one state.
-  scheduleGet: () => ipcRenderer.invoke("mc:scheduleGet"),
-  scheduleSet: (patch) => ipcRenderer.invoke("mc:scheduleSet", patch),
-  tickNow: () => ipcRenderer.invoke("mc:tickNow"),
-  onSchedulerTick: (cb) => ipcRenderer.on("mc:schedulerTick", (_e, data) => cb(data)),
-  // the drafted team lives in SQLite (my_roster) now -- read/write via the helper (source of truth)
-  teamSet: (team) => ipcRenderer.invoke("mc:teamSet", team),
-  teamGet: () => ipcRenderer.invoke("mc:teamGet"),
-  // onboarding: synced-league status (config + league row + player count), and a one-shot league sync
+  // whose board is on screen: {builtAt, players, season, stamp:{leagueId, scoringKey, ...}}
+  boardStamp: () => ipcRenderer.invoke("mc:boardStamp"),
+  // onboarding/status readout: config + league row + player count
   leagueInfo: () => ipcRenderer.invoke("mc:leagueInfo"),
   // multi-league: list all known leagues (+ which is active) and switch the active one
   leagueList: () => ipcRenderer.invoke("mc:leagueList"),
   leagueSetActive: (leagueId) => ipcRenderer.invoke("mc:leagueSetActive", leagueId),
-  dataSources: () => ipcRenderer.invoke("mc:dataSources"),
-  modelGraph: () => ipcRenderer.invoke("mc:modelGraph"),
-  // THE DERIVED LINEAGE GRAPH and MODEL PAGE (src/lineage/dag.ts, src/lineage/modelPage.ts) -- what
-  // the Data page and Model page now render from, in place of dataSources/modelGraph.
+  // the derived lineage graph (src/lineage/dag.ts) -- Status reads its freshness, not its topology
   lineage: () => ipcRenderer.invoke("mc:lineage"),
+  // the model registry + the model page's serve table and scorecard (src/lineage/modelPage.ts)
+  modelGraph: () => ipcRenderer.invoke("mc:modelGraph"),
   modelPage: () => ipcRenderer.invoke("mc:modelPage"),
-  // Pushed after any engine invocation whose lineage/model stamp differs from the last one seen --
-  // the same push chokepoint as onBoardChanged, watching two more stamps (app/main.js CHANGE_WATCHES).
+  // per-league ownership overlay for the board (who owns each player)
+  ownership: () => ipcRenderer.invoke("mc:ownership"),
+  // the in-season scheduler's config + LAST TICK. Read-only: the copilot changes the schedule through
+  // the engine (`ff schedule`), and the app's job is to make a failing tick visible -- it ran red for
+  // days behind a renderer that never called this (audit 3.7).
+  scheduleGet: () => ipcRenderer.invoke("mc:scheduleGet"),
+  onSchedulerTick: (cb) => ipcRenderer.on("mc:schedulerTick", (_e, data) => cb(data)),
+  // the loopback bridge + CDP port + store path, so Status can say what Claude Code will talk to.
+  // Deliberately WITHOUT the bridge token: the renderer has no business holding it.
+  bridgeInfo: () => ipcRenderer.invoke("mc:bridgeInfo"),
+  // Pushed by main after any engine invocation whose board/lineage/model stamp differs from the last
+  // one seen. Carries the stamp itself so the renderer decides, rather than trusting "something
+  // happened" (app/main.js's ffRun + rpc chokepoints).
+  onBoardChanged: (cb) => ipcRenderer.on("mc:boardChanged", (_e, data) => cb(data)),
   onLineageChanged: (cb) => ipcRenderer.on("mc:lineageChanged", (_e, data) => cb(data)),
   onModelsChanged: (cb) => ipcRenderer.on("mc:modelsChanged", (_e, data) => cb(data)),
-  ingestSource: (id) => ipcRenderer.invoke("mc:ingestSource", id),
-  // per-league ownership overlay for the board (who owns each player) + a roster resync
-  ownership: () => ipcRenderer.invoke("mc:ownership"),
-  syncRosters: () => ipcRenderer.invoke("mc:syncRosters"),
-  syncLeague: () => ipcRenderer.invoke("mc:syncLeague"),
-  // tuning levers: clamped write of a partial {key:value} patch, returns the new levers
-  setLevers: (patch) => ipcRenderer.invoke("mc:setLevers", patch),
-  // rebuild the values/report + embedded data (renderer reloads on success)
-  refreshData: () => ipcRenderer.invoke("mc:refreshData"),
-  // push the board to a Google Sheet via bim-cli (id/url optional)
-  pushSheet: (id) => ipcRenderer.invoke("mc:pushSheet", id),
   openExternal: (url) => ipcRenderer.invoke("mc:openExternal", url),
 });

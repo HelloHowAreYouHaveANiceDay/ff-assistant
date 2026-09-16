@@ -298,56 +298,12 @@ async function cmdServe(rest: string[]) {
           result = row ? { ageSec: Math.round((Date.now() - Date.parse(row.updated_at)) / 1000), data: JSON.parse(row.state_json) } : null;
           break;
         }
-        case "data-sources": {
-          // freshness (rows + last-updated) for every table node in the warehouse DAG; the renderer
-          // holds the static lineage and looks up each table here by name.
-          const TS: [string, string][] = [
-            ["player", "updated_at"], ["ranking", "fetched_at"], ["player_bio", "updated_at"], ["team_bye", ""],
-            ["player_advanced", "updated_at"], ["trade_value", "updated_at"], ["weekly_rank", "scraped"],
-            ["player_status", "updated_at"], ["trending", "scraped"], ["team_odds", "updated_at"], ["boris_tier", "scraped"],
-            ["adp", "scraped"], ["market_value", "updated_at"], ["news", "asof"], ["league", "last_synced_at"],
-            ["player_value", "updated_at"], ["board", "updated_at"],
-            // identity + staging: freshness for the new spine, so the lineage view can show row
-            // counts for them like any other node rather than rendering them permanently empty.
-            ["ranking_history", "fetched_at"], ["player_ids", "updated_at"],
-            ["player_identity", "created_at"], ["player_xref", "created_at"],
-            ["stg_player", "updated_at"],
-            // RAW LAYER (`ff ingest-raw`): the league's own history plus the nflverse/FFC feeds.
-            // Freshness is the FETCH time, not the as_of stamp -- as_of is a point-in-time property
-            // of the row, and a table full of 2019 as_of values is not stale.
-            ["raw_league_season", "fetched_at"], ["raw_league_team_season", "fetched_at"],
-            ["raw_league_pick", "fetched_at"], ["raw_league_matchup", "fetched_at"],
-            ["raw_league_division", "fetched_at"],
-            ["raw_nfl_game", "fetched_at"], ["raw_injury", "fetched_at"], ["raw_depth_chart", "fetched_at"],
-            ["raw_snap_count", "fetched_at"], ["raw_nfl_draft_pick", "fetched_at"],
-            ["raw_participation", "fetched_at"], ["raw_adp_history", "fetched_at"],
-            ["raw_contract", "fetched_at"],
-            // EXTENSION FEATURES (`ff build-features-ext`).
-            ["feat_player_week_context", "updated_at"], ["feat_player_season_ext", "updated_at"],
-            ["feat_coverage", "updated_at"],
-            // THE FEATURE LAYER PROPER (`ff build-features`, `ff build-weekly-features`) and the
-            // scorecard. These were served by no key at all until the final integration, so the Data
-            // page -- whose job is "show me what data exists" -- was silently omitting the table the
-            // weekly model is fitted on, the table the board is fitted on, and the entire forward
-            // record of what this repo has predicted. The renderer's node list is DERIVED from the
-            // keys served here (app/renderer/app.js, `whDagNodes`), so registering a table is the
-            // whole of making it visible; there is no second list to remember.
-            ["feat_player_season", "updated_at"], ["feat_curve", "updated_at"],
-            ["feat_player_week", "updated_at"], ["feat_player_week_model", "updated_at"],
-            ["raw_espn_projection", "fetched_at"],
-            ["scorecard_prediction", "created_at"], ["scorecard_result", "scored_at"],
-          ];
-          const tables: Record<string, { rows: number; updated: string | null }> = {};
-          for (const [t, col] of TS) {
-            try {
-              const r = db.prepare(`SELECT count(*) c${col ? `, max(${col}) u` : ""} FROM ${t}`).get() as { c: number; u?: string | null };
-              tables[t] = { rows: r.c, updated: r.u ?? null };
-            } catch { tables[t] = { rows: 0, updated: null }; }
-          }
-          const lastIngest = (db.prepare("SELECT value FROM settings WHERE key='last_ingest'").get() as { value: string } | undefined)?.value ?? null;
-          result = { lastIngest, tables };
-          break;
-        }
+        // (The `data-sources` serve method lived here: per-table freshness for a hand-enumerated
+        // list of 40-odd table names. Removed in WP14 (2026-09-16). Its ONLY consumer anywhere was
+        // the app's `mc:dataSources` IPC handler, which the Data page stopped calling when that
+        // page became a derived DAG -- proven by grep across src/, scripts/, test/ and app/:
+        // docs/ui-audit-2026-09-16.md 4.3. `lineage` below supersedes it and is DERIVED from the
+        // ingest + feature registries rather than enumerated, which is why it does not rot.)
         // THE DERIVED LINEAGE GRAPH (src/lineage/dag.ts): nodes/edges computed from the ingest
         // registry (src/data/ingest.ts) and the feature/trainer registry (src/lineage/registry.ts),
         // not enumerated here. See `ff lineage --json` for the same payload from a shell.
@@ -2350,6 +2306,26 @@ async function cmdScrapeLeague(rest: string[]) {
 // that season's ACTUAL weekly results, report OUR championship / playoff rate. The trustworthy
 // objective for "optimize championship wins".
 async function cmdBacktest(rest: string[]) {
+  // `--help` used to fall through and START A FULL RUN. It prints the flags now -- and in particular
+  // the one thing about `--seasons` that surprised an independent reviewer (D-5, 2026-09-16).
+  if (rest.includes("--help") || rest.includes("-h")) {
+    console.log([
+      "usage: ff backtest [--league <id>] [--seasons A-B] [--n 150] [--full] [--no-lookahead]",
+      "                   [--inflation] [--bot-book vor|rank] [--homogeneous] [--dump-trials PATH]",
+      "                   [--artifact-dir DIR] [--projection artifact] [--no-rookies] [--<lever> <v>]",
+      "",
+      "  --seasons A-B   the SCOREABLE window, and it is not always the window you get: a season is",
+      "                  scored only where the format's target holds BOTH its weekly results and the",
+      "                  PRIOR season the draft's book is built from. So the first year of a range",
+      "                  normally supplies the projection rather than being scored -- `--seasons",
+      "                  2024-2025` scores 2025 alone. This is expected, not a narrowing bug; the",
+      "                  `per season:` line always names exactly which seasons were scored, so read",
+      "                  that rather than the flag when you quote an n.",
+      "  --league <id>   default: the ACTIVE league. The league's FORMAT selects the draft model",
+      "                  (auction or snake), the history target, and the golden master it is gated on.",
+    ].join("\n"));
+    return;
+  }
   const { runBacktest } = await import("./draft/backtest.js");
   const { leagueFromConfig } = await import("./draft/sim.js");
   const { openDb } = await import("./db/db.js");

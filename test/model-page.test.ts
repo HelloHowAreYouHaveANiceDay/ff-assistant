@@ -1,7 +1,14 @@
-// THE MODEL PAGE'S NEW SECTIONS (weekly-serve, scorecard, ledger) CARRY NO NUMBER OF THEIR OWN --
-// every figure comes from src/lineage/modelPage.ts's JSON, read at render time. This proves it, and
-// proves buildModelPage() itself assembles from the registries rather than quoting a remembered
-// number.
+// THE SERVE TABLE AND SCORECARD SECTIONS CARRY NO NUMBER OF THEIR OWN -- every figure comes from
+// src/lineage/modelPage.ts's JSON, read at render time. This proves it, and proves buildModelPage()
+// itself assembles from the registries rather than quoting a remembered number.
+//
+// WP14 (2026-09-16): the Model page is gone and these two renderers moved to STATUS, where they
+// answer "what will Claude Code's weekly/stream answers come from" and "is the forward record still
+// being written" -- the second being exactly what the scheduler's scorecard routine was failing to
+// do (audit 3.7, fixed in src/weekly/scorecard.ts). `renderLedgerSection` went with the page:
+// the pre-registered P<n>/W<n> ledger is documentation, and it lives in docs/redesign-2026-09.md
+// and `ff ledger`. buildModelPage still assembles it, and the engine-side test below still proves
+// that, so nothing about the ledger itself is now unchecked.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -31,7 +38,7 @@ function hasLiteralFigure(fnSrc: string): boolean {
   return /\d+\.\d+/.test(fnSrc) || /\d%/.test(fnSrc);
 }
 
-for (const name of ["renderWeeklyServe", "renderScorecardSection", "renderLedgerSection"]) {
+for (const name of ["renderWeeklyServe", "renderScorecardSection"]) {
   test(`${name}() contains no literal percentage or point figure`, () => {
     const fn = extractFn(SRC, name);
     assert.equal(hasLiteralFigure(fn), false, `${name}() has a hardcoded number -- it must read everything from the page JSON`);

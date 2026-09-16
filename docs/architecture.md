@@ -17,10 +17,19 @@ behind each choice lives in `docs/decisions.md`.
 
 ## The problem being solved
 
-A non-technical user wants the "Claude drives my fantasy team" experience but cannot set up
-Claude Code, an API key, or a terminal. The app must hide three technical pieces -- the agent
-loop, a local database, and the data/browser scripts -- behind a chat window and a few buttons,
-and run unattended (full-auto) on the user's own Claude subscription.
+The original problem statement was: a non-technical user wants the "Claude drives my fantasy team"
+experience but cannot set up Claude Code, an API key, or a terminal, so the app must hide the agent
+loop, a local database, and the data/browser scripts behind a chat window and a few buttons.
+
+**That is no longer the shape of the system (D26, 2026-09-16).** The operator has a terminal, and
+the agent is Claude Code driving `ff` and the `ff-draft` stdio MCP server. Rebuilding a chat box
+inside the app rebuilds a worse Claude Code -- same SDK, same 39 tools, same engine, but no
+transcript, no interruption, no file access. So the app keeps only what a terminal cannot be: the
+**two logged-in `<webview>` guests and the loopback bridge** (the credentials live in a browser
+profile a human logged into by hand -- 12+ engine modules and the 11 browser MCP tools have no other
+route to ESPN/Yahoo), a **stable CDP target** on 9223, and a **board + Status page**. The
+double-click-installer goal is deferred with the chat pane; see `docs/ui-audit-2026-09-16.md` for
+the control-by-control evidence and `app/README.md` for what replaced each removed button.
 
 ## System diagram
 
@@ -29,17 +38,20 @@ and run unattended (full-auto) on the user's own Claude subscription.
 |  Desktop app  (Electron)                                          |
 |                                                                   |
 |  +----------------+  +------------------+  +------------------+    |
-|  |  Chat pane     |  |  Roster / matchup |  |  Budget panel   |    |
-|  |  (streams the  |  |  dashboard        |  |  (cap slider +  |    |
-|  |   agent turns) |  |  (reads SQLite)   |  |   usage meter)  |    |
+|  |  Board         |  |  Browser          |  |  Status          |    |
+|  |  (value board  |  |  (ESPN + Yahoo    |  |  (league, board  |    |
+|  |   + ownership) |  |   logged-in       |  |   stamp, ticks,  |    |
+|  |                |  |   <webview>s)     |  |   bridge health) |    |
 |  +--------+-------+  +---------+---------+  +--------+---------+    |
 |           |                   |                     |             |
 |  +--------v-------------------v---------------------v---------+    |
-|  |  Claude Agent SDK  (headless session)                      |    |
-|  |  auth: user's Claude subscription via OAuth                |    |
-|  |  system prompt: "fantasy football co-manager"             |    |
-|  |  budget governor wraps every run (see spec-auth-and-budget)|    |
+|  |  ff serve (stdio) + the loopback APP BRIDGE (127.0.0.1)    |    |
+|  |  /fetch /read /read-frame /click /write-transaction        |    |
 |  +--+-------------+------------------+----------------------+-+    |
+|     |             |                  |                             |
+|     |   Claude Code  --(stdio MCP: `ff mcp`, 39 tools)-->  the same |
+|     |   tool registry; it reaches the platforms THROUGH the bridge  |
+|     |   and the CDP guest above, never its own browser (D26).       |
 |     |             |                  |                             |
 |  +--v----+   +----v------+   +-------v-----------------+           |
 |  |SQLite |   |data scripts|   |bro-style CDP browser    |          |
@@ -215,7 +227,16 @@ points a game -- cannot see a level error. Only the cross-check can.
 which strips commas, so downstream `split(",")` is sound *for files we write*. It is NOT sound for
 nflverse feeds, which contain quoted headshot URLs -- always use `fetchCsv` there.
 
-## The Data and Model pages are views, not documents (Track K, 2026-09-09)
+## The lineage and model views are ASSEMBLED, not documents (Track K, 2026-09-09)
+
+> **Where they are read, since D26/WP14 (2026-09-16):** from a terminal -- `ff lineage --json`,
+> `ff model-page --json`, `ff ledger` -- with the freshness table and the serve/scorecard tables
+> folded into the app's Status page as read-only text. The Data and Model PAGES (the dagre canvases,
+> the per-asset materialize buttons, the value trace, the ledger table) are cut: the buttons
+> duplicated `ff ingest-source <id>` / `ff refresh`, and three of the Model page's sections had been
+> rendering as EMPTY HEADERS for days because the engine's error was swallowed twice on the way
+> (`docs/ui-audit-2026-09-16.md` 1.8). Everything below about the ASSEMBLERS is unchanged and still
+> the point -- the fix was never the drawing.
 
 Both app pages used to be hand-maintained: a curated node/edge list for the Data page (`WH_CURATED`/
 `WH_DERIVE`/`WH_EDGES`), and prose on the Model page written 2026-09-08 describing "a curve times two
@@ -226,16 +247,17 @@ ledger, none of which the page could grow to show without someone editing it by 
 The fix in both cases is the same shape: put a real assembler between the registry and the renderer,
 and make the renderer a dumb consumer of its JSON.
 
-- **Data page**: `src/lineage/dag.ts` computes the lineage graph from `src/data/ingest.ts` +
-  `src/lineage/registry.ts` (see `docs/data-layers.md`). `app/renderer/app.js` draws exactly the served
-  nodes/edges, grouped by `kind`, wired to rebuild via `node.materialize`.
+- **Lineage**: `src/lineage/dag.ts` computes the graph from `src/data/ingest.ts` +
+  `src/lineage/registry.ts` (see `docs/data-layers.md`). The Status page renders exactly the served
+  nodes as a freshness table -- `lineageNodes` is a pass-through and `test/dag-derivation.test.ts`
+  fault-injects a dropped node to prove it.
 - **Model page**: `src/lineage/modelPage.ts` assembles one JSON from `src/draft/models.ts` (`MODELS`,
   `EVALUATED_NOT_SHIPPED`, `modelStatus()`), `src/weekly/streamingServe.ts` (which artifact serves each
   position), `src/weekly/scorecard.ts` (frozen/scored counts per kind, live scores), and
-  `src/lineage/ledger.ts` (the `fact_prediction` table). The renderer's new sections
-  (`renderWeeklyServe`, `renderScorecardSection`, `renderLedgerSection`) contain no number of their
-  own -- `test/model-page.test.ts` extracts each function's real source and fault-injects a literal
-  figure to prove the guard would catch one.
+  `src/lineage/ledger.ts` (the `fact_prediction` table). The two sections Status keeps
+  (`renderWeeklyServe`, `renderScorecardSection`) contain no number of their own --
+  `test/model-page.test.ts` extracts each function's real source and fault-injects a literal figure
+  to prove the guard would catch one.
 
 Both pages refresh in place on a push from the engine: `ff serve` gained cheap `lineage-stamp` /
 `models-stamp` probes, and the existing board-change chokepoint in `app/main.js` (every `ff`
