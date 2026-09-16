@@ -26,7 +26,7 @@ import Database from "better-sqlite3";
 import { simulateSeasons, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "./season.js";
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
-import { loadRosBlend, rosPerGame } from "./rosBlend.js";
+import { loadRosBlendFor, rosPerGame } from "./rosBlend.js";
 import { dataPath } from "../data/paths.js";
 import { loadEligibilityMap } from "../data/eligibility.js";
 
@@ -289,7 +289,9 @@ export async function loadSimContext(opts: {
   // non-bye weeks, rate = his points over those weeks with a missed game counted as zero -- the same
   // per-scheduled-week frame `proj / 17` is in. (Not the data track's to-date columns, which are per
   // game played and on a different scale; that mismatch is what the first fit of K measured.)
-  const { blend: rosBlend, source: rosSource } = loadRosBlend();
+  // K is PER FORMAT (WP8): it minimises RMSE in points on a format's own lines (ESPN 6, Yahoo 5), so
+  // the live caveat must quote the format's fit, not the incumbent's.
+  const { blend: rosBlend, source: rosSource } = loadRosBlendFor(fmt.model);
   const rateByName = new Map<string, { k: number; pts: number }>();
   if (playedWeeks > 0) {
     for (const r of db.prepare(
