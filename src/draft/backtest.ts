@@ -4,8 +4,10 @@
 // with a thin bench correctly loses titles when a stud has a down week or is out. This is what makes
 // the strategy verdict trustworthy for "optimize championship wins" (season-points sim can't see it).
 
-import { draftField, mulberry32, SIM_LEAGUE, type SimLeague } from "./sim.js";
-import { computeValues, resolveValueLeague, type PointsRow } from "./values.js";
+import { mulberry32, SIM_LEAGUE, type SimLeague } from "./sim.js";
+import { computeValues, filterToStartable, resolveValueLeague, type PointsRow } from "./values.js";
+import { slotAdmits, splitTemplate, startingSlots } from "./slots.js";
+import { AuctionModel, vorBook, type DraftModel, type DraftFieldSpec } from "./draftModel.js";
 import { optimalLineup } from "../inseason/lineup.js";
 import { buildSchedule, seedField } from "./schedule.js";
 import type { SeedingRule } from "../league/types.js";
@@ -80,15 +82,35 @@ function weekScore(roster: { name: string; pos: string; proj: number }[], week: 
     .filter((p) => p.actual != null) as { pos: string; proj: number; actual: number }[];
   // pick starters by proj, but the "points" we total are ACTUAL -> reuse startingPoints by feeding
   // proj as the selection value, then map back. Simplest: group, sort by proj, sum actual of chosen.
-  const FLEX_OK = new Set(["RB", "WR", "TE"]);
+  //
+  // THROUGH THE ONE SLOT MODULE (WP11). This used to test `slot === "BE"` and `slot === "FLEX"`
+  // against literals, which is the exact failure `slots.ts` was written to end: a Yahoo template's
+  // `SUPERFLEX` matched neither, so it became a DEDICATED requirement for a position literally named
+  // "SUPERFLEX" that nobody plays -- a bot lineup silently missing its best quarterback every week --
+  // and its two `IR` slots became two more phantom starting positions. `splitTemplate` returns the
+  // dedicated counts plus flex GROUPS narrowest-first, and for ESPN (`QB RB WR TE FLEX FLEX DST K`
+  // + 4 `BE`) it is arithmetically the code it replaced: the dedicated slots draw from disjoint
+  // positional pools, so filling them before the two `[RB,WR,TE]` flex slots takes the same players.
+  //
+  // WALK THE TEMPLATE IN ORDER, AND SUM IN THAT ORDER (bisected 2026-09-16). A first version filled
+  // every dedicated slot and THEN the flex groups. For ESPN that picks the same eight starters -- but
+  // it adds their points in a different ORDER (QB,RB,WR,TE,DST,K,FLEX,FLEX instead of the template's
+  // QB,RB,WR,TE,FLEX,FLEX,DST,K), and floating-point addition is not associative: 5,634 of 30,784
+  // scored lineups in one 2017 run differed in the last bit (94.89999999999999 vs 94.9), one
+  // head-to-head somewhere turned on such a tie, and the incumbent's 2017 title rate moved 33% -> 34%
+  // with every input "identical". So the traversal is the template's own order, which is bitwise the
+  // code it replaced for ESPN, while `slotAdmits`/`isBenchSlot` still resolve SUPERFLEX and skip IR.
+  // A template that lists a WIDER flex group before a NARROWER one (SUPERFLEX before FLEX) would fill
+  // greedily in that order; every real template (incl. Yahoo 129048) lists the narrow group first.
   const byPos: Record<string, { proj: number; actual: number }[]> = {};
   for (const p of startable) (byPos[p.pos] ??= []).push(p);
   for (const k of Object.keys(byPos)) byPos[k].sort((a, b) => b.proj - a.proj);
   let total = 0; const used = new Set<{ proj: number; actual: number }>();
-  for (const slot of lg.slots) {
-    if (slot === "BE") continue;
-    if (slot === "FLEX") { let best: { proj: number; actual: number } | null = null; for (const p of FLEX_OK) { const a = (byPos[p] || []).find((x) => !used.has(x)); if (a && (!best || a.proj > best.proj)) best = a; } if (best) { used.add(best); total += best.actual; } }
-    else { const a = (byPos[slot] || []).find((x) => !used.has(x)); if (a) { used.add(a); total += a.actual; } }
+  for (const slot of startingSlots(lg.slots)) {
+    const elig = slotAdmits(slot);
+    let best: { proj: number; actual: number } | null = null;
+    for (const p of elig) { const a = (byPos[p] || []).find((x) => !used.has(x)); if (a && (!best || a.proj > best.proj)) best = a; }
+    if (best) { used.add(best); total += best.actual; }
   }
   return total;
 }
@@ -129,8 +151,41 @@ export interface MarketModel {
   idioSd?: number;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams: number = required("playoffTeams"), regWeeks: number = required("regWeeks"), avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false, seeding: SeedingRule = required("seeding"), playoffReseed: boolean = required("playoffReseed"), variancePath?: string): BacktestResult {
+/**
+ * HOW THE PLAYERS GET HANDED OUT (WP11). Everything after the draft -- the schedule, byes, the
+ * lineup optimizer, waivers, seeding, the bracket -- is draft-type-neutral and is reused verbatim;
+ * only the draft itself forks. Defaulting to `AuctionModel` keeps every existing caller, and the
+ * incumbent golden line, exactly as it was.
+ */
+export interface DraftOptions {
+  model?: DraftModel;
+  /** Snake only: our 0-based draft slot. Undefined = drawn per trial from the trial's own seed. */
+  ourSlot?: number | null;
+  /** Snake only: the season's real preseason ADP, name -> ADP. Absent = the room prices off the
+   *  pool's own VOR (the snake analogue of the auction's default `--bot-book vor` arm). */
+  adp?: Map<string, number>;
+  /**
+   * SNAKE ONLY -- the per-bot independent view (`--bot-noise`), as a log-sd.
+   *
+   * WHY IT IS NOT JUST `market.idioSd`, which is where the auction gets it. In the auction that field
+   * is populated only by `--market ecr`, so the FLAGLESS auction arm runs with no idiosyncratic term
+   * at all -- and it does not need one, because its room is genuinely heterogeneous: every seat is a
+   * different `managers.json` owner with his own positional appetite and budget anxiety. The snake
+   * room has NO profiles (this league's draft log is not in the store), so with no idiosyncratic term
+   * all eleven bots hold one identical book and the draft is deterministic given the pool -- a room
+   * that does not exist. Threading it separately is what makes `--bot-noise` a live lever on the
+   * snake's flagless arm instead of a flag the banner prints and the model never reads.
+   */
+  botIdioSd?: number;
+}
+
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams: number = required("playoffTeams"), regWeeks: number = required("regWeeks"), avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false, seeding: SeedingRule = required("seeding"), playoffReseed: boolean = required("playoffReseed"), variancePath?: string, draft: DraftOptions = {}): BacktestResult {
   const REG_WEEKS = Array.from({ length: regWeeks }, (_, i) => i + 1); // fantasy regular-season weeks
+  const valueLeague = resolveValueLeague(lg);
+  // A POSITION WITH NO SLOT NEVER ENTERS THE HARNESS. Identity for ESPN (it starts a K and a DST);
+  // for Yahoo it removes every kicker and defense from the draft pool, from the waiver wire, and
+  // from the roster-structure statistics, so no stage downstream has to know the league has none.
+  seasonPoints = filterToStartable(seasonPoints, valueLeague);
   const rngM = mulberry32(seed * 104729 + 3);
   const rngU = mulberry32(seed * 15485863 + 7);
   const us = ourSd == null ? marketSd : ourSd; // our projection error; < marketSd => a VALUE EDGE
@@ -160,13 +215,32 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   // identical -- which is exactly why this went unnoticed -- but for any other league the ARBITER
   // was valuing players for a different format than the live board (`ff.ts:767`) prices them for.
   // maxKDst likewise comes from the lever instead of the literal 2.
-  const useValues = new Map(computeValues(seasonPoints.map((p) => ({ ...p, points: projUs.get(p.name) ?? 0 })), resolveValueLeague(lg), cfg.maxKDst ?? 2).map((v) => {
-    const a = injuryLever ? (avail.get(v.name) ?? 1) : 1; // unknown players (e.g. rookies) => assume healthy
-    return [v.name, Math.max(1, v.value * (1 - injuryLever * (1 - a)))] as [string, number];
-  }));
-  const picks = draftField(projMarket, useValues, cfg, seed, lg, { drainNom, greedyNom, botBook, homogeneous, botIdioSd: market.idioSd, variancePath });
-  const rosters: { name: string; pos: string; proj: number }[][] = Array.from({ length: lg.teams }, () => []);
-  for (const p of picks) rosters[p.team].push({ name: p.name, pos: p.pos, proj: projMap.get(p.name) ?? 0 });
+  const ourPoints = seasonPoints.map((p) => ({ ...p, points: projUs.get(p.name) ?? 0 }));
+  const model = draft.model ?? AuctionModel;
+  // OUR BOOK. Dollars for an auction (unchanged); VOR POINTS for a snake, where dollars have no
+  // referent and the integer rounding would flatten the whole bench tail into a single $1 tie.
+  // The injury lever is a MULTIPLICATIVE discount on our own valuation, so it is draft-type-neutral
+  // and rides on either book; the $1 floor is auction-only (a snake has no minimum bid).
+  const useValues = model.kind === "snake"
+    ? new Map([...vorBook(ourPoints, valueLeague)].map(([n, v]) => {
+      const a = injuryLever ? (avail.get(n) ?? 1) : 1;
+      return [n, Math.max(0, v * (1 - injuryLever * (1 - a)))] as [string, number];
+    }))
+    : new Map(computeValues(ourPoints, valueLeague, cfg.maxKDst ?? 2).map((v) => {
+      const a = injuryLever ? (avail.get(v.name) ?? 1) : 1; // unknown players (e.g. rookies) => assume healthy
+      return [v.name, Math.max(1, v.value * (1 - injuryLever * (1 - a)))] as [string, number];
+    }));
+  const fieldSpec: DraftFieldSpec = {
+    botBook, homogeneous, variancePath, adp: draft.adp,
+    // `market.idioSd` first, so `--market ecr` behaves identically in both models; `draft.botIdioSd`
+    // is the snake's own channel (see DraftOptions) and is undefined for the auction, which keeps the
+    // incumbent's flagless arm exactly as it was.
+    botIdioSd: market.idioSd ?? draft.botIdioSd,
+  };
+  const draftedTeams = model.runDraft(projMarket, lg, fieldSpec, { values: useValues, cfg, drainNom, greedyNom, slot: draft.ourSlot }, seed);
+  const rosters: { name: string; pos: string; proj: number }[][] = draftedTeams.map((team) =>
+    team.map((p) => ({ name: p.name, pos: p.pos, proj: projMap.get(p.name) ?? 0 })));
+  const picks = draftedTeams.flatMap((team) => team);
 
   // In-season LINEUP skill: our team (0) can set each week's lineup by a WEEKLY projection
   // (actual + forecast noise, sd ourWeeklySd) instead of the season average -> starts the right
@@ -194,8 +268,9 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   // waiver rule that ignores this will happily drop a team's only quarterback for a fourth receiver
   // -- which no manager does, and which would make bot churn look worse than it is by breaking the
   // bots rather than by testing them.
-  const MIN_AT_POS: Record<string, number> = {};
-  for (const s of lg.slots) if (s !== "BE" && s !== "FLEX") MIN_AT_POS[s] = (MIN_AT_POS[s] ?? 0) + 1;
+  // Through `splitTemplate` for the same reason `weekScore` is: `s !== "BE" && s !== "FLEX"` made
+  // `SUPERFLEX` and `IR` into mandatory positions. For ESPN it returns the identical six counts.
+  const MIN_AT_POS: Record<string, number> = splitTemplate(lg.slots).dedicated;
   const trailAvg = (name: string, uptoWk: number): { avg: number; g: number } => {
     let s = 0, g = 0; for (let w = 1; w < uptoWk; w++) { const p = weekly.get(name)?.get(w); if (p != null) { s += p; g++; } }
     return { avg: g ? s / g : 0, g };

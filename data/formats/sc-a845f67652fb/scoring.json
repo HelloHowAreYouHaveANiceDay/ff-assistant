@@ -1,0 +1,65 @@
+{
+  "scoringKey": "sc-a845f67652fb",
+  "rules": {
+    "passYd": 0.04,
+    "passTD": 6,
+    "int": -2,
+    "rushYd": 0.1,
+    "rushTD": 6,
+    "recYd": 0.1,
+    "recTD": 6,
+    "rec": 1,
+    "fumble": -2,
+    "twoPt": 2,
+    "cmp40": 2,
+    "rush40": 2,
+    "rec40": 2,
+    "passFirstDown": 0.2,
+    "recFirstDown": 0.5,
+    "rushFirstDown": 0.5,
+    "passYdBonus": [
+      [
+        300,
+        2
+      ],
+      [
+        400,
+        3
+      ]
+    ],
+    "rushYdBonus": [
+      [
+        100,
+        2
+      ],
+      [
+        200,
+        3
+      ]
+    ],
+    "recYdBonus": [
+      [
+        100,
+        2
+      ],
+      [
+        200,
+        3
+      ]
+    ],
+    "recByPos": {
+      "TE": 1.5
+    }
+  },
+  "kicker": null,
+  "defense": null,
+  "provenance": {
+    "leagueId": "129048",
+    "platform": "yahoo",
+    "leagueName": "Fappening World Cup Edition",
+    "configSource": "owner-override",
+    "configFetchedAt": "2026-09-16 02:42",
+    "fetchedAt": "2026-09-16T11:18:44.286Z",
+    "builtBy": "scripts/build-format-features.mjs"
+  }
+}

@@ -33,9 +33,14 @@ export function loadGolden(model, key) {
   const p = model.path("golden");
   if (!existsSync(p)) {
     throw new NoGoldenError(
-      `format ${key} has no golden -- a pre-draft gate needs the snake DraftModel; in-season odds are reachable but ungated.\n` +
+      `format ${key} has no golden -- nothing here has been checked against a pinned number.\n` +
       `  (${p} does not exist. There is deliberately no fallback to the incumbent's ${"data/golden.json"}: gating one\n` +
-      "   format's backtest against another format's pinned number is a pass or a fail for the wrong reason.)",
+      "   format's backtest against another format's pinned number is a pass or a fail for the wrong reason.)\n" +
+      "  To pin one: run that format's flagless arbiter --\n" +
+      "    npm run ff -- backtest --league <id> --full --no-lookahead --seasons <range> --n 150\n" +
+      "  -- and write its playoff%/title% into that file with a `provenance` block saying who signed it off.\n" +
+      "  (A SNAKE format is now runnable: src/draft/draftModel.ts, WP11. A draft type with no DraftModel\n" +
+      "   still refuses at the backtest, by name, rather than being priced as an auction.)",
     );
   }
   let doc;

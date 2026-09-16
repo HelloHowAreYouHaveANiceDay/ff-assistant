@@ -2340,9 +2340,14 @@ async function cmdBacktest(rest: string[]) {
   // the ESPN target. They come from the league's format now; an unbuilt one refuses by name.
   const btFmt = await formatCtx(rest, db);
   const conf = btCtx.config; db.close();
-  // The championship arbiter prices an AUCTION. It has no meaning for a snake league, and printing a
-  // playoff percentage off auction values for one would be a number with no referent.
-  (await import("./data/leagueContext.js")).requireAuction(btCtx, "ff backtest");
+  // WHICH DRAFT MODEL (WP11). This used to be `requireAuction("ff backtest")` -- a flat refusal,
+  // correct at the time because the only draft in the repo priced an auction and printing a playoff
+  // percentage off auction dollars for a snake league would have been a number with no referent.
+  // It is now a RESOLUTION: the format's `draftType` selects a `DraftModel`, and a draft type with no
+  // model is still a named refusal rather than a silent auction.
+  const { draftModelFor, SNAKE_IGNORED_LEVERS } = await import("./draft/draftModel.js");
+  const btDraftType = btCtx.config.draftType ?? "auction";
+  const btModel = draftModelFor(btDraftType);
   const lg = leagueFromConfig(conf); const lv = conf.levers;
   // Levers resolve in one place: registry defaults <- STORED config <- CLI overrides. Because
   // `leverOverridesFromArgv` walks the registry rather than a hand-written list of flags, a lever
@@ -2699,6 +2704,77 @@ async function cmdBacktest(rest: string[]) {
       rookieDraft.set(`${normNm(d.name)}|${d.season}`, { pos: d.pos, overall: d.pick });
   }
 
+  // ============================================================================================
+  // SNAKE (WP11). Two knobs, both meaningless for an auction and both refused there rather than
+  // silently ignored, because a flag that does nothing reads exactly like a flag that works.
+  //
+  //   --our-slot N     our 0-based draft slot, fixed. Default: drawn per TRIAL from the trial's own
+  //                    seed, so it is a common random number -- the same trial index draws the same
+  //                    slot in every arm and the CRN pairing the whole arbiter rests on survives.
+  //   --snake-adp F    the room drafts in the order of the REAL preseason ADP for that season, from
+  //                    `raw_adp_history` (FantasyFootballCalculator), format F. The value CURVE is
+  //                    still the pool's own VOR; only the ORDER is the archive's.
+  //
+  // THE ARCHIVE HAS NO SUPERFLEX ADP. `raw_adp_history` holds `standard` (2008-2026), `ppr`
+  // (2010-2026) and `half-ppr` (2018-2026), all 12-team ONE-QUARTERBACK drafts. So for a superflex
+  // league this arm prices the room on a 1-QB consensus, which understates QB demand by exactly the
+  // amount superflex creates -- it will let our QB-heavy book buy quarterbacks the room has no
+  // reason to leave on the board, and it therefore FLATTERS us. It is reported as a bounded arm, and
+  // it is not the shipped gate. The default room -- the pool's own VOR under THIS league's roster
+  // economics -- is format-native and is what the golden pins.
+  const ourSlotArg = valueOf(rest, "--our-slot");
+  const snakeAdpFmt = valueOf(rest, "--snake-adp");
+  if (btModel.kind !== "snake" && (ourSlotArg != null || snakeAdpFmt != null)) {
+    throw new Error(`--our-slot/--snake-adp are SNAKE-only; league ${btCtx.leagueId ?? "?"} holds an ${btDraftType} draft.`);
+  }
+  const ourSlot = ourSlotArg != null ? Number(ourSlotArg) : null;
+  if (ourSlot != null && (!Number.isInteger(ourSlot) || ourSlot < 0 || ourSlot >= lg.teams)) {
+    throw new Error(`--our-slot must be an integer in 0..${lg.teams - 1} (got ${JSON.stringify(ourSlotArg)}).`);
+  }
+  const adpByYear = new Map<number, Map<string, number>>();
+  if (snakeAdpFmt) {
+    const adb = openDb(valueOf(rest, "--db"));
+    const rowsAdp = adb.prepare(
+      "SELECT season, name, adp FROM raw_adp_history WHERE format = ? AND adp IS NOT NULL",
+    ).all(snakeAdpFmt) as { season: number; name: string; adp: number }[];
+    adb.close();
+    const { nameKey: nkAdp } = await import("./draft/values.js");
+    for (const r of rowsAdp) {
+      const m = adpByYear.get(r.season) ?? adpByYear.set(r.season, new Map()).get(r.season)!;
+      m.set(nkAdp(r.name), Number(r.adp));
+    }
+    const covered = [...adpByYear.keys()].filter((y) => seasons.includes(y)).sort();
+    if (!covered.length) {
+      throw new Error(`--snake-adp ${snakeAdpFmt}: raw_adp_history holds no rows for that format in ${lo}-${hi}. ` +
+        `Formats present: ${[...new Set(rowsAdp.map(() => snakeAdpFmt))].join(",") || "(none)"}.`);
+    }
+    console.log(`  --snake-adp ${snakeAdpFmt}: the room drafts in the REAL preseason ADP order (raw_adp_history),`);
+    console.log(`    covering ${covered.length}/${seasons.length} backtested seasons (${covered[0]}-${covered[covered.length - 1]}); a season with no ADP falls back to the pool's own VOR order.`);
+    // HOW MANY NAMES ACTUALLY JOIN. A key miss is silent: the player drops into the unranked tail and
+    // the arm degrades toward the default book while still calling itself ADP. Printed per season so
+    // a zero is a visible failure rather than a null result. (`nameKey` bridges the suffix spellings.)
+    const { nameKey: nk2 } = await import("./draft/values.js");
+    const matchLine = covered.map((y) => {
+      const m = adpByYear.get(y)!;
+      const hit = (pts.get(y) ?? []).filter((r) => m.has(nk2(r.name))).length;
+      return `${y}:${hit}/${m.size}`;
+    }).join(" ");
+    console.log(`    ADP names matched into the season pool: ${matchLine}`);
+    console.log(`    NOTE: the archive is 12-team ONE-QB (standard/ppr/half-ppr). There is NO superflex ADP in it,`);
+    console.log(`          so under a superflex format this arm UNDERSTATES the room's demand for quarterbacks.`);
+  }
+  if (btModel.kind === "snake") {
+    console.log(`DRAFT   SNAKE, ${lg.teams} teams x ${(await import("./draft/draftModel.js")).draftRounds(lg.slots)} rounds` +
+      ` (${lg.slots.length} roster slots less IR), our slot ${ourSlot == null ? "drawn per trial (CRN)" : ourSlot}` +
+      `; room book ${snakeAdpFmt ? `ADP(${snakeAdpFmt})` : botBook}, per-bot view (--bot-noise) ${botIdioSd}`);
+    console.log(`  the DOLLAR levers have no referent here and are IGNORED: ${SNAKE_IGNORED_LEVERS.join(", ")}.`);
+    console.log("  --homogeneous is a no-op BY CONSTRUCTION (this room has no per-owner profiles to flatten:" +
+      " the store holds no draft log for this league), and --bot-book price is fitted on ESPN AUCTION dollars" +
+      " -- it falls back to the independent rank curve here.");
+    console.log(`  live and draft-type-neutral: benchDiscount=${cfg.benchDiscount}, posMult, maxAtPos, plus the legality rule` +
+      " (a pick is legal only while the picks left still cover every unfilled starting slot -- starterReserve's semantics, as a constraint).");
+  }
+
   for (const yr of seasons) {
     const projYr = noLookahead ? yr - 1 : yr; // no-lookahead: our projection = prior season's actuals
     let proj = pts.get(projYr); if (!proj) continue; // skip the first year when no prior exists
@@ -2772,7 +2848,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed, btFmt.model.path("variance")); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed, btFmt.model.path("variance"), { model: btModel, ourSlot, adp: adpByYear.get(yr), botIdioSd: btModel.kind === "snake" ? botIdioSd : undefined }); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a

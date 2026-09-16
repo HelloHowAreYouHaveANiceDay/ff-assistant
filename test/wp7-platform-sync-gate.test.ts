@@ -246,8 +246,12 @@ test("a format with NO golden is REFUSED BY NAME -- never defaulted to the incum
     assert.ok(err instanceof NoGoldenError, "the refusal must be its own type so cpcv can distinguish it from a broken file");
     const msg = String((err as Error).message);
     assert.match(msg, /sc-a845f67652fb/, "the refusal names the FORMAT");
-    assert.match(msg, /snake DraftModel/, "and says what is actually missing for a pre-draft gate");
-    assert.match(msg, /in-season odds are reachable but ungated/);
+    // WP11 moved what "missing" MEANS. The snake DraftModel now exists (src/draft/draftModel.ts), so
+    // the refusal is no longer "there is no engine" -- it is "nobody has pinned a number", and it has
+    // to say how to pin one or it is a dead end rather than a refusal.
+    assert.match(msg, /nothing here has been checked against a pinned number/, "says what is actually missing");
+    assert.match(msg, /backtest --league <id>/, "and names the command that produces the number");
+    assert.match(msg, /provenance/, "and says the number needs a sign-off record, not just a value");
     assert.match(msg, /no fallback to the incumbent/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -1,0 +1,32 @@
+{
+  "_what": "THE YAHOO 129048 FORMAT'S GATE NUMBER -- a REGRESSION TRIPWIRE, not an edge claim. It is the flagless championship-backtest result for this format under the first SnakeModel (WP11, src/draft/draftModel.ts). Its only job is the one rule (D13): a materially different number means an input drifted, and the drift must be found before anything else happens.",
+  "scoringKey": "sc-a845f67652fb",
+  "formatKey": "fk-3a298dfdeb32",
+  "league": "129048",
+  "draftType": "snake",
+  "playoffPct": 99.2,
+  "titlePct": 39.8,
+  "tolerancePp": 3.0,
+  "baseFlags": "--full --no-lookahead",
+  "seasons": "1999-2025",
+  "n": "150",
+  "command": "npm run ff -- backtest --league 129048 --full --no-lookahead --seasons 1999-2025 --n 150",
+  "_playoffPct": "PRIMARY GATE (D13). Measured 99.179% over 3,900 paired trials (26 scored seasons x 150), data/trials/wp11-yahoo-base.tsv, 2026-09-16. READ THE SATURATION WARNING BELOW BEFORE USING THIS AS AN AXIS: the per-season range is 95.3% to 100%, so this gate can only ever detect a REGRESSION. It cannot resolve an improvement and it cannot resolve a small change in either direction (cpcv puts the resolvable effect at ~0.57pp).",
+  "_titlePct": "SECONDARY / CONTEXT ONLY, never gated (D13: the sim has no measured skill on a single-elim title). Measured 39.821% against an 8.3% random baseline in this 12-team league. Unlike the playoff column it is NOT saturated -- the per-season spread is 26% to 59% -- so it is the more informative of the two numbers here, and that inversion relative to the incumbent is stated rather than left to be discovered.",
+  "_saturation": "THE PRIMARY AXIS IS NEARLY DEGENERATE FOR THIS FORMAT AS CONFIGURED, and that is a finding about the harness, not about the league. Two reasons compound: (1) the playoff field is 8 of 12 (66.7% at random) against the incumbent's 7 of 16 (43.8%), so the bar is far lower; (2) in a SNAKE a room that mis-ranks a player LOSES him, whereas in an auction it merely overpays -- so the same asserted market error (marketSd 0.30 shared + bot-noise 0.20 idiosyncratic, against our own noise-free prior-season view) converts into much more roster damage. Sensitivity, measured 2014-2025 n=40: marketSd 0.30 -> 40.0% titles / 99% playoffs, 0.15 -> 24.8% / 96%, 0.05 -> 13.4% / 80%. The room's SHARED error is the whole story -- the per-bot view is not: --bot-noise 0 / 0.20 / 0.40 give 40.2% / 40.0% / 41.4%. Until the room model is calibrated against a real snake draft log, treat the playoff column as a downward tripwire only and read the title column for direction.",
+  "_tolerancePp": "+/- pp of Monte-Carlo slack on the consistency check, the same 3.0 the incumbent uses. Effectively one-sided here (the metric cannot exceed 100).",
+  "provenance": {
+    "status": "CANDIDATE GOLDEN",
+    "what": "first SnakeModel (WP11), first time this format has had a pre-draft gate number at all",
+    "date": "2026-09-16",
+    "authority": "owner pre-approved this wave with 'close the gaps. The goal is an accurate edge'; the number is a tripwire pinned by the executor, NOT an owner-signed shipped posture the way D13/D14/D15 are for the incumbent",
+    "rePinRequired": "after ANY change to src/draft/draftModel.ts, to the room model (marketSd / bot-noise / the bench rule / the legality rule), or to this format's history CSVs or projection artifact. It is not a number to preserve -- it is a number to re-measure and re-record deliberately.",
+    "supersedes": "An earlier measurement of the same command on the same day read 99.77% / 45.69%. It was WRONG and is recorded rather than deleted: the snake book's tie-break for sub-replacement players was raw points, which is position-blind, so the incumbent's IDP rows (LB/DB/DL, present in this format's target because it re-scores the same history) outranked every sub-replacement receiver and filled rounds 12-17. 149 of 816 drafted players -- ~18% of every roster -- could not be started. `vorBook` now prices a position the league has no slot for at exactly zero; test/snake-kdst.test.ts locks it with a fault injection on the slot template. A SECOND defect moved it again, from 39.21% to 39.82% titles: `--bot-noise` reached the auction only through `market.idioSd`, which only `--market ecr` populates, so the snake room ran with ZERO per-bot disagreement while the banner printed 'per-bot view 0.2'. It has its own channel now (`DraftOptions.botIdioSd`) and test/snake-face-validity.test.ts asserts it is connected end to end.",
+    "notGated": [
+      "The room is NOT this league's managers: the store holds no raw_league_pick for 129048, so the field is a generic best-available room off our own VOR book, not twelve modelled owners.",
+      "No superflex ADP exists anywhere in raw_adp_history (it holds 12-team ONE-QB standard/ppr/half-ppr only), so the honest-arbiter `--market ecr` analogue cannot be run format-natively. `--snake-adp ppr` runs it on a 1-QB consensus and FLATTERS us.",
+      "The seasons are replayed with our book = the prior season's actuals, i.e. the projector artifact is NOT in this arm (`--projection artifact` needs a blind per-season fold set, which this format does not have)."
+    ],
+    "measuredBy": "data/trials/wp11-yahoo-base.tsv (3,900 rows); docs/validation.md 'Snake DraftModel, first run'"
+  }
+}

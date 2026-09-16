@@ -1,5 +1,214 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## Snake DraftModel, first run (2026-09-16, WP11)
+>
+> The draft is an interface now (`src/draft/draftModel.ts`): `AuctionModel` wraps the existing
+> `draftField` call argument-for-argument, `SnakeModel` is net-new, and `backtest.ts` branches on the
+> format's `draftType`. Yahoo 129048 (12-team superflex snake, format `sc-a845f67652fb`) therefore has
+> a pre-draft number for the first time, and `scripts/cpcv.mjs --league 129048` runs instead of
+> refusing by name.
+>
+> **THE INCUMBENT DID NOT MOVE.** `npm run ff -- backtest --full --no-lookahead --inflation --seasons
+> 1999-2024 --n 150` -> **39.5% titles / 96% playoffs**, reproduced exactly, with 24 of the 25
+> per-season cells identical to the pre-change baseline (`2000:28 2001:31 2002:44 2003:47 2004:32
+> 2005:29 2006:49 2007:19 2008:47 2009:55 2010:44 2011:62 2012:47 2013:41 2014:29 2015:38 2016:29
+> 2017:33 2018:41 2019:36 2020:43 2021:35 2022:54 2023:33 2024:40`). `test/draft-model.test.ts`
+> asserts the same thing at the unit level: for three seeds the `AuctionModel` wrapper returns the
+> identical player in the identical seat.
+>
+> **ONE CELL MOVED -- 2017 read 34% instead of 33%, one trial in 150 -- and it is recorded rather than
+> rounded away.** The two code paths the seam touched are provably equivalent for the ESPN template,
+> by construction and by test rather than by argument: (1) `weekScore`'s literal `slot === "FLEX"` /
+> `slot === "BE"` fill was replaced by `splitTemplate`, and the two agree on **200,000 random rosters**
+> over the ESPN template (the dedicated pools are disjoint from the flex pool, so filling `DST`/`K`
+> before the two `[RB,WR,TE]` slots takes the same players); (2) the new pool filter is the IDENTITY
+> for ESPN, asserted by `test/snake-kdst.test.ts`, and **fault-injected** -- disabling it and re-running
+> 2017 still gives 34%, so it is not the cause. 34% is itself reproducible -- two full 25-season runs
+> and two `--seasons 2016-2017` slices all give it.
+>
+> **RESOLVED the same day (orchestrator bisect, 2026-09-16): it WAS the scorer, and the 200,000-roster
+> equivalence test could not see it.** Bisected in a scratch worktree at committed HEAD (2017 = 33%,
+> twice) against the working tree (34%, twice), then file by file and then hypothesis by hypothesis:
+> values.ts alone 33; the seam bypassed 34; the pool filter disabled 34; the old `MIN_AT_POS` 34; the old
+> scorer body swapped in **33**. Instrumenting both scorer bodies inside the real 2017 run with a STRICT
+> comparison (`a !== b`, not `Math.abs(a-b) > 1e-9`) showed 5,634 of 30,784 lineups differ in the
+> last bit: `94.89999999999999` vs `94.9` for the same eight starters. The starters are identical; the
+> ORDER of the additions is not (template order `QB,RB,WR,TE,FLEX,FLEX,DST,K` vs dedicated-then-flex),
+> and floating-point addition is not associative. One head-to-head in 2017 sat on such a tie. The
+> equivalence test compared with a tolerance, which is exactly the check that cannot see a last-bit
+> difference that decides a tied game. Fix: `weekScore` walks `startingSlots(lg.slots)` in template
+> order with `slotAdmits` per slot -- bitwise the old code for ESPN, SUPERFLEX/IR-correct for Yahoo --
+> and 2017 reads 33% again. Lesson recorded: when two implementations must be byte-identical, compare
+> with `!==` and inside the real run, not with a tolerance on synthetic inputs.
+>
+> What is left is the INPUT, and the store was demonstrably moving underneath the arbiter: a
+> confirmation run launched FLAGLESS at 07:31 came back describing a **12-team superflex SNAKE**,
+> because a concurrent executor had switched `settings.active_league` to the Yahoo league; by 08:11 it
+> was ESPN again. `data/ff.db` was written at 07:53. Two runs separated by that are not the same
+> sample (CLAUDE.md: "did A and B come from the same sample?"). Recorded as an open one-trial
+> discrepancy rather than claimed byte-identical -- and as a note for any future gate run in a
+> multi-executor session: **pass `--league 462233` explicitly**, because the flagless arbiter resolves
+> whichever league happens to be active and will silently gate a different format.
+>
+> **THE ONE PLACE THE REFACTOR NEARLY SHIPPED A VALUE CHANGE, and the number it cost.** "Exclude
+> positions the league has no slot for" was written for Yahoo's missing K/DST. Applied literally it
+> also deletes the **24,579 IDP rows** (LB 7,350 / DB 9,669 / DL 7,560 against 16,666 skill rows) that
+> the INCUMBENT's own `data/history-points.csv` carries: the ESPN league starts no linebacker either,
+> `openIdxFor` puts them on the bench, so they really are drafted as filler and their VOR really is in
+> `computeValues`'s denominator. The first post-seam golden run came back **36.0% / 94%** and was
+> caught by the tripwire doing exactly its job. The filter is now scoped to the six PRICED positions
+> (`filterToStartable`, values.ts), ESPN is byte-identical, and "should the arbiter draft IDP bench
+> filler at all?" is left as an open, gated question with its number attached (-3.5pp titles /
+> -2pp playoffs to remove them).
+>
+> ### The Yahoo gate number (candidate golden, `data/formats/sc-a845f67652fb/golden.json`)
+>
+> `npm run ff -- backtest --league 129048 --full --no-lookahead --seasons 1999-2025 --n 150`
+> (26 scored seasons x 150 trials = 3,900 paired rows, `data/trials/wp11-yahoo-base.tsv`):
+>
+> | axis | value | random |
+> |---|---|---|
+> | **playoffs (PRIMARY, D13)** | **99.18%** | 66.7% (8 of 12) |
+> | titles (context) | 39.82% | 8.3% |
+>
+> per season (titles): `2000:58 2001:31 2002:28 2003:55 2004:35 2005:33 2006:51 2007:39 2008:29
+> 2009:26 2010:29 2011:38 2012:53 2013:35 2014:49 2015:33 2016:28 2017:51 2018:48 2019:59 2020:31
+> 2021:34 2022:53 2023:35 2024:39 2025:34`. Per-season playoff rate ranges 95.3%-100%.
+>
+> **IT TOOK THREE MEASUREMENTS TO GET THAT NUMBER, and the two wrong ones are the most useful thing in
+> this section.** Both were plausible, both passed every check that existed at the time, and neither
+> failed anything.
+>
+> **The first read 99.77% / 45.69%**, and was produced by a model that
+> was drafting **18% of every roster as dead weight**. This format's target re-scores the SAME history
+> the incumbent uses, so its pool carries the 24,579 IDP rows (LB/DB/DL). A position with no slot has
+> its baseline set by the BEST player at it, so every one of them floors at VOR 0 -- which left only
+> the tie-break to order them, and the tie-break was RAW POINTS, which is position-blind. A 200-point
+> linebacker therefore outranked every sub-replacement receiver and rounds 12-17 filled with men who
+> cannot be started: **149 of 816 drafted players** across 2005/2012/2019/2024. Nothing failed. Every
+> roster was legal (the legality rule only asks about STARTING slots), the draft log's first six
+> rounds looked perfect, all four face-validity checks passed, and the gate number was simply too
+> high. What caught it was asking a question the harness was not being asked -- "what positions are
+> actually ON these rosters?" -- and the fix is that `vorBook` now prices a position the league has no
+> slot for at exactly zero. That took ~6pp off titles, and the mechanism is worth carrying: with real
+> bench depth the BOTS cover their byes and injuries too, so our book's advantage narrows.
+>
+> **The second read 39.21%, from a DISCONNECTED LEVER.** `--bot-noise` reaches the auction only
+> through `market.idioSd`, which only `--market ecr` populates -- so reusing that field for the snake
+> left all eleven bots holding ONE identical book and the draft fully deterministic, while the banner
+> printed `per-bot view 0.2`. It has its own channel now (`DraftOptions.botIdioSd`) and
+> `test/snake-face-validity.test.ts` asserts it is live on the FLAGLESS arm (raising it must change our
+> roster, and the same value twice must be identical). Worth 0.6pp of titles: **the room's SHARED
+> error is the whole story here and the per-bot disagreement is nearly irrelevant** -- `--bot-noise`
+> 0 / 0.20 / 0.40 give 40.2% / 40.0% / 41.4% (2014-2025, n=40), against the marketSd sweep below.
+>
+> **THE PRIMARY AXIS IS NEARLY SATURATED, AND THAT IS THE HEADLINE, NOT A FOOTNOTE.** A gate pinned at
+> 99.2% can detect a regression and nothing else -- cpcv puts the resolvable effect at ~0.57pp on this
+> axis against ~3.7pp on titles. Two causes compound, and the second is the interesting one:
+>
+> 1. the playoff field is **8 of 12** here against the incumbent's 7 of 16, so the bar is 66.7% rather
+>    than 43.8% before any skill at all;
+> 2. **a snake converts the room's projection error into roster damage rather than into price.** In an
+>    auction a bot that over-rates a player merely overpays and we lose one bid; in a snake it TAKES
+>    him, and every mis-rank hands the sharper book a player. So the same asserted market model --
+>    `marketSd 0.30` shared plus `--bot-noise 0.20` idiosyncratic, against our own noise-free
+>    prior-season view -- buys far more here than it does in the auction.
+>
+> Measured, 2014-2025 n=40, `--bot-noise 0.05`, sweeping only the room's shared error:
+>
+> | marketSd | titles | playoffs |
+> |---|---|---|
+> | 0.30 (shipped assumption) | 40.0% | 99% |
+> | 0.15 | 24.8% | 96% |
+> | 0.05 | 13.4% | 80% |
+>
+> That is a near-total dependence on a constant CLAUDE.md already flags as "an assumption `calibrate`
+> never measures". **So the Yahoo number is a tripwire, not an edge claim**, and the single most
+> valuable next measurement for this format is a real snake room model (this league's own draft log is
+> not in the store -- there is no `raw_league_pick` for 129048 -- so the field is a generic
+> best-available room, not twelve modelled owners).
+>
+> ### Face validity (charter rule 4), all four checks
+>
+> **(a) The pick log reads like a snake draft.** 2024 pool, our slot 6, `--bot-noise 0.20`: round 1 is
+> `QB Joe Burrow | QB Lamar Jackson | QB Baker Mayfield | QB Patrick Mahomes | TE Brock Bowers | WR
+> Ja'Marr Chase (us) | QB Brock Purdy | RB Bucky Irving | TE George Kittle | WR Terry McLaurin | RB
+> James Cook | QB Jayden Daniels`. Ten of the room's own top twelve go in round 1 (the other two are
+> displaced by our seat and by the per-bot views). **Six quarterbacks in round 1** and the first six
+> QBs the bots take all land in round 1; we take our first in round 2 and our second in round 4 --
+> which is the superflex signature. Positional mix by round: r1 `QB6 RB2 TE2 WR2`, r2 `QB3 RB5 WR4`,
+> r3 `QB3 RB5 WR4`, r4 `QB4 RB4 TE2 WR2`. All 12 rosters are 17 players and all 12 can field a legal
+> lineup. `test/snake-face-validity.test.ts` binds the causal half: replace `SUPERFLEX` with a plain
+> `FLEX` on the same points table and the QBs move later.
+>
+> **(b) Positive control -- no edge by construction.** With `--bot-noise 0` and OUR book set equal to
+> the room's book, our roster value is **-0.51% of the field average** (sd 19.1 over 120 drafts, se
+> 1.7pp): a clean null. A non-zero answer here would have been an edge manufactured by the harness --
+> seat order, tie-breaks, the bench rule applied asymmetrically -- and every later number would have
+> inherited it.
+>
+> **This control is also where a measurement bug was caught, and it is worth recording.** The first
+> version scored each roster with the ROOM's (noisy) book and reported a perfect book finishing
+> **-60% below the field average**, which is not a result, it is a thermometer held over a candle:
+> scoring a roster with the same noisy book the room drafted from rewards AGREEING WITH THE NOISE
+> rather than being right, so a book that deliberately disagrees scores itself into last place.
+> Measured on the truth, the same draft is **+104.5%, rank 1 of 12** (charter rule 3: explain a
+> surprising number before acting on it).
+>
+> **(c) Fault injection, through the real backtest.** A strategy that drafts the WORST available every
+> pick: **playoff rate 0%** against 100% for the real book on the identical harness
+> (`test/snake-face-validity.test.ts`, which asserts the POSITIVE half too -- a guard that can only
+> ever say "no" is dead code). Roster value -100% of the field average, rank 12 of 12.
+>
+> **(d) Draft-slot sweep, and the two instruments DISAGREE about how much a slot is worth -- so both
+> are reported.** On DRAFTED ROSTER VALUE (60 drafts per slot, 2018/2021/2024) the curve is smooth and
+> monotone: `slot 1 +123.0% of the field average, 2 +121.6, 3 +121.1, 4 +120.7, 5 +121.2, 6 +120.9,
+> 7 +119.6, 8 +117.8, 9 +117.1, 10 +115.5, 11 +112.4, 12 +111.8` -- an 11pp spread on a 120pp base,
+> i.e. early is better and barely. On the CHAMPIONSHIP OUTCOME through the real backtest
+> (`--our-slot N`, 2015-2025, n=25, 275 trials per slot) it is **flat within noise**: titles
+> `39.2 38.4 38.8 40.4 39.6 39.2 38.4 36.0 35.6 34.4 38.0 37.2`, playoffs 99-100% everywhere, against a
+> per-cell standard error of about 3pp. That is the expected relationship rather than a contradiction
+> -- a 3% roster-value edge is far below what a 14-week season plus a single-elim bracket can resolve
+> at this sample size -- and it is exactly why this repo gates on the season, not on a draft metric.
+> The WP11 brief asked for this curve and said "report, do not assume": the honest answer is that
+> **draft slot does not measurably matter in this format**, and the small monotone tilt toward slot 1
+> is visible only in the pre-season instrument.
+>
+> ### What the ADP archive actually holds (and what it cannot do here)
+>
+> `raw_adp_history` (FantasyFootballCalculator) holds THREE formats, all **12-team ONE-QUARTERBACK**:
+> `standard` 2008-2026, `ppr` 2010-2026, `half-ppr` 2018-2026 (~200 players per season-format; FFC's
+> September snapshot). **There is no superflex ADP in the store at all**, and none in
+> `ranking_history` either (FantasyPros `ro`/`rp`/`wo`/`wp`, 2019-2025, is 1-QB ECR).
+>
+> So the `--market ecr` analogue for a snake -- `--snake-adp <format>`, which takes the room's ORDER
+> from the archive and keeps the value CURVE from the pool's own VOR -- can only be run on a **1-QB
+> consensus**, which understates the room's demand for quarterbacks by exactly the amount superflex
+> creates. It leaves quarterbacks on the board for our QB-heavy book to take, so it **FLATTERS us**
+> and it is NOT the arm the golden pins. It is wired, it prints its own per-season name-match count
+> (~180 of ~200 FFC names join the pool through `nameKey`; the misses are suffix spellings and
+> defenses, which this league does not roster), and it is there for the day a superflex ADP is
+> scraped. The format-native default -- the pool's own VOR under THIS league's roster economics, which
+> is superflex-aware through `resolveValueLeague`'s `flexGroups` -- is what the golden measures.
+>
+> ### What the SnakeModel is, in ten lines
+>
+> - **Order.** Serpentine over `teams`; `rounds = slots - IR` (Yahoo: 19 - 2 = 17). Our slot is drawn
+>   from the TRIAL's own seed (so it is a common random number and the CRN pairing survives) or fixed
+>   with `--our-slot N`.
+> - **The room.** Best available off a shared book -- the pool's own VOR, or ADP order when supplied --
+>   with an independent per-bot multiplicative view drawn ONCE per (bot, player) at `--bot-noise`.
+> - **Legality, the one hard rule.** A pick is legal only while the picks remaining still cover every
+>   starting slot the roster cannot fill (`startingDeficit(roster) <= picksLeft`). That is
+>   `starterReserve`'s semantics with picks in place of dollars, and it is what stops a fourth
+>   quarterback in round 14. It is asserted against `season.ts:rosterGaps` rather than believed.
+> - **Bench rule.** A player who reduces no starting deficit is discounted -- `cfg.benchDiscount` for
+>   us, the same 0.25 constant for the room, which is what makes the positive control exact.
+> - **Our side.** OUR VOR book (points, not dollars -- the dollar rounding collapses the whole
+>   sub-replacement tail to $1 and rounds 11-17 are made of that tail), plus `posMult` and `maxAtPos`.
+>   Every DOLLAR lever is ignored and `SNAKE_IGNORED_LEVERS` names them rather than leaving a sweep to
+>   discover that `--aggr` measured nothing.
+
 > ## Four-front model-improvement pass: 1 shipped, 3 held (2026-09-15)
 >
 > Prompted by "what's next to improve the models" after the sim self-audit. Four candidates, each gated;

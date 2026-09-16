@@ -152,6 +152,62 @@ export function resolveValueLeague(cfg: { teams: number; budget: number; slots: 
   };
 }
 
+/**
+ * THE POSITIONS THIS LEAGUE CAN ACTUALLY START -- dedicated slots plus anything a flex group admits.
+ *
+ * Yahoo 129048 rosters NO KICKER AND NO DEFENSE. Nothing in the value model knew that: the pool came
+ * from a history CSV that scores K and DST rows (under the DEFAULT tables, because this league
+ * declares none), `baselines()` computed a replacement level for them off that pool, and
+ * `computeValues` handed every kicker a dollar figure. The consequences were not cosmetic -- the
+ * board carried kickers a manager cannot roster, `waivers` could and did offer one, and the K/DST
+ * reserve arithmetic had a live denominator for positions with zero slots.
+ *
+ * Returns `null` when the league is a LEGACY hand-built `ValueLeague` (a `starters` map with no
+ * `dedicated`/`flexGroups`), because such a league has not told us its slot template -- only
+ * `resolveValueLeague` knows it, and inferring "no K slot" from a map that simply omits the key
+ * would silently delete kickers from `DEFAULT_VALUE_LEAGUE` and from every test fixture. Absent
+ * evidence, nothing is excluded: this filter only ever fires on a league that named its slots.
+ */
+export function startablePositions(lg: ValueLeague): Set<string> | null {
+  if (!lg.dedicated || !lg.flexGroups) return null;
+  const out = new Set<string>(Object.keys(lg.dedicated));
+  for (const g of lg.flexGroups) for (const p of g.elig) out.add(p);
+  return out;
+}
+
+/**
+ * The six positions this value model claims to price. Anything else in a pool (see below) is outside
+ * its universe and is left exactly where it is.
+ *
+ * DUPLICATED FROM `slots.ts` ON PURPOSE -- that module is the slot vocabulary and imports nothing; a
+ * second consumer importing a private constant back out of it is not what it is for. The two lists
+ * are bound by `test/snake-kdst.test.ts`, which asserts this set is exactly the set of tokens
+ * `slotEligibility` treats as a dedicated position.
+ */
+const PRICED_POSITIONS = new Set(["QB", "RB", "WR", "TE", "K", "DST"]);
+
+/**
+ * Drop players at positions the league has no slot for. Identity for ESPN (which starts a K and a
+ * DST) and for any legacy `ValueLeague`; for Yahoo it removes every K and DST.
+ *
+ * THE SCOPE IS THE SIX PRICED POSITIONS, and that restriction is a measured decision, not timidity.
+ * `data/history-points.csv` -- the incumbent's own backtest pool -- carries 24,579 IDP rows (LB
+ * 7,350 / DB 9,669 / DL 7,560) alongside 16,666 skill rows. The ESPN league starts no linebacker
+ * either, so a literal "drop every position with no slot" ALSO deletes those, and they are not
+ * inert: `openIdxFor` puts them on the bench, so they really are drafted as bench filler, and their
+ * VOR really does sit in `computeValues`'s denominator. Dropping them moved the incumbent golden
+ * from 39.5%/96% to 36.0%/94% (measured, 1999-2024 n=150, 2026-09-16). That may well be an
+ * improvement -- dead roster is dead roster -- but it is a VALUE CHANGE, and the one rule (D13) says
+ * a value change is gated and signed off, not smuggled in inside a draft-seam refactor. So WP11
+ * fixes the defect it was asked to fix (a league with no kicker slot must not be shown kickers) and
+ * leaves the IDP question on the table with its number attached.
+ */
+export function filterToStartable(points: PointsRow[], lg: ValueLeague): PointsRow[] {
+  const ok = startablePositions(lg);
+  if (!ok) return points;
+  return points.filter((p) => !PRICED_POSITIONS.has(p.pos) || ok.has(p.pos));
+}
+
 /** Replacement baseline points per position = the points of the first NON-startable player at
  *  that position across the whole league (dedicated starters + this position's share of FLEX).
  *
@@ -250,6 +306,10 @@ export function computeValues(
   points: PointsRow[], lg: ValueLeague = DEFAULT_VALUE_LEAGUE, maxKDst = 2, flexWeighted = true,
   eligibility?: EligibilityMap,
 ): ValueRow[] {
+  // A POSITION WITH NO SLOT IS NOT PRICED (WP11). See `startablePositions`: for ESPN and for every
+  // legacy `ValueLeague` this is the identity, so no incumbent number moves; for Yahoo it is what
+  // stops the board carrying a kicker in a league that cannot start one.
+  points = filterToStartable(points, lg);
   const base = baselines(points, lg, flexWeighted, eligibility);
   const ptsBy = new Map(points.map((p) => [p.name, p.points])); // for the tail tie-break below
   // A DUAL-ELIGIBLE PLAYER IS WORTH THE BETTER OF HIS BASELINES. VOR is the max over the positions

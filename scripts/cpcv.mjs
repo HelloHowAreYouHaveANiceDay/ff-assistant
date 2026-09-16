@@ -53,7 +53,7 @@ const argv = process.argv.slice(2);
 const val = (k, d) => { const i = argv.indexOf(k); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
 const has = (k) => argv.includes(k);
 
-const BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config. GOLDEN MASTER on the PRIMARY axis = 96.0% PLAYOFF (title% ~38.5% is context, D13); BOTH title-edges DEMOTED (consensusBlend=0 D14, benchDiscount=0.25 D15), so the shipped flagless config IS the pre-edge base. Pass --consensus-blend 1 --bench-discount 0.35 --golden 97.0 --golden-title 42.3 to reproduce the old title-tuned posture.
+let BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config. GOLDEN MASTER on the PRIMARY axis = 96.0% PLAYOFF (title% ~38.5% is context, D13); BOTH title-edges DEMOTED (consensusBlend=0 D14, benchDiscount=0.25 D15), so the shipped flagless config IS the pre-edge base. Pass --consensus-blend 1 --bench-discount 0.35 --golden 97.0 --golden-title 42.3 to reproduce the old title-tuned posture.
 const TREATMENT = val("--treatment", "--no-rookies");                        // the flag(s) to ADD for the treatment arm
 const SEASONS = val("--seasons", "1999-2024");
 const N = val("--n", "150");
@@ -74,8 +74,8 @@ const GOLDEN_TITLE = Number(val("--golden-title", "38.5")); // SECONDARY/context
 // the point backtest, NOT a selection decision, so it is not something a search can tune against.
 const HOLDOUT = parseHoldout(val("--holdout-seasons", null));
 const OUT_DIR = val("--out-dir", "data/trials");
-const BASE_LABEL = val("--baseline-label", `shipped[${BASE_FLAGS}]`);
-const TREAT_LABEL = val("--treatment-label", `shipped[${BASE_FLAGS}] ${TREATMENT}`);
+let BASE_LABEL = val("--baseline-label", `shipped[${BASE_FLAGS}]`);
+let TREAT_LABEL = val("--treatment-label", `shipped[${BASE_FLAGS}] ${TREATMENT}`);
 
 let baseDump = val("--baseline-dump", null);
 let treatDump = val("--treatment-dump", null);
@@ -93,6 +93,7 @@ const GOLDEN_FLAGGED = val("--golden", null) != null;
 const GOLDEN_TITLE_FLAGGED = val("--golden-title", null) != null;
 const GOLDEN_TOL_FLAGGED = val("--golden-tol", null) != null;
 let FORMAT_KEY;
+let DRAFT_TYPE;   // set unconditionally in the format block below (the incumbent path included)
 let GOLDEN_EFF = GOLDEN, GOLDEN_TITLE_EFF = GOLDEN_TITLE, GOLDEN_TOL_EFF = GOLDEN_TOL, GOLDEN_SRC = "cpcv.mjs defaults (the incumbent's pinned D15 numbers)";
 {
   const { INCUMBENT_MODEL, INCUMBENT_SCORING_KEY, resolveFormat } = await import("../src/data/formatResolve.ts").then(async (m) => ({
@@ -133,7 +134,26 @@ let GOLDEN_EFF = GOLDEN, GOLDEN_TITLE_EFF = GOLDEN_TITLE, GOLDEN_TOL_EFF = GOLDE
     if (!GOLDEN_TOL_FLAGGED) GOLDEN_TOL_EFF = g.tolerancePp;
     GOLDEN_SRC = g.path + (GOLDEN_FLAGGED ? " (overridden by --golden)" : "");
   }
-  console.log(`format gate: ${LEAGUE != null ? `league ${LEAGUE}` : "no --league (THE INCUMBENT)"} -> scoring ${fmt.scoringKey}, format ${fmt.formatKey ?? "(not resolved -- no league named)"}; ` +
+  // AUCTION-ONLY FLAGS ARE STRIPPED FOR A SNAKE FORMAT, LOUDLY (WP11). `--inflation` reprices a bid
+  // against the room's remaining money; a snake drafter cannot bid, so the flag is INERT there. An
+  // inert flag in the gate command is worse than a wrong one: the header would advertise an arm that
+  // never ran, and the golden file would record a `baseFlags` string nobody can reproduce a meaning
+  // for. `scripts/lib/golden.mjs`'s refusal names the command to pin a golden with; this keeps the
+  // two spellings the same.
+  DRAFT_TYPE = fmt.spec.draftType;
+  if (DRAFT_TYPE === "snake") {
+    const AUCTION_ONLY = ["--inflation", "--pos-inflation", "--scarcity", "--budget-pressure", "--drain-nom", "--greedy-nom"];
+    const kept = BASE_FLAGS.split(/\s+/).filter((f) => f && !AUCTION_ONLY.includes(f));
+    const dropped = BASE_FLAGS.split(/\s+/).filter((f) => AUCTION_ONLY.includes(f));
+    if (dropped.length) console.log(`  snake format: dropping auction-only base flags ${dropped.join(" ")} (they price a BID and are inert here).`);
+    BASE_FLAGS = kept.join(" ");
+    // The labels are built from BASE_FLAGS above, so they have to be rebuilt -- a ledger row whose
+    // label advertises `--inflation` for an arm that never ran it is the same mislabelling the
+    // format stamp exists to prevent. An explicitly passed label always wins.
+    if (val("--baseline-label", null) == null) BASE_LABEL = `shipped[${BASE_FLAGS}]`;
+    if (val("--treatment-label", null) == null) TREAT_LABEL = `shipped[${BASE_FLAGS}] ${TREATMENT}`;
+  }
+  console.log(`format gate: ${LEAGUE != null ? `league ${LEAGUE}` : "no --league (THE INCUMBENT)"} -> scoring ${fmt.scoringKey}, format ${fmt.formatKey ?? "(not resolved -- no league named)"}, draft ${DRAFT_TYPE}; ` +
     `golden ${GOLDEN_EFF}% playoffs (+/-${GOLDEN_TOL_EFF}pp) from ${GOLDEN_SRC}`);
 }
 
@@ -268,6 +288,7 @@ const line = {
   format_key: FORMAT_KEY,
   deps_hash: depsHash,
   deps_parts: depsParts,
+  draft_type: DRAFT_TYPE,
   spec: { base_flags: BASE_FLAGS, treatment: TREATMENT, seasons: SEASONS, n: N, artifact_dir: ARTIFACT_DIR },
   primary: "playoffs",
   // PLAYOFFS -- the proximate target. effect + season-bootstrap CI is the thin-edge instrument; PBO is

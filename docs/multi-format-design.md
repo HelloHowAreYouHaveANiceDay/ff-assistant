@@ -155,7 +155,9 @@ per-format features + seeded playoff-odds gate) is reachable before any snake wo
    as an RB/WR/TE flex and QB replacement level is wrong — which is the *entire* point of superflex. Fix:
    make flex-eligibility part of the format (`slot → eligible positions`), and let `baselines()`
    (values.ts:135) fill a superflex slot from QB+RB+WR+TE. Surgical, but it moves numbers → re-gate.
-2. **Snake draft engine.** None exists; the auction path (VOR→$, second-price sim, nomination) is
+2. **Snake draft engine. CLOSED (WP11, 2026-09-16) -- see "Wall 2 -- the snake DraftModel" at the end
+   of this document.** The wall as it was originally stated, kept because it is what landed:
+   None exists; the auction path (VOR→$, second-price sim, nomination) is
    meaningless for snake. Introduce a `DraftModel` interface with two implementations:
    - `AuctionModel` — the existing computeValues + sim.ts auction.
    - `SnakeModel` — rank/tier value = expected VOR at pick given ADP; the backtest "draft" becomes
@@ -463,3 +465,304 @@ Two smaller things, recorded so they are not rediscovered: the format's `history
 scores K and DST under the DEFAULT rules (this league rosters neither, so nothing consumes those rows,
 but the K/DST tiers of its variance model are consequently identical to ESPN's); and the format's board
 still carries K and DST players, so `waivers` can offer a kicker in a league with no kicker slot.
+
+## The Yahoo weekly track (WP8, 2026-09-16) -- caveats 2 and 3 above are now CLOSED
+
+The three caveats of the first Yahoo in-season run said the weekly serve was the crudest model in the
+repo: no blind fold set (so nothing historical could be evaluated), no weekly artifact (so every point
+total was the season line over 17), and a rest-of-season K borrowed from the ESPN fit. The weekly track
+now exists for this format on the same recipe the ESPN one ships (D16/D17/D19/D23), and every number
+below is measured rather than asserted.
+
+### 1. The blind fold set
+
+`tools/train_projection.py --db data/formats/sc-a845f67652fb/features.db --holdout-season Y` for
+Y = 2012..2025, into `data/formats/sc-a845f67652fb/fold-artifacts/artifact-Y.json` -- fourteen
+artifacts, the same range and the same recipe as the incumbent's `data/fold-artifacts-d16`
+(`--learner gbm`, depth 3, 300 rounds; the Yahoo projector's own header). Run seven at a time through
+`xargs -P 7`; ~30 s each, single-core, disjoint outputs.
+
+THE BLIND PROOF, and it is three separate facts because "the file exists" is not one of them:
+each artifact declares `holdoutSeason: Y` and its `seasons` array ends at Y-1 (so the season it
+projects is not in its training set); each loads through the CONSUMER's loader with `checkGolden`, so
+the trainer's own five fixture predictions are reproduced by the TypeScript projector to 1e-6; and each
+serves Yahoo-SCALED projections (top QB 395-617 across the fourteen seasons, against the ~300 a
+half-PPR artifact produces for the same men). `buildInto` additionally REFUSES an artifact whose
+`holdoutSeason` disagrees with the season it would anchor.
+
+### 2. The weekly table, rebuilt on blind lines
+
+`scripts/build-format-features.mjs --league 129048 --weekly-only --weekly-seasons 2012-2026
+--prune-weekly`. Two changes to that script, both because the honesty flag was weaker than it looked:
+
+- `manifest.weekly.seasonLineBlind` was `existsSync(foldDir)` -- the presence of a DIRECTORY. A
+  half-built fold set, or one whose artifact-2019 had seen 2019, set it to `true` exactly as readily as
+  a complete one. It is now decided PER SEASON from each artifact's own `holdoutSeason` header, and the
+  manifest carries `blindSeasons` / `notBlindSeasons` so a reader asking "can I evaluate on 2019?" gets
+  an answer instead of one bit for fourteen seasons.
+- `--prune-weekly` removes seasons outside the rebuilt range. 2010 and 2011 cannot be fitted blind (no
+  artifact can be trained on seasons before the curve has pairs), and leaving their old rows in the
+  table while the manifest described only 2012-2025 is the state where the flag is true and the table
+  disagrees with it. The weekly trainer's window is 2012-2025 for the same reason on the ESPN side.
+
+WHAT THE BLIND LINES COST, which is the measurement that says the lookahead was real (mean absolute
+change in `season_line_pg`, points per scheduled week, over the 7,694 player-seasons the two builds
+share):
+
+| pos | n | identical | mean abs delta | mean relative | max | mean line before -> after |
+|---|---|---|---|---|---|---|
+| QB | 906 | 101 | 1.589 | 22.6% | 12.88 | 11.585 -> 11.250 |
+| RB | 1789 | 260 | 0.851 | 21.7% | 8.59 | 6.025 -> 5.700 |
+| TE | 1448 | 161 | 0.707 | 20.4% | 10.93 | 5.025 -> 4.714 |
+| WR | 2642 | 364 | 0.645 | 15.6% | 6.92 | 5.919 -> 5.866 |
+| DST | 448 | 0 | 0.262 | 4.2% | 1.54 | 6.195 -> 5.987 |
+| K | 461 | 0 | 0.164 | 2.7% | 0.68 | 6.650 -> 6.568 |
+
+A fifth of the skill-position anchor moved, and it moved DOWN -- which is what a boosted model that has
+seen the season it is projecting does: it knows who hit. The identical rows are the ones the fold
+artifact could not price and the rookie curve filled instead (that curve is fitted before the season
+either way, so it is blind in both builds).
+
+### 3. The format's weekly artifacts
+
+Same recipe as the shipped ESPN pair, read off `data/weekly-artifact.json`'s own header rather than
+retyped: `--zero-model two-part --learner gbm --features all`, target `ratio_to_season_line`,
+population `rostered`, `rowFilter: in_population` (the D23 decision population, which the format DB
+carries because `buildInto` runs `buildPopulation`), quantile grid 0.05-0.9.
+
+- `data/formats/sc-a845f67652fb/weekly-artifact.json` -- 27 features, 70,266 population rows,
+  populationHash `64e92f5e68448e07`, seasons 2012-2025, gbm served for QB/RB/WR/TE with the trainer's
+  own self-check against scikit-learn's `predict` passing.
+- `data/formats/sc-a845f67652fb/weekly-artifact-lineonly.json` -- the season-line floor the serve table
+  names at K (`--season-line-only`, every mean intercept exactly 1.0).
+
+Both were golden-checked THROUGH THE CONSUMER (`scripts/weekly-artifact-probe.mjs`, which loads them
+with `loadWeeklyArtifact` and therefore re-runs the six golden rows): "the trainer wrote a file" and
+"the engine can serve it" are two facts, and only the second one matters at serve time.
+
+There is no Yahoo DST streaming artifact and there should not be: the league rosters no defence. DST
+comes back in `projectStreamingWith`'s `missing` list, by name.
+
+
+### 4. The evaluation -- the number that says whether this is an improvement
+
+`evaluateWeekly` nested by season on the format's own DB, 2012-2025, every fold retrained by
+`tools/train_weekly.py` with that season held out, 300 random rosters per league-week. Two things had
+to be parameterised in `src/weekly/evaluate.ts` first, and both were wrong-answer risks rather than
+conveniences:
+
+- the harness read the CANDIDATE artifact from `dataPath(CHALLENGER_WEEKLY_ARTIFACT)` -- the ESPN file
+  -- to learn which model kind and learner every fold must fit, whatever DB it was scoring. It now
+  takes the format's `ModelHandle`; omitted, it is the incumbent, so the ESPN path is unchanged.
+- `SCENARIOS`, the roster template the DECISION metric draws over, was the ESPN starting template:
+  one FLEX, a kicker, a defence, no superflex. Scoring a superflex league on it measures a lineup
+  decision nobody in that league makes. `scenariosForSlots(cfg.slots, cfg.flex_ok)` derives the
+  template from the league's own slots through `slotEligibility`, and the ESPN constant stays a pinned
+  constant (`test/weekly-scenarios.test.ts` asserts it, and fault-injects the derivation).
+
+Yahoo template: `QB WR WR RB RB TE FLEX FLEX FLEX SUPERFLEX` plus 5 or 8 bench (standard-15 /
+deep-18); the bench is drawn from the union of the flex groups' eligibility, so a superflex league
+draws quarterbacks onto the bench and the ESPN template draws exactly what it always did.
+
+POOLED, 69,975 scored player-weeks (the decision population, non-bye weeks, a did-not-play week is a
+zero):
+
+| model | RMSE | CRPS | coverage | cov(>0) | bias | zeroP | zeroA |
+|---|---|---|---|---|---|---|---|
+| **weekly (the format model)** | **8.211** | **3.5889** | 0.848 | 0.843 | +0.146 | 0.240 | 0.245 |
+| season_line (the floor) | 9.564 | 4.4956 | 0.880 | 0.867 | -0.232 | 0.100 | 0.245 |
+| shipped_week (the baseline) | 9.569 | 4.5292 | 0.865 | 0.843 | -0.234 | 0.103 | 0.245 |
+| trailing4 (the folk model) | 9.752 | 4.3958 | 0.873 | 0.859 | +1.771 | 0.112 | 0.245 |
+
+THE GATE, the same three pre-registered clauses the ESPN model is held to, PASSES on all three:
+(a) pooled CRPS 3.5889 against the baseline's 4.5292; (b) coverage-given-positive 0.843, inside
+[0.75, 0.85] pooled with every position inside [0.70, 0.90]; (c) predicted zero share 0.240 against an
+actual 0.245, off by 0.006, every position inside 0.03.
+
+PER POSITION, the gate fills the serve table exactly as it does for ESPN -- **QB, RB, WR, TE ship the
+two-part form model; K and DST keep the floor**, failing clause (a) by a hair in the third decimal
+(K 2.4738 vs 2.4720, DST 3.1331 vs 3.1326), which is the same verdict and the same margin the ESPN
+track recorded. CRPS against the floor: QB 4.6185 vs 6.7155, RB 3.4522 vs 4.5744, WR 3.9040 vs 4.8116,
+TE 3.3838 vs 4.1067. So `WEEKLY_SERVE` needs no per-format variant: the measurement agrees with it.
+
+THE DECISION METRIC (actual points of the starters each model chose, 72,900 drawn rosters per
+scenario, common random numbers so `winShare` is paired against `shipped_week`):
+
+| scenario | weekly | shipped_week | gain | winShare |
+|---|---|---|---|---|
+| standard-15 | 141.63 | 126.52 | **+15.11 pts/lineup** | 0.810 |
+| deep-18 | 153.35 | 134.43 | **+18.92 pts/lineup** | 0.823 |
+
+READ THAT GAIN WITH ITS SOURCE ATTACHED. It is far larger than the ESPN track's, and the reason is
+structural rather than a better model: this template starts TEN men including three flexes and a
+superflex out of a 15- or 18-man roster, so much more of the roster is a decision, and Yahoo's scoring
+(full PPR, 6-point passing TDs, milestone and first-down bonuses) puts more points on each of those
+decisions. It is not evidence that the Yahoo model is better than the ESPN one; it is evidence that
+this league's weekly decision is worth more, and that the model beats the floor when making it.
+
+SELECTION vs HOLDOUT. Every fold is blind to its own season, so the pooled number is already
+out-of-sample; what a split can still show is whether the gain lives in one era. Early (2012-2018)
+CRPS 3.5562 against the floor's 4.4445; late (2019-2025) 3.6190 against 4.5427 -- a gain of 0.89 and
+0.92 CRPS, with the same coverage and zero-share behaviour in both halves. The recipe itself (feature
+set, two-part zero model, gbm learner) was SELECTED on the ESPN track, not on this format, so no
+selection budget has been spent here; nothing below the third decimal should be leaned on.
+
+### 5. The rest-of-season blend, per format
+
+`scripts/fit-ros-blend.mjs --league 129048` (a `--league` axis through `scripts/lib/format-paths.mjs`,
+the same pattern `fit-variance` uses) fits K on the format's own weekly table in the per-SCHEDULED-week
+frame:
+
+| | ESPN (half-PPR, 1QB) | Yahoo (full-PPR superflex) |
+|---|---|---|
+| fitted K | **6** | **5** |
+| rows | 41,524 | 44,101 |
+| held-out RMSE | 4.3666 (line-only 4.9295, rate-only 5.1474) | 6.0598 (line-only 6.9176, rate-only 7.0656) |
+| K per fold | 6 x 14 | 6, then 5 x 13 |
+
+Both beat both controls, so the blend is doing work in both formats; Yahoo's evidence stabilises one
+week sooner. That is why `ros-blend.json` moved OUT of the resolver's SHARED-NFL set (where D18's "an
+NFL-level stabilization constant" had put it) and into the per-format artifact table: K is chosen by
+minimising RMSE in POINTS, on a format's own lines and a format's own weekly scores, and a full-PPR
+superflex point is not a half-PPR point. The incumbent's path is unchanged (`data/ros-blend.json`) and
+the flagless refit reproduces the shipped file byte-for-byte apart from its `fittedAt` stamp.
+
+### 6. The serve, live
+
+With the artifacts in place `resolveFormat(db, "129048").model.has("weekly")` is true and the copilot's
+weekly path serves them. Week 2 of 2026, `ff copilot lineup --league 129048 --week 2`:
+
+    basisNote: every point total is from the weekly projector (src/weekly/projector.ts) for week 2
+    QB Tyler Shough 26.04 | WR Garrett Wilson 14.88 | WR Jameson Williams 12.65
+    RB Chase Brown 18.22 | RB Omarion Hampton 17.92 | TE Kyle Pitts 12.97
+    FLEX Jacory Croskey-Merritt 12.96 | FLEX Carnell Tate 12.23 | FLEX Michael Mayer 10.46
+    SUPERFLEX Joe Burrow 24.83                                        total 163.2
+
+against WP7's `no weekly projector was supplied: every point total is the season projection divided by
+17` and 150.4. `ff copilot stream --league 129048 --pos QB` names the files it served:
+`artifactByPos {QB,RB,WR,TE: weekly-artifact.json, K: weekly-artifact-lineonly.json}`,
+`missing ["DST"]` -- the format's own directory at every position, and a named refusal at the one it
+does not have.
+
+TWO THINGS HAD TO CHANGE FOR THAT TO BE A CORRECT NUMBER RATHER THAN A PLAUSIBLE ONE.
+
+- **The ROWS follow the format, not just the artifacts** (`projectStreamingWith`). Resolving the
+  artifacts per format while reading the feature rows from whatever store the caller opened is a
+  half-fix, and the missing half decides the number: the weekly target is `pts / season_line_pg`, so a
+  Yahoo artifact served on the incumbent's rows multiplies a full-PPR superflex ratio by a half-PPR
+  line at every position, with full coverage and no error anywhere -- F-4 one table further down. A
+  non-incumbent handle now reads its own `features.db`; the incumbent keeps the caller's handle, which
+  is what leaves `ff scorecard`'s open transaction and the whole ESPN path untouched.
+- **The live season's rows have to exist in that DB.** `ff sync-actuals` writes a non-incumbent
+  format's `current-actuals.csv` and then REFUSES the forward-board rebuild, because
+  `buildForwardBoard` writes the shared `feat_player_week*` tables; its own note says the fix is "the
+  format dir's own feature tables", and those now exist. `scripts/build-format-features.mjs --league
+  129048 --forward-only` runs both builders against `data/formats/<key>/features.db` with the format's
+  actuals and the format's projector: 590 players x 18 weeks, 10,620 rows, 422 with settled points.
+  Positive control, 2026 week 1 mean `season_line_pg` -- QB 11.71 / RB 5.49 / WR 5.19 / TE 5.38 in the
+  format DB against 8.09 / 3.73 / 4.01 / 3.35 in the main store: the rows are on the Yahoo scale, not
+  the incumbent's.
+
+ESPN IDENTITY, checked the way this pass checks everything: the board's `row_json` differs from
+`data/ff.db.bak-prearchfix-2026-09-16` in exactly the same 151 rows and exactly the one key
+(`ESPN_ADP`, max delta 0.7) before and after the league switch; `ff copilot lineup --league 462233` is
+byte-identical starter-for-starter and projection-for-projection across the switch (91.7 both times);
+the store is left `active_league = 462233`.
+
+### What is still NOT closed for this format
+
+- **The first caveat is only half-lifted, and not by WP8.** WP11 landed a CANDIDATE
+  `data/formats/sc-a845f67652fb/golden.json` (99.2% playoffs / 39.8% titles under the first
+  SnakeModel) while this pass ran, so the format does now have a pre-draft tripwire -- but it is a
+  tripwire, its own file says the playoff axis is nearly saturated at 8-of-12, and nothing in the
+  WEEKLY track above is checked against it. The weekly gate here is the weekly track's own
+  pre-registered gate, which is a different and smaller claim than a championship gate. WP11's golden
+  also records that its arm excludes `--projection artifact` "because this format does not have a
+  blind per-season fold set" -- it has one now (section 1), so that arm is newly runnable and the
+  golden would need re-pinning with it, deliberately, not silently.
+- **`simContext` still reads the ROOT ros-blend.** `loadRosBlendFor(model)` exists in
+  `src/draft/rosBlend.ts` and the resolver now carries the artifact; the call site
+  (`src/draft/simContext.ts`, another work package's file) still calls `loadRosBlend()`, so the live
+  Yahoo caveat sentence still says `K=6 (fitted)` where this format's own fit says 5. One line.
+- **`ff evaluate-weekly` has no `--league` axis.** The function takes `model` / `scenarios` /
+  `flexOk` / `label`; `src/ff.ts` (another work package's file this wave) does not yet pass them, so
+  the run above was driven from a scratch runner.
+- **The forward build is a script, not a verb.** `ff sync-actuals --league <id>` should call
+  `--forward-only`'s two builders instead of printing its refusal, now that the refusal's stated
+  precondition is met.
+- The format's live weekly rows are only as fresh as the last `--forward-only` run; nothing recomputes
+  them when Yahoo actuals land. And 2010-2011 are gone from this format's weekly table by design (no
+  blind artifact can exist for them), so its trainer window is 2012-2025 where ESPN's is 2010-2025.
+
+## Wall 2 -- the snake DraftModel (WP11, 2026-09-16): CLOSED, with an honest gate
+
+The draft is an interface now: `src/draft/draftModel.ts`. `AuctionModel` wraps the existing
+`draftField` call argument-for-argument (the incumbent golden line is unchanged before and after, and
+`test/draft-model.test.ts` asserts the identical player in the identical seat for three seeds);
+`SnakeModel` is net-new; `runBacktest` takes a `DraftOptions` and `ff backtest` RESOLVES the model
+from the format's `draftType` where it used to refuse with `requireAuction`. A draft type with no
+model is still a named refusal, not a silent auction.
+
+**The SnakeModel in one paragraph.** Serpentine order over `teams`, `rounds = slots - IR` (Yahoo
+129048: 19 - 2 = 17), our slot drawn from the TRIAL's own seed so it is a common random number and
+the CRN pairing the arbiter rests on survives (`--our-slot N` fixes it). The room picks BEST
+AVAILABLE off a shared book -- the pool's own VOR under THIS league's roster economics, which is
+superflex-aware for free through `resolveValueLeague`'s `flexGroups`, or the real preseason ADP order
+when `--snake-adp <format>` supplies one -- each bot through an independent multiplicative view drawn
+once per (bot, player) at `--bot-noise`. One hard rule governs everybody: a pick is legal only while
+the picks remaining still cover every starting slot the roster cannot fill. That is `starterReserve`'s
+semantics with picks in place of dollars, it is what stops a fourth quarterback in round 14, and it is
+asserted against `season.ts:rosterGaps` rather than believed. Our side picks off OUR VOR book (points,
+not dollars -- the dollar rounding collapses the sub-replacement tail to $1 and rounds 11-17 are made
+of that tail) with `benchDiscount`, `posMult` and `maxAtPos`; every dollar lever is inert and
+`SNAKE_IGNORED_LEVERS` names them rather than leaving a sweep to discover that `--aggr` measured
+nothing.
+
+**The gate number, and what it is worth.** `data/formats/sc-a845f67652fb/golden.json` exists, so
+`scripts/cpcv.mjs --league 129048` RUNS instead of refusing -- it also strips the auction-only base
+flags for a snake format, loudly, and stamps `draft_type` on the ledger row. The flagless arbiter
+(`--full --no-lookahead --seasons 1999-2025 --n 150`, 26 scored seasons, 3,900 paired trials) gives
+**99.18% playoffs / 39.82% titles** against 66.7% / 8.3% at random. Read docs/validation.md "Snake
+DraftModel, first run" before using either number: the PRIMARY axis is **nearly saturated** (95%-100%
+per season; cpcv resolves ~0.57pp there against ~3.7pp on titles), so it is a downward tripwire and
+nothing else, and the margin is near-totally dependent on `marketSd 0.30` -- an assumption
+`ff calibrate` never measures. Halving it takes titles 40.0% -> 24.8% and playoffs 99% -> 96%; the per-bot view, by contrast, is
+nearly irrelevant (--bot-noise 0/0.20/0.40 -> 40.2%/40.0%/41.4%). The
+reason a snake is so much more sensitive to it than an auction is structural and worth carrying
+forward: **an auction converts the room's projection error into PRICE, a snake converts it into
+ROSTER** -- a bot that over-rates a player merely overpays in one and TAKES him in the other.
+
+**The first measurement of that number was WRONG, at 99.77% / 45.69%, and the failure is the useful
+part.** This format's target re-scores the same history the incumbent uses, so its pool carries the
+24,579 IDP rows; a position with no slot takes its baseline from the BEST player at it, so every one
+floors at VOR 0, and the only thing left ordering them was a RAW-POINTS tie-break. A 200-point
+linebacker outranked every sub-replacement receiver, rounds 12-17 filled with unstartable men, and
+**18% of every roster was dead weight** (149 of 816 drafted players). Nothing failed -- every roster
+was legal, the first six rounds of the pick log looked perfect, and all four face-validity checks
+passed; the only symptom was a number ~6pp too high on titles. A SECOND defect moved it again:
+`--bot-noise` reaches the auction only through `market.idioSd`, which only `--market ecr` populates,
+so the snake room ran with ZERO per-bot disagreement while the banner printed `per-bot view 0.2`. It
+has its own channel now and a connected-lever test. `vorBook` now prices a position with
+no slot at exactly zero, and `test/snake-kdst.test.ts` locks it with a fault injection on the slot
+template.
+
+**Two gaps this did not close, both data rather than code.** (1) The store holds no `raw_league_pick`
+for 129048, so the field is a generic best-available room, not this league's twelve owners --
+`managers.json` is the ESPN auction room and has no snake analogue. (2) **There is no superflex ADP
+anywhere in the store.** `raw_adp_history` is FantasyFootballCalculator's 12-team ONE-QB `standard`
+(2008-2026), `ppr` (2010-2026) and `half-ppr` (2018-2026); `ranking_history` is 1-QB FantasyPros ECR
+(2019-2025). So the `--market ecr` analogue can only be run on a 1-QB consensus, which understates the
+room's demand for quarterbacks by exactly the amount superflex creates -- it leaves QBs on the board
+for our QB-heavy book, and therefore FLATTERS us. `--snake-adp ppr` is wired and prints its own
+per-season name-match count so a key miss is visible rather than silently degrading to the default
+book, and it is there for the day a superflex ADP is scraped.
+
+**And the Yahoo pool no longer carries kickers or defenses.** `startablePositions` /
+`filterToStartable` (values.ts) drop any of the six PRICED positions the league has no slot for, so
+the draft pool, the value book and the waiver wire in a Yahoo backtest hold none -- closing the last
+of the two "smaller things" recorded at the end of the WP7 section. The scope is deliberately the six
+priced positions and NOT "every position with no slot", and the reason is measured: the INCUMBENT's
+own `data/history-points.csv` carries 24,579 IDP rows (LB/DB/DL) that are currently drafted as bench
+filler and whose VOR sits in `computeValues`'s denominator, and removing them moves the ESPN golden
+from 39.5%/96% to 36.0%/94%. That is a value change under the one rule (D13), so it is left on the
+table with its number attached rather than smuggled in inside a draft-seam refactor.
