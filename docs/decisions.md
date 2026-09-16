@@ -856,6 +856,186 @@ for the in-season analysis, which starts from the current roster per D18); Yahoo
 verb/UX threading of `--league` through every surface. The one rule (D13) still gates every value/strategy
 change -- now PER FORMAT, against that format's golden.
 
+## D25 -- Three approved in-season corrections (2026-09-16, owner sign-off on the three "Open, needing
+OWNER SIGN-OFF" items of `docs/architecture-review-2026-09-16.md` section 5; executed as WP10)
+
+Each of the three moves a live ESPN in-season number, so each was applied the charter way: arbiter
+measured BEFORE, change applied, arbiter measured AFTER with the SAME command and the SAME seeds, and
+the before/after written down here. All three were APPLIED. The store was mutating under the session
+(other executors), so the calibration arbiter was pointed at a VACUUM snapshot (`--db`) and both arms
+of every pair read the same bytes; the `reg` arm reproduces the pre-change run exactly, which is the
+positive control that the flag is the lever and the snapshot is the live store.
+
+### D25.1 -- The streaming replacement level is in the `/17` frame, not `/regWeeks`
+
+**What was wrong.** `src/draft/simContext.ts` built the per-position streaming floor as
+`seasonPts / regWeeks` (13 for ESPN 462233) while every consumer compares it against a `proj / 17`
+quantity -- `season.ts` prices every rostered man at `rosPerGame ?? proj / 17`, and `emptySlotPoints`
+puts this floor straight beside those numbers. The floor was high by 17/regWeeks = **1.3077x**, so a
+starting slot nobody can fill was worth MORE than it is, which systematically flattened the cost of
+thin depth: every bye the bench cannot cover, every injury week, every depth-risk question.
+`src/draft/sim.ts` already divided by 17; simContext was the odd one out. Fixed at the PRODUCER, so
+there is now exactly ONE frame in the in-season stack (the `NFL_WEEKS` comment block in
+`src/inseason/copilot.ts` records it). `scripts/season-calibration.mjs` carried a SECOND COPY of the
+same rule -- correcting only the module would have left the arbiter measuring the old behaviour and
+reporting "no change" -- so it gained `--replacement-frame nfl|reg` (default `nfl`) and both arms come
+from one version of that script.
+
+**Arbiter** (D18's four arms, playoff Brier; lower is better):
+
+```
+node --import tsx scripts/season-calibration.mjs --db <snapshot> --at-week {4,8} \
+     --artifact-dir data/fold-artifacts-d16 --replacement-frame {reg,nfl}
+node --import tsx scripts/season-calibration.mjs --db <snapshot> \
+     --artifact-dir data/fold-artifacts-d16 --replacement-frame {reg,nfl}   # preseason, for title Brier
+```
+
+| arm (pooled playoff Brier, 114 team-seasons) | BEFORE (`reg`) | AFTER (`nfl`) | delta |
+|---|---|---|---|
+| week 8, A from scratch      | 0.2362 | 0.2342 | -0.0020 |
+| week 8, B seeded standings  | 0.1476 | 0.1455 | -0.0021 |
+| week 8, C + ROS lines       | 0.1391 | 0.1377 | -0.0014 |
+| week 8, D + level shrink    | 0.1351 | **0.1336** | -0.0015 |
+| week 4, A                   | 0.2328 | 0.2315 | -0.0013 |
+| week 4, B                   | 0.2052 | 0.2046 | -0.0006 |
+| week 4, C                   | 0.2007 | 0.2005 | -0.0002 |
+| week 4, D                   | 0.2007 | **0.2004** | -0.0003 |
+
+BETTER in all eight arm/week cells. Paired by season on the shipped arm D at week 8: mean -0.00155
++/- SE 0.00104 (t -1.49, better in 6/8 seasons) -- an improvement inside noise, which is the honest
+reading; the point is that it does not get WORSE. The D18 arm structure is unchanged (seeding still
+decisive at week 8, -0.0888 +/- 0.0149, 8/8; the shrink still clears, -0.0042 +/- 0.0012, 7/8) and the
+shuffled-outcome control still loses (D 0.2950 honest 0.1336). Reliability bands move only inside a
+bucket or two of counting noise.
+
+The PRESEASON arm (a from-scratch full season, where the streaming floor matters least) is the one
+place the number does not improve: pooled playoff Brier 0.2294 -> 0.2297 (skill 6.4% -> 6.3%), paired
+mean **+0.00020 +/- SE 0.00106, t 0.19, better in 5/8 seasons** -- i.e. indistinguishable from zero,
+which is the applied/reverted test ("not worse beyond noise"). Title Brier, reported as CONTEXT only
+per D13, IMPROVES: 0.0641 -> 0.0636, paired mean -0.00047 +/- 0.00047 (t -1.01, 6/8), skill 1.8% ->
+2.5%. **APPLIED.**
+
+**Conservation + live verbs** (`copilot-crosscheck.mjs --schedule real`: ALL CHECKS PASSED before and
+after, all 15 lines byte-identical including the fault injection; playoff shares 7.0000, title 1.0000
+both ways). Live 462233 numbers that moved:
+
+| verb | BEFORE | AFTER |
+|---|---|---|
+| `season-odds`, us (8==3) playoff% / title% | 65.75 / 13.50 | 66.45 / 13.50 |
+| `season-odds`, largest playoff move (MILE) | 50.95 | 54.05 |
+| `season-odds`, mean points per team | 883.6-1032.4 | 874.7-1028.5 (every team 4-9 pts lower) |
+| `waivers`, base playoff% | 66.6 | 67.1 |
+| `waivers`, recommended DROP on 3 of 4 rows | Michael Pittman Jr. | **Isaiah Likely** |
+| `waivers`, top row playoffsPp | 0.0 (none cleared noise) | +0.1 |
+| `depth-risk` Breece Hall, costPp | 18.2 | **21.75** |
+| `depth-risk` Breece Hall, costTitlePp | 6.4 | 8.35 |
+| `depth-risk`, free-agent insurers recoversPp | -3.6 / -4.0 | +0.65 / +0.7 |
+| `stream --pos QB` | unchanged (identical but for the `asOf` stamp) | |
+
+The depth-risk move is the correction working as intended: losing a starter now leaves a slot at the
+CORRECT (lower) streaming floor, so thin depth costs what it costs -- 3.5pp more than we were quoting.
+
+### D25.2 -- The handcuff / depth horizon is the LEAGUE's season, not the NFL's
+
+**What was wrong.** `src/inseason/copilotActions.ts` passed `NFL_WEEKS` (17) where `handcuffBoard`'s
+own header says `weeks` is "the REMAINING horizon" -- how long this backup still has to pay off. That
+question ends when OUR season ends: ESPN 462233's last playoff week is 16. Every row was quoted over a
+horizon a week longer than it has, and the `--week W` remaining-weeks arithmetic was off by one all
+season. `leagueSeasonWeeks(ctx)` (WP5) reads the league's own format block, so a league that really
+does run to week 17 (Yahoo 129048) is unchanged.
+
+**Arbiter** (`node --import tsx scripts/inseason-backtest-{handcuff,promotion}.mjs`, same seasons
+2018-2025 / 2018-2024): **byte-identical before and after** (only the wall-clock line differs).
+
+| | BEFORE | AFTER |
+|---|---|---|
+| handcuff REALIZED diff/decision | 0.015, CI [-0.13, 0.15], P 58%, differed 37 | identical |
+| handcuff SIM (distr.) | -0.048, CI [-0.08, -0.02], P 0%, differed 37 | identical |
+| handcuff positive control (drop-best) | -36.6 pts | identical |
+| promotion (all gates, P39, per-fold RMSE) | | identical |
+
+That identity is STRUCTURAL and is stated rather than read as a null: `backtest/handcuffSignal.ts`
+hardcodes `weeks: 1` so the per-week signal is scale-free, and `inseason-backtest-promotion.mjs` never
+reaches the copilot at all. Neither arbiter CAN see this lever. The real evidence is the live verb.
+
+**A DEAD ARBITER WAS FOUND AND FIXED FIRST.** `scripts/inseason-backtest-handcuff.mjs` picked its
+league with `ORDER BY last_synced_at DESC LIMIT 1` -- one of the S-1 resolvers the architecture review
+deleted from `src/`, left behind in this script. With Yahoo 129048 the newest-synced row it resolved
+to a league holding NO `fact_roster_week` rows, so the harness evaluated ZERO decisions and printed
+`diff/decision 0.000 ... (differed 0)` with a **positive control of 0.0** -- an empty set that reads
+exactly like "the handcuff signal does nothing". It now resolves through `resolveLeagueContext` (with
+`--league`), threads the league into `makeHandcuffValueFn`/`makeSimExpectedScorer`, and REFUSES
+(exit 3) on zero evaluated decisions rather than printing a zero. The table above is from the fixed
+harness; every figure in it was unobtainable before.
+
+**Live verbs** (462233, ESPN, last playoff week 16 -> horizon 16):
+
+| `ff copilot handcuffs --pos RB` | BEFORE | AFTER |
+|---|---|---|
+| basisNote horizon | "over 17 weeks" | "over 16 weeks" |
+| Stevenson basePerWk / activePerWk | 7.77 / 10.73 | 8.26 / 11.40 |
+| Corum basePerWk / activePerWk | 6.45 / 9.79 | 6.86 / 10.40 |
+| every per-week magnitude | | x 17/16 = 1.0625 exactly |
+| `expectedPts` (tier rows) | | UNCHANGED (lift ~ 1/weeks, games ~ weeks) |
+| `expectedPts` (injury-model rows, e.g. Stevenson) | 8.5 | 8.8 |
+| row ORDER | | 64 of 66 identical; one 2dp tie (RJ Harvey / Aaron Jones, 8.53 -> 9.06 vs 9.07) swaps |
+
+`depth-risk` does not take this horizon (it is a simulated playoff-probability question); its move in
+the table above is D25.1's. **APPLIED.**
+
+### D25.3 -- `starterBaselines` fills FLEX by ELIGIBILITY GROUP, not by one `flex_ok` list
+
+**What was wrong.** `src/draft/lineupMarginal.ts`'s `starterBaselines` counted every flex-ish slot
+(`isFlexSlot`) and then filled them ALL from the league's single `flex_ok` array. Under a SUPERFLEX
+template that is two errors at once: quarterbacks compete for no flex slot (QB replacement level sits
+at the last DEDICATED quarterback, far too shallow, so V3 prices the whole position against the wrong
+man), and the [RB,WR,TE] pool is handed the superflex slot as well (the RB/WR/TE baselines run one
+slot-per-team too deep). `values.ts baselines()` was generalised to groups by D24; this is the same
+laminar-greedy fill on the same input, via `splitTemplate` from the one slot module. `expectedWeekPoints`
+now prices a flex slot against ITS OWN group cutoff (`baseline[<slot token>]`, falling back to `FLEX`)
+and falls back to the replacement level over what THAT slot admits.
+
+**Consumers, checked by grep rather than assumed.** `starterBaselines` has exactly ONE production
+consumer: `src/draft/strategyV3.ts`. `rosterValue.ts`, `rosterMarginal.ts`, the trade tools and the
+copilot do not call it. The V2 bidder is the default (`sim.ts`: `useV3 = opts.strategy === "v3" ||
+FF_STRATEGY === "v3"`), so **no live verb's number moves today** -- this is a V3 value-book correction
+that lands before a Yahoo/snake pre-draft path needs it.
+
+**Arbiter: the championship backtest, which must stay byte-identical, plus a direct old-vs-new diff.**
+The old implementation (git HEAD) was run beside the new one over the live 529-row 2026 board:
+
+| template | BEFORE | AFTER |
+|---|---|---|
+| ESPN 462233, openFraction 1 / 0.5 / 0.25 | | **0 differing keys**, all 7 baselines identical at all three |
+| Yahoo 129048 superflex, QB baseline (pts/wk) | 12.935294 | **10.594118** (deeper replacement -> QB VOR rises) |
+| Yahoo, FLEX cutoff | 5.370588 | 5.835294 (the 3 FLEX slots no longer absorb the superflex) |
+| Yahoo, RB / WR / TE | 5.335 / 5.371 / 5.324 | 5.741 / 5.835 / 5.441 |
+| Yahoo, SUPERFLEX cutoff | (no entry) | 10.594118 |
+| FAULT INJECTION: Yahoo with the `SUPERFLEX` token removed | | **every key identical to the old answer** |
+
+That last row is the decisive half: a generalisation that changed the baselines for any reason OTHER
+than the superflex slot would fail it, and a dead one would fail the superflex row. Locked durably in
+`test/marginal-superflex.test.ts` (5 tests) against a deterministic 314-man fixture: the pre-D25 ESPN
+numbers at two openFractions, agreement with `values.ts baselines()` (the independent reference, which
+D25 did not touch), the superflex direction, the fault injection, and a `floorFor` check that moving
+ONLY the `SUPERFLEX` baseline moves only the SUPERFLEX slot. The lock was itself fault-injected
+(`+ 1` on a group's slot count): 3 of the 5 fail, so it is connected. **APPLIED.**
+
+**Golden (`backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150`): 39.5% / 96%**,
+as required. The per-season line reproduces the pre-change baseline on 24 of 25 seasons; **2017 reads
+34% against the baseline's 33%**, and that drift is NOT D25's: a 2016-2018 run with
+`src/draft/lineupMarginal.ts` restored to git HEAD prints the identical `2017:34% 2018:41%`, and the
+other two D25 files are not on the draft path at all (`ff backtest` never loads `simContext.ts`;
+`copilot.ts`/`copilotActions.ts` are reached only from `cmdCopilot`). It belongs to the concurrently
+edited `src/draft/{values,backtest,rosBlend}.ts` (WP11's K/DST + snake work, which records its own
+golden measurements in `values.ts`).
+
+**Not done, and it is the right shape to name:** the laminar fill now exists TWICE -- in
+`values.ts baselines()` and here. Neither `values.ts` nor `slots.ts` exports it as a primitive and
+both are other executors' files this pass, so the duplication is recorded rather than removed. The
+fix is one exported `laminarFlexFill(pool, groups)` in `slots.ts` with both call sites on it; until
+then `test/marginal-superflex.test.ts`'s agreement check is what stops the two drifting.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

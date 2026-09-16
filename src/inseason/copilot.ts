@@ -64,10 +64,14 @@ import { round3 as r3 } from "../round3.js";
  * `leagueSeasonWeeks` below is the second one, from the league's own format block. Use it whenever
  * the question is about the league's calendar and NOT about spreading a season projection.
  *
- * KNOWN DISAGREEMENT, NOT FIXED HERE: `simContext.ts:399` builds the streaming `replacement` level as
- * `seasonPts / regWeeks` while every consumer of it compares against `proj / 17` quantities, so the
- * streaming floor is high by 17/regWeeks (~1.31x for this league). That file is WP3's and the change
- * moves live ESPN in-season numbers, so it is reported rather than taken unilaterally.
+ * THE DISAGREEMENT IS RESOLVED (D25, 2026-09-16), AND THERE IS NOW ONE FRAME. `simContext.ts` built
+ * the streaming `replacement` level as `seasonPts / regWeeks` while every consumer of it compared
+ * against `proj / 17` quantities, so the streaming floor was high by 17/regWeeks (1.3077x for ESPN
+ * 462233). It divides by 17 now, at the producer, so `ctx.replacement` and every per-week projection
+ * beside it are in the SAME frame. `scripts/season-calibration.mjs` carried its own copy of the same
+ * rule and was corrected with it (`--replacement-frame reg` reproduces the old arm). Anything asking
+ * "per week of the LEAGUE's season" -- the handcuff/depth horizon, the playoff calendar -- still uses
+ * `leagueSeasonWeeks`, which is the other frame and is not interchangeable with this one.
  */
 export const NFL_WEEKS = 17;
 

@@ -100,13 +100,31 @@ if (SEEDING !== "record" && SEEDING !== "division-winners-first") {
 //
 // `--field N` forces a CONSTANT field for every season. It exists only to reproduce the constant-7
 // arm that P49 is registered against; it is never the right way to score a league.
+// `--replacement-frame nfl|reg` -- WHICH WEEK FRAME THE STREAMING FLOOR IS IN (D25, 2026-09-16).
+//
+//   nfl (default)  seasonProj / 17 -- the frame the rostered men are priced in (`season.ts:503`:
+//                  `rosPerGame ?? proj / 17`), so the floor and the bodies it stands in for are
+//                  comparable. This is what `src/draft/simContext.ts` now produces.
+//   reg            seasonProj / regWeeks -- the pre-D25 behaviour, 17/reg (1.31x for a 13-week
+//                  season) HIGH. Kept so the change is a paired measurement from ONE version of this
+//                  script rather than a comparison of two script versions, which is how a pipeline
+//                  difference gets mistaken for a result.
+const REPLACEMENT_FRAME = val("--replacement-frame", "nfl");
+if (REPLACEMENT_FRAME !== "nfl" && REPLACEMENT_FRAME !== "reg") {
+  throw new Error(`--replacement-frame "${REPLACEMENT_FRAME}" is not a frame -- use nfl | reg.`);
+}
 const PER_SEASON_FORMAT = argv.includes("--per-season-format");
 const FIELD_OVERRIDE = val("--field", null) == null ? null : Number(val("--field", null));
 if (PER_SEASON_FORMAT && FIELD_OVERRIDE != null) {
   throw new Error("--per-season-format and --field are contradictory: one reads the season's own field, the other overrides it.");
 }
 
-const db = new Database("data/ff.db", { readonly: true });
+// `--db <path>` -- WHICH STORE. Default the live one. It exists so a paired A/B can be run against a
+// SNAPSHOT COPY: `data/ff.db` is written by other verbs (and, during a multi-executor session, by
+// other sessions), and a mid-run migration made this harness print `SKIPPED -- no rosters for week 8`
+// for all eight seasons -- a substrate change reported as a data absence. Two arms of one comparison
+// must read the same bytes, so point both at one copy.
+const db = new Database(val("--db", "data/ff.db"), { readonly: true });
 // ONE LEAGUE, NAMED (S-9). Every `fact_*` / `raw_league_*` table below holds more than one league's
 // rows now, and their team ids collide across platforms -- so a season-only filter silently unions
 // two rooms. `--league <id>`; absent = the ACTIVE league.
@@ -333,14 +351,18 @@ function buildSeason(season, atWeek = null) {
   }
 
   // Streaming floor: the second-best UNROSTERED projection at each position, per week. Same rule as
-  // src/draft/simContext.ts, which is where it is justified.
+  // src/draft/simContext.ts, which is where it is justified -- INCLUDING the divisor, which is why
+  // `--replacement-frame` exists (D25): this file holds a SECOND COPY of that rule, so correcting
+  // only the module would have left the arbiter measuring the old behaviour and reporting "no
+  // change" -- the fix-two-of-three-callers shape this repo has been burned by before.
   const replacement = {};
   {
+    const denom = REPLACEMENT_FRAME === "reg" ? reg : 17;
     const free = {};
     for (const p of proj) if (!rostered.has(p.name)) (free[p.pos] ??= []).push(p.mean);
     for (const [pos, list] of Object.entries(free)) {
       list.sort((a, b) => b - a);
-      replacement[pos] = Math.max(0, (list[Math.min(1, list.length - 1)] ?? 0) / reg);
+      replacement[pos] = Math.max(0, (list[Math.min(1, list.length - 1)] ?? 0) / denom);
     }
   }
 
@@ -414,7 +436,7 @@ for (let y = LO; y <= HI; y++) seasons.push(y);
 // the same outcomes, paired by season. Exits when done; the preseason report below is untouched.
 // ---------------------------------------------------------------------------------------------
 if (AT_WEEK != null) {
-  console.log(`IN-SEASON CALIBRATION at week ${AT_WEEK} -- ${LO}-${HI}, ${TRIALS} trials, seed ${SEED}, per-fold artifacts from ${FOLD_DIR}\n`);
+  console.log(`IN-SEASON CALIBRATION at week ${AT_WEEK} -- ${LO}-${HI}, ${TRIALS} trials, seed ${SEED}, per-fold artifacts from ${FOLD_DIR}, replacement frame ${REPLACEMENT_FRAME}\n`);
   console.log(`  arms: A = from scratch (pre-D18: week-${AT_WEEK} rosters, preseason lines, no standings)   B = A + standings seeded from ${AT_WEEK - 1} settled weeks   C = B + rest-of-season lines   D = C + level uncertainty shrunk by sqrt(K/(K+k))\n`);
   const arms = ["A", "B", "C", "D"];
   const rows = { A: [], B: [], C: [], D: [] };

@@ -45,7 +45,7 @@
  * `scripts/marginal-agreement.mjs` measures the whole disagreement against the simulated marginal,
  * which is the check that matters.
  */
-import { isBenchSlot, isFlexSlot, slotAdmits } from "./slots.js";
+import { isBenchSlot, isFlexSlot, slotAdmits, splitTemplate } from "./slots.js";
 
 export interface LmPlayer {
   name: string; pos: string; proj: number; bye?: number | null;
@@ -165,9 +165,21 @@ export function availForRank(
  * Engine's `DraftState` carries a per-seat open-slot COUNT and no per-position breakdown, so a finer
  * allocation would be invented rather than measured.
  *
- * The returned record carries one entry per position seen in the pool plus a `FLEX` entry: the last
- * man taken into the flex slots, which is the flex's own cutoff and is NOT the max (or the min) of
- * the positional baselines.
+ * The returned record carries one entry per position seen in the pool plus one entry per FLEX GROUP,
+ * keyed by that group's slot token (`FLEX`, `SUPERFLEX`, ...): the first man that group's slots could
+ * NOT reach, which is the group's own cutoff and is NOT the max (or the min) of the positional
+ * baselines.
+ *
+ * ELIGIBILITY GROUPS, NOT ONE `flex_ok` LIST (D25, 2026-09-16). This built its flex pool from the
+ * league's single `flex_ok` array, so every flex slot in the template -- whatever its token -- was
+ * treated as admitting [RB,WR,TE]. Under Yahoo 129048 (three `FLEX` plus one `SUPERFLEX`) that meant
+ * quarterbacks competed for NO flex slot at all, so QB replacement level sat at the twelfth
+ * quarterback in a league where the superflex slot takes it to roughly the twenty-fourth, and V3
+ * priced the whole position against the wrong man. `values.ts baselines()` already fills by GROUP,
+ * laminar-greedy; this now does the same thing on the same input, so the two surfaces cannot
+ * disagree about what a league's flex slots reach. ESPN 462233 has a single `[RB,WR,TE]` group, where
+ * the group fill reduces to "take the top flexTotal" -- byte-for-byte what the line below did -- which
+ * is what test/strategy-v3.test.ts's agreement lock against `values.ts` asserts.
  */
 export function starterBaselines(
   pool: readonly { pos: string; proj: number }[],
@@ -181,31 +193,54 @@ export function starterBaselines(
   for (const p of pool) (byPos.get(p.pos) ?? byPos.set(p.pos, []).get(p.pos)!).push(p.proj);
   for (const l of byPos.values()) l.sort((a, b) => b - a);
 
-  const dedicatedSlots = (pos: string) => lg.slots.filter((s) => s === pos).length;
-  const flexSlots = lg.slots.filter((s) => isFlexSlot(s)).length;
-  const dedicated = (pos: string) => Math.round(dedicatedSlots(pos) * lg.teams * frac);
-  const flexTotal = Math.round(flexSlots * lg.teams * frac);
+  // ONE PARSE OF THE TEMPLATE (slots.ts), so a `D/ST` or `Q/W/R/T` token cannot mean one thing here
+  // and another in the lineup optimiser. `flexOk` still overrides the literal `FLEX` token and
+  // nothing else, exactly as `slotAdmits` does everywhere else.
+  const { dedicated: dedPerTeam, flex: groups } = splitTemplate(lg.slots, flexOk);
+  const dedicated = (pos: string) => Math.round((dedPerTeam[pos] ?? 0) * lg.teams * frac);
 
   // The flex pool: every flex-eligible man beyond his own position's dedicated demand, best first.
-  const flexPool: { pos: string; pts: number }[] = [];
-  for (const pos of flexOk) {
+  // "Flex-eligible" is now the UNION over the groups, which is what admits QB under a superflex.
+  const flexElig: string[] = [];
+  for (const g of groups) for (const p of g.elig) if (!flexElig.includes(p)) flexElig.push(p);
+  const flexPool: { pos: string; pts: number; taken: boolean }[] = [];
+  for (const pos of flexElig) {
     const arr = byPos.get(pos) ?? [];
-    for (let i = dedicated(pos); i < arr.length; i++) flexPool.push({ pos, pts: arr[i] });
+    for (let i = dedicated(pos); i < arr.length; i++) flexPool.push({ pos, pts: arr[i], taken: false });
   }
   flexPool.sort((a, b) => b.pts - a.pts);
+
+  // LAMINAR GREEDY, the same rule `values.ts baselines()` uses: each man (best first) takes the
+  // MOST-CONSTRAINED open group that admits him. `splitTemplate` already returns the groups narrowest
+  // first, so `find` is that rule. `continue` rather than `break`: once the W/R/T slots are full a
+  // quarterback further down the list can still take the SUPERFLEX, and stopping at the first man
+  // nobody can seat would lose him.
+  const open = groups.map((g) => ({
+    label: g.label, elig: new Set(g.elig), left: Math.round(g.count * lg.teams * frac),
+  }));
   const claimed: Record<string, number> = {};
-  for (const p of flexPool.slice(0, flexTotal)) claimed[p.pos] = (claimed[p.pos] ?? 0) + 1;
+  for (const p of flexPool) {
+    const g = open.find((x) => x.left > 0 && x.elig.has(p.pos));
+    if (!g) continue;
+    g.left--; p.taken = true; claimed[p.pos] = (claimed[p.pos] ?? 0) + 1;
+  }
 
   const out: Record<string, number> = {};
   for (const [pos, arr] of byPos) {
     if (!arr.length) continue;
-    const startable = dedicated(pos) + (flexOk.includes(pos) ? (claimed[pos] ?? 0) : 0);
+    const startable = dedicated(pos) + (flexElig.includes(pos) ? (claimed[pos] ?? 0) : 0);
     out[pos] = Math.max(0, (arr[startable] ?? arr[arr.length - 1]) / weeks);
   }
-  // The flex's own cutoff: the last man the league's flex slots reach. With nothing left to reach
-  // for, the best remaining flex-eligible body is the honest answer rather than zero.
-  const lastFlex = flexPool[Math.max(0, Math.min(flexPool.length - 1, flexTotal))];
-  if (lastFlex) out.FLEX = Math.max(0, lastFlex.pts / weeks);
+  // EACH GROUP'S OWN CUTOFF: the best man it could NOT reach. With nothing left to reach for, the
+  // last eligible body in the pool is the honest answer rather than zero -- the same fallback the
+  // single-group version had. Two groups do not share a cutoff (a SUPERFLEX reaches deeper than a
+  // W/R/T flex on the same board), so each gets its own entry under its slot token.
+  for (const g of groups) {
+    const elig = new Set(g.elig);
+    const cut = flexPool.find((p) => !p.taken && elig.has(p.pos))
+      ?? [...flexPool].reverse().find((p) => elig.has(p.pos));
+    if (cut) out[g.label] = Math.max(0, cut.pts / weeks);
+  }
   return out;
 }
 
@@ -242,9 +277,15 @@ export function expectedWeekPoints(roster: readonly LmPlayer[], week: number, o:
   // margin, so taking the max over positions would price the flex against the wrong man).
   const floorFor = (slot: string): number => {
     if (isFlexSlot(slot)) {
-      const b = o.baseline?.FLEX;
+      // THIS GROUP'S CUTOFF, then the generic `FLEX` one (D25). `starterBaselines` now emits one
+      // entry per eligibility group keyed by its slot token, because a SUPERFLEX reaches a different
+      // man than a W/R/T flex on the same board; reading `FLEX` for both priced the superflex slot
+      // against the wrong cutoff. ESPN's only group IS `FLEX`, so the first lookup hits and nothing
+      // moves. The streaming fallback is likewise over what THIS slot admits, not over the league's
+      // single `flex_ok` list -- identical for ESPN, and the difference is a quarterback for Yahoo.
+      const b = o.baseline?.[String(slot).trim().toUpperCase()] ?? o.baseline?.FLEX;
       if (b != null) return b;
-      return Math.max(0, ...flex.map((p) => o.replacement?.[p] ?? 0));
+      return Math.max(0, ...slotAdmits(slot, flex).map((p) => o.replacement?.[p] ?? 0));
     }
     if (!STREAMED.has(slot)) {
       const b = o.baseline?.[slot];

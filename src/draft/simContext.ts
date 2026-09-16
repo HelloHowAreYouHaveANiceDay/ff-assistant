@@ -266,7 +266,10 @@ export async function loadSimContext(opts: {
       // The unmatched are NAMED, because two very different things land here: a man whose game is
       // not synced yet (a data gap, fix by syncing) and a name the two tables spell differently (a
       // join gap, fix in code). A count cannot tell them apart; a list can.
-      seedSource.push(`wk${w}: ${useApplied ? "ESPN applied points" : "synced actuals for the snapshotted lineup"}` +
+      // The platform's own applied points, named by platform: this caveat read "ESPN applied points"
+      // for the Yahoo league too (WP9, 2026-09-16), and a caveat that names the wrong platform is a
+      // caveat nobody can trust.
+      seedSource.push(`wk${w}: ${useApplied ? `${ctx.platformRaw ?? ctx.platform ?? "the platform's"} applied points` : "synced actuals for the snapshotted lineup"}` +
         (missing.length ? ` (${missing.length} starters unmatched, scored 0: ${missing.slice(0, 6).join(", ")}${missing.length > 6 ? ", ..." : ""})` : ""));
     }
   }
@@ -416,8 +419,24 @@ export async function loadSimContext(opts: {
    * most of them look. The SECOND-best available is a deliberately modest stand-in for that
    * competition. It is a judgement call, so it is stated here rather than buried, and the resolved
    * values are printed by `ff models`.
+   *
+   * THE WEEK FRAME IS `NFL_WEEKS`, NOT `regWeeks` (D25, 2026-09-16). This divided a season projection
+   * by the LEAGUE's regular season (13 here) while every consumer compares the result against a
+   * `proj / 17` quantity: `season.ts:503` prices every rostered man at `rosPerGame ?? proj / 17`, and
+   * `emptySlotPoints` puts this floor straight beside those numbers. The floor was therefore high by
+   * 17/regWeeks -- 1.3077x for ESPN 462233 -- which made a slot nobody can fill worth MORE than it is
+   * and systematically flattened the cost of thin depth (every empty-slot week, every bye the bench
+   * cannot cover, every `assertRostersCanFillLineup` shortfall). A season projection is a 17-game
+   * total; spreading it over the league's 13-week regular season is the wrong arithmetic regardless
+   * of which quantity it is compared against, so the fix is here, at the producer, and there is now
+   * exactly ONE frame in the in-season stack. `src/draft/sim.ts:291` already used `/ NFL_WEEKS`; this
+   * was the odd one out. Arbiter: scripts/season-calibration.mjs (D18's four arms) -- see D25.
    */
   const REPLACEMENT_INDEX = 1;
+  /** The frame a SEASON PROJECTION is in -- 17 scheduled NFL games. Deliberately NOT `regWeeks`; see
+   *  above. Kept as a local literal because `src/inseason/copilot.ts` (which exports `NFL_WEEKS`)
+   *  imports this module, and the cycle would be a startup failure rather than a wrong number. */
+  const NFL_WEEKS = 17;
   const replacement: Record<string, number> = {};
   {
     const freeByPos: Record<string, number[]> = {};
@@ -428,8 +447,9 @@ export async function loadSimContext(opts: {
     for (const [pos, list] of Object.entries(freeByPos)) {
       list.sort((a, b) => b - a);
       const seasonPts = list[Math.min(REPLACEMENT_INDEX, list.length - 1)] ?? 0;
-      // Season projection -> per week. A streamed player is started for one week, not a season.
-      replacement[pos] = Math.max(0, seasonPts / Math.max(1, regWeeks));
+      // Season projection -> per SCHEDULED NFL WEEK. A streamed player is started for one week, not a
+      // season -- and the number he is compared against is `proj / 17`, so this divides by 17 too.
+      replacement[pos] = Math.max(0, seasonPts / NFL_WEEKS);
     }
   }
 

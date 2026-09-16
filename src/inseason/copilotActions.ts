@@ -258,7 +258,17 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
     case "handcuffs": {
       const positions = a.positions ?? ["RB"];
       const { depth, poolSize, vm } = S.loadDepth(positions, dbPath, leagueId);
-      return C.handcuffs(ctx, { provenance, depth, vm, poolSize, positions, weeks: a.week != null ? Math.max(1, C.NFL_WEEKS - a.week + 1) : C.NFL_WEEKS, freeOnly: a.freeOnly });
+      // THE HORIZON IS THE LEAGUE'S SEASON, NOT THE NFL'S (D25, 2026-09-16). `handcuffBoard`'s own
+      // header says `weeks` is "the REMAINING horizon" -- how long this backup still has to pay off --
+      // and that question ends when OUR season ends: ESPN 462233's last playoff week is 16, Yahoo
+      // 129048's is 17. Using `NFL_WEEKS` counted week 17 for an ESPN league whose title is already
+      // decided by then, so every row was quoted over a horizon a week longer than it has, and the
+      // remaining-weeks arithmetic at `--week W` was off by one all season. `leagueSeasonWeeks` reads
+      // the league's own format block (playoff weeks, with regWeeks as the fallback), so a league that
+      // does run to week 17 is unchanged. Magnitudes move by 17/16 = 1.0625 here; the ORDER does not,
+      // because `weeks` divides every row's `basePerWk`/`activePerWk` alike.
+      const horizon = C.leagueSeasonWeeks(ctx);
+      return C.handcuffs(ctx, { provenance, depth, vm, poolSize, positions, weeks: a.week != null ? Math.max(1, horizon - a.week + 1) : horizon, freeOnly: a.freeOnly });
     }
     case "depth_risk":
       if (!a.player) throw new Error("depth_risk needs a player name");
