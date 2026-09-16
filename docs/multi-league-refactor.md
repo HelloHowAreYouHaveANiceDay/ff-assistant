@@ -72,6 +72,26 @@ per-league-context driven rather than global.
 - **Phase 5 — verb threading + UX.** `--league` through every in-season/draft verb; the copilot/MCP takes a
   league; `league_sync` no longer overwrites — it adds/updates a league's layer.
 
+## Confirmed 2026-09-15 (owner)
+
+- **The second league is a DIFFERENT scoring format, and models are retrained per league.** So Phase 3 is
+  core, not deferrable: each league gets its OWN trained artifacts (projector + weekly + fold set), fit
+  to its scoring, stored per-league (proposed `data/leagues/<leagueId>/*.json`) and selected by
+  `LeagueContext`. The shared NFL layer shares the DATA and the component-stat features; the MODEL is
+  per-league. Training cost is once-per-league-per-season (acceptable).
+
+## Phase 2 migration reality (why it needs a dedicated, backed-up run)
+
+Getting `league_id` into the derived tables is NOT all cheap `ALTER ADD COLUMN`. Two shapes:
+- **Config (`settings`) is key-value (PK = `key`)** -> per-league is a KEY convention (`config:<leagueId>`)
+  with a fallback to the legacy `config` key. No schema change; low risk. But it touches the config
+  chokepoint (`getConfig`/`setConfig` + ~5 direct `settings WHERE key='config'` readers), so it is still
+  a careful edit of the path every verb reads.
+- **Board / player_value / in-season `fact_*` etc. need `league_id` IN THE PRIMARY KEY** (so league B's
+  board does not collide with league A's). SQLite cannot add a PK column in place -> each is a TABLE
+  REBUILD (create new, copy, drop, rename) under a transaction, with `data/ff.db` backed up first. This
+  is the hard-to-reverse core of Phase 2 and gets its own run + owner sign-off + a verified backup.
+
 ## Invariants (do not break)
 
 - The one rule (D13) still gates every value/strategy change — now per league.
