@@ -6,7 +6,7 @@
 // manufactures a real board change and requires the stamp to move.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, copyFileSync, mkdtempSync, existsSync } from "node:fs";
+import { readFileSync, copyFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -17,6 +17,9 @@ test("the stamp MOVES when the board is rewritten (the positive direction)", (t)
   if (!existsSync("data/ff.db")) return t.skip("no local store");
   // Work on a copy: this test mutates board.updated_at and must never touch the real store.
   const dir = mkdtempSync(join(tmpdir(), "ffstamp-"));
+  // The copy below is the whole store (~1 GB). Without this teardown every run leaks one, and 455
+  // of them had accumulated in %TEMP% -- 287 GB -- before anyone noticed the disk filling.
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const db1 = join(dir, "ff.db");
   copyFileSync("data/ff.db", db1);
   for (const ext of ["-wal", "-shm"]) if (existsSync("data/ff.db" + ext)) copyFileSync("data/ff.db" + ext, db1 + ext);
