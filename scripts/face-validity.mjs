@@ -16,6 +16,8 @@ import Database from "better-sqlite3";
 import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
 
 const botBook = process.argv.includes("rank") ? "rank" : process.argv.includes("price") ? "price" : "vor";
+const argOf = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
+const explicitLeague = argOf("--league");
 const readCsv = (p) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
 const points = readCsv("data/points.csv").map((f) => ({ name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) })).filter((p) => p.name && p.points);
 const ourValues = new Map();
@@ -53,11 +55,21 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 //   RB 1055-1292 | WR 1126-1291 | QB 192-328 | TE 199-215
 const REAL = (() => {
   const db = new Database("data/ff.db", { readonly: true });
+  function resolveLeague(explicit) {
+    if (explicit) return String(explicit);
+    const sel = db.prepare("SELECT value FROM settings WHERE key='active_league'").get();
+    if (sel && sel.value && db.prepare("SELECT 1 FROM league WHERE league_id=?").get(sel.value)) return String(sel.value);
+    const r = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
+    return r ? String(r.league_id) : null;
+  }
+  const leagueId = resolveLeague(explicitLeague);
+  if (!leagueId) { console.error("face-validity: no league found -- run a league sync first"); process.exit(1); }
+  console.log(`league ${leagueId}`);
   let picks;
   try {
     picks = db.prepare(
-      "SELECT season, pos, price, season_total_money FROM fact_draft_pick WHERE season_total_money > 0",
-    ).all();
+      "SELECT season, pos, price, season_total_money FROM fact_draft_pick WHERE league_id=? AND season_total_money > 0",
+    ).all(leagueId);
   } catch { picks = []; } finally { db.close(); }
   if (!picks.length) {
     console.error("face-validity: fact_draft_pick has no season_total_money -- run `ff build-picks`");

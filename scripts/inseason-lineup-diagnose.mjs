@@ -20,7 +20,19 @@ import { loadWeekContext, loadModel } from "../src/inseason/backtest/context.ts"
 import { optimalLineup } from "../src/inseason/lineup.ts";
 
 const db = new Database("data/ff.db");
-const leagueId = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get().league_id;
+
+// ---- --league <id>, default the store's active league (mirrors activeLeagueId in src/db/db.ts) --
+const argOf = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
+function resolveLeague(explicit) {
+  if (explicit) return String(explicit);
+  const sel = db.prepare("SELECT value FROM settings WHERE key='active_league'").get();
+  if (sel && sel.value && db.prepare("SELECT 1 FROM league WHERE league_id=?").get(sel.value)) return String(sel.value);
+  const r = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
+  return r ? String(r.league_id) : null;
+}
+const leagueId = resolveLeague(argOf("--league"));
+if (!leagueId) { console.log("no league found -- run a league sync first"); process.exit(1); }
+console.log(`league ${leagueId}`);
 const SEASONS = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025];
 
 for (const model of ["floor", "challenger"]) {
@@ -30,7 +42,7 @@ for (const model of ["floor", "challenger"]) {
   let toolProj = 0, mgrProj = 0;
   let mgrStartedUnavailable = 0, toolStartedScoredZero = 0;
   for (const season of SEASONS) {
-    const weeks = db.prepare("SELECT DISTINCT week FROM fact_roster_week WHERE season=? ORDER BY week").all(season).map((r) => r.week);
+    const weeks = db.prepare("SELECT DISTINCT week FROM fact_roster_week WHERE league_id=? AND season=? ORDER BY week").all(leagueId, season).map((r) => r.week);
     for (const week of weeks) {
       const ctx = loadWeekContext(db, leagueId, season, week, artifact);
       if (!ctx.rosters.size || !ctx.template.length) continue;

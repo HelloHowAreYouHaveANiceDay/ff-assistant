@@ -32,6 +32,18 @@ const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 
 const db = new Database("data/ff.db", { readonly: true });
 
+// ---- --league <id>, default the store's active league (mirrors activeLeagueId in src/db/db.ts) --
+function resolveLeague(explicit) {
+  if (explicit) return String(explicit);
+  const sel = db.prepare("SELECT value FROM settings WHERE key='active_league'").get();
+  if (sel && sel.value && db.prepare("SELECT 1 FROM league WHERE league_id=?").get(sel.value)) return String(sel.value);
+  const r = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
+  return r ? String(r.league_id) : null;
+}
+const leagueId = resolveLeague(arg("--league", null));
+if (!leagueId) { console.error("stream-horizon: no league found -- run a league sync first"); process.exit(1); }
+console.log(`league ${leagueId}`);
+
 const challenger = loadWeeklyArtifact(JSON.parse(readFileSync("data/weekly-artifact.json", "utf8")));
 const neutralJson = JSON.parse(readFileSync("data/weekly-artifact.json", "utf8"));
 let zeroed = 0;
@@ -49,9 +61,9 @@ const cells = [];   // {season, week, pos, chall, neutral, board, chosenChangedD
 let poolWeeks = 0, changedByDvp = 0;
 
 for (const season of seasons) {
-  const poolStmt = db.prepare("SELECT week, player_sk FROM fact_fa_pool_week WHERE season=?");
+  const poolStmt = db.prepare("SELECT week, player_sk FROM fact_fa_pool_week WHERE league_id=? AND season=?");
   const poolByWeek = new Map();
-  for (const r of poolStmt.all(season)) {
+  for (const r of poolStmt.all(leagueId, season)) {
     let s = poolByWeek.get(r.week); if (!s) { s = new Set(); poolByWeek.set(r.week, s); }
     s.add(r.player_sk);
   }

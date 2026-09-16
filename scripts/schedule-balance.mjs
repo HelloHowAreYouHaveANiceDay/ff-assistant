@@ -13,10 +13,24 @@
  */
 import Database from 'better-sqlite3';
 const db = new Database('data/ff.db', { readonly: true });
-const divs = db.prepare("SELECT division_id, name, team_ids_json FROM raw_league_division WHERE season=2026 ORDER BY division_id").all();
+
+// ---- --league <id>, default the store's active league (mirrors activeLeagueId in src/db/db.ts) --
+const argOf = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
+function resolveLeague(explicit) {
+  if (explicit) return String(explicit);
+  const sel = db.prepare("SELECT value FROM settings WHERE key='active_league'").get();
+  if (sel && sel.value && db.prepare("SELECT 1 FROM league WHERE league_id=?").get(sel.value)) return String(sel.value);
+  const r = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
+  return r ? String(r.league_id) : null;
+}
+const leagueId = resolveLeague(argOf('--league'));
+if (!leagueId) { console.log('no league found -- run a league sync first'); process.exit(1); }
+console.log('league', leagueId);
+
+const divs = db.prepare("SELECT division_id, name, team_ids_json FROM raw_league_division WHERE league_id=? AND season=2026 ORDER BY division_id").all(leagueId);
 const dOf = new Map();
 for (const d of divs) for (const id of JSON.parse(d.team_ids_json)) dOf.set(String(id), d.division_id);
-const games = db.prepare("SELECT week, home_id, away_id FROM raw_league_matchup WHERE season=2026 ORDER BY week").all();
+const games = db.prepare("SELECT week, home_id, away_id FROM raw_league_matchup WHERE league_id=? AND season=2026 ORDER BY week").all(leagueId);
 console.log('games', games.length, 'weeks', new Set(games.map((g) => g.week)).size);
 const perTeam = new Map(), opp = new Map();
 for (const g of games) {
@@ -36,7 +50,8 @@ for (let w = 1; w <= 13; w++) {
 const proj = db.prepare(`
   SELECT o.team_id, SUM(pv.proj_pts) AS pts, COUNT(*) n
     FROM ownership o JOIN player_value pv ON pv.player_id = o.player_id AND pv.season = 2026
-   GROUP BY o.team_id`).all();
+   WHERE o.league_id = ?
+   GROUP BY o.team_id`).all(leagueId);
 const byDiv = new Map();
 for (const t of proj) {
   const d = dOf.get(String(t.team_id));
@@ -49,5 +64,5 @@ for (const d of divs) {
   const v = byDiv.get(d.division_id);
   if (v) console.log(`  ${d.name.padEnd(16)} ${(v.pts / v.teams).toFixed(1)}  (${v.teams} teams)`);
 }
-const me = db.prepare("SELECT team_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
+const me = db.prepare("SELECT team_id FROM league WHERE league_id=?").get(leagueId);
 console.log('our team id', me.team_id, 'division', dOf.get(String(me.team_id)));

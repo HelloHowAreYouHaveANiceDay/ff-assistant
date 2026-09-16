@@ -84,13 +84,37 @@ RANK_WHEN_UNRANKED = 200.0
 # --------------------------------------------------------------------------------------------------
 # ROWS
 # --------------------------------------------------------------------------------------------------
-def load_rows(db):
+def resolve_league(con, explicit):
+    """Mirror `activeLeagueId` in src/db/db.ts: an explicit --league wins if it names a real
+    league; otherwise fall back to the most-recently-synced one. `None` only on a store that has
+    never synced a league."""
+    if explicit:
+        return str(explicit)
+    row = con.execute("SELECT value FROM settings WHERE key = 'active_league'").fetchone()
+    if row and row[0] and con.execute(
+            "SELECT 1 FROM league WHERE league_id = ?", (row[0],)).fetchone():
+        return str(row[0])
+    row = con.execute(
+        "SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
+def resolve_league_for_db(db_path, explicit):
+    con = sqlite3.connect(db_path)
+    try:
+        return resolve_league(con, explicit)
+    finally:
+        con.close()
+
+
+def load_rows(db, league_id):
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row
     cur = con.execute(
         "SELECT season, week, pos, bid_amount, won, season_line_pg, pos_line_rank, td_ppg,"
         "       prior_pts, team_faab_share, league_faab_share, teams_need_pos, teams_counted, budget"
-        "  FROM fact_waiver_claim WHERE pos IS NOT NULL ORDER BY season, week")
+        "  FROM fact_waiver_claim WHERE pos IS NOT NULL AND league_id = ? ORDER BY season, week",
+        (league_id,))
     rows = []
     for r in cur:
         rows.append({
@@ -389,13 +413,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="data/ff.db")
     ap.add_argument("--out", default="data/faab-model.json")
+    ap.add_argument("--league", default=None,
+                     help="league_id to fit on; default the store's active league "
+                          "(settings.active_league, else most-recently-synced)")
     ap.add_argument("--alpha", type=float, default=1.0)
     ap.add_argument("--C", type=float, default=1.0)
     ap.add_argument("--draws", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=7)
     a = ap.parse_args()
 
-    rows = load_rows(a.db)
+    league_id = resolve_league_for_db(a.db, a.league)
+    if not league_id:
+        sys.exit("train_faab: no league found (empty `league` table) -- run a league sync first")
+    print("league " + league_id + (" (explicit)" if a.league else " (active league)"))
+
+    rows = load_rows(a.db, league_id)
+    if not rows:
+        sys.exit("train_faab: fact_waiver_claim has no rows for league " + league_id)
     winners = [r for r in rows if r["won"] == 1]
     # The win head drops seasons whose LOSSES were never retained -- see the header on 2018.
     scored_seasons = sorted({r["season"] for r in rows if r["won"] == 0})
@@ -411,6 +445,7 @@ def main():
         "kind": "faab-bid",
         "version": 1,
         "builtAt": date.today().isoformat(),
+        "league": league_id,
         "trainedOn": {
             "priceSeasons": sorted({r["season"] for r in winners}),
             "winSeasons": scored_seasons,

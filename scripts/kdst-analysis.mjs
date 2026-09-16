@@ -4,10 +4,23 @@
 import Database from "better-sqlite3";
 const db = new Database("H:/working/ff-assistant/data/ff.db", { readonly: true });
 
+// ---- --league <id>, default the store's active league (mirrors activeLeagueId in src/db/db.ts) --
+const argOf = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
+function resolveLeague(explicit) {
+  if (explicit) return String(explicit);
+  const sel = db.prepare("SELECT value FROM settings WHERE key='active_league'").get();
+  if (sel && sel.value && db.prepare("SELECT 1 FROM league WHERE league_id=?").get(sel.value)) return String(sel.value);
+  const r = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
+  return r ? String(r.league_id) : null;
+}
+const leagueId = resolveLeague(argOf("--league"));
+if (!leagueId) { console.error("kdst-analysis: no league found -- run a league sync first"); process.exit(1); }
+console.log(`league ${leagueId}`);
+
 // ---- load per-team-week: total, K pts, DST pts -------------------------------------------------
 const rows = db.prepare(
-  "SELECT season, week, team_id, started_pts, slots_json FROM fact_lineup_week WHERE slots_json IS NOT NULL AND started_pts IS NOT NULL"
-).all();
+  "SELECT season, week, team_id, started_pts, slots_json FROM fact_lineup_week WHERE league_id=? AND slots_json IS NOT NULL AND started_pts IS NOT NULL"
+).all(leagueId);
 const tw = new Map(); // key season|week|team -> {tot,k,dst}
 for (const r of rows) {
   let slots; try { slots = JSON.parse(r.slots_json); } catch { continue; }
@@ -35,8 +48,8 @@ const expOf = (season, week) => {
 
 // ---- matchups: join both teams ----------------------------------------------------------------
 const matchups = db.prepare(
-  "SELECT season, week, home_id, away_id FROM fact_matchup WHERE home_id IS NOT NULL AND away_id IS NOT NULL ORDER BY season, week"
-).all();
+  "SELECT season, week, home_id, away_id FROM fact_matchup WHERE league_id=? AND home_id IS NOT NULL AND away_id IS NOT NULL ORDER BY season, week"
+).all(leagueId);
 
 const games = []; // per matchup: {season, margin(home-away), homeKD, awayKD, exp}
 let unmatched = 0;

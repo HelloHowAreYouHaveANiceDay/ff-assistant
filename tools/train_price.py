@@ -108,13 +108,37 @@ FEATURES = FEATURE_SETS["inflation"]
 PER_POS = {"log_rank", "log_rank_sq", "no_consensus"}
 
 
-def load_picks(db_path):
+def resolve_league_for_db(db_path, explicit):
+    con = sqlite3.connect(db_path)
+    try:
+        return resolve_league(con, explicit)
+    finally:
+        con.close()
+
+
+def resolve_league(con, explicit):
+    """Mirror `activeLeagueId` in src/db/db.ts: an explicit --league wins if it names a real
+    league; otherwise fall back to the most-recently-synced one. `None` only on a store that has
+    never synced a league."""
+    if explicit:
+        return str(explicit)
+    row = con.execute("SELECT value FROM settings WHERE key = 'active_league'").fetchone()
+    if row and row[0] and con.execute(
+            "SELECT 1 FROM league WHERE league_id = ?", (row[0],)).fetchone():
+        return str(row[0])
+    row = con.execute(
+        "SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
+def load_picks(db_path, league_id):
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     rows = [dict(r) for r in con.execute(
         "SELECT season, team_name, name, pos, price, pick_order,"
         " consensus_pos_rank_asof AS ecr, consensus_sd_asof AS sd"
-        " FROM fact_draft_pick ORDER BY season, pick_order")]
+        " FROM fact_draft_pick WHERE league_id = ? ORDER BY season, pick_order",
+        (league_id,))]
     con.close()
     return rows
 
@@ -384,6 +408,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="data/ff.db")
     ap.add_argument("--out", default="data/price-model.json")
+    ap.add_argument("--league", default=None,
+                     help="league_id to fit on; default the store's active league "
+                          "(settings.active_league, else most-recently-synced)")
     ap.add_argument("--holdout-season", default="none")
     # WHICH SEASONS ARE ELIGIBLE AT ALL, before the holdout is removed. `--holdout-season 2020` on a
     # store holding 2018-2026 trains on 2026 as well, which is a later season leaking into an
@@ -401,9 +428,16 @@ def main():
     global FEATURES
     FEATURES = FEATURE_SETS[args.market_state]
 
-    picks = load_picks(args.db)
+    league_id = resolve_league_for_db(args.db, args.league)
+    if not league_id:
+        sys.exit("train_price: no league found (empty `league` table) -- run a league sync first")
+    if not args.quiet:
+        print("league " + league_id
+              + (" (explicit)" if args.league else " (active league)"))
+
+    picks = load_picks(args.db, league_id)
     if not picks:
-        sys.exit("train_price: fact_draft_pick is empty -- run `ff build-picks`")
+        sys.exit("train_price: fact_draft_pick has no rows for league " + league_id)
     rows, meta = build(picks)
     if args.seasons:
         parts = [int(x) for x in args.seasons.split("-")]
@@ -429,6 +463,7 @@ def main():
         "kind": "price",
         "fittedFrom": "tools/train_price.py",
         "fittedAt": date.today().isoformat(),
+        "league": league_id,
         "seasons": seasons,
         "holdoutSeason": holdout,
         "budget": BUDGET,

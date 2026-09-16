@@ -25,18 +25,33 @@ import Database from "better-sqlite3";
 const POS = ["QB", "RB", "WR", "TE"];
 const db = new Database("data/ff.db", { readonly: true });
 
-const bounds = db.prepare("SELECT MIN(season) lo, MAX(season) hi FROM fact_draft_pick").get();
-if (!bounds || bounds.lo == null) { console.log("fact_draft_pick is empty -- run `ff build-picks`"); process.exit(1); }
-const first = Number(process.argv[2] ?? bounds.lo);
-const last = Number(process.argv[3] ?? bounds.hi);
+// ---- --league <id>, default the store's active league (mirrors activeLeagueId in src/db/db.ts) --
+const argOf = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
+function resolveLeague(explicit) {
+  if (explicit) return String(explicit);
+  const sel = db.prepare("SELECT value FROM settings WHERE key='active_league'").get();
+  if (sel && sel.value && db.prepare("SELECT 1 FROM league WHERE league_id=?").get(sel.value)) return String(sel.value);
+  const r = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
+  return r ? String(r.league_id) : null;
+}
+const leagueId = resolveLeague(argOf("--league"));
+if (!leagueId) { console.log("no league found -- run a league sync first"); process.exit(1); }
+// positional args (firstSeason, lastSeason) skip past a "--league <id>" pair if present
+const positional = process.argv.slice(2).filter((v, i, a) => !(v === "--league" || a[i - 1] === "--league"));
 
-console.log(`MANAGER STABILITY -- seasons ${first}-${last}, from fact_draft_pick`);
+const bounds = db.prepare("SELECT MIN(season) lo, MAX(season) hi FROM fact_draft_pick WHERE league_id=?").get(leagueId);
+if (!bounds || bounds.lo == null) { console.log("fact_draft_pick is empty for league " + leagueId + " -- run `ff build-picks`"); process.exit(1); }
+const first = Number(positional[0] ?? bounds.lo);
+const last = Number(positional[1] ?? bounds.hi);
+
+console.log(`MANAGER STABILITY -- league ${leagueId}, seasons ${first}-${last}, from fact_draft_pick`);
 
 const picks = db.prepare(
   `SELECT p.season, p.team_id, p.pos, p.price, t.owner
-     FROM fact_draft_pick p LEFT JOIN fact_team_season t ON t.season = p.season AND t.team_id = p.team_id
-    WHERE p.season BETWEEN ? AND ? ORDER BY p.season, p.pick_order`,
-).all(first, last);
+     FROM fact_draft_pick p LEFT JOIN fact_team_season t
+       ON t.season = p.season AND t.team_id = p.team_id AND t.league_id = p.league_id
+    WHERE p.league_id = ? AND p.season BETWEEN ? AND ? ORDER BY p.season, p.pick_order`,
+).all(leagueId, first, last);
 db.close();
 
 // --- per (owner, season) positional spend shares -------------------------------------------------
