@@ -5,6 +5,7 @@
 import { fetchCsv, pick, NFLVERSE, DPROC } from "./nflverse.js";
 import { nameKey } from "../draft/values.js";
 import { nowIso, type DB } from "../db/db.js";
+import type { WeeklyFanOutRow } from "./ecrHistory.js";
 
 const num = (s: string): number | null => { const n = Number(s); return Number.isFinite(n) ? n : null; };
 const int = (s: string): number | null => { const n = num(s); return n == null ? null : Math.round(n); };
@@ -271,7 +272,7 @@ export async function ingestBorisTiers(db: DB, scoring = "HALF"): Promise<number
  * every scrape before this change was overwritten in place and is gone. The archive therefore
  * resumes at the first ingest after this ships and has a permanent hole from 2025-01 to now.
  */
-export async function ingestWeekly(db: DB): Promise<{ live: number; archived: number; archiveIgnored: number; scrapeDates: string[] }> {
+export async function ingestWeekly(db: DB): Promise<{ live: number; archived: number; archiveIgnored: number; scrapeDates: string[]; fanOut: WeeklyFanOutRow[] }> {
   const rows = await fetchCsv(`${DPROC}/fp_latest_weekly.csv`).catch(() => [] as Record<string, string>[]);
   const scraped = rows[0] ? pick(rows[0], "scrape_date") : "";
   const up = db.prepare(`INSERT OR REPLACE INTO weekly_rank (player_id, pos, rank, ecr, best, worst, sd, scraped) VALUES (@id, @pos, @rank, @ecr, @best, @worst, @sd, @sc)`);
@@ -289,11 +290,19 @@ export async function ingestWeekly(db: DB): Promise<{ live: number; archived: nu
   // THE RETENTION. The ingest DATE is only a fallback: a row's own `scrape_date` is the as-of the
   // point-in-time rule is stated against, and stamping a stale scrape with today would be the one
   // error the freshness bound cannot catch.
-  const { appendWeeklyRankSnapshot } = await import("./ecrHistory.js");
-  const snap = appendWeeklyRankSnapshot(db, rows.map((r) => ({
+  const { appendWeeklyRankSnapshot, fanOutWeeklyRankSnapshot } = await import("./ecrHistory.js");
+  const snapRows = rows.map((r) => ({
     name: pick(r, "player_name"), pos: pick(r, "pos"), team: pick(r, "team"),
     ecr: Number(pick(r, "ecr")), sd: num(pick(r, "sd")), best: int(pick(r, "best")), worst: int(pick(r, "worst")),
     scrapeDate: pick(r, "scrape_date"),
-  })), nowIso().slice(0, 10));
-  return { live: n, archived: snap.inserted, archiveIgnored: snap.ignored, scrapeDates: snap.dates };
+  }));
+  const fallback = nowIso().slice(0, 10);
+  const snap = appendWeeklyRankSnapshot(db, snapRows, fallback);
+  // AND INTO EVERY FORMAT STORE'S OWN COPY (D29). A format's `features.db` carries its own frozen
+  // `ranking_history`, so retaining only at the root leaves every non-incumbent format's archive
+  // stopped at the day its store was built -- the Yahoo copy ends 2024-12-27 -- and a weekly ECR
+  // screen on that format is then impossible for want of rows, not for want of a model. Skips are
+  // reported by name rather than silently tolerated; see `fanOutWeeklyRankSnapshot`.
+  const fanOut = fanOutWeeklyRankSnapshot(snapRows, fallback);
+  return { live: n, archived: snap.inserted, archiveIgnored: snap.ignored, scrapeDates: snap.dates, fanOut };
 }

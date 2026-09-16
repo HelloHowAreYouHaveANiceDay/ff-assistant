@@ -3,8 +3,9 @@
 // that is accepted and ignored looks exactly like one that works.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { simulateSeasons, type SeasonTeamInput, type VarianceModel } from "../src/draft/season.js";
+import { simulateSeasons, LEVEL_PRIOR_WEEKS, type SeasonTeamInput, type VarianceModel } from "../src/draft/season.js";
 import { rosPerGame, loadRosBlend } from "../src/draft/rosBlend.js";
+import { dataPath } from "../src/data/paths.js";
 
 const vm: VarianceModel = {
   tiers: 1, unfitted: [],
@@ -92,6 +93,32 @@ test("level shrink, bootstrap: a stronger roster's playoff odds RISE as the leve
   const none = simulateSeasons(strong, weeks, vm, { ...bootBase, played: { ...seeded, priorWeeks: Infinity } })[0].playoffs;
   assert.equal(none, wide, "an infinite prior must not touch the draw");
   assert.ok(tight > wide, `the 40%-stronger roster should be MORE certain to make it once its level is pinned (${tight} vs ${wide})`);
+});
+
+// D28 (2026-09-16): the level's prior weight is its OWN constant, no longer the rest-of-season MEAN
+// blend's K. These pin the three things that change: the constant's value, that the caller-side
+// rollback env reaches the draw, and that it reproduces the pre-D28 posture exactly.
+test("D28: the level prior weight is its own constant (1), not the ros blend's K (6)", () => {
+  assert.equal(LEVEL_PRIOR_WEEKS, 1, "D28 shipped K_u = 1; changing it is a decision, not an edit");
+  const { blend } = loadRosBlend(dataPath("ros-blend.json"));
+  assert.notEqual(LEVEL_PRIOR_WEEKS, blend.K, "the LEVEL weight must not silently equal the MEAN blend's K again");
+});
+
+test("D28: FF_SIM_LEVEL_PRIOR_WEEKS=6 reproduces the pre-D28 posture EXACTLY, and the default is not it", () => {
+  const seeded = { weeks: 3, wins: [2, 1, 1, 2, 1, 2, 1, 2], pts: [300, 250, 250, 300, 250, 300, 250, 300] };
+  const withSd = { ...base, projSd: 0.3 };
+  const had = process.env.FF_SIM_LEVEL_PRIOR_WEEKS;
+  try {
+    delete process.env.FF_SIM_LEVEL_PRIOR_WEEKS;
+    const shipped = simulateSeasons(teams, weeks, vm, { ...withSd, played: { ...seeded, priorWeeks: LEVEL_PRIOR_WEEKS } });
+    const explicitOld = simulateSeasons(teams, weeks, vm, { ...withSd, played: { ...seeded, priorWeeks: 6 } });
+    process.env.FF_SIM_LEVEL_PRIOR_WEEKS = "6";
+    const rolledBack = simulateSeasons(teams, weeks, vm, { ...withSd, played: { ...seeded, priorWeeks: LEVEL_PRIOR_WEEKS } });
+    assert.deepEqual(rolledBack, explicitOld, "the rollback env must OVERRIDE the caller's weight, exactly");
+    assert.notDeepEqual(shipped, explicitOld, "K_u = 1 and K_u = 6 must differ -- else neither the knob nor D28 is connected");
+  } finally {
+    if (had === undefined) delete process.env.FF_SIM_LEVEL_PRIOR_WEEKS; else process.env.FF_SIM_LEVEL_PRIOR_WEEKS = had;
+  }
 });
 
 test("rosPerGame blend arithmetic: line only at K=Infinity, actual only at K=0, games-weighted between", () => {

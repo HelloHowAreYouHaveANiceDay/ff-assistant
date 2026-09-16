@@ -1173,6 +1173,151 @@ which is why Yahoo 129048 is NOT measured here. (b) The DST name-key gap is unch
 Broncos` vs `DEN D/ST`); it costs nothing today because DST is `POS_INTERCEPT_ONLY` and is served by
 the D20 matchup model.
 
+## D28 -- The season level's uncertainty gets its OWN prior weight, K_u = 1 (2026-09-16, owner: "let's aim for quality, so even if it's not backwards compatible and we have to rerun things, we should get towards a better edge", APPLIED)
+
+D18 shrank the posterior spread of a player's season LEVEL by `sqrt(K/(K+k))` and took K from
+`data/ros-blend.json` -- the weight the rest-of-season MEAN blend was fitted to (ESPN 6, Yahoo 5).
+D18's own text called that an untested transfer, and M2d tested it
+(`docs/season-sim-calibration-2026-09-16.md` section 5b): K for a posterior MEAN and K for a
+posterior SPREAD are different quantities, and only the first had ever been fitted. The level's
+weight is now its own named constant, `LEVEL_PRIOR_WEEKS = 1` in `src/draft/season.ts`, passed by
+`src/draft/simContext.ts` (the ONE production call site) and by `scripts/season-calibration.mjs`
+arm D. The ROS MEAN blend is untouched and still per format: the live caveat still reads
+"ROS lines blend K=6 on 192 men", which is the other K and is correct.
+
+**It is a SHARPENING, not a shrink.** Nothing was widened; the forecast reaches further and the
+worst-calibrated bin closes.
+
+**THE GATE, before and after.** `scripts/season-calibration.mjs --db <VACUUM INTO snapshot of
+data/ff.db, 2026-09-16> --artifact-dir data/fold-artifacts-d16 --replacement-frame nfl`, 3000
+trials, seed 7, 2018-2025, 114 real team-seasons. Same invocations both sides; the BEFORE run was
+taken on unmodified source, not reconstructed.
+
+| arm | before (K_u = 6, D25) | after (K_u = 1) |
+|---|---|---|
+| preseason, playoff Brier | 0.2297 | **0.2297** (identical by construction: k = 0, the factor is 1 either way) |
+| preseason, title Brier | 0.0636 | **0.0636** (identical) |
+| week 4, arm D | 0.2004 | **0.2002** (the pre-registered null, re-measured on the applied code) |
+| week 8, arm D | 0.1336 | **0.1297** |
+| week 11, arm D | 0.0867 | **0.0850** |
+| week 8, arms A / B / C | 0.2342 / 0.1455 / 0.1377 | unchanged -- they carry no `priorWeeks` |
+| week 11, arms A / B / C | 0.2327 / 0.0970 / 0.0896 | unchanged |
+
+M2d's table read week 11 as **0.0851**, and the 0.0001 is explained rather than waved at: M2d swept
+the FACTOR on a grid whose week-11 point was the ROUNDED `0.302`, where the exact constant gives
+`sqrt(1/11) = 0.301511`. Re-running week 11 on the applied code with `FF_SIM_LEVEL_SHRINK=0.302`
+returns arm D **0.0851**, so the difference is the grid's rounding and nothing else. Week 8's
+`0.354` rounds close enough that both give 0.1297.
+
+The paired-by-season statistics are M2d's and are not re-derived here: week 8 -0.0039, 95% season
+bootstrap CI [-0.0067, -0.0007], better in 7/8 seasons; week 11 -0.0017, CI [-0.0030, -0.0002],
+6/8; week 4 a dead null (-0.0001); preseason exactly zero. `K_u = 0` wins the week-8
+leave-one-season-out grid and is NOT taken: it is the grid's edge and the worst value at week 4.
+
+**ROLLBACK, proved rather than asserted.** `FF_SIM_LEVEL_PRIOR_WEEKS=6` replaces the constant at
+call time. Re-run at week 8 it returns **A 0.2342 B 0.1455 C 0.1377 D 0.1336** -- all four arms
+byte-identical to the BEFORE run. The knob REPLACES a weight the caller supplied and never invents
+one, so arms B and C (which deliberately carry no shrink) stay unshrunk under it.
+`FF_SIM_LEVEL_SHRINK` still overrides the resulting FACTOR directly, for a sweep.
+
+**THE LIVE SURFACES.** `node --import tsx scripts/copilot-crosscheck.mjs --schedule real` --
+**ALL CHECKS PASSED**, including both fault injections. `ff copilot` before/after, league 462233,
+1 settled week (k = 1, so the factor moves 0.926 -> 0.707 -- the smallest it will ever be this
+season; the effect grows with k):
+
+| verb | before | after |
+|---|---|---|
+| `season-odds` us (8==3) | 66.45% playoffs / 13.50% title | **68.40% / 13.90%** |
+| `season-odds` field leader | NICK 66.70% | **NICK 71.15%** |
+| `season-odds` field tail | cja 17.10%, Bird 21.60% | **cja 14.65%, Bird 17.10%** |
+| `waivers` base playoff / title | 67.1% / 12.2% | **70.4% / 13.5%** |
+| `waivers` top target | Malik Willis +0.1 pp | **Sam Darnold -0.8 pp** |
+| `depth-risk "Breece Hall"` cost | 21.75 pp (se 1.05) | **25.3 pp (se 0.20)** |
+| `depth-risk` top insurance | Bijan Robinson +23.4 pp | **Jahmyr Gibbs +26.5 pp** |
+
+The season-odds table is the sharpening made visible: the top rises, the tail falls, the three
+conservation invariants still hold exactly (104 wins, 7 playoff shares, 1 champion). The waiver
+reordering is NOT a decision change -- both candidates are far under that run's 2.9 pp noise floor
+and neither clears it; the ranking among sub-noise targets was never meaningful.
+
+**YAHOO USES THE SAME CONSTANT, and it is one code path.** `grep priorWeeks src/` outside
+`season.ts` returns exactly one line, `simContext.ts:470`, and it is format-independent -- so the
+Yahoo (129048) seed shrinks by the same K_u. Two consequences named rather than discovered later:
+the level weight no longer varies by format (the MEAN blend's K still does, ESPN 6 / Yahoo 5), and
+it no longer depends on a ros-blend fit EXISTING -- a format with no fitted K used to get no level
+shrink at all, which was an accident of borrowing, not a decision about uncertainty. Not measured
+here: `ff copilot season-odds --league 129048` REFUSES on the active-board stamp ("board is built
+for league 462233, not 129048 -- run `ff league-set-active 129048` (rebuild) or `ff assemble
+--league 129048`"). The refusal is recorded; the board was NOT switched.
+
+**Left open, because a measurement cannot settle it:** `K_u` is a single number standing in for a
+per-player, per-position quantity -- a rookie's level after seven games is far less certain than a
+ninth-year tight end's. This experiment can only say the one number belongs near 1 rather than 6.
+Weeks 2-3 and 12+ were never sampled.
+
+Draft-path gate, run ONCE and unmoved (nothing in the draft path reads the seed constant):
+`backtest --league 462233 --full --no-lookahead --inflation --seasons 1999-2024 --n 150` ->
+**CHAMPIONSHIPS 39.5% (random 6.3%) | playoffs 96%**, and the per-season line is byte-identical to
+the one M2d recorded (2000:28% ... 2024:40%).
+
+## D29 -- The `rankings` routine is ON the live schedule, and the weekly consensus fans out to every format store (2026-09-16, owner: "let's aim for quality, so even if it's not backwards compatible and we have to rerun things, we should get towards a better edge", APPLIED)
+
+D27 built the `rankings` routine (`ff ingest-source weekly`: refresh `weekly_rank` AND append the
+scrape point-in-time into `ranking_history`) and put it FIRST in `DEFAULT_ROUTINES`, then left the
+live `settings.scheduler` row alone, because writing it is an outward-facing change to a running
+app (charter rule 1). The row is now written. **The archive cannot be backfilled** -- the feed
+publishes one file, the latest scrape -- so every week the routine did not fire is permanently
+missing from any future screen, which is why this is worth running even if the ECR candidate is
+ultimately rejected.
+
+**THE ROW.** Written through the engine's own verb, `npm run ff -- schedule --routines
+rankings,actuals,scorecard,decisions --every 15 --enable` (a data change, no code change):
+
+| | before | after |
+|---|---|---|
+| `settings.scheduler` | `{"enabled":true,"everyMinutes":15,"routines":["actuals","scorecard","decisions"]}` | `{"enabled":true,"everyMinutes":15,"routines":["rankings","actuals","scorecard","decisions"]}` |
+
+`sunday` (D25/M2c) is deliberately NOT added -- this decision is about the consensus cadence, and
+adding a second routine under cover of it would be exactly the silent-side-effect the charter bans.
+This is step 2 of `docs/weekly-ecr-screen-2026-09-16.md` section 16 and ONLY step 2: the ECR model
+promotion (step 1, the `weekly-artifact.candidate-ecr.json` file swap) is D27 and remains PENDING.
+Section 16 states the two are independent and that the cadence is worth running either way.
+
+**IT FIRES, twice proved.** `ff inseason-tick --routines rankings` -> `1/1 steps ok in 2.6s`, 815
+`wp` rows for scrape 2026-09-16; a second run -> `+0 new (815 already held)`, i.e. idempotent.
+And the RUNNING APP's own timer, read from its in-memory `lastTick` through `mc:scheduleGet`:
+`at 2026-09-16T21:18:38Z, ok: true, ran ["rankings","actuals","scorecard","decisions"], 4/4 steps
+ok`, with `{"step":"ingest-source weekly","ok":true}`. The app was neither launched nor killed.
+
+**THE FAN-OUT (the D27 follow-up (a), now closed).** `data/formats/<key>/features.db` carries its
+OWN frozen copy of `ranking_history`, so the M2b retention was filling exactly one of N archives and
+the Yahoo format's copy would have sat at 2024-12-27 forever -- a Yahoo weekly ECR screen impossible
+for want of rows, not for want of a model. `ingestWeekly` now also appends each scrape into every
+format store (`fanOutWeeklyRankSnapshot`, `src/data/ecrHistory.ts`), same `INSERT OR IGNORE`, same
+key. Row counts across one ingest:
+
+| store | `wp` rows before | after | latest `wp` scrape before -> after |
+|---|---|---|---|
+| `data/ff.db` (incumbent) | 68,806 | 68,806 | 2026-09-16 -> 2026-09-16 (already held; the append is a no-op) |
+| `data/formats/sc-a845f67652fb/features.db` (Yahoo) | 67,991 | **68,806** | 2024-12-27 -> **2026-09-16** |
+
+A second tick left the Yahoo count at 68,806. The two stores now hold an identical 545,155-row
+archive.
+
+**IT REFUSES RATHER THAN REPAIRS, and the refusals are tested.** A directory whose name is an
+unverifiable claim (no `scoring.json`, or one that re-hashes to a different key) is skipped by name
+via `checkPreimage` -- we are writing into a MODEL store, and doing that on the strength of a folder
+title is the failure that check exists to prevent. A verified store with no `ranking_history` table
+is skipped too, and `test/weekly-rank-fanout.test.ts` asserts the table is NOT created: a silent
+`CREATE TABLE` in a model store is how a half-built format starts looking built. Every skip is
+printed, because an append nobody can see is indistinguishable from one that never ran.
+
+**ROLLBACK.** The row: `npm run ff -- schedule --routines actuals,scorecard,decisions --every 15
+--enable` restores the previous value exactly. The fan-out: it is append-only and
+ignore-on-conflict, so there is nothing to undo -- and if the code is reverted, the rows already
+written stay, which is the desired direction. Store backup: `data/ff.db.bak-prewp16a-2026-09-16`
+(online `db.backup()`, integrity ok).
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

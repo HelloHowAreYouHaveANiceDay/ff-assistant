@@ -46,6 +46,9 @@ function withEnv<T>(env: Record<string, string | undefined>, fn: () => T): T {
 const UNSET = {
   FF_SIM_LEVEL_SCALE: undefined, FF_SIM_TEAM_SD: undefined, FF_SIM_WEEKLY_VAR: undefined,
   FF_SIM_CORR_SCALE: undefined, FF_WEEKLY_COUPLING: undefined, FF_SIM_LEVEL_SHRINK: undefined,
+  // D28's rollback knob: unset here so an ambient value in the shell cannot silently re-weight the
+  // level prior underneath any assertion in this file.
+  FF_SIM_LEVEL_PRIOR_WEEKS: undefined,
 };
 
 test("every dispersion knob at its documented default reproduces the unset simulator EXACTLY", () => {

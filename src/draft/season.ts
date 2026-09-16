@@ -186,7 +186,9 @@ export interface SeasonOpts {
     weeks: number; wins: number[]; pts: number[];
     /**
      * HOW MUCH THE UNCERTAINTY ABOUT A PLAYER'S TRUE LEVEL HAS SHRUNK, expressed as the prior's
-     * weight in weeks -- the same K the rest-of-season blend was fitted to. With K weeks of prior
+     * weight in weeks -- `LEVEL_PRIOR_WEEKS`, the LEVEL's own constant since D28. It used to be
+     * `rosBlend.K`, the weight the rest-of-season MEAN blend was fitted to; see LEVEL_PRIOR_WEEKS for
+     * the measurement that separated them. With K weeks of prior
      * and k weeks observed the posterior spread of the level is sqrt(K / (K + k)) of the prior's, so
      * that factor scales the projection error (parametric) and each drawn season's deviation from
      * its target level (bootstrap; zeros stay zeros, the within-season shape is untouched). Omitted
@@ -213,6 +215,35 @@ export interface SeasonOdds {
  * omitted option is byte-identical.
  */
 export const PLAYOFF_WEEKS = 3;
+
+/**
+ * THE LEVEL'S OWN PRIOR WEIGHT, IN WEEKS (D28, 2026-09-16) -- `played.priorWeeks`.
+ *
+ * D18 shrank the posterior spread of a player's season LEVEL by `sqrt(K/(K+k))` and took K from
+ * `data/ros-blend.json` -- the weight the rest-of-season MEAN blend was fitted to (ESPN 6, Yahoo 5).
+ * That was an untested transfer and D18's own text said so: K for a posterior MEAN and K for a
+ * posterior SPREAD are different quantities, and only the first was ever fitted.
+ *
+ * M2d swept the factor directly (`docs/season-sim-calibration-2026-09-16.md` section 5b) and read it
+ * back as an implied prior weight. Held-out, season-paired playoff Brier, 2018-2025, 3000 trials:
+ *
+ *     week 8   0.1336 -> 0.1297   (-0.0039, 95% CI [-0.0067, -0.0007], better in 7/8 seasons)
+ *     week 11  0.0867 -> 0.0851   (-0.0017, 95% CI [-0.0030, -0.0002], better in 6/8 seasons)
+ *     week 4   -0.0001 (a dead null)      preseason  unchanged by construction (k = 0 -> factor 1)
+ *
+ * It is a SHARPENING, not a flattening: `sd(p)` rises 0.2994 -> 0.3120 at week 8 and the worst
+ * reliability bin (70-100%) closes from +10.4 to +6.7. `K_u = 0` wins the leave-one-season-out grid
+ * at week 8 but is the grid's EDGE and the worst value at week 4, so the interior value is what
+ * ships -- a constant chosen at a boundary is a constant the data has not bounded.
+ *
+ * ONE NUMBER STANDING IN FOR A PER-PLAYER ONE. A rookie's level after seven games is far less
+ * certain than a ninth-year tight end's; this experiment can only say the single number belongs near
+ * 1 rather than near 6. Left open deliberately (docs/decisions.md D28).
+ *
+ * ROLLBACK, and the record: `FF_SIM_LEVEL_PRIOR_WEEKS=6` restores the D18/D25 posture exactly (or any
+ * other weight, for a sweep). `FF_SIM_LEVEL_SHRINK` still overrides the resulting FACTOR directly.
+ */
+export const LEVEL_PRIOR_WEEKS = 1;
 
 function gauss(rng: () => number): number {
   const u = Math.max(1e-9, rng()), v = rng();
@@ -507,7 +538,19 @@ export function simulateSeasons(
   }
   if (played && played.weeks > opts.weeks) throw new Error(`played.weeks ${played.weeks} exceeds the regular season (${opts.weeks})`);
   // The level-uncertainty shrink (see SeasonOpts.played.priorWeeks): 1 = untouched.
-  const K = played?.priorWeeks;
+  // `FF_SIM_LEVEL_PRIOR_WEEKS` is D28's ROLLBACK and sweep axis: it replaces the caller's
+  // `priorWeeks` with the named weight, so `=6` reproduces the pre-D28 (D18/D25) posture through the
+  // same code path rather than a second one. Read at call time, like every other knob here; unset or
+  // unparseable leaves the caller's value untouched.
+  // It REPLACES a weight the caller supplied; it never INVENTS one. A caller that passed no
+  // `priorWeeks` is asking for no shrink at all (calibration arms B and C are exactly that), and a
+  // rollback knob that silently shrank those arms would be measuring a different thing than the
+  // control it is being compared against.
+  // An EMPTY string is not zero here. `Number("")` is 0, and 0 is a valid weight (the level is known
+  // exactly), so an accidentally-blank variable would silently pin every level rather than do nothing.
+  const _envKRaw = (process.env.FF_SIM_LEVEL_PRIOR_WEEKS ?? "").trim();
+  const _envK = _envKRaw === "" ? NaN : Number(_envKRaw);
+  const K = played?.priorWeeks != null && Number.isFinite(_envK) && _envK >= 0 ? _envK : played?.priorWeeks;
   const shrink = played && K != null && Number.isFinite(K) && K >= 0 ? Math.sqrt(K / (K + played.weeks)) : 1;
   // EXPERIMENT (explore/sim-variance, 2026-09-14): late-season top-bin under-confidence (D18's
   // recorded next candidate). Two ENV-gated levers, both no-ops when unset, so the shipped gate is

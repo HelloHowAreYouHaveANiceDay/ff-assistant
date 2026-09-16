@@ -23,7 +23,7 @@
  */
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
-import { simulateSeasons, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "./season.js";
+import { simulateSeasons, LEVEL_PRIOR_WEEKS, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "./season.js";
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
 import { loadRosBlendFor, rosPerGame } from "./rosBlend.js";
@@ -460,8 +460,14 @@ export async function loadSimContext(opts: {
   const played = playedWeeks > 0
     ? {
       weeks: playedWeeks, wins: teams.map((t) => playedWins.get(t.id) ?? 0), pts: teams.map((t) => playedPts.get(t.id) ?? 0),
-      // The same K the lines were blended with: the level uncertainty shrinks by sqrt(K/(K+k)).
-      ...(Number.isFinite(rosBlend.K) ? { priorWeeks: rosBlend.K } : {}),
+      // THE LEVEL'S OWN PRIOR WEIGHT (D28, 2026-09-16). This used to be `rosBlend.K` -- the weight
+      // the rest-of-season MEAN blend was fitted to -- and it is now `LEVEL_PRIOR_WEEKS` (= 1),
+      // measured for the SPREAD it actually governs (src/draft/season.ts carries the numbers). Two
+      // consequences worth naming: the weight no longer varies by format (the MEAN blend's K still
+      // does, and still updates the lines above), and it no longer depends on a ros-blend fit
+      // EXISTING -- a format with no fitted K used to get no level shrink at all, which was an
+      // accident of borrowing rather than a decision about uncertainty.
+      priorWeeks: LEVEL_PRIOR_WEEKS,
     }
     : undefined;
   if (playedWeeks > 0) {

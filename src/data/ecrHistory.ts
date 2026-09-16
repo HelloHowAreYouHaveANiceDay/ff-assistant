@@ -23,9 +23,13 @@
 import { createGunzip } from "node:zlib";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import { openDb, nowIso, type DB } from "../db/db.js";
 import { nameKey } from "../draft/values.js";
+import { dataPath } from "./paths.js";
+import { checkPreimage } from "./formatResolve.js";
 
 export const FPECR_URL = "https://github.com/DynastyProcess/data/raw/master/files/db_fpecr.csv.gz";
 /** Redraft + weekly. Dynasty/best-ball/superflex describe a different game. */
@@ -152,6 +156,73 @@ export function appendWeeklyRankSnapshot(
   run();
   res.dates = [...dates].sort();
   return res;
+}
+
+/**
+ * THE SAME SCRAPE, INTO EVERY FORMAT STORE'S OWN COPY OF `ranking_history` (D29, 2026-09-16).
+ *
+ * WHY A FAN-OUT AND NOT A SHARED TABLE. `data/formats/<key>/features.db` is a FROZEN COPY of the
+ * feature substrate, built once by `scripts/build-format-features.mjs`, and it carries its own
+ * `ranking_history` (544k rows in the Yahoo store today) because the per-format trainers and the
+ * weekly feature builder read the archive out of the store they were pointed at. So the M2b
+ * retention -- which appends each live weekly scrape into the incumbent store -- was filling exactly
+ * one of N archives, and the Yahoo format's copy would sit frozen at 2024-12-27 forever. A weekly
+ * ECR screen on the Yahoo format is then impossible not because the feature is wrong but because
+ * the column has no 2026 rows in the store that format reads.
+ *
+ * WHAT THIS IS NOT. It does not create, migrate or repair a format store. A directory with no
+ * `features.db`, or one whose `features.db` has no `ranking_history` table, is SKIPPED BY NAME with
+ * the reason -- the same no-fallback posture `resolveFormat` takes, because silently creating a
+ * table in a model store is how a half-built format starts looking built.
+ *
+ * THE PREIMAGE IS CHECKED FIRST (`checkPreimage`): a directory NAME is a claim and `scoring.json` is
+ * the evidence. We are writing into a model store; doing that on the strength of a folder title is
+ * the failure that check exists to prevent.
+ *
+ * The append itself is the same `INSERT OR IGNORE` with the same key, so a second ingest of a scrape
+ * a format store already holds writes nothing, exactly as it does at the root.
+ */
+export interface WeeklyFanOutRow {
+  /** The format directory, as `formatDir(key)` spells it. */
+  dir: string;
+  key: string;
+  /** Present when the append ran. */
+  result?: WeeklySnapshotResult;
+  /** Present instead when the store was left alone, and why. */
+  skipped?: string;
+}
+
+export function fanOutWeeklyRankSnapshot(
+  rows: WeeklyRankSnapshotRow[], fallbackDate: string,
+): WeeklyFanOutRow[] {
+  const root = dataPath("formats");
+  if (!existsSync(root)) return [];
+  const out: WeeklyFanOutRow[] = [];
+  for (const ent of readdirSync(root, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    const key = ent.name;
+    const dir = join(root, key);
+    const pre = checkPreimage(dir, key);
+    if (!pre.ok) { console.warn(`  weekly consensus NOT fanned out to format ${key}: ${pre.why}`); out.push({ dir, key, skipped: pre.why }); continue; }
+    const dbFile = join(dir, "features.db");
+    if (!existsSync(dbFile)) { const why = `${dbFile} does not exist -- this format has no feature store to archive into`; console.warn(`  weekly consensus NOT fanned out to format ${key}: ${why}`); out.push({ dir, key, skipped: why }); continue; }
+    let fdb: DB | null = null;
+    try {
+      fdb = new Database(dbFile);
+      const has = fdb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ranking_history'").get();
+      if (!has) { const why = `${dbFile} has no ranking_history table -- not migrating a model store from here`; console.warn(`  weekly consensus NOT fanned out to format ${key}: ${why}`); out.push({ dir, key, skipped: why }); continue; }
+      const r = appendWeeklyRankSnapshot(fdb, rows, fallbackDate);
+      // Said out loud, per store. An append nobody can see is indistinguishable from one that never
+      // ran, and this one writes into a model store.
+      console.log(`  weekly consensus fanned out to format ${key}: +${r.inserted} ranking_history rows (${r.ignored} already held) at scrape ${r.dates.join("/") || "none"}`);
+      out.push({ dir, key, result: r });
+    } catch (e) {
+      const why = `could not append: ${String((e as Error).message).slice(0, 200)}`;
+      console.warn(`  weekly consensus NOT fanned out to format ${key}: ${why}`);
+      out.push({ dir, key, skipped: why });
+    } finally { fdb?.close(); }
+  }
+  return out;
 }
 
 export async function ingestEcrHistory(opts: {

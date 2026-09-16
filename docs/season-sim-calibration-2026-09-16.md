@@ -1,5 +1,13 @@
 # M2d -- WHERE THE SEASON SIMULATOR'S DISPERSION IS WRONG, and in which direction (2026-09-16)
 
+> **STATUS UPDATE (2026-09-16, WP16a): the ONE FINDING of section 6 -- `K_u = 1`, the level's own
+> prior weight -- was SIGNED OFF AND APPLIED as D28.** The constant is `LEVEL_PRIOR_WEEKS` in
+> `src/draft/season.ts`; the before/after gate, the live-surface deltas and the
+> `FF_SIM_LEVEL_PRIOR_WEEKS=6` rollback are in `docs/decisions.md` D28. Everything BELOW this line
+> is the measurement exactly as it was written, including the sentences that say nothing is applied
+> -- they describe the state at the time of the sweep and are left unedited on purpose. The four
+> NULLs and the rejected roster-level factor are unchanged and still ship at their swept defaults.
+
 A MEASUREMENT, not a change. Nothing here is applied: every value is passed explicitly through an
 env-gated knob that is a no-op at its default, the flagless arbiter reproduces the D25 record
 exactly, and the two live surfaces (`copilot-crosscheck --schedule real`, `ff copilot season-odds

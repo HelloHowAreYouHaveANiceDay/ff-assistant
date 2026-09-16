@@ -44,7 +44,7 @@
 // fresh clone reproduces the recorded figures without first regenerating 24 fold files.
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import Database from "better-sqlite3";
-import { simulateSeasons } from "../src/draft/season.ts";
+import { simulateSeasons, LEVEL_PRIOR_WEEKS } from "../src/draft/season.ts";
 import { loadArtifact } from "../src/model/projector.ts";
 import { boardProjection } from "../src/model/features.ts";
 import { nameKey, dstAliasKey } from "../src/draft/values.ts";
@@ -449,12 +449,15 @@ for (let y = LO; y <= HI; y++) seasons.push(y);
 //   FF_WEEKLY_COUPLING  (default 1.8)  within-week teammate copula multiple
 //   FF_SIM_CORR_SCALE   (default 1)    season-level teammate copula multiple
 //   FF_SIM_LEVEL_SHRINK (default: the D18 sqrt(K/(K+k)))  in-season level shrink override
+//   FF_SIM_LEVEL_PRIOR_WEEKS (default LEVEL_PRIOR_WEEKS = 1, D28)  the level's prior weight in weeks;
+//                       6 restores the pre-D28 posture (the ros blend's K), which is D28's rollback
 // ---------------------------------------------------------------------------------------------
 const SWEEP = val("--sweep", null);
 const SWEEP_OUT = val("--sweep-out", null);
 const SWEEP_DEFAULTS = {
   FF_SIM_LEVEL_SCALE: "1", FF_SIM_TEAM_SD: "0", FF_SIM_WEEKLY_VAR: "1",
   FF_WEEKLY_COUPLING: "1.8", FF_SIM_CORR_SCALE: "1", FF_SIM_LEVEL_SHRINK: null,
+  FF_SIM_LEVEL_PRIOR_WEEKS: String(LEVEL_PRIOR_WEEKS),
 };
 if (SWEEP) {
   const eq = SWEEP.indexOf("=");
@@ -493,7 +496,7 @@ if (SWEEP) {
     const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (s.rosOf.has(p.name) ? { ...p, rosPerGame: s.rosOf.get(p.name) } : { ...p })) }));
     const servedOpts = AT_WEEK == null
       ? base
-      : { ...base, played: s.played ? { ...s.played, priorWeeks: Number.isFinite(s.rosK) ? s.rosK : undefined } : undefined };
+      : { ...base, played: s.played ? { ...s.played, priorWeeks: LEVEL_PRIOR_WEEKS } : undefined };
     const cells = [];
     for (const v of values) {
       setKnob(v);
@@ -610,7 +613,7 @@ if (SWEEP) {
 // ---------------------------------------------------------------------------------------------
 if (AT_WEEK != null) {
   console.log(`IN-SEASON CALIBRATION at week ${AT_WEEK} -- ${LO}-${HI}, ${TRIALS} trials, seed ${SEED}, per-fold artifacts from ${FOLD_DIR}, replacement frame ${REPLACEMENT_FRAME}\n`);
-  console.log(`  arms: A = from scratch (pre-D18: week-${AT_WEEK} rosters, preseason lines, no standings)   B = A + standings seeded from ${AT_WEEK - 1} settled weeks   C = B + rest-of-season lines   D = C + level uncertainty shrunk by sqrt(K/(K+k))\n`);
+  console.log(`  arms: A = from scratch (pre-D18: week-${AT_WEEK} rosters, preseason lines, no standings)   B = A + standings seeded from ${AT_WEEK - 1} settled weeks   C = B + rest-of-season lines   D = C + level uncertainty shrunk by sqrt(K/(K+k)), K = LEVEL_PRIOR_WEEKS ${LEVEL_PRIOR_WEEKS} (D28; =6 restores D18 via FF_SIM_LEVEL_PRIOR_WEEKS)\n`);
   const arms = ["A", "B", "C", "D"];
   const rows = { A: [], B: [], C: [], D: [] };
   const perSeasonBrier = [];
@@ -634,7 +637,7 @@ if (AT_WEEK != null) {
       A: simulateSeasons(s.teams, s.weeks, useVm, base),
       B: simulateSeasons(s.teams, s.weeks, useVm, { ...base, played: s.played ?? undefined }),
       C: simulateSeasons(withRos, s.weeks, useVm, { ...base, played: s.played ?? undefined }),
-      D: simulateSeasons(withRos, s.weeks, useVm, { ...base, played: s.played ? { ...s.played, priorWeeks: Number.isFinite(s.rosK) ? s.rosK : undefined } : undefined }),
+      D: simulateSeasons(withRos, s.weeks, useVm, { ...base, played: s.played ? { ...s.played, priorWeeks: LEVEL_PRIOR_WEEKS } : undefined }),
     };
     const b = {};
     for (const arm of arms) {
