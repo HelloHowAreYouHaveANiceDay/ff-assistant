@@ -213,6 +213,95 @@ export async function ingestLeagueTransactions(opts: { dbPath?: string; seasons:
 }
 
 /**
+ * YAHOO'S TRANSACTION LOG -> `raw_league_transaction`, in the ESPN row shape (WP9).
+ *
+ * WHAT YAHOO GIVES THAT ESPN'S RENDERED PAGE DOES NOT: the WINNING FAB BID on every team's claim, not
+ * just ours. That is the whole reason this is worth having -- it is what `train_faab.py` is fitted on
+ * for the ESPN league, and without it the Yahoo league's FAAB advice can only ever be the rule of
+ * thumb. Verified on the live page 2026-09-16: "$2 Waiver", "$3 Waiver", "$7 Waiver" beside other
+ * managers' adds.
+ *
+ * THREE FIELDS YAHOO DOES NOT PUBLISH, recorded as such rather than reconstructed:
+ *   transaction_id   there is none. The key is DERIVED (team + timestamp text + row ordinal) and is
+ *                    prefixed `y-` so nothing can mistake it for a platform id. It is stable for a
+ *                    given page ordering, which is what an upsert needs, and nothing joins on it.
+ *   member_id        absent; the team id is what Yahoo names.
+ *   losing bids      absent. Only the winning claim is shown, so a FAAB model fitted on this sees
+ *                    clearing prices and not the book. Stated because "we have the bids" would be
+ *                    a materially stronger claim than what is true.
+ *
+ * WEEK IS DERIVED FROM THE DATE, because Yahoo publishes no scoring period on this page. A claim is
+ * attributed to the NEXT week whose games have not finished -- a Tuesday-morning waiver run is for
+ * the coming Sunday, which is the convention every waiver consumer in this repo already assumes.
+ * `executed_at` is a LOCAL date-time like the ESPN path's, built from Yahoo's own "Sep 16, 4:55 am"
+ * plus the season year (a month before August belongs to the following calendar year).
+ */
+const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+
+/** "Sep 16, 4:55 am" + season 2026 -> "2026-09-16 04:55:00". Null when the text is not that shape --
+ *  a null timestamp is a fact; a fabricated one silently moves a claim across a waiver deadline. */
+export function yahooTxWhen(text: string, season: number): string | null {
+  const m = /([A-Za-z]{3})[a-z]*\s+(\d{1,2})(?:,)?\s*(?:(\d{1,2}):(\d{2})\s*([ap])m?)?/i.exec(String(text ?? ""));
+  if (!m) return null;
+  const mon = MONTHS[m[1].toLowerCase()];
+  if (!mon) return null;
+  const year = mon >= 8 ? season : season + 1;
+  let hour = m[3] ? Number(m[3]) % 12 : 0;
+  if (m[5] && m[5].toLowerCase() === "p") hour += 12;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${year}-${p(mon)}-${p(Number(m[2]))} ${p(hour)}:${p(Number(m[4] ?? 0))}:00`;
+}
+
+export async function ingestYahooTransactions(opts: { dbPath?: string; leagueId?: string; season?: number; limit?: number })
+  : Promise<{ rows: number; transactions: number; withBid: number; season: number }> {
+  const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
+  const db = openDb(opts.dbPath);
+  try {
+    const ctx = resolveLeagueContext(db, opts.leagueId);
+    const leagueId = requirePlatform(ctx, "yahoo", "ingest yahoo transactions", "transactions");
+    const season = opts.season ?? ctx.rowSeason ?? ctx.config.season;
+    const { YahooLeague, yahooPlayerKey } = await import("../league/yahoo.js");
+    const lg = YahooLeague.direct(leagueId, ctx.teamId, ctx.config as never);
+    const log = await lg.transactions(opts.limit ?? 150);
+
+    // The week each date falls in: the first week whose last game day is NOT before the date.
+    const weeks = db.prepare(
+      "SELECT week, MAX(gameday) AS last FROM raw_nfl_game WHERE season=? AND game_type='REG' AND gameday IS NOT NULL AND gameday<>'' GROUP BY week ORDER BY week",
+    ).all(season) as { week: number; last: string }[];
+    const weekOf = (when: string | null): number => {
+      if (!when) return 0;
+      const d = when.slice(0, 10);
+      for (const w of weeks) if (!(w.last < d)) return w.week;
+      return weeks.length ? weeks[weeks.length - 1].week : 0;
+    };
+
+    const rows: TransactionItemRow[] = [];
+    let withBid = 0;
+    for (const t of log) {
+      const when = yahooTxWhen(t.when, season);
+      const week = weekOf(when);
+      t.items.forEach((it, i) => {
+        if (it.bid != null) withBid++;
+        rows.push({
+          season, week, transactionId: t.key, itemNo: i,
+          type: it.bid != null ? "WAIVER" : "FREEAGENT",
+          itemType: it.action === "add" ? "ADD" : "DROP",
+          executedAt: when, proposedAtMs: null,
+          teamId: t.teamId ?? "", memberId: null,
+          espnPlayerId: yahooPlayerKey(it.playerId),
+          fromTeamId: it.action === "add" ? "-1" : (t.teamId ?? null),
+          toTeamId: it.action === "add" ? (t.teamId ?? null) : "-1",
+          fromLineupSlotId: null, toLineupSlotId: null,
+          bidAmount: it.bid, status: null, executionType: null, isPending: 0,
+        });
+      });
+    }
+    upsertTransactionRows(db, leagueId, rows, nowIso());
+    return { rows: rows.length, transactions: log.length, withBid, season };
+  } finally { db.close(); }
+}
+
+/**
  * CAPTURE PENDING TRADE PROPOSALS with FULL TERMS, before ESPN purges them. The regular mTransactions2
  * feed keeps a PENDING/CANCELED proposal's terms but DROPS a DECLINED proposal's -- leaving only a thin
  * decline event + a dangling relatedTransactionId (verified 2026-09-12: the Garrett Wilson decline's

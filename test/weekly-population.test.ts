@@ -262,14 +262,24 @@ test("ROSTER_DEPTH re-measured from fact_roster_week agrees with the constant", 
       t.diagnostic("SKIPPED: this store has no fact_roster_week (Track B has not been built here).");
       return;
     }
+    // ONE LEAGUE, NAMED. `ROSTER_DEPTH` describes the league the weekly population is built for, and
+    // this query read `fact_roster_week` UNFILTERED -- harmless while the store held one league's
+    // rows and wrong the moment a second league's landed there (WP9 put the Yahoo league's in). A
+    // 12-team SUPERFLEX league's quarterbacks are not evidence about a 16-team single-QB league's
+    // depth, and mixing them moved the measured QB depth from 26 to 27 with nothing saying why.
+    const league = (db.prepare("SELECT value FROM settings WHERE key = 'active_league'").get() as { value?: string } | undefined)?.value;
+    if (!league) {
+      t.diagnostic("SKIPPED: this store names no active league, so the depths cannot be attributed to one.");
+      return;
+    }
     const teams = (db.prepare(
-      "SELECT COUNT(*) * 1.0 / COUNT(DISTINCT season) AS t FROM (SELECT DISTINCT season, team_id FROM fact_roster_week)",
-    ).get() as { t: number }).t;
+      "SELECT COUNT(*) * 1.0 / COUNT(DISTINCT season) AS t FROM (SELECT DISTINCT season, team_id FROM fact_roster_week WHERE league_id = ?)",
+    ).get(league) as { t: number }).t;
     assert.ok(teams > 0, "the roster feed names no teams -- nothing can be measured from it");
     const rows = db.prepare(
-      `SELECT pos, COUNT(*) * 1.0 / (SELECT COUNT(DISTINCT season || '|' || week) FROM fact_roster_week) AS per
-         FROM fact_roster_week WHERE pos IN ('QB','RB','WR','TE','K','DST') GROUP BY pos`,
-    ).all() as { pos: string; per: number }[];
+      `SELECT pos, COUNT(*) * 1.0 / (SELECT COUNT(DISTINCT season || '|' || week) FROM fact_roster_week WHERE league_id = ?) AS per
+         FROM fact_roster_week WHERE league_id = ? AND pos IN ('QB','RB','WR','TE','K','DST') GROUP BY pos`,
+    ).all(league, league) as { pos: string; per: number }[];
     assert.equal(rows.length, 6, "the roster feed does not cover all six positions");
     for (const r of rows) {
       const scaled = Math.ceil((r.per / teams) * LEAGUE_TEAMS);

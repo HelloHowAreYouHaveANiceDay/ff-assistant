@@ -1360,6 +1360,15 @@ CREATE TABLE IF NOT EXISTS raw_league_roster_week (
   lineup_slot_id INTEGER, is_starter INTEGER, applied_points REAL,
   acquisition_type TEXT, acquisition_date TEXT,
   as_of TEXT, as_of_start TEXT, as_of_end TEXT, fetched_at TEXT NOT NULL,
+  -- LAST, because `addColumns` appends it with ALTER TABLE on an existing store and a fresh store
+  -- must end up with the SAME column order -- otherwise a positional INSERT would write different
+  -- columns on the two. (The writer names its columns now, so order is no longer load-bearing; the
+  -- ordering is kept anyway so `PRAGMA table_info` is identical either way.)
+  --
+  -- The NFL team he played for that week, WHERE THE PLATFORM PUBLISHES IT. Identity, not display:
+  -- a platform with no cross-reference in this store resolves by name+position, and that is exactly
+  -- where `nameKey` collapses a Jr. onto his father. NULL = the feed did not say. See db.ts.
+  pro_team TEXT,
   PRIMARY KEY (league_id, season, week, team_id, espn_player_id));
 CREATE INDEX IF NOT EXISTS idx_rlrw_wk ON raw_league_roster_week (season, week);
 CREATE INDEX IF NOT EXISTS idx_rlrw_pl ON raw_league_roster_week (espn_player_id, season);

@@ -6,6 +6,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { openDb } from "../src/db/db.ts";
+import { liveYahooPool } from "./yahoo-live-pool.mjs";
 import { resolveFormat } from "../src/data/formatResolve.ts";
 import { resolveLeagueContext } from "../src/data/leagueContext.ts";
 import { loadArtifact } from "../src/model/projector.ts";
@@ -37,10 +38,11 @@ const FMT = formatArg(mainDb);
 const LEAGUE = FMT.leagueId;
 const cfg = resolveLeagueContext(mainDb, LEAGUE).config;
 mainDb.close();
-const MY_ROSTER = ["Jared Goff", "Joe Burrow", "Tyler Shough", "Omarion Hampton", "Chase Brown",
-  "Jacory Croskey-Merritt", "Tyjae Spears", "Mike Washington", "Emmett Johnson", "Garrett Wilson",
-  "Jameson Williams", "Carnell Tate", "Makai Lemon", "Omar Cooper", "Chris Bell", "Kyle Pitts",
-  "Michael Mayer", "Isiah Pacheco"];
+// OUR ROSTER AND THE FREE-AGENT POOL, READ LIVE (WP9) -- both were literals here (an eighteen-name
+// array and a hand-scraped `fa-pool.json` with no producer), and both were already wrong.
+const LIVE = await liveYahooPool(LEAGUE);
+const MY_ROSTER = LIVE.ours;
+if (LIVE.overlap.length) throw new Error(`yahoo pool control FAILED: ${LIVE.overlap.length} "available" player(s) are on a roster (${LIVE.overlap.slice(0, 5).map((f) => f.name).join(", ")}). Refusing to rank a pool that contains rostered men.`);
 
 const { blend, source } = loadRosBlend();
 const K = blend.K;
@@ -98,8 +100,8 @@ for (const f of filled) console.log(`  ${f.slot.padEnd(9)} $${String(f.value).pa
 const weakest = Math.min(...filled.filter((f) => f.value > 0).map((f) => f.value));
 console.log(`  weakest startable: $${weakest};  BENCH: ${mine.filter((m) => !used.has(m.name)).map((b) => `${b.name} $${b.value}`).join(", ")}`);
 
-// FA overlay
-const fa = JSON.parse(readFileSync(join(FMT.model.dir, "fa-pool.json"), "utf8"));
+// FA overlay -- the REAL pool, from Yahoo's own `status=A` list through the adaptor.
+const fa = LIVE.fa;
 const seen = new Set(); const faVals = [];
 for (const f of fa) { const v = byKey.get(nameKey(f.name)); if (v && !seen.has(nameKey(f.name))) { seen.add(nameKey(f.name)); faVals.push(v); } }
 faVals.sort((a, b) => b.value - a.value);

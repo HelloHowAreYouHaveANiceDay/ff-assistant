@@ -59,6 +59,9 @@ export interface RosterWeekRow {
   espnPlayerId: string; name: string; position: string;
   lineupSlotId: number; isStarter: number; appliedPoints: number | null;
   acquisitionType: string | null; acquisitionDate: string | null;
+  /** The NFL team he played for that week, where the platform publishes it. Identity, not display --
+   *  see `raw_league_roster_week.pro_team`. ESPN's boxscore ingester leaves it null. */
+  proTeam?: string | null;
 }
 
 export interface RosterWeekFetch {
@@ -182,14 +185,20 @@ export function weekKickoffs(db: DB): Map<string, { first: string; last: string 
 /** Upsert already-fetched weeks. Pure with respect to the network, like `loadLeagueHistory`. */
 export function loadLeagueRosterWeeks(db: DB, leagueId: string, weeks: RosterWeekFetch[], fetchedAt: string): RosterWeekCounts {
   const kick = weekKickoffs(db);
+  // COLUMNS ARE NAMED, not positional. `pro_team` is added to an existing store by `addColumns`
+  // (i.e. at the END) and declared in schema.sql for a fresh one; a positional VALUES list would
+  // silently write different columns on the two if those orders ever parted company.
   const up = db.prepare(
-    `INSERT INTO raw_league_roster_week VALUES (@l,@s,@w,@t,@p,@name,@pos,@slot,@st,@pts,@at,@ad,@aof,@a0,@a1,@now)
+    `INSERT INTO raw_league_roster_week
+       (league_id, season, week, team_id, espn_player_id, name, position, lineup_slot_id, is_starter,
+        applied_points, acquisition_type, acquisition_date, as_of, as_of_start, as_of_end, fetched_at, pro_team)
+     VALUES (@l,@s,@w,@t,@p,@name,@pos,@slot,@st,@pts,@at,@ad,@aof,@a0,@a1,@now,@team)
      ON CONFLICT(league_id,season,week,team_id,espn_player_id) DO UPDATE SET
        name=excluded.name, position=excluded.position, lineup_slot_id=excluded.lineup_slot_id,
        is_starter=excluded.is_starter, applied_points=excluded.applied_points,
        acquisition_type=excluded.acquisition_type, acquisition_date=excluded.acquisition_date,
        as_of=excluded.as_of, as_of_start=excluded.as_of_start, as_of_end=excluded.as_of_end,
-       fetched_at=excluded.fetched_at`);
+       fetched_at=excluded.fetched_at, pro_team=excluded.pro_team`);
   const c: RosterWeekCounts = { weeks: 0, available: 0, rows: 0, starters: 0 };
   db.transaction(() => {
     for (const wk of weeks) {
@@ -200,7 +209,7 @@ export function loadLeagueRosterWeeks(db: DB, leagueId: string, weeks: RosterWee
         up.run({
           l: leagueId, s: r.season, w: r.week, t: r.teamId, p: r.espnPlayerId, name: r.name, pos: r.position,
           slot: r.lineupSlotId, st: r.isStarter, pts: r.appliedPoints, at: r.acquisitionType, ad: r.acquisitionDate,
-          aof: k?.last ?? null, a0: k?.first ?? null, a1: k?.last ?? null, now: fetchedAt,
+          aof: k?.last ?? null, a0: k?.first ?? null, a1: k?.last ?? null, now: fetchedAt, team: r.proTeam ?? null,
         });
         c.rows++;
         if (r.isStarter) c.starters++;
@@ -306,6 +315,85 @@ export const weeksInSeason = (season: number): number => (season >= 2021 ? 18 : 
  * A season that returns nothing keeps its status rows -- "we asked and ESPN had none" is a fact, and
  * a sweep that aborts on the first empty week can never establish where the coverage ends.
  */
+/**
+ * THE WEEKS OF `season` THAT ARE FULLY PLAYED as of `today` -- the only weeks a non-ESPN adaptor is
+ * asked for (WP9).
+ *
+ * WHY THE CUT IS THE LAST KICKOFF AND NOT THE FIRST. Yahoo's team page for a week in progress renders
+ * the locked lineup with PARTIAL points, and a partial total is indistinguishable in the store from a
+ * final one -- the D18 seed would score the week and hand the simulator a set of standings built on
+ * half a Sunday. Same definition of "settled" as `loadSimContext`'s, deliberately: a week whose last
+ * NFL game day is strictly before today. (`feat_player_week` scoring is the seed's SECOND condition
+ * and stays there; this one is about what is safe to WRITE.)
+ */
+export function settledWeeks(db: DB, season: number, today: string): number[] {
+  const out: number[] = [];
+  for (const r of db.prepare(
+    "SELECT week, MAX(gameday) AS last FROM raw_nfl_game WHERE season=? AND game_type='REG' AND gameday IS NOT NULL AND gameday<>'' GROUP BY week ORDER BY week",
+  ).all(season) as { week: number; last: string }[]) {
+    if (!(r.last < today)) break;                 // contiguous from week 1
+    out.push(r.week);
+  }
+  return out;
+}
+
+/**
+ * INGEST THROUGH THE PLATFORM SEAM, for a platform whose adaptor implements `rosterWeek` (WP9).
+ *
+ * `loadLeagueRosterWeeks` is shared with the ESPN path on purpose: the columns, the `as_of` stamping
+ * from `raw_nfl_game` and the conflict clause are one piece of code, so a Yahoo row cannot end up a
+ * different SHAPE from an ESPN one. What differs is only where the rows came from.
+ *
+ * The rows a non-ESPN adaptor cannot supply are NULL and say so here rather than being invented:
+ * `acquisition_type`/`acquisition_date` are ESPN-only (Yahoo publishes acquisitions on a separate
+ * page under a different key, and deriving them here would put a join in the raw layer).
+ */
+export async function ingestPlatformRosterWeeks(opts: {
+  dbPath?: string; leagueId?: string; season?: number; weeks?: number[]; pauseMs?: number; today?: string;
+}): Promise<{ counts: RosterWeekCounts; checks: RosterWeekCheck[]; findings: GuardFinding[]; weeks: number[]; platform: string }> {
+  const { resolveLeagueContext } = await import("./leagueContext.js");
+  const { platformFor } = await import("../league/platform.js");
+  const db = openDb(opts.dbPath);
+  try {
+    const ctx = resolveLeagueContext(db, opts.leagueId);
+    const leagueId = ctx.leagueId;
+    if (!leagueId) throw new Error("ingest platform roster-weeks: no league resolved.");
+    const plat = await platformFor(ctx.platformRaw);
+    if (!plat.rosterWeek) {
+      throw new Error(`ingest roster-weeks: the "${plat.id}" adaptor has no rosterWeek capability. Nothing was written -- a league whose platform cannot supply a week's started lineup must be refused by name, never filled in from another source.`);
+    }
+    const season = opts.season ?? ctx.rowSeason ?? ctx.config.season;
+    const weeks = opts.weeks ?? settledWeeks(db, season, opts.today ?? localDate());
+    if (!weeks.length) return { counts: { weeks: 0, available: 0, rows: 0, starters: 0 }, checks: readBackRosterWeeks(db, leagueId), findings: [], weeks: [], platform: plat.id };
+    const { bridgePlatformIO } = await import("../league/platform.js");
+    const io = bridgePlatformIO(plat.webview.host, 40000);
+    const pause = opts.pauseMs ?? 400;
+    const fetched: RosterWeekFetch[] = [];
+    for (const week of weeks) {
+      const rows = await plat.rosterWeek(io, leagueId, season, week);
+      fetched.push({
+        season, week, available: rows.length > 0, note: null,
+        rows: rows.map((r) => ({
+          season, week, teamId: r.teamId, espnPlayerId: r.platformPlayerId, name: r.name, position: r.position,
+          lineupSlotId: r.lineupSlotId, isStarter: r.isStarter ? 1 : 0, appliedPoints: r.appliedPoints,
+          acquisitionType: null, acquisitionDate: null, proTeam: r.proTeam ?? null,
+        })),
+      });
+      if (pause) await new Promise((r) => setTimeout(r, pause));
+    }
+    const counts = loadLeagueRosterWeeks(db, leagueId, fetched, nowIso());
+    const checks = readBackRosterWeeks(db, leagueId);
+    return { counts, checks, findings: checkRosterWeeks(checks), weeks, platform: plat.id };
+  } finally { db.close(); }
+}
+
+/** LOCAL date, YYYY-MM-DD. Same spelling as `rosterState.localDate`; duplicated rather than imported
+ *  because rosterState imports THIS module and a cycle here would be a startup failure. */
+function localDate(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: number[]; pauseMs?: number; leagueId?: string })
   : Promise<{ counts: RosterWeekCounts; checks: RosterWeekCheck[]; findings: GuardFinding[] }> {
   const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");

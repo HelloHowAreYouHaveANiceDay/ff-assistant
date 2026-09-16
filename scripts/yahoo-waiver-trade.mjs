@@ -3,8 +3,8 @@
 // weakest startable slots, FA upgrades, and the QB-surplus trade angle.
 // Full-season preseason value; weeks 1-2 not yet folded in (D18 ROS blend is the refinement).
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { openDb } from "../src/db/db.ts";
+import { liveYahooPool } from "./yahoo-live-pool.mjs";
 import { resolveFormat } from "../src/data/formatResolve.ts";
 import { resolveLeagueContext } from "../src/data/leagueContext.ts";
 import { loadArtifact } from "../src/model/projector.ts";
@@ -36,10 +36,14 @@ const FMT = formatArg(mainDb);
 const LEAGUE = FMT.leagueId;
 const cfg = resolveLeagueContext(mainDb, LEAGUE).config;
 mainDb.close();
-const MY_ROSTER = ["Jared Goff", "Joe Burrow", "Tyler Shough", "Omarion Hampton", "Chase Brown",
-  "Jacory Croskey-Merritt", "Tyjae Spears", "Mike Washington", "Emmett Johnson", "Garrett Wilson",
-  "Jameson Williams", "Carnell Tate", "Makai Lemon", "Omar Cooper", "Chris Bell", "Kyle Pitts",
-  "Michael Mayer", "Isiah Pacheco"];
+// OUR ROSTER AND THE FREE-AGENT POOL, READ LIVE FROM YAHOO (WP9). Both used to be literals in this
+// file: an eighteen-name array, and `data/formats/<key>/fa-pool.json`, a hand-scraped list with no
+// producer. Both were stale within hours of being written -- when this changed, the array still had
+// Michael Mayer and Chris Bell, whom we had already dropped, and did not have Mike Gesicki or
+// Devaughn Vele, whom we had added. See scripts/yahoo-live-pool.mjs.
+const LIVE = await liveYahooPool(LEAGUE);
+const MY_ROSTER = LIVE.ours;
+if (LIVE.overlap.length) throw new Error(`yahoo pool control FAILED: ${LIVE.overlap.length} "available" player(s) are on a roster (${LIVE.overlap.slice(0, 5).map((f) => f.name).join(", ")}). One of the two reads is of the wrong thing; refusing to rank a pool that contains rostered men.`);
 
 const db = openDb(FMT.model.require("features-db"));
 const art = loadArtifact(JSON.parse(readFileSync(FMT.model.require("projection"), "utf8")), { checkGolden: true });
@@ -75,15 +79,13 @@ console.log(`  --> weakest startable value: $${weakest}`);
 console.log(`\n  BENCH: ${bench.map((b) => `${b.name} $${b.value}(${b.pos})`).join(", ")}`);
 
 // --- FA pool overlaid with our value ------------------------------------------------------------
-// The hand-built free-agent pool lives beside the format's other artifacts. It is per-LEAGUE data
-// in a per-FORMAT directory -- a known wart (P-5: no Yahoo FA reader exists yet), kept here rather
-// than moved, because moving it without a producer would just relocate the gap.
-const fa = JSON.parse(readFileSync(join(FMT.model.dir, "fa-pool.json"), "utf8"));
+// THE REAL POOL, from Yahoo's own `status=A` player list through the adaptor -- not a file.
+const fa = LIVE.fa;
 const faVals = [];
 for (const f of fa) { const v = byKey.get(nameKey(f.name)); if (v) faVals.push({ name: f.name, pos: v.valuePos ?? v.pos, value: v.value, points: v.points }); }
 const seen = new Set(); const faUniq = faVals.filter((f) => (seen.has(nameKey(f.name)) ? false : seen.add(nameKey(f.name))));
 faUniq.sort((a, b) => b.value - a.value);
-console.log(`\n=== BEST AVAILABLE (our value), of ${fa.length} FAs scraped ===`);
+console.log(`\n=== BEST AVAILABLE (our value), of ${fa.length} available read live from Yahoo (${fa.filter((f) => f.waivers).length} still on waivers; 0 of them on any roster -- checked) ===`);
 for (const f of faUniq.slice(0, 15)) {
   const up = f.value > weakest ? `  <-- UPGRADE over $${weakest} flex` : "";
   console.log(`  $${String(f.value).padStart(3)}  ${f.pos.padEnd(3)} ${f.name.padEnd(24)} ${f.points.toFixed(0)}pt${up}`);

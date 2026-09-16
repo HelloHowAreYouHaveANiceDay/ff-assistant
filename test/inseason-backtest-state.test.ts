@@ -47,8 +47,14 @@ function fixture(): Fixture {
     `INSERT INTO raw_nfl_game (season, game_id, week, gameday, game_type, home_team, away_team, fetched_at) VALUES (?,?,?,?,?,?,?,?)`);
   for (let w = 1; w <= 3; w++) game.run(SEASON, `g${w}`, w, `2097-09-${String(w * 7).padStart(2, "0")}`, "REG", "AAA", "BBB", "now");
 
+  // COLUMNS NAMED, NOT POSITIONAL. `raw_league_roster_week` gained `pro_team` (WP9, additive), and a
+  // positional VALUES list breaks on any added column -- and would silently write into the WRONG
+  // column if one were ever inserted rather than appended. Same reason the real writer names its own.
   const roster = db.prepare(
-    `INSERT INTO raw_league_roster_week VALUES (@l,@s,@w,@t,@p,@n,@pos,@slot,@st,@pts,NULL,NULL,@aof,@aof,@aof,'now')`);
+    `INSERT INTO raw_league_roster_week
+       (league_id, season, week, team_id, espn_player_id, name, position, lineup_slot_id, is_starter,
+        applied_points, acquisition_type, acquisition_date, as_of, as_of_start, as_of_end, fetched_at)
+     VALUES (@l,@s,@w,@t,@p,@n,@pos,@slot,@st,@pts,NULL,NULL,@aof,@aof,@aof,'now')`);
   const feat = db.prepare(
     `INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, name, pos, pts, updated_at) VALUES (?,?,?,?,?,?,?,'now')`);
   const xref = db.prepare("INSERT INTO player_xref (player_sk, source, source_id, created_at) VALUES (?,?,?,'now')");

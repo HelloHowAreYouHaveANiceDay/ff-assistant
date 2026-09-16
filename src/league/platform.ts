@@ -108,6 +108,34 @@ export interface PlatformRoster {
 }
 
 /**
+ * ONE WEEK'S ROSTER FOR ONE TEAM, IN THE SHAPE `raw_league_roster_week` STORES (WP9).
+ *
+ * Deliberately the raw table's vocabulary rather than a prettier one, because the whole point is that
+ * a Yahoo row and an ESPN row are INDISTINGUISHABLE to the four readers downstream:
+ *
+ *   `platformPlayerId`  the PLATFORM's own player id, as it will be stored in the column named
+ *                       `espn_player_id`. A non-ESPN adaptor MUST namespace it -- see YAHOO_ID_PREFIX.
+ *   `lineupSlotId`      ESPN's INTEGER slot encoding (20 bench, 21 IR, 23 flex, 7 superflex). Not a
+ *                       stylistic choice: `isStarterSlot`, `SLOT_NAME` and `startingTemplate` all
+ *                       read it as that, so any other id space produces an unfillable template.
+ *   `appliedPoints`     the week's ACTUAL points, or null where the platform does not publish them.
+ *                       Never 0 for "unknown": a zero week is a real and common result.
+ */
+export interface PlatformRosterWeekRow {
+  teamId: string;
+  platformPlayerId: string;
+  name: string;
+  position: string;
+  lineupSlotId: number;
+  isStarter: boolean;
+  appliedPoints: number | null;
+  /** The NFL team he played for that week, where the platform publishes it -- `raw_league_roster_week.
+   *  pro_team`. It is IDENTITY: an adaptor with no player cross-reference in this store resolves by
+   *  name + position, which is exactly where a generational suffix collapses a son onto his father. */
+  proTeam?: string | null;
+}
+
+/**
  * The ONE capability an adaptor needs from the outside world: an authenticated GET, executed inside
  * the webview that holds this platform's login, returning the response body as text.
  *
@@ -157,6 +185,19 @@ export interface Platform {
   syncRosters(io: PlatformIO, leagueId: string, season: number): Promise<PlatformRoster[]>;
   /** ONE team, as the platform-agnostic type. `proj` is 0 -- valuation is attached by openLeague. */
   readTeam(io: PlatformIO, leagueId: string, season: number, teamId: string): Promise<LeagueTeam>;
+
+  /**
+   * OPTIONAL CAPABILITY: every team's roster AS IT STOOD in week `week`, with that week's points.
+   *
+   * Optional because not every platform publishes a historical week's lineup, and an adaptor without
+   * it must be refused BY NAME by the caller rather than fall back to "the current roster wearing a
+   * week number" -- which is precisely the ESPN `leagueHistory + mRoster` trap documented at the top
+   * of src/data/leagueRosters.ts, where four different weeks returned byte-identical starters.
+   *
+   * ESPN does not implement this: its roster-week history comes from a JSON boxscore view with its
+   * own cache, and routing it through here would be a second spelling of an ingester that works.
+   */
+  rosterWeek?(io: PlatformIO, leagueId: string, season: number, week: number): Promise<PlatformRosterWeekRow[]>;
 }
 
 const REGISTRY = new Map<string, () => Promise<Platform>>([

@@ -36,6 +36,7 @@ import { openDb, nowIso, type DB } from "../../db/db.js";
 import { nameKey } from "../../draft/values.js";
 import { optimalLineup, type RosterPlayer } from "../../inseason/lineup.js";
 import { BENCH_SLOT, IR_SLOT } from "../../data/leagueRosters.js";
+import { buildSkResolver } from "../../data/skResolve.js";
 
 /** ESPN proTeamId -> the abbreviation `feat_player_week_model` keys a defence by. Derived from the
  *  ids ESPN publishes, checked against the 32 `DST:` keys the feature table actually carries for
@@ -53,10 +54,30 @@ const SLOT_NAME: Record<number, string> = {
   16: "DST", 17: "K", 20: "BE", 21: "IR", 23: "FLEX",
 };
 
-export interface ResolveReport { total: number; byXref: number; byDst: number; byName: number; unresolved: number; examples: string[] }
+export interface ResolveReport { total: number; byXref: number; byDst: number; byName: number; byTeam: number; unresolved: number; examples: string[] }
 
-/** ESPN id -> player_sk, for every id in `raw_league_roster_week` and `raw_league_transaction`. */
-export function buildEspnResolver(db: DB): { resolve(espnId: string, name: string, pos: string): { sk: string; how: string } | null; report: ResolveReport } {
+/**
+ * ESPN id -> player_sk, for every id in `raw_league_roster_week` and `raw_league_transaction`.
+ *
+ * STAGE 4 (`byTeam`) WAS ADDED BY WP9, AND IT IS STRICTLY ADDITIVE -- it is consulted only after
+ * stages 1-3 have all missed, so no row that resolved before can resolve differently now.
+ *
+ * WHY IT IS NEEDED. Stage 3 keys on (name_key, position) but first DROPS every `stg_player` row
+ * flagged `ambiguous`, and that flag is about the NAME, not the pair: Justin Jefferson the receiver
+ * and Justin Jefferson the linebacker are both flagged, so the pair `justinjefferson|WR` -- which is
+ * unique -- was thrown away with them. And `nameKey` strips generational suffixes ON PURPOSE, so
+ * Marvin Harrison Jr. and Michael Pittman Jr. each collapse onto a father who is also a WR; no
+ * name+position rule can ever separate those, but the NFL TEAM does.
+ *
+ * So stage 4 is `buildSkResolver` -- the repo's one name/position/team resolver, already used by every
+ * history producer -- reached with the `pro_team` the platform published. That is reuse rather than a
+ * fourth spelling of a name match.
+ *
+ * MEASURED, on the Yahoo league's week 1 (207 rostered men, no cross-reference at all): 202 resolved
+ * by stage 3, 5 did not, and all 5 were ROSTERED men who therefore reappeared in `fact_fa_pool_week`
+ * as free agents nobody could sign while their points vanished from their team's `started_pts`.
+ */
+export function buildEspnResolver(db: DB): { resolve(espnId: string, name: string, pos: string, proTeam?: string | null): { sk: string; how: string } | null; report: ResolveReport } {
   const xref = new Map<string, string>();
   for (const r of db.prepare("SELECT source_id, player_sk FROM player_xref WHERE source='espn'").all() as { source_id: string; player_sk: number }[]) {
     xref.set(String(r.source_id), String(r.player_sk));
@@ -73,10 +94,11 @@ export function buildEspnResolver(db: DB): { resolve(espnId: string, name: strin
   }
   for (const k of dupe) byName.delete(k);
 
-  const report: ResolveReport = { total: 0, byXref: 0, byDst: 0, byName: 0, unresolved: 0, examples: [] };
+  const sk = buildSkResolver(db);
+  const report: ResolveReport = { total: 0, byXref: 0, byDst: 0, byName: 0, byTeam: 0, unresolved: 0, examples: [] };
   return {
     report,
-    resolve(espnId, name, pos) {
+    resolve(espnId, name, pos, proTeam) {
       report.total++;
       const hit = xref.get(String(espnId));
       if (hit) { report.byXref++; return { sk: hit, how: "xref" }; }
@@ -87,6 +109,10 @@ export function buildEspnResolver(db: DB): { resolve(espnId: string, name: strin
       }
       const nk = byName.get(`${nameKey(name)}|${(pos ?? "").toUpperCase()}`);
       if (nk) { report.byName++; return { sk: nk, how: "name+pos" }; }
+      // STAGE 4, additive: the shared name/position/TEAM resolver. Reached only when the three above
+      // have missed, so it can add a resolution and never change one.
+      const s4 = sk.resolve({ name, pos, team: proTeam ?? null });
+      if (s4) { report.byTeam++; return { sk: s4, how: proTeam ? "name+pos+team" : "name+pos (sk)" }; }
       report.unresolved++;
       if (report.examples.length < 12) report.examples.push(`${name || "(no name)"} [${pos}] espn=${espnId}`);
       return null;
@@ -111,6 +137,10 @@ export interface AsOfState {
   rostered: Set<string>;
   /** Player ids the resolver could not place. Reported, not hidden. */
   unresolved: number;
+  /** `nameKey|POS` of every ROSTERED man the resolver could not place. He has no surrogate key, so
+   *  he cannot be in `rostered` -- and without this the free-agent pool, which is "everyone not in
+   *  `rostered`", would offer him as a signing. See the comment at the skip. */
+  unresolvedKeys: Set<string>;
 }
 
 /**
@@ -133,16 +163,26 @@ export function asOfRosterState(
   ).get(season, week) as { last: string | null } | undefined;
   const res = resolver ?? buildEspnResolver(db);
   const rows = db.prepare(
-    `SELECT team_id, espn_player_id, name, position, lineup_slot_id, is_starter
+    `SELECT team_id, espn_player_id, name, position, lineup_slot_id, is_starter, pro_team
        FROM raw_league_roster_week WHERE league_id=? AND season=? AND week=?`,
   ).all(leagueId, season, week) as
-    { team_id: string; espn_player_id: string; name: string; position: string; lineup_slot_id: number; is_starter: number }[];
+    { team_id: string; espn_player_id: string; name: string; position: string; lineup_slot_id: number; is_starter: number; pro_team: string | null }[];
   const rosters: RosterEntry[] = [];
   const rostered = new Set<string>();
+  const unresolvedKeys = new Set<string>();
   let unresolved = 0;
   for (const r of rows) {
-    const hit = res.resolve(r.espn_player_id, r.name, r.position);
-    if (!hit) { unresolved++; continue; }
+    const hit = res.resolve(r.espn_player_id, r.name, r.position, r.pro_team);
+    if (!hit) {
+      unresolved++;
+      // AN UNRESOLVED *ROSTERED* MAN MUST NOT BECOME A FREE AGENT. He is skipped from `rosters`
+      // because there is no key to carry him under -- but `rostered` is what the FA pool is
+      // subtracted from, so leaving him out of BOTH puts a man twelve managers already own into the
+      // pool a waiver policy chooses from. His name+position is recorded so the pool can exclude him
+      // even where his surrogate key is unknown.
+      unresolvedKeys.add(`${nameKey(r.name)}|${(r.position ?? "").toUpperCase()}`);
+      continue;
+    }
     rostered.add(hit.sk);
     rosters.push({
       teamId: r.team_id, playerSk: hit.sk, espnPlayerId: r.espn_player_id, name: r.name, pos: r.position,
@@ -150,7 +190,7 @@ export function asOfRosterState(
       lineupSlotId: r.lineup_slot_id, isStarter: !!r.is_starter,
     });
   }
-  return { season, week, asOf: prev?.last ?? null, firstKickoff: kick?.first ?? null, rosters, rostered, unresolved };
+  return { season, week, asOf: prev?.last ?? null, firstKickoff: kick?.first ?? null, rosters, rostered, unresolved, unresolvedKeys };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -301,6 +341,9 @@ export function buildRosterState(db: DB, leagueId: string, seasons: number[], op
           // available would put phantom players in the pool a waiver policy chooses from.
           if (p.player_sk == null || p.player_sk === "") continue;
           if (state.rostered.has(p.player_sk)) continue;
+          // ...and not a rostered man whose identity we simply failed to resolve. Without this the
+          // pool offers five men the twelve managers already own (measured, Yahoo week 1).
+          if (state.unresolvedKeys.has(`${nameKey(p.name)}|${(p.pos ?? "").toUpperCase()}`)) continue;
           upFa.run({ lg: leagueId, s: season, w: week, sk: p.player_sk, p: p.pos, n: p.name, pts: p.pts ?? 0, ros: round2(p.ros), g: p.games, now: built });
           counts.faRows++;
         }

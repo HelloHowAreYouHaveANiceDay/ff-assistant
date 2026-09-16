@@ -392,11 +392,56 @@ function buildTools(dbPath: string | undefined, season: number) {
       ...(browserTools(tool as never, dbPath) as never[]),
       tool(
         "discover_leagues",
-        "Browse MY ESPN fantasy home and list my leagues/teams (leagueId, season, team) by reading page links -- more reliable than guessing IDs. Saves them to the store.",
+        "Browse MY fantasy homes on EVERY platform that has an adaptor (ESPN and Yahoo) and list my leagues/teams (leagueId, season, team) by reading the pages. Saves them to the store, each row stamped with the platform that found it.",
         {},
         async () => {
+          /**
+           * THE WRITER, shared by both platforms' halves (WP9).
+           *
+           * `team_id` is COALESCEd, not overwritten. A platform read that cannot see our seat returns
+           * null there -- that means "this read cannot tell", never "we have no team" -- and blanking
+           * `league.team_id` breaks every verb that needs it while looking exactly like a successful
+           * discovery. Same rule `LeagueSettings.teamId` states for `league_sync`.
+           */
+          const writeLeagues = (
+            db: ReturnType<typeof openDb>, platform: string,
+            found: { leagueId: string; season: number | null; teamId: string | null; name: string | null }[],
+            now: string,
+          ): void => {
+            const stmt = db.prepare(
+              "INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?, ?, ?, ?, ?, ?) " +
+              "ON CONFLICT(league_id) DO UPDATE SET platform=excluded.platform, name=COALESCE(excluded.name, league.name), " +
+              "season=excluded.season, team_id=COALESCE(excluded.team_id, league.team_id), last_synced_at=excluded.last_synced_at");
+            for (const l of found) stmt.run(l.leagueId, platform, l.name || null, l.season ?? null, l.teamId || null, now);
+          };
+
+          /**
+           * THE YAHOO HALF. It does NOT reuse the ESPN half's browser: Yahoo's pages are
+           * server-rendered, so one credentialed GET inside the `yahooview` guest is the whole read,
+           * and driving a Playwright page at the ESPN webview (which is what `rendererPage` returns)
+           * would have produced an ESPN-shaped answer about Yahoo. Failure here is REPORTED and does
+           * not abort the ESPN half -- being signed out of one platform is not a reason to discover
+           * nothing.
+           */
+          const discoverYahoo = async (wantSeason: number): Promise<{ line: string; found: { leagueId: string; season: number | null; teamId: string | null; name: string | null }[] }> => {
+            try {
+              const { yahooPlatform } = await import("../league/yahoo.js");
+              const io = platformIO(yahooPlatform.webview.host);
+              const found = await yahooPlatform.discover(io, wantSeason);
+              return { line: found.length ? `found ${found.length} yahoo league(s):\n` + found.map((l) => `leagueId ${l.leagueId}, season ${l.season ?? "?"}, team ${l.teamId || "?"}${l.name ? `, "${l.name}"` : ""}`).join("\n") : "no yahoo leagues", found };
+            } catch (e) { return { line: `yahoo: ${String((e as Error).message).slice(0, 160)}`, found: [] }; }
+          };
+
           const { browser, page } = await rendererPage();
-          if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "app not available" }] }; }
+          if (!page) {
+            // Still do the Yahoo half: it needs the bridge, not a CDP page.
+            await browser?.close().catch(() => {});
+            const db = openDb(dbPath);
+            const y = await discoverYahoo(getConfig(db).season);
+            writeLeagues(db, "yahoo", y.found, new Date().toISOString());
+            db.close();
+            return { content: [{ type: "text", text: `espn: app CDP not available.\n${y.line}` }] };
+          }
           try {
             await wvNavigate(page, "https://fantasy.espn.com/football/");
             await page.waitForTimeout(2500);
@@ -423,10 +468,15 @@ function buildTools(dbPath: string | undefined, season: number) {
             // is now a fact the platform states about itself rather than a string typed at the call
             // site, which is what made `discover_leagues` unable to ever produce a Yahoo row.
             const platform = espnPlatform.id;
-            for (const l of keep) db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(league_id) DO UPDATE SET platform=excluded.platform, name=COALESCE(excluded.name, league.name), season=excluded.season, team_id=excluded.team_id, last_synced_at=excluded.last_synced_at").run(l.leagueId, platform, l.name || null, l.season ?? null, l.teamId || null, now);
+            writeLeagues(db, platform, keep, now);
+            // BOTH PLATFORMS, ALWAYS (WP9). This verb wrote ESPN rows only, so the Yahoo league had to
+            // be typed into the store by hand -- and a hand-made row is a row nothing can re-derive.
+            const y = await discoverYahoo(wantSeason);
+            writeLeagues(db, "yahoo", y.found, now);
             db.close();
             const skipLine = skipped.length ? `\n(skipped ${skipped.length} link(s) for another season: ${skipped.map((l) => `${l.leagueId}/${l.season ?? "?"}`).join(", ")})` : "";
-            return { content: [{ type: "text", text: keep.length ? `found ${keep.length} ${platform} league(s):\n` + keep.map((l) => `leagueId ${l.leagueId}, season ${l.season ?? "?"}, team ${l.teamId || "?"}${l.name ? `, "${l.name}"` : ""}`).join("\n") + skipLine : "no league links on the fantasy home -- navigate into a team page + read_page, or confirm I'm logged in" + skipLine }] };
+            const espnLine = keep.length ? `found ${keep.length} ${platform} league(s):\n` + keep.map((l) => `leagueId ${l.leagueId}, season ${l.season ?? "?"}, team ${l.teamId || "?"}${l.name ? `, "${l.name}"` : ""}`).join("\n") + skipLine : "no league links on the fantasy home -- navigate into a team page + read_page, or confirm I'm logged in" + skipLine;
+            return { content: [{ type: "text", text: `${espnLine}\n${y.line}` }] };
           } catch (e) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "discover error: " + String(e).slice(0, 120) }] }; }
         },
       ),

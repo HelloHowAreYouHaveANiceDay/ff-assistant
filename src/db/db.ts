@@ -399,6 +399,21 @@ function addColumns(db: DB): void {
     ["feat_player_season", "own_games_usage", "INTEGER"],
     // A crosswalk key that stands for more than one real person. See player_ids_variant.
     ["player_ids", "ambiguous", "INTEGER"],
+    // THE NFL TEAM A ROSTERED MAN PLAYED FOR THAT WEEK, where the platform publishes it (WP9).
+    //
+    // Additive, and it exists for ONE reason: identity. `raw_league_roster_week` is resolved to a
+    // player_sk by the platform's own player id, and a platform with no cross-reference in this store
+    // (Yahoo) falls through to a name+position match -- which is exactly where `nameKey` collapses a
+    // generational suffix onto the father. Marvin Harrison Jr. and Michael Pittman Jr. are each a WR
+    // whose father is also a WR, and DJ Moore is two different receivers; all three are unresolvable
+    // by name and position and trivially resolvable with the team. Measured on the Yahoo league's
+    // week 1 before this column existed: 5 of 207 rostered men unresolved -- and an unresolved
+    // ROSTERED man does not merely go missing, he reappears in `fact_fa_pool_week` as a free agent
+    // nobody can actually sign, and his points drop out of his team's `started_pts`.
+    //
+    // NULL where the platform's feed does not carry it, which is the honest value: the ESPN boxscore
+    // ingester does not write it today and its rows resolve by ESPN id anyway.
+    ["raw_league_roster_week", "pro_team", "TEXT"],
     // WHERE A CONTEXT ROW CAME FROM, and it is load-bearing rather than descriptive.
     //
     // `feat_player_week_context` now has TWO builders under two different guarantees. The historical
