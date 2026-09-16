@@ -71,8 +71,14 @@ test("stepsFor resolves in REGISTRY order and de-dupes, skipping unknowns", () =
 });
 
 test("every registry routine names verbs that the tick's handler map can run", () => {
-  // The tick maps these four verbs to handlers; a routine that named anything else would SKIP silently.
-  const known = new Set(["sync-actuals", "scorecard", "refresh-decisions", "sync-league"]);
+  // The tick maps these verbs to handlers; a routine that named anything else would SKIP silently.
+  // `ingest-source` joined the map with the M2b `rankings` routine -- and this assertion is what
+  // caught that the routine had originally named `ingest-raw`, which `cmdIngestRaw` refuses for any
+  // id outside RAW_ASSETS. THE LIST IS A MIRROR OF `HANDLERS` IN src/ff.ts AND ROTS IF THAT MAP
+  // GROWS: it is kept because the map lives inside a function that cannot be imported without
+  // running the CLI, so a derived check is not available. Adding a verb here without adding it there
+  // reinstates exactly the silent skip this test exists to prevent.
+  const known = new Set(["sync-actuals", "scorecard", "refresh-decisions", "sync-league", "ingest-source"]);
   for (const [name, r] of Object.entries(ROUTINES)) {
     for (const [verb] of r.steps) {
       assert.ok(known.has(verb), `routine ${name} names verb "${verb}" that inseason-tick has no handler for`);

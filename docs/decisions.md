@@ -1084,6 +1084,95 @@ the app on which `ok:false` could appear -- now `ok`, and Status renders a faili
 `/write-transaction`'s guest resolution (the last bridge route still using
 `getElementById("espnview")`, the pattern the P-3 no-fallback fix converted its five siblings off).
 
+## D27 -- The weekly expert consensus is SERVABLE; the candidate awaits promotion (2026-09-16, **PENDING OWNER SIGN-OFF -- NOT APPLIED**)
+
+**Nothing in this entry has been applied.** `WEEKLY_SERVE` is unchanged, all four served weekly
+artifacts are byte-identical (`data/weekly-artifact.json` md5 `a3871f4c489164abbda8e29734b16f53`),
+no default feature list moved, and the candidate model serves nothing. Full evidence:
+`docs/weekly-ecr-screen-2026-09-16.md` sections 11-17.
+
+**What D19 held this feature back for is now fixed.** M2a admitted `ecr_wk_rank` on the measurement
+(+0.04134 pooled CRPS on 2020-2024, floor 0.01650, 5/0 seasons, with an exact +0.00015 null on the
+eight seasons the column does not cover) and then declared it **dead at serve**: the archive stops at
+2024-12-27 and the live feed (`weekly_rank`) was `DELETE`d on every ingest. M2b built the retention.
+`ingestWeekly` now ALSO appends each scrape into `ranking_history` as `ecr_type = 'wp'` on the
+archive's own primary key, so `ecrWeekTable` serves 2026 with **no change of its own**. First
+retained scrape **2026-09-16, 815 rows, every fielded position**; a second run of the same ingest
+adds 0 rows and reports 815 conflicts, so the append is idempotent AND demonstrably ran.
+**Backfill is impossible** -- the feed publishes only the latest scrape and every earlier one was
+overwritten in place, so 2025-01 to 2026-09-15 is a permanent hole.
+
+**The live column works.** 2026 week 2 (the live week): 395/532 rows carry a value, 236/295 of the
+decision population, 8 of our 12 rostered men. Every gap is a refusal firing, not a hole -- the 19
+BUF/DET NULLs are the Thursday game whose kickoff-minus-two anchor (09-15) precedes the scrape, and
+weeks 4+ are all past the 8-day staleness bound. `scripts/ecr-week-leak-guard.mjs --seasons 2020-2026`
+holds with **both fault injections firing on the 2026 rows specifically** (48 rows move under a
+leaked cutoff, 369 under a shifted anchor). That guard's era bound was itself repaired in this pass:
+its covered-season list was the literal `2019..2024` and is now derived from `ranking_history`, so a
+correct live season passes rather than failing a snapshot of the day it was written.
+
+**The candidate.** `data/weekly-artifact.candidate-ecr.json` -- the shipped recipe plus the two
+names, same `populationHash 7ca2e2be49fc5aa7` / `populationRows 84582`, 27 features, golden block
+recomputed to 1e-6 by the consumer's loader. **The decisive control: the same command with the 25
+features only reproduces `data/weekly-artifact.json` byte-for-byte**, so every candidate-vs-served
+difference is the two columns' presence in the design and nothing else.
+
+**Two things the owner must weigh, and the second is the reason this is a decision rather than a
+formality.**
+
+1. **The lever is connected on live 2026 rows.** Lamar Jackson moves **+5.02** on the column's value
+   alone (16.04 with `ecr_wk_*` blanked -> 21.06 with them); Jared Goff, whose column is NULL, moves
+   exactly 0.00. QB carries most of its own movement (0.474 of a 0.543 mean absolute move).
+
+2. **But most of the live movement is NOT the consensus.** Over the 463 QB/RB/WR/TE rows of week 2,
+   mean |candidate - served| is 0.548 points, of which only **0.238** survives as |candidate -
+   candidate-with-the-columns-blanked|. At WR it is 0.198 of 0.770: Puka Nacua's -15.11 is almost
+   entirely the REFIT (12.32 vs 12.12 blanked). Adding two mostly-NULL columns re-splits every tree
+   and, through the new `ecr` mask group at `MASK_DROP_P = 0.97`, changes the missingness
+   augmentation -- which bites hardest where the vector is most imputed, and 2026 rows are exactly
+   that regime (the D19 fragility by name). This does not contradict M2a's negative control: that
+   control says the perturbation is a WASH on measured CRPS, not that it is small per player.
+   Both are true. The direction *looks* like a correction (Nacua's served 27.43 is 2.3x his own
+   12.05 season line off a 9.9-point week 1; the candidate returns him to ~1.0x) but "looks more
+   sensible" is not a measurement.
+
+**The live decision it changes this week: none.** The starting eleven is identical under both
+artifacts -- Likely and Loveland merely swap the TE and FLEX slots -- and all four streaming picks
+(QB/RB/WR/TE) are unchanged.
+
+**A forward record is already accruing, deliberately ahead of the decision.** A new write-once
+scorecard kind `weekly_ecr_candidate` (model `ecr_candidate`) froze **530 week-2 rows** on the same
+players, week and `as_of` as the shipped `weekly` and `weekly_challenger` rows, each stamped with the
+candidate's artifact and `"served": false`. 2026-09-16 was the LAST legal day to snapshot week 2, so
+waiting for the sign-off would have cost that week permanently. Re-freezing refuses. If the answer is
+no, the series records a model that was rejected, which costs nothing.
+
+**The cadence is built but NOT enabled, and that is the one live-behaviour change left.** A `rankings`
+routine (`ff ingest-source weekly`, verified end-to-end through `ff inseason-tick --routines rankings`
+after `test/routines.test.ts` caught it first naming `ingest-raw`, which refuses a non-RAW id, and
+`ingest-source` being absent from the tick's HANDLERS map, where an unmapped verb is skipped
+silently) is FIRST in the registry -- ahead of `actuals`, which rebuilds the
+forward rows, and `scorecard`, which freezes them -- and is in `DEFAULT_ROUTINES`. The live store's
+STORED `settings.scheduler` row overrides that entirely and does not list it, so on this machine the
+routine exists and never fires. Writing that row is an outward-facing change to a running app and was
+left for the sign-off (charter rule 1). **It is worth running even if the model is rejected**: the
+archive cannot be backfilled, so every week it is not accruing is permanently missing from any future
+screen.
+
+**Promote / roll back**: docs/weekly-ecr-screen-2026-09-16.md section 16. Promotion is a file copy
+(`weekly-artifact.candidate-ecr.json` over `weekly-artifact.json`, which `WEEKLY_SERVE` already names
+at QB/RB/WR/TE) plus the `ff schedule --routines rankings,...` line; rollback is the reverse copy.
+The store writes are independently reversible from `data/ff.db.bak-prem2b-2026-09-16`.
+
+**Two follow-ups this work surfaced and did not do.** (a) **The retention does not reach the per-format
+stores.** `data/formats/sc-a845f67652fb/features.db` carries its own copy of `ranking_history` frozen
+at 67,991 rows (2024), because `features.db` is a `copyFileSync` of the root store taken on the last
+FULL build and `--weekly-only` skips it -- so a Yahoo rebuild today would write an all-NULL 2026
+column, the same dead-at-serve state one store further out. That must land before any Yahoo screen,
+which is why Yahoo 129048 is NOT measured here. (b) The DST name-key gap is unchanged (`Denver
+Broncos` vs `DEN D/ST`); it costs nothing today because DST is `POS_INTERCEPT_ONLY` and is served by
+the D20 matchup model.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

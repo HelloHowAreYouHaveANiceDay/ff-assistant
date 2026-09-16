@@ -178,7 +178,7 @@ export async function ingestAll(dbPath?: string): Promise<void> {
   const news = await ingestNews(db, SEASON); // needs the player table (ecr) for RSS tagging
   const adv = await ingestAdvanced(db, SEASON); // snap % + PFR efficiency
   const tv = await ingestTradeValues(db);       // trade values
-  const wk = await ingestWeekly(db);            // FantasyPros weekly ranks
+  const wk = await ingestWeekly(db);            // FantasyPros weekly ranks (live table + kept snapshot)
   const scoring = cfg.scoring;
   const sleeper = await ingestSleeper(db);      // Sleeper live injury/depth + add/drop trending
   const odds = await ingestOdds(db);            // ESPN Vegas implied team totals
@@ -189,7 +189,7 @@ export async function ingestAll(dbPath?: string): Promise<void> {
   setSetting(db, "last_ingest", nowIso());
   setSetting(db, "season", String(SEASON));
   const newsTotal = Object.values(news).reduce((a, b) => a + b, 0);
-  console.log(`ingest ok (${Date.now() - t0}ms, season ${SEASON}): players=${ecr.players} ecr=${ecr.rankings} bio=${bio} byes=${byes} news=${newsTotal} advanced(snap=${adv.snap} pfr=${adv.pfr}) trade_values=${tv} weekly=${wk} status=${sleeper.status} trending=${sleeper.trending} odds=${odds} boris=${boris} adp=${adp} market=${mkt}`);
+  console.log(`ingest ok (${Date.now() - t0}ms, season ${SEASON}): players=${ecr.players} ecr=${ecr.rankings} bio=${bio} byes=${byes} news=${newsTotal} advanced(snap=${adv.snap} pfr=${adv.pfr}) trade_values=${tv} weekly=${wk.live}(kept +${wk.archived} @${wk.scrapeDates.join("/") || "none"}) status=${sleeper.status} trending=${sleeper.trending} odds=${odds} boris=${boris} adp=${adp} market=${mkt}`);
   db.close();
 }
 
@@ -530,7 +530,11 @@ export const L1_ASSETS: L1Asset[] = [
   { id: "byes", reads: ["src_nflverse"], writes: ["team_bye", "game"] },
   { id: "advanced", reads: ["src_nflverse"], writes: ["player_advanced"] },
   { id: "trade", reads: ["src_dproc"], writes: ["trade_value"] },
-  { id: "weekly", reads: ["src_fp"], writes: ["weekly_rank"] },
+  // `weekly_rank` FIRST and that order is load-bearing: `l1.writes[0]` is the table the ingest audit
+  // reads back, and the audit must count the rows the reported number is about. `ranking_history` is
+  // the M2b point-in-time RETENTION of the same scrape (src/data/advanced.ts) -- declared here so the
+  // lineage graph shows the second edge, not counted there.
+  { id: "weekly", reads: ["src_fp"], writes: ["weekly_rank", "ranking_history"] },
   { id: "status", reads: ["src_sleeper"], writes: ["player_status", "trending"] },
   { id: "odds", reads: ["src_espn"], writes: ["team_odds"] },
   { id: "boris", reads: ["src_boris"], writes: ["boris_tier"] },
@@ -611,7 +615,13 @@ export async function ingestOne(dbPath: string | undefined, id: string, opts: { 
     case "byes": rows = await ingestByes(db, SEASON); break;
     case "advanced": rows = (await ingestAdvanced(db, SEASON)).snap; break;
     case "trade": rows = await ingestTradeValues(db); break;
-    case "weekly": rows = await ingestWeekly(db); break;
+    // `rows` is the LIVE table's count, because that is what `L1_ASSETS["weekly"].writes[0]`
+    // (`weekly_rank`) reads back below. The kept snapshot is an APPEND to a second table and is
+    // reported separately -- counting it here would make the audit's readback disagree with the
+    // number it is auditing, which is the shape of a validation that cannot fail.
+    case "weekly": { const w = await ingestWeekly(db); rows = w.live;
+      console.log(`  weekly consensus retained: +${w.archived} new ranking_history rows (${w.archiveIgnored} already held) at scrape ${w.scrapeDates.join("/") || "none"}`);
+      break; }
     case "status": rows = (await ingestSleeper(db)).status; break;
     case "odds": rows = await ingestOdds(db); break;
     case "boris": rows = await ingestBorisTiers(db, scoring); break;

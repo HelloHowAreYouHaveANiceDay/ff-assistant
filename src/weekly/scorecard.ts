@@ -28,6 +28,7 @@
  *             not manufacture one.
  */
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { openDb, nowIso, activeLeagueId, getConfig, type DB } from "../db/db.js";
 import { scoringKeyFor } from "../data/formatKey.js";
 import {
@@ -68,8 +69,37 @@ export const SC_BASELINE: ScorecardModel = "shipped_week";
  * choose from. Mixing an unshipped model into `weekly` would make its lineup column read as a
  * lineup somebody could have set.
  */
-export const SCORECARD_KINDS = ["weekly", "weekly_challenger", "stream"] as const;
+export const SCORECARD_KINDS = ["weekly", "weekly_challenger", "weekly_ecr_candidate", "stream"] as const;
 export type ScorecardKind = typeof SCORECARD_KINDS[number];
+
+/**
+ * THE `weekly_ecr_candidate` KIND: A FORWARD RECORD FOR A MODEL THAT IS NOT SERVED (M2b, 2026-09-16).
+ *
+ * `data/weekly-artifact.candidate-ecr.json` is the shipped weekly recipe plus two columns --
+ * `ecr_wk_rank` / `ecr_wk_sd`, the point-in-time weekly expert consensus (M2a,
+ * docs/weekly-ecr-screen-2026-09-16.md). It is a CANDIDATE awaiting owner sign-off and it serves
+ * nothing: it is absent from `WEEKLY_SERVE`, from `ARTIFACT_OF`, and from every default.
+ *
+ * WHY IT IS FROZEN ANYWAY, AND WHY THAT IS THE POINT. The admission evidence so far is a backtest --
+ * exactly the arrangement the header of this file says keeps producing numbers that do not survive a
+ * new season. The only measurement that cannot be gamed is a prediction written before kickoff, and
+ * a prediction can only be written before a kickoff that has not happened. Waiting for the sign-off
+ * to start the record would mean the record starts weeks late, and the weeks it missed can never be
+ * recovered -- so the candidate's week is frozen NOW, on the same players, in the same week, with
+ * the same `as_of` as the shipped and challenger rows, under its own kind so it can never be
+ * mistaken for a lineup somebody could have set.
+ *
+ * IF THE SIGN-OFF SAYS NO, the series is a record of a model that was rejected, which is worth
+ * keeping and costs nothing. If it says YES, the promoted model arrives with out-of-sample evidence
+ * that predates its own promotion. Both readings need the rows to exist before the decision.
+ *
+ * SAME REFUSALS AS EVERY OTHER KIND: `INSERT OR IGNORE` (re-freezing writes nothing), and it sits
+ * inside the same late-snapshot guard, so a week whose first kickoff has passed is not written.
+ * The artifact is OPTIONAL on disk: absent, the kind is skipped and says so -- it must never fall
+ * back to the shipped artifact, which would record the incumbent's numbers under the candidate's
+ * name and make the two look identical forever.
+ */
+export const ECR_CANDIDATE_WEEKLY_ARTIFACT = "weekly-artifact.candidate-ecr.json";
 
 /**
  * THE `stream` KIND: ONE PICK PER POSITION PER WEEK, frozen before kickoff.
@@ -163,6 +193,9 @@ export interface ScorecardOpts {
   artifactPath?: string;
   /** The challenger, snapshotted under its own kind. Defaults to `CHALLENGER_WEEKLY_ARTIFACT`. */
   challengerArtifactPath?: string;
+  /** The ECR candidate (M2b), snapshotted under `weekly_ecr_candidate`. Defaults to the FORMAT's
+   *  `ECR_CANDIDATE_WEEKLY_ARTIFACT`; absent on disk, the kind is skipped and says so. */
+  ecrCandidateArtifactPath?: string;
   /**
    * WHICH FREEZE OF THE ODDS THIS IS. 0 (the default) is the preseason snapshot. A later number
    * writes a SECOND series rather than touching the first, which is the only honest way to record
@@ -214,6 +247,8 @@ export interface ScorecardResult {
   servedBy?: Record<string, string>;
   /** The `weekly_challenger` kind: the two-part model, same players, same frozen as-of. */
   challenger: { week: number | null; taken: number; skipped: string | null };
+  /** The `weekly_ecr_candidate` kind (M2b): the unserved ECR candidate, same players, same as_of. */
+  ecrCandidate: { week: number | null; taken: number; skipped: string | null; artifact: string | null };
   /** The `stream` kind: one pick per position out of the pool, plus the board's pick beside it. */
   stream: { week: number | null; taken: number; skipped: string | null; artifactByPos: Record<string, string> };
   espn: { attempted: boolean; ok: boolean; reason: string; stored: number };
@@ -524,6 +559,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
     season: opts.season, today, imminentWeek: null,
     snapshot: { week: null, taken: 0, skipped: null, byModel: {} },
     challenger: { week: null, taken: 0, skipped: null },
+    ecrCandidate: { week: null, taken: 0, skipped: null, artifact: null },
     stream: { week: null, taken: 0, skipped: null, artifactByPos: {} },
     espn: { attempted: false, ok: false, reason: "not attempted", stored: 0 },
     seasonKind: { taken: 0, skipped: null },
@@ -565,6 +601,21 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
       challenger = loadWeeklyArtifact(JSON.parse(readFileSync(opts.challengerArtifactPath ?? fmt.model.path("weekly"), "utf8")));
     } catch (e) {
       challengerWhy = `no challenger artifact to snapshot (${(e as Error).message})`;
+    }
+
+    // THE ECR CANDIDATE (M2b). Resolved beside the FORMAT's own weekly artifact -- not through
+    // `dataPath` -- for the F-4/WP3 reason every other artifact here is: a Yahoo scorecard must not
+    // freeze rows produced by the incumbent's half-PPR model under the Yahoo format key. It is NOT
+    // in `ARTIFACT_OF`/`WEEKLY_SERVE` and must not be: it serves nothing.
+    const ecrCandPath = opts.ecrCandidateArtifactPath
+      ?? join(dirname(fmt.model.path("weekly")), ECR_CANDIDATE_WEEKLY_ARTIFACT);
+    let ecrCandidate: WeeklyArtifact | null = null;
+    let ecrCandidateWhy: string | null = null;
+    try {
+      ecrCandidate = loadWeeklyArtifact(JSON.parse(readFileSync(ecrCandPath, "utf8")));
+      res.ecrCandidate.artifact = ecrCandPath;
+    } catch (e) {
+      ecrCandidateWhy = `no ECR candidate artifact at ${ecrCandPath} -- the kind is skipped rather than served by something else (${(e as Error).message})`;
     }
 
     // ---------------- SNAPSHOT ----------------
@@ -667,6 +718,46 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           })();
           if (!res.challenger.taken) {
             notes.push(`week ${week}'s challenger snapshot was already taken -- written once, like every other prediction here.`);
+          }
+        }
+
+        // ---- weekly_ecr_candidate: the UNSERVED ECR candidate, same players, same as_of. ----
+        // Same shape as the challenger block above, deliberately: same row set (`loadWeeklyRows`
+        // filtered to a season line, which is the trainer's own row filter), same frozen `as_of`,
+        // same INSERT OR IGNORE. The ONE difference is that this model is not served anywhere, which
+        // is exactly why the record has to start before the decision rather than after it.
+        res.ecrCandidate.week = week;
+        if (!ecrCandidate) {
+          res.ecrCandidate.skipped = ecrCandidateWhy;
+        } else {
+          const insE = db.prepare(
+            `INSERT OR IGNORE INTO scorecard_prediction
+               (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at, ${SCORECARD_META_COLUMN})
+             VALUES (@fk,@season,@week,'weekly_ecr_candidate','ecr_candidate',@subject,@name,@pos,@value,@p10,@p90,@asOf,@now,@meta)`,
+          );
+          const nowE = nowIso();
+          // The artifact's own stamp travels with every row. A candidate that is retrained during
+          // the season would otherwise leave a series whose step change has no explanation in a
+          // table that cannot be edited -- the same reason the `weekly` rows carry `servedBy`.
+          const metaE = JSON.stringify({
+            artifact: ECR_CANDIDATE_WEEKLY_ARTIFACT, path: ecrCandPath,
+            fittedAt: (ecrCandidate as { fittedAt?: string }).fittedAt ?? null,
+            features: ecrCandidate.features.length, served: false,
+          });
+          const rowsE = loadWeeklyRows(db, opts.season, week).filter((r) => r.season_line_pg != null);
+          db.transaction(() => {
+            for (const p of projectWeekly({ artifact: ecrCandidate!, rows: rowsE })) {
+              if (!Number.isFinite(p.mean)) continue;
+              const info = insE.run({
+                fk: fmtKey, season: opts.season, week, subject: p.feat_key, name: p.name, pos: p.pos,
+                value: p.mean, p10: Number.isFinite(p.p10) ? p.p10 : null,
+                p90: Number.isFinite(p.p90) ? p.p90 : null, asOf, now: nowE, meta: metaE,
+              });
+              if (info.changes) res.ecrCandidate.taken++;
+            }
+          })();
+          if (!res.ecrCandidate.taken) {
+            notes.push(`week ${week}'s ECR-candidate snapshot was already taken -- written once, like every other prediction here.`);
           }
         }
 
@@ -811,6 +902,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         if (!frozen.length) {
           if (kind === "weekly") notes.push(`week ${week} is settled but was never snapshotted -- nothing to score`);
           else if (kind === "stream") notes.push(`week ${week} has no frozen streaming picks -- nothing to score for ${kind}`);
+          else if (kind === "weekly_ecr_candidate") notes.push(`week ${week} has no ECR-candidate snapshot -- nothing to score for ${kind}`);
           else if (week >= CHALLENGER_FIRST_WEEK) notes.push(`week ${week} has no challenger snapshot -- nothing to score for ${kind}`);
           continue;
         }
@@ -830,7 +922,11 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         // put a projection for a man nobody picked into a table about who was picked, and
         // lineupRegret would then draw rosters out of six players. The challenger needs them (its
         // lineup column is scored against SC_BASELINE and it holds exactly one model); this does not.
-        const companions = kind !== "weekly_challenger" ? [] : db.prepare(
+        // `weekly_ecr_candidate` needs them for the SAME reason the challenger does and on the same
+        // terms: it holds exactly one model, so without the shipped kind's rows beside it its lineup
+        // column has nothing to be regret against and is left NaN.
+        const WHOLE_FIELD_KINDS = new Set<ScorecardKind>(["weekly_challenger", "weekly_ecr_candidate"]);
+        const companions = !WHOLE_FIELD_KINDS.has(kind) ? [] : db.prepare(
           "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE format_key = ? AND season = ? AND week = ? AND kind = 'weekly'",
         ).all(fmtKey, opts.season, week) as typeof frozen;
         const bySubject = new Map<string, Scored1>();
@@ -961,6 +1057,11 @@ export function formatScorecard(r: ScorecardResult): string {
   }
   if (r.challenger.skipped) out.push(`  challenger:  week ${r.challenger.week ?? "-"}: SKIPPED -- ${r.challenger.skipped}`);
   else out.push(`  challenger:  week ${r.challenger.week}: ${r.challenger.taken} rows from ${CHALLENGER_WEEKLY_ARTIFACT} (kind weekly_challenger, model two_part), series starts week ${CHALLENGER_FIRST_WEEK}`);
+  if (r.ecrCandidate?.skipped) out.push(`  ecr cand:    week ${r.ecrCandidate.week ?? "-"}: SKIPPED -- ${r.ecrCandidate.skipped}`);
+  else if (r.ecrCandidate) {
+    out.push(`  ecr cand:    week ${r.ecrCandidate.week}: ${r.ecrCandidate.taken} rows from ${ECR_CANDIDATE_WEEKLY_ARTIFACT} ` +
+      "(kind weekly_ecr_candidate, model ecr_candidate) -- NOT SERVED; a forward record for an admission awaiting sign-off");
+  }
   // OPTIONAL ACCESS ON PURPOSE. `formatScorecard` is also called on hand-built result objects, and a
   // formatter that throws on a field a caller did not supply turns a reporting concern into a crash
   // at the end of a run that has already written its predictions.

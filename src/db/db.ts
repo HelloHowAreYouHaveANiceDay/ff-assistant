@@ -491,6 +491,11 @@ function addColumns(db: DB): void {
     // WEEKLY candidates (2026-09-15): rolling season-to-date red-zone touch share, and prior-season volatility.
     ["feat_player_week_model", "rz_share_td", "REAL"],
     ["feat_player_week_model", "prior_vol_cv", "REAL"],
+    // WEEKLY EXPERT CONSENSUS candidate (M2a, 2026-09-16): FantasyPros' weekly positional consensus
+    // rank and its panel dispersion, as of this team's kickoff minus two days. Declared-not-fitted;
+    // the archive covers 2020-2024 only, so every other season is NULL by construction.
+    ["feat_player_week_model", "ecr_wk_rank", "REAL"],
+    ["feat_player_week_model", "ecr_wk_sd", "REAL"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];

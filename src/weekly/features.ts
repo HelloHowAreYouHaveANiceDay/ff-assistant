@@ -64,6 +64,12 @@ export const WEEKLY_FEATURE_FIELDS = [
   "td_fd", "td_ts", "td_attempts", "td_rush_yards",
   "rz_share_td",   // rolling season-to-date red-zone touch share (pbp), point-in-time -- 2026-09-15 candidate
   "prior_vol_cv",  // prior-season weekly CV (volatility), always-present -- 2026-09-15 candidate
+  // THE WEEKLY EXPERT CONSENSUS (M2a, 2026-09-16 candidate). FantasyPros' WEEKLY positional consensus
+  // rank and its dispersion, from `ranking_history` where `ecr_type = 'wp'`, taken from the LATEST
+  // scrape dated at or before this team's Friday cutoff. See `ecrWeekTable` for the as-of rule and
+  // the era bound: the archive's weekly scrapes exist for 2020-2024 ONLY, so every other season is
+  // MISSING by construction and the live season has no row at all.
+  "ecr_wk_rank", "ecr_wk_sd",
   "home", "spread_line", "total_line", "implied_team_total", "days_rest",
   "season_line_pg", "week_no",
   // ---- THE AVAILABILITY BLOCK, from feat_player_week_context (the data track). See CONTEXT_FIELDS
@@ -160,6 +166,11 @@ export function ensureContextColumns(db: DB): void {
   if (!have.size) return;                              // table not created yet; schema.sql owns that
   for (const c of CONTEXT_FIELDS) {
     if (!have.has(c.name)) db.exec(`ALTER TABLE feat_player_week_model ADD COLUMN ${c.name} ${c.sql}`);
+  }
+  // The M2a consensus pair, for the same reason: `weekModelInsertSql` names them, so a store created
+  // before they were added to schema.sql would fail the INSERT rather than write a NULL.
+  for (const c of ECR_WEEK_FIELDS) {
+    if (!have.has(c)) db.exec(`ALTER TABLE feat_player_week_model ADD COLUMN ${c} REAL`);
   }
 }
 
@@ -525,6 +536,91 @@ export function priorSeasonVol(db: DB, season: number): Map<string, number> {
 }
 
 /**
+ * THE WEEKLY EXPERT CONSENSUS, POINT IN TIME (M2a candidate, 2026-09-16).
+ *
+ * `ranking_history` with `ecr_type = 'wp'` is FantasyPros' WEEKLY POSITIONAL consensus: for one
+ * scrape date and one position, `ecr` is already the within-position consensus rank (RB1 = 1.08 on
+ * 2023-10-13 is Christian McCaffrey), `sd` the dispersion of the expert panel around it. It is the
+ * one feed on this table that is a FORECAST rather than an accumulation -- it embeds injury news,
+ * role changes and matchup reads days before a box score does -- which is the whole hypothesis.
+ *
+ * THE AS-OF RULE, and it is the availability block's anchor rather than the league-wide one.
+ * The value is read from the LATEST `wp` scrape dated at or before `cutoff`, where cutoff is THIS
+ * TEAM'S kickoff minus two days -- the same cutoff `feat_player_week_context` uses for the Friday
+ * injury report, and for the same reason: it is strictly before this player's own kickoff, which is
+ * the only thing a lineup decision needs. The league-wide `as_of` (the day before the week's FIRST
+ * kickoff, i.e. Wednesday) would be too early to admit a Friday scrape at all, and this feed is
+ * scraped on Fridays -- so the strictly-safest anchor would produce an empty column rather than a
+ * safer one. A team playing Thursday gets a cutoff of Tuesday and therefore the PREVIOUS week's
+ * scrape, stale by seven days; that is what was actually knowable, and it is left stale rather than
+ * quietly advanced.
+ *
+ * STALENESS IS A REFUSAL, not a carry-forward. If the newest qualifying scrape is more than
+ * ECR_WEEK_MAX_AGE_DAYS old the value is NULL: a bye-week gap or a mid-season hole in the archive
+ * must not hand the model a three-week-old opinion wearing this week's name.
+ *
+ * A PLAYER ABSENT FROM THE QUALIFYING SCRAPE IS NULL, not backfilled from an older one. The list is
+ * the panel's answer for that week; a man who is not on it has no weekly consensus, and reaching
+ * back for his rank from an earlier week would report a stale opinion as a current one.
+ *
+ * ERA BOUND, stated rather than discovered later: the archive holds `wp` scrapes for **2020-2024
+ * only** (2019 carries a single stray December date). 2012-2019 and 2025-2026 are MISSING BY
+ * CONSTRUCTION -- there is no live weekly-consensus path in this store, so a model fitted on this
+ * column serves nothing forward until one exists. Same shape as `feat_injury_horizon` (docs/weekly.md
+ * section 5), and it must be read the same way.
+ */
+export const ECR_WEEK_MAX_AGE_DAYS = 8;
+/** The weekly-consensus feed's own position vocabulary -> ours. It publishes kickers as both. */
+const ECR_POS_ALIAS: Record<string, string> = { PK: "K", DEF: "DST", "D/ST": "DST" };
+
+export function ecrWeekTable(db: DB, season: number): {
+  /** `cutoff` is an ISO date: this team's kickoff minus two days. */
+  get(cutoff: string, name: string, pos: string): { ecr: number; sd: number | null } | null;
+  /** The scrape dates the season carries, ascending. Reported, so an empty column is never silent. */
+  dates: string[];
+} {
+  const rows = db.prepare(
+    `SELECT scrape_date, player_id, pos, ecr, sd FROM ranking_history
+      WHERE source = 'fantasypros' AND ecr_type = 'wp' AND season = ?`,
+  ).all(season) as { scrape_date: string; player_id: string; pos: string; ecr: number; sd: number | null }[];
+  // date -> `${name_key}|${pos}` -> value. One map per scrape so a lookup can never silently mix two.
+  const byDate = new Map<string, Map<string, { ecr: number; sd: number | null }>>();
+  for (const r of rows) {
+    const pos = ECR_POS_ALIAS[(r.pos ?? "").toUpperCase()] ?? (r.pos ?? "").toUpperCase();
+    if (!WEEKLY_POS.includes(pos)) continue;                 // IDP lists exist here; we field none
+    const m = byDate.get(r.scrape_date) ?? byDate.set(r.scrape_date, new Map()).get(r.scrape_date)!;
+    // A player ranked twice at one position on one date cannot happen (it is the primary key), so
+    // the first writer wins and there is nothing to reconcile.
+    m.set(`${r.player_id}|${pos}`, { ecr: r.ecr, sd: r.sd });
+  }
+  const dates = [...byDate.keys()].sort();
+  const dayOf = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 864e5;
+  return {
+    dates,
+    get(cutoff, name, pos) {
+      if (!cutoff || !dates.length) return null;
+      // The latest scrape at or before the cutoff. Linear from the end is fine: <=20 dates a season.
+      let chosen: string | null = null;
+      for (let i = dates.length - 1; i >= 0; i--) if (dates[i] <= cutoff) { chosen = dates[i]; break; }
+      if (!chosen) return null;
+      const age = dayOf(cutoff) - dayOf(chosen);
+      if (!Number.isFinite(age) || age > ECR_WEEK_MAX_AGE_DAYS) return null;
+      return byDate.get(chosen)!.get(`${nameKey(name)}|${pos}`) ?? null;
+    },
+  };
+}
+
+/** This team's kickoff minus two days -- the cutoff `ecrWeekTable` is read at, and the same cutoff
+ *  the Friday injury report uses. NULL where the team has no scheduled game (a bye), which is a row
+ *  the decision population excludes anyway. */
+export function ecrWeekCutoff(sched: ScheduleInfo, season: number, team: string | null, week: number): string | null {
+  const day = team ? sched.teamGameDay.get(`${season}|${team}|${week}`) : undefined;
+  if (!day) return null;
+  const t = Date.parse(`${day}T00:00:00Z`);
+  return Number.isFinite(t) ? new Date(t - 2 * 864e5).toISOString().slice(0, 10) : null;
+}
+
+/**
  * THE UPSERT, GENERATED FROM ONE COLUMN LIST rather than typed out twice.
  *
  * There were two copies of this statement -- the historical builder's and the forward builder's --
@@ -535,7 +631,8 @@ export function priorSeasonVol(db: DB, season: number): Map<string, number> {
 const WEEK_MODEL_BASE_COLS = [
   "feat_key", "player_sk", "season", "week", "as_of", "name", "pos", "team", "opponent", "home",
   "is_bye", "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
-  "td_attempts", "td_rush_yards", "rz_share_td", "prior_vol_cv", "dvp_mult", "dvp_n", "spread_line", "total_line",
+  "td_attempts", "td_rush_yards", "rz_share_td", "prior_vol_cv", "ecr_wk_rank", "ecr_wk_sd",
+  "dvp_mult", "dvp_n", "spread_line", "total_line",
   "implied_team_total", "days_rest", "pts",
 ];
 /** The three columns the conflict target keys on, which must not appear in the SET clause. */
@@ -662,6 +759,7 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
     const dvp = dvpTable(db, season);
     const rzShare = rzShareTable(db, season);
     const priorVol = priorSeasonVol(db, season);
+    const ecrWk = ecrWeekTable(db, season);
     const ctx = contextFor(db, season);
     const raw = db.prepare(
       `SELECT feat_key, player_sk, season, week, name, pos, team, opponent, home, is_bye,
@@ -743,6 +841,12 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
           rz_share_td: finite(rzShare.get(r.week, r.player_sk, r.team)),
           // prior-season weekly CV (volatility), constant across the season and always known.
           prior_vol_cv: finite(r.player_sk != null ? priorVol.get(String(r.player_sk)) ?? null : null),
+          // WEEKLY EXPERT CONSENSUS as of this team's kickoff minus two days. NULL outside 2020-2024,
+          // which is the whole archive, and NULL for anyone the panel did not rank that week.
+          ...(() => {
+            const e = ecrWk.get(ecrWeekCutoff(sched, season, r.team, r.week) ?? "", r.name, r.pos);
+            return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null };
+          })(),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           // schedule and market columns as published preseason / pre-kickoff.
           spread_line: finite(r.spread_line), total_line: finite(r.total_line),
@@ -781,13 +885,15 @@ export function weeklyCoverage(db: DB, seasons?: number[]): {
   const cols = [
     "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
     "td_attempts", "td_rush_yards", "dvp_mult", "home", "spread_line", "total_line",
-    "implied_team_total", "days_rest", "pts",
+    "implied_team_total", "days_rest", "pts", "ecr_wk_rank", "ecr_wk_sd",
     ...CONTEXT_FIELDS.map((c) => c.name),
   ];
   // A column this store does not HAVE reports 0, exactly like a column it has and never filled.
   // Both are "the model did not see it", which is what a coverage table is for.
-  const present = new Set<string>(presentContextFields(db).map((c) => String(c.name)));
-  const isContext = new Set<string>(CONTEXT_FIELDS.map((c) => String(c.name)));
+  const present = new Set<string>([
+    ...presentContextFields(db).map((c) => String(c.name)), ...presentEcrWeekFields(db)]);
+  const isContext = new Set<string>([
+    ...CONTEXT_FIELDS.map((c) => String(c.name)), ...ECR_WEEK_FIELDS]);
   const where = seasons?.length ? ` WHERE season IN (${seasons.map(() => "?").join(",")})` : "";
   const sel = cols.map((c) =>
     (!isContext.has(c) || present.has(c) ? `SUM(${c} IS NOT NULL)` : "0") + ` AS ${c}`).join(", ");
@@ -824,6 +930,22 @@ export interface WeeklyRow {
  * says. The difference between the two is reported by `weeklyCoverage`, and the trainer REFUSES to
  * fit a two-part model when they are absent rather than quietly fitting without them.
  */
+/**
+ * The M2a consensus columns, IF this store has them.
+ *
+ * Same reasoning as `presentContextFields`, and it is not hypothetical: a per-format `features.db`
+ * built before 2026-09-16 has the table without these two columns, and naming a missing column in a
+ * SELECT is a hard SQLite error rather than a NULL -- so a hard-coded select would take down the
+ * SERVING path (`projectStreamingWith` reads through this loader) on every store that has not been
+ * migrated. A store that lacks them reads NULL, which is the same statement the 2025+ seasons make.
+ */
+export const ECR_WEEK_FIELDS = ["ecr_wk_rank", "ecr_wk_sd"] as const;
+export function presentEcrWeekFields(db: DB): string[] {
+  const have = new Set((db.prepare("PRAGMA table_info(feat_player_week_model)").all() as { name: string }[])
+    .map((c) => c.name));
+  return ECR_WEEK_FIELDS.filter((c) => have.has(c));
+}
+
 export function presentContextFields(db: DB): typeof CONTEXT_FIELDS {
   const have = new Set((db.prepare("PRAGMA table_info(feat_player_week_model)").all() as { name: string }[])
     .map((c) => c.name));
@@ -845,12 +967,15 @@ export function presentContextFields(db: DB): typeof CONTEXT_FIELDS {
  */
 export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow[] {
   const present = presentContextFields(db);
+  const ecrWk = presentEcrWeekFields(db);
   const stream = presentStreamFields(db);
   const rows = db.prepare(
     `SELECT m.feat_key, m.player_sk, m.season, m.week, m.name, m.pos, m.team, m.opponent, m.home,
             m.season_line_pg, m.td_games, m.td_ppg, m.t4_mean, m.t4_sd, m.td_fd, m.td_ts,
-            m.td_attempts, m.td_rush_yards, m.rz_share_td, m.prior_vol_cv, m.dvp_mult, m.dvp_n, m.spread_line, m.total_line,
+            m.td_attempts, m.td_rush_yards, m.rz_share_td, m.prior_vol_cv,
+            m.dvp_mult, m.dvp_n, m.spread_line, m.total_line,
             m.implied_team_total, m.days_rest
+            ${ecrWk.length ? ", " + ecrWk.map((c) => `m.${c}`).join(", ") : ""}
             ${present.length ? ", " + present.map((c) => `m.${c.name}`).join(", ") : ""}
             ${stream.length ? ", " + stream.map((c) => `s.${c}`).join(", ") : ""}
        FROM feat_player_week_model m
@@ -878,6 +1003,8 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
       td_rush_yards: r.td_rush_yards == null ? null : Number(r.td_rush_yards),
       rz_share_td: r.rz_share_td == null ? null : Number(r.rz_share_td),
       prior_vol_cv: r.prior_vol_cv == null ? null : Number(r.prior_vol_cv),
+      ecr_wk_rank: r.ecr_wk_rank == null ? null : Number(r.ecr_wk_rank),
+      ecr_wk_sd: r.ecr_wk_sd == null ? null : Number(r.ecr_wk_sd),
       home: r.home == null ? null : Number(r.home),
       spread_line: r.spread_line == null ? null : Number(r.spread_line),
       total_line: r.total_line == null ? null : Number(r.total_line),
@@ -996,6 +1123,10 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
   const dvp = dvpTable(db, season);
   const rzShare = rzShareTable(db, season);
   const priorVol = priorSeasonVol(db, season);
+  // The live season has NO weekly-consensus rows in `ranking_history` (the archive stops in 2024), so
+  // this reads empty and every forward row is NULL. That is the honest state and it is why the column
+  // is a candidate rather than a serve: see `ecrWeekTable`'s era bound.
+  const ecrWk = ecrWeekTable(db, season);
 
   ensureContextColumns(db);
   const ins = db.prepare(weekModelInsertSql());
@@ -1051,6 +1182,10 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
           td_attempts: finite(td?.td_attempts ?? null), td_rush_yards: finite(td?.td_rush_yards ?? null),
           rz_share_td: finite(rzShare.get(week, p.player_sk, p.team)),
           prior_vol_cv: finite(p.player_sk != null ? priorVol.get(String(p.player_sk)) ?? null : null),
+          ...(() => {
+            const e = ecrWk.get(ecrWeekCutoff(sched, season, p.team, week) ?? "", p.name, p.pos);
+            return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null };
+          })(),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           spread_line: spread, total_line: total, implied_team_total: implied,
           days_rest: daysRest,

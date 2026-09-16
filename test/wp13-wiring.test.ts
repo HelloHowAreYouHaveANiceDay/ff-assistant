@@ -96,8 +96,19 @@ test("item 4: the FREE-AGENT POOL is priced from the same handle -- a pool in on
 // =================================================================================================
 
 test("item 3: every routine is leagueScoped now, and the plan carries --league on every step", () => {
+  // ONE DELIBERATE EXCEPTION, NAMED RATHER THAN ASSUMED (M2b, 2026-09-16). `rankings` runs
+  // `ff ingest-source weekly` -- FantasyPros' league-INDEPENDENT positional consensus, one copy per
+  // store. There is no per-league version of it to fetch, so marking it leagueScoped would append a
+  // `--league` the verb has no use for and re-run the identical fetch once per league. It is listed
+  // here by name so that widening this carve-out is a deliberate act; every league-shaped routine
+  // must still be leagueScoped, which is the property WP13 established.
+  const NOT_LEAGUE_SHAPED = new Set(["rankings"]);
   for (const [name, r] of Object.entries(ROUTINES)) {
-    assert.equal(r.leagueScoped, true, `routine ${name} -- all four verbs take --league as of WP13`);
+    if (NOT_LEAGUE_SHAPED.has(name)) {
+      assert.equal(r.leagueScoped, false, `routine ${name} is a global feed -- it must NOT claim to be league-scoped`);
+      continue;
+    }
+    assert.equal(r.leagueScoped, true, `routine ${name} -- every league-shaped verb takes --league as of WP13`);
   }
   const dir = mkdtempSync(join(tmpdir(), "ff-wp13r-"));
   const db = openDb(join(dir, "t.db"));

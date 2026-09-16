@@ -48,6 +48,43 @@ export interface Routine {
  * roster or odds move -- not a duplicate of it.
  */
 export const ROUTINES: Record<string, Routine> = {
+  /**
+   * THE WEEKLY EXPERT CONSENSUS, PULLED BEFORE THE WEEK IS BUILT (M2b, 2026-09-16).
+   *
+   * THE VERB IS `ingest-source`, NOT `ingest-raw`, and that is not interchangeable: `weekly` is an
+   * L1 asset (it feeds the board), and `cmdIngestRaw` REFUSES any id outside `RAW_ASSETS` with
+   * `exit 2`. A routine naming the wrong one would have failed every tick, loudly but off-screen.
+   * `test/routines.test.ts` catches the other half -- a verb the tick has no handler for is SKIPPED
+   * SILENTLY -- which is how this was found, so `ingest-source` is in the tick's HANDLERS map too.
+   *
+   * IT IS FIRST IN THE REGISTRY AND THAT ORDER IS LOAD-BEARING. `ff ingest-source weekly` refreshes
+   * `weekly_rank` AND appends the scrape into `ranking_history` (src/data/advanced.ts), but it does
+   * NOT rebuild `feat_player_week_model`. `actuals` does, through `buildForwardInto`, which is what
+   * reads the archive and fills `ecr_wk_rank`/`ecr_wk_sd`; and `scorecard` then FREEZES the week's
+   * predictions off those rows, write-once. Run in the other order the column a prediction was
+   * frozen on is a week old, and nothing in the frozen row says so.
+   *
+   * CADENCE. This is on the DEFAULT set, which the app's timer runs every `everyMinutes` (clamped
+   * to [5, 720]) whenever the schedule is enabled -- so on any live cadence it lands many times
+   * between Thursday and Sunday's first kickoff, which is the window the point-in-time rule needs
+   * (the feed is published on Fridays; the column's anchor is each team's kickoff minus two days).
+   * The repeat cost is one ~300KB CSV and an `INSERT OR IGNORE`: re-ingesting a scrape already held
+   * writes nothing, by construction, so over-running is a no-op rather than a corruption. A SINGLE
+   * weekly run would be the fragile design -- one missed Friday and the week has no consensus at
+   * all, with no second chance before kickoff.
+   *
+   * NOT `leagueScoped`: the feed is FantasyPros' league-independent positional consensus, one copy
+   * per store. Marking it league-scoped would fetch and re-append the identical rows once per
+   * league, which the ignore-on-conflict makes harmless and pointless.
+   */
+  rankings: {
+    name: "rankings",
+    what: "refresh the FantasyPros weekly consensus and RETAIN the scrape point-in-time (ranking_history)",
+    steps: [["ingest-source", ["weekly"]]],
+    needsApp: false,
+    platforms: null,          // a public CSV -- no fantasy provider involved
+    leagueScoped: false,
+  },
   actuals: {
     name: "actuals",
     what: "ingest nflverse results, rebuild the forward board (trailing form), refresh decisions on a change",
@@ -84,7 +121,7 @@ export const ROUTINES: Record<string, Routine> = {
 
 /** What the app schedules by default in-season: everything self-contained, on one cadence. `roster`
  *  is left off the default because it needs the app bridge and moves slower; the copilot can add it. */
-export const DEFAULT_ROUTINES = ["actuals", "scorecard", "decisions"];
+export const DEFAULT_ROUTINES = ["rankings", "actuals", "scorecard", "decisions"];
 
 export interface ScheduleConfig {
   /** The master switch. Off means the app runs no routines on a timer. */

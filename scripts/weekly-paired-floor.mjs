@@ -30,6 +30,13 @@ const basePath = val("--baseline", null);
 const candPath = val("--candidate", null);
 const model = val("--model", "weekly");
 if (!basePath || !candPath) { console.error("usage: --baseline <json> --candidate <json> [--model weekly]"); process.exit(1); }
+// `--seasons 2020-2024`: restrict the WHOLE comparison to a season block, for a candidate column that
+// only EXISTS over part of the range. Without it a feature present in five of fourteen seasons is
+// scored on nine seasons where both arms are identical by construction, which drags the mean toward
+// zero and inflates nothing -- it simply measures the archive's coverage rather than the feature.
+// The block must be pre-registered as the decision before the numbers are read, exactly like the
+// canonical selection/holdout split it replaces.
+const seasonSpec = val("--seasons", null);
 const holdoutSpec = val("--holdout-seasons", null);
 const holdout = new Set(holdoutSpec
   ? (() => { const [a, b] = holdoutSpec.split("-").map(Number); const o = []; for (let y = a; y <= (b ?? a); y++) o.push(y); return o; })()
@@ -48,7 +55,11 @@ function crpsBySeason(ev) {
   return m;
 }
 const baseM = crpsBySeason(base), candM = crpsBySeason(cand);
-const seasons = [...baseM.keys()].filter((y) => candM.has(y)).sort((a, b) => a - b);
+const keep = seasonSpec
+  ? (() => { const [a, b] = seasonSpec.split("-").map(Number); const s = new Set(); for (let y = a; y <= (b ?? a); y++) s.add(y); return s; })()
+  : null;
+const seasons = [...baseM.keys()]
+  .filter((y) => candM.has(y) && (!keep || keep.has(y))).sort((a, b) => a - b);
 if (seasons.length < 3) { console.error(`only ${seasons.length} shared seasons -- need >=3 for a season floor`); process.exit(1); }
 
 const fmt = (x, d = 4) => (Number.isFinite(x) ? x.toFixed(d) : "NA");

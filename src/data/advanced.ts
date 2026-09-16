@@ -250,8 +250,28 @@ export async function ingestBorisTiers(db: DB, scoring = "HALF"): Promise<number
   return rows.length;
 }
 
-// FantasyPros current-week positional rankings -> weekly_rank
-export async function ingestWeekly(db: DB): Promise<number> {
+/**
+ * FantasyPros current-week positional rankings -> `weekly_rank` (live) AND `ranking_history` (kept).
+ *
+ * TWO WRITES, DELIBERATELY DIFFERENT IN KIND (M2b, 2026-09-16).
+ *
+ * `weekly_rank` stays exactly what it was: the CURRENT week's list, truncated and rewritten on every
+ * ingest, keyed `(player_id, pos)`. Every existing consumer (the agent's start/sit lookup) asks it
+ * "what is he ranked NOW", and that is the right table for that question.
+ *
+ * What was missing is the other question -- "what did the panel say BEFORE last Sunday" -- which no
+ * amount of reading `weekly_rank` can answer, because the row that would have held it was deleted.
+ * So the same rows are ALSO appended, point in time, into `ranking_history` as `ecr_type = 'wp'`,
+ * keyed by the feed's own `scrape_date`. See `appendWeeklyRankSnapshot` for the three refusals that
+ * make that an archive rather than a second cache; the important one here is that the append is
+ * `INSERT OR IGNORE` and is not inside the DELETE-and-rewrite transaction: nothing in this function
+ * can ever remove a retained scrape.
+ *
+ * BACKFILL IS IMPOSSIBLE. The feed publishes one file, the latest scrape, with no history endpoint;
+ * every scrape before this change was overwritten in place and is gone. The archive therefore
+ * resumes at the first ingest after this ships and has a permanent hole from 2025-01 to now.
+ */
+export async function ingestWeekly(db: DB): Promise<{ live: number; archived: number; archiveIgnored: number; scrapeDates: string[] }> {
   const rows = await fetchCsv(`${DPROC}/fp_latest_weekly.csv`).catch(() => [] as Record<string, string>[]);
   const scraped = rows[0] ? pick(rows[0], "scrape_date") : "";
   const up = db.prepare(`INSERT OR REPLACE INTO weekly_rank (player_id, pos, rank, ecr, best, worst, sd, scraped) VALUES (@id, @pos, @rank, @ecr, @best, @worst, @sd, @sc)`);
@@ -265,5 +285,15 @@ export async function ingestWeekly(db: DB): Promise<number> {
       up.run({ id: k, pos, rank: int(pick(r, "rank")), ecr: num(pick(r, "ecr")), best: int(pick(r, "best")), worst: int(pick(r, "worst")), sd: num(pick(r, "sd")), sc: scraped }); n++;
     }
   })();
-  return n;
+
+  // THE RETENTION. The ingest DATE is only a fallback: a row's own `scrape_date` is the as-of the
+  // point-in-time rule is stated against, and stamping a stale scrape with today would be the one
+  // error the freshness bound cannot catch.
+  const { appendWeeklyRankSnapshot } = await import("./ecrHistory.js");
+  const snap = appendWeeklyRankSnapshot(db, rows.map((r) => ({
+    name: pick(r, "player_name"), pos: pick(r, "pos"), team: pick(r, "team"),
+    ecr: Number(pick(r, "ecr")), sd: num(pick(r, "sd")), best: int(pick(r, "best")), worst: int(pick(r, "worst")),
+    scrapeDate: pick(r, "scrape_date"),
+  })), nowIso().slice(0, 10));
+  return { live: n, archived: snap.inserted, archiveIgnored: snap.ignored, scrapeDates: snap.dates };
 }

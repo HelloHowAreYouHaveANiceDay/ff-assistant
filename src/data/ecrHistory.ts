@@ -57,6 +57,103 @@ export function splitCsv(line: string): string[] {
 
 export interface IngestResult { read: number; kept: number; skippedType: number; badRow: number; seasons: number[]; types: string[] }
 
+/**
+ * THE LIVE WEEKLY CONSENSUS, RETAINED AS A POINT-IN-TIME SNAPSHOT (M2b, 2026-09-16).
+ *
+ * WHY THIS EXISTS. `weekly_rank` (src/data/advanced.ts `ingestWeekly`) holds FantasyPros' CURRENT
+ * week positional consensus and is `DELETE`d on every ingest, keyed `(player_id, pos)` with no
+ * season and no week. So the live feed carries exactly the quantity `ecr_wk_rank` needs and RETAINS
+ * NONE OF IT: yesterday's opinion is gone the moment today's lands, and a stored row cannot be
+ * placed in a week at all. That is the whole reason the M2a screen admitted the feature on the
+ * measurement and died at the serve boundary (docs/weekly-ecr-screen-2026-09-16.md section 7).
+ *
+ * WHAT THIS DOES. Every ingest of the weekly feed ALSO appends the same rows into
+ * `ranking_history` as `ecr_type = 'wp'`, keyed exactly like the DynastyProcess archive
+ * (`source, ecr_type, scrape_date, player_id, pos`), so the archive and the live retention are ONE
+ * table with one key and `ecrWeekTable` needs no change whatsoever to read 2026.
+ *
+ * THREE PROPERTIES, and each is a refusal rather than a convenience:
+ *   - **APPEND ONLY.** `INSERT OR IGNORE`. Never DELETE, never UPDATE. Re-ingesting the same scrape
+ *     is a no-op (the idempotency control in the sign-off doc asserts the row count is unchanged on
+ *     a second run); a NEW scrape date is a NEW row. A point-in-time archive that any ingest can
+ *     rewrite is not point-in-time, and an UPDATE here would silently re-date last week's opinion.
+ *   - **THE SCRAPE'S OWN DATE, not the ingest time.** The feed publishes `scrape_date` per row; that
+ *     is the as-of the whole point-in-time rule is stated against. `fallbackDate` (the ingest date)
+ *     is used only where the feed carries none, and a row whose date is unusable is dropped rather
+ *     than stamped with today -- dating a stale scrape "today" is the one error that would let a
+ *     week-old consensus pass the freshness bound.
+ *   - **`season` IS THE SCRAPE YEAR**, byte-for-byte what `ingestEcrHistory` above stamps, so a
+ *     later re-load of the archive cannot disagree with a row we wrote. Redraft weekly lists stop
+ *     in December (the archive holds no January `wp` date in six seasons), so the calendar year and
+ *     the NFL season are the same thing on this feed.
+ *
+ * WHAT IS **NOT** WRITTEN: `ecr_type = 'wo'`, the weekly OVERALL list. `fp_latest_weekly.csv`
+ * publishes positional pages only (qb / ppr-rb / ppr-wr / ppr-te / k / dst / dl / lb / db) and no
+ * overall page, so there is no overall consensus in this feed to retain. Manufacturing one by
+ * pooling the positional lists would be our number wearing FantasyPros' name. `wp` is the column
+ * `ecr_wk_rank` reads anyway.
+ *
+ * IDP rows (DL/LB/DB) are kept, because the archive keeps them and `ecrWeekTable` drops them at
+ * READ time -- one filter, in the reader, rather than two that can disagree.
+ */
+export interface WeeklyRankSnapshotRow {
+  name: string;
+  pos: string;
+  team?: string | null;
+  ecr: number;
+  sd?: number | null;
+  best?: number | null;
+  worst?: number | null;
+  /** The feed's own scrape date for this row. Falls back to `fallbackDate` when absent. */
+  scrapeDate?: string | null;
+}
+
+export interface WeeklySnapshotResult {
+  /** Rows the archive did not already hold -- i.e. what this scrape actually added. */
+  inserted: number;
+  /** Rows already present under the same key: a re-ingest of a scrape we have. */
+  ignored: number;
+  /** Rows with no usable date or no name/ecr. Dropped, never stamped with today. */
+  badRow: number;
+  /** The scrape dates written, ascending. Reported so an empty append is never silent. */
+  dates: string[];
+}
+
+export function appendWeeklyRankSnapshot(
+  db: DB, rows: WeeklyRankSnapshotRow[], fallbackDate: string,
+): WeeklySnapshotResult {
+  const ins = db.prepare(
+    `INSERT OR IGNORE INTO ranking_history
+       (source, ecr_type, season, scrape_date, player_id, name, pos, team, ecr, sd, best, worst, fetched_at)
+     VALUES ('fantasypros','wp',@season,@date,@pid,@name,@pos,@team,@ecr,@sd,@best,@worst,@now)`,
+  );
+  const now = nowIso();
+  const res: WeeklySnapshotResult = { inserted: 0, ignored: 0, badRow: 0, dates: [] };
+  const dates = new Set<string>();
+  const isDate = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d);
+  const run = db.transaction(() => {
+    for (const r of rows) {
+      const date = (r.scrapeDate ?? "").trim() || fallbackDate;
+      const name = (r.name ?? "").trim();
+      const pos = (r.pos ?? "").trim().toUpperCase();
+      if (!isDate(date) || !name || !pos || !Number.isFinite(r.ecr)) { res.badRow++; continue; }
+      const info = ins.run({
+        season: Number(date.slice(0, 4)), date, pid: nameKey(name), name, pos,
+        team: r.team ?? "", ecr: r.ecr,
+        sd: Number.isFinite(r.sd as number) ? r.sd : null,
+        best: Number.isFinite(r.best as number) ? r.best : null,
+        worst: Number.isFinite(r.worst as number) ? r.worst : null,
+        now,
+      });
+      if (info.changes) res.inserted++; else res.ignored++;
+      dates.add(date);
+    }
+  });
+  run();
+  res.dates = [...dates].sort();
+  return res;
+}
+
 export async function ingestEcrHistory(opts: {
   dbPath?: string; file?: string; url?: string; types?: string[]; onProgress?: (n: number) => void;
 } = {}): Promise<IngestResult> {
