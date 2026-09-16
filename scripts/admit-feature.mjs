@@ -17,6 +17,8 @@
 // DROP = its contribution is within the floor (noise).
 //
 // The verdict is the number to quote in the admission trace, not a hand-read 12.03->12.02.
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { evaluateProjection, score } from "../src/model/evaluate.ts";
 import { admissionVerdict } from "./lib/arbiter.mjs";
 import { parseHoldout, splitSeasons, assertSelectionBlind } from "./lib/holdout.mjs";
@@ -43,6 +45,45 @@ const dbPath = val("--db", undefined);
 // requested seasons -- each fold fits walk-forward (train on < Y) -- so blinding the DECISION does not
 // change what any model FITS; it only prevents the choice from being made on held-out seasons.
 const holdout = parseHoldout(val("--holdout-seasons", null));
+// --baseline-cache <file>: REUSE OF THE SHARED ARM. Exactly one of the two arms sets no env at all --
+// the UNTOUCHED DEFAULT DESIGN (the `cand` arm under --remove, the `base` arm under add mode). Its
+// per-season pinball does not depend on the candidate, so a contribution LEDGER over N features would
+// otherwise re-fit the identical full-design nested CV N times. The cache keys that arm by everything
+// that CAN change it (db, season list, scored position) and by nothing that cannot (the candidate), so
+// a cache HIT is byte-identical to the run it replaces. Absent flag = no cache = the original behaviour.
+const cachePath = val("--baseline-cache", null);
+// --json <file>: dump BOTH arms' per-season pinball plus the verdicts, so a driver can build a per-era /
+// per-season table without re-running anything or re-parsing stdout.
+const jsonOut = val("--json", null);
+const cacheKey = `${dbPath ?? "data/ff.db"}|${seasons[0]}-${seasons[seasons.length - 1]}|${pos ?? "ALL"}`;
+function readCache() {
+  if (!cachePath || !existsSync(cachePath)) return null;
+  try { return JSON.parse(readFileSync(cachePath, "utf8")); } catch { return null; }
+}
+function cachedFullDesign() {
+  const c = readCache();
+  const hit = c?.[cacheKey];
+  if (!hit) return null;
+  return new Map(Object.entries(hit).map(([s, v]) => [Number(s), v]));
+}
+function storeFullDesign(m) {
+  if (!cachePath) return;
+  const c = readCache() ?? {};
+  c[cacheKey] = Object.fromEntries([...m].map(([s, v]) => [String(s), v]));
+  mkdirSync(dirname(cachePath), { recursive: true });
+  writeFileSync(cachePath, JSON.stringify(c, null, 2));
+}
+/** Run one arm, or serve the FULL-DEFAULT arm from the cache. `isFullDesign` is true only for the arm
+ *  that sets no FF_* env -- the one arm a ledger shares across candidates. */
+async function arm(isFullDesign) {
+  if (isFullDesign) {
+    const hit = cachedFullDesign();
+    if (hit) { console.log(`  (full-design arm served from --baseline-cache: ${cacheKey})`); return hit; }
+  }
+  const m = perSeasonPinball(await evaluateProjection({ dbPath, seasons, log: () => {} }));
+  if (isFullDesign) storeFullDesign(m);
+  return m;
+}
 
 /** Map<season, mean trained pinball> for one nested-CV run. With `pos` set, scores only that
  *  position's rows -- the right metric for a feature the trainer fits for one position family. */
@@ -68,12 +109,12 @@ console.log(`${removeMode ? "LEAVE-ONE-OUT" : "ADMISSION"} GATE: ${candidate}${p
 console.log(removeMode ? `baseline run (--remove-features ${candidate}; shipped design MINUS it) ...` : "baseline run (no --add-features) ...");
 delete process.env.FF_ADD_FEATURES; delete process.env.FF_REMOVE_FEATURES;
 if (removeMode) process.env.FF_REMOVE_FEATURES = candidate;
-const base = perSeasonPinball(await evaluateProjection({ dbPath, seasons, log: () => {} }));
+const base = await arm(!removeMode);
 
 console.log(removeMode ? `candidate run (full default, ${candidate} present) ...` : `candidate run (--add-features ${candidate}) ...`);
 delete process.env.FF_ADD_FEATURES; delete process.env.FF_REMOVE_FEATURES;
 if (!removeMode) process.env.FF_ADD_FEATURES = candidate;
-const cand = perSeasonPinball(await evaluateProjection({ dbPath, seasons, log: () => {} }));
+const cand = await arm(removeMode);
 
 const shared = seasons.filter((s) => base.has(s) && cand.has(s));
 // PARTITION the scored seasons into the DECISION set (selection) and the one-shot CONFIRM set
@@ -97,7 +138,20 @@ const v = admissionVerdict(cand, base, selSeasons);
 // 2021-2025 holdout arms DO differ -- so "identical on every scored season" would have let the
 // meaningless REJECT through. Fault-injected 2026-09-16 on exactly that candidate.
 const identicalDecisionArms = selSeasons.every((s) => Math.abs(cand.get(s) - base.get(s)) < 1e-12);
+// --json dump. Written in BOTH exits (including DEGENERATE) so a driver never has to infer a missing
+// file's meaning: a degenerate row is reported as DEGENERATE, not as a zero.
+function dumpJson(extra) {
+  if (!jsonOut) return;
+  mkdirSync(dirname(jsonOut), { recursive: true });
+  writeFileSync(jsonOut, JSON.stringify({
+    candidate, pos, removeMode, db: dbPath ?? "data/ff.db",
+    seasons: shared, selectionSeasons: selSeasons, holdoutSeasons,
+    perSeason: shared.map((s) => ({ season: s, base: base.get(s), cand: cand.get(s), contribution: base.get(s) - cand.get(s) })),
+    ...extra,
+  }, null, 2));
+}
 if (identicalDecisionArms) {
+  dumpJson({ status: "DEGENERATE" });
   const holdoutDiffers = holdoutSeasons.some((s) => Math.abs(cand.get(s) - base.get(s)) >= 1e-12);
   console.error(`\n  DEGENERATE: the baseline and candidate arms are IDENTICAL on every DECISION season (${selSeasons[0]}-${selSeasons[selSeasons.length - 1]}) ` +
     `-- ${candidate} never entered the fit there (most likely below the trainer's per-position row-coverage floor on those seasons, ` +
@@ -129,4 +183,11 @@ if (holdoutSeasons.length >= 3) {
   console.log(`\n  CONFIRM: only ${holdoutSeasons.length} held-out season(s) scored -- too few for an honest confirm (need >= 3). Report the decision as unconfirmed.`);
 }
 console.log(`\n  The ADMIT/REJECT decision is the DECISION verdict (selection seasons); the confirm is reported, not gated.`);
+dumpJson({
+  status: "OK",
+  decision: { improvement: v.improvement, se: v.se, t: v.t, floor: v.floor, wins: v.wins, nSeasons: v.nSeasons, ciLo: v.ciLo, ciHi: v.ciHi, pass: v.pass },
+  confirm: holdoutSeasons.length >= 3
+    ? (() => { const c = admissionVerdict(cand, base, holdoutSeasons); return { improvement: c.improvement, se: c.se, t: c.t, floor: c.floor, wins: c.wins, nSeasons: c.nSeasons, pass: c.pass }; })()
+    : null,
+});
 process.exit(v.pass ? 0 : 2);
