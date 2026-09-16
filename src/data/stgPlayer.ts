@@ -35,7 +35,7 @@
  * rank; those are consumer concerns. If a column would change when our strategy changes, it does not
  * belong in staging.
  */
-import { openDb, nowIso, type DB } from "../db/db.js";
+import { openDb, nowIso, getConfig, type DB } from "../db/db.js";
 import { resolveOrMint, crosswalkPeople, disputedIds, idBag } from "./identity.js";
 
 export interface RekeySummary {
@@ -186,9 +186,11 @@ export function buildStgPlayer(dbPath?: string): StgBuildResult {
     //    Added rather than dropped, because a staging layer that silently loses current players is
     //    worse than one that admits it does not have their ids. They carry source='board' so the gap
     //    is visible and countable rather than inferred from a row that looks complete.
+    // THE SEASON, BOUND AS A PARAMETER, from the config chokepoint -- not a correlated subselect into
+    // the legacy `config` mirror, which is whichever league was made active last.
     for (const b of db.prepare(
-      "SELECT player_id, row_json FROM board WHERE season = (SELECT CAST(json_extract(value,'$.season') AS INTEGER) FROM settings WHERE key='config')",
-    ).all() as { player_id: string; row_json: string }[]) {
+      "SELECT player_id, row_json FROM board WHERE season = ?",
+    ).all(getConfig(db).season) as { player_id: string; row_json: string }[]) {
       const j = JSON.parse(b.row_json) as Record<string, unknown>;
       const pos = normPos(String(j.Pos ?? ""));
       if (!pos) continue;

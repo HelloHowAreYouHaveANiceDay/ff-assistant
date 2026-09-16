@@ -24,6 +24,7 @@
  * a caller cannot forget to log if there is no path that reaches the answer without logging.
  */
 import { openDb, logAction } from "../db/db.js";
+import { resolveLeagueContext } from "../data/leagueContext.js";
 import { loadSimContext, type SimContext } from "../draft/simContext.js";
 import * as C from "./copilot.js";
 import * as S from "./copilotStore.js";
@@ -38,6 +39,14 @@ export const COPILOT_VERBS = [
 export type CopilotVerb = (typeof COPILOT_VERBS)[number];
 
 export interface CopilotArgs {
+  /**
+   * WHICH LEAGUE this decision is about. Omitted = the ACTIVE league (`settings.active_league`).
+   *
+   * The same flag `ff copilot --league` takes and the same optional argument the MCP tools take, so a
+   * number printed in a terminal and a number the Assistant quotes cannot be about two different
+   * leagues -- which is the whole reason this dispatcher exists. An id naming no league row THROWS.
+   */
+  league?: string;
   schedule?: "real" | "generated" | "auto";
   trials?: number;
   seed?: number;
@@ -182,18 +191,18 @@ function summarize(verb: CopilotVerb, r: unknown): string {
 }
 
 /** Build the shared context once. Exposed so a caller running several verbs pays for it once. */
-export async function copilotContext(schedule: CopilotArgs["schedule"] = "auto"): Promise<SimContext> {
-  return loadSimContext({ schedule });
+export async function copilotContext(schedule: CopilotArgs["schedule"] = "auto", leagueId?: string | null): Promise<SimContext> {
+  return loadSimContext({ schedule, leagueId });
 }
 
-function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: string): unknown {
-  const provenance = S.loadProvenance(dbPath);
+function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: string, leagueId?: string | null): unknown {
+  const provenance = S.loadProvenance(dbPath, leagueId);
   const base = { provenance, trials: a.trials, seed: a.seed };
   switch (verb) {
     case "season_odds":
       return C.seasonOdds(ctx, { ...base, trials: a.trials ?? 2000 });
     case "lineup_recommend": {
-      const wk = a.week ?? S.currentWeek(dbPath).week;
+      const wk = a.week ?? S.currentWeek(dbPath, new Date(), leagueId).week;
       const objective = a.objective ?? "expected";
       // The weekly projector, routed through `WEEKLY_SERVE` per position. `null` when there is no
       // artifact or no feature row for this week; `lineupRecommend` then falls back to the season
@@ -222,18 +231,18 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
           objective, bands: withBands?.bands, nflOpp,
           winprob: { sims: a.trials ?? 8000, seed: a.seed ?? 7 },
         }),
-        weekSource: a.week != null ? "caller" : S.currentWeek(dbPath).source,
+        weekSource: a.week != null ? "caller" : S.currentWeek(dbPath, new Date(), leagueId).source,
       };
     }
     case "waiver_targets":
-      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath) });
+      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId) });
     case "trade_check":
       return C.tradeCheck(ctx, { give: a.give ?? [], get: a.get ?? [] }, { provenance, trials: a.trials ?? 1600, seeds: a.seed != null ? [a.seed] : [7, 101] });
     case "trade_finder":
-      return C.tradeFinder(ctx, { provenance, values: S.loadConsensusValues(dbPath), trials: a.trials ?? 1200, seed: a.seed ?? 7, limit: a.limit ?? 8, maxGap: a.maxGap, positions: a.positions });
+      return C.tradeFinder(ctx, { provenance, values: S.loadConsensusValues(dbPath, leagueId), trials: a.trials ?? 1200, seed: a.seed ?? 7, limit: a.limit ?? 8, maxGap: a.maxGap, positions: a.positions });
     case "handcuffs": {
       const positions = a.positions ?? ["RB"];
-      const { depth, poolSize, vm } = S.loadDepth(positions, dbPath);
+      const { depth, poolSize, vm } = S.loadDepth(positions, dbPath, leagueId);
       return C.handcuffs(ctx, { provenance, depth, vm, poolSize, positions, weeks: a.week != null ? Math.max(1, C.NFL_WEEKS - a.week + 1) : C.NFL_WEEKS, freeOnly: a.freeOnly });
     }
     case "depth_risk":
@@ -246,13 +255,13 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // format block unless a caller overrides them, and passing the number here would send it back
       // down the `regWeeks + 1 .. 17` derivation -- which produces a FOUR-week bracket under this
       // league's 13-week season and a three-week one under its old 14-week season.
-      const { games } = S.loadGames(dbPath);
+      const { games } = S.loadGames(dbPath, leagueId);
       return C.playoffSos(ctx, { provenance, games, teamOf: S.loadTeamOf(dbPath) });
     }
     case "stream_recommend": {
       const pos = String(a.pos ?? a.positions?.[0] ?? "").toUpperCase();
       if (!pos) throw new Error("stream_recommend needs a position -- it is a one-position decision");
-      const wk = a.week ?? S.currentWeek(dbPath).week;
+      const wk = a.week ?? S.currentWeek(dbPath, new Date(), leagueId).week;
       // The pool is built HERE and handed in, so copilot.ts stays pure. `loadStreamingProjection`
       // is the only path to a projection and it consults the per-position ship mapping, so there is
       // no way to reach a number without knowing which artifact produced it.
@@ -262,7 +271,7 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
           provenance, availability: S.loadAvailability(dbPath),
           pool: proj.pool, limit: a.limit, artifactByPos: proj.artifactByPos,
         }),
-        weekSource: a.week != null ? "caller" : S.currentWeek(dbPath).source,
+        weekSource: a.week != null ? "caller" : S.currentWeek(dbPath, new Date(), leagueId).source,
         artifactByPos: proj.artifactByPos,
         missingArtifact: proj.missing,
       };
@@ -320,8 +329,14 @@ export async function runCopilot(
   const db = openDb(opts.dbPath);
   const logId = logAction(db, { runType: "copilot", action: verb, detail: { args } });
   try {
-    const ctx = opts.ctx ?? await copilotContext(args.schedule);
-    const result = dispatch(verb, ctx, args, opts.dbPath);
+    // RESOLVE THE LEAGUE ONCE, HERE, and thread it: the context, the provenance stamp, the current
+    // week, the FAAB scale and the consensus values all now come from the same id. An unknown
+    // `--league`/`league` throws out of `resolveLeagueContext`, and the throw is logged (below) rather
+    // than silently answering for the active league.
+    const leagueId = args.league;
+    if (leagueId != null) resolveLeagueContext(db, leagueId);          // validates; throws by name
+    const ctx = opts.ctx ?? await copilotContext(args.schedule, leagueId);
+    const result = dispatch(verb, ctx, args, opts.dbPath, leagueId);
     const summary = summarize(verb, result);
     // WRITTEN BEFORE THE RETURN, not after. `status` is `recommended` rather than `done` because
     // nothing was done -- advice was given, and the log should not claim a roster move happened.

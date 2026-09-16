@@ -81,14 +81,16 @@ export class EspnLeague implements LeagueProvider {
 
   /** Attach to the running app and make sure the guest is on an ESPN origin (the fetch is
    *  same-origin credentialed, so a webview parked elsewhere returns a login page, not data). */
-  static async open(db: DB): Promise<EspnLeague> {
-    const row = db.prepare("SELECT league_id, team_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as
-      { league_id: string; team_id: string } | undefined;
-    if (!row?.league_id) throw new Error("no league synced -- run the app once and sync your league.");
-    const raw = db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string } | undefined;
-    if (!raw) throw new Error("no config in settings -- run the app once.");
-    const cfg = JSON.parse(raw.value) as EspnConfig;
-    if (!Array.isArray(cfg.slots) || !cfg.slots.length) throw new Error("config.slots missing -- re-sync the league.");
+  static async open(db: DB, leagueId?: string | null): Promise<EspnLeague> {
+    // ONE RESOLVER. This used to take the most-recently-synced row while its caller resolved the
+    // league a different way, and read the legacy config mirror -- two chances to open a league whose
+    // id and whose rules came from two different leagues.
+    const { resolveLeagueContext, requireLeagueId, requireTeamId } =
+      await import("../data/leagueContext.js");
+    const ctx = resolveLeagueContext(db as unknown as import("../db/db.js").DB, leagueId);
+    const row = { league_id: requireLeagueId(ctx, "open the ESPN league"), team_id: requireTeamId(ctx, "open the ESPN league") };
+    const cfg = ctx.config as unknown as EspnConfig;
+    if (!Array.isArray(cfg.slots) || !cfg.slots.length) throw new Error(`config:${row.league_id} has no lineup slots -- re-sync the league.`);
 
     const { browser, raw: wv } = await attachWebview();
     if (!/fantasy\.espn\.com/.test(await wv.refreshUrl())) {

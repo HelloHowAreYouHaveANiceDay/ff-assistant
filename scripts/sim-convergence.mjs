@@ -32,13 +32,22 @@ import { dstAliasKey } from "../src/draft/values.ts";
 import { simulateSeasons } from "../src/draft/season.ts";
 import { effectiveFormat } from "../src/league/index.ts";
 import { buildSchedule } from "../src/draft/schedule.ts";
+import { resolveLeagueContext } from "../src/data/leagueContext.ts";
+/** `--league <id>`; absent = the ACTIVE league. */
+const leagueFlag = (argv) => { const i = argv.indexOf("--league"); return i >= 0 ? argv[i + 1] : undefined; };
+
 
 const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
 const outcomes = JSON.parse(readFileSync("data/rank-outcomes.json", "utf8"));
 const corrModel = JSON.parse(readFileSync("data/correlation-model.json", "utf8"));
 const db = new Database("data/ff.db", { readonly: true });
-const cfg = JSON.parse(db.prepare("SELECT value FROM settings WHERE key='config'").get().value);
-const lgRow = db.prepare("SELECT league_id, team_id FROM league WHERE season=? AND team_id IS NOT NULL").get(cfg.season);
+// THE LEAGUE'S OWN CONFIG, through the one chokepoint (`resolveLeagueContext` + `getConfig`).
+// This read `settings.config` directly -- now only a derived MIRROR of whichever league is
+// ACTIVE, so it answered for the wrong league the moment a second league existed. `--league <id>`
+// overrides; an id naming no league throws by name.
+const simLeague = resolveLeagueContext(db, leagueFlag(process.argv));
+const cfg = simLeague.config;
+const lgRow = { league_id: simLeague.leagueId, team_id: simLeague.teamId };
 
 const byeOf = new Map();
 for (const r of db.prepare(

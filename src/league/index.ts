@@ -11,6 +11,7 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { Database as DB } from "better-sqlite3";
+import { getConfig } from "../db/db.js";
 import { optimalLineup } from "../inseason/lineup.js";
 import { dstAliasKey, nameKey as valuesNameKey } from "../draft/values.js";
 import type { LeagueDivision, LeagueFormat, LeaguePlayer, LeagueProvider, LeagueTeam, SeedingRule } from "./types.js";
@@ -120,20 +121,18 @@ export function effectiveFormat(cfg: { format?: unknown }): LeagueFormat {
   return validateFormat(cfg?.format, "config.format");
 }
 
-/** The block in force, straight from the store. */
-export function leagueFormat(db: DB): LeagueFormat {
-  const row = db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string } | undefined;
-  if (!row) throw new Error("no config in settings -- run the app once.");
-  return effectiveFormat(JSON.parse(row.value));
+/** The block in force for ONE league, through the config chokepoint. `leagueId` omitted = the ACTIVE
+ *  league. It used to read the legacy `config` mirror directly, which is whichever league was active
+ *  last -- so a second league's calendar silently came back as the first league's. */
+export function leagueFormat(db: DB, leagueId?: string | null): LeagueFormat {
+  return effectiveFormat(getConfig(db as unknown as import("../db/db.js").DB, leagueId));
 }
 
 /** The league calendar WITHOUT needing the app running -- reads the synced config from our own db.
  *  Analysis that only needs the schedule (playoff SOS across all 32 NFL teams) should use this and
  *  stay runnable offline; only roster-dependent work needs openLeague. */
-export function leagueCalendar(db: DB): { season: number; regWeeks: number; nflWeeks: number; playoffWeeks: number[]; format: LeagueFormat } {
-  const row = db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string } | undefined;
-  if (!row) throw new Error("no config in settings -- run the app once.");
-  const cfg = JSON.parse(row.value) as { season: number; format?: unknown };
+export function leagueCalendar(db: DB, leagueId?: string | null): { season: number; regWeeks: number; nflWeeks: number; playoffWeeks: number[]; format: LeagueFormat } {
+  const cfg = getConfig(db as unknown as import("../db/db.js").DB, leagueId);
   const format = effectiveFormat(cfg);
   return { season: cfg.season, regWeeks: format.regWeeks, nflWeeks: NFL_WEEKS, playoffWeeks: format.playoffWeeks, format };
 }
@@ -198,23 +197,31 @@ export function resolvePlayer(roster: LeaguePlayer[], query: string): LeaguePlay
   throw new Error(`"${query}" matches nobody on that roster. Have: ${roster.map((p) => p.name).join(", ")}`);
 }
 
-export async function openLeague(opts: { dbPath?: string; points?: string } = {}): Promise<OpenLeague> {
+export async function openLeague(opts: { dbPath?: string; points?: string; leagueId?: string | null } = {}): Promise<OpenLeague> {
   const db = new Database(opts.dbPath ?? "data/ff.db", { readonly: true });
-  const cfgRow = db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string } | undefined;
-  if (!cfgRow) { db.close(); throw new Error("no config in settings -- run the app once."); }
-  const cfg = JSON.parse(cfgRow.value) as { platform?: string };
+  // DISPATCH ON THE LEAGUE ROW, NOT ON THE CONFIG (S-12). This used to read `cfg.platform` -- a field
+  // `AppConfig` has never had -- so `?? "espn"` was unconditional, the `default:` refusal below was
+  // UNREACHABLE, and the Yahoo league was handed an ESPN adaptor holding its own Yahoo league id.
+  // The platform is a property of the league, and the league row is where it lives.
+  let ctx;
+  try {
+    const { resolveLeagueContext } = await import("../data/leagueContext.js");
+    ctx = resolveLeagueContext(db as unknown as import("../db/db.js").DB, opts.leagueId);
+  } catch (e) { db.close(); throw e; }
+  const leagueId = ctx.leagueId;
+  if (!leagueId) { db.close(); throw new Error("no league synced -- run the app once and sync your league."); }
+  const platform = ctx.platform;
 
-  const platform = cfg.platform ?? "espn";
   let provider: LeagueProvider;
   switch (platform) {
     case "espn": {
       const { EspnLeague } = await import("./espn.js");
-      provider = await EspnLeague.open(db);
+      provider = await EspnLeague.open(db, leagueId);
       break;
     }
     default:
       db.close();
-      throw new Error(`no adaptor for platform "${platform}". Implement LeagueProvider in src/league/${platform}.ts and add a case here.`);
+      throw new Error(`no adaptor for platform "${platform ?? "unknown"}" (league ${leagueId}). Implement LeagueProvider in src/league/${platform ?? "<platform>"}.ts and add a case here.`);
   }
 
   // --- OUR valuation, attached here so no adaptor ever has an opinion about worth ---------------
@@ -263,7 +270,7 @@ export async function openLeague(opts: { dbPath?: string; points?: string } = {}
   return {
     provider, db, season: shape.season, slots: shape.slots, teams, me, score,
     regWeeks: shape.regWeeks, nflWeeks: shape.nflWeeks, playoffWeeks: shape.playoffWeeks,
-    format: leagueFormat(db),
+    format: leagueFormat(db, leagueId),
     proj: (n) => projOf.get(lookupKey(n)) ?? 0,
     posOf: (n) => posOf.get(lookupKey(n)),
     teamOf: (n) => teamOf.get(lookupKey(n)),

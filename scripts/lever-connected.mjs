@@ -7,6 +7,10 @@ import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { draftFieldSeats, SIM_LEAGUE } from "../src/draft/sim.ts";
 import { DEFAULT_LEVERS, LEVER_BY_KEY } from "../src/draft/levers.ts";
+import { resolveLeagueContext } from "../src/data/leagueContext.ts";
+/** `--league <id>`; absent = the ACTIVE league. */
+const leagueFlag = (argv) => { const i = argv.indexOf("--league"); return i >= 0 ? argv[i + 1] : undefined; };
+
 
 const [, , lever, aRaw, bRaw] = process.argv;
 if (!lever) { console.error("usage: lever-connected.mjs <lever> <valueA> <valueB>   (values may be JSON)"); process.exit(2); }
@@ -24,9 +28,12 @@ for (const f of readCsv("data/values.csv")) ourValues.set(f[0].trim(), Number(f[
 // lever against a config we no longer ship, so a "DEAD" verdict could be an artifact of the wrong
 // base. This mirrors getConfig()'s merge (stored levers OVER code defaults) without opening the DB
 // for writes (openDb migrates + seeds): read-only, exactly like scripts/read-config.mjs.
+// THE LEAGUE'S OWN CONFIG, through the one chokepoint (`resolveLeagueContext` + `getConfig`).
+// This read `settings.config` directly -- now only a derived MIRROR of whichever league is
+// ACTIVE, so it answered for the wrong league the moment a second league existed. `--league <id>`
+// overrides; an id naming no league throws by name.
 const db = new Database("data/ff.db", { readonly: true });
-const storedRow = db.prepare("SELECT value FROM settings WHERE key='config'").get();
-const storedLevers = storedRow ? (JSON.parse(storedRow.value).levers ?? {}) : {};
+const storedLevers = resolveLeagueContext(db, leagueFlag(process.argv)).config.levers ?? {};
 db.close();
 const base = { values: Object.fromEntries(ourValues), ...DEFAULT_LEVERS, ...storedLevers };
 

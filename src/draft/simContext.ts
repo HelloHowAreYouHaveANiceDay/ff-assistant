@@ -85,15 +85,27 @@ export interface SimContext {
 function localIso(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-export async function loadSimContext(opts: { schedule?: "real" | "generated" | "auto"; /** YYYY-MM-DD; defaults to today. A backtest or a test passes the day it is asking about. */ today?: string } = {}): Promise<SimContext> {
+export async function loadSimContext(opts: {
+  schedule?: "real" | "generated" | "auto";
+  /** YYYY-MM-DD; defaults to today. A backtest or a test passes the day it is asking about. */
+  today?: string;
+  /** WHICH LEAGUE. Omitted = the ACTIVE league. Everything below -- the config, the ownership rows,
+   *  the live schedule read -- comes from this one id, rather than from three different queries. */
+  leagueId?: string | null;
+} = {}): Promise<SimContext> {
   const want = opts.schedule ?? "auto";
   const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8")) as VarianceModel;
   const outcomes = JSON.parse(readFileSync(dataPath("rank-outcomes.json"), "utf8"));
   const corr = JSON.parse(readFileSync(dataPath("correlation-model.json"), "utf8"));
 
   const db = new Database(dataPath("ff.db"), { readonly: true });
-  const cfg = JSON.parse((db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string }).value);
-  const lgRow = db.prepare("SELECT league_id, team_id FROM league WHERE season=? AND team_id IS NOT NULL").get(cfg.season) as { league_id: string; team_id: string };
+  // ONE RESOLVER, ONE CONFIG. This read the legacy `config` mirror (whichever league was active last)
+  // and then picked its league row with an UNORDERED `.get()` over `season=? AND team_id IS NOT NULL`
+  // -- an arbitrary row once a second league exists. Both now come from the same context.
+  const { resolveLeagueContext, requireTeamId } = await import("../data/leagueContext.js");
+  const ctx = resolveLeagueContext(db as unknown as import("../db/db.js").DB, opts.leagueId);
+  const cfg = ctx.config;
+  const lgRow = { league_id: ctx.leagueId as string, team_id: requireTeamId(ctx, "loadSimContext") };
 
   const byeOf = new Map<string, number>();
   for (const r of db.prepare(
@@ -273,11 +285,34 @@ export async function loadSimContext(opts: { schedule?: "real" | "generated" | "
   if (want !== "generated") {
     let liveErr: Error | null = null;
     try {
+      // A TIMEOUT, BECAUSE "auto" MUST NOT BE ABLE TO BLOCK (I-8). This read opens the league over the
+      // app's CDP port; with the app RUNNING but its ESPN page slow to answer, the whole call used to
+      // sit there -- `test/roster-completeness.test.ts` measured 533 s of wall clock for 1.25 s of CPU,
+      // and the unit suite simply hung. "auto" already means "real when reachable, generated
+      // otherwise", and a read that never returns is not reachable. The handle is closed on the
+      // timeout path too, or the CDP connection keeps the process alive after the answer is in.
+      const budgetMs = Number(process.env.FF_LIVE_READ_TIMEOUT_MS ?? 15000);
       const { openLeague } = await import("../league/index.js");
-      const lg = await openLeague();
-      const sched = lg.provider.matchups ? await lg.provider.matchups() : null;
-      const idx = new Map(lg.teams.map((t, i) => [t.id, i]));
-      await lg.close();
+      const live = (async () => {
+        const lg = await openLeague({ leagueId: ctx.leagueId });
+        try {
+          const sched = lg.provider.matchups ? await lg.provider.matchups() : null;
+          const idx = new Map(lg.teams.map((t, i) => [t.id, i]));
+          return { sched, idx };
+        } finally { await lg.close().catch(() => {}); }
+      })();
+      // Attached IMMEDIATELY, not after the race: the loser of a race still rejects, and a rejection
+      // with no handler at that moment is an unhandled-rejection crash in the test runner.
+      live.catch(() => {});
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const { sched, idx } = await Promise.race([
+        live,
+        new Promise<never>((_, rej) => {
+          timer = setTimeout(() => rej(new Error(`live league read exceeded ${budgetMs}ms (FF_LIVE_READ_TIMEOUT_MS)`)), budgetMs);
+          // Do not let the timer itself hold the event loop open once the race is decided.
+          (timer as unknown as { unref?: () => void }).unref?.();
+        }),
+      ]).finally(() => { if (timer) clearTimeout(timer); });
       if (sched) {
         for (let w = 1; w <= regWeeks; w++) {
           const g = sched.games.filter((x) => x.week === w)

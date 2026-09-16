@@ -6,6 +6,7 @@
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { openDb, getConfig, setConfig, getMyRoster, setMyRoster, logAction, completeAction, recentActions, type RosterEntry } from "../db/db.js";
+import { resolveLeagueContext } from "../data/leagueContext.js";
 import { nameKey } from "../draft/values.js";
 import { scoringFromEspn, type ScoringRules } from "../draft/scoring.js";
 import { LEVER_META, clampLever, applyLevers } from "../draft/levers.js";
@@ -364,15 +365,27 @@ function buildTools(dbPath: string | undefined, season: number) {
             await wvNavigate(page, "https://fantasy.espn.com/football/");
             await page.waitForTimeout(2500);
             // grab leagueId-bearing hrefs + the current URL from inside the webview; parse them in Node
-            const raw = await wvEval(page, "JSON.stringify(Array.prototype.slice.call(document.querySelectorAll('a')).map(function(a){return a.href}).filter(function(h){return h.indexOf('leagueId')>=0}).concat([location.href]))");
+            // THE LINK TEXT COMES BACK TOO. It is the only place the league's NAME appears before a
+            // sync, and writing `name NULL` left rows that nothing could identify (S-14).
+            const raw = await wvEval(page, "JSON.stringify(Array.prototype.slice.call(document.querySelectorAll('a')).map(function(a){return {h:a.href,t:(a.textContent||'').trim().slice(0,80)}}).filter(function(x){return x.h.indexOf('leagueId')>=0}).concat([{h:location.href,t:''}]))");
             await browser?.close().catch(() => {});
-            let hrefs: string[] = []; try { hrefs = JSON.parse(raw || "[]"); } catch { /* empty */ }
-            const seen: Record<string, boolean> = {}; const found: { leagueId: string; seasonId: string; teamId: string }[] = [];
-            for (const h of hrefs) { try { const u = new URL(h); const lg = u.searchParams.get("leagueId"); if (!lg) continue; const se = u.searchParams.get("seasonId") || ""; const k = lg + "|" + se; if (!seen[k]) { seen[k] = true; found.push({ leagueId: lg, seasonId: se, teamId: u.searchParams.get("teamId") || "" }); } } catch { /* skip */ } }
+            let links: { h: string; t: string }[] = []; try { links = JSON.parse(raw || "[]"); } catch { /* empty */ }
+            const seen: Record<string, boolean> = {}; const found: { leagueId: string; seasonId: string; teamId: string; name: string }[] = [];
+            for (const x of links) { try { const u = new URL(x.h); const lg = u.searchParams.get("leagueId"); if (!lg) continue; const se = u.searchParams.get("seasonId") || ""; const k = lg + "|" + se; if (!seen[k]) { seen[k] = true; found.push({ leagueId: lg, seasonId: se, teamId: u.searchParams.get("teamId") || "", name: x.t }); } } catch { /* skip */ } }
             const db = openDb(dbPath); const now = new Date().toISOString();
-            for (const l of found) db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?, 'espn', ?, ?, ?, ?) ON CONFLICT(league_id) DO UPDATE SET season=excluded.season, team_id=excluded.team_id, last_synced_at=excluded.last_synced_at").run(l.leagueId, null, Number(l.seasonId) || null, l.teamId || null, now);
+            // SEASON FILTER. A fantasy-home scrape picks up next season's placeholder links, and each
+            // one used to become a `league` row of its own -- that is where the junk 211696/2027 stub
+            // with a NULL name came from. A league whose season is not the config season is not a
+            // league this store can do anything with yet, so it is reported and not written.
+            const wantSeason = getConfig(db).season;
+            const skipped = found.filter((l) => Number(l.seasonId) && Number(l.seasonId) !== wantSeason);
+            const keep = found.filter((l) => !Number(l.seasonId) || Number(l.seasonId) === wantSeason);
+            // `platform='espn'` is CORRECT here and deliberate: this verb browses ESPN's fantasy home,
+            // so every league it can possibly find is an ESPN league.
+            for (const l of keep) db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?, 'espn', ?, ?, ?, ?) ON CONFLICT(league_id) DO UPDATE SET name=COALESCE(excluded.name, league.name), season=excluded.season, team_id=excluded.team_id, last_synced_at=excluded.last_synced_at").run(l.leagueId, l.name || null, Number(l.seasonId) || null, l.teamId || null, now);
             db.close();
-            return { content: [{ type: "text", text: found.length ? `found ${found.length} league(s):\n` + found.map((l) => `leagueId ${l.leagueId}, season ${l.seasonId || "?"}, team ${l.teamId || "?"}`).join("\n") : "no league links on the fantasy home -- navigate into a team page + read_page, or confirm I'm logged in" }] };
+            const skipLine = skipped.length ? `\n(skipped ${skipped.length} link(s) for another season: ${skipped.map((l) => `${l.leagueId}/${l.seasonId}`).join(", ")})` : "";
+            return { content: [{ type: "text", text: keep.length ? `found ${keep.length} league(s):\n` + keep.map((l) => `leagueId ${l.leagueId}, season ${l.seasonId || "?"}, team ${l.teamId || "?"}${l.name ? `, "${l.name}"` : ""}`).join("\n") + skipLine : "no league links on the fantasy home -- navigate into a team page + read_page, or confirm I'm logged in" + skipLine }] };
           } catch (e) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "discover error: " + String(e).slice(0, 120) }] }; }
         },
       ),
@@ -385,12 +398,20 @@ function buildTools(dbPath: string | undefined, season: number) {
           if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "app not available (open the desktop app)" }] }; }
           const db = openDb(dbPath); let closed = false; const shut = () => { if (!closed) { closed = true; try { db.close(); } catch { /* already closed */ } } };
           try {
-            const lg = activeLeague(db);
-            if (!lg) { shut(); await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "no league known -- run discover_leagues first" }] }; }
+            const ctx = resolveLeagueContext(db, undefined);
+            if (!ctx.leagueId) { shut(); await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "no league known -- run discover_leagues first" }] }; }
+            if (ctx.platform !== "espn") {
+              shut(); await browser?.close().catch(() => {});
+              return { content: [{ type: "text", text: `league ${ctx.leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} sync adaptor exists yet.` }] };
+            }
+            const lg = { league_id: ctx.leagueId, season: ctx.rowSeason ?? ctx.config.season, team_id: ctx.teamId };
             const swid = await espnSwid(page);
             const j = await espnGet<any>(page, espnLeagueUrl(lg.season, lg.league_id, ["mSettings", "mTeam"]));
             await browser?.close().catch(() => {});
             if (!j) { shut(); return { content: [{ type: "text", text: "could not read league (not logged in, or wrong league id)" }] }; }
+            // IDENTITY BEFORE ANY WRITE. Emptiness was already checked below; this checks WHOSE.
+            const idProblem = leagueSyncIdentityProblem(j, lg.league_id);
+            if (idProblem) { shut(); return { content: [{ type: "text", text: idProblem }] }; }
             const s = j.settings ?? {}; const rs = s.rosterSettings ?? {}; const sc = s.scoringSettings ?? {}; const ds = s.draftSettings ?? {};
             const mine = (j.teams ?? []).find((t: any) => (t.owners ?? []).some((o: string) => swid && normSwid(o) === normSwid(swid)));
             const slots = rs.lineupSlotCounts ?? {};
@@ -401,8 +422,11 @@ function buildTools(dbPath: string | undefined, season: number) {
             const scoring = recPts >= 1 ? "PPR" : recPts >= 0.5 ? "HALF" : "STD";
             const mineName = mine ? (mine.name ?? `${mine.location ?? ""} ${mine.nickname ?? ""}`.trim()) : null;
             const configSlots = espnSlotsToConfig(slots);
-            const budget = ds.type === "AUCTION" && ds.auctionBudget ? Number(ds.auctionBudget) : getConfig(db).budget;
-            const teams = Number(s.size) || getConfig(db).teams;
+            const budget = ds.type === "AUCTION" && ds.auctionBudget ? Number(ds.auctionBudget) : getConfig(db, lg.league_id).budget;
+            const teams = Number(s.size) || getConfig(db, lg.league_id).teams;
+            // The DRAFT TYPE, from ESPN's own draftSettings rather than assumed. An auction-only verb
+            // can then refuse a snake league by name instead of pricing a draft that has no dollars.
+            const draftType: "auction" | "snake" = ds.type === "AUCTION" ? "auction" : "snake";
             // Build the actual per-stat scoring model from the league's real scoringItems -- this is
             // what tailors OUR points/values (not just the HALF/PPR consensus bucket).
             // Build the WHOLE model -- offence, kicking AND defence. Only the offensive third used to
@@ -423,7 +447,7 @@ function buildTools(dbPath: string | undefined, season: number) {
             const format = formatFromEspnSettings({ settings: s, teams: j.teams ?? [] });
             const playoffTeams = format.playoffTeams;
             const regWeeks = format.regWeeks;
-            const before = getConfig(db);
+            const before = getConfig(db, lg.league_id);
             // align the app's format + scoring MODEL to the real league (values recompute on next `ff refresh`)
             //
             // KICKER AND DEFENCE GO IN TOO, and leaving them out was the whole bug this line already
@@ -446,13 +470,15 @@ function buildTools(dbPath: string | undefined, season: number) {
               shut();
               return { content: [{ type: "text", text: `league_sync REFUSED: the settings pull was degenerate (${configSlots.length} lineup slots, ${teams} teams, ${Object.keys(rules).length} scoring rules) -- not overwriting the working config with an empty read. Re-run once the app's ESPN session is live.` }] };
             }
+            // EXPLICITLY THIS LEAGUE. `setConfig(db, ...)` with no id landed on whatever league was
+            // ACTIVE -- which is how a sync of league A rewrote league B's config (S-3).
             setConfig(db, { scoring, slots: configSlots, budget, teams, scoring_rules: rules,
-              kicker: model.kicker, defense: model.defense,
-              playoffTeams, regWeeks, format, formatEspn: format } as never);
+              kicker: model.kicker, defense: model.defense, draftType,
+              playoffTeams, regWeeks, format, formatEspn: format } as never, lg.league_id);
             // Record the write, reading back the config that landed (proves setConfig persisted a
             // non-degenerate slot list rather than trusting the call returned).
             const { auditIngest } = await import("../data/validatedIngest.js");
-            auditIngest(db, { source: "league-sync-config", season: lg.season, rowsWritten: configSlots.length, readback: () => getConfig(db).slots.length });
+            auditIngest(db, { source: "league-sync-config", season: lg.season, rowsWritten: configSlots.length, readback: () => getConfig(db, lg.league_id).slots.length });
             const changed = scoring !== before.scoring || budget !== before.budget || teams !== before.teams || JSON.stringify(configSlots) !== JSON.stringify(before.slots) || JSON.stringify(rules) !== JSON.stringify(before.scoring_rules);
             shut();
             return { content: [{ type: "text", text: `synced "${s.name}" (league ${lg.league_id}, ${lg.season}): ${s.size} teams, ${ds.type ?? "?"} draft${ds.auctionBudget ? ` $${ds.auctionBudget}` : ""}, ${sc.scoringType}, ${scoring} scoring. My team: "${mineName ?? "?"}" (id ${mine?.id ?? "?"}). Roster: ${slotSummary}.${changed ? " Config updated to match -- run `ff refresh` to recompute values/tiers for this format." : ""}` }] };
@@ -468,8 +494,13 @@ function buildTools(dbPath: string | undefined, season: number) {
           if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "app not available" }] }; }
           const db = openDb(dbPath); let closed = false; const shut = () => { if (!closed) { closed = true; try { db.close(); } catch { /* already closed */ } } };
           try {
-            const lg = activeLeague(db);
-            if (!lg) { shut(); await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "no league known -- run discover_leagues then league_sync" }] }; }
+            const ctx = resolveLeagueContext(db, undefined);
+            if (!ctx.leagueId) { shut(); await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "no league known -- run discover_leagues then league_sync" }] }; }
+            if (ctx.platform !== "espn") {
+              shut(); await browser?.close().catch(() => {});
+              return { content: [{ type: "text", text: `league ${ctx.leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} read adaptor exists yet.` }] };
+            }
+            const lg = { league_id: ctx.leagueId, season: ctx.rowSeason ?? ctx.config.season, team_id: ctx.teamId, name: ctx.name };
             const j = await espnGet<any>(page, espnLeagueUrl(lg.season, lg.league_id, ["mTeam", "mRoster", "mSettings", "mStandings", "mDraftDetail"]));
             await browser?.close().catch(() => {});
             if (!j) { shut(); return { content: [{ type: "text", text: "could not read league (auth?)" }] }; }
@@ -558,19 +589,27 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
       return { content: [{ type: "text" as const, text: `copilot ${verb} failed: ${String(e instanceof Error ? e.message : e).slice(0, 400)}` }] };
     }
   };
+  // WHICH LEAGUE (I-7). Optional on every in-season tool, and absent means the ACTIVE league --
+  // the same rule `ff copilot --league` obeys, so a number the Assistant quotes and a number a
+  // terminal prints cannot be about two different leagues. An id naming no league THROWS.
+  const LEAGUE = z.string().optional()
+    .describe("league id to answer for. Omit for the ACTIVE league (the one the app's league tab selects). An unknown id is refused by name rather than silently answered for another league.");
+  // Every copilot tool takes `league`, added here rather than retyped into ten schemas -- a
+  // hand-listed copy is exactly how one tool ends up silently unable to accept it.
+  const tool2: ToolFn = (name, desc, schema, handler) => tool(name, desc, { ...schema, league: LEAGUE }, handler);
   const SCHEDULE = z.enum(["real", "generated", "auto"]).optional()
     .describe("REAL uses the league's actual matchups and needs the desktop app running (it FAILS rather than silently substituting); GENERATED is deterministic and offline but its playoff seeding is not this league's; AUTO (default) prefers real and reports which it used in assumptions.schedule.");
   const TRIALS = z.number().optional().describe("Monte Carlo trials. More trials narrow the noise floor, which is returned with the result -- a difference smaller than the floor is not a difference.");
   const SEED = z.number().optional().describe("random seed; results are compared under common random numbers, so leave it alone unless re-measuring.");
 
   return [
-    tool(
+    tool2(
       "season_odds",
       "PLAYOFF AND CHAMPIONSHIP ODDS for every team in my league from the rosters that actually exist, mine flagged, plus THE CURRENT OBJECTIVE REGIME. Returns each team's playoff%, title%, mean wins, mean points and expected optimal-lineup points in the league PLAYOFF WEEKS (weeks 14-16 under the current format block), with the conservation checks (titles sum to 1, playoff shares sum to the playoff field) -- it REFUSES to return a table that fails one. LEAD WITH THE PLAYOFF NUMBER and say so: scored against 114 real team-seasons this simulator BEATS a uniform baseline on the playoff berth (Brier 0.2370 vs 0.2451) and LOSES to it on the champion (0.0659 vs 0.0652), so the title figure is reported alongside and is not a number to plan on. `objective.regime` says whether the seed is secure (playoff probability at or above the threshold, default 70%, derived from the calibration) -- in the secure regime every other tool ranks moves on the league PLAYOFF WEEKS (weeks 14-16 under the current format block) instead. ALWAYS report assumptions.schedule too: a generated schedule is not this league's seeding.",
       { schedule: SCHEDULE, trials: TRIALS, seed: SEED },
       call("season_odds"),
     ),
-    tool(
+    tool2(
       "lineup_recommend",
       "THIS WEEK'S BEST LEGAL STARTING LINEUP, with everyone who cannot play named and why (bye, or ruled OUT/IR/PUP in the store). QUESTIONABLE players are still started -- they play more often than not. Weekly points come through the PER-POSITION serve table (`WEEKLY_SERVE`): as of the 2026-09-09 owner decision, the matchup-aware streaming model serves ALL SIX positions (QB, RB, WR, TE, K, DST) -- see `docs/validation.md` for the measurement it rests on. It REFUSES to return a lineup that starts a man on a bye or ruled out. `objective` picks WHICH QUESTION: the default `expected` maximises expected points; `winprob` maximises P(beating this week's real opponent) and is NOT the default because a 2018-2025 replay measured it at -0.59 percentage points of team-weeks won -- quote that number whenever you use it, and note it REFUSES a generated schedule rather than inventing an opponent. If you do not pass `week`, the result says where the week came from -- the store often does not know, and `weekSource: default` means ASK THE USER which week they mean.",
       {
@@ -580,49 +619,49 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
       },
       call("lineup_recommend"),
     ),
-    tool(
+    tool2(
       "waiver_targets",
       "WAIVER CLAIMS SCORED BY THE CHANGE IN MY PLAYOFF PROBABILITY -- every add paired with every legal drop, under common random numbers. Each row carries THREE numbers and you must name which you are quoting: `playoffsPp` is the primary (the factor the simulator has measured skill on), `playoffWeekPts` is expected optimal-lineup points in the league PLAYOFF WEEKS (weeks 14-16 under the current format block), and `titlePp` is reported alongside and never decides. `rankValue` is whichever the current regime ranks on -- see `objective`. A claim is two decisions and the DROP is the one people get wrong, so each add lists its drop options with their own deltas. Drops that would leave a mandatory slot unfillable (dropping the only kicker) are REFUSED and named, not scored. Compare every delta against noiseFloorPp, which is computed for the PRIMARY quantity: a target that does not clear it is not distinguishable from doing nothing. The FAAB figure is a STATED RULE OF THUMB priced per point of PLAYOFF probability, not a fitted value -- say so when you quote it.",
       { schedule: SCHEDULE, trials: TRIALS, seed: SEED, limit: z.number().optional().describe("how many free agents to evaluate (default 4); each costs simulation time"), positions: z.array(z.string()).optional().describe("restrict the add candidates, e.g. [\"RB\"]") },
       call("waiver_targets"),
     ),
-    tool(
+    tool2(
       "trade_check",
       "SCORE ONE NAMED TRADE OFFER FROM BOTH SIDES, primarily in PLAYOFF probability, with playoff-week points and title probability reported alongside. Both sides always, and not out of fairness: a proposal the other manager loses on is simply rejected, so `them.playoffsPp` is what separates 'this helps us' from 'this is proposable'. The verdict is on the playoff delta because that is the factor this simulator has been measured to predict; quoting the title delta as the reason would be quoting the factor it cannot. Give and get are player names; every `get` must sit on ONE opponent's roster and every `give` on mine. Reports each side's legality (a trade that leaves either roster unable to field a lineup is flagged) and the noise floor.",
       { give: z.array(z.string()).describe("players I send"), get: z.array(z.string()).describe("players I receive -- all from the same opponent"), schedule: SCHEDULE, trials: TRIALS, seed: SEED },
       call("trade_check"),
     ),
-    tool(
+    tool2(
       "trade_finder",
       "FIND ONE-FOR-ONE TRADES WORTH PROPOSING: balanced on CONSENSUS MARKET VALUE first, then ranked by the change in my PLAYOFF probability (or, once the seed is secure, by expected points in the league PLAYOFF WEEKS (weeks 14-16 under the current format block) -- `objective` says which). The value gate is the important half -- filtering on the partner's simulated equity instead once produced 'my WR4 for Christian McCaffrey' as a recommendation, which passes the simulator and no human accepts. `mutual: true` means it clears the noise floor for BOTH teams and is the only kind worth actually sending. Players with no consensus value are SKIPPED and counted, never priced at zero.",
       { schedule: SCHEDULE, trials: TRIALS, seed: SEED, limit: z.number().optional().describe("how many candidate deals to simulate (default 8)"), maxGap: z.number().optional().describe("consensus-value band, default 0.15 = the two sides within 15% of each other"), positions: z.array(z.string()).optional().describe("restrict what I am shopping FOR") },
       call("trade_finder"),
     ),
-    tool(
+    tool2(
       "handcuffs",
       "WHAT EACH BACKUP SCORES IF THE MAN AHEAD OF HIM MISSES A WEEK -- a conditional POINTS payoff, not a probability, and `objective` says so rather than dressing it as one. Ranked by that conditional payoff, not by the lift, because ranking on lift is degenerate (its coefficient on the backup's own value is negative, so it returns the worst player behind the best starter). Rows are flagged `ours` and `rostered`. A handcuff is worth about the same once activated whoever he backs up; the reason to prefer an elite team's handcuff is that he is CHEAPER for the same payoff, not that his ceiling is higher. `contested: true` means the published depth chart and our projection disagree, i.e. a genuine timeshare -- often the most useful row on the page.",
       { positions: z.array(z.string()).optional().describe("positions to scan, default [\"RB\"]"), week: z.number().optional().describe("current week, so the EV is over the REMAINING horizon rather than a full season"), freeOnly: z.boolean().optional().describe("only men nobody in the league rosters"), schedule: SCHEDULE },
       call("handcuffs"),
     ),
-    tool(
+    tool2(
       "depth_risk",
       "WHAT LOSING ONE OF MY PLAYERS WOULD COST, in percentage points of PLAYOFF probability, and who insures him. `costPp` is POSITIVE when we are worse off without him; `costPlayoffWeekPts` and `costTitlePp` are the same loss in the league PLAYOFF WEEKS (weeks 14-16 under the current format block) and in championship probability, reported alongside. The insurance list deliberately mixes free agents with players on other rosters and shortlists them SEPARATELY -- ranking them together on projection fills the list with the fifteen best starters in the league and never shows a claim, which is not an answer to 'my back is hurt'. A trade-finder ranked on points cannot see this: it prices a backup at what he adds to a HEALTHY lineup, which is usually zero.",
       { player: z.string().describe("a player on MY roster"), schedule: SCHEDULE, trials: TRIALS, seed: SEED, limit: z.number().optional().describe("how many insurance candidates (default 4)") },
       call("depth_risk"),
     ),
-    tool(
+    tool2(
       "power_rankings",
       "THE LEAGUE RANKED BY BEST STARTING LINEUP on OUR projections, with each team's simulated playoff% and title% beside it (the same run season_odds returns, so the two cannot disagree). HONEST LIMIT, state it when you quote this: it ranks teams by the same board we bid from, so it is not an independent grade of our own roster -- if our projection is wrong about a player it is wrong here the same way. Read the SPREAD between teams rather than any single absolute.",
       { schedule: SCHEDULE, trials: TRIALS, seed: SEED },
       call("power_rankings"),
     ),
-    tool(
+    tool2(
       "playoff_sos",
       "STRENGTH OF SCHEDULE FOR THE FANTASY PLAYOFF WEEKS -- the only weeks that decide a title. Opponent quality is solved from the POSTED BETTING LINES as a simultaneous system (a team's average spread is confounded by whom it played; this is not), because prior-year defense-vs-position was measured and does not carry year to year. NEGATIVE sos = weaker opponents = better. `costPerWeek` is the MEASURED fantasy swing per position and is under a point a week for a typical starter: it breaks ties between comparable players and does NOT overturn a projection gap. Check `pricedPlayoffGames` -- early in the season most playoff-week games have no line yet and the number is the market's current read projected forward.",
       { schedule: SCHEDULE },
       call("playoff_sos"),
     ),
-    tool(
+    tool2(
       "stream_recommend",
       "WHOM TO START OR ADD AT ONE POSITION THIS WEEK, out of my own men AND everyone nobody in the league rosters. This is the question lineup_recommend cannot answer: it sets the best eleven out of the twelve I already own, and cannot say 'your defence is on bye, claim this one'. Returns my players and the streamable pool ranked by the WEEKLY projection with p10/p90 and, where the serving model publishes one, P(he scores nothing) -- plus the start/sit, and the add/drop with the change in EXPECTED POINTS THIS WEEK. THE UNIT IS POINTS AND NOT PLAYOFF PROBABILITY, and say so: a single slot on a single Sunday has no season simulation behind it and the noise floor of one would swamp the effect. Drops that leave a mandatory slot unfillable are REFUSED and named, not scored. READ `artifactByPos` AND QUOTE IT: the streaming gate is applied per position, so at some positions this is the matchup-aware streaming model and at others it is the same season-line floor the lineup is served from, which has no matchup, no form and no weather in it. A position with no rows returns empty lists and says so in assumptions.basisNote -- that is 'we cannot answer', not 'do nothing'.",
       {
@@ -686,10 +725,31 @@ async function espnGet<T = unknown>(page: import("playwright-core").Page, url: s
 async function espnSwid(page: import("playwright-core").Page): Promise<string> {
   return await wvEval(page, "(document.cookie.match(/SWID=([^;]+)/)||[])[1]||''");
 }
-// The active league row (current season preferred), as discovered/synced into the store.
-function activeLeague(db: import("better-sqlite3").Database): { league_id: string; season: number; team_id: string | null; name: string | null } | undefined {
-  return (db.prepare("SELECT league_id, season, team_id, name FROM league WHERE season=@s ORDER BY last_synced_at DESC LIMIT 1").get({ s: new Date().getFullYear() })
-    ?? db.prepare("SELECT league_id, season, team_id, name FROM league ORDER BY last_synced_at DESC LIMIT 1").get()) as any;
+// `activeLeague` lived here -- a THIRD answer to "which league" (last-synced, current season
+// preferred), disagreeing with `activeLeagueId` and with `currentLeagueId`. On the live store it
+// returned the Yahoo row while `league_sync` then fetched an ESPN URL for it. Deleted 2026-09-16;
+// `resolveLeagueContext` is the only resolver.
+
+/**
+ * THE IDENTITY GUARD for `league_sync` (S-3), as a pure function so it is unit-testable.
+ *
+ * The sync used to resolve a league by one rule, fetch `leagues/<that id>`, and then UPDATE whatever
+ * row its resolver liked and `setConfig` with no id at all -- three different leagues in one verb.
+ * The existing degenerate-read guard checked EMPTINESS, which cannot see "this is the right shape,
+ * for the wrong league". So the payload must say it is the league we asked for.
+ *
+ * ESPN echoes the league id back as `id` (a number). A payload with no id at all is NOT accepted:
+ * "unlabelled" is exactly the case this guard exists for.
+ */
+export function leagueSyncIdentityProblem(payload: unknown, requestedId: string): string | null {
+  const got = (payload as { id?: unknown })?.id;
+  if (got == null || got === "") {
+    return `league_sync REFUSED: the settings payload carries no league id, so it cannot be shown to be league ${requestedId}'s. Nothing was written.`;
+  }
+  if (String(got) !== String(requestedId)) {
+    return `league_sync REFUSED: asked for league ${requestedId} but the payload is league ${String(got)} -- reading one league and writing another is how a league inherits another league's rules. Nothing was written.`;
+  }
+  return null;
 }
 
 const SYSTEM = `You are a fantasy football draft copilot for a 16-team, half-PPR $200 AUCTION with 12 roster slots (QB, RB, WR, TE, 2x FLEX [RB/WR/TE], DST, K, and 4 bench). Use read_needs for the live open slots + max bid rather than assuming.

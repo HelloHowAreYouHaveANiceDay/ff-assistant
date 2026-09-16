@@ -5,11 +5,19 @@
 import Database from "better-sqlite3";
 import { nameKey, dstAliasKey } from "../src/draft/values.ts";
 import { optimalLineup } from "../src/inseason/lineup.ts";
+import { resolveLeagueContext } from "../src/data/leagueContext.ts";
+/** `--league <id>`; absent = the ACTIVE league. */
+const leagueFlag = (argv) => { const i = argv.indexOf("--league"); return i >= 0 ? argv[i + 1] : undefined; };
 
 const db = new Database("data/ff.db", { readonly: true });
 const SEASON = 2026;
-const cfg = JSON.parse(db.prepare("SELECT value FROM settings WHERE key='config'").get().value);
-const lg = db.prepare("SELECT league_id, team_id FROM league WHERE season=? AND team_id IS NOT NULL").get(SEASON);
+// THE LEAGUE'S OWN CONFIG, through the one chokepoint (`resolveLeagueContext` + `getConfig`).
+// This read `settings.config` directly -- now only a derived MIRROR of whichever league is
+// ACTIVE, so it answered for the wrong league the moment a second league existed. `--league <id>`
+// overrides; an id naming no league throws by name.
+const asLeague = resolveLeagueContext(db, leagueFlag(process.argv));
+const cfg = asLeague.config;
+const lg = { league_id: asLeague.leagueId, team_id: asLeague.teamId };
 const MY_TEAM = String(lg.team_id);
 
 // --- board: player_id -> {name,pos,ourProj,player_sk} (exactly the sim's source) ---
@@ -118,4 +126,5 @@ console.log("  " + teams.map((t) => `${t.abbrev}:ecr${t.ecrN}/adp${t.adpN}`).joi
 
 // dump for other tests
 import { writeFileSync } from "node:fs";
+
 writeFileSync("scratch-teams.json", JSON.stringify({ teams, rosters: [...rosters.entries()] }, null, 1));

@@ -32,13 +32,9 @@ export interface SeasonCheck {
   season: number; available: number; teams: number; picks: number; total: number; games: number; champion: string | null;
 }
 
-/** The league id every row is scoped by. The store holds exactly one league row; a raw table keyed
- *  without it could not hold a second, and this is a source key, not a derivation. */
-export function currentLeagueId(db: DB): string {
-  const r = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id?: string } | undefined;
-  if (!r?.league_id) throw new Error("no league row in the store -- sync the league once before ingesting its history");
-  return String(r.league_id);
-}
+// `currentLeagueId` lived here and answered "which league" by LAST SYNC, disagreeing with
+// `activeLeagueId` -- so these ingesters fetched one league's data over ESPN and stamped another
+// league's id onto every row (S-2). Deleted 2026-09-16; `resolveLeagueContext` is the only resolver.
 
 /**
  * Upsert the five raw tables from snapshots already in hand.
@@ -146,9 +142,19 @@ export function readBackLeagueHistory(db: DB, leagueId: string): SeasonCheck[] {
  * A season whose schedule read fails keeps its season/team/pick rows -- the schedule is a separate
  * ESPN view and one gated view must not discard the auction prices that came back fine.
  */
-export async function ingestLeagueHistory(opts: { dbPath?: string; seasons: number[] }): Promise<{ counts: LeagueHistoryCounts; checks: SeasonCheck[] }> {
+export async function ingestLeagueHistory(opts: { dbPath?: string; seasons: number[]; leagueId?: string }): Promise<{ counts: LeagueHistoryCounts; checks: SeasonCheck[] }> {
   const { openLeague } = await import("../league/index.js");
-  const lg = await openLeague({ dbPath: opts.dbPath });
+  const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
+  // RESOLVE ONCE, AND REFUSE THE WRONG PLATFORM BEFORE ANY FETCH. The old code opened the league by
+  // one rule and stamped rows with another; the id used for the fetch and the id used for the write
+  // are now the same variable, and a non-ESPN league is refused by name rather than filled with ESPN
+  // data under its own id.
+  const leagueId = (() => {
+    const db = openDb(opts.dbPath);
+    try { return requirePlatform(resolveLeagueContext(db, opts.leagueId), "espn", "ingest league-history"); }
+    finally { db.close(); }
+  })();
+  const lg = await openLeague({ dbPath: opts.dbPath, leagueId });
   try {
     if (!lg.provider.history) throw new Error(`the ${lg.provider.platform} adaptor exposes no history()`);
     const snaps = await lg.provider.history(opts.seasons);
@@ -161,7 +167,6 @@ export async function ingestLeagueHistory(opts: { dbPath?: string; seasons: numb
     }
     const db = openDb(opts.dbPath);
     try {
-      const leagueId = currentLeagueId(db);
       const counts = loadLeagueHistory(db, leagueId, snaps, schedules, nowIso());
       return { counts, checks: readBackLeagueHistory(db, leagueId) };
     } finally { db.close(); }

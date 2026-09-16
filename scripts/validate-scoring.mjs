@@ -14,6 +14,10 @@ import Database from "better-sqlite3";
 import { attachWebview } from "../src/browser/webviewPage.ts";
 import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, DEFAULT_SCORING } from "../src/draft/scoring.ts";
 import { fetchCsv } from "../src/data/nflverse.ts";
+import { resolveLeagueContext } from "../src/data/leagueContext.ts";
+/** `--league <id>`; absent = the ACTIVE league. */
+const leagueFlag = (argv) => { const i = argv.indexOf("--league"); return i >= 0 ? argv[i + 1] : undefined; };
+
 
 const ESPN_TEAM = { 1:"ATL",2:"BUF",3:"CHI",4:"CIN",5:"CLE",6:"DAL",7:"DEN",8:"DET",9:"GB",10:"TEN",
   11:"IND",12:"KC",13:"LV",14:"LAR",15:"MIA",16:"MIN",17:"NE",18:"NO",19:"NYG",20:"NYJ",21:"PHI",
@@ -23,8 +27,13 @@ const YR = 2025, WEEKS = [3, 5, 8, 11];
 const nk = (s) => String(s).toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b/g, " ").replace(/[^a-z]/g, "");
 
 const db = new Database("data/ff.db", { readonly: true });
-const cfg = JSON.parse(db.prepare("SELECT value FROM settings WHERE key='config'").get().value);
-const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get();
+// THE LEAGUE'S OWN CONFIG, through the one chokepoint (`resolveLeagueContext` + `getConfig`).
+// This read `settings.config` directly -- now only a derived MIRROR of whichever league is
+// ACTIVE, so it answered for the wrong league the moment a second league existed. `--league <id>`
+// overrides; an id naming no league throws by name.
+const vsLeague = resolveLeagueContext(db, leagueFlag(process.argv));
+const cfg = vsLeague.config;
+const lg = vsLeague.leagueId ? { league_id: vsLeague.leagueId } : undefined;
 db.close();
 const scoring = cfg.scoring_rules ?? DEFAULT_SCORING;
 

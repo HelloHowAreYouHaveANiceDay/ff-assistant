@@ -32,6 +32,7 @@
  *      leave-one-season-out in `tools/train_faab.py` where it belongs.
  */
 import type { DB } from "../../db/db.js";
+import { resolveLeagueContext } from "../../data/leagueContext.js";
 import { backtestWaivers } from "./waiver.js";
 import type { ModelName } from "./context.js";
 import {
@@ -100,10 +101,13 @@ export function adjudicate(bid: number, roomWon: number | null): { won: boolean;
 /** Our team id in a season, resolved by OWNER from the team we are today -- ESPN's numeric ids are
  *  stable in this league but that is a property to check, not to assume, and the owner is the thing
  *  that actually persists. */
-export function ourTeamId(db: DB, season: number): string | null {
-  const lg = db.prepare("SELECT team_id, season FROM league ORDER BY last_synced_at DESC LIMIT 1")
-    .get() as { team_id: string; season: number } | undefined;
-  if (!lg) return null;
+export function ourTeamId(db: DB, season: number, leagueId?: string | null): string | null {
+  // ONE RESOLVER. `ORDER BY last_synced_at DESC` here disagreed with `activeLeagueId` -- so on the
+  // live store this answered with the YAHOO row's `team_id` (NULL) while every other part of the
+  // backtest was working on the ESPN league.
+  const ctx = resolveLeagueContext(db, leagueId);
+  if (!ctx.leagueId || !ctx.teamId || ctx.rowSeason == null) return null;
+  const lg = { team_id: ctx.teamId, season: ctx.rowSeason };
   const me = db.prepare("SELECT owner FROM fact_team_season WHERE season=? AND team_id=?")
     .get(lg.season, String(lg.team_id)) as { owner: string | null } | undefined;
   if (!me?.owner) return String(lg.team_id);

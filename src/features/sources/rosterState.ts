@@ -317,11 +317,14 @@ export function localDate(d = new Date()): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-export async function buildRosterStateInto(opts: { dbPath?: string; seasons: number[]; throughAsOf?: string }): Promise<BuildCounts> {
-  const { currentLeagueId } = await import("../../data/leagueHistory.js");
+export async function buildRosterStateInto(opts: { dbPath?: string; seasons: number[]; throughAsOf?: string; leagueId?: string }): Promise<BuildCounts> {
+  const { resolveLeagueContext, requireLeagueId } = await import("../../data/leagueContext.js");
   const db = openDb(opts.dbPath);
   try {
-    return buildRosterState(db, currentLeagueId(db), opts.seasons, { throughAsOf: opts.throughAsOf });
+    // A DERIVATION, not a fetch -- so no platform gate here; it reads whatever raw rows that league
+    // has. What matters is that the id it reads by is the id it writes by, from one resolver.
+    const leagueId = requireLeagueId(resolveLeagueContext(db, opts.leagueId), "build-roster-state");
+    return buildRosterState(db, leagueId, opts.seasons, { throughAsOf: opts.throughAsOf });
   } finally { db.close(); }
 }
 

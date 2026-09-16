@@ -306,12 +306,14 @@ export const weeksInSeason = (season: number): number => (season >= 2021 ? 18 : 
  * A season that returns nothing keeps its status rows -- "we asked and ESPN had none" is a fact, and
  * a sweep that aborts on the first empty week can never establish where the coverage ends.
  */
-export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: number[]; pauseMs?: number })
+export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: number[]; pauseMs?: number; leagueId?: string })
   : Promise<{ counts: RosterWeekCounts; checks: RosterWeekCheck[]; findings: GuardFinding[] }> {
-  const { currentLeagueId } = await import("./leagueHistory.js");
+  const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
   const db = openDb(opts.dbPath);
   try {
-    const leagueId = currentLeagueId(db);
+    // The id the ESPN URLs are built from IS the id every row is stamped with -- and a non-ESPN
+    // league is refused here, before the first fetch.
+    const leagueId = requirePlatform(resolveLeagueContext(db, opts.leagueId), "espn", "ingest league-rosters");
     const pause = opts.pauseMs ?? 600;
     const fetched: RosterWeekFetch[] = [];
     for (const season of opts.seasons) {

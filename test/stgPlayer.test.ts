@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import Database from "better-sqlite3";
 import { playerKey, normPos } from "../src/data/stgPlayer.js";
+import { getConfig } from "../src/db/db.js";
 
 const DB = "data/ff.db";
 const ready = (() => {
@@ -101,9 +102,9 @@ test("every current board player resolves -- staging cannot lose the people we a
   const db = open();
   const gap = db.prepare(
     `SELECT COUNT(*) c FROM board b
-     WHERE b.season = (SELECT CAST(json_extract(value,'$.season') AS INTEGER) FROM settings WHERE key='config')
+     WHERE b.season = ?
        AND NOT EXISTS (SELECT 1 FROM stg_player s WHERE s.name_key = b.player_id)`,
-  ).get() as { c: number };
+  ).get(getConfig(db).season) as { c: number };
   db.close();
   assert.equal(gap.c, 0);
 });

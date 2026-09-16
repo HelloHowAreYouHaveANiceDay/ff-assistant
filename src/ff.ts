@@ -371,8 +371,8 @@ async function cmdServe(rest: string[]) {
           const { computeModelGraph } = await import("./lineage/modelGraph.js");
           const { ageFactor } = await import("./draft/age.js");
           const { opportunityFactor } = await import("./draft/opportunity.js");
-          const cfgRow = db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string } | undefined;
-          const cfg = cfgRow ? JSON.parse(cfgRow.value) : {};
+          // THE ACTIVE LEAGUE's config, through the chokepoint. This read the legacy mirror.
+          const cfg = getConfig(db, activeLeagueId(db)) as unknown as Record<string, unknown>;
           const season = Number(cfg.season) || new Date().getFullYear();
 
           let ageCurve: Record<string, unknown> | null = null, oppModel: Record<string, unknown> | null = null;
@@ -424,14 +424,16 @@ async function cmdServe(rest: string[]) {
           break;
         }
         case "ownership": {
-          const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string } | undefined;
+          // THE ACTIVE league, not the most-recently-synced one -- ownership is what the app draws
+          // rosters from, and the app's league tab is what `active_league` records.
+          const lid = activeLeagueId(db);
           const map: Record<string, { owner: string; team: string; slot: string }> = {};
-          if (lg) {
-            for (const r of db.prepare("SELECT p.name AS name, o.owner, o.team_abbrev, o.slot FROM ownership o JOIN player p ON p.player_id=o.player_id WHERE o.league_id=?").all(lg.league_id) as { name: string; owner: string; team_abbrev: string; slot: string }[]) {
+          if (lid) {
+            for (const r of db.prepare("SELECT p.name AS name, o.owner, o.team_abbrev, o.slot FROM ownership o JOIN player p ON p.player_id=o.player_id WHERE o.league_id=?").all(lid) as { name: string; owner: string; team_abbrev: string; slot: string }[]) {
               map[r.name] = { owner: r.owner, team: r.team_abbrev, slot: r.slot };
             }
           }
-          result = { leagueId: lg?.league_id ?? null, ownership: map };
+          result = { leagueId: lid, ownership: map };
           break;
         }
         case "config-get": result = getConfig(db); break;
@@ -457,11 +459,13 @@ async function cmdServe(rest: string[]) {
           setConfig(db, { levers: next }); result = next; break;
         }
         case "league-info": {
-          const cfg = getConfig(db);
           const aId = activeLeagueId(db);
+          const cfg = getConfig(db, aId);
+          // NO FALLBACK TO ANOTHER LEAGUE. With no active league there is no league to report, and
+          // reporting a different one is the whole class of bug this pass removes.
           const lg = (aId
             ? db.prepare("SELECT league_id, name, season, team_id, scoring_json FROM league WHERE league_id = ?").get(aId)
-            : db.prepare("SELECT league_id, name, season, team_id, scoring_json FROM league ORDER BY last_synced_at DESC LIMIT 1").get()) as { league_id: string; name: string; season: number; team_id: string; scoring_json: string } | undefined;
+            : undefined) as { league_id: string; name: string; season: number; team_id: string; scoring_json: string } | undefined;
           const nPlayers = (db.prepare("SELECT count(*) c FROM player_value WHERE season = ?").get(cfg.season) as { c: number }).c;
           result = { config: cfg, league: lg ?? null, players: nPlayers, onboarded: nPlayers > 0 && !!lg };
           break;
@@ -720,10 +724,10 @@ async function cmdLaunchPractice(rest: string[]) {
   await detach(a);
 }
 
-// Last-resort fallbacks only. The real identity comes from the synced `league` table (below);
-// these are used only if nothing has been discovered/synced yet.
-const REAL_LEAGUE = "462233"; // seacaptaindate.com (16-team $200 auction)
-const REAL_TEAM = "8";
+// `REAL_LEAGUE`/`REAL_TEAM` were hardcoded here as "last-resort fallbacks". A hardcoded league id is
+// a fifth resolver: it cannot be wrong about which league it means, and is always wrong about which
+// league you meant. Deleted 2026-09-16 -- `enter-draft` now REFUSES when the store does not know the
+// league and the team, which is the honest answer.
 
 // Enter the REAL league draft room (G1). Same auction app as practice, so once we're in,
 // readBlock/readRoster/readBoard/quickBid/jumpBid all transfer. The real draft opens a few
@@ -742,14 +746,18 @@ async function espnSwidFor(page: { evaluate: (js: string) => Promise<unknown> })
 
 async function cmdEnterDraft(rest: string[]) {
   const { readRoster } = await import("./draft/espnAuction.js");
-  const { openDb, getConfig } = await import("./db/db.js");
+  const { openDb } = await import("./db/db.js");
   const db = openDb(valueOf(rest, "--db"));
-  const season = getConfig(db).season;
-  const active = (db.prepare("SELECT league_id, team_id FROM league WHERE season=@s ORDER BY last_synced_at DESC LIMIT 1").get({ s: season })
-    ?? db.prepare("SELECT league_id, team_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get()) as { league_id: string; team_id: string } | undefined;
+  // ONE RESOLVER, and `--league` is the explicit override this verb already accepted. A league whose
+  // team is unknown REFUSES rather than entering a draft room under a hardcoded team id.
+  const ctx = await leagueCtx(rest, db);
+  const season = ctx.config.season;
+  const { requireAuction, requireTeamId, requirePlatform } = await import("./data/leagueContext.js");
+  requirePlatform(ctx, "espn", "enter-draft");
+  requireAuction(ctx, "enter-draft");
+  const league = ctx.leagueId as string;
+  const team = valueOf(rest, "--team") ?? requireTeamId(ctx, "enter-draft");
   db.close();
-  const league = valueOf(rest, "--league") ?? active?.league_id ?? REAL_LEAGUE;
-  const team = valueOf(rest, "--team") ?? active?.team_id ?? REAL_TEAM;
   const a = await attachFor(rest);
   // Reuse a non-draft tab (or make one); don't disturb an existing draft tab if already in.
   const existingDraft = a.pages.find((p) => /\/football\/draft/.test(p.url()));
@@ -819,14 +827,15 @@ async function cmdEnterDraft(rest: string[]) {
 // the data. Then the ONLINE half checks the session. Everything prints OK / CHECK / FAIL so it can
 // be read in ten seconds at 08:30 without interpreting anything.
 async function preflightOffline(rest: string[]): Promise<void> {
-  const { openDb, getConfig } = await import("./db/db.js");
+  const { openDb } = await import("./db/db.js");
   const { valueBook } = await import("./data/appdata.js");
   const { DEFAULT_LEVERS } = await import("./draft/levers.js");
   const { existsSync, statSync, readFileSync } = await import("node:fs");
   const line = (ok: boolean | null, msg: string) => console.log(`${ok === null ? "CHECK" : ok ? "OK   " : "FAIL "}: ${msg}`);
   let db;
   try { db = openDb(valueOf(rest, "--db")); } catch (e) { line(false, `cannot open the store -- ${(e as Error).message}`); return; }
-  const cfg = getConfig(db);
+  const pfCtx = await leagueCtx(rest, db);
+  const cfg = pfCtx.config;
   const season = Number(valueOf(rest, "--season") ?? cfg.season);
 
   // 1. The value book the bidder will actually use.
@@ -863,7 +872,7 @@ async function preflightOffline(rest: string[]): Promise<void> {
 
   // 6. The clock. ESPN's draftSettings.date was read at setup; if we stored it, say how long is left.
   try {
-    const row = db.prepare("SELECT scoring_json FROM league WHERE league_id = ?").get(REAL_LEAGUE) as { scoring_json?: string } | undefined;
+    const row = db.prepare("SELECT scoring_json FROM league WHERE league_id = ?").get(pfCtx.leagueId ?? "") as { scoring_json?: string } | undefined;
     const draftAt = row?.scoring_json ? (JSON.parse(row.scoring_json) as { draftDate?: number }).draftDate : undefined;
     if (draftAt) {
       const mins = Math.round((draftAt - Date.now()) / 60000);
@@ -875,8 +884,15 @@ async function preflightOffline(rest: string[]): Promise<void> {
 
 async function cmdPreflight(rest: string[]) {
   const { readRoster } = await import("./draft/espnAuction.js");
-  const league = valueOf(rest, "--league") ?? REAL_LEAGUE;
-  const team = valueOf(rest, "--team") ?? REAL_TEAM;
+  const { openDb } = await import("./db/db.js");
+  const { requireTeamId } = await import("./data/leagueContext.js");
+  // ONE RESOLVER, no hardcoded league. A store that cannot say which league and team we are cannot
+  // preflight a draft, and saying so beats preflighting somebody else's room.
+  const pdb = openDb(valueOf(rest, "--db"));
+  const pctx = await leagueCtx(rest, pdb);
+  pdb.close();
+  const league = pctx.leagueId;
+  const team = valueOf(rest, "--team") ?? (pctx.leagueId ? requireTeamId(pctx, "preflight") : null);
   console.log("--- engine (offline) ---");
   await preflightOffline(rest).catch((e) => console.log(`FAIL : offline checks threw -- ${(e as Error).message}`));
   console.log("--- session (browser) ---");
@@ -1023,15 +1039,18 @@ async function cmdBuildStaging(rest: string[]) {
       `${mig.migrated} migrated, ${mig.unchanged} already current, ${mig.ambiguous} ambiguous (left alone), ` +
       `${mig.collided} collided on a merge (left alone), ${mig.unmapped} unmapped`);
   }
+  // THE SEASON, BOUND, from the config chokepoint -- not a subselect into the legacy `config`
+  // mirror, which is whichever league was made active last.
+  const stgSeason = (await leagueCtx(rest, db)).config.season;
   const cov = db.prepare(
     `SELECT COUNT(*) n, SUM(EXISTS(SELECT 1 FROM stg_player s WHERE s.name_key=b.player_id)) matched
-     FROM board b WHERE b.season = (SELECT CAST(json_extract(value,'$.season') AS INTEGER) FROM settings WHERE key='config')`,
-  ).get() as { n: number; matched: number };
+     FROM board b WHERE b.season = ?`,
+  ).get(stgSeason) as { n: number; matched: number };
   console.log(`\n  board coverage: ${cov.matched}/${cov.n} current players resolve into staging`);
   const amb = db.prepare(
     `SELECT COUNT(*) c FROM board b JOIN stg_player s ON s.name_key=b.player_id
-     WHERE s.ambiguous=1 AND b.season=(SELECT CAST(json_extract(value,'$.season') AS INTEGER) FROM settings WHERE key='config')`,
-  ).get() as { c: number };
+     WHERE s.ambiguous=1 AND b.season = ?`,
+  ).get(stgSeason) as { c: number };
   console.log(`  of which ${amb.c} carry a name shared with another real player -- the rows where a`);
   console.log(`  name-based join can still silently return the wrong man.`);
   db.close();
@@ -1084,11 +1103,11 @@ async function cmdIngestEcr(rest: string[]) {
 }
 
 async function cmdHandcuffs(rest: string[]) {
-  const { openDb, getConfig } = await import("./db/db.js");
+  const { openDb } = await import("./db/db.js");
   const { handcuffBoard } = await import("./inseason/handcuff.js");
   const { readFileSync } = await import("node:fs");
   const db = openDb(valueOf(rest, "--db"));
-  const season = getConfig(db).season;
+  const season = (await leagueCtx(rest, db)).config.season;
   const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8"));
   const positions = (valueOf(rest, "--pos") ?? "RB").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
   const weeks = Number(valueOf(rest, "--weeks") ?? 17);
@@ -1360,14 +1379,19 @@ async function cmdNews(rest: string[]) {
 
 async function cmdValues(rest: string[]) {
   const { computeValues, resolveValueLeague } = await import("./draft/values.js");
-  const { openDb, getConfig } = await import("./db/db.js");
+  const { openDb } = await import("./db/db.js");
   const { readFileSync, writeFileSync } = await import("node:fs");
   const src = valueOf(rest, "--points") ?? dataPath("points.csv");
   const out = valueOf(rest, "--out") ?? dataPath("values.csv");
   const [, ...lines] = readFileSync(src, "utf8").trim().split(/\r?\n/);
   const points = lines.map((l) => { const f = l.split(","); return { name: f[0].trim(), pos: f[1].trim().toUpperCase(), points: Number(f[2]) }; }).filter((p) => p.name && p.points);
   // config-driven so values.csv matches the board (same league shape + K/DST cap)
-  const db = openDb(valueOf(rest, "--db")); const cfg = getConfig(db); db.close();
+  const db = openDb(valueOf(rest, "--db"));
+  const valCtx = await leagueCtx(rest, db);
+  const cfg = valCtx.config; db.close();
+  // AUCTION DOLLARS ARE AN AUCTION FACT. A snake league has no budget, so refuse rather than print a
+  // price list for a draft that never sets one.
+  (await import("./data/leagueContext.js")).requireAuction(valCtx, "ff values");
   const vals = computeValues(points, resolveValueLeague(cfg), cfg.levers.maxKDst);
   writeFileSync(out, "player,pos,value\n" + vals.map((v) => `${v.name},${v.pos},${v.value}`).join("\n") + "\n", "utf8");
   console.log(`wrote ${vals.length} values -> ${out}`);
@@ -1428,7 +1452,7 @@ async function cmdCalibrate(rest: string[]) {
 
 async function cmdSim(rest: string[]) {
   const { runSim, leagueFromConfig } = await import("./draft/sim.js");
-  const { openDb, getConfig } = await import("./db/db.js");
+  const { openDb } = await import("./db/db.js");
   const { readFileSync } = await import("node:fs");
   const readCsv = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
   const pointsFile = valueOf(rest, "--points") ?? dataPath("points.csv");
@@ -1438,7 +1462,10 @@ async function cmdSim(rest: string[]) {
   const ourValues = new Map<string, number>();
   for (const f of readCsv(valuesFile)) ourValues.set(f[0].trim(), Number(f[2]));
   // league shape + bidding levers come from the SYNCED config (per league); CLI flags still override
-  const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db); db.close();
+  const db = openDb(valueOf(rest, "--db"));
+  const simCtx = await leagueCtx(rest, db);
+  const conf = simCtx.config; db.close();
+  (await import("./data/leagueContext.js")).requireAuction(simCtx, "ff sim");
   const lg = leagueFromConfig(conf); const lv = conf.levers;
   const cfg = {
     values: Object.fromEntries(ourValues),
@@ -1643,8 +1670,10 @@ async function cmdSyncSettings(rest: string[]) {
   const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
   const waitMs = Number(valueOf(rest, "--wait") ?? 6000);
   const db = openDb(valueOf(rest, "--db"));
-  const lg = db.prepare("SELECT league_id, season FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; season: number } | undefined;
-  if (!lg) { db.close(); return failStep("no league synced -- run league_sync first"); }
+  const ctx = await leagueCtx(rest, db);
+  if (!ctx.leagueId) { db.close(); return failStep("no league synced -- run league_sync first"); }
+  if (ctx.platform !== "espn") { db.close(); return failStep(`league ${ctx.leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} settings adaptor exists yet`); }
+  const lg = { league_id: ctx.leagueId, season: ctx.rowSeason ?? ctx.config.season };
 
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
   if (!browser) { db.close(); return failStep("app not running -- open the desktop app (its logged-in session is needed)"); }
@@ -1673,12 +1702,12 @@ async function cmdSyncSettings(rest: string[]) {
     return;
   }
 
-  const before = getConfig(db) as Record<string, unknown>;
+  const before = getConfig(db, lg.league_id) as Record<string, unknown>;
   const patch: Record<string, unknown> = { posMax: s.posMax, rosterSettings: s.misc };
   // The ladder is stored only when the page actually carried tiers, so a page that renders the
   // roster table but not the scoring table cannot blank a good ladder.
   if (s.paLadder.length) patch.defense = { ...(before.defense as object ?? {}), paLadder: s.paLadder };
-  setConfig(db, patch as never);
+  setConfig(db, patch as never, lg.league_id);
 
   console.log(`settings synced from the rendered page (league ${lg.league_id}, ${lg.season}):`);
   console.log(`  position maximums: ${Object.entries(s.posMax).map(([k, v]) => `${k} ${v}`).join(", ")}`);
@@ -1708,8 +1737,13 @@ async function cmdSyncRosters(rest: string[]) {
   const { nameKey, dstAliasKey } = await import("./draft/values.js");
   const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
   const db = openDb(valueOf(rest, "--db"));
-  const lg = db.prepare("SELECT league_id, season FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string; season: number } | undefined;
-  if (!lg) { db.close(); return failStep("no league synced -- run league_sync first"); }
+  // RESOLVE ONCE, REFUSE THE WRONG PLATFORM BEFORE THE FETCH -- this verb DELETEs the league's
+  // ownership rows and reinserts, so a league resolved by one rule and fetched by another wipes one
+  // league's rosters and refills them with another league's.
+  const ctx = await leagueCtx(rest, db);
+  if (!ctx.leagueId) { db.close(); return failStep("no league synced -- run league_sync first"); }
+  if (ctx.platform !== "espn") { db.close(); return failStep(`league ${ctx.leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} roster-sync adaptor exists yet`); }
+  const lg = { league_id: ctx.leagueId, season: ctx.rowSeason ?? ctx.config.season };
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
   if (!browser) { db.close(); return failStep("app not running -- open the desktop app (its logged-in session is needed)"); }
   const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://"));
@@ -2109,16 +2143,18 @@ async function cmdBuildManagers(rest: string[]) {
 // managers.json (the sim's bot field). Needs the desktop app open (for the authenticated session).
 async function cmdScrapeLeague(rest: string[]) {
   const { chromium } = await import("playwright-core");
-  const { openDb, getConfig } = await import("./db/db.js");
+  const { openDb } = await import("./db/db.js");
   const { buildManagerProfiles } = await import("./draft/scout.js");
   type Recap = import("./draft/scout.js").Recap;
   const { writeFileSync } = await import("node:fs");
   const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
-  const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db);
-  const lgRow = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string } | undefined;
+  const db = openDb(valueOf(rest, "--db"));
+  const ctx = await leagueCtx(rest, db);
+  const conf = ctx.config;
   db.close();
-  if (!lgRow) { console.log("no league synced -- run league_sync (or discover_leagues) first"); return; }
-  const leagueId = lgRow.league_id;
+  if (!ctx.leagueId) { console.log("no league synced -- run league_sync (or discover_leagues) first"); return; }
+  if (ctx.platform !== "espn") { console.log(`league ${ctx.leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} scrape adaptor exists yet`); return; }
+  const leagueId = ctx.leagueId;
   const years = Number(valueOf(rest, "--years") ?? 4);
   const seasons: number[] = []; for (let y = conf.season - years; y < conf.season; y++) seasons.push(y); // prior N seasons
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
@@ -2179,12 +2215,17 @@ async function cmdScrapeLeague(rest: string[]) {
 async function cmdBacktest(rest: string[]) {
   const { runBacktest } = await import("./draft/backtest.js");
   const { leagueFromConfig } = await import("./draft/sim.js");
-  const { openDb, getConfig } = await import("./db/db.js");
+  const { openDb } = await import("./db/db.js");
   const { readFileSync } = await import("node:fs");
   const rows = (p: string) => readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
   const nPerSeason = Number(valueOf(rest, "--n") ?? 300);
   // league shape, bidding levers, and playoff format all come from the SYNCED config (per league)
-  const db = openDb(valueOf(rest, "--db")); const conf = getConfig(db); db.close();
+  const db = openDb(valueOf(rest, "--db"));
+  const btCtx = await leagueCtx(rest, db);
+  const conf = btCtx.config; db.close();
+  // The championship arbiter prices an AUCTION. It has no meaning for a snake league, and printing a
+  // playoff percentage off auction values for one would be a number with no referent.
+  (await import("./data/leagueContext.js")).requireAuction(btCtx, "ff backtest");
   const lg = leagueFromConfig(conf); const lv = conf.levers;
   // Levers resolve in one place: registry defaults <- STORED config <- CLI overrides. Because
   // `leverOverridesFromArgv` walks the registry rather than a hand-written list of flags, a lever
@@ -3555,6 +3596,24 @@ function valueOf(args: string[], flag: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
+/**
+ * `--league <id>` -- THE ONE WAY A VERB IS TOLD WHICH LEAGUE TO WORK ON.
+ *
+ * Absent means the ACTIVE league (`settings.active_league`, what the app's league tab sets). An id
+ * that names no league row THROWS out of `resolveLeagueContext`, because a typo that silently becomes
+ * the active league is the wrong-league-action failure arriving from the keyboard.
+ */
+function leagueArg(args: string[]): string | undefined {
+  return valueOf(args, "--league");
+}
+
+/** Resolve the league context for a verb, honouring `--league`. Resolve ONCE, then thread it.
+ *  Dynamic import to match the rest of this file, which keeps `ff <verb>` start-up cheap. */
+async function leagueCtx(args: string[], db: import("./db/db.js").DB): Promise<import("./data/leagueContext.js").LeagueContext> {
+  const { resolveLeagueContext } = await import("./data/leagueContext.js");
+  return resolveLeagueContext(db, leagueArg(args));
+}
+
 // ==================================================================================================
 // WEEKLY TRACK COMMANDS. Everything they call lives under src/weekly/; the imports are dynamic so
 // the CLI's start-up cost does not grow for the verbs that never touch the weekly path.
@@ -3775,11 +3834,30 @@ async function cmdCopilot(rest: string[]) {
     stream: "stream_recommend",
   };
   const verb = verbArg ? VERB_OF[verbArg] : undefined;
+  // AN UNKNOWN FLAG IS AN ERROR, NOT A NO-OP (I-7). `ff copilot lineup --weak 3` used to run the
+  // DEFAULT lineup and print it as though the flag had been honoured -- a caller who believes he
+  // asked for something he did not get, which is the same failure `--objective` already refuses by
+  // name. Enumerated from the flags this verb actually reads, so a flag added below must be added
+  // here too or its own test fails.
+  const KNOWN_FLAGS = new Set([
+    "--league", "--db", "--schedule", "--trials", "--seed", "--week", "--player", "--give", "--get",
+    "--pos", "--limit", "--free", "--max-gap", "--json", "--objective",
+  ]);
+  const VALUELESS = new Set(["--free", "--json"]);
+  const unknown = rest.filter((r) => r.startsWith("--") && !KNOWN_FLAGS.has(r));
+  if (unknown.length) {
+    console.error(`ff copilot: unknown flag(s) ${unknown.join(", ")}. Known: ${[...KNOWN_FLAGS].sort().join(" ")}`);
+    process.exitCode = 2;
+    return;
+  }
+  void VALUELESS;
   if (!verb) {
     console.log(`usage: ff copilot <${Object.keys(VERB_OF).join("|")}> [flags]\n` +
       `  --schedule real|generated|auto   real THROWS if the app is unreachable; auto says which it used\n` +
       `  --trials N  --seed N  --week N  --player "Name"  --give "A,B"  --get "C"  --pos RB,WR\n` +
       `  --limit N   --free   --max-gap 0.15   --json\n` +
+      `  --league <id>                    which league to answer for (default: the ACTIVE league;\n` +
+      `                                   an id naming no league is REFUSED, never silently swapped)\n` +
       `  --objective expected|winprob   LINEUP only. Default expected. winprob maximises P(beating\n` +
       `                                 this week's real opponent and REFUSES a generated schedule;\n` +
       `                                 it measured -0.59pp of team-weeks won, so it is not default.`);
@@ -3804,7 +3882,7 @@ async function cmdCopilot(rest: string[]) {
     objective: objectiveOf(valueOf(rest, "--objective")),
   };
 
-  const run = await runCopilot(verb, args, { dbPath: valueOf(rest, "--db") });
+  const run = await runCopilot(verb, { ...args, league: leagueArg(rest) }, { dbPath: valueOf(rest, "--db") });
   if (rest.includes("--json")) { console.log(JSON.stringify(run.result, null, 2)); return; }
   console.log(JSON.stringify(run.result, null, 2));
   console.log(`\n--- ${String(verbArg).toUpperCase()} ---\n${run.summary}`);
@@ -3859,10 +3937,12 @@ async function cmdIngestRaw(rest: string[]) {
   console.log(`raw asset ${id}: ${r.rows} rows (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   if (id === "league-history") {
     const { openDb } = await import("./db/db.js");
-    const { currentLeagueId, readBackLeagueHistory } = await import("./data/leagueHistory.js");
+    const { readBackLeagueHistory } = await import("./data/leagueHistory.js");
+    const { requireLeagueId } = await import("./data/leagueContext.js");
     const db = openDb(valueOf(rest, "--db"));
+    const lid = requireLeagueId(await leagueCtx(rest, db), "ingest-raw league-history");
     console.log("  season  avail  teams  picks  total$  games  champion");
-    for (const c of readBackLeagueHistory(db, currentLeagueId(db))) {
+    for (const c of readBackLeagueHistory(db, lid)) {
       console.log(`  ${c.season}   ${c.available ? "yes" : "no "}  ${String(c.teams).padStart(5)}  ${String(c.picks).padStart(5)}  ` +
         `${String(c.total).padStart(6)}  ${String(c.games).padStart(5)}  ${c.champion ?? "-"}`);
     }
@@ -4013,12 +4093,14 @@ async function cmdInseasonBacktest(rest: string[]) {
 }
 
 async function cmdFormat(rest: string[]) {
-  const { openDb, getConfig, setConfig } = await import("./db/db.js");
+  const { openDb, setConfig } = await import("./db/db.js");
   const { formatFromEspnSettings, effectiveFormat, localStamp, isSeedingRule, validateFormat } = await import("./league/index.js");
   const sub = rest.find((r) => !r.startsWith("--")) ?? "show";
   const db = openDb(valueOf(rest, "--db") ?? undefined);
   try {
-    const cfg = getConfig(db) as Record<string, unknown>;
+    // ONE context for the whole verb: the block is read, written and printed for the SAME league.
+    const fmtCtx = await leagueCtx(rest, db);
+    const cfg = fmtCtx.config as unknown as Record<string, unknown>;
     const season = Number(valueOf(rest, "--season") ?? cfg.season);
 
     /** Mirror the block onto the flat keys the readers that predate it still use. Written from the
@@ -4026,7 +4108,7 @@ async function cmdFormat(rest: string[]) {
     const store = (fmt: import("./league/types.js").LeagueFormat, espn?: import("./league/types.js").LeagueFormat | null) => {
       const patch: Record<string, unknown> = { format: fmt, regWeeks: fmt.regWeeks, playoffTeams: fmt.playoffTeams };
       if (espn !== undefined) patch.formatEspn = espn;
-      setConfig(db, patch as never);
+      setConfig(db, patch as never, fmtCtx.leagueId);
     };
 
     if (sub === "sync") {
@@ -4038,9 +4120,9 @@ async function cmdFormat(rest: string[]) {
         console.log(`read ${p}`);
       } else {
         const { bridgeFetch } = await import("./browser/appBridge.js");
-        const lg = db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id: string } | undefined;
-        if (!lg) throw new Error("no league synced -- run discover_leagues/league_sync in the app first.");
-        const url = `${ESPN_READS_BASE}/seasons/${season}/segments/0/leagues/${lg.league_id}?view=mSettings&view=mTeam`;
+        const { requirePlatform } = await import("./data/leagueContext.js");
+        const lgId = requirePlatform(fmtCtx, "espn", "ff format sync");
+        const url = `${ESPN_READS_BASE}/seasons/${season}/segments/0/leagues/${lgId}?view=mSettings&view=mTeam`;
         payload = JSON.parse(await bridgeFetch(url));   // READ-ONLY: a GET through the app's session
       }
       const fmt = formatFromEspnSettings(payload);
@@ -4048,7 +4130,7 @@ async function cmdFormat(rest: string[]) {
       // way, so `show` reports the real difference instead of an override that has quietly drifted.
       const existing = cfg.format as import("./league/types.js").LeagueFormat | null;
       if (existing?.source === "owner-override") {
-        setConfig(db, { formatEspn: fmt } as never);
+        setConfig(db, { formatEspn: fmt } as never, fmtCtx.leagueId);
         console.log(`ESPN block refreshed for ${season}, but an OWNER OVERRIDE is in force and was left alone.`);
         console.log(`  to adopt ESPN's:  ff format sync --adopt`);
       }

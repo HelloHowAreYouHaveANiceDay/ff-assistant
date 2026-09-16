@@ -192,12 +192,12 @@ export function readBackTransactions(db: DB, leagueId: string): TransactionCheck
   ).all(leagueId) as TransactionCheck[];
 }
 
-export async function ingestLeagueTransactions(opts: { dbPath?: string; seasons: number[]; pauseMs?: number })
+export async function ingestLeagueTransactions(opts: { dbPath?: string; seasons: number[]; pauseMs?: number; leagueId?: string })
   : Promise<{ counts: TransactionCounts; checks: TransactionCheck[] }> {
-  const { currentLeagueId } = await import("./leagueHistory.js");
+  const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
   const db = openDb(opts.dbPath);
   try {
-    const leagueId = currentLeagueId(db);
+    const leagueId = requirePlatform(resolveLeagueContext(db, opts.leagueId), "espn", "ingest league-transactions");
     const pause = opts.pauseMs ?? 400;
     const fetched: TransactionWeekFetch[] = [];
     for (const season of opts.seasons) {
@@ -221,14 +221,14 @@ export async function ingestLeagueTransactions(opts: { dbPath?: string; seasons:
  * terms (both teams, all players, proposer) permanently -- they persist even after the trade resolves.
  * Uncached (bridgeFetch, not espnGet) so a poll always sees fresh pending state; needs the app running.
  */
-export async function ingestPendingTrades(opts: { dbPath?: string }): Promise<{ pending: number; proposals: number }> {
-  const { currentLeagueId } = await import("./leagueHistory.js");
-  const { getConfig } = await import("../db/db.js");
+export async function ingestPendingTrades(opts: { dbPath?: string; leagueId?: string }): Promise<{ pending: number; proposals: number }> {
+  const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
   const { bridgeFetch } = await import("../browser/appBridge.js");
   const db = openDb(opts.dbPath);
   try {
-    const leagueId = currentLeagueId(db);
-    const season = getConfig(db).season;
+    const ctx = resolveLeagueContext(db, opts.leagueId);
+    const leagueId = requirePlatform(ctx, "espn", "sync-pending-trades");
+    const season = ctx.config.season;
     const url = `${HOST}/seasons/${season}/segments/0/leagues/${leagueId}?view=mPendingTransactions`;
     let payload: unknown;
     try { payload = JSON.parse(await bridgeFetch(url, {}, 20000)); }

@@ -4,7 +4,8 @@
 // show) is the default, and the write is a separate, opt-in step whose payload is printed in full
 // before it is ever sent. Nothing here runs on the automation loop; a trade proposal is only ever a
 // deliberate, per-trade act.
-import { getConfig, openDb, type DB } from "../db/db.js";
+import { openDb, type DB } from "../db/db.js";
+import { resolveLeagueContext } from "../data/leagueContext.js";
 import { ESPN_READS_BASE, ESPN_WRITES_BASE } from "../data/espnApi.js";
 
 export interface TradePlayer { name: string; playerId: string; teamId: string }
@@ -37,16 +38,20 @@ function findPlayer(db: DB, season: number, name: string): TradePlayer[] {
   return rows;
 }
 
-export function resolveTrade(db: DB, giveNames: string[], getNames: string[]): TradeResolution {
-  const cfg = getConfig(db) as { season: number };
-  const season = cfg.season;
-  const lg = db.prepare(
-    "SELECT league_id, team_id FROM league WHERE season = ? AND team_id IS NOT NULL",
-  ).get(season) as { league_id: string; team_id: string } | undefined;
+export function resolveTrade(db: DB, giveNames: string[], getNames: string[], leagueIdArg?: string | null): TradeResolution {
+  // ONE RESOLVER, and this one mattered most: `propose_trade` is the system's only OUTWARD WRITE, and
+  // it used to pick its league with an UNORDERED `.get()` over `season=? AND team_id IS NOT NULL` --
+  // an arbitrary row the moment a second league of the same season has a team id (P-2).
+  const ctx = resolveLeagueContext(db, leagueIdArg);
+  const season = ctx.config.season;
   const problems: string[] = [];
-  const leagueId = lg?.league_id ?? null;
-  const myTeamId = lg?.team_id ?? null;
-  if (!lg) problems.push("your team is not known: the league table has no team_id for this season (sync the league first)");
+  const leagueId = ctx.leagueId;
+  const myTeamId = ctx.teamId;
+  if (!leagueId) problems.push("no league in the store (sync the league first)");
+  else if (!myTeamId) problems.push(`your team is not known: league ${leagueId} has no team_id (sync the league first)`);
+  // A trade is POSTED to a platform. Refusing here, by name, beats building an ESPN URL for a league
+  // that is not on ESPN.
+  if (leagueId && ctx.platform !== "espn") problems.push(`league ${leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} trade adaptor exists yet`);
 
   const teamName = (id: string): string | null => {
     const r = db.prepare("SELECT name FROM raw_league_team_season WHERE season = ? AND team_id = ?").get(season, id) as { name: string } | undefined;
@@ -112,11 +117,11 @@ export async function executeTradeProposal(
   dbPath: string | undefined,
   giveNames: string[],
   getNames: string[],
-  opts: { send?: boolean } = {},
+  opts: { send?: boolean; leagueId?: string | null } = {},
 ): Promise<TradeProposalRun> {
   const db = openDb(dbPath);
   let resolution: TradeResolution;
-  try { resolution = resolveTrade(db, giveNames, getNames); } finally { db.close(); }
+  try { resolution = resolveTrade(db, giveNames, getNames, opts.leagueId); } finally { db.close(); }
   if (!resolution.ok) return { resolution, scoringPeriodId: null, sent: false };
 
   // The current scoringPeriodId, read LIVE through the app session (else the store's current week),
@@ -130,7 +135,7 @@ export async function executeTradeProposal(
       if (Number.isFinite(sp)) spid = Number(sp);
     }
   } catch { /* fall through to the store */ }
-  if (spid == null) { try { const { currentWeek } = await import("./copilotStore.js"); spid = currentWeek(dbPath).week; } catch { /* leave null */ } }
+  if (spid == null) { try { const { currentWeek } = await import("./copilotStore.js"); spid = currentWeek(dbPath, new Date(), resolution.leagueId).week; } catch { /* leave null */ } }
   if (spid != null) (resolution.payload as { scoringPeriodId?: number }).scoringPeriodId = spid;
 
   if (!opts.send) return { resolution, scoringPeriodId: spid, sent: false };

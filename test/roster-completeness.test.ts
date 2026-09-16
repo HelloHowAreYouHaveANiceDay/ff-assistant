@@ -18,6 +18,8 @@ import Database from "better-sqlite3";
 import { loadSimContext } from "../src/draft/simContext.js";
 import { assertRostersCanFillLineup } from "../src/draft/season.js";
 import { dstAliasKey, nameKey } from "../src/draft/values.js";
+import { resolveLeagueContext } from "../src/data/leagueContext.js";
+import type { DB } from "../src/db/db.js";
 
 // --- the structural guard itself ------------------------------------------------------------------
 // Both directions are asserted. A guard that can only ever REFUSE is dead code that reads exactly
@@ -137,9 +139,12 @@ test("eligibility is inert for a single-eligible roster -- same answer with the 
 test("every rostered player resolves onto the board", async (t) => {
   if (!existsSync("data/ff.db")) return t.skip("no local store");
   const db = new Database("data/ff.db", { readonly: true });
-  const cfg = JSON.parse((db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string }).value);
-  const lg = db.prepare("SELECT league_id FROM league WHERE season=? AND team_id IS NOT NULL").get(cfg.season) as { league_id: string } | undefined;
-  if (!lg) { db.close(); return t.skip("no league bound"); }
+  // ONE RESOLVER, ONE CONFIG -- this read the legacy `config` mirror and then picked its league with
+  // an unordered `.get()`, the two defects the production code just lost.
+  const ctx = resolveLeagueContext(db as unknown as DB);
+  const cfg = ctx.config;
+  if (!ctx.leagueId || !ctx.teamId) { db.close(); return t.skip("no league bound"); }
+  const lg = { league_id: ctx.leagueId };
 
   const boardIds = new Set((db.prepare("SELECT player_id FROM board WHERE season=?").all(cfg.season) as { player_id: string }[]).map((r) => r.player_id));
   const owned = (db.prepare("SELECT player_id FROM ownership WHERE league_id=?").all(lg.league_id) as { player_id: string }[]).map((r) => r.player_id);
@@ -153,13 +158,15 @@ test("every rostered player resolves onto the board", async (t) => {
 test("no team is short of a position its lineup must start", async (t) => {
   if (!existsSync("data/ff.db")) return t.skip("no local store");
   const db = new Database("data/ff.db", { readonly: true });
-  const cfgRow = db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string } | undefined;
+  const cfg = resolveLeagueContext(db as unknown as DB).config;
   db.close();
-  if (!cfgRow) return t.skip("no config");
-  const cfg = JSON.parse(cfgRow.value);
 
+  // GENERATED, not "auto". This test is about ROSTER SHAPE, which does not depend on the schedule at
+  // all -- and "auto" opens the live league over the app's CDP port, which is what made this file
+  // hang for 533 seconds whenever the app was running (I-8). The production timeout bounds that now;
+  // asking for the schedule this test does not use would still have cost the timeout on every run.
   let ctx;
-  try { ctx = await loadSimContext(); } catch { return t.skip("context unavailable"); }
+  try { ctx = await loadSimContext({ schedule: "generated" }); } catch { return t.skip("context unavailable"); }
   if (!ctx.teams.length) return t.skip("no teams");
 
   // FLEX is excluded deliberately: it is fillable from several positions, so a count against it
@@ -182,7 +189,7 @@ test("the DST namespaces really are different, so the alias is load-bearing", as
   // interchangeable. They are not, and this states the fact the join depends on.
   if (!existsSync("data/ff.db")) return t.skip("no local store");
   const db = new Database("data/ff.db", { readonly: true });
-  const cfg = JSON.parse((db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string }).value);
+  const cfg = resolveLeagueContext(db as unknown as DB).config;
   const dstBoard = (db.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(cfg.season) as { player_id: string; row_json: string }[])
     .filter((r) => JSON.parse(r.row_json).Pos === "DST").map((r) => r.player_id);
   db.close();

@@ -18,6 +18,8 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
+import { getConfig, type AppConfig } from "../db/db.js";
+import { resolveLeagueContext } from "../data/leagueContext.js";
 import { nameKey } from "../draft/values.js";
 import type { VarianceModel } from "../draft/season.js";
 import type { DepthEntry } from "./handcuff.js";
@@ -30,10 +32,11 @@ import type { WeeklyBand } from "./winprob.js";
 
 const open = (dbPath?: string) => new Database(dbPath ?? dataPath("ff.db"), { readonly: true });
 
-function configOf(db: import("better-sqlite3").Database): { season: number; regWeeks?: number; playoffTeams?: number; slots: string[]; flex_ok?: string[] } {
-  const row = db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string } | undefined;
-  if (!row) throw new Error("no config in settings -- run the app once, or `ff refresh`.");
-  return JSON.parse(row.value);
+/** THIS LEAGUE's config, through the one chokepoint. It used to read the legacy `config` mirror --
+ *  whichever league was active last -- so every in-season read below was silently about that league
+ *  no matter which one the caller asked for. `leagueId` omitted = the ACTIVE league. */
+function configOf(db: import("better-sqlite3").Database, leagueId?: string | null): AppConfig {
+  return getConfig(db as unknown as import("../db/db.js").DB, leagueId);
 }
 
 /**
@@ -89,10 +92,10 @@ export function loadAvailability(dbPath?: string): AvailabilityMap {
 /** The depth chart + our projection, in the shape `handcuffBoard` wants, plus the positional pool
  *  sizes its injury tiers are fractions of. Mirrors `ff handcuffs` exactly so the two surfaces
  *  cannot report different boards. */
-export function loadDepth(positions: string[], dbPath?: string): { depth: DepthEntry[]; poolSize: Record<string, number>; vm: VarianceModel } {
+export function loadDepth(positions: string[], dbPath?: string, leagueId?: string | null): { depth: DepthEntry[]; poolSize: Record<string, number>; vm: VarianceModel } {
   const db = open(dbPath);
   try {
-    const season = configOf(db).season;
+    const season = configOf(db, leagueId).season;
     const rows = db.prepare(
       "SELECT b.row_json, s.depth_order AS depth FROM board b LEFT JOIN player_status s USING(player_id) WHERE b.season = ?",
     ).all(season) as { row_json: string; depth: number | null }[];
@@ -121,10 +124,10 @@ export function loadDepth(positions: string[], dbPath?: string): { depth: DepthE
  * board's own player_id is the join key everywhere else in this codebase and market_value uses it
  * too, so the id join comes first and the name key is the fallback.
  */
-export function loadConsensusValues(dbPath?: string): Map<string, number> {
+export function loadConsensusValues(dbPath?: string, leagueId?: string | null): Map<string, number> {
   const db = open(dbPath);
   try {
-    const season = configOf(db).season;
+    const season = configOf(db, leagueId).season;
     const byId = new Map<string, number>();
     for (const r of db.prepare("SELECT player_id, value FROM market_value").all() as { player_id: string; value: number | null }[]) {
       if (r.value != null) byId.set(r.player_id, Number(r.value));
@@ -140,10 +143,10 @@ export function loadConsensusValues(dbPath?: string): Map<string, number> {
 }
 
 /** The NFL schedule with posted lines, for playoff SOS. */
-export function loadGames(dbPath?: string): { games: GameRow[]; season: number; regWeeks: number } {
+export function loadGames(dbPath?: string, leagueId?: string | null): { games: GameRow[]; season: number; regWeeks: number } {
   const db = open(dbPath);
   try {
-    const cfg = configOf(db);
+    const cfg = configOf(db, leagueId);
     const games = db.prepare("SELECT week, team, opponent, home, spread_line FROM game WHERE season=?").all(cfg.season) as GameRow[];
     // FROM THE FORMAT BLOCK, not `?? 14`. Playoff SOS is computed off `regWeeks`, so a stale default
     // would score the wrong three weeks -- silently, and with a plausible-looking answer.
@@ -170,11 +173,11 @@ export function loadTeamOf(dbPath?: string): Map<string, string> {
  * before three players changed teams is not the same number as one built after, and the only thing
  * standing between the Assistant and quoting the first as the second is this stamp.
  */
-export function loadProvenance(dbPath?: string): Provenance {
+export function loadProvenance(dbPath?: string, leagueId?: string | null): Provenance {
   const db = open(dbPath);
   let season = 0, boardRows = 0;
   try {
-    season = configOf(db).season;
+    season = configOf(db, leagueId).season;
     boardRows = (db.prepare("SELECT count(*) n FROM board WHERE season=?").get(season) as { n: number }).n;
   } finally { db.close(); }
   let varianceSeasons: number | null = null;
@@ -192,10 +195,14 @@ export function loadProvenance(dbPath?: string): Provenance {
 
 /** FAAB budget, when the league recorded one. Defaults to a $100 scale (percentage-style bidding),
  *  which is what the FAAB rule of thumb in copilot.ts is expressed against. */
-export function loadFaabBudget(dbPath?: string): number {
+export function loadFaabBudget(dbPath?: string, leagueId?: string | null): number {
   const db = open(dbPath);
   try {
-    const row = db.prepare("SELECT scoring_json FROM league WHERE scoring_json IS NOT NULL ORDER BY last_synced_at DESC LIMIT 1").get() as { scoring_json: string } | undefined;
+    // THIS league's recorded budget, not "whichever league synced most recently and happens to have a
+    // scoring_json". A second league in the store used to be able to set our FAAB scale.
+    const id = resolveLeagueContext(db as unknown as import("../db/db.js").DB, leagueId).leagueId;
+    if (!id) return 100;
+    const row = db.prepare("SELECT scoring_json FROM league WHERE league_id = ? AND scoring_json IS NOT NULL").get(id) as { scoring_json: string } | undefined;
     if (!row) return 100;
     const j = JSON.parse(row.scoring_json) as { faabBudget?: number };
     return Number(j.faabBudget) > 0 ? Number(j.faabBudget) : 100;
@@ -239,10 +246,10 @@ export function localToday(now: Date = new Date()): string {
  * schedule -- the old behaviour is kept exactly: week 1, `source: "default"`, said out loud. An
  * unknown week is a fine thing to report and a terrible thing to hide.
  */
-export function currentWeek(dbPath?: string, now: Date = new Date()): { week: number; source: string } {
+export function currentWeek(dbPath?: string, now: Date = new Date(), leagueId?: string | null): { week: number; source: string } {
   const db = open(dbPath);
   try {
-    const cfg = configOf(db);
+    const cfg = configOf(db, leagueId);
     const weeks = db.prepare(
       `SELECT week, max(gameday) last_kick, min(gameday) first_kick
          FROM raw_nfl_game

@@ -292,6 +292,15 @@ export const DEFAULT_CONFIG = {
   playoffTeams: 6,   // MIRROR of format.playoffTeams
   regWeeks: 14,      // MIRROR of format.regWeeks
   scoring: "HALF", // STD | HALF | PPR -- selects the Boris/ADP/market consensus VARIANT
+  // HOW THE LEAGUE IS STOCKED. "auction" for every ESPN league this repo has ever run, and the
+  // default, so an existing store is byte-identical. A snake league prices nothing in dollars, so the
+  // auction-only verbs (auto-draft, values-as-dollars, sim/backtest) refuse on it BY NAME rather than
+  // quietly reporting auction values for a draft that has none.
+  //
+  // `platform` is deliberately NOT here. It is a property of the LEAGUE ROW (`league.platform`), read
+  // through LeagueContext; storing it in the config as well is two sources for one fact, and that is
+  // exactly how `openLeague` came to dispatch on a field AppConfig does not have (S-12).
+  draftType: "auction" as "auction" | "snake",
   // the actual per-stat scoring model that tailors OUR points/values (populated by league_sync)
   scoring_rules: DEFAULT_SCORING as ScoringRules,
   // tunable knobs (tiers, K/DST cap, bidding, sleeper cutoff) -- visible + assistant-writable
@@ -319,14 +328,35 @@ export function setActiveLeagueId(db: DB, leagueId: string): void {
 const configKey = (leagueId: string | null): string => (leagueId ? `config:${leagueId}` : "config");
 
 /**
- * MULTI-LEAGUE CONFIG (2026-09-15, Phase 2a). Source of truth is per-league key `config:<leagueId>`.
- * The legacy `config` key is kept as a MIRROR of the ACTIVE league's config, so the handful of direct
- * `settings WHERE key='config'` readers keep working unchanged. `getConfig(db)` with no id resolves the
- * active league; an explicit id reads that league. Falls back to the legacy key, then DEFAULT_CONFIG.
+ * MULTI-LEAGUE CONFIG. Source of truth is the per-league key `config:<leagueId>`.
+ *
+ * THE FALLBACK THAT HAD TO GO (S-7, 2026-09-16). An EXPLICIT id whose key is absent used to fall back
+ * to the legacy `config` MIRROR -- which holds ANOTHER league's config. That is how the Yahoo league
+ * came to carry ESPN's playoff calendar, ESPN's half-PPR scoring rules, ESPN's divisions and ESPN's
+ * team ids: `getConfig(db, "129048")` returned league 462233's config, and `setConfig` then merged the
+ * new league's handful of edits on top of it and stored the result as a fact. A config inherited from
+ * a different league is not a default, it is a fabrication, and it passes every shape check there is.
+ *
+ * So: an explicit id reads ONLY its own key, and falls back to DEFAULT_CONFIG -- which is wrong in a
+ * visible, uniform way (no format block at all, so `effectiveFormat` THROWS) rather than wrong in a way
+ * that looks configured. Resolution with NO id is unchanged: active league's key, then the legacy
+ * mirror, then defaults.
+ *
+ * The legacy `config` key survives as a DERIVED MIRROR of the active league, written by `setConfig` and
+ * `setActiveLeagueConfig`, so anything outside this repo that reads it still sees something sane. No
+ * code in src/ or scripts/ reads it any more.
  */
 export function getConfig(db: DB, leagueId?: string | null): AppConfig {
-  const id = leagueId === undefined ? activeLeagueId(db) : leagueId;
-  const raw = (id ? getSetting(db, configKey(id)) : undefined) ?? getSetting(db, "config");
+  // `null` means "this store has no league" (a fresh clone), NOT "a league I named" -- it keeps the
+  // legacy path so a config-only caller on a bare store behaves as it always has. Only a real id is
+  // treated as an explicit, isolated request.
+  const explicit = typeof leagueId === "string" && leagueId.length > 0;
+  const raw = explicit
+    ? getSetting(db, configKey(leagueId as string))
+    : ((): string | undefined => {
+      const id = activeLeagueId(db);
+      return (id ? getSetting(db, configKey(id)) : undefined) ?? getSetting(db, "config");
+    })();
   if (raw) {
     try {
       const s = JSON.parse(raw);
@@ -336,16 +366,32 @@ export function getConfig(db: DB, leagueId?: string | null): AppConfig {
   }
   return { ...DEFAULT_CONFIG };
 }
+/**
+ * Write a config patch for ONE league.
+ *
+ * REFUSES rather than writing a league-less config (S-11). The old `!id` branch wrote the legacy mirror
+ * alone -- a config belonging to no league, which the next `getConfig` for ANY league could inherit.
+ * There is no such thing as a config that is not some league's config.
+ */
 export function setConfig(db: DB, cfg: Partial<AppConfig>, leagueId?: string | null): void {
-  const id = leagueId === undefined ? activeLeagueId(db) : leagueId;
+  const explicit = typeof leagueId === "string" && leagueId.length > 0;
+  const id = explicit ? (leagueId as string) : activeLeagueId(db);
+  if (!id) {
+    throw new Error(
+      "setConfig: no league to write the config for -- pass an explicit leagueId, or sync a league first " +
+      "(a config that belongs to no league is the mirror every other league used to inherit).",
+    );
+  }
   const merged = JSON.stringify({ ...getConfig(db, id), ...cfg });
-  if (id) setSetting(db, configKey(id), merged);
-  // Keep the legacy `config` mirror pointed at the ACTIVE league (or write it directly when no league).
-  if (!id || id === activeLeagueId(db)) setSetting(db, "config", merged);
+  setSetting(db, configKey(id), merged);
+  // Keep the legacy `config` mirror pointed at the ACTIVE league. DERIVED, never read by this repo.
+  if (id === activeLeagueId(db)) setSetting(db, "config", merged);
 }
 
-/** Point the legacy `config` mirror at a league's config -- called when the active league changes
- *  (a new `league_sync`), so the direct `WHERE key='config'` readers follow the switch. */
+/** Point the legacy `config` mirror at a league's config -- called when the active league changes.
+ *  DERIVED ONLY: as of 2026-09-16 nothing in src/ or scripts/ reads that key, it is kept so anything
+ *  outside this repo still sees a sane value. `test/config-isolation-faultinject.test.ts` corrupts it
+ *  and asserts every per-league read is unaffected, which is what "no reader left" actually means. */
 export function setActiveLeagueConfig(db: DB, leagueId: string): void {
   const raw = getSetting(db, configKey(leagueId));
   if (raw) setSetting(db, "config", raw);

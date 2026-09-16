@@ -5,11 +5,19 @@
 import fs from "node:fs";
 import Database from "better-sqlite3";
 import { loadPriceModel, priceFor } from "../src/model/price.ts";
+import { resolveLeagueContext } from "../src/data/leagueContext.ts";
+/** `--league <id>`; absent = the ACTIVE league. */
+const leagueFlag = (argv) => { const i = argv.indexOf("--league"); return i >= 0 ? argv[i + 1] : undefined; };
+
 
 const db = new Database("data/ff.db", { readonly: true });
 let bad = 0;
 const gate = (ok, msg) => { console.log((ok ? "PASS  " : "FAIL  ") + msg); if (!ok) bad++; };
-const cfg = JSON.parse(db.prepare("SELECT value FROM settings WHERE key='config'").get().value);
+// THE LEAGUE'S OWN CONFIG, through the one chokepoint (`resolveLeagueContext` + `getConfig`).
+// This read `settings.config` directly -- now only a derived MIRROR of whichever league is
+// ACTIVE, so it answered for the wrong league the moment a second league existed. `--league <id>`
+// overrides; an id naming no league throws by name.
+const cfg = resolveLeagueContext(db, leagueFlag(process.argv)).config;
 const ROOM = (cfg.teams ?? 16) * (cfg.budget ?? 200);
 const ROSTERED = (cfg.teams ?? 16) * (cfg.slots?.length ?? 12);
 

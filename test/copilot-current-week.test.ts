@@ -25,7 +25,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { openDb } from "../src/db/db.js";
+import { openDb, setConfig, setActiveLeagueId } from "../src/db/db.js";
 import { currentWeek, localToday } from "../src/inseason/copilotStore.js";
 
 const SEASON = 2026;
@@ -41,9 +41,11 @@ const WEEKS: [week: number, first: string, last: string][] = [
 function tmpDb(withSchedule = true): string {
   const path = join(mkdtempSync(join(tmpdir(), "ff-week-")), "ff.db");
   const db = openDb(path);
-  const cfg = JSON.parse((db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string }).value);
-  cfg.season = SEASON;
-  db.prepare("UPDATE settings SET value = ? WHERE key='config'").run(JSON.stringify(cfg));
+  // A league, and ITS config -- `settings.config` is now only a derived mirror, so writing the season
+  // there alone would leave every reader on DEFAULT_CONFIG's season instead.
+  db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES ('L1','espn','t',?,'1','2026-01-01T00:00:00Z')").run(SEASON);
+  setActiveLeagueId(db, "L1");
+  setConfig(db, { season: SEASON }, "L1");
   if (withSchedule) {
     const ins = db.prepare(
       `INSERT INTO raw_nfl_game (season, game_id, game_type, week, gameday, fetched_at)

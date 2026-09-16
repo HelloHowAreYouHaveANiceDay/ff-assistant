@@ -6,14 +6,17 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb, setConfig } from "../src/db/db.js";
+import { openDb, setConfig, setActiveLeagueId } from "../src/db/db.js";
 import { resolveTrade } from "../src/inseason/proposeTrade.js";
 
 // A minimal league: I am team 8; team 14 is the counterparty. Godwin is mine, Bo Nix is theirs.
 function seed() {
   const db = openDb(join(mkdtempSync(join(tmpdir(), "ff-trade-")), "t.db"));
-  setConfig(db, { season: 2026 });
-  db.prepare("INSERT INTO league (season, league_id, team_id) VALUES (2026, '462233', '8')").run();
+  // The LEAGUE ROW FIRST, with its platform -- a config now belongs to a league (it is written under
+  // `config:<id>`, never to a league-less mirror), and the resolver reads the platform from the row.
+  db.prepare("INSERT INTO league (season, league_id, platform, team_id, last_synced_at) VALUES (2026, '462233', 'espn', '8', '2026-09-10T00:00:00Z')").run();
+  setActiveLeagueId(db, '462233');
+  setConfig(db, { season: 2026 }, '462233');
   const team = db.prepare("INSERT INTO raw_league_team_season (league_id, season, team_id, name, fetched_at) VALUES ('462233', 2026, ?, ?, '2026-09-10')");
   team.run("8", "That King Henry"); team.run("14", "Jevon's Paradox");
   const ros = db.prepare("INSERT INTO raw_league_roster_week (league_id, season, week, team_id, espn_player_id, name, fetched_at) VALUES ('462233', 2026, 1, ?, ?, ?, '2026-09-10')");
@@ -33,8 +36,11 @@ test("a valid trade resolves to the exact ESPN payload with the right ids and di
 
 test("an exact GET name resolves and builds the payload: you give team 8's player, get team 14's", () => {
   const db = openDb(join(mkdtempSync(join(tmpdir(), "ff-trade2-")), "t.db"));
-  setConfig(db, { season: 2026 });
-  db.prepare("INSERT INTO league (season, league_id, team_id) VALUES (2026, '462233', '8')").run();
+  // The LEAGUE ROW FIRST, with its platform -- a config now belongs to a league (it is written under
+  // `config:<id>`, never to a league-less mirror), and the resolver reads the platform from the row.
+  db.prepare("INSERT INTO league (season, league_id, platform, team_id, last_synced_at) VALUES (2026, '462233', 'espn', '8', '2026-09-10T00:00:00Z')").run();
+  setActiveLeagueId(db, '462233');
+  setConfig(db, { season: 2026 }, '462233');
   db.prepare("INSERT INTO raw_league_team_season (league_id, season, team_id, name, fetched_at) VALUES ('462233',2026,'8','Mine','x'),('462233',2026,'14','Theirs','x')").run();
   db.prepare("INSERT INTO raw_league_roster_week (league_id, season, week, team_id, espn_player_id, name, fetched_at) VALUES ('462233',2026,1,'8','3116165','Chris Godwin Jr.','x'),('462233',2026,1,'14','4426338','Bo Nix','x')").run();
   const r = resolveTrade(db, ["Chris Godwin"], ["Bo Nix"]);
@@ -52,8 +58,11 @@ test("an exact GET name resolves and builds the payload: you give team 8's playe
 
 test("FAULT: giving a player you do not own is refused and NOT sendable", () => {
   const db = openDb(join(mkdtempSync(join(tmpdir(), "ff-trade3-")), "t.db"));
-  setConfig(db, { season: 2026 });
-  db.prepare("INSERT INTO league (season, league_id, team_id) VALUES (2026, '462233', '8')").run();
+  // The LEAGUE ROW FIRST, with its platform -- a config now belongs to a league (it is written under
+  // `config:<id>`, never to a league-less mirror), and the resolver reads the platform from the row.
+  db.prepare("INSERT INTO league (season, league_id, platform, team_id, last_synced_at) VALUES (2026, '462233', 'espn', '8', '2026-09-10T00:00:00Z')").run();
+  setActiveLeagueId(db, '462233');
+  setConfig(db, { season: 2026 }, '462233');
   db.prepare("INSERT INTO raw_league_team_season (league_id, season, team_id, name, fetched_at) VALUES ('462233',2026,'8','Mine','x'),('462233',2026,'14','Theirs','x')").run();
   db.prepare("INSERT INTO raw_league_roster_week (league_id, season, week, team_id, espn_player_id, name, fetched_at) VALUES ('462233',2026,1,'8','3116165','Chris Godwin Jr.','x'),('462233',2026,1,'14','4426338','Bo Nix','x')").run();
   // Try to give Bo Nix (team 14's player) -- the give-ownership check must refuse.
@@ -66,8 +75,11 @@ test("FAULT: giving a player you do not own is refused and NOT sendable", () => 
 
 test("FAULT: an unknown player name is refused, not silently dropped", () => {
   const db = openDb(join(mkdtempSync(join(tmpdir(), "ff-trade4-")), "t.db"));
-  setConfig(db, { season: 2026 });
-  db.prepare("INSERT INTO league (season, league_id, team_id) VALUES (2026, '462233', '8')").run();
+  // The LEAGUE ROW FIRST, with its platform -- a config now belongs to a league (it is written under
+  // `config:<id>`, never to a league-less mirror), and the resolver reads the platform from the row.
+  db.prepare("INSERT INTO league (season, league_id, platform, team_id, last_synced_at) VALUES (2026, '462233', 'espn', '8', '2026-09-10T00:00:00Z')").run();
+  setActiveLeagueId(db, '462233');
+  setConfig(db, { season: 2026 }, '462233');
   db.prepare("INSERT INTO raw_league_team_season (league_id, season, team_id, name, fetched_at) VALUES ('462233',2026,'8','Mine','x'),('462233',2026,'14','Theirs','x')").run();
   db.prepare("INSERT INTO raw_league_roster_week (league_id, season, week, team_id, espn_player_id, name, fetched_at) VALUES ('462233',2026,1,'8','3116165','Chris Godwin Jr.','x')").run();
   const r = resolveTrade(db, ["Chris Godwin"], ["Nobody At All"]);

@@ -23,6 +23,10 @@ import Database from "better-sqlite3";
 import { loadSimContext } from "../src/draft/simContext.ts";
 import { effectiveFormat } from "../src/league/index.ts";
 import { rosterGaps } from "../src/draft/season.ts";
+import { resolveLeagueContext } from "../src/data/leagueContext.ts";
+/** `--league <id>`; absent = the ACTIVE league. */
+const leagueFlag = (argv) => { const i = argv.indexOf("--league"); return i >= 0 ? argv[i + 1] : undefined; };
+
 
 const TRIALS = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 2500);
 const topArg = process.argv.indexOf("--top");
@@ -80,7 +84,11 @@ console.log(`WAIVER SWEEP -- ${adds.length} free agents x legal drops = ${pairs.
 console.log(`  ${TRIALS} trials x ${SEEDS.length} seeds each\n`);
 
 const db = new Database("data/ff.db", { readonly: true });
-const cfg = JSON.parse(db.prepare("SELECT value FROM settings WHERE key='config'").get().value);
+// THE LEAGUE'S OWN CONFIG, through the one chokepoint (`resolveLeagueContext` + `getConfig`).
+// This read `settings.config` directly -- now only a derived MIRROR of whichever league is
+// ACTIVE, so it answered for the wrong league the moment a second league existed. `--league <id>`
+// overrides; an id naming no league throws by name.
+const cfg = resolveLeagueContext(db, leagueFlag(process.argv)).config;
 db.close();
 // From the format block, never a literal -- see docs/validation.md, Track E.
 const cfgFormat = effectiveFormat(cfg);

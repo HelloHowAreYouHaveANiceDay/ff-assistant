@@ -271,6 +271,20 @@ silently ESPN-shaped.
   (name/season on discover; junk row), I-7 `--league` flag + MCP arg, I-8 timeout. Adds `platform`
   + `draftType` to AppConfig. Tests: config isolation, explicit-id no-inheritance (fault injection),
   resolver agreement, league_sync identity guard.
+  **DONE 2026-09-16 (working tree, uncommitted).** `resolveLeagueContext` is the only resolver;
+  `currentLeagueId`/`activeLeague`/`REAL_LEAGUE` and every inline last-synced league query are gone
+  (`src` now has `last_synced_at DESC` only inside `activeLeagueId` and the `league-list` ORDER BY);
+  no reader of `settings key='config'` is left in `src/` or `scripts/`. `getConfig(db, <explicit id>)`
+  falls back to `DEFAULT_CONFIG`, never the mirror; `setConfig` refuses a league-less write.
+  `openLeague` dispatches on the league ROW's platform and its refusal is now reachable and tested.
+  `--league <id>` on the CLI + an optional `league` on all ten MCP copilot tools; `ff copilot` rejects
+  unknown flags. `loadSimContext`'s live read is bounded by `FF_LIVE_READ_TIMEOUT_MS` (default 15 s;
+  positive control `scripts/live-read-timeout-probe.mjs`), so `npm test` now finishes in ~185 s with
+  the app running (was 533 s + 1 fail). Junk league row 211696 deleted. Gate: `backtest --full
+  --no-lookahead --inflation --seasons 1999-2024 --n 150` = 39.5% / 96% with the per-season line
+  byte-identical to the baseline above. Not done in WP1: `app/engine/ff.cjs` is a stale build artifact
+  (`npm run build:engine` regenerates it); `ingest-source` has no `--league` passthrough yet (its
+  league sources resolve the active league and refuse a non-ESPN platform by name).
 - **WP2 (opus) -- Storage integrity.** S-4, S-5, S-6, S-8 (stamp + refuse + rebuild hook), S-9, S-13,
   I-5 (format_key on scorecard_*), P-2. Migration is idempotent, runs against the backed-up store.
   Test: synthetic second-league rows in every keyed table leave every ESPN read byte-identical.

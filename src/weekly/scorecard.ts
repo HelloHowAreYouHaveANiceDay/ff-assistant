@@ -134,6 +134,8 @@ export interface ScorecardOpts {
   score?: boolean;
   /** Also read ESPN's own weekly projection through the app bridge. */
   espn?: boolean;
+  /** WHICH LEAGUE the optional ESPN baseline pull is for. Omitted = the ACTIVE league. */
+  leagueId?: string | null;
   /** Snapshot a specific week rather than the imminent one. */
   week?: number;
   /** The date the run is anchored to. Injectable so a test can drive the refusal path. */
@@ -549,7 +551,10 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
       } else {
         if (opts.espn) {
           res.espn.attempted = true;
-          const lg = (db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get() as { league_id?: string } | undefined)?.league_id;
+          // ONE RESOLVER -- the ESPN baseline pull must be for the league this scorecard is about,
+          // not for whichever row synced most recently.
+          const { resolveLeagueContext } = await import("../data/leagueContext.js");
+          const lg = resolveLeagueContext(db, opts.leagueId).leagueId ?? undefined;
           const f = await fetchEspnWeekly({ season: opts.season, week, leagueId: lg });
           res.espn.ok = f.ok; res.espn.reason = f.reason;
           if (f.ok) {

@@ -98,8 +98,17 @@ export function fingerprintDraftArbiter(db) {
   for (const c of DRAFT_ARBITER_DEPS.code) parts[`code:${c}`] = hashFile(c);
   if (db) {
     for (const t of DRAFT_ARBITER_DEPS.tables) parts[`table:${t}`] = tableVersion(db, t);
+    // THE ACTIVE LEAGUE'S OWN CONFIG ROW, not the legacy `config` mirror. The mirror is derived from
+    // whichever league was made active last, so on a two-league store it fingerprints a league the
+    // arbiter may not be running for. Resolved the same way `activeLeagueId` does (explicit selection
+    // first, then most-recently-synced); spelled out here rather than imported because this file is
+    // loaded by plain-`node` scripts that cannot load TypeScript.
     try {
-      const cfg = db.prepare("SELECT value FROM settings WHERE key = 'config'").get();
+      const sel = db.prepare("SELECT value FROM settings WHERE key = 'active_league'").get();
+      const id = (sel && db.prepare("SELECT 1 FROM league WHERE league_id = ?").get(String(sel.value)))
+        ? String(sel.value)
+        : db.prepare("SELECT league_id FROM league ORDER BY last_synced_at DESC LIMIT 1").get()?.league_id;
+      const cfg = id ? db.prepare("SELECT value FROM settings WHERE key = ?").get(`config:${id}`) : undefined;
       parts["config:settings.config"] = cfg ? sha(String(cfg.value)).slice(0, 16) : "UNSET";
     } catch { parts["config:settings.config"] = "ERR"; }
   }
