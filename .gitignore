@@ -121,3 +121,6 @@ data/projection-artifact.2c.json
 data/variance-model.json
 data/fold-models/
 docs/redesign/*.out
+
+# Disposable TMPDIR for the test suite (scripts/run-tests.mjs)
+.tmp-test/

@@ -13,7 +13,7 @@
   "scripts": {
     "ff": "tsx src/ff.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
     "build:engine": "esbuild src/ff.ts --bundle --platform=node --format=cjs --target=node20 --outfile=app/engine/ff.cjs --external:better-sqlite3 --external:playwright-core --external:@anthropic-ai/claude-agent-sdk --external:electron --banner:js=\"const import_meta_url=require('url').pathToFileURL(__filename).href;\" --define:import.meta.url=import_meta_url && node -e \"require('fs').copyFileSync('src/db/schema.sql','app/engine/schema.sql')\"",
     "lint": "eslint .",
     "knip": "knip"
