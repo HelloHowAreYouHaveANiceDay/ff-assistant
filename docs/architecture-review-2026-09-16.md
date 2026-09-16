@@ -310,10 +310,122 @@ silently ESPN-shaped.
   half-keyed tables, "rebuilt on switch"); lint warnings; this file's status.
 - **WP7 -- Per-format gate + Yahoo in-season odds** (after WP1-5): `cpcv --league`, per-format
   `golden.json`, `ff copilot season-odds --league 129048` from the seeded simulator.
+  **DONE 2026-09-16 (commit 8edb34e).** `ff sync-rosters` is PLATFORM-DISPATCHED: it resolves
+  the league once, hands `platformFor(ctx.platformRaw)` one authenticated GET inside that platform's own
+  guest (`bridgePlatformIO`), and writes through one shared writer (`src/data/ownershipSync.ts`) that
+  keys every row by `nameKey` with the DST nickname->abbreviation alias applied on POSITION. The ESPN
+  rows it produces are **byte-identical** to the ones the old ESPN-only body wrote (192 rows compared
+  field-for-field before and after); Yahoo 129048 now holds **207 ownership rows across 12 teams**
+  (17-18 each), our 18 matching the live team page name-for-name. New `ff sync-schedule [--league]`
+  writes `raw_league_matchup` through any platform's `provider.matchups()`: **84 games over 14 weeks**
+  for 129048, ESPN's 1042 untouched. `raw_league_matchup` carries pairings only (no score columns), and
+  the Yahoo league has no started-lineup snapshot, so `loadSimContext` now REFUSES to seed a league whose
+  settled weeks have no `raw_league_roster_week` rows -- previously every team scored 0, every matchup
+  tied, and the home side "won", i.e. fabricated standings that render exactly like real ones. The
+  refusal is carried into `assumptions.played.seedBlocked` and leads the caveat as "NOT SEEDED: ...".
+  `fit-variance` / `fit-correlation` / `fit-bootstrap` take `--league` (`scripts/lib/format-paths.mjs`):
+  with no flag they return the historical literals BY CONSTRUCTION, opening no store -- re-run flagless
+  they reproduced `variance-model.json` and `rank-outcomes.json` BYTE-IDENTICAL and
+  `correlation-model.json` identical modulo the CRLF the git checkout applies (the writer emits LF;
+  `git diff` is empty). All three are now fitted into `data/formats/sc-a845f67652fb/` from the Yahoo
+  target: 16 of 24 CV cells differ from ESPN's (K and DST are identical, because the Yahoo target still
+  scores them under the default rules -- the league rosters neither, so nothing consumes them, but it is
+  a cosmetic untruth in that file). `ff sync-actuals --league 129048` writes the format's own
+  `current-actuals.csv` (Rodgers wk1 16.5 PPR vs the root's 12.5 half-PPR) and REFUSES the forward-board
+  rebuild by name, because `buildForwardBoard` writes the shared `feat_player_week*` tables that hold the
+  INCUMBENT's scored target; its scoring model now comes from the same resolved context as its output
+  path (it took the ACTIVE league's rules while writing another league's file). `scripts/cpcv.mjs` gains
+  `--league`: it resolves the format, passes `--league` down to both child backtests, reads
+  `<dir>/golden.json` (new `data/golden.json` pins the incumbent's 96.0 / 38.5 / 3.0pp), stamps
+  `league`+`format_key` on the ledger row, and for 129048 REFUSES by name ("format sc-a845f67652fb has no
+  golden -- a pre-draft gate needs the snake DraftModel; in-season odds are reachable but ungated"),
+  running nothing and appending nothing. Flagless it reads 96.0/38.5 from `data/golden.json` and is
+  otherwise unchanged (verified end-to-end on cached dumps). The leftover `dataPath` per-format reads are
+  closed: `copilotStore` (handcuff variance model, provenance variance + projection stamps, and the two
+  weekly loaders, all now per league), `backtest/scorers.ts`, `backtest/winprobLineup.ts`,
+  `injuryHorizon.ts` (variance per format; `injury-duration-artifact.json` confirmed SHARED-NFL and read
+  through `model.shared`), and `draft/sim.ts` (a `variancePath` threaded from the backtest's resolved
+  format through `DraftFieldOpts`). LIVE RUN on 129048: playoff shares sum to **exactly 8.0000** over 12
+  teams and title shares to 1.0000; the lineup fills SUPERFLEX with Jared Goff beside Burrow at QB and
+  flags no IR slot; the weekly serve falls back BY NAME to the format's season line
+  (`basisNote: "no weekly projector was supplied..."`); waivers report `faabBasis: "rule"` on a $100
+  budget. `copilot-crosscheck.mjs --league 129048`: ALL CHECKS PASSED, fault injection included. ESPN
+  identity after switching back: `player_value` 529 rows byte-identical to the backup, `board` differs
+  only in `ESPN_ADP` on 151 players (live market drift of 0.1, diagnosed field-by-field), the week-2
+  lineup JSON identical to its pre-switch capture, golden **39.5% / 96%** with the per-season line
+  byte-identical. Gates: tsc clean; 898 tests / 896 pass / 2 skip / 0 fail; eslint 0 errors, 47 warnings
+  (two fewer than the 0835e7a baseline); `active_league = 462233`. NOT done: the Yahoo format has no
+  weekly/streaming artifact and no fold set, so the weekly serve and the D18 seed both degrade and say so;
+  `player_value_position` went 523 -> 529 rows on the ESPN rebuild because this was the first ESPN board
+  rebuild since WP3 restored its producer (the backup's 523 is the pre-WP3 table) -- the six additions are
+  board rows that previously had no pvp row at all; the Yahoo board still carries K and DST players even
+  though the league rosters neither, so `waivers` can suggest a kicker.
 - **Model improvement (after the architecture is at target):** re-screen the feature library under
   the Yahoo target (pre-filter first), Yahoo-native market anchors, K refit per format, the snake
   draft `DraftModel`.
+  **M1 DONE 2026-09-16 -- the Yahoo re-screen is MEASURED and the projection-layer edge thesis is NOT supported (`docs/format-edge-screen-2026-09-16.md`):** Yahoo baseline nested CV recorded (trained RMSE 71.3 / pinball 15.7 pooled over 13 blind folds, beating the free curve at every position); 18 paired-floor screens under the Yahoo target with the identical 18 run against `data/ff.db` in the same session -- **zero ADMITs**, the only near-miss `prior_adot` TE (+0.0582 vs floor 0.0633, ESPN -0.0387, holdout reverses to -0.2708); `prior_carries_per_game` QB rejects, so superflex is a Layer-2 value effect not a projection effect, as the design doc already argued from the other side; the half-PPR-scaled `fftoday_proj` anchor still KEEPs strongly under Yahoo (+0.5698, 8/8), so that approximation is flagged but not costly. Nothing shipped; new read-only `scripts/prefilter-feature.mjs`; no Yahoo championship gate exists (F-9/WP7), so any admission would have been pinball-floor-only.
 
 Execution order: WP1 + WP6 in parallel (disjoint files) -> WP2 -> WP3 -> WP4 + WP5 (disjoint) -> WP7.
 
 **WP6 status (2026-09-16): DONE.** AGENTS.md/README.md/CLAUDE.md D0-D11 refs and the stale "still to be scaffolded" line fixed; README 35-tool/Not-yet-built/Shipped-levers/Layout-tree corrected; docs/validation.md sim-calibration rename noted; D24 valueKey/formatKey claim corrected; multi-league-refactor.md S-5/S-8/S-9 corrections added; multi-format-design.md Status note added.
+
+## 5. Status at the end of the session (2026-09-16)
+
+Commits, in order: bbd4e79 (review + docs + .gitignore), 3777546 (WP1), 72efc6b (WP4), 4b52583 (WP2),
+37e96fd (WP5), 84a9f0d (WP3), 8edb34e (WP7), then the M1 screen + the admit-feature guard. Every wave
+was gated on the same three facts, measured by the orchestrator independently of the executor: tsc
+clean, the full suite green with the app running (508 -> 898 tests), and the golden line
+39.5% / 96% byte-identical to the pre-change baseline. The ESPN board's values, ranks and tiers are
+byte-identical to `data/ff.db.bak-prearchfix-2026-09-16`; the only board difference is the live
+`ESPN_ADP` market column. The store is left with `active_league = 462233`.
+
+**At target (section 3):** one resolver and a real LeagueContext; per-league config isolated;
+`league_id` in every per-league PK with every reader filtered and every DELETE scoped; a format
+resolver with the incumbent alias and no silent fallback; every per-format artifact resolved through
+the league's format (the shared-NFL set classified individually); one slot-eligibility module; FAAB
+per league; the Platform seam with an ESPN and a Yahoo adaptor; bridge guest resolution by host with
+no fallback; the app switch per platform with a board stamp that refuses the wrong league; `--league`
+on the verbs and an optional `league` on the copilot MCP tools; cpcv reads a per-format golden and
+refuses a format without one. The Yahoo league runs end to end from its own artifact and config.
+
+**Open, needing OWNER SIGN-OFF (each moves a live ESPN in-season number; charter rule 1):**
+1. `simContext.ts` builds the streaming replacement level as `seasonPts / regWeeks` while every consumer
+   compares it against `proj / 17` quantities -- the floor is high by 17/regWeeks (~1.31x under 13 weeks).
+2. The handcuff horizon uses `NFL_WEEKS` (17) where the question is weeks left in the LEAGUE's season
+   (ESPN ends week 16); `leagueSeasonWeeks(ctx)` exists, the default is not flipped.
+3. `lineupMarginal.baselines()` builds its flex pool from `flex_ok` only, so a SUPERFLEX group does not
+   raise QB replacement level there (values.ts `flexGroups` already does) -- a value-book change, so
+   it belongs behind the arbiter.
+
+**Open, engineering (no sign-off needed, not started):**
+- Snake `DraftModel` (design doc phase 5): the only route to a Yahoo pre-draft gate / golden.
+- Yahoo weekly + streaming artifacts and a per-season BLIND fold set (`tools/train_*.py` runs; the
+  format's `manifest.weekly.seasonLineBlind: false` says why the current season lines are lookahead).
+- Yahoo started-lineup ingestion (a `raw_league_roster_week` equivalent) and scores on
+  `raw_league_matchup`, so the D18 seed can run for Yahoo instead of refusing by name.
+- A per-format forward board (`buildForwardBoard` writes the shared `feat_player_week*` tables).
+- `tools/train_price.py` and `tools/train_faab.py` read `fact_draft_pick` / `fact_waiver_claim`
+  unfiltered; harmless with one league's rows, wrong once Yahoo history exists.
+- One-off analysis scripts still unfiltered (kdst-analysis, manager-stability, format-history,
+  schedule-balance, stream-horizon, inseason-lineup-diagnose, face-validity); `ingest-source` has no
+  `--league` passthrough (the league sources resolve the active league and refuse non-ESPN).
+- The Yahoo format's target still scores K/DST under the default rules and its board carries K/DST
+  players although the league rosters neither (cosmetic; `waivers` can suggest a kicker).
+- `YahooLeague.freeAgents` is unbuilt (the FA pool is the hand-built `fa-pool.json`); `discover` for
+  Yahoo is unbuilt (the league row was created by hand); Return TD / Offensive Fumble Return TD are
+  Yahoo scoring terms `ScoringRules` cannot express (carried in `rosterSettings`, do not move the key).
+- eslint: 47 warnings (`no-useless-assignment`), 0 errors -- untouched.
+- Operational: `app/engine/ff.cjs` is rebuilt (`npm run build:engine`) but an EXTERNAL Claude Code
+  session's `ff-draft` MCP server keeps the process it started with -- restart it to see the new tools.
+
+**Model improvement, first pass (M1, `docs/format-edge-screen-2026-09-16.md`):** the projection-layer
+format-edge thesis is NOT supported -- 18 candidates screened under the Yahoo target and the same 18
+under ESPN in one session, zero ADMITs, the ESPN arm reproducing the recorded frontier numbers to four
+decimals, positive controls passing (the screen returns KEEP for `fftoday_proj` under both targets).
+Two arms were DEGENERATE rather than null (`prior_cpoe` QB, `prior_ryoe` RB: below the trainer's
+coverage floor on the decision seasons, so both arms were the same model and printed REJECT);
+`scripts/admit-feature.mjs` now refuses a verdict on identical decision arms, fault-injected on that
+exact candidate. The first honest accuracy figure for the Yahoo format is recorded (trained RMSE 71.3
+/ pinball 15.7 pooled over 13 blind folds). Where the edge is, on the evidence: the VALUE and DECISION
+layer (superflex is a Layer-2 effect -- QB 6/24 of top value on the 2026 Yahoo board vs 1/24 under
+ESPN; item 3 above; the frontier doc's own reading), not the projector.

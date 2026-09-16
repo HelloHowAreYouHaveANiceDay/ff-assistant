@@ -87,6 +87,25 @@ const pooled = (m, ss) => ss.reduce((a, s) => a + m.get(s), 0) / ss.length;
 
 // --- DECISION (selection seasons only) -----------------------------------------------------------
 const v = admissionVerdict(cand, base, selSeasons);
+// DEGENERATE-ARM GUARD (2026-09-16, M1 format-edge screen). Two candidates (`prior_cpoe` QB, `prior_ryoe`
+// RB) returned exactly 0.0000 +/- 0.0000 with 0 wins under BOTH targets, and printed the same `REJECT` a
+// real null prints. They were not null: the NGS columns cover ~40-50 rows a season, under the trainer's
+// 200-row coverage floor, so the candidate never entered the fit and the two arms were the SAME model. A
+// verdict on two identical arms is silence read as agreement, so it is refused by name instead.
+// The test is on the DECISION seasons, because that is where the verdict is made: `prior_cpoe` QB is
+// identical on every 2013-2020 fold (NGS starts 2016 and clears the floor only recently) while its
+// 2021-2025 holdout arms DO differ -- so "identical on every scored season" would have let the
+// meaningless REJECT through. Fault-injected 2026-09-16 on exactly that candidate.
+const identicalDecisionArms = selSeasons.every((s) => Math.abs(cand.get(s) - base.get(s)) < 1e-12);
+if (identicalDecisionArms) {
+  const holdoutDiffers = holdoutSeasons.some((s) => Math.abs(cand.get(s) - base.get(s)) >= 1e-12);
+  console.error(`\n  DEGENERATE: the baseline and candidate arms are IDENTICAL on every DECISION season (${selSeasons[0]}-${selSeasons[selSeasons.length - 1]}) ` +
+    `-- ${candidate} never entered the fit there (most likely below the trainer's per-position row-coverage floor on those seasons, ` +
+    `or not in EXT_ALLOWED for --pos).` +
+    (holdoutDiffers ? ` The held-out block DOES differ, so the column only reaches coverage in recent seasons -- a regime the decision block cannot see; screen it with --holdout-seasons / a later --seasons window and say so.` : "") +
+    ` No verdict: this is neither ADMIT nor REJECT.`);
+  process.exit(3);
+}
 console.log(`\n  holdout block (never used to decide): ${holdout.join(", ")}`);
 console.log(`  DECISION seasons: ${selSeasons.length}  (${selSeasons[0]}-${selSeasons[selSeasons.length - 1]})`);
 console.log(removeMode
