@@ -625,3 +625,135 @@ outright -- but nothing in the WEEKLY track is checked against it, and WP11's ow
 `--projection artifact` arm "because this format does not have a blind per-season fold set", which
 WP8 has now built; that arm is newly runnable and a re-pin is a deliberate act, not a side effect.
 Nothing refreshes the format's live weekly rows when Yahoo actuals land.
+
+## WP13 -- the last wiring package (2026-09-16)
+
+**Closes the "Open, and each is one line in a file WP8 does not own" list above, WP9's accuracy gap,
+and WP11's noted `deps.mjs` gap.** Five seams where the wrong answer RENDERED PERFECTLY; none of them
+was failing, each was answering a different question under the same column heading.
+
+1. **`ff evaluate-weekly --league <id>` (WP8).** The verb resolves the league's format and passes the
+   four arguments `evaluateWeekly` has accepted since WP8: `dbPath = model.require("features-db")`,
+   `model`, `scenarios = scenariosForSlots(cfg.slots, cfg.flex_ok)`, `flexOk`, plus a `label`. The
+   season window is READ from the format's `manifest.weekly.blindSeasons` (2012-2025 for
+   `sc-a845f67652fb`, 14 blind seasons) rather than retyped -- a season whose line was not fitted
+   blind cannot be evaluated honestly. **The incumbent path is deliberately unchanged and not by
+   accident of equality:** `scenarios`/`flexOk`/`label` stay OMITTED, because `scenariosForSlots` does
+   NOT reproduce the pinned `SCENARIOS` (the stored ESPN config says RB1/WR1 where the pinned template
+   says RB2/WR2 -- `test/weekly-scenarios.test.ts` asserts exactly that), and deriving it would
+   silently re-measure every published weekly number on a different roster shape. New `--resolve-only`
+   prints the resolved option object and runs nothing, which is how the control below was taken
+   without training fourteen folds. **Controls.** Flagless: `seasons 2012-2025`, `trainSeasons
+   2010-2025`, `rosters 300`, `features all`, no `dbPath`, no scenarios/flexOk/label, model
+   `data` / `sc-f6143a8dfb13` / `data\weekly-artifact.json` -- i.e. argument for argument what it
+   resolved before. `--league 129048`: `data\formats\sc-a845f67652fb\features.db`, 2012-2025 both,
+   template `QB/WR/WR/RB/RB/TE/FLEX/FLEX/FLEX/SUPERFLEX`, the format's own weekly artifact. A real
+   one-fold run (`--seasons 2025 --train-seasons 2012-2025 --rosters 60`) completes and names the
+   format: pooled weekly CRPS 3.582 vs season_line 4.483, ships QB/WR/TE (a single fold, NOT a gate --
+   WP8's 14-season verdict stands).
+2. **`ff sync-actuals --league <id>` rebuilds the format's forward board (WP8).** WP7's refusal is
+   replaced by the two builders `scripts/build-format-features.mjs --forward-only` runs --
+   `buildForwardBoard` and `buildForwardWeeks`, IMPORTED, not shelled out -- against the format dir's
+   own `features.db` with the format's actuals and projector. The incumbent branch is untouched; the
+   one-slot `data/actuals-state.json` change gate stays the incumbent's (a second format sharing it
+   would make each run look unchanged to the other), so a format rebuild is unconditional.
+   **Control** (`--league 129048`): 1039 weekly rows to the format's `current-actuals.csv`, forward
+   board 590 players x 18 weeks -> 10,620 rows (422 with actual pts), `feat_player_week_model` 10,620
+   rows, 10,404 with a season line, week 1 played. `data/current-actuals.csv` md5
+   `8a7095cb...f654` UNCHANGED; the main store's `feat_player_week` (297,463) and
+   `feat_player_week_model` (187,728) unchanged by count AND by a checksum of every 2026 row. The
+   decision-snapshot refresh after it is best-effort and REFUSED BY NAME ("board is built for league
+   462233"), which is correct: the ESPN board was active.
+3. **`--league` through `ingest-raw` and the routine planner (WP9).** `RawAsset.run` takes an options
+   bag (`RawAssetRunOpts`) rather than a widened positional signature, so the eleven league-less feeds
+   are untouched; the four league-shaped assets read `leagueId`. `league-rosters` and
+   `league-transactions` now DISPATCH ON PLATFORM: ESPN calls exactly what it called before, anything
+   else goes through `ingestPlatformRosterWeeks` / the new `ingestPlatformTransactions`, and a
+   platform with no reader is refused by name having written nothing. `refresh-decisions`, `scorecard`
+   and `sync-pending-trades` take `--league`; `sync-league` already forwarded every flag but `--tier`.
+   `Routine.leagueScoped` is `true` for all four. **Controls.** `planRoutines` now lists
+   `sync-actuals`/`scorecard`/`refresh-decisions` for BOTH leagues with `--league <id>` appended, and
+   still skips Yahoo's `roster` by name ("no yahoo adaptor -- its step(s) `sync-league` are
+   espn-only"). Live: `ff ingest-raw league-rosters --league 129048` -> "via the yahoo adaptor: weeks
+   1, 207 rows (120 starters)"; `ff ingest-raw league-transactions --league 129048` -> "18
+   transactions, 33 item rows, 10 with a FAB bid", both matching WP9's numbers.
+4. **The Yahoo lineup facts are in Yahoo's currency (WP9's accuracy gap).** `buildRosterState` takes a
+   `pointsDb`; `buildRosterStateInto` opens the format's `features.db` READ-ONLY for a league whose
+   format resolves to a directory, and the incumbent keeps the shared table. The FREE-AGENT POOL reads
+   the same handle -- a pool priced in one scoring system and the rosters it is compared against in
+   another is the same defect one table over. **Control, `fact_lineup_week` 2026 week 1 vs Yahoo's own
+   published totals:** team 11 **138.00 vs 138.00**; teams 1-10 agree within **0.08** (1/1000 of the
+   total; the format table stores `pts` to one decimal). Team 12 reads 135.40 against 138.72 and the
+   gap is DIAGNOSED, not waved past: Kenny Gainwell has TWO surrogate keys, and the roster resolver
+   takes `12112` (`pts` NULL) while his 3.3 points sit on `1834`. That is an identity-layer duplicate,
+   not a currency error, and it is unfixed (see below). Before this change every team was ~30% light
+   (team 11 read 96.7). **ESPN is untouched and was not rebuilt:** `fact_lineup_week` 1896 rows /
+   `f1a5ae574119934e`, `fact_roster_week` 24,367 / `895b06e28c37f695`, `fact_fa_pool_week` 64,865 /
+   `7fcf555a62935694`, all three identical before and after over `(league_id, season, week, team_id,
+   started_pts, optimal_pts)` and the roster/pool equivalents. Yahoo's pool went 323 -> 380 rows,
+   which is the format table carrying rows the shared one does not.
+5. **The arbiter fingerprint follows `resolveFormat` (WP11's noted gap).** `scripts/lib/deps.mjs`
+   hashed `data/history-{points,weekly}.csv` as string literals, so every `cpcv --league 129048`
+   ledger row recorded hashes of files that run never opened -- and would have read CURRENT while the
+   Yahoo target moved underneath it. A league now resolves its format directory and hashes ITS target
+   plus its projection artifact and fold-artifact directory. The resolution is SYNCHRONOUS and made
+   against the same evidence `resolveFormat`'s preimage check uses (`scoring.json`'s declared rules vs
+   the league's stored rules), because this file is loaded by plain-`node` scripts that cannot import
+   TypeScript and both callers call it synchronously. **Controls.** Flagless `04efd89da036a121` at HEAD
+   and `04efd89da036a121` after -- byte-identical, and `--league 462233` gives the SAME hash (an
+   unmatched league reads the root's files, deliberately, or the first named-ESPN run would make the
+   whole ledger read STALE). `--league 129048` gives `ab3d921db95c24c7`, carrying
+   `file:data/formats/sc-a845f67652fb/history-{points,weekly}.csv`, that dir's
+   `projection-artifact.json` and `fold-artifacts`, and `format:129048 = sc-a845f67652fb:scoring.json`,
+   with the incumbent's two history keys ABSENT.
+
+**Gates.** `tsc` clean. `npm test`: **955 tests, 953 pass, 2 skipped, 0 fail** (206 s, app running).
+eslint 0 errors, **46 warnings, none in a WP13 line** (all `no-useless-assignment`/`no-explicit-any`
+identical at HEAD). Golden, run with the league named explicitly:
+`backtest --league 462233 --full --no-lookahead --inflation --seasons 1999-2024 --n 150` ->
+**CHAMPIONSHIPS: 39.5% | playoffs: 96%**, per-season line byte-for-byte identical to this session's
+pre-WP13 baseline:
+
+```
+  per season: 2000:28%  2001:31%  2002:44%  2003:47%  2004:32%  2005:29%  2006:49%  2007:19%  2008:47%  2009:55%  2010:44%  2011:62%  2012:47%  2013:41%  2014:29%  2015:38%  2016:29%  2017:33%  2018:41%  2019:36%  2020:43%  2021:35%  2022:54%  2023:33%  2024:40%
+```
+
+`npm run build:engine` rebuilt `app/engine/ff.cjs` (2.1mb). League round-trip 129048 -> 462233: stamps
+`sc-a845f67652fb` then `sc-f6143a8dfb13` restored, `board-keys-diff.mjs` reports **ESPN_ADP as the
+only differing key** against `ff.db.bak-prearchfix-2026-09-16` (322 of 529 rows, max 10.3 -- live
+market drift, the same single-key story WP7 recorded). Store left at `active_league = 462233`.
+Backup `data/ff.db.bak-prewp13-2026-09-16` (integrity ok) taken before the first write.
+
+**Tests.** `test/wp13-wiring.test.ts` (6): the points handle, positive AND negative (no handle must
+still read the shared table, or the test cannot tell "follows the handle" from "always reads the
+second database"); the FA pool on the same handle; `leagueScoped` + the per-league plan + the
+platform skip that survives it; a raw asset refusing an unknown platform having written nothing; the
+transaction dispatcher naming ESPN's own reader; and the fingerprint, with the incumbent frozen and a
+FAULT INJECTION (add one scoring term to the config and the format match must be lost).
+FAULT-INJECTED for real: reverting `pts.prepare` to `db.prepare` in `rosterState.ts` fails the lineup
+test and leaves the FA test green, which is the separation intended.
+`test/wp5-slots-league.test.ts`'s I-7 routine assertion was INVERTED on purpose, with a comment saying
+what changed and why: it asserted that a non-active league is REPORTED rather than run, which was the
+honest answer while the verbs took no flag.
+
+**Unfinished, with the reason.**
+- **Kenny Gainwell has two surrogate keys**, which is the whole of team 12's 3.32-point gap. Both
+  `stg_player`/identity resolution and `skResolve` are outside this package's file allowlist, and the
+  fix is an identity-layer decision (which key is canonical, and what happens to the rows already
+  written under the other), not a wiring one.
+- **`ff scorecard --league <id>` is wired but was NOT exercised on the Yahoo league.** Running it
+  writes `scorecard_prediction` rows, which are WRITE-ONCE, and this package's store-write contract is
+  `129048` rows in `fact_*`/`raw_league_*` plus the format directory. A write-once table is exactly
+  the kind of thing not to seed as a side effect of a wiring test; it needs its own run with sign-off.
+- **`runScorecard` still reads its weekly ROWS from the main store** even for a format league (it
+  resolves the format for ARTIFACTS, which WP3 did). `src/weekly/scorecard.ts` was league-arg-only in
+  this package's scope. The forward-features rebuild inside `ff scorecard` does follow the format now.
+- **`scripts/cpcv.mjs` calls `fingerprintDraftArbiter(ddb)` with no league**, so the per-format
+  fingerprint is reached through a documented `--league` argv default in `deps.mjs` rather than the
+  one-line `fingerprintDraftArbiter(ddb, LEAGUE)` that file should carry. `cpcv.mjs` is outside this
+  package's allowlist; the argv default exists so the feature is CONNECTED rather than correct code
+  nothing reaches, and it says so at the function.
+- **`ingest-source` still has no `--league` passthrough** (unchanged from WP12), and
+  `ingestPlatformRosterWeeks` ignores `--seasons`: it writes the SETTLED weeks of the current season,
+  which is the only window a Yahoo team page can be read for safely (partial in-progress points are
+  indistinguishable from final ones in the store).

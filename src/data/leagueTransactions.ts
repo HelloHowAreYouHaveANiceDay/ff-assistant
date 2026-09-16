@@ -252,6 +252,32 @@ export function yahooTxWhen(text: string, season: number): string | null {
   return `${year}-${p(mon)}-${p(Number(m[2]))} ${p(hour)}:${p(Number(m[4] ?? 0))}:00`;
 }
 
+/**
+ * INGEST A NON-ESPN LEAGUE'S TRANSACTION LOG (WP13) -- the dispatcher `ff ingest-raw
+ * league-transactions --league <id>` reaches for a league whose platform is not ESPN.
+ *
+ * There is no `transactions` method on the `Platform` interface: ESPN's log comes from a JSON feed
+ * fetched per scoring period and Yahoo's from a rendered page, and the two ingesters differ in more
+ * than their transport (event-derived keys, FAB bids Yahoo publishes and ESPN does not). So this is a
+ * REGISTRY of the readers that exist, and a platform with no entry is refused BY NAME rather than
+ * silently writing nothing -- which is indistinguishable from a league that had no transactions.
+ */
+export async function ingestPlatformTransactions(opts: { dbPath?: string; leagueId?: string; season?: number; limit?: number })
+  : Promise<{ rows: number; transactions: number; withBid: number; season: number; platform: string }> {
+  const { resolveLeagueContext } = await import("./leagueContext.js");
+  const platform = (() => {
+    const db = openDb(opts.dbPath);
+    try { return String(resolveLeagueContext(db, opts.leagueId).platformRaw ?? ""); } finally { db.close(); }
+  })();
+  if (platform === "yahoo") return { ...(await ingestYahooTransactions(opts)), platform };
+  throw new Error(
+    `ingest league-transactions: no transaction reader for platform "${platform || "unknown"}" -- ` +
+    "ESPN goes through ingestLeagueTransactions and Yahoo through ingestYahooTransactions. Nothing " +
+    "was written: a platform with no reader must be refused by name, because writing zero rows reads " +
+    "exactly like a league that made no moves.",
+  );
+}
+
 export async function ingestYahooTransactions(opts: { dbPath?: string; leagueId?: string; season?: number; limit?: number })
   : Promise<{ rows: number; transactions: number; withBid: number; season: number }> {
   const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");

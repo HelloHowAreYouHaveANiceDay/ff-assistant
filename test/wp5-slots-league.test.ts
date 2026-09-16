@@ -258,12 +258,21 @@ test("I-7: the routine set iterates the leagues with a seat, and skips a platfor
   assert.match(yahooRoster!.why, /no yahoo adaptor/, `named: ${yahooRoster!.why}`);
   assert.match(yahooRoster!.why, /sync-league/, "and it names the step that is ESPN-only");
 
-  // A routine whose verbs take no --league can only run for the ACTIVE league, and the other league
-  // is REPORTED rather than run N times with a flag that would be silently ignored.
-  assert.ok(plan.runs.some((r) => r.leagueId === "462233" && r.routine === "actuals"), "the active league runs");
-  const skippedActuals = plan.skipped.find((s) => s.leagueId === "129048" && s.routine === "actuals");
-  assert.ok(skippedActuals, "the non-active league's actuals routine is reported, not silently run");
-  assert.match(skippedActuals!.why, /--league/, `names the missing flag: ${skippedActuals!.why}`);
+  // EXPECTATION CHANGED BY WP13, AND THE SEMANTICS WITH IT. Until WP13 `actuals` was NOT
+  // `leagueScoped` -- `ff sync-actuals`/`scorecard`/`refresh-decisions` took no `--league` -- so this
+  // assertion read "the non-active league's actuals routine is REPORTED, not silently run", which was
+  // the honest answer while appending the flag would have been silently ignored. All four verbs now
+  // read the flag, `Routine.leagueScoped` is `true`, and `planRoutines` runs the routine for EVERY
+  // league with a seat, appending `--league <id>` to each step. What has NOT changed is the other
+  // gate: a routine whose `platforms` list excludes the league is still skipped by name (above).
+  for (const lg of ["462233", "129048"]) {
+    const run = plan.runs.find((r) => r.leagueId === lg && r.routine === "actuals");
+    assert.ok(run, `league ${lg} runs the actuals routine`);
+    assert.deepEqual(run!.steps, [["sync-actuals", ["--league", lg]]],
+      "every step carries the league it is for, rather than resolving whichever is active");
+  }
+  assert.equal(plan.skipped.find((s) => s.routine === "actuals"), undefined,
+    "no league is skipped for want of a --league flag any more");
 
   // FAULT INJECTION: nothing is skipped for a reason that is not stated.
   for (const s of plan.skipped) assert.ok(s.why.length > 20, `every skip carries a reason: ${JSON.stringify(s)}`);

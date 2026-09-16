@@ -203,6 +203,23 @@ export async function ingestAll(dbPath?: string): Promise<void> {
 // One list, so `ff ingest-source --list` and docs/data-sources.md cannot disagree about what exists.
 // A source that is documented but unregistered reads exactly like one that is registered and broken.
 // ==================================================================================================
+/**
+ * WHAT A RAW ASSET IS RUN FOR, beyond its season range (WP13).
+ *
+ * An OPTIONS BAG rather than a positional argument on every asset: most of these assets are
+ * league-less nflverse/FFC feeds, and widening their signature would make eleven of them carry a
+ * parameter they have no use for -- which reads exactly like a parameter that is being ignored on
+ * purpose. An asset that ignores `opts` keeps working unchanged; the four league-shaped ones
+ * (league-history, league-rosters, league-transactions, espn-eligibility) read `leagueId` and thread
+ * it into the resolver they already call, so `ff ingest-raw <id> --league <other>` cannot fetch one
+ * league and stamp the rows with another's id.
+ */
+export interface RawAssetRunOpts {
+  /** The league this run is for. Omitted = the ACTIVE league, resolved by the asset itself -- which
+   *  is exactly what every asset did before this bag existed, so an omitted flag is unchanged. */
+  leagueId?: string;
+}
+
 export interface RawAsset {
   /** The id `ff ingest-source <id>` takes. */
   id: string;
@@ -219,7 +236,7 @@ export interface RawAsset {
   /** LINEAGE: the table(s) this asset writes. Usually just `table`, split out where a "(+..." suffix
    *  on `table` hides a second table so the graph can draw a real edge to it. */
   writes: string[];
-  run(dbPath: string | undefined, seasons: number[]): Promise<number>;
+  run(dbPath: string | undefined, seasons: number[], opts?: RawAssetRunOpts): Promise<number>;
 }
 
 export const RAW_ASSETS: RawAsset[] = [
@@ -230,9 +247,9 @@ export const RAW_ASSETS: RawAsset[] = [
     defaultSeasons: [2018, new Date().getFullYear()],
     reads: ["src_espn"],
     writes: ["raw_league_season", "raw_league_team_season", "raw_league_pick", "raw_league_matchup", "raw_league_division"],
-    async run(dbPath, seasons) {
+    async run(dbPath, seasons, opts) {
       const { ingestLeagueHistory } = await import("./leagueHistory.js");
-      const r = await ingestLeagueHistory({ dbPath, seasons });
+      const r = await ingestLeagueHistory({ dbPath, seasons, leagueId: opts?.leagueId });
       return r.counts.picks;
     },
   },
@@ -430,13 +447,13 @@ export const RAW_ASSETS: RawAsset[] = [
     defaultSeasons: null,
     reads: ["src_espn"],
     writes: ["raw_espn_eligibility", "player_eligibility"],
-    async run(dbPath, seasons) {
+    async run(dbPath, seasons, opts) {
       const { ingestEligibility } = await import("./eligibility.js");
       const { getConfig } = await import("../db/db.js");
       const db = openDb(dbPath);
       const season = seasons[seasons.length - 1] ?? getConfig(db).season;
       try {
-        const r = await ingestEligibility({ db, season, useCache: process.env.FF_ELIG_CACHE === "1" });
+        const r = await ingestEligibility({ db, season, leagueId: opts?.leagueId, useCache: process.env.FF_ELIG_CACHE === "1" });
         console.log(`  raw_espn_eligibility ${season}: ${r.reason}; staged ${r.staged.staged} onto player_sk` +
           (r.staged.unresolved ? `, ${r.staged.unresolved} unresolved by ESPN id (e.g. ${r.staged.unresolvedNames.slice(0, 4).join(", ")})` : ""));
         return r.rows;
@@ -450,9 +467,22 @@ export const RAW_ASSETS: RawAsset[] = [
     defaultSeasons: [2018, new Date().getFullYear()],
     reads: ["src_espn"],
     writes: ["raw_league_roster_week"],
-    async run(dbPath, seasons) {
-      const { ingestLeagueRosters } = await import("./leagueRosters.js");
-      const r = await ingestLeagueRosters({ dbPath, seasons });
+    // PLATFORM-DISPATCHED (WP13). The ESPN body is the boxscore-view sweep this asset has always run,
+    // called with exactly the arguments it was called with before. Any other platform goes through
+    // `ingestPlatformRosterWeeks`, which asks that platform's adaptor for the settled weeks and writes
+    // through the SAME `loadLeagueRosterWeeks` writer -- so a Yahoo row cannot be a different SHAPE
+    // from an ESPN one -- and refuses BY NAME when the adaptor has no `rosterWeek`.
+    async run(dbPath, seasons, opts) {
+      const { ingestLeagueRosters, ingestPlatformRosterWeeks } = await import("./leagueRosters.js");
+      const platform = await platformOf(dbPath, opts?.leagueId);
+      if (platform !== "espn") {
+        const r = await ingestPlatformRosterWeeks({ dbPath, leagueId: opts?.leagueId });
+        console.log(`  raw_league_roster_week via the "${r.platform}" adaptor: weeks ${r.weeks.join(",") || "(none settled)"}, ` +
+          `${r.counts.rows} rows (${r.counts.starters} starters)`);
+        for (const f of r.findings) console.log(`  raw_league_roster_week ${f.season}: ${f.what} (${f.got} > ${f.limit})`);
+        return r.counts.rows;
+      }
+      const r = await ingestLeagueRosters({ dbPath, seasons, leagueId: opts?.leagueId });
       for (const f of r.findings) console.log(`  raw_league_roster_week ${f.season}: ${f.what} (${f.got} > ${f.limit})`);
       return r.counts.rows;
     },
@@ -464,9 +494,20 @@ export const RAW_ASSETS: RawAsset[] = [
     defaultSeasons: [2018, new Date().getFullYear()],
     reads: ["src_espn"],
     writes: ["raw_league_transaction", "raw_league_transaction_status"],
-    async run(dbPath, seasons) {
-      const { ingestLeagueTransactions } = await import("./leagueTransactions.js");
-      const r = await ingestLeagueTransactions({ dbPath, seasons });
+    // PLATFORM-DISPATCHED (WP13), the same rule as league-rosters above: ESPN runs the per-scoring-
+    // period mTransactions2 sweep unchanged; any other platform goes through
+    // `ingestPlatformTransactions`, which routes to that platform's own transaction reader and
+    // refuses by name where there is none.
+    async run(dbPath, seasons, opts) {
+      const { ingestLeagueTransactions, ingestPlatformTransactions } = await import("./leagueTransactions.js");
+      const platform = await platformOf(dbPath, opts?.leagueId);
+      if (platform !== "espn") {
+        const y = await ingestPlatformTransactions({ dbPath, leagueId: opts?.leagueId });
+        console.log(`  raw_league_transaction via the "${y.platform}" adaptor: ${y.transactions} transactions, ` +
+          `${y.rows} item rows, ${y.withBid} with a FAB bid (season ${y.season})`);
+        return y.rows;
+      }
+      const r = await ingestLeagueTransactions({ dbPath, seasons, leagueId: opts?.leagueId });
       for (const c of r.checks) {
         console.log(`  raw_league_transaction ${c.season}: ${c.transactions} transactions, ${c.adds} adds, ${c.waivers} waiver items, ` +
           `$${c.faab} FAAB, ${c.resolvedPct}% of items resolve to a player_sk`);
@@ -509,7 +550,15 @@ function reportSeasons(r: { table: string; seasons: { season: number; ok: boolea
 
 const RAW_ONLY_ASSETS = new Set(RAW_ASSETS.map((a) => a.id));
 
-async function ingestRawOnly(dbPath: string | undefined, id: string, opts: { seasons?: number[] }): Promise<{ rows: number }> {
+/** WHICH PLATFORM a league-shaped asset is about to run against. One resolver (`resolveLeagueContext`),
+ *  so the platform an asset dispatches on and the league it stamps its rows with come from one read. */
+async function platformOf(dbPath: string | undefined, leagueId: string | undefined): Promise<string> {
+  const { resolveLeagueContext } = await import("./leagueContext.js");
+  const db = openDb(dbPath);
+  try { return String(resolveLeagueContext(db, leagueId).platformRaw ?? ""); } finally { db.close(); }
+}
+
+async function ingestRawOnly(dbPath: string | undefined, id: string, opts: { seasons?: number[]; leagueId?: string }): Promise<{ rows: number }> {
   const asset = RAW_ASSETS.find((a) => a.id === id)!;
   let seasons = opts.seasons ?? [];
   if (!seasons.length && asset.defaultSeasons) {
@@ -517,7 +566,7 @@ async function ingestRawOnly(dbPath: string | undefined, id: string, opts: { sea
     for (let y = lo; y <= hi; y++) seasons.push(y);
   }
   seasons = seasons.slice().sort((a, b) => a - b);
-  const rows = await asset.run(dbPath, seasons);
+  const rows = await asset.run(dbPath, seasons, { leagueId: opts.leagueId });
   // VALIDATE THE WRITE LANDED. Read back the asset's primary table for exactly the seasons this run
   // targeted, record the verdict in ingest_audit, and fail loudly on a degenerate write -- a raw
   // sweep that reported a total but left the store empty is the silent failure this contract exists
@@ -539,7 +588,7 @@ async function ingestRawOnly(dbPath: string | undefined, id: string, opts: { sea
 // Materialize ONE source (asset) + only its affected downstream: ECR feeds the projection curve, so
 // it re-projects then re-assembles; every other source feeds the board directly, so it just
 // re-assembles. This is the per-node "materialize" behind the pipeline DAG view.
-export async function ingestOne(dbPath: string | undefined, id: string, opts: { seasons?: number[] } = {}): Promise<{ rows: number }> {
+export async function ingestOne(dbPath: string | undefined, id: string, opts: { seasons?: number[]; leagueId?: string } = {}): Promise<{ rows: number }> {
   // RAW-ONLY ASSETS return before the shared tail below. They write a raw_* table and feed nothing
   // the board is assembled from, so re-projecting and re-assembling afterwards would be a five-second
   // no-op that also rewrites consumer tables for no reason. Registered here rather than in the switch

@@ -237,7 +237,25 @@ export interface BuildCounts { rosterRows: number; faRows: number; lineupRows: n
  * those would put today's roster into a backtest of a week that has not been played, which reads
  * exactly like data. `throughAsOf` (default: today) is the cut.
  */
-export function buildRosterState(db: DB, leagueId: string, seasons: number[], opts: { throughAsOf?: string } = {}): BuildCounts {
+/**
+ * THE POINTS THESE FACTS ARE DENOMINATED IN (WP13).
+ *
+ * `actual_pts`, `started_pts` and `optimal_pts` are all read out of `feat_player_week_model`, and in
+ * the MAIN store that table holds the INCUMBENT format's scored target. For a league whose format
+ * resolves to a directory of its own, reading it there answers the question in the wrong currency:
+ * Yahoo team 11's week-1 `started_pts` came out 96.7 against Yahoo's own published 138.00, because
+ * every man was priced under half-PPR. Nothing failed -- a lineup total in the wrong scoring system
+ * renders exactly like one in the right scoring system, which is why it survived a whole work package.
+ *
+ * So the points come from a SECOND handle, opened read-only on that format's `features.db` and joined
+ * on the same keys. `undefined` means "the same database as the rosters", i.e. the incumbent's path
+ * unchanged, byte for byte.
+ */
+export function buildRosterState(
+  db: DB, leagueId: string, seasons: number[],
+  opts: { throughAsOf?: string; pointsDb?: DB } = {},
+): BuildCounts {
+  const pts = opts.pointsDb ?? db;
   const cut = opts.throughAsOf ?? localDate();
   const built = nowIso();
   const res = buildEspnResolver(db);
@@ -270,7 +288,7 @@ export function buildRosterState(db: DB, leagueId: string, seasons: number[], op
       // Realised weekly points, from the weekly feature table -- the SAME target the weekly model is
       // scored on, so a lineup number and a projection number cannot be about different quantities.
       const ptsOf = new Map<string, { pts: number; name: string; pos: string }>();
-      for (const r of db.prepare(
+      for (const r of pts.prepare(
         `SELECT player_sk, week, name, pos, pts FROM feat_player_week_model WHERE season=?`,
       ).all(season) as { player_sk: string; week: number; name: string; pos: string; pts: number | null }[]) {
         ptsOf.set(`${r.week}|${r.player_sk}`, { pts: r.pts ?? 0, name: r.name, pos: r.pos });
@@ -325,7 +343,11 @@ export function buildRosterState(db: DB, leagueId: string, seasons: number[], op
         // THE FREE-AGENT POOL. Everyone with a weekly feature row this week who is on nobody's
         // roster. `ros_pts` is the REST-OF-SEASON total from this week forward -- an OUTCOME, used
         // only to score a decision after the fact, never as an input to one.
-        const pool = db.prepare(
+        //
+        // Read from the SAME points handle as the lineup totals above: a pool priced in one scoring
+        // system while the rosters it is compared against are priced in another is the same defect
+        // one table over, and "who is worth adding" is exactly the comparison it would corrupt.
+        const pool = pts.prepare(
           `SELECT f.player_sk, f.name, f.pos, f.pts,
                   (SELECT COALESCE(SUM(g.pts),0) FROM feat_player_week_model g
                      WHERE g.season=f.season AND g.player_sk=f.player_sk AND g.week>=f.week AND g.week<=?) AS ros,
@@ -362,13 +384,27 @@ export function localDate(d = new Date()): string {
 
 export async function buildRosterStateInto(opts: { dbPath?: string; seasons: number[]; throughAsOf?: string; leagueId?: string }): Promise<BuildCounts> {
   const { resolveLeagueContext, requireLeagueId } = await import("../../data/leagueContext.js");
+  const { resolveFormat } = await import("../../data/formatResolve.js");
   const db = openDb(opts.dbPath);
+  let points: DB | null = null;
   try {
     // A DERIVATION, not a fetch -- so no platform gate here; it reads whatever raw rows that league
     // has. What matters is that the id it reads by is the id it writes by, from one resolver.
     const leagueId = requireLeagueId(resolveLeagueContext(db, opts.leagueId), "build-roster-state");
-    return buildRosterState(db, leagueId, opts.seasons, { throughAsOf: opts.throughAsOf });
-  } finally { db.close(); }
+    // WHICH SCORING SYSTEM THE POINTS ARE IN -- see buildRosterState's `pointsDb` note. The incumbent
+    // keeps the shared table (one handle, the path this function has always taken); a format
+    // directory's league is priced out of ITS OWN feature tables, read-only.
+    const fmt = resolveFormat(db, leagueId);
+    if (fmt.provenance !== "incumbent-root") {
+      const featDb = fmt.model.require("features-db");
+      const { default: Database } = await import("better-sqlite3");
+      points = new Database(featDb, { readonly: true }) as unknown as DB;
+      console.log(`build-roster-state: league ${leagueId} -> format ${fmt.scoringKey}; weekly points read from ${featDb}`);
+    }
+    return buildRosterState(db, leagueId, opts.seasons, {
+      throughAsOf: opts.throughAsOf, ...(points ? { pointsDb: points } : {}),
+    });
+  } finally { points?.close(); db.close(); }
 }
 
 /** Unused-import guard: BENCH_SLOT is re-exported so a consumer reading slot semantics has one place

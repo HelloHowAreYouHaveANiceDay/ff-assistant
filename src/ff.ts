@@ -1628,7 +1628,9 @@ async function cmdStore(rest: string[]) {
  *  purges a declined one to a thin event. Run frequently in-season (it is in the fast/daily/weekly tiers). */
 async function cmdSyncPendingTrades(rest: string[]) {
   const { ingestPendingTrades } = await import("./data/leagueTransactions.js");
-  await ingestPendingTrades({ dbPath: valueOf(rest, "--db") });
+  // `--league <id>` (WP13): ESPN-only by name (the verb polls mPendingTransactions), but the id it
+  // polls is now the id the caller asked for rather than whichever league is active.
+  await ingestPendingTrades({ dbPath: valueOf(rest, "--db"), leagueId: leagueArg(rest) });
 }
 
 async function cmdSyncLeague(rest: string[]) {
@@ -2005,23 +2007,41 @@ async function cmdSyncActuals(rest: string[]) {
   }
   console.log(`  wrote ${r.weekly} weekly rows to ${r.path}; weeks present: ${r.weeks.join(", ") || "none"} (history-weekly.csv untouched)`);
 
-  // THE FORWARD REBUILD IS THE INCUMBENT'S, AND ONLY THE INCUMBENT'S (WP7).
+  // THE FORWARD REBUILD GOES TO THE FORMAT'S OWN FEATURE TABLES (WP13; WP7 refused here, WP8 built
+  // the database that made the refusal unnecessary).
   //
-  // `buildForwardBoard` writes `feat_player_week` / `feat_player_week_model` IN THE MAIN STORE, and
-  // those rows carry a SCORED `pts` target. Running it for a second format would re-score the shared
-  // tables under that format's rules -- i.e. silently replace the ESPN-scored in-season features every
-  // ESPN surface reads -- while `data/actuals-state.json` (one slot) recorded the other league's hash.
-  // A per-format forward board needs its own feature tables (the format dir's `features.db`), which is
-  // not built. So a non-incumbent format gets its own `current-actuals.csv` and a NAMED refusal of the
-  // rebuild, rather than a rebuild that corrupts the incumbent's.
+  // WP7's refusal was right about the danger and right about the fix: `buildForwardBoard` writes
+  // `feat_player_week` / `feat_player_week_model`, and IN THE MAIN STORE those rows hold the
+  // INCUMBENT's scored target -- rebuilding them under another format's rules would silently replace
+  // every ESPN in-season feature. Its own note said what was needed ("a per-format forward board needs
+  // the format dir's own feature tables"), and WP8 built that database. So the two forward builders
+  // now run against `data/formats/<key>/features.db` with the format's own actuals and the format's
+  // own projector -- the SAME two calls `scripts/build-format-features.mjs --forward-only` makes,
+  // imported rather than shelled out to, so there is one implementation and not a second spelling.
+  //
+  // NOTHING OUTSIDE THE FORMAT DIRECTORY IS OPENED FOR WRITING on this branch, and the incumbent's
+  // `data/actuals-state.json` (one slot) is deliberately not touched by it either: the change gate is
+  // the incumbent's, and a second format sharing that one slot would make each run look unchanged to
+  // the other. A format rebuild is therefore unconditional and cheap-by-week rather than hash-gated.
   if (actualsFmt.provenance !== "incumbent-root") {
-    console.log(
-      `  format ${actualsFmt.scoringKey} has its re-scored actuals; the forward-board rebuild is SKIPPED.\n` +
-      "  buildForwardBoard writes feat_player_week/feat_player_week_model in data/ff.db, which hold the\n" +
-      "  INCUMBENT format's scored target -- rebuilding them under these rules would overwrite every ESPN\n" +
-      "  in-season feature. A per-format forward board needs the format dir's own feature tables; until\n" +
-      "  that exists this league's weekly serve falls back to its season line and says so.",
-    );
+    const featDb = actualsFmt.model.require("features-db");
+    const { buildForwardBoard } = await import("./weekly/forwardBoard.js");
+    const { buildForwardWeeks } = await import("./weekly/features.js");
+    console.log(`  format ${actualsFmt.scoringKey}: rebuilding the forward board into ${featDb} (its own feature tables)...`);
+    const fb = await buildForwardBoard({ dbPath: featDb, season, actualsPath: r.path });
+    console.log(`  forward board: ${fb.keys} players x ${fb.maxWeek} weeks -> feat_player_week ${fb.weekRows} rows (${fb.withPts} with actual pts)`);
+    const fw = await buildForwardWeeks({ dbPath: featDb, season, model: actualsFmt.model });
+    console.log(`  feat_player_week_model: ${fw.rows} rows, ${fw.players} players x ${fw.weeks} weeks; ` +
+      `${fw.withLine} with a season line; weeks already played: ${fw.playedWeeks.join(",") || "(none)"}`);
+    // Stage B, exactly as the incumbent branch below: the actuals moved, so this league's standing
+    // recommendations may have. Stamped with THIS league, never the active one.
+    try {
+      const { refreshDecisionSnapshot } = await import("./inseason/decisionSnapshot.js");
+      const d = await refreshDecisionSnapshot({ dbPath, actualsHash: r.hash, schedule: "auto", leagueId: actualsFmt.leagueId });
+      console.log(`  refreshed decision snapshot: ${d.verbs.join(", ")} (week ${d.week ?? "?"}, ${d.schedule} schedule)`);
+    } catch (e) {
+      console.log(`  decision-snapshot refresh skipped: ${String(e).slice(0, 140)}`);
+    }
     return;
   }
 
@@ -2047,7 +2067,9 @@ async function cmdSyncActuals(rest: string[]) {
   // nothing here writes to ESPN -- every copilot run is logged at status "recommended" (D3).
   try {
     const { refreshDecisionSnapshot } = await import("./inseason/decisionSnapshot.js");
-    const d = await refreshDecisionSnapshot({ dbPath, actualsHash: r.hash, schedule: "auto" });
+    // The league is the one this verb RESOLVED, not "whichever is active when the sims finish" --
+    // the same rule refreshDecisionSnapshot states for its own read (I-7).
+    const d = await refreshDecisionSnapshot({ dbPath, actualsHash: r.hash, schedule: "auto", leagueId: actualsFmt.leagueId });
     console.log(`  refreshed decision snapshot: ${d.verbs.join(", ")} (week ${d.week ?? "?"}, ${d.schedule} schedule)`);
   } catch (e) {
     console.log(`  decision-snapshot refresh skipped: ${String(e).slice(0, 140)}`);
@@ -2064,8 +2086,10 @@ async function cmdSyncActuals(rest: string[]) {
 async function cmdRefreshDecisions(rest: string[]) {
   const { refreshDecisionSnapshot } = await import("./inseason/decisionSnapshot.js");
   const sched = (valueOf(rest, "--schedule") ?? "auto") as "real" | "generated" | "auto";
-  const r = await refreshDecisionSnapshot({ dbPath: valueOf(rest, "--db"), schedule: sched });
-  console.log(`refreshed ${r.rows} decision snapshots (${r.verbs.join(", ")}) for week ${r.week ?? "?"} on the ${r.schedule} schedule`);
+  // `--league <id>` (WP13). Omitted = the ACTIVE league, which is what `refreshDecisionSnapshot`
+  // already resolves for itself, so the flagless call is unchanged.
+  const r = await refreshDecisionSnapshot({ dbPath: valueOf(rest, "--db"), schedule: sched, leagueId: leagueArg(rest) });
+  console.log(`refreshed ${r.rows} decision snapshots (${r.verbs.join(", ")}) for league ${r.leagueId || "?"} week ${r.week ?? "?"} on the ${r.schedule} schedule`);
 }
 
 /**
@@ -3928,12 +3952,22 @@ async function cmdEvaluateStreaming(rest: string[]) {
 async function cmdScorecard(rest: string[]) {
   const { runScorecard, formatScorecard } = await import("./weekly/scorecard.js");
   const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
+  // `--league <id>` (WP13). `runScorecard` has always taken a `leagueId` and resolved the ACTIVE
+  // league when it was omitted; this verb simply never offered the flag. The forward rebuild below
+  // follows the same rule `ff sync-actuals` now does -- a format directory's live rows belong in ITS
+  // feature tables, never in the shared ones, which hold the incumbent's scored target.
+  const scFmt = await (async () => {
+    const db = openDb(valueOf(rest, "--db"));
+    try { return await formatCtx(rest, db); } finally { db.close(); }
+  })();
   // The live season has no played weeks, so its rows come from the schedule and the board rather
   // than from history. `--no-forward` skips it for a season already in feat_player_week_model.
   if (!rest.includes("--no-forward")) {
     const { buildForwardWeeks } = await import("./weekly/features.js");
     const f = await buildForwardWeeks({
-      dbPath: valueOf(rest, "--db"), season, useTeamOdds: rest.includes("--team-odds"),
+      dbPath: scFmt.provenance === "incumbent-root" ? valueOf(rest, "--db") : scFmt.model.require("features-db"),
+      season, useTeamOdds: rest.includes("--team-odds"),
+      ...(scFmt.provenance === "incumbent-root" ? {} : { model: scFmt.model }),
     });
     console.log(`forward features: ${f.rows} rows, ${f.players} players x ${f.weeks} weeks; ` +
       `${f.withLine} with a season line, ${f.withLines} with a published spread; ` +
@@ -3950,7 +3984,7 @@ async function cmdScorecard(rest: string[]) {
     ? async () => {
       const { loadSimContext } = await import("./draft/simContext.js");
       const { seasonOdds } = await import("./inseason/copilot.js");
-      const ctx = await loadSimContext({ schedule: "real" });
+      const ctx = await loadSimContext({ schedule: "real", leagueId: leagueArg(rest) });
       if (ctx.syntheticSchedule) {
         throw new Error(
           "scorecard --odds refuses a GENERATED schedule: a playoff probability from a stand-in " +
@@ -3970,6 +4004,7 @@ async function cmdScorecard(rest: string[]) {
 
   const res = await runScorecard({
     dbPath: valueOf(rest, "--db"), season,
+    leagueId: leagueArg(rest),
     snapshot: !rest.includes("--score-only"),
     score: !rest.includes("--snapshot-only"),
     espn: rest.includes("--espn"),
@@ -3983,12 +4018,70 @@ async function cmdScorecard(rest: string[]) {
   else console.log(formatScorecard(res));
 }
 
+/**
+ * WHICH SEASONS A FORMAT'S WEEKLY TABLE CAN BE EVALUATED OVER (WP13).
+ *
+ * The incumbent's defaults are PINNED (2012-2025 scored, 2010-2025 trained) because every published
+ * weekly number was measured on them. A format directory's window is a property of the directory, so
+ * it is READ from the manifest's `weekly.blindSeasons` -- the seasons whose season-line anchor came
+ * from an artifact blind to that season -- rather than retyped. A season outside that list cannot be
+ * evaluated honestly: its line has seen its own outcome. Falls back to 2012-2025 (the window WP8
+ * built the Yahoo fold set over) when a directory carries no manifest, and says so.
+ */
+async function formatWeeklyWindow(model: import("./data/formatResolve.js").ModelHandle): Promise<{ seasons: [number, number]; why: string }> {
+  try {
+    const { readFileSync } = await import("node:fs");
+    const m = JSON.parse(readFileSync(model.path("manifest"), "utf8")) as { weekly?: { blindSeasons?: number[] } };
+    const b = (m.weekly?.blindSeasons ?? []).filter((s) => Number.isFinite(s)).sort((a, z) => a - z);
+    if (b.length) return { seasons: [b[0], b[b.length - 1]], why: `manifest weekly.blindSeasons (${b.length} blind seasons)` };
+  } catch { /* no manifest, or no blind list -- fall through */ }
+  return { seasons: [2012, 2025], why: "no manifest weekly.blindSeasons -- defaulting to the WP8 fold window" };
+}
+
 async function cmdEvaluateWeekly(rest: string[]) {
-  const { evaluateWeekly, formatWeeklyReport } = await import("./weekly/evaluate.js");
-  const res = await evaluateWeekly({
-    dbPath: valueOf(rest, "--db"),
-    seasons: seasonRange(valueOf(rest, "--seasons"), [2012, 2025]),
-    trainSeasons: seasonRange(valueOf(rest, "--train-seasons"), [2010, 2025]),
+  const { evaluateWeekly, formatWeeklyReport, scenariosForSlots } = await import("./weekly/evaluate.js");
+  const dbFlag = valueOf(rest, "--db");
+  // WHICH LEAGUE, AND THEREFORE WHICH FORMAT'S ROWS AND RECIPE (WP8's open item).
+  //
+  // `evaluateWeekly` has taken `model` / `scenarios` / `flexOk` / `label` since WP8 and this verb
+  // passed none of them, so the only way to evaluate the Yahoo format was a scratch runner. Now the
+  // league resolves the format and the format supplies all four.
+  //
+  // THE INCUMBENT PATH IS DELIBERATELY UNCHANGED, and not by accident of equality:
+  //   - `scenarios` stays OMITTED, i.e. the pinned `SCENARIOS` constant. `scenariosForSlots` does NOT
+  //     reproduce it (the stored ESPN config says RB1/WR1 where the pinned template says RB2/WR2 --
+  //     test/weekly-scenarios.test.ts asserts exactly this), so deriving it here would silently
+  //     re-measure every published weekly number on a different roster shape.
+  //   - `flexOk` stays omitted for the same reason: the pinned shapes carry their own filler rule.
+  //   - `dbPath` stays whatever `--db` said (default `data/ff.db`), rather than the resolved
+  //     `features-db`, so an explicit `--db` still wins on the incumbent path.
+  // A FORMAT DIRECTORY gets all four, because for it there is no pinned anything.
+  const resolved = await (async () => {
+    const db = openDb(dbFlag);
+    try {
+      const ctx = await leagueCtx(rest, db);
+      return { cfg: ctx.config, lid: ctx.leagueId, fmt: await formatCtx(rest, db) };
+    } finally { db.close(); }
+  })();
+  const { cfg, lid, fmt } = resolved;
+  const isIncumbent = fmt.provenance === "incumbent-root";
+  const win = isIncumbent ? null : await formatWeeklyWindow(fmt.model);
+  if (!isIncumbent) {
+    console.log(`evaluate-weekly: league ${lid ?? "?"} -> format ${fmt.scoringKey}`);
+    console.log(`  rows + recipe from ${fmt.model.require("features-db")}; season window from ${win!.why}`);
+  }
+  const evalOpts = {
+    dbPath: isIncumbent ? dbFlag : fmt.model.require("features-db"),
+    seasons: seasonRange(valueOf(rest, "--seasons"), win?.seasons ?? [2012, 2025]),
+    trainSeasons: seasonRange(valueOf(rest, "--train-seasons"), win?.seasons ?? [2010, 2025]),
+    model: fmt.model,
+    // The label and the derived template are NON-INCUMBENT ONLY: `label` appears in the result JSON,
+    // and adding it to the flagless run would change the incumbent's output for no reason.
+    ...(isIncumbent ? {} : {
+      scenarios: scenariosForSlots(cfg.slots, cfg.flex_ok),
+      flexOk: cfg.flex_ok,
+      label: `league ${lid ?? "?"} -> format ${fmt.scoringKey}`,
+    }),
     rosters: Number(valueOf(rest, "--rosters") ?? 300),
     features: valueOf(rest, "--features") ?? "all",
     keepArtifacts: valueOf(rest, "--keep-artifacts"),
@@ -4014,7 +4107,21 @@ async function cmdEvaluateWeekly(rest: string[]) {
       return v === "availability" ? AVAIL : v.split(",").map((s) => s.trim()).filter(Boolean);
     })(),
     reuseArtifacts: rest.includes("--reuse-artifacts"),
-  });
+  };
+  // `--resolve-only`: print WHAT WOULD BE PASSED and run nothing. The control on this wiring is that
+  // the flagless (incumbent) run resolves the same arguments it resolved before `--league` existed,
+  // and a full evaluation trains fourteen folds to answer that -- so the resolved object is printable
+  // on its own. The ModelHandle is rendered as its resolved paths, which is the part that can be wrong.
+  if (rest.includes("--resolve-only")) {
+    const { model, ...rest2 } = evalOpts;
+    console.log(JSON.stringify({
+      ...rest2,
+      model: { dir: model.dir, scoringKey: model.scoringKey, provenance: model.provenance, weekly: model.path("weekly"), featuresDb: model.path("features-db") },
+      scenarioNames: (evalOpts as { scenarios?: { name: string; slots: string[] }[] }).scenarios?.map((s) => `${s.name}:${s.slots.join("/")}`) ?? "(pinned SCENARIOS)",
+    }, null, 1));
+    return;
+  }
+  const res = await evaluateWeekly(evalOpts);
   if (rest.includes("--json")) console.log(JSON.stringify(res, null, 2));
   else console.log(formatWeeklyReport(res));
 }
@@ -4157,7 +4264,10 @@ async function cmdIngestRaw(rest: string[]) {
     for (let y = lo; y <= hi; y++) seasons.push(y);
   }
   const t0 = Date.now();
-  const r = await ingestOne(valueOf(rest, "--db"), id, { seasons });
+  // `--league <id>` (WP13). Threaded through the asset's options bag; the league-shaped assets
+  // (league-history / -rosters / -transactions, espn-eligibility) resolve it and dispatch on the
+  // league's PLATFORM, and every other asset ignores it because it is not about a league at all.
+  const r = await ingestOne(valueOf(rest, "--db"), id, { seasons, leagueId: leagueArg(rest) });
   console.log(`raw asset ${id}: ${r.rows} rows (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   if (id === "league-history") {
     const { openDb } = await import("./db/db.js");

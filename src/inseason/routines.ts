@@ -26,13 +26,17 @@ export interface Routine {
   /**
    * DOES EVERY STEP ACCEPT `--league <id>`?
    *
-   * `false` today for all four, and that is a statement about `src/ff.ts`, not about the routine:
-   * `sync-actuals`, `scorecard`, `refresh-decisions` and `sync-league` resolve the ACTIVE league and
-   * take no `--league` flag. Appending one anyway would be SILENTLY IGNORED -- the routine would look
-   * per-league and run the active league's work N times -- which is the exact failure shape this
-   * whole pass exists to remove. So `planRoutines` runs them for the ACTIVE league only and REPORTS
-   * every other league it could not run, naming the verb. Flipping this to `true` is one line once
-   * those verbs take the flag.
+   * `true` for all four as of WP13, and that is a statement about `src/ff.ts`, not about the routine.
+   * It was `false` because `sync-actuals`, `scorecard`, `refresh-decisions` and `sync-league` all
+   * resolved the ACTIVE league and took no flag, so appending one would have been SILENTLY IGNORED --
+   * the routine would look per-league while running the active league's work N times, which is the
+   * exact failure shape this pass exists to remove. All four now READ the flag (`sync-league` forwards
+   * every flag but its own `--tier` to each step), so `planRoutines` appends `--league <id>` and runs
+   * the set for every synced league.
+   *
+   * THE FLAG IS NOT THE ONLY GATE, and `platforms` is still the other one: `roster` remains
+   * `["espn"]`, so the Yahoo league is skipped BY NAME there rather than run against an ESPN-only
+   * step list. A routine is run for a league only when BOTH are satisfied.
    */
   leagueScoped: boolean;
 }
@@ -50,7 +54,7 @@ export const ROUTINES: Record<string, Routine> = {
     steps: [["sync-actuals", []]],
     needsApp: false,
     platforms: null,          // nflverse results -- no fantasy provider involved
-    leagueScoped: false,
+    leagueScoped: true,
   },
   scorecard: {
     name: "scorecard",
@@ -58,7 +62,7 @@ export const ROUTINES: Record<string, Routine> = {
     steps: [["scorecard", ["--no-forward", "--no-odds"]]],
     needsApp: false,
     platforms: null,
-    leagueScoped: false,
+    leagueScoped: true,
   },
   decisions: {
     name: "decisions",
@@ -66,7 +70,7 @@ export const ROUTINES: Record<string, Routine> = {
     steps: [["refresh-decisions", ["--schedule", "auto"]]],
     needsApp: false,
     platforms: null,
-    leagueScoped: false,
+    leagueScoped: true,
   },
   roster: {
     name: "roster",
@@ -74,7 +78,7 @@ export const ROUTINES: Record<string, Routine> = {
     steps: [["sync-league", ["--tier", "fast"]]],
     needsApp: true,
     platforms: ["espn"],      // cmdSyncLeague builds ESPN URLs; there is no yahoo syncRosters wiring yet
-    leagueScoped: false,
+    leagueScoped: true,
   },
 };
 
