@@ -25,9 +25,13 @@ const espnLeagueUrl = (season: number, leagueId: string, views: string[]) =>
  * login (P-6). This is what lets `league_sync` and `discover_leagues` DISPATCH on the league's
  * platform instead of building ESPN URLs for whatever id they resolved: the adaptor is handed an IO
  * and never learns which browser it is talking to.
+ *
+ * ONE SPELLING (WP7): the body lives in `src/league/platform.ts` as `bridgePlatformIO`, so
+ * `ff sync-rosters` and this file cannot drift into two slightly different transports -- which is
+ * exactly what had happened (the roster sync held its own Playwright/CDP body).
  */
 function platformIO(host: string): import("../league/platform.js").PlatformIO {
-  return { get: async (url, headers) => (await import("../browser/appBridge.js")).bridgeFetch(url, headers, 25000, { host }) };
+  return { get: async (url, headers) => (await import("../league/platform.js")).bridgePlatformIO(host).get(url, headers) };
 }
 
 /**

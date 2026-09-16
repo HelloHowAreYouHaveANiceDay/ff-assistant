@@ -143,12 +143,23 @@ export function espnSettingsFromPayload(
   };
 }
 
-/** PURE: an ESPN `view=mRoster` payload -> every team's roster in our vocabulary. */
+/**
+ * PURE: an ESPN `view=mRoster&view=mTeam` payload -> every team's roster in our vocabulary.
+ *
+ * `owner` and `abbrev` are lifted verbatim from the ownership sync that used to live in ff.ts: the
+ * manager's display name from `members` keyed by the team's first owner GUID, falling back to
+ * location+nickname and then to `Team <id>`, and ESPN's own `abbrev` falling back to `T<id>`. Same
+ * strings, same precedence -- the ownership rows this produces must be byte-identical to the ones the
+ * ESPN-only body produced, which is the control for this refactor.
+ */
 export function espnRostersFromPayload(payload: unknown): PlatformRoster[] {
-  const j = payload as { teams?: any[] };
+  const j = payload as { teams?: any[]; members?: any[] };
+  const memberName = new Map<string, string>((j.members ?? []).map((m: any) => [String(m.id), String(m.displayName || m.firstName || m.id)]));
   return (j.teams ?? []).map((t: any) => ({
     teamId: String(t.id),
     teamName: String(t.name ?? (`${t.location ?? ""} ${t.nickname ?? ""}`.trim() || t.id)),
+    owner: memberName.get(String((t.owners ?? [])[0])) || `${t.location ?? ""} ${t.nickname ?? ""}`.trim() || `Team ${t.id}`,
+    abbrev: t.abbrev || `T${t.id}`,
     players: ((t.roster?.entries ?? []) as any[]).map((e) => {
       const p = e.playerPoolEntry?.player ?? e.player ?? {};
       return {

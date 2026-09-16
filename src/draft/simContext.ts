@@ -67,7 +67,14 @@ export interface SimContext {
    *  simulation starts at, and the rest-of-season blend applied to rostered men. Carried so every
    *  consumer can PRINT it beside its number rather than leave a reader to guess whether a
    *  September odds figure knows it is October. */
-  played: { weeks: number; nextWeek: number; source: string[]; rosBlendK: number; rosBlendSource: "fitted" | "absent"; rosApplied: number; today: string };
+  played: {
+    weeks: number; nextWeek: number; source: string[]; rosBlendK: number;
+    rosBlendSource: "fitted" | "absent"; rosApplied: number; today: string;
+    /** Why `weeks` is 0 even though weeks HAVE been played, when that is the case. Null otherwise.
+     *  Carried so a caveat can say "not seeded, and here is why" rather than reading like a league
+     *  whose season has not started. */
+    seedBlocked: string | null;
+  };
 }
 
 /**
@@ -201,6 +208,25 @@ export async function loadSimContext(opts: {
     if (!scored) break;                        // contiguous from week 1: a gap means unsynced data
     settled.push(r.week);
   }
+  // A SETTLED WEEK WITH NO ROSTER SNAPSHOT IS NOT A SEEDABLE WEEK (WP7).
+  //
+  // The seed below scores each team's week from `raw_league_roster_week` -- the STARTED lineup, per
+  // team, per week. That table is written by the ESPN roster-week ingester and exists for 462233
+  // only; the Yahoo league's weekly starters are not read by anything in this repo. With no rows the
+  // loop below scores every team 0, every matchup ties, the tie goes to the home side, and the
+  // simulator is handed a fabricated set of standings that looks exactly like a real one. So a league
+  // with no snapshot for the settled weeks is seeded from NOTHING and says so -- a full-season
+  // simulation from preseason lines, which is a worse answer than seeding but an honest one.
+  const snapshotWeeks = settled.length
+    ? (db.prepare(
+      "SELECT COUNT(DISTINCT week) c FROM raw_league_roster_week WHERE league_id=? AND season=? AND week<=? AND is_starter=1",
+    ).get(lgRow.league_id, cfg.season, settled[settled.length - 1]) as { c: number }).c
+    : 0;
+  const seedBlocked = settled.length > 0 && snapshotWeeks === 0
+    ? `league ${lgRow.league_id} has ${settled.length} settled week(s) but NO started-lineup rows in raw_league_roster_week, ` +
+      "so the standings cannot be seeded from what actually happened -- simulating the full season from preseason lines instead"
+    : null;
+  if (seedBlocked) { settled.length = 0; console.warn(`season so far: NOT SEEDED -- ${seedBlocked}`); }
   const playedWeeks = settled.length;
   const nextWeek = playedWeeks + 1;
   // Team scores for the settled weeks: the STARTED lineup ESPN applied, from the roster snapshot,
@@ -446,7 +472,7 @@ export async function loadSimContext(opts: {
     teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds, format,
     slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement,
     posMax: (cfg as { posMax?: Record<string, number> }).posMax,
-    played: { weeks: playedWeeks, nextWeek, source: seedSource, rosBlendK: rosBlend.K, rosBlendSource: rosSource, rosApplied, today },
+    played: { weeks: playedWeeks, nextWeek, source: seedSource, rosBlendK: rosBlend.K, rosBlendSource: rosSource, rosApplied, today, seedBlocked },
     opts: mkOpts,
     run: (t, trials, seed, extra) => simulateSeasons(t, weeks, vm, { ...mkOpts(trials, seed), ...extra }),
     clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),

@@ -406,5 +406,60 @@ is what the in-season copilot already reads as "no weekly projector was supplied
 **What a second format still needs before it is gated end to end:** its own `current-actuals` (`ff
 sync-actuals --league <id>`), a weekly artifact, variance/rank-outcomes/correlation fits, a blind
 fold set (`manifest.weekly.seasonLineBlind` records honestly when the weekly season line is not
-blind), and a `golden.json` -- `cpcv.mjs` has no `--league` axis yet, so the championship gate is
-still the incumbent's (F-9, WP7).
+blind), and a `golden.json`. Of those, WP7 landed the actuals, the three fits and the gate AXIS; the
+weekly artifact, the fold set and the golden itself are still missing for Yahoo 129048, and the
+sections below say exactly what that costs.
+
+## Yahoo in-season, first run (2026-09-16, WP7)
+
+The Yahoo superflex league produced in-season numbers from its OWN model for the first time. Every
+figure below is from `ff copilot <verb> --league 129048` on the live store with `active_league`
+switched to 129048, week 2 of the 2026 season, and every one of them carries three caveats stated
+once here and repeated in each result's own caveat sentence.
+
+**Season odds** (`--schedule real`, 2000 trials, seed 7). Playoff probability over the twelve teams,
+which sums to **exactly 8.0000** -- the league's playoff field size, the conservation law this
+simulator must satisfy and the first time it has been exercised at anything but 7-of-16:
+
+| team | playoff% | title% | | team | playoff% | title% |
+|---|---|---|---|---|---|---|
+| T7 | 79.60 | 15.70 | | T3 | 64.95 | 8.25 |
+| T12 | 79.05 | 14.85 | | T5 | 61.05 | 4.70 |
+| T10 | 71.35 | 9.10 | | T4 | 59.55 | 4.35 |
+| T2 | 70.85 | 9.50 | | T8 | 58.85 | 5.70 |
+| **T11 (us)** | **68.35** | **10.25** | | T6 | 54.70 | 2.65 |
+| T9 | 66.10 | 8.20 | | | | |
+| T1 | 65.60 | 6.75 | | **sum** | **8.0000** | **1.0000** |
+
+**Lineup** (week 2, expected-points objective): QB Joe Burrow, WR Garrett Wilson, WR Jameson
+Williams, RB Omarion Hampton, RB Chase Brown, TE Kyle Pitts, FLEX Carnell Tate, FLEX Jacory
+Croskey-Merritt, FLEX Michael Mayer, **SUPERFLEX Jared Goff** -- the superflex slot filled by the
+second quarterback, which is the whole point of WP5's slot module, and neither IR slot flagged.
+150.4 projected points; Isiah Pacheco listed OUT (Back).
+
+**Waivers**: base 69.30% playoffs / 10.40% title, noise floor 2.89pp; top claim ADD Mike Gesicki (TE)
+/ DROP Isiah Pacheco for +3.20pp playoffs, FAAB ~32 at `faabBasis: "rule"` on the league's OWN $100
+FAB budget (10% of budget per +1pp of playoff probability -- a stated rule of thumb, not a fit, and
+there is no fitted FAAB model for this league).
+
+**THE THREE CAVEATS, and none of them is small.**
+
+1. **UNGATED.** `cpcv.mjs --league 129048` REFUSES: this format has no `golden.json`, and a pre-draft
+   gate would need the snake `DraftModel` that does not exist. Nothing here has been checked against a
+   pinned number the way the incumbent's 96.0% playoff golden checks the ESPN board. These are the
+   model's answers, not validated answers.
+2. **NOT SEEDED, and the season-line inputs are not blind.** The league has played a week, but no
+   started-lineup snapshot for it reaches the store (`raw_league_roster_week` is ESPN-only), so the D18
+   seeding REFUSES rather than scoring every team zero and handing the home side the tie -- the
+   simulation runs the full season from preseason lines and the caveat says so. Separately,
+   `manifest.weekly.seasonLineBlind` is `false` for this format: no per-season blind fold set has been
+   built, so any historical evaluation of it would be reading a line that has seen its own season.
+3. **NO WEEKLY ARTIFACT.** Every point total above is the format's season projection divided by 17
+   (`basisNote: "no weekly projector was supplied..."`) -- no matchup, no recent form, no weather. That
+   is the honest degradation the serve rule specifies, not a silent read of the incumbent's weekly
+   model, but it is a materially weaker projection than the ESPN league gets.
+
+Two smaller things, recorded so they are not rediscovered: the format's `history-weekly.csv` still
+scores K and DST under the DEFAULT rules (this league rosters neither, so nothing consumes those rows,
+but the K/DST tiers of its variance model are consequently identical to ESPN's); and the format's board
+still carries K and DST players, so `waivers` can offer a kicker in a league with no kicker slot.

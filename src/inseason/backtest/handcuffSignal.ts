@@ -20,8 +20,8 @@ import { handcuffBoard, type DepthEntry } from "../handcuff.js";
 import { loadVarianceModel, poolRankFor } from "./scorers.js";
 import type { DecisionMember } from "./harness.js";
 
-export function makeHandcuffValueFn(db: DB, positions: string[] = ["RB"]): (m: DecisionMember, season: number) => number {
-  const vm = loadVarianceModel();
+export function makeHandcuffValueFn(db: DB, positions: string[] = ["RB"], leagueId?: string | null): (m: DecisionMember, season: number) => number {
+  const vm = loadVarianceModel(db, leagueId);
   const bySeason = new Map<number, Map<string, number>>();
 
   const build = (season: number): Map<string, number> => {

@@ -1,6 +1,9 @@
 // CROSS-CHECK THE COPILOT AGAINST THE REAL LEAGUE, read-only.
 //
-//   node --import tsx scripts/copilot-crosscheck.mjs [--week N] [--schedule real|generated|auto]
+//   node --import tsx scripts/copilot-crosscheck.mjs [--league <id>] [--week N] [--schedule real|generated|auto]
+//
+// `--league` is threaded into every `runCopilot` call and into `currentWeek`, so the cross-check runs
+// against the league it names rather than whichever one happens to be active (WP7).
 //
 // WHY A SCRIPT AND NOT A TEST. test/copilot.test.ts asserts these same properties on a fixture, and
 // that is the right place for them: the fixture runs on a clean clone with no store, no app and no
@@ -19,7 +22,8 @@ import { nameKey } from "../src/draft/values.ts";
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i > -1 ? process.argv[i + 1] : d; };
 const schedule = arg("--schedule", "auto");
-const week = Number(arg("--week", String(currentWeek().week)));
+const league = arg("--league", null);
+const week = Number(arg("--week", String(currentWeek(undefined, new Date(), league).week)));
 
 let failures = 0;
 const check = (label, ok, detail) => {
@@ -27,10 +31,10 @@ const check = (label, ok, detail) => {
   console.log(`  ${ok ? "OK  " : "FAIL"}  ${label}${detail ? `  --  ${detail}` : ""}`);
 };
 
-console.log(`COPILOT CROSS-CHECK -- schedule ${schedule}, week ${week}\n`);
+console.log(`COPILOT CROSS-CHECK -- league ${league ?? "(active)"}, schedule ${schedule}, week ${week}\n`);
 
 // --- 1. SEASON ODDS: the conservation laws, on the REAL rosters and the REAL schedule ------------
-const odds = (await runCopilot("season_odds", { schedule, trials: 3000 })).result;
+const odds = (await runCopilot("season_odds", { league, schedule, trials: 3000 })).result;
 console.log(`SEASON ODDS (${odds.assumptions.schedule} schedule, ${odds.assumptions.trials} trials)`);
 const sumTitles = odds.teams.reduce((a, t) => a + t.champion, 0);
 const sumPlayoffs = odds.teams.reduce((a, t) => a + t.playoffs, 0);
@@ -41,7 +45,7 @@ check("exactly one team is flagged as ours", odds.teams.filter((t) => t.us).leng
 
 // --- 2. LINEUP: nobody started who cannot play, checked against the SOURCE -----------------------
 const avail = loadAvailability();
-const lineup = (await runCopilot("lineup_recommend", { schedule, week })).result;
+const lineup = (await runCopilot("lineup_recommend", { league, schedule, week })).result;
 console.log(`\nLINEUP week ${lineup.week} (weekSource: ${lineup.weekSource})`);
 const startedNames = lineup.starters.filter((s) => s.name !== "(empty)").map((s) => s.name);
 const outStarters = startedNames.filter((n) => avail.get(nameKey(n))?.status === "OUT");
@@ -58,7 +62,7 @@ check("the store carries OUT designations at all", [...avail.values()].some((v) 
   `${[...avail.values()].filter((v) => v.status === "OUT").length} OUT / ${avail.size} rows`);
 let byeWeeksSeen = 0;
 for (let w = 1; w <= 18; w++) {
-  const r = (await runCopilot("lineup_recommend", { schedule, week: w })).result;
+  const r = (await runCopilot("lineup_recommend", { league, schedule, week: w })).result;
   if (r.unavailable.length) byeWeeksSeen++;
 }
 check("our roster is unavailable somewhere across weeks 1-18 (the bye column is connected)", byeWeeksSeen > 0,

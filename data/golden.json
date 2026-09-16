@@ -1,0 +1,15 @@
+{
+  "_what": "THE INCUMBENT FORMAT'S GATE NUMBERS. These are the pinned D15 numbers, written down here rather than left as defaults inside scripts/cpcv.mjs so that a per-format gate reads every format the same way -- `data/formats/<key>/golden.json` for a built format, this file for the incumbent (whose model files live at the data/ root).",
+  "scoringKey": "sc-f6143a8dfb13",
+  "league": "462233",
+  "playoffPct": 96.0,
+  "titlePct": 38.5,
+  "tolerancePp": 3.0,
+  "baseFlags": "--full --no-lookahead --inflation",
+  "seasons": "1999-2024",
+  "n": "150",
+  "_playoffPct": "PRIMARY GATE (D13): the axis the season sim has measured skill on (playoff Brier 0.2370 vs uniform 0.2451). Source: data/experiments.jsonl config_hash e625249e, full_set_baseline_playoff_pct 96.107, at benchDiscount 0.25 / consensusBlend 0 -- both title-edges demoted (D14/D15), so this pre-edge base IS the shipped posture.",
+  "_titlePct": "SECONDARY / CONTEXT ONLY, never gated: the sim has NO measured skill on the single-elim title (title Brier 0.0659 vs uniform 0.0652, P16 FAILED). Same ledger row, full_set_baseline_pct 38.48. The old title-tuned posture (--consensus-blend 1 --bench-discount 0.35) was 97.0 / 42.3.",
+  "_tolerancePp": "+/- pp of Monte-Carlo slack on the consistency check, unchanged from cpcv.mjs's --golden-tol default.",
+  "_pinnedBy": "docs/decisions.md D13/D14/D15; docs/architecture-review-2026-09-16.md F-9 (WP7)."
+}

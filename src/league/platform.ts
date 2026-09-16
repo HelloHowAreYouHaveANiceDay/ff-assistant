@@ -89,8 +89,23 @@ export interface LeagueSettings {
   provenance: string;
 }
 
-/** One roster as a sync reads it, before OUR valuation is attached. */
-export interface PlatformRoster { teamId: string; teamName: string; players: { name: string; pos: string; slot: string; team?: string }[] }
+/**
+ * One roster as a sync reads it, before OUR valuation is attached.
+ *
+ * `owner` and `abbrev` are what the OWNERSHIP overlay stores beside the player (`ff sync-rosters`):
+ * the manager's display name and the team's short tag. They are optional because not every platform
+ * publishes both on the roster read -- a platform that does not gets `null`, and the ownership writer
+ * falls back to the team NAME rather than inventing a manager. They live here rather than in a second
+ * per-platform roster read because the ownership sync used to be an ESPN-only body inside ff.ts, which
+ * is exactly how a Yahoo league ends up with ESPN-shaped rows (P-1).
+ */
+export interface PlatformRoster {
+  teamId: string;
+  teamName: string;
+  owner?: string | null;
+  abbrev?: string | null;
+  players: { name: string; pos: string; slot: string; team?: string }[];
+}
 
 /**
  * The ONE capability an adaptor needs from the outside world: an authenticated GET, executed inside
@@ -101,6 +116,17 @@ export interface PlatformRoster { teamId: string; teamName: string; players: { n
  */
 export interface PlatformIO {
   get(url: string, headers?: Record<string, string>): Promise<string>;
+}
+
+/**
+ * The DEFAULT IO: one authenticated GET inside the app guest that holds `host`'s login.
+ *
+ * One spelling, so `league_sync` (agent.ts), `ff sync-rosters` and any future sync verb cannot end up
+ * with three slightly different transports -- which is how the roster sync came to hold its own
+ * Playwright/CDP body while `league_sync` went through the bridge.
+ */
+export function bridgePlatformIO(host: string, timeoutMs = 25000): PlatformIO {
+  return { get: async (url, headers) => (await import("../browser/appBridge.js")).bridgeFetch(url, headers, timeoutMs, { host }) };
 }
 
 /** What the CALLER knows and the platform's own pages do not publish. See `Platform.syncSettings`. */

@@ -19,7 +19,7 @@
  * difference relies on. This mirrors the identity-keyed draws in season.ts.
  */
 import type { DB } from "../../db/db.js";
-import { dataPath } from "../../data/paths.js";
+import { INCUMBENT_MODEL, resolveFormat } from "../../data/formatResolve.js";
 import { readFileSync } from "node:fs";
 import { optimalLineup, type RosterPlayer } from "../lineup.js";
 import { sampleWeek, tierFor, type VarianceModel } from "../../draft/season.js";
@@ -49,9 +49,19 @@ function seededRng(key: string): () => number {
   return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 
-/** The fitted variance model, read once. */
-export function loadVarianceModel(): VarianceModel {
-  return JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8")) as VarianceModel;
+/**
+ * The fitted variance model, read once -- FROM THE LEAGUE'S OWN FORMAT (WP7).
+ *
+ * This read `dataPath("variance-model.json")`, the INCUMBENT's copy, whatever league the in-season
+ * backtest was replaying. Weekly CVs are cut from fantasy points, so they are a property of the
+ * SCORING RULES: serving half-PPR CVs to a full-PPR superflex league tiers every player wrong and the
+ * output is a plausible-looking ceiling nobody can trace. Pass the store (and, for a non-active
+ * league, its id) and the format resolves; omit it and the incumbent is used, which is exactly what
+ * this always did.
+ */
+export function loadVarianceModel(db?: DB, leagueId?: string | null): VarianceModel {
+  const p = db ? resolveFormat(db, leagueId).model.require("variance") : INCUMBENT_MODEL.require("variance");
+  return JSON.parse(readFileSync(p, "utf8")) as VarianceModel;
 }
 
 /** (season, name) -> variance TIER, cached, from the per-season pool rank. Shared by the sim scorer
@@ -76,8 +86,8 @@ export function makeTierFn(db: DB, vm: VarianceModel): (season: number, name: st
  * (drop by lowest ceiling) against value-min (drop by lowest mean): they diverge on exactly the
  * low-mean/high-variance body a floor-only view discards. Returns (member, season) -> ceiling points.
  */
-export function makeCeilingFn(db: DB): (m: DecisionMember, season: number) => number {
-  const vm = loadVarianceModel();
+export function makeCeilingFn(db: DB, leagueId?: string | null): (m: DecisionMember, season: number) => number {
+  const vm = loadVarianceModel(db, leagueId);
   const tierFn = makeTierFn(db, vm);
   return (m, season) => {
     const posVm = vm.pos[m.pos];
@@ -90,10 +100,10 @@ export function makeCeilingFn(db: DB): (m: DecisionMember, season: number) => nu
   };
 }
 
-export function makeSimExpectedScorer(db: DB, opts: { trials?: number; seed?: number } = {}): Scorer {
+export function makeSimExpectedScorer(db: DB, opts: { trials?: number; seed?: number; leagueId?: string | null } = {}): Scorer {
   const trials = opts.trials ?? 200;
   const seed = opts.seed ?? 7;
-  const vm = loadVarianceModel();
+  const vm = loadVarianceModel(db, opts.leagueId);
   const tierOf = makeTierFn(db, vm);
 
   return {

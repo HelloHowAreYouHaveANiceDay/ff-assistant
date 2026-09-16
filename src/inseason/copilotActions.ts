@@ -120,7 +120,12 @@ export function caveat(a: C.Assumptions): string {
     a.played
       ? (a.played.weeks > 0
         ? `from wk${a.played.nextWeek}: standings seeded from ${a.played.weeks} settled week(s), ROS lines blend K=${a.played.rosBlendK} on ${a.played.rosApplied} men`
-        : "no settled week yet: full-season simulation from preseason lines")
+        // NOT SEEDED is two different facts and they must not read the same. "no settled week yet" is
+        // September; `seedBlocked` is "weeks HAVE been played and this league's results are not in the
+        // store", which is a caveat on the number, not a description of the calendar.
+        : a.played.seedBlocked
+          ? `NOT SEEDED: ${a.played.seedBlocked}`
+          : "no settled week yet: full-season simulation from preseason lines")
       : "season-so-far unknown",
   ];
   return `[${bits.join("; ")}]`;
@@ -216,8 +221,8 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       //
       // The `winprob` arm needs BANDS as well as means, and takes both from ONE call so a mean and
       // its own p10/p90 cannot come from two different reads of the table.
-      const withBands = objective === "winprob" ? S.loadWeeklyBands(ctx.season, wk, dbPath) : null;
-      const weekly = withBands?.weekly ?? S.loadWeeklyProjection(ctx.season, wk, dbPath) ?? undefined;
+      const withBands = objective === "winprob" ? S.loadWeeklyBands(ctx.season, wk, dbPath, leagueId) : null;
+      const weekly = withBands?.weekly ?? S.loadWeeklyProjection(ctx.season, wk, dbPath, undefined, leagueId) ?? undefined;
       // The week's NFL schedule as team -> opponent, for the DST same-game conflict flag. Absent rows
       // (a week the model table has not built) leave the map empty, and the flag simply does not fire.
       const nflOpp = new Map<string, string>();
@@ -275,7 +280,7 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // The pool is built HERE and handed in, so copilot.ts stays pure. `loadStreamingProjection`
       // is the only path to a projection and it consults the per-position ship mapping, so there is
       // no way to reach a number without knowing which artifact produced it.
-      const proj = streamProjections(ctx, wk, dbPath);
+      const proj = streamProjections(ctx, wk, dbPath, S.formatModelOf(dbPath, leagueId));
       return {
         ...C.streamRecommend(ctx, wk, pos, {
           provenance, availability: S.loadAvailability(dbPath),
@@ -298,10 +303,10 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
  * the right default: the failure mode to avoid is calling a rostered man free, and a name that
  * matches nothing is not on a roster.
  */
-function streamProjections(ctx: SimContext, week: number, dbPath?: string): {
+function streamProjections(ctx: SimContext, week: number, dbPath: string | undefined, model: import("../data/formatResolve.js").ModelHandle): {
   pool: C.StreamPlayer[]; artifactByPos: Record<string, string>; missing: string[];
 } {
-  const p = loadStreamingProjection(ctx.season, week, dbPath);
+  const p = loadStreamingProjection(ctx.season, week, dbPath, model);
   if (!p) return { pool: [], artifactByPos: {}, missing: [] };
   const ourNames = new Set(ctx.teams[ctx.meIdx].roster.map((r) => C.lineupNameKey(r.name)));
   const leagueNames = new Set(ctx.teams.flatMap((t) => t.roster.map((r) => C.lineupNameKey(r.name))));

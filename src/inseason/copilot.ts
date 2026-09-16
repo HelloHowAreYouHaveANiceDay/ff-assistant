@@ -240,7 +240,7 @@ export interface Assumptions {
   /** THE SEASON SO FAR (D18): how many settled weeks seeded the standings (0 = a from-scratch
    *  season, the pre-D18 behaviour), the week the simulation starts at, and the rest-of-season
    *  blend weight applied to played games ("Infinity" = preseason lines only). */
-  played?: { weeks: number; nextWeek: number; rosBlendK: number | "Infinity"; rosApplied: number };
+  played?: { weeks: number; nextWeek: number; rosBlendK: number | "Infinity"; rosApplied: number; seedBlocked?: string | null };
 }
 
 export function defaultProvenance(ctx: SimContext): Provenance {
@@ -270,7 +270,7 @@ function assumptionsOf(
     asOf: new Date().toISOString(),
     objective,
     playoffWeeks: [...(ctx.format?.playoffWeeks ?? [])],
-    ...(ctx.played ? { played: { weeks: ctx.played.weeks, nextWeek: ctx.played.nextWeek, rosBlendK: ctx.played.rosBlendK === Infinity ? "Infinity" as const : ctx.played.rosBlendK, rosApplied: ctx.played.rosApplied } } : {}),
+    ...(ctx.played ? { played: { weeks: ctx.played.weeks, nextWeek: ctx.played.nextWeek, rosBlendK: ctx.played.rosBlendK === Infinity ? "Infinity" as const : ctx.played.rosBlendK, rosApplied: ctx.played.rosApplied, seedBlocked: ctx.played.seedBlocked ?? null } } : {}),
   };
 }
 

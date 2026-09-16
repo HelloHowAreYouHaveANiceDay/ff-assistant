@@ -15,13 +15,16 @@
 // these two players average, do they have good weeks together? So each player-week is divided by
 // that player's own season mean before correlating.
 import { readFileSync, writeFileSync } from "node:fs";
+import { fitPaths } from "./lib/format-paths.mjs";
 
 const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
-const rows = readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1);
+// PER FORMAT (WP7): see scripts/lib/format-paths.mjs. No `--league` = the literals this always used.
+const PATHS = fitPaths("correlation", "data/correlation-model.json");
+const rows = readFileSync(PATHS.weeklyCsv, "utf8").trim().split(/\r?\n/).slice(1);
 
 // LEAVE-SEASON-OUT support for the calibration harness's un-leaked refit. Both unset -> shipped run.
 const FIT_EXCLUDE = process.env.FIT_EXCLUDE ? Number(process.env.FIT_EXCLUDE) : null;
-const FIT_OUT = process.env.FIT_OUT || "data/correlation-model.json";
+const FIT_OUT = PATHS.out;
 
 // season -> name -> {pos, team, weeks: Map<week, pts>}
 const players = new Map();
@@ -81,7 +84,7 @@ const pearson = (xs, ys) => {
 };
 
 const PAIRS = [["QB","WR"],["QB","TE"],["QB","RB"],["RB","WR"],["WR","TE"],["RB","TE"],["QB","DST"],["QB","K"],["K","DST"]];
-const model = { fittedFrom: "data/history-weekly.csv", teamWeeks: cell.size, pairs: {} };
+const model = { fittedFrom: PATHS.weeklyCsv, teamWeeks: cell.size, pairs: {} };
 console.log(`within-team same-week correlation, on residuals (week / player's season mean)`);
 console.log(`${cell.size} team-weeks\n`);
 console.log("  pair      n        r      note");

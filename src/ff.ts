@@ -123,6 +123,8 @@ async function main() {
       return cmdRefreshGamedayStatus(rest);
     case "sync-rosters":
       return cmdSyncRosters(rest);
+    case "sync-schedule":
+      return cmdSyncSchedule(rest);
     case "sync-settings":
       return cmdSyncSettings(rest);
     case "sync-league":
@@ -1791,88 +1793,107 @@ async function cmdSyncSettings(rest: string[]) {
   db.close();
 }
 
-// Sync all teams' rosters for the active league -> ownership overlay (who owns each player). Read
-// through the app's logged-in ESPN session. Empty pre-draft; populates once the league drafts.
+/**
+ * `ff sync-rosters [--league <id>]` -- every team's roster for ONE league -> the `ownership` overlay.
+ *
+ * PLATFORM-DISPATCHED (P-1, WP7). This used to be an ESPN body: a CDP connection, a fetch inside the
+ * `espnview` guest, ESPN's own lineupSlotId table, ESPN's `members` array. A Yahoo league could only
+ * be refused. Now the league's PLATFORM chooses the adaptor, the adaptor is handed one authenticated
+ * GET inside the guest that holds ITS login, and the rows are written by one shared writer
+ * (src/data/ownershipSync.ts). The ESPN rows this produces are byte-identical to the old body's --
+ * `espnRostersFromPayload` carries the same owner/abbrev precedence, and the slot table it uses is
+ * the adaptor's, which agrees with the old one on every slot this league uses.
+ */
 async function cmdSyncRosters(rest: string[]) {
-  const { chromium } = await import("playwright-core");
   const { openDb, nowIso } = await import("./db/db.js");
-  const { nameKey, dstAliasKey } = await import("./draft/values.js");
-  const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
+  const { platformFor, bridgePlatformIO } = await import("./league/platform.js");
+  const { writeOwnership } = await import("./data/ownershipSync.js");
   const db = openDb(valueOf(rest, "--db"));
-  // RESOLVE ONCE, REFUSE THE WRONG PLATFORM BEFORE THE FETCH -- this verb DELETEs the league's
-  // ownership rows and reinserts, so a league resolved by one rule and fetched by another wipes one
-  // league's rosters and refills them with another league's.
+  // RESOLVE ONCE, DISPATCH ON THAT SAME ROW -- this verb DELETEs the league's ownership rows and
+  // reinserts, so a league resolved by one rule and fetched by another wipes one league's rosters and
+  // refills them with another league's.
   const ctx = await leagueCtx(rest, db);
   if (!ctx.leagueId) { db.close(); return failStep("no league synced -- run league_sync first"); }
-  if (ctx.platform !== "espn") { db.close(); return failStep(`league ${ctx.leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} roster-sync adaptor exists yet`); }
-  const lg = { league_id: ctx.leagueId, season: ctx.rowSeason ?? ctx.config.season };
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
-  if (!browser) { db.close(); return failStep("app not running -- open the desktop app (its logged-in session is needed)"); }
-  const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://"));
-  if (!page) { db.close(); await browser.close(); return failStep("app renderer not found"); }
-  const wvEval = (js: string): Promise<string> => page.evaluate(async (code) => { const wv = document.getElementById("espnview") as any; if (!wv?.executeJavaScript) return ""; try { return await wv.executeJavaScript(code); } catch (e: any) { return "ERR:" + (e?.message ?? e); } }, js);
-  const cur = await wvEval("location.href");
-  if (!/fantasy\.espn\.com/.test(cur)) { await page.evaluate(() => { const wv = document.getElementById("espnview") as any; if (wv?.loadURL) wv.loadURL("https://fantasy.espn.com/football/"); }); await page.waitForTimeout(4000); }
-  const ESPN_SLOT: Record<number, string> = { 0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K", 20: "BE", 21: "IR", 23: "FLEX" };
-  const url = `${ESPN_READS_BASE}/seasons/${lg.season}/segments/0/leagues/${lg.league_id}?view=mRoster&view=mTeam`;
-  const raw = await wvEval(`fetch(${JSON.stringify(url)},{credentials:'include'}).then(function(r){return r.ok?r.text():('HTTP '+r.status)}).catch(function(e){return 'ERR '+e.message})`);
-  await browser.close();
-  let j: any; try { j = JSON.parse(raw); } catch { db.close(); return failStep(`could not read rosters: ${raw?.slice(0, 60)}`); }
-  const memberName = new Map<string, string>((j.members ?? []).map((m: any) => [m.id, m.displayName || m.firstName || m.id]));
-  // REFUSE TO WIPE REAL ROWS ON AN EMPTY PULL. This verb deletes the league's ownership then
-  // re-inserts; if the ESPN read came back with no rostered players (session expired, a shape change),
-  // the old code deleted everything, inserted nothing, and printed "0 players across 0 teams" at exit
-  // 0 -- silent data-loss. Count the pull BEFORE touching the table. An empty pull is only a FAILURE
-  // when there are rows to lose: pre-draft, an empty roster is genuine and wiping an already-empty
-  // table is a harmless no-op, so that case succeeds quietly rather than blocking the pre-draft flow.
-  const pulledEntries = (j.teams ?? []).reduce((s: number, t: any) => s + (t.roster?.entries?.length ?? 0), 0);
-  const { refreshDecision, auditIngest } = await import("./data/validatedIngest.js");
-  const existing = (db.prepare("SELECT count(*) AS c FROM ownership WHERE league_id=?").get(lg.league_id) as { c: number }).c;
-  const decision = refreshDecision(pulledEntries, existing);
-  if (decision === "refuse-empty-wipe") {
+  const season = ctx.rowSeason ?? ctx.config.season;
+  let plat;
+  try { plat = await platformFor(ctx.platformRaw); }
+  catch (e) { db.close(); return failStep(`league ${ctx.leagueId}: ${(e as Error).message}`); }
+  let rosters;
+  try {
+    rosters = await plat.syncRosters(bridgePlatformIO(plat.webview.host), ctx.leagueId, season);
+  } catch (e) {
+    db.close();
+    return failStep(`could not read ${plat.id} rosters for league ${ctx.leagueId}: ${String((e as Error).message).slice(0, 200)}`);
+  }
+  const { auditIngest } = await import("./data/validatedIngest.js");
+  const w = writeOwnership(db, ctx.leagueId, rosters, nowIso());
+  if (w.decision === "refuse-empty-wipe") {
     db.close();
     return failStep(
-      `ownership pull returned 0 rostered players across ${(j.teams ?? []).length} teams, but ${existing} ` +
-      "are already stored -- refusing to WIPE them with an empty read. The app's ESPN session likely " +
+      `ownership pull returned 0 rostered players across ${rosters.length} teams, but ${w.existing} ` +
+      `are already stored -- refusing to WIPE them with an empty read. The app's ${plat.id} session likely ` +
       "expired; the existing rows are kept. Re-run once it is live.",
     );
   }
-  if (decision === "noop-empty") {
+  if (w.decision === "noop-empty") {
     db.close();
     console.log("ownership: 0 rostered players (pre-draft or empty league) -- nothing to sync.");
     return;
   }
-  const up = db.prepare("INSERT OR REPLACE INTO ownership (league_id, player_id, owner, team_abbrev, slot, team_id, updated_at) VALUES (@lid,@pid,@own,@abr,@slot,@tid,@now)");
-  const now = nowIso(); let n = 0, teams = 0;
-  db.transaction(() => {
-    db.prepare("DELETE FROM ownership WHERE league_id=?").run(lg.league_id);
-    for (const t of j.teams ?? []) {
-      const owner = memberName.get((t.owners ?? [])[0]) || `${t.location ?? ""} ${t.nickname ?? ""}`.trim() || `Team ${t.id}`;
-      const abbr = t.abbrev || `T${t.id}`;
-      const entries = t.roster?.entries ?? []; if (entries.length) teams++;
-      for (const e of entries) {
-        const p = e.playerPoolEntry?.player ?? {};
-        let k = nameKey(p.fullName ?? "");
-        if (!k) continue;
-        // ESPN names a defense by its nickname ("Packers D/ST" -> "packers") while every table we
-        // join against keys it by abbreviation ("GB D/ST" -> "gb"). Written raw, the row matches
-        // nothing downstream and the roster silently comes up one starter short. Gated on ESPN's own
-        // position id rather than the lineup slot, because a benched defense sits in a BE slot.
-        if (p.defaultPositionId === 16) k = dstAliasKey(k) ?? k;
-        up.run({ lid: lg.league_id, pid: k, own: owner, abr: abbr, slot: ESPN_SLOT[e.lineupSlotId] ?? "", tid: String(t.id ?? ""), now });
-        n++;
-      }
-    }
-  })();
-  // VALIDATE THE WRITE LANDED, league-scoped, and record it. n>0 is guaranteed by the pre-write guard
-  // above, but the read-back proves the rows actually persisted (a rolled-back transaction would not).
+  // VALIDATE THE WRITE LANDED, league-scoped, and record it. The read-back proves the rows actually
+  // persisted (a rolled-back transaction would not).
   const v = auditIngest(db, {
-    source: "ownership", season: lg.season, rowsWritten: n,
-    readback: () => (db.prepare("SELECT count(*) AS c FROM ownership WHERE league_id=?").get(lg.league_id) as { c: number }).c,
+    source: "ownership", season, rowsWritten: w.rows,
+    readback: () => (db.prepare("SELECT count(*) AS c FROM ownership WHERE league_id=?").get(ctx.leagueId as string) as { c: number }).c,
   });
   db.close();
   if (!v.ok) return failStep(`ownership sync validation FAILED -- ${v.reason}`);
-  console.log(`ownership synced: ${n} rostered players across ${teams} teams (league ${lg.league_id})`);
+  console.log(`ownership synced: ${w.rows} rostered players across ${w.teams} teams (league ${ctx.leagueId}, ${plat.id})`);
+}
+
+/**
+ * `ff sync-schedule [--league <id>]` -- THIS league's regular-season matchups -> `raw_league_matchup`.
+ *
+ * WHY IT IS ITS OWN VERB (WP7). The schedule reached the store only as a by-product of
+ * `ff ingest-raw league-history`, which walks a league's whole past through the ESPN-only
+ * `provider.history()`. A Yahoo league has no history reader (and does not need one to be simulated),
+ * but the D18 seeded simulator and `--schedule real`'s stored fallback both read `raw_league_matchup`
+ * -- so without this the Yahoo league's season odds would run on a GENERATED schedule and say so,
+ * which is a worse answer than the real one sitting on a scoreboard page nobody read.
+ *
+ * It writes ONE season, replacing that league-season's rows (the same delete-then-insert
+ * `loadLeagueHistory` does, for the same reason: a changed calendar otherwise leaves ghost pairings).
+ */
+async function cmdSyncSchedule(rest: string[]) {
+  const { openDb, nowIso } = await import("./db/db.js");
+  const { openLeague } = await import("./league/index.js");
+  const db = openDb(valueOf(rest, "--db"));
+  const ctx = await leagueCtx(rest, db);
+  if (!ctx.leagueId) { db.close(); return failStep("no league synced -- run league_sync first"); }
+  const season = ctx.rowSeason ?? ctx.config.season;
+  const leagueId = ctx.leagueId;
+  db.close();
+  const lg = await openLeague({ dbPath: valueOf(rest, "--db"), leagueId });
+  let sched;
+  try {
+    if (!lg.provider.matchups) return failStep(`the ${lg.provider.platform} adaptor exposes no matchups() -- cannot read league ${leagueId}'s schedule`);
+    sched = await lg.provider.matchups(season);
+  } catch (e) {
+    return failStep(`could not read league ${leagueId}'s schedule: ${String((e as Error).message).slice(0, 240)}`);
+  } finally { await lg.close().catch(() => {}); }
+  const db2 = openDb(valueOf(rest, "--db"));
+  const now = nowIso();
+  const before = (db2.prepare("SELECT count(*) c FROM raw_league_matchup WHERE league_id=? AND season=?").get(leagueId, season) as { c: number }).c;
+  const up = db2.prepare("INSERT OR REPLACE INTO raw_league_matchup VALUES (@l,@s,@w,@h,@a,@now)");
+  db2.transaction(() => {
+    db2.prepare("DELETE FROM raw_league_matchup WHERE league_id=? AND season=?").run(leagueId, season);
+    for (const g of sched.games) up.run({ l: leagueId, s: season, w: g.week, h: String(g.homeId), a: String(g.awayId), now });
+  })();
+  const after = (db2.prepare("SELECT count(*) c FROM raw_league_matchup WHERE league_id=? AND season=?").get(leagueId, season) as { c: number }).c;
+  const weeks = new Set(sched.games.map((g) => g.week)).size;
+  db2.close();
+  if (after !== sched.games.length) return failStep(`schedule write did not land: read ${sched.games.length} games, store holds ${after}`);
+  console.log(`schedule synced: ${after} games over ${weeks} week(s) for league ${leagueId} season ${season} (was ${before}). NOTE: raw_league_matchup carries the PAIRINGS only -- no scores.`);
 }
 
 // Materialize ONE data source (asset) + its downstream (project/assemble). Powers the DAG view's
@@ -1950,12 +1971,17 @@ async function cmdBuildHistory(rest: string[]) {
  */
 async function cmdSyncActuals(rest: string[]) {
   const { ingestCurrentSeasonActuals } = await import("./data/history.js");
-  const { openDb, getConfig } = await import("./db/db.js");
+  const { openDb } = await import("./db/db.js");
   const { buildSkResolver } = await import("./data/skResolve.js");
   const { DEFAULT_LEAGUE_SCORING } = await import("./draft/scoring.js");
   const dbPath = valueOf(rest, "--db");
   const force = rest.includes("--force");
-  const db = openDb(dbPath); const conf = getConfig(db);
+  const db = openDb(dbPath);
+  // THE SCORING RULES AND THE OUTPUT PATH MUST COME FROM THE SAME LEAGUE (WP7). `getConfig(db)` with
+  // no id is the ACTIVE league, while `formatCtx` honours `--league` -- so `ff sync-actuals --league
+  // <other>` used to score the season under the ACTIVE league's rules and write the result into the
+  // OTHER league's directory. Both now come from the one resolved context.
+  const conf = (await leagueCtx(rest, db)).config;
   const actualsFmt = await formatCtx(rest, db);
   const season = Number(process.env.FF_SEASON ?? conf.season);
   const resolver = buildSkResolver(db);
@@ -1978,6 +2004,26 @@ async function cmdSyncActuals(rest: string[]) {
     return;
   }
   console.log(`  wrote ${r.weekly} weekly rows to ${r.path}; weeks present: ${r.weeks.join(", ") || "none"} (history-weekly.csv untouched)`);
+
+  // THE FORWARD REBUILD IS THE INCUMBENT'S, AND ONLY THE INCUMBENT'S (WP7).
+  //
+  // `buildForwardBoard` writes `feat_player_week` / `feat_player_week_model` IN THE MAIN STORE, and
+  // those rows carry a SCORED `pts` target. Running it for a second format would re-score the shared
+  // tables under that format's rules -- i.e. silently replace the ESPN-scored in-season features every
+  // ESPN surface reads -- while `data/actuals-state.json` (one slot) recorded the other league's hash.
+  // A per-format forward board needs its own feature tables (the format dir's `features.db`), which is
+  // not built. So a non-incumbent format gets its own `current-actuals.csv` and a NAMED refusal of the
+  // rebuild, rather than a rebuild that corrupts the incumbent's.
+  if (actualsFmt.provenance !== "incumbent-root") {
+    console.log(
+      `  format ${actualsFmt.scoringKey} has its re-scored actuals; the forward-board rebuild is SKIPPED.\n` +
+      "  buildForwardBoard writes feat_player_week/feat_player_week_model in data/ff.db, which hold the\n" +
+      "  INCUMBENT format's scored target -- rebuilding them under these rules would overwrite every ESPN\n" +
+      "  in-season feature. A per-format forward board needs the format dir's own feature tables; until\n" +
+      "  that exists this league's weekly serve falls back to its season line and says so.",
+    );
+    return;
+  }
 
   const changed = force || prev.season !== season || prev.hash !== r.hash;
   if (!changed) {
@@ -2726,7 +2772,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed, btFmt.model.path("variance")); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a

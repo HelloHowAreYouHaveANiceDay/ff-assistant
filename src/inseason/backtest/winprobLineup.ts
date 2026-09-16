@@ -41,7 +41,7 @@
  */
 import { readFileSync } from "node:fs";
 import type { DB } from "../../db/db.js";
-import { dataPath } from "../../data/paths.js";
+import { resolveFormat } from "../../data/formatResolve.js";
 import { optimalLineup, type RosterPlayer } from "../lineup.js";
 import { loadWeeklyRows } from "../../weekly/features.js";
 import { projectWeekly } from "../../weekly/projector.js";
@@ -226,7 +226,11 @@ export function backtestWinProbLineups(
   const artifact = loadModel(opts.model);
   const sims = opts.sims ?? 1200;
   const baseSeed = opts.seed ?? 20260909;
-  const corr = opts.corr ?? (JSON.parse(readFileSync(dataPath("correlation-model.json"), "utf8")) as CorrelationModel);
+  // THE LEAGUE'S OWN teammate correlation (WP7). This read the incumbent's copy through `dataPath`
+  // for whatever league was being replayed; the fit is on fantasy points, so it belongs to the
+  // scoring rules, and `resolveFormat` refuses an unbuilt format by name rather than substituting
+  // another format's numbers.
+  const corr = opts.corr ?? (JSON.parse(readFileSync(resolveFormat(db, leagueId).model.require("correlation"), "utf8")) as CorrelationModel);
   const rows: WinProbRow[] = [];
   const skipped: Record<string, number> = {};
   const bump = (k: string) => { skipped[k] = (skipped[k] ?? 0) + 1; };

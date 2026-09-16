@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { dataPath } from "../data/paths.js";
+import { INCUMBENT_MODEL } from "../data/formatResolve.js";
 import { loadPriceModel, priceFor, type PriceArtifact } from "../model/price.js";
 import { makeV2Strategy, type DraftState, type PlayerRef, type V2Config } from "./strategy.js";
 import { makeV3Strategy, type V3Config } from "./strategyV3.js";
@@ -35,6 +36,9 @@ function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v =
 
 export interface Pick { name: string; pos: string; team: number; price: number; }
 export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile[]; drainNom?: boolean; greedyNom?: boolean;
+  /** The FORMAT's variance model, for the V3 strategy's availability tiers (WP7). Omitted = the
+   *  incumbent's copy at the data/ root, which is what this always read. */
+  variancePath?: string;
   /** How the BOTS price players. "vor" (default) computes their book with computeValues -- OUR OWN
    *  valuation function -- which makes the whole field a noisy copy of us. That self-reference is
    *  what hid the FLEX-baseline bug for months, and it means any edge measured against these bots
@@ -236,7 +240,15 @@ export const ourSdPrivateFor = (posRank: number | null): number =>
 export function buildV3Config(
   points: PointsRow[],
   lg: SimLeague,
-  o: { byeOf?: (n: string) => number | null; priceOf?: (n: string, pos: string) => number } = {},
+  o: {
+    byeOf?: (n: string) => number | null;
+    priceOf?: (n: string, pos: string) => number;
+    /** WHICH FORMAT'S variance model tiers availability (WP7). Defaults to the INCUMBENT's copy at the
+     *  data/ root -- which is what this read always was, spelled through `dataPath`. A caller serving
+     *  another format passes that format's path; there is no resolver here because `buildV3Config` is
+     *  pure over a points table and a league shape and has no store to resolve one from. */
+    variancePath?: string;
+  } = {},
 ): V3Config {
   const projMap = new Map(points.map((p) => [p.name, p.points]));
   const posRank = new Map<string, number>(), overallRank = new Map<string, number>();
@@ -254,7 +266,7 @@ export function buildV3Config(
   let avail: Record<string, number> = { QB: 0.90, RB: 0.82, WR: 0.85, TE: 0.85, K: 0.95, DST: 1.0 };
   let availOf: ((name: string, pos: string) => number | undefined) | undefined;
   {
-    const p = dataPath("variance-model.json");
+    const p = o.variancePath ?? INCUMBENT_MODEL.path("variance");
     if (existsSync(p)) {
       const vm = JSON.parse(readFileSync(p, "utf8"));
       avail = { ...avail, ...availFromVarianceModel(vm) };
@@ -429,7 +441,7 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
   // bidding from -- which is what we should honestly expect to pay, and keeps the plan from being
   // priced off our own valuation (the self-reference that hid the FLEX bug for months).
   const ourStrat = useV3
-    ? makeV3Strategy(buildV3Config(points, lg, { priceOf: (name) => trueVal.get(name) ?? 1 }))
+    ? makeV3Strategy(buildV3Config(points, lg, { priceOf: (name) => trueVal.get(name) ?? 1, variancePath: opts.variancePath }))
     : makeV2Strategy(cfg);
   const available = new Set(points.map((p) => p.name));
   let nom = 0, guard = 0;

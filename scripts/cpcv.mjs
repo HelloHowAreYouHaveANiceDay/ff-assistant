@@ -46,6 +46,7 @@ import { execSync } from "node:child_process";
 import { fingerprintDraftArbiter } from "./lib/deps.mjs";
 import { loadDump, sharedSeeds, perSeasonRates, cpcvSubsets, pathLifts, seasonEffect, pboOf } from "./lib/arbiter.mjs";
 import { parseHoldout, splitSeasons, assertSelectionBlind } from "./lib/holdout.mjs";
+import { loadGolden, NoGoldenError } from "./lib/golden.mjs";
 
 // ---- args -------------------------------------------------------------------------------------
 const argv = process.argv.slice(2);
@@ -79,9 +80,69 @@ const TREAT_LABEL = val("--treatment-label", `shipped[${BASE_FLAGS}] ${TREATMENT
 let baseDump = val("--baseline-dump", null);
 let treatDump = val("--treatment-dump", null);
 
+// ---- WHICH FORMAT IS BEING GATED (F-9, WP7) ---------------------------------------------------
+// With no `--league` this is EXACTLY what it always was: the incumbent, `--golden 96.0` /
+// `--golden-title 38.5` as parsed above, no store opened, no format key on the ledger row. With
+// `--league <id>` the league's format is resolved, `--league` is passed down to the child backtest so
+// both arms read that format's target, and the gate numbers come from that format's own golden.json --
+// or the run REFUSES BY NAME rather than holding another format's backtest against 96.0%.
+const LEAGUE = val("--league", null);
+// An EXPLICIT flag always wins over a file -- that is what `--golden 97.0` exists for (the old
+// title-tuned posture), and a pinned file must not silently override a deliberate override.
+const GOLDEN_FLAGGED = val("--golden", null) != null;
+const GOLDEN_TITLE_FLAGGED = val("--golden-title", null) != null;
+const GOLDEN_TOL_FLAGGED = val("--golden-tol", null) != null;
+let FORMAT_KEY;
+let GOLDEN_EFF = GOLDEN, GOLDEN_TITLE_EFF = GOLDEN_TITLE, GOLDEN_TOL_EFF = GOLDEN_TOL, GOLDEN_SRC = "cpcv.mjs defaults (the incumbent's pinned D15 numbers)";
+{
+  const { INCUMBENT_MODEL, INCUMBENT_SCORING_KEY, resolveFormat } = await import("../src/data/formatResolve.ts").then(async (m) => ({
+    ...m, INCUMBENT_SCORING_KEY: (await import("../src/data/formatKey.ts")).INCUMBENT_SCORING_KEY,
+  }));
+  // NO `--league` MEANS THE INCUMBENT, EXPLICITLY -- not "whichever league is active". Resolving the
+  // active league here would stamp the ledger row with a second league's format key for a run whose
+  // child backtest read the incumbent's target, which is precisely the mislabelling this stamp exists
+  // to prevent.
+  let fmt;
+  if (LEAGUE == null) {
+    fmt = { model: INCUMBENT_MODEL, scoringKey: INCUMBENT_SCORING_KEY, formatKey: null, spec: { draftType: "auction" } };
+  } else {
+    const { default: Database } = await import("better-sqlite3");
+    const gdb = new Database("data/ff.db", { readonly: true });
+    try { fmt = resolveFormat(gdb, LEAGUE); } finally { gdb.close(); }
+  }
+  FORMAT_KEY = fmt.formatKey;
+  let g = null;
+  try {
+    g = loadGolden(fmt.model, fmt.scoringKey);
+  } catch (e) {
+    if (e instanceof NoGoldenError) {
+      // A NAMED REFUSAL, not a fallback. Only for a league that was ASKED for: with no `--league` and
+      // no data/golden.json this keeps the historical defaults, so an older checkout still runs.
+      if (LEAGUE != null) {
+        console.log(`\nREFUSED: ${e.message}`);
+        console.log(`\n  league ${LEAGUE} -> scoring ${fmt.scoringKey}, format ${fmt.formatKey}, draft ${fmt.spec.draftType}.`);
+        console.log("  Nothing was run and nothing was appended to the ledger.");
+        process.exit(2);
+      }
+      console.log(`  (no golden file for the incumbent; using cpcv.mjs's pinned defaults ${GOLDEN}/${GOLDEN_TITLE})`);
+    } else throw e;
+  }
+  if (g) {
+    if (!GOLDEN_FLAGGED) GOLDEN_EFF = g.playoffPct;
+    if (!GOLDEN_TITLE_FLAGGED && g.titlePct != null) GOLDEN_TITLE_EFF = g.titlePct;
+    if (!GOLDEN_TOL_FLAGGED) GOLDEN_TOL_EFF = g.tolerancePp;
+    GOLDEN_SRC = g.path + (GOLDEN_FLAGGED ? " (overridden by --golden)" : "");
+  }
+  console.log(`format gate: ${LEAGUE != null ? `league ${LEAGUE}` : "no --league (THE INCUMBENT)"} -> scoring ${fmt.scoringKey}, format ${fmt.formatKey ?? "(not resolved -- no league named)"}; ` +
+    `golden ${GOLDEN_EFF}% playoffs (+/-${GOLDEN_TOL_EFF}pp) from ${GOLDEN_SRC}`);
+}
+
 // ---- run the two arms (unless dumps are supplied) ---------------------------------------------
 function runArm(extraFlags, dumpPath) {
-  const cmd = `npm run -s ff -- backtest ${BASE_FLAGS} ${extraFlags} --seasons ${SEASONS} --n ${N} --artifact-dir ${ARTIFACT_DIR} --dump-trials ${dumpPath}`;
+  // `--league` is passed DOWN, not just used up here: the child backtest must read the same format's
+  // history/points as the golden it is being checked against, or the gate compares two different models.
+  const leagueFlag = LEAGUE != null ? ` --league ${LEAGUE}` : "";
+  const cmd = `npm run -s ff -- backtest ${BASE_FLAGS} ${extraFlags} --seasons ${SEASONS} --n ${N} --artifact-dir ${ARTIFACT_DIR}${leagueFlag} --dump-trials ${dumpPath}`;
   console.log(`\n$ ${cmd}`);
   execSync(cmd, { stdio: "inherit" });
   if (!fs.existsSync(dumpPath)) throw new Error(`backtest did not write ${dumpPath}`);
@@ -124,12 +185,12 @@ const fullAp = 100 * poA.full, fullBp = 100 * poB.full;
 // vs uniform 0.2451) and ~NONE on the champion (title Brier 0.0659 vs uniform 0.0652 -- P16 FAILED,
 // docs/validation.md). So the ship/no-ship golden-master consistency check keys on the PLAYOFF column;
 // title% is reproduced and printed as SECONDARY/context only, never gated.
-const consistencyOK = Math.abs(fullAp - GOLDEN) <= GOLDEN_TOL;
-const titleConsistent = Math.abs(fullA - GOLDEN_TITLE) <= GOLDEN_TOL;
+const consistencyOK = Math.abs(fullAp - GOLDEN_EFF) <= GOLDEN_TOL_EFF;
+const titleConsistent = Math.abs(fullA - GOLDEN_TITLE_EFF) <= GOLDEN_TOL_EFF;
 console.log(`\n================ CONSISTENCY CHECK (PRIMARY GATE = playoff%) ================`);
-console.log(`  baseline full-set PLAYOFF%: ${fullAp.toFixed(2)}%  (golden master ${GOLDEN}% +/- ${GOLDEN_TOL}pp)  -> ${consistencyOK ? "PASS" : "FAIL"}  <- GATE (D13)`);
+console.log(`  baseline full-set PLAYOFF%: ${fullAp.toFixed(2)}%  (golden master ${GOLDEN_EFF}% +/- ${GOLDEN_TOL_EFF}pp, from ${GOLDEN_SRC})  -> ${consistencyOK ? "PASS" : "FAIL"}  <- GATE (D13)`);
 console.log(`  treatment full-set PLAYOFF%: ${fullBp.toFixed(2)}%   point delta ${(fullBp - fullAp >= 0 ? "+" : "")}${(fullBp - fullAp).toFixed(2)}pp (untrustworthy alone -- see distribution below)`);
-console.log(`  baseline / treatment title% (SECONDARY/context, NOT gated): ${fullA.toFixed(2)}% / ${fullB.toFixed(2)}%   point delta ${(fullB - fullA >= 0 ? "+" : "")}${(fullB - fullA).toFixed(2)}pp   (title golden ~${GOLDEN_TITLE}% -> ${titleConsistent ? "consistent" : "MOVED"}; informational, no gate)`);
+console.log(`  baseline / treatment title% (SECONDARY/context, NOT gated): ${fullA.toFixed(2)}% / ${fullB.toFixed(2)}%   point delta ${(fullB - fullA >= 0 ? "+" : "")}${(fullB - fullA).toFixed(2)}pp   (title golden ~${GOLDEN_TITLE_EFF}% -> ${titleConsistent ? "consistent" : "MOVED"}; informational, no gate)`);
 console.log(`  ${Ntot} seasons, ${poolN / Ntot} trials/season, ${poolN} paired trials`);
 if (!consistencyOK) {
   console.log(`\n  CONSISTENCY CHECK FAILED -- the dump aggregation does not reproduce the point backtest on the PRIMARY (playoff) axis.`);
@@ -181,6 +242,7 @@ if (poCf) {
 // ---- ledger append --------------------------------------------------------------------------------
 const configHash = crypto.createHash("sha256").update(JSON.stringify({
   baseFlags: BASE_FLAGS, treatment: TREATMENT, seasons: SEASONS, n: N, artifactDir: ARTIFACT_DIR,
+  ...(LEAGUE != null ? { league: LEAGUE, formatKey: FORMAT_KEY } : {}),
 })).digest("hex").slice(0, 16);
 // PHASE 4: the dependency fingerprint AT MEASUREMENT TIME. scripts/experiments-status.mjs recomputes it
 // later and flags this experiment STALE if it moved. `spec` records the exact command so
@@ -199,6 +261,11 @@ const line = {
   baseline_label: BASE_LABEL,
   treatment_label: TREAT_LABEL,
   config_hash: configHash,
+  // WHICH FORMAT THIS ROW MEASURED (F-9). Null for a flagless run = the incumbent, which is what every
+  // historical row is; a `--league` run stamps the format key so two formats' rows cannot be compared
+  // by accident.
+  league: LEAGUE,
+  format_key: FORMAT_KEY,
   deps_hash: depsHash,
   deps_parts: depsParts,
   spec: { base_flags: BASE_FLAGS, treatment: TREATMENT, seasons: SEASONS, n: N, artifact_dir: ARTIFACT_DIR },

@@ -23,6 +23,7 @@
 // otherwise. A week the player's TEAM played but he did not becomes a 0 -- that is injury risk, and
 // it belongs in the pool.
 import { readFileSync, writeFileSync } from "node:fs";
+import { fitPaths } from "./lib/format-paths.mjs";
 
 const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
 const MAX_RANK = { QB: 40, RB: 90, WR: 110, TE: 45, K: 40, DST: 40 };
@@ -31,11 +32,13 @@ const MIN_TRAJ = 20;   // below this many TRAJECTORIES, widen further
 const EMIT_TRAJ = 10;  // below this many, the rank gets no pool at all rather than a fabricated one
 const LAST_REG_WEEK = 17;
 
-const rows = readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1);
+// PER FORMAT (WP7): see scripts/lib/format-paths.mjs. No `--league` = the literals this always used.
+const PATHS = fitPaths("rank-outcomes", "data/rank-outcomes.json");
+const rows = readFileSync(PATHS.weeklyCsv, "utf8").trim().split(/\r?\n/).slice(1);
 
 // LEAVE-SEASON-OUT support for the calibration harness's un-leaked refit. Both unset -> shipped run.
 const FIT_EXCLUDE = process.env.FIT_EXCLUDE ? Number(process.env.FIT_EXCLUDE) : null;
-const FIT_OUT = process.env.FIT_OUT || "data/rank-outcomes.json";
+const FIT_OUT = PATHS.out;
 
 // season -> name -> {pos, team, weeks:Map}
 const byKey = new Map();
@@ -107,7 +110,7 @@ for (const p of byKey.values()) {
 }
 
 // Smooth: each rank's pool is itself plus neighbours, widening until MIN_TRAJ trajectories.
-const model = { schema: 2, fittedFrom: "data/history-weekly.csv", seasons, smooth: SMOOTH, pos: {} };
+const model = { schema: 2, fittedFrom: PATHS.weeklyCsv, seasons, smooth: SMOOTH, pos: {} };
 console.log("bootstrap pools -- actual weekly TRAJECTORIES by position and PRESEASON rank (prior-year finish)");
 console.log("  pos   ranks   median #traj   rank 1 -> season total mean / p10 / p90   (weekly mean)");
 for (const pos of POS) {
@@ -137,7 +140,7 @@ for (const pos of POS) {
 }
 writeFileSync(FIT_OUT, JSON.stringify(model));
 const bytes = readFileSync(FIT_OUT).length;
-console.log(`\nwrote data/rank-outcomes.json (${(bytes / 1024 / 1024).toFixed(1)} MB)`);
+console.log(`\nwrote ${FIT_OUT} (${(bytes / 1024 / 1024).toFixed(1)} MB) -- ${PATHS.label}`);
 console.log(`\nThe p10 column is the point of this file: it is a REAL bad SEASON posted by a real player`);
 console.log(`who entered at that rank, including the ones who got hurt in week 3. A fitted lognormal`);
 console.log(`cannot produce that shape, a same-season rank join would have deleted it, and resampling`);

@@ -21,6 +21,7 @@ import { dataPath } from "../data/paths.js";
 import { getConfig, activeLeagueId, assertBoardFor, type AppConfig } from "../db/db.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { scoringKey } from "../data/formatKey.js";
+import { resolveFormat } from "../data/formatResolve.js";
 import { nameKey } from "../draft/values.js";
 import type { VarianceModel } from "../draft/season.js";
 import type { DepthEntry } from "./handcuff.js";
@@ -39,6 +40,28 @@ const open = (dbPath?: string) => new Database(dbPath ?? dataPath("ff.db"), { re
  *  no matter which one the caller asked for. `leagueId` omitted = the ACTIVE league. */
 function configOf(db: import("better-sqlite3").Database, leagueId?: string | null): AppConfig {
   return getConfig(db as unknown as import("../db/db.js").DB, leagueId);
+}
+
+/**
+ * THIS LEAGUE'S MODEL FILES (WP7). The three reads below -- the variance model for the handcuff
+ * board, the variance model's season count and the projection artifact's stamp -- went through
+ * `dataPath`, i.e. the INCUMBENT's copies, whatever league the caller asked about. A superflex
+ * full-PPR league's handcuff tiers were being cut with half-PPR weekly CVs, and its provenance block
+ * claimed the ESPN projector had produced the numbers.
+ *
+ * `resolveFormat` refuses an unbuilt format by name rather than falling back to the root, so a caller
+ * that cannot be served says so. Each use below decides for itself whether a miss is fatal (the
+ * handcuff board needs a variance model) or reportable (a provenance stamp is best-effort and a
+ * missing file is `null`, never another format's).
+ */
+export function formatModelFor(db: import("better-sqlite3").Database, leagueId?: string | null): import("../data/formatResolve.js").ModelHandle {
+  return resolveFormat(db as unknown as import("../db/db.js").DB, leagueId).model;
+}
+
+/** The same, for a caller that holds a PATH rather than a handle (the copilot dispatcher). */
+export function formatModelOf(dbPath?: string, leagueId?: string | null): import("../data/formatResolve.js").ModelHandle {
+  const db = open(dbPath);
+  try { return formatModelFor(db, leagueId); } finally { db.close(); }
 }
 
 /** S-8: the single-slot board is stamped with the league it was built for; serving it to another
@@ -123,7 +146,7 @@ export function loadDepth(positions: string[], dbPath?: string, leagueId?: strin
       rosteredPct: typeof p.j["Rostered%"] === "number" ? (p.j["Rostered%"] as number) : null,
       poolRank: poolRank.get(String(p.j.Player)) ?? null,
     }));
-    const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8")) as VarianceModel;
+    const vm = JSON.parse(readFileSync(formatModelFor(db, leagueId).require("variance"), "utf8")) as VarianceModel;
     return { depth, poolSize, vm };
   } finally { db.close(); }
 }
@@ -188,7 +211,7 @@ export function loadProvenance(dbPath?: string, leagueId?: string | null): Prove
   // THE LEAGUE STAMP (I-7). Read from the league ROW and from this league's own config, so a number
   // cannot be quoted without saying which league and which scoring rules produced it. The scoring key
   // is the same content hash `data/formats/<key>/` is named by, which makes the claim checkable.
-  const { lgId, platform, scoring, season, boardRows } = (() => {
+  const { lgId, platform, scoring, season, boardRows, model } = (() => {
     const db = open(dbPath);
     try {
       const lctx = resolveLeagueContext(db as unknown as import("../db/db.js").DB, leagueId);
@@ -197,17 +220,21 @@ export function loadProvenance(dbPath?: string, leagueId?: string | null): Prove
       const s = configOf(db, leagueId).season;
       boardGuard(db, leagueId, "loadProvenance");
       const rows = (db.prepare("SELECT count(*) n FROM board WHERE season=?").get(s) as { n: number }).n;
-      return { lgId: lctx.leagueId, platform: lctx.platform as string | null, scoring: key, season: s, boardRows: rows };
+      // The FORMAT's own artifacts, not the root's. Best-effort: an unbuilt format throws here and the
+      // two stamps below are reported as null -- "we cannot say" -- rather than as the incumbent's.
+      let mh: import("../data/formatResolve.js").ModelHandle | null = null;
+      try { mh = formatModelFor(db, leagueId); } catch { mh = null; }
+      return { lgId: lctx.leagueId, platform: lctx.platform as string | null, scoring: key, season: s, boardRows: rows, model: mh };
     } finally { db.close(); }
   })();
   let varianceSeasons: number | null = null;
   try {
-    const vm = JSON.parse(readFileSync(dataPath("variance-model.json"), "utf8")) as { seasons?: unknown[] };
+    const vm = JSON.parse(readFileSync(model!.require("variance"), "utf8")) as { seasons?: unknown[] };
     varianceSeasons = Array.isArray(vm.seasons) ? vm.seasons.length : null;
   } catch { /* the stamp is best-effort; a missing file is reported as null, never guessed */ }
   let projectionArtifact: string | null = null;
   try {
-    const a = JSON.parse(readFileSync(dataPath("projection-artifact.json"), "utf8")) as { fittedAt?: string; fittedFrom?: string };
+    const a = JSON.parse(readFileSync(model!.require("projection"), "utf8")) as { fittedAt?: string; fittedFrom?: string };
     projectionArtifact = a.fittedAt ? `${a.fittedFrom ?? "projection-artifact"}@${a.fittedAt}` : null;
   } catch { /* likewise */ }
   return { leagueId: lgId, platform, scoringKey: scoring, season, boardRows, varianceSeasons, sampler: "bootstrap", projectionArtifact };
@@ -357,7 +384,7 @@ export function currentWeek(dbPath?: string, now: Date = new Date(), leagueId?: 
  * Null means "fall back to the season line and SAY SO", never "project zero".
  */
 export function loadWeeklyProjection(
-  season: number, week: number, dbPath?: string, artifactPath?: string,
+  season: number, week: number, dbPath?: string, artifactPath?: string, leagueId?: string | null,
 ): Map<string, number> | null {
   const db = open(dbPath);
   try {
@@ -384,7 +411,10 @@ export function loadWeeklyProjection(
       return out;
     }
 
-    const projected = projectStreamingWith(db as unknown as StreamDb, season, week);
+    // THE FORMAT'S weekly artifacts, resolved from the league the CALLER named -- not from whichever
+    // league is active. `projectStreamingWith`'s own default is the active league's format, which is
+    // right for a bare store and wrong for `--league <other>`.
+    const projected = projectStreamingWith(db as unknown as StreamDb, season, week, formatModelFor(db, leagueId));
     if (!projected?.rows.length) return null;
     for (const p of projected.rows) put(p.name, p.mean);
     return out;
@@ -401,11 +431,11 @@ export function loadWeeklyProjection(
  * it rather than the comment claiming it.
  */
 export function loadWeeklyBands(
-  season: number, week: number, dbPath?: string,
+  season: number, week: number, dbPath?: string, leagueId?: string | null,
 ): { weekly: Map<string, number>; bands: Map<string, WeeklyBand> } | null {
   const db = open(dbPath);
   try {
-    const projected = projectStreamingWith(db as unknown as StreamDb, season, week);
+    const projected = projectStreamingWith(db as unknown as StreamDb, season, week, formatModelFor(db, leagueId));
     if (!projected?.rows.length) return null;
     const weekly = new Map<string, number>();
     const bands = new Map<string, WeeklyBand>();

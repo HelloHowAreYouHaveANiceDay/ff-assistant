@@ -17,14 +17,19 @@
 //   3. SKEW. Fantasy weeks are right-skewed (a 40-point ceiling game, a floor of ~0). A symmetric
 //      normal understates both the ceiling that wins a playoff game and the zero that loses one.
 import { readFileSync, writeFileSync } from "node:fs";
+import { fitPaths } from "./lib/format-paths.mjs";
 
 const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
 const REG_WEEKS = 17;
-const rows = readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1);
+// PER FORMAT (WP7): `--league <id>` fits THAT league's format from ITS history-weekly.csv into ITS
+// directory. With no flag this is `data/history-weekly.csv` -> `data/variance-model.json`, exactly as
+// before. FIT_OUT (the leave-season-out harness) still wins over both.
+const PATHS = fitPaths("variance", "data/variance-model.json");
+const rows = readFileSync(PATHS.weeklyCsv, "utf8").trim().split(/\r?\n/).slice(1);
 
 // LEAVE-SEASON-OUT support for the calibration harness's un-leaked refit. Both unset -> shipped run.
 const FIT_EXCLUDE = process.env.FIT_EXCLUDE ? Number(process.env.FIT_EXCLUDE) : null;
-const FIT_OUT = process.env.FIT_OUT || "data/variance-model.json";
+const FIT_OUT = PATHS.out;
 
 // season -> pos -> name -> weekly points
 const bySeason = new Map();
@@ -89,7 +94,7 @@ const FALLBACK = {
 const MIN_N = 30;   // below this a tier's CV is noise; fall back to the nearest well-populated tier
 
 const unfitted = [];
-const model = { fittedFrom: "data/history-weekly.csv", seasons: [...bySeason.keys()].sort(), tiers: TIERS, unfitted, pos: {} };
+const model = { fittedFrom: PATHS.weeklyCsv, seasons: [...bySeason.keys()].sort(), tiers: TIERS, unfitted, pos: {} };
 console.log("weekly scoring variance, by position and tier (tier 0 = best by season total)");
 console.log("  pos  tier      n     CV   avail   skew   note");
 for (const p of POS) {
@@ -120,7 +125,7 @@ for (const p of POS) {
 }
 
 writeFileSync(FIT_OUT, JSON.stringify(model, null, 2));
-console.log(`\nwrote data/variance-model.json (${model.seasons.length} seasons)`);
+console.log(`\nwrote ${FIT_OUT} (${model.seasons.length} seasons) -- ${PATHS.label}`);
 console.log(`\nRead the CV column: it is the fraction of a player's weekly mean that a typical week`);
 console.log(`swings by. Anything near 1.0 means the position is close to a coin flip week to week,`);
 console.log(`and a simulator that ignores it will report playoff odds far too confidently.`);

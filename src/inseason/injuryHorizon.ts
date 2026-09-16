@@ -27,7 +27,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { openDb } from "../db/db.js";
-import { dataPath } from "../data/paths.js";
+import { INCUMBENT_MODEL, resolveFormat } from "../data/formatResolve.js";
 import { normPos } from "../data/stgPlayer.js";
 import { injuryGroup } from "../features/sources/injuryDuration.js";
 import { espnStatusToReport } from "../features/sources/weekContext.js";
@@ -302,10 +302,12 @@ export function loadInjuryOutlook(opts: {
   artifact?: InjuryHorizonArtifact | null;
   /** Injectable clock, so the week rule is testable without waiting for Sunday. */
   now?: string;
+  /** WHICH LEAGUE'S FORMAT tiers the fallback availability. Omitted = the active league's. */
+  leagueId?: string | null;
 }): InjuryOutlookSet {
   // Imported lazily-by-module (static imports, evaluated once) rather than passed in, because the
   // two call sites in copilot.ts are synchronous and take no store handle.
-  const tier = tierMissProbFrom(readVarianceModel());
+  const tier = tierMissProbFrom(readVarianceModel(opts.dbPath, opts.leagueId));
   let a: InjuryHorizonArtifact | null;
   if (opts.artifact !== undefined) a = opts.artifact;
   else a = readShippedArtifact();
@@ -456,14 +458,38 @@ function imminentWeek(db: ReturnType<typeof openDb>, season: number, now?: strin
   return null;
 }
 
+/**
+ * INJURY DURATION IS SHARED-NFL, and that is a classification, not a convenience (WP7).
+ *
+ * The artifact answers "how many GAMES does this designation cost?" -- a fact about football and
+ * medicine, not about a scoring system. `formatResolve.ts` classifies it as shared for exactly that
+ * reason, so it is read through `shared()` rather than through `dataPath`: the path is the same, but
+ * the decision is now recorded in the one table that lists which artifacts a format owns.
+ */
 function readShippedArtifact(): InjuryHorizonArtifact | null {
-  const p = dataPath(INJURY_HORIZON_ARTIFACT);
+  const p = INCUMBENT_MODEL.shared("injury-duration");
   if (!existsSync(p)) return null;
   return loadInjuryHorizonArtifact(JSON.parse(readFileSync(p, "utf8")));
 }
 
-function readVarianceModel(): { tiers?: number; pos: Record<string, { avail: number[] }> } | null {
-  const p = dataPath("variance-model.json");
+/**
+ * THE VARIANCE MODEL IS NOT SHARED. Its per-tier availability is indexed by a tier cut from FANTASY
+ * POINTS, so which tier a player lands in depends on the scoring rules -- and the fallback miss
+ * probability this feeds is the number every outlook degrades to. Resolved from the league's format;
+ * with no store to resolve from, the incumbent's, which is what this read always was.
+ */
+function readVarianceModel(dbPath?: string, leagueId?: string | null): { tiers?: number; pos: Record<string, { avail: number[] }> } | null {
+  let p: string;
+  try {
+    const db = openDb(dbPath);
+    try { p = resolveFormat(db, leagueId).model.path("variance"); } finally { db.close(); }
+  } catch {
+    // A store that cannot be opened or a format that is not built: fall back to the INCUMBENT's copy,
+    // which is what this read always was. That is a degradation and it is bounded -- the value feeds
+    // only the tier-rate FALLBACK miss probability, and the note this function's caller prints already
+    // says the number knows the player's tier and nothing about any injury he has.
+    p = INCUMBENT_MODEL.path("variance");
+  }
   if (!existsSync(p)) return null;
   try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; }
 }
