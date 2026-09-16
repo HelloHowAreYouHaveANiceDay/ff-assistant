@@ -125,6 +125,17 @@ export const PRODUCERS: Producer[] = [
     reads: ["feat_player_week_model", "raw_espn_projection", "league", "fact_team_season", "scorecard_prediction"],
     writes: ["scorecard_prediction", "scorecard_result"],
   },
+  {
+    id: "refresh-decision-snapshot",
+    what: "Stage B: the materialised in-season decision state -- one current waiver/trade/odds row per league",
+    // verified: src/inseason/decisionSnapshot.ts -- runs the copilot verbs over a shared SimContext
+    // and `INSERT INTO decision_snapshot ... ON CONFLICT(league_id, verb)`. It reads the board and the
+    // league through loadSimContext rather than a table of its own. Declared here because the CREATE
+    // moved into schema.sql in WP2 (S-13): it used to be created by that module alone, so the DAG
+    // could not see it at all.
+    reads: ["board", "league", "ownership"],
+    writes: ["decision_snapshot"],
+  },
   // ================= PROGRAMME 3 PRODUCERS, ADDED ON THE MERGED TREE (INTEGRATION PASS 5) =================
   // Every entry below existed as an `ff` verb or python trainer before this merge but had no lineage
   // declaration, because Track K (the branch that built this registry) was cut before Programme 3

@@ -235,21 +235,21 @@ export function backtestWinProbLineups(
 
   for (const season of opts.seasons) {
     const weeks = db.prepare(
-      `SELECT DISTINCT week FROM fact_lineup_week WHERE season=? ORDER BY week`,
-    ).all(season) as { week: number }[];
+      `SELECT DISTINCT week FROM fact_lineup_week WHERE league_id=? AND season=? ORDER BY week`,
+    ).all(leagueId, season) as { week: number }[];
     if (!weeks.length) continue;
     for (const { week } of weeks) {
       const games = db.prepare(
-        `SELECT home_id, away_id FROM fact_matchup WHERE season=? AND week=?`,
-      ).all(season, week) as { home_id: string; away_id: string }[];
+        `SELECT home_id, away_id FROM fact_matchup WHERE league_id=? AND season=? AND week=?`,
+      ).all(leagueId, season, week) as { home_id: string; away_id: string }[];
       if (!games.length) { bump("no fact_matchup row for the week"); continue; }
 
       const ctx = loadWeekContext(db, leagueId, season, week, artifact);
       if (!ctx.rosters.size || !ctx.template.length) { bump("no roster state or no starting template"); continue; }
       const bands = loadBands(db, season, week, artifact);
       const actual = new Map((db.prepare(
-        `SELECT team_id, started_pts, optimal_pts, roster_n FROM fact_lineup_week WHERE season=? AND week=?`,
-      ).all(season, week) as { team_id: string; started_pts: number; optimal_pts: number; roster_n: number }[])
+        `SELECT team_id, started_pts, optimal_pts, roster_n FROM fact_lineup_week WHERE league_id=? AND season=? AND week=?`,
+      ).all(leagueId, season, week) as { team_id: string; started_pts: number; optimal_pts: number; roster_n: number }[])
         .map((r) => [r.team_id, r]));
 
       for (const g of games) {

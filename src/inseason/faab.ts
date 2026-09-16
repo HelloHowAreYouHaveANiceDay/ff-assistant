@@ -32,6 +32,7 @@ import { existsSync, readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { nameKey } from "../draft/values.js";
 import { latestScoredWeek } from "./regWeeks.js";
+import { activeLeagueId } from "../db/db.js";
 
 export const FAAB_ARTIFACT_PATH = process.env.FF_FAAB_MODEL ?? "data/faab-model.json";
 
@@ -236,9 +237,16 @@ export interface FaabLiveState {
  */
 export function liveFaabState(o: {
   dbPath?: string; season: number; week?: number; teamId: string; fallbackBudget?: number;
+  /** WHICH LEAGUE (S-9). Every read below is filtered by it: a team id is only unique inside one
+   *  league (ESPN numbers 1-18, Yahoo 1-12), so an unfiltered `WHERE season=?` mixes two rooms'
+   *  budgets into one. Omitted = the ACTIVE league -- the only caller that does not pass it yet is
+   *  `waiverTargets` in copilot.ts, which is WP5's to thread from its SimContext. */
+  leagueId?: string | null;
 }): FaabLiveState {
   const db = new Database(o.dbPath ?? (process.env.FF_DB ?? "data/ff.db"), { readonly: true });
   try {
+    const lg = o.leagueId ?? activeLeagueId(db as unknown as import("../db/db.js").DB);
+    if (!lg) throw new Error("liveFaabState: no league in the store -- run league_sync once first.");
     let week = o.week ?? 0, weekSource = "caller";
     if (!week) {
       week = (latestScoredWeek(db, o.season) ?? 0) + 1;
@@ -246,17 +254,17 @@ export function liveFaabState(o: {
       if (week < 1) { week = 1; weekSource = "no settled week in the store -- week 1"; }
     }
     const budget = (() => {
-      const r = db.prepare(`SELECT MAX(faab_spent) mx FROM fact_team_season WHERE season = ?`).get(o.season) as { mx: number | null };
+      const r = db.prepare(`SELECT MAX(faab_spent) mx FROM fact_team_season WHERE league_id = ? AND season = ?`).get(lg, o.season) as { mx: number | null };
       const fb = o.fallbackBudget ?? 100;
       return (r?.mx ?? 0) >= fb ? Math.round(r!.mx as number) : fb;
     })();
-    const teams = (db.prepare(`SELECT COUNT(*) n FROM fact_team_season WHERE season = ?`).get(o.season) as { n: number }).n || 12;
+    const teams = (db.prepare(`SELECT COUNT(*) n FROM fact_team_season WHERE league_id = ? AND season = ?`).get(lg, o.season) as { n: number }).n || 12;
     const spend = db.prepare(
       `SELECT COALESCE(SUM(bid_amount),0) tot,
               COALESCE(SUM(CASE WHEN COALESCE(NULLIF(to_team_id,'-1'), team_id) = ? THEN bid_amount END),0) mine
          FROM raw_league_transaction
-        WHERE season=? AND type='WAIVER' AND item_type='ADD' AND status='EXECUTED'`)
-      .get(o.teamId, o.season) as { tot: number; mine: number };
+        WHERE league_id=? AND season=? AND type='WAIVER' AND item_type='ADD' AND status='EXECUTED'`)
+      .get(o.teamId, lg, o.season) as { tot: number; mine: number };
     const remaining = Math.max(0, budget - spend.mine);
     const leagueRemaining = Math.max(0, teams * budget - spend.tot);
 
@@ -294,8 +302,8 @@ export function liveFaabState(o: {
     const rw = Math.max(1, week - 1);
     for (const p of FAAB_POSITIONS) {
       const c = db.prepare(
-        `SELECT team_id, SUM(CASE WHEN pos = ? THEN 1 ELSE 0 END) n FROM fact_roster_week WHERE season=? AND week=? GROUP BY team_id`)
-        .all(p, o.season, rw) as { team_id: string; n: number }[];
+        `SELECT team_id, SUM(CASE WHEN pos = ? THEN 1 ELSE 0 END) n FROM fact_roster_week WHERE league_id=? AND season=? AND week=? GROUP BY team_id`)
+        .all(p, lg, o.season, rw) as { team_id: string; n: number }[];
       if (!c.length) continue;
       const a = c.map((x) => x.n).sort((x, y) => x - y);
       const m = a.length % 2 ? a[a.length >> 1] : (a[(a.length >> 1) - 1] + a[a.length >> 1]) / 2;

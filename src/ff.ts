@@ -159,6 +159,26 @@ async function main() {
     }
     case "app-data":
       return cmdAppData(rest);
+    // `ff league-set-active <id>` -- the same transactional switch the app's league tab performs
+    // (S-8): point `settings.active_league` at the league, CLEAR the single-slot board, and rebuild
+    // it under the new league. Named here because every board-stamp refusal tells the reader to run it.
+    case "league-set-active": {
+      const lid = rest.find((a) => !a.startsWith("--")) ?? valueOf(rest, "--league") ?? "";
+      const { openDb } = await import("./db/db.js");
+      const { switchActiveLeague } = await import("./data/assemble.js");
+      const db = openDb(valueOf(rest, "--db"));
+      try {
+        if (!lid || !db.prepare("SELECT 1 FROM league WHERE league_id = ?").get(lid)) {
+          throw new Error(`league-set-active: unknown league "${lid}" -- \`ff app-data\` lists what this store knows.`);
+        }
+        const sw = await switchActiveLeague(db, lid, { dbPath: valueOf(rest, "--db") });
+        console.log(`active league: ${sw.active}` +
+          (sw.cleared ? ` | board ${sw.rebuilt ? "rebuilt" : "CLEARED and PENDING"}` : " | board unchanged") +
+          (sw.stamp ? ` | stamp ${JSON.stringify(sw.stamp)}` : ""));
+        if (sw.reason) console.log(`  ${sw.reason}`);
+      } finally { db.close(); }
+      return;
+    }
     case "serve":
       return cmdServe(rest);
     case "auth": {
@@ -234,7 +254,7 @@ async function cmdAppData(rest: string[]) {
 // SQLite in Electron. Methods are additive; agent-ask stays its own streamed spawn.
 async function cmdServe(rest: string[]) {
   const readline = await import("node:readline");
-  const { openDb, getConfig, setMyRoster, getMyRoster, setConfig, activeLeagueId, setActiveLeagueId } = await import("./db/db.js");
+  const { openDb, getConfig, setMyRoster, getMyRoster, setConfig, activeLeagueId, localDraftId, getBoardStamp } = await import("./db/db.js");
   const { appDataPayload } = await import("./data/appdata.js");
   const { authStatus } = await import("./agent/auth.js");
   const { applyLevers, DEFAULT_LEVERS } = await import("./draft/levers.js");
@@ -260,14 +280,19 @@ async function cmdServe(rest: string[]) {
           const s = Number(params.season) || curSeason();
           const row = db.prepare("SELECT MAX(updated_at) AS m, COUNT(*) AS n FROM board WHERE season = ?")
             .get(s) as { m: string | null; n: number };
-          result = { builtAt: row?.m ?? null, players: row?.n ?? 0, season: s };
+          // WHOSE BOARD (S-8), beside how old it is. `pending` means the league was switched and the
+          // rebuild has not landed, so the app can say "no board for this league yet" instead of
+          // rendering the previous league's dollars.
+          result = { builtAt: row?.m ?? null, players: row?.n ?? 0, season: s, stamp: getBoardStamp(db) };
           break;
         }
         case "app-data": result = appDataPayload(db, Number(params.season) || curSeason()); break;
-        case "my-roster-get": result = getMyRoster(db, String(params.draftId ?? "local")); break;
-        case "my-roster-set": setMyRoster(db, String(params.draftId ?? "local"), (params.roster as { name: string; price: number }[]) ?? []); result = { ok: true, n: ((params.roster as unknown[]) ?? []).length }; break;
+        // THE LOCAL DRAFT SESSION IS PER LEAGUE (S-13): `local:<leagueId>`, so the board you drafted
+        // in one league's tab is not the same team as another's. The app sends no draftId.
+        case "my-roster-get": result = getMyRoster(db, String(params.draftId ?? localDraftId(activeLeagueId(db)))); break;
+        case "my-roster-set": setMyRoster(db, String(params.draftId ?? localDraftId(activeLeagueId(db))), (params.roster as { name: string; price: number }[]) ?? []); result = { ok: true, n: ((params.roster as unknown[]) ?? []).length }; break;
         case "live-state": {
-          const row = db.prepare("SELECT updated_at, state_json FROM draft_state WHERE draft_id = ?").get(String(params.draftId ?? "local")) as { updated_at: string; state_json: string } | undefined;
+          const row = db.prepare("SELECT updated_at, state_json FROM draft_state WHERE draft_id = ?").get(String(params.draftId ?? localDraftId(activeLeagueId(db)))) as { updated_at: string; state_json: string } | undefined;
           result = row ? { ageSec: Math.round((Date.now() - Date.parse(row.updated_at)) / 1000), data: JSON.parse(row.state_json) } : null;
           break;
         }
@@ -480,8 +505,14 @@ async function cmdServe(rest: string[]) {
         case "league-set-active": {
           const lid = String(params.leagueId ?? "");
           if (!lid || !db.prepare("SELECT 1 FROM league WHERE league_id = ?").get(lid)) throw new Error(`unknown league ${lid}`);
-          setActiveLeagueId(db, lid);
-          result = { active: activeLeagueId(db) };
+          // S-8: a switch INVALIDATES the single-slot board and rebuilds it under the new league. If
+          // the rebuild cannot run, the board stays cleared and stamped `pending` and the reason
+          // comes back for the app to show -- readers then refuse by name rather than serving the
+          // previous league's dollars under this league's heading.
+          const { switchActiveLeague } = await import("./data/assemble.js");
+          const sw = await switchActiveLeague(db, lid, { dbPath: valueOf(rest, "--db") });
+          if (sw.reason) console.error(`league-set-active ${lid}: ${sw.reason}`);
+          result = { ...sw, active: activeLeagueId(db) };
           break;
         }
         case "auth-status": result = authStatus(); break;
@@ -546,19 +577,24 @@ async function cmdRefresh(rest: string[]) {
 // + points.csv, fetches ESPN/last-year, computes derived fields, writes the value/board tables.
 async function cmdAssemble(rest: string[]) {
   const { assemble } = await import("./data/assemble.js");
-  const n = await assemble(valueOf(rest, "--db"), valueOf(rest, "--points") ?? dataPath("points.csv"));
-  console.log(`assembled ${n} players -> player_value + board + ranking:espn`);
+  const n = await assemble(valueOf(rest, "--db"), valueOf(rest, "--points") ?? dataPath("points.csv"), leagueArg(rest));
+  const { openDb, getBoardStamp } = await import("./db/db.js");
+  const sdb = openDb(valueOf(rest, "--db"));
+  const stamp = getBoardStamp(sdb);
+  sdb.close();
+  console.log(`assembled ${n} players -> player_value + board + ranking:espn` +
+    (stamp ? ` (stamped league ${stamp.leagueId}, season ${stamp.season}, ${stamp.scoringKey})` : ""));
 }
 
 // Mirror the app's drafted team into SQLite (my_roster). Reads a JSON array [{name,price}] on stdin;
 // the Electron app pipes it here on every roster change so the agent (and durability) see the team.
 async function cmdMyRosterSet(rest: string[]) {
-  const { openDb, setMyRoster } = await import("./db/db.js");
-  const draftId = valueOf(rest, "--draft") ?? "local";
+  const { openDb, setMyRoster, activeLeagueId, localDraftId } = await import("./db/db.js");
   const raw = await new Promise<string>((res) => { let s = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => res(s.trim())); });
   let roster: { name: string; price: number }[] = [];
   try { const parsed = JSON.parse(raw || "[]"); if (Array.isArray(parsed)) roster = parsed.map((r) => ({ name: String(r.name), price: Number(r.price) || 0 })); } catch { /* empty */ }
   const db = openDb(valueOf(rest, "--db"));
+  const draftId = valueOf(rest, "--draft") ?? localDraftId(activeLeagueId(db));
   setMyRoster(db, draftId, roster);
   db.close();
   console.log(`my_roster[${draftId}] set: ${roster.length} players`);
@@ -2111,13 +2147,17 @@ async function cmdBuildManagers(rest: string[]) {
   const range = (valueOf(rest, "--seasons") ?? "2018-2026").split("-").map(Number);
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const db = openDb(valueOf(rest, "--db"));
+  const { requireLeagueId: reqLgMp } = await import("./data/leagueContext.js");
+  const mpLeague = reqLgMp(await leagueCtx(rest, db), "build-managers");
   // Keyed on OWNER through the team-season row, never on team id or team name: both are reused and
   // renamed across seasons, and a profile attached to the wrong human is worse than no profile.
+  // BOTH SIDES OF THE JOIN carry the league (S-9): without it a 2024 team 8 matches two leagues.
   const rows = db.prepare(
     `SELECT p.season, p.team_id, p.pos, p.price, t.owner, t.team_name
-       FROM fact_draft_pick p LEFT JOIN fact_team_season t ON t.season = p.season AND t.team_id = p.team_id
-      WHERE p.season BETWEEN ? AND ? ORDER BY p.season, p.pick_order`,
-  ).all(lo, hi) as { season: number; team_id: string; pos: string; price: number; owner: string | null; team_name: string | null }[];
+       FROM fact_draft_pick p LEFT JOIN fact_team_season t
+              ON t.league_id = p.league_id AND t.season = p.season AND t.team_id = p.team_id
+      WHERE p.league_id = ? AND p.season BETWEEN ? AND ? ORDER BY p.season, p.pick_order`,
+  ).all(mpLeague, lo, hi) as { season: number; team_id: string; pos: string; price: number; owner: string | null; team_name: string | null }[];
   db.close();
   if (!rows.length) { console.log(`no picks in ${lo}-${hi} -- run \`ff build-picks\``); return; }
   const byTeam = new Map<string, Recap>();
@@ -2726,12 +2766,14 @@ async function cmdBuildRosterState(rest: string[]) {
     seasons = []; for (let y = lo; y <= (hi ?? lo); y++) seasons.push(y);
   } else {
     const db = openDb(valueOf(rest, "--db"));
-    seasons = (db.prepare("SELECT DISTINCT season FROM raw_league_roster_week ORDER BY season").all() as { season: number }[]).map((r) => r.season);
+    const { requireLeagueId: reqLgRs } = await import("./data/leagueContext.js");
+    const rsLeague = reqLgRs(await leagueCtx(rest, db), "build-roster-state");
+    seasons = (db.prepare("SELECT DISTINCT season FROM raw_league_roster_week WHERE league_id = ? ORDER BY season").all(rsLeague) as { season: number }[]).map((r) => r.season);
     db.close();
     if (!seasons.length) { console.log("no raw_league_roster_week rows -- run `ff scrape-league` first"); return; }
   }
   const t0 = Date.now();
-  const r = await buildRosterStateInto({ dbPath: valueOf(rest, "--db"), seasons, throughAsOf: valueOf(rest, "--through") });
+  const r = await buildRosterStateInto({ dbPath: valueOf(rest, "--db"), seasons, throughAsOf: valueOf(rest, "--through"), leagueId: leagueArg(rest) });
   console.log(`fact_roster_week ${r.rosterRows.toLocaleString()} rows | fact_fa_pool_week ${r.faRows.toLocaleString()} | fact_lineup_week ${r.lineupRows.toLocaleString()}`);
   console.log(`  seasons ${r.seasons.join(",")}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   // IDENTITY RESOLUTION, PER RULE, printed rather than inferred. A feed that resolves at 4% and a
@@ -2744,8 +2786,9 @@ async function cmdBuildRosterState(rest: string[]) {
 // One row per real draft pick this league made, with the consensus as it stood. See features/picks.ts.
 async function cmdBuildPicks(rest: string[]) {
   const { buildDraftPicks, buildLeagueFacts } = await import("./features/picks.js");
-  const r = buildDraftPicks({ dbPath: valueOf(rest, "--db"), recapPath: valueOf(rest, "--recap") });
-  console.log(`fact_draft_pick: ${r.rows} rows, from ${r.source}`);
+  const lg = leagueArg(rest);
+  const r = buildDraftPicks({ dbPath: valueOf(rest, "--db"), recapPath: valueOf(rest, "--recap"), leagueId: lg });
+  console.log(`fact_draft_pick: ${r.rows} rows for league ${r.leagueId}, from ${r.source}`);
   console.log(`  season  teams  picks  total$   raw$   sk%   consensus  as-of`);
   for (const s of r.perSeason) {
     console.log(`  ${s.season}  ${String(s.teams).padStart(5)}  ${String(s.picks).padStart(5)}  ${String(s.total).padStart(6)}  ` +
@@ -2758,8 +2801,8 @@ async function cmdBuildPicks(rest: string[]) {
     ? `  TOTALS DISAGREE with raw_league_pick in: ${r.mismatched.join(", ")}`
     : `  totals match raw_league_pick to the dollar in all ${r.perSeason.length} seasons`);
 
-  const f = buildLeagueFacts({ dbPath: valueOf(rest, "--db") });
-  console.log(`\nfact_team_season: ${f.teamSeasons} rows   fact_matchup: ${f.matchups} rows`);
+  const f = buildLeagueFacts({ dbPath: valueOf(rest, "--db"), leagueId: lg });
+  console.log(`\nfact_team_season: ${f.teamSeasons} rows   fact_matchup: ${f.matchups} rows   (league ${f.leagueId})`);
   console.log(`  season  teams  games  playoff field  top-k seeds agree  champion`);
   for (const s of f.perSeason) {
     console.log(`  ${s.season}  ${String(s.teams).padStart(5)}  ${String(s.games).padStart(5)}  ` +
@@ -3318,8 +3361,11 @@ async function cmdAutoDraft(rest: string[]) {
   let lastDecision: { player: string; pos: string | null; offer: number; cap: number; reason: string; action: string } | null = null;
   const logPath = `data/draft-log-${Date.now()}.json`;
   // also write the live snapshot into the store (draft_state) so the app reads it via the helper
-  const { openDb: openDbForDraft, writeDraftState } = await import("./db/db.js");
+  const { openDb: openDbForDraft, writeDraftState, activeLeagueId: activeForDraft, localDraftId: localDraftIdForDraft } = await import("./db/db.js");
   const draftDb = (() => { try { return openDbForDraft(); } catch { return null; } })();
+  // The live snapshot lands on THIS league's session (S-13), not on a shared `'local'` row that two
+  // leagues' drafts would overwrite in turn.
+  const liveDraftId = draftDb ? localDraftIdForDraft(activeForDraft(draftDb)) : "local";
   for (let i = 0; i < rounds; i++) {
     const r = await readRoster(page);
     if (r.filled === 0 && r.open === 0) {
@@ -3551,7 +3597,7 @@ async function cmdAutoDraft(rest: string[]) {
         recentPicks: picks.slice(-12).map((p) => ({ pick: p.pick, name: p.name, pos: p.pos, team: p.fantasyTeam, price: p.price })),
       };
       writeFileSync(liveStatePath, JSON.stringify(liveState, null, 0)); // fast-path file for the poll
-      if (draftDb) writeDraftState(draftDb, "local", Object.assign({    // + the store, read via the helper
+      if (draftDb) writeDraftState(draftDb, liveDraftId, Object.assign({    // + the store, read via the helper
         onBlockPlayer: onBlock?.player ?? null, onBlockPos: onBlock ? normPos(b.pos) : null,
         bid: onBlock?.currentOffer ?? null, ourBudget: 200 - r.spent, ourSpent: r.spent, ourFilled: r.filled,
       }, liveState));

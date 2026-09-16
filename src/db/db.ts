@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { nameKey } from "../draft/values.js";
 import { DEFAULT_SCORING, type ScoringRules } from "../draft/scoring.js";
 import { DEFAULT_LEVERS, type Levers } from "../draft/levers.js";
+import { scoringKey } from "../data/formatKey.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_DB_PATH = process.env.FF_DB ?? "data/ff.db";
@@ -53,11 +54,27 @@ export function openDb(path: string = DEFAULT_DB_PATH): DB {
   db.pragma("foreign_keys = ON");
   migrate(db);
   if (!getSetting(db, "config")) setSetting(db, "config", JSON.stringify(DEFAULT_CONFIG)); // seed the single config
-  if (!db.prepare(`SELECT 1 FROM draft WHERE draft_id = 'local'`).get()) {          // seed the app's working draft session
-    db.prepare(`INSERT INTO draft (draft_id, kind, season, status, started_at, updated_at) VALUES ('local', 'local', ?, 'active', ?, ?)`)
-      .run(DEFAULT_CONFIG.season, nowIso(), nowIso());
+  // THE APP'S WORKING DRAFT SESSION, LEAGUE-QUALIFIED (S-13). It used to be the bare id `'local'`, one
+  // row shared by every league in the store -- so the board you drafted in the Yahoo tab and the board
+  // you drafted in the ESPN tab were the same team, and `my_roster` had no way to say which league a
+  // $47 Ja'Marr Chase belonged to. `localDraftId` makes it `local:<leagueId>`.
+  const lg = activeLeagueId(db);
+  const seedId = localDraftId(lg);
+  if (!db.prepare(`SELECT 1 FROM draft WHERE draft_id = ?`).get(seedId)) {
+    db.prepare(`INSERT INTO draft (draft_id, kind, league_id, season, status, started_at, updated_at) VALUES (?, 'local', ?, ?, 'active', ?, ?)`)
+      .run(seedId, lg, DEFAULT_CONFIG.season, nowIso(), nowIso());
   }
   return db;
+}
+
+/**
+ * The app's working draft session for ONE league. A store with two leagues has two of them.
+ *
+ * `null` (a fresh clone with no league synced) keeps the bare `'local'` id, so a store that has never
+ * seen a league behaves exactly as it always did rather than growing a session called `local:null`.
+ */
+export function localDraftId(leagueId: string | null | undefined): string {
+  return leagueId ? `local:${leagueId}` : "local";
 }
 
 /** Apply schema.sql. CREATE ... IF NOT EXISTS throughout, so re-running is a no-op. */
@@ -68,8 +85,16 @@ export function openDb(path: string = DEFAULT_DB_PATH): DB {
 // GENUINELY per-league (a second league writes its own rows here). NOT team_odds (NFL game odds are
 // the same for every fantasy league) and NOT scorecard_* (they measure the shared MODEL's accuracy,
 // not a league) -- those are SHARED and must NOT be partitioned by league.
+//
+// WP2 (S-5, 2026-09-16) ADDED THE LAST THREE. `fact_draft_pick`, `fact_team_season` and `fact_matchup`
+// each CARRIED a `league_id` column and left it out of the PRIMARY KEY -- `(season, team_name,
+// pick_order)`, `(season, team_id)`, `(season, week, home_id)`. A column that is not in the key does
+// not partition anything: two leagues' 2024 team 8 are the same row, and the upserts in picks.ts would
+// have overwritten one league's history with the other's the first time both were built. The refactor
+// doc listed all three as "already keyed", which is why nobody looked.
 const LEAGUE_ID_PK_TABLES = [
   "fact_roster_week", "fact_lineup_week", "fact_fa_pool_week", "fact_waiver_claim", "decision_snapshot",
+  "fact_draft_pick", "fact_team_season", "fact_matchup",
 ];
 
 export function migrate(db: DB): void {
@@ -77,6 +102,9 @@ export function migrate(db: DB): void {
   addColumns(db);
   backfillLeagueConfig(db);
   migrateLeagueIdPk(db);
+  migrateLocalDraftId(db);
+  migrateScorecardFormatKey(db);
+  migrateBoardStamp(db);
 }
 
 /**
@@ -86,11 +114,20 @@ export function migrate(db: DB): void {
  * off. IDEMPOTENT: a table that already has `league_id` is skipped, so this is a no-op after the first
  * run and on a fresh store (schema.sql already creates the new shape).
  */
+interface ColInfo { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }
+
+const pkOf = (cols: ColInfo[]): string[] =>
+  cols.filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
+
 function migrateLeagueIdPk(db: DB): void {
   const backfill = activeLeagueId(db);                  // null on a fresh store -> only empty tables get rebuilt
   const todo = LEAGUE_ID_PK_TABLES.filter((t) => {
-    const cols = db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[];
-    if (!cols.length || cols.some((c) => c.name === "league_id")) return false;   // absent or already migrated
+    const cols = db.prepare(`PRAGMA table_info(${t})`).all() as ColInfo[];
+    if (!cols.length) return false;                     // table not created yet; schema.sql owns that
+    // THE TEST IS THE KEY, NOT THE COLUMN (S-5). The old predicate skipped any table that merely HAD a
+    // `league_id` column, which is exactly the three tables that carried one outside the key -- so the
+    // migration reported itself done on the tables that needed it most.
+    if (pkOf(cols)[0] === "league_id") return false;    // already migrated
     if (backfill) return true;
     // no active league: only safe to rebuild an EMPTY table (a fresh store); rows with no league to
     // attribute them to are left for the next open once a league exists.
@@ -102,20 +139,207 @@ function migrateLeagueIdPk(db: DB): void {
   try {
     db.transaction(() => {
       for (const t of todo) {
-        const cols = db.prepare(`PRAGMA table_info(${t})`).all() as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[];
-        const pk = cols.filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
-        const colDDL = cols.map((c) => `"${c.name}" ${c.type}${c.notnull ? " NOT NULL" : ""}${c.dflt_value != null ? ` DEFAULT ${c.dflt_value}` : ""}`);
+        const cols = db.prepare(`PRAGMA table_info(${t})`).all() as ColInfo[];
+        const before = (db.prepare(`SELECT COUNT(*) c FROM "${t}"`).get() as { c: number }).c;
+        const pk = pkOf(cols);
+        // A table that already HAS the column keeps it (and its position moves to the front); one that
+        // does not gains it. Either way `league_id` leads the new key exactly once.
+        const rest = cols.filter((c) => c.name !== "league_id");
+        const hadCol = rest.length !== cols.length;
+        const colDDL = ['"league_id" TEXT NOT NULL',
+          ...rest.map((c) => `"${c.name}" ${c.type}${c.notnull ? " NOT NULL" : ""}${c.dflt_value != null ? ` DEFAULT ${c.dflt_value}` : ""}`)];
         const idx = db.prepare(`SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`).all(t) as { sql: string }[];
-        const names = cols.map((c) => `"${c.name}"`).join(", ");
-        const newPk = ["league_id", ...pk].map((c) => `"${c}"`).join(", ");
-        db.exec(`CREATE TABLE "${t}__ml" ("league_id" TEXT NOT NULL, ${colDDL.join(", ")}, PRIMARY KEY (${newPk}))`);
-        db.prepare(`INSERT INTO "${t}__ml" ("league_id", ${names}) SELECT ?, ${names} FROM "${t}"`).run(tag);
+        const restNames = rest.map((c) => `"${c.name}"`).join(", ");
+        const newPk = ["league_id", ...pk.filter((c) => c !== "league_id")].map((c) => `"${c}"`).join(", ");
+        db.exec(`CREATE TABLE "${t}__ml" (${colDDL.join(", ")}, PRIMARY KEY (${newPk}))`);
+        // An existing row whose `league_id` is NULL is attributed to the backfill league, the same rule
+        // a table with no column at all gets -- a NOT NULL key column cannot take the NULL through.
+        db.prepare(
+          `INSERT INTO "${t}__ml" ("league_id", ${restNames}) ` +
+          `SELECT ${hadCol ? `COALESCE("league_id", ?)` : "?"}, ${restNames} FROM "${t}"`,
+        ).run(tag);
         db.exec(`DROP TABLE "${t}"`);
         db.exec(`ALTER TABLE "${t}__ml" RENAME TO "${t}"`);
-        for (const ix of idx) { try { db.exec(ix.sql); } catch { /* index may already be recreated by schema.sql on next open */ } }
+        // RECREATE THE INDEXES, AND PROVE IT. `DROP TABLE` takes the table's indexes with it, and the
+        // recreation used to sit in a bare try/catch whose comment claimed "schema.sql will do it next
+        // open" -- schema.sql had ALREADY run, two lines earlier in `migrate`, so a swallowed failure
+        // here turned an index into a silent full table scan that nothing would ever report.
+        for (const ix of idx) db.exec(ix.sql);
+        const after = (db.prepare(`SELECT COUNT(*) c FROM "${t}"`).get() as { c: number }).c;
+        if (after !== before) throw new Error(`migrateLeagueIdPk: ${t} lost rows (${before} -> ${after})`);
+        const nIdx = (db.prepare(
+          `SELECT COUNT(*) c FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`,
+        ).get(t) as { c: number }).c;
+        if (nIdx !== idx.length) throw new Error(`migrateLeagueIdPk: ${t} has ${nIdx} explicit indexes, expected ${idx.length}`);
       }
     })();
   } finally { db.pragma("foreign_keys = ON"); }
+}
+
+/**
+ * S-13: the app's working draft session was the bare id `'local'`, shared by every league.
+ *
+ * Renames it to `local:<activeLeague>` across the four tables that key on it, once. Idempotent: a
+ * store with no `'local'` row (or no league) is untouched. FKs are off for the rename because
+ * `draft_state`/`my_roster` REFERENCE `draft(draft_id)` with no ON UPDATE CASCADE.
+ */
+function migrateLocalDraftId(db: DB): void {
+  const lg = activeLeagueId(db);
+  if (!lg) return;
+  let stale: boolean;
+  try { stale = !!db.prepare(`SELECT 1 FROM draft WHERE draft_id = 'local'`).get(); } catch { return; }
+  if (!stale) return;
+  const want = localDraftId(lg);
+  if (db.prepare(`SELECT 1 FROM draft WHERE draft_id = ?`).get(want)) return;  // both exist: leave the old row alone
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.prepare(`UPDATE draft SET draft_id = ?, league_id = COALESCE(league_id, ?) WHERE draft_id = 'local'`).run(want, lg);
+      for (const t of ["draft_state", "draft_pick", "my_roster"]) {
+        // `draft_pick` is created by the draft runtime, not by schema.sql, so it can legitimately be
+        // absent. Checked by inspection rather than by catching, so a REAL failure still surfaces.
+        const cols = db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[];
+        if (!cols.length) continue;
+        db.prepare(`UPDATE "${t}" SET draft_id = ? WHERE draft_id = 'local'`).run(want);
+      }
+    })();
+  } finally { db.pragma("foreign_keys = ON"); }
+}
+
+/** The incumbent ESPN league's scoring key. `scoringKey(DEFAULT_SCORING)` -- pinned as a constant so a
+ *  migration that backfills "the scoring these rows were written under" can PROVE it rather than
+ *  assume it. Asserted below and in test/format-key.test.ts. */
+export const ESPN_SCORING_KEY = "sc-f6143a8dfb13";
+
+/**
+ * I-5: `scorecard_prediction` / `scorecard_result` gain `format_key` at the head of the PRIMARY KEY.
+ *
+ * The two tables measure a MODEL's accuracy, which is per FORMAT and not per league -- two leagues on
+ * identical rules should and do share a row. But the PK was `(season, week, kind, model, subject)` with
+ * `INSERT OR IGNORE` everywhere, so the SECOND format to freeze a player-week was silently dropped, and
+ * an `odds` subject (a team id) collided outright across platforms. Sharing is right per format and a
+ * fabrication across formats.
+ *
+ * Existing rows are backfilled with the ESPN scoring key, which is ASSERTED to be what the active
+ * league's rules actually hash to -- a backfill that stamps a guessed provenance is the same defect at
+ * one remove.
+ */
+function migrateScorecardFormatKey(db: DB): void {
+  const todo = ["scorecard_prediction", "scorecard_result"].filter((t) => {
+    const cols = db.prepare(`PRAGMA table_info(${t})`).all() as ColInfo[];
+    return cols.length > 0 && pkOf(cols)[0] !== "format_key";
+  });
+  if (!todo.length) return;
+  const rows = todo.reduce((a, t) => a + (db.prepare(`SELECT COUNT(*) c FROM "${t}"`).get() as { c: number }).c, 0);
+  const id = activeLeagueId(db);
+  const key = scoringKey(getConfig(db, id).scoring_rules);
+  if (rows && key !== ESPN_SCORING_KEY) {
+    throw new Error(
+      `migrateScorecardFormatKey: ${rows} existing scorecard row(s) were all written under the ESPN ` +
+      `half-PPR rules (${ESPN_SCORING_KEY}), but league ${id ?? "?"}'s scoring hashes to ${key}. Backfilling ` +
+      "them with that key would stamp the wrong provenance on the only out-of-sample record this repo owns.",
+    );
+  }
+  db.transaction(() => {
+    for (const t of todo) {
+      const cols = db.prepare(`PRAGMA table_info(${t})`).all() as ColInfo[];
+      const before = (db.prepare(`SELECT COUNT(*) c FROM "${t}"`).get() as { c: number }).c;
+      const rest = cols.filter((c) => c.name !== "format_key");
+      const hadCol = rest.length !== cols.length;
+      const colDDL = ['"format_key" TEXT NOT NULL',
+        ...rest.map((c) => `"${c.name}" ${c.type}${c.notnull ? " NOT NULL" : ""}${c.dflt_value != null ? ` DEFAULT ${c.dflt_value}` : ""}`)];
+      const newPk = ["format_key", ...pkOf(cols).filter((c) => c !== "format_key")].map((c) => `"${c}"`).join(", ");
+      const restNames = rest.map((c) => `"${c.name}"`).join(", ");
+      db.exec(`CREATE TABLE "${t}__fk" (${colDDL.join(", ")}, PRIMARY KEY (${newPk}))`);
+      db.prepare(
+        `INSERT INTO "${t}__fk" ("format_key", ${restNames}) ` +
+        `SELECT ${hadCol ? `COALESCE("format_key", ?)` : "?"}, ${restNames} FROM "${t}"`,
+      ).run(ESPN_SCORING_KEY);
+      db.exec(`DROP TABLE "${t}"`);
+      db.exec(`ALTER TABLE "${t}__fk" RENAME TO "${t}"`);
+      const after = (db.prepare(`SELECT COUNT(*) c FROM "${t}"`).get() as { c: number }).c;
+      if (after !== before) throw new Error(`migrateScorecardFormatKey: ${t} lost rows (${before} -> ${after})`);
+    }
+  })();
+}
+
+// ============================================================================================
+// S-8: THE BOARD STAMP. `board`, `player_value` and `player_value_position` stay single-slot --
+// regenerable, read in dozens of places, and partitioning them would mean a pervasive reader
+// cascade. What they could NOT do was say WHOSE they are: 529 rows of ESPN half-PPR auction dollars
+// were served unchanged to a Yahoo superflex league, because `setActiveLeagueId` wrote two settings
+// and stopped. A stamp plus a refusal is the cheap half of that: the numbers are either this
+// league's or nobody gets them.
+// ============================================================================================
+
+export interface BoardStamp {
+  leagueId: string;
+  season?: number;
+  scoringKey?: string;
+  builtAt?: string;
+  /** The board was CLEARED for this league and the rebuild has not succeeded yet. Readers refuse by
+   *  name rather than serving the previous league's dollars. */
+  pending?: boolean;
+}
+
+export function getBoardStamp(db: DB): BoardStamp | null {
+  const raw = getSetting(db, "board_stamp");
+  if (!raw) return null;
+  try {
+    const s = JSON.parse(raw) as BoardStamp;
+    return s && typeof s.leagueId === "string" ? s : null;
+  } catch { return null; }
+}
+
+export function setBoardStamp(db: DB, s: BoardStamp): void {
+  setSetting(db, "board_stamp", JSON.stringify(s));
+}
+
+/** Rows in the single-slot board. Cheap, and the three tables are written together. */
+function boardRowCount(db: DB): number {
+  try { return (db.prepare("SELECT COUNT(*) c FROM board").get() as { c: number }).c; } catch { return 0; }
+}
+
+/**
+ * REFUSE to serve the board to a league it was not built for.
+ *
+ * A missing stamp WITH rows present is also a refusal: it means the board predates the stamp and this
+ * process cannot say whose it is. The one-time migration below stamps an existing board with the
+ * ACTIVE league, so on a real store that state is reached only by hand-editing settings.
+ */
+export function assertBoardFor(db: DB, leagueId: string | null | undefined, what = "the board"): void {
+  if (!leagueId) return;                       // a store with no league has no other league to confuse it with
+  const stamp = getBoardStamp(db);
+  if (stamp?.pending) {
+    throw new Error(
+      `board not built for league ${stamp.leagueId} -- it was cleared on the league switch and the rebuild ` +
+      "has not succeeded (run `ff assemble --league " + stamp.leagueId + "`). " + what + " is unavailable.",
+    );
+  }
+  if (!boardRowCount(db)) return;              // an empty board is its own, visible failure in every reader
+  if (!stamp) {
+    throw new Error(
+      `${what}: the board carries no league stamp, so nothing can say which league's dollars these are ` +
+      `-- run \`ff assemble --league ${leagueId}\` to rebuild and stamp it.`,
+    );
+  }
+  if (stamp.leagueId !== leagueId) {
+    throw new Error(
+      `board is built for league ${stamp.leagueId}, not ${leagueId} -- run \`ff league-set-active ${leagueId}\` ` +
+      `(rebuild) or \`ff assemble --league ${leagueId}\``,
+    );
+  }
+}
+
+/** One-time: an existing board has no stamp and IS the active league's (there has only ever been one
+ *  league's board in any store this code has run on). Stamp it rather than refuse every reader. */
+function migrateBoardStamp(db: DB): void {
+  if (getBoardStamp(db)) return;
+  if (!boardRowCount(db)) return;
+  const id = activeLeagueId(db);
+  if (!id) return;
+  const cfg = getConfig(db, id);
+  setBoardStamp(db, { leagueId: id, season: cfg.season, scoringKey: scoringKey(cfg.scoring_rules), builtAt: nowIso() });
 }
 
 /** Phase 2a backfill: copy the legacy single `config` into the active league's per-league key
@@ -149,6 +373,10 @@ function addColumns(db: DB): void {
     // nothing in the store could answer "which of these sixteen rosters is MINE" -- league.team_id
     // holds the number and there was no column to join it to.
     ["ownership", "team_id", "TEXT"],
+    // WHICH LEAGUE AN ACTION WAS TAKEN IN (S-13/I-7). The D3 audit trail had no league column at all,
+    // so with two leagues in one store "what did the copilot do?" could not be answered per league --
+    // and a wrong-league action would have been indistinguishable in the log from a right one.
+    ["action_log", "league_id", "TEXT"],
     // The surrogate player key on the CONSUMER tables. Additive rather than a new PK: board and
     // player_value are still written and read by name_key everywhere, and swapping the primary key
     // under live consumers is a much larger change than giving them the stable id to migrate onto.
@@ -412,17 +640,29 @@ export function getMyRoster(db: DB, draftId: string): RosterEntry[] {
 }
 
 // --- action log (the D3 audit trail: every agent ACTION is logged planned -> done/failed) ---
-export function logAction(db: DB, a: { runId?: string; runType: string; action: string; detail?: unknown }): number {
+export function logAction(db: DB, a: { runId?: string; runType: string; action: string; detail?: unknown; leagueId?: string | null }): number {
+  // `leagueId` omitted falls back to the ACTIVE league rather than NULL: every action this repo takes
+  // is taken in SOME league, and a NULL here would be a row that cannot be attributed later.
+  const lg = a.leagueId !== undefined ? a.leagueId : activeLeagueId(db);
   const info = db.prepare(
-    `INSERT INTO action_log (ts, run_id, run_type, action, detail_json, status) VALUES (?, ?, ?, ?, ?, 'planned')`,
-  ).run(nowIso(), a.runId ?? null, a.runType, a.action, JSON.stringify(a.detail ?? {}));
+    `INSERT INTO action_log (ts, league_id, run_id, run_type, action, detail_json, status) VALUES (?, ?, ?, ?, ?, ?, 'planned')`,
+  ).run(nowIso(), lg ?? null, a.runId ?? null, a.runType, a.action, JSON.stringify(a.detail ?? {}));
   return info.lastInsertRowid as number;
 }
 export function completeAction(db: DB, id: number, status: "done" | "failed" | "skipped", reason?: string): void {
   db.prepare(`UPDATE action_log SET status = ?, reason = ? WHERE id = ?`).run(status, reason ?? null, id);
 }
-export function recentActions(db: DB, limit = 10): { ts: string; action: string; status: string; detail_json: string; reason: string }[] {
-  return db.prepare(`SELECT ts, action, status, detail_json, reason FROM action_log ORDER BY id DESC LIMIT ?`).all(limit) as never;
+/** The last `limit` actions IN ONE LEAGUE. `leagueId` omitted = the active league; pass `null` for
+ *  every league (which is what "what has this store done?" means, and nothing else should want). */
+export function recentActions(db: DB, limit = 10, leagueId?: string | null | undefined): { ts: string; action: string; status: string; detail_json: string; reason: string }[] {
+  const lg = leagueId === undefined ? activeLeagueId(db) : leagueId;
+  if (lg == null) return db.prepare(`SELECT ts, action, status, detail_json, reason FROM action_log ORDER BY id DESC LIMIT ?`).all(limit) as never;
+  // Rows written before `action_log.league_id` existed carry NULL; they belong to the one league this
+  // store had, so they are included rather than silently dropped from the audit trail.
+  return db.prepare(
+    `SELECT ts, action, status, detail_json, reason FROM action_log
+      WHERE league_id = ? OR league_id IS NULL ORDER BY id DESC LIMIT ?`,
+  ).all(lg, limit) as never;
 }
 
 

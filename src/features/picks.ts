@@ -31,6 +31,7 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { openDb, nowIso, type DB } from "../db/db.js";
+import { resolveLeagueContext, requireLeagueId } from "../data/leagueContext.js";
 import { dataPath } from "../data/paths.js";
 import { nameKey } from "../draft/values.js";
 import { buildSkResolver } from "../data/skResolve.js";
@@ -48,17 +49,30 @@ export interface PicksResult {
   /** Seasons in raw_league_pick whose dollar total does NOT match the fact table. Must be empty. */
   mismatched: number[];
   source: "raw_league_pick" | "recaps.json";
+  /** WHICH LEAGUE these rows are. Printed, so a rebuild cannot be read as covering the whole store. */
+  leagueId: string;
 }
 
-export function buildDraftPicks(opts: { dbPath?: string; recapPath?: string } = {}): PicksResult {
+/**
+ * ONE LEAGUE'S PICKS (S-4/S-6, 2026-09-16).
+ *
+ * Every read here used to be filtered by SEASON alone, and the `DELETE` was `WHERE season = ?` with no
+ * league at all. With two leagues in the store that is not a partial rebuild, it is a rebuild of
+ * league A that DELETES league B's 2024 rows and then re-derives the season from whichever league's
+ * raw rows happened to sort last. `shape.get(yr)` had exactly one slot per season, so the room's size
+ * and budget were whoever loaded last, too.
+ */
+export function buildDraftPicks(opts: { dbPath?: string; recapPath?: string; leagueId?: string | null } = {}): PicksResult {
   const db = openDb(opts.dbPath);
+  const ctx = resolveLeagueContext(db, opts.leagueId);
+  const lg = requireLeagueId(ctx, "build-picks");
   const now = nowIso();
   const resolver = buildSkResolver(db);
-  const res: PicksResult = { rows: 0, perSeason: [], mismatched: [], source: "raw_league_pick" };
+  const res: PicksResult = { rows: 0, perSeason: [], mismatched: [], source: "raw_league_pick", leagueId: lg };
 
   let raw = db.prepare(
-    "SELECT league_id, season, pick_no, team_id, name, pos, price FROM raw_league_pick ORDER BY season, pick_no",
-  ).all() as { league_id: string; season: number; pick_no: number; team_id: string | null; name: string; pos: string | null; price: number }[];
+    "SELECT league_id, season, pick_no, team_id, name, pos, price FROM raw_league_pick WHERE league_id = ? ORDER BY season, pick_no",
+  ).all(lg) as { league_id: string; season: number; pick_no: number; team_id: string | null; name: string; pos: string | null; price: number }[];
 
   // FALLBACK to the old recap file, and it is a fallback rather than a second source of truth: a
   // store that has not run `ff ingest-raw league-history` yet still gets a table, and the result
@@ -68,12 +82,12 @@ export function buildDraftPicks(opts: { dbPath?: string; recapPath?: string } = 
     if (!existsSync(recapPath)) { db.close(); return res; }
     res.source = "recaps.json";
     const teamId = new Map<string, string>();
-    for (const t of db.prepare("SELECT season, team_id, name FROM raw_league_team_season").all() as { season: number; team_id: string; name: string }[]) {
+    for (const t of db.prepare("SELECT season, team_id, name FROM raw_league_team_season WHERE league_id = ?").all(lg) as { season: number; team_id: string; name: string }[]) {
       teamId.set(`${t.season}|${t.name}`, t.team_id);
     }
     raw = (JSON.parse(readFileSync(recapPath, "utf8")) as RecapTeam[]).flatMap((t) =>
       t.picks.map((p) => ({
-        league_id: "", season: t.season, pick_no: p.pick, team_id: teamId.get(`${t.season}|${t.name}`) ?? null,
+        league_id: lg, season: t.season, pick_no: p.pick, team_id: teamId.get(`${t.season}|${t.name}`) ?? null,
         name: p.player, pos: p.pos, price: p.price,
       })));
     raw.sort((a, b) => a.season - b.season || a.pick_no - b.pick_no);
@@ -82,11 +96,11 @@ export function buildDraftPicks(opts: { dbPath?: string; recapPath?: string } = 
   // Team identity and the room's shape, per season. Both come from the raw league tables; a season
   // missing a settings row keeps NULLs rather than inheriting last year's budget.
   const team = new Map<string, { name: string | null; owner: string | null }>();
-  for (const t of db.prepare("SELECT season, team_id, name, owner FROM raw_league_team_season").all() as { season: number; team_id: string; name: string | null; owner: string | null }[]) {
+  for (const t of db.prepare("SELECT season, team_id, name, owner FROM raw_league_team_season WHERE league_id = ?").all(lg) as { season: number; team_id: string; name: string | null; owner: string | null }[]) {
     team.set(`${t.season}|${t.team_id}`, { name: t.name, owner: t.owner });
   }
   const shape = new Map<number, { size: number; budget: number; slots: number }>();
-  for (const s of db.prepare("SELECT season, size, auction_budget, slot_counts_json FROM raw_league_season WHERE available = 1").all() as { season: number; size: number; auction_budget: number; slot_counts_json: string | null }[]) {
+  for (const s of db.prepare("SELECT season, size, auction_budget, slot_counts_json FROM raw_league_season WHERE league_id = ? AND available = 1").all(lg) as { season: number; size: number; auction_budget: number; slot_counts_json: string | null }[]) {
     let slots = 0;
     try { for (const v of Object.values(JSON.parse(s.slot_counts_json ?? "{}") as Record<string, number>)) slots += Number(v) || 0; } catch { /* no slot map */ }
     shape.set(s.season, { size: s.size, budget: s.auction_budget, slots });
@@ -98,7 +112,7 @@ export function buildDraftPicks(opts: { dbPath?: string; recapPath?: string } = 
        money_remaining, slots_remaining, season_total_money, price_share, updated_at)
      VALUES (@season,@lg,@teamId,@owner,@teamName,@sk,@name,@nk,@pos,@price,@order,@date,@asOf,@rank,@sd,
        @money,@slots,@pool,@share,@now)
-     ON CONFLICT(season, team_name, pick_order) DO UPDATE SET
+     ON CONFLICT(league_id, season, team_name, pick_order) DO UPDATE SET
        player_sk=excluded.player_sk, name=excluded.name, pos=excluded.pos, price=excluded.price,
        owner=excluded.owner, team_id=excluded.team_id, consensus_asof=excluded.consensus_asof,
        consensus_pos_rank_asof=excluded.consensus_pos_rank_asof,
@@ -119,7 +133,7 @@ export function buildDraftPicks(opts: { dbPath?: string; recapPath?: string } = 
       // REPLACE THE SEASON. The upsert keys on team_name, which comes from a source table that can
       // change (a team renames), so a rebuild after a rename would leave the old rows in place --
       // the same shape of defect the feature tables carried.
-      db.prepare("DELETE FROM fact_draft_pick WHERE season = ?").run(yr);
+      db.prepare("DELETE FROM fact_draft_pick WHERE league_id = ? AND season = ?").run(lg, yr);
       for (const p of mine) {
         const pos = normPos((p.pos ?? "").toUpperCase());
         const nk = nameKey(p.name);
@@ -132,7 +146,7 @@ export function buildDraftPicks(opts: { dbPath?: string; recapPath?: string } = 
         const t = team.get(tk);
         const before = spent.get(tk) ?? 0, count = taken.get(tk) ?? 0;
         ins.run({
-          season: yr, lg: p.league_id || null, teamId: p.team_id, owner: t?.owner || null,
+          season: yr, lg, teamId: p.team_id, owner: t?.owner || null,
           teamName: t?.name ?? p.team_id ?? null,
           sk, name: p.name, nk, pos, price: p.price, order: p.pick_no,
           date: null, asOf, rank: c?.rank ?? null, sd: c?.sd ?? null,
@@ -225,7 +239,7 @@ function liveConsensus(db: DB, yr: number, out: Map<string, { rank: number; sd: 
 // ==================================================================================================
 
 export interface LeagueFactsResult {
-  teamSeasons: number; matchups: number;
+  teamSeasons: number; matchups: number; leagueId: string;
   perSeason: { season: number; teams: number; games: number; champion: string | null; settled: boolean; playoffField: number; fieldSource: string; seedsAgree: boolean | null }[];
 }
 
@@ -241,27 +255,29 @@ export interface LeagueFactsResult {
  * progress has neither, and a consumer scoring a simulation against it would be scoring against a
  * placeholder that looks exactly like a result.
  */
-export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsResult {
+export function buildLeagueFacts(opts: { dbPath?: string; leagueId?: string | null } = {}): LeagueFactsResult {
   const db = openDb(opts.dbPath);
+  const ctx = resolveLeagueContext(db, opts.leagueId);
+  const lg = requireLeagueId(ctx, "build-picks (league facts)");
   const now = nowIso();
-  const res: LeagueFactsResult = { teamSeasons: 0, matchups: 0, perSeason: [] };
+  const res: LeagueFactsResult = { teamSeasons: 0, matchups: 0, leagueId: lg, perSeason: [] };
 
   const rows = db.prepare(
     `SELECT league_id, season, team_id, name, owner_id, owner, wins, losses, points_for, final_rank,
             playoff_seed, acquisitions, faab_spent, drops, trades, lineup_moves
-       FROM raw_league_team_season ORDER BY season, CAST(team_id AS INTEGER)`,
-  ).all() as Record<string, string | number | null>[];
+       FROM raw_league_team_season WHERE league_id = ? ORDER BY season, CAST(team_id AS INTEGER)`,
+  ).all(lg) as Record<string, string | number | null>[];
   const games = db.prepare(
-    "SELECT league_id, season, week, home_id, away_id FROM raw_league_matchup ORDER BY season, week, home_id",
-  ).all() as { league_id: string; season: number; week: number; home_id: string; away_id: string }[];
+    "SELECT league_id, season, week, home_id, away_id FROM raw_league_matchup WHERE league_id = ? ORDER BY season, week, home_id",
+  ).all(lg) as { league_id: string; season: number; week: number; home_id: string; away_id: string }[];
   // THE SEASON'S OWN FORMAT, read from ESPN per season by `ingest-raw league-history`. Before this
   // existed the field size was inferred from the team COUNT (`playoffFieldFor`), which is a proxy
   // that happens to be right for this league's history and cannot ever be wrong out loud. Now the
   // real number is available and the proxy is the fallback, reported when it is used.
   const fmtBySeason = new Map<number, { regWeeks: number | null; playoffTeams: number | null; playoffReseed: number | null; seedingRule: string | null; divisionCount: number | null }>();
   for (const r of db.prepare(
-    "SELECT season, reg_weeks, playoff_teams, playoff_reseed, seeding_rule, division_count FROM raw_league_season",
-  ).all() as Record<string, number | string | null>[]) {
+    "SELECT season, reg_weeks, playoff_teams, playoff_reseed, seeding_rule, division_count FROM raw_league_season WHERE league_id = ?",
+  ).all(lg) as Record<string, number | string | null>[]) {
     fmtBySeason.set(Number(r.season), {
       regWeeks: r.reg_weeks == null ? null : Number(r.reg_weeks),
       playoffTeams: r.playoff_teams == null ? null : Number(r.playoff_teams),
@@ -284,7 +300,7 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
        reg_weeks, playoff_teams, playoff_reseed, seeding_rule, division_count)
      VALUES (@lg,@season,@team,@name,@oid,@owner,@w,@l,@pf,@seed,@rank,@champ,@playoffs,@settled,@acq,@faab,@drops,@trades,@moves,@now,
        @rw,@pt,@prs,@sr,@dc)
-     ON CONFLICT(season, team_id) DO UPDATE SET
+     ON CONFLICT(league_id, season, team_id) DO UPDATE SET
        team_name=excluded.team_name, owner=excluded.owner, owner_id=excluded.owner_id, wins=excluded.wins,
        losses=excluded.losses, points_for=excluded.points_for, playoff_seed=excluded.playoff_seed,
        final_rank=excluded.final_rank, champion=excluded.champion, made_playoffs=excluded.made_playoffs,
@@ -296,12 +312,15 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
   const insM = db.prepare(
     `INSERT INTO fact_matchup (league_id, season, week, home_id, away_id, updated_at)
      VALUES (@lg,@season,@week,@home,@away,@now)
-     ON CONFLICT(season, week, home_id) DO UPDATE SET away_id=excluded.away_id, updated_at=excluded.updated_at`,
+     ON CONFLICT(league_id, season, week, home_id) DO UPDATE SET away_id=excluded.away_id, updated_at=excluded.updated_at`,
   );
 
   db.transaction(() => {
-    db.prepare("DELETE FROM fact_team_season").run();
-    db.prepare("DELETE FROM fact_matchup").run();
+    // SCOPED (S-4). These two were bare `DELETE FROM`, i.e. "rebuild league A by first destroying every
+    // other league's history" -- the same shape as the `DELETE FROM team_odds` incident recorded in
+    // docs/multi-league-refactor.md, still present in the file that doc was written about.
+    db.prepare("DELETE FROM fact_team_season WHERE league_id = ?").run(lg);
+    db.prepare("DELETE FROM fact_matchup WHERE league_id = ?").run(lg);
     for (const [season, list] of [...bySeason.entries()].sort((a, b) => a[0] - b[0])) {
       const settled = list.every((r) => r.final_rank != null) && list.some((r) => Number(r.final_rank) === 1);
       // THE PLAYOFF FIELD is a stated constant per era -- see playoffFieldFor for why it cannot be
@@ -323,7 +342,7 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
         const champ = settled && rank === 1 ? 1 : 0;
         if (champ) champion = String(r.owner ?? r.name ?? r.team_id);
         insT.run({
-          lg: r.league_id, season, team: String(r.team_id), name: r.name, oid: r.owner_id, owner: r.owner,
+          lg, season, team: String(r.team_id), name: r.name, oid: r.owner_id, owner: r.owner,
           w: r.wins, l: r.losses, pf: r.points_for, seed, rank, champ,
           playoffs: seed == null ? null : (seed <= field ? 1 : 0),
           settled: settled ? 1 : 0,
@@ -335,7 +354,7 @@ export function buildLeagueFacts(opts: { dbPath?: string } = {}): LeagueFactsRes
         res.teamSeasons++;
       }
       const g = games.filter((x) => x.season === season);
-      for (const x of g) { insM.run({ lg: x.league_id, season, week: x.week, home: x.home_id, away: x.away_id, now }); res.matchups++; }
+      for (const x of g) { insM.run({ lg, season, week: x.week, home: x.home_id, away: x.away_id, now }); res.matchups++; }
       res.perSeason.push({ season, teams: list.length, games: g.length, champion, settled, playoffField: field, fieldSource, seedsAgree: agrees });
     }
   })();

@@ -42,7 +42,7 @@
  * the claim bought and are targets; `competing_bids` is knowable only afterwards and is stored for
  * reporting, never as a feature. `scripts/faab-leakage.mjs` is the guard, and it fault-injects.
  */
-import { nowIso, activeLeagueId, type DB } from "../../db/db.js";
+import { nowIso, type DB } from "../../db/db.js";
 
 /** ESPN's Integer.MIN_VALUE null sentinel, which appears as a team id on unresolved claims. */
 export const NULL_TEAM = "-2147483648";
@@ -97,12 +97,12 @@ const median = (xs: number[]): number => {
 /** ESPN player id -> `player_sk`. `player_xref` covers real players; D/ST carry NEGATIVE ids that
  *  the cross-source id file has no row for, and the roster fact table is where their `DST:XX` key
  *  is already written. Both together resolve 100% of this league's waiver claims. */
-export function espnToSk(db: DB): Map<string, string> {
+export function espnToSk(db: DB, leagueId: string): Map<string, string> {
   const m = new Map<string, string>();
   for (const r of db.prepare(`SELECT source_id id, CAST(player_sk AS TEXT) sk FROM player_xref WHERE source='espn'`)
     .all() as { id: string; sk: string }[]) m.set(r.id, r.sk);
-  for (const r of db.prepare(`SELECT DISTINCT espn_player_id id, player_sk sk FROM fact_roster_week WHERE espn_player_id IS NOT NULL`)
-    .all() as { id: string; sk: string }[]) if (!m.has(r.id)) m.set(r.id, r.sk);
+  for (const r of db.prepare(`SELECT DISTINCT espn_player_id id, player_sk sk FROM fact_roster_week WHERE league_id = ? AND espn_player_id IS NOT NULL`)
+    .all(leagueId) as { id: string; sk: string }[]) if (!m.has(r.id)) m.set(r.id, r.sk);
   return m;
 }
 
@@ -115,20 +115,20 @@ export function espnToSk(db: DB): Map<string, string> {
  * maxed out, the observed spend is a lower bound and the fallback applies; the read-back prints the
  * value so a season with a different budget is a visible row rather than a silent rescaling.
  */
-export function budgetFor(db: DB, season: number, fallback = 100): number {
-  const r = db.prepare(`SELECT MAX(faab_spent) mx FROM fact_team_season WHERE season = ?`).get(season) as { mx: number | null };
+export function budgetFor(db: DB, leagueId: string, season: number, fallback = 100): number {
+  const r = db.prepare(`SELECT MAX(faab_spent) mx FROM fact_team_season WHERE league_id = ? AND season = ?`).get(leagueId, season) as { mx: number | null };
   const mx = r?.mx ?? 0;
   return mx >= fallback ? Math.round(mx) : fallback;
 }
 
-export function buildWaiverClaimsOn(db: DB, seasons?: number[]): BuildFaabResult {
-  const sk = espnToSk(db);
+export function buildWaiverClaimsOn(db: DB, leagueId: string, seasons?: number[]): BuildFaabResult {
+  const sk = espnToSk(db, leagueId);
   const all = db.prepare(
     `SELECT league_id, season, week, transaction_id, team_id, to_team_id, espn_player_id, bid_amount, status,
             executed_at, proposed_at_ms
        FROM raw_league_transaction
-      WHERE type='WAIVER' AND item_type='ADD' AND status IS NOT NULL
-      ORDER BY season, COALESCE(proposed_at_ms, 0), transaction_id`).all() as RawClaim[];
+      WHERE league_id = ? AND type='WAIVER' AND item_type='ADD' AND status IS NOT NULL
+      ORDER BY season, COALESCE(proposed_at_ms, 0), transaction_id`).all(leagueId) as RawClaim[];
 
   const wanted = seasons ? new Set(seasons) : null;
   const claims = all.filter((c) =>
@@ -142,9 +142,9 @@ export function buildWaiverClaimsOn(db: DB, seasons?: number[]): BuildFaabResult
   const teamsOf = new Map<number, number>();
   const budgetOf = new Map<number, number>();
   for (const s of seasonsPresent) {
-    const t = db.prepare(`SELECT COUNT(*) n FROM fact_team_season WHERE season = ?`).get(s) as { n: number };
+    const t = db.prepare(`SELECT COUNT(*) n FROM fact_team_season WHERE league_id = ? AND season = ?`).get(leagueId, s) as { n: number };
     teamsOf.set(s, t.n || 12);
-    budgetOf.set(s, budgetFor(db, s));
+    budgetOf.set(s, budgetFor(db, leagueId, s));
   }
 
   // Position ranks by the PRESEASON season line, per (season, week, pos). Preseason, so knowing it
@@ -189,8 +189,8 @@ export function buildWaiverClaimsOn(db: DB, seasons?: number[]): BuildFaabResult
     if (hit) return hit;
     const rows = db.prepare(
       `SELECT team_id, SUM(CASE WHEN pos = ? THEN 1 ELSE 0 END) n
-         FROM fact_roster_week WHERE season=? AND week=? GROUP BY team_id`)
-      .all(pos, season, w) as { team_id: string; n: number }[];
+         FROM fact_roster_week WHERE league_id=? AND season=? AND week=? GROUP BY team_id`)
+      .all(pos, leagueId, season, w) as { team_id: string; n: number }[];
     const med = median(rows.map((r) => r.n));
     const out = { need: rows.filter((r) => r.n < med).length, teams: rows.length };
     needCache.set(k, out);
@@ -271,15 +271,14 @@ export function buildWaiverClaimsOn(db: DB, seasons?: number[]): BuildFaabResult
     `INSERT INTO fact_waiver_claim (${cols.join(",")}) VALUES (${cols.map((c) => "@" + c).join(",")})
      ON CONFLICT(league_id, season, transaction_id, espn_player_id) DO UPDATE SET
        ${cols.filter((c) => !["league_id", "season", "transaction_id", "espn_player_id"].includes(c)).map((c) => `${c}=excluded.${c}`).join(", ")}`);
-  const lg = activeLeagueId(db) ?? "";
-  db.transaction(() => { for (const r of out) ins.run({ league_id: lg, ...r }); })();
+  db.transaction(() => { for (const r of out) ins.run({ league_id: leagueId, ...r }); })();
 
-  return { rows: out.length, ...coverage(db, seasonsPresent) };
+  return { rows: out.length, ...coverage(db, leagueId, seasonsPresent) };
 }
 
 /** Read the table back per season -- including the property that proves the failures are LOSING
  *  BIDS rather than some other refusal, which is the fact this whole track rests on. */
-export function coverage(db: DB, seasons: number[]): Omit<BuildFaabResult, "rows"> & { perSeason: ClaimSeasonCoverage[] } {
+export function coverage(db: DB, leagueId: string, seasons: number[]): Omit<BuildFaabResult, "rows"> & { perSeason: ClaimSeasonCoverage[] } {
   const perSeason: ClaimSeasonCoverage[] = [];
   for (const s of seasons) {
     const r = db.prepare(
@@ -289,11 +288,11 @@ export function coverage(db: DB, seasons: number[]): Omit<BuildFaabResult, "rows
               SUM(player_sk IS NOT NULL) resolved,
               SUM(season_line_pg IS NOT NULL OR td_ppg IS NOT NULL) feats,
               MAX(budget) budget
-         FROM fact_waiver_claim WHERE season = ?`).get(s) as Record<string, number | null>;
+         FROM fact_waiver_claim WHERE league_id = ? AND season = ?`).get(leagueId, s) as Record<string, number | null>;
     const contested = db.prepare(
       `SELECT COUNT(*) n FROM (SELECT season, week, espn_player_id FROM fact_waiver_claim
-         WHERE season=? AND won IS NOT NULL GROUP BY 1,2,3 HAVING SUM(won=0) > 0 AND SUM(won=1) > 0)`).get(s) as { n: number };
-    const teams = db.prepare(`SELECT MAX(teams_counted) n FROM fact_waiver_claim WHERE season=?`).get(s) as { n: number | null };
+         WHERE league_id=? AND season=? AND won IS NOT NULL GROUP BY 1,2,3 HAVING SUM(won=0) > 0 AND SUM(won=1) > 0)`).get(leagueId, s) as { n: number };
+    const teams = db.prepare(`SELECT MAX(teams_counted) n FROM fact_waiver_claim WHERE league_id=? AND season=?`).get(leagueId, s) as { n: number | null };
     const c = r.claims ?? 0;
     perSeason.push({
       season: s, claims: c, winners: r.winners ?? 0, losers: r.losers ?? 0, unscored: r.unscored ?? 0,
@@ -308,8 +307,8 @@ export function coverage(db: DB, seasons: number[]): Omit<BuildFaabResult, "rows
     `SELECT COUNT(*) n FROM (
        SELECT season, week, espn_player_id, MAX(CASE WHEN won=1 THEN bid_amount END) wb,
               MAX(CASE WHEN won=0 THEN bid_amount END) lb
-         FROM fact_waiver_claim WHERE won IS NOT NULL GROUP BY 1,2,3)
-      WHERE wb IS NOT NULL AND lb IS NOT NULL AND lb > wb`).get() as { n: number };
+         FROM fact_waiver_claim WHERE league_id = ? AND won IS NOT NULL GROUP BY 1,2,3)
+      WHERE wb IS NOT NULL AND lb IS NOT NULL AND lb > wb`).get(leagueId) as { n: number };
   const losingSeasons = perSeason.filter((p) => p.losers > 0).map((p) => p.season);
   return {
     perSeason,

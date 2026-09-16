@@ -21,12 +21,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import { openDb } from "../src/db/db.js";
 import { claimantOf, NULL_TEAM, UNPROCESSED } from "../src/features/sources/faab.js";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.js";
 
 const argv = process.argv.slice(2);
 const inject = argv.includes("--inject") ? argv[argv.indexOf("--inject") + 1] : null;
 const dbPath = (argv.includes("--db") ? argv[argv.indexOf("--db") + 1] : undefined) ?? "data/ff.db";
 const ARTIFACT = "data/faab-model.json";
 const db = openDb(dbPath);
+// ONE LEAGUE, NAMED (S-9): `fact_waiver_claim` and `fact_roster_week` hold every league now.
+const LEAGUE = requireLeagueId(
+  resolveLeagueContext(db, argv.includes("--league") ? argv[argv.indexOf("--league") + 1] : undefined),
+  "faab-leakage");
 
 // FAAB budget from the league's OWN settings, not hardcoded -- a leak guard that assumes the wrong
 // budget on a different league silently cannot fire. Same source as loadFaabBudget (copilotStore.ts).
@@ -35,7 +40,7 @@ const FAAB_BUDGET = (() => {
   try { const b = Number(JSON.parse(r?.scoring_json ?? "{}").faabBudget); return b > 0 ? b : 100; } catch { return 100; }
 })();
 
-const rows = db.prepare("SELECT * FROM fact_waiver_claim ORDER BY season, proposed_at_ms, transaction_id").all();
+const rows = db.prepare("SELECT * FROM fact_waiver_claim WHERE league_id = ? ORDER BY season, proposed_at_ms, transaction_id").all(LEAGUE);
 if (!rows.length) { console.log("fact_waiver_claim is empty -- run scripts/faab-coverage.mjs --build first."); process.exit(1); }
 
 const results = [];
@@ -108,8 +113,8 @@ const check = (id, what, ok, detail) => { results.push({ id, what, ok, detail })
   const needAt = (season, week, pos) => {
     const k = `${season}|${week}|${pos}`;
     if (cache.has(k)) return cache.get(k);
-    const r = db.prepare("SELECT team_id, SUM(CASE WHEN pos = ? THEN 1 ELSE 0 END) n FROM fact_roster_week WHERE season=? AND week=? GROUP BY team_id")
-      .all(pos, season, week);
+    const r = db.prepare("SELECT team_id, SUM(CASE WHEN pos = ? THEN 1 ELSE 0 END) n FROM fact_roster_week WHERE league_id=? AND season=? AND week=? GROUP BY team_id")
+      .all(pos, LEAGUE, season, week);
     const m = med(r.map((x) => x.n));
     const v = { need: r.filter((x) => x.n < m).length, teams: r.length };
     cache.set(k, v); return v;

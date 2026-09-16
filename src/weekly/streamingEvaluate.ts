@@ -46,7 +46,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb, type DB } from "../db/db.js";
+import { openDb, activeLeagueId, type DB } from "../db/db.js";
 import { makeProjections } from "../projections.js";
 import { loadWeeklyArtifact, projectWeekly, type WeeklyArtifact } from "./projector.js";
 import { loadWeeklyRows, type WeeklyRow } from "./features.js";
@@ -310,12 +310,16 @@ export function faPoolTable(db: DB): boolean {
  * silently treated as "nobody is a free agent", which would leave every pool empty and every metric
  * reading zero -- a null that looks exactly like a measurement.
  */
-export function realFaPool(db: DB, seasons: number[]): Map<string, true> | null {
+export function realFaPool(db: DB, seasons: number[], leagueId?: string | null): Map<string, true> | null {
   if (!faPoolTable(db)) return null;
+  // ONE LEAGUE'S POOL (S-9). "On nobody's roster" is a statement ABOUT A LEAGUE: a man free in a
+  // 12-team Yahoo league is rostered in a 16-team ESPN one. Unioning the two makes the pool neither.
+  // Omitted = the active league; the weekly evaluator has no context to thread yet (WP3/WP5).
+  const lg = leagueId ?? activeLeagueId(db as unknown as import("../db/db.js").DB);
   const rows = db.prepare(
     `SELECT season, week, player_sk FROM fact_fa_pool_week
-      WHERE season IN (${seasons.map(() => "?").join(",")})`,
-  ).all(...seasons) as { season: number; week: number; player_sk: string }[];
+      WHERE league_id = ? AND season IN (${seasons.map(() => "?").join(",")})`,
+  ).all(lg, ...seasons) as { season: number; week: number; player_sk: string }[];
   if (!rows.length) return null;
   const out = new Map<string, true>();
   for (const r of rows) out.set(`${r.season}|${r.week}|${r.player_sk}`, true);

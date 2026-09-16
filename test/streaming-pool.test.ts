@@ -21,6 +21,9 @@ import { streamingRegret, realFaPool, POOL_DEPTH } from "../src/weekly/streaming
  */
 
 /** Two men at QB. The rank pool admits only the low-ranked one; the real pool admits only the other. */
+/** The fixture's league. `fact_fa_pool_week` is per league; an unfiltered read unions two rooms. */
+const LG = "L";
+
 const rows = () => [
   {
     key: "A", pos: "QB", season: 2020, week: 1, actual: 30, line: 20, rank: 1, t4: 20,
@@ -60,18 +63,28 @@ test("realFaPool reads the table, and returns null rather than an empty pool whe
   // NO TABLE at all: null, so the caller falls back and says so. Returning an empty Map here would
   // mark every player "not a free agent", empty every pool, and report "no weeks" -- a null that
   // looks exactly like a small measurement.
-  assert.equal(realFaPool(db as never, [2020]), null, "a store with no table must report null");
+  assert.equal(realFaPool(db as never, [2020], LG), null, "a store with no table must report null");
 
-  db.exec("CREATE TABLE fact_fa_pool_week (season INTEGER, week INTEGER, player_sk TEXT, pos TEXT)");
-  assert.equal(realFaPool(db as never, [2020]), null, "an EMPTY table must also report null, not an empty pool");
+  db.exec("CREATE TABLE fact_fa_pool_week (league_id TEXT, season INTEGER, week INTEGER, player_sk TEXT, pos TEXT)");
+  assert.equal(realFaPool(db as never, [2020], LG), null, "an EMPTY table must also report null, not an empty pool");
 
-  db.exec("INSERT INTO fact_fa_pool_week VALUES (2020, 1, 'QB:X', 'QB'), (2020, 2, 'QB:Y', 'QB')");
-  const pool = realFaPool(db as never, [2020]);
+  db.exec("INSERT INTO fact_fa_pool_week VALUES ('L', 2020, 1, 'QB:X', 'QB'), ('L', 2020, 2, 'QB:Y', 'QB')");
+  // ANOTHER LEAGUE's rows for the same season-week (S-9). They must not reach league L's pool.
+  db.exec("INSERT INTO fact_fa_pool_week VALUES ('M', 2020, 1, 'QB:Z', 'QB')");
+  const pool = realFaPool(db as never, [2020], LG);
   assert.ok(pool, "a populated table must produce a pool -- the positive control");
   assert.equal(pool!.size, 2);
   assert.equal(pool!.has("2020|1|QB:X"), true);
   assert.equal(pool!.has("2020|1|QB:Y"), false, "the key must include the WEEK, not just the player");
+  assert.equal(pool!.has("2020|1|QB:Z"), false, "another league's free agent must not be in this league's pool");
   // A season the caller did not ask for is not in the set.
-  assert.equal(realFaPool(db as never, [2021]), null, "a season with no rows must not borrow another's");
+  assert.equal(realFaPool(db as never, [2021], LG), null, "a season with no rows must not borrow another's");
+  // ...and neither is another LEAGUE's: a store holding only league M's rows reports null for L.
+  const dir2 = mkdtempSync(join(tmpdir(), "ff-fa2-"));
+  const db2 = new Database(join(dir2, "t.db"));
+  db2.exec("CREATE TABLE fact_fa_pool_week (league_id TEXT, season INTEGER, week INTEGER, player_sk TEXT, pos TEXT)");
+  db2.exec("INSERT INTO fact_fa_pool_week VALUES ('M', 2020, 1, 'QB:Z', 'QB')");
+  assert.equal(realFaPool(db2 as never, [2020], LG), null, "a league with no rows must not borrow another league's");
+  db2.close();
   db.close();
 });

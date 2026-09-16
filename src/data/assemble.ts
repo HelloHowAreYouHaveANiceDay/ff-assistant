@@ -7,7 +7,8 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fetchCsv, pick, NFLVERSE } from "./nflverse.js";
 import { nameKey, computeValues, resolveValueLeague, type PointsRow } from "../draft/values.js";
 import { scoreWeek, type ScoringRules } from "../draft/scoring.js";
-import { openDb, getConfig, nowIso } from "../db/db.js";
+import { openDb, nowIso, setBoardStamp, getBoardStamp, setActiveLeagueId, ESPN_SCORING_KEY, type DB, type BoardStamp } from "../db/db.js";
+import { scoringKey } from "./formatKey.js";
 import { dataPath } from "./paths.js";
 import { boardSpreads } from "../draft/spread.js";
 import { loadEligibilityMap } from "./eligibility.js";
@@ -132,10 +133,84 @@ const COLS = ["rank", "player", "pos", "pos_rank", "ecr_pos", "espn_pos", "tier"
 const header = (lastYr: number) => ["Rank", "Player", "Pos", "Us_Pos", "ECR_Pos", "ESPN_Pos", "Tier", "Team", "Bye", "Age", "Exp", "Ht", "Wt", "40yd",
   "OurValue$", "vsECR", "ADP", "vsADP", "Mkt30d", "ProjPts", "P10", "P50", "P90", `${lastYr}Pts`, `${lastYr}Gms`, "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "ESPN_ADP", "Rostered%", "SleeperBuzz", "Depth", "Latest News", "NewsURL", "Eligible"];
 
-export async function assemble(dbPath?: string, pointsPath = dataPath("points.csv")): Promise<number> {
+/**
+ * SWITCH THE ACTIVE LEAGUE, AND DO NOT LEAVE THE OTHER LEAGUE'S BOARD BEHIND (S-8).
+ *
+ * `setActiveLeagueId` wrote two settings and stopped, so switching to the Yahoo league left 529 rows
+ * of ESPN half-PPR AUCTION dollars in `board`/`player_value` and every reader went on serving them
+ * under the new league's name. The refactor doc claimed the board was "rebuilt on switch"; no such
+ * code existed.
+ *
+ * So: clear the three tables, write a PENDING stamp, and attempt the rebuild. If the rebuild cannot
+ * run for that league (the format resolver for a non-ESPN league is WP3's), the board stays cleared
+ * and pending, the reason is returned and printed, and every reader refuses BY NAME -- which is the
+ * only acceptable failure mode. Never the other league's dollars.
+ */
+export async function switchActiveLeague(
+  db: DB, leagueId: string, opts: { dbPath?: string; pointsPath?: string; rebuild?: boolean } = {},
+): Promise<{ active: string; stamp: BoardStamp | null; rebuilt: boolean; cleared: boolean; reason?: string }> {
+  const prev = getBoardStamp(db);
+  setActiveLeagueId(db, leagueId);
+  if (prev && prev.leagueId === leagueId && !prev.pending) {
+    return { active: leagueId, stamp: prev, rebuilt: false, cleared: false };
+  }
+  db.transaction(() => {
+    // `player_value_position` is DELIBERATELY NOT CLEARED. schema.sql says it is "written by the
+    // assembler alongside player_value" and that is no longer true -- no code in `src/` writes it
+    // (only the stale `app/engine/ff.cjs` build artifact does) and no code reads it. Clearing a table
+    // with no producer is irreversible loss with no reader to protect; it stays until WP3 restores
+    // its producer, at which point it joins the two above. Measured 2026-09-16: clearing it here cost
+    // 523 rows that nothing could rebuild.
+    for (const t of ["board", "player_value"]) {
+      try { db.prepare(`DELETE FROM "${t}"`).run(); } catch { /* table absent on a bare store */ }
+    }
+    setBoardStamp(db, { leagueId, pending: true });
+  })();
+  if (opts.rebuild === false) {
+    return { active: leagueId, stamp: getBoardStamp(db), rebuilt: false, cleared: true, reason: "rebuild not requested" };
+  }
+  try {
+    await assemble(opts.dbPath, opts.pointsPath ?? dataPath("points.csv"), leagueId);
+    return { active: leagueId, stamp: getBoardStamp(db), rebuilt: true, cleared: true };
+  } catch (e) {
+    return {
+      active: leagueId, stamp: getBoardStamp(db), rebuilt: false, cleared: true,
+      reason: `the board could not be rebuilt for league ${leagueId}: ${(e as Error).message}`,
+    };
+  }
+}
+
+export async function assemble(dbPath?: string, pointsPath = dataPath("points.csv"), leagueId?: string | null): Promise<number> {
   const db = openDb(dbPath);
-  const cfg = getConfig(db);
+  // WHOSE BOARD THIS IS (S-8). `board`/`player_value`/`player_value_position` are single-slot by
+  // design -- regenerable, read everywhere -- but "single-slot" and "belongs to nobody" are not the
+  // same thing. The build stamps the league, season and scoring key it was produced under; every
+  // reader calls `assertBoardFor` and REFUSES a mismatch, so 529 rows of ESPN half-PPR auction
+  // dollars can never be served to a Yahoo superflex league under the same column headings.
+  const { resolveLeagueContext } = await import("./leagueContext.js");
+  const lctx = resolveLeagueContext(db, leagueId);
+  const cfg = lctx.config;
   const season = cfg.season;
+  // REFUSE TO BUILD A BOARD OUT OF ANOTHER FORMAT'S ARTIFACTS (S-8, measured 2026-09-16).
+  //
+  // Every input below comes from the ESPN data ROOT -- `points.csv` above all -- and there is no
+  // format resolver yet (F-2/F-3, WP3). So `assemble` on a non-incumbent league does not fail: it
+  // happily builds the ESPN projection pool, prices it with the new league's budget and slots, and
+  // stamps the result as that league's board. That is the exact "silently ESPN-shaped" outcome this
+  // pass exists to make impossible, and it HAPPENED on the live store: a league switch to the Yahoo
+  // league produced 529 rows of ESPN projections stamped `sc-a845f67652fb`.
+  //
+  // Until WP3 lands, a league whose scoring does not hash to the incumbent key gets a NAMED refusal
+  // and a cleared, pending board. `assertBoardFor` then refuses every reader by name.
+  const key = scoringKey(cfg.scoring_rules);
+  if (key !== ESPN_SCORING_KEY) {
+    throw new Error(
+      `assemble: league ${lctx.leagueId ?? "?"} scores as ${key}, but every artifact this builder reads ` +
+      `(points.csv, values.csv, the ESPN ranks) belongs to the incumbent format ${ESPN_SCORING_KEY}. ` +
+      "There is no per-format resolver yet (WP3, docs/architecture-review-2026-09-16.md F-2/F-3), so a " +
+      "board built here would be the ESPN projection pool wearing this league's dollar signs. Refusing.",
+    );
+  }
   const asof = Date.UTC(season, 8, 1); // Sep 1
 
   // 1. projections -> our values (existing TS computeValues)
@@ -350,6 +425,13 @@ export async function assemble(dbPath?: string, pointsPath = dataPath("points.cs
   const lines = [HEAD.join(",")];
   for (const r of rows) lines.push(COLS.map((c) => san(r[c])).join(","));
   writeFileSync(dataPath("player-report.csv"), lines.join("\n") + "\n", "utf8");
+  // THE STAMP, written LAST -- after the rows it describes. A stamp written first would survive a
+  // build that threw halfway and claim a board that is not there.
+  if (lctx.leagueId) {
+    setBoardStamp(db, {
+      leagueId: lctx.leagueId, season, scoringKey: scoringKey(cfg.scoring_rules), builtAt: nowIso(),
+    });
+  }
   db.close();
   return rows.length;
 }

@@ -21,6 +21,10 @@ import { scoreOdds, formatScorecard, type ScorecardResult } from "../src/weekly/
 
 const SEASON = 2091;
 const N = 16, FIELD = 7;
+// The fixture's own format and league. Both are now part of the key (I-5/S-9): a scorecard row belongs
+// to a FORMAT, and an `odds` subject is a team id, which belongs to a LEAGUE.
+const FMT = "sc-fixture", LG = "L";
+const scope = { formatKey: FMT, leagueId: LG };
 
 /** Sixteen teams: the first seven made the playoffs, the first won it. */
 function seedLeague(db: DB, o: { settled?: boolean; ranked?: boolean; champions?: number } = {}): void {
@@ -46,8 +50,8 @@ function seedLeague(db: DB, o: { settled?: boolean; ranked?: boolean; champions?
  *  uniform rate. Both are legal tables; only one of them knows anything. */
 function seedOdds(db: DB, kind: "sharp" | "flat" | "backwards"): void {
   const ins = db.prepare(
-    `INSERT INTO scorecard_prediction (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-     VALUES (@season,0,'odds',@model,@id,@id,NULL,@value,NULL,NULL,@asOf,@now)`,
+    `INSERT INTO scorecard_prediction (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+     VALUES (@fk,@season,0,'odds',@model,@id,@id,NULL,@value,NULL,NULL,@asOf,@now)`,
   );
   const now = nowIso();
   db.transaction(() => {
@@ -55,8 +59,8 @@ function seedOdds(db: DB, kind: "sharp" | "flat" | "backwards"): void {
       const made = i < FIELD;
       const playoff = kind === "flat" ? (100 * FIELD) / N : kind === "sharp" ? (made ? 85 : 12) : (made ? 12 : 85);
       const title = kind === "flat" ? 100 / N : kind === "sharp" ? (i === 0 ? 40 : 4) : (i === 0 ? 1 : 6.6);
-      ins.run({ season: SEASON, model: "playoff", id: `T${i}`, value: playoff, asOf: `${SEASON}-09-01`, now });
-      ins.run({ season: SEASON, model: "title", id: `T${i}`, value: title, asOf: `${SEASON}-09-01`, now });
+      ins.run({ fk: FMT, season: SEASON, model: "playoff", id: `T${i}`, value: playoff, asOf: `${SEASON}-09-01`, now });
+      ins.run({ fk: FMT, season: SEASON, model: "title", id: `T${i}`, value: title, asOf: `${SEASON}-09-01`, now });
     }
   })();
 }
@@ -68,7 +72,7 @@ function withDb<T>(fn: (db: DB) => T): T {
 }
 
 test("a settled season is scored, playoff and title separately, each against its own uniform floor", () => {
-  const r = withDb((db) => { seedLeague(db); seedOdds(db, "sharp"); return scoreOdds(db, SEASON); });
+  const r = withDb((db) => { seedLeague(db); seedOdds(db, "sharp"); return scoreOdds(db, SEASON, scope); });
   assert.equal(r.skipped, null);
   assert.deepEqual(r.models.map((m) => m.model), ["playoff", "title"]);
   const [p, t] = r.models;
@@ -81,9 +85,9 @@ test("a settled season is scored, playoff and title separately, each against its
 });
 
 test("POSITIVE CONTROL: a sharper table beats a flat one, and a backwards one is WORSE than knowing nothing", () => {
-  const sharp = withDb((db) => { seedLeague(db); seedOdds(db, "sharp"); return scoreOdds(db, SEASON); });
-  const flat = withDb((db) => { seedLeague(db); seedOdds(db, "flat"); return scoreOdds(db, SEASON); });
-  const back = withDb((db) => { seedLeague(db); seedOdds(db, "backwards"); return scoreOdds(db, SEASON); });
+  const sharp = withDb((db) => { seedLeague(db); seedOdds(db, "sharp"); return scoreOdds(db, SEASON, scope); });
+  const flat = withDb((db) => { seedLeague(db); seedOdds(db, "flat"); return scoreOdds(db, SEASON, scope); });
+  const back = withDb((db) => { seedLeague(db); seedOdds(db, "backwards"); return scoreOdds(db, SEASON, scope); });
   const brierOf = (r: typeof sharp, m: string) => r.models.find((x) => x.model === m)!.brier;
   assert.ok(brierOf(sharp, "playoff") < brierOf(flat, "playoff"), "the scorer cannot tell a sharp table from a flat one");
   assert.ok(brierOf(back, "playoff") > brierOf(flat, "playoff"), "a table that is exactly wrong scored no worse than the floor");
@@ -94,14 +98,14 @@ test("POSITIVE CONTROL: a sharper table beats a flat one, and a backwards one is
 });
 
 test("FAULT: an UNSETTLED season is refused, and the refusal says what is missing", () => {
-  const unsettled = withDb((db) => { seedLeague(db, { settled: false }); seedOdds(db, "sharp"); return scoreOdds(db, SEASON); });
+  const unsettled = withDb((db) => { seedLeague(db, { settled: false }); seedOdds(db, "sharp"); return scoreOdds(db, SEASON, scope); });
   assert.match(unsettled.skipped ?? "", /has not resolved/);
   assert.equal(unsettled.models.length, 0);
-  const unranked = withDb((db) => { seedLeague(db, { ranked: false }); seedOdds(db, "sharp"); return scoreOdds(db, SEASON); });
+  const unranked = withDb((db) => { seedLeague(db, { ranked: false }); seedOdds(db, "sharp"); return scoreOdds(db, SEASON, scope); });
   assert.match(unranked.skipped ?? "", /has not resolved/);
   // Two champions is a season that cannot have happened; scoring it would report a verdict on data
   // that is wrong rather than incomplete.
-  const twoChamps = withDb((db) => { seedLeague(db, { champions: 2 }); seedOdds(db, "sharp"); return scoreOdds(db, SEASON); });
+  const twoChamps = withDb((db) => { seedLeague(db, { champions: 2 }); seedOdds(db, "sharp"); return scoreOdds(db, SEASON, scope); });
   assert.match(twoChamps.skipped ?? "", /champion/);
 });
 
@@ -111,30 +115,30 @@ test("FAULT: frozen rows that join no team are refused rather than scored agains
     // The same rows under team ids nobody holds -- the shape of a key-space mismatch, which would
     // otherwise produce an empty scored set and a Brier of NaN reported as a number.
     const ins = db.prepare(
-      `INSERT INTO scorecard_prediction (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-       VALUES (@season,0,'odds',@model,@id,@id,NULL,@value,NULL,NULL,@asOf,@now)`,
+      `INSERT INTO scorecard_prediction (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+       VALUES (@fk,@season,0,'odds',@model,@id,@id,NULL,@value,NULL,NULL,@asOf,@now)`,
     );
     const now = nowIso();
     for (let i = 0; i < N; i++) {
-      ins.run({ season: SEASON, model: "playoff", id: `X${i}`, value: 50, asOf: "x", now });
-      ins.run({ season: SEASON, model: "title", id: `X${i}`, value: 6, asOf: "x", now });
+      ins.run({ fk: FMT, season: SEASON, model: "playoff", id: `X${i}`, value: 50, asOf: "x", now });
+      ins.run({ fk: FMT, season: SEASON, model: "title", id: `X${i}`, value: 6, asOf: "x", now });
     }
-    return scoreOdds(db, SEASON);
+    return scoreOdds(db, SEASON, scope);
   });
   assert.match(r.skipped ?? "", /join no team/);
 });
 
 test("FAULT: no frozen rows at all is a skip that says so, not a score of zero", () => {
-  const r = withDb((db) => { seedLeague(db); return scoreOdds(db, SEASON); });
+  const r = withDb((db) => { seedLeague(db); return scoreOdds(db, SEASON, scope); });
   assert.match(r.skipped ?? "", /nothing was ever snapshotted/);
-  const noTeams = withDb((db) => { seedOdds(db, "sharp"); return scoreOdds(db, SEASON); });
+  const noTeams = withDb((db) => { seedOdds(db, "sharp"); return scoreOdds(db, SEASON, scope); });
   assert.match(noTeams.skipped ?? "", /no rows for/);
 });
 
 test("the 2026 rows stay unscored until the season resolves, and the report says why", () => {
   // 2026 is live. The rows exist, the outcomes do not, and the command has to say that rather than
   // print a Brier against an in-progress table.
-  const r = withDb((db) => { seedOdds(db, "sharp"); return scoreOdds(db, SEASON); });
+  const r = withDb((db) => { seedOdds(db, "sharp"); return scoreOdds(db, SEASON, scope); });
   const rendered = formatScorecard({
     season: SEASON, today: "2026-09-09", imminentWeek: 1,
     snapshot: { week: null, taken: 0, skipped: "x", byModel: {} },
@@ -147,7 +151,7 @@ test("the 2026 rows stay unscored until the season resolves, and the report says
 });
 
 test("the report renders the scored block with both models and their floors", () => {
-  const r = withDb((db) => { seedLeague(db); seedOdds(db, "sharp"); return scoreOdds(db, SEASON); });
+  const r = withDb((db) => { seedLeague(db); seedOdds(db, "sharp"); return scoreOdds(db, SEASON, scope); });
   const rendered = formatScorecard({
     season: SEASON, today: "2092-01-10", imminentWeek: null,
     snapshot: { week: null, taken: 0, skipped: "x", byModel: {} },

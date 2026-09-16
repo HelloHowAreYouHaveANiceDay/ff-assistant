@@ -1,11 +1,15 @@
 // The app's data payload (board + news + config), read from the store. Shared by `ff app-data`
 // (one-shot) and `ff serve` (the persistent helper), so there's one definition.
-import { getConfig, type DB } from "../db/db.js";
+import { getConfig, activeLeagueId, assertBoardFor, type DB } from "../db/db.js";
 import { LEVER_SPECS } from "../draft/levers.js";
 
 const NUM = new Set(["Rank", "Bye", "Age", "Wt", "40yd", "OurValue$", "vsECR", "ProjPts", "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "ESPN_ADP", "Rostered%", "Depth"]);
 
-export function appDataPayload(db: DB, season: number) {
+export function appDataPayload(db: DB, season: number, leagueId?: string | null) {
+  // S-8: REFUSE a board built for another league rather than relabelling its dollars. `board` is
+  // single-slot and carries a stamp; a mismatch throws by name and names the fix.
+  const lg = leagueId ?? activeLeagueId(db);
+  assertBoardFor(db, lg, "app-data");
   const players = (db.prepare(
     "SELECT row_json FROM board WHERE season = ? ORDER BY CAST(json_extract(row_json,'$.Rank') AS INTEGER)",
   ).all(season) as { row_json: string }[]).map((r) => JSON.parse(r.row_json) as Record<string, unknown>);
@@ -23,7 +27,7 @@ export function appDataPayload(db: DB, season: number) {
   const lastYr = players.length
     ? (Object.keys(players[0]).find((k) => k.endsWith("Gms") && /^\d{4}/.test(k))?.slice(0, 4) ?? "LastYr")
     : "LastYr";
-  const config = { ...getConfig(db), season };
+  const config = { ...getConfig(db, lg), season };
   // Ship the lever REGISTRY to the renderer so the Settings UI is generated from it. The renderer
   // used to carry its own `LEVERS_UI` table, which had drifted to 8 of the 13 levers -- benchDiscount
   // (the largest measured win, 24.4% -> 28.0%) and all four positional multipliers were invisible
@@ -45,7 +49,8 @@ export function appDataPayload(db: DB, season: number) {
  *  data/values.csv is a checked-in SEED (it makes a fresh clone work before any refresh), not a
  *  second source of truth -- callers fall back to it only when the table is empty, and say so.
  *  scripts/value-gates.mjs asserts the two agree after a build. */
-export function valueBook(db: DB, season: number): { name: string; pos: string; value: number }[] {
+export function valueBook(db: DB, season: number, leagueId?: string | null): { name: string; pos: string; value: number }[] {
+  assertBoardFor(db, leagueId ?? activeLeagueId(db), "valueBook");
   return (db.prepare(
     "SELECT p.name AS name, p.position AS pos, pv.our_value AS value FROM player_value pv " +
     "JOIN player p USING(player_id) WHERE pv.season = ? ORDER BY pv.our_value DESC",

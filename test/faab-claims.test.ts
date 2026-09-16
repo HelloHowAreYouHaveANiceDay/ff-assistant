@@ -88,7 +88,7 @@ test("a waiver run prices every bid in it against the SAME pre-run budget", () =
       { tx: "b1", ms: 2000, week: 3, team: "1", to: "1", pid: "102", bid: 5, status: "EXECUTED" },
       { tx: "b2", ms: 2000, week: 3, team: "2", to: "2", pid: "102", bid: 4, status: "FAILED_INVALIDPLAYERSOURCE" },
     ]);
-    const r = buildWaiverClaimsOn(db, [SEASON]);
+    const r = buildWaiverClaimsOn(db, "L", [SEASON]);
     assert.equal(r.rows, 4);
     const rows = db.prepare("SELECT * FROM fact_waiver_claim ORDER BY proposed_at_ms, transaction_id")
       .all() as Record<string, number | string | null>[];
@@ -108,7 +108,7 @@ test("a 2018-shaped payload -- teamId is the null sentinel -- still yields its w
       { tx: "s1", ms: 1000, week: 2, team: null, to: "3", pid: "101", bid: 18, status: "EXECUTED" },
       { tx: "s2", ms: 1000, week: 2, team: null, to: "4", pid: "102", bid: 6, status: "EXECUTED" },
     ]);
-    const r = buildWaiverClaimsOn(db, [SEASON]);
+    const r = buildWaiverClaimsOn(db, "L", [SEASON]);
     assert.equal(r.rows, 2);
     assert.deepEqual(r.perSeason[0].winners, 2);
     assert.deepEqual(
@@ -126,7 +126,7 @@ test("PENDING and CANCELED claims are excluded -- a bid with no outcome is not a
       // A rule failure is a real bid that did NOT lose an auction: kept, but with no win/loss.
       { tx: "f1", ms: 1000, week: 2, team: "4", to: "4", pid: "102", bid: 9, status: "FAILED_ROSTERLIMIT" },
     ]);
-    const r = buildWaiverClaimsOn(db, [SEASON]);
+    const r = buildWaiverClaimsOn(db, "L", [SEASON]);
     assert.equal(r.rows, 2);
     assert.equal(r.perSeason[0].winners, 1);
     assert.equal(r.perSeason[0].losers, 0);
@@ -139,7 +139,7 @@ test("PENDING and CANCELED claims are excluded -- a bid with no outcome is not a
 test("point-in-time columns read the week BEFORE, and the target reads from the week itself", () => {
   withDb((db) => {
     fixture(db, [{ tx: "x1", ms: 1000, week: 4, team: "1", to: "1", pid: "101", bid: 12, status: "EXECUTED" }]);
-    buildWaiverClaimsOn(db, [SEASON]);
+    buildWaiverClaimsOn(db, "L", [SEASON]);
     const row = db.prepare("SELECT * FROM fact_waiver_claim").get() as Record<string, number>;
     assert.equal(row.prior_pts, 6);                    // week 3 points = 3*2
     assert.equal(row.td_ppg, 4);                       // the week-4 row's to-date column
@@ -152,8 +152,8 @@ test("point-in-time columns read the week BEFORE, and the target reads from the 
 test("the budget is read from the league's own spend, not typed into the source", () => {
   withDb((db) => {
     fixture(db, []);
-    assert.equal(budgetFor(db, SEASON), 100);          // nobody maxed out -> the documented fallback
+    assert.equal(budgetFor(db, "L", SEASON), 100);          // nobody maxed out -> the documented fallback
     db.prepare("UPDATE fact_team_season SET faab_spent = 250 WHERE team_id='1'").run();
-    assert.equal(budgetFor(db, SEASON), 250);          // a drained team puts the budget exactly here
+    assert.equal(budgetFor(db, "L", SEASON), 250);          // a drained team puts the budget exactly here
   });
 });

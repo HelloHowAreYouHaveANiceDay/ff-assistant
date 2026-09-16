@@ -43,7 +43,7 @@ function fixture(opts: { season?: number; n?: number; weeks?: number; roster?: b
     season_line_pg REAL, pts REAL, is_bye INTEGER, PRIMARY KEY (season, week, feat_key))`);
   if (opts.roster) {
     db.exec(`CREATE TABLE fact_roster_week (
-      season INTEGER, week INTEGER, team_id TEXT, player_sk TEXT, pos TEXT)`);
+      league_id TEXT, season INTEGER, week INTEGER, team_id TEXT, player_sk TEXT, pos TEXT)`);
   }
   const ins = db.prepare(
     "INSERT INTO feat_player_week_model VALUES (@k, @sk, @season, @week, @pos, @line, @pts, 0)");
@@ -172,14 +172,19 @@ test("populationKeys returns NULL on an unbuilt store, so the harness refuses in
 
 test("the rule is the DECISION: a rostered man is in however deep he sits, and an unrostered deep man is out", () => {
   const { db, season, weeks } = fixture({ roster: true });
+  const LG = "L";
   // One man at rank 110 of 120 at WR -- far past POPULATION_DEPTH.WR -- ROSTERED every week.
-  const ins = db.prepare("INSERT INTO fact_roster_week VALUES (?, ?, 'T1', ?, 'WR')");
-  for (let w = 1; w <= weeks; w++) ins.run(season, w, "WR-110");
-  assert.equal(populationSource(db as never, season), "roster_feed",
+  const ins = db.prepare("INSERT INTO fact_roster_week VALUES (?, ?, ?, 'T1', ?, 'WR')");
+  for (let w = 1; w <= weeks; w++) ins.run(LG, season, w, "WR-110");
+  // ANOTHER LEAGUE rosters a DIFFERENT deep man in the same weeks (S-9). He must not be pulled into
+  // league L's population: an unfiltered read unions the two rooms' rosters.
+  for (let w = 1; w <= weeks; w++) ins.run("M", season, w, "WR-111");
+  assert.equal(populationSource(db as never, season, LG), "roster_feed",
     "the fixture has a roster feed and the source must say so");
-  assert.ok(hasRosterFeed(db as never, season));
+  assert.ok(hasRosterFeed(db as never, season, LG));
+  assert.ok(!hasRosterFeed(db as never, season, "ZZ"), "a league with no roster rows has no feed");
 
-  buildPopulation(db as never, [season]);
+  buildPopulation(db as never, [season], LG);
   const keys = populationKeys(db as never, season)!;
 
   assert.ok(keys.has(`WR:110|1`),

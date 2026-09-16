@@ -30,6 +30,7 @@ import { loadPriceModel, priceFor } from "../src/model/price.ts";
 import { loadArtifact } from "../src/model/projector.ts";
 import { boardProjection } from "../src/model/features.ts";
 import { rankBook } from "../src/draft/sim.ts";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 import { computeValues, resolveValueLeague } from "../src/draft/values.ts";
 
 const argv = process.argv.slice(2);
@@ -44,7 +45,14 @@ const SEASON_RANGE = val("--seasons", null);
 const HOLDOUT = val("--holdout", null) === null ? null : Number(val("--holdout", null));
 
 const db = new Database("data/ff.db", { readonly: true });
-let seasons = db.prepare("SELECT DISTINCT season FROM fact_draft_pick ORDER BY season").all().map((r) => r.season);
+// ONE LEAGUE, NAMED (S-9). Every `fact_*` / `raw_league_*` table below holds more than one league's
+// rows now, and their team ids collide across platforms -- so a season-only filter silently unions
+// two rooms. `--league <id>`; absent = the ACTIVE league.
+const LEAGUE = requireLeagueId(
+  resolveLeagueContext(db, argv.includes("--league") ? argv[argv.indexOf("--league") + 1] : undefined),
+  "price-loso");
+
+let seasons = db.prepare("SELECT DISTINCT season FROM fact_draft_pick WHERE league_id = ? ORDER BY season").all(LEAGUE).map((r) => r.season);
 if (!seasons.length) { console.log("fact_draft_pick is empty"); process.exit(1); }
 if (SEASON_RANGE) {
   const [lo, hi] = SEASON_RANGE.split("-").map(Number);
@@ -63,7 +71,7 @@ seasons.sort((a, b) => a - b);
 // ---- the picks, with the market state as it stood ------------------------------------------------
 const bySeason = new Map();
 for (const s of seasons) {
-  const picks = db.prepare("SELECT * FROM fact_draft_pick WHERE season = ? ORDER BY pick_order").all(s);
+  const picks = db.prepare("SELECT * FROM fact_draft_pick WHERE league_id = ? AND season = ? ORDER BY pick_order").all(LEAGUE, s);
   const teams = new Set(picks.map((p) => p.team_name)).size;
   const leagueMoney = teams * BUDGET;
   const n = picks.length;

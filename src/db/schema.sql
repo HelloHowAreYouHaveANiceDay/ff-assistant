@@ -297,6 +297,7 @@ CREATE TABLE IF NOT EXISTS my_roster (
 CREATE TABLE IF NOT EXISTS action_log (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   ts           TEXT,
+  league_id    TEXT,                 -- WHICH LEAGUE the action was taken in (S-13); NULL only pre-2026-09-16
   run_id       TEXT,
   run_type     TEXT,
   action       TEXT,
@@ -622,9 +623,13 @@ CREATE INDEX IF NOT EXISTS idx_featwk_sk ON feat_player_week (player_sk, season,
 -- stood at the time. It is the training set a price model needs and the store had nowhere to put:
 -- `draft_pick` is draft-RUNTIME state (keyed by a live draft_id, empty between drafts), which is a
 -- different thing from the historical record.
+--
+-- `league_id` LEADS THE PRIMARY KEY (S-5, 2026-09-16). It was a plain column for months: two leagues'
+-- 2024 picks were the same rows, and the upsert in features/picks.ts would have overwritten one
+-- league's auction history with the other's. src/db/db.ts migrates an existing store in place.
 CREATE TABLE IF NOT EXISTS fact_draft_pick (
+  league_id       TEXT NOT NULL,
   season          INTEGER,
-  league_id       TEXT,
   team_id         TEXT,
   owner           TEXT,
   team_name       TEXT,
@@ -639,7 +644,7 @@ CREATE TABLE IF NOT EXISTS fact_draft_pick (
   consensus_pos_rank_asof REAL,
   consensus_sd_asof REAL,
   updated_at      TEXT,
-  PRIMARY KEY (season, team_name, pick_order)
+  PRIMARY KEY (league_id, season, team_name, pick_order)
 );
 CREATE INDEX IF NOT EXISTS idx_fdp_season ON fact_draft_pick (season);
 CREATE INDEX IF NOT EXISTS idx_fdp_sk ON fact_draft_pick (player_sk);
@@ -654,7 +659,7 @@ CREATE INDEX IF NOT EXISTS idx_fdp_sk ON fact_draft_pick (player_sk);
 -- row rather than leaving every consumer to re-derive it from a season number and today's date --
 -- which is exactly the kind of re-derivation that ends up meaning three different things.
 CREATE TABLE IF NOT EXISTS fact_team_season (
-  league_id     TEXT,
+  league_id     TEXT NOT NULL,
   season        INTEGER,
   team_id       TEXT,
   team_name     TEXT,
@@ -674,7 +679,7 @@ CREATE TABLE IF NOT EXISTS fact_team_season (
   trades        INTEGER,
   lineup_moves  INTEGER,
   updated_at    TEXT,
-  PRIMARY KEY (season, team_id)
+  PRIMARY KEY (league_id, season, team_id)
 );
 CREATE INDEX IF NOT EXISTS idx_fts_season ON fact_team_season (season);
 
@@ -682,13 +687,13 @@ CREATE INDEX IF NOT EXISTS idx_fts_season ON fact_team_season (season);
 -- on: who played whom, in which week. Straight from `raw_league_matchup`, one row per game (the raw
 -- table is already keyed by the home side, so there is no doubling to undo).
 CREATE TABLE IF NOT EXISTS fact_matchup (
-  league_id  TEXT,
+  league_id  TEXT NOT NULL,
   season     INTEGER,
   week       INTEGER,
   home_id    TEXT,
   away_id    TEXT,
   updated_at TEXT,
-  PRIMARY KEY (season, week, home_id)
+  PRIMARY KEY (league_id, season, week, home_id)
 );
 CREATE INDEX IF NOT EXISTS idx_fm_season ON fact_matchup (season);
 
@@ -1243,7 +1248,12 @@ CREATE TABLE IF NOT EXISTS raw_espn_projection (
 -- scorecard_prediction is the forward record: what we said, BEFORE it could be contaminated. A row
 -- is written once and never updated -- a prediction you can edit after the fact is not a prediction,
 -- so the insert is OR IGNORE and re-running the snapshot is a no-op rather than a rewrite.
+-- `format_key` LEADS THE KEY (I-5, 2026-09-16). These tables measure a MODEL's accuracy, which is per
+-- FORMAT, not per league -- two leagues on identical rules share a row and should. Across DIFFERENT
+-- rules they are different quantities, and with `INSERT OR IGNORE` the second format's row was silently
+-- dropped while an `odds` subject (a team id) collided outright. It is `scoringKey(scoring_rules)`.
 CREATE TABLE IF NOT EXISTS scorecard_prediction (
+  format_key      TEXT NOT NULL,
   season          INTEGER,
   week            INTEGER,           -- 0 for season-long kinds
   kind            TEXT,              -- 'weekly' | 'weekly_challenger' | 'season' | 'odds'
@@ -1261,12 +1271,13 @@ CREATE TABLE IF NOT EXISTS scorecard_prediction (
   p90             REAL,
   as_of           TEXT,
   created_at      TEXT,
-  PRIMARY KEY (season, week, kind, model, subject)
+  PRIMARY KEY (format_key, season, week, kind, model, subject)
 );
 
 -- scorecard_result is the scored side, rebuilt from actuals whenever a week completes. Rebuildable
 -- BY DESIGN (predictions are not): scoring is a pure function of a frozen prediction and an actual.
 CREATE TABLE IF NOT EXISTS scorecard_result (
+  format_key      TEXT NOT NULL,
   season          INTEGER,
   week            INTEGER,
   kind            TEXT,
@@ -1275,7 +1286,7 @@ CREATE TABLE IF NOT EXISTS scorecard_result (
   value           REAL,
   n               INTEGER,
   scored_at       TEXT,
-  PRIMARY KEY (season, week, kind, model, metric)
+  PRIMARY KEY (format_key, season, week, kind, model, metric)
 );
 
 -- raw_espn_eligibility: ESPN's OWN answer to "which lineup slots may this player be started in",
@@ -1310,7 +1321,17 @@ CREATE TABLE IF NOT EXISTS player_eligibility (
 -- A SIDECAR rather than a column on player_value because schema.sql only reaches a FRESH store
 -- (every statement is CREATE ... IF NOT EXISTS), so a new column would also need an ALTER in
 -- src/db/db.ts; a new table needs neither and lands on an existing store unchanged. One row per
--- valued player per season, written by the assembler alongside player_value.
+-- valued player per season.
+--
+-- KNOWN GAP, FOUND 2026-09-16 (WP2), DELIBERATELY NOT CLOSED HERE. There is no `CREATE` under this
+-- comment and there has not been one for some time: the table exists on the LIVE store (523 rows,
+-- DDL `player_id, season, board_pos, value_pos, eligible_json, updated_at`, PK `(player_id, season)`)
+-- and on no fresh clone. "Written by the assembler" is no longer true either -- nothing in `src/`
+-- writes it and nothing reads it; only the stale `app/engine/ff.cjs` build artifact still does.
+-- Adding the CREATE back without its producer would put a table in the lineage graph that no producer
+-- declares, so the fix is to restore the WRITE (a values-layer change, WP3) and the CREATE together.
+-- Until then `switchActiveLeague` deliberately does NOT clear it: clearing a table nothing can
+-- rebuild is irreversible loss, and it cost 523 live rows once before this note existed.
 -- ================= RAW LAYER: this league's week-by-week rosters and transaction log =============
 --
 -- Added by the in-season backtest track. The store already held this league's auction, finish and
@@ -1362,29 +1383,48 @@ CREATE TABLE IF NOT EXISTS raw_league_transaction_status (
 -- Identity RESOLVED (raw_league_roster_week.espn_player_id -> player_xref -> player_sk), which is
 -- what makes these joinable to feat_player_week_model and to the weekly projector's output.
 CREATE TABLE IF NOT EXISTS fact_roster_week (
+  league_id TEXT NOT NULL,
   season INTEGER NOT NULL, week INTEGER NOT NULL, team_id TEXT NOT NULL, player_sk TEXT NOT NULL,
   espn_player_id TEXT, name TEXT, pos TEXT, slot TEXT, lineup_slot_id INTEGER, is_starter INTEGER,
   actual_pts REAL, as_of TEXT, built_at TEXT,
-  PRIMARY KEY (season, week, team_id, player_sk));
+  PRIMARY KEY (league_id, season, week, team_id, player_sk));
 CREATE INDEX IF NOT EXISTS idx_frw_sk ON fact_roster_week (player_sk, season, week);
 
 -- Every skill/K/DST player with a weekly feature row in that season who was NOT on any roster in
 -- week w. "On nobody's roster" is the definition of a free agent this league actually uses; waiver
 -- status is not distinguishable from the roster feed and is therefore not claimed.
 CREATE TABLE IF NOT EXISTS fact_fa_pool_week (
+  league_id TEXT NOT NULL,
   season INTEGER NOT NULL, week INTEGER NOT NULL, player_sk TEXT NOT NULL,
   pos TEXT, name TEXT, actual_pts REAL, ros_pts REAL, ros_games INTEGER, built_at TEXT,
-  PRIMARY KEY (season, week, player_sk));
+  PRIMARY KEY (league_id, season, week, player_sk));
 CREATE INDEX IF NOT EXISTS idx_ffpw_pos ON fact_fa_pool_week (season, week, pos);
 
 -- What each team STARTED, what the best legal lineup from that same roster would have scored, and
 -- the difference. `optimal_pts` is HINDSIGHT: it uses the week's realised points, so it is a ceiling
 -- nobody could have hit, not a target. It is the denominator the tool has to be measured against.
 CREATE TABLE IF NOT EXISTS fact_lineup_week (
+  league_id TEXT NOT NULL,
   season INTEGER NOT NULL, week INTEGER NOT NULL, team_id TEXT NOT NULL,
   started_pts REAL, optimal_pts REAL, bench_left REAL,
   starters INTEGER, roster_n INTEGER, slots_json TEXT, optimal_json TEXT, built_at TEXT,
-  PRIMARY KEY (season, week, team_id));
+  PRIMARY KEY (league_id, season, week, team_id));
+
+-- STAGE B of continuous in-season updates: the MATERIALISED decision state, one current row per verb
+-- PER LEAGUE. Its CREATE used to live in src/inseason/decisionSnapshot.ts and omitted `league_id`
+-- entirely while the INSERT beside it wrote one (S-13) -- two spellings of one table, and the one that
+-- would run on a fresh store was the broken one.
+CREATE TABLE IF NOT EXISTS decision_snapshot (
+  league_id    TEXT NOT NULL,
+  verb         TEXT NOT NULL,
+  season       INTEGER,
+  week         INTEGER,
+  schedule     TEXT,            -- real | generated: a generated schedule is not this league's seeding
+  actuals_hash TEXT,            -- the current-actuals content hash this snapshot was computed against
+  summary      TEXT,            -- the one-line recommendation, caveat included
+  result_json  TEXT,            -- the full structured result
+  updated_at   TEXT,
+  PRIMARY KEY (league_id, verb));
 -- feat_player_week_stream: WHAT THE OPPONENT ALLOWS, AS OF THE WEEK. The streaming half of the
 -- weekly feature view; src/weekly/streamingFeatures.ts owns it and states each column's as-of rule.
 --
@@ -1538,6 +1578,7 @@ CREATE INDEX IF NOT EXISTS idx_fih_season ON feat_injury_horizon (season, week);
 -- be predicted, never to predict. `competing_bids` is knowable only after the run and is stored for
 -- reporting, NOT as a model feature.
 CREATE TABLE IF NOT EXISTS fact_waiver_claim (
+  league_id       TEXT NOT NULL,
   season          INTEGER NOT NULL,
   week            INTEGER NOT NULL,
   transaction_id  TEXT NOT NULL,
@@ -1570,7 +1611,7 @@ CREATE TABLE IF NOT EXISTS fact_waiver_claim (
   ros_pts         REAL,             -- his points from week w to the end of the season
   ros_games       INTEGER,
   built_at        TEXT,
-  PRIMARY KEY (season, transaction_id, espn_player_id)
+  PRIMARY KEY (league_id, season, transaction_id, espn_player_id)
 );
 CREATE INDEX IF NOT EXISTS idx_fwc_player ON fact_waiver_claim (season, week, player_sk);
 

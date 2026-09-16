@@ -11,20 +11,25 @@
  */
 import { openDb } from "../src/db/db.js";
 import { buildWaiverClaimsOn, coverage } from "../src/features/sources/faab.js";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.js";
 
 const argv = process.argv.slice(2);
 const dbPath = (argv.includes("--db") ? argv[argv.indexOf("--db") + 1] : undefined) ?? "data/ff.db";
 const db = openDb(dbPath);
+// ONE LEAGUE, NAMED. `--league <id>`; absent = the active league. Every count below is that league's.
+const lg = requireLeagueId(
+  resolveLeagueContext(db, argv.includes("--league") ? argv[argv.indexOf("--league") + 1] : undefined),
+  "faab-coverage");
 
 let res;
 if (argv.includes("--build")) {
   const t0 = Date.now();
-  res = buildWaiverClaimsOn(db);
-  console.log(`built fact_waiver_claim: ${res.rows} rows in ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
+  res = buildWaiverClaimsOn(db, lg);
+  console.log(`built fact_waiver_claim for league ${lg}: ${res.rows} rows in ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
 } else {
-  const seasons = db.prepare("SELECT DISTINCT season FROM fact_waiver_claim ORDER BY season").all().map((r) => r.season);
-  res = { rows: db.prepare("SELECT COUNT(*) n FROM fact_waiver_claim").get().n, ...coverage(db, seasons) };
-  console.log(`fact_waiver_claim: ${res.rows} rows\n`);
+  const seasons = db.prepare("SELECT DISTINCT season FROM fact_waiver_claim WHERE league_id = ? ORDER BY season").all(lg).map((r) => r.season);
+  res = { rows: db.prepare("SELECT COUNT(*) n FROM fact_waiver_claim WHERE league_id = ?").get(lg).n, ...coverage(db, lg, seasons) };
+  console.log(`fact_waiver_claim: ${res.rows} rows for league ${lg}\n`);
 }
 
 console.log("  season  claims  won  lost  unscored  bid>0%  contested  id%   feat%  teams  budget");
@@ -47,7 +52,7 @@ const bids = db.prepare(
   `SELECT pos, COUNT(*) n, ROUND(AVG(bid_amount),1) mean, MAX(bid_amount) mx,
           ROUND(AVG(CASE WHEN won=1 THEN bid_amount END),1) wmean,
           ROUND(AVG(CASE WHEN won=0 THEN bid_amount END),1) lmean
-     FROM fact_waiver_claim GROUP BY pos ORDER BY n DESC`).all();
+     FROM fact_waiver_claim WHERE league_id = ? GROUP BY pos ORDER BY n DESC`).all(lg);
 console.log("\n  the price of a claim, by position (all seasons):");
 console.log("  pos     n   mean   max   mean(won)  mean(lost)");
 for (const b of bids) {

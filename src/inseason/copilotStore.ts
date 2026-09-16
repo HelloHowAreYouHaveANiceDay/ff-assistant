@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
-import { getConfig, type AppConfig } from "../db/db.js";
+import { getConfig, activeLeagueId, assertBoardFor, type AppConfig } from "../db/db.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { nameKey } from "../draft/values.js";
 import type { VarianceModel } from "../draft/season.js";
@@ -37,6 +37,13 @@ const open = (dbPath?: string) => new Database(dbPath ?? dataPath("ff.db"), { re
  *  no matter which one the caller asked for. `leagueId` omitted = the ACTIVE league. */
 function configOf(db: import("better-sqlite3").Database, leagueId?: string | null): AppConfig {
   return getConfig(db as unknown as import("../db/db.js").DB, leagueId);
+}
+
+/** S-8: the single-slot board is stamped with the league it was built for; serving it to another
+ *  league would relabel one league's dollars as another's. Refuse by name instead. */
+function boardGuard(db: import("better-sqlite3").Database, leagueId: string | null | undefined, what: string): void {
+  const d = db as unknown as import("../db/db.js").DB;
+  assertBoardFor(d, leagueId ?? activeLeagueId(d), what);
 }
 
 /**
@@ -96,6 +103,7 @@ export function loadDepth(positions: string[], dbPath?: string, leagueId?: strin
   const db = open(dbPath);
   try {
     const season = configOf(db, leagueId).season;
+    boardGuard(db, leagueId, "loadDepth");
     const rows = db.prepare(
       "SELECT b.row_json, s.depth_order AS depth FROM board b LEFT JOIN player_status s USING(player_id) WHERE b.season = ?",
     ).all(season) as { row_json: string; depth: number | null }[];
@@ -128,6 +136,7 @@ export function loadConsensusValues(dbPath?: string, leagueId?: string | null): 
   const db = open(dbPath);
   try {
     const season = configOf(db, leagueId).season;
+    boardGuard(db, leagueId, "loadConsensusValues");
     const byId = new Map<string, number>();
     for (const r of db.prepare("SELECT player_id, value FROM market_value").all() as { player_id: string; value: number | null }[]) {
       if (r.value != null) byId.set(r.player_id, Number(r.value));
@@ -178,6 +187,7 @@ export function loadProvenance(dbPath?: string, leagueId?: string | null): Prove
   let season = 0, boardRows = 0;
   try {
     season = configOf(db, leagueId).season;
+    boardGuard(db, leagueId, "loadProvenance");
     boardRows = (db.prepare("SELECT count(*) n FROM board WHERE season=?").get(season) as { n: number }).n;
   } finally { db.close(); }
   let varianceSeasons: number | null = null;

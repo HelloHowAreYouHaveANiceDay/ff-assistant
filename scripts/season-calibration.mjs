@@ -51,6 +51,7 @@ import { nameKey, dstAliasKey } from "../src/draft/values.ts";
 import { playoffFieldFor } from "../src/features/picks.ts";
 import { rosPerGame, loadRosBlend } from "../src/draft/rosBlend.ts";
 import { loadConsensusPct, blendConsensus } from "../src/draft/consensusBlend.ts";
+import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 
 // PER-POSITION CONSENSUS BLEND (explore/perpos-blend), env-gated so the default gate is untouched.
 // BLEND_QB / BLEND_RB / BLEND_WR / BLEND_TE in [0,1] re-rank that position's projector means toward
@@ -106,6 +107,12 @@ if (PER_SEASON_FORMAT && FIELD_OVERRIDE != null) {
 }
 
 const db = new Database("data/ff.db", { readonly: true });
+// ONE LEAGUE, NAMED (S-9). Every `fact_*` / `raw_league_*` table below holds more than one league's
+// rows now, and their team ids collide across platforms -- so a season-only filter silently unions
+// two rooms. `--league <id>`; absent = the ACTIVE league.
+const LEAGUE = requireLeagueId(
+  resolveLeagueContext(db, argv.includes("--league") ? argv[argv.indexOf("--league") + 1] : undefined),
+  "season-calibration");
 const vm = JSON.parse(readFileSync("data/variance-model.json", "utf8"));
 const outcomes = JSON.parse(readFileSync("data/rank-outcomes.json", "utf8"));
 const corr = JSON.parse(readFileSync("data/correlation-model.json", "utf8"));
@@ -158,8 +165,8 @@ function byesFor(season) {
  */
 function regularSeasonWeeks(season, teams) {
   const perWeek = db.prepare(
-    "SELECT week, COUNT(*) n FROM fact_matchup WHERE season = ? GROUP BY week ORDER BY week",
-  ).all(season);
+    "SELECT week, COUNT(*) n FROM fact_matchup WHERE league_id = ? AND season = ? GROUP BY week ORDER BY week",
+  ).all(LEAGUE, season);
   const full = teams / 2;
   let reg = 0;
   for (const w of perWeek) {
@@ -171,7 +178,7 @@ function regularSeasonWeeks(season, teams) {
 
 /** The lineup template, expanded from the season's own slot counts. */
 function slotsFor(season) {
-  const row = db.prepare("SELECT slot_counts_json FROM raw_league_season WHERE season = ?").get(season);
+  const row = db.prepare("SELECT slot_counts_json FROM raw_league_season WHERE league_id = ? AND season = ?").get(LEAGUE, season);
   if (!row?.slot_counts_json) return null;
   const counts = JSON.parse(row.slot_counts_json);
   const order = ["QB", "RB", "WR", "TE", "FLEX", "DST", "K", "BE"];
@@ -238,15 +245,15 @@ function buildSeason(season, atWeek = null) {
     ? db.prepare(
       `SELECT p.team_id, p.name, p.pos, NULL AS player_sk, t.owner, t.team_name, t.wins, t.points_for, t.playoff_seed,
               t.final_rank, t.champion, t.made_playoffs
-         FROM fact_draft_pick p JOIN fact_team_season t ON t.season = p.season AND t.team_id = p.team_id
-        WHERE p.season = ? ORDER BY p.pick_order`,
-    ).all(season)
+         FROM fact_draft_pick p JOIN fact_team_season t ON t.league_id = p.league_id AND t.season = p.season AND t.team_id = p.team_id
+        WHERE p.league_id = ? AND p.season = ? ORDER BY p.pick_order`,
+    ).all(LEAGUE, season)
     : db.prepare(
       `SELECT r.team_id, r.name, r.pos, r.player_sk, t.owner, t.team_name, t.wins, t.points_for, t.playoff_seed,
               t.final_rank, t.champion, t.made_playoffs
-         FROM fact_roster_week r JOIN fact_team_season t ON t.season = r.season AND t.team_id = r.team_id
-        WHERE r.season = ? AND r.week = ? ORDER BY r.team_id, r.name`,
-    ).all(season, Math.min(atWeek, 17));
+         FROM fact_roster_week r JOIN fact_team_season t ON t.league_id = r.league_id AND t.season = r.season AND t.team_id = r.team_id
+        WHERE r.league_id = ? AND r.season = ? AND r.week = ? ORDER BY r.team_id, r.name`,
+    ).all(LEAGUE, season, Math.min(atWeek, 17));
   if (!picks.length) return { skip: atWeek == null ? "no picks" : `no rosters for week ${atWeek}` };
 
   const byTeam = new Map();
@@ -276,7 +283,7 @@ function buildSeason(season, atWeek = null) {
   const idx = new Map(teams.map((t, i) => [t.id, i]));
   const weeks = [];
   for (let w = 1; w <= reg; w++) {
-    const g = db.prepare("SELECT home_id, away_id FROM fact_matchup WHERE season = ? AND week = ?").all(season, w)
+    const g = db.prepare("SELECT home_id, away_id FROM fact_matchup WHERE league_id = ? AND season = ? AND week = ?").all(LEAGUE, season, w)
       .map((x) => [idx.get(String(x.home_id)), idx.get(String(x.away_id))])
       .filter(([a, b]) => a != null && b != null);
     if (g.length) weeks.push(g);
@@ -294,7 +301,7 @@ function buildSeason(season, atWeek = null) {
   if (atWeek != null && atWeek > 1) {
     const playedWeeks = Math.min(atWeek - 1, reg);
     const startedPts = new Map();
-    for (const r of db.prepare("SELECT week, team_id, started_pts FROM fact_lineup_week WHERE season = ? AND week <= ?").all(season, playedWeeks)) {
+    for (const r of db.prepare("SELECT week, team_id, started_pts FROM fact_lineup_week WHERE league_id = ? AND season = ? AND week <= ?").all(LEAGUE, season, playedWeeks)) {
       startedPts.set(`${r.week}|${r.team_id}`, r.started_pts);
     }
     const wins = teams.map(() => 0), pts = teams.map(() => 0);
@@ -342,8 +349,8 @@ function buildSeason(season, atWeek = null) {
   // this league's whole history and structurally incapable of being wrong out loud. `--field` forces
   // a constant, which is the arm P49 is registered against.
   const fmtRow = db.prepare(
-    "SELECT reg_weeks, playoff_teams, playoff_reseed, seeding_rule, division_count FROM raw_league_season WHERE season = ?",
-  ).get(season);
+    "SELECT reg_weeks, playoff_teams, playoff_reseed, seeding_rule, division_count FROM raw_league_season WHERE league_id = ? AND season = ?",
+  ).get(LEAGUE, season);
   const espnField = fmtRow?.playoff_teams == null ? null : Number(fmtRow.playoff_teams);
   const field = FIELD_OVERRIDE ?? ((PER_SEASON_FORMAT && espnField != null) ? espnField : playoffFieldFor(teams.length));
   const fieldSource = FIELD_OVERRIDE != null ? `forced ${FIELD_OVERRIDE}`
@@ -358,7 +365,7 @@ function buildSeason(season, atWeek = null) {
   // handed a division to win by accident.
   let divisionOf;
   {
-    const divs = db.prepare("SELECT division_id, team_ids_json FROM raw_league_division WHERE season = ? ORDER BY division_id").all(season);
+    const divs = db.prepare("SELECT division_id, team_ids_json FROM raw_league_division WHERE league_id = ? AND season = ? ORDER BY division_id").all(LEAGUE, season);
     if (divs.length > 1) {
       const dOf = new Map();
       divs.forEach((d, i) => { for (const id of JSON.parse(d.team_ids_json)) dOf.set(String(id), i); });

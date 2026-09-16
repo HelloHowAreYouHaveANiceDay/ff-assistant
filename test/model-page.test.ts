@@ -66,8 +66,8 @@ test("buildModelPage assembles weeklyServe from STREAM_SERVE_POS/SHIPPED_STREAMI
 test("buildModelPage's scorecard section reflects an actual frozen prediction", () => {
   const db = freshDb();
   db.prepare(
-    `INSERT INTO scorecard_prediction (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-     VALUES (2026, 3, 'weekly', 'weekly', 'p1', 'Test Player', 'RB', 10, 5, 15, '2026-09-01', '2026-09-01')`,
+    `INSERT INTO scorecard_prediction (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+     VALUES ('sc-fixture', 2026, 3, 'weekly', 'weekly', 'p1', 'Test Player', 'RB', 10, 5, 15, '2026-09-01', '2026-09-01')`,
   ).run();
   const page = buildModelPage(db);
   const weekly = page.scorecard.find((k) => k.kind === "weekly")!;

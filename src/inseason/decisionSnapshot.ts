@@ -8,7 +8,7 @@
 // The snapshot is keyed by verb (one current row each), stamped with the actuals hash that triggered
 // the refresh, so "is this stale?" is a hash comparison, exactly as sync-actuals decides whether to
 // rebuild at all.
-import { openDb, nowIso, activeLeagueId, type DB } from "../db/db.js";
+import { openDb, nowIso, activeLeagueId } from "../db/db.js";
 import { runCopilot, copilotContext, type CopilotVerb } from "./copilotActions.js";
 
 /** The decision surfaces a continuous refresh materialises. Odds first (context), then the two the
@@ -16,20 +16,10 @@ import { runCopilot, copilotContext, type CopilotVerb } from "./copilotActions.j
  *  already renders live, not a standing recommendation that drifts with actuals. */
 export const SNAPSHOT_VERBS: CopilotVerb[] = ["season_odds", "waiver_targets", "trade_finder"];
 
-export function ensureSnapshotTable(db: DB): void {
-  db.exec(
-    `CREATE TABLE IF NOT EXISTS decision_snapshot (
-       verb         TEXT PRIMARY KEY,
-       season       INTEGER,
-       week         INTEGER,
-       schedule     TEXT,            -- real | generated: a generated schedule is not this league's seeding
-       actuals_hash TEXT,           -- the current-actuals content hash this snapshot was computed against
-       summary      TEXT,           -- the one-line recommendation, caveat included
-       result_json  TEXT,           -- the full structured result
-       updated_at   TEXT
-     )`,
-  );
-}
+// THE CREATE LIVES IN schema.sql (S-13, 2026-09-16). It used to live here, and it omitted the
+// `league_id` the INSERT below has always written -- so a FRESH store got a one-row-per-verb table
+// shared by every league while an existing store (migrated by `migrateLeagueIdPk`) got the keyed one.
+// Two spellings of one table, and the one that ran first on a new machine was the broken one.
 
 /**
  * Recompute the snapshot verbs against the current board and store them, stamped with `actualsHash`.
@@ -42,7 +32,6 @@ export async function refreshDecisionSnapshot(opts: {
   const ctx = await copilotContext(opts.schedule ?? "auto");
   const db = openDb(opts.dbPath);
   try {
-    ensureSnapshotTable(db);
     const ins = db.prepare(
       `INSERT INTO decision_snapshot (league_id, verb, season, week, schedule, actuals_hash, summary, result_json, updated_at)
        VALUES (@lg,@verb,@season,@week,@schedule,@hash,@summary,@json,@now)

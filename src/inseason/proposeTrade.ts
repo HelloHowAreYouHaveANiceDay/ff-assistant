@@ -29,12 +29,15 @@ export interface TradeResolution {
 
 /** Find a player on the current-season roster feed by a loose name match; returns every hit so an
  *  ambiguous name is a reported problem, not a silent pick. */
-function findPlayer(db: DB, season: number, name: string): TradePlayer[] {
+function findPlayer(db: DB, leagueId: string, season: number, name: string): TradePlayer[] {
+  // FILTERED BY LEAGUE (S-9/P-2). The roster feed holds every league's rows and the team ids overlap,
+  // so an unfiltered match could resolve a give to ANOTHER league's roster and then assert it is not
+  // on your team -- or worse, agree that it is.
   const rows = db.prepare(
     `SELECT DISTINCT name, espn_player_id AS playerId, team_id AS teamId
        FROM raw_league_roster_week
-      WHERE season = ? AND lower(name) LIKE '%' || lower(?) || '%'`,
-  ).all(season, name) as TradePlayer[];
+      WHERE league_id = ? AND season = ? AND lower(name) LIKE '%' || lower(?) || '%'`,
+  ).all(leagueId, season, name) as TradePlayer[];
   return rows;
 }
 
@@ -54,12 +57,14 @@ export function resolveTrade(db: DB, giveNames: string[], getNames: string[], le
   if (leagueId && ctx.platform !== "espn") problems.push(`league ${leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} trade adaptor exists yet`);
 
   const teamName = (id: string): string | null => {
-    const r = db.prepare("SELECT name FROM raw_league_team_season WHERE season = ? AND team_id = ?").get(season, id) as { name: string } | undefined;
+    if (!leagueId) return null;
+    const r = db.prepare("SELECT name FROM raw_league_team_season WHERE league_id = ? AND season = ? AND team_id = ?").get(leagueId, season, id) as { name: string } | undefined;
     return r?.name ?? null;
   };
 
   const resolveSide = (names: string[], side: "give" | "get"): TradePlayer[] => names.map((n) => {
-    const hits = findPlayer(db, season, n);
+    if (!leagueId) return { name: n, playerId: "", teamId: "" };
+    const hits = findPlayer(db, leagueId, season, n);
     if (hits.length === 0) { problems.push(`${side}: no roster player matches "${n}"`); return { name: n, playerId: "", teamId: "" }; }
     if (hits.length > 1) { problems.push(`${side}: "${n}" is ambiguous -- matches ${hits.map((h) => h.name).join(", ")}`); }
     return hits[0];

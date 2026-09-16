@@ -108,21 +108,21 @@ export function ourTeamId(db: DB, season: number, leagueId?: string | null): str
   const ctx = resolveLeagueContext(db, leagueId);
   if (!ctx.leagueId || !ctx.teamId || ctx.rowSeason == null) return null;
   const lg = { team_id: ctx.teamId, season: ctx.rowSeason };
-  const me = db.prepare("SELECT owner FROM fact_team_season WHERE season=? AND team_id=?")
-    .get(lg.season, String(lg.team_id)) as { owner: string | null } | undefined;
+  const me = db.prepare("SELECT owner FROM fact_team_season WHERE league_id=? AND season=? AND team_id=?")
+    .get(ctx.leagueId, lg.season, String(lg.team_id)) as { owner: string | null } | undefined;
   if (!me?.owner) return String(lg.team_id);
-  const row = db.prepare("SELECT team_id FROM fact_team_season WHERE season=? AND owner=?")
-    .get(season, me.owner) as { team_id: string } | undefined;
+  const row = db.prepare("SELECT team_id FROM fact_team_season WHERE league_id=? AND season=? AND owner=?")
+    .get(ctx.leagueId, season, me.owner) as { team_id: string } | undefined;
   return row?.team_id ?? null;
 }
 
 /** Points above replacement, and the oracle constant, exactly as tools/train_faab.py fitted them --
  *  so "dollars saved" compares against the SAME rule-of-thumb baseline step 2 reported, not a
  *  second construction of it that happens to share a name. */
-function ruleBaseline(db: DB, m: FaabModel): (season: number, pos: string, line: number | null, budget: number) => number {
+function ruleBaseline(db: DB, leagueId: string, m: FaabModel): (season: number, pos: string, line: number | null, budget: number) => number {
   const rows = db.prepare(
-    "SELECT season, pos, season_line_pg FROM fact_waiver_claim WHERE won=1 AND season_line_pg IS NOT NULL")
-    .all() as { season: number; pos: string; season_line_pg: number }[];
+    "SELECT season, pos, season_line_pg FROM fact_waiver_claim WHERE league_id=? AND won=1 AND season_line_pg IS NOT NULL")
+    .all(leagueId) as { season: number; pos: string; season_line_pg: number }[];
   const by = new Map<string, number[]>();
   for (const r of rows) {
     const k = `${r.season}|${r.pos}`;
@@ -146,14 +146,14 @@ export function backtestFaab(
   const m = opts.artifact !== undefined ? opts.artifact : loadFaabModel();
   if (!m) throw new Error("no FAAB artifact -- run tools/train_faab.py first");
   const target = opts.target ?? 0.7;
-  const rule = ruleBaseline(db, m);
+  const rule = ruleBaseline(db, leagueId, m);
 
   const feat = db.prepare(
     "SELECT season_line_pg, td_ppg FROM feat_player_week_model WHERE season=? AND week=? AND player_sk=?");
   const priorPts = db.prepare(
     "SELECT pts FROM feat_player_week_model WHERE season=? AND week=? AND player_sk=? AND pts IS NOT NULL");
   const winnerOf = db.prepare(
-    "SELECT MAX(bid_amount) b FROM fact_waiver_claim WHERE season=? AND week=? AND player_sk=? AND won=1");
+    "SELECT MAX(bid_amount) b FROM fact_waiver_claim WHERE league_id=? AND season=? AND week=? AND player_sk=? AND won=1");
   const rankCache = new Map<string, Map<string, number>>();
   const needCache = new Map<string, { need: number; teams: number }>();
 
@@ -176,8 +176,8 @@ export function backtestFaab(
     const hit = needCache.get(k);
     if (hit) return hit;
     const c = db.prepare(
-      "SELECT team_id, SUM(CASE WHEN pos = ? THEN 1 ELSE 0 END) n FROM fact_roster_week WHERE season=? AND week=? GROUP BY team_id")
-      .all(pos, season, w) as { team_id: string; n: number }[];
+      "SELECT team_id, SUM(CASE WHEN pos = ? THEN 1 ELSE 0 END) n FROM fact_roster_week WHERE league_id=? AND season=? AND week=? GROUP BY team_id")
+      .all(pos, leagueId, season, w) as { team_id: string; n: number }[];
     const a = c.map((x) => x.n).sort((x, y) => x - y);
     const md = a.length ? (a.length % 2 ? a[a.length >> 1] : (a[(a.length >> 1) - 1] + a[a.length >> 1]) / 2) : 0;
     const v = { need: c.filter((x) => x.n < md).length, teams: c.length };
@@ -189,17 +189,17 @@ export function backtestFaab(
   for (const season of opts.seasons) {
     const { weeks } = backtestWaivers(db, leagueId, { seasons: [season], model: opts.model ?? "challenger" });
     if (!weeks.length) continue;
-    const meId = ourTeamId(db, season);
-    const budgetRow = db.prepare("SELECT MAX(budget) b, MAX(teams_counted) t FROM fact_waiver_claim WHERE season=?")
-      .get(season) as { b: number | null; t: number | null };
+    const meId = ourTeamId(db, season, leagueId);
+    const budgetRow = db.prepare("SELECT MAX(budget) b, MAX(teams_counted) t FROM fact_waiver_claim WHERE league_id=? AND season=?")
+      .get(leagueId, season) as { b: number | null; t: number | null };
     const budget = budgetRow?.b ?? 100;
     const teams = budgetRow?.t ?? 12;
 
     // OUR remaining budget going into each week, and the room's -- point-in-time, from the claims
     // executed in strictly earlier weeks.
     const spent = db.prepare(
-      "SELECT week, SUM(bid_amount) tot, SUM(CASE WHEN team_id=? THEN bid_amount END) mine FROM fact_waiver_claim WHERE season=? AND won=1 GROUP BY week")
-      .all(meId ?? "", season) as { week: number; tot: number | null; mine: number | null }[];
+      "SELECT week, SUM(bid_amount) tot, SUM(CASE WHEN team_id=? THEN bid_amount END) mine FROM fact_waiver_claim WHERE league_id=? AND season=? AND won=1 GROUP BY week")
+      .all(meId ?? "", leagueId, season) as { week: number; tot: number | null; mine: number | null }[];
     const before = (w: number): { mine: number; league: number } => {
       let mine = 0, tot = 0;
       for (const s of spent) if (s.week < w) { mine += s.mine ?? 0; tot += s.tot ?? 0; }
@@ -226,7 +226,7 @@ export function backtestFaab(
         };
         const wanted = bidForWinProb(m, row, target);
         const bid = Math.min(wanted ?? Math.max(1, Math.round(clearingPrice(m, row))), bud.mine);
-        const w = winnerOf.get(season, wk.week, a.playerSk) as { b: number | null };
+        const w = winnerOf.get(leagueId, season, wk.week, a.playerSk) as { b: number | null };
         const roomWon = w?.b ?? null;
         rows.push({
           season, week: wk.week, playerSk: a.playerSk, name: a.name, pos: a.pos,

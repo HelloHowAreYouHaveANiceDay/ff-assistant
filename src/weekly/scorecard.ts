@@ -28,8 +28,9 @@
  *             not manufacture one.
  */
 import { readFileSync } from "node:fs";
-import { openDb, nowIso, type DB } from "../db/db.js";
+import { openDb, nowIso, activeLeagueId, getConfig, type DB } from "../db/db.js";
 import { dataPath } from "../data/paths.js";
+import { scoringKey } from "../data/formatKey.js";
 import {
   loadWeeklyArtifact, projectWeekly, seasonLineOnlyArtifact,
   CHALLENGER_WEEKLY_ARTIFACT, type WeeklyArtifact,
@@ -115,6 +116,21 @@ export const CHALLENGER_FIRST_WEEK = 2;
  * reconstructed from git history against a table whose whole point is that it cannot be edited.
  */
 export const SCORECARD_META_COLUMN = "meta";
+
+/**
+ * WHOSE ACCURACY IS THIS (I-5). A scorecard row belongs to a FORMAT (the scoring rules that produced
+ * the prediction) and, for the `odds` kind, to a LEAGUE (the team ids are that league's). Both are
+ * resolved here, once, so no reader has to guess and no writer can stamp a row with neither.
+ *
+ * Omitted = the active league and its scoring key, which is what every existing caller means.
+ */
+export function scorecardScope(
+  db: DB, scope?: { formatKey?: string; leagueId?: string | null },
+): { formatKey: string; leagueId: string | null } {
+  const leagueId = scope?.leagueId ?? activeLeagueId(db);
+  const formatKey = scope?.formatKey ?? scoringKey(getConfig(db, leagueId).scoring_rules);
+  return { formatKey, leagueId };
+}
 
 export function ensureScorecardMetaColumn(db: DB): void {
   const have = new Set((db.prepare("PRAGMA table_info(scorecard_prediction)").all() as { name: string }[])
@@ -406,13 +422,17 @@ const BRIER_BINS = [0, 0.05, 0.15, 0.3, 0.5, 0.7, 1.0001];
  * must show: every team has a final rank, and exactly one of them won. Scoring early would record a
  * verdict on a season that has not happened.
  */
-export function scoreOdds(db: DB, season: number): OddsScored {
+export function scoreOdds(db: DB, season: number, scope?: { formatKey?: string; leagueId?: string | null }): OddsScored {
+  // ONE FORMAT, ONE LEAGUE (I-5/S-9). An `odds` subject is a TEAM ID, which is unique inside one
+  // league and nowhere else -- ESPN 1-18 and Yahoo 1-12 overlap outright -- so both halves of this
+  // join have to name whose season they are scoring.
+  const { formatKey, leagueId } = scorecardScope(db, scope);
   const rows = db.prepare(
-    "SELECT model, subject, value, week, as_of FROM scorecard_prediction WHERE season = ? AND kind = 'odds'",
-  ).all(season) as { model: string; subject: string; value: number; week: number; as_of: string | null }[];
+    "SELECT model, subject, value, week, as_of FROM scorecard_prediction WHERE format_key = ? AND season = ? AND kind = 'odds'",
+  ).all(formatKey, season) as { model: string; subject: string; value: number; week: number; as_of: string | null }[];
   const teamsRows = db.prepare(
-    "SELECT team_id, made_playoffs, champion, playoff_seed, final_rank, settled FROM fact_team_season WHERE season = ?",
-  ).all(season) as { team_id: string; made_playoffs: number | null; champion: number | null; playoff_seed: number | null; final_rank: number | null; settled: number | null }[];
+    "SELECT team_id, made_playoffs, champion, playoff_seed, final_rank, settled FROM fact_team_season WHERE league_id = ? AND season = ?",
+  ).all(leagueId, season) as { team_id: string; made_playoffs: number | null; champion: number | null; playoff_seed: number | null; final_rank: number | null; settled: number | null }[];
 
   const empty = (skipped: string): OddsScored => ({ season, teams: teamsRows.length, models: [], skipped });
   if (!rows.length) return empty(`no frozen 'odds' rows for ${season} -- nothing was ever snapshotted, so there is nothing to score`);
@@ -484,6 +504,12 @@ export function scoreOdds(db: DB, season: number): OddsScored {
 
 export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult> {
   const db = openDb(opts.dbPath);
+  // RESOLVED ONCE, THREADED (I-5). `format_key` stamps every prediction and every scored row with the
+  // scoring rules it was produced under; without it a second format's rows were silently dropped by
+  // `INSERT OR IGNORE` and every read mixed two models' accuracy under one name.
+  const { resolveLeagueContext } = await import("../data/leagueContext.js");
+  const lctx = resolveLeagueContext(db, opts.leagueId);
+  const fmtKey = scoringKey(lctx.config.scoring_rules);
   const today = opts.today ?? iso(new Date());
   const notes: string[] = [];
   const res: ScorecardResult = {
@@ -553,9 +579,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           res.espn.attempted = true;
           // ONE RESOLVER -- the ESPN baseline pull must be for the league this scorecard is about,
           // not for whichever row synced most recently.
-          const { resolveLeagueContext } = await import("../data/leagueContext.js");
-          const lg = resolveLeagueContext(db, opts.leagueId).leagueId ?? undefined;
-          const f = await fetchEspnWeekly({ season: opts.season, week, leagueId: lg });
+          const f = await fetchEspnWeekly({ season: opts.season, week, leagueId: lctx.leagueId ?? undefined });
           res.espn.ok = f.ok; res.espn.reason = f.reason;
           if (f.ok) {
             res.espn.stored = storeEspnWeekly(db, f.rows, asOf);
@@ -574,8 +598,8 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         ensureScorecardMetaColumn(db);
         const ins = db.prepare(
           `INSERT OR IGNORE INTO scorecard_prediction
-             (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at, ${SCORECARD_META_COLUMN})
-           VALUES (@season,@week,'weekly',@model,@subject,@name,@pos,@value,@p10,@p90,@asOf,@now,@meta)`,
+             (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at, ${SCORECARD_META_COLUMN})
+           VALUES (@fk,@season,@week,'weekly',@model,@subject,@name,@pos,@value,@p10,@p90,@asOf,@now,@meta)`,
         );
         const now = nowIso();
         // WHICH ARTIFACT PRODUCED THIS ROW, plus the date the mapping last changed. Only on the
@@ -591,7 +615,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
               const p = v.by[m];
               if (!p || !Number.isFinite(p.mean)) continue;
               const info = ins.run({
-                season: opts.season, week, model: m, subject: key, name: v.name, pos: v.pos,
+                fk: fmtKey, season: opts.season, week, model: m, subject: key, name: v.name, pos: v.pos,
                 value: p.mean, p10: Number.isFinite(p.p10) ? p.p10 : null,
                 p90: Number.isFinite(p.p90) ? p.p90 : null, asOf, now, meta: metaFor(m, v.pos),
               });
@@ -617,8 +641,8 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         } else {
           const insC = db.prepare(
             `INSERT OR IGNORE INTO scorecard_prediction
-               (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-             VALUES (@season,@week,'weekly_challenger','two_part',@subject,@name,@pos,@value,@p10,@p90,@asOf,@now)`,
+               (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+             VALUES (@fk,@season,@week,'weekly_challenger','two_part',@subject,@name,@pos,@value,@p10,@p90,@asOf,@now)`,
           );
           const nowC = nowIso();
           const rowsC = loadWeeklyRows(db, opts.season, week).filter((r) => r.season_line_pg != null);
@@ -626,7 +650,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
             for (const p of projectWeekly({ artifact: challenger!, rows: rowsC })) {
               if (!Number.isFinite(p.mean)) continue;
               const info = insC.run({
-                season: opts.season, week, subject: p.feat_key, name: p.name, pos: p.pos,
+                fk: fmtKey, season: opts.season, week, subject: p.feat_key, name: p.name, pos: p.pos,
                 value: p.mean, p10: Number.isFinite(p.p10) ? p.p10 : null,
                 p90: Number.isFinite(p.p90) ? p.p90 : null, asOf, now: nowC,
               });
@@ -648,8 +672,8 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           const picks = topStreamPick(proj.rows, opts.poolDepth ?? POOL_DEPTH);
           const insP = db.prepare(
             `INSERT OR IGNORE INTO scorecard_prediction
-               (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-             VALUES (@season,@week,'stream',@model,@subject,@name,@pos,@value,@p10,@p90,@asOf,@now)`,
+               (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+             VALUES (@fk,@season,@week,'stream',@model,@subject,@name,@pos,@value,@p10,@p90,@asOf,@now)`,
           );
           const nowP = nowIso();
           db.transaction(() => {
@@ -686,8 +710,8 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
       } else {
         const insS = db.prepare(
           `INSERT OR IGNORE INTO scorecard_prediction
-             (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-           VALUES (@season,0,'season','season_line',@subject,@name,@pos,@value,NULL,NULL,@asOf,@now)`,
+             (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+           VALUES (@fk,@season,0,'season','season_line',@subject,@name,@pos,@value,NULL,NULL,@asOf,@now)`,
         );
         const now = nowIso();
         const asOf = `${opts.season}-09-01`;
@@ -695,7 +719,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           for (const r of seasonRows) {
             // The season total, not the per-game line: what is scored against is points-to-date at
             // season end, and storing the per-game figure would need a games count nobody has yet.
-            const info = insS.run({ season: opts.season, subject: r.feat_key, name: r.name, pos: r.pos, value: r.line * r.weeks, asOf, now });
+            const info = insS.run({ fk: fmtKey, season: opts.season, subject: r.feat_key, name: r.name, pos: r.pos, value: r.line * r.weeks, asOf, now });
             if (info.changes) res.seasonKind.taken++;
           }
         })();
@@ -737,15 +761,15 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           const vintage = opts.oddsVintage ?? 0;
           const insO = db.prepare(
             `INSERT OR IGNORE INTO scorecard_prediction
-               (season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-             VALUES (@season,@vintage,'odds',@model,@subject,@name,NULL,@value,NULL,NULL,@asOf,@now)`,
+               (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
+             VALUES (@fk,@season,@vintage,'odds',@model,@subject,@name,NULL,@value,NULL,NULL,@asOf,@now)`,
           );
           const now = nowIso();
           db.transaction(() => {
             for (const r of rows) {
               for (const [model, value] of [["playoff", r.playoffPct], ["title", r.titlePct]] as [string, number][]) {
                 if (!Number.isFinite(value)) continue;
-                const info = insO.run({ season: opts.season, vintage, model, subject: r.subject, name: r.name, value, asOf: today, now });
+                const info = insO.run({ fk: fmtKey, season: opts.season, vintage, model, subject: r.subject, name: r.name, value, asOf: today, now });
                 if (info.changes) res.oddsKind.taken++;
               }
             }
@@ -769,8 +793,8 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
       // shipped models would read as a lineup somebody could have set.
       for (const [week, kind] of weeks.flatMap((w) => SCORECARD_KINDS.map((k) => [w, k] as [number, ScorecardKind]))) {
         const frozen = db.prepare(
-          "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE season = ? AND week = ? AND kind = ?",
-        ).all(opts.season, week, kind) as { model: string; subject: string; name: string; pos: string; value: number; p10: number | null; p90: number | null }[];
+          "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE format_key = ? AND season = ? AND week = ? AND kind = ?",
+        ).all(fmtKey, opts.season, week, kind) as { model: string; subject: string; name: string; pos: string; value: number; p10: number | null; p90: number | null }[];
         if (!frozen.length) {
           if (kind === "weekly") notes.push(`week ${week} is settled but was never snapshotted -- nothing to score`);
           else if (kind === "stream") notes.push(`week ${week} has no frozen streaming picks -- nothing to score for ${kind}`);
@@ -794,8 +818,8 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         // lineupRegret would then draw rosters out of six players. The challenger needs them (its
         // lineup column is scored against SC_BASELINE and it holds exactly one model); this does not.
         const companions = kind !== "weekly_challenger" ? [] : db.prepare(
-          "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE season = ? AND week = ? AND kind = 'weekly'",
-        ).all(opts.season, week) as typeof frozen;
+          "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE format_key = ? AND season = ? AND week = ? AND kind = 'weekly'",
+        ).all(fmtKey, opts.season, week) as typeof frozen;
         const bySubject = new Map<string, Scored1>();
         for (const f of [...frozen, ...companions]) {
           const y = actual.get(f.subject);
@@ -835,9 +859,9 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
 
       // Persist the scored rows. Rebuildable BY DESIGN, unlike the predictions.
       const insR = db.prepare(
-        `INSERT INTO scorecard_result (season, week, kind, model, metric, value, n, scored_at)
-         VALUES (@season,@week,@kind,@model,@metric,@value,@n,@now)
-         ON CONFLICT(season, week, kind, model, metric) DO UPDATE SET
+        `INSERT INTO scorecard_result (format_key, season, week, kind, model, metric, value, n, scored_at)
+         VALUES (@fk,@season,@week,@kind,@model,@metric,@value,@n,@now)
+         ON CONFLICT(format_key, season, week, kind, model, metric) DO UPDATE SET
            value=excluded.value, n=excluded.n, scored_at=excluded.scored_at`,
       );
       const now = nowIso();
@@ -845,15 +869,15 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         for (const r of res.scored) {
           for (const [metric, value] of [["rmse", r.rmse], ["crps", r.crps], ["coverage", r.coverage],
             ["lineup_pts", r.lineupPts], ["lineup_win_share", r.lineupWinShare]] as [string, number][]) {
-            if (Number.isFinite(value)) insR.run({ season: opts.season, week: r.week, kind: r.kind, model: r.model, metric, value, n: r.n, now });
+            if (Number.isFinite(value)) insR.run({ fk: fmtKey, season: opts.season, week: r.week, kind: r.kind, model: r.model, metric, value, n: r.n, now });
           }
         }
       })();
 
       // ---- the season kind, scored against points to date. ----
       const sp = db.prepare(
-        "SELECT subject, value FROM scorecard_prediction WHERE season = ? AND kind = 'season'",
-      ).all(opts.season) as { subject: string; value: number }[];
+        "SELECT subject, value FROM scorecard_prediction WHERE format_key = ? AND season = ? AND kind = 'season'",
+      ).all(fmtKey, opts.season) as { subject: string; value: number }[];
       if (sp.length && weeks.length) {
         const todate = new Map<string, number>();
         for (const r of db.prepare(
@@ -875,14 +899,14 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
       }
 
       // ---- the odds kind, scored once the season has resolved. ----
-      const od = scoreOdds(db, opts.season);
+      const od = scoreOdds(db, opts.season, { formatKey: fmtKey, leagueId: lctx.leagueId });
       res.oddsScored = od;
       if (od.skipped) notes.push(`odds accrual: ${od.skipped}`);
       else {
         const insO = db.prepare(
-          `INSERT INTO scorecard_result (season, week, kind, model, metric, value, n, scored_at)
-           VALUES (@season,0,'odds',@model,@metric,@value,@n,@now)
-           ON CONFLICT(season, week, kind, model, metric) DO UPDATE SET
+          `INSERT INTO scorecard_result (format_key, season, week, kind, model, metric, value, n, scored_at)
+           VALUES (@fk,@season,0,'odds',@model,@metric,@value,@n,@now)
+           ON CONFLICT(format_key, season, week, kind, model, metric) DO UPDATE SET
              value=excluded.value, n=excluded.n, scored_at=excluded.scored_at`,
         );
         const nowO = nowIso();
@@ -893,7 +917,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
               ["uniform_brier", m.uniformBrier], ["uniform_log_loss", m.uniformLogLoss],
               ["skill", m.skill],
             ] as [string, number][]) {
-              if (Number.isFinite(value)) insO.run({ season: opts.season, model: m.model, metric, value, n: m.n, now: nowO });
+              if (Number.isFinite(value)) insO.run({ fk: fmtKey, season: opts.season, model: m.model, metric, value, n: m.n, now: nowO });
             }
           }
         })();

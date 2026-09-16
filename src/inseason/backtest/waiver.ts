@@ -121,8 +121,8 @@ export function backtestWaivers(
     for (const [week, adds] of [...byWeek.entries()].sort((a, b) => a[0] - b[0])) {
       // THE CHOICE SET: who was on nobody's roster the week BEFORE. See the header.
       const pool = db.prepare(
-        `SELECT player_sk, name, pos FROM fact_fa_pool_week WHERE season=? AND week=?`,
-      ).all(season, Math.max(1, week - 1)) as { player_sk: string; name: string; pos: string }[];
+        `SELECT player_sk, name, pos FROM fact_fa_pool_week WHERE league_id=? AND season=? AND week=?`,
+      ).all(leagueId, season, Math.max(1, week - 1)) as { player_sk: string; name: string; pos: string }[];
       if (!pool.length) continue;
       const inPool = new Set(pool.map((p) => p.player_sk));
       const ctx = loadWeekContext(db, leagueId, season, week, artifact);
@@ -137,8 +137,8 @@ export function backtestWaivers(
       const resolved: AddRow[] = [];
       for (const a of adds) {
         const meta = db.prepare(
-          `SELECT player_sk, name, pos FROM fact_roster_week WHERE season=? AND espn_player_id=? LIMIT 1`,
-        ).get(season, a.eid) as { player_sk: string; name: string; pos: string } | undefined;
+          `SELECT player_sk, name, pos FROM fact_roster_week WHERE league_id=? AND season=? AND espn_player_id=? LIMIT 1`,
+        ).get(leagueId, season, a.eid) as { player_sk: string; name: string; pos: string } | undefined;
         addsTotal++;
         if (!meta) continue;
         const hit = inPool.has(meta.player_sk);

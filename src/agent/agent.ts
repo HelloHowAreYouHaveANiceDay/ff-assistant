@@ -5,7 +5,7 @@
 // discover_leagues, driven via the renderer). No bro -- everything goes through the app session.
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { openDb, getConfig, setConfig, getMyRoster, setMyRoster, logAction, completeAction, recentActions, type RosterEntry } from "../db/db.js";
+import { openDb, getConfig, setConfig, getMyRoster, setMyRoster, logAction, completeAction, recentActions, activeLeagueId, assertBoardFor, localDraftId, type RosterEntry } from "../db/db.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { nameKey } from "../draft/values.js";
 import { scoringFromEspn, type ScoringRules } from "../draft/scoring.js";
@@ -61,6 +61,7 @@ function buildTools(dbPath: string | undefined, season: number) {
           const db = openDb(dbPath);
           const pos = (args.pos || "").toUpperCase();
           const limit = args.limit && args.limit > 0 ? Math.min(args.limit, 60) : 12;
+          assertBoardFor(db, activeLeagueId(db), "read_board");
           const sql = (pos && pos !== "ALL" ? BOARD_SQL + " AND p.position=@pos" : BOARD_SQL) + " ORDER BY pv.our_value DESC LIMIT @limit";
           const rows = db.prepare(sql).all({ season, pos, limit }) as Row[];
           db.close();
@@ -73,6 +74,7 @@ function buildTools(dbPath: string | undefined, season: number) {
         { name: z.string().describe("player name, full or partial") },
         async (args) => {
           const db = openDb(dbPath);
+          assertBoardFor(db, activeLeagueId(db), "player_detail");
           const row = db.prepare(BOARD_SQL + " AND lower(p.name) LIKE @q ORDER BY pv.our_value DESC LIMIT 1")
             .get({ season, q: `%${(args.name || "").toLowerCase()}%` }) as Row | undefined;
           let extra = "";
@@ -117,8 +119,8 @@ function buildTools(dbPath: string | undefined, season: number) {
             FROM my_roster mr
             LEFT JOIN player p ON p.player_id = mr.player_id
             LEFT JOIN player_value pv ON pv.player_id = mr.player_id
-            WHERE mr.draft_id = 'local' ORDER BY mr.price DESC`,
-          ).all() as { name: string; price: number; pos: string; pos_rank: string; our_value: number; proj_pts: number }[];
+            WHERE mr.draft_id = @draftId ORDER BY mr.price DESC`,
+          ).all({ draftId: localDraftId(activeLeagueId(db)) }) as { name: string; price: number; pos: string; pos_rank: string; our_value: number; proj_pts: number }[];
           db.close();
           const spent = rows.reduce((s, r) => s + (r.price || 0), 0);
           const text = rows.length
@@ -140,10 +142,10 @@ function buildTools(dbPath: string | undefined, season: number) {
           const price = args.price ?? (row.our_value || 1);
           const id = logAction(db, { runType: "chat", action: "draft_player", detail: { name: row.name, price } });
           try {
-            const cur = getMyRoster(db, "local");
+            const cur = getMyRoster(db, localDraftId(activeLeagueId(db)));
             if (cur.some((r) => r.name === row.name)) { completeAction(db, id, "skipped", "already on roster"); db.close(); return { content: [{ type: "text", text: `${row.name} is already on your team` }] }; }
-            setMyRoster(db, "local", [...cur, { name: row.name, price }]);
-            const ok = getMyRoster(db, "local").some((r) => r.name === row.name); // verify the write
+            setMyRoster(db, localDraftId(activeLeagueId(db)), [...cur, { name: row.name, price }]);
+            const ok = getMyRoster(db, localDraftId(activeLeagueId(db))).some((r) => r.name === row.name); // verify the write
             completeAction(db, id, ok ? "done" : "failed", ok ? undefined : "not present after write");
             db.close();
             return { content: [{ type: "text", text: ok ? `drafted ${row.name} (${row.position}) for $${price}` : `failed to draft ${row.name}` }] };
@@ -156,12 +158,12 @@ function buildTools(dbPath: string | undefined, season: number) {
         { name: z.string().describe("player name to drop") },
         async (args) => {
           const db = openDb(dbPath);
-          const cur = getMyRoster(db, "local");
+          const cur = getMyRoster(db, localDraftId(activeLeagueId(db)));
           const hit = cur.find((r) => r.name.toLowerCase().includes((args.name || "").toLowerCase()));
           if (!hit) { db.close(); return { content: [{ type: "text", text: `"${args.name}" is not on your team` }] }; }
           const id = logAction(db, { runType: "chat", action: "drop_player", detail: { name: hit.name } });
-          setMyRoster(db, "local", cur.filter((r) => r.name !== hit.name));
-          const ok = !getMyRoster(db, "local").some((r) => r.name === hit.name); // verify the removal
+          setMyRoster(db, localDraftId(activeLeagueId(db)), cur.filter((r) => r.name !== hit.name));
+          const ok = !getMyRoster(db, localDraftId(activeLeagueId(db))).some((r) => r.name === hit.name); // verify the removal
           completeAction(db, id, ok ? "done" : "failed");
           db.close();
           return { content: [{ type: "text", text: ok ? `dropped ${hit.name}` : `failed to drop ${hit.name}` }] };
@@ -186,7 +188,7 @@ function buildTools(dbPath: string | undefined, season: number) {
         async () => {
           const db = openDb(dbPath);
           const cfg = getConfig(db);
-          const roster = getMyRoster(db, "local");
+          const roster = getMyRoster(db, localDraftId(activeLeagueId(db)));
           const posOf = new Map<string, string>();
           for (const r of roster) { const p = db.prepare("SELECT position FROM player WHERE player_id = ?").get(nameKey(r.name)) as { position: string } | undefined; if (p) posOf.set(r.name, p.position); }
           db.close();
@@ -212,13 +214,13 @@ function buildTools(dbPath: string | undefined, season: number) {
         { name: z.string().describe("player on my team"), price: z.number().describe("corrected auction $") },
         async (args) => {
           const db = openDb(dbPath);
-          const cur = getMyRoster(db, "local");
+          const cur = getMyRoster(db, localDraftId(activeLeagueId(db)));
           const hit = cur.find((r) => r.name.toLowerCase().includes((args.name || "").toLowerCase()));
           if (!hit) { db.close(); return { content: [{ type: "text", text: `"${args.name}" is not on your team` }] }; }
           const id = logAction(db, { runType: "chat", action: "set_price", detail: { name: hit.name, from: hit.price, to: args.price } });
           const next: RosterEntry[] = cur.map((r) => r.name === hit.name ? { name: r.name, price: Math.round(args.price) } : r);
-          setMyRoster(db, "local", next);
-          const ok = getMyRoster(db, "local").some((r) => r.name === hit.name && r.price === Math.round(args.price));
+          setMyRoster(db, localDraftId(activeLeagueId(db)), next);
+          const ok = getMyRoster(db, localDraftId(activeLeagueId(db))).some((r) => r.name === hit.name && r.price === Math.round(args.price));
           completeAction(db, id, ok ? "done" : "failed");
           db.close();
           return { content: [{ type: "text", text: ok ? `set ${hit.name} to $${Math.round(args.price)}` : `failed to update ${hit.name}` }] };

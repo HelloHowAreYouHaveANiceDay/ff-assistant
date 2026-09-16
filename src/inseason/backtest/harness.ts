@@ -103,14 +103,14 @@ function iterateStates(
       m.set(r.week, { pts: r.pts ?? 0, bye: !!r.is_bye, out: !!r.inj_out });
       if (r.t4_mean != null) formByKey.set(`${r.player_sk}|${r.week}`, r.t4_mean);
     }
-    const regWeeks = regWeeksFor(db, season);
+    const regWeeks = regWeeksFor(db, leagueId, season);
     const maxW = Math.min(maxDecisionWeek ?? regWeeks - 1, regWeeks - 1);
 
     // Preload every season's FA-pool rows once, indexed by week.
     const faByWeek = new Map<number, { playerSk: string; name: string; pos: string }[]>();
     for (const r of db.prepare(
-      `SELECT week, player_sk, name, pos FROM fact_fa_pool_week WHERE season=? AND player_sk IS NOT NULL`,
-    ).all(season) as { week: number; player_sk: string; name: string; pos: string }[]) {
+      `SELECT week, player_sk, name, pos FROM fact_fa_pool_week WHERE league_id=? AND season=? AND player_sk IS NOT NULL`,
+    ).all(leagueId, season) as { week: number; player_sk: string; name: string; pos: string }[]) {
       let l = faByWeek.get(r.week); if (!l) { l = []; faByWeek.set(r.week, l); }
       l.push({ playerSk: r.player_sk, name: r.name, pos: r.pos });
     }

@@ -115,6 +115,11 @@ export async function loadSimContext(opts: {
   // ESPN's eligibility, read from the STAGED table rather than re-derived from the board's Eligible
   // string: the board column is a display of this, and two readings of one fact is how they drift.
   const eligByKey = loadEligibilityMap(db, cfg.season);
+  // S-8: the board is single-slot and stamped. A simulation run on another league's dollars would
+  // produce a confident, wrong title probability with nothing anywhere saying which league's values
+  // it priced -- so this refuses by name instead.
+  const { assertBoardFor } = await import("../db/db.js");
+  assertBoardFor(db as unknown as import("../db/db.js").DB, ctx.leagueId, "loadSimContext");
   const board = new Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[] }>();
   for (const r of db.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(cfg.season) as { player_id: string; row_json: string }[]) {
     const j = JSON.parse(r.row_json) as Record<string, unknown>;

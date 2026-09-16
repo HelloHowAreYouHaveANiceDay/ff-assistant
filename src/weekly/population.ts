@@ -55,6 +55,14 @@
  */
 import { createHash } from "node:crypto";
 import type { Database as DB } from "better-sqlite3";
+import { activeLeagueId } from "../db/db.js";
+
+/** WHICH LEAGUE's roster feed defines "rostered" (S-9). `fact_roster_week` is per league and its team
+ *  ids collide numerically across platforms, so an unfiltered read unions two rooms. Every entry point
+ *  below takes an optional id; omitted means the ACTIVE league, which is what the weekly feature
+ *  builder (src/weekly/features.ts, WP3/WP5's to thread) is doing implicitly today. */
+const leagueOf = (db: DB, leagueId?: string | null): string | null =>
+  leagueId ?? activeLeagueId(db as unknown as import("../db/db.js").DB);
 
 /** The league this population is about; it appears in the depth derivation above. */
 export const LEAGUE_TEAMS = 16;
@@ -144,16 +152,17 @@ function lineRanks(db: DB, season: number): Map<string, { pos: string; rank: num
 
 /** True where `fact_roster_week` exists AND has rows for this season. An empty table is not a
  *  league in which nobody was rostered; it is a feed that does not reach that season. */
-export function hasRosterFeed(db: DB, season: number): boolean {
+export function hasRosterFeed(db: DB, season: number, leagueId?: string | null): boolean {
   const t = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'fact_roster_week'").get();
   if (!t) return false;
-  const n = db.prepare("SELECT COUNT(*) AS n FROM fact_roster_week WHERE season = ?").get(season) as { n: number };
+  const n = db.prepare("SELECT COUNT(*) AS n FROM fact_roster_week WHERE league_id = ? AND season = ?")
+    .get(leagueOf(db, leagueId), season) as { n: number };
   return n.n > 0;
 }
 
 /** Which rule a season's flags came from. */
-export function populationSource(db: DB, season: number): PopulationSource {
-  return hasRosterFeed(db, season) ? "roster_feed" : "rank_approximation";
+export function populationSource(db: DB, season: number, leagueId?: string | null): PopulationSource {
+  return hasRosterFeed(db, season, leagueId) ? "roster_feed" : "rank_approximation";
 }
 
 /**
@@ -163,19 +172,20 @@ export function populationSource(db: DB, season: number): PopulationSource {
  * this function has no row whose membership is unknown, and a NULL is therefore unambiguously "this
  * season was never built" rather than "this row fell through a branch".
  */
-export function buildPopulation(db: DB, seasons: number[]): PopulationSeason[] {
+export function buildPopulation(db: DB, seasons: number[], leagueId?: string | null): PopulationSeason[] {
   ensurePopulationColumn(db);
+  const lg = leagueOf(db, leagueId);
   const out: PopulationSeason[] = [];
   const upd = db.prepare(
     `UPDATE feat_player_week_model SET ${POPULATION_COLUMN} = ? WHERE season = ? AND week = ? AND feat_key = ?`,
   );
   for (const season of seasons) {
-    const source = populationSource(db, season);
+    const source = populationSource(db, season, lg);
     const rostered = new Set<string>();
     if (source === "roster_feed") {
       for (const r of db.prepare(
-        "SELECT week, player_sk FROM fact_roster_week WHERE season = ? AND player_sk IS NOT NULL",
-      ).all(season) as { week: number; player_sk: string }[]) rostered.add(`${r.week}|${r.player_sk}`);
+        "SELECT week, player_sk FROM fact_roster_week WHERE league_id = ? AND season = ? AND player_sk IS NOT NULL",
+      ).all(lg, season) as { week: number; player_sk: string }[]) rostered.add(`${r.week}|${r.player_sk}`);
     }
     const rank = lineRanks(db, season);
     const rows = db.prepare(

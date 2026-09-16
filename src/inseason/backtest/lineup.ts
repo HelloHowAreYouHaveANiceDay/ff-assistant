@@ -84,8 +84,8 @@ export function backtestLineups(
 
   for (const season of opts.seasons) {
     const weeks = db.prepare(
-      `SELECT DISTINCT week FROM fact_lineup_week WHERE season=? ORDER BY week`,
-    ).all(season) as { week: number }[];
+      `SELECT DISTINCT week FROM fact_lineup_week WHERE league_id=? AND season=? ORDER BY week`,
+    ).all(leagueId, season) as { week: number }[];
     if (!weeks.length) continue;
     for (const { week } of weeks) {
       const ctx = loadWeekContext(db, leagueId, season, week, artifact);
@@ -94,8 +94,8 @@ export function backtestLineups(
       seasonsSeen.add(season);
 
       const actualOf = db.prepare(
-        `SELECT team_id, started_pts, optimal_pts, roster_n FROM fact_lineup_week WHERE season=? AND week=?`,
-      ).all(season, week) as { team_id: string; started_pts: number; optimal_pts: number; roster_n: number }[];
+        `SELECT team_id, started_pts, optimal_pts, roster_n FROM fact_lineup_week WHERE league_id=? AND season=? AND week=?`,
+      ).all(leagueId, season, week) as { team_id: string; started_pts: number; optimal_pts: number; roster_n: number }[];
       const byTeam = new Map(actualOf.map((r) => [r.team_id, r]));
 
       const weekRows: LineupRow[] = [];

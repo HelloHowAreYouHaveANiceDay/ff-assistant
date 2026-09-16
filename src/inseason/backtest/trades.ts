@@ -84,7 +84,7 @@ export function backtestTrades(db: DB, opts: {
       let m = future.get(r.player_sk); if (!m) { m = new Map(); future.set(r.player_sk, m); }
       m.set(r.week, { pts: r.pts ?? 0, bye: !!r.is_bye, out: !!r.inj_out });
     }
-    const regWeeks = regWeeksFor(db, season);
+    const regWeeks = regWeeksFor(db, opts.leagueId, season);
 
     for (let W = 1; W <= regWeeks - 1; W++) {
       const wc = loadWeekContext(db, opts.leagueId, season, W, wm);

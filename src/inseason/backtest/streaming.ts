@@ -57,11 +57,11 @@ export function backtestStreaming(
   for (const season of opts.seasons) {
     const faByWeek = new Map<number, { playerSk: string; pos: string }[]>();
     for (const r of db.prepare(
-      `SELECT week, player_sk, pos FROM fact_fa_pool_week WHERE season=? AND player_sk IS NOT NULL`,
-    ).all(season) as { week: number; player_sk: string; pos: string }[]) {
+      `SELECT week, player_sk, pos FROM fact_fa_pool_week WHERE league_id=? AND season=? AND player_sk IS NOT NULL`,
+    ).all(opts.leagueId, season) as { week: number; player_sk: string; pos: string }[]) {
       let l = faByWeek.get(r.week); if (!l) { l = []; faByWeek.set(r.week, l); } l.push({ playerSk: r.player_sk, pos: r.pos });
     }
-    const regWeeks = regWeeksFor(db, season);
+    const regWeeks = regWeeksFor(db, opts.leagueId, season);
 
     for (let w = 1; w <= regWeeks; w++) {
       const wc = loadWeekContext(db, opts.leagueId, season, w, wm);

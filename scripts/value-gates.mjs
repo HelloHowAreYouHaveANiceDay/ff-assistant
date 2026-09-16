@@ -17,7 +17,10 @@ const gate = (ok, msg) => { console.log((ok ? "PASS  " : "FAIL  ") + msg); if (!
 // This read `settings.config` directly -- now only a derived MIRROR of whichever league is
 // ACTIVE, so it answered for the wrong league the moment a second league existed. `--league <id>`
 // overrides; an id naming no league throws by name.
-const cfg = resolveLeagueContext(db, leagueFlag(process.argv)).config;
+const vgCtx = resolveLeagueContext(db, leagueFlag(process.argv));
+const cfg = vgCtx.config;
+// ONE LEAGUE, NAMED (S-9): `fact_draft_pick` now holds every league's picks.
+const LEAGUE = vgCtx.leagueId;
 const ROOM = (cfg.teams ?? 16) * (cfg.budget ?? 200);
 const ROSTERED = (cfg.teams ?? 16) * (cfg.slots?.length ?? 12);
 
@@ -78,8 +81,8 @@ const roomShare = (() => {
   const out = {};
   const rowsR = db.prepare(
     `SELECT season, pos, SUM(price) s, SUM(SUM(price)) OVER (PARTITION BY season) t
-       FROM fact_draft_pick GROUP BY season, pos`,
-  ).all();
+       FROM fact_draft_pick WHERE league_id = ? GROUP BY season, pos`,
+  ).all(LEAGUE);
   for (const r of rowsR) (out[r.pos] ??= []).push(r.s / r.t);
   return out;
 })();
