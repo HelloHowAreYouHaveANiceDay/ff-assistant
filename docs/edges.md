@@ -525,6 +525,7 @@ The QA audit's one decision we LOSE to humans (lineup, -1.4 to -4.5 pts/wk). Roo
 the live copilot benches OUT/DOUBTFUL but STARTS questionable players (copilot.ts:341), and there is NO
 game-day inactive feed anywhere in the repo (Sleeper `player_status` is a designation snapshot, not the
 ~90-min OUT list). So a questionable-then-inactive player is started and scores 0.
+[2026-09-16, M2c: the two files this edge cites (`scripts/inseason-backtest-lineup-info.mjs`, `src/inseason/backtest/playProb.ts`) are ABSENT from the repo and the 1.79 cannot be reproduced; the current measurement is `docs/availability-gap-2026-09-16.md` -- on the served arm our zero-start rate equals the managers' (3.49%), the recoverable game-day-inactive bound is +1.23 pts/team-week [0.91, 1.63], and the Sunday re-read routine now records the paired evidence weekly.]
 `scripts/inseason-backtest-lineup-info.mjs` sizes it: set each historical lineup by projection with NAIVE
 availability (bench OUT/DOUBTFUL, start Q -- our live rule) vs FRESH (bench every actual scratch), diff
 realized. **Gap = 1.79 pts/team-week (2018-2024, 1330 team-weeks; 1.24-2.88 by season)** -- of 884
