@@ -2076,6 +2076,11 @@ async function cmdInseasonTick(rest: string[]) {
     "scorecard": cmdScorecard,
     "refresh-decisions": cmdRefreshDecisions,
     "sync-league": cmdSyncLeague,
+    // The `rankings` routine (M2b): refresh the FantasyPros weekly consensus and RETAIN the scrape
+    // point-in-time. Registered here because a routine naming a verb this map does not hold is
+    // SKIPPED SILENTLY -- it would sit in the schedule looking enabled and never run, which is
+    // exactly the failure `test/routines.test.ts` exists to catch.
+    "ingest-source": cmdIngestSource,
   };
   const passThrough = dbPath ? ["--db", dbPath] : [];
   const t0 = Date.now();
@@ -2734,9 +2739,27 @@ async function cmdBacktest(rest: string[]) {
   const adpByYear = new Map<number, Map<string, number>>();
   if (snakeAdpFmt) {
     const adb = openDb(valueOf(rest, "--db"));
-    const rowsAdp = adb.prepare(
-      "SELECT season, name, adp FROM raw_adp_history WHERE format = ? AND adp IS NOT NULL",
-    ).all(snakeAdpFmt) as { season: number; name: string; adp: number }[];
+    // `--snake-adp league`: THE ROOM IS THIS LEAGUE'S OWN DRAFT (M2e). Not an archive of somebody
+    // else's 12-team 1-QB mock, but the actual order these twelve managers actually picked in, from
+    // `raw_league_pick` -- the rows `scripts/yahoo-draft-ingest.mjs` writes. An ADP is a rank and a
+    // pick number is a rank, so nothing is converted; this is the same `name -> order` map the
+    // archive path builds, from a source that IS the room.
+    //
+    // ITS RANGE IS THE RANGE OF THE DRAFT LOG, WHICH IS NOT THE RANGE OF THE GATE. For league 129048
+    // that log is 2025 and 2026, and 2026 has no actuals to score against yet, so exactly one season
+    // of the gate's 1999-2025 can run this arm today. Worse, league 129048's 2025 draft was made
+    // under a DIFFERENT format (1-QB with K and D/ST, 15 rounds) from the superflex format the
+    // golden gates, so a 2025 run imports a 1-QB room's quarterback demand into a superflex sim and
+    // flatters us for exactly the reason `--snake-adp ppr` does. It is wired because it is the arm
+    // that becomes correct the moment 2026's season is scoreable; it is NOT a gate today, and the
+    // banner says so rather than leaving it to be discovered.
+    const rowsAdp = snakeAdpFmt === "league"
+      ? (adb.prepare(
+        "SELECT season, name, pick_no AS adp FROM raw_league_pick WHERE league_id = ? ORDER BY season, pick_no",
+      ).all(btCtx.leagueId ?? "") as { season: number; name: string; adp: number }[])
+      : (adb.prepare(
+        "SELECT season, name, adp FROM raw_adp_history WHERE format = ? AND adp IS NOT NULL",
+      ).all(snakeAdpFmt) as { season: number; name: string; adp: number }[]);
     adb.close();
     const { nameKey: nkAdp } = await import("./draft/values.js");
     for (const r of rowsAdp) {
@@ -2745,10 +2768,14 @@ async function cmdBacktest(rest: string[]) {
     }
     const covered = [...adpByYear.keys()].filter((y) => seasons.includes(y)).sort();
     if (!covered.length) {
-      throw new Error(`--snake-adp ${snakeAdpFmt}: raw_adp_history holds no rows for that format in ${lo}-${hi}. ` +
+      throw new Error(snakeAdpFmt === "league"
+        ? `--snake-adp league: raw_league_pick holds no picks for league ${btCtx.leagueId ?? "?"} in ${lo}-${hi}. Ingest the league's own draft first (scripts/yahoo-draft-ingest.mjs).`
+        : `--snake-adp ${snakeAdpFmt}: raw_adp_history holds no rows for that format in ${lo}-${hi}. ` +
         `Formats present: ${[...new Set(rowsAdp.map(() => snakeAdpFmt))].join(",") || "(none)"}.`);
     }
-    console.log(`  --snake-adp ${snakeAdpFmt}: the room drafts in the REAL preseason ADP order (raw_adp_history),`);
+    console.log(snakeAdpFmt === "league"
+      ? `  --snake-adp league: the room drafts in THIS LEAGUE'S OWN REAL DRAFT ORDER (raw_league_pick),`
+      : `  --snake-adp ${snakeAdpFmt}: the room drafts in the REAL preseason ADP order (raw_adp_history),`);
     console.log(`    covering ${covered.length}/${seasons.length} backtested seasons (${covered[0]}-${covered[covered.length - 1]}); a season with no ADP falls back to the pool's own VOR order.`);
     // HOW MANY NAMES ACTUALLY JOIN. A key miss is silent: the player drops into the unranked tail and
     // the arm degrades toward the default book while still calling itself ADP. Printed per season so
@@ -2760,8 +2787,14 @@ async function cmdBacktest(rest: string[]) {
       return `${y}:${hit}/${m.size}`;
     }).join(" ");
     console.log(`    ADP names matched into the season pool: ${matchLine}`);
-    console.log(`    NOTE: the archive is 12-team ONE-QB (standard/ppr/half-ppr). There is NO superflex ADP in it,`);
-    console.log(`          so under a superflex format this arm UNDERSTATES the room's demand for quarterbacks.`);
+    if (snakeAdpFmt === "league") {
+      console.log(`    NOTE: this is a DIAGNOSTIC ARM, NOT A GATE. It covers only the seasons this league's own draft`);
+      console.log(`          log reaches, and a season whose draft was made under a DIFFERENT format than the one being`);
+      console.log(`          simulated imports that format's positional demand -- read the per-season line, not the total.`);
+    } else {
+      console.log(`    NOTE: the archive is 12-team ONE-QB (standard/ppr/half-ppr). There is NO superflex ADP in it,`);
+      console.log(`          so under a superflex format this arm UNDERSTATES the room's demand for quarterbacks.`);
+    }
   }
   if (btModel.kind === "snake") {
     console.log(`DRAFT   SNAKE, ${lg.teams} teams x ${(await import("./draft/draftModel.js")).draftRounds(lg.slots)} rounds` +

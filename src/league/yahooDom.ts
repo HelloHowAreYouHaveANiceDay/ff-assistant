@@ -103,7 +103,7 @@ export function htmlText(s: string): string {
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
-    .replace(/&#x27;|&apos;/g, "'")
+    .replace(/&#x27;|&#0*39;|&apos;/g, "'")
     .replace(/&#x2F;/g, "/")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
@@ -649,6 +649,151 @@ export function parseYahooMyLeagues(html: string): YahooMyLeagueRow[] {
       leagueId: lg[1], name: htmlText(lg[2]) || null,
       teamId: tm ? tm[1] : null, teamName: tm ? htmlText(tm[2]) || null : null,
     });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// /f1/<id>/draftresults -- THE LEAGUE'S OWN DRAFT (M2e)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * WHICH SEASONS THE DRAFT PAGE OFFERS, and what each one's `draft_results_period` token is.
+ *
+ * READ, NOT ASSUMED. The page carries a `<select id="yfa-draftresults-select">` whose options are
+ * `current` ("2026 draft order") and `previous` ("2025 season draft results"). The prior-season
+ * mapping is exactly the kind of fact that is cheap to assume ("previous means season-1") and
+ * expensive to be wrong about -- a renewed league can skip a year -- so the season is taken from the
+ * option's own label and a label with no four-digit year is refused rather than guessed.
+ */
+export function parseYahooDraftPeriods(html: string): { value: string; season: number; label: string }[] {
+  const sel = /<select[^>]*id="yfa-draftresults-select"[\s\S]*?<\/select>/i.exec(html);
+  if (!sel) return [];
+  const out: { value: string; season: number; label: string }[] = [];
+  for (const o of sel[0].matchAll(/<option[^>]*value="([^"]*)"[^>]*>([\s\S]*?)<\/option>/gi)) {
+    const label = htmlText(o[2]);
+    const yr = /\b(19|20)\d{2}\b/.exec(label);
+    if (!yr) throw new Error(`yahoo draftresults: the season selector offers "${label}" (value "${o[1]}"), which names no four-digit season. Refusing to guess which season that draft is.`);
+    out.push({ value: o[1], season: Number(yr[0]), label });
+  }
+  return out;
+}
+
+/**
+ * ONE REAL PICK, as the draft-results page publishes it.
+ *
+ * `overallPick` is the ONLY pick number that means anything across rounds, and the two tabs publish
+ * it differently: the ROUND tab prints the position WITHIN the round (`1.` twelve times per table)
+ * and the TEAM tab prints the overall number in parentheses (`(24)`). So the round tab's overall is
+ * DERIVED -- `(round-1) * teams + pickInRound` -- and the team tab's is READ. `parseYahooDraftResults`
+ * therefore takes the team count as an argument rather than guessing it from the tallest round table,
+ * and `yahooDraftFromHtml` (yahoo.ts) cross-checks the derived numbers against the read ones. Two
+ * independent reads of the same fact is the only way to catch a page whose row order is not pick order.
+ *
+ * `teamId` is NOT here: neither tab carries a `/f1/<lg>/<teamId>` link anywhere (verified on both
+ * tabs of both seasons, 2026-09-16). The team is published as a NAME and the join to an id is the
+ * caller's, against the all-rosters page.
+ */
+export interface YahooDraftPick {
+  round: number; pickInRound: number; overallPick: number;
+  teamName: string; playerId: string; name: string; pos: string; proTeam: string;
+}
+
+/** The player anchor + meta span a draft-results cell renders:
+ *  `<a href="https://sports.yahoo.com/nfl/players/40059" class="name">Jahmyr Gibbs</a> <span ...>(Det - RB)</span>`.
+ *  NOT `parseYahooPlayerCell`: that reads `data-ys-playerid` and a `title` attribute, and this page
+ *  publishes NEITHER -- the id is in the href and the name is the anchor's text. A shared parser that
+ *  silently returned null here would have produced an empty draft with no error anywhere. */
+function draftPlayerCell(cell: string): { playerId: string; name: string; pos: string; proTeam: string } | null {
+  // A TEAM DEFENSE IS A DRAFTED MAN AND ITS ANCHOR IS A DIFFERENT SHAPE. Yahoo links a player to
+  // `/nfl/players/<numeric id>` and a defense to `/nfl/teams/<slug>/` -- no numeric id anywhere. The
+  // first version of this matched only the player form, so league 129048's 2025 draft (which rosters
+  // D/ST; the 2026 superflex format does not) came back with 169 of its 180 picks and, worse, every
+  // pick AFTER a defense carried a pick number one too low, because the skipped row still consumed a
+  // slot in the round. Eleven silently missing picks and a silently shifted order is exactly the
+  // failure the team-tab cross-check exists to catch, and it caught it.
+  const a = /<a[^>]+href="[^"]*\/nfl\/(players\/(\d+)|teams\/([a-z-]+))\/?"[^>]*class="[^"]*\bname\b[^"]*"[^>]*>([\s\S]*?)<\/a>/i.exec(cell);
+  if (!a) return null;
+  const meta = /\(([^)]*)\)/.exec(htmlText(cell.replace(a[0], " ")));
+  const parts = (meta ? meta[1] : "").split(/\s*-\s*/);
+  return {
+    // `def:<slug>` rather than a bare slug: the id space is Yahoo's numeric player id and a defense
+    // has none, so it gets a namespaced key that cannot be mistaken for one.
+    playerId: a[2] ? a[2] : `def:${(a[3] ?? "").toLowerCase()}`,
+    name: htmlText(a[4]),
+    pos: (parts[1] ?? "").trim().toUpperCase(), proTeam: (parts[0] ?? "").trim().toUpperCase(),
+  };
+}
+
+/**
+ * THE ROUND TAB -- `?drafttab=round`, one table per round, in pick order.
+ *
+ * Markup, read 2026-09-16 (league 129048, both seasons): `<div id="drafttables" class="round ...">`
+ * holding N tables, each `<thead><tr><th colspan="3">Round K</th></tr></thead>` then one `<tr>` per
+ * pick: `<td class="first">p.</td>`, the player cell, and `<td class="last ... " title="Team Name">`.
+ * There are no nested tables in that region (checked), so the row scan is the plain one.
+ *
+ * THROWS on a page with no round table at all -- an empty draft and a failed read are the same thing
+ * to a caller, and this one would go on to write an empty season into the store.
+ */
+export function parseYahooDraftResults(html: string, teams: number): YahooDraftPick[] {
+  const zone = /<div[^>]*id="drafttables"[^>]*>([\s\S]*)$/i.exec(html);
+  const scope = zone ? zone[1] : html;
+  const out: YahooDraftPick[] = [];
+  for (const t of scope.matchAll(/<th[^>]*>\s*Round\s+(\d+)\s*<\/th>[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/gi)) {
+    const round = Number(t[1]);
+    let inRound = 0;
+    for (const r of tableRows(t[2])) {
+      const cells = rowCellsTagged(r);
+      if (cells.length < 3) continue;
+      const p = draftPlayerCell(cells[1].body);
+      if (!p) continue;
+      const title = /title="([^"]*)"/i.exec(cells[2].tag);
+      const teamName = htmlText(title ? title[1] : cells[2].body);
+      inRound++;
+      // The printed `1.` is not trusted as the position: it is a LABEL, and a page whose rows were
+      // ever reordered would still print an ascending label. The position is the row's index, and
+      // `ingestYahooDraft` checks the resulting overall numbers against the team tab's printed ones.
+      out.push({
+        round, pickInRound: inRound, overallPick: (round - 1) * teams + inRound,
+        teamName, playerId: p.playerId, name: p.name, pos: p.pos, proTeam: p.proTeam,
+      });
+    }
+  }
+  if (!out.length) {
+    throw new Error("yahoo draftresults: the round tab carried no `Round N` table with picks in it -- not logged in, a league that has not drafted, or Yahoo changed the markup. Refusing to report an empty draft.");
+  }
+  return out;
+}
+
+/**
+ * THE TEAM TAB -- `?drafttab=team`, one table per team, each row `<td>k.</td><td>(overall)</td><player>`.
+ *
+ * This is the INDEPENDENT read of the same draft, and it exists for one job: it prints the OVERALL
+ * pick number that the round tab only implies. `ingestYahooDraft` requires the two to agree on every
+ * (player -> overall pick) pair, which is what turns "the rows looked serpentine" into a checked fact.
+ */
+export function parseYahooDraftByTeam(html: string): { teamName: string; picks: { overallPick: number; teamPick: number; playerId: string; name: string }[] }[] {
+  const zone = /<div[^>]*id="drafttables"[^>]*>([\s\S]*)$/i.exec(html);
+  const scope = zone ? zone[1] : html;
+  const out: { teamName: string; picks: { overallPick: number; teamPick: number; playerId: string; name: string }[] }[] = [];
+  for (const t of scope.matchAll(/<th[^>]*colspan="3"[^>]*>([\s\S]*?)<\/th>[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/gi)) {
+    const teamName = htmlText(t[1]);
+    if (!teamName || /^Round\s+\d+$/i.test(teamName)) continue;      // a round table, not a team table
+    const picks: { overallPick: number; teamPick: number; playerId: string; name: string }[] = [];
+    for (const r of tableRows(t[2])) {
+      const cells = rowCells(r);
+      if (cells.length < 3) continue;
+      const p = draftPlayerCell(cells[2]);
+      const overall = /\((\d+)\)/.exec(htmlText(cells[1]));
+      const teamPick = Number(htmlText(cells[0]).replace(/\D/g, ""));
+      if (!p || !overall || !teamPick) continue;
+      picks.push({ overallPick: Number(overall[1]), teamPick, playerId: p.playerId, name: p.name });
+    }
+    if (picks.length) out.push({ teamName, picks });
+  }
+  if (!out.length) {
+    throw new Error("yahoo draftresults: the team tab carried no team table with picks in it -- refusing to report an empty draft.");
   }
   return out;
 }

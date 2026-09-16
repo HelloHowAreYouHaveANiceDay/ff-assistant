@@ -1,0 +1,76 @@
+{
+  "_what": "THE M2e RE-MEASUREMENT of this format's gate, as a CANDIDATE beside golden.json -- not a replacement for it. golden.json is UNTOUCHED. This file records what the gate reads when the one constant it is most sensitive to (`marketSd`) is set to the values MEASURED from league 129048's own real draft instead of the asserted 0.30, and says which number the owner should pin.",
+  "scoringKey": "sc-a845f67652fb",
+  "formatKey": "fk-3a298dfdeb32",
+  "league": "129048",
+  "draftType": "snake",
+  "date": "2026-09-16",
+  "status": "CANDIDATE -- owner decision required. Nothing here is pinned and nothing is shipped.",
+
+  "recommendation": {
+    "pin": "KEEP golden.json EXACTLY AS IT IS: 99.2% playoffs / 39.8% titles at marketSd 0.30.",
+    "why": "The measurement did not move the number, it CHANGED WHAT THE NUMBER IS. 0.30 was an assertion CLAUDE.md flags as never measured; it is now a value the league's own draft is consistent with. The two estimators bracket it (0.244 and 0.335) and it sits between them, so there is no fitted value to replace it with that the data prefers. Re-pinning to 0.24 or to 0.34 would be pinning a bracket endpoint, which is a worse claim than pinning the middle.",
+    "whatDoesChange": "The `notGated` line 'the room is NOT this league's managers: the store holds no raw_league_pick for 129048' is now FALSE -- there are 384 of them (2026 and 2025). And the `_saturation` note's 'until the room model is calibrated against a real snake draft log' has been done, with the result below.",
+    "whatTheOwnerIsBeingAskedToDECIDE": "Nothing about the pin. The decision is whether to accept the two LIMITS this measurement exposed (see `limits`), both of which bound how far this format's gate can be trusted and neither of which a re-pin would fix."
+  },
+
+  "measured": {
+    "what": "`marketSd` in the arm the golden pins is the dispersion of the ROOM's ordering around a PRIOR-SEASON-ACTUALS VOR book -- `--no-lookahead` sets our own error to 0 and our book to season Y-1's actuals, and the room drafts off that x (1 + e), e ~ N(0, marketSd), one shared draw per player.",
+    "source": "league 129048's own 2026 draft: 204 picks, 12 teams x 17 rounds, serpentine, from /f1/129048/draftresults (scripts/yahoo-draft-ingest.mjs). 181 of the 204 picks (89%) are in the 2025-actuals pool; the other 23 are rookies our no-lookahead book cannot hold.",
+    "method": "simulation-based method of moments (scripts/snake-room-error.mjs): a dispersion statistic on the real draft, the same statistic on drafts simulated by `runSnakeDraft` itself across a grid of marketSd, inverted on the ascending branch. The simulator supplies the serpentine, positional need, the bench rule and the legality rule, so no hand-built correction for any of them is needed.",
+    "estimates": [
+      { "statistic": "logGap", "fitted": 0.244, "band": [0.207, 0.321], "over": "86 positive-VOR picks", "note": "sd of log(V_j / v(p)) -- the implied log error, in marketSd's own units." },
+      { "statistic": "rankGapTop", "fitted": 0.335, "band": [null, 0.255], "over": "115 positive-VOR picks", "note": "sd of (draft position - book rank) among the positive-VOR picks. Its curve peaks near 0.50 and falls after, so only the ascending branch is inverted; the upper band endpoint is off that branch and is recorded as null rather than extrapolated." }
+    ],
+    "asserted": 0.30,
+    "verdict": "0.244 <= 0.30 <= 0.335. The asserted constant is inside the measured bracket and the measurement cannot reject it.",
+    "positiveControl": {
+      "what": "`--self-test X` feeds the identical pipeline a SIMULATED draft at a known X (seed 987654, outside the grid's own seed block) and requires X back. Without it, an estimator that always answers 'about 0.3' is indistinguishable from one that measured something.",
+      "recovered": { "0.15": { "rankGap": 0.144, "rankGapTop": 0.136, "logGap": 0.120 }, "0.30": { "rankGap": 0.271, "rankGapTop": 0.258, "logGap": 0.288 }, "0.50": { "rankGap": 0.808, "rankGapTop": null, "logGap": 0.362 } },
+      "reads": "BIASED LOW by about 0.02-0.04 over 0.15-0.30, so the real fits are if anything slight understatements. And NO RESOLUTION ABOVE ~0.40: at a true 0.50 the statistics return 0.81 / nothing / 0.36. A fit from this instrument is only meaningful below ~0.4 -- both real fits are -- and it can never support a claim that the room's error is large."
+    },
+    "botIdioSdIsNOTIDENTIFIED": "Re-fitting at --bot-noise 0 / 0.20 / 0.40 moves the fitted shared error by 0.04 or less (logGap 0.255 / 0.244 / 0.242; rankGapTop 0.343 / 0.335 / 0.305). With twelve seats and ONE draft the shared and per-bot terms are not separable: the shared term absorbs whatever the per-bot term is set to. This is the quantitative form of the golden's existing observation that the per-bot view is nearly irrelevant, and it means no number for `--bot-noise` can be claimed to be measured."
+  },
+
+  "gate": {
+    "command": "npm run ff -- backtest --league 129048 --full --no-lookahead --seasons 1999-2025 --n 150 [--market-noise X]",
+    "arms": [
+      { "marketSd": 0.24, "playoffPct": 98, "titlePct": 34.2, "perSeasonTitles": "2000:50 2001:24 2002:29 2003:43 2004:34 2005:28 2006:42 2007:27 2008:30 2009:22 2010:28 2011:36 2012:46 2013:34 2014:35 2015:27 2016:27 2017:47 2018:37 2019:48 2020:23 2021:33 2022:48 2023:29 2024:32 2025:33" },
+      { "marketSd": 0.30, "playoffPct": 99, "titlePct": 39.8, "pinned": true, "perSeasonTitles": "2000:58 2001:31 2002:28 2003:55 2004:35 2005:33 2006:51 2007:39 2008:29 2009:26 2010:29 2011:38 2012:53 2013:35 2014:49 2015:33 2016:28 2017:51 2018:48 2019:59 2020:31 2021:34 2022:53 2023:35 2024:39 2025:34", "note": "RE-RUN 2026-09-16 UNDER M2e AND REPRODUCED EXACTLY -- 39.8% / 99% with all 26 per-season cells identical to the line golden.json records. The draft ingest and the picks.ts NULL fix moved nothing, which is the one-rule check this wave owed." },
+      { "marketSd": 0.34, "playoffPct": 100, "titlePct": 44.3, "perSeasonTitles": "2000:60 2001:39 2002:37 2003:55 2004:43 2005:34 2006:57 2007:37 2008:30 2009:35 2010:35 2011:40 2012:61 2013:37 2014:43 2015:31 2016:29 2017:61 2018:49 2019:70 2020:38 2021:47 2022:59 2023:43 2024:42 2025:41" }
+    ],
+    "readAsUncertainty": "The measurement's bracket on the constant translates into a +/- 5pp bracket on the title column (34.2 - 44.3) and a 98-100 bracket on the playoff column. That is the honest error bar on this format's gate, and it is far wider than the 3.0pp tolerance the golden carries -- the tolerance measures Monte-Carlo slack, not this."
+  },
+
+  "limits": [
+    {
+      "name": "THE ROOM MODEL CANNOT PRODUCE THE DISORDER OF A REAL DRAFT'S TAIL, AT ANY marketSd.",
+      "what": "Over ALL 181 covered picks the real draft's rank-gap sd is 44.3. The simulated room reaches 33.0 at marketSd 0.30 and TOPS OUT at 41.9 near 0.80, where it is drafting nearly at random -- it never reaches 44.3.",
+      "why": "`vorBook` prices every sub-replacement player at exactly 0 plus a 1e-4-per-point tie-break, and the room's error is MULTIPLICATIVE on points. A noised zero is a zero, so the model drafts the last five or six rounds in almost book order however large the constant is, while the real room drafts them in an order our book has no opinion about at all.",
+      "consequence": "The fit above is taken on the positive-VOR region, which is the region the model can represent. The bench rounds are OUTSIDE the room model's range, not merely noisier than it assumes. A room model that gave the floored tail its own dispersion (additive, or a rank-space shuffle) is the next thing to build, and it is a MODEL change, not a constant change."
+    },
+    {
+      "name": "THE FIT ATTRIBUTES ALL DISAGREEMENT TO THE ROOM'S ERROR, WHICH IS THE HARNESS'S OWN ASSUMPTION AND IS WRONG.",
+      "what": "The estimator measures how far the room's order sits from a prior-season-actuals VOR book. The backtest calls that whole distance the room's ERROR, because in that arm our book is the truth by construction.",
+      "why": "Some of it is the room being RIGHT: twelve managers drafting in September 2026 are using 2026 projections, injury news and depth charts, none of which a 2025-actuals book contains.",
+      "consequence": "The fitted value is therefore an UPPER BOUND on the room's error, and the gate number under it is an UPPER BOUND on our edge. The direct evidence for how big that overstatement is sits in `leagueAdpArm` below and it is not small."
+    }
+  ],
+
+  "leagueAdpArm": {
+    "what": "The second arm the M2e brief asked for: a room whose book IS this league's own real draft order (`--snake-adp league`, new, reading raw_league_pick), instead of our book plus noise.",
+    "coverage": "ONE SEASON. The league's draft log is 2025 and 2026; 2026 has no actuals to score against yet, so 2025 is the only cell that can run. The unit of analysis in this repo is the SEASON, so this is n=1 and it is a DIAGNOSTIC, not a gate.",
+    "result": { "season": 2025, "n": 400, "titlePct": 0.0, "playoffPct": 59, "control_defaultRoom_sameSeason": { "titlePct": 35.0, "playoffPct": 100 }, "control_adpPpr_sameSeason": { "titlePct": 0.8, "playoffPct": 79 } },
+    "reading": "Against the room's REAL order our book wins no titles and makes the playoffs 59% of the time -- BELOW the 66.7% a random seat gets in an 8-of-12 field. An independent real-order room (the FantasyFootballCalculator ppr archive) gives the same verdict, 0.8% / 79%. The mechanism is not subtle: our no-lookahead book is the PRIOR SEASON'S ACTUALS, and a real room's preseason order is a far better predictor of the coming season than that, so a room that drafts in real order takes the players who were actually worth drafting and leaves us the ones a stale book overrates.",
+    "confound_statedRatherThanBuried": "League 129048's 2025 draft was made under a DIFFERENT format from the one simulated -- 15 rounds, one quarterback, with kickers and defenses -- so a 1-QB room's quarterback demand is being imported into a superflex sim. That confound pushes the OTHER way (a room that leaves quarterbacks late should help our QB-heavy book), so it does not explain the result; it makes it starker.",
+    "whatItDoesNOTShow": "It does not show the shipped board is bad. The gate arm and this arm differ in WHOSE INFORMATION THE ROOM HAS, not in our strategy: the gate gives the room a blurred copy of a stale book, this arm gives it a real preseason opinion. The comparable question -- our REAL board (the projector artifact) against the room's REAL order -- cannot be run on this format yet (`--projection artifact` needs a blind per-season fold set this format does not have; see golden.json notGated). That is the measurement this arm is really asking for.",
+    "alsoContradicts": "docs/validation.md records that `--snake-adp ppr` 'FLATTERS us' because a 1-QB archive leaves quarterbacks on the board. Measured on 2025 it does the opposite by ~34pp of titles. That claim was an argument, not a run."
+  },
+
+  "provenance": {
+    "ingest": "scripts/yahoo-draft-ingest.mjs -> raw_league_pick 384 rows for league 129048 (2026: 204, 2025: 180), raw_league_season 2, raw_league_team_season 24; fact_draft_pick rebuilt to 384 rows (2026: 203/204 resolved to a player_sk, 2025: 176/180).",
+    "checks": "both draft tabs read and cross-checked on every pick's overall number; rectangular (12 x 17); serpentine, asserted against `serpentineOrder(12,17)` itself. Our team (11, 'Joe's Rookie Daycare') has exactly 17 picks from draft slot 6, and 16 of those 17 are still on its 18-man live roster -- one drop (Dylan Sampson) and two adds (Devaughn Vele, Mike Gesicki) in the weeks since.",
+    "espnUntouched": "league 462233's 1,658 fact_draft_pick rows are byte-identical to data/ff.db.bak-prem2e-2026-09-16 including updated_at (sha256 cad0c8b59eb8b814fbdeaf2234143a9c193e5e926be1bb273ddfd40c26c4cb18).",
+    "measuredBy": "scripts/snake-room-error.mjs (2026-09-16); docs/validation.md 'Yahoo room calibration (M2e)'."
+  }
+}

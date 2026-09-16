@@ -121,6 +121,83 @@ export function loadLeagueHistory(
   return counts;
 }
 
+/**
+ * THE SAME THREE RAW TABLES, FOR A YAHOO SNAKE (M2e).
+ *
+ * WHY IT IS NOT `loadLeagueHistory`. That function's input is a `SeasonSnapshot`, which is ESPN's
+ * season payload flattened: every behaviour and outcome field on `SeasonTeam` is a `number`, because
+ * ESPN's `mTeam` view publishes all of them. Yahoo's draft page publishes a team NAME and nothing
+ * else -- no wins, no points for, no acquisitions, no owner, no final rank -- so building a
+ * `SeasonSnapshot` here would mean writing a plausible number (0 wins, $0 FAAB) into every one of
+ * those columns, which is indistinguishable on the row from having read it. They are written NULL,
+ * and this is the function that says so.
+ *
+ * WHAT IS AND IS NOT WRITTEN, column by column:
+ *   raw_league_season       available=1, size=teams, note=the caller's provenance line.
+ *                           auction_budget NULL and ppr_points NULL -- A SNAKE HAS NO BUDGET, and the
+ *                           scoring rules live in `settings.config`, not here. The per-season format
+ *                           columns (reg_weeks, playoff_teams, ...) are NULL: the draft page carries
+ *                           no calendar, and this league's format is read from the settings page by
+ *                           `yahooSettingsFromHtml`, which is the only thing that has seen it.
+ *   raw_league_team_season  league_id/season/team_id/name only. Everything else NULL, per above.
+ *   raw_league_pick         pick_no = the OVERALL pick number (which for a snake IS the array index,
+ *                           exactly as for ESPN), team_id, name, pos. price NULL -- not 0: a snake
+ *                           pick has no price, and a zero would be a real price that happens to be
+ *                           free. owner_id/owner NULL -- Yahoo's draft page names the TEAM, not the
+ *                           manager.
+ *
+ * It writes ONLY the seasons it is given, and only for `leagueId`; no other league's rows are read
+ * or touched.
+ */
+export interface YahooDraftSeasonRows {
+  season: number;
+  teams: { teamId: string; name: string }[];
+  /** slot -> count, for `slots_remaining` in fact_draft_pick. `{}` when the season's roster template
+   *  is not known (a prior season whose settings page is no longer served), which leaves that column
+   *  NULL rather than filled from this season's template. */
+  slotCounts: Record<string, number>;
+  picks: { pickNo: number; teamId: string; name: string; pos: string | null }[];
+  note: string;
+}
+
+export function loadYahooDraftHistory(
+  db: DB, leagueId: string, seasons: YahooDraftSeasonRows[], fetchedAt: string,
+): LeagueHistoryCounts {
+  const upSeason = db.prepare(`INSERT INTO raw_league_season
+      (league_id, season, available, size, auction_budget, ppr_points, slot_counts_json, note, fetched_at)
+    VALUES (@l,@s,1,@size,NULL,NULL,@slots,@note,@now)
+    ON CONFLICT(league_id,season) DO UPDATE SET available=1,size=excluded.size,auction_budget=NULL,
+    ppr_points=NULL,slot_counts_json=excluded.slot_counts_json,note=excluded.note,fetched_at=excluded.fetched_at`);
+  const upTeam = db.prepare(`INSERT INTO raw_league_team_season
+      (league_id, season, team_id, name, fetched_at)
+    VALUES (@l,@s,@id,@name,@now)
+    ON CONFLICT(league_id,season,team_id) DO UPDATE SET name=excluded.name,fetched_at=excluded.fetched_at`);
+  const upPick = db.prepare(`INSERT INTO raw_league_pick
+      (league_id, season, pick_no, team_id, name, pos, price, owner_id, owner, fetched_at)
+    VALUES (@l,@s,@n,@tid,@name,@pos,NULL,NULL,NULL,@now)
+    ON CONFLICT(league_id,season,pick_no) DO UPDATE SET team_id=excluded.team_id,name=excluded.name,
+    pos=excluded.pos,price=NULL,fetched_at=excluded.fetched_at`);
+  // REPLACE THE SEASON'S PICKS, do not accumulate into them. Same hazard as the schedule above: a
+  // season re-read after the roster template changed (2025 had 15 rounds, 2026 has 17) would leave
+  // rounds 16-17 behind as ghosts of the other year.
+  const delPicks = db.prepare("DELETE FROM raw_league_pick WHERE league_id=@l AND season=@s");
+
+  const counts: LeagueHistoryCounts = { seasons: 0, available: 0, teams: 0, picks: 0, games: 0, divisions: 0 };
+  db.transaction(() => {
+    for (const s of seasons) {
+      upSeason.run({ l: leagueId, s: s.season, size: s.teams.length, slots: JSON.stringify(s.slotCounts), note: s.note, now: fetchedAt });
+      counts.seasons++; counts.available++;
+      for (const t of s.teams) { upTeam.run({ l: leagueId, s: s.season, id: t.teamId, name: t.name, now: fetchedAt }); counts.teams++; }
+      delPicks.run({ l: leagueId, s: s.season });
+      for (const p of s.picks) {
+        upPick.run({ l: leagueId, s: s.season, n: p.pickNo, tid: p.teamId, name: p.name, pos: p.pos, now: fetchedAt });
+        counts.picks++;
+      }
+    }
+  })();
+  return counts;
+}
+
 /** Read back what landed, per season. The cross-check the loader script did by hand, as a function
  *  so the ingest verb and the test assert on the same numbers. */
 export function readBackLeagueHistory(db: DB, leagueId: string): SeasonCheck[] {

@@ -14,7 +14,22 @@ import { openDb } from "../src/db/db.js";
 
 const HAVE_DB = existsSync("data/ff.db");
 
-// season -> [picks, total $] exactly as docs/league-tendencies.md records them.
+/**
+ * WHICH LEAGUE THESE NUMBERS ARE. docs/league-tendencies.md is about ONE room -- the ESPN auction
+ * league 462233 -- and every query here used to read `fact_draft_pick` with no league filter at all.
+ * That was invisible while the store held one league and became wrong the moment it held two: M2e
+ * ingested the Yahoo snake league's own draft (129048, 384 picks), and 2025 promptly read **372 picks
+ * against the recorded 192** -- this file's first test, failing for a completely healthy store.
+ *
+ * The other tests in the file did NOT fail, and that is the more interesting half: the `player_sk`
+ * coverage test, the consensus-stamp test and the raw-vs-fact reconciliation all kept passing on a
+ * contaminated population, because their assertions happen to survive it (the reconciliation compares
+ * two sums that are contaminated identically). A test that passes on the wrong rows is not passing.
+ * So every per-league read below is scoped, and the last test proves the scope is load-bearing.
+ */
+const LEAGUE = "462233";
+
+// season -> [picks, total $] exactly as docs/league-tendencies.md records them, FOR LEAGUE 462233.
 const RECORDED: Record<number, [number, number]> = {
   2022: [182, 2796],
   2023: [182, 2783],
@@ -27,8 +42,8 @@ test("every season's pick count and total spend match docs/league-tendencies.md 
   const db = openDb("data/ff.db");
   let rows: { season: number; n: number; total: number }[];
   try {
-    rows = db.prepare("SELECT season, COUNT(*) n, SUM(price) total FROM fact_draft_pick GROUP BY season")
-      .all() as typeof rows;
+    rows = db.prepare("SELECT season, COUNT(*) n, SUM(price) total FROM fact_draft_pick WHERE league_id = ? GROUP BY season")
+      .all(LEAGUE) as typeof rows;
   } catch { db.close(); return t.skip("fact_draft_pick not built -- run `ff build-picks`"); }
   db.close();
   if (!rows.length) return t.skip("fact_draft_pick is empty -- run `ff build-picks`");
@@ -50,8 +65,8 @@ test("a pick's player key is resolved for nearly all of them, and unresolved is 
   const db = openDb("data/ff.db");
   let r: { n: number; k: number };
   try {
-    r = db.prepare("SELECT COUNT(*) n, SUM(CASE WHEN player_sk IS NOT NULL THEN 1 ELSE 0 END) k FROM fact_draft_pick")
-      .get() as typeof r;
+    r = db.prepare("SELECT COUNT(*) n, SUM(CASE WHEN player_sk IS NOT NULL THEN 1 ELSE 0 END) k FROM fact_draft_pick WHERE league_id = ?")
+      .get(LEAGUE) as typeof r;
   } catch { db.close(); return t.skip("fact_draft_pick not built"); }
   db.close();
   if (!r.n) return t.skip("fact_draft_pick is empty");
@@ -69,8 +84,8 @@ test("the consensus columns are stamped with the scrape they came from", (t) => 
     rows = db.prepare(
       "SELECT season, consensus_asof asOf, COUNT(*) n, " +
       "SUM(CASE WHEN consensus_pos_rank_asof IS NOT NULL THEN 1 ELSE 0 END) withRank " +
-      "FROM fact_draft_pick GROUP BY season",
-    ).all() as typeof rows;
+      "FROM fact_draft_pick WHERE league_id = ? GROUP BY season",
+    ).all(LEAGUE) as typeof rows;
   } catch { db.close(); return t.skip("fact_draft_pick not built"); }
   db.close();
   if (!rows.length) return t.skip("fact_draft_pick is empty");
@@ -100,10 +115,10 @@ test("the consensus columns are stamped with the scrape they came from", (t) => 
 // THE OTHER TWO FACT TABLES
 // ==================================================================================================
 
-const factRows = <T>(sql: string): T[] | null => {
+const factRows = <T>(sql: string, ...params: unknown[]): T[] | null => {
   if (!HAVE_DB) return null;
   const db = openDb("data/ff.db");
-  try { return db.prepare(sql).all() as T[]; } catch { return null; } finally { db.close(); }
+  try { return db.prepare(sql).all(...params) as T[]; } catch { return null; } finally { db.close(); }
 };
 
 test("every settled season has EXACTLY ONE champion", (t) => {
@@ -158,11 +173,11 @@ test("every team in fact_matchup exists in fact_team_season for that season", (t
 test("fact_draft_pick totals match raw_league_pick to the dollar, season by season", (t) => {
   const rows = factRows<{ season: number; f: number; r: number; fn: number; rn: number }>(
     `SELECT p.season,
-            (SELECT SUM(price) FROM fact_draft_pick d WHERE d.season = p.season) f,
+            (SELECT SUM(price) FROM fact_draft_pick d WHERE d.league_id = p.league_id AND d.season = p.season) f,
             SUM(p.price) r,
-            (SELECT COUNT(*) FROM fact_draft_pick d WHERE d.season = p.season) fn,
+            (SELECT COUNT(*) FROM fact_draft_pick d WHERE d.league_id = p.league_id AND d.season = p.season) fn,
             COUNT(*) rn
-       FROM raw_league_pick p GROUP BY p.season ORDER BY p.season`);
+       FROM raw_league_pick p WHERE p.league_id = ? GROUP BY p.season ORDER BY p.season`, LEAGUE);
   if (!rows || !rows.length) return t.skip("raw_league_pick not ingested");
   assert.ok(rows.length >= 9, `only ${rows.length} seasons of raw picks`);
   for (const r of rows) {
@@ -173,7 +188,7 @@ test("fact_draft_pick totals match raw_league_pick to the dollar, season by seas
 
 test("the auction-state columns replay the auction: money and slots only ever fall", (t) => {
   const rows = factRows<{ season: number; team_id: string; pick_order: number; money_remaining: number | null; slots_remaining: number | null; price: number }>(
-    "SELECT season, team_id, pick_order, money_remaining, slots_remaining, price FROM fact_draft_pick ORDER BY season, team_id, pick_order");
+    "SELECT season, team_id, pick_order, money_remaining, slots_remaining, price FROM fact_draft_pick WHERE league_id = ? ORDER BY season, team_id, pick_order", LEAGUE);
   if (!rows || !rows.length) return t.skip("fact_draft_pick not built");
   const last = new Map<string, { money: number; slots: number; price: number }>();
   let checked = 0;
@@ -189,4 +204,41 @@ test("the auction-state columns replay the auction: money and slots only ever fa
     last.set(k, { money: r.money_remaining, slots: r.slots_remaining, price: r.price });
   }
   assert.ok(checked > 1000, `only ${checked} consecutive pairs compared`);
+});
+
+/**
+ * THE LEAGUE FILTERS ABOVE ARE LOAD-BEARING, AND THIS IS WHERE THAT IS PROVED.
+ *
+ * Adding `WHERE league_id = ?` to a query that was passing is the kind of change that can be wrong in
+ * both directions: it fixes nothing if the store only ever holds one league, and it hides a real
+ * regression if it silently matches zero rows. So this asserts the differential directly -- with a
+ * second league present, the unfiltered population MUST differ from the filtered one on a season both
+ * leagues drafted, which is exactly the condition under which the first test in this file failed
+ * (2025: 372 unfiltered against 192 for league 462233).
+ *
+ * On a store that holds one league there is no differential to observe and the test says so rather
+ * than asserting something it cannot see.
+ */
+test("the league filter is load-bearing: a second league in the store changes the unfiltered numbers", (t) => {
+  const leagues = factRows<{ league_id: string; n: number }>(
+    "SELECT league_id, COUNT(*) n FROM fact_draft_pick GROUP BY league_id ORDER BY league_id");
+  if (!leagues || !leagues.length) return t.skip("fact_draft_pick not built");
+  const mine = leagues.find((l) => l.league_id === LEAGUE);
+  assert.ok(mine && mine.n > 0, `league ${LEAGUE} has no picks -- the filter matches nothing, which would make every test above vacuous`);
+  if (leagues.length === 1) return t.skip(`only league ${LEAGUE} is in the store -- no differential to observe`);
+
+  // A season BOTH leagues drafted. Without one, the two populations could differ only by seasons and
+  // the per-season assertions above would not have been affected at all.
+  // `all` is a SQL keyword -- aliasing a column to it makes the whole statement throw, which
+  // `factRows` catches and turns into a null, i.e. a skip. Named `every` for that reason.
+  const shared = factRows<{ season: number; leagues: number; every: number; ours: number }>(
+    `SELECT season, COUNT(DISTINCT league_id) leagues, COUNT(*) every,
+            SUM(CASE WHEN league_id = ? THEN 1 ELSE 0 END) ours
+       FROM fact_draft_pick GROUP BY season HAVING leagues > 1`, LEAGUE);
+  assert.ok(shared, "the differential query did not run at all -- a thrown query reads exactly like a clean store");
+  if (!shared.length) return t.skip("no season is drafted by more than one league yet");
+  for (const s of shared) {
+    assert.ok(s.every > s.ours,
+      `${s.season}: the unfiltered count (${s.every}) equals the filtered one (${s.ours}) -- the filter cannot be shown to do anything`);
+  }
 });

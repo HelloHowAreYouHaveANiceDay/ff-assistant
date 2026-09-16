@@ -1,5 +1,184 @@
 # Validation harness (how we know a change is better, not a regression)
 
+> ## Yahoo room calibration (2026-09-16, M2e)
+>
+> **The Yahoo format's gate rested on one asserted constant and now rests on a measured one -- and the
+> measurement did not move the number.** `golden.json`'s own `_saturation` note said the whole result
+> is a function of `marketSd` (0.30 -> 40.0% titles, 0.15 -> 24.8%, 0.05 -> 13.4%) and that the
+> constant could not be trusted "until the room model is calibrated against a real snake draft log".
+> League 129048's own draft log is now in the store, and 0.30 survives it.
+>
+> ### The draft, into the store
+>
+> `scripts/yahoo-draft-ingest.mjs` reads `/f1/129048/draftresults` through the app's logged-in
+> `yahooview` guest and writes `raw_league_pick` / `raw_league_season` / `raw_league_team_season`.
+> **384 picks: 2026's 204 (12 x 17) and 2025's 180 (12 x 15).** The page's own season selector names
+> both seasons, so the prior-season mapping is READ rather than assumed ("previous" is not assumed to
+> mean "last year").
+>
+> **BOTH TABS ARE READ, AND THE CROSS-CHECK BETWEEN THEM IS THE WHOLE POINT.** The round tab publishes
+> the draft in pick order but numbers each pick WITHIN its round; the team tab publishes the overall
+> number. Deriving the overall number from the round tab alone means trusting that no row was dropped
+> -- and a row WAS dropped: the first cell parser matched only Yahoo's `/nfl/players/<id>` anchor, and
+> a team DEFENSE is `/nfl/teams/<slug>/`, so the 2025 draft came back with **169 of its 180 picks and
+> every pick after a defense shifted one slot earlier**. Nothing about that output looked wrong -- the
+> rounds were all there, every team had picks, the order still read serpentine. The team tab's printed
+> pick numbers are what caught it. Three checks now refuse rather than warn: the two tabs agree on
+> every pick, the draft is rectangular, and the order is the serpentine `serpentineOrder(12, 17)`
+> itself generates. `test/yahoo-draft.test.ts` fault-injects each one and asserts the positive half.
+>
+> Controls: our team (11) has exactly 17 picks from draft slot 6, 16 of which are still on its 18-man
+> live roster (one drop, two adds since). ESPN's 1,658 `fact_draft_pick` rows are byte-identical to
+> `data/ff.db.bak-prem2e-2026-09-16` **including `updated_at`** -- see the note on that below.
+>
+> **2025's team ids are the PUBLISHED TEAM NAMES, not Yahoo ids, and that is deliberate.** The
+> prior-season draft page carries no `/f1/<lg>/<teamId>` link anywhere, and four of the twelve teams
+> renamed between 2025 and 2026 (`El Heisman`, `Give Lamar his Flowers`, `La Porta Potty` and `The
+> Infirmary 3.0` are gone), so those four cannot be joined to a current id at all and matching them by
+> elimination would be fabricated identity. The NAME is used for all twelve rather than for the four,
+> because a season whose ids are half real and half labels is worse than one whose ids are honestly
+> labels throughout -- and a non-numeric id can never be mistaken for a Yahoo one by a join. 2025 is also a DIFFERENT FORMAT, and the draft itself says
+> so rather than a settings page we can no longer read: its 180 picks are **13 QB, 59 RB, 69 WR, 15 TE,
+> 11 K, 11 DEF** plus 2 Yahoo no longer names, over 15 rounds. Thirteen quarterbacks across twelve
+> teams is a ONE-QB league (2026's superflex draft took 33), and this format rosters no kicker and no
+> defense at all. So 2025 is the league's history, not a second sample of this format's room.
+>
+> ### What `marketSd` actually is, and what it measures out at
+>
+> In the arm the golden pins, `--no-lookahead` sets our own projection error to **zero** and our book
+> to the **prior season's actuals**; the room drafts off `that x (1 + e)`, one shared draw per player.
+> So `marketSd` is not "how wrong is a projection" in the abstract -- it is **the dispersion of the
+> room's ordering around a prior-season-actuals VOR book**, which a real draft log can be compared
+> against directly.
+>
+> `scripts/snake-room-error.mjs` is a **simulation-based method of moments**: a dispersion statistic on
+> the real draft, the same statistic on drafts simulated by `runSnakeDraft` itself across a grid of
+> `marketSd`, inverted on the ascending branch. The simulator supplies the serpentine, positional need,
+> the bench rule and the legality rule, so the correction for all four is exact by construction rather
+> than approximate by argument. 181 of the 204 picks (89%) are in the 2025-actuals pool; the other 23
+> are rookies a no-lookahead book cannot hold.
+>
+> | statistic | fitted marketSd | band | over |
+> |---|---|---|---|
+> | `logGap` -- sd of log(V_j / v(p)), in marketSd's own units | **0.244** | 0.207-0.321 | 86 positive-VOR picks |
+> | `rankGapTop` -- sd of (draft position - book rank) | **0.335** | lower bound 0.255 | 115 positive-VOR picks |
+> | **asserted (golden.json)** | **0.30** | | |
+>
+> **0.244 <= 0.30 <= 0.335.** The asserted constant is inside the bracket and the measurement cannot
+> reject it. The gate under each endpoint: `--market-noise 0.24` -> **34.2% titles / 98% playoffs**,
+> flagless (0.30) -> **39.8% / 99%**, `--market-noise 0.34` -> **44.3% / 100%**. That +/- 5pp on titles
+> is the honest error bar on this format's gate, and it is far wider than the golden's 3.0pp tolerance,
+> which measures Monte-Carlo slack and not this.
+>
+> **The flagless arm was re-run and reproduced EXACTLY** -- 39.8% / 99%, all 26 per-season cells
+> identical to the line `golden.json` records. The draft ingest and the `picks.ts` NULL fix moved
+> nothing, which is the one-rule check this wave owed.
+>
+> **THE ESTIMATOR'S OWN POSITIVE CONTROL, because "about 0.3" is exactly what a broken estimator would
+> also say.** `--self-test X` throws the real draft away and feeds the identical pipeline a SIMULATED
+> draft at a known `X` (on a seed outside the grid's own block). It has to hand `X` back:
+>
+> | true marketSd | rankGap | rankGapTop | logGap |
+> |---|---|---|---|
+> | 0.15 | 0.144 | 0.136 | 0.120 |
+> | 0.30 | 0.271 | 0.258 | 0.288 |
+> | 0.50 | 0.808 | OFF GRID | 0.362 |
+>
+> Two things follow, and the second bounds the whole exercise. **The estimator is biased LOW by about
+> 0.02-0.04 in the 0.15-0.30 range**, so the real draft's 0.244 / 0.335 are if anything slight
+> understatements and the bracket around 0.30 is, if anything, centred a little high of it. And **it
+> has no resolution above about 0.40**: at a true 0.50 the three statistics return 0.81, nothing, and
+> 0.36. So a fit is only meaningful while it lands below ~0.4 -- which both real fits do -- and no
+> reading of this instrument can support a claim that the room's error is LARGE.
+>
+> **`--bot-noise` IS NOT IDENTIFIED FROM ONE DRAFT, and that is a result rather than a gap.** Re-fitting
+> at `--bot-noise` 0 / 0.20 / 0.40 moves the fitted shared error by 0.04 or less (`logGap` 0.255 /
+> 0.244 / 0.242; `rankGapTop` 0.343 / 0.335 / 0.305). With twelve seats and one draft the shared term
+> absorbs whatever the per-bot term is set to, so no value of `--bot-noise` can be called measured.
+>
+> ### The limit the fit exposed: the room model cannot reach a real draft's TAIL
+>
+> Over **all** 181 covered picks the real draft's rank-gap sd is **44.3**. The simulated room reaches
+> 33.0 at `marketSd` 0.30 and **tops out at 41.9 near 0.80**, where it is drafting nearly at random --
+> it never reaches 44.3 at any value of the constant. The reason is structural: `vorBook` prices every
+> sub-replacement player at exactly 0 plus a 1e-4-per-point tie-break, and the room's error is
+> MULTIPLICATIVE on points, so **a noised zero is a zero**. The model drafts the last five or six
+> rounds in near book order however large `marketSd` is, while the real room drafts them in an order
+> our book has no opinion about at all. So the fit is taken on the positive-VOR region, which is the
+> region the model can represent, and the bench rounds are recorded as **outside the room model's
+> range** rather than fitted away. Giving the floored tail its own dispersion (additive, or a
+> rank-space shuffle) is a MODEL change and is the next thing to build.
+>
+> ### The other limit, and the number that shows how big it is
+>
+> The estimator measures how far the room's order sits from a prior-season-actuals book, and the
+> backtest calls that whole distance the room's ERROR -- because in that arm our book is the truth by
+> construction. Some of it is the room being **right**: twelve managers drafting in September 2026 are
+> using 2026 projections, injury news and depth charts, none of which a 2025-actuals book contains. So
+> the fitted value is an **upper bound** on the room's error and the gate under it is an **upper bound**
+> on our edge.
+>
+> `--snake-adp league` (new, reading `raw_league_pick`) gives the room this league's **actual draft
+> order** instead of our book plus noise. It covers ONE season -- the log is 2025 and 2026, and 2026
+> has no actuals yet -- so **n = 1 season and it is a diagnostic, not a gate**:
+>
+> | 2025, n=400 | titles | playoffs |
+> |---|---|---|
+> | room = the league's REAL 2025 order (`--snake-adp league`) | **0.0%** | **59%** |
+> | room = FantasyFootballCalculator ppr ADP (`--snake-adp ppr`) | 0.8% | 79% |
+> | room = our book + noise 0.30 (the gate's arm) | 35.0% | 100% |
+> | random | 8.3% | 66.7% |
+>
+> Against a room drafting in real order our book wins **no titles and makes the playoffs less often
+> than a random seat**. An independent real-order room says the same thing, which is what makes it a
+> measurement rather than an artifact of one source. The mechanism is not subtle: our no-lookahead book
+> is the PRIOR SEASON'S ACTUALS, and a real room's preseason order predicts the coming season far
+> better than that, so the room takes the players who were actually worth drafting and leaves us the
+> ones a stale book overrates.
+>
+> Two things this does NOT show, stated because both are easy to read into it. It does not say the
+> shipped board is bad: the two arms differ in **whose information the room has**, not in our strategy,
+> and the comparable question -- our REAL board (the projector artifact) against the room's real order
+> -- cannot be run on this format yet (`--projection artifact` needs a blind per-season fold set this
+> format does not have). And league 129048's 2025 draft was made under a different format (1-QB, K and
+> D/ST, 15 rounds), so a 1-QB room's quarterback demand is being imported into a superflex sim -- a
+> confound that pushes the OTHER way (a room leaving quarterbacks late should help our QB-heavy book),
+> so it does not explain the result, it makes it starker.
+>
+> **It also contradicts a claim already in this document.** The WP11 section argues that `--snake-adp
+> ppr` "FLATTERS us" because a 1-QB archive leaves quarterbacks on the board. Measured on 2025 it does
+> the opposite by ~34pp of titles. That claim was an argument, not a run, and it is left standing above
+> with this correction beside it rather than quietly edited.
+>
+> ### Three process notes
+>
+> **A verification rebuild is a WRITE.** Running `buildDraftPicks({leagueId: "462233"})` to check that
+> the Yahoo build had not touched ESPN moved 24 cells: two ESPN teams had renamed in
+> `raw_league_team_season` before this session, and the builder correctly re-derives `team_name` from
+> that table. Nothing was lost and the drift is benign, but the ESPN block was restored from the backup
+> byte-for-byte (sha256 `cad0c8b5...`) rather than absorbed, because "did anything move?" must not be
+> answered by a command that can move something.
+>
+> **PUTTING A SECOND LEAGUE'S DRAFT IN THE STORE BROKE A TEST -- CORRECTLY.** `test/picks.test.ts`
+> read `fact_draft_pick` with NO league filter in six places. That was invisible while the store held
+> one league and became wrong the instant it held two: 2025 read **372 picks against the recorded
+> 192**. The doc those numbers come from (`docs/league-tendencies.md`) is about ONE room, so every read
+> is scoped to 462233 now. The more interesting half is that the file's OTHER five unfiltered tests
+> kept PASSING on the contaminated population -- the `player_sk` coverage test (Yahoo resolves 99% too),
+> the consensus-stamp test, and the raw-vs-fact reconciliation, whose two sums are contaminated
+> identically and therefore still agree. A test that passes on the wrong rows is not passing, so a new
+> test asserts the differential itself: with a second league present the unfiltered count of a shared
+> season MUST exceed the filtered one, and it skips by name on a single-league store rather than
+> asserting something it cannot see. The auction-replay test is the one that was saved by the NULL fix
+> below -- it skips rows with a null `money_remaining`, so 384 rows of fabricated $0 would have walked
+> straight into it.
+>
+> **A snake pick has no price, and `null - 0` is 0 in JavaScript.** `picks.ts` computed
+> `money_remaining = budget - spent`, and a snake league's `auction_budget` is NULL, so all 384 Yahoo
+> rows were written with "this team had $0 left before its first pick" -- a real, terrible auction
+> state, indistinguishable on the row from one that was read. It is NULL now; ESPN is unaffected
+> because its budget is never null.
+>
 > ## Snake DraftModel, first run (2026-09-16, WP11)
 >
 > The draft is an interface now (`src/draft/draftModel.ts`): `AuctionModel` wraps the existing
@@ -185,6 +364,10 @@
 > from the archive and keeps the value CURVE from the pool's own VOR -- can only be run on a **1-QB
 > consensus**, which understates the room's demand for quarterbacks by exactly the amount superflex
 > creates. It leaves quarterbacks on the board for our QB-heavy book to take, so it **FLATTERS us**
+> [WRONG, as an argument -- measured the same day under M2e: on 2025 the `--snake-adp ppr` room gives
+> 0.8% titles / 79% playoffs and the league's REAL order 0.0% / 59%, against 35% / 100% for the gate's
+> own room. A real preseason order out-predicts a prior-season-actuals book; the arm does not flatter
+> us, it beats us. n=1 season, diagnostic only. See "Yahoo room calibration (M2e)" above.]
 > and it is NOT the arm the golden pins. It is wired, it prints its own per-season name-match count
 > (~180 of ~200 FFC names join the pool through `nameKey`; the misses are suffix spellings and
 > defenses, which this league does not roster), and it is there for the day a superflex ADP is

@@ -36,7 +36,7 @@ import { bridgeFetch } from "../browser/appBridge.js";
 import type { DiscoveredLeague, LeagueSettings, Platform, PlatformIO, PlatformRoster } from "./platform.js";
 import type { FreeAgent, LeagueProvider, LeagueSchedule, LeagueShape, LeagueTeam } from "./types.js";
 import { effectiveFormat, localStamp, playoffRounds } from "./index.js";
-import { parseYahooAvailable, parseYahooManagers, parseYahooMyLeagues, parseYahooRosters, parseYahooScheduleWeek, parseYahooScoreboardWeek, parseYahooScoringTables, parseYahooSettingsTable, parseYahooTeamWeek, parseYahooTransactions, yahooScoringFromTables } from "./yahooDom.js";
+import { parseYahooAvailable, parseYahooDraftByTeam, parseYahooDraftPeriods, parseYahooDraftResults, parseYahooManagers, parseYahooMyLeagues, parseYahooRosters, parseYahooScheduleWeek, parseYahooScoreboardWeek, parseYahooScoringTables, parseYahooSettingsTable, parseYahooTeamWeek, parseYahooTransactions, yahooScoringFromTables, type YahooDraftPick } from "./yahooDom.js";
 import { ESPN_SLOT_NAME } from "./espnSlots.js";
 import { isBenchSlot } from "../draft/slots.js";
 
@@ -113,6 +113,19 @@ export const yahooUrls = {
   scoreboard: (leagueId: string, week?: number | null): string => `${BASE}/f1/${leagueId}/${week ? `?matchup_week=${week}` : ""}`,
   standings: (leagueId: string): string => `${BASE}/f1/${leagueId}/standings`,
   draftRoom: (leagueId: string): string => `${BASE}/f1/${leagueId}/draftresults`,
+  /**
+   * THE DRAFT RESULTS, one tab and one season-period at a time (M2e).
+   *
+   * `tab`: `round` is the draft in PICK ORDER (one table per round); `team` is the same draft
+   * re-grouped by team, and is the only tab that prints the OVERALL pick number. Both are read,
+   * because the cross-check between them is what makes the pick order a fact rather than a reading
+   * of row order.
+   *
+   * `period`: Yahoo's own `current` / `previous` token, taken from the page's season selector
+   * (`parseYahooDraftPeriods`) rather than constructed -- see that parser for why.
+   */
+  draftResults: (leagueId: string, tab: "round" | "team" = "round", period = "current"): string =>
+    `${BASE}/f1/${leagueId}/draftresults?drafttab=${tab}&draft_results_period=${period}`,
   /** The AVAILABLE pool, 25 rows a page. `count` is an OFFSET, not a page size. `sort=OR` is the
    *  preseason overall rank -- a stable ordering that exists in every week, unlike a points sort,
    *  which needs a `stat1` week token and silently reorders the pool when that token is wrong. */
@@ -277,6 +290,99 @@ export function yahooSettingsFromHtml(
     rosterSettings: { ...t, "Unmapped scoring terms": Object.entries(unmapped).map(([k, v]) => `${k}=${v}`).join("; ") },
     provenance: `yahoo ${yahooUrls.settings(opts.leagueId)} + ${yahooUrls.managers(opts.leagueId)}, read ${stamp}`,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// /f1/<id>/draftresults -- THE LEAGUE'S OWN DRAFT (M2e)
+// ---------------------------------------------------------------------------------------------
+
+/** One season of this league's real draft, cross-checked. `teamName` is what the page printed; the
+ *  join to a Yahoo team id is the caller's, because the draft page carries no team link at all. */
+export interface YahooDraftSeason {
+  season: number;
+  /** Yahoo's own `draft_results_period` token this came from (`current` / `previous`). */
+  period: string;
+  teams: number;
+  rounds: number;
+  picks: YahooDraftPick[];
+  /** Team name -> its 0-based slot in round 1, derived from the picks and CHECKED serpentine. */
+  slotOf: Map<string, number>;
+}
+
+/**
+ * THE REAL DRAFT, from both tabs, with three checks that must pass before it is returned.
+ *
+ * WHY BOTH TABS. The round tab publishes the draft in pick order but numbers each pick WITHIN its
+ * round; the team tab publishes the overall number. Deriving the overall number from the round tab
+ * alone means trusting that the row order is the pick order and that no row was dropped -- and a
+ * dropped row is not hypothetical: the first version of the cell parser did not recognise a team
+ * DEFENSE anchor, so the 2025 draft came back 11 picks short with every later pick shifted, and the
+ * team tab is what caught it.
+ *
+ * THE THREE CHECKS, each a refusal rather than a warning:
+ *   1. every pick the round tab found carries the overall number the team tab prints for that player;
+ *   2. the pick count is exactly `teams * rounds` and every team has exactly `rounds` picks;
+ *   3. the order is SERPENTINE -- round 1's order forward, round 2's reversed, and so on.
+ * A page that fails any of them is a page this repo does not understand, and an unnoticed order
+ * error would be invisible downstream: every roster would still be legal and every count still right.
+ */
+export async function yahooDraftSeasons(io: PlatformIO, leagueId: string, teams: number): Promise<YahooDraftSeason[]> {
+  const first = await io.get(yahooUrls.draftResults(leagueId, "round", "current"));
+  const periods = parseYahooDraftPeriods(first);
+  if (!periods.length) throw new Error(`yahoo draft: ${yahooUrls.draftResults(leagueId)} carried no season selector -- not logged in, or Yahoo changed the page. Refusing to guess which season the draft on it is.`);
+  const out: YahooDraftSeason[] = [];
+  for (const p of periods) {
+    const roundHtml = p.value === "current" ? first : await io.get(yahooUrls.draftResults(leagueId, "round", p.value));
+    const teamHtml = await io.get(yahooUrls.draftResults(leagueId, "team", p.value));
+    out.push(yahooDraftFromHtml(roundHtml, teamHtml, { season: p.season, period: p.value, teams }));
+  }
+  return out;
+}
+
+/** The pure half of `yahooDraftSeasons` -- two saved pages in, one checked draft out. Pinned to a
+ *  fixture in test/yahoo-draft.test.ts, including a fault injection on each of the three checks. */
+export function yahooDraftFromHtml(
+  roundHtml: string, teamHtml: string, opts: { season: number; period: string; teams: number },
+): YahooDraftSeason {
+  const { season, period, teams } = opts;
+  const picks = parseYahooDraftResults(roundHtml, teams);
+  const byTeam = parseYahooDraftByTeam(teamHtml);
+
+  // CHECK 1 -- the two tabs agree on every pick's overall number.
+  const overallOf = new Map<string, number>();
+  for (const t of byTeam) for (const p of t.picks) overallOf.set(p.playerId, p.overallPick);
+  const bad: string[] = [];
+  for (const p of picks) {
+    const o = overallOf.get(p.playerId);
+    if (o == null) bad.push(`${p.name} (pick ${p.overallPick}) is absent from the team tab`);
+    else if (o !== p.overallPick) bad.push(`${p.name}: round tab says pick ${p.overallPick}, team tab says ${o}`);
+  }
+  if (bad.length) {
+    throw new Error(`yahoo draft ${season}: the round tab and the team tab disagree on ${bad.length} pick(s) -- the row order of one of them is not the pick order, or a row was dropped. First: ${bad[0]}. Nothing was written.`);
+  }
+
+  // CHECK 2 -- the draft is rectangular.
+  const perTeam = new Map<string, number>();
+  for (const p of picks) perTeam.set(p.teamName, (perTeam.get(p.teamName) ?? 0) + 1);
+  if (perTeam.size !== teams) throw new Error(`yahoo draft ${season}: the picks name ${perTeam.size} distinct teams, not ${teams}.`);
+  const rounds = picks.length / teams;
+  if (!Number.isInteger(rounds)) throw new Error(`yahoo draft ${season}: ${picks.length} picks do not divide into ${teams} teams.`);
+  for (const [t, n] of perTeam) if (n !== rounds) throw new Error(`yahoo draft ${season}: "${t}" has ${n} picks, not ${rounds}.`);
+
+  // CHECK 3 -- serpentine. Round 1 defines the slot order; every later round must be that order,
+  // reversed on the even rounds. This is the invariant the SnakeModel's own `serpentineOrder`
+  // produces, so a real draft that failed it would mean the model and the league disagree about
+  // what a snake is.
+  const slotOf = new Map<string, number>();
+  for (let i = 0; i < teams; i++) slotOf.set(picks[i].teamName, i);
+  if (slotOf.size !== teams) throw new Error(`yahoo draft ${season}: round 1 names only ${slotOf.size} distinct teams.`);
+  for (const p of picks) {
+    const want = p.round % 2 === 1 ? p.pickInRound - 1 : teams - p.pickInRound;
+    if (slotOf.get(p.teamName) !== want) {
+      throw new Error(`yahoo draft ${season}: pick ${p.overallPick} (round ${p.round}.${p.pickInRound}) went to "${p.teamName}", who drafted from slot ${slotOf.get(p.teamName)} in round 1 -- a serpentine round ${p.round} would give it to slot ${want}. This draft is not the serpentine the SnakeModel assumes.`);
+    }
+  }
+  return { season, period, teams, rounds, picks, slotOf };
 }
 
 // ---------------------------------------------------------------------------------------------

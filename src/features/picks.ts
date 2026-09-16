@@ -150,7 +150,13 @@ export function buildDraftPicks(opts: { dbPath?: string; recapPath?: string; lea
           teamName: t?.name ?? p.team_id ?? null,
           sk, name: p.name, nk, pos, price: p.price, order: p.pick_no,
           date: null, asOf, rank: c?.rank ?? null, sd: c?.sd ?? null,
-          money: sh ? sh.budget - before : null,
+          // A SNAKE HAS NO MONEY, so this column is NULL for one -- not 0. `sh.budget` is NULL for a
+          // snake league's season row (`loadYahooDraftHistory` writes it that way deliberately), and
+          // `null - 0` is 0 in JavaScript, so the arithmetic alone would have written "this team had
+          // $0 left before its first pick" onto all 384 of league 129048's rows: a real, terrible
+          // auction state, indistinguishable on the row from one that was read. ESPN is unaffected --
+          // its budget is never null.
+          money: sh && sh.budget != null ? sh.budget - before : null,
           slots: sh && sh.slots ? sh.slots - count : null,
           pool: pool || null,
           share: pool ? p.price / pool : null,
