@@ -29,8 +29,12 @@ league we calculate for.
 - The projection MODEL (rank curve + trained artifacts of production).
 
 **Layer 2 — PER-LEAGUE (one per league, all `league_id`-keyed):**
-- Already keyed (18): `league`, `raw_league_*`, `fact_matchup`, `fact_team_season`, `fact_draft_pick`,
-  `draft`, `roster`, `ownership`, `projection`, `matchup`.
+- Already keyed (18): `league`, `raw_league_*`, `draft`, `roster`, `ownership`, `projection`, `matchup`.
+  **CORRECTION (2026-09-16 architecture review, finding S-5):** `fact_draft_pick`, `fact_team_season`
+  and `fact_matchup` carry a `league_id` COLUMN but it is NOT part of their primary key (live PKs are
+  `[season,team_name,pick_order]`, `[season,team_id]` and `[season,week,home_id]`), so a second league's
+  upserts collide with the first's. These three are NOT correctly keyed today; see
+  `docs/architecture-review-2026-09-16.md` S-5/S-6 for the fix (WP2).
 - MUST ADD `league_id` (~15 single-slot today): `settings` (the config!), `board`, `player_value`,
   `player_value_position`, `draft_state`, `draft_pick`, `my_roster` (draft-keyed today), `fact_lineup_week`,
   `fact_roster_week`, `fact_fa_pool_week`, `fact_waiver_claim`, `scorecard_prediction`, `scorecard_result`,
@@ -131,14 +135,19 @@ rename in `migrate()` (`migrateLeagueIdPk`), existing rows backfilled to the act
   SHARED. They were wrongly migrated first, then reverted (rebuilt without `league_id`). Lesson: classify
   each table as league-data vs NFL/model-data before migrating; the tell was `DELETE FROM team_odds`
   wiping all leagues.
-- **Kept single-slot (active-league cache):** `board`, `player_value`, `player_value_position` -- they are
-  regenerable and read pervasively, so they stay the active league's working set (rebuilt on switch),
-  avoiding a pervasive reader cascade. This is the hybrid decided during execution.
+- **Kept single-slot (active-league cache):** `board`, `player_value`, `player_value_position` -- the
+  INTENT was that they stay the active league's working set, regenerated whenever the active league
+  switches, avoiding a pervasive reader cascade. **CORRECTION (2026-09-16 architecture review, finding
+  S-8): the rebuild-on-switch half was never built.** `setActiveLeagueId` writes the two settings rows
+  and stops; there is no invalidation or rebuild hook, so switching the active league silently serves
+  the PREVIOUS league's board/values under the new league's name. This is a known gap, not a shipped
+  behavior -- see `docs/architecture-review-2026-09-16.md` S-8 (WP2) for the fix.
 - **Writers updated** to write `league_id` (= `activeLeagueId(db)`) and key `ON CONFLICT` on it:
   `rosterState.ts` (the 3 positional inserts -- `@lg` prepended), `faab.ts`, `decisionSnapshot.ts`.
-- **Readers** are NOT yet league-filtered; harmless while only one league's data exists, and to be added
-  as the Yahoo reader lands (before a second league's rows exist). The gate to catch a missed reader is
-  the moment Yahoo history is ingested.
+- **Readers are NOT yet league-filtered** (confirmed still true by the 2026-09-16 architecture review,
+  which counted 21 unfiltered readers of these tables -- finding S-9); harmless while only one league's
+  data exists, and this is now being fixed under that review's WP2, not deferred to "when Yahoo history
+  is ingested" (Yahoo rows already exist in some of these tables today).
 
 ## Invariants (do not break)
 

@@ -261,5 +261,6 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   is empty. See `docs/decisions.md` D11 and `docs/validation.md`.
 - The in-season decision surface and its limits: `docs/in-season-design.md`; the weekly model and its
   write-once scorecard: `docs/weekly.md`
-- Recorded decisions D0–D11 (do not silently reverse): `docs/decisions.md`
+- Recorded decisions D0-D24 (do not silently reverse): `docs/decisions.md`
+- Current multi-league/multi-format finding list + fix plan: `docs/architecture-review-2026-09-16.md`
 - Planning/roadmap lives in the wiki, not here: `wiki/projects/project--ff-assistant.md`

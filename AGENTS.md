@@ -16,7 +16,7 @@ layer you are working on before you start.
 ## Before writing any code
 
 1. Read `docs/architecture.md` (the whole system), then the relevant `docs/specs/*.md`.
-2. Read `docs/decisions.md` -- do NOT silently reverse a recorded decision (D0-D11). If a
+2. Read `docs/decisions.md` -- do NOT silently reverse a recorded decision (D0-D24). If a
    decision looks wrong, raise it as an open question in the wiki roadmap instead of coding
    around it. Note **D10**: the shipped `ff` engine is TypeScript + deterministic (no LLM in the
    bid loop); Python is only the offline data builder; the app (Electron/Agent SDK/SQLite) is BUILT.
@@ -53,5 +53,3 @@ The Phase-2 engine is real code -- there IS something to build and test:
 - **Rebuild data (Python via uv):** `uv run --with nflreadpy --with polars tools/<script>.py`
   (`build_projections`, `build_history`, `build_weekly`), then `npm run ff -- values`.
 - ASCII-only in code/docs/output; write files with the editor tools, not shell heredocs.
-
-The packaged Electron app (Intended stack above) is the part still to be scaffolded.

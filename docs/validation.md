@@ -4556,7 +4556,8 @@ and the replay says so.
 >
 > `matchup` holds 0 rows, `ownership` holds rosters and not standings, `data/owners.json` carries names
 > with no results. The finalRank figures in `docs/league-tendencies.md` came from a live league call
-> and were never written down in machine-readable form. So `scripts/sim-calibration.mjs` is built
+> and were never written down in machine-readable form. So `scripts/sim-calibration.mjs` [renamed
+> `scripts/season-calibration.mjs` in commit d8a7fc3; the entry below is left as historical record] is built
 > end-to-end and PROVEN CONNECTED on a fixture: rosters rebuilt from the 738 real picks, every player
 > projected with the artifact blind to the season, the season simulated on a generated schedule,
 > scored by Brier plus a reliability table against a uniform baseline -- and against an ADVERSARIAL

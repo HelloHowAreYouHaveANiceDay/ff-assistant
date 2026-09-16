@@ -6,7 +6,10 @@ dist/
 data/*.db
 data/*.sqlite
 data/ff.db.bak*
-data/formats/                 # per-format model working sets (regenerable; each has a ~1GB features.db)
+# per-format model working sets (regenerable; each has a ~1GB features.db). NOTE: a trailing "# ..."
+# on a pattern line is NOT a comment in .gitignore syntax -- it becomes part of the pattern, which is
+# how this directory was un-ignored for a day (2026-09-16).
+data/formats/
 data/draft-log-*.json
 data/cheatsheet.md
 data/*-dom.json

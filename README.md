@@ -46,7 +46,12 @@ app a non-technical friend can run; the engine underneath is deterministic and v
   `fact_matchup`), reproducible by re-fetching, and they now feed the price model, the bot field, the
   positional gates and the season simulator's calibration. `docs/data-layers.md`.
 - **Not yet built:** the in-season lineup *writer* (the recommend path works; the ESPN write tools
-  are deferred until after the live draft) and multi-league fan-out (one synced league today). The
+  are deferred until after the live draft); a snake-draft value path (the draft engine is auction-only
+  today); a per-format championship gate (`cpcv`/`backtest --format`, a lazy per-format golden master);
+  a Yahoo platform adaptor (`src/league/` has ESPN only -- the live Yahoo league is read through ad hoc
+  `scripts/yahoo-*.mjs`, not the platform seam); and multi-league/format threading through storage and
+  the read layer (one active-league resolver, per-league-filtered readers). See
+  `docs/architecture-review-2026-09-16.md` for the full finding list and work plan. The
   SCORING half of the preseason odds accrual was the third item here and is now built: `ff scorecard`
   grades the frozen playoff/title rows with Brier, log loss and a reliability table once a season
   resolves, and refuses an unsettled one.
@@ -89,6 +94,20 @@ src/
   db/                # better-sqlite3 store (db.ts) + schema.sql
   data/              # TS ingesters -> the store: ingest, assemble, news, projections, history,
                      #   advanced, rankings, nflverse, appdata, paths  (the data warehouse)
+  features/          # point-in-time feature pipeline (build.ts), this league's own draft/result/
+                     #   matchup facts (picks.ts), and unconsumed rookie-prospect features (prospect.ts)
+  league/            # platform-agnostic league interface (types.ts) + openLeague() (index.ts); the
+                     #   ESPN adaptor (espn.ts, espnSlots.ts, settingsDom.ts) is the only ESPN-aware file
+  lineage/           # the Data/Model pages' graphs, computed from the ingest + producer registries
+                     #   (dag.ts, registry.ts, modelGraph.ts, modelPage.ts) + the prediction ledger (ledger.ts)
+  model/             # the season projection artifact: builder (build.ts), embargo rule (embargo.ts),
+                     #   nested-CV evaluator (evaluate.ts), feature loader (features.ts), the price
+                     #   model (price.ts), and the pure projector (projector.ts)
+  util/              # one bounded-concurrency primitive (pool.ts) with a global CPU budget, shared by
+                     #   every fan-out (sweeps, nested-CV folds)
+  weekly/            # the weekly/streaming layer: point-in-time features, projector, evaluators
+                     #   (lineup regret / streaming regret), the forward in-season board, the
+                     #   write-once scorecard, and a read-only ESPN projection baseline
   draft/             # the draft engine
     values.ts        #   VOR -> auction $ values          scoring.ts  # per-league scoring model
     strategy.ts      #   Engine<->Strategy seam; bidder   levers.ts   # tunable strategy knobs
@@ -113,7 +132,7 @@ app/
 test/                # node --test fault-injection suites
 tools/               # legacy Python pipeline, superseded by src/data/* (see tools/README.md)
 data/                # values.csv, points.csv, history-*.csv (+ samples); real per-league data gitignored
-docs/                # architecture, decisions (D0-D11), specs, and the harness findings (below)
+docs/                # architecture, decisions (D0-D24), specs, and the harness findings (below)
 ```
 
 ## Running it
@@ -279,7 +298,9 @@ docs/                # architecture, decisions (D0-D11), specs, and the harness 
   the gate is that K and DST are fitted at all instead of being two intercepts. Observed weather is
   NOT a feature and a test asserts its absence -- `raw_nfl_game`'s `temp` and `wind` are measured
   after the fact, and this store has no forecast feed.
-- **BYO agent:** `mcp` serves the Assistant's own 35-tool control surface over stdio MCP, so Claude
+- **BYO agent:** `mcp` serves the Assistant's own control surface over stdio MCP (`TOOL_NAMES.length`
+  in `src/agent/agent.ts`, asserted by `scripts/copilot-mcp-smoke.mjs` -- 39 tools as of 2026-09-16, not
+  a number to retype), so Claude
   Code (or any MCP client) can drive the draft and the season. `docs/mcp.md`; `claude mcp add
   ff-draft -- npx tsx <repo>/src/ff.ts mcp`.
 - **In-season copilot (`ff copilot <verb>`)** — the decision surface, READ-ONLY, and the same ten
@@ -313,8 +334,11 @@ docs/                # architecture, decisions (D0-D11), specs, and the harness 
 ## What the harness decided (docs/edges.md, docs/validation.md)
 
 Headline: **~42% championships / 97% playoffs** (full-system, no-lookahead, 25 scored seasons
-1999-2024, random = 6.3%). Shipped levers: `aggr 0.7`, `benchDiscount 0.35`, `starterReserve 4`,
-`maxShare 0.25`, `premium 2`, `consensusBlend 1`, all positional multipliers `1.0`, inflation ON.
+1999-2024, random = 6.3%). Shipped levers (D14/D15/D21): `aggr 0.7`, `benchDiscount 0.25`,
+`starterReserve 4`, `maxShare 0.25`, `premium 2`, `consensusBlend 0` (`consensusBlendQB 0.5`, QB toward
+market; RB/WR/TE stay 0), all positional multipliers `1.0`, inflation ON. The old title-tuned posture
+(`benchDiscount 0.35`, `consensusBlend 1`) is reproducible via `--bench-discount 0.35`
+`--consensus-blend 1` -- see CLAUDE.md's "The one rule" for the exact framing.
 
 **Read that number with its arbiter attached (Phase 2c, 2026-09-09).** It is measured against a field
 that drafts on our own projection plus one shared error of an asserted sd 0.30, and that never
@@ -441,7 +465,7 @@ integration pass 3) for what each choice is worth: 13 weeks moves the championsh
 ## Where planning lives
 
 Roadmap, phases, and issue tracking are in the wiki (`wiki/projects/project--ff-assistant.md` +
-`roadmap--ff-assistant.md`). Design rationale is `docs/decisions.md` (D0-D11, incl. **D10**: the
+`roadmap--ff-assistant.md`). Design rationale is `docs/decisions.md` (D0-D24, incl. **D10**: the
 engine is deterministic TS, no LLM in the bid loop). The draft-day procedure is
 `docs/draft-day-runbook.md`.
 

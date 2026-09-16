@@ -338,3 +338,23 @@ identified: the analysis is now format-native AND in-season-aware.
   carries a positive control that reproduces the ESPN incumbent).
 - No ship without stop-and-confirm; 3a and 5 are the boundaries that most need it (a scoring change moves
   every number; the draft engine is net-new logic).
+
+## Status 2026-09-16
+
+The 2026-09-16 architecture review (`docs/architecture-review-2026-09-16.md`) read this design against
+the live tree and found the phases above landed the ARTIFACTS but not the plumbing that would make a
+reader actually use them. Read this document as "the format-native model exists and is verified
+offline", not "format-native end to end" -- three things a reader should not take literally:
+
+- **Nothing in `src/` reads `data/formats/` yet.** No resolver computes a format key or maps
+  `config -> format -> artifact paths`; the Yahoo model is reachable only from five `scripts/yahoo-*.mjs`
+  that hardcode the key and the league id (finding F-2).
+- **The Yahoo model is script-only.** There is no Yahoo platform adaptor in `src/league/` (`src/league/`
+  has ESPN only) and no verb dispatches on it; `config:129048` itself is a byte-copy of the ESPN config
+  with a few fields edited by hand, not synced from Yahoo's own settings (findings F-1, P-5).
+- **The format DB's weekly table is a half-PPR copy.** `feat_player_week_model` inside
+  `data/formats/sc-a845f67652fb/features.db` is a row-for-row copy of the ESPN half-PPR table
+  (`build-format-features.mjs` never rebuilds it), so any weekly serve off it today would silently be
+  half-PPR, not Yahoo-scored (finding F-4).
+
+See that review's work packages WP1-WP7 for the fix plan.

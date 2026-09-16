@@ -819,7 +819,10 @@ model stretched across formats. The design separates three identities that had b
 account you manage, keyed by `league_id`), **Format** (the ruleset), and **Model** (the trained artifacts +
 values) -- and keys the Model by the FORMAT, so two leagues with the same rules share one model. Full design
 + verification ledger: `docs/multi-format-design.md`. The second league (Yahoo 129048: superflex, full-PPR,
-bonus scoring) is the proving ground and is now format-native end to end.
+bonus scoring) is the proving ground: its scoring, projector and value book are trained and verified
+per-format (below), but nothing in `src/` reads `data/formats/` yet -- the resolver that would make the
+board/backtest/in-season paths actually serve the Yahoo model is the subject of the 2026-09-16
+architecture review (`docs/architecture-review-2026-09-16.md`, findings F-2..F-4).
 
 What is APPLIED (each with an ESPN-byte-exact positive control, so single-format behavior is unchanged):
 
@@ -828,8 +831,12 @@ What is APPLIED (each with an ESPN-byte-exact positive control, so single-format
   points. A ruleset that omits them scores byte-for-byte as the old linear model. `YAHOO_129048_SCORING` was
   ground-truthed **8/8 exact** against Yahoo's own applied points. Every component was already in the
   nflverse feed, so no re-ingest was needed. `scoreWeek(r, s, pos?)` is now position-aware.
-- **Layered format keys** (`src/data/formatKey.ts`): `scoringKey` (projection target + heads), `valueKey`
-  (value book), `formatKey` (strategy + gate), each a canonical content hash so identical rules reuse a model.
+- **Layered format keys, partially built** (`src/data/formatKey.ts`): the module exports `scoringKey`
+  (projection target + heads) and the `canonicalJson` helper it is built on. `valueKey` (value book) and
+  `formatKey` (strategy + gate) are DESIGNED (see the layering above and `docs/multi-format-design.md`)
+  but do not exist as functions yet, and no resolver walks `config -> format -> artifact paths`. The gap
+  between this design and the code, and the fix plan, is the subject of the 2026-09-16 architecture
+  review: `docs/architecture-review-2026-09-16.md` (finding F-2).
 - **Per-format target + model**: `buildHistory` gained an `outDir`; a format's re-scored history + trained
   projector live under `data/formats/<scoringKey>/` (a copy of the store with `feat_player_season` rebuilt
   under the format's scoring), trained by the SAME `train_projection.py --db <that>` -- no python change. The
