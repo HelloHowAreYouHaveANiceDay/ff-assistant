@@ -154,6 +154,34 @@ projection model is well-saturated; the pbp substrate has not yielded an orthogo
 feature. The likely remaining edge is in the DECISION/roster-construction layer (where the sim already
 shows variance and RB-scarcity move outcomes -- the cja-vs-ARI power-ranking split), not the projection.
 
+### PRE-FILTERED 2026-09-17 (weekly grain): OFFENSIVE-LINE INJURY -- DEAD at the pre-filter, no full screen
+
+A team-week count of offensive linemen on the injury report, joined to every QB/RB/WR/TE row and
+measured against the OUT-OF-FOLD residual of the served 26-feature two-part GBM. Season-level mean
+partial correlation (level/anchor block + `ecr_wk_rank`/`ecr_wk_sd` partialled out), 14 seasons,
+floor 2.9*SE:
+
+| candidate | slice | raw rho_resid | rho\|L+ECR | floor | gap ol>=2 vs 0 (pts) | verdict |
+|---|---|---|---|---|---|---|
+| `ol_out` (Out/Doubtful linemen) | pooled | +0.0071 | +0.0066 +/- 0.0105 | 0.0305 | +0.120 +/- 0.155 | DEAD |
+| `ol_out` | RB | +0.0009 | +0.0063 +/- 0.0142 | 0.0413 | -0.110 +/- 0.154 | DEAD |
+| `ol_starters_out` (depth_rank 1) | pooled | +0.0083 | +0.0039 +/- 0.0086 | 0.0249 | -0.171 +/- 0.277 | DEAD |
+| `ol_questionable` | pooled | +0.0007 | +0.0007 +/- 0.0044 | 0.0129 | +0.074 +/- 0.089 | DEAD |
+
+**It is NOT a redundancy finding.** The raw correlation with the residual, before anything is
+partialled out, is already null -- the consensus is not hiding a real effect; there is no effect.
+The rushing prior fails too: RB is the flattest slice and its `>= 2` gap points the wrong way. Both
+controls passed (synthetic at a true 0.05 detected at +0.055 +/- 0.007, CLEARS every slice; shuffled
+`ol_out` null at +0.005 +/- 0.004), and the feature is provably connected (within-team lag-1
+autocorrelation +0.41 vs +0.01 shuffled; worst weeks nameable -- 2023 NYG wk5-6, 2017 WAS wk9).
+The per-season table was checked for the `prior_vol_cv` regime-split trap and shows none. The one
+thing not ruled out is a CONTINUOUS line-quality measure (starter continuity, block grade); the
+counting feature has almost no dynamic range (0.26-0.45 linemen out per team-week, `>= 2` on 2.5-5.9%
+of them) and that is not in the store. Method, leak guard, coverage, all tables, both controls, and
+the data problems (2025 injury feed is dateless; 2025 depth chart is a different schema so the
+starter variant is 13 seasons; `ecr_wk_rank` exists only 2019+): `docs/weekly-oline-prefilter-2026-09-17.md`.
+Reproduce: `node --import tsx scripts/weekly-oline-prefilter.mjs --artifact-dir data/fold-artifacts-oline --seasons 2012-2025`.
+
 ## Screening recipe (for the next candidate)
 
 **The screening path is now cheap and correct** (do NOT hand-read a pinball delta):
