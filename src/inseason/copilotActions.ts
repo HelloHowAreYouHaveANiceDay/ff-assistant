@@ -215,8 +215,8 @@ function summarize(verb: CopilotVerb, r: unknown): string {
 }
 
 /** Build the shared context once. Exposed so a caller running several verbs pays for it once. */
-export async function copilotContext(schedule: CopilotArgs["schedule"] = "auto", leagueId?: string | null): Promise<SimContext> {
-  return loadSimContext({ schedule, leagueId });
+export async function copilotContext(schedule: CopilotArgs["schedule"] = "auto", leagueId?: string | null, dbPath?: string): Promise<SimContext> {
+  return loadSimContext({ schedule, leagueId, dbPath });
 }
 
 function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: string, leagueId?: string | null): unknown {
@@ -398,7 +398,7 @@ export async function runCopilot(
     // than silently answering for the active league.
     const leagueId = args.league;
     if (leagueId != null) resolveLeagueContext(db, leagueId);          // validates; throws by name
-    const ctx = opts.ctx ?? await copilotContext(args.schedule, leagueId);
+    const ctx = opts.ctx ?? await copilotContext(args.schedule, leagueId, opts.dbPath);
     const result = dispatch(verb, ctx, args, opts.dbPath, leagueId);
     const summary = summarize(verb, result);
     // WRITTEN BEFORE THE RETURN, not after. `status` is `recommended` rather than `done` because

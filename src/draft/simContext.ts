@@ -99,10 +99,15 @@ export async function loadSimContext(opts: {
   /** WHICH LEAGUE. Omitted = the ACTIVE league. Everything below -- the config, the ownership rows,
    *  the live schedule read -- comes from this one id, rather than from three different queries. */
   leagueId?: string | null;
+  /** WHICH STORE. Omitted = data/ff.db. `ff copilot --db <path>` threads its path here so a
+   *  counterfactual copy of the store (a trade reversed, a roster edited) is what gets simulated;
+   *  before 2026-09-17 the flag reached the provenance loaders but this context always opened the
+   *  live store, and a `--db` run answered from the live rosters while saying nothing. */
+  dbPath?: string;
 } = {}): Promise<SimContext> {
   const want = opts.schedule ?? "auto";
 
-  const db = new Database(dataPath("ff.db"), { readonly: true });
+  const db = new Database(opts.dbPath ?? dataPath("ff.db"), { readonly: true });
   // ONE RESOLVER, ONE CONFIG. This read the legacy `config` mirror (whichever league was active last)
   // and then picked its league row with an UNORDERED `.get()` over `season=? AND team_id IS NOT NULL`
   // -- an arbitrary row once a second league exists. Both now come from the same context.
