@@ -1,5 +1,18 @@
 # The weekly model's contribution ledger (M2g, 2026-09-16)
 
+> **SUPERSEDED IN SCOPE ON 2026-09-17 -- read every number below as "the 25-column design".** D27
+> (WP16b) promoted `ecr_wk_rank` and `ecr_wk_sd` into the served artifact, which is now **27**
+> features. Nothing in this study is retracted: every arm, fold and verdict here is a correct
+> measurement of the design that was served when it ran, and the two new columns were explicitly
+> NOT in it. But the ledger's headline claim -- *what each SHIPPED weekly feature contributes today*
+> -- is a claim about the served design, and that design moved. So (a) this table has no row for the
+> two new columns, and (b) the contribution of the other twenty-five was measured without them
+> present, and a correlated column can only shrink a neighbour's leave-one-out. **The driver
+> (`scripts/weekly-contribution-ledger.mjs`) HAS been moved to the 27-column design** and carries an
+> `ecr` family, because the test that pins it exists to stop the ledger ablating a model nobody
+> serves; re-running the study against that design is an open follow-up and is ~31 arms x 14 folds
+> x ~4.7 min. Until it runs, this document is dated rather than wrong.
+
 **Nothing here is shipped.** No default feature list, trainer default, lever or artifact changed.
 `tools/train_weekly.py`, `src/weekly/**` and `scripts/weekly-paired-floor.mjs` are untouched by this
 work. The store was read through a `VACUUM INTO` snapshot; every fold artifact, every arm JSON and

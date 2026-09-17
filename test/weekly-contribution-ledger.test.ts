@@ -26,15 +26,17 @@ import {
   crpsBySeason, contribution, isDegenerate, signs, lineupOf,
 } from "../scripts/weekly-contribution-ledger.mjs";
 
-test("the shipped design is the 25 features the served artifact actually fits", () => {
+test("the shipped design is the features the served artifact actually fits", () => {
   const art = JSON.parse(readFileSync("data/weekly-artifact.json", "utf8")) as { features: { name: string }[] };
   const served = art.features.map((f) => f.name);
   // Not "the same set" -- the SAME LIST. The ledger's whole claim is that it ablated the design that
-  // ships, so a served artifact that grew a 26th column must fail here rather than be quietly
-  // measured as 25.
+  // ships, so a served artifact that grew a column must fail here rather than be quietly measured as
+  // the old width. It DID: D27/WP16b promoted `ecr_wk_rank`/`ecr_wk_sd` and this assertion is what
+  // caught it, which is the pin working rather than the pin being in the way. The driver was moved
+  // to 27; the PUBLISHED ledger was measured on the 25 and says so at the top of its own file.
   assert.deepEqual([...SHIPPED].sort(), [...served].sort(),
-    "SHIPPED has drifted from data/weekly-artifact.json -- the ledger would ablate a design nobody serves");
-  assert.equal(SHIPPED.length, 25);
+    "SHIPPED has drifted from the served weekly artifact -- the ledger would ablate a design nobody serves");
+  assert.equal(SHIPPED.length, 27);
 });
 
 test("the families PARTITION the shipped design -- no feature is counted twice or left out", () => {

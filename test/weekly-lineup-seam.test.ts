@@ -122,11 +122,33 @@ test("under the trained artifact, an OUT player is benched by the RULE and QUEST
   ]);
   // The weekly projection here says NOTHING about either man's availability -- inj_out is 0 for every
   // row. So if the OUT player is benched it is the store's rule doing it, which is the point.
+  //
+  // THE ASSERTION IS PAIRED, AND D27 IS WHY (2026-09-17). Until then this test read "is the
+  // QUESTIONABLE man in the starting eleven?", which conflates two different reasons he might not be:
+  // the flag benched him (the defect this test exists to catch) and he is simply not one of the best
+  // three receivers on the roster (a projection, and none of this test's business). The promoted
+  // 27-feature artifact moved the fixture's WR ordering -- WR Kilo, a 5.0/g man, projects 17.6 on a
+  // fully-imputed synthetic row and displaces the 14.1/g WR this test names -- so the OLD assertion
+  // went red for a merit change while the property it names was perfectly intact. Comparing the SAME
+  // roster and the SAME projections with and without the flag is structurally incapable of that
+  // confusion: only the flag differs between the two calls, so any difference IS the flag.
   const weekly = projMap(trained(), rows(ctx));
   const r = lineupRecommend(ctx, WEEK, { weekly, availability: avail });
-  assert.ok(!r.starters.some((s) => s.name === rb.name),
-    "an OUT player was started under the trained artifact");
-  assert.ok(r.starters.some((s) => s.name === wr.name),
-    "a QUESTIONABLE player was benched -- he plays more often than not, and the projection must not " +
-    "be allowed to become the availability check");
+  const none = lineupRecommend(ctx, WEEK, { weekly, availability: new Map() as AvailabilityMap });
+  const started = (out: ReturnType<typeof lineupRecommend>, name: string) => out.starters.some((s) => s.name === name);
+
+  // OUT: the rule must FLIP him out of a lineup he would otherwise be in. Both halves are asserted,
+  // because "he is benched" alone would also be satisfied by a man nobody would have started.
+  assert.ok(started(none, rb.name),
+    "the OUT player would not have started even unflagged, so the benching below proves nothing about the rule");
+  assert.ok(!started(r, rb.name), "an OUT player was started under the trained artifact");
+
+  // QUESTIONABLE: the flag must change NOTHING. Whether he starts is the projection's business; that
+  // the answer is the same with and without the flag is this seam's.
+  const onlyQ: AvailabilityMap = new Map([[key(wr.name), { status: "QUESTIONABLE" as const, source: "player_status", detail: "Foot" }]]);
+  assert.equal(started(lineupRecommend(ctx, WEEK, { weekly, availability: onlyQ }), wr.name), started(none, wr.name),
+    "the QUESTIONABLE flag changed whether this man starts -- he plays more often than not, and the " +
+    "status must not be allowed to act as a benching rule");
+  assert.ok(!r.unavailable.some((u) => u.name === wr.name),
+    `a QUESTIONABLE player was listed unavailable: ${JSON.stringify(r.unavailable)}`);
 });

@@ -724,6 +724,23 @@ export interface EvalOpts {
   seasons: number[];
   trainSeasons: number[];
   rosters?: number;
+  /**
+   * The trainer's `--features` list for every fold. OMITTED, IT IS THE ARTIFACT'S OWN FEATURE LIST,
+   * read off the file this harness scores against -- NOT the string `all` (WP16b).
+   *
+   * `all` is a MOVING SET: `RATIO_TO_LINE + CENTER + INDICATOR` in `tools/train_weekly.py`, which
+   * grows every time a candidate column is DECLARED, whether or not it ships. That made the flagless
+   * canonical run fit folds on a design the served artifact does not have -- 29 columns against the
+   * artifact's 25 on 2026-09-16, including `rz_share_td` and `prior_vol_cv`, two candidates that were
+   * REJECTED (docs/weekly-missingness-ablation-2026-09-16.md section 2, which had to pin the list by
+   * hand and discarded its first fold set for exactly this). A fold fitted on a superset is not the
+   * model that serves, so the canonical evaluation was measuring a design nobody is exposed to.
+   *
+   * Reading it off the artifact makes the default MOVE WITH THE SHIPPED MODEL instead of with the
+   * trainer's declaration list, and it is the same value `featuresUsed` already reports -- so the
+   * report's "features measured with" line is now a description of the run rather than beside it.
+   * `--features all` still reaches the old behaviour explicitly, which is what a frontier screen wants.
+   */
   features?: string;
   json?: boolean;
   keepArtifacts?: string;
@@ -843,7 +860,9 @@ export function applyServeMask(rows: WeeklyRow[], fields?: readonly string[]): v
 export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> {
   const dbPath = opts.dbPath ?? "data/ff.db";
   const rosters = opts.rosters ?? 300;
-  const features = opts.features ?? "all";
+  // Resolved BELOW, once the artifact this harness scores against has been loaded: the flagless
+  // default is that artifact's own feature list. See EvalOpts.features.
+  let features = opts.features ?? "";
   const dir = opts.keepArtifacts ?? mkdtempSync(join(tmpdir(), "ff-weekly-eval-"));
   const db = openDb(dbPath);
   const all: Scored1[] = [];
@@ -860,6 +879,17 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     const candidatePath = opts.model ? opts.model.require("weekly") : dataPath(CHALLENGER_WEEKLY_ARTIFACT);
     const fullArt = loadWeeklyArtifact(JSON.parse(readFileSync(candidatePath, "utf8")));
     featuresUsed = fullArt.features.map((f) => f.name);
+    // THE FLAGLESS DEFAULT IS THE SERVED DESIGN, derived here rather than typed anywhere: whatever
+    // the artifact on disk fits is what the folds fit. An artifact with NO features is the
+    // season-line floor, and "fit the floor's empty list" is not a thing the trainer can do, so that
+    // case falls back to `all` and says so instead of sending an empty list into a subprocess.
+    if (!features) {
+      features = featuresUsed.length ? featuresUsed.join(",") : "all";
+      if (!featuresUsed.length) {
+        console.error(`evaluate-weekly: ${candidatePath} declares no features (it is a line-only artifact), ` +
+          "so the folds fall back to --features all. Name a list explicitly if that is not what you want.");
+      }
+    }
     // WHICH MODEL THE FOLDS FIT IS READ OFF THE ARTIFACT THAT WOULD SHIP, not passed in.
     // The harness's job is to score the thing that would actually ship, and the full-data artifact
     // is that thing; taking the model kind from a flag instead would let the folds fit a two-part

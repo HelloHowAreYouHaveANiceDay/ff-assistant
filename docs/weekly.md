@@ -805,6 +805,17 @@ node --import tsx scripts/weekly-availability-coverage.mjs
 
 ff evaluate-weekly --seasons 2012-2025 --train-seasons 2010-2025 --rosters 300
     nested-by-season evaluation, lineup regret, the pre-registered predictions, the gate
+    FLAGLESS, --features IS THE SERVED ARTIFACT'S OWN FEATURE LIST (D27/WP16b, 2026-09-17).
+    It used to default to the literal string `all`, which is a MOVING SET -- the trainer's
+    RATIO_TO_LINE + CENTER + INDICATOR declaration, which grows every time a candidate
+    column is declared, shipped or not. On 2026-09-16 that was 29 columns against the
+    served artifact's 25, two of them (`rz_share_td`, `prior_vol_cv`) previously REJECTED,
+    so the canonical flagless run fitted every fold on a design nobody is exposed to and
+    the missingness ablation had to pin the list by hand. Now it is read off the artifact
+    this harness scores against, so the default MOVES WITH THE SHIPPED MODEL and is the
+    same value `featuresUsed` already reports. `--features all` still reaches the old
+    behaviour explicitly, which is what a frontier screen wants; a line-only artifact
+    declares no features at all and falls back to `all` with a message saying so.
 
 ff scorecard --season 2026 --team-odds --espn
     build forward features, snapshot the imminent week, score every settled week
@@ -1356,3 +1367,46 @@ no tree cliff. Verified on the live 2026 board -- `ff copilot stream --pos DST` 
 (sane, matchup-differentiated) AND forward weeks 10/15 where `opp_implied_total` is entirely absent (0
 non-finite rows; projections narrow to the floor rather than collapse). `test/dst-stream-serve.test.ts`
 locks the degradation in. Reversal is one line: `WEEKLY_SERVE["DST"] = SHIPPED_WEEKLY_ARTIFACT`.
+
+## 10. LIVE-SEASON FEEDS: which ones publish in season, and what happens when one does not (WP17, 2026-09-16)
+
+The M2h serve-time ablation (`docs/weekly-missingness-ablation-2026-09-16.md`) measured a LIVE
+regression rather than a risk: at the 2026 week-2 serve, seven of the twenty-five served columns were
+**100% NULL** while the same week of 2023, 2024 and 2025 carried 78-93%. Masking exactly that set is
++0.0647 CRPS in 14/14 held-out seasons and **-0.71 points per standard-15 lineup, every week**.
+Nothing warned, because a NULL is a legal serve value under D19 -- a dark feed and a healthy one
+produce the same shaped lineup.
+
+**What each column needs in season, and where it came from.**
+
+| column | live source | 2026 status before | after |
+|---|---|---|---|
+| `prior_snap_share` | `raw_snap_count` <- nflverse `snap_counts_<Y>.csv` | feed ingested to week 1, but `buildLiveWeekContextInto` wrote a literal NULL and DELETEd the archive row for the live week | carried forward from the last played week |
+| `prior_route_share` | `raw_participation` <- nflverse `pbp_participation_<Y>.csv` | no 2026 rows | **STILL DARK -- upstream 404s; the feed stops after 2025** |
+| `td_fd`, `td_ts`, `td_attempts`, `td_rush_yards` | nflverse `stats_player_week_<Y>.csv`, averaged over played weeks | `forwardBoard.ts` wrote all four as a literal NULL, and `buildForwardInto` read them off the LAST PLAYED row (always "through w-2", i.e. empty in week 2) | both fixed; ~77-78% at the live week |
+| `t4_sd` | derived, needs two played games | NULL | NULL, **structurally** -- it is 0% at week 2 of every season |
+
+**Where the refresh runs.** On the `actuals` routine, inside `buildForwardBoardInto`: it refreshes
+the season's snap counts (cache-bypassed), fills the four to-date ratios, rebuilds the model rows,
+writes the live week's availability block, and rebuilds the model rows once more so the block reaches
+them. It is not a routine of its own because the in-season tick can only run verbs `HANDLERS` in
+`src/ff.ts` holds, and neither `ingest-raw` nor `build-live-context` is one -- a routine naming either
+would look enabled and be skipped silently. `scripts/build-format-features.mjs --forward-only` calls
+the same function, so a per-format store gets the identical treatment.
+
+**Two guards, because a passing check that was never connected reads exactly like a healthy feed.**
+
+* `assertUsageWired` (src/weekly/forwardBoard.ts) REFUSES a board whose usage columns are empty while
+  the feed has rows for a settled week. An unpublished feed is not a bug and passes; a broken join
+  fails loudly. Both directions are driven in `test/live-usage-columns.test.ts`.
+* `liveWeekCoverage` (src/weekly/features.ts, printed by
+  `node --import tsx scripts/weekly-availability-coverage.mjs`) compares the LIVE week against the
+  same week in the prior three seasons and marks each column `ok` / `below` / `dark` / `none`. The
+  per-season coverage table cannot see this: a live season is mostly future weeks that legitimately
+  carry nothing, so a dark column averages out to "partially built". `ff copilot lineup` appends the
+  `dark` list to `assumptions.basisNote`, so a degraded lineup says so on its face.
+
+**The local-date correction that came with it.** `buildLiveWeekContextInto` resolved its target week
+from `nowIso()`, which is UTC, so after ~8pm ET it wrote the block to the week AFTER the one a lineup
+was being set for -- measured on 2026-09-16 at 21:51 local, target week 3 while `ff copilot lineup`
+was setting week 2. It now uses `localToday()`, the same rule `currentWeek` documents.

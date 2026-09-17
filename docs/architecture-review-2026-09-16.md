@@ -1068,3 +1068,125 @@ per-season line byte-identical, per the standing rule that the draft path reads 
 decision, and adding it under cover of this one would be the silent side effect the charter bans);
 the Yahoo board was NOT switched to take a Yahoo season-odds number; `K_u` is still one number
 standing in for a per-player, per-position quantity, and weeks 2-3 and 12+ remain unsampled.
+
+---
+
+## WP17 STATUS -- the live usage-feed regression, diagnosed and (mostly) closed (2026-09-16)
+
+**The finding it acts on.** M2h measured that seven served weekly columns were 100% NULL at the 2026
+week-2 serve while prior seasons carried 78-93% at the same week, worth **-0.71 points per lineup per
+week**. Diagnosed per column against row counts rather than by reading code: the raw feeds for 2026
+were INGESTED (snap counts 1,492 rows, week 1; player-week 1,118 rows, week 1) and three separate
+builders threw the values away.
+
+* `prior_snap_share` -- `buildLiveWeekContextInto` wrote a literal NULL and DELETEd the live week's
+  archive row. FIXED: carried forward by the same functions the historical builder uses.
+* `td_fd` / `td_ts` / `td_attempts` / `td_rush_yards` -- `forwardBoard.ts` wrote all four as NULL, and
+  `buildForwardInto` read them off the LAST PLAYED row, which carries "through w-2" and is therefore
+  empty in week 2 by construction. BOTH FIXED.
+* `prior_route_share` -- NOT FIXABLE. `pbp_participation_2026.csv` 404s upstream; the feed stops
+  after 2025. The lineup caveat now names it (`assumptions.basisNote`: "DEGRADED -- ... prior_route_share").
+* `t4_sd` -- structural (needs two played games); 0% at week 2 of every season, correctly.
+
+**Result at the live week (decision population, 2026 wk2):** `prior_snap_share` 0% -> **80%** (band
+77-80%), the four ratios 0% -> **77%** (band 87-88%, inside tolerance), `prior_route_share` still 0%
+and reported DARK. The Yahoo store (`data/formats/sc-a845f67652fb`) via `--forward-only`: identical
+shape, 0% -> 80% / 78%. `ff copilot lineup --league 462233` week 2 moved **91.7 -> 91.4** projected
+points with the TE/FLEX assignment changing (Loveland <-> Likely) -- the order of magnitude the mask
+measured.
+
+**A second defect found while fixing it.** `buildLiveWeekContextInto` resolved its target week from
+UTC, so after ~8pm ET the live week's availability block was written to the week AFTER the one the
+lineup was being set for (measured: target week 3 at 21:51 local while the lineup was week 2). Now on
+`localToday()`, the rule `currentWeek` already documents.
+
+**Guards added**, both fault-injected in both directions: `assertUsageWired` refuses a silently empty
+usage column when the feed has rows for a settled week, and `liveWeekCoverage` compares the live week
+against the same week in prior seasons (`ok`/`below`/`dark`/`none`) -- printed by
+`scripts/weekly-availability-coverage.mjs` and appended to the lineup caveat.
+
+**Store safety.** `data/ff.db.bak-prewp17-2026-09-16` (integrity ok) taken first; seasons <= 2025 in
+`feat_player_week_model`, `feat_player_week` and `feat_player_week_context` are byte-identical
+before and after by sha256, in the main store AND the format store.
+
+**Not done:** `prior_route_share` cannot be filled at all while nflverse does not publish the feed --
+it degrades to the anchor and says so, which is the honest state, not a fix. The refresh rides the
+`actuals` routine rather than a routine of its own, because `ingest-raw` / `build-live-context` are
+not in the tick's `HANDLERS` map and `src/ff.ts` was owned by a concurrent executor.
+
+## WP16b STATUS -- D27 APPLIED: the weekly expert consensus now SERVES (2026-09-17)
+
+**Signed off on the same sentence as D28/D29** ("let's aim for quality, so even if it's not
+backwards compatible and we have to rerun things, we should get towards a better edge"), which is
+what authorised the two downstream breakages below rather than working around them.
+
+`data/weekly-artifact.json` 25 features -> **27** (`+ecr_wk_rank`, `+ecr_wk_sd`), md5
+`a3871f4c...` -> `89e133ec...`. `WEEKLY_SERVE` did not move: it already named that file at
+QB/RB/WR/TE. Rollback is `data/weekly-artifact.pre-d27-2026-09-16.json`, and the copy-back was
+verified on a SCRATCH copy -- md5 returns to `a3871f4c...` and the consumer's loader reproduces all
+six golden rows at 25 features, with the live file untouched.
+
+**Four code changes, each because the promotion exposed something the old shape could not say:**
+
+1. **The stamp is no longer the filename.** A new model in the SAME file reads identically to the old
+   one if the record only carries the name, so a step change in a write-once series would be
+   unexplainable. Each `weekly` scorecard row now carries the serving artifact's own `fittedAt` and
+   feature count, read off the file that produced it, and `WEEKLY_SERVE_SWITCHED_ON` moves when the
+   SERVE changes (mapping *or* artifact), not only when the table does. `runScorecard` also notes, at
+   snapshot time and derived from the served artifact's own feature list, that from the promotion week
+   the `weekly` kind IS the consensus model -- so the `weekly_ecr_candidate` series converging with it
+   is legible rather than alarming. Both properties fault-injected in
+   `test/weekly-serve-switch.test.ts` (5/5; reducing the stamp, and `INSERT OR IGNORE` ->
+   `INSERT OR REPLACE`, each turn exactly one test red).
+2. **`ff evaluate-weekly`'s flagless `--features` is the served artifact's own list**, not the literal
+   `all` -- a MOVING set that grows with every DECLARED candidate and had the canonical run fitting
+   29 columns against a 25-column serve, two of them previously rejected. Verified: a flagless run
+   reports `features` identical to `featuresUsed`, the 27 the artifact fits.
+3. **`scripts/inseason-backtest-lineup.mjs --artifact <path>`** -- a candidate can now be scored
+   against real managers without being promoted first. It reaches the floor/challenger arms only; the
+   `served` arm REFUSES it by name, because that arm is a per-position TABLE and one file applied to
+   six positions under the name "served" is a number about a mapping nobody has. (The first version
+   applied it to both file arms and printed the identical 89.07 twice -- caught, fixed.) The
+   arm-summary tail is also now derived from the table by file, replacing enumeration that had gone
+   stale and was printing "QB/RB/WR/TE/K/DST come from the floor", wrong about five of six.
+4. `src/inseason/backtest/context.ts` `loadModel(name, artifactPath?)` carries the override and the
+   refusal.
+
+**The manager backtest, both arms from ONE script version** (league 462233, 1,896 team-weeks,
+2018-2025; manager 89.64, hindsight 102.12): challenger **89.07 -> 89.32**, served **89.30 -> 89.55**
+(gain vs manager -0.34 -> **-0.09**; beats own manager 47.9% -> 48.6%; median 49.0% -> 49.2%). The
+eight-season bootstrap CIs overlap almost entirely, so this is a consistent nudge, not a measured win;
+P37 still FAILS. The decision rested on the CRPS screen, not this table.
+
+**Two things the promotion legitimately broke, both fixed rather than suppressed:**
+
+- `test/weekly-contribution-ledger.test.ts` pinned M2g's `SHIPPED` to the served artifact and went
+  red -- the pin working. The driver moved to 27 with a new `ecr` family; the published ledger was
+  measured on the 25 and now says so in a banner. Re-running it is an open follow-up.
+- `test/weekly-lineup-seam.test.ts` went red on "a QUESTIONABLE player was benched", and it was a
+  MERIT change, not the availability rule: on the synthetic fully-imputed fixture the promoted model
+  projects a 5.0/g receiver at 17.6 and displaces the 14.1/g man the test names -- the D27 write-up's
+  own finding about imputed rows, one layer out. The assertion is now PAIRED (same roster, same
+  projections, flag vs no flag), which cannot be confused by merit and still catches a status acting
+  as a benching rule.
+
+**YAHOO 129048: NOT promoted, and the reason changed.** Section 14.5's two blockers are closed -- the
+format store's `ranking_history` carries 2026 (815 `wp` rows, via D29's fan-out) and its weekly table
+was rebuilt on blind lines with both columns (168,270 rows; the `prior_pts[Y] == pts[Y-1]` control
+503/503 and the not-the-half-PPR-copy control both pass; coverage tracks the root store). The NEW
+blocker is a baseline question: the format's shipped weekly artifact was fitted `--features all`, so
+its 27 columns include `rz_share_td` and `prior_vol_cv`, the two candidates the ESPN track REJECTED.
+A candidate built from the ESPN served list plus the consensus pair differs from it by FOUR columns,
+so that contrast would credit the consensus with two unrelated removals. That confounded file has
+been moved out of the format directory, because `ff scorecard --league 129048` resolves
+`weekly-artifact.candidate-ecr.json` from there and would have frozen a permanently mislabelled
+candidate series from it. Deciding the Yahoo baseline is the prerequisite; the screen itself is
+2 arms x 14 folds x ~4.7 min.
+
+**Gates.** `npm run typecheck` clean. `npx eslint .` 0 errors, 46 warnings -- the same 46 M2a and
+M2b recorded, none in a file touched here. `npm test` **1058 tests, 1056 pass, 0 fail, 2 skipped**
+(both skips pre-existing and unrelated: "a curve-only projection is EXACTLY the base", skipped
+because the shipped artifact is trained). Championship backtest
+`--league 462233 --full --no-lookahead --inflation --seasons 1999-2024 --n 150`: **39.5%
+championships / 96% playoffs**, and the per-season line reproduces the recorded run BYTE-FOR-BYTE --
+the control that says nothing here reached the draft path.

@@ -73,9 +73,11 @@ function toRosterPlayers(ctx: WeekContext, entries: { playerSk: string; name: st
 }
 
 export function backtestLineups(
-  db: DB, leagueId: string, opts: { seasons: number[]; model: ModelName },
+  db: DB, leagueId: string, opts: { seasons: number[]; model: ModelName; artifactPath?: string },
 ): { rows: LineupRow[]; summary: LineupSummary } {
-  const artifact = loadModel(opts.model);
+  // `artifactPath` overrides the FILE this arm reads, never the arm's meaning: `served` refuses it
+  // inside `loadModel` because that arm is a table. See context.ts.
+  const artifact = loadModel(opts.model, opts.artifactPath);
   const rows: LineupRow[] = [];
   const seasonsSeen = new Set<number>();
   const noInjury = new Set<number>();

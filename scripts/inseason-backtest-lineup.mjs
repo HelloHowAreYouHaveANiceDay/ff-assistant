@@ -1,6 +1,15 @@
 // BACKTEST 1 -- LINEUP REGRET AGAINST REAL MANAGERS.
 //
 //   node --import tsx scripts/inseason-backtest-lineup.mjs [--seasons 2018-2025] [--league <id>]
+//                                                          [--artifact <path>]
+//
+// `--artifact <path>` points the CHALLENGER arm at a named artifact file instead of
+// `data/weekly-artifact.json` (WP16b). The floor arm keeps its own file -- it is the reference the
+// other arms are read against. It exists because until it did, the only way to score a candidate weekly model
+// against real managers was to copy it over `data/weekly-artifact.json` first -- i.e. to promote it
+// in order to measure it (docs/weekly-ecr-screen-2026-09-16.md section 6). The SERVED arm refuses the
+// override and says so: that arm is the per-position TABLE, and one file applied to all six positions
+// under the name "served" would be a number about a mapping nobody is served.
 //
 // WHICH LEAGUE (D-2, 2026-09-16 -- D25.2's fix applied to this sibling). `ORDER BY last_synced_at DESC
 // LIMIT 1` returns whichever league synced last, not the ACTIVE one; on this store that is Yahoo
@@ -32,9 +41,18 @@ const seasons = []; for (let y = lo; y <= hi; y++) seasons.push(y);
 const db = new Database("data/ff.db");
 const leagueId = requireLeagueId(resolveLeagueContext(db, arg("--league", undefined)), "inseason-backtest-lineup");
 
+// The named artifact, if any. It reaches the two FILE arms; `served` keeps its own table, so one run
+// prints "this candidate" beside "what the live mapping scores" rather than two runs of two scripts.
+const artifactPath = arg("--artifact", undefined);
+
 const out = {};
 for (const model of ["floor", "challenger", "served"]) {
-  const { rows, summary } = backtestLineups(db, leagueId, { seasons, model });
+  // The override reaches the CHALLENGER arm only. The floor is the season-line-only REFERENCE the
+  // other two arms are read against; pointing it at a candidate too would leave the run with no
+  // baseline at all and make every arm agree for the wrong reason (measured: both arms printed the
+  // identical 89.07 on the first version of this flag).
+  const override = model === "challenger" ? artifactPath : undefined;
+  const { rows, summary } = backtestLineups(db, leagueId, { seasons, model, artifactPath: override });
   // AN EMPTY DECISION SET IS A REFUSAL, NOT A ZERO (D25.2). With no team-weeks every mean below is
   // NaN/0 and the PRE-REGISTERED lines print HELD/FAILED verdicts about nothing at all.
   if (summary.teamWeeks === 0) {
@@ -44,8 +62,13 @@ for (const model of ["floor", "challenger", "served"]) {
     process.exit(3);
   }
   out[model] = { summary, boot: seasonBootstrap(rows) };
-  console.log(`\n=== ${model} (${MODEL_FILES[model]})`);
-  if (model === "served") console.log(formatServeTable().split("\n").map((l) => "  " + l).join("\n"));
+  // NAME THE FILE THAT PRODUCED THE NUMBER, on the same line as the number. An arm silently reading
+  // an overridden artifact is the provenance gap this flag would otherwise create.
+  console.log(`\n=== ${model} (${override ?? MODEL_FILES[model]}${override ? "  [--artifact override]" : ""})`);
+  if (model === "served") {
+    console.log(formatServeTable().split("\n").map((l) => "  " + l).join("\n"));
+    if (artifactPath) console.log(`  --artifact is NOT applied to this arm: it is the table above, resolved from data/.`);
+  }
   console.log(`team-weeks ${summary.teamWeeks}   seasons ${summary.seasons.join(",")}`);
   console.log(`  managers started     ${summary.meanStarted}`);
   console.log(`  hindsight optimum    ${summary.meanOptimal}   (bench left ${summary.meanBenchLeft})`);
@@ -79,13 +102,19 @@ console.log(`    gain over the manager ${s.meanToolGain}; bootstrap ${out.served
 // Read FROM THE TABLE rather than naming positions by hand, so this line does not go stale the next
 // time WEEKLY_SERVE changes -- it already did once, on 2026-09-09, when this said "RB/WR/TE come
 // from the floor" and stopped being true.
-const streamingPos = STREAM_SERVE_POS.filter((p) => WEEKLY_SERVE[p] === STREAMING_ARTIFACT);
-const floorPos = STREAM_SERVE_POS.filter((p) => WEEKLY_SERVE[p] !== STREAMING_ARTIFACT);
-if (floorPos.length) {
-  console.log(`    it is BETWEEN the two single-artifact arms by construction: ${floorPos.join("/")} come from the`);
-  console.log(`    floor, ${streamingPos.join("/")} from the streaming artifact, and only the second group differs from the floor arm.`);
-} else {
-  console.log(`    every position (${streamingPos.join("/")}) now comes from the streaming artifact, so this arm`);
-  console.log(`    should sit close to the challenger arm above -- the streaming artifact is the same two-part`);
-  console.log(`    structure plus an opponent block measured near zero.`);
+// GROUP BY THE FILE EACH POSITION ACTUALLY READS. The previous version split the table into
+// "streaming" and "everything else" and called the second group "the floor" -- true when those were
+// the only two files, and FALSE since (2026-09-14) the streaming artifact stopped serving anywhere:
+// it printed "QB/RB/WR/TE/K/DST come from the floor", which is wrong about four positions and about
+// DST. Derived from the table, so it cannot go stale the next time the mapping moves.
+const byFile = new Map();
+for (const p of STREAM_SERVE_POS) {
+  const f = WEEKLY_SERVE[p];
+  if (!byFile.has(f)) byFile.set(f, []);
+  byFile.get(f).push(p);
+}
+console.log(`    it is a BLEND of the artifacts the table names, so it sits between the single-artifact arms:`);
+for (const [f, pos] of byFile) console.log(`      ${pos.join("/").padEnd(14)} ${f}`);
+if (!byFile.has(STREAMING_ARTIFACT)) {
+  console.log(`    (the streaming artifact serves NO position today, which is a measurement of the table, not a bug.)`);
 }

@@ -105,8 +105,29 @@ export type ScorecardKind = typeof SCORECARD_KINDS[number];
  * The artifact is OPTIONAL on disk: absent, the kind is skipped and says so -- it must never fall
  * back to the shipped artifact, which would record the incumbent's numbers under the candidate's
  * name and make the two look identical forever.
+ *
+ * 2026-09-17 -- THE SIGN-OFF SAID YES (D27 APPLIED, WP16b). From the promotion week on, the SERVED
+ * `weekly` kind IS the consensus model: `CHALLENGER_WEEKLY_ARTIFACT` now carries the 27-feature
+ * design, and `WEEKLY_SERVE` already named that file at QB/RB/WR/TE, so nothing in the table moved.
+ * Two consequences a later reader must not have to reconstruct:
+ *
+ *   - The `weekly_ecr_candidate` rows for the weeks BEFORE the promotion (2026 week 2 is the only
+ *     one) are the PRE-PROMOTION RECORD -- a genuine out-of-sample prediction of this model made
+ *     while a DIFFERENT model was being served. They are frozen and are not rewritten.
+ *   - From the promotion week on the two series are the SAME MODEL and will converge to within the
+ *     row set each kind selects. That is expected, not a bug, and the kind is deliberately LEFT
+ *     RUNNING: a broken series cannot be compared with itself across the change, which is the same
+ *     rule the challenger kind states about its own whole-field record.
+ *
+ * `runScorecard` says so in a NOTE at snapshot time rather than leaving it to this comment, and the
+ * note is derived from the served artifact's own feature list, so it cannot outlive the fact.
  */
 export const ECR_CANDIDATE_WEEKLY_ARTIFACT = "weekly-artifact.candidate-ecr.json";
+
+/** The two columns whose presence in a fitted artifact means it is the D27 consensus model. Named
+ *  once, read from the artifact's own feature list -- never a version number somebody must remember
+ *  to bump. */
+export const ECR_WEEKLY_FEATURES = ["ecr_wk_rank", "ecr_wk_sd"] as const;
 
 /**
  * THE `stream` KIND: ONE PICK PER POSITION PER WEEK, frozen before kickoff.
@@ -671,10 +692,23 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         // WHICH ARTIFACT PRODUCED THIS ROW, plus the date the mapping last changed. Only on the
         // `weekly` model: the other four are baselines with no artifact behind them, and writing a
         // serve-table name beside a baseline would claim a provenance it does not have.
-        const metaFor = (model: string, pos: string): string | null =>
-          model === "weekly"
-            ? JSON.stringify({ artifact: res.servedBy?.[pos] ?? null, switchedOn: WEEKLY_SERVE_SWITCHED_ON })
-            : null;
+        //
+        // THE FILENAME IS NOT AN IDENTITY, AND WP16b IS THE PROOF. D27 promoted a different model
+        // into the SAME file (`CHALLENGER_WEEKLY_ARTIFACT`, 25 features -> 27 with the consensus),
+        // so a stamp of the name alone reads identically across a change of model and leaves a step
+        // change in a write-once series unexplainable. The artifact's own `fittedAt` and feature
+        // count are read OFF THE FILE THAT PRODUCED THIS ROW, so a promotion cannot leave them
+        // stale the way a hand-bumped date can.
+        const metaFor = (model: string, pos: string): string | null => {
+          if (model !== "weekly") return null;
+          const file = res.servedBy?.[pos] ?? null;
+          const art = file ? served.get(file) : null;
+          return JSON.stringify({
+            artifact: file, switchedOn: WEEKLY_SERVE_SWITCHED_ON,
+            fittedAt: (art as { fittedAt?: string } | null)?.fittedAt ?? null,
+            features: art?.features.length ?? null,
+          });
+        };
         db.transaction(() => {
           for (const [key, v] of preds) {
             for (const m of SCORECARD_MODELS) {
@@ -765,6 +799,21 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           })();
           if (!res.ecrCandidate.taken) {
             notes.push(`week ${week}'s ECR-candidate snapshot was already taken -- written once, like every other prediction here.`);
+          }
+          // IS THE CANDIDATE NOW THE SERVED MODEL? Read from the SERVED artifacts' own feature
+          // lists, not from a date or a version anybody has to remember to bump. After D27 the two
+          // series are the same model and a later reader comparing them must know that.
+          const consensusServes = [...served.values()]
+            .some((a) => {
+              const names = new Set<string>(a.features.map((s) => s.name));
+              return ECR_WEEKLY_FEATURES.every((f) => names.has(f));
+            });
+          if (consensusServes) {
+            notes.push(`from week ${week} the served \`weekly\` kind IS the consensus model (D27, ` +
+              `promoted ${WEEKLY_SERVE_SWITCHED_ON}): the artifact serving it carries ` +
+              `${ECR_WEEKLY_FEATURES.join("/")}. The \`weekly_ecr_candidate\` rows for earlier weeks are the ` +
+              "PRE-PROMOTION record of this same model and are not rewritten; from here the two series " +
+              "converge, which is expected, and the kind is left running so the record is unbroken.");
           }
         }
 

@@ -56,9 +56,28 @@ export const MODEL_FILES: Record<ModelName, string> = {
   served: "WEEKLY_SERVE (per position)",
 };
 
-export function loadModel(name: ModelName): WeekModel {
-  if (name === SERVED) return SERVED;
-  return loadWeeklyArtifact(JSON.parse(readFileSync(dataPath(MODEL_FILES[name]), "utf8")));
+/**
+ * Load one arm's model. `artifactPath` NAMES A FILE IN PLACE OF THE ARM'S DEFAULT -- the override
+ * WP16b added so a candidate artifact can be scored against real managers WITHOUT being copied over
+ * `CHALLENGER_WEEKLY_ARTIFACT` first (M2a section 6 recorded that as the blocker: the only way to
+ * measure a candidate here was to promote it, which is exactly backwards).
+ *
+ * The SERVED arm REFUSES the override, and that refusal is the point. `served` is a TABLE
+ * (`WEEKLY_SERVE`), not a file: quietly applying one artifact to all six positions under the name
+ * "served" would report a number about a mapping nobody has -- the same class of lie `requireArtifact`
+ * below exists to prevent. To see what the live seam scores with a different artifact, swap the file
+ * the table already names and run the served arm again.
+ */
+export function loadModel(name: ModelName, artifactPath?: string): WeekModel {
+  if (name === SERVED) {
+    if (artifactPath) {
+      throw new Error(
+        `the "served" arm is the per-position table WEEKLY_SERVE, not a file, so it cannot be pointed at ${artifactPath}. ` +
+        "Run --model floor/challenger with --artifact, or swap the file the table names and re-run.");
+    }
+    return SERVED;
+  }
+  return loadWeeklyArtifact(JSON.parse(readFileSync(artifactPath ?? dataPath(MODEL_FILES[name]), "utf8")));
 }
 
 /** Narrow a model to a single artifact, for the paths that genuinely need one. Throws by NAME rather

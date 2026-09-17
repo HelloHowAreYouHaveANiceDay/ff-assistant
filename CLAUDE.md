@@ -267,7 +267,12 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   2026-09-12 owner override D11; the streaming artifact ships nowhere now, so `SHIPPED_STREAMING_POSITIONS`
   is empty. See `docs/decisions.md` D11 and `docs/validation.md`.
 - The in-season decision surface and its limits: `docs/in-season-design.md`; the weekly model and its
-  write-once scorecard: `docs/weekly.md`
+  write-once scorecard: `docs/weekly.md`. **Since D27 (2026-09-17) the SERVED weekly artifact carries
+  the expert-consensus columns (`ecr_wk_rank`/`ecr_wk_sd`, 27 features), so it now DEPENDS on the
+  `rankings` routine running every week** -- the feed publishes only its latest scrape and a missed
+  week cannot be backfilled; with the column absent the model degrades toward its season-line anchor
+  and gives back the +0.036 pooled CRPS the consensus was admitted on (5/0 covered seasons).
+  `ff evaluate-weekly`'s flagless `--features` is that artifact's own list, not the trainer's `all`.
 - Recorded decisions D0-D24 (do not silently reverse): `docs/decisions.md`
 - Current multi-league/multi-format finding list + fix plan: `docs/architecture-review-2026-09-16.md`
 - Planning/roadmap lives in the wiki, not here: `wiki/projects/project--ff-assistant.md`

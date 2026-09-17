@@ -4098,7 +4098,10 @@ async function cmdEvaluateWeekly(rest: string[]) {
       label: `league ${lid ?? "?"} -> format ${fmt.scoringKey}`,
     }),
     rosters: Number(valueOf(rest, "--rosters") ?? 300),
-    features: valueOf(rest, "--features") ?? "all",
+    // NO DEFAULT HERE. Omitted, `evaluateWeekly` fits every fold on the SERVED artifact's own
+    // feature list (WP16b); the old `?? "all"` fitted folds on `train_weekly.py`'s whole declaration
+    // set, which grows with every candidate column and so measured a design nobody ships.
+    features: valueOf(rest, "--features"),
     keepArtifacts: valueOf(rest, "--keep-artifacts"),
     // `--roster-convergence 150,300,600,1200,2400`: recompute the lineup-regret decision metric at
     // each roster count from the one trained set of scored rows, to check whether the default (300)

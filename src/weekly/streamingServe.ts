@@ -111,11 +111,24 @@ export const WEEKLY_SERVE: Record<string, string> = {
 };
 
 /**
- * THE DATE THE TABLE ABOVE WAS LAST CHANGED, LOCAL. It is written into the scorecard snapshot's
- * metadata so a series that changes model mid-season says WHEN and to WHAT, rather than leaving a
- * later reader to explain a step change in the numbers.
+ * THE DATE THE SERVE LAST CHANGED, LOCAL. It is written into the scorecard snapshot's metadata so a
+ * series that changes model mid-season says WHEN and to WHAT, rather than leaving a later reader to
+ * explain a step change in the numbers.
+ *
+ * IT IS NOT ONLY THE MAPPING'S DATE, AND WP16b IS WHY. D27 promoted a NEW MODEL INTO THE SAME FILE:
+ * `CHALLENGER_WEEKLY_ARTIFACT` went from the 25-feature design to the 27-feature one carrying the
+ * expert consensus, and `WEEKLY_SERVE` did not move a character -- it already named that file at
+ * QB/RB/WR/TE. A stamp that only tracked the table would have recorded 2026-09-14 for both models and
+ * left the step change in the series with no explanation in a table nobody may edit. So this date
+ * moves whenever the SERVE changes: the mapping, or the artifact behind it.
+ *
+ * A date is the weak half of the stamp and is not relied on alone: each `weekly` scorecard row also
+ * carries the serving artifact's own `fittedAt` and feature count (src/weekly/scorecard.ts), which a
+ * promotion cannot leave stale because it is read off the file that produced the row.
+ *
+ * 2026-09-14 mapping (D17/D20) -> 2026-09-17 artifact promotion (D27).
  */
-export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-14";
+export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-17";
 
 /** Positions the given artifact file serves. Derived from the table so the two can never disagree;
  *  a hand-maintained second list is the enumeration that rots. */

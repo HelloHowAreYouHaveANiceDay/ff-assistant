@@ -938,6 +938,13 @@ and make the two look identical forever -- the same refusal the challenger block
 
 ## 16. PROMOTE / ROLL BACK -- the exact commands
 
+> **BOTH STEPS HAVE BEEN RUN.** Step 2 (the cadence) on 2026-09-16 as D29/WP16a; step 1 (the model
+> swap) on 2026-09-17 as D27/WP16b, after the owner's sign-off. `data/weekly-artifact.json` is now
+> md5 `89e133ec8225f248f12664a0b5b87eb3` at 27 features and `WEEKLY_SERVE_SWITCHED_ON` is
+> `2026-09-17`. The ROLLBACK below was verified on a scratch copy rather than asserted: the copy-back
+> returns md5 `a3871f4c...` and the probe reproduces all six golden rows at 25 features. Everything
+> else in this section stands as written.
+
 **PROMOTE** (two commands, in this order). The first is the model; the second is the cadence without
 which the column goes stale and the model quietly serves last week's opinion.
 

@@ -76,6 +76,29 @@ function artifactAt(dir: string, scale: number): string {
   return p;
 }
 
+/**
+ * WRITE AN ARTIFACT AT A FIXED PATH, with its own `fittedAt` and feature count -- the shape of a
+ * PROMOTION, where a different model arrives in the SAME file. That is what D27 did on 2026-09-17
+ * (`weekly-artifact.json`, 25 features -> 27), and the filename is the one thing that does NOT
+ * change across it. The declared feature carries no coefficient, so the projections are identical
+ * either way and the test cannot pass by accident on a value difference.
+ */
+function artifactAtPath(path: string, opts: { fittedAt: string; extraFeature?: boolean; names?: string[] }): void {
+  const a = seasonLineOnlyArtifact({ positions: STREAM_SERVE_POS, seasons: [SEASON - 1] }) as Record<string, unknown>;
+  a.fittedAt = opts.fittedAt;
+  if (opts.extraFeature || opts.names) {
+    const names = opts.names ?? ["season_line_pg"];
+    a.features = names.map((name) => ({ name, transform: "center", center: 6, scale: 1, missing: 0 }));
+    // The loader requires every declared feature to carry a coefficient in every head (an undeclared
+    // one is how a producer and a consumer disagree silently). ZERO everywhere, so the projections
+    // are identical to the artifact this replaces and only the STAMP can differ.
+    for (const heads of Object.values(a.coef as Record<string, Record<string, Record<string, number>>>)) {
+      for (const h of Object.values(heads)) for (const name of names) h[name] = 0;
+    }
+  }
+  writeFileSync(path, JSON.stringify(a), "utf8");
+}
+
 test("the serve table is ONE table: every position resolves through it and the derived list agrees", () => {
   for (const pos of STREAM_SERVE_POS) {
     assert.ok(WEEKLY_SERVE[pos], `${pos} has no entry in WEEKLY_SERVE, so it would fall through to a default`);
@@ -206,4 +229,102 @@ test("FAULT INJECTION: re-snapshotting an already-frozen week REFUSES, so a serv
     "week 3 was not written either, so the guard refuses everything and this test cannot tell a " +
     "write-once refusal from a broken snapshot path");
   assert.ok(CHALLENGER_FIRST_WEEK >= 1);
+});
+
+test("a PROMOTION INTO THE SAME FILENAME is legible in the record: the stamp carries the artifact's own identity", async () => {
+  // D27/WP16b: `data/weekly-artifact.json` went from 25 features to 27 and `WEEKLY_SERVE` did not
+  // move a character, because it already named that file. A stamp of the FILENAME alone reads
+  // identically on both sides of that change, so a step in a write-once series would have no
+  // explanation anywhere. The row must therefore carry something the new model cannot share with the
+  // old one: the serving artifact's own `fittedAt` and feature count, read off the file that
+  // produced the row.
+  const dir = mkdtempSync(join(tmpdir(), "ff-promote-"));
+  const dbPath = join(dir, "t.db");
+  const db = openDb(dbPath);
+  seed(db);
+  db.close();
+  const path = join(dir, "served.json");
+  const opts = { dbPath, season: SEASON, sched: sched(), score: false } as const;
+
+  artifactAtPath(path, { fittedAt: `${SEASON}-01-01` });
+  const w2 = await runScorecard({ ...opts, week: 2, today: `${SEASON}-09-04`, artifactPath: path });
+  assert.ok(w2.snapshot.taken > 0, "week 2 froze nothing, so nothing below is measured");
+
+  // THE PROMOTION: a different model, same path.
+  artifactAtPath(path, { fittedAt: `${SEASON}-02-02`, extraFeature: true });
+  const w3 = await runScorecard({ ...opts, week: 3, today: `${SEASON}-09-06`, artifactPath: path });
+  assert.ok(w3.snapshot.taken > 0, "week 3 froze nothing after the promotion");
+
+  const d = openDb(dbPath);
+  try {
+    ensureScorecardMetaColumn(d);
+    const metaOf = (week: number) => {
+      const rows = d.prepare(
+        `SELECT DISTINCT ${SCORECARD_META_COLUMN} AS meta FROM scorecard_prediction
+          WHERE kind='weekly' AND model='weekly' AND season=? AND week=? AND ${SCORECARD_META_COLUMN} IS NOT NULL`,
+      ).all(SEASON, week) as { meta: string }[];
+      assert.equal(rows.length, 1, `week ${week} carries ${rows.length} distinct stamps`);
+      return JSON.parse(rows[0].meta) as { artifact: string | null; fittedAt: string | null; features: number | null };
+    };
+    const a = metaOf(2), b = metaOf(3);
+
+    // The filename is the SAME on both sides -- which is precisely why it cannot be the identity.
+    assert.equal(a.artifact, b.artifact, "the fixture did not reproduce a same-filename promotion");
+    assert.equal(a.fittedAt, `${SEASON}-01-01`, "week 2's row does not carry the model that produced it");
+    assert.equal(b.fittedAt, `${SEASON}-02-02`, "week 3's row does not carry the PROMOTED model");
+    assert.equal(a.features, 0);
+    assert.equal(b.features, 1);
+    // FAULT INJECTION, in the only form that discriminates: if the stamp were the filename (and the
+    // hand-bumped switch date, which is a constant in this process and so identical in both runs),
+    // these two rows would be byte-identical and a reader could not tell the models apart.
+    assert.notDeepEqual(a, b,
+      "the two weeks' stamps are identical across a change of model -- the record cannot distinguish " +
+      "the promoted artifact from the one it replaced, which is the whole failure D27 exposed");
+
+    // AND THE FROZEN WEEK IS UNTOUCHED: the promotion reaches week 3 and never rewrites week 2.
+    const w2rows = d.prepare(
+      "SELECT COUNT(*) c FROM scorecard_prediction WHERE kind='weekly' AND season=? AND week=2",
+    ).get(SEASON) as { c: number };
+    assert.ok(w2rows.c > 0);
+  } finally { d.close(); }
+});
+
+test("the scorecard SAYS SO when the served `weekly` kind has become the consensus model -- and stays silent when it has not", async () => {
+  // D27/WP16b. `weekly_ecr_candidate` was frozen for weeks BEFORE the promotion as an out-of-sample
+  // record of a model nobody served. After it, the two series are the SAME MODEL and will converge.
+  // A reader comparing them later cannot be expected to reconstruct that from a date, so the run
+  // says it at snapshot time -- and says it from the SERVED ARTIFACT'S OWN FEATURE LIST, never from a
+  // version number somebody must remember to bump.
+  //
+  // BOTH DIRECTIONS ARE ASSERTED, because a note that can only ever be silent and a note that fires
+  // unconditionally look identical in a green run. The two cases differ ONLY in which columns the
+  // served artifact declares.
+  const run = async (names: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "ff-consensus-"));
+    const dbPath = join(dir, "t.db");
+    const db = openDb(dbPath);
+    seed(db);
+    db.close();
+    const servedPath = join(dir, "served.json");
+    const candPath = join(dir, "cand.json");
+    artifactAtPath(servedPath, { fittedAt: `${SEASON}-03-03`, names });
+    artifactAtPath(candPath, { fittedAt: `${SEASON}-03-03`, names: ["ecr_wk_rank", "ecr_wk_sd"] });
+    const r = await runScorecard({
+      dbPath, season: SEASON, week: 2, today: `${SEASON}-09-04`, sched: sched(), score: false,
+      artifactPath: servedPath, ecrCandidateArtifactPath: candPath,
+    });
+    assert.ok(r.ecrCandidate.taken > 0,
+      `the candidate kind froze nothing (${r.ecrCandidate.skipped ?? "no reason given"}), so the note ` +
+      "below is being read off a branch that never ran");
+    return r.notes.some((n) => /IS the consensus model/.test(n));
+  };
+
+  // POSITIVE: the served artifact carries both consensus columns.
+  assert.equal(await run(["ecr_wk_rank", "ecr_wk_sd"]), true,
+    "the served artifact carries both consensus columns and the run did not say so -- the note cannot " +
+    "fire at all, which reads exactly like a correct silence");
+  // NEGATIVE / FAULT INJECTION: one column short is NOT the consensus model, and a note keyed on
+  // anything looser (a date, the file's name, either column alone) would fire here anyway.
+  assert.equal(await run(["ecr_wk_rank", "season_line_pg"]), false,
+    "the run claimed the consensus model is served by an artifact carrying only one of its two columns");
 });

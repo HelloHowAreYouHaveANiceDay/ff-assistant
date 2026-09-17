@@ -1084,12 +1084,100 @@ the app on which `ok:false` could appear -- now `ok`, and Status renders a faili
 `/write-transaction`'s guest resolution (the last bridge route still using
 `getElementById("espnview")`, the pattern the P-3 no-fallback fix converted its five siblings off).
 
-## D27 -- The weekly expert consensus is SERVABLE; the candidate awaits promotion (2026-09-16, **PENDING OWNER SIGN-OFF -- NOT APPLIED**)
+## D27 -- The weekly expert consensus SERVES (2026-09-16 measured, owner: "let's aim for quality, so even if it's not backwards compatible and we have to rerun things, we should get towards a better edge", **APPLIED 2026-09-17, WP16b**)
 
-**Nothing in this entry has been applied.** `WEEKLY_SERVE` is unchanged, all four served weekly
-artifacts are byte-identical (`data/weekly-artifact.json` md5 `a3871f4c489164abbda8e29734b16f53`),
-no default feature list moved, and the candidate model serves nothing. Full evidence:
-`docs/weekly-ecr-screen-2026-09-16.md` sections 11-17.
+**APPLIED.** The sign-off said yes, on the sentence above: the candidate ships even though it is not
+backwards compatible with the frozen record and forces re-runs downstream. What changed, exactly:
+
+| | before | after |
+|---|---|---|
+| `data/weekly-artifact.json` | 25 features, md5 `a3871f4c489164abbda8e29734b16f53` | **27 features** (`+ecr_wk_rank, +ecr_wk_sd`), md5 `89e133ec8225f248f12664a0b5b87eb3` |
+| `WEEKLY_SERVE` | QB/RB/WR/TE -> `weekly-artifact.json` | **unchanged** -- the promotion is a file swap, not a mapping change |
+| `WEEKLY_SERVE_SWITCHED_ON` | `2026-09-14` (the D17/D20 mapping) | **`2026-09-17`** -- the date now moves when the SERVE changes, mapping *or artifact* |
+| each `weekly` scorecard row's stamp | `{artifact, switchedOn}` | **`{artifact, switchedOn, fittedAt, features}`** read off the file that produced the row |
+| `ff evaluate-weekly` flagless `--features` | the literal `all` (29 columns, a MOVING set) | **the served artifact's own list** (27 today) |
+| `scripts/inseason-backtest-lineup.mjs` | no way to score a candidate without promoting it | **`--artifact <path>`** on the floor/challenger arms; the `served` arm REFUSES it |
+| the rollback file | -- | `data/weekly-artifact.pre-d27-2026-09-16.json`, md5 `a3871f4c...` |
+
+**THE PROMOTION'S OWN HAZARD, and it is the reason two files changed rather than zero.** The new
+model arrived in the SAME FILENAME. A record stamped with the filename alone reads identically on
+both sides of that change, so a step in a write-once series would have had no explanation anywhere --
+and `WEEKLY_SERVE_SWITCHED_ON` would have said `2026-09-14` for two different models. Both halves are
+fixed and both are fault-injected in `test/weekly-serve-switch.test.ts`: reducing the stamp back to
+filename+date makes the promotion test fail (the two weeks' stamps become byte-identical across a
+change of model), and turning the write-once `INSERT OR IGNORE` into `INSERT OR REPLACE` makes the
+frozen-week test fail. Restored, 5/5 green.
+
+**THE MANAGER BACKTEST, both arms from ONE script version** (`--league 462233`, 1,896 team-weeks,
+2018-2025; the manager's own lineup scores 89.64, hindsight 102.12):
+
+| arm | our lineup | gain vs the manager | beats own manager | beats league median | season bootstrap |
+|---|---|---|---|---|---|
+| floor (line-only) | 85.83 | -3.81 | 38.0% | 42.7% | -3.812 [-4.973, -2.661] |
+| challenger = **pre-D27** 25f | 89.07 | -0.58 | 47.3% | 48.5% | -0.577 [-1.664, 0.288] |
+| challenger = **promoted** 27f | **89.32** | **-0.32** | **48.0%** | **48.9%** | -0.324 [-1.518, 0.66] |
+| served (the table) **before** | 89.30 | -0.34 | 47.9% | 49.0% | -0.343 [-1.421, 0.457] |
+| served (the table) **after** | **89.55** | **-0.09** | **48.6%** | **49.2%** | -0.091 [-1.265, 0.827] |
+
+Read it for what it is: **+0.25 pts/team-week and the eight-season CIs overlap almost entirely**, so
+this is a consistent nudge in the right direction, not a measured win at this unit of analysis. It is
+reported because it is the first time a candidate weekly model could be scored against real managers
+WITHOUT being promoted first -- which is what `--artifact` bought. P37 still FAILS (49.2% against its
+60% bar) and the gap to the manager is still negative; the decision rested on the CRPS screen
+(`docs/weekly-ecr-screen-2026-09-16.md` section 5: +0.03635 CRPS, 5/0 seasons, on the five seasons the
+column covers), not on this table.
+
+**ROLLBACK, verified rather than asserted (on a SCRATCH copy, never the live file):** copying
+`data/weekly-artifact.pre-d27-2026-09-16.json` over `data/weekly-artifact.json` returns md5
+`a3871f4c489164abbda8e29734b16f53`, and `scripts/weekly-artifact-probe.mjs` then loads it through the
+CONSUMER's loader and reproduces all six golden rows at 25 features. The live file was untouched by
+that check and still reads `89e133ec...`.
+
+**WHAT THE PROMOTION BROKE ELSEWHERE, found by the suite rather than by reasoning** -- both are the
+"not backwards compatible" the owner's sentence authorised:
+
+1. `test/weekly-contribution-ledger.test.ts` pinned the ledger's `SHIPPED` to the served artifact and
+   correctly went red. The DRIVER (`scripts/weekly-contribution-ledger.mjs`) is moved to the 27-column
+   design with a new `ecr` family; the PUBLISHED M2g ledger was measured on the 25 and now carries a
+   banner saying so. Re-running it (~31 arms x 14 folds x ~4.7 min) is an open follow-up.
+2. `test/weekly-lineup-seam.test.ts` went red on "a QUESTIONABLE player was benched" -- and it was NOT
+   the availability rule. On the synthetic, fully-imputed fixture the promoted model re-orders the
+   receivers (WR Kilo, a 5.0/g man, projects 17.6 and displaces the 14.1/g WR the test names), which
+   is the D27 write-up's own finding about imputed rows, one layer out. The old assertion conflated
+   "the flag benched him" with "he is not one of the best three". It is now PAIRED -- same roster,
+   same projections, with and without the flag -- which is structurally incapable of that confusion:
+   the QUESTIONABLE flag changes nothing under either artifact, and the OUT flag flips a man who
+   otherwise starts. A merit change can no longer turn it red, and a status acting as a benching rule
+   still does.
+
+Full evidence: `docs/weekly-ecr-screen-2026-09-16.md` sections 11-17.
+
+**Section 16's step 2 -- the cadence -- was NOT done here because it was already done: D29 (WP16a)
+wrote the `settings.scheduler` row, and the running app's own timer has been firing
+`ingest-source weekly` since 2026-09-16.** Section 16 states the two steps are independent; this is
+step 1 alone. D29 also closed follow-up (a) (the retention fans out to every format store), which is
+why the Yahoo blocker below is a different one from the one section 14.5 recorded.
+
+**NOT done under this sign-off, and each is named rather than assumed:** (a) **Yahoo 129048 is NOT
+promoted** -- see below; (b) the M2g ledger re-run against the 27-column design; (c) the DST name-key
+crosswalk, unchanged.
+
+**YAHOO 129048 -- the two blockers section 14.5 named are now CLOSED, and a THIRD one was found.**
+The format store's own `ranking_history` now carries 2026 (815 `wp` rows, latest scrape 2026-09-16),
+`feat_player_week_model` was rebuilt on blind lines with both columns present (168,270 rows, the
+`prior_pts[Y] == pts[Y-1]` positive control 503/503 and the "this is not the half-PPR copy" control
+both passing), and coverage tracks the root store (2020-2024 ~64-77%, 2026 week 2 235/295). **But the
+format's SHIPPED weekly artifact was fitted with `--features all`, so its 27 columns INCLUDE
+`rz_share_td` and `prior_vol_cv` -- the two candidates the ESPN track REJECTED.** The candidate
+trained into that directory used the ESPN served list plus the two consensus columns, so it differs
+from the incumbent by **four** columns, not two: promoting on that contrast would credit the consensus
+pair with the removal of two other features. That confounded file has been moved OUT of the format
+directory (to this session's scratchpad) because `ff scorecard --league 129048` resolves
+`weekly-artifact.candidate-ecr.json` from the format dir and would have frozen a permanently
+mislabelled `weekly_ecr_candidate` series from it; absent, the kind is skipped and says so, which is
+the designed behaviour. The Yahoo screen therefore needs a baseline decision that is NOT D27's -- does
+that format keep `rz_share_td`/`prior_vol_cv`? -- before its two arms (14 folds each, ~4.7 min a fold)
+are worth running. It is a follow-up, not a blocker on this decision.
 
 **What D19 held this feature back for is now fixed.** M2a admitted `ecr_wk_rank` on the measurement
 (+0.04134 pooled CRPS on 2020-2024, floor 0.01650, 5/0 seasons, with an exact +0.00015 null on the
@@ -1280,8 +1368,9 @@ rankings,actuals,scorecard,decisions --every 15 --enable` (a data change, no cod
 `sunday` (D25/M2c) is deliberately NOT added -- this decision is about the consensus cadence, and
 adding a second routine under cover of it would be exactly the silent-side-effect the charter bans.
 This is step 2 of `docs/weekly-ecr-screen-2026-09-16.md` section 16 and ONLY step 2: the ECR model
-promotion (step 1, the `weekly-artifact.candidate-ecr.json` file swap) is D27 and remains PENDING.
-Section 16 states the two are independent and that the cadence is worth running either way.
+promotion (step 1, the `weekly-artifact.candidate-ecr.json` file swap) is D27, which was PENDING when
+this was written and was **APPLIED on 2026-09-17 (WP16b)**. Section 16 states the two are
+independent and that the cadence is worth running either way; it was, and it ran first.
 
 **IT FIRES, twice proved.** `ff inseason-tick --routines rankings` -> `1/1 steps ok in 2.6s`, 815
 `wp` rows for scrape 2026-09-16; a second run -> `+0 new (815 already held)`, i.e. idempotent.

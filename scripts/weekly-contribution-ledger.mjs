@@ -52,12 +52,22 @@ import { admissionVerdict, familyAdjust, normalSf } from "./lib/arbiter.mjs";
 
 export const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** The 25 features the shipped artifact fits, in artifact order. Not retyped from the trainer's
- *  ALL_FEATURES (which is 29 -- it also carries rz_share_td, prior_vol_cv and the two ecr columns,
- *  all REJECTED or unshippable candidates). CLAUDE.md: measure against the baseline you intend to ship. */
+/** The 27 features the shipped artifact fits, in artifact order. Not retyped from the trainer's
+ *  ALL_FEATURES (which is 29 -- it also carries rz_share_td and prior_vol_cv, both REJECTED
+ *  candidates). CLAUDE.md: measure against the baseline you intend to ship.
+ *
+ *  2026-09-17, D27/WP16b: `ecr_wk_rank`/`ecr_wk_sd` were PROMOTED into the served artifact, so this
+ *  list grew from 25 to 27 and a new `ecr` family joined the table below. **THE PUBLISHED LEDGER
+ *  (docs/weekly-contribution-ledger-2026-09-16.md) WAS MEASURED ON THE 25-COLUMN DESIGN** and does
+ *  not cover the two new columns or their effect on the other twenty-five; re-running it against
+ *  this design is an open follow-up, and that document carries the same banner. The driver is
+ *  corrected here rather than left behind because the test that pins it is asserting exactly one
+ *  thing -- that the arms ablate the design that SHIPS -- and a driver pinned to a superseded design
+ *  would ablate a model nobody is served from, which is the failure the pin exists to catch. */
 export const SHIPPED = [
   "td_ppg", "t4_mean", "t4_sd", "td_games", "spread_line", "total_line", "implied_team_total",
   "days_rest", "week_no", "season_line_pg", "td_fd", "td_ts", "td_attempts", "td_rush_yards",
+  "ecr_wk_rank", "ecr_wk_sd",
   "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out", "home", "inj_out",
   "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",
 ];
@@ -81,6 +91,11 @@ export const FAMILIES = {
   usage: ["td_fd", "td_ts", "td_attempts", "td_rush_yards", "prior_snap_share", "prior_route_share", "depth_rank"],
   avail: ["inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed", "teammates_out"],
   context: ["spread_line", "total_line", "implied_team_total", "days_rest", "home", "week_no"],
+  // D27/WP16b. Its OWN family rather than a member of `form`: the weekly expert consensus is an
+  // outside opinion about the coming week, not a summary of what this player has already done, and
+  // it goes absent at serve for its own reason (the scrape did not run) rather than with the
+  // to-date block. It is also the one family that is NULL on nine of the fourteen seasons.
+  ecr: ["ecr_wk_rank", "ecr_wk_sd"],
 };
 
 /** The smallest design the two-part contract permits: the level anchor plus the four columns stage
@@ -109,7 +124,7 @@ export function ordered(features) {
  *  reuses), then the family answers, then the knock-ins, then the 21 single-column leave-one-outs. */
 export function buildArms() {
   const arms = [];
-  arms.push({ id: "full", kind: "full", features: SHIPPED, label: "all 25 (the shipped design)" });
+  arms.push({ id: "full", kind: "full", features: SHIPPED, label: `all ${SHIPPED.length} (the shipped design)` });
 
   // LEAVE-FAMILY-OUT, retrained. A family containing a required column is dropped only down to the
   // columns the contract allows, and is labelled "partial" so nobody reads it as the whole block.
@@ -120,7 +135,7 @@ export function buildArms() {
     arms.push({
       id: `famloo__${fam}`, kind: "famloo", family: fam, drop: droppable, features: feats,
       partial: droppable.length !== cols.length,
-      label: `all 25 minus ${fam} (${droppable.length} of ${cols.length})`,
+      label: `all ${SHIPPED.length} minus ${fam} (${droppable.length} of ${cols.length})`,
     });
   }
 
@@ -139,7 +154,7 @@ export function buildArms() {
   for (const f of SHIPPED) {
     const feats = ordered(SHIPPED.filter((x) => x !== f));
     arms.push({
-      id: `loo__${f}`, kind: "loo", drop: [f], features: feats, label: `all 25 minus ${f}`,
+      id: `loo__${f}`, kind: "loo", drop: [f], features: feats, label: `all ${SHIPPED.length} minus ${f}`,
       refused: twoPartFeasible(feats) ? null : "two-part needs " + REQUIRED.join(", "),
     });
   }
