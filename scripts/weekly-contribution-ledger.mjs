@@ -46,22 +46,28 @@
 //   node --import tsx scripts/weekly-contribution-ledger.mjs --report --out-dir <dir>
 import { execFile, spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { admissionVerdict, familyAdjust, normalSf } from "./lib/arbiter.mjs";
 
 export const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** The 27 features the shipped artifact fits, in artifact order. Not retyped from the trainer's
+/** The 26 features the shipped artifact fits, in artifact order. Not retyped from the trainer's
  *  ALL_FEATURES (which is 29 -- it also carries rz_share_td and prior_vol_cv, both REJECTED
  *  candidates). CLAUDE.md: measure against the baseline you intend to ship.
  *
- *  2026-09-17, D27/WP16b: `ecr_wk_rank`/`ecr_wk_sd` were PROMOTED into the served artifact, so this
- *  list grew from 25 to 27 and a new `ecr` family joined the table below. **THE PUBLISHED LEDGER
- *  (docs/weekly-contribution-ledger-2026-09-16.md) WAS MEASURED ON THE 25-COLUMN DESIGN** and does
- *  not cover the two new columns or their effect on the other twenty-five; re-running it against
- *  this design is an open follow-up, and that document carries the same banner. The driver is
- *  corrected here rather than left behind because the test that pins it is asserting exactly one
+ *  HISTORY, because this list has moved twice in two days and each move retired a table:
+ *  - 2026-09-17, D27/WP16b: `ecr_wk_rank`/`ecr_wk_sd` PROMOTED, 25 -> 27, and a new `ecr` family.
+ *  - 2026-09-18, D30/WP18: `inj_feed` DROPPED, 27 -> 26. It is the one row this ledger resolved as a
+ *    proof rather than a measurement -- a constant 1 plus a missingness pattern over the fitted
+ *    population, whose leave-one-out and serve-mask arms both reproduced the full design BIT FOR BIT
+ *    on all fourteen seasons. The re-screen against the 27-column design (scripts/weekly-drop-screen.mjs)
+ *    reproduced that exactly, and the served artifact's six golden rows are unchanged to 1e-6 across
+ *    the promotion. The COLUMN is still built, stored and audited; it is only no longer FITTED.
+ *
+ *  **THE PUBLISHED LEDGER (docs/weekly-contribution-ledger-2026-09-16.md) WAS MEASURED ON THE
+ *  25-COLUMN DESIGN**; the 2026-09-18 section of that same file is the rerun against this one. The
+ *  driver is corrected here rather than left behind because the test that pins it asserts exactly one
  *  thing -- that the arms ablate the design that SHIPS -- and a driver pinned to a superseded design
  *  would ablate a model nobody is served from, which is the failure the pin exists to catch. */
 export const SHIPPED = [
@@ -69,7 +75,7 @@ export const SHIPPED = [
   "days_rest", "week_no", "season_line_pg", "td_fd", "td_ts", "td_attempts", "td_rush_yards",
   "ecr_wk_rank", "ecr_wk_sd",
   "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out", "home", "inj_out",
-  "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",
+  "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited",
 ];
 
 /** tools/train_weekly.py AVAILABILITY_REQUIRED -- the two-part refusal set. */
@@ -89,7 +95,10 @@ export const FAMILIES = {
   level: ["season_line_pg"],
   form: ["td_ppg", "t4_mean", "t4_sd", "td_games"],
   usage: ["td_fd", "td_ts", "td_attempts", "td_rush_yards", "prior_snap_share", "prior_route_share", "depth_rank"],
-  avail: ["inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed", "teammates_out"],
+  // D30/WP18 dropped `inj_feed` from the design, so it leaves this family too: FAMILIES must
+  // PARTITION `SHIPPED` (test/weekly-contribution-ledger.test.ts asserts it), and a family naming a
+  // column nobody fits would produce a leave-family-out arm that drops one column fewer than it says.
+  avail: ["inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "teammates_out"],
   context: ["spread_line", "total_line", "implied_team_total", "days_rest", "home", "week_no"],
   // D27/WP16b. Its OWN family rather than a member of `form`: the weekly expert consensus is an
   // outside opinion about the coming week, not a summary of what this player has already done, and
@@ -199,7 +208,7 @@ export function foldJobs(arms) {
 // ---- RUN ------------------------------------------------------------------------------------
 
 /** A bounded worker pool: `n` tasks in flight, in list order. */
-async function runPool(items, n, fn) {
+export async function runPool(items, n, fn) {
   const queue = [...items];
   const workers = Array.from({ length: Math.max(1, Math.min(n, queue.length)) }, async () => {
     for (let it = queue.shift(); it !== undefined; it = queue.shift()) await fn(it);
@@ -207,7 +216,7 @@ async function runPool(items, n, fn) {
   await Promise.all(workers);
 }
 
-const log = (outDir, line) => {
+export const log = (outDir, line) => {
   appendFileSync(join(outDir, "_run.log"), `[${new Date().toISOString()}] ${line}\n`);
   console.log(line);
 };
@@ -215,7 +224,7 @@ const log = (outDir, line) => {
 /** The trainer invocation, character-for-character `trainHoldout`'s (src/weekly/evaluate.ts). The
  *  shipped recipe is two-part + gbm and is read OFF the artifact there; it is pinned here because
  *  this driver bypasses that read, and `--verify` checks the produced folds say so. */
-function trainArgs(dbPath, holdout, features, out) {
+export function trainArgs(dbPath, holdout, features, out) {
   return [
     "run", "--with", "scikit-learn", "--with", "numpy", "tools/train_weekly.py",
     "--db", dbPath, "--seasons", "2012-2025", "--holdout-season", String(holdout),
@@ -238,14 +247,14 @@ function trainArgs(dbPath, holdout, features, out) {
  * this env is byte-compared against the same fold trained without it (see the doc's controls). Thread
  * count is a scheduling decision; HistGradientBoosting's histogram splits are exact and deterministic.
  */
-const SINGLE_THREAD = {
+export const SINGLE_THREAD = {
   OMP_NUM_THREADS: "1", OPENBLAS_NUM_THREADS: "1", MKL_NUM_THREADS: "1",
   NUMEXPR_NUM_THREADS: "1", VECLIB_MAXIMUM_THREADS: "1",
 };
 
-function foldPath(outDir, armId, season) { return join(outDir, "_folds", armId, `weekly-${season}.json`); }
+export function foldPath(outDir, armId, season) { return join(outDir, "_folds", armId, `weekly-${season}.json`); }
 
-async function trainFold(job, outDir, dbPath) {
+export async function trainFold(job, outDir, dbPath) {
   const out = foldPath(outDir, job.arm, job.season);
   mkdirSync(dirname(out), { recursive: true });
   if (existsSync(out) && statSync(out).size > 1000) {
@@ -301,7 +310,7 @@ export function verifyFolds(outDir, arms) {
  *  The predecessor of this driver captured stdout into a buffer and the run died on
  *  `Expected ',' or ']' after array element at position 2,000,000` -- a truncated pipe, not a bad
  *  arm. A `--json` result for 14 seasons is megabytes; nothing here ever holds it in a pipe buffer. */
-async function scoreArm(arm, outDir, dbPath, rosters) {
+export async function scoreArm(arm, outDir, dbPath, rosters) {
   const out = join(outDir, `${arm.id}.json`);
   if (existsSync(out)) {
     try { const j = JSON.parse(readFileSync(out, "utf8")); if (j.bySeason) return "cached"; } catch { /* rescore */ }
@@ -513,7 +522,11 @@ function report(outDir) {
 // ---- CLI ------------------------------------------------------------------------------------
 
 const MODES = ["--plan", "--train", "--verify", "--score", "--report"];
-if (process.argv.slice(2).some((a) => MODES.includes(a))) {
+// ONLY when this file is the entry point. scripts/weekly-drop-screen.mjs IMPORTS the plumbing
+// below so its arms are trained and scored by character-identical invocations; without this
+// guard a mode flag in the IMPORTER's argv would make this module run its own study too.
+const IS_MAIN = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+if (IS_MAIN && process.argv.slice(2).some((a) => MODES.includes(a))) {
   const argv = process.argv.slice(2);
   const v = (k, d) => { const i = argv.indexOf(k); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
   const outDir = v("--out-dir", null);

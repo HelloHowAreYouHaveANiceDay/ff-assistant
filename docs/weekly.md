@@ -166,7 +166,7 @@ identity rather than about time. A leak does not look like a handful, which is w
 assertion is the **ratio** (5 -> 30) and not the count. The staleness check against the context table
 has no such slack and must be exact; it is 0.
 
-On 2025 the audit says so rather than passing: `inj_feed` is 1 nowhere [STALE as of 2026-09-16: after D22 restored the dateless feed, 4,811 of 5,355 2025 population rows carry inj_feed=1; the M2g ledger found the column is a CONSTANT 1 across the whole population, i.e. a drop candidate -- docs/weekly-contribution-ledger-2026-09-16.md], so the availability block is
+On 2025 the audit says so rather than passing: `inj_feed` is 1 nowhere [STALE as of 2026-09-16: after D22 restored the dateless feed, 4,811 of 5,355 2025 population rows carry inj_feed=1; the M2g ledger found the column is a CONSTANT 1 across the whole population, i.e. a drop candidate -- docs/weekly-contribution-ledger-2026-09-16.md; D30/WP18 DROPPED it from the fitted design on 2026-09-18, and the column is still built, stored and audited exactly as described here], so the availability block is
 **not audited**, and the report says that is a coverage fact and not a clean bill.
 
 ### Coverage, per column per season (2010-2025, 178,033 rows)
@@ -1410,3 +1410,55 @@ the same function, so a per-format store gets the identical treatment.
 from `nowIso()`, which is UTC, so after ~8pm ET it wrote the block to the week AFTER the one a lineup
 was being set for -- measured on 2026-09-16 at 21:51 local, target week 3 while `ff copilot lineup`
 was setting week 2. It now uses `localToday()`, the same rule `currentWeek` documents.
+
+## 11. THE DESIGN DROPS A DEAD COLUMN AND KEEPS THE FIVE THE LEDGER PROPOSED (WP18, 2026-09-17; D30/D31)
+
+`docs/weekly-contribution-ledger-2026-09-16.md` (M2g) finished with two DROP candidates and refused to
+act on either, for the reason this repo's checklist gives: they were found on the 25-column design and
+the served design had moved to 27 (D27). Re-measured against what actually ships, they came apart.
+Full numbers, controls and rollbacks are D30 and D31 in `docs/decisions.md`; this is the short version
+and the part a later reader needs at the weekly horizon.
+
+**`inj_feed` is gone from the design, and the served artifact is 26 features** (md5
+`5aa938ecd0dc73ab68fe9a0137de3cfd`, rollback `data/weekly-artifact.pre-d30-2026-09-17.json`). Removing
+it is **bit-identical on all fourteen seasons** -- CRPS, every serve-mask block, lineup regret, the six
+golden rows to 1e-6, and the manager backtest line for line (89.32 pts/team-week, 48.0%, bootstrap
+-0.324 [-1.518, 0.66] over 1,896 team-weeks). The column takes exactly one distinct non-null value in
+every fitted season, so no head could ever split on it. **The COLUMN is unchanged**: it is still built
+by `src/weekly/features.ts`, still stored, still what `scripts/weekly-leak-audit.mjs` keys the
+availability audit on, and still a member of `MASKABLE_GROUPS`. Only the fit lost it.
+
+**The five usage columns STAY, and the holdout is what changed the answer.** `td_fd`, `td_ts`,
+`td_attempts`, `td_rush_yards`, `prior_route_share` as a joint selection were inside the floor on the
+decision block in both designs (+0.00131 then +0.00010). But with `ecr_wk_*` present the **holdout cost
+of dropping them is +0.00643 against a 0.00519 floor, 5 of 5 seasons, CI [+0.00353, +0.00985]**, where
+on the 25-column design it had been +0.00472 (4/5) and inside; and lineup regret flips from
++0.010/+0.093 (better without) to **-0.051/-0.060** (worse without). Two signals out of three now say
+they carry something on recent seasons.
+
+**AND THE SERVE-TIME ARGUMENT FOR THE SMALLER DESIGN DOES NOT SURVIVE ITS OWN MEASUREMENT.** M2g's
+structural finding -- usage is the cheapest family to remove and the most expensive to lose at serve --
+plus WP17 restoring the live usage columns to 77-80% made "fewer feeds to fail on a Sunday" look like a
+reason to take the 21-column design anyway. Masking each shared block on each design says otherwise:
+the exposure a 21-column model removes is **`usage5`, +0.00985 decision / +0.01104 holdout** -- the
+smallest block measured and 3% of what `prior_snap_share`+`depth_rank` cost (+0.325). Those two are
+the ones the two-part contract REFUSES to drop, so they are in every design; they were always the ones
+doing the serve-time work. The 21 also leans very slightly harder on `form` (+0.07699 vs +0.07299).
+**A hundredth of a CRPS of removed exposure against six hundredths of holdout cost is not a trade.**
+
+**The switch reaches 2026-09-18**, not today, and section "The switch reaches the NEXT unplayed week
+and no other" is the rule being applied: week 3's `weekly` rows were frozen this morning under the
+27-feature artifact and are write-once, so week 4 is the first snapshot that can carry the new design.
+`WEEKLY_SERVE_SWITCHED_ON` is `2026-09-18` for the same reason D27 widened that stamp -- two models
+must not share a date.
+
+**The Yahoo format got the same design (D31)**, replacing an artifact WP8 had fitted with
+`--features all` and which therefore carried `rz_share_td` and `prior_vol_cv`, two ESPN-REJECTED
+candidates, and no consensus columns. On the format's own folds the re-pin is **+0.02798 pooled CRPS
+over 14 seasons (13/14, clears its floor) and +0.04964 on the holdout (5/5)**, passes all three gate
+clauses, and is **+0.63 / +0.58 points a lineup** on that league's superflex template.
+
+**The reusable lesson, and it is the second time this exact shape has cost something:** a feature list
+spelled `all` is not a recipe, it is whatever the trainer declared that day. WP16b removed it from
+`ff evaluate-weekly`; D31 removed the last artifact fitted under it. Read the list off the served
+file's bytes.

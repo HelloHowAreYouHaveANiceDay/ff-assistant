@@ -1184,6 +1184,25 @@ been moved out of the format directory, because `ff scorecard --league 129048` r
 candidate series from it. Deciding the Yahoo baseline is the prerequisite; the screen itself is
 2 arms x 14 folds x ~4.7 min.
 
+> **CLOSED 2026-09-17 by D31 (WP18), and the answer was to stop asking which four columns.** The
+> baseline question dissolves once the format is held to the SAME design the ESPN serve carries
+> (26 columns after D30), because then there is no bespoke Yahoo feature list to decide -- the list is
+> read off the served file's bytes, which is the rule WP16b already imposed on
+> `ff evaluate-weekly`. `scripts/weekly-format-design-screen.mjs` ran exactly the 2 arms x 14 folds
+> this paragraph scoped, on the format's own `features.db`, scored through
+> `ff evaluate-weekly --league 129048` so the decision metric uses that league's superflex template.
+> The D30 design beats the confounded incumbent by **+0.02798 pooled CRPS over 14 seasons (13/14,
+> clears its 0.02158 floor)** and **+0.04964 on the 2021-2025 holdout (5/5, floor 0.04057)**, passes
+> all three gate clauses, and gains **+0.63 / +0.58 points a lineup**. It is promoted into the format
+> directory; the confounded file is the rollback copy `weekly-artifact.pre-d31-2026-09-17.json` and is
+> off the serving path. `ff copilot lineup --league 129048` still REFUSES on the active-board stamp
+> (recorded, not worked around -- the active league was not switched); what is asserted is that
+> `evaluate-weekly --league 129048 --resolve-only` names the re-pinned file. One real gap surfaced and
+> is NOT fixed: `weeklyPopulationProblem` compares a declared population hash against
+> `dataPath("ff.db")` only, so a FORMAT artifact's staleness is unchecked by it -- which is how this
+> file came to be stale in two ways at once (an accidental design and a population the store no longer
+> signs). Numbers, controls and the population-drift diagnosis: D31 in `docs/decisions.md`.
+
 **Gates.** `npm run typecheck` clean. `npx eslint .` 0 errors, 46 warnings -- the same 46 M2a and
 M2b recorded, none in a file touched here. `npm test` **1058 tests, 1056 pass, 0 fail, 2 skipped**
 (both skips pre-existing and unrelated: "a curve-only projection is EXACTLY the base", skipped

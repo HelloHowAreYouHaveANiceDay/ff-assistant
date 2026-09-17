@@ -1,5 +1,13 @@
 # The weekly model's contribution ledger (M2g, 2026-09-16)
 
+> **HISTORICAL AS OF 2026-09-17. EVERYTHING FROM HERE TO THE HORIZONTAL RULE BEFORE "THE RERUN ON THE
+> SERVED 26-COLUMN DESIGN" IS THE 25-COLUMN STUDY.** The rerun against the design that ships today is
+> the dated section at the end of this file, and it supersedes every table above. This one is KEPT
+> rather than replaced because it is the record D27 and D30 were decided against, and because the
+> comparison between the two designs turned out to be a finding of its own (five leave-one-out verdicts
+> flip on a two-column change; promoting the consensus halved the model's holdout exposure to a dark
+> usage feed). The original 2026-09-17 banner follows, unaltered.
+>
 > **SUPERSEDED IN SCOPE ON 2026-09-17 -- read every number below as "the 25-column design".** D27
 > (WP16b) promoted `ecr_wk_rank` and `ecr_wk_sd` into the served artifact, which is now **27**
 > features. Nothing in this study is retracted: every arm, fold and verdict here is a correct
@@ -440,3 +448,242 @@ node --import tsx scripts/weekly-paired-floor.mjs --baseline <dir>/loo__td_ppg.j
 `test/weekly-contribution-ledger.test.ts` cases). The four served weekly artifacts byte-identical
 (md5s at the top). `data/ff.db` never opened by this study -- every read went through the
 `VACUUM INTO` snapshot `ff-m2g.db` (md5 048cdc4c7e4bb4073da45183b41d14fb).
+
+---
+---
+
+# THE RERUN ON THE SERVED 26-COLUMN DESIGN (WP18, 2026-09-17)
+
+**This section supersedes every table above.** Everything above was measured on the **25-column**
+pre-D27 design; this is the same study, same driver, same folds-per-arm, same statistic, on the design
+that ships today (D27 added `ecr_wk_rank`/`ecr_wk_sd`; D30 dropped the dead `inj_feed`). The 25-column
+tables are kept, banner and all, because they are the record the two promotions were decided against
+and because the comparison BETWEEN the two designs is itself a finding.
+
+**WHAT SHIPPED, unlike the study above.** The 25-column study shipped nothing. This rerun is the
+POST-PROMOTION measurement of two changes that did ship on the strength of the earlier one: D27
+(consensus in) and D30 (`inj_feed` out). The rerun itself ships nothing -- it wrote no artifact, no
+default and no lever, and read a `VACUUM INTO` snapshot rather than the store.
+
+**34 trained arms x 14 folds = 476 fold trainings, zero failures**, plus 33 fold-reusing score-only
+arms, over ~2h20 at 24-way concurrency with each child pinned to one OpenMP thread. Same window
+2012-2025, same decision block 2012-2020 / confirm block 2021-2025, `--rosters 300`, the same
+`VACUUM INTO` snapshot (`ff-wp18.db`). Nothing was written to `data/ff.db`.
+
+**Controls, first.**
+
+- **DEGENERACY:** `full_dup` re-scores the full arm's own folds LAST, after every other arm, with an
+  empty mask: largest per-season |delta| **0.00e+0**. The harness did not move under the study, and
+  `isDegenerate` is shown returning its positive value against a real pair of runs rather than a fixture.
+- **EVERY FOLD FITTED ITS OWN ARM'S LIST**, re-read off the producer's bytes (`--verify`): *"every fold
+  of 34 trained arms carries exactly its arm's feature list, two-part/gbm, rostered/in_population,
+  holdout excluded."*
+- **The full arm's per-season CRPS reproduces the D30 drop screen's `served27`/`cand26` arms exactly**
+  (2.7252, 2.7981, 2.6796, 2.7123, 2.6210, 2.7017, 2.8522, 2.8408, 2.8259, 2.7881, 2.6525, 2.6753,
+  2.7802, 2.8113; lineup 85.729 / 90.704) -- a different driver, a different out-dir, a different day's
+  fold set. Full pooled CRPS **2.74829**, decision-block mean **2.75074**.
+
+## R1. The leave-one-out ledger, 26 columns
+
+`+` = removing the feature hurt. Four rows are REFUSED a training-time leave-one-out by the trainer's
+two-part contract (`inj_out`, `depth_rank`, `teammates_out`, `prior_snap_share`) and appear only in the
+serve-mask table, exactly as before.
+
+| feature | contribution (sel 2012-2020) | floor 2.9\*SE | wins | verdict | BH q (n=22) | holdout 2021-2025 | all 14 |
+|---|---|---|---|---|---|---|---|
+| `season_line_pg` | **+0.03536 +/- 0.00236** | 0.00684 | 9/9 | **KEEP** | 0.0 | **+0.03384 (5/5)** | +0.03482 (14/14) |
+| `td_games` | **+0.00847 +/- 0.00176** | 0.00511 | 9/9 | **KEEP** | 8.5e-6 | **+0.00749 (5/5)** | +0.00812 (14/14) |
+| `prac_dnp` | **+0.00576 +/- 0.00150** | 0.00434 | 7/9 | **KEEP** | 3.2e-4 | +0.00390 (4/5) | +0.00510 (11/14) |
+| `inj_doubtful` | **+0.00486 +/- 0.00111** | 0.00323 | 8/9 | **KEEP** | 4.6e-5 | **+0.00841 (5/5)** | +0.00613 (13/14) |
+| `week_no` | +0.00813 +/- 0.00312 | 0.00906 | 8/9 | DROP (sub-floor) | 1.7e-2 | +0.00433 (4/5) | +0.00677 (12/14) |
+| `ecr_wk_rank` | +0.00256 +/- 0.00201 | 0.00584 | 6/9 | DROP (sub-floor) | 2.2e-1 | **+0.01531 (5/5)** | +0.00711 (11/14) |
+| `prac_limited` | +0.00235 +/- 0.00082 | 0.00237 | 7/9 | DROP (sub-floor) | 9.1e-3 | +0.00118 (3/5) | +0.00193 (10/14) |
+| `td_ppg` | +0.00194 +/- 0.00103 | 0.00299 | 5/9 | DROP (sub-floor) | 8.1e-2 | +0.00310 (5/5) | +0.00236 (10/14) |
+| `implied_team_total` | +0.00155 +/- 0.00074 | 0.00215 | 6/9 | DROP (sub-floor) | 5.7e-2 | +0.00318 (5/5) | +0.00213 (11/14) |
+| `td_ts` | +0.00122 +/- 0.00105 | 0.00305 | 5/9 | DROP (sub-floor) | 2.5e-1 | +0.00019 (2/5) | +0.00085 (7/14) |
+| `td_rush_yards` | +0.00085 +/- 0.00056 | 0.00163 | 7/9 | DROP (sub-floor) | 1.6e-1 | +0.00196 (4/5) | +0.00124 (11/14) |
+| `spread_line` | +0.00068 +/- 0.00077 | 0.00224 | 5/9 | DROP (sub-floor) | 3.2e-1 | -0.00068 (2/5) | +0.00019 (7/14) |
+| `days_rest` | +0.00064 +/- 0.00062 | 0.00179 | 5/9 | DROP (sub-floor) | 2.7e-1 | +0.00092 (3/5) | +0.00074 (8/14) |
+| `ecr_wk_sd` | +0.00026 +/- 0.00061 | 0.00178 | 5/9 | DROP (sub-floor) | 5.3e-1 | **+0.00286 (5/5)** | +0.00119 (10/14) |
+| `t4_mean` | -0.00012 +/- 0.00119 | 0.00346 | 4/9 | DROP (negative) | 7.9e-1 | +0.00143 (3/5) | +0.00044 (7/14) |
+| `home` | -0.00019 +/- 0.00057 | 0.00166 | 4/9 | DROP (negative) | 8.1e-1 | +0.00110 (3/5) | +0.00027 (7/14) |
+| `total_line` | -0.00020 +/- 0.00100 | 0.00290 | 4/9 | DROP (negative) | 8.0e-1 | +0.00233 (3/5) | +0.00070 (7/14) |
+| `t4_sd` | -0.00049 +/- 0.00116 | 0.00335 | 2/9 | DROP (negative) | 8.1e-1 | -0.00038 (2/5) | -0.00045 (4/14) |
+| `td_attempts` | -0.00053 +/- 0.00053 | 0.00152 | 4/9 | DROP (negative) | 9.3e-1 | -0.00087 (1/5) | -0.00065 (5/14) |
+| `prior_route_share` | -0.00056 +/- 0.00060 | 0.00173 | 3/9 | DROP (negative) | 9.3e-1 | +0.00355 (5/5) | +0.00091 (8/14) |
+| `td_fd` | -0.00066 +/- 0.00038 | 0.00109 | 3/9 | DROP (negative) | 9.7e-1 | +0.00130 (3/5) | +0.00004 (6/14) |
+| `inj_questionable` | -0.00107 +/- 0.00058 | 0.00168 | 3/9 | DROP (negative) | 9.7e-1 | +0.00230 (5/5) | +0.00014 (8/14) |
+| `prior_snap_share` / `depth_rank` / `teammates_out` / `inj_out` | REFUSED by the two-part contract -- serve-mask rows only | | | | | | |
+
+**Four of the 22 measurable columns clear the floor**, against six of 21 on the 25-column design. The
+22 rows sum to **+0.07083 against a 2.75074 decision-block mean -- 2.57% of the loss**, and the level
+anchor is 50% of it. Both figures are within a hair of the 25-column edition's (+0.0698, 2.5%, 48%):
+**the design got two columns, lost one, and carries almost exactly as much as it did.**
+
+## R2. The five verdicts that FLIPPED, and why each one is a reading rather than a result
+
+This is what the comparison between the two designs buys, and it is mostly a lesson about how thin
+these rows are.
+
+| row | 25-column | 26-column | what moved |
+|---|---|---|---|
+| `week_no` | **KEEP** +0.01025 (floor 0.00865) | DROP (sub-floor) +0.00813 (floor 0.00906) | the estimate fell 20% AND the SE rose 5% -- it crossed from both sides at once |
+| `prac_limited` | **KEEP** +0.00302 (floor 0.00202) | DROP (sub-floor) +0.00235 (floor **0.00237**) | **misses by 0.00002.** A verdict decided in the fifth decimal is not a finding in either direction |
+| `home` | DROP (sub-floor) +0.00081 | DROP (negative) -0.00019 | sign flip inside a 0.0017 floor |
+| `inj_questionable` | DROP (sub-floor) +0.00002 | DROP (negative) -0.00107 | ditto, and its serve mask is +0.0157 either way |
+| `spread_line`, `days_rest` | DROP (negative) | DROP (sub-floor) | sign flips the other way, same verdict class |
+| `inj_feed` | **DEGENERATE** (+0.00000 exactly) | *(no row -- D30 dropped it)* | the one row that was a proof, acted on |
+
+**The honest reading of the flips is that nothing survived contact with a 2-column change except the
+rows that were never close.** `season_line_pg`, `td_games`, `inj_doubtful` and `prac_dnp` are KEEP in
+both designs, 9/9 or 8/9 in both, and BH-significant in both. Every flip happened inside 0.005 CRPS,
+which is between a third and twice the floor on nine seasons -- i.e. exactly the resolution limit this
+study has been reporting since its first table. **Do not read `week_no` as "demoted" or `prac_limited`
+as "rejected"**: read the pair as a demonstration that a keep/drop verdict on a sub-0.01 row is a
+coin the design's composition can flip.
+
+## R3. The two new columns, and the shape of a feature that only exists on part of the range
+
+`ecr_wk_rank` and `ecr_wk_sd` are a family of their own, and the serve mask says out loud which
+seasons the archive actually covers: masking `ecr_wk_rank` changes **exactly nothing** on
+**2012-2018 and 2025**, and moves six seasons, **2019-2024**. That is the coverage, measured from the
+model's own behaviour rather than from a coverage query.
+
+| | decision block 2012-2020 (7 of 9 seasons have NO column) | holdout 2021-2025 (4 of 5 have it) |
+|---|---|---|
+| `famloo__ecr` (leave the family out) | +0.00419, 4/9, floor 0.01246 -- **sub-floor** | **+0.03635, 5/5** |
+| knock-in over the 5-column floor | +0.01533, 7/9, floor 0.03050 -- sub-floor | **+0.08490, 4/5** |
+| `maskfam__ecr` (serve without it) | +0.00497, 2/9 -- sub-floor | **+0.03715, 4/5** |
+| lineup regret, family dropped | **-0.192 / -0.242** | |
+
+**The decision block CANNOT resolve this family and never could**, because seven of its nine seasons
+are blank for it; the holdout is where the column exists, and there it is the second-largest family
+knock-in in the table. This is the same asymmetry the M2a screen reported when it admitted the column
+on the covered seasons and measured an exact null (+0.00015) on the uncovered ones -- so the ledger's
+DROP verdict on `famloo__ecr` is **a statement about the archive's start date, not about the feature**,
+and it is the one row in this document where the selection/holdout split must not be read the usual
+way round. D27's promotion stands on the covered seasons, as recorded.
+
+## R4. Families, and the knock-in
+
+| family | leave-family-out (sel) | floor | wins | verdict | holdout | knock-in over floor (sel) | floor | wins | verdict | holdout |
+|---|---|---|---|---|---|---|---|---|---|---|
+| level (`season_line_pg`) | **+0.03536** | 0.00684 | 9/9 | **KEEP** | +0.03384 (5/5) | *(is the floor)* | | | | |
+| availability (5 of 6) | **+0.02613** | 0.00629 | 9/9 | **KEEP** | +0.02831 (5/5) | **+0.02700** | 0.01149 | 9/9 | **ADMIT** | +0.04110 (5/5) |
+| game context (6 of 6) | **+0.02519** | 0.01112 | 9/9 | **KEEP** | +0.02443 (5/5) | **+0.02813** | 0.00932 | 9/9 | **ADMIT** | +0.05087 (5/5) |
+| form (4 of 4) | **+0.01786** | 0.01170 | 9/9 | **KEEP** | +0.00903 (4/5) | **+0.03885** | 0.01297 | 9/9 | **ADMIT** | +0.03867 (4/5) |
+| ecr (2 of 2) | +0.00419 | 0.01246 | 4/9 | DROP (sub-floor) | **+0.03635 (5/5)** | +0.01533 | 0.03050 | 7/9 | sub-floor | **+0.08490 (4/5)** |
+| usage (5 of 7) | +0.00010 | 0.00402 | 5/9 | DROP (sub-floor) | **+0.00643 (5/5)** | **+0.02270** | 0.01017 | 9/9 | **ADMIT** | +0.02051 (5/5) |
+
+The knock-in floor's decision-block mean CRPS is **2.85782** against the full design's **2.75074**, so
+the 21 non-floor columns are jointly worth **+0.10707** -- 3.9% of the loss. They sum to **+0.03547**
+individually, a **3.0x redundancy** (2.8x on the 25-column design). The five knock-ins sum to
+**+0.13201** against that joint **+0.10707**, so ~19% of what any family carries alone is carried by
+another too. Masking, family by family (joint minus sum-of-members): context **+0.01458**,
+availability **+0.01423**, form **+0.00805**, ecr +0.00137, usage **-0.00022** -- usage is again the
+one block that is sub-additive, i.e. genuinely additive-to-nothing.
+
+**AND THE USAGE ROW IS THE ONE THAT MATTERED THIS WEEK.** `famloo__usage` is the D30 21-column
+candidate, and the number that stopped it is in this table: sub-floor on the decision block as always,
+but **+0.00643 on the holdout, 5 of 5, against a holdout floor of 0.00519** -- resolvable there, where
+on the 25-column design it had been +0.00472 at 4/5 and inside. With lineup regret at **-0.051 /
+-0.060** it is two signals out of three against the drop. See D30.
+
+## R5. The serve-time mask, and THE ONE GENUINELY NEW FINDING
+
+| feature | serve mask (sel) | floor | wins | verdict | holdout | 25-column mask (sel) |
+|---|---|---|---|---|---|---|
+| `depth_rank` | **+0.64309** | 0.25926 | 9/9 | **KEEP** | +0.30917 (5/5) | +0.56046 |
+| `t4_mean` | **+0.16503** | 0.07670 | 9/9 | **KEEP** | +0.16568 (5/5) | +0.20356 |
+| `season_line_pg` | **+0.09505** | 0.01677 | 9/9 | **KEEP** | +0.10451 (5/5) | +0.09712 |
+| `td_ppg` | **+0.05349** | 0.03111 | 9/9 | **KEEP** | +0.05392 (5/5) | +0.05984 |
+| `prior_snap_share` | **+0.04809** | 0.01919 | 8/9 | **KEEP** | +0.04655 (5/5) | +0.04611 |
+| `inj_out` | **+0.03144** | 0.01037 | 9/9 | **KEEP** | +0.03661 (5/5) | +0.03579 |
+| `td_games` | **+0.02372** | 0.00787 | 9/9 | **KEEP** | +0.01770 (5/5) | +0.02432 |
+| `week_no` | **+0.01910** | 0.00883 | 9/9 | **KEEP** | +0.01529 (5/5) | +0.01981 |
+| `inj_questionable` | **+0.01565** | 0.00578 | 9/9 | **KEEP** | +0.01082 (5/5) | +0.01666 |
+| `implied_team_total` | **+0.01328** | 0.00513 | 9/9 | **KEEP** | +0.01499 (5/5) | +0.01464 |
+| `teammates_out` | **+0.01158** | 0.00467 | 9/9 | **KEEP** | +0.01327 (5/5) | +0.01234 |
+| `prac_dnp` | **+0.01052** | 0.00434 | 9/9 | **KEEP** | +0.01189 (5/5) | +0.00901 |
+| `inj_doubtful` | **+0.00782** | 0.00361 | 9/9 | **KEEP** | +0.01223 (5/5) | +0.00917 |
+| `prac_limited` | **+0.00645** | 0.00249 | 9/9 | **KEEP** | +0.00701 (5/5) | +0.00739 |
+| `days_rest` | **+0.00459** | 0.00279 | 8/9 | **KEEP** | +0.00731 (5/5) | +0.00485 |
+| `td_ts` | **+0.00416** | 0.00353 | 8/9 | **KEEP** | +0.00111 (3/5) | +0.00485 |
+| `ecr_wk_rank` | +0.00332 | 0.00868 | 2/9 | sub-floor | **+0.02820 (4/5)** | *(new)* |
+| `spread_line` | **+0.00228** | 0.00133 | 8/9 | **KEEP** | +0.00079 (4/5) | +0.00455 |
+| `prior_route_share` | +0.00219 | 0.00246 | 5/9 | sub-floor | +0.00699 (5/5) | +0.00149 |
+| `total_line` | +0.00146 | 0.00241 | 6/9 | sub-floor | +0.00587 (5/5) | +0.00281 |
+| `t4_sd` | +0.00140 | 0.00382 | 6/9 | sub-floor | +0.00070 (3/5) | +0.00176 |
+| `td_rush_yards` | +0.00102 | 0.00123 | 7/9 | sub-floor | +0.00205 (4/5) | +0.00127 |
+| `ecr_wk_sd` | +0.00066 | 0.00187 | 2/9 | sub-floor | +0.00417 (3/5) | *(new)* |
+| `td_fd` | +0.00058 | 0.00259 | 6/9 | sub-floor | +0.00082 (4/5) | +0.00040 |
+| `home` | +0.00023 | 0.00108 | 6/9 | sub-floor | +0.00187 (5/5) | +0.00043 |
+| `td_attempts` | -0.00011 | 0.00101 | 5/9 | sub-floor | -0.00095 (2/5) | +0.00013 |
+
+| family | serve mask (sel) | floor | wins | holdout | 25-column (sel / holdout) |
+|---|---|---|---|---|---|
+| usage (all 7) | **+0.35956** | 0.09430 | 9/9 | **+0.18323 (5/5)** | +0.39950 / **+0.39148** |
+| availability (all 6) | **+0.13917** | 0.02015 | 9/9 | +0.14311 (5/5) | +0.14107 / +0.13337 |
+| level | **+0.09505** | 0.01677 | 9/9 | +0.10451 (5/5) | +0.09712 / +0.09880 |
+| form (all 4) | **+0.07299** | 0.02176 | 9/9 | +0.06038 (5/5) | +0.08291 / +0.06525 |
+| context (all 6) | **+0.04761** | 0.01291 | 9/9 | +0.05666 (5/5) | +0.05938 / +0.06430 |
+| ecr (all 2) | +0.00497 | 0.01335 | 2/9 | **+0.03715 (4/5)** | *(new)* |
+
+**THE FINDING: promoting the weekly consensus HALVED the model's holdout exposure to a dark usage
+feed, and nothing was designed to measure that.** The usage family's serve mask is essentially
+unchanged on the decision block (+0.3995 -> +0.3596) and **falls from +0.3915 to +0.1832 on the
+holdout** -- and the split lands exactly where the consensus archive starts. The mechanism is
+visible in the same tables: `ecr_wk_*` is null on 2012-2018 and moves the model on 2019-2024, which is
+7 of the 9 decision seasons blank and 4 of the 5 holdout seasons covered. On a recent Sunday with the
+snap/route/depth feeds dark, the model now has an outside opinion about this week to fall back on;
+before D27 it had only the level and the to-date block. **This is an OBSERVATION, not a designed
+test** -- the two designs differ by exactly the ECR columns, the pattern matches the coverage, and the
+selection block (mostly uncovered) barely moved, which is as much as an unplanned comparison can
+carry. But it is the first quantified answer to "what does the consensus buy us beyond CRPS", and the
+answer is *robustness to the feed failure this study named as the weekly track's biggest exposure*.
+
+**Everything else in section 3 above stands.** A leave-one-out measures REDUNDANCY and a serve mask
+measures RELIANCE, and they remain almost unrelated: `t4_mean` is -0.00012 to leave out and **+0.165**
+to lose at serve; `inj_questionable` is -0.00107 and **+0.0157**; `depth_rank`'s mask is **+0.643**,
+twenty-seven times any leave-one-out in the table and still not comparable to one. The family ordering
+still inverts -- usage is the least valuable family to remove from the design and by far the most
+expensive to lose at serve.
+
+## R6. The decision layer
+
+| arm | standard-15 | delta | deep-18 | delta |
+|---|---|---|---|---|
+| **full design (26)** | **85.729** | -- | **90.704** | -- |
+| knock-in **floor** (5 columns) | 84.458 | **-1.272** | 89.113 | **-1.592** |
+| fam **availability** | 85.404 | -0.325 | 90.262 | -0.442 |
+| fam **game context** | 85.536 | -0.193 | 90.465 | -0.240 |
+| fam **ecr** | 85.537 | -0.192 | 90.463 | -0.242 |
+| fam **usage** | 85.679 | **-0.051** | 90.645 | **-0.060** |
+| fam **form** | 85.754 | **+0.025** | 90.750 | **+0.046** |
+| LOO `season_line_pg` | 85.297 | -0.433 | 90.165 | -0.540 |
+| serve-mask fam **form** | 82.860 | **-2.870** | 87.181 | **-3.523** |
+| serve-mask fam **availability** | 83.957 | -1.773 | 88.608 | -2.096 |
+| serve-mask fam **usage** | 84.057 | -1.672 | 88.666 | -2.038 |
+| serve-mask fam **context** | 85.263 | -0.467 | 90.133 | -0.572 |
+| serve-mask fam **level** | 85.342 | -0.388 | 90.297 | -0.408 |
+| serve-mask fam **ecr** | 85.616 | -0.113 | 90.601 | -0.104 |
+
+**The whole 21-column apparatus beyond the floor is worth ~1.3 points a lineup** (up from ~1.1 on the
+25-column design), and the ordering by lineup regret is now **level (-0.43) > availability (-0.33) >
+context (-0.19) ~ ecr (-0.19) > usage (-0.05) > form (+0.03)**, which still disagrees with both CRPS
+tables. The `usage` family drop is the row D30 weighed: fractionally NEGATIVE here, where on the
+25-column design it was fractionally positive -- the third of the three signals that turned.
+
+## R7. Reproduce
+
+```
+node --import tsx scripts/weekly-contribution-ledger.mjs --plan
+node --import tsx scripts/weekly-contribution-ledger.mjs --train  --out-dir <dir> --db <snapshot> --concurrency 24
+node --import tsx scripts/weekly-contribution-ledger.mjs --verify --out-dir <dir>
+node --import tsx scripts/weekly-contribution-ledger.mjs --score  --out-dir <dir> --db <snapshot> --concurrency 6
+node --import tsx scripts/weekly-contribution-ledger.mjs --report --out-dir <dir>
+```
+
+`SHIPPED` in that driver is pinned to the served artifact's own feature list by
+`test/weekly-contribution-ledger.test.ts`, so the next promotion fails that test rather than being
+quietly measured at the old width -- which is how this rerun came to be scheduled at all.

@@ -556,6 +556,29 @@ with `loadWeeklyArtifact` and therefore re-runs the six golden rows): "the train
 There is no Yahoo DST streaming artifact and there should not be: the league rosters no defence. DST
 comes back in `projectStreamingWith`'s `missing` list, by name.
 
+> **SUPERSEDED 2026-09-17 by D31 (WP18) -- `--features all` was the wrong recipe and this paragraph
+> is why.** `all` is a MOVING set: on the day WP8 ran it meant 27 columns INCLUDING `rz_share_td` and
+> `prior_vol_cv`, two candidates the ESPN track had already screened and REJECTED, and EXCLUDING the
+> two `ecr_wk_*` columns D27 has since promoted. "Same recipe as the shipped ESPN pair, read off
+> `data/weekly-artifact.json`'s own header" is exactly right about the zero model, the learner, the
+> target and the population -- and wrong about the one part of the recipe that was spelled `all`
+> instead of being read off that header. WP16b removed the same default from the ESPN path.
+>
+> `data/formats/sc-a845f67652fb/weekly-artifact.json` is now the **26-column D30 served design**,
+> md5 `c7e74c2122d1e8df4743d9286fc22d2d`, fitted on today's rows (`populationHash 63c7b712cd8acdbe`,
+> 74,990 flagged rows). It beats the incumbent design on the format's own folds -- **+0.02798 pooled
+> CRPS over 14 seasons (13/14 wins, clears its 0.02158 floor) and +0.04964 on the 2021-2025 holdout
+> (5/5, floor 0.04057)** -- passes all three gate clauses, and gains **+0.63 / +0.58 points a lineup**
+> on this league's superflex template. The screen is `scripts/weekly-format-design-screen.mjs`; the
+> numbers, the controls and the rollback are D31 in `docs/decisions.md`. The old file is kept as
+> `weekly-artifact.pre-d31-2026-09-17.json` and is off the serving path.
+>
+> The evaluation in section 4 below is the INCUMBENT design's and is reproduced exactly by D31's
+> incumbent arm on the rebuilt store (RMSE 8.211, CRPS 3.5889, coverage 0.848, cov(>0) 0.843, bias
+> +0.146, zeroP 0.240, zeroA 0.245; standard-15 141.63, deep-18 153.35), so it is dated rather than
+> wrong -- and that reproduction is what proves the store's fourteen fitted seasons did not move when
+> the weekly table was rebuilt on 2026-09-17.
+
 
 ### 4. The evaluation -- the number that says whether this is an improvement
 

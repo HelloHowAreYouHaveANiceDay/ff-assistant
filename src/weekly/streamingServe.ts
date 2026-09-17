@@ -126,9 +126,17 @@ export const WEEKLY_SERVE: Record<string, string> = {
  * carries the serving artifact's own `fittedAt` and feature count (src/weekly/scorecard.ts), which a
  * promotion cannot leave stale because it is read off the file that produced the row.
  *
- * 2026-09-14 mapping (D17/D20) -> 2026-09-17 artifact promotion (D27).
+ * 2026-09-14 mapping (D17/D20) -> 2026-09-17 artifact promotion (D27) -> 2026-09-18 artifact
+ * promotion (D30, the 27-feature design minus the dead `inj_feed` column).
+ *
+ * WHY D30's DATE IS TOMORROW'S AND NOT TODAY'S, which is the only thing about it that looks odd.
+ * D27 took this value on 2026-09-17 and 2026 week 3's `weekly` rows were frozen that morning under
+ * it. Those rows are write-once and are NOT rewritten, so the first snapshot the D30 design can
+ * appear in is week 4 -- and re-using 2026-09-17 would make two different models carry one date,
+ * which is the exact failure this constant was widened to prevent. The date names the week the
+ * switch REACHES, not the minute the file moved.
  */
-export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-17";
+export const WEEKLY_SERVE_SWITCHED_ON = "2026-09-18";
 
 /** Positions the given artifact file serves. Derived from the table so the two can never disagree;
  *  a hand-maintained second list is the enumeration that rots. */

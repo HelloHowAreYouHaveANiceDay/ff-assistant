@@ -1407,6 +1407,213 @@ ignore-on-conflict, so there is nothing to undo -- and if the code is reverted, 
 written stay, which is the desired direction. Store backup: `data/ff.db.bak-prewp16a-2026-09-16`
 (online `db.backup()`, integrity ok).
 
+## D30 -- The weekly design drops the dead `inj_feed` column and KEEPS the five usage columns (2026-09-17 measured, owner: "let's aim for quality, so even if it's not backwards compatible and we have to rerun things, we should get towards a better edge", **APPLIED 2026-09-18, WP18**)
+
+**APPLIED, and it is half of what the ledger proposed.** `docs/weekly-contribution-ledger-2026-09-16.md`
+(M2g) ended with exactly two DROP candidates and refused to act on either. Both were re-measured here
+against the design that actually SHIPS -- the 27-column D27 one, not the 25 they were found on -- and
+they came apart: one is a proof, the other reversed.
+
+| | before | after |
+|---|---|---|
+| `data/weekly-artifact.json` | 27 features, md5 `89e133ec8225f248f12664a0b5b87eb3` | **26 features** (`-inj_feed`), md5 `5aa938ecd0dc73ab68fe9a0137de3cfd` |
+| `WEEKLY_SERVE` | QB/RB/WR/TE -> `weekly-artifact.json` | **unchanged** -- a file swap, not a mapping change |
+| `WEEKLY_SERVE_SWITCHED_ON` | `2026-09-17` (D27) | **`2026-09-18`** -- the week the switch REACHES (see below) |
+| `scripts/weekly-contribution-ledger.mjs` `SHIPPED` | 27, `avail` family of 7 | **26**, `avail` family of 6 |
+| the rollback file | -- | `data/weekly-artifact.pre-d30-2026-09-17.json`, md5 `89e133ec...` |
+| the `inj_feed` STORE column | built, stored, audited, fitted | **built, stored, audited -- no longer fitted** |
+
+### The two candidates, and what the re-screen said
+
+`scripts/weekly-drop-screen.mjs` (new), 3 designs x 14 leave-one-season-out folds on a `VACUUM INTO`
+snapshot, `--rosters 300`, decision block 2012-2020 and holdout 2021-2025, scored through
+`ff evaluate-weekly --reuse-artifacts` and read back through `scripts/lib/arbiter.mjs`'s 2.9\*SE floor
+-- the same statistic `scripts/weekly-paired-floor.mjs` applies. A DROP holds only if REMOVING the
+thing costs LESS than the floor on the decision block **and** the holdout agrees.
+
+| design | f | cost of the drop (sel 2012-2020) | floor | wins | holdout 2021-2025 | holdout floor | wins | lineup regret std-15 / deep-18 | gate | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `cand26` = served minus `inj_feed` | 26 | **+0.00000 exactly** | 0.00000 | 0/9 | **+0.00000** | 0.00000 | 0/5 | **0.000 / 0.000** | PASS a/b/c | **DROP -- degenerate** |
+| `cand21` = also minus the five usage columns | 21 | +0.00010 +/- 0.00138 | 0.00402 | 5/9 | **+0.00643 +/- 0.00179** | **0.00519** | **5/5** | **-0.051 / -0.060** | PASS a/b/c | **KEEP -- the stop rule fired** |
+
+**`inj_feed` is not a small effect, it is an exact one, three ways over.** Retrained without it and
+served without it, the model reproduces the 27-column design **bit for bit on all fourteen seasons**
+(largest per-season |delta| 0.00e+0), at CRPS, at every one of the six serve-mask blocks, and at
+lineup regret; the served artifact's six golden rows are unchanged to 1e-6 across the swap; and the
+manager backtest is IDENTICAL line for line (89.32 pts/team-week, 48.0% vs its own manager, bootstrap
+-0.324 [-1.518, 0.66], 1,896 team-weeks). The reason is in the store and M2g already diagnosed it: over
+the fitted population `inj_feed` takes exactly one distinct non-null value -- 1 -- in every season, so
+no head can split on it and no coefficient can move on it. This is the only row in either weekly ledger
+where "carries nothing" is a proof rather than a failure to resolve.
+
+**THE OTHER ONE REVERSED, AND THE HOLDOUT IS WHY -- this is the "re-measure against the baseline you
+intend to ship" rule producing a different answer, not confirming one.** On the 25-column design the
+five droppable usage columns (`td_fd`, `td_ts`, `td_attempts`, `td_rush_yards`, `prior_route_share`)
+were +0.00131 (4/9) inside their floor on the decision block, +0.00472 (4/5) inside on the holdout,
+and lineup regret was fractionally BETTER without them (+0.010 / +0.093). With `ecr_wk_*` in the design
+the decision block still cannot resolve them (+0.00010, 5/9, floor 0.00402) -- but the **holdout cost
++0.00643 against a 0.00519 floor, 5 of 5 seasons, bootstrap CI [+0.00353, +0.00985] excluding zero**,
+and lineup regret goes the other way in both scenarios. Two of the three signals now say the columns
+are carrying something on recent seasons. The pre-registered stop rule ("if the 21 loses regret or
+fails a clause, stop at 26") fires, and it is the holdout -- the block that was never allowed to
+decide -- that supplies the evidence. Nothing about the 25-column measurement was wrong; the design
+under it moved.
+
+### The serve-time half of the question, which is what made the 21 tempting
+
+M2g's biggest structural finding is that `usage` is the CHEAPEST family to remove from the design and
+the MOST EXPENSIVE to lose at serve, and WP17 had just restored the live usage columns to 77-80%
+populated. So the screen masked, on each design, the blocks all three share -- and a design that never
+fits a column cannot be hurt by its feed dying:
+
+| block masked at serve | served27 (sel) | cand26 (sel) | cand21 (sel) |
+|---|---|---|---|
+| `usage2` (`prior_snap_share`, `depth_rank`) | +0.32502 | +0.32502 | +0.32421 |
+| `avail6` | +0.13917 | +0.13917 | +0.13515 |
+| `level` | +0.09505 | +0.09505 | +0.09300 |
+| `form` | +0.07299 | +0.07299 | +0.07699 |
+| `context` | +0.04761 | +0.04761 | +0.04563 |
+| `ecr` | +0.00497 (2/9) | +0.00497 (2/9) | +0.00559 (2/9) |
+| `usage5` (the five proposed for removal) | +0.00985 | +0.00985 | *(cannot be exposed)* |
+
+**The smaller design buys almost nothing at serve and the numbers say so.** The exposure it removes is
+`usage5`, worth **+0.0099 decision / +0.0110 holdout** -- the smallest block in the table and 3% of what
+`usage2` costs. The two usage columns the two-part contract REFUSES to drop are doing the serve-time
+work, exactly as M2g said, and they are in every design. Meanwhile cand21 leans very slightly HARDER on
+`form` (+0.07699 vs +0.07299). So "fewer feeds to fail on a Sunday" is real but is worth a hundredth of
+a CRPS, against a holdout cost six times that. The trade is not available at a price worth paying.
+
+### Why the switch date is 2026-09-18 and not today
+
+2026 week 3's `weekly` scorecard rows were frozen this morning (created 2026-09-17T04:04Z) under the
+D27 27-feature artifact, stamped `{"artifact":"weekly-artifact.json","switchedOn":"2026-09-17",
+"fittedAt":"2026-09-16","features":27}`. They are write-once and are **not rewritten**, so the first
+snapshot that can carry the 26-feature design is week 4. Re-using `2026-09-17` would put two different
+models under one date, which is the exact failure the constant was widened to prevent in D27. The date
+names the week the switch REACHES.
+
+### Controls, before the numbers mean anything
+
+1. **The refit control (the same one section 13.1 of the ECR screen ran), and it is decisive.** The
+   SERVED 27-column design refitted from today's store reproduces `data/weekly-artifact.json`
+   **byte-for-byte ignoring `fittedAt`** -- same `populationHash 7ca2e2be49fc5aa7`, same
+   `populationRows 84582`. So the store has not drifted and every difference below is the dropped
+   column, with no refit noise to disentangle.
+2. **The candidate was fitted on the same rows**: `populationHash` and `populationRows` identical to
+   the served artifact's, and its feature list differs from it by exactly `["inj_feed"]` and nothing.
+3. **Every fold fitted exactly its arm's list**, re-read off the producer's own bytes (`--check`): 42
+   folds, three arms, two-part/gbm, rostered/in_population, holdout never in its own training list.
+4. **The degeneracy control can return TRUE against a real pair of runs**: `served27` re-scored last,
+   after every other arm, largest per-season |delta| **0.00e+0**.
+5. **Serve-checked through the CONSUMER's loader** (`scripts/weekly-artifact-probe.mjs`, which
+   recomputes the golden block to 1e-6): 26 features, six golden rows identical to the 27's.
+6. **The rollback was verified on a scratch copy, not asserted**: promote -> md5 `5aa938ec...` at 26
+   features, copy back -> md5 `89e133ec...` at 27 features, both probed through the loader.
+
+**ROLLBACK** (one command, rehearsed above):
+`Copy-Item data\weekly-artifact.pre-d30-2026-09-17.json data\weekly-artifact.json -Force`, then
+`node --import tsx scripts\weekly-artifact-probe.mjs data\weekly-artifact.json` must print 27 features
+and md5 `89e133ec8225f248f12664a0b5b87eb3`. `WEEKLY_SERVE_SWITCHED_ON` goes back to `2026-09-17` and
+`SHIPPED` in the ledger driver back to 27 (its test fails until both agree, which is the point).
+Store backup: `data/ff.db.bak-prewp18-2026-09-17` (online `db.backup()`, `integrity_check ok`) -- this
+work wrote nothing to the store, so it is a precaution rather than a restore point.
+
+## D31 -- The Yahoo format's weekly artifact is re-pinned to the SERVED design; the two ESPN-rejected candidates leave its serving path (2026-09-17 measured, owner: "let's aim for quality, so even if it's not backwards compatible and we have to rerun things, we should get towards a better edge", **APPLIED 2026-09-17, WP18**)
+
+**APPLIED, as a per-format re-pin.** WP8 fitted `data/formats/sc-a845f67652fb/weekly-artifact.json`
+with `--features all` (docs/multi-format-design.md, "The format's weekly artifacts"). `all` is a
+MOVING set -- whatever `tools/train_weekly.py` happened to declare that day -- so the file that has
+been serving league 129048 carried **`rz_share_td` and `prior_vol_cv`, two candidates the ESPN track
+screened and REJECTED**, and did NOT carry the two `ecr_wk_*` columns the ESPN track has since
+promoted (D27). WP16b removed that default from the ESPN path for exactly this reason; this closes the
+same hole on the format path.
+
+| | before | after |
+|---|---|---|
+| `data/formats/sc-a845f67652fb/weekly-artifact.json` | 27 features incl. `rz_share_td`, `prior_vol_cv`, `inj_feed`; md5 `d665889b163c80b0c48b640743d0ed48` | **26 features -- the D30 served design exactly**; md5 `c7e74c2122d1e8df4743d9286fc22d2d` |
+| its `populationHash` / rows | `64e92f5e68448e07` / 70266 (pre-rebuild) | **`63c7b712cd8acdbe` / 74990** (today's store) |
+| the rollback file | -- | `data/formats/sc-a845f67652fb/weekly-artifact.pre-d31-2026-09-17.json`, md5 `d665889b...` |
+| the format's serving path | the confounded incumbent | the re-pinned artifact; the incumbent is a rollback file, off the path |
+
+### The screen
+
+`scripts/weekly-format-design-screen.mjs` (new), two designs x 14 leave-one-season-out folds on the
+format's OWN `features.db`, scored by `ff evaluate-weekly --league 129048` -- which resolves the
+format, its season window and its own roster template (`QB WR WR RB RB TE FLEX FLEX FLEX SUPERFLEX`),
+so the decision metric is a lineup somebody in that league actually sets. The incumbent design is read
+OFF THE SERVED FILE'S BYTES rather than retyped. `--rosters 300`, decision block 2012-2020, holdout
+2021-2025, the same 2.9\*SE paired-season floor.
+
+| block | improvement (incumbent - candidate) | SE | floor 2.9\*SE | wins | verdict |
+|---|---|---|---|---|---|
+| SELECTION 2012-2020 | +0.01595 | 0.00591 | 0.01715 | 8/9 | inside the floor (by 0.0012) |
+| **HOLDOUT 2021-2025** | **+0.04964** | 0.01399 | 0.04057 | **5/5** | **ADMIT -- clears the floor** |
+| ALL 14 | **+0.02798** | 0.00744 | 0.02158 | **13/14** | **ADMIT -- clears the floor** |
+
+Per-season the candidate wins thirteen of fourteen (2019 is the single loss, -0.0029) and every one of
+the five holdout seasons; the gain is **bigger on recent seasons** (2021-2024 +0.042 to +0.081), which
+is what an expert-consensus column replacing two rejected ones should look like, since the consensus
+archive only covers the late block.
+
+**THE FORMAT'S OWN GATE, all three pre-registered clauses, both designs, from the same invocations:**
+
+| clause | incumbent 27f | candidate 26f |
+|---|---|---|
+| (a) pooled CRPS beats the shipped `week()` baseline (4.5292) | PASS 3.5889 | **PASS 3.5602** |
+| (b) coverage given pts > 0 in [0.75, 0.85] pooled, every position in [0.70, 0.90] | PASS 0.843 | PASS 0.843 |
+| (c) predicted zero share within 0.03 of actual (0.245) | PASS 0.240 (off 0.006) | **PASS 0.241 (off 0.004)** |
+
+The format's line-only floor is not an arm: `evaluateWeekly` scores `season_line` (CRPS 4.4956),
+`shipped_week` (4.5292), `trailing4` (4.3958) and `zero` (9.9440) on the same rows in the same call,
+identically under both designs, which is what clause (a) is computed against.
+
+**THE DECISION LAYER, on the format's own template:** standard-15 **141.63 -> 142.26 (+0.63
+pts/lineup)**, deep-18 **153.35 -> 153.93 (+0.58)**. Small next to WP8's +15.11 over the floor, and it
+should be: this is one design against another, not the model against no model.
+
+### Two controls, and the second one is the reason this could be promoted at all
+
+1. **The degeneracy positive control**: the incumbent arm re-scored last, after every other arm,
+   largest per-season |delta| **0.00e+0** -- DEGENERATE as required, so the harness did not move under
+   the screen and `isDegenerate` is shown returning its positive value against a real pair of runs.
+2. **THE REFIT CONTROL FAILED, AND THE FAILURE IS THE FINDING.** The incumbent design refitted from
+   the format's rows today does NOT reproduce the served file: `populationHash 63c7b712cd8acdbe` /
+   74,990 rows against the file's `64e92f5e68448e07` / 70,266. Charter rule 3 says diagnose before
+   acting, and the diagnosis is exact rather than plausible. The signature is a sha256 of a fully
+   specified body, so the old hash was SEARCHED for: **today's 2012-2025 per-season counts plus a 2026
+   count of 291 reproduce `64e92f5e68448e07` exactly, and 69,975 + 291 = 70,266 as declared.** So not
+   one of the fourteen FITTED seasons moved; the entire drift is the 2026 rows the 2026-09-17 weekly
+   rebuild added (291 -> 5,015), a season in neither the fit window nor the scored window. The
+   independent confirmation is that this screen's INCUMBENT arm, refitted fold by fold on the rebuilt
+   store, reproduces WP8's published pooled table to four decimals -- RMSE 8.211, CRPS 3.5889,
+   coverage 0.848, cov(>0) 0.843, bias +0.146, zeroP 0.240, zeroA 0.245 -- and its decision metric to
+   two (141.63 / 153.35). A store whose fitted rows had moved could not do that.
+
+   **It also means the served file was stale in TWO ways, not one**: an accidental design AND a
+   population the store no longer signs. The promoted file is fitted on today's rows and declares
+   today's hash. (Note a real gap this surfaced, recorded not fixed: `weeklyPopulationProblem`
+   (`src/draft/models.ts`) compares a declared hash against `dataPath("ff.db")` -- the INCUMBENT store
+   -- so a format artifact's staleness is not checked by it at all. That guard is ESPN-only today.)
+
+### What is NOT claimed, and the serving check
+
+`ff copilot lineup --league 129048` **REFUSES**, and the refusal is recorded rather than worked
+around: *"board is built for league 462233, not 129048 -- run `ff league-set-active 129048` (rebuild)
+or `ff assemble --league 129048`"*. The active league was NOT switched. What IS asserted is the
+resolution, which is the part this change owns: `ff evaluate-weekly --league 129048 --resolve-only`
+prints `model.weekly = data\formats\sc-a845f67652fb\weekly-artifact.json` with
+`provenance: "format-dir"` and the superflex template, i.e. the league resolves to the format whose
+weekly artifact is now the re-pinned one.
+
+This is an EXECUTOR-PINNED re-pin on a format whose golden is itself a candidate (see the caveat on
+`data/formats/sc-a845f67652fb/golden.json`), not an owner-signed posture like D13/D14/D15.
+
+**ROLLBACK** (one command):
+`Copy-Item data\formats\sc-a845f67652fb\weekly-artifact.pre-d31-2026-09-17.json data\formats\sc-a845f67652fb\weekly-artifact.json -Force`,
+then the probe must print 27 features and the md5 must be `d665889b163c80b0c48b640743d0ed48`. Nothing
+else moves: `WEEKLY_SERVE` has no per-format variant and was not touched, and this work wrote nothing
+to any store.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

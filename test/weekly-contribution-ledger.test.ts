@@ -33,10 +33,14 @@ test("the shipped design is the features the served artifact actually fits", () 
   // ships, so a served artifact that grew a column must fail here rather than be quietly measured as
   // the old width. It DID: D27/WP16b promoted `ecr_wk_rank`/`ecr_wk_sd` and this assertion is what
   // caught it, which is the pin working rather than the pin being in the way. The driver was moved
-  // to 27; the PUBLISHED ledger was measured on the 25 and says so at the top of its own file.
+  // to 27, then to 26 when D30/WP18 dropped the dead `inj_feed` column; the PUBLISHED ledger was
+  // measured on the 25 and says so at the top of its own file, with the rerun in a dated section.
   assert.deepEqual([...SHIPPED].sort(), [...served].sort(),
     "SHIPPED has drifted from the served weekly artifact -- the ledger would ablate a design nobody serves");
-  assert.equal(SHIPPED.length, 27);
+  assert.equal(SHIPPED.length, 26);
+  // The dropped column is dropped from the DESIGN, not from the store: it is still built and still
+  // audited, so a test that asserted its absence everywhere would be asserting the wrong thing.
+  assert.equal(SHIPPED.includes("inj_feed"), false, "D30 dropped inj_feed from the fitted design");
 });
 
 test("the families PARTITION the shipped design -- no feature is counted twice or left out", () => {
