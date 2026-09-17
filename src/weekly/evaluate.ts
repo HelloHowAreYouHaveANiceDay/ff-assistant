@@ -821,6 +821,25 @@ function lineOnlyFor(db: DB, trainSeasons: number[], holdout: number): WeeklyArt
   return loadWeeklyArtifact(seasonLineOnlyArtifact({ positions: Object.keys(q), seasons: ins, quantiles: q }));
 }
 
+/**
+ * THE SERVE-TIME MASK (`EvalOpts.maskServe`), as one named, testable function.
+ *
+ * It nulls the named feature fields on the SCORED rows and nothing else. Null is not a third state
+ * invented here: it is exactly what the store holds when a feed did not publish, so the projector
+ * turns it into the artifact's own declared `missing` for the linear heads and into NaN for the
+ * boosted design (`weeklyFeatureValueBoosted`) -- i.e. the mask group's absent state, byte for byte
+ * what a Sunday with that feed dark would hand the serving path. Training is untouched.
+ *
+ * DEFAULT OFF, AND PROVABLY SO: an undefined or EMPTY list returns without writing anything, which
+ * is what makes the flagless run identical to the run before this option existed. A mask that
+ * silently did something on an empty list would be a measurement instrument that changes the thing
+ * it measures, and no green number would say so -- test/weekly-missingness.test.ts pins both halves.
+ */
+export function applyServeMask(rows: WeeklyRow[], fields?: readonly string[]): void {
+  if (!fields?.length) return;
+  for (const r of rows) for (const k of fields) (r.f as Record<string, number | null>)[k] = null;
+}
+
 export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> {
   const dbPath = opts.dbPath ?? "data/ff.db";
   const rosters = opts.rosters ?? 300;
@@ -900,9 +919,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
       // model projects them as the 2026 live serve would -- from the anchors, with the availability
       // block absent. The folds above trained on the untouched DB, so this is fit-with / serve-without,
       // the exact 2026 regime. Applied to `s.rows` only; nothing here writes back to the store.
-      if (opts.maskServe?.length) {
-        for (const r of s.rows) for (const k of opts.maskServe) (r.f as Record<string, number | null>)[k] = null;
-      }
+      applyServeMask(s.rows, opts.maskServe);
       if (!s.rows.length) continue;
       all.push(...withSpread(s, art, lineOnly, pointPredictions(s, art, lineOnly), spread));
     }
