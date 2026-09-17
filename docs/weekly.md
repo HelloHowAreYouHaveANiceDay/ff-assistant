@@ -166,7 +166,7 @@ identity rather than about time. A leak does not look like a handful, which is w
 assertion is the **ratio** (5 -> 30) and not the count. The staleness check against the context table
 has no such slack and must be exact; it is 0.
 
-On 2025 the audit says so rather than passing: `inj_feed` is 1 nowhere, so the availability block is
+On 2025 the audit says so rather than passing: `inj_feed` is 1 nowhere [STALE as of 2026-09-16: after D22 restored the dateless feed, 4,811 of 5,355 2025 population rows carry inj_feed=1; the M2g ledger found the column is a CONSTANT 1 across the whole population, i.e. a drop candidate -- docs/weekly-contribution-ledger-2026-09-16.md], so the availability block is
 **not audited**, and the report says that is a coverage fact and not a clean bill.
 
 ### Coverage, per column per season (2010-2025, 178,033 rows)
