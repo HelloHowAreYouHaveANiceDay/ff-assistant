@@ -123,7 +123,18 @@ export function optimalLineup(players: RosterPlayer[], slots: string[], flexOk?:
   // slot (means the assignment was constrained), and starters that are actually unavailable.
   const weakestStarter = Math.min(...starters.filter((s) => s.proj > 0).map((s) => s.proj));
   for (const b of bench) if (b.available && b.proj > weakestStarter + 0.5) flags.push(`bench ${b.name} (${b.proj}) out-projects a starter -- roster-slot constrained`);
-  for (const s of starters) { const pl = players.find((p) => p.name === s.name); if (pl && !pl.available) flags.push(`${s.name} started but not available`); }
+  // THE SEATED OBJECT, not a lookup by name (M3, 2026-09-17). `players.find(p => p.name === s.name)`
+  // resolved a started man by NAME, so on a roster carrying two men of one name it inspected
+  // whichever came first -- and flagged "X started but not available" about a lineup that had
+  // correctly started the OTHER X. `occupant[i]` is the man who was actually seated, so the test is
+  // on identity and cannot be confused. Byte-identical wherever names are unique, and unreachable
+  // in any case (the assignment only ever draws from `order`, which is the available players) --
+  // which is exactly why it must be right: it is a tripwire, and a tripwire that can fire falsely is
+  // worse than none.
+  for (let i = 0; i < startSlots.length; i++) {
+    const o = occupant[i];
+    if (o && !o.available) flags.push(`${o.name} started but not available`);
+  }
 
   return { starters, bench, totalProj, flags };
 }

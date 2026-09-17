@@ -467,10 +467,20 @@ export function assertStartersAvailable(
   const bad: string[] = [];
   for (const s of starters) {
     if (s.name === "(empty)") continue;
-    const p = roster.find((x) => x.name === s.name);
-    if (!p) continue;
-    const why = unavailableReason(p, week, availability);
-    if (why) bad.push(`${s.name} -- ${why}`);
+    // EVERY roster man of that name, not the FIRST one (M3, 2026-09-17). `roster.find` picked
+    // whichever copy came first in roster order, and two men can share a name -- ESPN has carried
+    // two Mike Williamses, two Michael Carters, a Josh Allen at QB and one at LB. That made the
+    // guard decide by ROSTER ORDER, in both directions, and both are wrong:
+    //   * the unavailable copy first -> it THROWS on a lineup that started the available one, and
+    //     the whole verb fails (`ff copilot lineup` and the MCP tool both error out). Measured.
+    //   * the available copy first -> a genuinely-benched bye/OUT man passes unseen, which is the
+    //     single failure this guard exists to catch.
+    // Starting "that name" is a plumbing failure only when EVERY man who could be him is out. For a
+    // roster with no duplicate names `cands` has one element and this is byte-identical to `find`.
+    const cands = roster.filter((x) => x.name === s.name);
+    if (!cands.length) continue;
+    const whys = cands.map((p) => unavailableReason(p, week, availability));
+    if (whys.every((w) => w != null)) bad.push(`${s.name} -- ${whys[0]}`);
   }
   if (bad.length) {
     throw new Error(
@@ -549,18 +559,43 @@ export function lineupRecommend(
   const roster = ctx.teams[ctx.meIdx].roster;
   const unavailable: LineupResultJson["unavailable"] = [];
   const fellBack: string[] = [];
+  /** Men with NEITHER a weekly row NOR a usable season projection. Named, never silently zeroed. */
+  const noBasis: string[] = [];
   let fromWeekly = 0;
+  /**
+   * THE SEASON-LINE FALLBACK, GUARDED (M3, 2026-09-17). `p.proj / perWeek` was taken on trust, and
+   * a roster man whose `proj` is not a finite number -- absent because the board carried no row for
+   * him, or NaN because his `ProjPts` cell did not parse -- made this NaN. NaN then propagates all
+   * the way to `totalProj`, which is the HEADLINE number of the verb, and serialises to JSON `null`;
+   * the man is still seated (NaN sorts last but the assignment fills every slot it legally can), his
+   * slot prints `NaN`, and `basisNote` says he "fell back to the season projection divided by 17" --
+   * which is precisely what did not happen. A number nobody can read is better than a number that is
+   * wrong, but a NAMED zero is better than either. `Number.isFinite` was already the test applied to
+   * the weekly value one line up; it simply was not applied to the fallback.
+   *
+   * Today's only production loader (`loadSimContext`) writes `Number(j.ProjPts) || 0` and DROPS a
+   * rostered man with no board row, so this is latent there rather than live -- but `lineupRecommend`
+   * is also reached from hand-built contexts (the backtest harness, the scripts) where it is not.
+   */
+  const seasonFallback = (p: { name: string; proj: number }): number => {
+    const v = p.proj / perWeek;
+    if (Number.isFinite(v)) return v;
+    noBasis.push(p.name);
+    return 0;
+  };
   const players = roster.map((p) => {
     const why = unavailableReason(p, week, availability);
     if (why) unavailable.push({ name: p.name, pos: p.pos, reason: why });
     const wk = o.weekly?.get(lineupNameKey(p.name));
     if (o.weekly) { if (wk != null && Number.isFinite(wk)) fromWeekly++; else fellBack.push(p.name); }
-    const pts = wk != null && Number.isFinite(wk) ? wk : p.proj / perWeek;
+    const pts = wk != null && Number.isFinite(wk) ? wk : seasonFallback(p);
     return { name: p.name, pos: p.pos, proj: r2(pts), available: why == null, reason: why ?? "available" };
   });
   const res = optimalLineup(players, ctx.slots, ctx.flexOk);
   assertStartersAvailable(res.starters, roster, week, availability);
-  const reasonOf = new Map(players.map((p) => [p.name, p.reason]));
+  // Keyed on name AND position (M3): a roster carrying two men of one name gave both bench rows
+  // the LAST one's reason, so a bye man could be listed as "available". Unique names: unchanged.
+  const reasonOf = new Map(players.map((p) => [`${p.name}|${p.pos}`, p.reason]));
 
   // -------------------------------------------------------------------------------------------
   // THE HEAD-TO-HEAD OBJECTIVE. Everything above is unchanged and runs for both objectives, so the
@@ -592,7 +627,11 @@ export function lineupRecommend(
     const toWp = (rs: typeof roster): WinProbPlayer[] => rs.map((p) => {
       const k = lineupNameKey(p.name);
       const wk = o.weekly?.get(k);
-      const pts = wk != null && Number.isFinite(wk) ? wk : p.proj / perWeek;
+      // The SAME guard as the expected-points path above -- a NaN mean here would poison the
+      // sampler's every draw rather than one slot. Fixing one of two callers of a rule is worse
+      // than fixing neither, because it looks done.
+      const sf = p.proj / perWeek;
+      const pts = wk != null && Number.isFinite(wk) ? wk : (Number.isFinite(sf) ? sf : 0);
       return {
         name: p.name, pos: p.pos, ...(p.eligible ? { eligible: p.eligible } : {}),
         available: unavailableReason(p, week, availability) == null,
@@ -631,17 +670,30 @@ export function lineupRecommend(
       ? `every point total is from the weekly projector (src/weekly/projector.ts) for week ${week}`
       : `${fromWeekly} of ${roster.length} point totals are from the weekly projector for week ${week}; ` +
         `${fellBack.length} fell back to the season projection divided by ${perWeek} because the projector had no row for them: ${fellBack.join(", ")}`;
+  // AND THE MEN WITH NO BASIS AT ALL (M3). The sentence above claims the fallback was a season
+  // projection; for these men there was none, and they are carried at zero. Saying "fell back to the
+  // season line" about a man who has no season line is the same defect as the NaN it replaced, one
+  // layer up -- a plausible sentence about something that did not happen.
+  if (noBasis.length) {
+    assumptions.basisNote += `; ${noBasis.length} man/men had NEITHER a weekly row NOR a usable ` +
+      `season projection and are carried at ZERO, which understates them: ${noBasis.join(", ")}. ` +
+      "That is a board/roster join gap, not a projection.";
+  }
 
   // Under `winprob` the STARTERS are the win-probability lineup and the bench is its complement --
   // the answer to the question that was asked. The expected-points lineup is not discarded: it is on
   // `winprob.epStarters` with its own P(win), so the two are always side by side and the reader can
   // see the trade rather than being told about it.
   const starters = wp ? wp.starters : res.starters.map((s) => ({ ...s, proj: r2(s.proj) }));
-  const startingNames = new Set(starters.map((s) => s.name));
+  const startingNames = new Map<string, number>();
+  for (const s of starters) startingNames.set(s.name, (startingNames.get(s.name) ?? 0) + 1);
   const bench = wp
-    ? players.filter((p) => !startingNames.has(p.name)).sort((a, b) => b.proj - a.proj)
+    // Consume one STARTING SEAT per name rather than filtering every man of that name out
+    // (M3): with two men of one name and only one of them starting, the name-set filter
+    // dropped BOTH, so a rostered man vanished from the result entirely. Unique names: unchanged.
+    ? players.filter((p) => { const n = startingNames.get(p.name) ?? 0; if (n > 0) { startingNames.set(p.name, n - 1); return false; } return true; }).sort((a, b) => b.proj - a.proj)
         .map((p) => ({ name: p.name, pos: p.pos, proj: r2(p.proj), available: p.available, reason: p.reason }))
-    : res.bench.map((b) => ({ ...b, proj: r2(b.proj), reason: reasonOf.get(b.name) ?? "available" }));
+    : res.bench.map((b) => ({ ...b, proj: r2(b.proj), reason: reasonOf.get(`${b.name}|${b.pos}`) ?? "available" }));
 
   // DST SAME-GAME CONFLICT. Our defense is negatively correlated with the offense it FACES (measured
   // 2012-2025: vs the opposing QB -0.32, RB -0.11, WR -0.05), so starting our DST AND an offensive
@@ -649,6 +701,22 @@ export function lineupRecommend(
   // (informational, small, worst for a QB). Needs the week's NFL schedule via `o.nflOpp`; absent it,
   // nothing is flagged and the output is byte-identical.
   const extraFlags: string[] = [];
+  // A NAME STARTED TWICE (M3). Two distinct men can share a name, and starting both of them is a
+  // legal lineup -- but it PRINTS as the same player in two slots, which reads as a bug in the
+  // optimizer and is indistinguishable from a duplicated roster row. The assignment is not touched
+  // (it is correct); the ambiguity is named, because the reader cannot otherwise resolve it. Inert
+  // on every roster with unique names, which is every roster this league has had.
+  {
+    const seen = new Set<string>();
+    for (const s of starters) {
+      if (s.name === "(empty)") continue;
+      if (seen.has(s.name)) {
+        extraFlags.push(`"${s.name}" fills more than one slot -- the roster carries ${roster.filter((p) => p.name === s.name).length} men of that name. ` +
+          "Both are started and the lineup is legal, but check which is which before submitting it.");
+      }
+      seen.add(s.name);
+    }
+  }
   if (o.nflOpp) {
     const teamOf = new Map(roster.map((p) => [p.name, (p.team ?? "").toUpperCase()]));
     for (const s of starters) {
