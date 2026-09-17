@@ -1462,3 +1462,94 @@ clauses, and is **+0.63 / +0.58 points a lineup** on that league's superflex tem
 spelled `all` is not a recipe, it is whatever the trainer declared that day. WP16b removed it from
 `ff evaluate-weekly`; D31 removed the last artifact fitted under it. Read the list off the served
 file's bytes.
+
+---
+
+## 12. THE SERVED BAND IS CALIBRATED ON THE ARTIFACT (WP19, 2026-09-17; D32)
+
+Sections 7-11 are about the MEAN: which columns the model fits, which learner produces it, which
+artifact serves each position. This one is about the INTERVAL, and it is the first change here that
+deliberately moves no point estimate at all.
+
+**What was wrong.** `docs/lineup-stress-2026-09-17.md` finding 5-a measured the served p10/p90 on
+23,657 realised rostered player-weeks: coverage 0.814 against a nominal 0.80 (fine), but **11.8%
+above p90 against a nominal 10%** and worst at RB (14.2%) and on the bench (13.9%). A band short on
+the upside understates the boom candidate against the safe one.
+
+**What the field is.** A new optional artifact block, `bandCalibration`, read by
+`src/weekly/projector.ts`:
+
+```
+"bandCalibration": {
+  "method": "conformal-scale",            // a SCALE on the p10/p90 RATIOS, not an additive shift
+  "levels": {"lo": 0.10, "hi": 0.90},
+  "k": 5,                                  // player-grouped folds, TRAIN-ONLY
+  "perPos": { "RB": {"p10": 1.2401, "p90": 1.0369, "n": 19176, "nLo": 9308, ... }, ... }
+}
+```
+
+Absent -- which is every artifact written before it existed -- serves the old band byte-for-byte, and
+a position with no entry is served uncalibrated. Both are tested, in both directions.
+
+**WHY A SCALE AND NOT THE ADDITIVE SPLIT-CONFORMAL SHIFT D16 USES ONE HORIZON UP.** The two-part
+model publishes p10 = 0 exactly wherever P(zero week) exceeds 0.10 -- the zero atom -- and 24.6% of
+the training rows realise exactly 0. An additive offset lifts every one of those p10s off the floor,
+and every ruled-out man's realised 0 becomes a below-p10 miss: the "injury-designated" cell of
+finding 5-b would go from 0.0% below p10 to ~100%. A scale leaves 0 at 0 by construction.
+
+**AND THE LOWER TAIL WAS NOT THE DEFECT IT LOOKED LIKE.** Only **64% of the scored rows claim a p10
+above zero at all**, and on those rows the pre-D32 lower miss was **0.090** -- nominal. Pooled 10%
+below p10 is unattainable against an atom, so the calibration solves
+`P(y > s90*p90) = 0.10` pooled and `P(y < s10*p10 | p10 > 0) = 0.10`, and the artifact's notes say
+exactly that rather than claiming a symmetry it cannot have.
+
+**Where the scales come from.** `tools/train_weekly.py --band-conformal-k 5` runs a SECOND
+player-grouped out-of-fold pass over ALL training rows -- the existing `--conformal-k` pass splits
+the PLAYED rows and its shift rides in the heads' baselines, so it moves the published p50, and a
+calibration of the interval must not. Each held-out row's MIXTURE p10/p90 is built with the same
+arithmetic the projector uses (`mix_quantile_vec`, checked against the scalar `mix_quantile` on a
+sample of every fit), and the scales are the conformal quantiles of `y/p90` and `y/p10`. The cost is
+a fit going from 3m41s to 4m34s, paid once per fold by `ff evaluate-weekly`; `--band-conformal-k 0`
+reproduces the pre-D32 trainer byte-for-byte and is what the refit controls used.
+
+**Out of fold, on the fitted population, the upper tail lands on 0.100-0.101 at every position** (QB
+0.108 -> 0.101, RB 0.109 -> 0.101, WR 0.100 -> 0.100, TE 0.098 -> 0.100) and the lower tail,
+conditional on claiming a floor, on 0.100. **On one league's actual rosters the same change is
+smaller**: pooled coverage 0.814 -> 0.802 (onto nominal), tail asymmetry 0.050 -> 0.032, upside miss
+0.118 -> 0.115. The gap is a population difference -- the trainer fits `in_population` over sixteen
+seasons of the whole store, the table scores one league's rosters, which are a stronger set of
+players with a longer upper tail -- and it is recorded rather than closed by refitting to the
+evaluation set. Full tables: `docs/decisions.md` D32.
+
+**Nothing in the decision layer moves.** The lineup ranks by the mean; the mean and the median are
+byte-identical across the swap (23,657 paired rows, max |d| 0.00e+0), so lineup regret and the
+manager backtest are identical line for line.
+
+**THE GATE, both arms from ONE trained fold set** (14 folds trained once with the calibration on,
+then re-scored with the field stripped via `--reuse-artifacts`; the strip step reports 14 of 14 folds
+actually carried one, and zero would mean the arms were the same model):
+
+| | ESPN before -> after | Yahoo before -> after |
+|---|---|---|
+| (a) pooled CRPS | PASS 2.7469 -> 2.7495 | PASS 3.5602 -> 3.5622 |
+| (b) cov(pts>0) pooled, band [0.75, 0.85] | PASS 0.839 -> **0.833** | PASS 0.843 -> **0.837** |
+| (c) zero share vs actual | PASS, unchanged | PASS, unchanged |
+| decision metric std-15 / deep-18 | 85.7569 / 90.6828, **unchanged** | 142.2626 / 153.9269, **unchanged** |
+
+Every per-position verdict is unchanged (including the pre-existing clause-(a) failures at K, and at
+DST on Yahoo, whose numbers are byte-identical because those positions are intercept-only here). The
+cost is **+0.0026 / +0.0020 pooled CRPS, almost all of it RB** -- the expected shape, since CRPS
+integrates pinball loss over the ladder and a loss-optimal ladder gives a little back when it is
+widened to make the tail honest.
+
+**DST is NOT calibrated.** `WEEKLY_SERVE` serves it from `data/dst-stream-artifact.json`
+(`tools/train_dst_stream.py`), outside this pass's ownership -- and it is the one position whose
+asymmetry runs the other way (11.5% below p10, 8.6% above), so the common-direction correction would
+have been wrong for it. Open work, named.
+
+**The serve stamp gained a field.** `src/weekly/scorecard.ts` writes `bandCal` into each `weekly`
+row's metadata beside `artifact`/`switchedOn`/`fittedAt`/`features`: without it a calibrated and an
+uncalibrated artifact of the same design and the same `fittedAt` are indistinguishable in a
+write-once series, and D32 promoted on the same day as D30. `WEEKLY_SERVE_SWITCHED_ON` does NOT move
+-- it is `2026-09-18`, no frozen row carries that date yet, and the model that first appears under it
+is the 26-feature design WITH this calibration, i.e. one model under one date.

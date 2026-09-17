@@ -668,6 +668,63 @@ def intercept_only(rows, pos, specs, zero_model):
     return out, len(sub)
 
 
+def mix_quantile(q, p_zero, vals, grid):
+    """THE TWO-PART MIXTURE'S q-QUANTILE, in ratio units. F(y) = pZero + (1 - pZero) * F_played(y).
+
+    Extracted so `evaluate()` below and the VECTORISED form used by the band calibration are the same
+    arithmetic rather than two implementations of it -- the drift this repo keeps finding. Mirrors
+    src/weekly/projector.ts mixQ line for line, anchored at (0, 0) because the conditional
+    distribution's floor is the clamp floor, which is 0."""
+    if p_zero >= 1:
+        return 0.0
+    qp = (q - p_zero) / (1.0 - p_zero)
+    if not (qp > 0):
+        return 0.0
+    if qp >= grid[-1]:
+        return vals[-1]
+    lo_q, lo_v = 0.0, 0.0
+    for i, g in enumerate(grid):
+        if qp <= g:
+            span = g - lo_q
+            return lo_v + (vals[i] - lo_v) * ((qp - lo_q) / span) if span > 0 else vals[i]
+        lo_q, lo_v = g, vals[i]
+    return vals[-1]
+
+
+def mix_quantile_vec(q, p_zero, vals, grid):
+    """`mix_quantile` for a whole matrix at once: `p_zero` is (n,), `vals` is (n, len(grid)) already
+    clamped and made non-decreasing. Checked against the scalar form above on a sample by
+    `band_self_check` -- a vectorised rewrite that agreed with nothing would be exactly the
+    producer-grades-its-own-homework failure."""
+    g = np.asarray(grid, dtype=float)
+    pz = np.clip(np.asarray(p_zero, dtype=float), 0.0, 1.0)
+    qp = np.where(pz >= 1.0, -1.0, (q - pz) / np.maximum(1e-300, 1.0 - pz))
+    out = np.zeros(len(pz), dtype=float)
+    # Beyond the top grid level the mixture is flat at the last fitted quantile.
+    top = qp >= g[-1]
+    out[top] = vals[top, -1]
+    mid = (qp > 0) & ~top
+    if mid.any():
+        idx = np.searchsorted(g, qp[mid], side="left")     # first i with g[i] >= qp
+        idx = np.clip(idx, 0, len(g) - 1)
+        lo_q = np.where(idx > 0, g[np.maximum(idx - 1, 0)], 0.0)
+        rowi = np.nonzero(mid)[0]
+        lo_v = np.where(idx > 0, vals[rowi, np.maximum(idx - 1, 0)], 0.0)
+        hi_v = vals[rowi, idx]
+        span = g[idx] - lo_q
+        out[mid] = np.where(span > 0, lo_v + (hi_v - lo_v) * ((qp[mid] - lo_q) / np.maximum(span, 1e-300)), hi_v)
+    return out
+
+
+def cal_band(v, scale, side, med, lo, hi):
+    """THE BAND CALIBRATION APPLIED (D32). A SCALE on the ratio, re-clamped, never crossing the
+    median. Mirrors src/weekly/projector.ts calBand."""
+    if scale is None or not np.isfinite(scale):
+        return v
+    w = min(hi, max(lo, v * float(scale)))
+    return min(w, med) if side == "lo" else max(w, med)
+
+
 def boosted_raw(head, x):
     """The Python mirror of projector.ts boostedRaw(): baseline plus every tree's leaf value. `x` is
     the REDUCED design vector, in the boosted head-set's own `features` order (the position's keep
@@ -731,8 +788,17 @@ def evaluate(artifact, row):
     def clamped(h):
         return min(hi, max(lo, lin(h)))
 
+    # THE BAND CALIBRATION (D32), per position. None where the artifact carries none -- and then every
+    # number below is byte-identical to what the pre-D32 trainer produced.
+    cb = ((artifact.get("bandCalibration") or {}).get("perPos") or {}).get(row["pos"])
+    s10 = cb["p10"] if cb else None
+    s90 = cb["p90"] if cb else None
+
     if artifact.get("zeroModel") != "two-part":
-        return {h: line * clamped(h) for h in ("mean", "p10", "p50", "p90")}
+        med = clamped("p50")
+        return {"mean": line * clamped("mean"), "p50": line * med,
+                "p10": line * cal_band(clamped("p10"), s10, "lo", med, lo, hi),
+                "p90": line * cal_band(clamped("p90"), s90, "hi", med, lo, hi)}
 
     z = lin("zero")
     p_zero = 1.0 / (1.0 + math.exp(-z)) if z >= 0 else math.exp(z) / (1.0 + math.exp(z))
@@ -745,24 +811,14 @@ def evaluate(artifact, row):
         prev = v
 
     def mix_q(q):
-        if p_zero >= 1:
-            return 0.0
-        qp = (q - p_zero) / (1.0 - p_zero)
-        if not (qp > 0):
-            return 0.0
-        if qp >= grid[-1]:
-            return vals[-1]
-        lo_q, lo_v = 0.0, 0.0
-        for i, g in enumerate(grid):
-            if qp <= g:
-                span = g - lo_q
-                return lo_v + (vals[i] - lo_v) * ((qp - lo_q) / span) if span > 0 else vals[i]
-            lo_q, lo_v = g, vals[i]
-        return vals[-1]
+        return mix_quantile(q, p_zero, vals, grid)
 
+    med = mix_q(0.50)
     return {
         "mean": line * (1.0 - p_zero) * ratio,
-        "p10": line * mix_q(0.10), "p50": line * mix_q(0.50), "p90": line * mix_q(0.90),
+        "p10": line * cal_band(mix_q(0.10), s10, "lo", med, lo, hi),
+        "p50": line * med,
+        "p90": line * cal_band(mix_q(0.90), s90, "hi", med, lo, hi),
         "pZero": p_zero,
     }
 
@@ -882,7 +938,8 @@ def fit_position_boosted(rows, specs, pos, args):
     mean-calibrated on its own training rows; clause (c) then MEASURES whether that held out of
     sample rather than being fitted to pass).
 
-    Returns (feature_names, heads_block, self_check_arrays) or (None, None, None) when a stage cannot
+    Returns (feature_names, heads_block, self_check_arrays, band_calibration) or four Nones when a
+    stage cannot
     be fitted -- the caller then leaves this position linear, which the boosted `positions` list
     records so no consumer walks a head that was never fitted.
     """
@@ -891,7 +948,7 @@ def fit_position_boosted(rows, specs, pos, args):
 
     sub = [r for r in rows if r["pos"] == pos]
     if len(sub) < 500:
-        return None, None, None
+        return None, None, None, None
     keep = keep_for(specs, pos)
     feat_names = [specs[j]["name"] for j in keep]
     # THE BOOSTED DESIGN FEEDS NaN FOR MISSING (native HistGBM handling), not spec['missing'].
@@ -901,9 +958,9 @@ def fit_position_boosted(rows, specs, pos, args):
     yz = np.array([1 if r["pts"] <= ZERO_PTS else 0 for r in sub], dtype=int)
     y_ratio = np.array([r["pts"] / r["season_line_pg"] for r in sub], dtype=float)
     if len(set(yz.tolist())) < 2:
-        return None, None, None
+        return None, None, None, None
     if int((yz == 0).sum()) < 500:
-        return None, None, None
+        return None, None, None, None
     hp = dict(max_depth=args.gbm_depth, learning_rate=0.05, max_iter=args.gbm_iter,
               min_samples_leaf=30, l2_regularization=1.0, early_stopping=False, random_state=0)
 
@@ -959,6 +1016,80 @@ def fit_position_boosted(rows, specs, pos, args):
                 if ok.any():
                     shift[name] = float(np.quantile(yp[ok] - oof[ok], q))
 
+    # ---- THE BAND CALIBRATION (D32): a SECOND, SEPARATE out-of-fold pass over ALL rows. ----
+    #
+    # WHY IT IS SEPARATE AND NOT FOLDED INTO THE LOOP ABOVE, which would have been cheaper. The
+    # conformal block above splits the PLAYED rows; this one has to split ALL of them, because the
+    # served p10/p90 are the MIXTURE's and a did-not-play week is exactly the row the mixture is
+    # about. Re-using one fold assignment for both would change which rows the conditional shift is
+    # computed on -- and that shift moves the published p50, which a calibration of the INTERVAL must
+    # not do. So the shift's folds are left untouched and this pass pays for its own.
+    #
+    # WHAT IT SOLVES. Out-of-fold, each row gets the band it would have been served, built by exactly
+    # the arithmetic src/weekly/projector.ts uses (`mix_quantile_vec`, checked against the scalar
+    # `mix_quantile` on a sample). Then:
+    #     s90 = Quantile_0.90 ( y / p90 )           over rows with p90 > 0
+    #     s10 = Quantile_0.10 ( y / p10 )           over rows with p10 > 0
+    # so that P(y > s90*p90) = 0.10 and P(y < s10*p10 | p10 > 0) = 0.10 by construction. A SCALE, not
+    # a shift: see src/weekly/projector.ts WeeklyBandCalibration for why an additive offset destroys
+    # the zero atom and turns every ruled-out man into a below-p10 miss.
+    #
+    # ONLY THE REAL ROWS COUNT. The folds are fitted on the augmented design (that is the model being
+    # calibrated) but the statistic is taken on rows [0:n_real] -- the augmented duplicates are a
+    # training device with masked features, not members of the population anyone is scored on.
+    band = None
+    bk = int(getattr(args, "band_conformal_k", 0) or 0)
+    if bk > 0:
+        k = min(bk, len(set(grp_fit.tolist())))
+        if k >= 2:
+            n_real = len(sub)
+            gkf = GroupKFold(n_splits=k)
+            oof_z = np.full(len(yz_fit), np.nan)
+            oof_q = {grid_head(q): np.full(len(yz_fit), np.nan) for q in QUANTILE_GRID}
+            for tr, te in gkf.split(X_fit, yz_fit, grp_fit):
+                ctr = HistGradientBoostingClassifier(**hp).fit(X_fit[tr], yz_fit[tr])
+                oof_z[te] = ctr.decision_function(X_fit[te])
+                ptr = tr[yz_fit[tr] == 0]
+                for q in QUANTILE_GRID:
+                    mq = HistGradientBoostingRegressor(loss="quantile", quantile=q, **hp).fit(X_fit[ptr], yr_fit[ptr])
+                    oof_q[grid_head(q)][te] = mq.predict(X_fit[te])
+            ok = np.isfinite(oof_z[:n_real])
+            for q in QUANTILE_GRID:
+                ok &= np.isfinite(oof_q[grid_head(q)][:n_real])
+            if ok.sum() >= 1000:
+                # The served vals: the fitted shift, the clamp, then made non-decreasing -- the same
+                # three steps, in the same order, as evaluate() and projectWeekly().
+                vals = np.empty((int(ok.sum()), len(QUANTILE_GRID)), dtype=float)
+                prev = np.full(int(ok.sum()), CLAMP_LO, dtype=float)
+                for j, q in enumerate(QUANTILE_GRID):
+                    name = grid_head(q)
+                    v = np.clip(oof_q[name][:n_real][ok] + shift[name], CLAMP_LO, CLAMP_HI)
+                    prev = np.maximum(prev, v)
+                    vals[:, j] = prev
+                z = oof_z[:n_real][ok]
+                pz = np.where(z >= 0, 1.0 / (1.0 + np.exp(-np.abs(z))), np.exp(-np.abs(z)) / (1.0 + np.exp(-np.abs(z))))
+                p10 = mix_quantile_vec(0.10, pz, vals, QUANTILE_GRID)
+                p50 = mix_quantile_vec(0.50, pz, vals, QUANTILE_GRID)
+                p90 = mix_quantile_vec(0.90, pz, vals, QUANTILE_GRID)
+                band_self_check(pz, vals, p10, p50, p90)
+                y = yr_fit[:n_real][ok]
+                lo_ok = p10 > 0
+                s90 = solve_upper_scale(y, p90)
+                s10 = float(np.quantile(y[lo_ok] / p10[lo_ok], 0.10)) if lo_ok.sum() >= 500 else 1.0
+                # BEFORE, measured on the same out-of-fold rows, so the artifact can carry the number
+                # the correction was solved against rather than a claim about it.
+                band = {"p10": s10, "p90": s90, "n": int(ok.sum()), "nLo": int(lo_ok.sum()),
+                        "oofBefore": {"cover": float(np.mean((y >= p10) & (y <= p90))),
+                                      "below": float(np.mean(y < p10)),
+                                      "above": float(np.mean(y > p90)),
+                                      "belowGivenFloor": float(np.mean(y[lo_ok] < p10[lo_ok]))}}
+                c10 = np.minimum(np.clip(p10 * s10, CLAMP_LO, CLAMP_HI), p50)
+                c90 = np.maximum(np.clip(p90 * s90, CLAMP_LO, CLAMP_HI), p50)
+                band["oofAfter"] = {"cover": float(np.mean((y >= c10) & (y <= c90))),
+                                    "below": float(np.mean(y < c10)),
+                                    "above": float(np.mean(y > c90)),
+                                    "belowGivenFloor": float(np.mean(y[lo_ok] < c10[lo_ok]))}
+
     heads = {"zero": serialize_boosted_head(clf),
              "mean": serialize_boosted_head(mean_m)}
     for name, m in qmodels.items():
@@ -966,7 +1097,93 @@ def fit_position_boosted(rows, specs, pos, args):
     # Self-check on the FIT matrices (X_fit carries the augmented NaN rows), so the walker is proven to
     # reproduce sklearn on exactly the missing patterns the serve will hit.
     check = {"X": X_fit, "Xp": Xp, "clf": clf, "mean": mean_m, "qmodels": qmodels, "shift": shift}
-    return feat_names, {"features": feat_names, "heads": heads}, check
+    return feat_names, {"features": feat_names, "heads": heads}, check, band
+
+
+def solve_upper_scale(y, p90, level=0.90):
+    """The scale s with P(y > s * p90) = 1 - level over ALL rows, not over the rows where p90 > 0.
+
+    THE ROWS WITH p90 == 0 ARE WHY THIS IS NOT ONE np.quantile CALL, and leaving them out is a real
+    (small) error rather than a tidiness question. A man the first stage puts at P(zero) above 0.90
+    has a published p90 of exactly 0 -- the atom again -- and whether he lands above it does NOT
+    depend on s: he is above iff he scored anything at all. Solving the quantile on the p90 > 0 rows
+    alone therefore delivers 0.10 CONDITIONAL on those rows and 0.10 * P(p90 > 0) pooled, which
+    measured 0.095 on the first fit and looked like a 5% miss of the target it was actually hitting.
+    Encoding the degenerate rows as a fixed outcome -- above (a sentinel beyond any attainable ratio)
+    or never -- makes the pooled quantile exact."""
+    r = np.zeros(len(y), dtype=float)
+    ok = p90 > 0
+    r[ok] = y[ok] / p90[ok]
+    # Degenerate rows: above for any s if he scored, never above otherwise.
+    deg_above = (~ok) & (y > 0)
+    if deg_above.any():
+        r[deg_above] = np.inf
+    fin = np.isfinite(r)
+    n_fin = int(fin.sum())
+    if len(r) < 500 or n_fin < 500:
+        return 1.0
+    # The miss budget the finite rows may spend: the pooled one, less what the degenerate rows spend
+    # unconditionally. Expressed as a level on the finite subpopulation.
+    budget = (1.0 - level) * len(r) - float(deg_above.sum())
+    if not (budget > 0):
+        return 1.0
+    s = float(np.quantile(r[fin], 1.0 - budget / n_fin))
+    return s if np.isfinite(s) and s > 0 else 1.0
+
+
+def seasonline_band(sub_rows, k):
+    """THE FLOOR ARTIFACT'S BAND CALIBRATION (D32) -- the same conformal scale, on the model that has
+    no coefficients. Its p10/p90 are the empirical ratio quantiles, so the out-of-fold form fits them
+    on the training part of each player-grouped fold and measures the scale on the held-out part.
+
+    Returns None when the position cannot be split, which leaves it UNCALIBRATED rather than
+    calibrated on itself -- an in-sample band correction is narrower than the thing it corrects."""
+    from sklearn.model_selection import GroupKFold
+    if len(sub_rows) < 1000:
+        return None
+    y = np.array([r["pts"] / r["season_line_pg"] for r in sub_rows], dtype=float)
+    groups = np.array([("p" + str(r["player_sk"])) if r.get("player_sk") is not None
+                       else ("s" + str(r["season"])) for r in sub_rows])
+    kk = min(int(k), len(set(groups.tolist())))
+    if kk < 2:
+        return None
+    p10 = np.full(len(y), np.nan)
+    p90 = np.full(len(y), np.nan)
+    p50 = np.full(len(y), np.nan)
+    for tr, te in GroupKFold(n_splits=kk).split(y.reshape(-1, 1), y, groups):
+        p10[te] = min(CLAMP_HI, max(CLAMP_LO, quantile(list(y[tr]), 0.10)))
+        p50[te] = min(CLAMP_HI, max(CLAMP_LO, quantile(list(y[tr]), 0.50)))
+        p90[te] = min(CLAMP_HI, max(CLAMP_LO, quantile(list(y[tr]), 0.90)))
+    lo_ok = p10 > 0
+    s90 = solve_upper_scale(y, p90)
+    s10 = float(np.quantile(y[lo_ok] / p10[lo_ok], 0.10)) if lo_ok.sum() >= 500 else 1.0
+    c10 = np.minimum(np.clip(p10 * s10, CLAMP_LO, CLAMP_HI), p50)
+    c90 = np.maximum(np.clip(p90 * s90, CLAMP_LO, CLAMP_HI), p50)
+    return {"p10": s10, "p90": s90, "n": int(len(y)), "nLo": int(lo_ok.sum()),
+            "oofBefore": {"cover": float(np.mean((y >= p10) & (y <= p90))),
+                          "below": float(np.mean(y < p10)), "above": float(np.mean(y > p90)),
+                          "belowGivenFloor": float(np.mean(y[lo_ok] < p10[lo_ok])) if lo_ok.any() else 0.0},
+            "oofAfter": {"cover": float(np.mean((y >= c10) & (y <= c90))),
+                         "below": float(np.mean(y < c10)), "above": float(np.mean(y > c90)),
+                         "belowGivenFloor": float(np.mean(y[lo_ok] < c10[lo_ok])) if lo_ok.any() else 0.0}}
+
+
+def band_self_check(pz, vals, p10, p50, p90, n=200, tol=1e-12):
+    """THE VECTORISED MIXTURE MUST REPRODUCE THE SCALAR ONE -- the same discipline
+    `boosted_self_check` applies to the tree walker, applied to the only other place this file
+    reimplements arithmetic the TypeScript side also implements. A rewrite that agreed with nothing
+    would calibrate the band against a distribution the serve never produces."""
+    if not len(pz):
+        return
+    idx = np.linspace(0, len(pz) - 1, min(n, len(pz))).astype(int)
+    for i in idx:
+        row = [float(v) for v in vals[i]]
+        for q, got in ((0.10, p10[i]), (0.50, p50[i]), (0.90, p90[i])):
+            want = mix_quantile(q, float(pz[i]), row, QUANTILE_GRID)
+            if not abs(float(got) - want) <= tol:
+                sys.exit("train_weekly: the vectorised mixture disagrees with the scalar one at q=" +
+                         repr(q) + " (" + repr(float(got)) + " vs " + repr(want) + ") -- refusing to "
+                         "solve a band calibration against arithmetic the serve does not use")
 
 
 def boosted_self_check(perpos, checks, tol=1e-9):
@@ -1031,6 +1248,13 @@ def main():
     ap.add_argument("--conformal-k", type=int, default=5,
                     help="gbm: player-grouped folds for the train-only conformal calibration of the "
                          "boosted quantile heads. 0 = off (the pre-calibration heads).")
+    ap.add_argument("--band-conformal-k", type=int, default=5,
+                    help="D32: player-grouped folds for the train-only BAND calibration -- the "
+                         "multiplicative conformal scales on the served p10/p90. 0 = off, and the "
+                         "artifact then carries no `bandCalibration` field at all, which is the "
+                         "pre-D32 band byte-for-byte. Separate from --conformal-k on purpose: that "
+                         "one calibrates the CONDITIONAL quantile heads (and so moves p50), this one "
+                         "calibrates the published INTERVAL and must not.")
     ap.add_argument("--aug-frac", type=float, default=0.5,
                     help="gbm: MISSINGNESS AUGMENTATION rate -- augmented rows added, as a fraction of "
                          "the fitted rows, each a duplicate with serve-time feature blocks masked to "
@@ -1077,6 +1301,11 @@ def main():
     seasons = sorted({r["season"] for r in rows})
     positions = POS_FITTED + POS_INTERCEPT_ONLY
 
+    # THE BAND CALIBRATION (D32), filled per position by whichever fit path ran. Empty = no
+    # `bandCalibration` field on the artifact at all, which is what every pre-D32 file carries and
+    # what the consumer reads as "serve the old band".
+    band_per_pos = {}
+
     if args.season_line_only:
         specs = []
         coef, counts = {}, {}
@@ -1091,6 +1320,18 @@ def main():
                 "p90": {"intercept": quantile(sub, 0.90)},
             }
             counts[pos] = len(sub)
+        # THE FLOOR'S BAND IS CALIBRATED TOO, and it is the artifact that serves K (WEEKLY_SERVE).
+        # The heads are two empirical quantiles of the ratio, so the out-of-fold form is the same
+        # arithmetic on player-grouped folds: fit the quantiles on the training part, measure the
+        # scale on the held-out part. Cheap here -- there is no model to refit, only two order
+        # statistics -- and it is the same statistic the boosted path solves.
+        bk = int(args.band_conformal_k or 0)
+        if bk > 0:
+            for pos in list(coef):
+                sub_rows = [r for r in rows if r["pos"] == pos]
+                got = seasonline_band(sub_rows, bk)
+                if got:
+                    band_per_pos[pos] = got
         zero_model = "quantile"
         notes = ("season-line-only floor: mean intercept exactly 1.0, so the projection IS the "
                  "preseason season line per game. Quantile intercepts are the EMPIRICAL ratio "
@@ -1158,10 +1399,12 @@ def main():
         for pos in POS_FITTED:
             if pos not in coef:
                 continue
-            _names, block, ck = fit_position_boosted(rows, specs, pos, args)
+            _names, block, ck, bnd = fit_position_boosted(rows, specs, pos, args)
             if block:
                 perpos[pos] = block
                 checks[pos] = ck
+                if bnd:
+                    band_per_pos[pos] = bnd
         if not perpos:
             sys.exit("train_weekly: --learner gbm fitted no boosted position -- refusing to write a "
                      "gbm artifact that would silently serve the linear heads everywhere")
@@ -1204,6 +1447,29 @@ def main():
     if boosted_block is not None:
         artifact["learner"] = "gbm"
         artifact["boosted"] = boosted_block
+    # THE BAND CALIBRATION (D32). Written only when a position actually solved one, and the whole
+    # field is omitted when none did -- an artifact that declares a calibration of nothing would claim
+    # something it does not have, and the consumer reads an absent field as "serve the old band".
+    if band_per_pos:
+        artifact["bandCalibration"] = {
+            "method": "conformal-scale",
+            "levels": {"lo": 0.10, "hi": 0.90},
+            "k": int(args.band_conformal_k or 0),
+            "fittedOn": "train-only, player-grouped out-of-fold rows of this artifact's own fit set",
+            "perPos": {p: {"p10": round(b["p10"], 6), "p90": round(b["p90"], 6),
+                           "n": b["n"], "nLo": b["nLo"],
+                           "oofBefore": {k2: round(v2, 6) for k2, v2 in b["oofBefore"].items()},
+                           "oofAfter": {k2: round(v2, 6) for k2, v2 in b["oofAfter"].items()}}
+                       for p, b in band_per_pos.items()},
+            "notes": "MULTIPLICATIVE conformal scales on the served p10/p90 RATIOS, solved so that "
+                     "P(y > s90*p90) = 0.10 and P(y < s10*p10 | p10 > 0) = 0.10 out of fold. A scale "
+                     "rather than a shift because the published p10 sits on the ZERO ATOM wherever "
+                     "P(zero week) exceeds 0.10, and an additive offset would lift every one of "
+                     "those off the floor and turn every ruled-out man's realised 0 into a "
+                     "below-p10 miss. The pooled lower miss is therefore 0.10 times the share of "
+                     "rows claiming a positive floor, which is a measurement of the atom rather "
+                     "than a defect of the band. The mean and p50 are NOT touched.",
+        }
     # golden is computed LAST so it reflects the served heads -- boosted where a boosted block exists.
     artifact["golden"] = golden_rows(artifact)
 
@@ -1240,6 +1506,17 @@ def main():
                 print("       P(zero) logit intercept " + format(z["intercept"], ".4f") +
                       "  " + (zt or "(intercept only)"))
         print("  golden rows: " + str(len(artifact["golden"])))
+        if "bandCalibration" in artifact:
+            print("  BAND CALIBRATION (D32), train-only OOF, k=" + str(artifact["bandCalibration"]["k"]) +
+                  " -- scales on the served p10/p90 ratios, and the OOF coverage they were solved from:")
+            print("    pos   s10     s90        n   OOF before: cover/<p10/>p90    after: cover/<p10/>p90")
+            for p, b in artifact["bandCalibration"]["perPos"].items():
+                bf, af = b["oofBefore"], b["oofAfter"]
+                print("    " + p.ljust(4) + " " + format(b["p10"], ".4f") + " " + format(b["p90"], ".4f") +
+                      str(b["n"]).rjust(9) + "        " +
+                      format(bf["cover"], ".3f") + "/" + format(bf["below"], ".3f") + "/" + format(bf["above"], ".3f") +
+                      "          " +
+                      format(af["cover"], ".3f") + "/" + format(af["below"], ".3f") + "/" + format(af["above"], ".3f"))
         if boosted_block is not None:
             n_trees = len(boosted_block["perPos"][boosted_block["positions"][0]]["heads"]["mean"]["trees"])
             print("  served learner: gbm for " + ", ".join(boosted_block["positions"]) +

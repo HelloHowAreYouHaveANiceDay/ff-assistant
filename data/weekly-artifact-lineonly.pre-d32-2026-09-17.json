@@ -3,7 +3,7 @@
   "kind": "weekly",
   "zeroModel": "quantile",
   "fittedFrom": "tools/train_weekly.py",
-  "fittedAt": "2026-09-17",
+  "fittedAt": "2026-09-15",
   "seasons": [
     2010,
     2011,
@@ -121,126 +121,6 @@
     "hi": 4.0
   },
   "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 0) are 24.6% of the training rows.",
-  "bandCalibration": {
-    "method": "conformal-scale",
-    "levels": {
-      "lo": 0.1,
-      "hi": 0.9
-    },
-    "k": 5,
-    "fittedOn": "train-only, player-grouped out-of-fold rows of this artifact's own fit set",
-    "perPos": {
-      "QB": {
-        "p10": 1.0,
-        "p90": 0.993752,
-        "n": 11055,
-        "nLo": 0,
-        "oofBefore": {
-          "cover": 0.886658,
-          "below": 0.014654,
-          "above": 0.098688,
-          "belowGivenFloor": 0.0
-        },
-        "oofAfter": {
-          "cover": 0.885301,
-          "below": 0.014654,
-          "above": 0.100045,
-          "belowGivenFloor": 0.0
-        }
-      },
-      "RB": {
-        "p10": 1.0,
-        "p90": 0.99967,
-        "n": 19176,
-        "nLo": 0,
-        "oofBefore": {
-          "cover": 0.891583,
-          "below": 0.008448,
-          "above": 0.099969,
-          "belowGivenFloor": 0.0
-        },
-        "oofAfter": {
-          "cover": 0.891531,
-          "below": 0.008448,
-          "above": 0.100021,
-          "belowGivenFloor": 0.0
-        }
-      },
-      "WR": {
-        "p10": 1.0,
-        "p90": 0.99942,
-        "n": 21461,
-        "nLo": 0,
-        "oofBefore": {
-          "cover": 0.897954,
-          "below": 0.002097,
-          "above": 0.099949,
-          "belowGivenFloor": 0.0
-        },
-        "oofAfter": {
-          "cover": 0.897908,
-          "below": 0.002097,
-          "above": 0.099995,
-          "belowGivenFloor": 0.0
-        }
-      },
-      "TE": {
-        "p10": 1.0,
-        "p90": 1.000955,
-        "n": 10968,
-        "nLo": 0,
-        "oofBefore": {
-          "cover": 0.897976,
-          "below": 0.001641,
-          "above": 0.100383,
-          "belowGivenFloor": 0.0
-        },
-        "oofAfter": {
-          "cover": 0.898341,
-          "below": 0.001641,
-          "above": 0.100018,
-          "belowGivenFloor": 0.0
-        }
-      },
-      "K": {
-        "p10": 1.0,
-        "p90": 1.004365,
-        "n": 8557,
-        "nLo": 0,
-        "oofBefore": {
-          "cover": 0.890265,
-          "below": 0.008765,
-          "above": 0.10097,
-          "belowGivenFloor": 0.0
-        },
-        "oofAfter": {
-          "cover": 0.891317,
-          "below": 0.008765,
-          "above": 0.099918,
-          "belowGivenFloor": 0.0
-        }
-      },
-      "DST": {
-        "p10": 1.0,
-        "p90": 0.99793,
-        "n": 8350,
-        "nLo": 0,
-        "oofBefore": {
-          "cover": 0.752695,
-          "below": 0.147784,
-          "above": 0.099521,
-          "belowGivenFloor": 0.0
-        },
-        "oofAfter": {
-          "cover": 0.752216,
-          "below": 0.147784,
-          "above": 0.1,
-          "belowGivenFloor": 0.0
-        }
-      }
-    },
-    "notes": "MULTIPLICATIVE conformal scales on the served p10/p90 RATIOS, solved so that P(y > s90*p90) = 0.10 and P(y < s10*p10 | p10 > 0) = 0.10 out of fold. A scale rather than a shift because the published p10 sits on the ZERO ATOM wherever P(zero week) exceeds 0.10, and an additive offset would lift every one of those off the floor and turn every ruled-out man's realised 0 into a below-p10 miss. The pooled lower miss is therefore 0.10 times the share of rows claiming a positive floor, which is a measurement of the atom rather than a defect of the band. The mean and p50 are NOT touched."
-  },
   "golden": [
     {
       "pos": "RB",
@@ -274,9 +154,9 @@
       },
       "expect": {
         "mean": 14.5,
-        "p50": 10.65616686755364,
         "p10": 0.0,
-        "p90": 42.21019365405559
+        "p50": 10.65616686755364,
+        "p90": 42.22412761616893
       }
     },
     {
@@ -311,9 +191,9 @@
       },
       "expect": {
         "mean": 11.0,
-        "p50": 9.048157454345358,
         "p10": 0.0,
-        "p90": 28.995462751582437
+        "p50": 9.048157454345358,
+        "p90": 29.01228987971267
       }
     },
     {
@@ -347,9 +227,9 @@
       },
       "expect": {
         "mean": 19.5,
-        "p50": 17.09219896737061,
         "p10": 0.0,
-        "p90": 43.943424835925775
+        "p50": 17.09219896737061,
+        "p90": 44.21970958139031
       }
     },
     {
@@ -384,9 +264,9 @@
       },
       "expect": {
         "mean": 7.5,
-        "p50": 5.207058069143907,
         "p10": 0.0,
-        "p90": 19.634105234642533
+        "p50": 5.207058069143907,
+        "p90": 19.6153725538536
       }
     },
     {
@@ -399,9 +279,9 @@
       },
       "expect": {
         "mean": 9.0,
-        "p50": 6.61417253848157,
         "p10": 0.0,
-        "p90": 26.199430543896572
+        "p50": 6.61417253848157,
+        "p90": 26.208079210035887
       }
     },
     {
@@ -436,9 +316,9 @@
       },
       "expect": {
         "mean": 13.0,
-        "p50": 10.693276991499058,
         "p10": 0.0,
-        "p90": 34.26736507005197
+        "p50": 10.693276991499058,
+        "p90": 34.28725167602407
       }
     }
   ]

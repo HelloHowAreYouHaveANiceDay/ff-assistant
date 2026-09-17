@@ -105,7 +105,10 @@ test("a player the projector has no row for falls back to the season line, and i
   // But the basis is NOT claimed as a clean weekly-model run, and the fallback names the man.
   assert.equal(r.assumptions.basis, "projection", "a partial weekly run was reported as a full one");
   assert.match(String(r.assumptions.basisNote), new RegExp(missing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(String(r.assumptions.basisNote), /fell back to the season projection/);
+  // D33 reworded this sentence: the fallback is now the D18 blend where the context has one and the
+  // flat preseason line where it does not, and the caveat says WHICH. Both halves are asserted.
+  assert.match(String(r.assumptions.basisNote), /fell back to the season line/);
+  assert.match(String(r.assumptions.basisNote), /preseason projection divided by 17/);
 });
 
 test("with no weekly projector at all the old path is unchanged, and says so", () => {

@@ -473,12 +473,43 @@ Nothing else in `src/` was touched. `src/weekly/espnProjections.ts` was read onl
 
 ## 8. What is left, and what could not be tested
 
+### ADDENDUM 2026-09-17 (WP19): three of these were taken up, and one of the findings was wrong
+
+WP19 acted on findings 5-a, 2-d and 3-a. See `docs/decisions.md` D32 (the band) and D33 (the
+fallback), and `docs/weekly.md` section 12. In short:
+
+* **5-a (the band is short on the upside)** is now corrected on the artifact: a per-position
+  multiplicative conformal scale on p10/p90, fitted train-only out of fold, carried in a new
+  `bandCalibration` field the projector reads (D32). **But the finding's framing of the LOWER tail
+  was wrong and the fix says so.** "6.8% below p10 against a nominal 10%" reads as a miss; it is
+  mostly the ZERO ATOM. Only **64% of the 23,657 scored rows claim a p10 above zero at all**, and on
+  those rows the pre-D32 lower miss was **0.090** -- already nominal. For the other 36%, p10 = 0 is
+  the CORRECT tenth percentile of a distribution with a quarter of its mass at exactly 0, and
+  P(Y < 0) = 0 is not a defect. A calibration that chased 10% pooled would have had to lift every one
+  of those p10s off the floor, which is exactly what turns the "degenerate" injury cell of 5-b from
+  0% below p10 into ~100%. That is why D32's correction is a SCALE and not the standard additive
+  conformal shift.
+* **2-d (the lineup fallback is the preseason line, not the D18 blend)** is fixed (D33): one
+  function, `perGameStrength` in `src/draft/rosBlend.ts`, read by `src/draft/season.ts` and by both
+  fallback callers in `lineupRecommend`.
+* **3-a (the ordering is confident, the outcome is not, and the serve says neither)** is fixed by
+  reporting rather than by changing a number: every contested slot now carries the margin to the best
+  legal alternative and both men's p10/p90, and the caveat states the tightest one as a fraction of
+  the band.
+* **A CORRECTION TO 3-a's OWN NUMBER, worth stating because the sentence is quoted.** "the two FLEX
+  slots were decided by 0.70 points (Jameson Williams 10.24 over Colston Loveland 9.54)" compares two
+  men who **both start**. That gap decides which FLEX label each one wears, not whether either plays,
+  so it is not a decision at all. The real marginal call at the second FLEX on the same roster is
+  Loveland 9.54 over the best man on the bench, Chris Godwin Jr. 7.33 -- **2.21 points, 9.6% of a
+  22.9-point band**, which is what the served `contested` block now prints. The tightest genuine call
+  on that lineup is QB: Goff 16.83 over Nix 15.36, **1.47 points, 6.9% of a 21.2-point band**.
+
 | item | why |
 |---|---|
 | ESPN's own weekly projection as a historical baseline arm | impossible: the store holds 585 rows, all 2026 week 2, and ESPN publishes the projection block only for the current scoring period (section 4) |
 | the app-UP live schedule read latency | the brief forbids driving the running app; the fallback path, which is what a live serve uses when CDP is unavailable, was measured instead |
 | a real duplicate-name roster | none exists in either league today; the defects were found and are regression-tested on synthetic twins built from the live roster's own men |
-| aligning the lineup fallback with the D18 `rosPerGame` blend (finding 2-d) | it would move the lineup -- a model change, forbidden in this pass, and it needs the D13 gate and owner sign-off |
+| ~~aligning the lineup fallback with the D18 `rosPerGame` blend (finding 2-d)~~ | **DONE, WP19/D33.** And the historical harnesses cannot measure it: `scripts/inseason-backtest-lineup.mjs` falls back to `td_ppg` (its own header says so), and `scripts/lineup-stress.mjs`'s two new D33 arms report their positive control returning **zero** -- the men the projector has no row for are exactly the men with no `season_line_pg` in the weekly feature table, so both fallbacks are undefined for them THERE. In production the number comes from the board, which does carry them. The connection is proved by unit test instead |
 | a lineup LOCK concept (finding 2-b) | a new capability, not a defect fix |
 | reading `ownership.slot = 'IR'` (finding 2-c) | `src/draft/simContext.ts` is outside this pass's file ownership |
 | naming the stale-vs-absent feed distinction in the caveat (finding 2-e) | needs an `as_of` read the coverage function does not do; a design decision, not a bug fix |

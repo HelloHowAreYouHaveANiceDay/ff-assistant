@@ -34,6 +34,7 @@
  * the black-box recorder sees every piece of advice given even though no roster move follows it.
  */
 import { optimalLineup } from "./lineup.js";
+import { slotAdmits } from "../draft/slots.js";
 // Track H. The one-week HEAD-TO-HEAD objective. Imported rather than inlined because the sampler,
 // the copula call and the swap search are a module's worth of decisions with their own tests; this
 // file's job is to hand it the roster, the opponent and the week and to report what it said.
@@ -41,6 +42,7 @@ import { winProbLineup, opponentStarters, type WeeklyBand, type WinProbOpts, typ
 import { handcuffBoard, loadInjuryOutlook, type DepthEntry, type HandcuffRow, type InjuryOutlookSet } from "./handcuff.js";
 import { rosterGaps, rosterOverfills, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
 import { nameKey } from "../draft/values.js";
+import { perGameStrength } from "../draft/rosBlend.js";
 import {
   loadFaabModel, liveFaabState, featureRow, recommendBid, faabArtifactFor,
   type FaabModel, type FaabLiveState, type FaabRow,
@@ -414,9 +416,40 @@ export interface LineupPlayer { slot?: string; name: string; pos: string; proj: 
  *  ones at the margins, which is the whole content of the second option. */
 export type LineupObjective = "expected" | "winprob";
 
+/**
+ * ONE CONTESTED SLOT (M3 finding 3-a; WP19): the seated man, the best legal alternative who is
+ * sitting, the MARGIN between them, and both men's band.
+ *
+ * WHY THE RESULT CARRIES THIS AT ALL. The stress test measured that drawing every man once from the
+ * model's own p10-p90 flips the starting SET 95% of the time on the live roster, because the bands
+ * are enormous relative to the gaps between candidates: the two FLEX slots were decided by 0.70
+ * points between two men whose own p10-p90 spans are 22.0 and 22.9 points wide. The expected-points
+ * ORDERING is stable to any plausible error in the projection; the realised ordering is a coin toss.
+ * A reader handed "91.4 projected pts" and a list of names cannot see that, and the summary carried
+ * neither the band nor the margin. No number moves because of this -- it is what the recommendation
+ * already was, said out loud.
+ *
+ * WHAT THE MARGIN IS, EXACTLY, so it is not read as more than it is: the seated man's projection
+ * minus the best AVAILABLE non-starting man eligible for that slot. It is the head-to-head gap a
+ * reader means by "the FLEX was decided by 0.7 points", NOT the total-points cost of the swap (which
+ * can cascade through the assignment and is never smaller). `marginBandFrac` divides it by the WIDER
+ * of the two men's p10-p90 spans, so a value near zero reads as the coin flip it is.
+ */
+export interface LineupContest {
+  slot: string;
+  starter: { name: string; pos: string; proj: number; p10: number | null; p90: number | null };
+  alternative: { name: string; pos: string; proj: number; p10: number | null; p90: number | null };
+  margin: number;
+  /** null when neither man has a served band -- never a fabricated width. */
+  marginBandFrac: number | null;
+}
+
 export interface LineupResultJson {
   week: number;
   starters: { slot: string; name: string; pos: string; proj: number }[];
+  /** Per starting slot that had a real alternative, the margin and both men's band. Empty when no
+   *  slot was contested (every alternative ineligible or unavailable). */
+  contested: LineupContest[];
   bench: LineupPlayer[];
   unavailable: { name: string; pos: string; reason: string }[];
   totalProj: number;
@@ -577,9 +610,24 @@ export function lineupRecommend(
    * rostered man with no board row, so this is latent there rather than live -- but `lineupRecommend`
    * is also reached from hand-built contexts (the backtest harness, the scripts) where it is not.
    */
-  const seasonFallback = (p: { name: string; proj: number }): number => {
-    const v = p.proj / perWeek;
-    if (Number.isFinite(v)) return v;
+  /**
+   * AND IT IS THE D18 REST-OF-SEASON BLEND, NOT THE PRESEASON LINE (D33, 2026-09-17). This used to
+   * be `p.proj / perWeek` -- the August number spread flat -- while `src/draft/season.ts` priced the
+   * very same man, on the very same context, at `rosPerGame`: his preseason line updated on the
+   * games he has actually played, by the format's own fitted K. Two surfaces, one context, two
+   * different per-week strengths for one player, which is exactly the drift `WEEKLY_SERVE` was built
+   * to make impossible, one seam short. `perGameStrength` is now the ONE definition both read.
+   */
+  /** Of the men who fell back, the ones priced at the D18 BLEND rather than at the flat preseason
+   *  line. Counted so `basisNote` can say which of the two it was -- a caveat that named the wrong
+   *  one would be the same defect as the NaN it replaced, one layer up. */
+  const blendedBack: string[] = [];
+  const seasonFallback = (p: { name: string; proj: number; rosPerGame?: number }): number => {
+    const v = perGameStrength(p, perWeek);
+    if (Number.isFinite(v)) {
+      if (p.rosPerGame != null && Number.isFinite(p.rosPerGame)) blendedBack.push(p.name);
+      return v;
+    }
     noBasis.push(p.name);
     return 0;
   };
@@ -629,8 +677,8 @@ export function lineupRecommend(
       const wk = o.weekly?.get(k);
       // The SAME guard as the expected-points path above -- a NaN mean here would poison the
       // sampler's every draw rather than one slot. Fixing one of two callers of a rule is worse
-      // than fixing neither, because it looks done.
-      const sf = p.proj / perWeek;
+      // than fixing neither, because it looks done. And the SAME D33 blend, for the same reason.
+      const sf = perGameStrength(p, perWeek);
       const pts = wk != null && Number.isFinite(wk) ? wk : (Number.isFinite(sf) ? sf : 0);
       return {
         name: p.name, pos: p.pos, ...(p.eligible ? { eligible: p.eligible } : {}),
@@ -669,7 +717,12 @@ export function lineupRecommend(
     : allWeekly
       ? `every point total is from the weekly projector (src/weekly/projector.ts) for week ${week}`
       : `${fromWeekly} of ${roster.length} point totals are from the weekly projector for week ${week}; ` +
-        `${fellBack.length} fell back to the season projection divided by ${perWeek} because the projector had no row for them: ${fellBack.join(", ")}`;
+        `${fellBack.length} fell back to the season line because the projector had no row for them: ${fellBack.join(", ")}` +
+        // D33: WHICH season line, per man. The blend and the flat preseason number are different
+        // quantities and a caveat that named only one of them would be describing the other.
+        (blendedBack.length
+          ? `; ${blendedBack.length} of those are priced at the REST-OF-SEASON blend (the preseason line updated on the games he has played, the same number the season simulator uses): ${blendedBack.join(", ")}`
+          : `; none of them has played games in this context, so all ${fellBack.length} are the preseason projection divided by ${perWeek}`);
   // AND THE MEN WITH NO BASIS AT ALL (M3). The sentence above claims the fallback was a season
   // projection; for these men there was none, and they are carried at zero. Saying "fell back to the
   // season line" about a man who has no season line is the same defect as the NaN it replaced, one
@@ -736,9 +789,58 @@ export function lineupRecommend(
     }
   }
 
+  // -------------------------------------------------------------------------------------------
+  // THE MARGIN, PER CONTESTED SLOT (WP19). See `LineupContest` for what it is and what it is not.
+  // Computed from the lineup that was ACTUALLY returned -- `starters` above, which is the winprob
+  // lineup under that objective -- and from the bench it left, so the two can never describe
+  // different assignments.
+  // -------------------------------------------------------------------------------------------
+  const bandOf = (name: string): { p10: number | null; p90: number | null } => {
+    const b = o.bands?.get(lineupNameKey(name));
+    return b && Number.isFinite(b.p10) && Number.isFinite(b.p90) ? { p10: r2(b.p10), p90: r2(b.p90) } : { p10: null, p90: null };
+  };
+  const flexSet = ctx.flexOk ? new Set(ctx.flexOk) : undefined;
+  const contested: LineupContest[] = [];
+  for (const s of starters) {
+    if (s.name === "(empty)") continue;
+    const admits = slotAdmits(s.slot, flexSet);
+    // The best man who is SITTING, is available, and could legally take this slot.
+    let alt: (typeof bench)[number] | null = null;
+    for (const b of bench) {
+      if (!b.available || !admits.includes(b.pos)) continue;
+      if (alt == null || b.proj > alt.proj) alt = b;
+    }
+    if (!alt) continue;
+    const sb = bandOf(s.name), ab = bandOf(alt.name);
+    const spans = [sb, ab].filter((x) => x.p10 != null && x.p90 != null).map((x) => x.p90! - x.p10!);
+    const width = spans.length ? Math.max(...spans) : null;
+    contested.push({
+      slot: s.slot,
+      starter: { name: s.name, pos: s.pos, proj: r2(s.proj), ...sb },
+      alternative: { name: alt.name, pos: alt.pos, proj: r2(alt.proj), ...ab },
+      margin: r2(s.proj - alt.proj),
+      marginBandFrac: width != null && width > 0 ? r3(Math.abs(s.proj - alt.proj) / width) : null,
+    });
+  }
+  // THE CAVEAT SAYS IT, because a result nobody reads the JSON of is a result that did not say it.
+  // The TIGHTEST contest is the one that decides whether the recommendation is a recommendation.
+  const tight = contested.reduce(
+    (a, c) => (a == null || Math.abs(c.margin) < Math.abs(a.margin) ? c : a), null as LineupContest | null);
+  if (tight) {
+    assumptions.basisNote +=
+      `. TIGHTEST CALL: ${tight.slot} is decided by ${Math.abs(tight.margin).toFixed(2)} projected points ` +
+      `(${tight.starter.name} ${tight.starter.proj.toFixed(2)} over ${tight.alternative.name} ${tight.alternative.proj.toFixed(2)})` +
+      (tight.marginBandFrac != null && tight.starter.p10 != null && tight.starter.p90 != null
+        ? `, inside a p10-p90 band ${(tight.starter.p90 - tight.starter.p10).toFixed(1)} points wide -- ` +
+          `${(100 * tight.marginBandFrac).toFixed(1)}% of the band, i.e. the EXPECTED-points ordering is clear and the ` +
+          "REALISED one is close to a coin toss"
+        : " (no served band for either man, so how close that is cannot be stated)");
+  }
+
   return {
     week,
     starters,
+    contested,
     bench,
     unavailable,
     totalProj: wp ? wp.totalProj : r2(res.totalProj),

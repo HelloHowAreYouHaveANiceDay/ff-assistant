@@ -1614,6 +1614,291 @@ then the probe must print 27 features and the md5 must be `d665889b163c80b0c48b6
 else moves: `WEEKLY_SERVE` has no per-format variant and was not touched, and this work wrote nothing
 to any store.
 
+## D32 -- The served weekly band is CONFORMALLY CALIBRATED on the artifact (2026-09-17 measured, owner: "let's aim for quality, so even if it's not backwards compatible and we have to rerun things, we should get towards a better edge", **APPLIED 2026-09-17, WP19**)
+
+**What the stress test found, and what is actually wrong with it.**
+`docs/lineup-stress-2026-09-17.md` finding 5-a measured the served p10/p90 against 23,657 realised
+rostered player-weeks (league 462233, 2018-2025): coverage **0.814** against a nominal 0.80, which is
+fine, but the two misses are not symmetric -- **11.8% above p90 against 6.8% below p10**, worst at RB
+(14.2%) and on the bench (13.9%). A band short on the upside understates the boom candidate against
+the safe one, which is the trade a start/sit decision is.
+
+**THE LOWER HALF OF THAT FINDING IS MOSTLY THE ZERO ATOM, and diagnosing that BEFORE acting on it is
+what chose the instrument** (charter rule 3). Of the 23,657 rows, only **15,150 (64%) claim a p10
+above zero at all** -- the two-part model publishes p10 = 0 exactly wherever P(zero week) exceeds
+0.10 -- and on those rows the pre-D32 lower miss was **0.090**, already nominal. On the other 36%,
+p10 = 0 is the CORRECT tenth percentile of a distribution with a quarter of its mass at exactly 0,
+and P(Y < 0) = 0 is not a defect. So **pooled 10% below p10 is not attainable**, and a calibration
+that chased it would have to lift every atom p10 off the floor -- which would turn finding 5-b's
+"degenerate" injury-designated cell from 0.0% below p10 into ~100%.
+
+**So the correction is a SCALE, not the standard additive conformal shift (D16's instrument).**
+
+| | |
+|---|---|
+| new artifact field | `bandCalibration` (`src/weekly/projector.ts`), `method: "conformal-scale"`, per position |
+| what it does | multiplies the served p10/p90 RATIOS, re-clamps to the artifact's own `[lo, hi]`, and never crosses the median |
+| what it does NOT do | touch `mean` or `p50`. Asserted, not claimed: golden `mean`/`p50` identical to **0.00e+0** across the swap, and 23,657 paired served rows with **max &#124;d mean&#124; = max &#124;d p50&#124; = 0.00e+0** |
+| where the numbers come from | `tools/train_weekly.py --band-conformal-k 5`: a SECOND player-grouped out-of-fold pass over ALL training rows, building each held-out row's MIXTURE p10/p90 with the arithmetic the projector uses, then `s90 = Quantile(y/p90, 0.90)` pooled and `s10 = Quantile(y/p10, 0.10)` on the rows claiming a floor |
+| absent = unchanged | an artifact with no field, and a position with no entry, serves exactly what it served before. Both directions are tested |
+
+**Why a separate out-of-fold pass rather than the one that was already there.** The existing
+`--conformal-k` block calibrates the CONDITIONAL quantile heads and its shift rides in each head's
+baseline -- so it moves the published `p50`. Re-using its fold assignment for the band would change
+which rows that shift is computed on, and a calibration of the INTERVAL that moved the MEDIAN is a
+model change wearing a calibration's name. The cost is real and is stated: the boosted fit goes from
+**3m41s to 4m34s**, and `ff evaluate-weekly` pays it once per fold.
+
+### The scales, and the out-of-fold coverage they were solved from
+
+| pos | s10 | s90 | OOF n | before cover / <p10 / >p90 | after cover / <p10 / >p90 |
+|---|---|---|---|---|---|
+| QB | 1.0903 | 1.0255 | 11,055 | 0.832 / 0.061 / **0.108** | 0.832 / 0.068 / **0.101** |
+| RB | 1.2401 | 1.0369 | 19,176 | 0.849 / 0.043 / **0.109** | 0.844 / 0.055 / **0.101** |
+| WR | 1.1598 | 1.0023 | 21,461 | 0.851 / 0.049 / 0.100 | 0.844 / 0.056 / 0.100 |
+| TE | 1.2098 | 0.9905 | 10,968 | 0.868 / 0.035 / 0.098 | 0.860 / 0.040 / 0.100 |
+| K (floor artifact) | 1.0000 | 1.0044 | 8,557 | 0.890 / 0.009 / 0.101 | 0.891 / 0.009 / 0.100 |
+
+Out of fold, on the population the model is fitted on, the upper tail lands on **0.100/0.101 at every
+position** and the lower tail, conditional on claiming a floor, on **0.100**. That is the target, hit
+exactly, by construction -- which is why the interesting number is the next table.
+
+**AN ESTIMATOR BUG THIS FOUND, fixed before promotion.** The first fit solved `s90` on the rows with
+`p90 > 0` only and delivered **0.095** pooled, which reads as a 5% miss of a target it was actually
+hitting conditionally. A man whose P(zero week) exceeds 0.90 has p90 = 0 and is above it iff he
+scored anything, *whatever s is* -- so those rows spend part of the miss budget unconditionally.
+`solve_upper_scale` encodes them as a fixed outcome and the pooled level becomes exact.
+
+### What it does on the SERVE population, which is a different population and says so
+
+`node --import tsx scripts/lineup-stress.mjs baselines --cal-weekly <cand> --cal-lineonly <cand>` --
+both arms from ONE read of ONE row set, via a `mapArtifact` seam added for exactly this
+(`src/weekly/streamingServe.ts`), so no candidate had to be promoted in order to be measured.
+
+| cell | before cover / <p10 / >p90 | after cover / <p10 / >p90 |
+|---|---|---|
+| **ALL** (23,657) | 0.814 / 0.068 / 0.118 | **0.802 / 0.083 / 0.115** |
+| QB | 0.817 / 0.086 / 0.098 | 0.812 / 0.103 / 0.085 |
+| RB | 0.795 / 0.063 / **0.142** | 0.777 / 0.090 / **0.134** |
+| WR | 0.814 / 0.069 / 0.117 | 0.802 / 0.082 / 0.116 |
+| TE | 0.828 / 0.054 / 0.118 | 0.809 / 0.070 / 0.121 |
+| K | 0.865 / 0.013 / 0.122 | 0.870 / 0.013 / 0.118 |
+| DST (not ours -- see below) | 0.799 / 0.115 / 0.086 | unchanged |
+| STARTERS | 0.827 / 0.067 / 0.106 | 0.812 / 0.086 / 0.102 |
+| BENCH | 0.791 / 0.070 / 0.139 | 0.786 / 0.078 / 0.135 |
+| weeks 1-4 | 0.832 / 0.056 / 0.112 | 0.821 / 0.071 / 0.108 |
+| weeks 5-17 | 0.808 / 0.072 / 0.120 | 0.796 / 0.087 / 0.117 |
+| injury-DESIGNATED (degenerate cell) | 1.000 / 0.000 / 0.000 | **1.000 / 0.000 / 0.000** -- the atom survives, which an additive shift would have destroyed |
+| rows claiming p10 > 0 | 0.640 of rows; <p10 on them **0.090** | 0.640; <p10 on them **0.114** |
+
+**Read honestly: this is an improvement in symmetry and in pooled level, and it is SMALLER on this
+population than on the one it was fitted on.** Pooled coverage moves 0.814 -> **0.802**, i.e. onto
+nominal; the tail asymmetry &#124;below - above&#124; goes **0.050 -> 0.032**; the upside miss goes
+0.118 -> 0.115. It does not reach 0.100/0.100 here, and the reason is diagnosed rather than waved at:
+the trainer's population is `in_population` over sixteen seasons of the whole store (rostered plus
+plausible pickups), while this table is one league's ACTUAL rosters -- a narrower, stronger set of
+players whose upper tail is further out. The scales are solved where the brief requires them to be
+solved, train-only and out of fold; fitting them to this table instead would be fitting to the
+evaluation population of one league. **Every per-position cell stays inside the gate's
+[0.70, 0.90], and the pooled cell inside [0.75, 0.85].**
+
+**NO LINEUP MOVES, AND THAT IS PROVED RATHER THAN ARGUED.** The lineup ranks by the MEAN, which the
+calibration does not touch, so lineup regret and the manager backtest must be identical -- and they
+are, line for line (served 89.55 pts/team-week, -0.09 [-1.26, 0.75], 5/8 seasons, 0.489 vs own
+manager, 1,896 team-weeks, before and after).
+
+### THE GATE, all three clauses, both arms, from ONE trained fold set
+
+14 leave-one-season-out folds trained once with the calibration ON (78m30s), then the SAME fold
+artifacts re-scored with `bandCalibration` stripped (26s, `--reuse-artifacts`). So the two arms
+differ by that field and by nothing else -- no retraining, no refit noise, and the strip step reports
+how many folds actually carried one (**14 of 14**; zero would have meant the arms were the same
+model and it says so).
+
+| ESPN 462233, 70,011 rows | before | after |
+|---|---|---|
+| (a) pooled CRPS vs the shipped `week()` baseline 3.4045 | PASS **2.7469** | PASS **2.7495** |
+| (b) coverage given pts > 0, pooled (band [0.75, 0.85]) | PASS 0.839 | PASS **0.833** |
+| (c) predicted zero share vs actual 0.246 | PASS 0.243 (off 0.003) | PASS 0.243 (off 0.003) |
+| gate verdict | PASS, ships `weekly` | **PASS, ships `weekly`** |
+| cov(pts>0) QB / RB / WR / TE | 0.790 / 0.814 / 0.839 / 0.852 | **0.787 / 0.810 / 0.829 / 0.842** |
+| decision metric std-15 / deep-18 | 85.7569 / 90.6828 | **85.7569 / 90.6828** |
+
+| YAHOO 129048 (`sc-a845f67652fb`), 69,975 rows | before | after |
+|---|---|---|
+| (a) pooled CRPS vs baseline 4.5292 | PASS 3.5602 | PASS **3.5622** |
+| (b) coverage given pts > 0, pooled | PASS 0.843 | PASS **0.837** |
+| (c) predicted zero share vs actual 0.245 | PASS 0.241 (off 0.004) | PASS 0.241 (off 0.004) |
+| gate verdict | PASS | **PASS** |
+| cov(pts>0) QB / RB / WR / TE | 0.795 / 0.820 / 0.844 / 0.855 | **0.790 / 0.817 / 0.833 / 0.842** |
+| decision metric std-15 / deep-18 | 142.2626 / 153.9269 | **142.2626 / 153.9269** |
+
+**Every per-position clause verdict is unchanged**, including the two pre-existing clause-(a)
+failures (ESPN K, Yahoo K and DST), whose numbers are byte-identical in both arms because those
+positions are intercept-only in this artifact and carry no calibration.
+
+**THE COST, STATED RATHER THAN BURIED: +0.0026 pooled CRPS on ESPN and +0.0020 on Yahoo**, and it is
+almost entirely RB (+0.0089 / +0.0091); QB is +0.0026 / +0.0020 and WR, TE, K and DST are unchanged
+to four decimals. That is the expected shape: CRPS integrates pinball loss over the published ladder,
+so a ladder that was loss-optimal gives a little back when it is widened to make the TAIL honest.
+0.09% of CRPS against clause (b) moving from 0.839 to 0.833 and the out-of-fold upper tail from 0.108
+to 0.101, with the decision metric unchanged to four decimals, is the trade -- and a decision metric
+that did NOT move is the point rather than a disappointment: the lineup ranks by the mean.
+
+### The live serve, checked after the swap
+
+`ff copilot lineup` on 2026 week 2, before and after: total **91.4** both times, the same eight men in
+the same slots, the same margins (QB 1.47, FLEX 2.21 / 2.91, WR 9.46) -- and the BANDS moved
+(Goff p10 7.56 -> 8.24, p90 28.75 -> 29.49; St. Brown p10 5.20 -> 6.03; Loveland p90 22.91 -> 22.70).
+**Loveland's p10 is exactly 0.00 in both**, which is the zero atom surviving the swap, in production,
+on a real roster.
+
+### What is NOT calibrated, and why
+
+**DST.** `WEEKLY_SERVE` serves DST from `data/dst-stream-artifact.json`, produced by
+`tools/train_dst_stream.py`. Neither that trainer nor that file is in this pass's ownership, so DST's
+band is untouched -- and it is the one position whose asymmetry runs the OTHER way (11.5% below p10,
+8.6% above), so a correction fitted for the common direction would have been wrong for it anyway.
+Recorded as open work, not skipped silently.
+
+### Controls, before any of the above means anything
+
+1. **THE REFIT CONTROL.** The served 26-column design refitted from today's store with the pre-D32
+   code reproduces `data/weekly-artifact.json` **byte-for-byte ignoring `fittedAt`** (same
+   `populationHash 7ca2e2be49fc5aa7`, 84,582 rows). The store has not drifted; every difference below
+   is the calibration.
+2. **THE IDENTITY CONTROL, which is the decisive one.** The promoted artifact differs from the served
+   one in `bandCalibration` and **in nothing else but the golden block it implies** -- everything
+   else byte-for-byte, golden `mean`/`p50` identical to 0.00e+0, golden p10/p90 moved (max 1.30 /
+   1.14 points). So this is a calibration and not a refit.
+3. **`--band-conformal-k 0` reproduces the pre-D32 trainer exactly**, proved on the Yahoo path where
+   it was used as that format's refit control and came back byte-for-byte.
+4. **THE VECTORISED MIXTURE IS CHECKED AGAINST THE SCALAR ONE** on a sample of every fit
+   (`band_self_check`), because the calibration is solved on a numpy rewrite of arithmetic the
+   TypeScript projector also implements -- the third implementation of `mixQ`, and the producer would
+   otherwise be grading its own homework.
+5. **THE GOLDEN BLOCK CATCHES A CONSUMER THAT IGNORES THE FIELD**: a golden block written without the
+   calibration is refused on a calibrated artifact (fault-injected in `test/weekly-band-calibration.test.ts`).
+6. **THE ZERO ATOM IS ASSERTED, not assumed**: a p10 of exactly 0 stays exactly 0 under scales up to
+   100x.
+7. **THE ROLLBACK WAS REHEARSED ON SCRATCH COPIES**, not asserted -- promote, probe, copy back,
+   probe, md5 equal to the original, for all four files.
+
+### What moved, and the rollback
+
+| file | before (= rollback file) | after |
+|---|---|---|
+| `data/weekly-artifact.json` | `5aa938ecd0dc73ab68fe9a0137de3cfd` | **`70a520322d63d01b4626f197f179674b`** |
+| `data/weekly-artifact-lineonly.json` | `d2982b1c809838356bd450b8e0e3ae3f` | **`083c6a5c727d655f76d4da81c7dfe68c`** |
+| `data/formats/sc-a845f67652fb/weekly-artifact.json` | `c7e74c2122d1e8df4743d9286fc22d2d` | **`16328d1ea863b930d272b12888b141e3`** |
+| `data/formats/sc-a845f67652fb/weekly-artifact-lineonly.json` | `44338d5b9d07381d6fd405cd186384cc` | **`6a18098d20088d08e9f7759c37a8534b`** |
+
+The rollback files are `<name>.pre-d32-2026-09-17.json` beside each. Feature counts, `coef`, the
+boosted blocks and `WEEKLY_SERVE` are all unchanged; so is the ledger driver's `SHIPPED` list, which
+is a FEATURE list and this touched no feature.
+
+**A SECOND, SMALLER THING THE YAHOO FLOOR REFIT CORRECTED, diagnosed rather than waved through.** The
+format's line-only artifact came back NOT byte-identical to the served one on its heads-plus-signature
+comparison. Every quantile intercept is identical to six decimals at all six positions; the whole
+delta is `populationHash 64e92f5e68448e07` / 70,266 rows -> `63c7b712cd8acdbe` / 74,990 -- exactly the
+stale-2026-rows drift D31 diagnosed and corrected on that format's OTHER weekly file while leaving
+this one behind. The promoted file declares today's rows. No number moved.
+
+**ROLLBACK** (four commands, rehearsed above):
+`Copy-Item data\weekly-artifact.pre-d32-2026-09-17.json data\weekly-artifact.json -Force` and the
+same for the three siblings; then
+`node --import tsx scripts\weekly-artifact-probe.mjs data\weekly-artifact.json` must load and the
+md5 must be `5aa938ec...`. `WEEKLY_SERVE_SWITCHED_ON` does not move either way. Nothing here wrote to
+any store.
+
+### The switch date does NOT move, and that is the rule being applied rather than an oversight
+
+`WEEKLY_SERVE_SWITCHED_ON` stays **`2026-09-18`**. D30 set it there this morning because 2026 week 3's
+`weekly` scorecard rows were frozen at 04:04Z under the D27 27-feature artifact and are write-once, so
+week 4 is the first snapshot that can carry anything newer. **No frozen row carries `2026-09-18`**
+(verified on the store: the newest `weekly` rows are week 3, `switchedOn 2026-09-17`, `features 27`).
+D30's design therefore never reaches a snapshot on its own; the model that first appears under
+`2026-09-18` is the 26-feature design WITH this calibration, which is one model under one date --
+exactly what the constant was widened to guarantee. To make that legible anyway, the scorecard's
+`weekly` stamp now also carries `bandCal` (`src/weekly/scorecard.ts`): without it, a calibrated and an
+uncalibrated artifact of the same design and the same `fittedAt` are indistinguishable in the series.
+
+### The Yahoo format got the same step on ITS OWN residuals (recorded here, per the brief)
+
+`data/formats/sc-a845f67652fb/weekly-artifact.json` and its line-only floor are refitted with the
+same calibration from the format's own `features.db`. Its refit control passed byte-for-byte
+(`populationHash 63c7b712cd8acdbe`, 74,990 rows), so the same identity argument holds there. That
+format has no `fact_lineup_week` history, so there is no roster-population coverage table for it --
+its evidence is its own out-of-fold numbers and its own gate.
+
+## D33 -- ONE per-week strength: the lineup fallback is the D18 rest-of-season blend, not the preseason line (2026-09-17, **APPLIED, WP19**)
+
+`docs/lineup-stress-2026-09-17.md` finding 2-d: `src/draft/season.ts` priced every rostered man at
+`rosPerGame ?? proj / 17` -- the preseason line updated on the games he has played, by the format's
+own fitted K (D18) -- while `lineupRecommend` and `toWp` in `src/inseason/copilot.ts` both wrote
+`p.proj / perWeek` and never read `rosPerGame`, which `loadSimContext` computes and attaches (K = 6,
+192 men on the live roster set). Same context, same player, two different per-week strengths on two
+surfaces. That is the drift `WEEKLY_SERVE` exists to make impossible, one seam short.
+
+**The fix is one function**, `perGameStrength` in `src/draft/rosBlend.ts`, imported by `season.ts` and
+by BOTH fallback callers in `copilot.ts` -- both, because fixing one of two callers of a rule is worse
+than fixing neither. `assumptions.basisNote` now says WHICH line each man fell back to; the old
+sentence claimed "the season projection divided by 17" for men who would now be on the blend, which is
+the same defect as the NaN M3 replaced, one layer up.
+
+**THE HISTORICAL HARNESSES CANNOT MEASURE THIS, and the positive control is what says so rather than a
+green null.** Two new arms in `scripts/lineup-stress.mjs` (`fbPre`, `fbBlend`) reconstruct both
+quantities point-in-time from `feat_player_week_model` and print, beside the result, a count of the
+men whose two fallback NUMBERS actually differ. That count is **0**, and the arms say so in words:
+the men the weekly projector has no row for are exactly the men with no `season_line_pg` in that
+table, so BOTH fallbacks are undefined for them there and the two arms are the same arm. In
+production the number comes from the BOARD, a different table, which does carry them. Separately,
+`scripts/inseason-backtest-lineup.mjs` falls back to `td_ppg` and its own header says so, so the
+manager backtest is blind to D33 by construction -- it printing the identical 89.55 / -0.09 /
+[-1.26, 0.75] / 5-of-8 before and after is a **degeneracy control on the change, not a measurement of
+it**.
+
+**So the connection is proved where it is real**: `test/lineup-fallback-and-margin.test.ts`, with a
+context that carries `rosPerGame` (the man is priced at the blend, and NOT at `proj/17` -- both halves
+asserted), a control with none (byte-identical to the pre-D33 behaviour), the same on the `winprob`
+caller, and the caveat's two spellings.
+
+**Live exposure today:** zero. On 2026 week 2 all twelve rostered men come from the weekly projector,
+so no fallback fires. Historically the fallback covers **710 of 24,367 rostered man-weeks (2.9%)**
+across 583 of 1,896 team-weeks.
+
+## D34 (presentation, no number moves) -- the lineup serve states its MARGIN and its BAND
+
+Finding 3-a: drawing each man once from the model's own p10-p90 flips the starting set 95% of the
+time, at a mean cost of 6.5 projected points, because the bands are enormous relative to the gaps
+between candidates. The expected-points ORDERING is stable to any plausible error; the REALISED
+ordering is close to a coin toss -- and the serve's summary ("Week 2: 91.4 projected pts. QB Jared
+Goff, ...") carried neither the band nor the gap.
+
+`LineupResultJson` now carries `contested`: per starting slot, the seated man, the best AVAILABLE
+non-starting man eligible for that slot, the margin between them, both men's p10/p90, and the margin
+as a fraction of the wider band. `assumptions.basisNote` states the tightest one, and the shared
+dispatcher's one-line summary prints the three closest -- so `ff copilot lineup` and the MCP
+`lineup_recommend` tool say the same thing, because they are the same function. Bands are now loaded
+for BOTH objectives (they used to be fetched only for `winprob`), still in ONE call so a mean and its
+own p10/p90 cannot come from two reads.
+
+Live, 2026 week 2:
+
+```
+QB    Jared Goff (16.83, p10 7.56 p90 28.75)   over Bo Nix (15.36, p10 6.96 p90 28.39)          margin 1.47  frac 0.069
+WR    Amon-Ra St. Brown (16.79, 5.20-30.28)    over Chris Godwin Jr. (7.33, 1.33-16.89)         margin 9.46  frac 0.377
+FLEX  Jameson Williams (10.24, 1.62-23.63)     over Chris Godwin Jr. (7.33, 1.33-16.89)         margin 2.91  frac 0.132
+FLEX  Colston Loveland (9.54, 0.00-22.91)      over Chris Godwin Jr. (7.33, 1.33-16.89)         margin 2.21  frac 0.096
+```
+
+**AND IT CORRECTS THE NUMBER FINDING 3-a QUOTED.** "the two FLEX slots were decided by 0.70 points
+(Jameson Williams 10.24 over Colston Loveland 9.54)" compares two men who **both start**: that gap
+decides which FLEX label each wears, not whether either plays, so it is not a decision. The real
+marginal call at the second FLEX is Loveland over the best man on the bench -- 2.21 points, 9.6% of a
+22.9-point band -- and the tightest genuine call on the lineup is QB at 1.47 points, 6.9% of a
+21.2-point band. Nothing about the recommendation changed; the sentence describing it did.
+
 ## Working mode (2026-08-31)
 
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work

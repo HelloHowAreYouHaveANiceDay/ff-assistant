@@ -143,9 +143,21 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     case "lineup_recommend": {
       const x = r as C.LineupResultJson;
       const empties = x.starters.filter((s) => s.name === "(empty)").length;
+      // THE MARGIN, IN THE SUMMARY (WP19). A reader handed a total and a list of names cannot see
+      // that two of the slots were coin flips inside a 22-point band; the three tightest contests
+      // are printed with the seated man's own p10-p90 so the summary and the JSON say the same
+      // thing. Nothing here changes a number -- it reports what the recommendation already was.
+      const close = [...x.contested].sort((a2, b2) => Math.abs(a2.margin) - Math.abs(b2.margin)).slice(0, 3);
+      const band = (c: C.LineupContest): string =>
+        c.starter.p10 != null && c.starter.p90 != null
+          ? ` inside his ${c.starter.p10.toFixed(1)}-${c.starter.p90.toFixed(1)} band` +
+            (c.marginBandFrac != null ? ` (${(100 * c.marginBandFrac).toFixed(0)}% of it)` : "")
+          : "";
       return `Week ${x.week}: ${x.totalProj} projected pts. ${x.starters.filter((s) => s.name !== "(empty)").map((s) => `${s.slot} ${s.name}`).join(", ")}.` +
         `${x.unavailable.length ? ` OUT/bye: ${x.unavailable.map((u) => `${u.name} (${u.reason})`).join(", ")}.` : ""}` +
-        `${empties ? ` ${empties} slot(s) UNFILLABLE.` : ""} ${caveat(x.assumptions)}`;
+        `${empties ? ` ${empties} slot(s) UNFILLABLE.` : ""}` +
+        `${close.length ? ` CLOSEST CALLS: ${close.map((c) => `${c.slot} ${c.starter.name} over ${c.alternative.name} by ${Math.abs(c.margin).toFixed(2)}${band(c)}`).join("; ")}.` : ""}` +
+        ` ${caveat(x.assumptions)}`;
     }
     case "waiver_targets": {
       const x = r as C.WaiverResult;
@@ -222,8 +234,13 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       //
       // The `winprob` arm needs BANDS as well as means, and takes both from ONE call so a mean and
       // its own p10/p90 cannot come from two different reads of the table.
-      const withBands = objective === "winprob" ? S.loadWeeklyBands(ctx.season, wk, dbPath, leagueId) : null;
-      const weekly = withBands?.weekly ?? S.loadWeeklyProjection(ctx.season, wk, dbPath, undefined, leagueId) ?? undefined;
+      // BANDS ARE LOADED FOR BOTH OBJECTIVES NOW (WP19). They used to be fetched only for `winprob`,
+      // which needs them to have a distribution at all -- but the expected-points serve needs them
+      // too, to say how close its tightest call is (`LineupContest`). Without them the margin is a
+      // bare number of points with nothing to read it against, and the caveat has to say so. Still
+      // ONE call, so a mean and its own p10/p90 cannot come from two different reads of the table.
+      const withBands = S.loadWeeklyBands(ctx.season, wk, dbPath, leagueId);
+      const weekly = withBands?.weekly ?? undefined;
       // The week's NFL schedule as team -> opponent, for the DST same-game conflict flag. Absent rows
       // (a week the model table has not built) leave the map empty, and the flag simply does not fire.
       const nflOpp = new Map<string, string>();

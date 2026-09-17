@@ -323,14 +323,33 @@ function rowsDbFor(db: StreamDb, mh: ModelHandle): { rdb: StreamDb; close: () =>
   return { rdb: h as unknown as StreamDb, close: () => h.close() };
 }
 
-export function projectStreamingWith(db: StreamDb, season: number, week: number, model?: ModelHandle): StreamProjections | null {
+/**
+ * A MEASUREMENT SEAM, and it exists for exactly one reason (WP19/D32).
+ *
+ * An ON-ARTIFACT change -- the band calibration is one -- has to be measured BEFORE against AFTER on
+ * the same rows. Without this the only way to do that is to point the serve at two files and read the
+ * feature table twice, which is two samples of a thing that can move between them (CLAUDE.md: never
+ * correlate two facts sampled from two separate runs). `mapArtifact` transforms each loaded artifact
+ * in-process, so both arms are projected from ONE read of ONE row set and the only difference between
+ * them is the field under test.
+ *
+ * It is a MEASUREMENT handle, not a serve knob: no production caller passes it, and a transform that
+ * returns its input unchanged is byte-identical to not passing one.
+ */
+export interface StreamServeOpts {
+  mapArtifact?: (a: WeeklyArtifact, file: string) => WeeklyArtifact;
+}
+
+export function projectStreamingWith(
+  db: StreamDb, season: number, week: number, model?: ModelHandle, opts?: StreamServeOpts,
+): StreamProjections | null {
   const mh = modelFor(db, model);
   const files = [...new Set(STREAM_SERVE_POS.map(artifactForPos))];
   const arts = new Map<string, WeeklyArtifact>();
   const missing: string[] = [];
   for (const f of files) {
     const a = tryLoad(f, mh);
-    if (a) arts.set(f, a);
+    if (a) arts.set(f, opts?.mapArtifact ? opts.mapArtifact(a, f) : a);
   }
   const artifactByPos: Record<string, string> = {};
   for (const p of STREAM_SERVE_POS) {

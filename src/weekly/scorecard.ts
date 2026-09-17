@@ -707,6 +707,14 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
             artifact: file, switchedOn: WEEKLY_SERVE_SWITCHED_ON,
             fittedAt: (art as { fittedAt?: string } | null)?.fittedAt ?? null,
             features: art?.features.length ?? null,
+            // WHETHER THE BAND THIS ROW'S p10/p90 CAME FROM WAS CALIBRATED (D32). Without it a
+            // calibrated and an uncalibrated artifact of the same design and the same `fittedAt` are
+            // INDISTINGUISHABLE in the series -- and D32 promoted on the same day as D30, so that is
+            // not a hypothetical. `null` for an artifact that carries none, which is what every row
+            // before this said by omission.
+            bandCal: art?.bandCalibration
+              ? { method: art.bandCalibration.method, k: art.bandCalibration.k, pos: Object.keys(art.bandCalibration.perPos).sort().join("/") }
+              : null,
           });
         };
         db.transaction(() => {

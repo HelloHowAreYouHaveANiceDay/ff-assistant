@@ -139,6 +139,72 @@ export function weeklyBoostedRaw(h: WeeklyBoostedHead, x: number[]): number {
   return s;
 }
 
+/**
+ * THE BAND CALIBRATION (D32, 2026-09-17) -- a MULTIPLICATIVE conformal scale on the served p10/p90,
+ * per position, carried ON the artifact and applied here.
+ *
+ * WHAT IT FIXES. The lineup stress test (docs/lineup-stress-2026-09-17.md, finding 5-a) measured the
+ * served band against 23,657 realised rostered player-weeks: coverage 0.814 against a nominal 0.80,
+ * which is fine, but the two MISSES are not symmetric -- 11.8% of weeks land above p90 against a
+ * nominal 10%, and it is worse at RB (14.2%) and on the bench (13.9%). A band that is short on the
+ * upside understates the boom candidate against the safe one, which is exactly the trade a start/sit
+ * decision is.
+ *
+ * WHY MULTIPLICATIVE AND NOT ADDITIVE, AND IT IS THE WHOLE DESIGN. The standard split-conformal
+ * correction (D16, the season heads) is ADDITIVE: shift the head by the q-quantile of (y - pred).
+ * Applied here it would destroy the thing the two-part model exists for. The published p10 is EXACTLY
+ * 0 wherever P(zero week) exceeds 0.10 -- the zero atom -- and 24.6% of the scored rows realise
+ * exactly 0. A positive additive offset lifts every one of those p10s off the floor, and every
+ * ruled-out man's realised 0 becomes a "below p10" miss: the injury-designated cell would go from
+ * 0.0% below p10 to ~100%. A scale leaves 0 at 0 by construction, so the atom survives and the
+ * correction acts only where the model claims a non-degenerate bound.
+ *
+ * SO THE LOWER SIDE IS SOLVED ON THE ROWS WHERE A BOUND IS CLAIMED, and this is stated rather than
+ * hidden. With an atom at 0 and a quarter of the population realising exactly 0, P(Y < p10) = 10%
+ * pooled is NOT ATTAINABLE and a calibration that chased it would be fitting a target that is wrong:
+ * p10 = 0 with P(Y < 0) = 0 is the CORRECT 10th percentile of a distribution with 24.6% of its mass
+ * at 0. The offsets solve P(Y > s90*p90) = 0.10 pooled, and P(Y < s10*p10 | p10 > 0) = 0.10 on the
+ * rows that claim a positive floor. The pooled lower miss is then 0.10 times the share of rows with
+ * p10 > 0, which is a measurement of the atom rather than a defect of the band.
+ *
+ * WHERE THE NUMBERS COME FROM: TRAIN-ONLY, OUT-OF-FOLD (the D16 pattern). tools/train_weekly.py
+ * refits the served stack on player-grouped folds of the TRAINING rows, builds each held-out row's
+ * MIXTURE p10/p90 exactly as this file does, and takes the conformal scale from those. Nothing here
+ * sees a held-out season, and fitting the scale on the model's own in-sample band -- which is
+ * narrower than it will be on unseen rows -- is the error the out-of-fold split exists to avoid.
+ *
+ * THE MEDIAN AND THE MEAN ARE NOT TOUCHED. This is a statement about the interval, not about the
+ * point estimate; a calibration that moved p50 would be a model change wearing a calibration's name,
+ * and the promotion gate asserts p50/mean are byte-identical across the swap.
+ *
+ * ABSENT = THE OLD BAND, BYTE-FOR-BYTE. An artifact with no `bandCalibration`, and a position with
+ * no entry in one, serves exactly what it served before -- so an old file keeps its meaning instead
+ * of silently claiming a calibration it does not have.
+ */
+export interface WeeklyBandOffsets {
+  /** Multiply the served p10 RATIO by this. 1 = untouched. */
+  p10: number;
+  /** Multiply the served p90 RATIO by this. 1 = untouched. */
+  p90: number;
+  /** Out-of-fold rows the scale was solved on, and how many of them claimed a positive p10. */
+  n: number;
+  nLo?: number;
+}
+export interface WeeklyBandCalibration {
+  /** The only method this evaluator implements. A file naming another one is REFUSED rather than
+   *  served through this arithmetic, because a scale and a shift are not interchangeable. */
+  method: "conformal-scale";
+  /** The two levels the scales were solved for. Recorded so the producer and the consumer cannot
+   *  disagree about which tail each offset belongs to. */
+  levels: { lo: number; hi: number };
+  /** Player-grouped folds used on the TRAINING rows. 0 would mean "not fitted" and is refused. */
+  k: number;
+  fittedOn?: string;
+  /** pos -> scales. A position absent here is served UNCALIBRATED. */
+  perPos: Record<string, WeeklyBandOffsets>;
+  notes?: string;
+}
+
 export interface WeeklyArtifact {
   schema: number;
   kind: "weekly";
@@ -151,6 +217,9 @@ export interface WeeklyArtifact {
   zeroModel?: WeeklyZeroModel;
   /** The quantile levels the SECOND stage was fitted at, ascending. Two-part artifacts only. */
   quantileGrid?: number[];
+  /** THE BAND CALIBRATION (D32). Absent on every artifact written before it existed, and an absent
+   *  field serves the OLD band byte-for-byte -- see `WeeklyBandCalibration`. */
+  bandCalibration?: WeeklyBandCalibration;
   fittedFrom: string;
   fittedAt?: string;
   seasons: number[];
@@ -318,6 +387,9 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
   // design so a position's reduced vector can be built in the boosted head-set's own `features` order.
   const boosted = a.learner === "gbm" ? a.boosted ?? null : null;
   const featIdx = boosted ? new Map<string, number>(a.features.map((s, i) => [s.name, i])) : null;
+  // THE BAND CALIBRATION (D32), per position. Null where the artifact carries none, which is every
+  // artifact written before the field existed -- and those serve exactly what they served before.
+  const bandCal = a.bandCalibration?.perPos ?? null;
   for (const row of rows) {
     const line = row.season_line_pg;
     if (line == null || !Number.isFinite(line) || line <= 0) continue;
@@ -345,14 +417,34 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
       const v = lin(h);
       return Number.isFinite(v) ? Math.min(a.clamps.hi, Math.max(a.clamps.lo, v)) : NaN;
     };
+    /**
+     * THE CALIBRATED BAND, in RATIO units (D32). A SCALE, so a p10 sitting on the zero atom stays on
+     * it -- see `WeeklyBandCalibration` for why an additive shift is the wrong instrument here.
+     * The result is re-clamped to the artifact's own [lo, hi] and is not allowed to cross the median,
+     * which is left exactly where the model put it: a quantile crossing introduced BY a calibration
+     * would invert every coverage number the calibration exists to fix.
+     */
+    const cb = bandCal?.[row.pos] ?? null;
+    const calBand = (v: number, side: "lo" | "hi", med: number): number => {
+      if (!cb || !Number.isFinite(v)) return v;
+      const s = side === "lo" ? cb.p10 : cb.p90;
+      if (!Number.isFinite(s)) return v;
+      const w = Math.min(a.clamps.hi, Math.max(a.clamps.lo, v * s));
+      if (!Number.isFinite(med)) return w;
+      return side === "lo" ? Math.min(w, med) : Math.max(w, med);
+    };
 
     if (!twoPart) {
       const mean = line * clamped("mean");
       if (!Number.isFinite(mean)) continue;
+      const med = clamped("p50");
       out.push({
         feat_key: row.feat_key, player_sk: row.player_sk, name: row.name, pos: row.pos,
         season: row.season, week: row.week,
-        mean, p10: line * clamped("p10"), p50: line * clamped("p50"), p90: line * clamped("p90"),
+        mean,
+        p10: line * calBand(clamped("p10"), "lo", med),
+        p50: line * med,
+        p90: line * calBand(clamped("p90"), "hi", med),
       });
       continue;
     }
@@ -399,7 +491,11 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
     out.push({
       feat_key: row.feat_key, player_sk: row.player_sk, name: row.name, pos: row.pos,
       season: row.season, week: row.week,
-      mean, p10: line * mixQ(0.10), p50: line * mixQ(0.50), p90: line * mixQ(0.90), pZero,
+      mean,
+      p10: line * calBand(mixQ(0.10), "lo", mixQ(0.50)),
+      p50: line * mixQ(0.50),
+      p90: line * calBand(mixQ(0.90), "hi", mixQ(0.50)),
+      pZero,
     });
   }
   return out;
@@ -484,6 +580,33 @@ export function loadWeeklyArtifact(json: unknown, opts: { checkGolden?: boolean;
       "quantile heads can reach the zero atom");
   }
   if (!(Number(a.trainMinLine) >= 0)) bad("trainMinLine must be a non-negative number");
+  // THE BAND CALIBRATION (D32). Absent is fine and means the old band. PRESENT and malformed is
+  // refused rather than partly applied: a scale silently read as 0 collapses the band to the median
+  // at that position, and a scale read as 1 is a calibration that is not there -- both produce
+  // plausible numbers and neither produces an error.
+  if (a.bandCalibration != null) {
+    const bc = a.bandCalibration;
+    if (bc.method !== "conformal-scale") {
+      bad(`bandCalibration.method is ${JSON.stringify(bc.method)}, and this evaluator implements only ` +
+        '"conformal-scale" (a MULTIPLICATIVE scale on the p10/p90 ratios). A scale and an additive ' +
+        "shift are not interchangeable -- an additive one lifts every p10 off the zero atom -- so a " +
+        "file naming another method is refused rather than served through this arithmetic.");
+    }
+    if (!bc.levels || !(bc.levels.lo > 0 && bc.levels.lo < 1) || !(bc.levels.hi > bc.levels.lo && bc.levels.hi < 1)) {
+      bad("bandCalibration.levels must be {lo, hi} quantile levels with 0 < lo < hi < 1");
+    }
+    if (!(Number(bc.k) >= 2)) bad("bandCalibration.k must be at least 2 -- a calibration fitted in-sample is narrower than the band it corrects, which is the error it exists to remove");
+    if (!bc.perPos || typeof bc.perPos !== "object") bad("bandCalibration carries no perPos block");
+    for (const [pos, o] of Object.entries(bc.perPos)) {
+      if (!a.coef[pos]) bad(`bandCalibration names position ${pos}, which the artifact has no heads for`);
+      for (const h of ["p10", "p90"] as const) {
+        const v = (o as WeeklyBandOffsets)[h];
+        if (typeof v !== "number" || !Number.isFinite(v) || !(v > 0)) {
+          bad(`bandCalibration.perPos.${pos}.${h} must be a finite POSITIVE scale (1 = untouched), got ${JSON.stringify(v)}`);
+        }
+      }
+    }
+  }
   if (a.rowFilter != null && !["season_line_pg", "in_population"].includes(a.rowFilter)) {
     bad(`rowFilter is ${JSON.stringify(a.rowFilter)}, expected "season_line_pg" or "in_population". ` +
       "An artifact that does not say which rows it was fitted on cannot be checked against the rows " +

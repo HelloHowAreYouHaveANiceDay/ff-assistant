@@ -49,6 +49,31 @@ export function rosPerGame(line: number | null, tdGames: number | null, tdPts: n
 }
 
 /**
+ * ONE PER-WEEK STRENGTH FOR A ROSTERED MAN (D33, 2026-09-17) -- and it is one function because it
+ * was two numbers.
+ *
+ * `loadSimContext` computes the D18 blend once, per format, with that format's own fitted K, and
+ * attaches it to each roster player as `rosPerGame`. The SEASON SIMULATOR read it
+ * (`season.ts`: `p.rosPerGame ?? p.proj / 17`); the LINEUP verb did not -- `lineupRecommend` and
+ * `toWp` in src/inseason/copilot.ts both wrote `p.proj / perWeek`, the PRESEASON line spread flat.
+ * So on the same context, in week 10, the two surfaces held two different per-week strengths for the
+ * same man: the simulator priced him on the games he had actually played and the lineup priced him
+ * on his August number. Measured exposure (docs/lineup-stress-2026-09-17.md finding 2-d): the
+ * fallback fires on 2.9% of rostered men in the 2018-2025 replay and 1 of 12 on the live roster.
+ *
+ * This is the function both call now. `perWeek` is the frame the SEASON PROJECTION is spread over
+ * (17 scheduled NFL games -- see NFL_WEEKS in src/inseason/copilot.ts) and is only ever used for the
+ * preseason half; `rosPerGame` is already a per-game number in that same frame, computed by
+ * `rosPerGame()` above from `proj / 17`.
+ *
+ * A man with no played games, or a context built before D18, has no `rosPerGame` and gets exactly
+ * what he got before. Nothing is invented here: the blend is fitted upstream or it is absent.
+ */
+export function perGameStrength(p: { proj: number; rosPerGame?: number }, perWeek: number): number {
+  return p.rosPerGame != null && Number.isFinite(p.rosPerGame) ? p.rosPerGame : p.proj / perWeek;
+}
+
+/**
  * THE BLEND FOR A FORMAT (WP8). K is fitted by minimising RMSE in POINTS on a format's own season
  * lines and weekly scores, so it is not a constant of football the way the age curve is: refitting
  * the Yahoo (full-PPR superflex) table moves it. `model.path` resolves to the `data/` root for the

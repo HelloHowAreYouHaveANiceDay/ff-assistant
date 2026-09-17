@@ -252,6 +252,27 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   four arms (docs/validation.md D18: seeding is decisive from week 5, 8/8 seasons; the shrink clears the
   floor at week 8). `--schedule real` now falls
   back to the store's synced matchups when the app's CDP port is unreachable and says so.
+- **The served weekly BAND is calibrated ON the artifact (D32, 2026-09-17, docs/weekly.md section 12):**
+  `bandCalibration` -- per-position MULTIPLICATIVE conformal scales on p10/p90, fitted train-only out of
+  fold by `tools/train_weekly.py --band-conformal-k 5` (a SECOND fold pass; `--conformal-k` calibrates the
+  conditional heads and moves p50, this one must not). It is a SCALE and not the additive shift D16 uses
+  one horizon up because the two-part p10 sits on the ZERO ATOM wherever P(zero week) > 0.10, and an
+  additive offset would turn every ruled-out man's realised 0 into a below-p10 miss. Absent field = the
+  old band byte-for-byte; a position with no entry is served uncalibrated; DST is NOT calibrated (its
+  artifact comes from `tools/train_dst_stream.py`). Only 64% of scored rows claim a p10 above zero, so
+  POOLED 10% below p10 is unattainable and is not the target -- read `<p10` beside that share, never alone.
+  The band calibration moves NO mean and NO median, so it moves no lineup; assert that before reading any
+  coverage table. A fit now costs ~4m34s instead of ~3m41s.
+- **One per-week strength for a rostered man (D33):** `perGameStrength` (`src/draft/rosBlend.ts`), read by
+  `src/draft/season.ts` AND by both fallback callers in `lineupRecommend`. The lineup used to price a man
+  the weekly projector had no row for at the preseason line over 17 while the simulator priced him at the
+  D18 blend. Neither historical harness can measure the change (`inseason-backtest-lineup.mjs` falls back
+  to `td_ppg`; `lineup-stress.mjs`'s D33 arms report their positive control returning ZERO because those
+  men have no `season_line_pg` in the weekly table) -- it is proved by unit test on a context that carries
+  `rosPerGame`.
+- **The lineup serve states its MARGIN (D34):** `LineupResultJson.contested` -- per slot, the seated man,
+  the best legal sitting alternative, the gap, both bands, and the gap as a fraction of the band. Bands are
+  loaded for BOTH objectives now. No number moves.
 - Draft-day procedure and machine setup: `docs/draft-day-runbook.md`
 - The MCP control surface (39 tools, shared with the in-app Assistant): `docs/mcp.md`. The count is
   `TOOL_NAMES.length` in `src/agent/agent.ts`, not a number to retype -- `scripts/copilot-mcp-smoke.mjs`
@@ -275,6 +296,6 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   week cannot be backfilled; with the column absent the model degrades toward its season-line anchor
   and gives back the +0.036 pooled CRPS the consensus was admitted on (5/0 covered seasons).
   `ff evaluate-weekly`'s flagless `--features` is that artifact's own list, not the trainer's `all`.
-- Recorded decisions D0-D31 (do not silently reverse): `docs/decisions.md`
+- Recorded decisions D0-D34 (do not silently reverse): `docs/decisions.md`
 - Current multi-league/multi-format finding list + fix plan: `docs/architecture-review-2026-09-16.md`
 - Planning/roadmap lives in the wiki, not here: `wiki/projects/project--ff-assistant.md`

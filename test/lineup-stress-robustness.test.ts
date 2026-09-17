@@ -181,7 +181,9 @@ test("a man with NO WEEKLY ROW falls back to the season line / 17 and the caveat
   weekly.delete(lineupNameKey(victim.name));
   const res = lineupRecommend(c, WEEK, { availability: new Map(), weekly });
   assert.equal(res.assumptions.basis, "projection", "one fallback man means the basis is NOT weekly-model");
-  assert.match(String(res.assumptions.basisNote), new RegExp(`1 fell back to the season projection divided by 17.*${victim.name}`));
+  // D33 wording: "fell back to the season line ... : <name>", then which line it was.
+  assert.match(String(res.assumptions.basisNote), new RegExp(`1 fell back to the season line.*${victim.name}`));
+  assert.match(String(res.assumptions.basisNote), /preseason projection divided by 17/);
   // The control: with every row present the basis is weekly-model and nothing is named.
   const full = lineupRecommend(ctx(), WEEK, { availability: new Map(), weekly: weeklyFor(c, (p) => p.proj / 17) });
   assert.equal(full.assumptions.basis, "weekly-model");
@@ -194,7 +196,7 @@ test("a NaN weekly projection is treated as ABSENT, not as a number", () => {
   weekly.set(lineupNameKey(victim.name), NaN);
   const res = lineupRecommend(c, WEEK, { availability: new Map(), weekly });
   assert.ok(Number.isFinite(res.totalProj));
-  assert.match(String(res.assumptions.basisNote), /fell back to the season projection/);
+  assert.match(String(res.assumptions.basisNote), /fell back to the season line/);
 });
 
 test("EVERY man OUT: every slot goes empty with a named reason, and the total is zero -- no crash", () => {

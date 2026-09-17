@@ -48,6 +48,7 @@ import { draw as unitDraw, drawGauss, PURPOSE, PlayerIds } from "./rng.js";
 import { prepare as prepBootstrap, sampleSeason as bootstrapSeason, weekOf, type RankOutcomes, type CorrelationModel, type PoolPlayer } from "./bootstrap.js";
 import { seedField } from "./schedule.js";
 import { slotAdmits, splitTemplate } from "./slots.js";
+import { perGameStrength } from "./rosBlend.js";
 import type { SeedingRule } from "../league/types.js";
 
 export interface VarianceModel {
@@ -531,7 +532,9 @@ export function simulateSeasons(
   // ONE definition of a player's per-game strength, used by both sampling paths: the rest-of-season
   // mean when the context supplied one, else the preseason total over 17. Two readings of this
   // quantity is how the bootstrap pool and the lineup-setting estimate would come to disagree.
-  const perGame = (p: SeasonPlayer): number => p.rosPerGame ?? p.proj / 17;
+  // D33: ONE function, shared with the LINEUP verb (src/inseason/copilot.ts), so a man's week is
+  // the same number on both surfaces. See src/draft/rosBlend.ts perGameStrength.
+  const perGame = (p: SeasonPlayer): number => perGameStrength(p, 17);
   const played = opts.played && opts.played.weeks > 0 ? opts.played : null;
   if (played && (played.wins.length !== N || played.pts.length !== N)) {
     throw new Error(`played standings are for ${played.wins.length}/${played.pts.length} teams but the league has ${N}`);
