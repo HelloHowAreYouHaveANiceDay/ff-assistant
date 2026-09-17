@@ -22,6 +22,7 @@
 import { openDb, nowIso, type DB } from "../../db/db.js";
 import { normPos } from "../../data/stgPlayer.js";
 import { normalizeStatus } from "../../inseason/copilot.js";
+import { localToday } from "../../inseason/copilotStore.js";
 import { buildSourceResolver, type SourceResolver } from "./resolve.js";
 
 export interface WeekContextResult {
@@ -29,6 +30,13 @@ export interface WeekContextResult {
   perSeason: { season: number; rows: number; withSnap: number; withRoute: number; withReport: number; withDepth: number }[];
   resolution: { source: string; rows: number; resolved: number; byRule: Record<string, number> }[];
 }
+
+/** The snapshot instant on the LOCAL clock, `YYYY-MM-DDTHH:MM:SS`. Same calendar as `raw_nfl_game`'s
+ *  gamedays, which is what `as_of` is compared against. See the note in `buildLiveWeekContextInto`. */
+const localNow = (now: Date = new Date()): string => {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${localToday(now)}T${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}`;
+};
 
 const shiftDays = (iso: string, days: number): string => {
   const t = Date.parse(`${iso}T00:00:00Z`);
@@ -414,6 +422,18 @@ export interface LiveWeekContextResult {
   /** Players carrying a designation, of `rows`. */
   withStatus: number;
   withDepth: number;
+  /** Rows carrying the carried-forward usage pair. See the WP17 note on `buildLiveWeekContextInto`:
+   *  these used to be written as a literal NULL, so the live week served the model a hole in the
+   *  column the M2h ablation measured at -0.71 points per lineup per week. */
+  withSnap: number;
+  withRoute: number;
+  /**
+   * Feeds this season has NO rows for, named. A serve caveat has to be able to say WHICH column is
+   * absent -- `pbp_participation` stops publishing after 2025 upstream (404 for 2026), so
+   * `prior_route_share` is structurally unfillable for the live season and that is a fact about the
+   * commons, not about our ingest.
+   */
+  missingFeeds: string[];
   outs: number;
   /** From the news feed rather than the structured status -- an escalation the status had not caught. */
   fromNews: number;
@@ -467,11 +487,27 @@ export function buildLiveWeekContext(opts: LiveWeekContextOpts): LiveWeekContext
 
 export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): LiveWeekContextResult {
   const season = opts.season;
-  const asOf = opts.now ?? nowIso();
-  const asOfDay = asOf.slice(0, 10);
+  const asOf = opts.now ?? localNow();
+  // THE CALENDAR DAY IS LOCAL, NOT UTC (WP17), and the difference is a whole week of context.
+  //
+  // `nowIso()` is UTC, so every evening after 8pm ET it reads as TOMORROW. The rule below is "the
+  // earliest week whose first kickoff is still ahead", and a Thursday-night week whose opener is
+  // tomorrow then looks as though it has already kicked off -- so the live week's availability block
+  // is written to the week AFTER the one a lineup is being set for, and the live week keeps the
+  // NULLs. Measured on 2026-09-16 at 21:51 local: the target came back as week 3 while `ff copilot
+  // lineup` was setting week 2. `currentWeek` documents the same hazard and already resolves it this
+  // way; an injected `opts.now` is honoured verbatim so a test still drives the rule directly.
+  //
+  // THE STAMP MOVES WITH IT, and it has to. `as_of` is compared LEXICALLY against `raw_nfl_game`'s
+  // `gameday`, which is a US LOCAL date -- so a UTC stamp of 01:59Z on the 17th sits "after" a
+  // gameday of the 17th whose kickoff is still twenty hours away, and the point-in-time test in
+  // test/featuresExt.test.ts correctly reads that as a row dated on or after the game it describes.
+  // Mixing a UTC instant into a local-date comparison was the whole defect; `localNow()` states the
+  // snapshot in the same calendar the schedule is written in.
+  const asOfDay = opts.now ? opts.now.slice(0, 10) : localToday();
   const res: LiveWeekContextResult = {
-    season, week: null, asOf, rows: 0, withStatus: 0, withDepth: 0, outs: 0, fromNews: 0,
-    unresolved: 0, skipped: null, kickedOff: [],
+    season, week: null, asOf, rows: 0, withStatus: 0, withDepth: 0, withSnap: 0, withRoute: 0,
+    missingFeeds: [], outs: 0, fromNews: 0, unresolved: 0, skipped: null, kickedOff: [],
   };
 
   // ---- THE TARGET WEEK, from raw_nfl_game kickoffs. ----
@@ -550,6 +586,31 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
     (outsBy.get(k) ?? outsBy.set(k, new Set()).get(k)!).add(sk);
   }
 
+  // ---- THE CARRIED-FORWARD USAGE PAIR (WP17). ----
+  //
+  // These two were written as a LITERAL NULL here, and that was the live regression the M2h
+  // missingness ablation found: this builder DELETEs the target week's rows and rewrites them, so
+  // whatever the archive builder had put in `prior_snap_share` was destroyed and the live week
+  // served the model a hole in a column it was fitted on. The cost was measured, not assumed --
+  // masking exactly the set that was dark at the 2026 week-2 serve is +0.0647 CRPS in 14/14 held-out
+  // seasons and -0.71 points per standard lineup, EVERY week.
+  //
+  // They are computed by the SAME two functions the historical builder uses, against the same raw
+  // tables, so the live week and a settled week cannot mean different things by the same column
+  // name. The carry-forward is bounded at the target week, which is by construction the first week
+  // NOT yet kicked off -- so the newest snap count it can reach is the last week played.
+  //
+  // A feed with no rows for the season yields an empty map and a NULL column, which is the honest
+  // value. `missingFeeds` names it so a caveat can say WHICH feed is dark rather than implying the
+  // model saw everything.
+  const resolver = buildSourceResolver(db);
+  const snap = priorWeekSnap(db, season, resolver, week);
+  const route = priorWeekRoute(db, season, resolver, week);
+  for (const [table, feed] of [["raw_snap_count", "nflverse snap_counts"], ["raw_participation", "nflverse pbp_participation"]] as const) {
+    const c = (db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE season = ?`).get(season) as { c: number }).c;
+    if (!c) res.missingFeeds.push(`${feed} (${table}) has no ${season} rows`);
+  }
+
   const sched = schedule(db, [season]);
   const now = nowIso();
   const ins = db.prepare(
@@ -558,13 +619,14 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
        prior_snap_share, prior_route_share, report_status_wed, report_status_fri,
        practice_status_wed, practice_status_fri, teammates_out, depth_rank, source, updated_at)
      VALUES (@sk,@season,@week,@asOf,@team,@pos,@opp,@home,@rest,@roof,@spread,@total,@implied,
-       @temp,@wind,NULL,NULL,NULL,@rsf,NULL,NULL,@out,@depth,'live',@now)
+       @temp,@wind,@snap,@route,NULL,@rsf,NULL,NULL,@out,@depth,'live',@now)
      ON CONFLICT(season, week, player_sk) DO UPDATE SET
        as_of=excluded.as_of, team=excluded.team, pos=excluded.pos, opponent=excluded.opponent,
        home=excluded.home, days_rest=excluded.days_rest, roof=excluded.roof,
        spread_line=excluded.spread_line, total_line=excluded.total_line,
        implied_team_total=excluded.implied_team_total, temp_observed=excluded.temp_observed,
-       wind_observed=excluded.wind_observed, report_status_fri=excluded.report_status_fri,
+       wind_observed=excluded.wind_observed, prior_snap_share=excluded.prior_snap_share,
+       prior_route_share=excluded.prior_route_share, report_status_fri=excluded.report_status_fri,
        teammates_out=excluded.teammates_out, depth_rank=excluded.depth_rank,
        source=excluded.source, updated_at=excluded.updated_at`,
   );
@@ -578,17 +640,21 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
       const g = u.team ? sched.get(`${season}|${u.team}|${week}`) : undefined;
       const outSet = u.team ? outsBy.get(`${u.team}|${pos}`) : undefined;
       const mates = outSet ? outSet.size - (outSet.has(sk) ? 1 : 0) : 0;
+      const sSnap = snap.get(`${week}|${sk}`) ?? null;
+      const sRoute = route.get(`${week}|${sk}`) ?? null;
       ins.run({
         sk, season, week, asOf, team: u.team, pos,
         opp: g?.opponent ?? null, home: g ? g.home : null, rest: g?.rest ?? null, roof: g?.roof ?? null,
         spread: g?.spread ?? null, total: g?.total ?? null, implied: g?.implied ?? null,
-        temp: g?.temp ?? null, wind: g?.wind ?? null,
+        temp: g?.temp ?? null, wind: g?.wind ?? null, snap: sSnap, route: sRoute,
         rsf: l?.report ?? null, out: mates, depth: l?.depth ?? null, now,
       });
       res.rows++;
       if (l?.report) res.withStatus++;
       if (l?.report === "Out") res.outs++;
       if (l?.depth != null) res.withDepth++;
+      if (sSnap != null) res.withSnap++;
+      if (sRoute != null) res.withRoute++;
     }
   };
 
@@ -603,6 +669,8 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
       if (l?.report) res.withStatus++;
       if (l?.report === "Out") res.outs++;
       if (l?.depth != null) res.withDepth++;
+      if (snap.get(`${week}|${sk}`) != null) res.withSnap++;
+      if (route.get(`${week}|${sk}`) != null) res.withRoute++;
     }
   } else {
     db.transaction(() => {

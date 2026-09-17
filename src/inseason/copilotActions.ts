@@ -29,6 +29,7 @@ import { loadSimContext, type SimContext } from "../draft/simContext.js";
 import * as C from "./copilot.js";
 import * as S from "./copilotStore.js";
 import { loadStreamingProjection } from "../weekly/streamingServe.js";
+import { liveWeekCoverage } from "../weekly/features.js";
 
 export const COPILOT_VERBS = [
   "season_odds", "lineup_recommend", "waiver_targets", "trade_check",
@@ -226,6 +227,13 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // The week's NFL schedule as team -> opponent, for the DST same-game conflict flag. Absent rows
       // (a week the model table has not built) leave the map empty, and the flag simply does not fire.
       const nflOpp = new Map<string, string>();
+      // WHICH FEATURE COLUMNS ARE DARK AT THIS SERVE (WP17). A NULL is a legal serve value under
+      // D19 -- the model falls back on its declared missing-value and, in the limit, on the season
+      // line anchor -- so a dark feed produces a lineup that looks exactly like a healthy one. It
+      // cost -0.71 points per lineup per week for the whole of 2026 before anyone queried a single
+      // week by hand (docs/weekly-missingness-ablation-2026-09-16.md). The caveat now NAMES the
+      // columns, so a reader can tell a degraded lineup from a full one without running a script.
+      const dark: string[] = [];
       {
         const db = openDb(dbPath);
         try {
@@ -234,14 +242,23 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
           ).all(ctx.season, wk) as { team: string; opponent: string }[]) {
             nflOpp.set(String(r.team).toUpperCase(), String(r.opponent).toUpperCase());
           }
-        } finally { db.close(); }
+          for (const c of liveWeekCoverage(db, ctx.season, wk)) if (c.status === "dark") dark.push(c.column);
+        } catch { /* an old store without the model table says nothing rather than failing a lineup */ }
+        finally { db.close(); }
+      }
+      const res = C.lineupRecommend(ctx, wk, {
+        provenance, availability: S.loadAvailability(dbPath), weekly,
+        objective, bands: withBands?.bands, nflOpp,
+        winprob: { sims: a.trials ?? 8000, seed: a.seed ?? 7 },
+      });
+      if (dark.length) {
+        res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; DEGRADED -- ${dark.length} model ` +
+          `feature(s) are 100% ABSENT at this week and were populated at the same week in prior seasons: ` +
+          `${dark.join(", ")}. The projector serves each as its declared missing value, so these totals ` +
+          "lean harder on the season-line anchor than a normal week's do.";
       }
       return {
-        ...C.lineupRecommend(ctx, wk, {
-          provenance, availability: S.loadAvailability(dbPath), weekly,
-          objective, bands: withBands?.bands, nflOpp,
-          winprob: { sims: a.trials ?? 8000, seed: a.seed ?? 7 },
-        }),
+        ...res,
         weekSource: a.week != null ? "caller" : S.currentWeek(dbPath, new Date(), leagueId).source,
       };
     }

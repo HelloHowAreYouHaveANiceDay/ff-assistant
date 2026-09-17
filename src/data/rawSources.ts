@@ -348,6 +348,17 @@ export async function ingestRawDepthCharts(opts: { dbPath?: string; seasons?: nu
  */
 export async function ingestRawSnapCounts(opts: { dbPath?: string; seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
   const db = openDb(opts.dbPath);
+  try { return await ingestRawSnapCountsInto(db, opts); } finally { db.close(); }
+}
+
+/**
+ * The same ingest against a CONNECTION the caller already holds.
+ *
+ * It exists for the live season (WP17): `buildForwardBoardInto` refreshes the current season's snap
+ * counts as part of the weekly board rebuild, and it already has the store open. Opening a second
+ * connection to the same file from inside that call is how a writer ends up waiting on itself.
+ */
+export async function ingestRawSnapCountsInto(db: DB, opts: { seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
   const now = nowIso();
   const gameday = new Map<string, string>();
   for (const g of db.prepare("SELECT game_id, gameday FROM raw_nfl_game WHERE gameday IS NOT NULL").all() as { game_id: string; gameday: string }[]) {
@@ -390,7 +401,6 @@ export async function ingestRawSnapCounts(opts: { dbPath?: string; seasons?: num
     }
     return n;
   });
-  db.close();
   return { table: "raw_snap_count", seasons, total: totalOf(seasons) };
 }
 

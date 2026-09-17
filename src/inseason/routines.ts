@@ -85,9 +85,27 @@ export const ROUTINES: Record<string, Routine> = {
     platforms: null,          // a public CSV -- no fantasy provider involved
     leagueScoped: false,
   },
+  /**
+   * THE LIVE SEASON'S USAGE FEEDS RIDE THIS ROUTINE (WP17), and that is deliberate rather than a
+   * missing routine of its own.
+   *
+   * `buildForwardBoardInto` now refreshes the current season's nflverse snap counts and rebuilds the
+   * live week's availability block as part of the board rebuild. It could not be a routine here: the
+   * tick can only run verbs `HANDLERS` in src/ff.ts holds, and neither `ingest-raw` nor
+   * `build-live-context` is one -- a routine naming either would sit in the schedule looking enabled
+   * and be SKIPPED SILENTLY, which is the same class of failure `test/routines.test.ts` exists for.
+   * The board rebuild is also the step that has just created the universe the live context builder
+   * reads, so it is the only seam where the two can meet in the right order.
+   *
+   * What that buys, measured: seven served weekly features were 100% NULL at the 2026 week-2 serve
+   * while prior seasons carried 78-93% at the same week, worth -0.71 points per lineup per week
+   * (docs/weekly-missingness-ablation-2026-09-16.md). Six of the seven now land on this routine's
+   * ordinary tick; the seventh (`prior_route_share`) cannot -- nflverse stopped publishing
+   * `pbp_participation` after 2025 -- and the lineup caveat names it instead.
+   */
   actuals: {
     name: "actuals",
-    what: "ingest nflverse results, rebuild the forward board (trailing form), refresh decisions on a change",
+    what: "ingest nflverse results + the live season's snap counts, rebuild the forward board (trailing form, usage-to-date) and the live week's availability block, refresh decisions on a change",
     steps: [["sync-actuals", []]],
     needsApp: false,
     platforms: null,          // nflverse results -- no fantasy provider involved

@@ -11,12 +11,26 @@
 //
 // The columns are read from src/weekly/features.ts CONTEXT_FIELDS rather than retyped, so a column
 // added there appears here without anyone remembering to add it.
-import { openDb } from "../src/db/db.js";
-import { CONTEXT_FIELDS, weeklyCoverage } from "../src/weekly/features.ts";
+import { openDb, getConfig } from "../src/db/db.js";
+import { CONTEXT_FIELDS, weeklyCoverage, liveWeekCoverage } from "../src/weekly/features.ts";
 
-const i = process.argv.indexOf("--db");
-const db = openDb(i >= 0 ? process.argv[i + 1] : undefined);
+const arg = (k) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : undefined; };
+const db = openDb(arg("--db"));
 const rows = weeklyCoverage(db);
+
+// THE LIVE-WEEK TRIPWIRE (WP17). The season table above is the wrong resolution to see a live
+// outage: a live season is mostly future weeks that legitimately carry nothing, so a column that
+// went 100% dark at the serve reads as an ordinary partially-built season. `--week` overrides; by
+// default the live week is the first week of the configured season with no scored rows.
+const liveSeason = Number(arg("--season") ?? getConfig(db).season);
+// The live week is the first with NO scored row AT ALL -- not the first with a missing one. Every
+// week has rows for men who did not play, so `pts IS NULL` alone resolves to week 1 forever, which
+// is the degenerate week where every to-date column is legitimately empty in every season.
+const liveWeek = Number(arg("--week") ?? (db.prepare(
+  `SELECT MIN(week) AS w FROM feat_player_week_model WHERE season = ? AND week NOT IN
+     (SELECT week FROM feat_player_week_model WHERE season = ? AND pts IS NOT NULL)`)
+  .get(liveSeason, liveSeason)?.w ?? 1));
+const tripwire = liveWeekCoverage(db, liveSeason, liveWeek);
 db.close();
 
 const cols = CONTEXT_FIELDS.map((c) => c.name);
@@ -40,3 +54,20 @@ READING THIS
              that nobody in the league was hurt, which is worse than missing data.
   depth_rank and prior_snap_share survive 2025 because the depth-chart and snap feeds still carry
   dates; the injury block is the only one that goes dark.`);
+
+// ---------------------------------------------------------------------------------------------
+console.log(`\nLIVE-WEEK TRIPWIRE -- ${liveSeason} week ${liveWeek}, decision population, against the`);
+console.log("same week in the 3 prior seasons. A column DARK here with a healthy band is a live feed");
+console.log("outage: it is the shape M2h measured at -0.71 points per lineup per week, and the season");
+console.log("table above cannot show it.\n");
+console.log("  column                    live    band (prior seasons, same week)   status");
+let bad = 0;
+for (const r of tripwire) {
+  const pc = (x) => `${(100 * x).toFixed(0)}%`.padStart(5);
+  const band = r.prior.length ? `${pc(r.bandLo)} - ${pc(r.bandHi)}  [${r.prior.map((p) => `${p.season} ${pc(p.share)}`).join("  ")}]` : "(no prior coverage)";
+  if (r.status === "dark" || r.status === "below") bad++;
+  console.log(`  ${r.column.padEnd(22)} ${pc(r.live)}    ${band.padEnd(46)} ${r.status.toUpperCase()}`);
+}
+console.log(`\n  ${bad} column(s) below band.` + (bad
+  ? " A DARK column with a live feed is a bug; a DARK column whose upstream file 404s is a\n  coverage fact and the serve caveat must NAME it (see docs/weekly.md, 'live-season feeds')."
+  : " The live week is inside the band every prior season set at this point."));

@@ -35,7 +35,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDb, nowIso, type DB } from "../db/db.js";
-import { buildPopulation } from "./population.js";
+import { buildPopulation, POPULATION_COLUMN } from "./population.js";
 import { nameKey } from "../draft/values.js";
 import { fetchCsvCached, URLS, cacheTag, canonTeam, pick } from "../data/nflverse.js";
 import { loadArtifact, type ProjectionArtifact } from "../model/projector.js";
@@ -906,6 +906,85 @@ export function weeklyCoverage(db: DB, seasons?: number[]): {
   }));
 }
 
+/** The column list `weeklyCoverage` reports on, derived once so the live tripwire below cannot
+ *  drift from the season table it is compared against. */
+export const COVERAGE_COLUMNS: string[] = [
+  "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
+  "td_attempts", "td_rush_yards", "dvp_mult", "home", "spread_line", "total_line",
+  "implied_team_total", "days_rest", "ecr_wk_rank", "ecr_wk_sd",
+  ...CONTEXT_FIELDS.map((c) => String(c.name)),
+];
+
+/** One column's live-week coverage against the band the same week carried in prior seasons. */
+export interface LiveCoverageRow {
+  column: string;
+  /** Share of the live week's decision-population rows carrying the column, 0..1. */
+  live: number;
+  /** The same share in each prior season at the SAME week, and its min/max. */
+  prior: { season: number; share: number }[];
+  bandLo: number; bandHi: number;
+  /** `dark` = the column is empty live and the band says it should not be. `below` = present but
+   *  materially under the band. `ok` = inside or above it. `none` = the band itself is empty, so
+   *  there is nothing to compare against and silence means nothing. */
+  status: "ok" | "below" | "dark" | "none";
+}
+
+/**
+ * THE LIVE-WEEK COVERAGE TRIPWIRE (WP17).
+ *
+ * `weeklyCoverage` reports per SEASON, which is exactly the resolution at which the 2026 regression
+ * hid: the season average of a live season with two weeks in it is dominated by future weeks that
+ * legitimately carry nothing, so a column that went dark at the serve looks like an ordinary
+ * partially-built season. The ablation found it only because somebody queried one week by hand.
+ *
+ * So this compares the LIVE WEEK against what the SAME WEEK carried in prior seasons -- the only
+ * comparison in which "100% NULL" is distinguishable from "not published yet at this point in the
+ * year". A column dark live with a healthy band is the shape that cost -0.71 points per lineup per
+ * week, undetected, for the whole of 2026 so far.
+ *
+ * `bandLo` is the prior seasons' MINIMUM, not their mean: the question is whether the live week is
+ * outside anything ever seen at this point in a season, and a mean would let one bad year widen the
+ * gate. A column with no prior coverage at all reports `none` rather than a pass -- silence from a
+ * feed that has never spoken is not evidence.
+ */
+export function liveWeekCoverage(db: DB, season: number, week: number, priorSeasons = 3): LiveCoverageRow[] {
+  const present = new Set<string>([
+    ...presentContextFields(db).map((c) => String(c.name)), ...presentEcrWeekFields(db)]);
+  const isContext = new Set<string>([
+    ...CONTEXT_FIELDS.map((c) => String(c.name)), ...ECR_WEEK_FIELDS]);
+  const cols = COVERAGE_COLUMNS.filter((c) => !isContext.has(c) || present.has(c));
+  const havePop = (db.prepare("PRAGMA table_info(feat_player_week_model)").all() as { name: string }[])
+    .some((c) => c.name === POPULATION_COLUMN);
+  // The DECISION population, which is what a lineup is set from. Falling back to the whole table on
+  // a store without the flag keeps this readable on an old copy rather than throwing.
+  const where = `season = ? AND week = ? AND COALESCE(is_bye, 0) = 0${havePop ? ` AND COALESCE(${POPULATION_COLUMN}, 0) = 1` : ""}`;
+  const sel = cols.map((c) => `SUM(${c} IS NOT NULL) AS ${c}`).join(", ");
+  const q = db.prepare(`SELECT COUNT(*) AS rows_n, ${sel} FROM feat_player_week_model WHERE ${where}`);
+  const shareOf = (s: number): Record<string, number> | null => {
+    const r = q.get(s, week) as Record<string, number>;
+    if (!r || !r.rows_n) return null;
+    return Object.fromEntries(cols.map((c) => [c, (r[c] ?? 0) / r.rows_n]));
+  };
+  const liveRow = shareOf(season);
+  const priors: { season: number; cols: Record<string, number> }[] = [];
+  for (let s = season - priorSeasons; s < season; s++) {
+    const r = shareOf(s);
+    if (r) priors.push({ season: s, cols: r });
+  }
+  return cols.map((c) => {
+    const prior = priors.map((p) => ({ season: p.season, share: p.cols[c] }));
+    const shares = prior.map((p) => p.share);
+    const bandLo = shares.length ? Math.min(...shares) : 0;
+    const bandHi = shares.length ? Math.max(...shares) : 0;
+    const live = liveRow ? liveRow[c] : 0;
+    let status: LiveCoverageRow["status"] = "ok";
+    if (!shares.length || bandHi < 0.05) status = "none";
+    else if (live < 0.01) status = "dark";
+    else if (live < bandLo - 0.10) status = "below";
+    return { column: c, live, prior, bandLo, bandHi, status };
+  });
+}
+
 /** One feature row in evaluator shape. `pts` is NOT here: the target cannot be read by accident. */
 export interface WeeklyRow {
   feat_key: string; player_sk: string | null; season: number; week: number;
@@ -1120,6 +1199,22 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
   for (const r of playedRows) (played.get(r.feat_key) ?? played.set(r.feat_key, new Map()).get(r.feat_key)!).set(r.week, r);
   const playedWeeks = [...new Set(playedRows.map((r) => r.week))].sort((a, b) => a - b);
 
+  // THE TO-DATE RATIOS, READ FROM THIS WEEK'S OWN ROW (WP17).
+  //
+  // They used to be read off the last PLAYED row before this week, and that was silently always
+  // NULL: `feat_player_week`'s to-date columns accumulate AFTER the row is written, so the last
+  // played row before week w carries "through w-2", and in week 2 -- the first week these columns
+  // can say anything -- the last played row is week 1, whose to-date span is empty by construction.
+  // The forward board writes a row for EVERY week of the live season, and week w's row already holds
+  // weeks 1..w-1, which is exactly the point-in-time quantity. So read that, and keep the old
+  // last-played-row value as the fallback for a (season, week) the board has no row for.
+  const toDate = new Map<string, { td_fd: number | null; td_ts: number | null; td_attempts: number | null; td_rush_yards: number | null }>();
+  for (const r of db.prepare(
+    "SELECT feat_key, week, td_fd, td_ts, td_attempts, td_rush_yards FROM feat_player_week WHERE season = ?",
+  ).all(season) as { feat_key: string; week: number; td_fd: number | null; td_ts: number | null; td_attempts: number | null; td_rush_yards: number | null }[]) {
+    toDate.set(`${r.feat_key}|${r.week}`, r);
+  }
+
   const dvp = dvpTable(db, season);
   const rzShare = rzShareTable(db, season);
   const priorVol = priorSeasonVol(db, season);
@@ -1178,8 +1273,13 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
           season_line_pg: finite(line.get(p.feat_key) ?? null),
           td_games: games, td_ppg: games ? ptsSoFar / games : null,
           t4_mean: finite(t4mean), t4_sd: finite(t4sd),
-          td_fd: finite(td?.td_fd ?? null), td_ts: finite(td?.td_ts ?? null),
-          td_attempts: finite(td?.td_attempts ?? null), td_rush_yards: finite(td?.td_rush_yards ?? null),
+          ...(() => {
+            const own = toDate.get(`${p.feat_key}|${week}`) ?? td ?? null;
+            return {
+              td_fd: finite(own?.td_fd ?? null), td_ts: finite(own?.td_ts ?? null),
+              td_attempts: finite(own?.td_attempts ?? null), td_rush_yards: finite(own?.td_rush_yards ?? null),
+            };
+          })(),
           rz_share_td: finite(rzShare.get(week, p.player_sk, p.team)),
           prior_vol_cv: finite(p.player_sk != null ? priorVol.get(String(p.player_sk)) ?? null : null),
           ...(() => {
