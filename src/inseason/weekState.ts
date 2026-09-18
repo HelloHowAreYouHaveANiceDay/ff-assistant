@@ -33,6 +33,7 @@
 import { lockedNflTeams, finishedNflTeams, settledPointsFor, weekKickoffTimes } from "./kickoffLock.js";
 import { normalizeStatus, unknownStatusesSeen, type AvailabilityMap } from "./availability.js";
 import { nameKey } from "../draft/values.js";
+import { feedStatus } from "../data/feeds.js";
 import type { DB } from "../db/db.js";
 
 /** One NFL team's game, as this week's state sees it. */
@@ -57,9 +58,12 @@ export interface WeekState {
    *  spelling we do not know and those men were defaulted to startable -- the exact failure that
    *  made every `Injured Reserve` man look healthy for the whole of 2026. */
   unknownStatuses: string[];
-  /** One line per source, for the caveat. Commit 2 turns this into a typed freshness verdict; until
-   *  then it is the honest minimum: what was read and how much of it there was. */
+  /** One line per source, for the caveat: what was read and how much of it there was. */
   sources: { id: string; rows: number; asOf: string | null }[];
+  /** HOW OLD EVERY REGISTERED FEED IS (src/data/feeds.ts), dated once here and carried onto every
+   *  verb's assumptions. Commit 2 of the week-state design: freshness reached 0 of 10 verbs because
+   *  each would have had to ask for it, and none did. */
+  feeds: import("../data/feeds.js").FeedStatus[];
 }
 
 /**
@@ -79,6 +83,7 @@ export function emptyWeekState(season: number, week: number): WeekState {
     scheduledTeams: 0,
     unknownStatuses: [],
     sources: [],
+    feeds: [],
   };
 }
 
@@ -155,6 +160,7 @@ export function loadWeekState(
     scheduledTeams,
     unknownStatuses: [...unknownStatusesSeen.keys()],
     sources,
+    feeds: feedStatus(db, now),
   };
 }
 

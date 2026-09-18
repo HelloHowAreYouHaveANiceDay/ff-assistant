@@ -45,7 +45,7 @@ CREATE TABLE raw_league_pick (
   PRIMARY KEY ${pickPk});
 CREATE TABLE raw_league_matchup (
   league_id TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL, home_id TEXT NOT NULL, away_id TEXT NOT NULL,
-  fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, week, home_id));
+  fetched_at TEXT NOT NULL, home_score REAL, away_score REAL, PRIMARY KEY (league_id, season, week, home_id));
 CREATE TABLE raw_league_division (
   league_id TEXT NOT NULL, season INTEGER NOT NULL, division_id TEXT NOT NULL, name TEXT, team_ids_json TEXT,
   fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, division_id));`);
@@ -164,7 +164,7 @@ test("FAULT: a name-keyed pick table cannot hold a repeated player", () => {
     acquisitions_by_week_json TEXT, wins INTEGER, losses INTEGER, points_for REAL, final_rank INTEGER, playoff_seed INTEGER,
     fetched_at TEXT, PRIMARY KEY (league_id, season, team_id));
   CREATE TABLE raw_league_matchup (league_id TEXT, season INTEGER, week INTEGER, home_id TEXT, away_id TEXT,
-    fetched_at TEXT, PRIMARY KEY (league_id, season, week, home_id));
+    fetched_at TEXT, home_score REAL, away_score REAL, PRIMARY KEY (league_id, season, week, home_id));
   CREATE TABLE raw_league_division (league_id TEXT, season INTEGER, division_id TEXT, name TEXT, team_ids_json TEXT,
     fetched_at TEXT, PRIMARY KEY (league_id, season, division_id));`);
   assert.throws(

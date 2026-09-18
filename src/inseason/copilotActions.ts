@@ -25,6 +25,7 @@
  */
 import { openDb, logAction } from "../db/db.js";
 import { finishedTeams } from "./weekState.js";
+import { stalenessCaveat } from "../data/feeds.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { loadSimContext, type SimContext } from "../draft/simContext.js";
 import * as C from "./copilot.js";
@@ -130,7 +131,13 @@ export function caveat(a: C.Assumptions): string {
           : "no settled week yet: full-season simulation from preseason lines")
       : "season-so-far unknown",
   ];
-  return `[${bits.join("; ")}]`;
+  // FEED FRESHNESS, ON EVERY VERB. It used to reach ZERO of the ten -- a store whose ESPN cache had
+  // been frozen for nine days produced output indistinguishable from one synced a minute ago. It is
+  // appended OUTSIDE the bracket and only when something is actually stale: a DEGRADED banner on
+  // every run is wallpaper within a week, and the next real staleness scrolls past unread.
+  const stale = a.feeds ? stalenessCaveat(a.feeds) : null;
+  return `[${bits.join("; ")}]${stale ? `
+${stale}` : ""}`;
 }
 
 function summarize(verb: CopilotVerb, r: unknown): string {

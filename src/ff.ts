@@ -113,6 +113,8 @@ async function main() {
       return cmdIngestEspnPayload(rest);
     case "session-check":
       return cmdSessionCheck(rest);
+    case "feeds":
+      return cmdFeeds(rest);
     case "build-features-ext":
       return cmdBuildFeaturesExt(rest);
     case "build-waiver-claims":
@@ -1852,7 +1854,14 @@ async function cmdSyncSchedule(rest: string[]) {
   const db2 = openDb(valueOf(rest, "--db"));
   const now = nowIso();
   const before = (db2.prepare("SELECT count(*) c FROM raw_league_matchup WHERE league_id=? AND season=?").get(leagueId, season) as { c: number }).c;
-  const up = db2.prepare("INSERT OR REPLACE INTO raw_league_matchup VALUES (@l,@s,@w,@h,@a,@now)");
+  // COLUMNS ARE NAMED. This was `VALUES (@l,@s,@w,@h,@a,@now)` -- positional, six values -- and the
+  // moment `raw_league_matchup` gained `home_score`/`away_score` it became `table has 8 columns but
+  // 6 values were supplied`, thrown at PREPARE time, so every `ff sync-schedule` would have failed.
+  // TypeScript cannot see it: the SQL is a string. Naming the columns makes the insert indifferent
+  // to any column added after it, which is the whole reason the sibling writer in leagueHistory.ts
+  // was already written this way.
+  const up = db2.prepare(
+    "INSERT OR REPLACE INTO raw_league_matchup (league_id, season, week, home_id, away_id, fetched_at) VALUES (@l,@s,@w,@h,@a,@now)");
   db2.transaction(() => {
     db2.prepare("DELETE FROM raw_league_matchup WHERE league_id=? AND season=?").run(leagueId, season);
     for (const g of sched.games) up.run({ l: leagueId, s: season, w: g.week, h: String(g.homeId), a: String(g.awayId), now });
@@ -4883,4 +4892,43 @@ async function cmdSessionCheck(rest: string[]) {
     (r.status == null ? "" : `, HTTP ${r.status}`));
   // A NON-ZERO EXIT so this is usable as a gate in a script: `ff session-check && ff sync-rosters`.
   if (!r.ok) process.exitCode = 3;
+}
+
+/**
+ * `ff feeds` -- how old is everything this store decides from, and what to run about it.
+ *
+ * THE SAME REGISTRY THE SERVE READS (`src/data/feeds.ts`). That is the point: a health check that
+ * keeps its own list of feeds and its own idea of "too old" will disagree with the tool it is meant
+ * to be checking, and the disagreement surfaces as a green check beside a degraded recommendation.
+ * One table, two readers.
+ *
+ * Exit 3 when anything is stale or absent, so it gates a script the way `session-check` does:
+ *   ff feeds && ff copilot lineup
+ */
+async function cmdFeeds(rest: string[]) {
+  const { openDb } = await import("./db/db.js");
+  const { feedStatus } = await import("./data/feeds.js");
+  const db = openDb(valueOf(rest, "--db"));
+  let rows;
+  try { rows = feedStatus(db); } finally { db.close(); }
+
+  const mark = (v: string) => (v === "fresh" ? "ok  " : v === "stale" ? "STALE" : v === "absent" ? "NONE " : "?    ");
+  console.log("FEED                 AGE      LIMIT   STATE  POWERS");
+  for (const r of rows) {
+    console.log(
+      `${r.id.padEnd(20)} ${(r.ageHours == null ? "--" : `${r.ageHours}h`).padStart(8)} ${`${r.maxAgeHours}h`.padStart(6)}   ` +
+      `${mark(r.verdict)}  ${r.powers}`);
+  }
+  const bad = rows.filter((r) => r.verdict !== "fresh");
+  if (!bad.length) {
+    console.log(`\nAll ${rows.length} feeds are fresh.`);
+    return;
+  }
+  // THE COMMANDS, DEDUPLICATED AND IN ONE BLOCK. Two stale feeds that share a refresh command
+  // should print that command once -- a list that repeats itself is a list people stop reading.
+  console.log(`\n${bad.length} of ${rows.length} feed(s) need attention:`);
+  for (const r of bad) console.log(`  ${r.note}`);
+  const cmds = [...new Set(bad.map((r) => r.refresh))];
+  console.log(`\nTo refresh:\n${cmds.map((c) => `  ${c}`).join("\n")}`);
+  process.exitCode = 3;
 }

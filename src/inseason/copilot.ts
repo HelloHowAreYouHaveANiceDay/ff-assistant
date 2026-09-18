@@ -233,6 +233,10 @@ export interface Assumptions {
    *  in particular WHICH players fell back to the season line because the weekly projector had no
    *  row for them. A caveat that omits the fallback is a caveat that hides it. */
   basisNote?: string;
+  /** HOW OLD THE INPUTS ARE, per feed (src/data/feeds.ts). Carried on every verb's assumptions so a
+   *  reader can tell a number built on a nine-day-old ESPN cache from one built on a live sync --
+   *  the two were previously indistinguishable. Absent on a hand-built context. */
+  feeds?: import("../data/feeds.js").FeedStatus[];
   /** WHICH QUANTITY THIS RESULT IS MAXIMISING. On every result, because a delta with no objective
    *  attached is the same trap as a probability with no assumptions attached: it reads as a fact. */
   objective: Objective;
@@ -268,6 +272,9 @@ function assumptionsOf(
   trials: number | null, seeds: number[] | null, objective: Objective,
 ): Assumptions {
   return {
+    // Read off the CONTEXT, assembled once with the rest of the week's state -- not re-queried per
+    // verb, which is how it came to reach none of them.
+    ...(ctx.week?.feeds ? { feeds: ctx.week.feeds } : {}),
     schedule: ctx.syntheticSchedule ? "generated" : "real",
     basis,
     trials,
