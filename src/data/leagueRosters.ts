@@ -34,7 +34,7 @@
  * consumer for week w may read rows with `as_of` strictly before week w's FIRST kickoff and no other.
  * Where the schedule is unknown both are NULL, which says "we cannot date this" rather than guessing.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { openDb, nowIso, type DB } from "../db/db.js";
@@ -84,14 +84,44 @@ export function espnCachePath(key: string): string {
 }
 
 /**
+ * A CACHED PAYLOAD IS ONLY AS GOOD AS THE MOMENT IT WAS CAPTURED, and for a boxscore that moment
+ * has to be AFTER the week stopped changing.
+ *
+ * `espnGet` used to return any cache file that existed, forever. That is correct for a settled
+ * week -- its rosters, slots and points are immutable -- and silently wrong for every week that had
+ * not finished when the file was written. ESPN answers a FUTURE `scoringPeriodId` with the roster as
+ * it stands RIGHT NOW, so `box-<lg>-<season>-w9` fetched in September is a September snapshot of a
+ * November lineup, parked under a key that claims to be November's.
+ *
+ * MEASURED, and this is why the rule exists: every one of league 462233's eighteen 2026 boxscores
+ * was captured 2026-09-09 22:52, before week 1 had been played. Nine days and several lineup
+ * changes later, `ingest-raw league-rosters` still re-read those files, still reported
+ * "26,863 rows", and still wrote a week-2 lineup starting a quarterback who had been benched --
+ * a green run that changed nothing, which is this repo's most expensive bug shape.
+ *
+ * `freshAfter` is the fix and it is a DATE, not a TTL: a TTL expires a settled week forever (it is
+ * immutable, so re-fetching it is pure cost) and keeps a live week for however long the TTL is. The
+ * caller states the instant after which a capture is trustworthy, and only a file older than that is
+ * refetched. Absent, behaviour is exactly as before, so every other caller is unchanged.
+ */
+export function cacheCapturedAt(key: string): Date | null {
+  const f = espnCachePath(key);
+  return existsSync(f) ? statSync(f).mtime : null;
+}
+
+/**
  * One cached GET through the app's logged-in ESPN session.
  *
  * A cache hit costs nothing and makes the whole sweep re-runnable offline, which is what lets the
  * tests below run against real payloads with no network and no session.
  */
-export async function espnGet(key: string, url: string, headers?: Record<string, string>): Promise<unknown> {
+export async function espnGet(
+  key: string, url: string, headers?: Record<string, string>, opts?: { freshAfter?: Date | null },
+): Promise<unknown> {
   const f = espnCachePath(key);
-  if (existsSync(f)) return JSON.parse(gunzipSync(readFileSync(f)).toString("utf8"));
+  const fresh = opts?.freshAfter ?? null;
+  const captured = existsSync(f) ? statSync(f).mtime : null;
+  if (captured && !(fresh && captured < fresh)) return JSON.parse(gunzipSync(readFileSync(f)).toString("utf8"));
   const txt = await bridgeFetch(url, headers, 60000);
   let j: unknown;
   try { j = JSON.parse(txt); } catch { throw new Error(`ESPN returned non-JSON for ${key}: ${txt.slice(0, 160)}`); }
@@ -155,20 +185,53 @@ export function parseRosterWeek(payload: unknown, season: number, week: number):
 }
 
 /** Fetch (or read from cache) one season-week. READ-ONLY: a GET through the app's session. */
-export async function fetchRosterWeek(leagueId: string, season: number, week: number): Promise<RosterWeekFetch> {
+export async function fetchRosterWeek(
+  leagueId: string, season: number, week: number, opts?: { freshAfter?: Date | null },
+): Promise<RosterWeekFetch> {
   const url = `${HOST}/seasons/${season}/segments/0/leagues/${leagueId}?scoringPeriodId=${week}&view=mBoxscore`;
   try {
-    return parseRosterWeek(await espnGet(`box-${leagueId}-${season}-w${week}`, url), season, week);
+    const payload = await espnGet(`box-${leagueId}-${season}-w${week}`, url, undefined, { freshAfter: opts?.freshAfter ?? null });
+    return parseRosterWeek(payload, season, week);
   } catch (e) {
     return { season, week, available: false, rows: [], note: String((e as Error).message).slice(0, 160) };
   }
+}
+
+/**
+ * THE INSTANT AFTER WHICH A CAPTURE OF THIS WEEK'S PAYLOAD CAN BE TRUSTED.
+ *
+ * Shared by the boxscore sweep and the transaction sweep: both ask ESPN for one scoring period, and
+ * both get an answer that keeps changing until that period's last game has been played.
+ *
+ * A week stops changing once its last kickoff is behind us, so a capture is trustworthy only if it
+ * was taken AFTER that -- and a day of slack is added because the last game of a week kicks off in
+ * the evening US time and finishes in the NEXT UTC day, so a file stamped with the kickoff date
+ * itself may well have been written while that game was still being played.
+ *
+ * A week whose last kickoff is today or later has not settled at all, so nothing cached for it is
+ * trustworthy and the answer is "now" -- i.e. always refetch. Returning null means the store has no
+ * schedule for that week and freshness cannot be judged; the caller then keeps the old
+ * cache-forever behaviour rather than hammering ESPN on a guess.
+ */
+export function weekPayloadFreshAfter(kick: Map<string, { first: string; last: string }>, season: number, week: number, today = new Date()): Date | null {
+  const k = kick.get(`${season}|${week}`);
+  if (!k?.last) return null;
+  const day = today.toISOString().slice(0, 10);
+  if (k.last >= day) return today;                       // in progress or still to come: never cache
+  const settled = new Date(`${k.last}T00:00:00.000Z`);
+  settled.setUTCDate(settled.getUTCDate() + 1);          // one day of slack past the last kickoff
+  return settled;
 }
 
 // -------------------------------------------------------------------------------------------
 // LOAD
 // -------------------------------------------------------------------------------------------
 
-export interface RosterWeekCounts { weeks: number; available: number; rows: number; starters: number }
+export interface RosterWeekCounts {
+  weeks: number; available: number; rows: number; starters: number;
+  /** Rows deleted because the man is no longer on that week's roster. See the DELETE in the writer. */
+  removed: number;
+}
 
 /** The week's kickoff window, from `raw_nfl_game`. NULL where the schedule is not in the store. */
 export function weekKickoffs(db: DB): Map<string, { first: string; last: string }> {
@@ -199,12 +262,45 @@ export function loadLeagueRosterWeeks(db: DB, leagueId: string, weeks: RosterWee
        acquisition_type=excluded.acquisition_type, acquisition_date=excluded.acquisition_date,
        as_of=excluded.as_of, as_of_start=excluded.as_of_start, as_of_end=excluded.as_of_end,
        fetched_at=excluded.fetched_at, pro_team=excluded.pro_team`);
-  const c: RosterWeekCounts = { weeks: 0, available: 0, rows: 0, starters: 0 };
+  /**
+   * A PLAYER WHO IS NO LONGER ON THE ROSTER MUST LEAVE IT, and an upsert alone cannot say so.
+   *
+   * `ON CONFLICT ... DO UPDATE` can only add or amend a row; nothing in it removes one. So every man
+   * ever seen in a (league, season, week) stayed in that week forever, carrying whatever
+   * `is_starter` and `lineup_slot_id` he had the last time he WAS there. Once the boxscore cache
+   * began serving fresh payloads this surfaced immediately: league 462233's week 2 held 13 men and
+   * NINE starters for a 12-man, 8-start roster -- a dropped receiver still seated in a FLEX slot he
+   * had vacated days earlier. The store's own guard caught it (`roster size is not 12`,
+   * `starter count is not 8`), which is the only reason it is a fixed bug and not a silent one.
+   *
+   * SCOPED, and deliberately narrowly: only a week the fetch actually RETURNED is reconciled. A week
+   * that came back unavailable -- a network failure, an expired session, a season whose games have
+   * ended -- deletes nothing, because "ESPN told us nobody is on this roster" and "we could not ask"
+   * are the same empty list, and treating the second as the first would erase real history.
+   *
+   * THE KEY IS (TEAM, PLAYER), NOT PLAYER. Keying the keep-set on `espn_player_id` alone looks right
+   * and quietly misses the commonest case there is: a man who CHANGED TEAMS inside the league. He is
+   * still somewhere in the week's payload, so a player-keyed delete keeps BOTH his new row and the
+   * stale one on his old roster, and the team he left keeps starting him. That is exactly how league
+   * 462233's week 2 held a receiver in a FLEX slot on a team that had traded him away -- the first
+   * version of this delete ran, reported 112 rows removed, and left him there.
+   */
+  const del = db.prepare(
+    `DELETE FROM raw_league_roster_week
+      WHERE league_id=@l AND season=@s AND week=@w
+        AND (team_id || '|' || espn_player_id) NOT IN (SELECT value FROM json_each(@keep))`);
+  const c: RosterWeekCounts = { weeks: 0, available: 0, rows: 0, starters: 0, removed: 0 };
   db.transaction(() => {
     for (const wk of weeks) {
       const k = kick.get(`${wk.season}|${wk.week}`) ?? null;
       c.weeks++;
       if (wk.available) c.available++;
+      if (wk.available && wk.rows.length) {
+        c.removed += del.run({
+          l: leagueId, s: wk.season, w: wk.week,
+          keep: JSON.stringify(wk.rows.map((r) => `${r.teamId}|${r.espnPlayerId}`)),
+        }).changes;
+      }
       for (const r of wk.rows) {
         up.run({
           l: leagueId, s: r.season, w: r.week, t: r.teamId, p: r.espnPlayerId, name: r.name, pos: r.position,
@@ -364,7 +460,7 @@ export async function ingestPlatformRosterWeeks(opts: {
     }
     const season = opts.season ?? ctx.rowSeason ?? ctx.config.season;
     const weeks = opts.weeks ?? settledWeeks(db, season, opts.today ?? localDate());
-    if (!weeks.length) return { counts: { weeks: 0, available: 0, rows: 0, starters: 0 }, checks: readBackRosterWeeks(db, leagueId), findings: [], weeks: [], platform: plat.id };
+    if (!weeks.length) return { counts: { weeks: 0, available: 0, rows: 0, starters: 0, removed: 0 }, checks: readBackRosterWeeks(db, leagueId), findings: [], weeks: [], platform: plat.id };
     const { bridgePlatformIO } = await import("../league/platform.js");
     const io = bridgePlatformIO(plat.webview.host, 40000);
     const pause = opts.pauseMs ?? 400;
@@ -394,8 +490,8 @@ function localDate(d = new Date()): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: number[]; pauseMs?: number; leagueId?: string })
-  : Promise<{ counts: RosterWeekCounts; checks: RosterWeekCheck[]; findings: GuardFinding[] }> {
+export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: number[]; pauseMs?: number; leagueId?: string; refetch?: boolean })
+  : Promise<{ counts: RosterWeekCounts; checks: RosterWeekCheck[]; findings: GuardFinding[]; refetched: number }> {
   const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
   const db = openDb(opts.dbPath);
   try {
@@ -404,16 +500,25 @@ export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: numb
     const leagueId = requirePlatform(resolveLeagueContext(db, opts.leagueId), "espn", "ingest league-rosters", "syncRosters");
     const pause = opts.pauseMs ?? 600;
     const fetched: RosterWeekFetch[] = [];
+    // AN UNSETTLED WEEK IS REFETCHED, a settled one is served from cache -- see `weekPayloadFreshAfter`.
+    // The count is reported rather than assumed: "0 refetched" on a live week is the signature of the
+    // bug this replaced, and it is only visible if the number is printed.
+    const kick = weekKickoffs(db);
+    let refetched = 0;
     for (const season of opts.seasons) {
       for (let w = 1; w <= weeksInSeason(season); w++) {
         const before = Date.now();
-        const hit = existsSync(espnCachePath(`box-${leagueId}-${season}-w${w}`));
-        fetched.push(await fetchRosterWeek(leagueId, season, w));
-        if (!hit && Date.now() - before < pause) await new Promise((r) => setTimeout(r, pause));
+        const key = `box-${leagueId}-${season}-w${w}`;
+        const freshAfter = opts.refetch ? new Date() : weekPayloadFreshAfter(kick, season, w);
+        const captured = cacheCapturedAt(key);
+        const willFetch = !captured || (freshAfter != null && captured < freshAfter);
+        if (willFetch) refetched++;
+        fetched.push(await fetchRosterWeek(leagueId, season, w, { freshAfter }));
+        if (willFetch && Date.now() - before < pause) await new Promise((r) => setTimeout(r, pause));
       }
     }
     const counts = loadLeagueRosterWeeks(db, leagueId, fetched, nowIso());
     const checks = readBackRosterWeeks(db, leagueId);
-    return { counts, checks, findings: checkRosterWeeks(checks) };
+    return { counts, checks, findings: checkRosterWeeks(checks), refetched };
   } finally { db.close(); }
 }

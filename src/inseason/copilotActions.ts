@@ -24,6 +24,7 @@
  * a caller cannot forget to log if there is no path that reaches the answer without logging.
  */
 import { openDb, logAction } from "../db/db.js";
+import { finishedNflTeams, lockedNflTeams, settledPointsFor, weekKickoffTimes } from "./kickoffLock.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { loadSimContext, type SimContext } from "../draft/simContext.js";
 import * as C from "./copilot.js";
@@ -251,6 +252,32 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // week by hand (docs/weekly-missingness-ablation-2026-09-16.md). The caveat now NAMES the
       // columns, so a reader can tell a degraded lineup from a full one without running a script.
       const dark: string[] = [];
+      // WHO IS ALREADY PLAYING. Read here, at the edge, rather than inside `lineupRecommend` --
+      // that function is pure and a recommendation that silently depended on wall-clock time could
+      // not be reproduced in a backtest. `kickedOff` empty is the normal answer before the week's
+      // first game; `scheduled` beside it is what tells "nobody has played yet" apart from "the
+      // store has no schedule for this week", which would otherwise look identical.
+      let kickedOff = new Set<string>();
+      let scheduled = 0;
+      let finished = new Set<string>();
+      let finishedByScore = 0;
+      let settledPoints = new Map<string, number>();
+      const dbLock = openDb(dbPath);
+      try {
+        kickedOff = lockedNflTeams(dbLock, ctx.season, wk);
+        scheduled = weekKickoffTimes(dbLock, ctx.season, wk).size;
+        // FINISHED is a separate question from LOCKED -- see kickoffLock.ts. Only a finished man is
+        // priced at what he scored; a man mid-game keeps his projection, because his running total
+        // is not his final one.
+        const fin = finishedNflTeams(dbLock, ctx.season, wk);
+        finished = new Set([...fin.byScore, ...fin.byElapsed]);
+        finishedByScore = fin.byScore.size;
+        // The league id the rest of this dispatcher already resolves from; `settledPointsFor` is
+        // per league, so an unresolved id must read NOTHING rather than another league's scores.
+        const lg = leagueId ?? resolveLeagueContext(dbLock, null).leagueId;
+        if (lg) settledPoints = settledPointsFor(dbLock, String(lg), ctx.season, wk);
+      } catch { /* no schedule ingested: nothing is locked, which is the safe direction */ }
+      finally { dbLock.close(); }
       {
         const db = openDb(dbPath);
         try {
@@ -265,9 +292,22 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       }
       const res = C.lineupRecommend(ctx, wk, {
         provenance, availability: S.loadAvailability(dbPath), weekly,
-        objective, bands: withBands?.bands, nflOpp,
+        objective, bands: withBands?.bands, nflOpp, locked: kickedOff, finished, settledPoints,
         winprob: { sims: a.trials ?? 8000, seed: a.seed ?? 7 },
       });
+      if (scheduled) {
+        res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; ${kickedOff.size} of ${scheduled} ` +
+          `NFL teams have kicked off in week ${wk}` +
+          (kickedOff.size
+            ? ` (${[...kickedOff].sort().join(", ")}) -- rostered men on those teams are LOCKED where they sit and ` +
+              `the lineup below cannot move them. ${finished.size} of those teams have FINISHED` +
+              (finishedByScore < finished.size
+                ? ` (${finishedByScore} from a stored final score, ${finished.size - finishedByScore} ASSUMED finished ` +
+                  "because four hours have passed since kickoff and no score has been ingested)"
+                : " (from stored final scores)") +
+              "; their men are priced at what they actually scored. Anyone locked but still PLAYING keeps his projection."
+            : " -- nothing is locked, so every slot is still movable.");
+      }
       if (dark.length) {
         res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; DEGRADED -- ${dark.length} model ` +
           `feature(s) are 100% ABSENT at this week and were populated at the same week in prior seasons: ` +

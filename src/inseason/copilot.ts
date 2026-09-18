@@ -453,6 +453,15 @@ export interface LineupResultJson {
   bench: LineupPlayer[];
   unavailable: { name: string; pos: string; reason: string }[];
   totalProj: number;
+  /**
+   * HOW MUCH OF `totalProj` IS ALREADY BANKED rather than forecast.
+   *
+   * Present only once at least one starter's game is over. `banked` is the sum of their REAL scores;
+   * `projected` is the rest. The two are separated because they are different kinds of number and a
+   * single headline hides that: on the Friday of week 2 this league's lineup read "89.9 projected
+   * pts" when 35.0 of it had been scored the night before and could not change.
+   */
+  settled?: { banked: number; projected: number; players: { name: string; pts: number }[] };
   flags: string[];
   assumptions: Assumptions;
   /** Which objective produced `starters`. Always present, so a consumer never has to infer it from
@@ -585,6 +594,30 @@ export function lineupRecommend(
      *  DST that shares an NFL game with one of our offensive starters (they partly cancel). Absent,
      *  no such flag is produced -- the default is unchanged. */
     nflOpp?: Map<string, string>;
+    /**
+     * THE NFL TEAMS WHOSE GAME HAS ALREADY KICKED OFF (UPPER abbrev), from
+     * `lockedNflTeams(db, season, week)`. A rostered man on one of them cannot be moved, so he holds
+     * his current slot and the optimizer may neither seat nor unseat him.
+     *
+     * Absent means "nothing is locked", which is both the correct answer before the week's first
+     * kickoff and the behaviour every existing caller had. It is deliberately NOT defaulted to a
+     * live clock read inside this function: this file is pure, and a recommendation that silently
+     * depended on wall-clock time would be unreproducible in a backtest.
+     */
+    locked?: Set<string>;
+    /**
+     * WHAT A MAN WHOSE GAME IS OVER ACTUALLY SCORED, by `player_id`, from
+     * `settledPointsFor(db, league, season, week)`.
+     *
+     * Applied ONLY to a man whose NFL team is in `finished` -- kicked off is not the same as
+     * finished, and a running score substituted for a projection would price a receiver with one
+     * first-quarter catch at 1.4 points for the week. Where it applies, he stops being a
+     * distribution and becomes a constant: his band collapses to a point at the value he scored,
+     * which is what he is.
+     */
+    settledPoints?: Map<string, number>;
+    /** NFL teams whose game is OVER (union of `finishedNflTeams`). Gates `settledPoints`. */
+    finished?: Set<string>;
   } = {},
 ): LineupResultJson {
   const availability = o.availability ?? new Map<string, AvailabilityEntry>();
@@ -622,6 +655,9 @@ export function lineupRecommend(
    *  line. Counted so `basisNote` can say which of the two it was -- a caveat that named the wrong
    *  one would be the same defect as the NaN it replaced, one layer up. */
   const blendedBack: string[] = [];
+  /** Men whose game is over and whose real score replaced their projection. Named, and totalled, so
+   *  a reader can see how much of the headline number is already banked rather than forecast. */
+  const settled: { name: string; pts: number }[] = [];
   const seasonFallback = (p: { name: string; proj: number; rosPerGame?: number }): number => {
     const v = perGameStrength(p, perWeek);
     if (Number.isFinite(v)) {
@@ -637,7 +673,21 @@ export function lineupRecommend(
     const wk = o.weekly?.get(lineupNameKey(p.name));
     if (o.weekly) { if (wk != null && Number.isFinite(wk)) fromWeekly++; else fellBack.push(p.name); }
     const pts = wk != null && Number.isFinite(wk) ? wk : seasonFallback(p);
-    return { name: p.name, pos: p.pos, proj: r2(pts), available: why == null, reason: why ?? "available" };
+    // KICKOFF LOCK. `o.locked` is the set of NFL teams whose week has started; a man on one of them
+    // holds wherever he currently sits. Absent, nothing is locked and the assignment is exactly what
+    // it was -- which is what every caller that does not pass it still gets.
+    const nflTeam = p.team ? String(p.team).toUpperCase() : null;
+    const locked = o.locked != null && !!nflTeam && o.locked.has(nflTeam);
+    // SETTLED: his game is OVER and the league has scored him. He is no longer a projection.
+    const done = o.finished != null && !!nflTeam && o.finished.has(nflTeam);
+    const actual = done && p.playerId != null ? o.settledPoints?.get(p.playerId) : undefined;
+    if (actual != null && Number.isFinite(actual)) settled.push({ name: p.name, pts: r2(actual) });
+    return {
+      name: p.name, pos: p.pos,
+      proj: actual != null && Number.isFinite(actual) ? r2(actual) : r2(pts),
+      available: why == null, reason: why ?? "available",
+      ...(locked ? { locked: true, lockedSlot: p.slot ?? null } : {}),
+    };
   });
   const res = optimalLineup(players, ctx.slots, ctx.flexOk);
   assertStartersAvailable(res.starters, roster, week, availability);
@@ -686,10 +736,39 @@ export function lineupRecommend(
         team: p.team ?? null,
         proj: r2(pts),
         band: o.bands?.get(k) ?? null,
+        ...(o.locked != null && p.team && o.locked.has(String(p.team).toUpperCase())
+          ? { locked: true, lockedSlot: p.slot ?? null } : {}),
       };
     });
-    const oursWp = toWp(roster);
-    const theirsWp = toWp(opp.roster).filter((p) => p.available);
+
+    /**
+     * A FINISHED MAN IS A CONSTANT, and the sampler has to be told so explicitly.
+     *
+     * Leaving his band alone would draw him from a pre-game distribution he has already resolved --
+     * a receiver who scored 4.3 would keep contributing a 1.8-to-23.9 spread to our variance, which
+     * is the single biggest input to P(win). Collapsing the band to a point at what he actually
+     * scored is not a modelling choice; it is the only description of a completed game.
+     *
+     * `pZero` is deliberately dropped: a two-part band's zero atom is a statement about a game that
+     * might not happen, and this one did.
+     */
+    const settleWp = (list: WinProbPlayer[], rs: typeof roster): WinProbPlayer[] => {
+      const byName = new Map(rs.map((r) => [r.name, r]));
+      return list.map((w) => {
+        const r = byName.get(w.name);
+        const nfl = r?.team ? String(r.team).toUpperCase() : null;
+        const done = o.finished != null && !!nfl && o.finished.has(nfl);
+        const actual = done && r?.playerId != null ? o.settledPoints?.get(r.playerId) : undefined;
+        if (actual == null || !Number.isFinite(actual)) return w;
+        const v = r2(actual);
+        return { ...w, proj: v, band: { mean: v, p10: v, p50: v, p90: v } };
+      });
+    };
+    const oursWp = settleWp(toWp(roster), roster);
+    // THE OPPONENT IS SETTLED TOO. Half of a head-to-head margin is his, and pricing his finished
+    // players at their pre-game bands while ours are constants would bias every probability in our
+    // favour on exactly the days the question matters most.
+    const theirsWp = settleWp(toWp(opp.roster), opp.roster).filter((p) => p.available);
     const r = winProbLineup(oursWp, opponentStarters(theirsWp, ctx.slots, ctx.flexOk), ctx.slots, ctx.flexOk, o.winprob);
     wp = { ...r, opponent: opp.name, opponentTeamId: opp.id };
     assertStartersAvailable(r.starters, roster, week, availability);
@@ -801,13 +880,33 @@ export function lineupRecommend(
   };
   const flexSet = ctx.flexOk ? new Set(ctx.flexOk) : undefined;
   const contested: LineupContest[] = [];
+  /**
+   * A LOCKED MAN IS NOT A CONTEST, on either side of it.
+   *
+   * `contested` exists to say how close a DECISION was, and a decision the manager cannot take is
+   * not close -- it is not a decision. Before this, the morning after a Thursday game the serve
+   * reported "QB Bo Nix over Jared Goff by -1.47" about a quarterback who had already played and
+   * could not be started: a NEGATIVE margin, which reads as "you are starting the worse man", about
+   * the only lineup that was legal. And it named our two locked Detroit receivers as contested
+   * slots when neither could be moved at all.
+   *
+   * So a locked STARTER's slot is skipped (nothing can replace him) and a locked BENCH man is never
+   * offered as the alternative (he cannot come in). This is the same constraint `optimalLineup` and
+   * the winprob swap search now apply, at the layer that REPORTS rather than decides -- and it has
+   * to be applied here too, because a caveat that contradicts the lineup it describes is worse than
+   * no caveat: the reader believes the sentence, not the assignment.
+   */
+  const lockedNames = new Set(
+    roster.filter((p) => o.locked != null && p.team && o.locked.has(String(p.team).toUpperCase())).map((p) => p.name),
+  );
   for (const s of starters) {
     if (s.name === "(empty)") continue;
+    if (lockedNames.has(s.name)) continue;
     const admits = slotAdmits(s.slot, flexSet);
-    // The best man who is SITTING, is available, and could legally take this slot.
+    // The best man who is SITTING, is available, is NOT locked, and could legally take this slot.
     let alt: (typeof bench)[number] | null = null;
     for (const b of bench) {
-      if (!b.available || !admits.includes(b.pos)) continue;
+      if (!b.available || !admits.includes(b.pos) || lockedNames.has(b.name)) continue;
       if (alt == null || b.proj > alt.proj) alt = b;
     }
     if (!alt) continue;
@@ -821,6 +920,19 @@ export function lineupRecommend(
       margin: r2(s.proj - alt.proj),
       marginBandFrac: width != null && width > 0 ? r3(Math.abs(s.proj - alt.proj) / width) : null,
     });
+  }
+  // THE SETTLED SPLIT SAYS ITSELF FIRST, because it changes how every other number in this result
+  // should be read: a total that is half banked is not a forecast, and a win probability computed
+  // over it is much tighter than one computed before kickoff.
+  {
+    const startedNow = new Set(starters.map((x) => x.name));
+    const seated = settled.filter((x) => startedNow.has(x.name));
+    if (seated.length) {
+      const b = seated.reduce((a, x) => a + x.pts, 0);
+      assumptions.basisNote += `; ${seated.length} starter(s) have FINISHED and are priced at what they ` +
+        `actually scored, not at a projection: ${seated.map((x) => `${x.name} ${x.pts.toFixed(1)}`).join(", ")} ` +
+        `-- ${b.toFixed(1)} points of the total are BANKED and cannot change`;
+    }
   }
   // THE CAVEAT SAYS IT, because a result nobody reads the JSON of is a result that did not say it.
   // The TIGHTEST contest is the one that decides whether the recommendation is a recommendation.
@@ -837,13 +949,24 @@ export function lineupRecommend(
         : " (no served band for either man, so how close that is cannot be stated)");
   }
 
+  // THE BANKED/FORECAST SPLIT, over the men who were actually SEATED. `settled` above is every man
+  // on the roster whose game is over; only the started ones contribute to the headline total, and
+  // reporting the bench's settled points inside it would overstate what is locked in.
+  const startedNames = new Set(starters.map((x) => x.name));
+  const seatedSettled = settled.filter((x) => startedNames.has(x.name));
+  const banked = r2(seatedSettled.reduce((a, x) => a + x.pts, 0));
+  const total = wp ? wp.totalProj : r2(res.totalProj);
+
   return {
     week,
     starters,
     contested,
     bench,
     unavailable,
-    totalProj: wp ? wp.totalProj : r2(res.totalProj),
+    totalProj: total,
+    ...(seatedSettled.length
+      ? { settled: { banked, projected: r2(total - banked), players: seatedSettled } }
+      : {}),
     flags: [...res.flags, ...extraFlags],
     assumptions,
     objective,

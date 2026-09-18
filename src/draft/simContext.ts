@@ -148,7 +148,10 @@ export async function loadSimContext(opts: {
   const ownedIds = new Set<string>();
   const byTeam = new Map<string, SeasonTeamInput>();
   const unmatched: string[] = [];
-  for (const r of db.prepare("SELECT player_id, team_id, team_abbrev, owner FROM ownership WHERE league_id=?").all(lgRow.league_id) as { player_id: string; team_id: string; team_abbrev: string; owner: string }[]) {
+  // `slot` is carried so a surface that must know WHERE a man currently sits can ask -- the lineup
+  // serve needs it to honour a kickoff lock (src/inseason/kickoffLock.ts): a locked man holds the
+  // slot he is in, and "which slot" is a fact about the league roster, not about the board.
+  for (const r of db.prepare("SELECT player_id, team_id, team_abbrev, owner, slot FROM ownership WHERE league_id=?").all(lgRow.league_id) as { player_id: string; team_id: string; team_abbrev: string; owner: string; slot: string | null }[]) {
     ownedIds.add(r.player_id);
     // ESPN keys defenses by NICKNAME ("packers"); the board keys them by ABBREVIATION ("gb"). The
     // alias table for exactly this has existed in values.ts since the draft-room lookup needed it,
@@ -160,7 +163,7 @@ export async function loadSimContext(opts: {
     if (!b) { unmatched.push(r.player_id); continue; }
     if (alias) ownedIds.add(alias);
     if (!byTeam.has(r.team_id)) byTeam.set(r.team_id, { id: r.team_id, name: r.team_abbrev || r.owner, roster: [] });
-    byTeam.get(r.team_id)!.roster.push({ ...b, bye: byeOf.get(nameKey(b.name)) ?? null });
+    byTeam.get(r.team_id)!.roster.push({ ...b, bye: byeOf.get(nameKey(b.name)) ?? null, slot: r.slot ?? null, playerId: r.player_id });
   }
   // A roster row that matches nothing used to be skipped in silence, which is why the defect above
   // survived: an incomplete roster and a correct one produce the same output, and the simulator

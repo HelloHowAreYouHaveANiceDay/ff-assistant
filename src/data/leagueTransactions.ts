@@ -27,8 +27,7 @@
  * missing value here, it is a free-agent pickup.
  */
 import { openDb, nowIso, type DB } from "../db/db.js";
-import { espnGet, espnRoot, espnCachePath, weeksInSeason, weekKickoffs } from "./leagueRosters.js";
-import { existsSync } from "node:fs";
+import { espnGet, espnRoot, cacheCapturedAt, weekPayloadFreshAfter, weeksInSeason, weekKickoffs } from "./leagueRosters.js";
 import { ESPN_READS_BASE as HOST } from "./espnApi.js";
 
 
@@ -43,8 +42,35 @@ export interface TransactionItemRow {
   bidAmount: number | null; status: string | null; executionType: string | null; isPending: number;
 }
 
+/**
+ * A TRANSACTION ESPN RETURNED THAT PRODUCED NO ROWS, and the reason this type exists at all.
+ *
+ * The log is stored ONE ROW PER ITEM, so a transaction whose `items` array is empty contributes
+ * nothing -- and was, until 2026-09-18, discarded in silence. That is not a hypothetical: ESPN
+ * serves a trade between two OTHER teams as a container with `items: []` (our own trades come back
+ * with their items intact), so a third-party trade was invisible to every surface that reads this
+ * table while the ingest reported its row count and succeeded.
+ *
+ * Measured on league 462233: a 14 <-> 13 trade on 2026-09-17 moving Jalen Hurts and Ladd McConkey
+ * appeared in the payload TWICE -- `TRADE_ACCEPT` with `status: undefined` and `TRADE_UPHOLD`
+ * EXECUTED -- both with zero items, and neither produced a row. It was found only because a
+ * ROSTER-move cross-check disagreed with `ownership` on exactly two players out of 48.
+ *
+ * So they are COUNTED AND NAMED rather than dropped. The rows still cannot be written -- ESPN did
+ * not say who moved, and inventing the players would be worse than reporting the gap -- but "ESPN
+ * withheld the items of N transactions" and "there were no transactions" are now different
+ * sentences, which is the whole point.
+ */
+export interface ItemlessTransaction {
+  transactionId: string; type: string; status: string | null; teamId: string; executedAt: string | null;
+}
+
 export interface TransactionWeekFetch {
   season: number; week: number; available: boolean; note: string | null; rows: TransactionItemRow[];
+  /** Transactions ESPN returned with no items -- see `ItemlessTransaction`. Never silently dropped. */
+  itemless: ItemlessTransaction[];
+  /** Items ESPN returned with no `playerId`. Same rule: counted, not assumed to be zero. */
+  itemsWithoutPlayer: number;
 }
 
 interface EspnItem { playerId?: number; type?: string; fromTeamId?: number; toTeamId?: number; fromLineupSlotId?: number; toLineupSlotId?: number }
@@ -58,12 +84,22 @@ interface EspnTx {
 export function parseTransactionWeek(payload: unknown, season: number, week: number): TransactionWeekFetch {
   const j = espnRoot(payload);
   const tx = (j.transactions ?? []) as EspnTx[];
-  if (!Array.isArray(tx)) return { season, week, available: false, rows: [], note: "no transactions array in the payload" };
+  if (!Array.isArray(tx)) return { season, week, available: false, rows: [], itemless: [], itemsWithoutPlayer: 0, note: "no transactions array in the payload" };
   const rows: TransactionItemRow[] = [];
+  const itemless: ItemlessTransaction[] = [];
+  let itemsWithoutPlayer = 0;
   for (const t of tx) {
     const items = t.items ?? [];
+    // ZERO ITEMS IS A FACT ABOUT THE PAYLOAD, NOT AN ABSENCE OF ONE. See `ItemlessTransaction`.
+    if (!items.length) {
+      itemless.push({
+        transactionId: String(t.id ?? ""), type: String(t.type ?? ""), status: t.status ?? null,
+        teamId: String(t.teamId ?? ""), executedAt: t.proposedDate ? localIso(t.proposedDate) : null,
+      });
+      continue;
+    }
     items.forEach((it, i) => {
-      if (it.playerId == null) return;
+      if (it.playerId == null) { itemsWithoutPlayer++; return; }
       rows.push({
         season, week: Number(t.scoringPeriodId ?? week),
         transactionId: String(t.id ?? `${season}-${week}-${rows.length}`), itemNo: i,
@@ -82,7 +118,16 @@ export function parseTransactionWeek(payload: unknown, season: number, week: num
       });
     });
   }
-  return { season, week, available: rows.length > 0, rows, note: rows.length ? null : "ESPN returned no transactions for this scoring period" };
+  return {
+    season, week, available: rows.length > 0, rows, itemless, itemsWithoutPlayer,
+    // THE NOTE MUST SEPARATE THE THREE CASES, and the first draft of this did not: with zero rows
+    // AND withheld items it still said "ESPN returned no transactions", which is the precise
+    // confusion the itemless count exists to remove. Caught by the test, not by reading the code.
+    note: itemless.length
+      ? `${itemless.length} transaction(s) carried NO items and produced no rows` +
+        (rows.length ? "" : " -- ESPN returned transactions for this period but none could be stored")
+      : (rows.length ? null : "ESPN returned no transactions for this scoring period"),
+  };
 }
 
 /** LOCAL date-time, seconds resolution. The repo's dates are local; a UTC render would move a
@@ -93,12 +138,15 @@ export function localIso(ms: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-export async function fetchTransactionWeek(leagueId: string, season: number, week: number): Promise<TransactionWeekFetch> {
+export async function fetchTransactionWeek(
+  leagueId: string, season: number, week: number, opts?: { freshAfter?: Date | null },
+): Promise<TransactionWeekFetch> {
   const url = `${HOST}/seasons/${season}/segments/0/leagues/${leagueId}?scoringPeriodId=${week}&view=mTransactions2`;
   try {
-    return parseTransactionWeek(await espnGet(`tx-${leagueId}-${season}-w${week}`, url), season, week);
+    const payload = await espnGet(`tx-${leagueId}-${season}-w${week}`, url, undefined, { freshAfter: opts?.freshAfter ?? null });
+    return parseTransactionWeek(payload, season, week);
   } catch (e) {
-    return { season, week, available: false, rows: [], note: String((e as Error).message).slice(0, 160) };
+    return { season, week, available: false, rows: [], itemless: [], itemsWithoutPlayer: 0, note: String((e as Error).message).slice(0, 160) };
   }
 }
 
@@ -193,22 +241,38 @@ export function readBackTransactions(db: DB, leagueId: string): TransactionCheck
 }
 
 export async function ingestLeagueTransactions(opts: { dbPath?: string; seasons: number[]; pauseMs?: number; leagueId?: string })
-  : Promise<{ counts: TransactionCounts; checks: TransactionCheck[] }> {
+  : Promise<{ counts: TransactionCounts; checks: TransactionCheck[]; refetched: number; itemless: ItemlessTransaction[]; itemsWithoutPlayer: number }> {
   const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
   const db = openDb(opts.dbPath);
   try {
     const leagueId = requirePlatform(resolveLeagueContext(db, opts.leagueId), "espn", "ingest league-transactions", "syncTransactions");
     const pause = opts.pauseMs ?? 400;
+    // THE SAME FRESHNESS RULE THE BOXSCORE SWEEP USES, and for the same reason. A scoring period's
+    // transaction log keeps growing all week -- every add, drop, waiver claim and trade lands in the
+    // CURRENT period -- so a cached payload for an unfinished week is a snapshot of a log that has
+    // since moved on. Measured before this landed: league 462233's 2026 caches were all written
+    // 2026-09-12 15:19, the newest stored transaction was 2026-09-10, and every trade and waiver
+    // move the league had made in the eight days since was invisible to every surface that reads
+    // this table -- while the ingest reported its row count and succeeded.
+    const kick = weekKickoffs(db);
+    let refetched = 0;
     const fetched: TransactionWeekFetch[] = [];
     for (const season of opts.seasons) {
       for (let w = 1; w <= weeksInSeason(season); w++) {
-        const hit = existsSync(espnCachePath(`tx-${leagueId}-${season}-w${w}`));
-        fetched.push(await fetchTransactionWeek(leagueId, season, w));
-        if (!hit) await new Promise((r) => setTimeout(r, pause));
+        const freshAfter = weekPayloadFreshAfter(kick, season, w);
+        const captured = cacheCapturedAt(`tx-${leagueId}-${season}-w${w}`);
+        const willFetch = !captured || (freshAfter != null && captured < freshAfter);
+        if (willFetch) refetched++;
+        fetched.push(await fetchTransactionWeek(leagueId, season, w, { freshAfter }));
+        if (willFetch) await new Promise((r) => setTimeout(r, pause));
       }
     }
     const counts = loadLeagueTransactions(db, leagueId, fetched, nowIso());
-    return { counts, checks: readBackTransactions(db, leagueId) };
+    // AGGREGATED AND RETURNED, not logged and forgotten: the caller prints it, and a run where ESPN
+    // withheld a trade's items now looks different from a run where nothing happened.
+    const itemless = fetched.flatMap((f) => f.itemless);
+    const itemsWithoutPlayer = fetched.reduce((a, f) => a + f.itemsWithoutPlayer, 0);
+    return { counts, checks: readBackTransactions(db, leagueId), refetched, itemless, itemsWithoutPlayer };
   } finally { db.close(); }
 }
 

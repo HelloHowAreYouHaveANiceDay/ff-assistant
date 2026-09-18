@@ -272,14 +272,36 @@ test("ROSTER_DEPTH re-measured from fact_roster_week agrees with the constant", 
       t.diagnostic("SKIPPED: this store names no active league, so the depths cannot be attributed to one.");
       return;
     }
+    // SETTLED SEASONS ONLY (2026-09-18). `ROSTER_DEPTH` describes how deep a league carries each
+    // position over a FULL season, and an in-progress one is not evidence about that: it contributes
+    // a couple of league-weeks against another season's seventeen, weighted equally, while carrying
+    // a different team count. When the 2026 rows first landed -- two weeks of a sixteen-team season
+    // against eight fourteen-team ones -- two positions tipped through `Math.ceil` (K 18 -> 17,
+    // RB 55 -> 54) purely on composition, with every underlying row correct.
+    //
+    // Excluding unsettled seasons reproduces the pinned constants EXACTLY, all six, which is the
+    // check that says this is a scoping fix and not a quiet re-pin: the constants are untouched and
+    // `POPULATION_DEPTH` -- which sets the weekly model's population -- does not move. Re-pinning
+    // them would be a change to a shipped value and belongs behind the gate, not inside a test.
+    //
+    // `settled` is the league-fact table's own flag (every final_rank present and a champion named),
+    // so this tracks reality rather than a hardcoded season list that would rot every January.
+    const settled = (db.prepare(
+      "SELECT season FROM fact_team_season WHERE league_id = ? AND settled = 1 GROUP BY season",
+    ).all(league) as { season: number }[]).map((r) => r.season);
+    if (!settled.length) {
+      t.diagnostic("SKIPPED: this league has no settled season, so full-season depth cannot be measured.");
+      return;
+    }
+    const inSettled = `AND season IN (${settled.map(() => "?").join(",")})`;
     const teams = (db.prepare(
-      "SELECT COUNT(*) * 1.0 / COUNT(DISTINCT season) AS t FROM (SELECT DISTINCT season, team_id FROM fact_roster_week WHERE league_id = ?)",
-    ).get(league) as { t: number }).t;
+      `SELECT COUNT(*) * 1.0 / COUNT(DISTINCT season) AS t FROM (SELECT DISTINCT season, team_id FROM fact_roster_week WHERE league_id = ? ${inSettled})`,
+    ).get(league, ...settled) as { t: number }).t;
     assert.ok(teams > 0, "the roster feed names no teams -- nothing can be measured from it");
     const rows = db.prepare(
-      `SELECT pos, COUNT(*) * 1.0 / (SELECT COUNT(DISTINCT season || '|' || week) FROM fact_roster_week WHERE league_id = ?) AS per
-         FROM fact_roster_week WHERE league_id = ? AND pos IN ('QB','RB','WR','TE','K','DST') GROUP BY pos`,
-    ).all(league, league) as { pos: string; per: number }[];
+      `SELECT pos, COUNT(*) * 1.0 / (SELECT COUNT(DISTINCT season || '|' || week) FROM fact_roster_week WHERE league_id = ? ${inSettled}) AS per
+         FROM fact_roster_week WHERE league_id = ? ${inSettled} AND pos IN ('QB','RB','WR','TE','K','DST') GROUP BY pos`,
+    ).all(league, ...settled, league, ...settled) as { pos: string; per: number }[];
     assert.equal(rows.length, 6, "the roster feed does not cover all six positions");
     for (const r of rows) {
       const scaled = Math.ceil((r.per / teams) * LEAGUE_TEAMS);

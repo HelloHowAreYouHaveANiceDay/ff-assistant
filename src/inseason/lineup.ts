@@ -21,6 +21,19 @@ export interface RosterPlayer {
    * built without this field behaves exactly as it did. See src/data/eligibility.ts.
    */
   eligible?: string[];
+  /**
+   * HIS NFL GAME HAS KICKED OFF, so wherever he is, he stays. Absent or false means movable, which
+   * is what every existing caller passes and therefore how every existing caller still behaves.
+   * See src/inseason/kickoffLock.ts for how it is decided.
+   */
+  locked?: boolean;
+  /**
+   * The league slot he is LOCKED INTO -- the one he actually occupies right now. A bench or IR
+   * token means he is locked OUT of the lineup. Only read when `locked` is true; a locked man with
+   * no slot is treated as benched, because the safe failure is to leave him where the optimizer
+   * cannot seat him rather than to invent a slot for him.
+   */
+  lockedSlot?: string | null;
 }
 
 export interface LineupResult {
@@ -80,11 +93,45 @@ export function optimalLineup(players: RosterPlayer[], slots: string[], flexOk?:
   };
 
   const rank = (p: RosterPlayer) => { const i = flexOrder.indexOf(p.pos); return i < 0 ? flexOrder.length : i; };
-  const order = players.filter((p) => p.available).map((p, i) => ({ p, i }))
+
+  /**
+   * LOCKED MEN ARE SEATED FIRST AND NEVER MOVED, and they are removed from the pool the optimizer
+   * searches. This is a CONSTRAINT on the assignment, not a preference: a man whose NFL game has
+   * kicked off cannot be benched and a man on the bench when his game started cannot be started, so
+   * any answer that moves one is not a lineup, it is advice that cannot be taken.
+   *
+   * The two directions are separate and both matter. A locked STARTER holds his exact slot -- he is
+   * pre-seated, so the augmenting-path search below can neither displace him nor seat anyone else
+   * there. A locked BENCH man is dropped from `order` entirely, so he can never be seated. Without
+   * the second, the optimizer happily promotes a player who already played, which is the defect
+   * this exists to prevent.
+   *
+   * NOTHING CHANGES FOR A CALLER THAT SETS NO LOCKS: `lockedOut` is empty, no slot is pre-seated,
+   * and `order` is the same list in the same order as before -- the assignment is byte-identical.
+   */
+  const lockedOut = new Set<RosterPlayer>();
+  const occupant: (RosterPlayer | undefined)[] = new Array(startSlots.length).fill(undefined);
+  const preSeated = new Set<RosterPlayer>();
+  for (const p of players) {
+    if (!p.locked) continue;
+    const slot = (p.lockedSlot ?? "").trim();
+    // No slot, or a bench/IR slot: he is locked OUT. `isBenchSlot` is the one module that knows
+    // which tokens those are, so a Yahoo `IR` is treated the same as an ESPN `BE`.
+    if (!slot || isBenchSlot(slot)) { lockedOut.add(p); continue; }
+    // A locked starter takes the FIRST unfilled slot bearing his slot name -- two FLEX slots are
+    // interchangeable by construction, so which of them he holds cannot change any total.
+    const at = startSlots.findIndex((s, i) => s === slot && !occupant[i]);
+    if (at >= 0) { occupant[at] = p; preSeated.add(p); continue; }
+    // His slot is not in this template, or is already taken by another locked man. He cannot be
+    // seated and must not be re-seated elsewhere, so he is locked out and NAMED in the flags below
+    // rather than quietly becoming movable.
+    lockedOut.add(p);
+  }
+
+  const order = players.filter((p) => p.available && !lockedOut.has(p) && !preSeated.has(p)).map((p, i) => ({ p, i }))
     .sort((a, b) => b.p.proj - a.p.proj || rank(a.p) - rank(b.p) || a.i - b.i)
     .map((x) => x.p);
 
-  const occupant: (RosterPlayer | undefined)[] = new Array(startSlots.length).fill(undefined);
   const seat = (p: RosterPlayer, visited: Set<number>): boolean => {
     // A FREE slot first, in template order. This is what makes the single-eligible answer identical
     // to the old slot-order fill: nobody is ever displaced while a legal seat is empty.
@@ -94,6 +141,10 @@ export function optimalLineup(players: RosterPlayer[], slots: string[], flexOk?:
     // Otherwise push the occupants along an augmenting path.
     for (let s = 0; s < startSlots.length; s++) {
       if (visited.has(s) || !accepts(startSlots[s], p)) continue;
+      // A LOCKED occupant is immovable: the augmenting path may not route through his slot. Without
+      // this the pre-seating above would be undone the moment a higher-projected man was eligible
+      // for the same slot -- the search would displace him and call it optimal.
+      if (occupant[s] && preSeated.has(occupant[s]!)) continue;
       visited.add(s);
       const cur = occupant[s]!;
       occupant[s] = p;
@@ -122,7 +173,24 @@ export function optimalLineup(players: RosterPlayer[], slots: string[], flexOk?:
   // Flags the user cares about: a benched AVAILABLE player out-projecting a starter at an eligible
   // slot (means the assignment was constrained), and starters that are actually unavailable.
   const weakestStarter = Math.min(...starters.filter((s) => s.proj > 0).map((s) => s.proj));
-  for (const b of bench) if (b.available && b.proj > weakestStarter + 0.5) flags.push(`bench ${b.name} (${b.proj}) out-projects a starter -- roster-slot constrained`);
+  // A LOCKED bench man is excluded from this flag. He out-projects a starter for the same reason
+  // every played man does -- his game is over -- and telling a manager to start him is the advice
+  // this constraint exists to stop. He is reported separately, as a fact rather than an option.
+  const lockedByName = new Map(players.filter((p) => p.locked).map((p) => [p, true] as const));
+  const benchLocked = players.filter((p) => lockedOut.has(p));
+  for (const b of bench) {
+    const src = players.find((p) => p.name === b.name && p.pos === b.pos && !used.has(p));
+    if (src && lockedByName.has(src)) continue;
+    if (b.available && b.proj > weakestStarter + 0.5) flags.push(`bench ${b.name} (${b.proj}) out-projects a starter -- roster-slot constrained`);
+  }
+  if (benchLocked.length) {
+    flags.push(`LOCKED, cannot be started: ${benchLocked.map((p) => `${p.name} (${p.proj})`).join(", ")} -- ` +
+      "his NFL game has already kicked off");
+  }
+  const startedLocked = players.filter((p) => preSeated.has(p));
+  if (startedLocked.length) {
+    flags.push(`LOCKED, cannot be benched: ${startedLocked.map((p) => p.name).join(", ")}`);
+  }
   // THE SEATED OBJECT, not a lookup by name (M3, 2026-09-17). `players.find(p => p.name === s.name)`
   // resolved a started man by NAME, so on a roster carrying two men of one name it inspected
   // whichever came first -- and flagged "X started but not available" about a lineup that had
