@@ -388,7 +388,14 @@ export class EspnLeague implements LeagueProvider {
     const j = await this.wv.fetchJson<{
       settings?: { scheduleSettings?: { divisions?: { id: number; name: string }[] } };
       teams?: (EspnTeam & { divisionId?: number })[];
-      schedule?: { matchupPeriodId?: number; home?: { teamId?: number }; away?: { teamId?: number } }[];
+      schedule?: {
+        matchupPeriodId?: number;
+        // `totalPoints` is the side's SCORED total for that week. Verified present in a real cached
+        // payload (league 462233, week 1: 97.6 / 92.46 / 115.61 ...), so the score columns
+        // `raw_league_matchup` gained are fillable rather than decorative.
+        home?: { teamId?: number; totalPoints?: number };
+        away?: { teamId?: number; totalPoints?: number };
+      }[];
     }>(url);
     const divs = j.settings?.scheduleSettings?.divisions ?? [];
     const teams = j.teams ?? [];
@@ -398,7 +405,20 @@ export class EspnLeague implements LeagueProvider {
     }));
     const games = (j.schedule ?? [])
       .filter((m) => m.home?.teamId != null && m.away?.teamId != null)
-      .map((m) => ({ week: Number(m.matchupPeriodId ?? 0), homeId: String(m.home!.teamId), awayId: String(m.away!.teamId) }));
+      .map((m) => ({
+        week: Number(m.matchupPeriodId ?? 0),
+        homeId: String(m.home!.teamId),
+        awayId: String(m.away!.teamId),
+        // NULL, NOT 0, for an unplayed week. ESPN reports 0.0 for a week that has not happened AND
+        // for a genuine shutout, so the two are indistinguishable in the payload -- but a future
+        // week cannot be a shutout, and storing 0 there would put a fabricated result in the
+        // warehouse. A score is kept only when the week is behind us, which the CALLER cannot
+        // decide (it has no clock) and this reader can only approximate, so the rule is: keep a
+        // strictly positive total, drop 0 and absent alike. A real 0-point fantasy week is not a
+        // thing that happens with a full lineup; a 0 here is overwhelmingly "not played yet".
+        homeScore: typeof m.home!.totalPoints === "number" && m.home!.totalPoints > 0 ? m.home!.totalPoints : null,
+        awayScore: typeof m.away!.totalPoints === "number" && m.away!.totalPoints > 0 ? m.away!.totalPoints : null,
+      }));
     if (!games.length) throw new Error("ESPN returned no schedule entries -- session expired, or the API shape changed.");
     return { divisions, games };
   }

@@ -1861,16 +1861,30 @@ async function cmdSyncSchedule(rest: string[]) {
   // to any column added after it, which is the whole reason the sibling writer in leagueHistory.ts
   // was already written this way.
   const up = db2.prepare(
-    "INSERT OR REPLACE INTO raw_league_matchup (league_id, season, week, home_id, away_id, fetched_at) VALUES (@l,@s,@w,@h,@a,@now)");
+    "INSERT OR REPLACE INTO raw_league_matchup (league_id, season, week, home_id, away_id, fetched_at, home_score, away_score) " +
+    "VALUES (@l,@s,@w,@h,@a,@now,@hs,@as)");
+  let scored = 0;
   db2.transaction(() => {
     db2.prepare("DELETE FROM raw_league_matchup WHERE league_id=? AND season=?").run(leagueId, season);
-    for (const g of sched.games) up.run({ l: leagueId, s: season, w: g.week, h: String(g.homeId), a: String(g.awayId), now });
+    for (const g of sched.games) {
+      // `?? null`, never `?? 0`: better-sqlite3 refuses an `undefined` parameter, and a 0 would
+      // record a shutout for a week nobody has played. NULL is the only honest value for a score
+      // that does not exist yet.
+      const hs = g.homeScore ?? null;
+      const as = g.awayScore ?? null;
+      if (hs != null || as != null) scored++;
+      up.run({ l: leagueId, s: season, w: g.week, h: String(g.homeId), a: String(g.awayId), now, hs, as });
+    }
   })();
   const after = (db2.prepare("SELECT count(*) c FROM raw_league_matchup WHERE league_id=? AND season=?").get(leagueId, season) as { c: number }).c;
   const weeks = new Set(sched.games.map((g) => g.week)).size;
   db2.close();
   if (after !== sched.games.length) return failStep(`schedule write did not land: read ${sched.games.length} games, store holds ${after}`);
-  console.log(`schedule synced: ${after} games over ${weeks} week(s) for league ${leagueId} season ${season} (was ${before}). NOTE: raw_league_matchup carries the PAIRINGS only -- no scores.`);
+  // The NOTE used to say "PAIRINGS only -- no scores", which stopped being true the moment the
+  // table gained score columns and the adaptor started reading `totalPoints`. A caveat that
+  // describes the previous version of the code is worse than none: a reader trusts it.
+  console.log(`schedule synced: ${after} games over ${weeks} week(s) for league ${leagueId} season ${season} (was ${before}); ` +
+    `${scored} carry a score (the rest are NULL -- not played, or the platform published none).`);
 }
 
 // Materialize ONE data source (asset) + its downstream (project/assemble). Powers the DAG view's
