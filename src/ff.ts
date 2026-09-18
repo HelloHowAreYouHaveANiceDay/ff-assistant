@@ -109,6 +109,10 @@ async function main() {
       return cmdIngestSource(rest);
     case "ingest-raw":
       return cmdIngestRaw(rest);
+    case "ingest-espn-payload":
+      return cmdIngestEspnPayload(rest);
+    case "session-check":
+      return cmdSessionCheck(rest);
     case "build-features-ext":
       return cmdBuildFeaturesExt(rest);
     case "build-waiver-claims":
@@ -234,7 +238,11 @@ async function main() {
           "  attach [--port N]          test the connection to the app's embedded ESPN webview\n" +
           "  goto <url>                 navigate the app's webview\n" +
           "  inspect-draft [--out FILE] dump the live ESPN draft-room DOM\n" +
-          "  rank [--csv FILE]          top players by VOR (offline)",
+          "  rank [--csv FILE]          top players by VOR (offline)\n" +
+          "  ingest-espn-payload --file <json> --kind <settings|rosters|boxscore|transactions>\n" +
+          "                             ingest a SAVED ESPN API payload (see docs/browser-sync.md)\n" +
+          "  session-check [--cookie-file F] [--payload F]\n" +
+          "                             is the ESPN session alive? exit 3 when it is not",
       );
   }
 }
@@ -4743,4 +4751,120 @@ async function cmdLedger(rest: string[]) {
   db.close();
   if (rest.includes("--json")) { console.log(JSON.stringify({ rows, counts })); return; }
   console.log(`PREDICTION LEDGER: ${rows.length} rows -- held ${counts.held ?? 0}, failed ${counts.failed ?? 0}, split ${counts.split ?? 0}, pending ${counts.pending ?? 0}`);
+}
+
+/**
+ * `ff ingest-espn-payload --file <json> --kind <kind> --league <id> --season <YYYY> [--week N] [--dry-run]`
+ *
+ * THE FILE HANDOFF. The repo's other ESPN paths assume the login lives in the Electron app's webview
+ * and that the caller can speak its bridge protocol. An agent whose login lives in a server-side
+ * browser can do neither -- but it CAN save the API response to disk. This verb is the way in: it
+ * runs the SAME pure parsers the live path uses over a saved payload, so every identity and
+ * hollow-payload refusal still fires. See `src/data/espnPayload.ts` and docs/browser-sync.md.
+ *
+ * WHY IT MATTERS THAT THE FILE IS THE HANDOFF, not a summary: a 2.27 MB boxscore described in prose
+ * has lost the identity fields the guards check and every field nobody thought to mention. A file
+ * keeps full fidelity, which is the whole point.
+ */
+async function cmdIngestEspnPayload(rest: string[]) {
+  const { ingestEspnPayload, PAYLOAD_KINDS, KIND_VIEW } = await import("./data/espnPayload.js");
+  const file = valueOf(rest, "--file");
+  const kind = valueOf(rest, "--kind") as (typeof PAYLOAD_KINDS)[number] | undefined;
+  if (!file || !kind) {
+    console.log(
+      "usage: ff ingest-espn-payload --file <json> --kind <kind> [--league <id>] [--season <YYYY>] [--week N] [--dry-run]\n\n" +
+      "  kinds and the view to save each from:\n" +
+      PAYLOAD_KINDS.map((k) => `    ${k.padEnd(13)} view=${KIND_VIEW[k]}`).join("\n") +
+      "\n\n  --week is REQUIRED for boxscore and transactions (the scoringPeriodId the file was saved for).\n" +
+      "  --dry-run parses, validates and REFUSES as normal, but writes nothing.\n" +
+      "  Full recipe, with the exact URLs: docs/browser-sync.md",
+    );
+    return;
+  }
+  if (!PAYLOAD_KINDS.includes(kind)) return failStep(`unknown --kind "${kind}". Valid: ${PAYLOAD_KINDS.join(", ")}`);
+
+  // THE STORE IS OPENED ONLY WHEN IT IS NEEDED, and a dry run told BOTH the league and the season
+  // needs nothing from it. `ingestEspnPayload` was fixed to open lazily; this wrapper opened one
+  // unconditionally to resolve the league context, so `--dry-run --db <new path>` still created a
+  // database -- the same defect, one caller up, which is the shape this repo keeps paying for.
+  const dryRun = rest.includes("--dry-run");
+  const leagueArgV = valueOf(rest, "--league");
+  const seasonArgV = valueOf(rest, "--season");
+  const needsStore = !dryRun || leagueArgV == null || seasonArgV == null;
+
+  const { openDb } = await import("./db/db.js");
+  const db = needsStore ? openDb(valueOf(rest, "--db")) : null;
+  const ctx = db ? await leagueCtx(rest, db) : null;
+  const leagueId = leagueArgV ?? ctx?.leagueId;
+  const season = Number(seasonArgV ?? ctx?.rowSeason ?? ctx?.config.season);
+  if (!leagueId) { db?.close(); return failStep("no league: pass --league <id> or sync one first."); }
+  const weekArg = valueOf(rest, "--week");
+  try {
+    const r = await ingestEspnPayload({
+      file, kind, leagueId: String(leagueId), season, dryRun,
+      ...(db ? { db } : { dbPath: valueOf(rest, "--db") }),
+      week: weekArg == null ? undefined : Number(weekArg),
+    });
+    // THE PAYLOAD'S OWN IDENTITY IS PRINTED EVERY TIME. A file-handoff loop's cheapest failure is
+    // ingesting yesterday's download; the operator can see the league, season and team count the
+    // file actually claims rather than the ones they meant to save.
+    console.log(`ingested ${r.kind}: ${r.note}`);
+    console.log(`  payload says: league ${r.identity.id ?? "(none)"}, season ${r.identity.seasonId ?? "(none)"}, ` +
+      `${r.identity.teams ?? "(no teams array)"} teams, settings ${r.identity.hasSettings ? "present" : "absent"}`);
+  } catch (e) {
+    db?.close();
+    return failStep(String((e as Error).message));
+  }
+  db?.close();
+}
+
+/**
+ * `ff session-check [--league <id>] [--season Y] [--cookie-file F] [--payload F]`
+ *
+ * THE CHEAP PRE-FLIGHT. ESPN answers an expired session with a 200 and valid JSON that simply has no
+ * teams in it, which every downstream reader takes for "the league is empty" rather than "you are
+ * logged out". So the failure is normally discovered mid-sync, as a silently hollow result. This
+ * verb is the check you run BEFORE a sync: one GET, and a verdict that distinguishes a dead
+ * transport, an empty body, a login page, a payload with no league id, and the wrong league.
+ *
+ * IT WORKS OVER ANY SESSION PROVIDER, because `probeEspnSession` takes an injected `PlatformIO`:
+ *   (default)          the Electron app's webview bridge
+ *   --cookie-file F    a file holding a cookie header -- any browser that can export one
+ *   --payload F        a saved JSON response, for checking a file handoff without a network
+ */
+async function cmdSessionCheck(rest: string[]) {
+  const { probeEspnSession } = await import("./data/espnSession.js");
+  const { bridgePlatformIO, cookiePlatformIO, filePlatformIO } = await import("./league/platform.js");
+  const { openDb } = await import("./db/db.js");
+  const db = openDb(valueOf(rest, "--db"));
+  const ctx = await leagueCtx(rest, db);
+  const leagueId = valueOf(rest, "--league") ?? ctx.leagueId;
+  const season = Number(valueOf(rest, "--season") ?? ctx.rowSeason ?? ctx.config.season);
+  db.close();
+  if (!leagueId) return failStep("no league: pass --league <id> or sync one first.");
+
+  const cookieFile = valueOf(rest, "--cookie-file");
+  const payloadFile = valueOf(rest, "--payload");
+  let io;
+  let via: string;
+  if (payloadFile) {
+    io = filePlatformIO({ "view=mSettings": payloadFile });
+    via = `saved payload ${payloadFile}`;
+  } else if (cookieFile) {
+    const { readFileSync } = await import("node:fs");
+    io = cookiePlatformIO(readFileSync(cookieFile, "utf8"));
+    via = `cookie from ${cookieFile}`;
+  } else {
+    io = bridgePlatformIO("fantasy.espn.com");
+    via = "the app's webview bridge";
+  }
+
+  const r = await probeEspnSession(io, String(leagueId), season);
+  console.log(`session-check via ${via}: ${r.ok ? "OK" : "FAILED"} (${r.elapsedMs} ms)`);
+  console.log(`  ${r.reason}`);
+  console.log(`  asked league ${r.leagueId} season ${season}; payload says league ${r.gotLeagueId ?? "(none)"}, ` +
+    `season ${r.seasonId ?? "(none)"}, ${r.teams ?? "(no teams array)"} teams` +
+    (r.status == null ? "" : `, HTTP ${r.status}`));
+  // A NON-ZERO EXIT so this is usable as a gate in a script: `ff session-check && ff sync-rosters`.
+  if (!r.ok) process.exitCode = 3;
 }

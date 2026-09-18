@@ -157,6 +157,82 @@ export function bridgePlatformIO(host: string, timeoutMs = 25000): PlatformIO {
   return { get: async (url, headers) => (await import("../browser/appBridge.js")).bridgeFetch(url, headers, timeoutMs, { host }) };
 }
 
+/**
+ * A SESSION PROVIDER THAT IS NOT THE ELECTRON APP.
+ *
+ * `PlatformIO` was always the right contract -- "GET this URL with the user's session, return the
+ * body" -- but `bridgePlatformIO` was its only implementation, so in practice the repo assumed the
+ * login lived in the desktop app's webview and that a caller could speak its bridge protocol. An
+ * agent whose login lives in a server-side browser can do neither, and had no first-class way in.
+ *
+ * This is that way in: the caller supplies the COOKIES and the transport is a plain fetch. Anything
+ * that can produce a valid cookie header for the host -- a headless browser, a saved session, a
+ * curl-style export -- is now a provider on equal footing with the app.
+ *
+ * WHAT IS DELIBERATELY NOT DONE HERE. No cookie is read from a browser profile, no login is
+ * automated and nothing is persisted: the cookie arrives from the caller and lives for the process.
+ * A credential this module fetched for itself is a credential nobody decided to share.
+ */
+export function cookiePlatformIO(cookie: string, opts: { timeoutMs?: number; userAgent?: string } = {}): PlatformIO {
+  const jar = cookie.trim();
+  if (!jar) throw new Error("cookiePlatformIO: empty cookie. A session provider with no session is a 401 waiting to be misread as an empty league.");
+  const timeoutMs = opts.timeoutMs ?? 25000;
+  return {
+    async get(url, headers) {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, {
+          signal: ctl.signal,
+          headers: {
+            cookie: jar,
+            accept: "application/json, text/plain, */*",
+            ...(opts.userAgent ? { "user-agent": opts.userAgent } : {}),
+            ...(headers ?? {}),
+          },
+        });
+        const body = await res.text();
+        // A 401/403 that returns a body is the trap: ESPN answers an expired session with valid JSON
+        // that simply has no teams in it, which reads downstream as "the league is empty" rather
+        // than "you are logged out". The status is checked HERE so it cannot be lost.
+        if (!res.ok) {
+          throw new Error(`${res.status} ${res.statusText} for ${url.slice(0, 120)} -- ` +
+            (res.status === 401 || res.status === 403
+              ? "the session is not authenticated. Refresh the cookie; do NOT treat this as an empty league."
+              : `body starts: ${body.slice(0, 160)}`));
+        }
+        return body;
+      } finally { clearTimeout(t); }
+    },
+  };
+}
+
+/**
+ * A PROVIDER THAT READS FROM DISK, for the file-handoff loop.
+ *
+ * A browser task saves the API JSON into the workspace; this serves it back to the same pure parsers
+ * the live path uses, so the identity and hollow-payload guards run exactly as designed instead of
+ * being bypassed by a hand-summarised payload. `files` maps a substring of the URL (in practice the
+ * `view=` token) to the file holding that view's response.
+ *
+ * It REFUSES an unmatched URL rather than returning empty. "No file for this view" and "the league
+ * has no data" must not produce the same result -- that is the whole failure mode this repo keeps
+ * paying for.
+ */
+export function filePlatformIO(files: Record<string, string>): PlatformIO {
+  return {
+    async get(url) {
+      const hit = Object.entries(files).find(([token]) => url.includes(token));
+      if (!hit) {
+        throw new Error(`filePlatformIO: no saved payload matches ${url.slice(0, 160)}. ` +
+          `Known tokens: ${Object.keys(files).join(", ") || "(none)"}. Refusing rather than returning an empty body.`);
+      }
+      const { readFileSync } = await import("node:fs");
+      return readFileSync(hit[1], "utf8");
+    },
+  };
+}
+
 /** What the CALLER knows and the platform's own pages do not publish. See `Platform.syncSettings`. */
 export interface SyncHints {
   /** Our identity on the platform (ESPN's SWID cookie), so the sync can name OUR team. */
