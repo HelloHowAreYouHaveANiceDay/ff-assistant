@@ -16,6 +16,7 @@
 import { simulateSeasons, type SeasonTeamInput, type VarianceModel } from "../../src/draft/season.js";
 import { buildSchedule } from "../../src/draft/schedule.js";
 import type { SimContext } from "../../src/draft/simContext.js";
+import { emptyWeekState } from "../../src/inseason/weekState.js";
 
 export const SLOTS = ["QB", "RB", "WR", "TE", "FLEX", "FLEX", "DST", "K", "BE", "BE", "BE", "BE"];
 export const FLEX_OK = ["RB", "WR", "TE"];
@@ -68,6 +69,11 @@ export function fixtureCtx(opts: { strong?: number; mult?: number; meIdx?: numbe
   return {
     teams, weeks, meIdx, season: 2026, syntheticSchedule: opts.synthetic ?? true,
     board, ownedIds, slots: SLOTS, flexOk: FLEX_OK, replacement,
+    // THE EXPLICIT OPT-OUT. A fixture league has no live week -- asking it which NFL teams have
+    // kicked off is not a question -- so it says so by name rather than by omitting a field. Tests
+    // that need a week state build one and either pass it as the per-verb override or spread it
+    // over the context; `emptyWeekState` is what "there is none" looks like.
+    week: emptyWeekState(2026, 1),
     opts: mkOpts,
     run: (t, trials, seed, extra) => simulateSeasons(t, weeks, vm, { ...mkOpts(trials, seed), ...extra }),
     clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),

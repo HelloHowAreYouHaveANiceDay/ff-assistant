@@ -22,6 +22,7 @@
  * in the lineup optimiser: correct by coincidence, and silently wrong the moment the league changes.
  */
 import { readFileSync } from "node:fs";
+import { loadWeekState } from "../inseason/weekState.js";
 import Database from "better-sqlite3";
 import { simulateSeasons, LEVEL_PRIOR_WEEKS, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "./season.js";
 import { buildSchedule } from "./schedule.js";
@@ -75,6 +76,18 @@ export interface SimContext {
      *  whose season has not started. */
     seedBlocked: string | null;
   };
+  /**
+   * WHAT THIS WEEK IS (2026-09-18): who cannot play, who is locked, what is already scored.
+   *
+   * Carried here for the same reason `played` above is -- so every consumer reads ONE assembled
+   * answer instead of re-deriving it at its own call site -- and REQUIRED for a stronger reason:
+   * while it was a per-verb optional it reached 2 of the 10 copilot verbs, and the eight that missed
+   * it returned confident advice about men who could not play. See src/inseason/weekState.ts.
+   *
+   * A caller with no live week (a historical replay, a fold, a fixture) says so explicitly with
+   * `emptyWeekState(season, week)`, which is greppable; omitting it is not expressible.
+   */
+  week: import("../inseason/weekState.js").WeekState;
 }
 
 /**
@@ -320,6 +333,10 @@ export async function loadSimContext(opts: {
       if (ros != null) { p.rosPerGame = ros; rosApplied++; }
     }
   }
+  // THE WEEK'S STATE, read BEFORE the handle closes. It is assembled here rather than lazily on the
+  // returned object because a context that reads the store after `db.close()` is a context that
+  // works in a test and throws in the CLI -- which is exactly what the first version of this did.
+  const week = loadWeekState(db, { season: cfg.season, week: nextWeek, leagueId: lgRow.league_id });
   db.close();
 
   // THE FORMAT, from the block that has a source. `cfg.regWeeks ?? 14` used to live here, alongside
@@ -509,6 +526,10 @@ export async function loadSimContext(opts: {
     slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement,
     posMax: (cfg as { posMax?: Record<string, number> }).posMax,
     played: { weeks: playedWeeks, nextWeek, source: seedSource, rosBlendK: rosBlend.K, rosBlendSource: rosSource, rosApplied, today, seedBlocked },
+    // ASSEMBLED ONCE, above. Every verb reads `ctx.week` rather than loading availability, locks and
+    // settled points for itself -- the per-call-site loading is what left eight of ten verbs without
+    // any of it. The week is `nextWeek`: the one a decision taken now is about.
+    week,
     opts: mkOpts,
     run: (t, trials, seed, extra) => simulateSeasons(t, weeks, vm, { ...mkOpts(trials, seed), ...extra }),
     clone: (t) => (t ?? teams).map((x) => ({ ...x, roster: x.roster.map((p) => ({ ...p })) })),

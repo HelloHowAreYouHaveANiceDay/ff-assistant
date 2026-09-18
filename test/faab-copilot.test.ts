@@ -16,6 +16,7 @@ import { waiverTargets, FAAB_RULE, FAAB_MODEL_RULE, faabFor } from "../src/insea
 import { loadFaabModel, FAAB_ARTIFACT_PATH, type FaabLiveState } from "../src/inseason/faab.js";
 import { adjudicate } from "../src/inseason/backtest/faab.js";
 import type { SimContext } from "../src/draft/simContext.js";
+import { emptyWeekState } from "../src/inseason/weekState.js";
 import type { SeasonTeamInput, SeasonOdds } from "../src/draft/season.js";
 
 const SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "K", "DST"];
@@ -48,6 +49,10 @@ function fixtureCtx(): SimContext {
     board, ownedIds: new Set(teams.flatMap((t) => t.roster.map((p) => p.name.toLowerCase().replace(/\s+/g, "")))),
     slots: SLOTS, flexOk: ["RB", "WR", "TE"], replacement: {},
     format: { regWeeks: 14, playoffTeams: 4 } as SimContext["format"],
+    // A local fixture with no live week says so by name. The `as unknown as SimContext` cast here
+    // means TypeScript cannot enforce it, which is why this file failed at RUNTIME when `ctx.week`
+    // became required -- loudly, on the first line that read it, which is the behaviour wanted.
+    week: emptyWeekState(2026, 1),
   } as unknown as SimContext;
 }
 
