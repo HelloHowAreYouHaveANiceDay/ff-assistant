@@ -2131,11 +2131,26 @@ async function cmdProposeTrade(rest: string[]) {
   const { executeTradeProposal } = await import("./inseason/proposeTrade.js");
   const give = (valueOf(rest, "--give") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const get = (valueOf(rest, "--get") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  if (!give.length || !get.length) { console.log(`usage: ff propose-trade --give "Player A" --get "Player B" [--send]`); return; }
+  if (!give.length || !get.length) { console.log(`usage: ff propose-trade --give "Player A" --get "Player B" [--send] [--cookie-file F]`); return; }
   const send = rest.includes("--send");
+  // WHO SENDS IT. The app bridge by default, which is what this has always used. `--cookie-file`
+  // routes the write through a supplied ESPN session instead, so an agent whose login lives in a
+  // server-side browser can submit without speaking the desktop app's bridge protocol.
+  //
+  // BOTH providers go through the SAME allowlist (src/league/writeIO.ts): exactly ESPN's
+  // league-transactions endpoint and nothing else. That allowlist used to live only in
+  // `app/main.js`, so adding this flag without moving it would have created a second route to
+  // ESPN's write API with no guard on it at all.
+  const cookieFile = valueOf(rest, "--cookie-file");
+  let writer;
+  if (cookieFile) {
+    const { readFileSync } = await import("node:fs");
+    const { cookieWriteIO } = await import("./league/writeIO.js");
+    writer = cookieWriteIO(readFileSync(cookieFile, "utf8"));
+  }
   // ONE orchestration for CLI and MCP: resolve + inject the current scoringPeriodId, and send only
   // behind the gate. See executeTradeProposal in inseason/proposeTrade.ts.
-  const run = await executeTradeProposal(valueOf(rest, "--db"), give, get, { send });
+  const run = await executeTradeProposal(valueOf(rest, "--db"), give, get, { send, ...(writer ? { writer } : {}) });
   const r = run.resolution;
 
   console.log(`TRADE PROPOSAL (season ${r.season}, league ${r.leagueId ?? "?"})`);
@@ -2149,6 +2164,7 @@ async function cmdProposeTrade(rest: string[]) {
   if (!send) {
     console.log("\n  DRY RUN -- nothing sent. Re-run with --send to submit this proposal to ESPN (an irreversible");
     console.log("  outward action, visible to the other manager). The payload above is what would be POSTed.");
+    console.log(`  It would be sent via ${cookieFile ? `the cookie session in ${cookieFile}` : "the desktop app's ESPN webview"}.`);
     return;
   }
   if (!run.sent) {

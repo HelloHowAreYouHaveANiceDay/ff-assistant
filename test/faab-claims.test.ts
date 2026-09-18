@@ -27,41 +27,47 @@ const SEASON = 2098;
 interface TxSpec { tx: string; ms: number; week: number; team: string | null; to: string; pid: string; bid: number; status: string }
 
 function fixture(db: DB, specs: TxSpec[]): void {
-  for (let t = 1; t <= 4; t++) {
-    db.prepare(`INSERT INTO fact_team_season (league_id, season, team_id, team_name, faab_spent) VALUES ('L',?,?,?,0)`)
-      .run(SEASON, String(t), `Team ${t}`);
-  }
-  // Rosters: four teams, three RB each in every week, so the positional-need median is flat and the
-  // need column cannot accidentally carry the signal a bug would put there.
-  for (let w = 1; w <= 6; w++) {
+  // ONE transaction for the ~90 fixture rows. better-sqlite3 commits an un-transactioned INSERT on
+  // its own, i.e. an fsync per row -- seconds on a normal disk, minutes on a copy-on-write/overlay
+  // filesystem. Same rows, same order, nothing reads concurrently.
+  const load = db.transaction(() => {
     for (let t = 1; t <= 4; t++) {
-      for (let k = 0; k < 3; k++) {
-        db.prepare(`INSERT INTO fact_roster_week (league_id, season, week, team_id, player_sk, espn_player_id, name, pos)
-                    VALUES ('L',?,?,?,?,?,?,'RB')`).run(SEASON, w, String(t), `r${t}${k}`, `9${t}${k}`, `Body ${t}${k}`);
+      db.prepare(`INSERT INTO fact_team_season (league_id, season, team_id, team_name, faab_spent) VALUES ('L',?,?,?,0)`)
+        .run(SEASON, String(t), `Team ${t}`);
+    }
+    // Rosters: four teams, three RB each in every week, so the positional-need median is flat and the
+    // need column cannot accidentally carry the signal a bug would put there.
+    for (let w = 1; w <= 6; w++) {
+      for (let t = 1; t <= 4; t++) {
+        for (let k = 0; k < 3; k++) {
+          db.prepare(`INSERT INTO fact_roster_week (league_id, season, week, team_id, player_sk, espn_player_id, name, pos)
+                      VALUES ('L',?,?,?,?,?,?,'RB')`).run(SEASON, w, String(t), `r${t}${k}`, `9${t}${k}`, `Body ${t}${k}`);
+        }
       }
     }
-  }
-  // One claimable player with a preseason line and weekly points, plus a rival at the same position
-  // so pos_line_rank has something to order.
-  // The surrogate keys are the ones `player_xref` resolves to -- '1' and '2', not names. A fixture
-  // that quietly used a different key would join nothing and every feature would read NULL, which
-  // is the shape of bug this whole file exists to catch.
-  for (const [sk, line] of [["1", 12], ["2", 9]] as [string, number][]) {
-    for (let w = 1; w <= 6; w++) {
-      db.prepare(`INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, name, pos, season_line_pg, td_ppg, td_games, t4_mean, pts)
-                  VALUES (?,?,?,?,?,'RB',?,?,?,?,?)`)
-        .run(`${SEASON}-${w}-${sk}`, sk, SEASON, w, `Player ${sk}`, line, w, w - 1, w, w * 2);
+    // One claimable player with a preseason line and weekly points, plus a rival at the same position
+    // so pos_line_rank has something to order.
+    // The surrogate keys are the ones `player_xref` resolves to -- '1' and '2', not names. A fixture
+    // that quietly used a different key would join nothing and every feature would read NULL, which
+    // is the shape of bug this whole file exists to catch.
+    for (const [sk, line] of [["1", 12], ["2", 9]] as [string, number][]) {
+      for (let w = 1; w <= 6; w++) {
+        db.prepare(`INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, name, pos, season_line_pg, td_ppg, td_games, t4_mean, pts)
+                    VALUES (?,?,?,?,?,'RB',?,?,?,?,?)`)
+          .run(`${SEASON}-${w}-${sk}`, sk, SEASON, w, `Player ${sk}`, line, w, w - 1, w, w * 2);
+      }
     }
-  }
-  db.prepare(`INSERT INTO player_identity (player_sk, name_key) VALUES (1,'p1'), (2,'p2')`).run();
-  db.prepare(`INSERT INTO player_xref (player_sk, source, source_id) VALUES (1,'espn','101'), (2,'espn','102')`).run();
-  for (const s of specs) {
-    db.prepare(`INSERT INTO raw_league_transaction
-      (league_id, season, week, transaction_id, item_no, type, item_type, executed_at, proposed_at_ms,
-       team_id, espn_player_id, from_team_id, to_team_id, bid_amount, status, is_pending, fetched_at)
-      VALUES ('L',?,?,?,0,'WAIVER','ADD',?,?,?,?, '-1', ?, ?, ?, 0, 'now')`)
-      .run(SEASON, s.week, s.tx, `${SEASON}-01-01 00:00:00`, s.ms, s.team ?? NULL_TEAM, s.pid, s.to, s.bid, s.status);
-  }
+    db.prepare(`INSERT INTO player_identity (player_sk, name_key) VALUES (1,'p1'), (2,'p2')`).run();
+    db.prepare(`INSERT INTO player_xref (player_sk, source, source_id) VALUES (1,'espn','101'), (2,'espn','102')`).run();
+    for (const s of specs) {
+      db.prepare(`INSERT INTO raw_league_transaction
+        (league_id, season, week, transaction_id, item_no, type, item_type, executed_at, proposed_at_ms,
+         team_id, espn_player_id, from_team_id, to_team_id, bid_amount, status, is_pending, fetched_at)
+        VALUES ('L',?,?,?,0,'WAIVER','ADD',?,?,?,?, '-1', ?, ?, ?, 0, 'now')`)
+        .run(SEASON, s.week, s.tx, `${SEASON}-01-01 00:00:00`, s.ms, s.team ?? NULL_TEAM, s.pid, s.to, s.bid, s.status);
+    }
+  });
+  load();
 }
 
 function withDb(fn: (db: DB) => void): void {

@@ -318,3 +318,92 @@ ones asked for, and **sets exit code 3 on failure** (`src/ff.ts:4859`) so it wor
 because the array is the thing that empties out on a dead session while `size` may not
 (`src/data/espnSession.ts:87-94`). A mismatched `seasonId` is reported but is NOT a session failure
 -- the probe refuses to report a season problem as a login problem.
+
+---
+
+## 6. The write path
+
+Reads got three session providers once `PlatformIO` stopped being Electron-only (section 2). Writes
+got the same treatment on 2026-09-18, but the interesting part is what had to move first.
+
+### 6.1 The guard lived in the app, not in the system
+
+Before this, the only thing restricting what this tool could write to ESPN was a regular expression
+inside `app/main.js` (the `/write-transaction` route). That check is real and narrow -- exactly the
+league-transactions endpoint, nothing else -- but it belonged to **one transport**.
+`bridgeWriteTransaction` posts a url and a body to the app; the app checks the url; the app executes
+it in the authenticated guest.
+
+Adding a cookie-based writer beside that, which is the entire point of a portable write path, would
+have created a second route to ESPN's write API **with no allowlist on it at all**. The safety
+property was a property of the desktop app, not of the system.
+
+So the allowlist moved into `src/league/writeIO.ts`, which every provider goes through, and the app
+kept its own copy as defence in depth. They cannot share code -- `app/main.js` is plain JavaScript in
+its own package -- so `test/write-contract.test.ts` asserts the two regexes are **character
+identical**, and fails if they ever drift. The same rule the repo applies to any duplicated guard:
+compare, never retype and trust.
+
+### 6.2 What may be written
+
+Exactly one endpoint:
+
+```
+POST https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl
+       /seasons/{season}/segments/0/leagues/{leagueId}/transactions
+```
+
+Refused, each with a named reason: the `lm-api-reads` host, any other path on the writes host, a
+different game (`fba`), a non-numeric league, a segment other than 0, a query string, plain `http`,
+and a body over 100,000 bytes. Nothing has been widened -- adding waiver or lineup endpoints is a
+decision about what the tool may do to a real league, not a refactor, and it was not taken while
+moving a guard.
+
+### 6.3 The contract
+
+```ts
+interface PlatformWriteIO {
+  post(url: string, body: string): Promise<{ status: number; body: string }>;
+  readonly via: string;
+}
+```
+
+Three differences from the read contract, each deliberate:
+
+| | why |
+|---|---|
+| returns `{ status, body }` | for a write the STATUS is the result and the BODY is the reason. ESPN puts "ineligible player", "roster locked", "deadline passed" in the body of a refusal; throwing the status away loses exactly the sentence the manager needs |
+| never throws on a non-2xx | a 403 is an outcome to report, not a crash |
+| carries `via` | a write nobody can attribute is a write nobody can audit |
+
+Providers, all of which run `assertWritableUrl` **inside** the provider rather than at the call site,
+so a future caller cannot reach ESPN's write API by forgetting to call it:
+
+| provider | session |
+|---|---|
+| `bridgeWriteIO()` | the desktop app's authenticated ESPN webview (the default, unchanged) |
+| `cookieWriteIO(cookie)` | a supplied ESPN cookie header -- any browser that can export one |
+| `recordingWriteIO()` | sends nothing, records what it would have sent |
+
+`recordingWriteIO` is not a test double. It is how a dry run becomes structural rather than a flag
+every future caller has to remember to check: a caller handed it **cannot** send, whatever it does.
+
+### 6.4 Using it
+
+```
+ff propose-trade --give "Player A" --get "Player B"                      # dry run, the default
+ff propose-trade --give "Player A" --get "Player B" --cookie-file F      # dry run, names the session
+ff propose-trade --give "Player A" --get "Player B" --send               # SENDS, via the app
+ff propose-trade --give "Player A" --get "Player B" --send --cookie-file F   # SENDS, via the cookie
+```
+
+Dry run remains the default and the dry-run output now names which session **would** have sent it.
+`--send` is the only thing that writes, it is an irreversible outward action visible to another
+manager, and nothing in this repo sends one without it.
+
+### 6.5 What is still not writable
+
+`ff propose-trade` is the only write verb there is. Waivers and lineups are **not implemented as
+writes at all** -- `espnTeam.setLineup` throws `selectors not yet pinned`, and there is no waiver
+claim writer. The portable transport now exists for when they are built; the endpoints do not, and
+the allowlist deliberately does not admit them yet.

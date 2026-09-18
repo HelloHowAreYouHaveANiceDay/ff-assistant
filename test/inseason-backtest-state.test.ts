@@ -63,29 +63,35 @@ function fixture(): Fixture {
   // 13 players per team per week, with the same men all season so a week-to-week comparison is a
   // comparison of LINEUPS rather than of rosters.
   const slots = [...START_SLOTS, ...BENCH];
-  for (const t of TEAMS) {
-    slots.forEach((_, i) => {
-      const pid = `${t}${String(i).padStart(2, "0")}`;
-      ident.run(Number(pid) + 900000, `player${pid}`, "WR");
-      xref.run(Number(pid) + 900000, "espn", pid);
-    });
-  }
-  for (let w = 1; w <= 3; w++) {
+  // ONE transaction for the ~200 fixture rows. better-sqlite3 commits an un-transactioned INSERT on
+  // its own, i.e. an fsync per row -- seconds on a normal disk, minutes on a copy-on-write/overlay
+  // filesystem. Same rows, same order, nothing reads concurrently.
+  const load = db.transaction(() => {
     for (const t of TEAMS) {
-      slots.forEach((slot, i) => {
+      slots.forEach((_, i) => {
         const pid = `${t}${String(i).padStart(2, "0")}`;
-        const sk = String(Number(pid) + 900000);
-        roster.run({
-          l: LEAGUE, s: SEASON, w, t, p: pid, n: `Player ${pid}`, pos: POS_OF[slot], slot,
-          st: slot === 20 || slot === 21 ? 0 : 1, pts: null, aof: `2097-09-${String(w * 7).padStart(2, "0")}`,
-        });
-        // The BENCH scores more than the starters, so the hindsight optimum is strictly above what
-        // was started -- a fixture where they are equal cannot tell a working optimiser from a
-        // broken one.
-        feat.run(sk, sk, SEASON, w, `Player ${pid}`, POS_OF[slot], slot === 20 ? 20 + i : 5 + i);
+        ident.run(Number(pid) + 900000, `player${pid}`, "WR");
+        xref.run(Number(pid) + 900000, "espn", pid);
       });
     }
-  }
+    for (let w = 1; w <= 3; w++) {
+      for (const t of TEAMS) {
+        slots.forEach((slot, i) => {
+          const pid = `${t}${String(i).padStart(2, "0")}`;
+          const sk = String(Number(pid) + 900000);
+          roster.run({
+            l: LEAGUE, s: SEASON, w, t, p: pid, n: `Player ${pid}`, pos: POS_OF[slot], slot,
+            st: slot === 20 || slot === 21 ? 0 : 1, pts: null, aof: `2097-09-${String(w * 7).padStart(2, "0")}`,
+          });
+          // The BENCH scores more than the starters, so the hindsight optimum is strictly above what
+          // was started -- a fixture where they are equal cannot tell a working optimiser from a
+          // broken one.
+          feat.run(sk, sk, SEASON, w, `Player ${pid}`, POS_OF[slot], slot === 20 ? 20 + i : 5 + i);
+        });
+      }
+    }
+  });
+  load();
   return { dir, db };
 }
 

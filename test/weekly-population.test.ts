@@ -47,6 +47,13 @@ function fixture(opts: { season?: number; n?: number; weeks?: number; roster?: b
   }
   const ins = db.prepare(
     "INSERT INTO feat_player_week_model VALUES (@k, @sk, @season, @week, @pos, @line, @pts, 0)");
+  // ONE TRANSACTION FOR ALL 4,320 ROWS. better-sqlite3 runs an un-transactioned INSERT as its own
+  // transaction, which forces an fsync PER ROW. On a normal filesystem that is a few slow seconds
+  // and nobody notices; on a copy-on-write / overlay filesystem it was measured at ~66ms a row --
+  // about five minutes per `fixture()` call, and this file calls it six times, so roughly twenty
+  // minutes for one test file. Wrapping the loop is behaviour-identical (same rows, same order,
+  // nothing reads the handle concurrently) and took the file to seconds.
+  const load = db.transaction(() => {
   for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
     for (let i = 0; i < n; i++) {
       // Line falls away down the board GEOMETRICALLY, the way a real positional board does, so that
@@ -61,6 +68,8 @@ function fixture(opts: { season?: number; n?: number; weeks?: number; roster?: b
       }
     }
   }
+  });
+  load();
   return { db, season, n, weeks };
 }
 
