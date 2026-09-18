@@ -23,7 +23,42 @@ import { openDb, nowIso, type DB } from "../db/db.js";
 const SB = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
 const SUM = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=";
 
-interface EspnInjury { status?: string; date?: string; details?: string; type?: { description?: string }; athlete?: { id?: string | number; displayName?: string } }
+/**
+ * `details` IS AN OBJECT, NOT A STRING, and typing it as one cost the whole field.
+ *
+ * It was declared `details?: string` and passed through `String(v)`, which on an object yields the
+ * literal text `"[object Object]"` -- so every row in `raw_gameday_status` carried that instead of
+ * the injury. Nothing failed: the column is nullable, the value is a non-empty string, and the only
+ * consumer prints it. Found on 2026-09-18 while reading Jordan Mason's IR designation, where the
+ * detail that should have said what was wrong with him said `[object Object]`.
+ *
+ * The real shape carries the body part and the nature of the injury separately, so it is composed
+ * into a readable line rather than stringified. A STRING is still accepted, because a feed that
+ * changes back must not break, and anything else yields null rather than a placeholder.
+ */
+interface EspnInjuryDetails {
+  type?: string; location?: string; detail?: string; side?: string; returnDate?: string;
+}
+interface EspnInjury {
+  status?: string; date?: string; details?: string | EspnInjuryDetails;
+  type?: { description?: string }; athlete?: { id?: string | number; displayName?: string };
+}
+
+/** The injury as one human line: "Left Knee -- Sprain (return 2026-10-01)". Null when the feed gave
+ *  nothing usable -- never `[object Object]`, and never a fabricated placeholder. */
+export function describeInjury(details: unknown, fallback?: string | null): string | null {
+  if (typeof details === "string" && details.trim()) return details.trim();
+  if (details && typeof details === "object") {
+    const d = details as EspnInjuryDetails;
+    const part = [d.side, d.location ?? d.type].filter((x) => typeof x === "string" && x.trim()).join(" ").trim();
+    const what = typeof d.detail === "string" && d.detail.trim() ? d.detail.trim() : null;
+    const head = [part || null, what].filter(Boolean).join(" -- ");
+    const ret = typeof d.returnDate === "string" && d.returnDate.trim() ? ` (return ${d.returnDate.trim()})` : "";
+    if (head) return `${head}${ret}`;
+  }
+  const f = typeof fallback === "string" && fallback.trim() ? fallback.trim() : null;
+  return f;
+}
 
 /** One designation as the feed publishes it, before any identity resolution. This is the shape a
  *  fixture holds, so a fixture is a record of what ESPN said rather than of what we made of it. */
@@ -54,7 +89,7 @@ export async function fetchGamedayStatus(opts: { week?: number; year?: number } 
       const s = (v: string | undefined | null) => (v == null ? null : String(v));
       rows.push({
         espnAthleteId: espn, name: s(i.athlete?.displayName), status: s(i.status),
-        detail: s(i.details ?? i.type?.description), asOf: s(i.date),
+        detail: describeInjury(i.details, i.type?.description), asOf: s(i.date),
       });
     }
   }

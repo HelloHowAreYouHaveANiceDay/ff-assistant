@@ -165,7 +165,9 @@ function summarize(verb: CopilotVerb, r: unknown): string {
       if (!x.targets.length) return `No waiver claim scored. Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title. ${caveat(x.assumptions)}`;
       const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
       return `Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title; noise floor ${x.noiseFloorPp}pp. ${rows}.` +
-        `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""} ${caveat(x.assumptions)}`;
+        `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""}` +
+        `${x.unavailableAdds?.length ? ` EXCLUDED ${x.unavailableAdds.length} free agent(s) who CANNOT PLAY: ` +
+          `${x.unavailableAdds.slice(0, 4).map((u) => `${u.name} (${u.reason})`).join(", ")}.` : ""} ${caveat(x.assumptions)}`;
     }
     case "trade_check": {
       const x = r as C.TradeCheckResult;
@@ -175,8 +177,12 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     }
     case "trade_finder": {
       const x = r as C.TradeFinderResult;
-      if (!x.ideas.length) return `No balanced one-for-one found within a ${Math.round(100 * x.maxValueGap)}% consensus-value band (${x.candidates} candidates). ${caveat(x.assumptions)}`;
-      return `${x.candidates} balanced candidates; best: ` + x.ideas.slice(0, 4).map((i) => `${i.give} -> ${i.get} (${i.partner}) ${pp(i.playoffsPp)} playoffs / ${pp(i.titlePp)} title${i.mutual ? " MUTUAL" : i.themPlayoffsPp < 0 ? " (costs them)" : ""}`).join("; ") + `. Noise floor ${x.noiseFloorPp}pp. ${caveat(x.assumptions)}`;
+      // "No candidates" and "the candidates were all hurt" must never print the same sentence.
+      const hurt = x.skippedUnavailable
+        ? ` Skipped ${x.skippedUnavailable} pairing(s) involving ${x.unavailableNames.length} player(s) who cannot play: ${x.unavailableNames.slice(0, 5).join(", ")}.`
+        : "";
+      if (!x.ideas.length) return `No balanced one-for-one found within a ${Math.round(100 * x.maxValueGap)}% consensus-value band (${x.candidates} candidates).${hurt} ${caveat(x.assumptions)}`;
+      return `${x.candidates} balanced candidates; best: ` + x.ideas.slice(0, 4).map((i) => `${i.give} -> ${i.get} (${i.partner}) ${pp(i.playoffsPp)} playoffs / ${pp(i.titlePp)} title${i.mutual ? " MUTUAL" : i.themPlayoffsPp < 0 ? " (costs them)" : ""}`).join("; ") + `. Noise floor ${x.noiseFloorPp}pp.${hurt} ${caveat(x.assumptions)}`;
     }
     case "handcuffs": {
       const x = r as C.HandcuffResult;
@@ -324,11 +330,15 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // FAAB read is filtered to it, and the budget/process day come from the league's OWN rules
       // rather than from an ESPN assumption. A league with no fitted model gets `faabBasis: "rule"`
       // naming the artifact it would need, instead of another room's measurement.
-      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId), leagueId: leagueId ?? provenance.leagueId, acquisition: S.loadAcquisition(dbPath, leagueId), dbPath });
+      // AVAILABILITY IS PASSED (2026-09-18). Without it this verb recommended bidding FAAB on a man
+      // on injured reserve -- it built its add pool from the board and never asked who could play.
+      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, availability: S.loadAvailability(dbPath), faabBudget: S.loadFaabBudget(dbPath, leagueId), leagueId: leagueId ?? provenance.leagueId, acquisition: S.loadAcquisition(dbPath, leagueId), dbPath });
     case "trade_check":
       return C.tradeCheck(ctx, { give: a.give ?? [], get: a.get ?? [] }, { provenance, trials: a.trials ?? 1600, seeds: a.seed != null ? [a.seed] : [7, 101] });
     case "trade_finder":
-      return C.tradeFinder(ctx, { provenance, values: S.loadConsensusValues(dbPath, leagueId), trials: a.trials ?? 1200, seed: a.seed ?? 7, limit: a.limit ?? 8, maxGap: a.maxGap, positions: a.positions });
+      // AVAILABILITY IS PASSED (2026-09-18), the same gap the waiver verb had: this paired every man
+      // against every man without asking whether either could play.
+      return C.tradeFinder(ctx, { provenance, values: S.loadConsensusValues(dbPath, leagueId), trials: a.trials ?? 1200, seed: a.seed ?? 7, limit: a.limit ?? 8, maxGap: a.maxGap, positions: a.positions, availability: S.loadAvailability(dbPath) });
     case "handcuffs": {
       const positions = a.positions ?? ["RB"];
       const { depth, poolSize, vm } = S.loadDepth(positions, dbPath, leagueId);

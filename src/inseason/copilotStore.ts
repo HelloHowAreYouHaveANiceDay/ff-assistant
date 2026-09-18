@@ -26,7 +26,7 @@ import { nameKey } from "../draft/values.js";
 import type { VarianceModel } from "../draft/season.js";
 import type { DepthEntry } from "./handcuff.js";
 import type { AcquisitionRules } from "../league/types.js";
-import { lineupNameKey, normalizeStatus, type AvailabilityMap, type GameRow, type Provenance } from "./copilot.js";
+import { lineupNameKey, normalizeStatus, unknownStatusesSeen, type AvailabilityMap, type GameRow, type Provenance } from "./copilot.js";
 import { effectiveFormat } from "../league/index.js";
 import { loadWeeklyRows } from "../weekly/features.js";
 import { loadWeeklyArtifact, projectWeekly } from "../weekly/projector.js";
@@ -116,6 +116,18 @@ export function loadAvailability(dbPath?: string): AvailabilityMap {
       const k = nameKey(r.name); if (!k) continue;
       if (out.get(k)?.status === "OUT") continue;                 // idempotent; never clears an OUT
       out.set(k, { status, source: "gameday(espn)", detail: `ESPN game-day ${r.status}` });
+    }
+    // AN UNRECOGNISED STATUS IS REPORTED, not defaulted in silence. This is the guard for the defect
+    // that made every `Injured Reserve` man read as startable for the whole of 2026: the vocabulary
+    // was a hand-typed list, one producer's spelling was missing from it, and nothing said so. The
+    // default is still ACTIVE (see `normalizeStatus`), so behaviour does not change -- what changes
+    // is that a spelling nobody has taught us now announces itself on the very next run.
+    if (unknownStatusesSeen.size) {
+      const worst = [...unknownStatusesSeen.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+      console.warn(`WARNING: ${unknownStatusesSeen.size} UNRECOGNISED availability status value(s) were ` +
+        `treated as ACTIVE -- ${worst.map(([v, n]) => `"${v}" x${n}`).join(", ")}. ` +
+        "Add them to OUT_STATUSES or STARTABLE_STATUSES in src/inseason/copilot.ts; until then those " +
+        "men are startable to every in-season surface.");
     }
   } finally { db.close(); }
   return out;

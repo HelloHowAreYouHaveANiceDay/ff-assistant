@@ -396,17 +396,76 @@ export interface AvailabilityEntry { status: AvailabilityStatus; source: string;
 /** name_key -> what the store says about him this week. Built by `loadAvailability`. */
 export type AvailabilityMap = Map<string, AvailabilityEntry>;
 
+/**
+ * THE STATUS VOCABULARY, AND WHY IT IS NOT A HAND-TYPED LIST OF SEVEN STRINGS.
+ *
+ * This set used to be `["OUT","IR","PUP","NFI","SUSPENSION","DNR","DOUBTFUL"]`, matched EXACTLY
+ * against an upper-cased status. Two producers write into this function and they do not share a
+ * spelling: `player_status.injury_status` writes the abbreviation `IR`, while ESPN's game-day feed
+ * (`raw_gameday_status.status`) writes it out as **"Injured Reserve"** -- which matched nothing,
+ * fell through to the `return "ACTIVE"` at the bottom, and made every man on injured reserve read as
+ * fully startable to the lineup serve, the waiver verb and everything else downstream.
+ *
+ * MEASURED on 2026-09-18: 30 of the 128 players in the latest game-day week, and 89 rows across the
+ * season, every one of them `Injured Reserve`. It went unnoticed because the OTHER four values the
+ * feed emits (`Out` 44, `Doubtful` 8, `Suspension` 1, `Questionable` 136) all happen to match, so
+ * the vocabulary looked handled. The live cost was a waiver recommendation to bid FAAB on a running
+ * back who was on IR, with a confident playoff delta attached to it.
+ *
+ * THREE THINGS CHANGE, and the third is the one that stops this recurring:
+ *
+ *   1. The comparison is CANONICAL, not literal: case, punctuation and spacing are collapsed, so
+ *      "Injured Reserve", "INJURED_RESERVE" and "injured-reserve" are one token.
+ *   2. Both vocabularies are covered -- the abbreviations one producer uses AND the phrases the
+ *      other does -- listed together so the two can be read against each other.
+ *   3. An UNRECOGNISED status is recorded. The default stays ACTIVE, because benching a man on a
+ *      string we failed to parse is worse than starting him (the same asymmetry that keeps
+ *      QUESTIONABLE startable) -- but silence is what let this run, so it is no longer silent:
+ *      `unknownStatusesSeen` collects them and `loadAvailability` reports them. A new spelling from
+ *      either feed now shows up as a named warning instead of as a healthy-looking roster.
+ *
+ * `test/status-vocabulary.test.ts` closes the loop by reading the DISTINCT values out of the store's
+ * own tables and requiring every one to be recognised -- so the list is checked against the
+ * producers rather than trusted.
+ */
+export const canonStatus = (raw: string | null | undefined): string =>
+  String(raw ?? "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+
 /** Statuses that make a man UNSTARTABLE. QUESTIONABLE deliberately does not: he plays more often
  *  than not, and benching every questionable starter costs more than the occasional zero. */
-const OUT_STATUSES = new Set(["OUT", "IR", "PUP", "NFI", "SUSPENSION", "DNR", "DOUBTFUL"]);
+const OUT_STATUSES = new Set([
+  // abbreviations -- `player_status.injury_status`
+  "OUT", "IR", "PUP", "NFI", "SUSPENSION", "DNR", "DOUBTFUL", "INACTIVE",
+  // spelled out -- ESPN's `raw_gameday_status.status`, and the forms other feeds use
+  "INJURED RESERVE", "INJURY RESERVE", "RESERVE INJURED",
+  "PHYSICALLY UNABLE TO PERFORM", "NON FOOTBALL INJURY", "NON FOOTBALL ILLNESS",
+  "SUSPENDED", "DID NOT REPORT", "RESERVE SUSPENDED", "RESERVE PUP", "RESERVE DNR",
+]);
+
+/** Statuses that are KNOWN to leave a man startable. Present so that anything in neither set can be
+ *  told apart from a value we have deliberately decided is fine. */
+const STARTABLE_STATUSES = new Set(["ACTIVE", "PROBABLE", "NOTE", "AVAILABLE", "FULL", "LIMITED"]);
+
+/** Every unrecognised status this process has seen, with how many times. Read by `loadAvailability`
+ *  (and by the vocabulary test) so a spelling nobody has taught this function cannot pass unseen. */
+export const unknownStatusesSeen = new Map<string, number>();
 
 export function normalizeStatus(raw: string | null | undefined): AvailabilityStatus {
-  const s = String(raw ?? "").trim().toUpperCase();
+  const s = canonStatus(raw);
   if (!s) return "ACTIVE";
   if (OUT_STATUSES.has(s)) return "OUT";
   if (s === "QUESTIONABLE") return "QUESTIONABLE";
+  // NOT SILENT. See the note above: the default is ACTIVE on purpose, and the record is what makes
+  // that a decision rather than an accident.
+  if (!STARTABLE_STATUSES.has(s)) unknownStatusesSeen.set(s, (unknownStatusesSeen.get(s) ?? 0) + 1);
   return "ACTIVE";
 }
+
+/** True when this function actually recognises the value -- i.e. it is not being defaulted. */
+export const isKnownStatus = (raw: string | null | undefined): boolean => {
+  const s = canonStatus(raw);
+  return !s || OUT_STATUSES.has(s) || s === "QUESTIONABLE" || STARTABLE_STATUSES.has(s);
+};
 
 export interface LineupPlayer { slot?: string; name: string; pos: string; proj: number; available: boolean; reason: string }
 
@@ -1247,6 +1306,10 @@ export interface WaiverResult {
   noiseFloorPp: number;
   targets: WaiverTarget[];
   refused: WaiverRefusal[];
+  /** Free agents left OUT of the add pool because the store says they cannot play. Named rather than
+   *  silently filtered: stashing an injured man is a legitimate human call, and the point is that
+   *  the simulator cannot price it. Empty when no availability map was supplied. */
+  unavailableAdds: { name: string; pos: string; reason: string }[];
   faabBudget: number;
   objective: Objective;
   /** The waiver result's assumptions carry ONE extra block, because the bid is now a second model's
@@ -1304,6 +1367,26 @@ export function waiverTargets(
     faabTargetWinPct?: number;
     /** Our remaining FAAB. Read from the store when absent; a bid above it is FLAGGED, not capped. */
     faabRemaining?: number;
+    /**
+     * WHO CANNOT PLAY. Absent, nothing is filtered and this verb behaves exactly as it did.
+     *
+     * WHY IT IS NEEDED HERE, AND NOT ONLY IN THE LINEUP. This verb built its add pool straight from
+     * the board minus the rostered set and never consulted availability at all, so a free agent on
+     * INJURED RESERVE was a candidate like any other -- priced at his full season projection,
+     * scored through the simulator as though he would play every remaining week, and returned with
+     * a confident playoff delta and a FAAB bid attached. That is exactly what happened on
+     * 2026-09-18: Jordan Mason went on IR at 18:55 on the 16th, his manager dropped him four hours
+     * later, and this verb recommended bidding 53% of the budget on him.
+     *
+     * The fix is not the availability VOCABULARY (that was a separate defect, fixed in
+     * `normalizeStatus`) -- with the vocabulary corrected he was still recommended, because nothing
+     * on this path read availability at all. Fixing one and not the other would have looked done.
+     *
+     * An excluded man is NAMED, not silently dropped: stashing an injured player is a legitimate
+     * human decision, and the point is that the simulator cannot price it, not that nobody should
+     * ever do it.
+     */
+    availability?: AvailabilityMap;
     /** Injection seams, so the replay and the tests can drive the same code path the live tool does
      *  rather than a reimplementation of it. */
     faabModel?: FaabModel | null;
@@ -1360,11 +1443,22 @@ export function waiverTargets(
   const usingModel = !!(model && live);
   if (usingModel) faabNote = live!.note;
 
+  // UNAVAILABLE FREE AGENTS ARE EXCLUDED AND NAMED. See `availability` above for why this verb had
+  // no such filter at all. The key is the same `nameKey` the availability map is built on, so this
+  // is an id-style lookup rather than a display-name match.
+  const unavailableAdds: { name: string; pos: string; reason: string }[] = [];
+  const isOut = (p: { name: string; pos: string }): boolean => {
+    const a = o.availability?.get(nameKey(p.name));
+    if (!a || a.status !== "OUT") return false;
+    unavailableAdds.push({ name: p.name, pos: p.pos, reason: a.detail ?? a.source });
+    return true;
+  };
   const free = [...ctx.board.entries()]
     .filter(([id]) => !ctx.ownedIds.has(id))
     .map(([, p]) => p)
     .filter((p) => (o.positions ? o.positions.includes(p.pos) : true))
     .sort((a, b) => b.proj - a.proj)
+    .filter((p) => !isOut(p))
     .slice(0, nAdds);
 
   const baseBySeed = seeds.map((s) => outcomeOf(ctx, ctx.teams, trials, s));
@@ -1463,6 +1557,7 @@ export function waiverTargets(
     noiseFloorPp: noiseFloorPp(basePlayoff, trials),
     targets,
     refused,
+    unavailableAdds,
     faabBudget: budget,
     objective,
     assumptions: {
@@ -1614,6 +1709,10 @@ export interface TradeFinderResult {
   maxValueGap: number;
   candidates: number;
   skippedNoValue: number;
+  /** Pairings skipped because one side cannot play, and who they were. Counted rather than silently
+   *  dropped: "no balanced candidates" and "they were all hurt" are different answers. */
+  skippedUnavailable: number;
+  unavailableNames: string[];
   ideas: TradeIdea[];
   objective: Objective;
   assumptions: Assumptions;
@@ -1637,7 +1736,21 @@ export interface TradeFinderResult {
  */
 export function tradeFinder(
   ctx: SimContext,
-  o: BaseOpts & { values: Map<string, number>; maxGap?: number; limit?: number; positions?: string[] },
+  o: BaseOpts & {
+    values: Map<string, number>; maxGap?: number; limit?: number; positions?: string[];
+    /**
+     * WHO CANNOT PLAY -- the same map `lineupRecommend` takes, and needed here for the same reason
+     * the waiver verb needed it: this loop paired every man on our roster against every man on
+     * every other roster and never asked whether either could play. A man on injured reserve was
+     * valued at his full consensus price on BOTH sides -- as something to acquire, and as something
+     * to send away -- and the simulator then scored the resulting roster as though he would suit up.
+     *
+     * Excluded men are COUNTED, not silently skipped: "there were no balanced candidates" and "the
+     * balanced candidates were all hurt" are different answers and must not print the same.
+     * Absent, nothing is filtered and the verb behaves exactly as it did.
+     */
+    availability?: AvailabilityMap;
+  },
 ): TradeFinderResult {
   const trials = o.trials ?? 1200;
   const seed = o.seed ?? 7;
@@ -1647,16 +1760,27 @@ export function tradeFinder(
 
   const mine = ctx.teams[ctx.meIdx].roster;
   let skippedNoValue = 0;
+  let skippedUnavailable = 0;
+  const outNames = new Set<string>();
+  const cannotPlay = (p: { name: string }): boolean => {
+    if (o.availability?.get(nameKey(p.name))?.status !== "OUT") return false;
+    outNames.add(p.name);
+    return true;
+  };
   type Cand = { ti: number; give: SeasonTeamInput["roster"][number]; get: SeasonTeamInput["roster"][number]; gv: number; tv: number; gap: number };
   const cand: Cand[] = [];
   for (const give of mine) {
     const gv = val(give.name);
     if (gv == null) { skippedNoValue++; continue; }
+    // Trading AWAY a man who cannot play is a real move, but the simulator cannot price it: it
+    // scores the roster he leaves as though he had been playing. Excluded on both sides, counted.
+    if (cannotPlay(give)) { skippedUnavailable++; continue; }
     for (let ti = 0; ti < ctx.teams.length; ti++) {
       if (ti === ctx.meIdx) continue;
       for (const get of ctx.teams[ti].roster) {
         const tv = val(get.name);
         if (tv == null) continue;
+        if (cannotPlay(get)) { skippedUnavailable++; continue; }
         if (o.positions && !o.positions.includes(get.pos)) continue;
         const gap = Math.abs(tv - gv) / Math.max(tv, gv, 1);
         if (gap > maxGap) continue;
@@ -1714,6 +1838,8 @@ export function tradeFinder(
     maxValueGap: maxGap,
     candidates: cand.length,
     skippedNoValue,
+    skippedUnavailable,
+    unavailableNames: [...outNames].sort(),
     ideas,
     objective,
     assumptions: assumptionsOf(ctx, "simulation", { ...o, seeds: [seed] }, trials, [seed], objective),
