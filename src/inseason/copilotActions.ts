@@ -171,7 +171,7 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     }
     case "trade_check": {
       const x = r as C.TradeCheckResult;
-      return `${x.offer.give.join(" + ")} -> ${x.offer.get.join(" + ")} with ${x.them.teamName}: us ${pp(x.us.playoffsPp)} playoffs (+/-${x.us.se}), ` +
+      return `${x.offer.give.join(" + ")} -> ${x.offer.get.join(" + ")} with ${x.them.teamName}: us ${pp(x.us.playoffsPp)} playoffs (${x.us.se == null ? "one seed, SE not measured" : `+/-${x.us.se}`}), ` +
         `${x.us.playoffWeekPts >= 0 ? "+" : ""}${x.us.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(x.us.titlePp)} title; them ${pp(x.them.playoffsPp)} playoffs. ` +
         `Verdict: ${x.verdict}${x.mutual ? ", and it helps them too" : ""}. ${caveat(x.assumptions)}`;
     }

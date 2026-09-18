@@ -41,7 +41,7 @@ import { slotAdmits } from "../draft/slots.js";
 import { winProbLineup, opponentStarters, type WeeklyBand, type WinProbOpts, type WinProbResult, type WinProbPlayer } from "./winprob.js";
 import { handcuffBoard, loadInjuryOutlook, type DepthEntry, type HandcuffRow, type InjuryOutlookSet } from "./handcuff.js";
 import { rosterGaps, rosterOverfills, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
-import { nameKey } from "../draft/values.js";
+import { dstAliasKey, nameKey } from "../draft/values.js";
 import { perGameStrength } from "../draft/rosBlend.js";
 import {
   loadFaabModel, liveFaabState, featureRow, recommendBid, faabArtifactFor,
@@ -473,16 +473,60 @@ export interface LineupResultJson {
  * WHY A STARTER MAY NOT BE STARTED, resolved once so the guard and the optimizer read the same rule.
  * Returns null when he is startable.
  */
+/**
+ * A WEEKLY PROJECTION FOR ONE MAN, WITH THE DST ALIAS TRIED SECOND.
+ *
+ * `lineupNameKey` deliberately does NOT strip or translate a `D/ST` token -- its own header says so,
+ * and unifying it with the canonical `nameKey` would silently break every weekly lineup match. The
+ * consequence is that the two sides have to SPELL a defence the same way: "MIN D/ST" on both, which
+ * is what `ownership` happens to write today. A roster source that writes ESPN's NICKNAME form --
+ * `raw_league_roster_week` writes "Vikings D/ST" -- would match nothing and fall silently to the
+ * season line, with `basisNote` reporting it as a fallback rather than as a defence nobody could
+ * find.
+ *
+ * So the direct key is tried first, unchanged, and only on a MISS for a DST is the alias tried. That
+ * ordering matters: it cannot change any lookup that already succeeds, which is the property that
+ * makes this safe to add to a seam the header warns about.
+ */
+function weeklyFor(
+  weekly: WeeklyProjection | undefined,
+  p: { name: string; pos: string },
+): number | undefined {
+  if (!weekly) return undefined;
+  const direct = weekly.get(lineupNameKey(p.name));
+  if (direct != null || p.pos !== "DST") return direct;
+  const alias = dstAliasKey(p.name);
+  return alias == null ? undefined : weekly.get(lineupNameKey(`${alias.toUpperCase()} D/ST`));
+}
+
 export function unavailableReason(
-  p: { name: string; pos: string; bye?: number | null },
+  p: { name: string; pos: string; bye?: number | null; slot?: string | null },
   week: number,
   availability: AvailabilityMap,
 ): string | null {
   if (p.bye != null && Number(p.bye) === week) return `bye week ${week}`;
+  /**
+   * A MAN THE LEAGUE HAS ON IR CANNOT BE STARTED, whatever the injury feeds say about him.
+   *
+   * `ownership.slot` carried `IR` and NOTHING read it -- the architecture review flagged it and it
+   * stayed open. It matters because it is a different fact from a designation: the league itself has
+   * already ruled him ineligible, so he is unstartable even when the status feeds are stale, absent,
+   * or spell his condition in a way the vocabulary does not know. On the Yahoo league it is four men
+   * today, covered by the injury path only BY LUCK.
+   *
+   * `IR_SLOTS` rather than a literal: Yahoo writes `IR`, ESPN's lineupSlotId 21 renders as `IR`, and
+   * a platform that spells it differently must be added here rather than silently starting him.
+   */
+  const slot = (p.slot ?? "").trim().toUpperCase();
+  if (slot && IR_SLOTS.has(slot)) return `on IR (league slot "${p.slot}") -- not eligible to start`;
   const a = availability.get(nameKey(p.name));
   if (a && a.status === "OUT") return `${a.detail ? `OUT (${a.detail})` : "OUT"} -- ${a.source}`;
   return null;
 }
+
+/** League ROSTER slots that mean "cannot be started". Not injury statuses -- those are
+ *  `OUT_STATUSES` in availability.ts -- but the league's own eligibility ruling. */
+const IR_SLOTS = new Set(["IR", "INJURED RESERVE", "IL", "NA", "INACTIVE"]);
 
 /**
  * THE GUARD THAT MAKES AVAILABILITY LOAD-BEARING.
@@ -674,7 +718,7 @@ export function lineupRecommend(
   const players = roster.map((p) => {
     const why = unavailableReason(p, week, availability);
     if (why) unavailable.push({ name: p.name, pos: p.pos, reason: why });
-    const wk = o.weekly?.get(lineupNameKey(p.name));
+    const wk = weeklyFor(o.weekly, p);
     if (o.weekly) { if (wk != null && Number.isFinite(wk)) fromWeekly++; else fellBack.push(p.name); }
     const pts = wk != null && Number.isFinite(wk) ? wk : seasonFallback(p);
     // KICKOFF LOCK. `o.locked` is the set of NFL teams whose week has started; a man on one of them
@@ -1180,8 +1224,23 @@ function deltasOf(after: Outcome[], base: Outcome[], objective: Objective): Obje
  * differencing two averages) is what keeps that pairing intact, and the spread across seeds is the
  * standard error reported beside every number.
  */
-function pairedDelta(perSeed: number[]): { delta: number; se: number } {
-  return { delta: r2(mean(perSeed)), se: r2(sd(perSeed) / Math.sqrt(Math.max(1, perSeed.length))) };
+/**
+ * ONE SEED CANNOT PRODUCE A STANDARD ERROR, and reporting 0 for it is worse than reporting nothing.
+ *
+ * `sd([x])` is 0, so a single-seed run printed `se: 0` -- which reads as a perfectly precise
+ * measurement and actually means NOT MEASURED. `ff copilot trade-finder` defaults to one seed, so
+ * every idea it has ever returned carried `se: 0` beside a delta with real sampling noise in it; the
+ * waiver verb defaults to two seeds and reported honest values like 0.1, which is exactly the
+ * contrast that makes the 0 look like a number rather than an absence.
+ *
+ * `null` is the honest answer, and it is a different TYPE, so a consumer that formats it has to
+ * decide what to print rather than silently rendering "+/-0".
+ */
+function pairedDelta(perSeed: number[]): { delta: number; se: number | null } {
+  return {
+    delta: r2(mean(perSeed)),
+    se: perSeed.length < 2 ? null : r2(sd(perSeed) / Math.sqrt(perSeed.length)),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1196,7 +1255,9 @@ export interface ObjectiveDelta {
   playoffWeekPts: number;
   titlePp: number;
   rankValue: number;
-  se: number;
+  /** Sampling error across SEEDS. Null when only one seed was run -- see `pairedDelta`: a single
+   *  sample has no measurable spread, and 0 would read as certainty. */
+  se: number | null;
 }
 export interface WaiverDrop extends ObjectiveDelta { name: string; pos: string; proj: number }
 export interface WaiverRefusal { add: string; drop: string; pos: string; why: string }
@@ -1254,6 +1315,9 @@ export interface WaiverResult {
   noiseFloorPp: number;
   targets: WaiverTarget[];
   refused: WaiverRefusal[];
+  /** How the add pool was RANKED, and any position the ranking could not price. A reader who sees
+   *  four quarterbacks needs to know whether that is the pool or the sort. */
+  poolRanking: { basis: "value-over-replacement" | "raw-projection"; missingReplacement: string[] };
   /** Free agents left OUT of the add pool because the store says they cannot play. Named rather than
    *  silently filtered: stashing an injured man is a legitimate human call, and the point is that
    *  the simulator cannot price it. Empty when no availability map was supplied. */
@@ -1401,11 +1465,37 @@ export function waiverTargets(
     unavailableAdds.push({ name: p.name, pos: p.pos, reason: a.detail ?? a.source });
     return true;
   };
+  /**
+   * THE POOL IS RANKED BY VALUE OVER REPLACEMENT, NOT BY RAW SEASON POINTS.
+   *
+   * It used to be `.sort((a, b) => b.proj - a.proj)` over the whole free-agent pool. Season point
+   * totals are not comparable across positions -- a quarterback outscores every running back in any
+   * scoring system -- so the top `nAdds` were QUARTERBACKS every single time, in every league,
+   * forever. Measured on 2026-09-18, league 462233: the four candidates offered were Malik Willis,
+   * Bryce Young, Sam Darnold and Jacoby Brissett, while the pool held 115 WRs, 92 RBs and 59 TEs
+   * that could not be reached without passing `--pos`. Three of the four scored +0.00pp, correctly:
+   * the roster already had a starting QB, so a backup never enters a lineup. The verb was
+   * structurally unable to evaluate the pool it exists to evaluate.
+   *
+   * `ctx.replacement` is the per-position WEEKLY points freely available off waivers -- the
+   * streaming floor the season simulator already uses -- so the comparable quantity is the season
+   * total ABOVE that floor. A quarterback worth 280 points against a 17-point-a-week streamer is
+   * worth less than a back worth 180 against a 6-point-a-week one, which is the whole point.
+   *
+   * A POSITION WITH NO REPLACEMENT LEVEL IS NAMED, not silently ranked on raw points -- that would
+   * reinstate the bug for exactly the positions the store knows least about.
+   */
+  const missingReplacement = new Set<string>();
+  const vor = (p: { pos: string; proj: number }): number => {
+    const r = ctx.replacement[p.pos];
+    if (r == null) { missingReplacement.add(p.pos); return p.proj; }
+    return p.proj - r * NFL_WEEKS;
+  };
   const free = [...ctx.board.entries()]
     .filter(([id]) => !ctx.ownedIds.has(id))
     .map(([, p]) => p)
     .filter((p) => (o.positions ? o.positions.includes(p.pos) : true))
-    .sort((a, b) => b.proj - a.proj)
+    .sort((a, b) => vor(b) - vor(a))
     .filter((p) => !isOut(p))
     .slice(0, nAdds);
 
@@ -1505,6 +1595,10 @@ export function waiverTargets(
     noiseFloorPp: noiseFloorPp(basePlayoff, trials),
     targets,
     refused,
+    poolRanking: {
+      basis: missingReplacement.size === Object.keys(ctx.replacement).length ? "raw-projection" : "value-over-replacement",
+      missingReplacement: [...missingReplacement].sort(),
+    },
     unavailableAdds,
     faabBudget: budget,
     objective,
@@ -1894,7 +1988,9 @@ export interface DepthRiskResult {
   costPlayoffWeekPts: number;
   /** POSITIVE = percentage points of TITLE probability, reported alongside, never used alone. */
   costTitlePp: number;
-  se: number;
+  /** Sampling error across SEEDS. Null when only one seed was run -- see `pairedDelta`: a single
+   *  sample has no measurable spread, and 0 would read as certainty. */
+  se: number | null;
   noiseFloorPp: number;
   insurance: { name: string; pos: string; proj: number; from: string; free: boolean; recoversPp: number; recoversPlayoffWeekPts: number; recoversTitlePp: number }[];
   /**
