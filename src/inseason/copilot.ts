@@ -8,7 +8,7 @@
  * had no way to reach a single one of those answers, and the MCP surface it does reach was still
  * entirely a DRAFT surface (read_board, draft_player, set_lever) months after the draft ended.
  *
- * This file is those answers as pure functions over a `SimContext`. The CLI (`ff copilot <verb>`) and
+ * This file is those answers as pure functions over a `SimContext`. The CLI (`ff <verb>`) and
  * the MCP tools (`season_odds`, `lineup_recommend`, ...) are two thin callers of the same functions,
  * so the number the Assistant quotes and the number a terminal prints cannot differ.
  *
@@ -30,7 +30,7 @@
  * WHAT IS DELIBERATELY NOT HERE. No ESPN writes. Nothing in this module sets a lineup, submits a
  * claim or sends an offer; every function returns a RECOMMENDATION and the human acts. That is not
  * timidity about the plumbing -- it is D3's log-before-act invariant reaching the point where there
- * is something to log. The action-log write happens in the callers (`ff copilot`, the MCP tools), so
+ * is something to log. The action-log write happens in the callers (the `ff` in-season verbs, the MCP tools), so
  * the black-box recorder sees every piece of advice given even though no roster move follows it.
  */
 import { optimalLineup } from "./lineup.js";
@@ -562,7 +562,7 @@ export function assertStartersAvailable(
     // two Mike Williamses, two Michael Carters, a Josh Allen at QB and one at LB. That made the
     // guard decide by ROSTER ORDER, in both directions, and both are wrong:
     //   * the unavailable copy first -> it THROWS on a lineup that started the available one, and
-    //     the whole verb fails (`ff copilot lineup` and the MCP tool both error out). Measured.
+    //     the whole verb fails (`ff lineup` and the MCP tool both error out). Measured.
     //   * the available copy first -> a genuinely-benched bye/OUT man passes unseen, which is the
     //     single failure this guard exists to catch.
     // Starting "that name" is a plumbing failure only when EVERY man who could be him is out. For a
@@ -1253,7 +1253,7 @@ function deltasOf(after: Outcome[], base: Outcome[], objective: Objective): Obje
  * ONE SEED CANNOT PRODUCE A STANDARD ERROR, and reporting 0 for it is worse than reporting nothing.
  *
  * `sd([x])` is 0, so a single-seed run printed `se: 0` -- which reads as a perfectly precise
- * measurement and actually means NOT MEASURED. `ff copilot trade-finder` defaults to one seed, so
+ * measurement and actually means NOT MEASURED. `ff trade-finder` defaults to one seed, so
  * every idea it has ever returned carried `se: 0` beside a delta with real sampling noise in it; the
  * waiver verb defaults to two seeds and reported honest values like 0.1, which is exactly the
  * contrast that makes the 0 look like a number rather than an absence.

@@ -6,7 +6,7 @@
  *   rest.find((a) => !a.startsWith("--"))
  *
  * reads "the first token that is not a flag". A flag's VALUE is not a flag, so with
- * `ff copilot depth-risk --week 2` that expression returns **"2"** and hands it on as the player
+ * `ff copilot depth-risk --week 2` -- the spelling of the day -- that expression returns **"2"** and hands it on as the player
  * name -- which then fuzzy-matched a real person and answered
  * `"2" is not on our roster -- he is on HMLS`. A documented flag broke the verb, and the message
  * blamed somebody nobody had typed. `ff ingest-source --seasons 2018-2026 <id>` had the identical

@@ -66,12 +66,38 @@ async function main() {
       return cmdCheatsheet(rest);
     case "project":
       return cmdProject(rest);
+    // THE TEN IN-SEASON DECISIONS, each its own verb. They lived behind `ff <verb>` until
+    // 2026-09-19; the prefix bought nothing and cost a spelling (`ff lineup` vs the MCP
+    // tool's `lineup_recommend` vs a top-level `ff lineup` that meant something else entirely).
+    case "season-odds":
     case "lineup":
-      return cmdLineup(rest);
+    case "waivers":
+    case "trade-check":
+    case "trade-finder":
     case "handcuffs":
-      return cmdHandcuffs(rest);
-    case "copilot":
-      return cmdCopilot(rest);
+    case "depth-risk":
+    case "power-rankings":
+    case "playoff-sos":
+    case "stream":
+      return cmdCopilot(rest, cmd);
+    // THE OFFLINE LINEUP, renamed out of the way. It takes a CSV and points.csv and needs no store,
+    // no league and no app -- the draft-day fallback the runbook names. `ff lineup` now means the
+    // in-season recommendation, which is what anyone typing it expects.
+    case "lineup-offline":
+      return cmdLineup(rest);
+    case "copilot": {
+      // Kept only to say where it went, exactly as `ff bro` is -- a verb that silently vanishes
+      // leaves a user's muscle memory failing with "unknown command" and no idea what replaced it.
+      // Through the shared scan like every other positional -- the ban is absolute, and this
+      // tombstone is not special enough to be the exception that reopens it.
+      const sub = firstPositional(rest, new Set());
+      console.log("`ff <verb>` is gone -- the ten decisions are top-level verbs now.\n" +
+        `  Run ${sub ? `\`ff ${sub}\`` : "`ff <verb>`"} instead.\n` +
+        "  Verbs: season-odds lineup waivers trade-check trade-finder handcuffs depth-risk\n" +
+        "         power-rankings playoff-sos stream\n" +
+        "  (`ff lineup` is the in-season recommendation; the offline CSV path is `ff lineup-offline`.)");
+      return void process.exit(2);
+    }
     case "refresh-decisions":
       return cmdRefreshDecisions(rest);
     case "inseason-tick":
@@ -949,14 +975,6 @@ async function cmdPreflight(rest: string[]) {
 // copresent read once the season starts), projects each via the shared layer, and recommends the
 // optimal legal AVAILABLE lineup. `--set` would submit it (live, at season start).
 /**
- * `ff handcuffs [--pos RB,WR] [--weeks N] [--free] [--json]`
- *
- * Who is worth a bench slot because of who is ahead of them. Ranked by the CONDITIONAL payoff -- what
- * the man scores in a week the starter misses -- rather than by expected value, because a handcuff's
- * EV is a small probability times a moderate gain and sorting on it buries precisely the asymmetric
- * bets that justify holding one.
- */
-/**
  * `ff models`
  *
  * What is fitted, how old it is, whether it still passes its own checks, and -- the part that kept
@@ -1126,63 +1144,6 @@ async function cmdIngestEcr(rest: string[]) {
   if (!r.kept) console.log(`  NOTHING KEPT -- check --types against what the archive actually contains.`);
 }
 
-async function cmdHandcuffs(rest: string[]) {
-  const { openDb } = await import("./db/db.js");
-  const { handcuffBoard } = await import("./inseason/handcuff.js");
-  const { readFileSync } = await import("node:fs");
-  const db = openDb(valueOf(rest, "--db"));
-  const season = (await leagueCtx(rest, db)).config.season;
-  const vm = JSON.parse(readFileSync((await formatCtx(rest, db)).model.require("variance"), "utf8"));
-  const positions = (valueOf(rest, "--pos") ?? "RB").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-  const weeks = Number(valueOf(rest, "--weeks") ?? 17);
-
-  const rows = db.prepare(
-    "SELECT b.row_json, s.depth_order AS depth FROM board b LEFT JOIN player_status s USING(player_id) WHERE b.season = ?",
-  ).all(season) as { row_json: string; depth: number | null }[];
-  if (!rows.length) { console.log("no board -- run `ff refresh` first"); return; }
-
-  const parsed = rows.map((r) => ({ j: JSON.parse(r.row_json) as Record<string, unknown>, depth: r.depth }));
-  // Pool rank per position, from OUR ranking, so the lead's injury tier lines up with how the
-  // variance model was fitted (tiers are fractions of the full positional pool, not of a roster).
-  const poolSize: Record<string, number> = {};
-  const poolRank = new Map<string, number>();
-  for (const pos of positions) {
-    const list = parsed.filter((p) => p.j.Pos === pos).sort((a, b) => (Number(b.j.ProjPts) || 0) - (Number(a.j.ProjPts) || 0));
-    poolSize[pos] = list.length;
-    list.forEach((p, i) => poolRank.set(String(p.j.Player), i));
-  }
-  const entries = parsed.map((p) => ({
-    name: String(p.j.Player), pos: String(p.j.Pos), team: String(p.j.Team ?? ""),
-    depthOrder: p.depth, projPts: Number(p.j.ProjPts) || 0,
-    rosteredPct: typeof p.j["Rostered%"] === "number" ? (p.j["Rostered%"] as number) : null,
-    poolRank: poolRank.get(String(p.j.Player)) ?? null,
-  }));
-
-  let board = handcuffBoard(entries, vm, { weeks, positions, poolSize });
-  if (rest.includes("--free")) board = board.filter((r) => r.rosteredPct == null || r.rosteredPct < 50);
-  if (rest.includes("--json")) { console.log(JSON.stringify(board, null, 2)); return; }
-
-  console.log(`HANDCUFFS -- ${positions.join("/")}, ${weeks} weeks remaining${rest.includes("--free") ? ", rostered <50% only" : ""}`);
-  console.log(`what each man scores IF the starter ahead of him misses a week.\n`);
-  console.log("  backup                team  d  behind                now    if out    lift   miss%   EV    own%");
-  for (const r of board.slice(0, 25)) {
-    console.log(
-      `  ${(r.name.slice(0, 19) + (r.contested ? "*" : "")).padEnd(20)} ${r.team.padEnd(4)} ${String(r.depthOrder).padStart(1)}  ${r.lead.slice(0, 18).padEnd(18)}` +
-      ` ${r.basePerWk.toFixed(1).padStart(5)} ${r.activePerWk.toFixed(1).padStart(8)} ${("+" + r.liftPerWk.toFixed(1)).padStart(7)}` +
-      ` ${(100 * r.missProb).toFixed(0).padStart(6)}% ${r.expectedPts.toFixed(0).padStart(5)} ${r.rosteredPct == null ? "   --" : (r.rosteredPct.toFixed(0) + "%").padStart(6)}`,
-    );
-  }
-  console.log(`\n  * = the published depth chart calls him the starter but our projection does not -- a`);
-  console.log(`    TIMESHARE, where he may take over with nobody getting hurt at all.`);
-  console.log(`  Sorted by IF-OUT. Not by lift or EV: lift = -0.078*base + 0.402*lead, so its coefficient`);
-  console.log(`  on the backup's own value is NEGATIVE and ranking on it returns the WORST player behind`);
-  console.log(`  the best starter (Vaki 9.6 above Pacheco 12.5 behind the same back). EV inherits that.`);
-  console.log(`  Measured on 27 seasons: a depth-2 back gains +4.4 pts/wk when the lead misses (t=14.2,`);
-  console.log(`  positive in 79% of 307 cases). The payoff lands near 10.7 pts/wk REGARDLESS of how good`);
-  console.log(`  the starter is -- elite handcuffs are cheaper for the same payoff, not richer.`);
-  console.log(`  NOT added to the board projection: the rank curve already contains the seasons where`);
-  console.log(`  the man ahead got hurt, so adding it there would count the same event twice.`);
-}
 
 async function cmdLineup(rest: string[]) {
   const { loadProjections } = await import("./projections.js");
@@ -1192,7 +1153,7 @@ async function cmdLineup(rest: string[]) {
   const { readFileSync } = await import("node:fs");
   const proj = loadProjections(valueOf(rest, "--points") ?? dataPath("points.csv"), valueOf(rest, "--def") ?? dataPath("def-ratings.csv"));
   const rosterFile = valueOf(rest, "--roster");
-  if (!rosterFile) { console.log("usage: ff lineup --roster <csv: player[,opp][,injury]>  (live copresent read lands at season start)"); return; }
+  if (!rosterFile) { console.log("usage: ff lineup-offline --roster <csv: player[,opp][,injury]>   (no store, no league, no app -- the draft-day fallback; `ff lineup` is the in-season recommendation)"); return; }
   const rows = readFileSync(rosterFile, "utf8").trim().split(/\r?\n/).slice(1).map((l) => l.split(","));
   const table = new Map(proj.all().map((p) => [p.name.toLowerCase(), p.pos]));
   const players = rows.map((f) => {
@@ -1210,7 +1171,7 @@ async function cmdLineup(rest: string[]) {
 async function cmdProject(rest: string[]) {
   const { loadProjections } = await import("./projections.js");
   // JUSTIFIED dataPath (WP3 grep): `src/projections.ts` is the LEGACY read-only lookup behind two
-  // display verbs (`ff project <name>`, `ff lineup --roster <csv>`). It takes explicit paths, has no
+  // display verbs (`ff project <name>`, `ff lineup-offline --roster <csv>`). It takes explicit paths, has no
   // store handle and writes nothing; a `--points` flag already redirects it at a format's pool. It is
   // listed in the WP3 report as knowingly incumbent-default rather than silently so.
   // Skips flag values: `ff project --curve x "Name"` read "x" as the player.
@@ -4206,7 +4167,7 @@ async function cmdEvaluateWeekly(rest: string[]) {
 }
 
 /**
- * `ff copilot <verb>` -- the in-season decision surface in a terminal.
+ * `ff <verb>` -- the in-season decision surface in a terminal.
  *
  * The SAME dispatcher the MCP tools use (src/inseason/copilotActions.ts), so a number printed here
  * and a number the Assistant quotes cannot differ, and both are written to the action log before
@@ -4234,7 +4195,7 @@ function objectiveOf(v: string | undefined): "expected" | "winprob" | undefined 
   throw new Error(`--objective "${v}" is not an objective -- use expected | winprob.`);
 }
 
-async function cmdCopilot(rest: string[]) {
+async function cmdCopilot(rest: string[], verbArg: string) {
   /**
    * THE COPILOT FLAGS THAT CONSUME THE NEXT TOKEN. Hand-written because `valueOf` does not publish
    * such a list, and therefore asserted against this verb's own usage text in
@@ -4246,9 +4207,9 @@ async function cmdCopilot(rest: string[]) {
     "--pos", "--limit", "--max-gap", "--league", "--objective", "--db",
   ]);
   const { runCopilot, COPILOT_VERBS } = await import("./inseason/copilotActions.js");
-  // SKIPS FLAG VALUES. `rest.find((r) => !r.startsWith("--"))` read the VERB as "2" for
-  // `ff copilot --week 2 lineup` and silently printed usage.
-  const verbArg = firstPositional(rest, COPILOT_VALUE_FLAGS);
+  // The verb now arrives from the dispatcher rather than being scanned out of argv, so it cannot be
+  // confused with a flag's value -- the bug that made `ff copilot --week 2 lineup` print usage (the spelling of the day). The
+  // scan survives below for `depth-risk`'s bare player name, which is still a positional.
   const VERB_OF: Record<string, (typeof COPILOT_VERBS)[number]> = {
     "season-odds": "season_odds", lineup: "lineup_recommend", waivers: "waiver_targets",
     "trade-check": "trade_check", "trade-finder": "trade_finder", handcuffs: "handcuffs",
@@ -4256,7 +4217,7 @@ async function cmdCopilot(rest: string[]) {
     stream: "stream_recommend",
   };
   const verb = verbArg ? VERB_OF[verbArg] : undefined;
-  // AN UNKNOWN FLAG IS AN ERROR, NOT A NO-OP (I-7). `ff copilot lineup --weak 3` used to run the
+  // AN UNKNOWN FLAG IS AN ERROR, NOT A NO-OP (I-7). `ff lineup --weak 3` used to run the
   // DEFAULT lineup and print it as though the flag had been honoured -- a caller who believes he
   // asked for something he did not get, which is the same failure `--objective` already refuses by
   // name. Enumerated from the flags this verb actually reads, so a flag added below must be added
@@ -4268,13 +4229,13 @@ async function cmdCopilot(rest: string[]) {
   const VALUELESS = new Set(["--free", "--json"]);
   const unknown = rest.filter((r) => r.startsWith("--") && !KNOWN_FLAGS.has(r));
   if (unknown.length) {
-    console.error(`ff copilot: unknown flag(s) ${unknown.join(", ")}. Known: ${[...KNOWN_FLAGS].sort().join(" ")}`);
+    console.error(`ff ${verbArg}: unknown flag(s) ${unknown.join(", ")}. Known: ${[...KNOWN_FLAGS].sort().join(" ")}`);
     process.exitCode = 2;
     return;
   }
   void VALUELESS;
   if (!verb) {
-    console.log(`usage: ff copilot <${Object.keys(VERB_OF).join("|")}> [flags]\n` +
+    console.log(`usage: ff <${Object.keys(VERB_OF).join("|")}> [flags]\n` +
       `  --schedule real|generated|auto   real THROWS if the app is unreachable; auto says which it used\n` +
       `  --trials N  --seed N  --week N  --player "Name"  --give "A,B"  --get "C"  --pos RB,WR\n` +
       `  --limit N   --free   --max-gap 0.15   --json\n` +
@@ -4292,8 +4253,10 @@ async function cmdCopilot(rest: string[]) {
     trials: num("--trials"), seed: num("--seed"), week: num("--week"),
     // The player is the SECOND bare token: the first is the verb. `positionals` skips flag values,
     // so `depth-risk --week 2` no longer reads "2" as the player. See src/util/argv.ts.
+    // `rest` no longer contains the verb, so the first bare token IS the player. `positionals`
+    // still skips flag values, which is what stopped `--week 2` being read as a player name.
     player: valueOf(rest, "--player")
-      ?? (verbArg === "depth-risk" ? positionals(rest, COPILOT_VALUE_FLAGS).filter((t) => t !== verbArg)[0] : undefined),
+      ?? (verbArg === "depth-risk" ? positionals(rest, COPILOT_VALUE_FLAGS)[0] : undefined),
     give: list("--give").length ? list("--give") : undefined,
     get: list("--get").length ? list("--get") : undefined,
     positions: list("--pos").length ? list("--pos") : undefined,
@@ -4997,7 +4960,7 @@ async function cmdSessionCheck(rest: string[]) {
  * One table, two readers.
  *
  * Exit 3 when anything is stale or absent, so it gates a script the way `session-check` does:
- *   ff feeds && ff copilot lineup
+ *   ff feeds && ff lineup
  */
 async function cmdFeeds(rest: string[]) {
   const { openDb } = await import("./db/db.js");

@@ -40,7 +40,7 @@ deterministic and validated.
 - **In-season copilot — working, read-only.** Ten decisions (season odds, weekly lineup, waivers,
   trade check, trade finder, handcuffs, depth risk, power rankings, playoff SOS, and streaming --
   whom to start or add at ONE position out of the free-agent pool) as callable
-  functions over one sim context, reached identically from `ff copilot <verb>` and from the
+  functions over one sim context, reached identically from `ff <verb>` and from the
   MCP surface, almost all scored as a change in our PLAYOFF probability -- the factor the
   simulator has measured skill on -- with playoff-week strength as the secondary and the title
   reported alongside (Phase 3, 2026-09-09). Verified end to end against the live league. See
@@ -137,7 +137,7 @@ src/
     copilot.ts       #   the ten decisions as PURE functions over one SimContext, each result
                      #   carrying its own assumptions (schedule/trials/seeds/data stamp)
     copilotStore.ts  #   the read-only loading copilot.ts refuses to do (availability, depth, lines)
-    copilotActions.ts#   ONE dispatcher for `ff copilot` and the MCP tools + the D3 action-log write
+    copilotActions.ts#   ONE dispatcher for the `ff` in-season verbs and the MCP tools + the D3 action-log write
     lineup.ts        #   the optimizer                   handcuff.ts   # measured handcuff model
     rosterValue.ts   #   roster value under availability  waivers.ts   # the points-based scaffold
     espnTeam.ts      #   team-page scaffold (no writes exposed)
@@ -243,7 +243,7 @@ docs/                # architecture, decisions (D0-D24), specs, and the harness 
   in a view we already fetched -- so `fact_waiver_claim` holds 794 of this league's own claims with
   145 losses among them, and `tools/train_faab.py` fits both the clearing price and `P(win | bid)`.
   Leave-one-season-out MAE **$7.59** against **$10.32** for the old rule handed an oracle;
-  `ff copilot waivers` now returns the dollars for a target win probability, the predicted clearing
+  `ff waivers` now returns the dollars for a target win probability, the predicted clearing
   price and the P(win) curve, and flags a bid it cannot afford rather than capping it in silence.
   **Three of the four pre-registered predictions failed** and the reasons are worth more than the
   predictions: the room's bids are only 26.4% better explained (P54 wanted 30%), bids **rise** later
@@ -309,7 +309,7 @@ docs/                # architecture, decisions (D0-D24), specs, and the harness 
   REPORTED, NOT DECIDED") re-ran the same three clauses, including the pooled coverage band, on the
   decision population and found the streaming artifact passes every clause at all six positions
   (pooled coverage 0.847 in [0.75, 0.85]; RB 2.7083 vs floor 3.3448, WR 2.8862 vs 3.3553, TE 2.2335
-  vs 2.5542 CRPS). `ff copilot stream --pos DST --week 3` and the `stream_recommend` MCP tool
+  vs 2.5542 CRPS). `ff stream --pos DST --week 3` and the `stream_recommend` MCP tool
   serve it, and every result names which artifact served which position.
   **Read the result with its control attached:** the twelve opponent columns are worth under 0.004
   CRPS at every position against the same model without them, and P42 failed saying so. What passed
@@ -321,21 +321,21 @@ docs/                # architecture, decisions (D0-D24), specs, and the harness 
   a number to retype), so Claude
   Code (or any MCP client) can drive the draft and the season. `docs/mcp.md`; `claude mcp add
   ff-draft -- npx tsx <repo>/src/ff.ts mcp`.
-- **In-season copilot (`ff copilot <verb>`)** — the decision surface, READ-ONLY, and the same ten
+- **In-season copilot (`ff <verb>`)** — the decision surface, READ-ONLY, and the same ten
   functions Claude Code reaches as MCP tools (`src/inseason/copilot.ts`, one dispatcher in
   `copilotActions.ts`, so a terminal and an MCP client cannot quote different numbers):
 
   ```
-  npm run ff -- copilot season-odds --schedule real --trials 3000
-  npm run ff -- copilot lineup --week 5
-  npm run ff -- copilot waivers
-  npm run ff -- copilot trade-check --give "Chris Godwin Jr." --get "Jalen Hurts"
-  npm run ff -- copilot trade-finder
-  npm run ff -- copilot handcuffs --pos RB --free
-  npm run ff -- copilot depth-risk --player "Breece Hall"
-  npm run ff -- copilot power-rankings
-  npm run ff -- copilot playoff-sos
-  npm run ff -- copilot stream --pos DST --week 3
+  npm run ff -- season-odds --schedule real --trials 3000
+  npm run ff -- lineup --week 5
+  npm run ff -- waivers
+  npm run ff -- trade-check --give "Chris Godwin Jr." --get "Jalen Hurts"
+  npm run ff -- trade-finder
+  npm run ff -- handcuffs --pos RB --free
+  npm run ff -- depth-risk --player "Breece Hall"
+  npm run ff -- power-rankings
+  npm run ff -- playoff-sos
+  npm run ff -- stream --pos DST --week 3
   ```
 
   Almost everything is scored in ONE unit — the change in our championship probability, under common

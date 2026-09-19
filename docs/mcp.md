@@ -128,7 +128,7 @@ call left a row in `action_log`.
 ### The in-season tools (the copilot surface)
 
 Ten READ-ONLY verbs over ONE sim context (`src/inseason/copilot.ts`), reached through ONE dispatcher
-(`src/inseason/copilotActions.ts`) that `ff copilot <verb>` also uses. That single path is the point:
+(`src/inseason/copilotActions.ts`) that `ff <verb>` also uses. That single path is the point:
 six scripts used to hand-build the same context, three on the real schedule and three on a generated
 one, and the same roster returned a base title probability of 4.17%, 4.56% or 5.1% depending on which
 tool you asked. A terminal and an MCP client cannot disagree, because there is one place the
@@ -259,7 +259,7 @@ bid and every guard fired. `auto-draft --app` re-verified afterwards in a clean 
 It now walks to a scrollable ancestor AND dispatches a real wheel event. Verified by CONTENT, not by
 return value -- the top board row changed and rendered rows went 30 -> 54.
 
-Every mutation goes through the same `action_log` `ff copilot` writes, so the CLI and MCP share
+Every mutation goes through the same `action_log` the `ff` in-season verbs write, so the CLI and MCP share
 one audit trail. Writing to ESPN itself (lineups, waivers, trades) is **not** exposed -- reads only.
 
 ## Notes
@@ -329,8 +329,8 @@ on bye and there are nine defences free -- which one*. That decision is made at 
 a pool, and what decides it is almost entirely the matchup.
 
 ```
-ff copilot stream --pos DST --week 3
-ff copilot stream --pos QB  --week 3 --json
+ff stream --pos DST --week 3
+ff stream --pos QB  --week 3 --json
 ```
 
 **The unit is POINTS and the tool says so.** Everything else in the copilot is scored as a change in

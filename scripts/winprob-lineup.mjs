@@ -2,7 +2,7 @@
 //
 //   node --import tsx scripts/winprob-lineup.mjs [--week N] [--model floor|challenger|both] [--sims 8000]
 //
-// WHY THIS IS A SCRIPT AND NOT `ff copilot lineup --objective winprob`. It should be the CLI flag,
+// WHY THIS IS A SCRIPT AND NOT `ff lineup --objective winprob`. It should be the CLI flag,
 // and the plumbing for it is one line in `src/inseason/copilotActions.ts`'s dispatcher plus one in
 // `cmdCopilot`. Both files are outside this track's file fence -- other agents are editing them in
 // parallel -- so the flag is deferred and this script is the caller in the meantime. It reaches the
@@ -11,7 +11,7 @@
 // about the number differs from what the flag will print. What is missing is only the flag.
 //
 // NOTHING HERE WRITES TO ESPN. It reads the league through the app bridge, reads the store, and
-// prints. The default objective is unchanged -- `expected` is what `ff copilot lineup` and every MCP
+// prints. The default objective is unchanged -- `expected` is what `ff lineup` and every MCP
 // consumer still get; this prints both so the owner can see the trade before deciding.
 import { readFileSync } from "node:fs";
 import { openDb, logAction } from "../src/db/db.ts";
@@ -104,7 +104,7 @@ for (const [label, file] of MODELS) {
   line(`  (logged to action_log #${logId} at status "recommended")`);
 }
 
-console.log("\nTHE DEFAULT DID NOT CHANGE. `ff copilot lineup` and every MCP consumer still get the");
+console.log("\nTHE DEFAULT DID NOT CHANGE. `ff lineup` and every MCP consumer still get the");
 console.log("EXPECTED-POINTS lineup. docs/validation.md records why: the 2018-2025 replay measured the");
 console.log("win-probability lineup at -0.59pp of team-weeks won, so making it the default would be");
 console.log("shipping a measured regression.");

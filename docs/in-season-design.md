@@ -91,7 +91,7 @@ themselves: the availability map (`player_status` AND high-severity injury news,
 on different cycles and the stale one is not always the same), the depth chart, consensus values, the
 posted lines, the data stamp. Everything opens `{readonly: true}`.
 
-**`src/inseason/copilotActions.ts`** is the single dispatcher `ff copilot <verb>` and the ten MCP
+**`src/inseason/copilotActions.ts`** is the single dispatcher `ff <verb>` and the ten MCP
 tools both go through, so a number a terminal prints and a number the Assistant quotes are the same
 computation. It is also where the D3 write lives.
 
@@ -142,7 +142,7 @@ that -- a call that reaches the same work directly must leave the log empty.
   every player's band is the same multiple of his own season line, so there is no relative shape to
   trade and the objective is inert by construction. Revisit the day an artifact PASSES that gate.
 
-  `ff copilot lineup --objective winprob` now exists (src/ff.ts, copilotActions.ts) -- it was outside Track H's
+  `ff lineup --objective winprob` now exists (src/ff.ts, copilotActions.ts) -- it was outside Track H's
   file fence. `scripts/winprob-lineup.mjs` is the caller, reaching the same function through the same
   loaders with the same action-log write.
 - **The store CAN now tell you what week it is** (integration pass 2). The data track's

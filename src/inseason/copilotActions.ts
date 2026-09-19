@@ -2,7 +2,7 @@
  * ONE DISPATCHER FOR EVERY IN-SEASON RECOMMENDATION -- and the D3 action-log write that must happen
  * before any of them is returned.
  *
- * WHY A DISPATCHER RATHER THAN TWO CALLERS. `ff copilot <verb>` and the MCP tools of the same name
+ * WHY A DISPATCHER RATHER THAN TWO CALLERS. `ff <verb>` and the MCP tools of the same name
  * are the same nine answers reached two ways. If each wired itself to `copilot.ts` directly they
  * would be two implementations of the same thing, and the repo has already paid for that mistake
  * once: six scripts hand-built the same sim context, three of them on the real schedule and three on
@@ -45,7 +45,7 @@ export interface CopilotArgs {
   /**
    * WHICH LEAGUE this decision is about. Omitted = the ACTIVE league (`settings.active_league`).
    *
-   * The same flag `ff copilot --league` takes and the same optional argument the MCP tools take, so a
+   * The same flag `ff --league` takes and the same optional argument the MCP tools take, so a
    * number printed in a terminal and a number the Assistant quotes cannot be about two different
    * leagues -- which is the whole reason this dispatcher exists. An id naming no league row THROWS.
    */

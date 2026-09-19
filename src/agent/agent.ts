@@ -615,7 +615,7 @@ function buildTools(dbPath: string | undefined, season: number) {
       // --- IN-SEASON COPILOT: the decision surface, READ-ONLY.
       //
       // Nine verbs over ONE sim context (src/inseason/copilot.ts), reached through ONE dispatcher
-      // (copilotActions.ts) that `ff copilot` also uses -- so a number the Assistant quotes and a
+      // (copilotActions.ts) that the `ff` in-season verbs also use -- so a number the Assistant quotes and a
       // number a terminal prints are the same computation, and both are written to the action log
       // BEFORE they are returned (D3), even though this phase makes no ESPN writes at all. The
       // reason to log advice is that advice a human acts on is still the agent driving the team, and
@@ -683,7 +683,7 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
     }
   };
   // WHICH LEAGUE (I-7). Optional on every in-season tool, and absent means the ACTIVE league --
-  // the same rule `ff copilot --league` obeys, so a number the Assistant quotes and a number a
+  // the same rule `ff --league` obeys, so a number the Assistant quotes and a number a
   // terminal prints cannot be about two different leagues. An id naming no league THROWS.
   const LEAGUE = z.string().optional()
     .describe("league id to answer for. Omit for the ACTIVE league (the one the app's league tab selects). An unknown id is refused by name rather than silently answered for another league.");

@@ -1,6 +1,6 @@
 /**
  * THE DST SLOT MUST BE FILLABLE, and the reason this test exists is that it stopped being so
- * SILENTLY: `ff copilot lineup` returned "(empty)" at DST with a rostered defense on the bench, and
+ * SILENTLY: `ff lineup` returned "(empty)" at DST with a rostered defense on the bench, and
  * nothing errored. An empty slot scores replacement points, so the only symptom was a lineup that
  * looked slightly wrong to a human.
  *

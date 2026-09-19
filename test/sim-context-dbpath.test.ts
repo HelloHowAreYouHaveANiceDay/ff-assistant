@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { loadSimContext } from "../src/draft/simContext.js";
 import { copilotContext } from "../src/inseason/copilotActions.js";
 
-// `ff copilot --db <path>` exists so a COUNTERFACTUAL copy of the store (a trade reversed, a roster
+// `ff --db <path>` exists so a COUNTERFACTUAL copy of the store (a trade reversed, a roster
 // edited) can be simulated. Until 2026-09-17 the path reached the provenance loaders but the
 // simulation context always opened the live data/ff.db, so a --db run reported the live rosters
 // while saying nothing -- a pre-trade world and the live world came back IDENTICAL to the trial.

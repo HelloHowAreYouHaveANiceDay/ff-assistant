@@ -428,7 +428,7 @@ sections below say exactly what that costs.
 ## Yahoo in-season, first run (2026-09-16, WP7)
 
 The Yahoo superflex league produced in-season numbers from its OWN model for the first time. Every
-figure below is from `ff copilot <verb> --league 129048` on the live store with `active_league`
+figure below is from `ff <verb> --league 129048` on the live store with `active_league`
 switched to 129048, week 2 of the 2026 season, and every one of them carries three caveats stated
 once here and repeated in each result's own caveat sentence.
 
@@ -666,7 +666,7 @@ the flagless refit reproduces the shipped file byte-for-byte apart from its `fit
 ### 6. The serve, live
 
 With the artifacts in place `resolveFormat(db, "129048").model.has("weekly")` is true and the copilot's
-weekly path serves them. Week 2 of 2026, `ff copilot lineup --league 129048 --week 2`:
+weekly path serves them. Week 2 of 2026, `ff lineup --league 129048 --week 2`:
 
     basisNote: every point total is from the weekly projector (src/weekly/projector.ts) for week 2
     QB Tyler Shough 26.04 | WR Garrett Wilson 14.88 | WR Jameson Williams 12.65
@@ -675,7 +675,7 @@ weekly path serves them. Week 2 of 2026, `ff copilot lineup --league 129048 --we
     SUPERFLEX Joe Burrow 24.83                                        total 163.2
 
 against WP7's `no weekly projector was supplied: every point total is the season projection divided by
-17` and 150.4. `ff copilot stream --league 129048 --pos QB` names the files it served:
+17` and 150.4. `ff stream --league 129048 --pos QB` names the files it served:
 `artifactByPos {QB,RB,WR,TE: weekly-artifact.json, K: weekly-artifact-lineonly.json}`,
 `missing ["DST"]` -- the format's own directory at every position, and a named refusal at the one it
 does not have.
@@ -701,7 +701,7 @@ TWO THINGS HAD TO CHANGE FOR THAT TO BE A CORRECT NUMBER RATHER THAN A PLAUSIBLE
 
 ESPN IDENTITY, checked the way this pass checks everything: the board's `row_json` differs from
 `data/ff.db.bak-prearchfix-2026-09-16` in exactly the same 151 rows and exactly the one key
-(`ESPN_ADP`, max delta 0.7) before and after the league switch; `ff copilot lineup --league 462233` is
+(`ESPN_ADP`, max delta 0.7) before and after the league switch; `ff lineup --league 462233` is
 byte-identical starter-for-starter and projection-for-projection across the switch (91.7 both times);
 the store is left `active_league = 462233`.
 

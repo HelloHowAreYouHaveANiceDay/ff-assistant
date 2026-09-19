@@ -71,7 +71,7 @@ test("D1 FAULT INJECTION: the guard still REFUSES a lineup that starts a man rul
 
 test("D1 DEFECT: two men of one name, the UNAVAILABLE copy first -- the guard must NOT throw", () => {
   // THE BUG: `roster.find` returned the bye twin, so a legal lineup raised
-  // "lineup starts 1 player(s) who cannot play in week 3" and `ff copilot lineup` / the MCP tool
+  // "lineup starts 1 player(s) who cannot play in week 3" and `ff lineup` / the MCP tool
   // both failed outright. Measured on the live store's real roster before the fix.
   const c = clone(ctx());
   const r = mine(c);

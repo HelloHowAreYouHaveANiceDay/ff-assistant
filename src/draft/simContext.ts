@@ -112,7 +112,7 @@ export async function loadSimContext(opts: {
   /** WHICH LEAGUE. Omitted = the ACTIVE league. Everything below -- the config, the ownership rows,
    *  the live schedule read -- comes from this one id, rather than from three different queries. */
   leagueId?: string | null;
-  /** WHICH STORE. Omitted = data/ff.db. `ff copilot --db <path>` threads its path here so a
+  /** WHICH STORE. Omitted = data/ff.db. `ff --db <path>` threads its path here so a
    *  counterfactual copy of the store (a trade reversed, a roster edited) is what gets simulated;
    *  before 2026-09-17 the flag reached the provenance loaders but this context always opened the
    *  live store, and a `--db` run answered from the live rosters while saying nothing. */

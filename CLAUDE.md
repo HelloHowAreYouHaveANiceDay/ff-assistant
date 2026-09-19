@@ -280,9 +280,9 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   cross-origin iframe like Fantasy Chat, and a hardened frame-aware click), `refresh` (rerun the data
   pipeline), and `propose_trade` (the gated ESPN trade write, dry-run by default -- shares
   `executeTradeProposal` with `ff propose-trade`). The last ten are the in-season copilot's, and the same ten decisions are reachable
-  from a terminal as `ff copilot <verb>` through one dispatcher (`src/inseason/copilotActions.ts`),
+  from a terminal as `ff <verb>` through one dispatcher (`src/inseason/copilotActions.ts`),
   so a number printed in a shell and a number the Assistant quotes cannot differ. The tenth is
-  `stream_recommend` / `ff copilot stream`: of the men nobody rosters, who to start this week -- at
+  `stream_recommend` / `ff stream`: of the men nobody rosters, who to start this week -- at
   any of the six positions (`STREAM_SERVE_POS`). The weekly serve at every position is now the FORM
   model (`WEEKLY_SERVE` -> `CHALLENGER_WEEKLY_ARTIFACT`, `src/weekly/streamingServe.ts`) per the
   2026-09-12 owner override D11; the streaming artifact ships nowhere now, so `SHIPPED_STREAMING_POSITIONS`

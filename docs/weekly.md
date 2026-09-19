@@ -1091,7 +1091,7 @@ decision population, all three pass.
 
 ### 6.8 The decision surface, and the forward record
 
-`ff copilot stream --pos DST --week 2` / MCP tool `stream_recommend` -- see `docs/mcp.md`. Live and
+`ff stream --pos DST --week 2` / MCP tool `stream_recommend` -- see `docs/mcp.md`. Live and
 read-only through the app bridge, 2026 week 2:
 
 ```
@@ -1127,7 +1127,7 @@ zero regret until they do.
 
 The gate is applied per position, so **"what ships" is six decisions and not one**. `WEEKLY_SERVE` in
 `src/weekly/streamingServe.ts` is the single table that holds them, and every consumer resolves
-through it -- the scorecard's `weekly` kind, `projectStreamingWith`, `ff copilot stream` and the
+through it -- the scorecard's `weekly` kind, `projectStreamingWith`, `ff stream` and the
 `stream_recommend` MCP tool, whose `assumptions` block carries `artifactByPos` on every result.
 
 | pos | serves | what that is |
@@ -1286,7 +1286,7 @@ measurement the table exists to record, and the difference at K/DST is nil eithe
 redo with the D11 model on the old lines; those rows stand and will be graded as what they were.
 The redone model reaches the record from the next week frozen. Week 1 has no frozen rows (the first
 snapshot ran after its kickoff and refused, as designed). The live serve reads the artifact from
-disk per call, so `ff copilot lineup` served week 2 through the retrained model immediately
+disk per call, so `ff lineup` served week 2 through the retrained model immediately
 (checked: 0.8 s, a full lineup).
 
 ## 8. The weekly serve is now GRADIENT-BOOSTED (2026-09-14; D19)
@@ -1363,7 +1363,7 @@ pool holdout pick is a NULL, as in the screen; the streamable tier is the manage
 `loadWeeklyProjection` -> `projectStreamingWith`), so nothing new runs at the serve boundary. Ridge was
 chosen over a GBM precisely for serve robustness (the D19 lesson): a missing matchup column imputes to
 its centred mean, routing an unknown-matchup DST to `line * intercept` ~= the floor, linear all the way,
-no tree cliff. Verified on the live 2026 board -- `ff copilot stream --pos DST` for the current week
+no tree cliff. Verified on the live 2026 board -- `ff stream --pos DST` for the current week
 (sane, matchup-differentiated) AND forward weeks 10/15 where `opp_implied_total` is entirely absent (0
 non-finite rows; projections narrow to the floor rather than collapse). `test/dst-stream-serve.test.ts`
 locks the degradation in. Reversal is one line: `WEEKLY_SERVE["DST"] = SHIPPED_WEEKLY_ARTIFACT`.
@@ -1403,12 +1403,12 @@ the same function, so a per-format store gets the identical treatment.
   `node --import tsx scripts/weekly-availability-coverage.mjs`) compares the LIVE week against the
   same week in the prior three seasons and marks each column `ok` / `below` / `dark` / `none`. The
   per-season coverage table cannot see this: a live season is mostly future weeks that legitimately
-  carry nothing, so a dark column averages out to "partially built". `ff copilot lineup` appends the
+  carry nothing, so a dark column averages out to "partially built". `ff lineup` appends the
   `dark` list to `assumptions.basisNote`, so a degraded lineup says so on its face.
 
 **The local-date correction that came with it.** `buildLiveWeekContextInto` resolved its target week
 from `nowIso()`, which is UTC, so after ~8pm ET it wrote the block to the week AFTER the one a lineup
-was being set for -- measured on 2026-09-16 at 21:51 local, target week 3 while `ff copilot lineup`
+was being set for -- measured on 2026-09-16 at 21:51 local, target week 3 while `ff lineup`
 was setting week 2. It now uses `localToday()`, the same rule `currentWeek` documents.
 
 ## 11. THE DESIGN DROPS A DEAD COLUMN AND KEEPS THE FIVE THE LEDGER PROPOSED (WP18, 2026-09-17; D30/D31)

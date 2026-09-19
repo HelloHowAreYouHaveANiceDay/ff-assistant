@@ -273,7 +273,7 @@ sensitivity sweep is four flag combinations rather than four config writes and a
 `scripts/format-sensitivity.mjs` prints them. The `FF_SEEDING` environment variable is GONE and is
 no longer read -- a script still using it sweeps nothing and returns four identical numbers.
 - **Human-only (not auto):** nomination gamesmanship.
-- **Not yet live:** in-season lineup SUBMIT (recommend path works offline: `ff lineup --roster`).
+- **Not yet live:** in-season lineup SUBMIT (recommend path works offline: `ff lineup-offline --roster`).
 
 ## Setting this up on a DIFFERENT computer
 
