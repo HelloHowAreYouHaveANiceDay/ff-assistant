@@ -4965,12 +4965,18 @@ async function cmdExportDataset(rest: string[]) {
   const { existsSync, writeFileSync } = await import("node:fs");
   const out = valueOf(rest, "--out");
   if (!out) {
-    console.log("usage: ff export-dataset --out <file.db> [--json]");
+    console.log("usage: ff export-dataset --out <file.db> [--for-release] [--json]");
+    console.log("  --for-release refuses anywhere but a clean, pushed main -- a published dataset");
+    console.log("  must be traceable to mainline history.");
     console.log("  Writes the PUBLISHABLE tables only -- no league, roster, transaction, draft or");
     console.log("  manager data. See docs/dataset.md and test/dataset-export-privacy.test.ts.");
     return;
   }
   if (existsSync(out)) return failStep(`${out} already exists. Refusing to overwrite a file somebody may be about to publish.`);
+  if (rest.includes("--for-release")) {
+    const problem = await releaseRefProblem();
+    if (problem) return failStep(`--for-release REFUSED: ${problem} Nothing was written.`);
+  }
 
   const db = openDb(valueOf(rest, "--db"));
   let manifest;
@@ -4989,4 +4995,47 @@ async function cmdExportDataset(rest: string[]) {
   console.log(`  ${manifest.tables.length} tables, ${manifest.totalRows.toLocaleString()} rows`);
   console.log(`  ${manifest.excludedTables} tables EXCLUDED (league, roster, transaction, draft, manager)`);
   console.log(`  manifest: ${out}.manifest.json  (generatedAt ${manifest.generatedAt})`);
+}
+
+/**
+ * WHICH COMMIT A PUBLISHED DATASET MAY BE BUILT FROM.
+ *
+ * The 2026-09-19 snapshot was cut from a feature branch. Nothing was lost by it -- a tag pins its
+ * commit independently of any branch, and the asset lives on the release rather than in git -- but
+ * it is the wrong MODEL: the release pointed at history that was not yet on the mainline, so
+ * "which code produced this data?" answered with a commit nobody could find from `main`.
+ *
+ * So `--for-release` refuses anywhere but a clean, pushed `main`. The check lives HERE rather than
+ * in a runbook because a rule that depends on whoever is running the command is a rule that holds
+ * until the first hurried afternoon.
+ *
+ * It is a FLAG, not the default: `ff export-dataset` without it is for local use, experiments and
+ * tests, none of which should need a pristine checkout.
+ */
+async function releaseRefProblem(): Promise<string | null> {
+  // `await import`, not `require`: this project is ESM and `require` is not defined at runtime --
+  // which TypeScript happily accepted because the `as typeof import(...)` cast told it the shape.
+  // A cast is not a guarantee that the thing exists.
+  const { execSync } = await import("node:child_process");
+  const git = (cmd: string): string => {
+    try { return execSync(`git ${cmd}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
+    catch { return ""; }
+  };
+  const branch = git("rev-parse --abbrev-ref HEAD");
+  if (branch !== "main") {
+    return `on branch "${branch || "(unknown)"}", not main. A published dataset must be traceable to ` +
+      "mainline history, or nobody can find the code that produced it.";
+  }
+  // Unpushed work means the tag would point at a commit no consumer can fetch.
+  const ahead = git("rev-list --count origin/main..HEAD");
+  if (ahead && ahead !== "0") return `${ahead} commit(s) are not pushed to origin/main.`;
+  const behind = git("rev-list --count HEAD..origin/main");
+  if (behind && behind !== "0") return `${behind} commit(s) behind origin/main -- pull first.`;
+  // A dirty src/ means the artifact was built by code that is not in any commit.
+  const dirty = git("status --porcelain -- src tools").split("\n").filter(Boolean);
+  if (dirty.length) {
+    return `${dirty.length} uncommitted change(s) under src/ or tools/: ${dirty.slice(0, 3).map((l) => l.trim()).join(", ")}` +
+      `${dirty.length > 3 ? ", ..." : ""}. The artifact would be built by code that is in no commit.`;
+  }
+  return null;
 }

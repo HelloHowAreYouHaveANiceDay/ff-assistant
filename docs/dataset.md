@@ -3,13 +3,28 @@
 A snapshot of this repo's **derived and public-source** tables, so a new clone does not have to
 re-pull and re-train everything before it can model anything.
 
-Download: the repo's [Releases](https://github.com/HelloHowAreYouHaveANiceDay/ff-assistant/releases)
-page, asset `ff-dataset-<date>.db.gz`, with a `.sha256` beside it.
+### Download
+
+One URL, and it never changes -- it always resolves to the newest release:
 
 ```
-gunzip ff-dataset-2026-09-19.db.gz
-sha256sum -c ff-dataset-2026-09-19.db.sha256
+curl -LO https://github.com/HelloHowAreYouHaveANiceDay/ff-assistant/releases/latest/download/ff-dataset.db.gz
+curl -LO https://github.com/HelloHowAreYouHaveANiceDay/ff-assistant/releases/latest/download/ff-dataset.db.gz.sha256
+sha256sum -c ff-dataset.db.gz.sha256
+gunzip ff-dataset.db.gz
 ```
+
+A DATED copy is attached to every release too (`ff-dataset-<date>.db.gz`), for pinning a specific
+snapshot. The stable name is what `latest/download` needs: that pointer matches on the asset's
+FILENAME, so a dated name resolves only while its release happens to be the newest one -- which
+looks correct right up until the second release exists.
+
+## Releases are cut from `main`
+
+A published dataset must be traceable to mainline history, or "which code produced this?" answers
+with a commit nobody can find. `ff export-dataset --for-release` refuses anywhere but a clean,
+pushed `main` -- the rule lives in the tool rather than in a runbook, because a rule that depends on
+whoever is running the command holds until the first hurried afternoon.
 
 ---
 
