@@ -25,8 +25,8 @@
   "population": "rostered",
   "trainMinLine": 0.0,
   "rowFilter": "in_population",
-  "populationHash": "7ca2e2be49fc5aa7",
-  "populationRows": 84582,
+  "populationHash": "1ba3d1a481108050",
+  "populationRows": 70011,
   "features": [
     {
       "name": "td_ppg",

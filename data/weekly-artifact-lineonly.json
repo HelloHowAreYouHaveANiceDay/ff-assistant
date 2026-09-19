@@ -27,8 +27,8 @@
   "population": "rostered",
   "trainMinLine": 0.0,
   "rowFilter": "in_population",
-  "populationHash": "7ca2e2be49fc5aa7",
-  "populationRows": 84582,
+  "populationHash": "a2771c1af4732f31",
+  "populationRows": 79567,
   "features": [],
   "coef": {
     "QB": {

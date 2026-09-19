@@ -281,9 +281,15 @@ def main():
     holdout = None if args.holdout_season in ("none", "", None) else int(args.holdout_season)
     rows = load_rows(args.db, lo, hi, args.population)
     # The identity of the population these rows came from, from the same store in the same run.
+    # The seasons actually fitted, from the rows already loaded -- the SAME expression the
+    # artifact's `seasons` field uses below, so the stamped scope and the declared scope
+    # cannot disagree.
+    _fitted_seasons = sorted({r["season"] for r in rows})
     _con = sqlite3.connect(args.db)
     try:
-        pop_hash, pop_rows = tw.population_signature(_con)
+        # Over the FITTED seasons only -- the consumer scopes to `artifact.seasons`, so the two
+        # must name the same set. A hash over the live season would go stale on the next sync.
+        pop_hash, pop_rows = tw.population_signature(_con, _fitted_seasons)
     finally:
         _con.close()
     # NO SECOND FILTER. load_rows already selected the decision population in SQL; see train_weekly.

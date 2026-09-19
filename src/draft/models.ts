@@ -66,10 +66,19 @@ export function weeklyPopulationProblem(json: Record<string, unknown>): string |
   }
   const declared = typeof json.populationHash === "string" ? json.populationHash : null;
   if (!declared) return null;                 // fitted before the hash existed; check (1) is all there is
-  const sig = storePopulation();
+  // SCOPED TO THE SEASONS THIS ARTIFACT WAS FITTED ON. Unscoped, the hash covered the LIVE season
+  // too, which `buildForwardInto` rebuilds on every `actuals` routine -- so one waiver claim in a
+  // season the model has never seen declared it stale. See populationSignature's header for the
+  // measurement. A season the artifact does not name cannot invalidate it; every season it DOES
+  // name still can, and a genuine redefinition moves those.
+  const fitted = Array.isArray(json.seasons)
+    ? (json.seasons as unknown[]).map(Number).filter((n) => Number.isFinite(n))
+    : [];
+  const sig = storePopulation(fitted);
   if (!sig) return null;                      // no store here -- nothing to compare against
   if (declared !== sig.hash) {
-    return `populationHash ${declared} but the store's population is ${sig.hash} ` +
+    const over = fitted.length ? `over ${fitted[0]}-${fitted[fitted.length - 1]}` : "over every season";
+    return `populationHash ${declared} but the store's population ${over} is ${sig.hash} ` +
       `(${sig.rows} flagged rows). The population was REBUILT since this artifact was fitted, so it ` +
       "is a model of players the store no longer selects. Refit, or rebuild the population back.";
   }
@@ -78,15 +87,22 @@ export function weeklyPopulationProblem(json: Record<string, unknown>): string |
 
 /** The store's population signature, read once. Failure to open is `null`, never a throw: a registry
  *  check that crashes on a missing store makes `ff models` unusable on a fresh clone. */
-let SIG_CACHE: PopulationSignature | null | undefined;
-function storePopulation(): PopulationSignature | null {
-  if (SIG_CACHE !== undefined) return SIG_CACHE;
-  SIG_CACHE = null;
+let SIG_CACHE: Map<string, PopulationSignature | null> | undefined;
+function storePopulation(seasons: readonly number[] = []): PopulationSignature | null {
+  // KEYED BY SCOPE. The cache was a single slot, which was right when every caller asked the same
+  // question; now each artifact asks about its own seasons, and one slot would hand the second
+  // caller the FIRST caller's answer -- a wrong hash that looks like a real mismatch.
+  const key = seasons.length ? [...seasons].sort((a, b) => a - b).join(",") : "*";
+  SIG_CACHE ??= new Map();
+  const hit = SIG_CACHE.get(key);
+  if (hit !== undefined) return hit;
+  let sig: PopulationSignature | null = null;
   try {
     const db = new Database(dataPath("ff.db"), { readonly: true, fileMustExist: true });
-    try { SIG_CACHE = populationSignature(db); } finally { db.close(); }
-  } catch { SIG_CACHE = null; }
-  return SIG_CACHE;
+    try { sig = populationSignature(db, seasons.length ? seasons : undefined); } finally { db.close(); }
+  } catch { sig = null; }
+  SIG_CACHE.set(key, sig);
+  return sig;
 }
 
 export interface ModelSpec {

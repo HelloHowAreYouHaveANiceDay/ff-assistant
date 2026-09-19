@@ -86,7 +86,7 @@ ROW_FILTER = "in_population"
 POPULATION_DEPTH = {"QB": 42, "RB": 71, "WR": 79, "TE": 41, "K": 34, "DST": 37}
 
 
-def population_signature(con):
+def population_signature(con, seasons=None):
     """THE STORE'S POPULATION, AS A SHORT STRING, byte-identical to `populationSignature` in
     src/weekly/population.ts.
 
@@ -100,9 +100,16 @@ def population_signature(con):
     insertion order, seasons as [season, count] pairs ascending. A hash that differs only in
     whitespace is a hash that never matches, which would read as a permanently stale artifact.
     """
+    scope = ""
+    if seasons:
+        # SCOPED TO THE FITTED SEASONS (2026-09-19). Unscoped, this covered the LIVE season, which is
+        # rebuilt on every `actuals` routine -- so an artifact fitted through 2025 was declared stale
+        # by one waiver claim in 2026. The consumer applies the same scope; the two must agree
+        # exactly or the hash never matches.
+        scope = " AND season IN (%s)" % ",".join(str(int(x)) for x in seasons)
     rows = con.execute(
         "SELECT season, COUNT(*) FROM feat_player_week_model"
-        " WHERE " + POPULATION_COLUMN + " = 1 GROUP BY season ORDER BY season").fetchall()
+        " WHERE " + POPULATION_COLUMN + " = 1" + scope + " GROUP BY season ORDER BY season").fetchall()
     if not rows:
         return None, 0
     body = json.dumps(
@@ -1274,9 +1281,15 @@ def main():
     rows = load_rows(args.db, lo, hi, args.population)
     # The identity of the population these rows came from, stamped on the artifact. Read from the
     # SAME store, in the same run, so it cannot describe a different build than the one fitted.
+    # The seasons actually fitted, from the rows already loaded -- the SAME expression the
+    # artifact's `seasons` field uses below, so the stamped scope and the declared scope
+    # cannot disagree.
+    _fitted_seasons = sorted({r["season"] for r in rows})
     _con = sqlite3.connect(args.db)
     try:
-        pop_hash, pop_rows = population_signature(_con)
+        # Over the FITTED seasons only; see population_signature. The consumer scopes to
+        # `artifact.seasons`, so these two must name the same set.
+        pop_hash, pop_rows = population_signature(_con, _fitted_seasons)
     finally:
         _con.close()
     # NO SECOND FILTER HERE. `load_rows` selected the decision population in SQL; re-cutting it on

@@ -275,13 +275,42 @@ export interface PopulationSignature {
   depth: Record<string, number>;
 }
 
-export function populationSignature(db: DB): PopulationSignature | null {
+/**
+ * THE POPULATION'S IDENTITY, optionally SCOPED TO THE SEASONS AN ARTIFACT WAS FITTED ON.
+ *
+ * `seasons` exists because the unscoped signature had a false-positive mode that fires every week of
+ * a live season (2026-09-19). The hash covered EVERY season in the table, including the one being
+ * played -- and `buildForwardInto` rebuilds the live season's rows AND its population flags on every
+ * `actuals` routine, which `src/inseason/routines.ts` runs "many times between Thursday and Sunday's
+ * first kickoff". One waiver claim moves a man into the population, the count changes, the hash
+ * changes, and three artifacts that were never fitted on that season are declared stale.
+ *
+ * MEASURED, not inferred: the shipped artifacts were stamped when 2026 held 5,015 flagged rows and
+ * the store now holds 5,024 -- nine rows, one roster change -- while EVERY settled season hashed
+ * byte-identically. (Found by brute-forcing which 2026 count reproduces the declared hash, which is
+ * also the proof that no settled season moved.)
+ *
+ * What the guard is FOR is a population REDEFINITION -- a different `POPULATION_DEPTH`, another
+ * season of roster feed, a changed rule -- and every one of those moves the SETTLED seasons too. So
+ * scoping to the fitted seasons keeps the whole of that and drops the part that was never about the
+ * model: a season it has not seen.
+ *
+ * Unscoped (no `seasons`) is the old behaviour exactly, so callers that want the whole store -- the
+ * lineage page, a coverage report -- are unchanged.
+ */
+export function populationSignature(db: DB, seasons?: readonly number[]): PopulationSignature | null {
   const have = new Set((db.prepare("PRAGMA table_info(feat_player_week_model)").all() as { name: string }[])
     .map((c) => c.name));
   if (!have.has(POPULATION_COLUMN)) return null;
+  // The filter is applied in SQL rather than after the GROUP BY so a season with no flagged rows is
+  // absent from the body either way -- the two sides must serialise identically or the hash never
+  // matches, which reads as a permanently stale artifact.
+  const scope = seasons?.length
+    ? ` AND season IN (${seasons.map((s) => Number(s)).join(",")})`
+    : "";
   const perSeason = db.prepare(
     `SELECT season, COUNT(*) AS n FROM feat_player_week_model
-      WHERE ${POPULATION_PREDICATE} GROUP BY season ORDER BY season`,
+      WHERE ${POPULATION_PREDICATE}${scope} GROUP BY season ORDER BY season`,
   ).all() as { season: number; n: number }[];
   if (!perSeason.length) return null;
   const rows = perSeason.reduce((a, r) => a + r.n, 0);
