@@ -28,7 +28,13 @@ export type PlatformId = "espn" | "yahoo";
 /** Which embedded webview holds this platform's login. The app mounts one per platform, each on its
  *  own persistent partition, so both stay signed in at once (app/renderer/index.html). `host` is the
  *  string the app bridge resolves a guest by -- see `guestWebContents({host})` in app/main.js. */
-export interface WebviewSpec { elementId: string; host: string; partition: string }
+/**
+ * ELECTRON PRESENTATION ONLY. `elementId` and `partition` are `<webview>` concepts and mean nothing
+ * outside the desktop app, which is why `host` no longer lives here: the host is a PLATFORM FACT
+ * needed to choose a session, and reaching it through an Electron-shaped struct is what made two
+ * transport call sites read `plat.webview.host` to configure something that is not a webview.
+ */
+export interface WebviewSpec { elementId: string; partition: string }
 
 /** Where a league's pages live. One builder per page the app's tabs offer, so the renderer never
  *  concatenates a platform's URL itself (P-4: it did, for every league, always ESPN-shaped). */
@@ -245,7 +251,12 @@ export interface SyncHints {
 export interface Platform {
   readonly id: PlatformId;
   readonly urls: PlatformUrls;
-  readonly webview: WebviewSpec;
+  /** The session host -- whose login a request to this platform needs. A platform fact, not a
+   *  rendering detail, so it is readable without knowing anything about Electron. */
+  readonly host: string;
+  /** How the desktop app embeds this platform, where it does. OPTIONAL: a platform that never runs
+   *  in Electron is legal and says so by absence rather than inventing an element id. */
+  readonly webview?: WebviewSpec;
   /** The leagues this login can see. */
   discover(io: PlatformIO, wantSeason: number): Promise<DiscoveredLeague[]>;
   /**

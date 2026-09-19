@@ -61,7 +61,7 @@ async function activePlatform(dbPath?: string): Promise<{ id: string; host: stri
     try { raw = resolveLeagueContext(db, undefined).platformRaw; } finally { db.close(); }
     if (!raw) return { id: "espn", host: "espn.com", known: true };
     const { platformFor } = await import("../league/platform.js");
-    try { const p = await platformFor(raw); return { id: p.id, host: p.webview.host, known: true }; }
+    try { const p = await platformFor(raw); return { id: p.id, host: p.host, known: true }; }
     catch { return { id: raw, host: "", known: false }; }
   } catch { return { id: "espn", host: "espn.com", known: true }; }
 }

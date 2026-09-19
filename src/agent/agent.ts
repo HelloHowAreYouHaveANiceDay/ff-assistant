@@ -31,7 +31,9 @@ const espnLeagueUrl = (season: number, leagueId: string, views: string[]) =>
  * exactly what had happened (the roster sync held its own Playwright/CDP body).
  */
 function platformIO(host: string): import("../league/platform.js").PlatformIO {
-  return { get: async (url, headers) => (await import("../league/platform.js")).bridgePlatformIO(host).get(url, headers) };
+  // Through the ONE resolver (src/league/session.ts), so an agent driving this with a cookie or
+  // another browser tool gets its own session here too rather than silently the desktop app's.
+  return { get: async (url, headers) => (await import("../league/session.js")).resolveIO(host).get(url, headers) };
 }
 
 /**
@@ -53,6 +55,10 @@ async function activeGuest(dbPath: string | undefined): Promise<{ id: string; el
     if (!raw) return { id: "espn", elementId: "espnview" };
     const { platformFor } = await import("../league/platform.js");
     const p = await platformFor(raw);
+    // A platform with no `webview` does not run in the desktop app at all, so there is no guest to
+    // be active in. Falling back to ESPN's element id would point the caller at ANOTHER PLATFORM'S
+    // webview -- the wrong-site read `appBridge` already warns about -- so it is refused by name.
+    if (!p.webview) throw new Error(`platform ${p.id} has no desktop webview -- there is no active guest for it`);
     return { id: p.id, elementId: p.webview.elementId };
   } catch { return { id: "espn", elementId: "espnview" }; }
 }
@@ -426,7 +432,7 @@ function buildTools(dbPath: string | undefined, season: number) {
           const discoverYahoo = async (wantSeason: number): Promise<{ line: string; found: { leagueId: string; season: number | null; teamId: string | null; name: string | null }[] }> => {
             try {
               const { yahooPlatform } = await import("../league/yahoo.js");
-              const io = platformIO(yahooPlatform.webview.host);
+              const io = platformIO(yahooPlatform.host);
               const found = await yahooPlatform.discover(io, wantSeason);
               return { line: found.length ? `found ${found.length} yahoo league(s):\n` + found.map((l) => `leagueId ${l.leagueId}, season ${l.season ?? "?"}, team ${l.teamId || "?"}${l.name ? `, "${l.name}"` : ""}`).join("\n") : "no yahoo leagues", found };
             } catch (e) { return { line: `yahoo: ${String((e as Error).message).slice(0, 160)}`, found: [] }; }
@@ -509,7 +515,7 @@ function buildTools(dbPath: string | undefined, season: number) {
               if (!page) { await browser?.close().catch(() => {}); shut(); return { content: [{ type: "text", text: "app not available (open the desktop app)" }] }; }
               try { swid = await espnSwid(page); } finally { await browser?.close().catch(() => {}); }
             }
-            const io = platformIO(plat.webview.host);
+            const io = platformIO(plat.host);
             let st;
             try {
               st = await plat.syncSettings(io, ctx.leagueId, season, { swid, prevBudget: before.budget, prevTeams: before.teams });

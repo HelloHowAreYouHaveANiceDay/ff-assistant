@@ -173,7 +173,8 @@ export function espnRostersFromPayload(payload: unknown): PlatformRoster[] {
 
 export const espnPlatform: Platform = {
   id: "espn",
-  webview: { elementId: "espnview", host: "espn.com", partition: "persist:espn" },
+  host: "espn.com",
+  webview: { elementId: "espnview", partition: "persist:espn" },
   urls: {
     home: "https://fantasy.espn.com/football/",
     league: (leagueId, season) => `https://fantasy.espn.com/football/league?leagueId=${leagueId}&seasonId=${season}`,

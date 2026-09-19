@@ -209,8 +209,9 @@ test("P-1: syncSettings dispatches on the league row's platform; an unknown plat
   const yahoo = await platformFor("yahoo");
   assert.equal(espn.id, "espn");
   assert.equal(yahoo.id, "yahoo");
-  assert.equal(espn.webview.host, "espn.com");
-  assert.notEqual(yahoo.webview.host, espn.webview.host, "each platform names its OWN guest");
+  // `host` is a platform fact and no longer lives on the Electron webview spec (2026-09-19).
+  assert.equal(espn.host, "espn.com");
+  assert.notEqual(yahoo.host, espn.host, "each platform names its OWN session host");
 
   await assert.rejects(() => platformFor("sleeper"), /no platform adaptor for "sleeper"/,
     "an unregistered platform is refused by name, never given ESPN's adaptor");

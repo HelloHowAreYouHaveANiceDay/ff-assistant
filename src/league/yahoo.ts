@@ -32,7 +32,6 @@
  */
 import Database from "better-sqlite3";
 import type { Database as RawDB } from "better-sqlite3";
-import { bridgeFetch } from "../browser/appBridge.js";
 import type { DiscoveredLeague, LeagueSettings, Platform, PlatformIO, PlatformRoster } from "./platform.js";
 import type { FreeAgent, LeagueProvider, LeagueSchedule, LeagueShape, LeagueTeam } from "./types.js";
 import { effectiveFormat, localStamp, playoffRounds } from "./index.js";
@@ -139,9 +138,19 @@ export const yahooUrls = {
 const PLAYERS_PAGE = 25;
 const TRANSACTIONS_PAGE = 15;
 
-/** The default IO: one credentialed GET inside the app's `yahooview` guest. */
+/**
+ * THE DEFAULT IO -- now whatever `resolveIO` decides for Yahoo's host, which is the desktop guest
+ * unless the caller, a flag or the environment says otherwise.
+ *
+ * It was `bridgeFetch` called directly, behind a STATIC import of `../browser/appBridge.js` -- the
+ * only consumer of the bridge that did not import it lazily, so the Electron path was pulled into
+ * this module's graph unconditionally, including for a Yahoo-only agent that never opens the app.
+ *
+ * Resolution happens per CALL, not at module load, so a flag parsed after this module is imported
+ * still takes effect. A captured provider here would silently ignore it.
+ */
 export const yahooIO: PlatformIO = {
-  get: (url, headers) => bridgeFetch(url, headers, 25000, { host: YAHOO_HOST }),
+  get: async (url, headers) => (await import("./session.js")).resolveIO(YAHOO_HOST).get(url, headers),
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -391,7 +400,8 @@ export function yahooDraftFromHtml(
 
 export const yahooPlatform: Platform = {
   id: "yahoo",
-  webview: { elementId: "yahooview", host: YAHOO_HOST, partition: "persist:yahoo" },
+  host: YAHOO_HOST,
+  webview: { elementId: "yahooview", partition: "persist:yahoo" },
   urls: {
     home: yahooUrls.home,
     league: (leagueId) => yahooUrls.league(leagueId),

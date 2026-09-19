@@ -157,7 +157,7 @@ export async function executeTradeProposal(
   if (!opts.send) return { resolution, scoringPeriodId: spid, sent: false };
   if (spid == null) return { resolution, scoringPeriodId: null, sent: false, error: "cannot determine the current scoring period (need the app running) -- refusing to send without it" };
   try {
-    const writer = opts.writer ?? (await import("../league/writeIO.js")).bridgeWriteIO();
+    const writer = opts.writer ?? (await import("../league/session.js")).resolveWriteIO();
     const r = await writer.post(resolution.writeUrl!, JSON.stringify(resolution.payload));
     // A NON-2xx IS AN OUTCOME, NOT A CRASH. ESPN puts the reason in the body of a refusal -- an
     // ineligible player, a locked roster, a trade deadline that has passed -- and throwing the

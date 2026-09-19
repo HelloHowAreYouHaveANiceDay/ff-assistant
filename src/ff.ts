@@ -1778,7 +1778,8 @@ async function cmdSyncSettings(rest: string[]) {
  */
 async function cmdSyncRosters(rest: string[]) {
   const { openDb, nowIso } = await import("./db/db.js");
-  const { platformFor, bridgePlatformIO } = await import("./league/platform.js");
+  const { platformFor } = await import("./league/platform.js");
+  const { resolveIO } = await import("./league/session.js");
   const { writeOwnership } = await import("./data/ownershipSync.js");
   const db = openDb(valueOf(rest, "--db"));
   // RESOLVE ONCE, DISPATCH ON THAT SAME ROW -- this verb DELETEs the league's ownership rows and
@@ -1792,7 +1793,7 @@ async function cmdSyncRosters(rest: string[]) {
   catch (e) { db.close(); return failStep(`league ${ctx.leagueId}: ${(e as Error).message}`); }
   let rosters;
   try {
-    rosters = await plat.syncRosters(bridgePlatformIO(plat.webview.host), ctx.leagueId, season);
+    rosters = await plat.syncRosters(resolveIO(plat.host), ctx.leagueId, season);
   } catch (e) {
     db.close();
     return failStep(`could not read ${plat.id} rosters for league ${ctx.leagueId}: ${String((e as Error).message).slice(0, 200)}`);
@@ -4875,7 +4876,8 @@ async function cmdIngestEspnPayload(rest: string[]) {
  */
 async function cmdSessionCheck(rest: string[]) {
   const { probeEspnSession } = await import("./data/espnSession.js");
-  const { bridgePlatformIO, cookiePlatformIO, filePlatformIO } = await import("./league/platform.js");
+  const { cookiePlatformIO, filePlatformIO } = await import("./league/platform.js");
+  const { resolveIO, sessionKind } = await import("./league/session.js");
   const { openDb } = await import("./db/db.js");
   const db = openDb(valueOf(rest, "--db"));
   const ctx = await leagueCtx(rest, db);
@@ -4896,8 +4898,8 @@ async function cmdSessionCheck(rest: string[]) {
     io = cookiePlatformIO(readFileSync(cookieFile, "utf8"));
     via = `cookie from ${cookieFile}`;
   } else {
-    io = bridgePlatformIO("fantasy.espn.com");
-    via = "the app's webview bridge";
+    io = resolveIO("fantasy.espn.com");
+    via = `the ${sessionKind()} session`;
   }
 
   const r = await probeEspnSession(io, String(leagueId), season);

@@ -27,12 +27,19 @@ test("the registry resolves every known platform and REFUSES an unknown one by n
   await assert.rejects(() => platformFor(""), /no platform adaptor for "unknown"/);
 });
 
-test("each platform names its OWN webview, host and partition", async () => {
-  assert.deepEqual(espnPlatform.webview, { elementId: "espnview", host: "espn.com", partition: "persist:espn" });
-  assert.deepEqual(yahooPlatform.webview, { elementId: "yahooview", host: "fantasysports.yahoo.com", partition: "persist:yahoo" });
+test("each platform names its OWN host, webview and partition", async () => {
+  // `host` MOVED OFF `WebviewSpec` (2026-09-19): it is a platform fact used to choose a session,
+  // and living on an Electron struct meant two transport call sites read `plat.webview.host` to
+  // configure something that is not a webview. Same values, reachable without Electron vocabulary.
+  assert.equal(espnPlatform.host, "espn.com");
+  assert.equal(yahooPlatform.host, "fantasysports.yahoo.com");
+  assert.notEqual(espnPlatform.host, yahooPlatform.host);
+
+  assert.deepEqual(espnPlatform.webview, { elementId: "espnview", partition: "persist:espn" });
+  assert.deepEqual(yahooPlatform.webview, { elementId: "yahooview", partition: "persist:yahoo" });
   // Two platforms must never share a guest or a partition -- that is one login, not two.
-  assert.notEqual(espnPlatform.webview.partition, yahooPlatform.webview.partition);
-  assert.notEqual(espnPlatform.webview.elementId, yahooPlatform.webview.elementId);
+  assert.notEqual(espnPlatform.webview!.partition, yahooPlatform.webview!.partition);
+  assert.notEqual(espnPlatform.webview!.elementId, yahooPlatform.webview!.elementId);
 });
 
 test("page urls are built per platform, and each stays on its own host", () => {
