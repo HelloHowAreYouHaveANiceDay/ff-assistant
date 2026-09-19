@@ -730,6 +730,24 @@ export function simulateSeasons(
     //               exactly so this refactor moves no number; the playoff-week STRENGTH measure
     //               uses the same path deliberately, so it is comparable with the bracket's own
     //               scores rather than with a second model of the same weeks.
+    //
+    // TWO BRANCHES, AND ANYTHING ABOUT A SPECIFIC PLAYER MUST BE APPLIED IN BOTH.
+    //
+    // `simContext.ts` ALWAYS passes `bootstrap`, so the served path -- season odds, the copilot, the
+    // scorecard -- takes the FIRST branch. Most test fixtures pass none and take the second. A per-
+    // player effect wired into only the parametric branch is therefore dead in production while its
+    // own tests pass, which is exactly how the known-injury seam shipped inert (2026-09-19).
+    //
+    // The distinction that decides where an effect belongs: the parametric branch INVENTS a week, so
+    // knobs that shape a distribution (`cv`, `kScale`, `weeklyVarScale`, the tier availability rate)
+    // are meaningless in the bootstrap branch, which replays a real trajectory instead -- those are
+    // correctly parametric-only, and the bootstrap branch has its own transform block for the
+    // equivalent knobs. But a KNOWN FACT about a named player -- he is out, he is suspended, he was
+    // traded -- must override a resampled season too, because that season's missed weeks belong to
+    // whoever donated the trajectory, not to him.
+    //
+    // The cheap check before believing any null from a lever here: run the gate and look at the
+    // paired delta. A dead lever gives EXACTLY +0.0000 under common random numbers.
     const scoreTeamWeek = (ti: number, gameWeek: number, keyWeek: number, byes: boolean, playoffDraw: boolean): number => {
       const tm = teams[ti];
       let players: { name: string; pos: string; proj: number; available: boolean; actual: number | null; eligible?: string[] }[];
