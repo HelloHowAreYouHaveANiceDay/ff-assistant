@@ -126,6 +126,7 @@ docs/redesign/*.out
 .tmp-test/
 
 # Blind per-season injury-horizon artifacts (regenerable in ~3 min:
-# for y in 2011..2024; train_injury_duration.py --holdout-season $y). Kept out of git for the same
+# for y in 2018..2025; train_injury_duration.py --seasons 2009-2026 --holdout-season $y
+#  --out data/fold-artifacts-injury/artifact-$y.json). Kept out of git for the same
 # reason data/fold-artifacts-d16 is: they are derived, bulky, and rebuilt whenever the model changes.
 data/fold-artifacts-injury/
