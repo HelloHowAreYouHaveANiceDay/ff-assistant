@@ -248,7 +248,11 @@ export function writeExport(db: DB, outPath: string, plan: ExportPlan, now = new
  * and gets `resolved_by = 'dst-synthetic'`. That is worth saying out loud: the 32 defences are the
  * only keys in this dataset that are safe to join on directly across releases.
  */
-export function buildKeyDimension(db: DB): { rows: number; byRoute: Record<string, number>; unkeyedFeatureRows: number } {
+export interface DuplicateKey { name: string; position: string; keyWithIds: string; orphanKey: string; orphanSeasons: string }
+
+export function buildKeyDimension(db: DB): {
+  rows: number; byRoute: Record<string, number>; unkeyedFeatureRows: number; duplicates: DuplicateKey[];
+} {
   db.exec("DROP TABLE IF EXISTS pub.dim_player_key");
   db.exec(`CREATE TABLE pub.dim_player_key (
     player_sk TEXT PRIMARY KEY, name TEXT, position TEXT, resolved_by TEXT,
@@ -260,11 +264,12 @@ export function buildKeyDimension(db: DB): { rows: number; byRoute: Record<strin
       CASE WHEN k.player_sk LIKE 'DST:%' THEN 'dst-synthetic'
            WHEN g.gsis_id IS NOT NULL THEN 'xref-gsis'
            WHEN n.name_key IS NOT NULL THEN 'staged-name-key'
+           WHEN d.sk IS NOT NULL THEN 'xref-direct'
            ELSE 'unresolved' END,
-      COALESCE(g.gsis_id, n.gsis_id), COALESCE(g.mfl_id, n.mfl_id),
-      COALESCE(g.sportradar_id, n.sportradar_id), COALESCE(g.pfr_id, n.pfr_id),
-      COALESCE(g.sleeper_id, n.sleeper_id), COALESCE(g.espn_id, n.espn_id),
-      COALESCE(g.yahoo_id, n.yahoo_id), COALESCE(g.fantasypros_id, n.fantasypros_id)
+      COALESCE(g.gsis_id, n.gsis_id, d.gsis_id), COALESCE(g.mfl_id, n.mfl_id),
+      COALESCE(g.sportradar_id, n.sportradar_id), COALESCE(g.pfr_id, n.pfr_id, d.pfr_id),
+      COALESCE(g.sleeper_id, n.sleeper_id, d.sleeper_id), COALESCE(g.espn_id, n.espn_id, d.espn_id),
+      COALESCE(g.yahoo_id, n.yahoo_id), COALESCE(g.fantasypros_id, n.fantasypros_id, d.fantasypros_id)
     -- ONE ROW PER KEY. SELECT DISTINCT player_sk, name, pos fanned out: 45 keys carry more than
     -- one (name, pos) across the season -- a position reclassification, a name respelling -- and a
     -- key with NULL sk carries 154. Both broke the PRIMARY KEY. Grouping by the key is the fix; the
@@ -292,7 +297,33 @@ export function buildKeyDimension(db: DB): { rows: number; byRoute: Record<strin
         FROM main.stg_player s JOIN main.player_ids p ON p.name_key = s.name_key
        WHERE COALESCE(p.ambiguous, 0) = 0
        GROUP BY s.player_sk) n
-      ON n.sk = CAST(k.player_sk AS INTEGER) AND k.player_sk NOT LIKE 'DST:%'`);
+      ON n.sk = CAST(k.player_sk AS INTEGER) AND k.player_sk NOT LIKE 'DST:%'
+    LEFT JOIN (
+      -- THE IDS THE REGISTRY ALREADY HOLDS FOR THIS EXACT KEY (reported 2026-09-19).
+      --
+      -- Both routes above reach an id only THROUGH player_ids -- the first uses a gsis from
+      -- player_xref as a lookup key into it, the second a name key. A player the DynastyProcess map
+      -- does not carry therefore came out "unresolved" with every column NULL even though
+      -- player_xref held five perfectly good stable ids for that same player_sk. 38 of the 96
+      -- unresolved keys were in exactly that state.
+      --
+      -- Marvin Harrison Jr. is the case that shows why this route has to exist rather than the name
+      -- route being loosened: player_ids has no row for his gsis, and his name key resolves to
+      -- Marvin Harrison SR., which is correctly marked "ambiguous" and correctly refused above.
+      -- The only safe ids for him are the ones the identity registry already attached to his key.
+      --
+      -- It is LAST in every COALESCE, so no row that either player_ids route resolved changes its
+      -- ids; this only fills nulls. player_xref carries five sources, so mfl, sportradar and yahoo
+      -- are not reachable this way and stay NULL -- five ids beat none, and a partial row says which
+      -- route produced it.
+      SELECT x.player_sk AS sk,
+             MIN(CASE WHEN x.source = 'gsis'        THEN x.source_id END) gsis_id,
+             MIN(CASE WHEN x.source = 'pfr'         THEN x.source_id END) pfr_id,
+             MIN(CASE WHEN x.source = 'sleeper'     THEN x.source_id END) sleeper_id,
+             MIN(CASE WHEN x.source = 'espn'        THEN x.source_id END) espn_id,
+             MIN(CASE WHEN x.source = 'fantasypros' THEN x.source_id END) fantasypros_id
+        FROM main.player_xref x GROUP BY x.player_sk) d
+      ON d.sk = CAST(k.player_sk AS INTEGER) AND k.player_sk NOT LIKE 'DST:%'`);
 
   const rows = (db.prepare("SELECT COUNT(*) c FROM pub.dim_player_key").get() as { c: number }).c;
   // Rows the feature table could not key at all. Reported, because "the dimension has 3,823 rows"
@@ -303,5 +334,36 @@ export function buildKeyDimension(db: DB): { rows: number; byRoute: Record<strin
   for (const r of db.prepare("SELECT resolved_by, COUNT(*) n FROM pub.dim_player_key GROUP BY resolved_by").all() as { resolved_by: string; n: number }[]) {
     byRoute[r.resolved_by] = r.n;
   }
-  return { rows, byRoute, unkeyedFeatureRows: unkeyed };
+  // ---- DUPLICATE KEYS FROM AN IDENTITY REBUILD, REPORTED AND NOT MERGED (2026-09-19) ----------
+  //
+  // A rebuild can mint a SECOND key for a player without reattaching his xref rows, and the new key
+  // is the one carrying the current season. The dimension then covers the old key -- fully populated,
+  // looking healthy -- while a consumer joining on it silently loses this year.
+  //
+  // THEY ARE REPORTED RATHER THAN COLLAPSED, and the reason is in the data. Merging on (name,
+  // position) looks obviously right and is not: `Irv Smith TE` is TWO PEOPLE, the 1999 rows and the
+  // 2019-2023 rows, and a merge on that pair would fuse a father and a son into one player who
+  // played across four decades. `player_ids` already marks that name key "ambiguous" and both id
+  // routes already refuse it, which is the same judgement reached deliberately upstream.
+  //
+  // Nor can these keys be rescued by an id route: the ones seen here carry NO player_xref rows and
+  // NO player_ids row for their name key, so there is nothing to attach. Inventing a link would be
+  // the exact failure this dimension exists to prevent -- a row that still looks fully populated
+  // while pointing at somebody else. So the export STATES the defect and lets the consumer decide.
+  const duplicates = db.prepare(`
+    SELECT a.name AS name, a.pos AS position, a.player_sk AS keyWithIds, b.player_sk AS orphanKey,
+           (SELECT GROUP_CONCAT(DISTINCT f.season) FROM main.feat_player_week f
+             WHERE f.player_sk = b.player_sk) AS orphanSeasons
+      FROM (SELECT player_sk, MIN(name) name, MIN(pos) pos FROM main.feat_player_week
+             WHERE player_sk IS NOT NULL GROUP BY player_sk) a
+      JOIN (SELECT player_sk, MIN(name) name, MIN(pos) pos FROM main.feat_player_week
+             WHERE player_sk IS NOT NULL GROUP BY player_sk) b
+        ON a.name = b.name AND a.pos = b.pos
+       AND CAST(a.player_sk AS INTEGER) < CAST(b.player_sk AS INTEGER)
+     WHERE a.player_sk NOT LIKE 'DST:%'
+       AND EXISTS (SELECT 1 FROM main.player_xref x WHERE x.player_sk = CAST(a.player_sk AS INTEGER))
+       AND NOT EXISTS (SELECT 1 FROM main.player_xref x WHERE x.player_sk = CAST(b.player_sk AS INTEGER))
+     ORDER BY a.name`).all() as DuplicateKey[];
+
+  return { rows, byRoute, unkeyedFeatureRows: unkeyed, duplicates };
 }

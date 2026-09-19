@@ -73,8 +73,39 @@ FROM feat_player_week f JOIN dim_player_key k USING (player_sk);
   somebody else's ids to a row that still looks fully populated is worse than a null.
 - `dst-synthetic` (32) -- `DST:<TEAM>` is deterministic by construction. **These are the only keys in
   the dataset safe to join on directly across releases.**
-- `unresolved` (96) -- emitted with nulls rather than dropped, because a player with no external id
+- `xref-direct` (38) -- the ids the identity registry already holds for that exact `player_sk`, read
+  straight from `player_xref`. Used only when BOTH routes above miss. It exists because the other two
+  reach an id only *through* `player_ids`, so a player the DynastyProcess map does not carry came out
+  `unresolved` with every column NULL even though five perfectly good stable ids were sitting on his
+  key. Marvin Harrison Jr. is the type case: no `player_ids` row for his gsis, and his name key
+  resolves to Marvin Harrison **Sr.**, which is correctly marked `ambiguous` and refused. This route
+  fills only `gsis_id`, `pfr_id`, `sleeper_id`, `espn_id` and `fantasypros_id` -- `player_xref`
+  carries no others -- so `mfl_id`, `sportradar_id` and `yahoo_id` stay NULL on these rows.
+- `unresolved` (58) -- emitted with nulls rather than dropped, because a player with no external id
   is information.
+
+### A known defect: duplicate keys from an identity rebuild
+
+A rebuild can mint a **second** `player_sk` for a player without reattaching his `player_xref` rows,
+and the new key is the one carrying the **current season**. `dim_player_key` then covers the old key,
+fully populated and healthy-looking, while a join on it silently loses this year. The manifest lists
+every pair it can detect under `keyDimension.duplicates`; in this snapshot:
+
+| player | key with ids | orphan key | orphan seasons |
+|---|---|---|---|
+| Andy Borregales K | 489 | 12097 | 2026 |
+| Chig Okonkwo TE | 1602 | 12118 | 2026 |
+| Kenny Gainwell RB | 1834 | 12112 | 2026 |
+| Irv Smith TE | 11806 | 11808 | 1999 |
+
+**They are reported rather than merged, and the last row is why.** `Irv Smith TE` is two different
+people -- the 1999 player and the 2019-2023 player -- so a merge on (name, position) would fuse a
+father and a son into one man who played across four decades. `player_ids` already marks that name
+key `ambiguous`, and both id routes already refuse it. The three 2026 orphans carry no `player_xref`
+rows and no `player_ids` row for their name key, so there is nothing to attach to them either;
+inventing a link would produce exactly the fully-populated-but-wrong row this dimension exists to
+prevent. If you need the current season for these players, read the orphan key from the manifest and
+map it yourself.
 
 The full DynastyProcess map is shipped as `player_ids`, and `player_xref` / `stg_player` are included
 so you can re-derive the bridge yourself if you disagree with the routing.

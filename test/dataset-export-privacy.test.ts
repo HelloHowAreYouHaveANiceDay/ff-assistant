@@ -224,8 +224,22 @@ test("REAL STORE: dim_player_key is one row per key and reaches a STABLE externa
       // has missed, and saying so is what lets somebody else decide whether to trust it.
       const routes = (pub.prepare("SELECT DISTINCT resolved_by FROM dim_player_key").all() as { resolved_by: string }[])
         .map((r) => r.resolved_by);
-      for (const r of routes) assert.ok(["xref-gsis", "staged-name-key", "dst-synthetic", "unresolved"].includes(r), `unknown route ${r}`);
+      for (const r of routes) assert.ok(["xref-gsis", "staged-name-key", "xref-direct", "dst-synthetic", "unresolved"].includes(r), `unknown route ${r}`);
       assert.ok(routes.includes("xref-gsis"), "the EXACT route must actually be used, not just available");
+
+      // THE DIRECT ROUTE (2026-09-19 bug report). Both player_ids routes reach an id only THROUGH
+      // that map, so a player it does not carry came out unresolved with every column NULL even
+      // where player_xref already held stable ids for his exact key. Asserted as a FLOOR of one so
+      // a store whose registry has fewer such players does not fail, but a route that silently
+      // stopped resolving anybody does.
+      const direct = n("SELECT COUNT(*) c FROM dim_player_key WHERE resolved_by = 'xref-direct'");
+      assert.ok(direct > 0, "the xref-direct route resolved nobody -- it is present but not working");
+      // Every one of them must actually carry an id. A route that resolves a row to all-NULLs is
+      // worse than leaving it unresolved, because it claims to have answered.
+      assert.equal(n(`SELECT COUNT(*) c FROM dim_player_key WHERE resolved_by = 'xref-direct'
+                       AND gsis_id IS NULL AND pfr_id IS NULL AND sleeper_id IS NULL
+                       AND espn_id IS NULL AND fantasypros_id IS NULL`), 0,
+        "an xref-direct row carries no ids at all");
 
       // DST keys are deterministic by construction and need no bridge -- the only keys in the
       // dataset safe to join on directly across releases.
