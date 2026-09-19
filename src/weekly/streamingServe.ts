@@ -152,8 +152,14 @@ export function SERVE_POSITIONS_FOR(file: string): string[] {
  * gate clauses at all six positions, and the owner shipped it at all six.
  *
  * 2026-09-12: the owner OVERRODE that (see the `WEEKLY_SERVE` header) to ship the more-accurate form
- * model despite its 0.001 coverage miss, so `WEEKLY_SERVE` now names `CHALLENGER_WEEKLY_ARTIFACT` at
- * every position and this DERIVED list is consequently EMPTY -- the streaming artifact ships nowhere.
+ * model despite its 0.001 coverage miss, so this DERIVED list is consequently EMPTY -- the streaming
+ * artifact ships nowhere.
+ *
+ * "AT EVERY POSITION" WAS WRONG AND IS CORRECTED HERE (2026-09-19). This paragraph used to say the
+ * table names `CHALLENGER_WEEKLY_ARTIFACT` at every position. It does not, and has not: K serves
+ * from `SHIPPED_WEEKLY_ARTIFACT` (the season-line floor) and DST from `DST_STREAM_ARTIFACT`. Read
+ * the table, not this comment -- it is thirty lines above and it is the thing that decides. A DST
+ * bug report in week 2 was diagnosed partly against this sentence.
  * That is correct, not a bug: it is a measurement of the table, and the table changed. The lineage
  * page reads it to mark which positions streaming serves, which is now none.
  *

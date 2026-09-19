@@ -598,7 +598,25 @@ export type WeeklyProjection = Map<string, number>;
  *  by THIS form on both sides of its join, so swapping in canonical would silently break weekly
  *  lineup matching. Left as its own definition intentionally -- an owner decision, not an oversight. */
 export const lineupNameKey = (s: string): string =>
-  s.toLowerCase().replace(/[.'`]/g, "").replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  s.toLowerCase().replace(/[.'`]/g, "").replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/[^a-z0-9]+/g, " ")
+    // "D/ST" AND "DST" ARE THE SAME TEAM, and until 2026-09-19 they were not the same key.
+    //
+    // The slash is punctuation, so the line above turns "LAR D/ST" into "lar d st" and "LAR DST"
+    // into "lar dst" -- two keys for one defense. That would be harmless if the data agreed with
+    // itself, and it does not: `feat_player_week` spells 28 defenses "XX D/ST" and FOUR -- LAR, NE,
+    // SEA, SF -- "XX DST". `weeklyFor`'s alias path builds the slash form, so those four missed the
+    // map and their lineup slot came back EMPTY.
+    //
+    // It was invisible because an empty slot does not error, it scores replacement points. It was
+    // invisible to the bug report that found the ORIGINAL DST defect too, because that roster held
+    // Minnesota -- spelled with the slash, so it worked -- while 4 of this league's 17 rostered
+    // defenses were broken the whole time.
+    //
+    // Collapsed HERE rather than repaired in the feature table because a normaliser is where a
+    // spelling variant should die, and because both sides of the weekly join already run through
+    // this function, so one change fixes every consumer and cannot half-apply.
+    .replace(/\bd st\b/g, "dst")
+    .trim();
 
 /**
  * The best legal starting lineup for one week, with everyone who cannot play named and why.
