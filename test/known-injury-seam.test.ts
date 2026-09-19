@@ -96,3 +96,49 @@ test("ON: a LONGER episode costs more than a shorter one -- the magnitude tracks
   assert.ok(playoffsOf(lo, ME) < playoffsOf(sh, ME),
     "a four-week absence must cost more than a one-week absence");
 });
+
+/**
+ * THE BRANCH PRODUCTION ACTUALLY TAKES.
+ *
+ * Everything above runs on `fixtureCtx()`, which passes no `bootstrap` and therefore exercises the
+ * PARAMETRIC scoring branch. `src/draft/simContext.ts` always passes one, so every served season
+ * odds number -- the copilot, season_odds, the scorecard -- goes down the BOOTSTRAP branch instead.
+ * The seam was wired into the parametric branch only, so it was dead in production while all four
+ * tests above passed: correct, connected, green, and measuring a layer where the system was already
+ * right. Found by the gate arm reporting a paired delta of exactly +0.0000 across eight seasons
+ * while the curves were demonstrably being built.
+ *
+ * So these repeat the two decisive controls WITH a bootstrap, which is the configuration that ships.
+ */
+const bootOf = () => {
+  const c = fixtureCtx();
+  const o = c.opts(600, 11) as Record<string, unknown>;
+  return o.bootstrap as unknown;
+};
+
+test("BOOTSTRAP: the fixture's own opts tell us which branch the tests above exercised", () => {
+  // Guards the premise rather than assuming it. If the fixture ever starts passing a bootstrap, the
+  // tests above quietly change meaning and this says so.
+  assert.equal(bootOf(), undefined,
+    "fixtureCtx now passes a bootstrap -- the parametric-branch tests above are no longer testing that branch");
+});
+
+/**
+ * THE BOOTSTRAP BRANCH IS PROVED BY THE GATE HARNESS, NOT HERE, AND DELIBERATELY SO.
+ *
+ * A first attempt at a test here called `ctx.run` with a curve and asserted the number moved. It
+ * passed -- and proved nothing, because without a `bootstrap` option it was exercising the very
+ * parametric branch the tests above already cover. Writing a second copy of an existing test and
+ * reading its green as new coverage is the same self-deception that let the seam ship dead.
+ *
+ * A real fixture here would need outcome pools and a correlation model, i.e. a second copy of what
+ * `simContext` assembles -- and a fixture that reconstructs a producer's arguments drifts from it.
+ * So the branch is proved where it is genuinely exercised:
+ *
+ *   node --import tsx scripts/season-calibration.mjs --at-week 5 --seasons 2018-2025  *     --trials 3000 --seed 7 --sweep FF_SIM_KNOWN_INJURY=0,1
+ *
+ * That harness always passes a bootstrap. Before the branch was wired it reported a paired delta of
+ * EXACTLY +0.0000 across all eight seasons with curves demonstrably built -- the dead-lever
+ * signature -- and after wiring, every season's Brier moves. If the seam is ever reported as a null
+ * again, check that number is not zero before believing it.
+ */

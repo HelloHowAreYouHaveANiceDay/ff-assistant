@@ -52,6 +52,8 @@ import { playoffFieldFor } from "../src/features/picks.ts";
 import { rosPerGame, loadRosBlend } from "../src/draft/rosBlend.ts";
 import { loadConsensusPct, blendConsensus } from "../src/draft/consensusBlend.ts";
 import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
+import { loadInjuryHorizonArtifact, horizonFor } from "../src/inseason/injuryHorizon.ts";
+import { tailHazardFrom } from "../src/draft/knownInjury.ts";
 
 // PER-POSITION CONSENSUS BLEND (explore/perpos-blend), env-gated so the default gate is untouched.
 // BLEND_QB / BLEND_RB / BLEND_WR / BLEND_TE in [0,1] re-rank that position's projector means toward
@@ -204,6 +206,93 @@ function slotsFor(season) {
   for (const k of order) for (let i = 0; i < (counts[k] ?? 0); i++) out.push(k);
   for (const [k, n] of Object.entries(counts)) if (!order.includes(k)) for (let i = 0; i < n; i++) out.push(k);
   return out;
+}
+
+// ==================================================================================================
+// THE KNOWN-INJURY SEAM (commit 3 of docs/week-state-design-2026-09-18.md), as a GATE ARM.
+//
+// `simulateSeasons` prices every remaining week of every rostered man at a per-position, per-tier
+// availability rate drawn independently each week. For a man carrying a designation that rate is
+// both unconditional (a torn Achilles and a Questionable hamstring are the same number) and i.i.d.
+// across weeks (real injuries persist). The seam replaces it, for those men only, with an EPISODE
+// drawn from his own horizon curve. Whether that is an improvement is what this arm measures.
+//
+// FF_SIM_KNOWN_INJURY=1 turns it on, so `--sweep FF_SIM_KNOWN_INJURY --values 0,1` is a paired A/B
+// on identical rosters, schedule, seeds and models -- the seam is the only thing that differs.
+//
+// THREE WAYS THIS COULD CHEAT, AND WHAT STOPS EACH:
+//
+//   THE MODEL SAW THE SEASON. The shipped artifact is fitted on every season including the one
+//   being scored. So this loads a BLIND artifact per season from --injury-artifact-dir, and asserts
+//   both that its holdout IS this season and that its newest training season is strictly earlier.
+//   An artifact that fails either is refused rather than quietly used.
+//
+//   THE REPORT WAS FILED AFTER THE DECISION. Rows are read at WEEK W ONLY -- the report a manager
+//   running season odds in week W actually has. `feat_injury_horizon` is already built at that
+//   week's Friday cutoff, so the point-in-time property is the builder's, not re-derived here.
+//
+//   THE TAIL SAW THE SEASON. `tailHazardFrom` is fitted on episodes from seasons STRICTLY BEFORE
+//   this one. Pooling all history would let the season being scored inform its own extrapolation.
+//
+// AND THE CURVE IS FORCED MONOTONE. The four horizons are four independent fits, so nothing makes
+// P(miss>=4) <= P(miss>=1) by construction. `drawEpisodeLength` inverse-transforms a SURVIVAL curve
+// and a non-monotone one silently truncates the draw at the first rise. Violations are clamped by
+// running minimum and COUNTED, because a clamp that fires constantly is a broken model wearing a
+// fixed one's clothes.
+const INJURY_FOLD_DIR = val("--injury-artifact-dir", "data/fold-injury");
+const injCache = new Map();
+function blindInjuryArtifact(season) {
+  if (injCache.has(season)) return injCache.get(season);
+  const p = `${INJURY_FOLD_DIR}/artifact-${season}.json`;
+  let a = null;
+  if (existsSync(p)) {
+    a = loadInjuryHorizonArtifact(JSON.parse(readFileSync(p, "utf8")), { checkGolden: true });
+    if (Number(a.holdoutSeason) !== season) {
+      throw new Error(`${p} declares holdout ${a.holdoutSeason} but is being used to score ${season}.`);
+    }
+    const newest = Math.max(...a.seasons);
+    if (newest >= season) {
+      throw new Error(`${p} was trained through ${newest}, which is not strictly before ${season}. That is lookahead.`);
+    }
+  }
+  injCache.set(season, a);
+  return a;
+}
+
+/** The seam's inputs for one season at one week, or null where anything needed is absent. */
+function buildKnownInjury(season, week, skOf) {
+  const a = blindInjuryArtifact(season);
+  if (!a) return { curves: new Map(), tailHazard: 0.72, fromWeek: week, note: `no blind artifact in ${INJURY_FOLD_DIR}` };
+
+  // The tail, from episodes STRICTLY BEFORE this season.
+  const eps = db.prepare(
+    "SELECT injury_group, weeks_missed FROM fact_injury_episode WHERE weeks_missed IS NOT NULL AND season < ?",
+  ).all(season);
+  const tail = tailHazardFrom(eps);
+
+  const nameOf = new Map();                        // player_sk -> the projection name the sim uses
+  for (const [name, sk] of skOf) nameOf.set(String(sk), name);
+
+  const rows = db.prepare(
+    `SELECT player_sk, designation, practice_status, injury_group, pos, weeks_missed_so_far,
+            weeks_in_episode, prior_episodes_same, prior_episodes_any, age, injury_secondary_present
+       FROM feat_injury_horizon WHERE season = ? AND week = ?`,
+  ).all(season, Math.min(week, 17));
+
+  const curves = new Map();
+  let clamped = 0, onRoster = 0;
+  for (const r of rows) {
+    const name = nameOf.get(String(r.player_sk));
+    if (!name) continue;                           // on the report but on nobody's roster here
+    onRoster++;
+    const pred = horizonFor(a, r);
+    const raw = [pred.p[1], pred.p[2], pred.p[3], pred.p[4]];
+    let run = 1, bad = false;
+    const curve = raw.map((v) => { if (v > run + 1e-9) bad = true; run = Math.min(run, v); return run; });
+    if (bad) clamped++;
+    curves.set(name, curve);
+  }
+  return { curves, tailHazard: tail.pooled, fromWeek: week, clamped, onRoster, tailN: tail.n };
 }
 
 function buildSeason(season, atWeek = null) {
@@ -396,7 +485,12 @@ function buildSeason(season, atWeek = null) {
     }
   }
 
-  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosK };
+  // The seam is an IN-SEASON question: week W's report is what a manager running odds in week W
+  // has. The preseason arm has no player_sk on its draft picks and no report that is knowable at a
+  // September as-of, so it carries no curves and the knob is inert there -- deliberately.
+  const knownInjury = atWeek == null ? null : buildKnownInjury(season, atWeek, skOf);
+
+  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosK, knownInjury };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -458,6 +552,8 @@ const SWEEP_DEFAULTS = {
   FF_SIM_LEVEL_SCALE: "1", FF_SIM_TEAM_SD: "0", FF_SIM_WEEKLY_VAR: "1",
   FF_WEEKLY_COUPLING: "1.8", FF_SIM_CORR_SCALE: "1", FF_SIM_LEVEL_SHRINK: null,
   FF_SIM_LEVEL_PRIOR_WEEKS: String(LEVEL_PRIOR_WEEKS),
+  // OFF is the shipped posture. The seam is a model change and D13 plus owner sign-off govern it.
+  FF_SIM_KNOWN_INJURY: "0",
 };
 if (SWEEP) {
   const eq = SWEEP.indexOf("=");
@@ -500,7 +596,13 @@ if (SWEEP) {
     const cells = [];
     for (const v of values) {
       setKnob(v);
-      const odds = simulateSeasons(AT_WEEK == null ? s.teams : withRos, s.weeks, useVm, servedOpts);
+      // The seam reads its env knob HERE rather than in `servedOpts` above, because the sweep sets
+      // the knob per value and `servedOpts` is built once per season. Off, the option is absent and
+      // `simulateSeasons` takes the branch it took before the seam existed.
+      const armOpts = process.env.FF_SIM_KNOWN_INJURY === "1" && s.knownInjury
+        ? { ...servedOpts, knownInjury: s.knownInjury }
+        : servedOpts;
+      const odds = simulateSeasons(AT_WEEK == null ? s.teams : withRos, s.weeks, useVm, armOpts);
       const byId = new Map(odds.map((o) => [o.id, o]));
       const seasonRows = s.teams.map((t) => ({ season, team: t.name, p: byId.get(t.id)?.playoffs ?? s.field / s.teams.length, y: t.outcome.playoffs ? 1 : 0 }));
       rows[v].push(...seasonRows);
@@ -514,8 +616,12 @@ if (SWEEP) {
       cells.push(brier(seasonRows));
     }
     setKnob(restore === undefined ? "unset" : restore);
+    const ki = s.knownInjury;
+    const kiNote = knob === "FF_SIM_KNOWN_INJURY"
+      ? `   [seam: ${ki ? `${ki.curves.size} curves on ${ki.onRoster ?? 0} rostered, tail ${ki.tailHazard.toFixed(3)} from ${ki.tailN ?? 0}${ki.clamped ? `, ${ki.clamped} clamped` : ""}` : "none"}]`
+      : "";
     console.log(`  ${season}  teams ${String(s.teams.length).padStart(2)} reg ${s.reg} field ${s.field}   ` +
-      values.map((v, i) => `${v}: ${cells[i].toFixed(4)}`).join("   "));
+      values.map((v, i) => `${v}: ${cells[i].toFixed(4)}`).join("   ") + kiNote);
   }
   if (!rows[values[0]].length) { console.log("nothing scored."); process.exit(1); }
 

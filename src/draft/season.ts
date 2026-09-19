@@ -739,7 +739,24 @@ export function simulateSeasons(
         players = tm.roster.map((p) => {
           const onBye = byes && p.bye === gameWeek;
           const pp = b.byName.get(p.name);
-          const actual = onBye || !pp ? null : weekOf(drawn.get(pp), gameWeek);
+          // THE KNOWN-INJURY SEAM APPLIES HERE TOO, and leaving it out of this branch made it dead
+          // in production while every test stayed green. The served path (simContext.ts) ALWAYS
+          // passes `bootstrap`, so this is the branch that actually runs; the seam's own positive
+          // control passes because its fixture does not, and so takes the parametric path below.
+          // A resampled real season already carries the weeks that player missed, but they are
+          // SOMEBODY ELSE'S missed weeks -- a man known to be out right now must miss THESE weeks,
+          // not the ones his donor trajectory happened to miss.
+          //
+          // The uniform is keyed identically to the parametric branch's, so a man with a curve is
+          // drawn the same episode whichever way his score is produced. With no curve nothing is
+          // drawn at all and the line below is exactly what it was.
+          const inEpisode = knownInjury?.curves.get(p.name) != null && missedWeeks(
+            knownInjury.curves.get(p.name)!,
+            unitDraw(seedNum, trial, 0, pid(p.name), PURPOSE.injury),
+            knownInjury.tailHazard, knownInjury.fromWeek,
+            opts.weeks + (opts.playoffWeekCount ?? PLAYOFF_WEEKS),
+          ).has(gameWeek);
+          const actual = onBye || !pp || inEpisode ? null : weekOf(drawn.get(pp), gameWeek);
           // `eligible` rides along verbatim -- see SeasonPlayer. Track D made position a set
           // everywhere the board touches and stopped at THIS seam, so a dual-eligible man could not
           // cover the slot the simulated roster was actually short at.
