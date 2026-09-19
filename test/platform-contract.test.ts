@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import {
   PLATFORM_CONTRACT, checkPlatformShape, describeContract, describeShape,
 } from "../src/league/platformContract.js";
-import { KNOWN_PLATFORMS, platformFor } from "../src/league/platform.js";
+import { knownPlatforms, platformFor } from "../src/league/platform.js";
 
 /** The members of `interface Platform`, read from the source that declares it. */
 function interfaceMembers(): { name: string; optional: boolean }[] {
@@ -67,7 +67,7 @@ test("required vs optional agrees with the interface's own `?`", () => {
 });
 
 test("REAL ADAPTORS: espn and yahoo both pass, and report their capabilities honestly", async () => {
-  for (const id of KNOWN_PLATFORMS) {
+  for (const id of knownPlatforms()) {
     const p = await platformFor(id);
     const r = checkPlatformShape(p);
     assert.ok(r.ok, `${id} fails the contract it is registered under:\n${describeShape(r)}`);
@@ -132,13 +132,13 @@ test("the human-readable contract carries the traps, not just the member names",
   assert.match(text, /TRAP:/);
 });
 
-test("KNOWN_PLATFORMS is DERIVED from the registry, not retyped beside it", async () => {
+test("knownPlatforms() is DERIVED from the registry, not retyped beside it", async () => {
   // It was `["espn", "yahoo"]`, hand-written. The existing check iterates KNOWN_PLATFORMS and
   // confirms each resolves -- ONE-DIRECTIONAL, so a registry entry missing from the list was
   // invisible, and the symptom would have been a registered platform silently absent from the app's
   // league tabs. This asserts the other direction: every registered adaptor appears.
   const { platformFor: pf } = await import("../src/league/platform.js");
-  for (const id of KNOWN_PLATFORMS) assert.equal((await pf(id)).id, id);
+  for (const id of knownPlatforms()) assert.equal((await pf(id)).id, id);
 
   // The registry's own keys, read from the source that declares them -- the list cannot be checked
   // against itself, and REGISTRY is not exported.
@@ -146,8 +146,8 @@ test("KNOWN_PLATFORMS is DERIVED from the registry, not retyped beside it", asyn
   const block = src.slice(src.indexOf("const REGISTRY"), src.indexOf("]);", src.indexOf("const REGISTRY")));
   const keys = [...block.matchAll(/\["([a-z0-9_-]+)",\s*async/gi)].map((m) => m[1]);
   assert.ok(keys.length >= 2, `parsed only ${keys.length} registry keys -- the parser has drifted`);
-  assert.deepEqual([...KNOWN_PLATFORMS].sort(), keys.sort(),
-    "KNOWN_PLATFORMS and REGISTRY disagree. Derive the list from the registry rather than maintaining both.");
+  assert.deepEqual(knownPlatforms().sort(), keys.sort(),
+    "knownPlatforms() and REGISTRY disagree. Derive the list from the registry rather than maintaining both.");
 });
 
 test("the refusal for an unknown platform points at the contract", async () => {
@@ -158,4 +158,93 @@ test("the refusal for an unknown platform points at the contract", async () => {
     assert.match(e.message, /platform-contract/, "the refusal must name the command that explains the contract");
     return true;
   });
+});
+
+// ---------------------------------------------------------------------------------------------
+// RUNTIME REGISTRATION -- an embedding agent can add its own site without forking this repo.
+// ---------------------------------------------------------------------------------------------
+
+/** A minimal adaptor that satisfies the contract. Deliberately omits both optional capabilities:
+ *  no `webview` (does not run in Electron) and no `rosterWeek` (no trustworthy week history). */
+const fakePlatform = (id: string) => ({
+  id,
+  host: `${id}.example`,
+  urls: {
+    home: `https://${id}.example`,
+    league: (l: string, s: number) => `https://${id}.example/l/${l}/${s}`,
+    team: (l: string, s: number, t: string | null) => `https://${id}.example/l/${l}/${s}/t/${t ?? ""}`,
+    scoreboard: (l: string, s: number) => `https://${id}.example/l/${l}/${s}/sb`,
+    standings: (l: string, s: number) => `https://${id}.example/l/${l}/${s}/st`,
+    draftRoom: (l: string, s: number) => `https://${id}.example/l/${l}/${s}/dr`,
+  },
+  discover: async () => [],
+  syncSettings: async () => { throw new Error("not implemented"); },
+  syncRosters: async () => [],
+  readTeam: async () => { throw new Error("not implemented"); },
+});
+
+test("A THIRD PLATFORM CAN BE REGISTERED AT RUNTIME and is then resolvable", async () => {
+  const { registerPlatform, unregisterPlatform, platformFor: pf, knownPlatforms: known } =
+    await import("../src/league/platform.js");
+  try {
+    // It must be refused BEFORE registration, or this test proves nothing about registering.
+    await assert.rejects(() => pf("fakeball"), /no platform adaptor for "fakeball"/);
+
+    registerPlatform(fakePlatform("fakeball") as never);
+    const got = await pf("fakeball");
+    assert.equal(got.id, "fakeball");
+    assert.equal(got.host, "fakeball.example");
+    // DERIVED, so a runtime registration shows up without anybody maintaining a second list. This
+    // is the property the old hand-typed KNOWN_PLATFORMS could not have.
+    // COMPUTED AT CALL TIME. A `const` snapshot taken at module load passed every other assertion
+    // in this test and failed here -- which is why the list is a function.
+    assert.ok(known().includes("fakeball"), "a registered platform must appear in knownPlatforms()");
+  } finally { unregisterPlatform("fakeball"); }
+});
+
+test("A HALF-BUILT ADAPTER IS REFUSED AT REGISTRATION, naming what is missing", async () => {
+  const { registerPlatform, unregisterPlatform } = await import("../src/league/platform.js");
+  try {
+    assert.throws(
+      () => registerPlatform({ id: "brokenball", host: "b.example" } as never),
+      (e: Error) => {
+        assert.match(e.message, /does not satisfy the Platform contract/);
+        // Every missing member named, so the author can act on the message alone.
+        for (const n of ["urls", "discover", "syncSettings", "syncRosters", "readTeam"]) {
+          assert.match(e.message, new RegExp(n), `the refusal does not name the missing ${n}`);
+        }
+        assert.match(e.message, /platform-contract/, "the refusal should point at the command that explains the contract");
+        return true;
+      });
+    // AND IT MUST NOT HAVE BEEN REGISTERED. A gate that refuses loudly and registers anyway is worse
+    // than no gate: the caller sees an error and the broken adaptor is live.
+    const { platformFor: pf } = await import("../src/league/platform.js");
+    await assert.rejects(() => pf("brokenball"), /no platform adaptor/);
+  } finally { unregisterPlatform("brokenball"); }
+});
+
+test("REGISTERING OVER AN EXISTING PLATFORM requires saying so", async () => {
+  const { registerPlatform, unregisterPlatform, platformFor: pf } = await import("../src/league/platform.js");
+  try {
+    registerPlatform(fakePlatform("dupeball") as never);
+    // Silently replacing would hand one platform's leagues to another adaptor.
+    assert.throws(() => registerPlatform(fakePlatform("dupeball") as never), /already registered/);
+    const replacement = { ...fakePlatform("dupeball"), host: "replaced.example" };
+    registerPlatform(replacement as never, { replace: true });
+    assert.equal((await pf("dupeball")).host, "replaced.example", "an explicit replace must actually replace");
+  } finally { unregisterPlatform("dupeball"); }
+});
+
+test("THE STORED-PLATFORM VALIDATOR asks the registry instead of naming platforms", async () => {
+  // The bug the hand-typed `p === "espn" || p === "yahoo"` had: a correctly-registered third
+  // platform read back as `null`, i.e. "this build does not know that platform" about one it did.
+  const { isRegisteredPlatform, registerPlatform, unregisterPlatform } = await import("../src/league/platform.js");
+  assert.equal(isRegisteredPlatform("espn"), true);
+  assert.equal(isRegisteredPlatform("nopeball"), false);
+  try {
+    registerPlatform(fakePlatform("nopeball") as never);
+    assert.equal(isRegisteredPlatform("nopeball"), true,
+      "a registered platform must be recognised by the validator the league row goes through");
+  } finally { unregisterPlatform("nopeball"); }
+  assert.equal(isRegisteredPlatform("nopeball"), false, "unregister must actually unregister");
 });

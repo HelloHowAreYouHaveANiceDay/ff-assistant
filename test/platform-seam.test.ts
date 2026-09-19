@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { KNOWN_PLATFORMS, platformFor } from "../src/league/platform.js";
+import { knownPlatforms, platformFor } from "../src/league/platform.js";
 import { espnDiscoverFromLinks, espnIdentityProblem, espnPlatform, espnSlotsToConfig, espnLeagueApiUrl } from "../src/league/espnPlatform.js";
 import { yahooPlatform } from "../src/league/yahoo.js";
 
@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 const { resolveBridgeHost, bridgeUrlAllowed, BRIDGE_HOSTS } = require("../app/bridgeHosts.js");
 
 test("the registry resolves every known platform and REFUSES an unknown one by name", async () => {
-  for (const id of KNOWN_PLATFORMS) assert.equal((await platformFor(id)).id, id);
+  for (const id of knownPlatforms()) assert.equal((await platformFor(id)).id, id);
   // Positive first (a registry that could only ever throw would pass a refusal-only test), then the
   // refusal -- which is the thing `openLeague` could not reach before.
   await assert.rejects(() => platformFor("sleeper"), /no platform adaptor for "sleeper".*espn, yahoo/s);

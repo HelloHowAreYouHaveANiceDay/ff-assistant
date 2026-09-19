@@ -4631,11 +4631,11 @@ function printFormat(
 async function cmdPlatformContract(rest: string[]) {
   const { PLATFORM_CONTRACT, checkPlatformShape, describeContract, describeShape } =
     await import("./league/platformContract.js");
-  const { KNOWN_PLATFORMS, platformFor } = await import("./league/platform.js");
+  const { knownPlatforms, platformFor } = await import("./league/platform.js");
   const check = valueOf(rest, "--check");
 
   if (rest.includes("--json")) {
-    const out: Record<string, unknown> = { contract: PLATFORM_CONTRACT, known: KNOWN_PLATFORMS };
+    const out: Record<string, unknown> = { contract: PLATFORM_CONTRACT, known: knownPlatforms() };
     if (check) out.report = checkPlatformShape(await platformFor(check));
     console.log(JSON.stringify(out, null, 2));
     return;
@@ -4649,8 +4649,11 @@ async function cmdPlatformContract(rest: string[]) {
   }
 
   console.log("WHAT AN ADAPTER MUST PROVIDE\n");
-  console.log("Implement `Platform` (src/league/platform.ts), then add it to REGISTRY there.");
-  console.log(`Already registered: ${KNOWN_PLATFORMS.join(", ")}\n`);
+  console.log("Implement `Platform`, then register it -- either at runtime:");
+  console.log("    import { registerPlatform } from \"...\/league\/platform.js\";  registerPlatform(myPlatform);");
+  console.log("  or by adding a line to REGISTRY in src/league/platform.ts to ship it here.");
+  console.log("registerPlatform runs this same check and REFUSES a half-built adaptor, naming what is missing.");
+  console.log(`Already registered: ${knownPlatforms().join(", ")}\n`);
   console.log(describeContract());
   console.log("  Check your work:   npm run ff -- platform-contract --check <your id>");
   console.log("  Full notes:        docs/platform-adapter.md");

@@ -19,9 +19,17 @@
 // resolvers had, arrived at from the keyboard.
 import type { DB } from "../db/db.js";
 import { activeLeagueId, getConfig, type AppConfig } from "../db/db.js";
+import { isRegisteredPlatform, type PlatformId } from "../league/platform.js";
 
-/** The platforms a league row can name. `null` on a row written before the column existed. */
-export type LeaguePlatform = "espn" | "yahoo";
+/**
+ * The platforms a league row can name. `null` on a row written before the column existed.
+ *
+ * AN ALIAS OF `PlatformId`, not a second enumeration of it. This used to be its own closed union
+ * `"espn" | "yahoo"`, so ONE concept was spelled out in two files and adding a platform meant
+ * editing both -- with nothing failing if you edited one. Two sources of truth for the same set is
+ * the enumeration-rot shape, and the fact that they happened to agree was luck, not a property.
+ */
+export type LeaguePlatform = PlatformId;
 
 export interface LeagueContext {
   /** The league this computation is for. `null` only on a store that has never synced a league (a fresh
@@ -63,8 +71,19 @@ export function leagueRow(db: DB, leagueId: string): LeagueRow | undefined {
   } catch { return undefined; }            // fresh store, before the league table exists
 }
 
+/**
+ * A stored platform string, if this build actually has an adaptor for it.
+ *
+ * ASKS THE REGISTRY rather than naming the platforms. It was `p === "espn" || p === "yahoo"`, a
+ * hand-typed list that would silently answer `null` for a correctly-registered third platform --
+ * the caller would then see "this build does not know that platform" about one it does.
+ *
+ * `null` still means "not a platform this build can act on", and `platformRaw` still carries the
+ * original string so `platformFor` can refuse it BY NAME. That is the S-12 property and it is
+ * unchanged: an unknown platform is never quietly handed ESPN's adaptor.
+ */
 const asPlatform = (p: string | null | undefined): LeaguePlatform | null =>
-  (p === "espn" || p === "yahoo" ? p : null);
+  (isRegisteredPlatform(p) ? (p as LeaguePlatform) : null);
 
 /**
  * Resolve the context for `leagueId` (default: the ACTIVE league, `settings.active_league`).

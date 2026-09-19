@@ -15,16 +15,34 @@ That output is generated from `PLATFORM_CONTRACT` (`src/league/platformContract.
 fails if the two ever name different members. So the checklist cannot quietly go stale the way this
 document could — if they disagree, the suite says so and names the member.
 
-## The three steps
+## The two steps
 
-1. **Implement `Platform`** in `src/league/<yourid>.ts`.
-2. **Register it** in `REGISTRY` in `src/league/platform.ts`. `KNOWN_PLATFORMS` derives from that map,
-   so there is no second list to remember.
-3. **Add your id to the `PlatformId` union** (`src/league/platform.ts`) and to `LeaguePlatform`
-   (`src/data/leagueContext.ts`). These are two closed unions for the same concept; until they are
-   merged, a new platform needs both. See *Known rough edges*.
+1. **Implement `Platform`.**
+2. **Register it** — either at runtime, without touching this repo:
 
-Then run `npm run ff -- platform-contract --check <yourid>`.
+   ```ts
+   import { registerPlatform } from "ff-assistant/league/platform.js";
+   registerPlatform(sleeperPlatform);
+   ```
+
+   or, to ship it here, add a line to `REGISTRY` in `src/league/platform.ts`.
+
+That is all. There is no type union to widen and no second list to maintain: `PlatformId` accepts any
+string, `LeaguePlatform` is an alias of it, `knownPlatforms()` is computed from the registry at call
+time, and the validator that decides whether a stored league row names a usable platform asks the
+registry rather than naming platforms.
+
+Then check your work:
+
+```
+npm run ff -- platform-contract --check <yourid>
+```
+
+**`registerPlatform` runs the contract check for you** and refuses a half-built adaptor, naming every
+member that is missing — so the failure happens at registration with a message you can act on,
+rather than as a missing-method `TypeError` three layers into a sync. Re-registering an existing id
+is refused unless you pass `{ replace: true }`, because silently overwriting an adaptor would hand
+one platform's leagues to another.
 
 ## What the checker does and does not tell you
 
@@ -122,16 +140,15 @@ Your adaptor takes `io` and never asks which one it got.
 
 ## Known rough edges
 
-Honest about what is awkward today, so nobody rediscovers it:
+Honest about what is still awkward, so nobody rediscovers it:
 
-- **Two closed unions.** `PlatformId` (`league/platform.ts`) and `LeaguePlatform`
-  (`data/leagueContext.ts`) both enumerate the platforms, and a new id must be added to both. There
-  is also a hand-typed validator, `asPlatform`, which maps an unrecognised string to `null`. The raw
-  value survives as `platformRaw` and `platformFor` refuses it by name, so nothing silently gets
-  ESPN's adaptor — but three edits for one concept is two too many.
-- **No runtime registration.** `REGISTRY` is a module constant, so an adaptor must be added to this
-  repo rather than supplied by an embedding agent. A `registerPlatform()` entry point would fix that
-  and does not exist yet.
 - **Some verbs are ESPN-only by construction and say so.** `src/inseason/routines.ts` declares
   `platforms: ["espn"]` on the roster routine, so a non-ESPN league is skipped **by name** rather
-  than run against an ESPN-shaped sync.
+  than run against an ESPN-shaped sync. Your platform will not be picked up by those routines until
+  they are generalized; that is visible rather than silent, but it is real.
+- **The contract check is structural.** It cannot tell you whether `syncSettings` throws where it
+  should. Your first real sync is still the test that matters.
+- **An unknown platform in the store reads as `null`.** If a league row names a platform that is not
+  registered in the running process, `ctx.platform` is `null`. The raw string survives as
+  `platformRaw` and `platformFor` refuses it **by name**, so nothing is silently handed ESPN's
+  adaptor — but a runtime registration must happen before the context is resolved, not after.

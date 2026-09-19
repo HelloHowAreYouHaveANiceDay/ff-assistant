@@ -23,7 +23,20 @@ import type { ScoringRules, KickerRules, DefenseRules } from "../draft/scoring.j
 import type { AcquisitionRules, LeagueFormat, LeagueTeam } from "./types.js";
 
 /** The platforms this repo has (or refuses) an adaptor for. Same vocabulary as `league.platform`. */
-export type PlatformId = "espn" | "yahoo";
+/**
+ * A PLATFORM'S REGISTRY KEY.
+ *
+ * `"espn" | "yahoo" | (string & {})` is the standard TypeScript idiom for "these are the ones that
+ * ship, and any other string is legal too": the literals still autocomplete and still narrow, while
+ * a third-party adaptor registered through `registerPlatform` typechecks without editing this line.
+ *
+ * It was a CLOSED union, which made the type system the thing that blocked an embedding agent from
+ * connecting its own fantasy site -- not a missing capability, just an enumeration. The registry is
+ * the source of truth for what actually exists; this type no longer pretends to be.
+ */
+export type PlatformId = "espn" | "yahoo" | (string & {});
+
+import { checkPlatformShape, describeShape } from "./platformContract.js";
 
 /** Which embedded webview holds this platform's login. The app mounts one per platform, each on its
  *  own persistent partition, so both stay signed in at once (app/renderer/index.html). `host` is the
@@ -293,6 +306,59 @@ const REGISTRY = new Map<string, () => Promise<Platform>>([
 ]);
 
 /**
+ * ADD AN ADAPTOR AT RUNTIME -- the entry point for a site this repo does not ship.
+ *
+ * Before this, `REGISTRY` was a module constant, so supporting another platform meant forking this
+ * file. The contract (`platform-contract`) told an author what to build and then gave them nowhere
+ * to put it.
+ *
+ * REGISTRATION IS WHERE THE CONTRACT IS ENFORCED, and deliberately so. A half-built adaptor accepted
+ * here fails later, somewhere else, as a missing-method TypeError three layers into a sync -- so the
+ * structural check runs HERE and the refusal names every member that is absent. That check is
+ * structural only (it cannot call anything), and it says so; it is a gate against the common mistake,
+ * not a proof of correctness.
+ *
+ * `replace` exists because silently overwriting a registered platform would let one adaptor take
+ * over another's leagues without anybody choosing that. Overriding is legitimate -- a test double, a
+ * patched ESPN -- so it is allowed, but only when asked for by name.
+ */
+export function registerPlatform(platform: Platform, opts: { replace?: boolean } = {}): void {
+  const id = String(platform?.id ?? "");
+  if (!id) throw new Error("registerPlatform: the adaptor has no `id`. The id IS the registry key and the value the league table stores.");
+  if (REGISTRY.has(id) && !opts.replace) {
+    throw new Error(
+      `registerPlatform: "${id}" is already registered. Pass { replace: true } if you mean to override it -- ` +
+      "silently replacing an adaptor would hand one platform's leagues to another.",
+    );
+  }
+  // Checked at the boundary, so the failure names the missing members instead of surfacing as a
+  // TypeError inside a sync. A plain static import: platformContract.ts imports nothing at all, so
+  // there is no cycle to route around.
+  const report = checkPlatformShape(platform);
+  if (!report.ok) {
+    throw new Error(
+      `registerPlatform: "${id}" does not satisfy the Platform contract.
+${describeShape(report)}
+` +
+      "Run `npm run ff -- platform-contract` for what each member must provide.",
+    );
+  }
+  REGISTRY.set(id, async () => platform);
+}
+
+/** Remove a runtime-registered adaptor. Present so a test can clean up after itself rather than
+ *  leaking a registration into every later test in the same process. */
+export function unregisterPlatform(id: string): boolean {
+  return REGISTRY.delete(String(id));
+}
+
+/** Is there an adaptor for this id RIGHT NOW? Synchronous, because callers that only need to
+ *  normalise a stored string must not have to await a dynamic import to do it. */
+export function isRegisteredPlatform(id: string | null | undefined): boolean {
+  return REGISTRY.has(String(id ?? ""));
+}
+
+/**
  * The adaptor for a platform, or a REFUSAL THAT NAMES IT.
  *
  * `openLeague` used to dispatch on a config field that did not exist, so its `default:` refusal was
@@ -317,13 +383,17 @@ export async function platformFor(platform: string | null | undefined): Promise<
 }
 
 /**
- * The platform ids that HAVE an adaptor. Used by tests and by the app to render the league tabs.
+ * The platform ids that HAVE an adaptor RIGHT NOW. Used by tests and by the app's league tabs.
  *
- * DERIVED FROM THE REGISTRY, never retyped. It used to be the hand-written list `["espn", "yahoo"]`,
- * which is a snapshot of the day it was written: registering a third adaptor and forgetting this
- * line left it absent from the app's tabs while every test passed, because the only test iterates
- * THIS list and checks each entry resolves -- one-directional, so a registry entry missing here was
- * invisible. Same shape as the conformance check that named seven drivers against a fleet of
- * fifteen.
+ * A FUNCTION, AND THAT IS THE WHOLE POINT. Two snapshots were wrong here in a row:
+ *
+ *   1. it was the hand-written list `["espn", "yahoo"]` beside the registry -- and the only test
+ *      iterated the LIST and checked each entry resolved, which is one-directional, so a registry
+ *      entry missing from the list was invisible;
+ *   2. deriving it as `const KNOWN_PLATFORMS = [...REGISTRY.keys()]` fixed that and was STILL a
+ *      snapshot -- evaluated once at module load, so an adaptor added by `registerPlatform` never
+ *      appeared in it. Caught by the registration test, not by reasoning.
+ *
+ * A list computed at CALL TIME cannot go stale against the thing it describes.
  */
-export const KNOWN_PLATFORMS: PlatformId[] = [...REGISTRY.keys()] as PlatformId[];
+export function knownPlatforms(): PlatformId[] { return [...REGISTRY.keys()] as PlatformId[]; }
