@@ -124,3 +124,8 @@ docs/redesign/*.out
 
 # Disposable TMPDIR for the test suite (scripts/run-tests.mjs)
 .tmp-test/
+
+# Blind per-season injury-horizon artifacts (regenerable in ~3 min:
+# for y in 2011..2024; train_injury_duration.py --holdout-season $y). Kept out of git for the same
+# reason data/fold-artifacts-d16 is: they are derived, bulky, and rebuilt whenever the model changes.
+data/fold-artifacts-injury/
