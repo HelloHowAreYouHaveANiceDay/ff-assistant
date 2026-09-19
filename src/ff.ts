@@ -7,6 +7,7 @@
 //   npm run ff -- rank              print top players by VOR from the rankings CSV
 
 import { findPage, detach, type Attached } from "./browser/attach.js";
+import { positionals, firstPositional } from "./util/argv.js";
 import { inspectDraftDom } from "./draft/espnReader.js";
 import { loadRankings } from "./data/rankings.js";
 import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank.js";
@@ -179,7 +180,8 @@ async function main() {
     // (S-8): point `settings.active_league` at the league, CLEAR the single-slot board, and rebuild
     // it under the new league. Named here because every board-stamp refusal tells the reader to run it.
     case "league-set-active": {
-      const lid = rest.find((a) => !a.startsWith("--")) ?? valueOf(rest, "--league") ?? "";
+      // Skips flag values: `ff league-set-active --db x.db 462233` read "x.db" as the league id.
+      const lid = firstPositional(rest, new Set(["--db", "--league"])) ?? valueOf(rest, "--league") ?? "";
       const { openDb } = await import("./db/db.js");
       const { switchActiveLeague } = await import("./data/assemble.js");
       const db = openDb(valueOf(rest, "--db"));
@@ -506,7 +508,9 @@ async function cmdServe(rest: string[]) {
 async function cmdAgentAsk(rest: string[]) {
   const { agentAsk } = await import("./agent/agent.js");
   const json = rest.includes("--json");
-  let question = rest.filter((a) => !a.startsWith("--")).join(" ").trim();
+  // SKIPS FLAG VALUES. This joins every bare token into the question, so `ff ask --season 2026
+  // "who should I start?"` used to send the agent the question "2026 who should I start?".
+  let question = positionals(rest, new Set(["--db", "--season"])).join(" ").trim();
   // no positional question + piped stdin -> read it there (how the Electron app passes the message,
   // avoiding any shell-quoting of user text)
   if (!question && !process.stdin.isTTY) {
@@ -629,7 +633,9 @@ async function cmdAttach(rest: string[]) {
 // The agent navigating the copresent session itself (D0): drive the user's own
 // browser to a URL -- e.g. the ESPN mock-draft lobby -- then act from there.
 async function cmdGoto(rest: string[]) {
-  const url = rest.find((r) => !r.startsWith("--"));
+  // No value-taking flags today; the empty set SAYS so, and adding one later cannot silently
+  // reopen the positional bug because this call site already asks the question.
+  const url = firstPositional(rest, new Set());
   if (!url) {
     console.error("usage: ff goto <url>  (e.g. https://fantasy.espn.com/football/mockdraftlobby)");
     process.exit(2);
@@ -644,7 +650,7 @@ async function cmdGoto(rest: string[]) {
 
 // Click the first visible link/button whose text contains <text> (copresent action).
 async function cmdClick(rest: string[]) {
-  const text = rest.find((r) => !r.startsWith("--"));
+  const text = firstPositional(rest, new Set());   // no value-taking flags; stated, not assumed
   if (!text) {
     console.error('usage: ff click "<visible text>"');
     process.exit(2);
@@ -1207,7 +1213,8 @@ async function cmdProject(rest: string[]) {
   // display verbs (`ff project <name>`, `ff lineup --roster <csv>`). It takes explicit paths, has no
   // store handle and writes nothing; a `--points` flag already redirects it at a format's pool. It is
   // listed in the WP3 report as knowingly incumbent-default rather than silently so.
-  const name = rest.find((r) => !r.startsWith("--"));
+  // Skips flag values: `ff project --curve x "Name"` read "x" as the player.
+  const name = firstPositional(rest, new Set(["--curve", "--db", "--out"]));
   const opp = valueOf(rest, "--vs");
   const proj = loadProjections(valueOf(rest, "--points") ?? dataPath("points.csv"), valueOf(rest, "--def") ?? dataPath("def-ratings.csv"));
   if (!name) {
@@ -4228,8 +4235,20 @@ function objectiveOf(v: string | undefined): "expected" | "winprob" | undefined 
 }
 
 async function cmdCopilot(rest: string[]) {
+  /**
+   * THE COPILOT FLAGS THAT CONSUME THE NEXT TOKEN. Hand-written because `valueOf` does not publish
+   * such a list, and therefore asserted against this verb's own usage text in
+   * test/copilot-cli-args.test.ts -- an omitted flag reopens the positional bug for that flag alone,
+   * which is exactly how it survives a fix.
+   */
+  const COPILOT_VALUE_FLAGS = new Set([
+    "--schedule", "--trials", "--seed", "--week", "--player", "--give", "--get",
+    "--pos", "--limit", "--max-gap", "--league", "--objective", "--db",
+  ]);
   const { runCopilot, COPILOT_VERBS } = await import("./inseason/copilotActions.js");
-  const verbArg = rest.find((r) => !r.startsWith("--"));
+  // SKIPS FLAG VALUES. `rest.find((r) => !r.startsWith("--"))` read the VERB as "2" for
+  // `ff copilot --week 2 lineup` and silently printed usage.
+  const verbArg = firstPositional(rest, COPILOT_VALUE_FLAGS);
   const VERB_OF: Record<string, (typeof COPILOT_VERBS)[number]> = {
     "season-odds": "season_odds", lineup: "lineup_recommend", waivers: "waiver_targets",
     "trade-check": "trade_check", "trade-finder": "trade_finder", handcuffs: "handcuffs",
@@ -4271,7 +4290,10 @@ async function cmdCopilot(rest: string[]) {
   const args = {
     schedule: (valueOf(rest, "--schedule") as "real" | "generated" | "auto" | undefined) ?? "auto",
     trials: num("--trials"), seed: num("--seed"), week: num("--week"),
-    player: valueOf(rest, "--player") ?? (verbArg === "depth-risk" ? rest.filter((r) => !r.startsWith("--") && r !== verbArg)[0] : undefined),
+    // The player is the SECOND bare token: the first is the verb. `positionals` skips flag values,
+    // so `depth-risk --week 2` no longer reads "2" as the player. See src/util/argv.ts.
+    player: valueOf(rest, "--player")
+      ?? (verbArg === "depth-risk" ? positionals(rest, COPILOT_VALUE_FLAGS).filter((t) => t !== verbArg)[0] : undefined),
     give: list("--give").length ? list("--give") : undefined,
     get: list("--get").length ? list("--get") : undefined,
     positions: list("--pos").length ? list("--pos") : undefined,
@@ -4479,7 +4501,9 @@ async function cmdInseasonBacktest(rest: string[]) {
     trade: "scripts/inseason-backtest-trade.mjs",
     "trade-package": "scripts/inseason-backtest-trade-package.mjs",
   };
-  const which = rest.find((r) => !r.startsWith("--"));
+  // Flags here are passed THROUGH to the chosen script rather than consumed, so none takes a value
+  // at this level -- but the scan asks anyway, so a future flag cannot reopen the bug quietly.
+  const which = firstPositional(rest, new Set());
   const script = which ? SCRIPTS[which] : undefined;
   if (!script) {
     console.log(`usage: ff inseason-backtest <${Object.keys(SCRIPTS).join("|")}> [--seasons 2018-2025]`);
@@ -4501,7 +4525,12 @@ async function cmdInseasonBacktest(rest: string[]) {
 async function cmdFormat(rest: string[]) {
   const { openDb, setConfig } = await import("./db/db.js");
   const { formatFromEspnSettings, effectiveFormat, localStamp, isSeedingRule, validateFormat } = await import("./league/index.js");
-  const sub = rest.find((r) => !r.startsWith("--")) ?? "show";
+  // Skips flag values: with nine value-taking flags this verb was one flag-first invocation away
+  // from reading a season number as its subcommand.
+  const sub = firstPositional(rest, new Set([
+    "--db", "--season", "--reg-weeks", "--playoff-weeks", "--playoff-teams", "--playoff-reseed",
+    "--playoff-round-weeks", "--seeding", "--tiebreak",
+  ])) ?? "show";
   const db = openDb(valueOf(rest, "--db") ?? undefined);
   try {
     // ONE context for the whole verb: the block is read, written and printed for the SAME league.
