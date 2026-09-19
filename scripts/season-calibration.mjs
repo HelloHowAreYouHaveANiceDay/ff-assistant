@@ -239,7 +239,7 @@ function slotsFor(season) {
 // and a non-monotone one silently truncates the draw at the first rise. Violations are clamped by
 // running minimum and COUNTED, because a clamp that fires constantly is a broken model wearing a
 // fixed one's clothes.
-const INJURY_FOLD_DIR = val("--injury-artifact-dir", "data/fold-injury");
+const INJURY_FOLD_DIR = val("--injury-artifact-dir", "data/fold-artifacts-injury");
 const injCache = new Map();
 function blindInjuryArtifact(season) {
   if (injCache.has(season)) return injCache.get(season);
