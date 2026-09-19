@@ -19,11 +19,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  ESPN_WRITE_URL_PATTERN, MAX_WRITE_BODY, assertWritableUrl,
+  ESPN_WRITE_URL_PATTERN, MAX_WRITE_BODY, ESPN_WRITE_TYPES, assertWritableUrl,
   cookieWriteIO, recordingWriteIO,
 } from "../src/league/writeIO.js";
 
 const OK_URL = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/462233/transactions";
+// A MINIMAL PERMITTED BODY. The guard now checks the OPERATION as well as the endpoint, so a test
+// about the url, the size cap or a transport must send a body that clears the operation check --
+// otherwise it measures the operation check instead of the thing it names.
+const OK_BODY = JSON.stringify({ type: "TRADE_PROPOSAL", isLeagueManager: false, items: [] });
 
 // ---------------------------------------------------------------------------------------------
 // 1. THE TWO COPIES MUST AGREE
@@ -48,6 +52,45 @@ test("the app's allowlist regex is CHARACTER-IDENTICAL to the shared one", () =>
     "app/main.js and src/league/writeIO.ts disagree about what may be written. Make them identical.");
 });
 
+test("the app's PERMITTED OPERATIONS are identical to the shared list", () => {
+  // The url allowlist above constrains the ENDPOINT. It does not, and never did, constrain the
+  // OPERATION: ESPN serves waivers, free-agent adds, drops and LINEUP changes from that same
+  // transactions url, differing only by `type`. Both guards now check it, and both must agree for
+  // the same reason the regexes must -- otherwise which operations are possible depends on whether
+  // the desktop app happens to be running.
+  const main = readFileSync("app/main.js", "utf8");
+  const line = main.split("\n").find((l) => l.includes("const ALLOWED_WRITE_TYPES"));
+  assert.ok(line, "could not find ALLOWED_WRITE_TYPES in app/main.js -- if it moved, point this test at it rather than deleting it");
+  const m = /const ALLOWED_WRITE_TYPES = \[([^\]]*)\]/.exec(line!);
+  assert.ok(m, `found the line but could not extract the list: ${line!.trim().slice(0, 120)}`);
+  const appTypes = m![1].split(",").map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  assert.deepEqual(appTypes, [...ESPN_WRITE_TYPES],
+    "app/main.js and src/league/writeIO.ts disagree about which operations may be written.");
+});
+
+test("a WAIVER or LINEUP body is REFUSED at the permitted url", () => {
+  // THE REGRESSION THIS EXISTS FOR. Every body below goes to a url the allowlist permits, because
+  // it is the same url a trade uses. Before the operation check they would all have been sent.
+  const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
+  for (const t of ["WAIVER", "FREEAGENT", "ROSTER", "TRADE_ACCEPT", "DRAFT"]) {
+    assert.throws(() => assertWritableUrl(url, JSON.stringify({ type: t, items: [] })), /REFUSED to write a/,
+      `a ${t} transaction was NOT refused -- ESPN serves it from the permitted url`);
+  }
+  // A body with no type at all, and one that is not JSON: both fail CLOSED.
+  assert.throws(() => assertWritableUrl(url, JSON.stringify({ items: [] })), /REFUSED to write a/);
+  assert.throws(() => assertWritableUrl(url, "not json"), /not valid JSON/);
+});
+
+test("the ONE permitted operation still goes through -- the guard can say yes", () => {
+  // A guard that can only ever refuse is indistinguishable from a broken one, and would have
+  // silently disabled `ff propose-trade --send` while every negative test above stayed green.
+  const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
+  assertWritableUrl(url, JSON.stringify({ type: "TRADE_PROPOSAL", isLeagueManager: false, items: [] }));
+  assert.equal(ESPN_WRITE_TYPES.length, 1,
+    "the permitted-operation list grew. That is a decision about what this tool may do to a real " +
+    "league -- if it was deliberate, update this assertion deliberately.");
+});
+
 test("the app's body cap matches the shared one", () => {
   const main = readFileSync("app/main.js", "utf8");
   assert.ok(main.includes("tbody.length > 1e5"),
@@ -62,8 +105,8 @@ test("the app's body cap matches the shared one", () => {
 test("the permitted endpoint is permitted -- the guard can say YES", () => {
   // The positive control. A guard that refuses everything passes every rejection test below and
   // breaks the one feature this path exists to serve, silently, the first time someone sends a trade.
-  assert.doesNotThrow(() => assertWritableUrl(OK_URL, "{}"));
-  assert.doesNotThrow(() => assertWritableUrl(`${OK_URL}/`, "{}"), "a trailing slash is the same endpoint");
+  assert.doesNotThrow(() => assertWritableUrl(OK_URL, OK_BODY));
+  assert.doesNotThrow(() => assertWritableUrl(`${OK_URL}/`, OK_BODY), "a trailing slash is the same endpoint");
 });
 
 test("everything else is REFUSED, by name", () => {
@@ -87,7 +130,12 @@ test("everything else is REFUSED, by name", () => {
 test("an oversized or non-string body is REFUSED", () => {
   assert.throws(() => assertWritableUrl(OK_URL, "x".repeat(MAX_WRITE_BODY + 1)), /over the/);
   assert.throws(() => assertWritableUrl(OK_URL, undefined as unknown as string), /must be a JSON string/);
-  assert.doesNotThrow(() => assertWritableUrl(OK_URL, "x".repeat(MAX_WRITE_BODY)), "exactly at the cap is allowed");
+  // EXACTLY AT THE CAP, and still a valid permitted operation -- padded to the byte with filler so
+  // this tests the SIZE boundary rather than tripping the operation check on the way past it.
+  const pad = MAX_WRITE_BODY - JSON.stringify({ type: "TRADE_PROPOSAL", pad: "" }).length;
+  const atCap = JSON.stringify({ type: "TRADE_PROPOSAL", pad: "x".repeat(pad) });
+  assert.equal(atCap.length, MAX_WRITE_BODY, "the padded body is not exactly at the cap");
+  assert.doesNotThrow(() => assertWritableUrl(OK_URL, atCap), "exactly at the cap is allowed");
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -117,14 +165,14 @@ test("the COOKIE writer sends the cookie and returns the status rather than thro
   }) as unknown as typeof fetch;
   try {
     const io = cookieWriteIO("SWID=abc; espn_s2=def");
-    const r = await io.post(OK_URL, "{\"x\":1}");
+    const r = await io.post(OK_URL, OK_BODY);
     // A WRITE'S STATUS IS ITS RESULT. Throwing a 403 away loses the body, which is where ESPN puts
     // the reason -- an ineligible player, a locked roster, a passed deadline.
     assert.equal(r.status, 403);
     assert.match(r.body, /ineligible/);
     assert.equal((seen!.init.headers as Record<string, string>).cookie, "SWID=abc; espn_s2=def");
     assert.equal(seen!.init.method, "POST");
-    assert.equal(seen!.init.body, "{\"x\":1}");
+    assert.equal(seen!.init.body, OK_BODY, "the transport must forward the body verbatim");
   } finally { globalThis.fetch = realFetch; }
 });
 
@@ -139,10 +187,10 @@ test("the DRY-RUN writer records and sends NOTHING, and still runs the guard", a
   globalThis.fetch = (async () => { called = true; return new Response("", { status: 200 }); }) as typeof fetch;
   try {
     const io = recordingWriteIO();
-    const r = await io.post(OK_URL, "{\"a\":1}");
+    const r = await io.post(OK_URL, OK_BODY);
     assert.equal(called, false, "a dry run that touches the network is not a dry run");
     assert.equal(r.status, 0);
-    assert.deepEqual(io.sent, [{ url: OK_URL, body: "{\"a\":1}" }]);
+    assert.deepEqual(io.sent, [{ url: OK_URL, body: OK_BODY }]);
     // A rehearsal that skipped the allowlist would rehearse something the real run refuses.
     await assert.rejects(() => io.post("https://evil.example.com/x", "{}"), /REFUSED to write/);
     assert.equal(io.sent.length, 1, "the refused call must not be recorded as sent");

@@ -28,10 +28,20 @@
  *   NOTHING IS SENT THAT WAS NOT ALLOWLISTED. `assertWritableUrl` runs inside every provider, not at
  *   the call site, so a future caller cannot reach ESPN's write API by forgetting to call it.
  *
- * WHAT THIS MODULE DOES NOT DO. It does not widen what may be written. The allowlist is exactly the
- * endpoint the app already permitted -- league transactions -- because adding waiver or lineup
- * endpoints is a decision about what the tool may do to a real league, not a refactor, and it is not
- * one to take while moving a guard.
+ * WHAT THIS MODULE DOES NOT DO. It does not widen what may be written -- see ESPN_WRITE_TYPES.
+ *
+ * AND THE CORRECTION THAT COST THIS MODULE ITS HEADLINE CLAIM (2026-09-19). The paragraph here used
+ * to say the url allowlist was "exactly the endpoint the app already permitted -- league
+ * transactions -- because adding waiver or lineup endpoints is a decision about what the tool may
+ * do to a real league". That sentence assumed waivers and lineups HAVE their own endpoints. They do
+ * not. ESPN serves every roster operation from the one transactions URL, which this league's own
+ * transaction history proves: FREEAGENT, WAIVER (with a bid) and ROSTER (a lineup change) all come
+ * back from the same resource as TRADE_PROPOSAL.
+ *
+ * So the url allowlist never restricted waivers or lineups at all, and the only thing preventing
+ * this tool from sending one was that nobody had written the payload builder. A guard whose stated
+ * property is upheld by the ABSENCE OF A CALLER is not a guard. ESPN_WRITE_TYPES now checks the
+ * operation, so the claim below is enforced rather than merely believed.
  */
 
 /**
@@ -50,6 +60,25 @@ export const ESPN_WRITE_URL_PATTERN =
 export const MAX_WRITE_BODY = 1e5;
 
 /**
+ * THE PERMITTED OPERATIONS, and the reason the URL allowlist above is not enough on its own.
+ *
+ * ESPN serves EVERY roster operation from the one transactions endpoint. This league's own
+ * `raw_league_transaction` has 5,600+ rows proving it: `FREEAGENT/EXECUTE` (add and drop),
+ * `WAIVER/PROCESS` (a claim, carrying `bidAmount`), `ROSTER/EXECUTE` (a LINEUP CHANGE) and the
+ * `TRADE_*` family all arrive from the same resource. They differ from a trade only by this field.
+ *
+ * So a url allowlist constrains the ENDPOINT, never the OPERATION, and this module's header claimed
+ * to be "the one place that decides what this tool may change in a real league" while a body of
+ * `{"type":"WAIVER"}` would have passed it. That property held only because no code built such a
+ * body -- safety by ABSENCE OF CODE, which stops being true the moment somebody adds a builder and
+ * says nothing when it does. Exactly the guard-that-cannot-fail shape this repo keeps paying for.
+ *
+ * Adding a type here is a decision about what this tool may do to somebody's real league. It is not
+ * a refactor and it should be uncomfortable to make.
+ */
+export const ESPN_WRITE_TYPES: readonly string[] = ["TRADE_PROPOSAL"];
+
+/**
  * REFUSE ANYTHING NOT ON THE ALLOWLIST, loudly and by name.
  *
  * Throws rather than returning false: a caller that ignored a boolean would send the request, and
@@ -60,12 +89,30 @@ export function assertWritableUrl(url: string, body: string): void {
     throw new Error(
       `REFUSED to write to ${String(url).slice(0, 200)} -- the only permitted write endpoint is ` +
       "ESPN's league-transactions URL (lm-api-writes .../seasons/<Y>/segments/0/leagues/<id>/transactions). " +
-      "This is the one place that decides what this tool may change in a real league, and it is deliberately narrow.",
+      "That endpoint is deliberately narrow; WHICH OPERATION may be sent to it is decided separately, " +
+      "by ESPN_WRITE_TYPES, because ESPN serves waivers and lineup changes from this same URL.",
     );
   }
   if (typeof body !== "string") throw new Error("REFUSED to write: the body must be a JSON string.");
   if (body.length > MAX_WRITE_BODY) {
     throw new Error(`REFUSED to write: body is ${body.length} bytes, over the ${MAX_WRITE_BODY} cap.`);
+  }
+  // THE OPERATION, not just the endpoint. See ESPN_WRITE_TYPES for why the url alone decides nothing.
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); } catch {
+    // A body this guard cannot READ is a body it cannot VET, and ESPN would reject it anyway. Failing
+    // closed here costs nothing and removes the "unparseable slips through" branch entirely.
+    throw new Error("REFUSED to write: the body is not valid JSON, so the operation cannot be checked.");
+  }
+  const type = (parsed as { type?: unknown })?.type;
+  if (typeof type !== "string" || !ESPN_WRITE_TYPES.includes(type)) {
+    throw new Error(
+      `REFUSED to write a "${typeof type === "string" ? type : "(missing)"}" transaction. ` +
+      `The permitted operations are: ${ESPN_WRITE_TYPES.join(", ")}. ` +
+      "ESPN serves waivers, free-agent adds, drops and LINEUP changes from this same URL, so the " +
+      "endpoint allowlist does not restrict them -- this does. Widening it is a decision about what " +
+      "this tool may do to a real league, not a refactor.",
+    );
   }
 }
 

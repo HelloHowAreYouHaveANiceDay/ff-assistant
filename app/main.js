@@ -515,6 +515,17 @@ function startBridge() {
           return reply(400, { error: "url must be the ESPN league-transactions write endpoint" });
         }
         if (typeof tbody !== "string" || tbody.length > 1e5) return reply(400, { error: "body must be a JSON string" });
+        // WHICH OPERATION, not just which endpoint. ESPN serves waivers, free-agent adds, drops and
+        // LINEUP changes from this SAME transactions url -- they differ from a trade only by `type`
+        // -- so the url check above does not restrict them and never did. Kept in step with
+        // ESPN_WRITE_TYPES in src/league/writeIO.ts; test/write-contract.test.ts asserts the two
+        // lists agree, because this file cannot import that one.
+        const ALLOWED_WRITE_TYPES = ["TRADE_PROPOSAL"];
+        let tparsed;
+        try { tparsed = JSON.parse(tbody); } catch { return reply(400, { error: "body is not valid JSON, so the operation cannot be checked" }); }
+        if (!tparsed || !ALLOWED_WRITE_TYPES.includes(tparsed.type)) {
+          return reply(400, { error: `refusing to write a "${tparsed && tparsed.type}" transaction; permitted: ${ALLOWED_WRITE_TYPES.join(", ")}` });
+        }
         try {
           // RESOLVE THE GUEST BY HOST, like every sibling route (fixed WP14; audit 2.3). This was the
           // LAST route still doing `win.webContents.executeJavaScript(... getElementById("espnview"))`
