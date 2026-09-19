@@ -69,7 +69,18 @@ export function loadLeagueHistory(
   const upPick = db.prepare(`INSERT INTO raw_league_pick VALUES (@l,@s,@n,@tid,@name,@pos,@price,@oid,@owner,@now)
     ON CONFLICT(league_id,season,pick_no) DO UPDATE SET team_id=excluded.team_id,name=excluded.name,pos=excluded.pos,price=excluded.price,
     owner_id=excluded.owner_id,owner=excluded.owner,fetched_at=excluded.fetched_at`);
-  const upGame = db.prepare(`INSERT OR REPLACE INTO raw_league_matchup VALUES (@l,@s,@w,@h,@a,@now)`);
+  // NAMED COLUMNS, for the same reason `upSeason` uses them and for one more. `home_score`/
+  // `away_score` reach an EXISTING store through db.ts's ALTER path and a FRESH one through
+  // schema.sql, and a positional `VALUES (...)` would (a) throw "6 values for an 8 column table" the
+  // moment the columns exist and (b) before that, silently drop the scores off the end. Naming the
+  // columns is what makes the score survive the write instead of being discarded by the statement.
+  //
+  // `@hs`/`@as` are NULL wherever the adaptor did not report a number. NULL is the honest value for
+  // an unplayed week; writing 0 there would be a real, terrible score that nothing downstream could
+  // distinguish from a genuine shutout.
+  const upGame = db.prepare(`INSERT OR REPLACE INTO raw_league_matchup
+      (league_id, season, week, home_id, away_id, fetched_at, home_score, away_score)
+    VALUES (@l,@s,@w,@h,@a,@now,@hs,@as)`);
   const upDiv = db.prepare(`INSERT OR REPLACE INTO raw_league_division VALUES (@l,@s,@d,@name,@ids,@now)`);
   const delGames = db.prepare(`DELETE FROM raw_league_matchup WHERE league_id=@l AND season=@s`);
   const delDivs = db.prepare(`DELETE FROM raw_league_division WHERE league_id=@l AND season=@s`);
@@ -113,7 +124,16 @@ export function loadLeagueHistory(
         // into 166, with team 14 playing twice in week 1 and no error anywhere.
         delGames.run({ l: leagueId, s: s.season });
         delDivs.run({ l: leagueId, s: s.season });
-        for (const g of sched.games) { upGame.run({ l: leagueId, s: s.season, w: g.week, h: String(g.homeId), a: String(g.awayId), now: fetchedAt }); counts.games++; }
+        for (const g of sched.games) {
+          upGame.run({
+            l: leagueId, s: s.season, w: g.week, h: String(g.homeId), a: String(g.awayId), now: fetchedAt,
+            // `?? null` and NOT `?? 0`: an absent score is an unplayed (or un-ingested) week, and
+            // better-sqlite3 rejects `undefined` as a bound parameter outright, so the coalesce is
+            // load-bearing as well as semantic.
+            hs: g.homeScore ?? null, as: g.awayScore ?? null,
+          });
+          counts.games++;
+        }
         for (const d of sched.divisions) { upDiv.run({ l: leagueId, s: s.season, d: String(d.id), name: d.name, ids: JSON.stringify(d.teamIds), now: fetchedAt }); counts.divisions++; }
       }
     }

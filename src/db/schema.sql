@@ -725,9 +725,16 @@ CREATE TABLE IF NOT EXISTS raw_league_pick (
   league_id TEXT NOT NULL, season INTEGER NOT NULL, pick_no INTEGER NOT NULL, team_id TEXT, name TEXT NOT NULL,
   pos TEXT, price REAL, owner_id TEXT, owner TEXT, fetched_at TEXT NOT NULL,
   PRIMARY KEY (league_id, season, pick_no));
+-- `home_score`/`away_score` are NULLABLE and NULL IS THE MEANINGFUL VALUE: the week has not been
+-- played, or the row was ingested by a path that carries pairings only. NULL and 0 are different
+-- facts -- a fantasy team really can score 0 -- so a reader that coalesces the NULL to 0 turns "we
+-- do not know" into "they were shut out", which is the failure this column ordering exists to keep
+-- visible. They come last so that the store's pre-WP column order is unchanged, which is what lets
+-- db.ts's ALTER path produce the same layout a fresh schema.sql does.
 CREATE TABLE IF NOT EXISTS raw_league_matchup (
   league_id TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL, home_id TEXT NOT NULL, away_id TEXT NOT NULL,
-  fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, week, home_id));
+  fetched_at TEXT NOT NULL, home_score REAL, away_score REAL,
+  PRIMARY KEY (league_id, season, week, home_id));
 CREATE TABLE IF NOT EXISTS raw_league_division (
   league_id TEXT NOT NULL, season INTEGER NOT NULL, division_id TEXT NOT NULL, name TEXT, team_ids_json TEXT,
   fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, division_id));

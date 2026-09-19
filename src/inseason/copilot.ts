@@ -41,7 +41,7 @@ import { slotAdmits } from "../draft/slots.js";
 import { winProbLineup, opponentStarters, type WeeklyBand, type WinProbOpts, type WinProbResult, type WinProbPlayer } from "./winprob.js";
 import { handcuffBoard, loadInjuryOutlook, type DepthEntry, type HandcuffRow, type InjuryOutlookSet } from "./handcuff.js";
 import { rosterGaps, rosterOverfills, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
-import { nameKey } from "../draft/values.js";
+import { dstAliasKey, nameKey } from "../draft/values.js";
 import { perGameStrength } from "../draft/rosBlend.js";
 import {
   loadFaabModel, liveFaabState, featureRow, recommendBid, faabArtifactFor,
@@ -233,6 +233,10 @@ export interface Assumptions {
    *  in particular WHICH players fell back to the season line because the weekly projector had no
    *  row for them. A caveat that omits the fallback is a caveat that hides it. */
   basisNote?: string;
+  /** HOW OLD THE INPUTS ARE, per feed (src/data/feeds.ts). Carried on every verb's assumptions so a
+   *  reader can tell a number built on a nine-day-old ESPN cache from one built on a live sync --
+   *  the two were previously indistinguishable. Absent on a hand-built context. */
+  feeds?: import("../data/feeds.js").FeedStatus[];
   /** WHICH QUANTITY THIS RESULT IS MAXIMISING. On every result, because a delta with no objective
    *  attached is the same trap as a probability with no assumptions attached: it reads as a fact. */
   objective: Objective;
@@ -268,6 +272,9 @@ function assumptionsOf(
   trials: number | null, seeds: number[] | null, objective: Objective,
 ): Assumptions {
   return {
+    // Read off the CONTEXT, assembled once with the rest of the week's state -- not re-queried per
+    // verb, which is how it came to reach none of them.
+    ...(ctx.week?.feeds ? { feeds: ctx.week.feeds } : {}),
     schedule: ctx.syntheticSchedule ? "generated" : "real",
     basis,
     trials,
@@ -391,22 +398,19 @@ export function seasonOdds(ctx: SimContext, o: BaseOpts = {}): SeasonOddsResult 
 // WEEKLY LINEUP
 // ---------------------------------------------------------------------------------------------
 
-export type AvailabilityStatus = "OUT" | "QUESTIONABLE" | "ACTIVE";
-export interface AvailabilityEntry { status: AvailabilityStatus; source: string; detail?: string }
-/** name_key -> what the store says about him this week. Built by `loadAvailability`. */
-export type AvailabilityMap = Map<string, AvailabilityEntry>;
-
-/** Statuses that make a man UNSTARTABLE. QUESTIONABLE deliberately does not: he plays more often
- *  than not, and benching every questionable starter costs more than the occasional zero. */
-const OUT_STATUSES = new Set(["OUT", "IR", "PUP", "NFI", "SUSPENSION", "DNR", "DOUBTFUL"]);
-
-export function normalizeStatus(raw: string | null | undefined): AvailabilityStatus {
-  const s = String(raw ?? "").trim().toUpperCase();
-  if (!s) return "ACTIVE";
-  if (OUT_STATUSES.has(s)) return "OUT";
-  if (s === "QUESTIONABLE") return "QUESTIONABLE";
-  return "ACTIVE";
-}
+// THE AVAILABILITY VOCABULARY lives in its own leaf module (src/inseason/availability.ts) so that
+// `weekState.ts` can use it without a cycle back through this file. Re-exported here because every
+// existing caller imports these names from `copilot.js`, and a move that forces 20 import edits is a
+// move that gets reverted.
+import {
+  canonStatus, isKnownStatus, normalizeStatus, unknownStatusesSeen,
+  type AvailabilityStatus, type AvailabilityEntry, type AvailabilityMap,
+} from "./availability.js";
+import { finishedTeams } from "./weekState.js";
+export {
+  canonStatus, isKnownStatus, normalizeStatus, unknownStatusesSeen,
+  type AvailabilityStatus, type AvailabilityEntry, type AvailabilityMap,
+};
 
 export interface LineupPlayer { slot?: string; name: string; pos: string; proj: number; available: boolean; reason: string }
 
@@ -453,6 +457,15 @@ export interface LineupResultJson {
   bench: LineupPlayer[];
   unavailable: { name: string; pos: string; reason: string }[];
   totalProj: number;
+  /**
+   * HOW MUCH OF `totalProj` IS ALREADY BANKED rather than forecast.
+   *
+   * Present only once at least one starter's game is over. `banked` is the sum of their REAL scores;
+   * `projected` is the rest. The two are separated because they are different kinds of number and a
+   * single headline hides that: on the Friday of week 2 this league's lineup read "89.9 projected
+   * pts" when 35.0 of it had been scored the night before and could not change.
+   */
+  settled?: { banked: number; projected: number; players: { name: string; pts: number }[] };
   flags: string[];
   assumptions: Assumptions;
   /** Which objective produced `starters`. Always present, so a consumer never has to infer it from
@@ -467,16 +480,60 @@ export interface LineupResultJson {
  * WHY A STARTER MAY NOT BE STARTED, resolved once so the guard and the optimizer read the same rule.
  * Returns null when he is startable.
  */
+/**
+ * A WEEKLY PROJECTION FOR ONE MAN, WITH THE DST ALIAS TRIED SECOND.
+ *
+ * `lineupNameKey` deliberately does NOT strip or translate a `D/ST` token -- its own header says so,
+ * and unifying it with the canonical `nameKey` would silently break every weekly lineup match. The
+ * consequence is that the two sides have to SPELL a defence the same way: "MIN D/ST" on both, which
+ * is what `ownership` happens to write today. A roster source that writes ESPN's NICKNAME form --
+ * `raw_league_roster_week` writes "Vikings D/ST" -- would match nothing and fall silently to the
+ * season line, with `basisNote` reporting it as a fallback rather than as a defence nobody could
+ * find.
+ *
+ * So the direct key is tried first, unchanged, and only on a MISS for a DST is the alias tried. That
+ * ordering matters: it cannot change any lookup that already succeeds, which is the property that
+ * makes this safe to add to a seam the header warns about.
+ */
+function weeklyFor(
+  weekly: WeeklyProjection | undefined,
+  p: { name: string; pos: string },
+): number | undefined {
+  if (!weekly) return undefined;
+  const direct = weekly.get(lineupNameKey(p.name));
+  if (direct != null || p.pos !== "DST") return direct;
+  const alias = dstAliasKey(p.name);
+  return alias == null ? undefined : weekly.get(lineupNameKey(`${alias.toUpperCase()} D/ST`));
+}
+
 export function unavailableReason(
-  p: { name: string; pos: string; bye?: number | null },
+  p: { name: string; pos: string; bye?: number | null; slot?: string | null },
   week: number,
   availability: AvailabilityMap,
 ): string | null {
   if (p.bye != null && Number(p.bye) === week) return `bye week ${week}`;
+  /**
+   * A MAN THE LEAGUE HAS ON IR CANNOT BE STARTED, whatever the injury feeds say about him.
+   *
+   * `ownership.slot` carried `IR` and NOTHING read it -- the architecture review flagged it and it
+   * stayed open. It matters because it is a different fact from a designation: the league itself has
+   * already ruled him ineligible, so he is unstartable even when the status feeds are stale, absent,
+   * or spell his condition in a way the vocabulary does not know. On the Yahoo league it is four men
+   * today, covered by the injury path only BY LUCK.
+   *
+   * `IR_SLOTS` rather than a literal: Yahoo writes `IR`, ESPN's lineupSlotId 21 renders as `IR`, and
+   * a platform that spells it differently must be added here rather than silently starting him.
+   */
+  const slot = (p.slot ?? "").trim().toUpperCase();
+  if (slot && IR_SLOTS.has(slot)) return `on IR (league slot "${p.slot}") -- not eligible to start`;
   const a = availability.get(nameKey(p.name));
   if (a && a.status === "OUT") return `${a.detail ? `OUT (${a.detail})` : "OUT"} -- ${a.source}`;
   return null;
 }
+
+/** League ROSTER slots that mean "cannot be started". Not injury statuses -- those are
+ *  `OUT_STATUSES` in availability.ts -- but the league's own eligibility ruling. */
+const IR_SLOTS = new Set(["IR", "INJURED RESERVE", "IL", "NA", "INACTIVE"]);
 
 /**
  * THE GUARD THAT MAKES AVAILABILITY LOAD-BEARING.
@@ -585,10 +642,41 @@ export function lineupRecommend(
      *  DST that shares an NFL game with one of our offensive starters (they partly cancel). Absent,
      *  no such flag is produced -- the default is unchanged. */
     nflOpp?: Map<string, string>;
+    /**
+     * THE NFL TEAMS WHOSE GAME HAS ALREADY KICKED OFF (UPPER abbrev), from
+     * `lockedNflTeams(db, season, week)`. A rostered man on one of them cannot be moved, so he holds
+     * his current slot and the optimizer may neither seat nor unseat him.
+     *
+     * Absent means "nothing is locked", which is both the correct answer before the week's first
+     * kickoff and the behaviour every existing caller had. It is deliberately NOT defaulted to a
+     * live clock read inside this function: this file is pure, and a recommendation that silently
+     * depended on wall-clock time would be unreproducible in a backtest.
+     */
+    locked?: Set<string>;
+    /**
+     * WHAT A MAN WHOSE GAME IS OVER ACTUALLY SCORED, by `player_id`, from
+     * `settledPointsFor(db, league, season, week)`.
+     *
+     * Applied ONLY to a man whose NFL team is in `finished` -- kicked off is not the same as
+     * finished, and a running score substituted for a projection would price a receiver with one
+     * first-quarter catch at 1.4 points for the week. Where it applies, he stops being a
+     * distribution and becomes a constant: his band collapses to a point at the value he scored,
+     * which is what he is.
+     */
+    settledPoints?: Map<string, number>;
+    /** NFL teams whose game is OVER (union of `finishedNflTeams`). Gates `settledPoints`. */
+    finished?: Set<string>;
   } = {},
 ): LineupResultJson {
-  const availability = o.availability ?? new Map<string, AvailabilityEntry>();
+  // THE CONTEXT IS THE DEFAULT. `o.availability` survives ONLY as a fault-injection override for the
+  // tests -- `availability?: X` on an options bag is exactly what let eight of ten verbs run without
+  // it, so it must never again be the only way the value arrives. See src/inseason/weekState.ts.
+  const availability = o.availability ?? ctx.week.availability;
   const perWeek = o.weeklyPoints ?? NFL_WEEKS;
+  // Same rule as `availability` above: the context is the default, the option is for injection.
+  const lockedTeams = o.locked ?? ctx.week.locked;
+  const finishedSet = o.finished ?? finishedTeams(ctx.week);
+  const settledPts = o.settledPoints ?? ctx.week.settledPoints;
   const roster = ctx.teams[ctx.meIdx].roster;
   const unavailable: LineupResultJson["unavailable"] = [];
   const fellBack: string[] = [];
@@ -622,6 +710,9 @@ export function lineupRecommend(
    *  line. Counted so `basisNote` can say which of the two it was -- a caveat that named the wrong
    *  one would be the same defect as the NaN it replaced, one layer up. */
   const blendedBack: string[] = [];
+  /** Men whose game is over and whose real score replaced their projection. Named, and totalled, so
+   *  a reader can see how much of the headline number is already banked rather than forecast. */
+  const settled: { name: string; pts: number }[] = [];
   const seasonFallback = (p: { name: string; proj: number; rosPerGame?: number }): number => {
     const v = perGameStrength(p, perWeek);
     if (Number.isFinite(v)) {
@@ -634,10 +725,24 @@ export function lineupRecommend(
   const players = roster.map((p) => {
     const why = unavailableReason(p, week, availability);
     if (why) unavailable.push({ name: p.name, pos: p.pos, reason: why });
-    const wk = o.weekly?.get(lineupNameKey(p.name));
+    const wk = weeklyFor(o.weekly, p);
     if (o.weekly) { if (wk != null && Number.isFinite(wk)) fromWeekly++; else fellBack.push(p.name); }
     const pts = wk != null && Number.isFinite(wk) ? wk : seasonFallback(p);
-    return { name: p.name, pos: p.pos, proj: r2(pts), available: why == null, reason: why ?? "available" };
+    // KICKOFF LOCK. `o.locked` is the set of NFL teams whose week has started; a man on one of them
+    // holds wherever he currently sits. Absent, nothing is locked and the assignment is exactly what
+    // it was -- which is what every caller that does not pass it still gets.
+    const nflTeam = p.team ? String(p.team).toUpperCase() : null;
+    const locked = !!nflTeam && lockedTeams.has(nflTeam);
+    // SETTLED: his game is OVER and the league has scored him. He is no longer a projection.
+    const done = !!nflTeam && finishedSet.has(nflTeam);
+    const actual = done && p.playerId != null ? settledPts.get(p.playerId) : undefined;
+    if (actual != null && Number.isFinite(actual)) settled.push({ name: p.name, pts: r2(actual) });
+    return {
+      name: p.name, pos: p.pos,
+      proj: actual != null && Number.isFinite(actual) ? r2(actual) : r2(pts),
+      available: why == null, reason: why ?? "available",
+      ...(locked ? { locked: true, lockedSlot: p.slot ?? null } : {}),
+    };
   });
   const res = optimalLineup(players, ctx.slots, ctx.flexOk);
   assertStartersAvailable(res.starters, roster, week, availability);
@@ -686,10 +791,39 @@ export function lineupRecommend(
         team: p.team ?? null,
         proj: r2(pts),
         band: o.bands?.get(k) ?? null,
+        ...(p.team && lockedTeams.has(String(p.team).toUpperCase())
+          ? { locked: true, lockedSlot: p.slot ?? null } : {}),
       };
     });
-    const oursWp = toWp(roster);
-    const theirsWp = toWp(opp.roster).filter((p) => p.available);
+
+    /**
+     * A FINISHED MAN IS A CONSTANT, and the sampler has to be told so explicitly.
+     *
+     * Leaving his band alone would draw him from a pre-game distribution he has already resolved --
+     * a receiver who scored 4.3 would keep contributing a 1.8-to-23.9 spread to our variance, which
+     * is the single biggest input to P(win). Collapsing the band to a point at what he actually
+     * scored is not a modelling choice; it is the only description of a completed game.
+     *
+     * `pZero` is deliberately dropped: a two-part band's zero atom is a statement about a game that
+     * might not happen, and this one did.
+     */
+    const settleWp = (list: WinProbPlayer[], rs: typeof roster): WinProbPlayer[] => {
+      const byName = new Map(rs.map((r) => [r.name, r]));
+      return list.map((w) => {
+        const r = byName.get(w.name);
+        const nfl = r?.team ? String(r.team).toUpperCase() : null;
+        const done = !!nfl && finishedSet.has(nfl);
+        const actual = done && r?.playerId != null ? settledPts.get(r.playerId) : undefined;
+        if (actual == null || !Number.isFinite(actual)) return w;
+        const v = r2(actual);
+        return { ...w, proj: v, band: { mean: v, p10: v, p50: v, p90: v } };
+      });
+    };
+    const oursWp = settleWp(toWp(roster), roster);
+    // THE OPPONENT IS SETTLED TOO. Half of a head-to-head margin is his, and pricing his finished
+    // players at their pre-game bands while ours are constants would bias every probability in our
+    // favour on exactly the days the question matters most.
+    const theirsWp = settleWp(toWp(opp.roster), opp.roster).filter((p) => p.available);
     const r = winProbLineup(oursWp, opponentStarters(theirsWp, ctx.slots, ctx.flexOk), ctx.slots, ctx.flexOk, o.winprob);
     wp = { ...r, opponent: opp.name, opponentTeamId: opp.id };
     assertStartersAvailable(r.starters, roster, week, availability);
@@ -801,13 +935,33 @@ export function lineupRecommend(
   };
   const flexSet = ctx.flexOk ? new Set(ctx.flexOk) : undefined;
   const contested: LineupContest[] = [];
+  /**
+   * A LOCKED MAN IS NOT A CONTEST, on either side of it.
+   *
+   * `contested` exists to say how close a DECISION was, and a decision the manager cannot take is
+   * not close -- it is not a decision. Before this, the morning after a Thursday game the serve
+   * reported "QB Bo Nix over Jared Goff by -1.47" about a quarterback who had already played and
+   * could not be started: a NEGATIVE margin, which reads as "you are starting the worse man", about
+   * the only lineup that was legal. And it named our two locked Detroit receivers as contested
+   * slots when neither could be moved at all.
+   *
+   * So a locked STARTER's slot is skipped (nothing can replace him) and a locked BENCH man is never
+   * offered as the alternative (he cannot come in). This is the same constraint `optimalLineup` and
+   * the winprob swap search now apply, at the layer that REPORTS rather than decides -- and it has
+   * to be applied here too, because a caveat that contradicts the lineup it describes is worse than
+   * no caveat: the reader believes the sentence, not the assignment.
+   */
+  const lockedNames = new Set(
+    roster.filter((p) => p.team && lockedTeams.has(String(p.team).toUpperCase())).map((p) => p.name),
+  );
   for (const s of starters) {
     if (s.name === "(empty)") continue;
+    if (lockedNames.has(s.name)) continue;
     const admits = slotAdmits(s.slot, flexSet);
-    // The best man who is SITTING, is available, and could legally take this slot.
+    // The best man who is SITTING, is available, is NOT locked, and could legally take this slot.
     let alt: (typeof bench)[number] | null = null;
     for (const b of bench) {
-      if (!b.available || !admits.includes(b.pos)) continue;
+      if (!b.available || !admits.includes(b.pos) || lockedNames.has(b.name)) continue;
       if (alt == null || b.proj > alt.proj) alt = b;
     }
     if (!alt) continue;
@@ -821,6 +975,19 @@ export function lineupRecommend(
       margin: r2(s.proj - alt.proj),
       marginBandFrac: width != null && width > 0 ? r3(Math.abs(s.proj - alt.proj) / width) : null,
     });
+  }
+  // THE SETTLED SPLIT SAYS ITSELF FIRST, because it changes how every other number in this result
+  // should be read: a total that is half banked is not a forecast, and a win probability computed
+  // over it is much tighter than one computed before kickoff.
+  {
+    const startedNow = new Set(starters.map((x) => x.name));
+    const seated = settled.filter((x) => startedNow.has(x.name));
+    if (seated.length) {
+      const b = seated.reduce((a, x) => a + x.pts, 0);
+      assumptions.basisNote += `; ${seated.length} starter(s) have FINISHED and are priced at what they ` +
+        `actually scored, not at a projection: ${seated.map((x) => `${x.name} ${x.pts.toFixed(1)}`).join(", ")} ` +
+        `-- ${b.toFixed(1)} points of the total are BANKED and cannot change`;
+    }
   }
   // THE CAVEAT SAYS IT, because a result nobody reads the JSON of is a result that did not say it.
   // The TIGHTEST contest is the one that decides whether the recommendation is a recommendation.
@@ -837,13 +1004,24 @@ export function lineupRecommend(
         : " (no served band for either man, so how close that is cannot be stated)");
   }
 
+  // THE BANKED/FORECAST SPLIT, over the men who were actually SEATED. `settled` above is every man
+  // on the roster whose game is over; only the started ones contribute to the headline total, and
+  // reporting the bench's settled points inside it would overstate what is locked in.
+  const startedNames = new Set(starters.map((x) => x.name));
+  const seatedSettled = settled.filter((x) => startedNames.has(x.name));
+  const banked = r2(seatedSettled.reduce((a, x) => a + x.pts, 0));
+  const total = wp ? wp.totalProj : r2(res.totalProj);
+
   return {
     week,
     starters,
     contested,
     bench,
     unavailable,
-    totalProj: wp ? wp.totalProj : r2(res.totalProj),
+    totalProj: total,
+    ...(seatedSettled.length
+      ? { settled: { banked, projected: r2(total - banked), players: seatedSettled } }
+      : {}),
     flags: [...res.flags, ...extraFlags],
     assumptions,
     objective,
@@ -946,7 +1124,10 @@ export function streamRecommend(
     artifactByPos?: Record<string, string>;
   } = {},
 ): StreamRecommendResult {
-  const availability = o.availability ?? new Map<string, AvailabilityEntry>();
+  // THE CONTEXT IS THE DEFAULT. `o.availability` survives ONLY as a fault-injection override for the
+  // tests -- `availability?: X` on an options bag is exactly what let eight of ten verbs run without
+  // it, so it must never again be the only way the value arrives. See src/inseason/weekState.ts.
+  const availability = o.availability ?? ctx.week.availability;
   const limit = o.limit ?? 8;
   const roster = ctx.teams[ctx.meIdx].roster;
   const byeOf = new Map(roster.map((p) => [nameKey(p.name), p.bye ?? null]));
@@ -1050,8 +1231,23 @@ function deltasOf(after: Outcome[], base: Outcome[], objective: Objective): Obje
  * differencing two averages) is what keeps that pairing intact, and the spread across seeds is the
  * standard error reported beside every number.
  */
-function pairedDelta(perSeed: number[]): { delta: number; se: number } {
-  return { delta: r2(mean(perSeed)), se: r2(sd(perSeed) / Math.sqrt(Math.max(1, perSeed.length))) };
+/**
+ * ONE SEED CANNOT PRODUCE A STANDARD ERROR, and reporting 0 for it is worse than reporting nothing.
+ *
+ * `sd([x])` is 0, so a single-seed run printed `se: 0` -- which reads as a perfectly precise
+ * measurement and actually means NOT MEASURED. `ff copilot trade-finder` defaults to one seed, so
+ * every idea it has ever returned carried `se: 0` beside a delta with real sampling noise in it; the
+ * waiver verb defaults to two seeds and reported honest values like 0.1, which is exactly the
+ * contrast that makes the 0 look like a number rather than an absence.
+ *
+ * `null` is the honest answer, and it is a different TYPE, so a consumer that formats it has to
+ * decide what to print rather than silently rendering "+/-0".
+ */
+function pairedDelta(perSeed: number[]): { delta: number; se: number | null } {
+  return {
+    delta: r2(mean(perSeed)),
+    se: perSeed.length < 2 ? null : r2(sd(perSeed) / Math.sqrt(perSeed.length)),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1066,7 +1262,9 @@ export interface ObjectiveDelta {
   playoffWeekPts: number;
   titlePp: number;
   rankValue: number;
-  se: number;
+  /** Sampling error across SEEDS. Null when only one seed was run -- see `pairedDelta`: a single
+   *  sample has no measurable spread, and 0 would read as certainty. */
+  se: number | null;
 }
 export interface WaiverDrop extends ObjectiveDelta { name: string; pos: string; proj: number }
 export interface WaiverRefusal { add: string; drop: string; pos: string; why: string }
@@ -1124,6 +1322,13 @@ export interface WaiverResult {
   noiseFloorPp: number;
   targets: WaiverTarget[];
   refused: WaiverRefusal[];
+  /** How the add pool was RANKED, and any position the ranking could not price. A reader who sees
+   *  four quarterbacks needs to know whether that is the pool or the sort. */
+  poolRanking: { basis: "value-over-replacement" | "raw-projection"; missingReplacement: string[] };
+  /** Free agents left OUT of the add pool because the store says they cannot play. Named rather than
+   *  silently filtered: stashing an injured man is a legitimate human call, and the point is that
+   *  the simulator cannot price it. Empty when no availability map was supplied. */
+  unavailableAdds: { name: string; pos: string; reason: string }[];
   faabBudget: number;
   objective: Objective;
   /** The waiver result's assumptions carry ONE extra block, because the bid is now a second model's
@@ -1181,6 +1386,26 @@ export function waiverTargets(
     faabTargetWinPct?: number;
     /** Our remaining FAAB. Read from the store when absent; a bid above it is FLAGGED, not capped. */
     faabRemaining?: number;
+    /**
+     * WHO CANNOT PLAY. Absent, nothing is filtered and this verb behaves exactly as it did.
+     *
+     * WHY IT IS NEEDED HERE, AND NOT ONLY IN THE LINEUP. This verb built its add pool straight from
+     * the board minus the rostered set and never consulted availability at all, so a free agent on
+     * INJURED RESERVE was a candidate like any other -- priced at his full season projection,
+     * scored through the simulator as though he would play every remaining week, and returned with
+     * a confident playoff delta and a FAAB bid attached. That is exactly what happened on
+     * 2026-09-18: Jordan Mason went on IR at 18:55 on the 16th, his manager dropped him four hours
+     * later, and this verb recommended bidding 53% of the budget on him.
+     *
+     * The fix is not the availability VOCABULARY (that was a separate defect, fixed in
+     * `normalizeStatus`) -- with the vocabulary corrected he was still recommended, because nothing
+     * on this path read availability at all. Fixing one and not the other would have looked done.
+     *
+     * An excluded man is NAMED, not silently dropped: stashing an injured player is a legitimate
+     * human decision, and the point is that the simulator cannot price it, not that nobody should
+     * ever do it.
+     */
+    availability?: AvailabilityMap;
     /** Injection seams, so the replay and the tests can drive the same code path the live tool does
      *  rather than a reimplementation of it. */
     faabModel?: FaabModel | null;
@@ -1237,11 +1462,48 @@ export function waiverTargets(
   const usingModel = !!(model && live);
   if (usingModel) faabNote = live!.note;
 
+  // UNAVAILABLE FREE AGENTS ARE EXCLUDED AND NAMED. See `availability` above for why this verb had
+  // no such filter at all. The key is the same `nameKey` the availability map is built on, so this
+  // is an id-style lookup rather than a display-name match.
+  const unavailableAdds: { name: string; pos: string; reason: string }[] = [];
+  const isOut = (p: { name: string; pos: string }): boolean => {
+    const a = (o.availability ?? ctx.week.availability).get(nameKey(p.name));
+    if (!a || a.status !== "OUT") return false;
+    unavailableAdds.push({ name: p.name, pos: p.pos, reason: a.detail ?? a.source });
+    return true;
+  };
+  /**
+   * THE POOL IS RANKED BY VALUE OVER REPLACEMENT, NOT BY RAW SEASON POINTS.
+   *
+   * It used to be `.sort((a, b) => b.proj - a.proj)` over the whole free-agent pool. Season point
+   * totals are not comparable across positions -- a quarterback outscores every running back in any
+   * scoring system -- so the top `nAdds` were QUARTERBACKS every single time, in every league,
+   * forever. Measured on 2026-09-18, league 462233: the four candidates offered were Malik Willis,
+   * Bryce Young, Sam Darnold and Jacoby Brissett, while the pool held 115 WRs, 92 RBs and 59 TEs
+   * that could not be reached without passing `--pos`. Three of the four scored +0.00pp, correctly:
+   * the roster already had a starting QB, so a backup never enters a lineup. The verb was
+   * structurally unable to evaluate the pool it exists to evaluate.
+   *
+   * `ctx.replacement` is the per-position WEEKLY points freely available off waivers -- the
+   * streaming floor the season simulator already uses -- so the comparable quantity is the season
+   * total ABOVE that floor. A quarterback worth 280 points against a 17-point-a-week streamer is
+   * worth less than a back worth 180 against a 6-point-a-week one, which is the whole point.
+   *
+   * A POSITION WITH NO REPLACEMENT LEVEL IS NAMED, not silently ranked on raw points -- that would
+   * reinstate the bug for exactly the positions the store knows least about.
+   */
+  const missingReplacement = new Set<string>();
+  const vor = (p: { pos: string; proj: number }): number => {
+    const r = ctx.replacement[p.pos];
+    if (r == null) { missingReplacement.add(p.pos); return p.proj; }
+    return p.proj - r * NFL_WEEKS;
+  };
   const free = [...ctx.board.entries()]
     .filter(([id]) => !ctx.ownedIds.has(id))
     .map(([, p]) => p)
     .filter((p) => (o.positions ? o.positions.includes(p.pos) : true))
-    .sort((a, b) => b.proj - a.proj)
+    .sort((a, b) => vor(b) - vor(a))
+    .filter((p) => !isOut(p))
     .slice(0, nAdds);
 
   const baseBySeed = seeds.map((s) => outcomeOf(ctx, ctx.teams, trials, s));
@@ -1340,6 +1602,11 @@ export function waiverTargets(
     noiseFloorPp: noiseFloorPp(basePlayoff, trials),
     targets,
     refused,
+    poolRanking: {
+      basis: missingReplacement.size === Object.keys(ctx.replacement).length ? "raw-projection" : "value-over-replacement",
+      missingReplacement: [...missingReplacement].sort(),
+    },
+    unavailableAdds,
     faabBudget: budget,
     objective,
     assumptions: {
@@ -1491,6 +1758,10 @@ export interface TradeFinderResult {
   maxValueGap: number;
   candidates: number;
   skippedNoValue: number;
+  /** Pairings skipped because one side cannot play, and who they were. Counted rather than silently
+   *  dropped: "no balanced candidates" and "they were all hurt" are different answers. */
+  skippedUnavailable: number;
+  unavailableNames: string[];
   ideas: TradeIdea[];
   objective: Objective;
   assumptions: Assumptions;
@@ -1514,7 +1785,21 @@ export interface TradeFinderResult {
  */
 export function tradeFinder(
   ctx: SimContext,
-  o: BaseOpts & { values: Map<string, number>; maxGap?: number; limit?: number; positions?: string[] },
+  o: BaseOpts & {
+    values: Map<string, number>; maxGap?: number; limit?: number; positions?: string[];
+    /**
+     * WHO CANNOT PLAY -- the same map `lineupRecommend` takes, and needed here for the same reason
+     * the waiver verb needed it: this loop paired every man on our roster against every man on
+     * every other roster and never asked whether either could play. A man on injured reserve was
+     * valued at his full consensus price on BOTH sides -- as something to acquire, and as something
+     * to send away -- and the simulator then scored the resulting roster as though he would suit up.
+     *
+     * Excluded men are COUNTED, not silently skipped: "there were no balanced candidates" and "the
+     * balanced candidates were all hurt" are different answers and must not print the same.
+     * Absent, nothing is filtered and the verb behaves exactly as it did.
+     */
+    availability?: AvailabilityMap;
+  },
 ): TradeFinderResult {
   const trials = o.trials ?? 1200;
   const seed = o.seed ?? 7;
@@ -1524,16 +1809,27 @@ export function tradeFinder(
 
   const mine = ctx.teams[ctx.meIdx].roster;
   let skippedNoValue = 0;
+  let skippedUnavailable = 0;
+  const outNames = new Set<string>();
+  const cannotPlay = (p: { name: string }): boolean => {
+    if ((o.availability ?? ctx.week.availability).get(nameKey(p.name))?.status !== "OUT") return false;
+    outNames.add(p.name);
+    return true;
+  };
   type Cand = { ti: number; give: SeasonTeamInput["roster"][number]; get: SeasonTeamInput["roster"][number]; gv: number; tv: number; gap: number };
   const cand: Cand[] = [];
   for (const give of mine) {
     const gv = val(give.name);
     if (gv == null) { skippedNoValue++; continue; }
+    // Trading AWAY a man who cannot play is a real move, but the simulator cannot price it: it
+    // scores the roster he leaves as though he had been playing. Excluded on both sides, counted.
+    if (cannotPlay(give)) { skippedUnavailable++; continue; }
     for (let ti = 0; ti < ctx.teams.length; ti++) {
       if (ti === ctx.meIdx) continue;
       for (const get of ctx.teams[ti].roster) {
         const tv = val(get.name);
         if (tv == null) continue;
+        if (cannotPlay(get)) { skippedUnavailable++; continue; }
         if (o.positions && !o.positions.includes(get.pos)) continue;
         const gap = Math.abs(tv - gv) / Math.max(tv, gv, 1);
         if (gap > maxGap) continue;
@@ -1591,6 +1887,8 @@ export function tradeFinder(
     maxValueGap: maxGap,
     candidates: cand.length,
     skippedNoValue,
+    skippedUnavailable,
+    unavailableNames: [...outNames].sort(),
     ideas,
     objective,
     assumptions: assumptionsOf(ctx, "simulation", { ...o, seeds: [seed] }, trials, [seed], objective),
@@ -1697,7 +1995,9 @@ export interface DepthRiskResult {
   costPlayoffWeekPts: number;
   /** POSITIVE = percentage points of TITLE probability, reported alongside, never used alone. */
   costTitlePp: number;
-  se: number;
+  /** Sampling error across SEEDS. Null when only one seed was run -- see `pairedDelta`: a single
+   *  sample has no measurable spread, and 0 would read as certainty. */
+  se: number | null;
   noiseFloorPp: number;
   insurance: { name: string; pos: string; proj: number; from: string; free: boolean; recoversPp: number; recoversPlayoffWeekPts: number; recoversTitlePp: number }[];
   /**

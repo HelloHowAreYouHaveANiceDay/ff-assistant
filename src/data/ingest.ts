@@ -483,6 +483,11 @@ export const RAW_ASSETS: RawAsset[] = [
         return r.counts.rows;
       }
       const r = await ingestLeagueRosters({ dbPath, seasons, leagueId: opts?.leagueId });
+      // STATED, NOT ASSUMED. An unsettled week must be refetched every run (its lineup is still being
+      // edited); a settled one is served from cache. "0 refetched" on a live week means the freshness
+      // rule did not fire, which is exactly the failure this line exists to make visible.
+      console.log(`  raw_league_roster_week: ${r.refetched} week(s) refetched from ESPN, the rest served from cache` +
+        `; ${r.counts.removed} stale row(s) removed (men no longer on that week's roster)`);
       for (const f of r.findings) console.log(`  raw_league_roster_week ${f.season}: ${f.what} (${f.got} > ${f.limit})`);
       return r.counts.rows;
     },
@@ -508,6 +513,19 @@ export const RAW_ASSETS: RawAsset[] = [
         return y.rows;
       }
       const r = await ingestLeagueTransactions({ dbPath, seasons, leagueId: opts?.leagueId });
+      // As for the roster sweep: an unsettled week's log is still growing, so it must be refetched
+      // every run. "0 refetched" while the current week is live is the signature of a stale cache.
+      console.log(`  raw_league_transaction: ${r.refetched} week(s) refetched from ESPN, the rest served from cache`);
+      // ESPN serves a trade between two OTHER teams as a container with NO items, so it produces no
+      // rows. Reported by name: a third-party trade that is invisible in this table is a gap the
+      // reader must know about, and it used to look exactly like nothing having happened.
+      if (r.itemless.length) {
+        const seen = new Map(r.itemless.map((t) => [t.transactionId, t]));
+        console.log(`  raw_league_transaction: ${seen.size} transaction(s) carried NO items and are NOT in the ` +
+          `table (ESPN withholds the items of trades between other teams) -- ` +
+          [...seen.values()].slice(0, 6).map((t) => `${t.type}${t.status ? "/" + t.status : ""} team${t.teamId} ${t.executedAt ?? "?"}`).join("; "));
+      }
+      if (r.itemsWithoutPlayer) console.log(`  raw_league_transaction: ${r.itemsWithoutPlayer} item(s) carried no playerId`);
       for (const c of r.checks) {
         console.log(`  raw_league_transaction ${c.season}: ${c.transactions} transactions, ${c.adds} adds, ${c.waivers} waiver items, ` +
           `$${c.faab} FAAB, ${c.resolvedPct}% of items resolve to a player_sk`);

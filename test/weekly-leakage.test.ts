@@ -197,16 +197,23 @@ test("weekly features for week w do not move when week w's own results change", 
     // feat_player_week's own to-date columns are owned by src/features/build.ts and are not rebuilt
     // here; recompute the ones downstream of the perturbation so the fixture stays self-consistent
     // and the later-week control is real rather than an artefact of a stale column.
-    for (const r of db.prepare("SELECT DISTINCT feat_key FROM feat_player_week WHERE season = ?").all(SEASON) as { feat_key: string }[]) {
-      let g = 0, sum = 0;
-      for (let w = 1; w <= WEEKS; w++) {
-        db.prepare("UPDATE feat_player_week SET td_games = ?, td_pts = ? WHERE season = ? AND week = ? AND feat_key = ?")
-          .run(g, g ? sum / g : null, SEASON, w, r.feat_key);
-        const p = db.prepare("SELECT pts FROM feat_player_week WHERE season = ? AND week = ? AND feat_key = ?")
-          .get(SEASON, w, r.feat_key) as { pts: number | null } | undefined;
-        if (p?.pts != null) { g++; sum += p.pts; }
+    // ONE transaction for the ~190 updates. An un-transactioned statement commits on its own in
+    // better-sqlite3, i.e. an fsync per row -- seconds on a normal disk, minutes on a copy-on-write
+    // /overlay filesystem. Same statements, same order; the interleaved SELECT reads this same
+    // connection's uncommitted rows exactly as before.
+    const recompute = db.transaction(() => {
+      for (const r of db.prepare("SELECT DISTINCT feat_key FROM feat_player_week WHERE season = ?").all(SEASON) as { feat_key: string }[]) {
+        let g = 0, sum = 0;
+        for (let w = 1; w <= WEEKS; w++) {
+          db.prepare("UPDATE feat_player_week SET td_games = ?, td_pts = ? WHERE season = ? AND week = ? AND feat_key = ?")
+            .run(g, g ? sum / g : null, SEASON, w, r.feat_key);
+          const p = db.prepare("SELECT pts FROM feat_player_week WHERE season = ? AND week = ? AND feat_key = ?")
+            .get(SEASON, w, r.feat_key) as { pts: number | null } | undefined;
+          if (p?.pts != null) { g++; sum += p.pts; }
+        }
       }
-    }
+    });
+    recompute();
     await build(db);
     const after = snapshot(db, W);
     const afterAfter = snapshot(db, W + 1);

@@ -11,6 +11,39 @@ export function latestScoredWeek(db: DB, season: number): number | null {
 }
 
 /**
+ * THE LAST FULLY SETTLED WEEK -- the same rule `loadSimContext` applies (D18), not a second spelling.
+ *
+ * `latestScoredWeek` above answers "what is the highest week with ANY scored row", which is a
+ * different and much weaker question: one Thursday night game makes its whole week look finished.
+ * Measured on 2026-09-18, league 462233: week 2 had 22 scored rows out of 532 -- the DET/BUF opener
+ * and nothing else -- and `latestScoredWeek` returned 2, so the FAAB model advanced to week 3 on the
+ * Friday, three days before the week's remaining fifteen games.
+ *
+ * A week is settled when its last NFL game day is strictly BEFORE today AND the store holds scored
+ * rows for it. Both halves matter: the date alone would settle a week whose actuals have not synced,
+ * and the rows alone settle a week on its first kickoff. Contiguous from week 1, because a gap in
+ * the middle means unsynced data rather than a week that did not happen.
+ *
+ * Returns null when nothing has settled, which is the honest answer in week 1 and must not be
+ * confused with week 0.
+ */
+export function lastSettledWeek(db: DB, season: number, today?: string): number | null {
+  const day = today ?? new Date().toISOString().slice(0, 10);
+  let last: number | null = null;
+  for (const r of db.prepare(
+    "SELECT week, MAX(gameday) last FROM raw_nfl_game WHERE season=? AND game_type='REG' AND gameday IS NOT NULL GROUP BY week ORDER BY week",
+  ).all(season) as { week: number; last: string }[]) {
+    if (!(r.last < day)) break;
+    const scored = (db.prepare(
+      "SELECT COUNT(*) c FROM feat_player_week WHERE season=? AND week=? AND pts IS NOT NULL",
+    ).get(season, r.week) as { c: number }).c;
+    if (!scored) break;
+    last = r.week;
+  }
+  return last;
+}
+
+/**
  * Regular-season week count for `season` IN ONE LEAGUE: that league's own reg_weeks, else the last
  * scored week, else 14. The exact fallback chain the backtest harness/streaming/trades each rebuilt
  * inline.

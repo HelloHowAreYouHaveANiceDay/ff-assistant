@@ -31,7 +31,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { nameKey } from "../draft/values.js";
-import { latestScoredWeek } from "./regWeeks.js";
+import { lastSettledWeek } from "./regWeeks.js";
 import { activeLeagueId } from "../db/db.js";
 import type { AcquisitionRules } from "../league/types.js";
 
@@ -298,8 +298,12 @@ export function liveFaabState(o: {
     if (!lg) throw new Error("liveFaabState: no league in the store -- run league_sync once first.");
     let week = o.week ?? 0, weekSource = "caller";
     if (!week) {
-      week = (latestScoredWeek(db, o.season) ?? 0) + 1;
-      weekSource = "the week after the last one with settled points";
+      // THE LAST FULLY SETTLED WEEK, not the highest week with any scored row. `latestScoredWeek`
+      // counted a week finished on its first kickoff, so on the Friday of week 2 -- 22 scored rows
+      // out of 532, the Thursday opener alone -- this advanced the FAAB week to 3 while fifteen of
+      // the week's games had not been played. See `lastSettledWeek`.
+      week = (lastSettledWeek(db, o.season) ?? 0) + 1;
+      weekSource = "the week after the last FULLY settled one (last game day past, and scored)";
       if (week < 1) { week = 1; weekSource = "no settled week in the store -- week 1"; }
     }
     // THE LEAGUE'S OWN RULE FIRST. `config.acquisition.faabBudget` is a READ off the platform's

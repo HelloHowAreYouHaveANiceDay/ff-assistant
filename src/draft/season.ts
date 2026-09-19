@@ -61,6 +61,16 @@ export interface VarianceModel {
  *  correlate. Absent, a player is simply drawn independently. */
 export interface SeasonPlayer {
   name: string; pos: string; proj: number; bye?: number | null; team?: string;
+  /** The board's `player_id`. Carried so a consumer can join him BY KEY rather than by name -- the
+   *  settled-points lookup uses it, and it is the id every store table already speaks. */
+  playerId?: string;
+  /**
+   * THE LEAGUE SLOT HE CURRENTLY OCCUPIES ("QB", "FLEX", "BE", "IR", ...), where the loader knows
+   * it. Carried for the lineup serve, which needs it to honour a kickoff lock -- a man whose game
+   * has started holds the slot he is in. The SIMULATOR ignores it entirely: it assigns its own
+   * lineups every week, so a stored slot is not an input to any simulated season.
+   */
+  slot?: string | null;
   /**
    * REST-OF-SEASON per-game mean (2026-09-14, D18). When present it replaces `proj / 17` as the
    * player's per-game strength for the weeks still to be simulated -- the preseason line updated

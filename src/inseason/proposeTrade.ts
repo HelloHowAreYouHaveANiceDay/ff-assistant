@@ -122,7 +122,18 @@ export async function executeTradeProposal(
   dbPath: string | undefined,
   giveNames: string[],
   getNames: string[],
-  opts: { send?: boolean; leagueId?: string | null } = {},
+  opts: {
+    send?: boolean; leagueId?: string | null;
+    /**
+     * WHO SENDS IT. Absent, the app bridge, which is what this has always used -- so every existing
+     * caller is unchanged. Supplied, any `PlatformWriteIO`: a cookie session from a server-side
+     * browser, or `recordingWriteIO()` to rehearse without sending.
+     *
+     * The writer carries the allowlist (`src/league/writeIO.ts`), so a new provider cannot become a
+     * way to POST somewhere this tool was never permitted to write.
+     */
+    writer?: import("../league/writeIO.js").PlatformWriteIO;
+  } = {},
 ): Promise<TradeProposalRun> {
   const db = openDb(dbPath);
   let resolution: TradeResolution;
@@ -146,9 +157,16 @@ export async function executeTradeProposal(
   if (!opts.send) return { resolution, scoringPeriodId: spid, sent: false };
   if (spid == null) return { resolution, scoringPeriodId: null, sent: false, error: "cannot determine the current scoring period (need the app running) -- refusing to send without it" };
   try {
-    const { bridgeWriteTransaction } = await import("../browser/appBridge.js");
-    const response = await bridgeWriteTransaction(resolution.writeUrl!, JSON.stringify(resolution.payload));
-    return { resolution, scoringPeriodId: spid, sent: true, response };
+    const writer = opts.writer ?? (await import("../league/writeIO.js")).bridgeWriteIO();
+    const r = await writer.post(resolution.writeUrl!, JSON.stringify(resolution.payload));
+    // A NON-2xx IS AN OUTCOME, NOT A CRASH. ESPN puts the reason in the body of a refusal -- an
+    // ineligible player, a locked roster, a trade deadline that has passed -- and throwing the
+    // status away loses exactly the sentence the manager needs.
+    if (r.status >= 400) {
+      return { resolution, scoringPeriodId: spid, sent: false,
+        error: `ESPN refused the proposal with HTTP ${r.status} via ${writer.via}: ${r.body.slice(0, 400)}` };
+    }
+    return { resolution, scoringPeriodId: spid, sent: true, response: r.body };
   } catch (e) {
     return { resolution, scoringPeriodId: spid, sent: false, error: String(e instanceof Error ? e.message : e) };
   }

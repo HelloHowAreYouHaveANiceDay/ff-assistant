@@ -59,12 +59,17 @@ export async function refreshDecisionSnapshot(opts: {
       const a = (run.result as { assumptions?: { schedule?: string } }).assumptions;
       schedule = a?.schedule ?? schedule;
       ins.run({
-        lg, verb, season: ctx.season, week: (ctx as { week?: number }).week ?? null,
+        // `(ctx as { week?: number }).week` -- SimContext never HAD a `week` field, so this read
+        // `undefined` and wrote NULL on every row since the table was created (verified: 4 of 4
+        // rows null). A cast to a shape the type does not have is not a cast, it is a guess, and
+        // TypeScript could not warn because the assertion silenced it. `ctx.week` is now a real
+        // field and `ctx.week.week` is the week a decision taken now is about.
+        lg, verb, season: ctx.season, week: ctx.week.week,
         schedule: a?.schedule ?? null, hash: opts.actualsHash ?? null,
         summary: run.summary.slice(0, 4000), json: JSON.stringify(run.result), now,
       });
       done.push(verb);
     }
-    return { rows: done.length, schedule, week: (ctx as { week?: number }).week ?? null, verbs: done, leagueId: lg };
+    return { rows: done.length, schedule, week: ctx.week.week, verbs: done, leagueId: lg };
   } finally { db.close(); }
 }

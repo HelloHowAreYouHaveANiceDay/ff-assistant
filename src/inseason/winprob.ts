@@ -79,6 +79,16 @@ export interface WinProbPlayer {
   available: boolean;
   /** NFL team. Two players sharing one are coupled; a null team is drawn independently. */
   team?: string | null;
+  /**
+   * HIS NFL GAME HAS KICKED OFF. He is still SAMPLED -- he is part of our total either way -- but he
+   * may not be swapped: a locked starter cannot come out and a locked bench man cannot go in. The
+   * swap search skips him on both sides, so every candidate lineup it evaluates is one the manager
+   * could actually submit. Absent means movable, so a caller that sets no locks searches exactly
+   * the space it searched before.
+   */
+  locked?: boolean;
+  /** The slot he is locked into; a bench token means locked OUT. Only read when `locked`. */
+  lockedSlot?: string | null;
   /** The mean, i.e. what the EXPECTED-POINTS lineup maximises. */
   proj: number;
   /** The shape. Null means we have only a mean for him -- he is then a POINT MASS, which reads as a
@@ -490,9 +500,16 @@ export function winProbLineup(
   const theirs = totalsOf(m, opponentStarters.map((p) => idxOf.get(p)!));
   let oppMean = 0; for (let s = 0; s < sims; s++) oppMean += theirs[s]; oppMean /= sims;
 
-  // THE STARTING POINT: the expected-points lineup, from the same optimizer that ships today.
+  // THE STARTING POINT: the expected-points lineup, from the same optimizer that ships today --
+  // and it must be handed the LOCKS, or the search starts from a lineup the manager cannot submit
+  // and every swap it then reports is measured against a fiction. Constraining only the swap loop
+  // would be the classic half-fix: legal moves from an illegal position.
   const epRes = optimalLineup(
-    ours.map((p) => ({ name: p.name, pos: p.pos, proj: p.proj, available: p.available, ...(p.eligible ? { eligible: p.eligible } : {}) })),
+    ours.map((p) => ({
+      name: p.name, pos: p.pos, proj: p.proj, available: p.available,
+      ...(p.eligible ? { eligible: p.eligible } : {}),
+      ...(p.locked ? { locked: true, lockedSlot: p.lockedSlot ?? null } : {}),
+    })),
     slots, flexOk,
   );
   const byName = new Map(ours.map((p) => [p.name, p]));
@@ -513,9 +530,15 @@ export function winProbLineup(
   if (!o.noSearch) {
     for (; passes < maxPasses; passes++) {
       const inSet = new Set(current.map((p) => p.name));
-      const bench = availOurs.filter((p) => !inSet.has(p.name));
+      // A LOCKED bench man is not a candidate to come IN, and a LOCKED starter is not a candidate to
+      // go OUT. Filtering here rather than inside `seat` is deliberate: `seat` answers "is this set a
+      // legal ASSIGNMENT?", which a locked man does not change -- what he changes is whether the set
+      // is REACHABLE from where the roster stands now, and that is a property of the swap, not of
+      // the seating. Conflating the two would make the feasibility oracle answer two questions.
+      const bench = availOurs.filter((p) => !inSet.has(p.name) && !p.locked);
+      const movable = current.filter((p) => !p.locked);
       let best: { out: WinProbPlayer; add: WinProbPlayer; win: number } | null = null;
-      for (const out of current) {
+      for (const out of movable) {
         for (const add of bench) {
           const set = current.filter((p) => p !== out).concat(add);
           if (set.length !== current.length) continue;

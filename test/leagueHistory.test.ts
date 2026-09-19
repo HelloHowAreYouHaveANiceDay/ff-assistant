@@ -14,41 +14,35 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { loadLeagueHistory, readBackLeagueHistory } from "../src/data/leagueHistory.js";
-import type { DB } from "../src/db/db.js";
+import { openDb, type DB } from "../src/db/db.js";
 import type { LeagueSchedule, SeasonSnapshot } from "../src/league/types.js";
 
 interface Dump { fetchedAt: string; currentSeason: number; seasons: SeasonSnapshot[]; schedules: Record<string, LeagueSchedule> }
 const DUMP = JSON.parse(readFileSync("test/fixtures/league-history.json", "utf8")) as Dump;
 const LEAGUE = "TESTLEAGUE";
 
-/** The five raw tables, created exactly as schema.sql declares them. Duplicated here rather than
- *  read from schema.sql so the test can also express the WRONG key (see the fault injection). */
+/**
+ * THE REAL SCHEMA, then ONE table re-declared.
+ *
+ * This used to hand-roll the DDL for all five tables, "so the test can also express the WRONG key".
+ * Only `raw_league_pick` needs that -- the other four were copies, and copies of a producer's schema
+ * grade the test against a stale contract. When `raw_league_matchup` gained score columns, all six
+ * tests here failed with `no column named home_score`: the fixture could not notice a real schema
+ * change, which is the producer/consumer drift shape this repo has a scar from.
+ *
+ * So the store is built by `openDb`, the one place that knows the schema, and only the table whose
+ * KEY is under test is dropped and re-created. Any future column arrives automatically everywhere
+ * else.
+ */
 function rawDb(pickPk = "(league_id,season,pick_no)"): DB {
-  const db = new Database(":memory:") as unknown as DB;
-  db.exec(`
-CREATE TABLE raw_league_season (
-  league_id TEXT NOT NULL, season INTEGER NOT NULL, available INTEGER NOT NULL, size INTEGER,
-  auction_budget REAL, ppr_points REAL, slot_counts_json TEXT, note TEXT, fetched_at TEXT NOT NULL,
-  -- The per-season format columns. In a real store these are added by db.ts's ALTER path rather
-  -- than by schema.sql; here the fixture declares them, because the loader must write them.
-  reg_weeks INTEGER, playoff_teams INTEGER, playoff_round_weeks INTEGER, playoff_reseed INTEGER,
-  seeding_rule TEXT, division_count INTEGER,
-  PRIMARY KEY (league_id, season));
-CREATE TABLE raw_league_team_season (
-  league_id TEXT NOT NULL, season INTEGER NOT NULL, team_id TEXT NOT NULL, name TEXT, owner_id TEXT, owner TEXT,
-  acquisitions INTEGER, faab_spent REAL, drops INTEGER, trades INTEGER, lineup_moves INTEGER,
-  acquisitions_by_week_json TEXT, wins INTEGER, losses INTEGER, points_for REAL, final_rank INTEGER, playoff_seed INTEGER,
-  fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, team_id));
+  const db = openDb(":memory:") as unknown as DB;
+  // The fault injection: `raw_league_pick` is re-declared with whatever key the caller wants, so a
+  // test can prove the RIGHT key rejects a duplicate the wrong one would have accepted.
+  db.exec(`DROP TABLE IF EXISTS raw_league_pick;
 CREATE TABLE raw_league_pick (
   league_id TEXT NOT NULL, season INTEGER NOT NULL, pick_no INTEGER NOT NULL, team_id TEXT, name TEXT NOT NULL,
   pos TEXT, price REAL, owner_id TEXT, owner TEXT, fetched_at TEXT NOT NULL,
-  PRIMARY KEY ${pickPk});
-CREATE TABLE raw_league_matchup (
-  league_id TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL, home_id TEXT NOT NULL, away_id TEXT NOT NULL,
-  fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, week, home_id));
-CREATE TABLE raw_league_division (
-  league_id TEXT NOT NULL, season INTEGER NOT NULL, division_id TEXT NOT NULL, name TEXT, team_ids_json TEXT,
-  fetched_at TEXT NOT NULL, PRIMARY KEY (league_id, season, division_id));`);
+  PRIMARY KEY ${pickPk});`);
   return db;
 }
 
@@ -147,26 +141,10 @@ test("FAULT: a name-keyed pick table cannot hold a repeated player", () => {
   // The bad table keeps a UNIQUE on the real key so the loader's ON CONFLICT clause still resolves;
   // the PRIMARY KEY is the broken one. Anything less and the failure would be a SQL error about the
   // upsert rather than about the key under test.
-  const bad = new Database(":memory:") as unknown as DB;
-  bad.exec(`CREATE TABLE raw_league_pick (
-    league_id TEXT NOT NULL, season INTEGER NOT NULL, pick_no INTEGER NOT NULL, team_id TEXT, name TEXT NOT NULL,
-    pos TEXT, price REAL, owner_id TEXT, owner TEXT, fetched_at TEXT NOT NULL,
-    PRIMARY KEY (league_id, season, name),
-    UNIQUE (league_id, season, pick_no));
-  CREATE TABLE raw_league_season (
-    league_id TEXT NOT NULL, season INTEGER NOT NULL, available INTEGER NOT NULL, size INTEGER,
-    auction_budget REAL, ppr_points REAL, slot_counts_json TEXT, note TEXT, fetched_at TEXT NOT NULL,
-    reg_weeks INTEGER, playoff_teams INTEGER, playoff_round_weeks INTEGER, playoff_reseed INTEGER,
-    seeding_rule TEXT, division_count INTEGER,
-    PRIMARY KEY (league_id, season));
-  CREATE TABLE raw_league_team_season (league_id TEXT, season INTEGER, team_id TEXT, name TEXT, owner_id TEXT, owner TEXT,
-    acquisitions INTEGER, faab_spent REAL, drops INTEGER, trades INTEGER, lineup_moves INTEGER,
-    acquisitions_by_week_json TEXT, wins INTEGER, losses INTEGER, points_for REAL, final_rank INTEGER, playoff_seed INTEGER,
-    fetched_at TEXT, PRIMARY KEY (league_id, season, team_id));
-  CREATE TABLE raw_league_matchup (league_id TEXT, season INTEGER, week INTEGER, home_id TEXT, away_id TEXT,
-    fetched_at TEXT, PRIMARY KEY (league_id, season, week, home_id));
-  CREATE TABLE raw_league_division (league_id TEXT, season INTEGER, division_id TEXT, name TEXT, team_ids_json TEXT,
-    fetched_at TEXT, PRIMARY KEY (league_id, season, division_id));`);
+  // THE SECOND HAND-ROLLED COPY IS GONE TOO. It declared all five tables to get one wrong key, and
+  // went stale for exactly the same reason the first did. `rawDb` takes the key as a parameter, so
+  // the fault injection survives and the other four tables come from the real schema.
+  const bad = rawDb("(league_id, season, name), UNIQUE (league_id, season, pick_no)");
   assert.throws(
     () => loadLeagueHistory(bad, LEAGUE, duplicatePickSeason(), {}, "2099-01-01T00:00:00Z"),
     /UNIQUE constraint failed: raw_league_pick\.league_id, raw_league_pick\.season, raw_league_pick\.name/,

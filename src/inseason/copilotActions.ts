@@ -24,6 +24,8 @@
  * a caller cannot forget to log if there is no path that reaches the answer without logging.
  */
 import { openDb, logAction } from "../db/db.js";
+import { finishedTeams } from "./weekState.js";
+import { stalenessCaveat } from "../data/feeds.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { loadSimContext, type SimContext } from "../draft/simContext.js";
 import * as C from "./copilot.js";
@@ -129,7 +131,13 @@ export function caveat(a: C.Assumptions): string {
           : "no settled week yet: full-season simulation from preseason lines")
       : "season-so-far unknown",
   ];
-  return `[${bits.join("; ")}]`;
+  // FEED FRESHNESS, ON EVERY VERB. It used to reach ZERO of the ten -- a store whose ESPN cache had
+  // been frozen for nine days produced output indistinguishable from one synced a minute ago. It is
+  // appended OUTSIDE the bracket and only when something is actually stale: a DEGRADED banner on
+  // every run is wallpaper within a week, and the next real staleness scrolls past unread.
+  const stale = a.feeds ? stalenessCaveat(a.feeds) : null;
+  return `[${bits.join("; ")}]${stale ? `
+${stale}` : ""}`;
 }
 
 function summarize(verb: CopilotVerb, r: unknown): string {
@@ -164,18 +172,24 @@ function summarize(verb: CopilotVerb, r: unknown): string {
       if (!x.targets.length) return `No waiver claim scored. Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title. ${caveat(x.assumptions)}`;
       const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
       return `Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title; noise floor ${x.noiseFloorPp}pp. ${rows}.` +
-        `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""} ${caveat(x.assumptions)}`;
+        `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""}` +
+        `${x.unavailableAdds?.length ? ` EXCLUDED ${x.unavailableAdds.length} free agent(s) who CANNOT PLAY: ` +
+          `${x.unavailableAdds.slice(0, 4).map((u) => `${u.name} (${u.reason})`).join(", ")}.` : ""} ${caveat(x.assumptions)}`;
     }
     case "trade_check": {
       const x = r as C.TradeCheckResult;
-      return `${x.offer.give.join(" + ")} -> ${x.offer.get.join(" + ")} with ${x.them.teamName}: us ${pp(x.us.playoffsPp)} playoffs (+/-${x.us.se}), ` +
+      return `${x.offer.give.join(" + ")} -> ${x.offer.get.join(" + ")} with ${x.them.teamName}: us ${pp(x.us.playoffsPp)} playoffs (${x.us.se == null ? "one seed, SE not measured" : `+/-${x.us.se}`}), ` +
         `${x.us.playoffWeekPts >= 0 ? "+" : ""}${x.us.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(x.us.titlePp)} title; them ${pp(x.them.playoffsPp)} playoffs. ` +
         `Verdict: ${x.verdict}${x.mutual ? ", and it helps them too" : ""}. ${caveat(x.assumptions)}`;
     }
     case "trade_finder": {
       const x = r as C.TradeFinderResult;
-      if (!x.ideas.length) return `No balanced one-for-one found within a ${Math.round(100 * x.maxValueGap)}% consensus-value band (${x.candidates} candidates). ${caveat(x.assumptions)}`;
-      return `${x.candidates} balanced candidates; best: ` + x.ideas.slice(0, 4).map((i) => `${i.give} -> ${i.get} (${i.partner}) ${pp(i.playoffsPp)} playoffs / ${pp(i.titlePp)} title${i.mutual ? " MUTUAL" : i.themPlayoffsPp < 0 ? " (costs them)" : ""}`).join("; ") + `. Noise floor ${x.noiseFloorPp}pp. ${caveat(x.assumptions)}`;
+      // "No candidates" and "the candidates were all hurt" must never print the same sentence.
+      const hurt = x.skippedUnavailable
+        ? ` Skipped ${x.skippedUnavailable} pairing(s) involving ${x.unavailableNames.length} player(s) who cannot play: ${x.unavailableNames.slice(0, 5).join(", ")}.`
+        : "";
+      if (!x.ideas.length) return `No balanced one-for-one found within a ${Math.round(100 * x.maxValueGap)}% consensus-value band (${x.candidates} candidates).${hurt} ${caveat(x.assumptions)}`;
+      return `${x.candidates} balanced candidates; best: ` + x.ideas.slice(0, 4).map((i) => `${i.give} -> ${i.get} (${i.partner}) ${pp(i.playoffsPp)} playoffs / ${pp(i.titlePp)} title${i.mutual ? " MUTUAL" : i.themPlayoffsPp < 0 ? " (costs them)" : ""}`).join("; ") + `. Noise floor ${x.noiseFloorPp}pp.${hurt} ${caveat(x.assumptions)}`;
     }
     case "handcuffs": {
       const x = r as C.HandcuffResult;
@@ -251,6 +265,13 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // week by hand (docs/weekly-missingness-ablation-2026-09-16.md). The caveat now NAMES the
       // columns, so a reader can tell a degraded lineup from a full one without running a script.
       const dark: string[] = [];
+      // WHO IS ALREADY PLAYING is now on the CONTEXT (`ctx.week`), assembled once by
+      // `loadSimContext` -- it used to be read here, at this one call site, which is precisely why
+      // the other nine verbs had none of it. Only the two COUNTS the caveat prints are read out.
+      const kickedOff = ctx.week.locked;
+      const scheduled = ctx.week.scheduledTeams;
+      const finished = finishedTeams(ctx.week);
+      const finishedByScore = ctx.week.finished.byScore.size;
       {
         const db = openDb(dbPath);
         try {
@@ -264,10 +285,23 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
         finally { db.close(); }
       }
       const res = C.lineupRecommend(ctx, wk, {
-        provenance, availability: S.loadAvailability(dbPath), weekly,
+        provenance, weekly,
         objective, bands: withBands?.bands, nflOpp,
         winprob: { sims: a.trials ?? 8000, seed: a.seed ?? 7 },
       });
+      if (scheduled) {
+        res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; ${kickedOff.size} of ${scheduled} ` +
+          `NFL teams have kicked off in week ${wk}` +
+          (kickedOff.size
+            ? ` (${[...kickedOff].sort().join(", ")}) -- rostered men on those teams are LOCKED where they sit and ` +
+              `the lineup below cannot move them. ${finished.size} of those teams have FINISHED` +
+              (finishedByScore < finished.size
+                ? ` (${finishedByScore} from a stored final score, ${finished.size - finishedByScore} ASSUMED finished ` +
+                  "because four hours have passed since kickoff and no score has been ingested)"
+                : " (from stored final scores)") +
+              "; their men are priced at what they actually scored. Anyone locked but still PLAYING keeps his projection."
+            : " -- nothing is locked, so every slot is still movable.");
+      }
       if (dark.length) {
         res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; DEGRADED -- ${dark.length} model ` +
           `feature(s) are 100% ABSENT at this week and were populated at the same week in prior seasons: ` +
@@ -284,10 +318,14 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // FAAB read is filtered to it, and the budget/process day come from the league's OWN rules
       // rather than from an ESPN assumption. A league with no fitted model gets `faabBasis: "rule"`
       // naming the artifact it would need, instead of another room's measurement.
+      // AVAILABILITY IS PASSED (2026-09-18). Without it this verb recommended bidding FAAB on a man
+      // on injured reserve -- it built its add pool from the board and never asked who could play.
       return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId), leagueId: leagueId ?? provenance.leagueId, acquisition: S.loadAcquisition(dbPath, leagueId), dbPath });
     case "trade_check":
       return C.tradeCheck(ctx, { give: a.give ?? [], get: a.get ?? [] }, { provenance, trials: a.trials ?? 1600, seeds: a.seed != null ? [a.seed] : [7, 101] });
     case "trade_finder":
+      // AVAILABILITY IS PASSED (2026-09-18), the same gap the waiver verb had: this paired every man
+      // against every man without asking whether either could play.
       return C.tradeFinder(ctx, { provenance, values: S.loadConsensusValues(dbPath, leagueId), trials: a.trials ?? 1200, seed: a.seed ?? 7, limit: a.limit ?? 8, maxGap: a.maxGap, positions: a.positions });
     case "handcuffs": {
       const positions = a.positions ?? ["RB"];
@@ -327,7 +365,7 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       const proj = streamProjections(ctx, wk, dbPath, S.formatModelOf(dbPath, leagueId));
       return {
         ...C.streamRecommend(ctx, wk, pos, {
-          provenance, availability: S.loadAvailability(dbPath),
+          provenance,
           pool: proj.pool, limit: a.limit, artifactByPos: proj.artifactByPos,
         }),
         weekSource: a.week != null ? "caller" : S.currentWeek(dbPath, new Date(), leagueId).source,

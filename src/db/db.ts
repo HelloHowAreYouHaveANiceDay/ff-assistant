@@ -496,6 +496,20 @@ function addColumns(db: DB): void {
     // the archive covers 2020-2024 only, so every other season is NULL by construction.
     ["feat_player_week_model", "ecr_wk_rank", "REAL"],
     ["feat_player_week_model", "ecr_wk_sd", "REAL"],
+    // WHAT THE SCORE WAS, not merely who played whom. `raw_league_matchup` carried the pairing and
+    // nothing else, so the warehouse could not answer "what were the scores" for any week without
+    // re-deriving them by summing a started lineup -- which is a different measurement and can be
+    // wrong in ways nothing else would reveal.
+    //
+    // NULL MEANS THE WEEK HAS NOT BEEN PLAYED, or the row was written by a path that carries
+    // pairings only. It does NOT mean zero: a fantasy team can really score 0, so a reader that
+    // COALESCEs these to 0 converts an unknown into a shutout and every average computed over the
+    // column is then silently wrong. Any consumer must filter on `IS NOT NULL`, not on `> 0`.
+    //
+    // Additive, so an existing store keeps every row it has and simply gains two NULL columns --
+    // which is the honest value for a schedule that was ingested before scores were read.
+    ["raw_league_matchup", "home_score", "REAL"],
+    ["raw_league_matchup", "away_score", "REAL"],
   ];
   for (const [table, col, type] of WANT) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];

@@ -39,6 +39,42 @@ export type PlayerKey = string;
 
 export const dstKey = (team: string): PlayerKey => `DST:${(team || "").trim().toUpperCase()}`;
 
+/**
+ * THE ONE BRIDGE FROM THE BOARD/VALUE LAYER TO THE MODEL LAYER, and the reason it has to exist.
+ *
+ * The repo carries TWO key namespaces for the same men, both internally consistent, which is what
+ * makes the mismatch invisible:
+ *
+ *   MODEL LAYER   `feat_player_week`, `fact_roster_week`, `scorecard_prediction.subject` -- TEXT.
+ *                 A surrogate key rendered as text, or a synthetic `DST:<TEAM>` per the note above.
+ *   BOARD LAYER   `player_value.player_sk`, `board.player_sk` -- INTEGER, and therefore structurally
+ *                 incapable of holding `DST:MIN`. The identity registry nonetheless MINTS a
+ *                 surrogate for all 32 defences (`player_identity` sk 12089 is `name_key "min"`), so
+ *                 those columns hold an integer that joins to NOTHING in the model layer.
+ *
+ * A join that goes board -> model on `player_sk` therefore resolves every skill player on the first
+ * try and silently drops every defence. Measured on league 462233: 8 of 8 starters resolved, both
+ * DSTs unresolved, and joining on NAME instead "worked" only because both sides happened to render
+ * "MIN D/ST" -- a string coincidence standing in for a missing key mapping. Neither method
+ * announces the problem: the key join drops rows, the name join is one rename away from doing the
+ * same, and both produce a plausible total.
+ *
+ * So: never join those two layers on `player_sk` directly, and never on a name. Call this.
+ *
+ * `null` means the row cannot be keyed at all -- a board row with no staged match -- and is returned
+ * rather than guessed, the same rule `resolve` follows.
+ */
+export function boardModelKey(row: { position?: string | null; player_id?: string | null; team?: string | null; player_sk?: number | string | null }): PlayerKey | null {
+  const pos = normPos(row.position ?? "");
+  // A defence's board `player_id` IS its team code ("min"), which is the only identity it has here;
+  // `team` is preferred where the caller has it, because it is the field that means what it says.
+  if (pos === "DST") {
+    const t = (row.team || row.player_id || "").trim();
+    return t ? dstKey(t) : null;
+  }
+  return row.player_sk == null ? null : String(row.player_sk);
+}
+
 export interface SkResolver {
   /** gsis first, then (name_key, position, team), then (name_key, position). null = unresolved. */
   resolve(opts: { gsis?: string | null; name: string; pos: string; team?: string | null }): PlayerKey | null;

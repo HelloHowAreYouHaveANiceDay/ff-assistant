@@ -154,7 +154,17 @@ export interface LeagueProvider {
 /** The fantasy head-to-head schedule, with divisions, for fairness and playoff-path analysis. */
 export interface LeagueSchedule {
   divisions: { id: string; name: string; teamIds: string[] }[];
-  games: { week: number; homeId: string; awayId: string }[];
+  /**
+   * `homeScore`/`awayScore` are OPTIONAL and UNDEFINED IS MEANINGFUL: a schedule is published
+   * months before any of it is played, so a week with no score is the normal case and not a
+   * failure. Undefined must never be flattened to 0 on the way to the store -- a fantasy team can
+   * really score 0, and a reader could not then tell an unplayed week from a shutout.
+   *
+   * An adaptor sets these only where the platform actually printed a number for that side. No
+   * adaptor's `matchups()` supplies them today (see the report accompanying this change), so they
+   * exist for the writer path to preserve rather than to invent.
+   */
+  games: { week: number; homeId: string; awayId: string; homeScore?: number | null; awayScore?: number | null }[];
 }
 
 export interface DraftPick {

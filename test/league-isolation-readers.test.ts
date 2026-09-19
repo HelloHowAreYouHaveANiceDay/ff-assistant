@@ -71,116 +71,122 @@ const FMT_A = "sc-a", FMT_B = "sc-b";
  */
 function seedLeague(db: DB, lg: string, o: { teams: number; budget: number; faPlayers: number; bid: number; owner: string; regWeeks: number; fmt: string }): void {
   const now = nowIso();
-  db.prepare(
-    `INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?,?,?,?,?,?)`,
-  ).run(lg, "espn", `League ${lg}`, SEASON, "1", now);
-  db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)`)
-    .run(`config:${lg}`, JSON.stringify({ season: SEASON, teams: o.teams, budget: o.budget }), now);
-
-  // raw_league_season / team_season / matchup / pick -- the FEEDS of the three fact tables.
-  db.prepare(
-    `INSERT INTO raw_league_season (league_id, season, available, size, auction_budget, slot_counts_json, reg_weeks, playoff_teams, fetched_at)
-     VALUES (?,?,1,?,?,?,?,?,?)`,
-  ).run(lg, SEASON, o.teams, o.budget, JSON.stringify({ RB: 2, WR: 2 }), o.regWeeks, 6, now);
-  for (let t = 1; t <= o.teams; t++) {
+  // ONE transaction for the whole seed. Un-transactioned, better-sqlite3 commits each of these ~200
+  // inserts on its own, which is an fsync per row -- a few seconds here on a normal disk but minutes
+  // on a copy-on-write/overlay filesystem. Same rows, same order, nothing reads concurrently.
+  const load = db.transaction(() => {
     db.prepare(
-      `INSERT INTO raw_league_team_season (league_id, season, team_id, name, owner_id, owner, wins, losses, points_for,
-         final_rank, playoff_seed, acquisitions, faab_spent, drops, trades, lineup_moves, fetched_at)
-       VALUES (?,?,?,?,?,?,7,7,1000,?,?,3,?,1,0,5,?)`,
-    ).run(lg, SEASON, String(t), `${lg} Team ${t}`, `o${t}`, `${o.owner}${t}`, t, t, o.budget, now);
-    db.prepare(
-      `INSERT INTO fact_team_season (league_id, season, team_id, team_name, owner, wins, losses, points_for,
-         playoff_seed, final_rank, champion, made_playoffs, settled, faab_spent, updated_at)
-       VALUES (?,?,?,?,?,7,7,1000,?,?,?,?,1,?,?)`,
-    ).run(lg, SEASON, String(t), `${lg} Team ${t}`, `${o.owner}${t}`, t, t, t === 1 ? 1 : 0, t <= 6 ? 1 : 0, o.budget, now);
-  }
-  for (let w = 1; w <= 3; w++) {
-    db.prepare(`INSERT INTO raw_league_matchup (league_id, season, week, home_id, away_id, fetched_at) VALUES (?,?,?,?,?,?)`)
-      .run(lg, SEASON, w, "1", "2", now);
-    db.prepare(`INSERT INTO fact_matchup (league_id, season, week, home_id, away_id, updated_at) VALUES (?,?,?,?,?,?)`)
-      .run(lg, SEASON, w, "1", "2", now);
-    // BOTH SIDES of the matchup carry a lineup row: the win-probability backtest scores a team
-    // against its OPPONENT's actual points, so a one-sided week is silently skipped and the whole
-    // reader returns zero team-weeks -- a null that would compare equal on both stores.
-    for (const t of ["1", "2"]) {
-      db.prepare(
-        `INSERT INTO fact_lineup_week (league_id, season, week, team_id, started_pts, optimal_pts, bench_left, starters, roster_n, built_at)
-         VALUES (?,?,?,?,?,?,0,8,13,?)`,
-      ).run(lg, SEASON, w, t, 100 + o.teams, 120 + o.teams, now);
-    }
-  }
-  db.prepare(
-    `INSERT INTO raw_league_pick (league_id, season, pick_no, team_id, name, pos, price, owner_id, owner, fetched_at)
-     VALUES (?,?,1,'1',?,'RB',?,?,?,?)`,
-  ).run(lg, SEASON, `${lg} Star`, o.budget, "o1", `${o.owner}1`, now);
+      `INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?,?,?,?,?,?)`,
+    ).run(lg, "espn", `League ${lg}`, SEASON, "1", now);
+    db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)`)
+      .run(`config:${lg}`, JSON.stringify({ season: SEASON, teams: o.teams, budget: o.budget }), now);
 
-  // Roster / free-agent state. Team ids COLLIDE with the other league's on purpose.
-  for (let w = 1; w <= 3; w++) {
+    // raw_league_season / team_season / matchup / pick -- the FEEDS of the three fact tables.
+    db.prepare(
+      `INSERT INTO raw_league_season (league_id, season, available, size, auction_budget, slot_counts_json, reg_weeks, playoff_teams, fetched_at)
+       VALUES (?,?,1,?,?,?,?,?,?)`,
+    ).run(lg, SEASON, o.teams, o.budget, JSON.stringify({ RB: 2, WR: 2 }), o.regWeeks, 6, now);
     for (let t = 1; t <= o.teams; t++) {
       db.prepare(
-        `INSERT INTO fact_roster_week (league_id, season, week, team_id, player_sk, espn_player_id, name, pos, is_starter, built_at)
-         VALUES (?,?,?,?,?,?,?,'RB',1,?)`,
-      ).run(lg, SEASON, w, String(t), `${lg}sk${t}`, `${lg}${t}`, `${lg} Body ${t}`, now);
-    }
-    for (let p = 0; p < o.faPlayers; p++) {
+        `INSERT INTO raw_league_team_season (league_id, season, team_id, name, owner_id, owner, wins, losses, points_for,
+           final_rank, playoff_seed, acquisitions, faab_spent, drops, trades, lineup_moves, fetched_at)
+         VALUES (?,?,?,?,?,?,7,7,1000,?,?,3,?,1,0,5,?)`,
+      ).run(lg, SEASON, String(t), `${lg} Team ${t}`, `o${t}`, `${o.owner}${t}`, t, t, o.budget, now);
       db.prepare(
-        `INSERT INTO fact_fa_pool_week (league_id, season, week, player_sk, pos, name, built_at) VALUES (?,?,?,?,'RB',?,?)`,
-      ).run(lg, SEASON, w, `${lg}fa${p}`, `${lg} FA ${p}`, now);
+        `INSERT INTO fact_team_season (league_id, season, team_id, team_name, owner, wins, losses, points_for,
+           playoff_seed, final_rank, champion, made_playoffs, settled, faab_spent, updated_at)
+         VALUES (?,?,?,?,?,7,7,1000,?,?,?,?,1,?,?)`,
+      ).run(lg, SEASON, String(t), `${lg} Team ${t}`, `${o.owner}${t}`, t, t, t === 1 ? 1 : 0, t <= 6 ? 1 : 0, o.budget, now);
+    }
+    for (let w = 1; w <= 3; w++) {
+      db.prepare(`INSERT INTO raw_league_matchup (league_id, season, week, home_id, away_id, fetched_at) VALUES (?,?,?,?,?,?)`)
+        .run(lg, SEASON, w, "1", "2", now);
+      db.prepare(`INSERT INTO fact_matchup (league_id, season, week, home_id, away_id, updated_at) VALUES (?,?,?,?,?,?)`)
+        .run(lg, SEASON, w, "1", "2", now);
+      // BOTH SIDES of the matchup carry a lineup row: the win-probability backtest scores a team
+      // against its OPPONENT's actual points, so a one-sided week is silently skipped and the whole
+      // reader returns zero team-weeks -- a null that would compare equal on both stores.
+      for (const t of ["1", "2"]) {
+        db.prepare(
+          `INSERT INTO fact_lineup_week (league_id, season, week, team_id, started_pts, optimal_pts, bench_left, starters, roster_n, built_at)
+           VALUES (?,?,?,?,?,?,0,8,13,?)`,
+        ).run(lg, SEASON, w, t, 100 + o.teams, 120 + o.teams, now);
+      }
     }
     db.prepare(
-      `INSERT INTO raw_league_roster_week (league_id, season, week, team_id, espn_player_id, name, position, lineup_slot_id, is_starter, applied_points, as_of, fetched_at)
-       VALUES (?,?,?,'1',?,?,'RB',2,1,10,?,?)`,
-    ).run(lg, SEASON, w, `${lg}1`, `${lg} Star`, now, now);
-  }
+      `INSERT INTO raw_league_pick (league_id, season, pick_no, team_id, name, pos, price, owner_id, owner, fetched_at)
+       VALUES (?,?,1,'1',?,'RB',?,?,?,?)`,
+    ).run(lg, SEASON, `${lg} Star`, o.budget, "o1", `${o.owner}1`, now);
 
-  // BOTH LEAGUES ROSTER THE SAME MAN, exactly as two real leagues do. `asOfRosterState` -- and so the
-  // lineup and win-probability backtests -- resolves the as-of roster feed through
-  // `player_identity`/`player_xref`, which are GLOBAL tables with no league dimension; without a
-  // resolvable man those two readers see an empty room and return zero team-weeks, a null that
-  // compares equal on both stores and covers nothing. The identity, the crosswalk and his feature
-  // rows are seeded ONCE in `makeStore` (see SHARED_ESPN_ID); only the ROSTERING is per league.
-  for (let w = 1; w <= 3; w++) {
-    for (const [t, id] of [["1", SHARED_ESPN_ID], ["2", SHARED_ESPN_ID_2]] as [string, string][]) {
+    // Roster / free-agent state. Team ids COLLIDE with the other league's on purpose.
+    for (let w = 1; w <= 3; w++) {
+      for (let t = 1; t <= o.teams; t++) {
+        db.prepare(
+          `INSERT INTO fact_roster_week (league_id, season, week, team_id, player_sk, espn_player_id, name, pos, is_starter, built_at)
+           VALUES (?,?,?,?,?,?,?,'RB',1,?)`,
+        ).run(lg, SEASON, w, String(t), `${lg}sk${t}`, `${lg}${t}`, `${lg} Body ${t}`, now);
+      }
+      for (let p = 0; p < o.faPlayers; p++) {
+        db.prepare(
+          `INSERT INTO fact_fa_pool_week (league_id, season, week, player_sk, pos, name, built_at) VALUES (?,?,?,?,'RB',?,?)`,
+        ).run(lg, SEASON, w, `${lg}fa${p}`, `${lg} FA ${p}`, now);
+      }
       db.prepare(
         `INSERT INTO raw_league_roster_week (league_id, season, week, team_id, espn_player_id, name, position, lineup_slot_id, is_starter, applied_points, as_of, fetched_at)
-         VALUES (?,?,?,?,?,?,'RB',2,1,15,?,?)`,
-      ).run(lg, SEASON, w, t, id, `Shared Starter ${t}`, now, now);
+         VALUES (?,?,?,'1',?,?,'RB',2,1,10,?,?)`,
+      ).run(lg, SEASON, w, `${lg}1`, `${lg} Star`, now, now);
     }
-  }
 
-  // Waiver history: one EXECUTED claim, at a bid that differs between the leagues.
-  db.prepare(
-    `INSERT INTO raw_league_transaction (league_id, season, week, transaction_id, item_no, type, item_type,
-        executed_at, proposed_at_ms, team_id, espn_player_id, from_team_id, to_team_id, bid_amount, status, is_pending, fetched_at)
-     VALUES (?,?,2,?,0,'WAIVER','ADD',?,1000,'1',?, '-1', '1', ?, 'EXECUTED', 0, ?)`,
-  ).run(lg, SEASON, `${lg}tx1`, now, `${lg}1`, o.bid, now);
-  db.prepare(
-    `INSERT INTO fact_waiver_claim (league_id, season, week, transaction_id, team_id, espn_player_id, player_sk,
-        name, pos, bid_amount, status, won, competing_bids, budget, teams_counted, season_line_pg, built_at)
-     VALUES (?,?,2,?,'1',?,?,?,'RB',?,'EXECUTED',1,0,?,?,?,?)`,
-  ).run(lg, SEASON, `${lg}tx1`, `${lg}1`, `${lg}sk1`, `${lg} Star`, o.bid, o.budget, o.teams, o.bid, now);
-
-  // Decision snapshots and frozen odds -- per league and per FORMAT respectively.
-  db.prepare(
-    `INSERT INTO decision_snapshot (league_id, verb, season, week, schedule, summary, result_json, updated_at)
-     VALUES (?,'season_odds',?,1,'real',?, '{}', ?)`,
-  ).run(lg, SEASON, `${lg} says so`, now);
-  for (let t = 1; t <= o.teams; t++) {
-    for (const [model, v] of [["playoff", t <= 6 ? 85 : 12], ["title", t === 1 ? 40 : 4]] as [string, number][]) {
-      db.prepare(
-        `INSERT INTO scorecard_prediction (format_key, season, week, kind, model, subject, name, value, as_of, created_at)
-         VALUES (?,?,0,'odds',?,?,?,?,?,?)`,
-      ).run(o.fmt, SEASON, model, String(t), String(t), v, `${SEASON}-09-01`, now);
+    // BOTH LEAGUES ROSTER THE SAME MAN, exactly as two real leagues do. `asOfRosterState` -- and so the
+    // lineup and win-probability backtests -- resolves the as-of roster feed through
+    // `player_identity`/`player_xref`, which are GLOBAL tables with no league dimension; without a
+    // resolvable man those two readers see an empty room and return zero team-weeks, a null that
+    // compares equal on both stores and covers nothing. The identity, the crosswalk and his feature
+    // rows are seeded ONCE in `makeStore` (see SHARED_ESPN_ID); only the ROSTERING is per league.
+    for (let w = 1; w <= 3; w++) {
+      for (const [t, id] of [["1", SHARED_ESPN_ID], ["2", SHARED_ESPN_ID_2]] as [string, string][]) {
+        db.prepare(
+          `INSERT INTO raw_league_roster_week (league_id, season, week, team_id, espn_player_id, name, position, lineup_slot_id, is_starter, applied_points, as_of, fetched_at)
+           VALUES (?,?,?,?,?,?,'RB',2,1,15,?,?)`,
+        ).run(lg, SEASON, w, t, id, `Shared Starter ${t}`, now, now);
+      }
     }
-  }
 
-  // Weekly model rows, so the population source has something to read.
-  for (let w = 1; w <= 3; w++) {
+    // Waiver history: one EXECUTED claim, at a bid that differs between the leagues.
     db.prepare(
-      `INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, name, pos, season_line_pg, td_ppg, pts)
-       VALUES (?,?,?,?,?,'RB',?,1,10)`,
-    ).run(`${lg}-${w}-1`, `${lg}sk1`, SEASON, w, `${lg} Star`, 12);
-  }
+      `INSERT INTO raw_league_transaction (league_id, season, week, transaction_id, item_no, type, item_type,
+          executed_at, proposed_at_ms, team_id, espn_player_id, from_team_id, to_team_id, bid_amount, status, is_pending, fetched_at)
+       VALUES (?,?,2,?,0,'WAIVER','ADD',?,1000,'1',?, '-1', '1', ?, 'EXECUTED', 0, ?)`,
+    ).run(lg, SEASON, `${lg}tx1`, now, `${lg}1`, o.bid, now);
+    db.prepare(
+      `INSERT INTO fact_waiver_claim (league_id, season, week, transaction_id, team_id, espn_player_id, player_sk,
+          name, pos, bid_amount, status, won, competing_bids, budget, teams_counted, season_line_pg, built_at)
+       VALUES (?,?,2,?,'1',?,?,?,'RB',?,'EXECUTED',1,0,?,?,?,?)`,
+    ).run(lg, SEASON, `${lg}tx1`, `${lg}1`, `${lg}sk1`, `${lg} Star`, o.bid, o.budget, o.teams, o.bid, now);
+
+    // Decision snapshots and frozen odds -- per league and per FORMAT respectively.
+    db.prepare(
+      `INSERT INTO decision_snapshot (league_id, verb, season, week, schedule, summary, result_json, updated_at)
+       VALUES (?,'season_odds',?,1,'real',?, '{}', ?)`,
+    ).run(lg, SEASON, `${lg} says so`, now);
+    for (let t = 1; t <= o.teams; t++) {
+      for (const [model, v] of [["playoff", t <= 6 ? 85 : 12], ["title", t === 1 ? 40 : 4]] as [string, number][]) {
+        db.prepare(
+          `INSERT INTO scorecard_prediction (format_key, season, week, kind, model, subject, name, value, as_of, created_at)
+           VALUES (?,?,0,'odds',?,?,?,?,?,?)`,
+        ).run(o.fmt, SEASON, model, String(t), String(t), v, `${SEASON}-09-01`, now);
+      }
+    }
+
+    // Weekly model rows, so the population source has something to read.
+    for (let w = 1; w <= 3; w++) {
+      db.prepare(
+        `INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, name, pos, season_line_pg, td_ppg, pts)
+         VALUES (?,?,?,?,?,'RB',?,1,10)`,
+      ).run(`${lg}-${w}-1`, `${lg}sk1`, SEASON, w, `${lg} Star`, 12);
+    }
+  });
+  load();
 }
 
 const A_OPTS = { teams: 16, budget: 100, faPlayers: 2, bid: 20, owner: "ownerA", regWeeks: 13, fmt: FMT_A };
@@ -226,14 +232,19 @@ function makeStore(withB: boolean): Store {
   // than either league's star, pushing both stars outside the rank cut, so the only way a star enters
   // the population is through his own league's `fact_roster_week`. League B's star must therefore be
   // absent from league A's build -- and if he leaks in, `inPopulation` goes 93 -> 96.
-  for (let w = 1; w <= 3; w++) {
-    for (let i = 0; i < 30; i++) {
-      db.prepare(
-        `INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, name, pos, season_line_pg, td_ppg, pts)
-         VALUES (?,NULL,?,?,?,'RB',?,1,10)`,
-      ).run(`fill-${w}-${i}`, SEASON, w, `Filler ${i}`, 100 - i);
+  // One transaction for the 90 fillers -- see seedLeague: an un-transactioned insert loop is an
+  // fsync per row, which is minutes rather than seconds on a copy-on-write filesystem.
+  const fill = db.transaction(() => {
+    for (let w = 1; w <= 3; w++) {
+      for (let i = 0; i < 30; i++) {
+        db.prepare(
+          `INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, name, pos, season_line_pg, td_ppg, pts)
+           VALUES (?,NULL,?,?,?,'RB',?,1,10)`,
+        ).run(`fill-${w}-${i}`, SEASON, w, `Filler ${i}`, 100 - i);
+      }
     }
-  }
+  });
+  fill();
   // A is the ACTIVE league in both stores, so a reader that falls back to "the active league"
   // instead of honouring its argument does not accidentally pass.
   db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES ('active_league', ?, ?)

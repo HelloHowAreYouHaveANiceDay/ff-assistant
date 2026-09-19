@@ -1,0 +1,103 @@
+# The published dataset
+
+A snapshot of this repo's **derived and public-source** tables, so a new clone does not have to
+re-pull and re-train everything before it can model anything.
+
+Download: the repo's [Releases](https://github.com/HelloHowAreYouHaveANiceDay/ff-assistant/releases)
+page, asset `ff-dataset-<date>.db.gz`, with a `.sha256` beside it.
+
+```
+gunzip ff-dataset-2026-09-19.db.gz
+sha256sum -c ff-dataset-2026-09-19.db.sha256
+```
+
+---
+
+## What is in it
+
+31 tables, ~3.67M rows, 474 MB uncompressed (~99 MB gzipped). Three groups:
+
+| group | examples | why it is here |
+|---|---|---|
+| public NFL feeds | `raw_depth_chart` (1.9M), `raw_snap_count` (326k), `raw_injury` (91k), `raw_participation`, `raw_pbp_player_week`, `raw_nfl_game`, `raw_combine`, `raw_ngs` | already redistributable, but slow to re-pull |
+| player identity | `player`, `player_bio`, `player_identity`, `player_xref`, `stg_player` | the join keys everything else uses |
+| the derived modelling layer | `feat_player_week` (297k), `feat_player_week_model` (188k), `feat_player_week_context`, `feat_curve`, `feat_player_prospect`, `feat_injury_horizon`, `fact_injury_episode` | **the expensive part** -- needs the full ingest *and* the training runs to reproduce |
+
+The last group is the reason to publish at all. The public feeds are cheap for anyone to fetch; the
+feature tables are not.
+
+## What is NOT in it, and why
+
+**Nothing from anybody's fantasy league.** 57 tables are excluded, including every one of:
+
+```
+ownership              raw_league_season        fact_team_season
+league                 raw_league_team_season   fact_matchup
+draft / draft_state    raw_league_pick          fact_draft_pick
+roster / my_roster     raw_league_matchup       fact_roster_week
+matchup                raw_league_roster_week   fact_lineup_week
+action_log             raw_league_transaction   fact_waiver_claim
+decision_snapshot      raw_league_division      fact_fa_pool_week
+```
+
+Those tables hold **other people's data**: sixteen managers' ESPN account GUIDs, their usernames,
+eighteen member ids, and their complete add/drop/waiver/trade history, pulled with one owner's
+authenticated session from a private league. None of them agreed to publication, and a
+roster-and-transaction history re-identifies its league to anyone who knows it. That is a consent
+question rather than a technical one, and no amount of column-stripping makes it not one.
+
+### How the exclusion is enforced
+
+Not by remembering. `src/data/datasetExport.ts` carries an **allowlist that fails CLOSED**, plus a
+structural column scan, and `test/dataset-export-privacy.test.ts` asserts both:
+
+- **An allowlist, not a denylist.** A denylist fails *open*: a table added next month is published
+  by default and nobody finds out until it is on the internet. An allowlist fails *closed*: a new
+  table is merely missing until someone deliberately adds it. There is a test that creates an
+  unclassified table and asserts it is excluded.
+- **A column scan, re-run every export.** The allowlist is a decision made once; the scan re-checks
+  it against the live schema, so a table approved in March that gains a `league_id` in September
+  **refuses the export** rather than quietly shrinking it.
+- **A content scan.** The real manager handles are searched across every text column of every table
+  about to be exported -- the only check that does not depend on column *names*, and so the only one
+  that would catch a handle embedded in a JSON blob or a log line.
+
+Audit of the published file, run on the exact artifact rather than on the plan that made it:
+
+```
+tables                : 31
+league tables         : NONE
+private columns       : NONE
+manager handles found : 0  (16 handles searched)
+```
+
+`VACUUM INTO` is deliberately not used to build it: that copies the whole database, private tables
+included, and a later `DROP` leaves those rows in freed pages a determined reader can recover. The
+export is a fresh file that only ever had allowlisted tables copied into it.
+
+## Regenerate it yourself
+
+```
+npm run ff -- export-dataset --out ff-dataset.db
+```
+
+Prints the row counts and how many tables were withheld, and writes `<out>.manifest.json`.
+
+## IT IS A SNAPSHOT
+
+Read `generatedAt` in the manifest before trusting anything in it during a season. This repo has an
+expensive history with stale caches that looked live -- a downloaded snapshot is exactly that shape.
+`npm run ff -- feeds` dates every feed in a store against a declared max age and tells you what to
+re-run.
+
+## Attribution and terms
+
+- The NFL play-by-play, injury, depth-chart, snap-count, participation, combine and Next Gen Stats
+  tables are derived from **[nflverse](https://github.com/nflverse)**, and carry nflverse's own
+  terms. Please credit nflverse in anything built on them.
+- Preseason projection columns derive from **FFToday**.
+- ADP and trending columns derive from **Sleeper**.
+- This dataset is offered for research and personal use, with **no warranty** and no claim of
+  ownership over any upstream source's data. If you are a rights-holder and want something removed,
+  open an issue and it will be taken down.
+- No ESPN league content is included -- see above.
