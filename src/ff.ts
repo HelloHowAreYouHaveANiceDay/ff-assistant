@@ -115,6 +115,8 @@ async function main() {
       return cmdSessionCheck(rest);
     case "feeds":
       return cmdFeeds(rest);
+    case "import-dataset":
+      return cmdImportDataset(rest);
     case "export-dataset":
       return cmdExportDataset(rest);
     case "build-features-ext":
@@ -5006,6 +5008,86 @@ async function cmdFeeds(rest: string[]) {
  * It prints what it EXCLUDED as well as what it wrote. An export that quietly shrank is an export
  * nobody audits, and the count of withheld tables is the cheapest way to see the guard did something.
  */
+// ==================================================================================================
+// `ff import-dataset --file <ff-dataset.db[.gz]>` -- the inverse of export-dataset.
+//
+// DRY RUN BY DEFAULT. This writes into somebody's store, and the failure it prevents is silent: a
+// straight copy keyed on `player_sk` attaches the release's rows to whoever holds that number
+// locally, and every row still matches something. `--write` is the explicit go-ahead.
+//
+// See src/data/datasetImport.ts for why the only bridge is a stable external id.
+// ==================================================================================================
+async function cmdImportDataset(rest: string[]) {
+  const file = valueOf(rest, "--file");
+  if (!file) { console.error("usage: ff import-dataset --file <ff-dataset.db|.db.gz> [--db <target>] [--write] [--on-unmapped skip|null]"); process.exitCode = 2; return; }
+  const { existsSync, createReadStream, createWriteStream, unlinkSync } = await import("node:fs");
+  if (!existsSync(file)) { console.error(`no such file: ${file}`); process.exitCode = 2; return; }
+
+  // A .gz is decompressed to a sibling temp file rather than in memory: these are ~480 MB.
+  let dbFile = file, tmp: string | null = null;
+  if (file.endsWith(".gz")) {
+    const { createGunzip } = await import("node:zlib");
+    const { pipeline } = await import("node:stream/promises");
+    tmp = `${file.replace(/\.gz$/, "")}.import-tmp`;
+    console.log(`decompressing ${file} ...`);
+    await pipeline(createReadStream(file), createGunzip(), createWriteStream(tmp));
+    dbFile = tmp;
+  }
+
+  const { openDb } = await import("./db/db.js");
+  const { planImport, writeImport } = await import("./data/datasetImport.js");
+  const write = rest.includes("--write");
+  const onUnmapped = (valueOf(rest, "--on-unmapped") ?? "skip") as "skip" | "null";
+  if (onUnmapped !== "skip" && onUnmapped !== "null") { console.error("--on-unmapped must be skip or null"); process.exitCode = 2; return; }
+
+  const db = openDb(valueOf(rest, "--db"));
+  try {
+    db.exec(`ATTACH DATABASE '${dbFile.replace(/'/g, "''")}' AS src`);
+    const modeFlag = valueOf(rest, "--mode") as "fresh" | "merge" | undefined;
+    const plan = planImport(db, modeFlag ? { mode: modeFlag } : {});
+
+    if (rest.includes("--json")) {
+      const { bridge, ...rest2 } = plan;
+      console.log(JSON.stringify({ ...rest2, bridged: bridge.size, write }, null, 2));
+    } else {
+      console.log(`MODE: ${plan.mode}${plan.mode === "merge" ? "  (your store has its own identities, so every player_sk is remapped through a stable id)" : "  (no local identities -- the release's keys are adopted as-is)"}`);
+      if (plan.mode === "merge") {
+        console.log(`  bridged ${plan.bridge.size} release keys via ${Object.entries(plan.bridgeBy).map(([k, v]) => `${k} ${v}`).join(", ") || "nothing"}`);
+        console.log(`  ${plan.unbridgeable} release key(s) have no local match -- their rows are ${onUnmapped === "skip" ? "SKIPPED" : "kept with a NULL player_sk"}`);
+      }
+      console.log(`\n  ${"table".padEnd(30)} ${"rows".padStart(9)} ${"mapped".padStart(9)} ${"unmapped".padStart(9)}`);
+      for (const t of plan.tables) {
+        console.log(`  ${t.table.padEnd(30)} ${String(t.srcRows).padStart(9)} ${String(t.mapped).padStart(9)} ${String(t.unmapped).padStart(9)}${t.hasPlayerSk ? "" : "   (no player_sk)"}`);
+      }
+      console.log(`\n  ${plan.tables.length} table(s), ${plan.totalRows.toLocaleString()} rows`);
+      if (plan.refused.length) console.log(`  REFUSED (not on the publishable allowlist): ${plan.refused.join(", ")}`);
+      if (plan.identityRefused.length) {
+        console.log(`  NOT MERGED (these DEFINE identity; merging two registries would collide): ${plan.identityRefused.join(", ")}`);
+      }
+      if (plan.mode === "merge" && plan.unbridgeable) {
+        console.log("\n  An unmapped row is one whose player carries no external id BOTH sides share.");
+        console.log("  In practice these are mostly pre-2010 players: the crosswalk has an mfl_id for them");
+        console.log("  and no gsis/pfr, and a local xref keyed on a name would be a name join. They are");
+        console.log("  reported rather than bridged on a guess.");
+      }
+      if (plan.absent.length) console.log(`  absent from this file: ${plan.absent.join(", ")}`);
+    }
+
+    if (!write) {
+      console.log("\n  DRY RUN -- nothing was written. Re-run with --write to apply.");
+      return;
+    }
+    const r = writeImport(db, plan, { onUnmapped });
+    const total = Object.values(r.written).reduce((a, b) => a + b, 0);
+    const lost = Object.values(r.dropped).reduce((a, b) => a + b, 0);
+    console.log(`\n  WROTE ${total.toLocaleString()} rows${lost ? `, dropped ${lost.toLocaleString()} unbridgeable` : ""}.`);
+  } finally {
+    try { db.exec("DETACH DATABASE src"); } catch { /* not attached */ }
+    db.close();
+    if (tmp && existsSync(tmp)) unlinkSync(tmp);
+  }
+}
+
 async function cmdExportDataset(rest: string[]) {
   const { planExport, writeExport } = await import("./data/datasetExport.js");
   const { openDb } = await import("./db/db.js");

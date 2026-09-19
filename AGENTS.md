@@ -30,6 +30,47 @@ layer you are working on before you start.
 - CDP browser control reusing the `bro` repo's persistent-session machinery.
 - In-app scheduler for in-season routines (`src/inseason/routines.ts` + the Electron main-process timer).
 
+## Keys: the one policy that silently corrupts a store
+
+**`player_sk` is a SNAPSHOT-LOCAL surrogate. Never join it across databases.**
+
+It is a minted `AUTOINCREMENT` key. The same number means different players in different stores, and
+an identity rebuild reassigns it -- this store's own `identity_rekey` log records one rebuild moving
+**11,974 of 12,021 keys**. A cross-database `INSERT ... SELECT` or `JOIN ... USING (player_sk)`
+therefore attaches rows to the wrong players, **every row still matches something, and nothing
+errors**. There is no natural signal that it happened.
+
+- To join a published dataset to anything, use **`dim_player_key`** -> a stable external id
+  (`gsis_id`, `mfl_id`, `pfr_id`, ...). `resolved_by` records which route produced each row.
+- `DST:<TEAM>` keys are deterministic by construction and are the **only** keys safe to carry across.
+- To bring a release into a store, use **`ff import-dataset --file <f>`** (dry-run by default). It
+  does the bridging, refuses a file with no crosswalk, and reports what it could not bridge. Do not
+  write another bespoke import script -- that is where this bug keeps being reintroduced.
+- `test/dataset-import-keys.test.ts` is the guardrail; `src/data/datasetImport.ts` is the reasoning.
+
+## Database safety
+
+- **`data/ff.db` is gitignored and is not reproducible from the repo.** Never commit it; never
+  `rm` it. Back it up before any destructive import or migration -- `ff import-dataset` without
+  `--write` is a dry run precisely so you can look first.
+- The store is SQLite in WAL mode: copying it means copying `-wal` and `-shm` too.
+- This is a **shared checkout**. Another session may hold the DB or a `git index.lock`; check before
+  assuming a lock is stale, and stage explicit paths rather than `git add -A`.
+
+## ESPN / Yahoo sessions: what needs the desktop app
+
+One resolver decides, `src/league/session.ts`: explicit `io` -> `--session`/`--cookie-file` ->
+`FF_SESSION`/`FF_SESSION_COOKIE_FILE` -> **the Electron bridge (the default)**.
+
+- **Reads work headless.** Any `Platform` method takes an injected `io`, so a cookie session drives
+  `discover`/`syncSettings`/`syncRosters`/`readTeam` with no app running.
+- **Writes default to the app** and are ESPN-only: the allowlist is one ESPN transactions URL and the
+  permitted operation list is `["TRADE_PROPOSAL"]` (`src/league/writeIO.ts`). Waivers and lineups are
+  refused by the operation check, not merely unimplemented.
+- **The draft verbs need the app.** `--app` drives the embedded webview; plain `--port` does not (see
+  CLAUDE.md's live-draft traps).
+- Adding a platform: `npm run ff -- platform-contract`, and `docs/platform-adapter.md`.
+
 ## Hard rules
 
 - ASCII-only in all source, output, and docs (this machine's terminal is CP1252).
@@ -46,8 +87,21 @@ layer you are working on before you start.
 
 The Phase-2 engine is real code -- there IS something to build and test:
 
-- **Test:** `npm test` (Node's test runner over `test/*.test.ts`). **Typecheck:** `npm run typecheck`
-  (`tsc --noEmit`). Both must be green before every commit.
+- **Test:** `npm test` -- which runs `scripts/run-tests.mjs`, driving **Node's built-in test runner**
+  (`node:test`) over `test/*.test.ts`. **This repo does NOT use vitest or jest.** Do not install one;
+  `describe`/`it`/`expect` are not available. Use `test()` from `node:test` and `assert` from
+  `node:assert/strict`, as every existing file does.
+- **Typecheck:** `npm run typecheck` (`tsc --noEmit`). **Lint:** `npm run lint`. Test and typecheck
+  must both be green before every commit.
+- **If `npm test` fails on a fresh clone, suspect the install before the code.** `npm install` must be
+  run as `npm install better-sqlite3` FIRST, then `npm install` -- a bare install aborts on the
+  node-gyp build and leaves `tsx` missing, so nothing runs and the failures look like real breakage.
+  See "Setup on a new machine" in `CLAUDE.md`.
+- **Data-dependent tests SKIP, they do not fail.** `data/ff.db` and four other artifacts
+  (`history-points.csv`, `history-weekly.csv`, `rank-outcomes.json`, `variance-model.json`) are
+  gitignored, and every test that needs them is behind an `existsSync` guard and reports a skip. If
+  you see failures rather than skips on a clean clone, that is a real defect -- report it with the
+  test names rather than working around it.
 - **Run a command:** `npm run ff -- <cmd>` (e.g. `values`, `cheatsheet`, `backtest`, `sim`,
   `values-check`, `preflight`, `launch-practice`, `auto-draft`). See `README.md` "Key commands".
 - **Rebuild data (Python via uv):** `uv run --with nflreadpy --with polars tools/<script>.py`
