@@ -4613,20 +4613,20 @@ function printFormat(
 }
 
 // ==================================================================================================
-// `ff build-injury-horizon --seasons 2010-2024` -- TRACK I. Injury episodes and their point-in-time
+// `ff build-injury-horizon --seasons 2009-2026` -- TRACK I. Injury episodes and their point-in-time
 // horizon, plus coverage.
 //
 // A SEPARATE VERB from `build-features-ext` for the same reason `build-live-context` is separate:
-// it obeys a different rule about dates. This builder is only defined where `raw_injury` carries a
-// report date -- 2010-2024 -- because an undated filing cannot be placed on either side of a Friday
-// cutoff, and running it over 2025 would write an empty season that reads like an absence of
-// injuries rather than an absence of dates.
+// it obeys a different rule about dates. Where the feed publishes report dates the builder places
+// each filing against that team's Friday cutoff; where it publishes none -- 2009, and again from
+// 2025 -- it reads each week's file as that week's final pre-game report. Coverage therefore runs
+// 2009 to now. 1999-2008 is genuinely absent: nflverse's injury feed begins in 2009.
 // ==================================================================================================
 async function cmdBuildInjuryHorizon(rest: string[]) {
   const { buildInjuryDuration } = await import("./features/sources/injuryDuration.js");
   const { writeInjuryCoverage } = await import("./features/sources/coverage.js");
   const { openDb } = await import("./db/db.js");
-  const range = (valueOf(rest, "--seasons") ?? "2010-2024").split("-").map(Number);
+  const range = (valueOf(rest, "--seasons") ?? "2009-2026").split("-").map(Number);
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const seasons: number[] = []; for (let y = lo; y <= hi; y++) seasons.push(y);
   const dbPath = valueOf(rest, "--db");

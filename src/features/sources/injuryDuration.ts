@@ -20,10 +20,13 @@
  *
  * THE CUTOFF IS THIS TEAM'S OWN KICKOFF MINUS TWO DAYS, exactly as feat_player_week_context anchors
  * it. Anchoring on the league's first game instead would hand a Thursday-night player a Friday
- * report filed after he had already played. `raw_injury` rows without a date are excluded outright:
- * from 2025 the feed publishes none, and an undated filing cannot be placed on either side of a
- * cutoff. That is why this builder covers 2010-2024 and says so in its coverage rather than
- * quietly emitting a season of nulls.
+ * report filed after he had already played. Where a season publishes dates, an undated filing is
+ * excluded outright, because it cannot be placed on either side of a cutoff.
+ *
+ * Where a season publishes NO dates -- 2009, and again from 2025 -- the per-week file is itself the
+ * consolidated final pre-game report, so it is read as such; see `filings`. That is why coverage is
+ * 2009-present rather than the 2010-2024 this once claimed. 1999-2008 is genuinely absent: nflverse's
+ * injury feed begins in 2009 and there is no earlier source in the commons.
  *
  * WHAT COUNTS AS "ON THE REPORT". A row with a named injury (report_primary_injury, else
  * practice_primary_injury) or a real designation. A row that names no injury and reports Full
@@ -127,12 +130,47 @@ interface Filing { week: number; team: string; pos: string; asOf: string; status
  * cutoff, letting `at()` select the one filing per week exactly as it would a dated one. The dated
  * path (<=2024) is byte-identical: `dateless` is false and the original query and `asOf` run unchanged.
  */
+/**
+ * Does this season's feed publish dates at all?
+ *
+ * Exported so the rule can be tested against the real per-season shares rather than inferred from
+ * the row counts a build happens to emit. See the comment at the call site for why it is a share.
+ */
+export function isDatelessSeason(rows: number, dated: number): boolean {
+  return rows > 0 && dated / rows < 0.5;
+}
+
 function filings(db: DB, season: number, resolver: SourceResolver): Map<string, Filing[]> {
   const out = new Map<string, Filing[]>();
   const dm = db.prepare(
     "SELECT COUNT(*) AS n, SUM(as_of IS NOT NULL AND as_of <> '') AS dated FROM raw_injury WHERE season = ?",
   ).get(season) as { n: number; dated: number | null };
-  const dateless = dm.n > 0 && (dm.dated ?? 0) === 0;
+  // A SHARE, NOT AN EXACT ZERO. This read `(dm.dated ?? 0) === 0` and that cost the whole of 2009:
+  // the season carries 4,821 filings of the same `classic` shape as 2010 -- same status vocabulary,
+  // same weeks 1-21, 100% gsis -- but only 17 of them are dated, and all 17 are week 17 sharing one
+  // timestamp (2010-01-01T09:23:14Z), i.e. a single stray filing batch. Seventeen rows were enough to
+  // make `dated === 0` false, so the season took the DATED path, which discards the other 99.6% and
+  // leaves too little behind to form one episode. 2009 read as "no injury data" when it is merely
+  // undated -- exactly the shape the fallback below exists to serve.
+  //
+  // The two regimes are nowhere near each other, so the threshold decides nothing marginal: seasons
+  // that publish dates run 98-100% dated, and seasons that do not run 0-0.4%. Half is simply a line
+  // drawn through an empty region. A season landing genuinely in between would be a new source shape
+  // and is told about rather than guessed at.
+  const datedShare = dm.n > 0 ? (dm.dated ?? 0) / dm.n : 0;
+  const dateless = isDatelessSeason(dm.n, dm.dated ?? 0);
+  if (dateless && (dm.dated ?? 0) > 0) {
+    console.warn(
+      `[injury] ${season}: ${dm.dated}/${dm.n} filings (${(datedShare * 100).toFixed(2)}%) carry a date; ` +
+      "reading the season as dateless and taking each week's file as its final pre-game report.",
+    );
+  } else if (!dateless && datedShare < 0.98) {
+    console.warn(
+      `[injury] ${season}: only ${(datedShare * 100).toFixed(1)}% of filings are dated, but the dated ` +
+      `path is in use, so ${dm.n - (dm.dated ?? 0)} row(s) are being dropped. This is a source shape ` +
+      "neither path was built for -- check the feed before trusting this season.",
+    );
+  }
   for (const r of db.prepare(
     dateless
       ? `SELECT week, gsis_id, full_name, position, team, report_status, practice_status, as_of,
