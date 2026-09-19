@@ -115,6 +115,8 @@ async function main() {
       return cmdSessionCheck(rest);
     case "feeds":
       return cmdFeeds(rest);
+    case "export-dataset":
+      return cmdExportDataset(rest);
     case "build-features-ext":
       return cmdBuildFeaturesExt(rest);
     case "build-waiver-claims":
@@ -4945,4 +4947,46 @@ async function cmdFeeds(rest: string[]) {
   const cmds = [...new Set(bad.map((r) => r.refresh))];
   console.log(`\nTo refresh:\n${cmds.map((c) => `  ${c}`).join("\n")}`);
   process.exitCode = 3;
+}
+
+/**
+ * `ff export-dataset --out <file.db> [--json]` -- the publishable dataset.
+ *
+ * Derived and public-source tables only. Every ESPN private-league table is excluded by an
+ * ALLOWLIST THAT FAILS CLOSED (src/data/datasetExport.ts), and the exclusion is asserted in
+ * test/dataset-export-privacy.test.ts rather than left to whoever runs this remembering.
+ *
+ * It prints what it EXCLUDED as well as what it wrote. An export that quietly shrank is an export
+ * nobody audits, and the count of withheld tables is the cheapest way to see the guard did something.
+ */
+async function cmdExportDataset(rest: string[]) {
+  const { planExport, writeExport } = await import("./data/datasetExport.js");
+  const { openDb } = await import("./db/db.js");
+  const { existsSync, writeFileSync } = await import("node:fs");
+  const out = valueOf(rest, "--out");
+  if (!out) {
+    console.log("usage: ff export-dataset --out <file.db> [--json]");
+    console.log("  Writes the PUBLISHABLE tables only -- no league, roster, transaction, draft or");
+    console.log("  manager data. See docs/dataset.md and test/dataset-export-privacy.test.ts.");
+    return;
+  }
+  if (existsSync(out)) return failStep(`${out} already exists. Refusing to overwrite a file somebody may be about to publish.`);
+
+  const db = openDb(valueOf(rest, "--db"));
+  let manifest;
+  try {
+    const plan = planExport(db);
+    manifest = writeExport(db, out, plan);
+    writeFileSync(`${out}.manifest.json`, JSON.stringify(manifest, null, 2));
+  } catch (e) {
+    db.close();
+    return failStep(String((e as Error).message));
+  }
+  db.close();
+
+  if (rest.includes("--json")) { console.log(JSON.stringify(manifest, null, 2)); return; }
+  console.log(`wrote ${out}`);
+  console.log(`  ${manifest.tables.length} tables, ${manifest.totalRows.toLocaleString()} rows`);
+  console.log(`  ${manifest.excludedTables} tables EXCLUDED (league, roster, transaction, draft, manager)`);
+  console.log(`  manifest: ${out}.manifest.json  (generatedAt ${manifest.generatedAt})`);
 }
