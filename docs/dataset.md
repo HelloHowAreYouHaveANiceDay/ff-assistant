@@ -41,6 +41,44 @@ whoever is running the command holds until the first hurried afternoon.
 The last group is the reason to publish at all. The public feeds are cheap for anyone to fetch; the
 feature tables are not.
 
+## Keys: how to join this to anything else
+
+**`player_sk` IS SNAPSHOT-LOCAL. Do not use it as a durable key.** It is a minted surrogate, and an
+identity rebuild reassigns it: this store's own `identity_rekey` log records a single rebuild moving
+**11,974 of 12,021 keys**. Joining release N on `player_sk` and then upgrading to release N+1 gives
+you the wrong players *silently* -- every row still matches something.
+
+Use **`dim_player_key`** instead. One row per `player_sk` in the snapshot, bridging it to the ids
+the rest of the ecosystem uses:
+
+| column | coverage |
+|---|---|
+| `mfl_id` | **96.7%** -- the DynastyProcess crosswalk's own row key, and the best coverage here |
+| `pfr_id` | 81.4% |
+| `espn_id` | 70.9% |
+| `gsis_id` | 70.8% -- nflverse's key for NFL stats |
+| `sportradar_id` | 65.6% |
+| `sleeper_id` | 58.3% |
+
+```sql
+SELECT f.*, k.gsis_id, k.mfl_id
+FROM feat_player_week f JOIN dim_player_key k USING (player_sk);
+```
+
+`resolved_by` records HOW each row was bridged, so you can discount the weaker route:
+
+- `xref-gsis` (2,671) -- exact, through the gsis cross-reference.
+- `staged-name-key` (1,023) -- a NAME join, used only after the exact route missed. Name keys flagged
+  `ambiguous` (shared by more than one real player) are **excluded rather than resolved**: attaching
+  somebody else's ids to a row that still looks fully populated is worse than a null.
+- `dst-synthetic` (32) -- `DST:<TEAM>` is deterministic by construction. **These are the only keys in
+  the dataset safe to join on directly across releases.**
+- `unresolved` (96) -- emitted with nulls rather than dropped, because a player with no external id
+  is information.
+
+The full DynastyProcess map is shipped as `player_ids`, and `player_xref` / `stg_player` are included
+so you can re-derive the bridge yourself if you disagree with the routing.
+
 ## What is NOT in it, and why
 
 **Nothing from anybody's fantasy league.** 57 tables are excluded, including every one of:
@@ -112,6 +150,11 @@ re-run.
   terms. Please credit nflverse in anything built on them.
 - Preseason projection columns derive from **FFToday**.
 - ADP and trending columns derive from **Sleeper**.
+- `player_ids` and `dim_player_key`'"'"'s external ids derive from the **DynastyProcess player ID map**
+  ([dynastyprocess/data](https://github.com/dynastyprocess/data)), the crosswalk served as
+  `nflreadr::load_ff_playerids()`. Please credit DynastyProcess. Its licence is stated on their
+  repository -- check it before redistributing this dataset further; I have not independently
+  verified the terms.
 - This dataset is offered for research and personal use, with **no warranty** and no claim of
   ownership over any upstream source's data. If you are a rights-holder and want something removed,
   open an issue and it will be taken down.

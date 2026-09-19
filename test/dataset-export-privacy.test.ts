@@ -15,10 +15,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { openDb } from "../src/db/db.js";
-import { PUBLISHABLE, planExport, privateColumnsIn } from "../src/data/datasetExport.js";
+import { PUBLISHABLE, planExport, privateColumnsIn, writeExport } from "../src/data/datasetExport.js";
 
 /** Tables that must NEVER appear in an export, named individually so a regression is loud and
  *  specific rather than a count that shifted. */
@@ -171,4 +173,66 @@ test("REAL STORE: no exported row contains a known manager's username", { skip: 
       assert.equal(hit.c, 0, `${t.table} contains a manager's username in a text column`);
     }
   } finally { db.close(); }
+});
+
+// ---------------------------------------------------------------------------------------------
+// STABLE KEYS -- the dataset is only useful to somebody else if they can join it
+// ---------------------------------------------------------------------------------------------
+
+test("the crosswalk that makes the dataset joinable is ON the allowlist", () => {
+  /**
+   * `player_ids` is the DynastyProcess cross-platform map -- the table the fantasy-data ecosystem
+   * joins on (`nflreadr::load_ff_playerids()`). The first version of this allowlist omitted it, so
+   * the published dataset was keyed ONLY on `player_sk`: a minted surrogate that the store's own
+   * `identity_rekey` log shows moving 11,974 of 12,021 keys in a single rebuild. A consumer who
+   * joined release N on it and upgraded to N+1 would have silently joined the wrong players, with
+   * every row still matching something.
+   */
+  const allowed = new Set(PUBLISHABLE.map((p) => p.table));
+  for (const t of ["player_ids", "player_xref", "stg_player"]) {
+    assert.ok(allowed.has(t), `${t} must be published -- without it nobody can key this dataset`);
+  }
+});
+
+test("REAL STORE: dim_player_key is one row per key and reaches a STABLE external id", { skip: !existsSync(DB) && "no data/ff.db" }, () => {
+  // READ-WRITE on purpose: `writeExport` ATTACHes the target, and SQLite refuses to attach a
+  // writable database to a read-only connection. Nothing in `main` is modified -- every statement
+  // against it is a SELECT, and the only CREATEs are in the attached `pub`.
+  const src = new Database(DB);
+  const out = join(tmpdir(), `ff-keydim-${process.pid}.db`);
+  try {
+    const plan = planExport(src as never);
+    writeExport(src as never, out, plan);
+    const pub = new Database(out, { readonly: true });
+    try {
+      const n = (sql: string) => (pub.prepare(sql).get() as { c: number }).c;
+      const total = n("SELECT COUNT(*) c FROM dim_player_key");
+      assert.ok(total > 1000, `dim_player_key has only ${total} rows -- this would pass vacuously`);
+      // ONE ROW PER KEY. The first build fanned out: 45 keys carry more than one (name, pos) across
+      // a season and the NULL key carried 154, which broke the primary key outright.
+      assert.equal(n("SELECT COUNT(*) c FROM (SELECT player_sk FROM dim_player_key GROUP BY player_sk HAVING COUNT(*) > 1)"), 0);
+      assert.equal(n("SELECT COUNT(*) c FROM dim_player_key WHERE player_sk IS NULL"), 0);
+
+      // THE POINT: a stable id for the overwhelming majority. `mfl_id` is the crosswalk's own row
+      // key and has the best coverage; a floor rather than an exact number, so a rebuild that
+      // gains players does not fail this.
+      const withMfl = n("SELECT COUNT(*) c FROM dim_player_key WHERE mfl_id IS NOT NULL");
+      assert.ok(withMfl / total > 0.9, `only ${(100 * withMfl / total).toFixed(1)}% carry an mfl_id`);
+
+      // AND THE ROUTE IS RECORDED, so a consumer can discount the weaker one. A name-key join is a
+      // name join, which this repo distrusts on principle -- it is used only after the exact route
+      // has missed, and saying so is what lets somebody else decide whether to trust it.
+      const routes = (pub.prepare("SELECT DISTINCT resolved_by FROM dim_player_key").all() as { resolved_by: string }[])
+        .map((r) => r.resolved_by);
+      for (const r of routes) assert.ok(["xref-gsis", "staged-name-key", "dst-synthetic", "unresolved"].includes(r), `unknown route ${r}`);
+      assert.ok(routes.includes("xref-gsis"), "the EXACT route must actually be used, not just available");
+
+      // DST keys are deterministic by construction and need no bridge -- the only keys in the
+      // dataset safe to join on directly across releases.
+      assert.equal(n("SELECT COUNT(*) c FROM dim_player_key WHERE player_sk LIKE 'DST:%' AND resolved_by <> 'dst-synthetic'"), 0);
+    } finally { pub.close(); }
+  } finally {
+    src.close();
+    try { rmSync(out, { force: true }); } catch { /* best effort */ }
+  }
 });
