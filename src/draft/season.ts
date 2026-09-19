@@ -45,6 +45,7 @@ import { optimalLineup } from "../inseason/lineup.js";
 // Imported as `unitDraw`, not `draw`: the playoff bracket already has a local `draw(teamIndex)` that
 // would shadow it, and the shadowed call type-checked as a wrong-arity error only by luck.
 import { draw as unitDraw, drawGauss, PURPOSE, PlayerIds } from "./rng.js";
+import { missedWeeks } from "./knownInjury.js";
 import { prepare as prepBootstrap, sampleSeason as bootstrapSeason, weekOf, type RankOutcomes, type CorrelationModel, type PoolPlayer } from "./bootstrap.js";
 import { seedField } from "./schedule.js";
 import { slotAdmits, splitTemplate } from "./slots.js";
@@ -96,6 +97,22 @@ export interface SeasonTeamInput { id: string; name: string; roster: SeasonPlaye
 export interface SeasonOpts {
   weeks: number;
   playoffTeams: number;
+  /**
+   * KNOWN INJURY DESIGNATIONS (commit 3, docs/week-state-design-2026-09-18.md). Player name ->
+   * his horizon survival curve, plus the measured tail hazard. When a man appears here, his weeks
+   * missed are drawn as ONE CONTIGUOUS EPISODE from that curve instead of from the unconditional
+   * per-tier rate -- which on men actually on the report scores 0.92 nested log loss against the
+   * conditional model's 0.35, i.e. worse than a constant.
+   *
+   * ABSENT (the default) the simulator is BIT-IDENTICAL to before: no map, no lookups, every man
+   * drawn exactly as he was. This is a model change and stays off until it clears the D13 gate.
+   */
+  knownInjury?: {
+    curves: Map<string, import("./knownInjury.js").HorizonCurve>;
+    tailHazard: number;
+    /** The first week the designations are about -- the episode starts here. */
+    fromWeek: number;
+  };
   /**
    * HOW THE FIELD IS SEEDED. Defaults to "record", the rule this simulator has always used, so an
    * omitted value changes nothing. "division-winners-first" needs `divisionOf` as well -- without it
@@ -585,6 +602,7 @@ export function simulateSeasons(
   const levelScale = _envNum("FF_SIM_LEVEL_SCALE");
   const levelFactor = effShrink * (levelScale ?? 1);
   const weeklyVarScale = _envNum("FF_SIM_WEEKLY_VAR");
+  const knownInjury = opts.knownInjury;
   // M2d KNOB (new dependence), 2026-09-16. `FF_SIM_TEAM_SD` is the sd of a per-FANTASY-TEAM, per-trial
   // lognormal (mean 1) multiplier applied to every man on that roster for the whole season. The
   // copula couples NFL teammates only, so a sixteen-man roster's season total is very nearly a sum of
@@ -735,8 +753,31 @@ export function simulateSeasons(
           // The fitted avail is games/17, which ALREADY includes the bye. Applying the bye
           // separately (so the RIGHT week is missed, which a season total cannot see) means the
           // injury rate must have the bye divided back out, or every player is benched twice.
-          const healthy = unitDraw(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffInjury : PURPOSE.injury)
-            < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+          // A MAN WITH A KNOWN DESIGNATION IS DRAWN AS AN EPISODE, not as an independent weekly
+          // coin. The uniform is the SAME one the unconditional path would have used -- same seed,
+          // same trial, same purpose -- so common random numbers survive and a man with no
+          // designation produces a bit-identical trial. Only the THRESHOLD changes, never the draw.
+          const u = unitDraw(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffInjury : PURPOSE.injury);
+          const curve = knownInjury?.curves.get(p.name) ?? null;
+          let healthy: boolean;
+          if (curve) {
+            // ONE uniform per (player, trial) for the whole episode -- drawn off the season key so
+            // it does not change week to week, which is what makes the absence PERSIST.
+            const eu = unitDraw(seedNum, trial, 0, pid(p.name), playoffDraw ? PURPOSE.playoffInjury : PURPOSE.injury);
+            const episode = missedWeeks(curve, eu, knownInjury!.tailHazard, knownInjury!.fromWeek, opts.weeks + (opts.playoffWeekCount ?? PLAYOFF_WEEKS));
+            // THE CURVE SPEAKS TO THIS EPISODE, NOT TO THE REST OF HIS SEASON. Inside the episode
+            // he is out. AFTER it he reverts to the unconditional rate, because a man who returns
+            // in week 6 can be hurt again in week 11 and the horizon model has nothing to say
+            // about that.
+            //
+            // Found by a failing test: a curve of zeros -- a designated man expected to play --
+            // made him MORE available than an undesignated one, because the episode was replacing
+            // his availability for the whole season rather than for the weeks it covers. Being on
+            // the injury report is not a health benefit.
+            healthy = episode.has(gameWeek) ? false : u < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+          } else {
+            healthy = u < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+          }
           const cvBase = m.cv[tier] ?? 0.8;
           let cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
           // WEEKLY-VARIANCE SCALE (experiment): the parametric twin of the bootstrap compression --
