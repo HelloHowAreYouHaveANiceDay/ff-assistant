@@ -110,3 +110,29 @@ test("NO NAIVE POSITIONAL SCAN SURVIVES in a verb that takes value flags", () =>
     "a naive positional scan is back. Use firstPositional/positionals from src/util/argv.ts with " +
     "that verb's value-taking flags:\n" + naive.map((x) => `  ff.ts:${x.n}: ${x.l.trim()}`).join("\n"));
 });
+
+test("EVERY copilot verb is reachable from the CLI", async () => {
+  // `VERB_OF` is typed `Record<string, (typeof COPILOT_VERBS)[number]>`, which stops a CLI name from
+  // mapping to a verb that does not exist -- but NOT the reverse. An eleventh entry added to
+  // COPILOT_VERBS compiles fine while being unreachable from a terminal, and the only symptom is
+  // `ff copilot <newverb>` printing usage.
+  //
+  // The two surfaces also SPELL the verbs differently -- `season-odds` on the CLI, `season_odds` in
+  // MCP -- so this is not a case where the names can simply be compared. (That spelling difference
+  // cost a round in this very bug bash: a smoke test using the MCP names reported 9 of 10 verbs
+  // broken, when they were merely named something else.)
+  const { COPILOT_VERBS } = await import("../src/inseason/copilotActions.js");
+  const src = readFileSync("src/ff.ts", "utf8");
+  const i = src.indexOf("const VERB_OF");
+  assert.ok(i >= 0, "could not find VERB_OF in src/ff.ts -- if it moved, point this test at it rather than deleting it");
+  const body = src.slice(i, src.indexOf("};", i));
+  // Keys are quoted only when they contain a hyphen, so BOTH forms have to be read. A regex that
+  // required quotes found 6 of 10 and reported four working verbs as unreachable.
+  const mapped = new Set([...body.matchAll(/(?:"[a-z-]+"|[a-z]+)\s*:\s*"([a-z_]+)"/g)].map((m) => m[1]));
+  const unreachable = COPILOT_VERBS.filter((v) => !mapped.has(v));
+  assert.deepEqual(unreachable, [],
+    `these copilot verbs have no CLI spelling in VERB_OF, so \`ff copilot <verb>\` prints usage for ` +
+    `them while the MCP tool works: ${unreachable.join(", ")}`);
+  assert.equal(mapped.size, COPILOT_VERBS.length,
+    `VERB_OF maps ${mapped.size} verbs but COPILOT_VERBS has ${COPILOT_VERBS.length}`);
+});

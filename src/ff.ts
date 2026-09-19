@@ -5006,6 +5006,24 @@ async function cmdFeeds(rest: string[]) {
   let rows;
   try { rows = feedStatus(db); } finally { db.close(); }
 
+  // MACHINE-READABLE FEED HEALTH. An agent's first question about any number this repo produces is
+  // "is the data behind it fresh?", and until now the only answer was a human table it had to parse.
+  // The EXIT CODE carries the same verdict (3 when anything is stale or absent), so a caller can
+  // branch without reading either.
+  if (rest.includes("--json")) {
+    const bad = rows.filter((r) => r.verdict !== "fresh");
+    console.log(JSON.stringify({
+      ok: bad.length === 0,
+      checked: rows.length,
+      needsAttention: bad.length,
+      feeds: rows,
+      // Deduplicated, in the order they should be run -- the same list the human output prints.
+      refresh: [...new Set(bad.map((r) => r.refresh))],
+    }, null, 2));
+    if (bad.length) process.exitCode = 3;
+    return;
+  }
+
   const mark = (v: string) => (v === "fresh" ? "ok  " : v === "stale" ? "STALE" : v === "absent" ? "NONE " : "?    ");
   console.log("FEED                 AGE      LIMIT   STATE  POWERS");
   for (const r of rows) {
