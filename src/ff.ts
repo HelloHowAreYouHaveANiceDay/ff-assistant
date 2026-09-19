@@ -125,6 +125,8 @@ async function main() {
       return cmdBuildLiveContext(rest);
     case "build-injury-horizon":
       return cmdBuildInjuryHorizon(rest);
+    case "platform-contract":
+      return cmdPlatformContract(rest);
     case "build-prospect":
       return cmdBuildProspect(rest);
     case "refresh-gameday-status":
@@ -4614,6 +4616,46 @@ function printFormat(
 }
 
 // ==================================================================================================
+// ==================================================================================================
+// `ff platform-contract [--check <id>]` -- WHAT AN ADAPTER MUST PROVIDE.
+//
+// The entry point for "I want this engine to talk to my fantasy site." Before this the only answer
+// was `platformFor`'s refusal -- "Implement Platform in src/league/<platform>.ts and register it" --
+// which names a file and a type and leaves the requirements to be reverse-engineered from the two
+// shipped adaptors.
+//
+// `--check <id>` runs the structural check against a REGISTERED platform. It is deliberately not a
+// pass/fail on correctness: it says what is missing, what is declined, and -- always -- what the
+// check cannot see, because a checker that implies more than it verifies is worse than none.
+// ==================================================================================================
+async function cmdPlatformContract(rest: string[]) {
+  const { PLATFORM_CONTRACT, checkPlatformShape, describeContract, describeShape } =
+    await import("./league/platformContract.js");
+  const { KNOWN_PLATFORMS, platformFor } = await import("./league/platform.js");
+  const check = valueOf(rest, "--check");
+
+  if (rest.includes("--json")) {
+    const out: Record<string, unknown> = { contract: PLATFORM_CONTRACT, known: KNOWN_PLATFORMS };
+    if (check) out.report = checkPlatformShape(await platformFor(check));
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+
+  if (check) {
+    const p = await platformFor(check);        // refuses an unknown id BY NAME
+    console.log(`PLATFORM "${check}" against the adapter contract\n`);
+    console.log(describeShape(checkPlatformShape(p)));
+    return;
+  }
+
+  console.log("WHAT AN ADAPTER MUST PROVIDE\n");
+  console.log("Implement `Platform` (src/league/platform.ts), then add it to REGISTRY there.");
+  console.log(`Already registered: ${KNOWN_PLATFORMS.join(", ")}\n`);
+  console.log(describeContract());
+  console.log("  Check your work:   npm run ff -- platform-contract --check <your id>");
+  console.log("  Full notes:        docs/platform-adapter.md");
+}
+
 // `ff build-injury-horizon --seasons 2009-2026` -- TRACK I. Injury episodes and their point-in-time
 // horizon, plus coverage.
 //

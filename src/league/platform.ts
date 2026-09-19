@@ -305,11 +305,25 @@ export async function platformFor(platform: string | null | undefined): Promise<
   if (!load) {
     throw new Error(
       `no platform adaptor for "${key || "unknown"}" -- known platforms: ${[...REGISTRY.keys()].join(", ")}. ` +
-      "Implement Platform in src/league/<platform>.ts and register it in src/league/platform.ts.",
+      "Implement Platform in src/league/<platform>.ts and register it in REGISTRY here. " +
+      // The refusal is where somebody learns this platform is not supported, so it is also where
+      // they should learn what supporting it takes -- rather than being left to reverse-engineer
+      // the requirements from the two shipped adaptors.
+      "To see exactly what an adaptor must provide, and to check yours: " +
+      "`npm run ff -- platform-contract` (docs/platform-adapter.md).",
     );
   }
   return load();
 }
 
-/** The platform ids that HAVE an adaptor. Used by tests and by the app to render the league tabs. */
-export const KNOWN_PLATFORMS: PlatformId[] = ["espn", "yahoo"];
+/**
+ * The platform ids that HAVE an adaptor. Used by tests and by the app to render the league tabs.
+ *
+ * DERIVED FROM THE REGISTRY, never retyped. It used to be the hand-written list `["espn", "yahoo"]`,
+ * which is a snapshot of the day it was written: registering a third adaptor and forgetting this
+ * line left it absent from the app's tabs while every test passed, because the only test iterates
+ * THIS list and checks each entry resolves -- one-directional, so a registry entry missing here was
+ * invisible. Same shape as the conformance check that named seven drivers against a fleet of
+ * fifteen.
+ */
+export const KNOWN_PLATFORMS: PlatformId[] = [...REGISTRY.keys()] as PlatformId[];
