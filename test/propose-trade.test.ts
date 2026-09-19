@@ -48,12 +48,48 @@ test("an exact GET name resolves and builds the payload: you give team 8's playe
   assert.equal(r.ok, true, `expected sendable, got problems: ${r.problems.join("; ")}`);
   assert.equal(r.myTeamId, "8");
   assert.equal(r.otherTeamId, "14");
-  const p = r.payload;
+  // THE PLATFORM IS RECORDED, and the payload is NOT built here any more (step C, 2026-09-19).
+  // `resolveTrade` resolves people and teams; the ESPN body and URL belong to the ESPN adaptor, so
+  // the assertions about their SHAPE moved to where that shape is decided -- see below.
+  assert.equal(r.platform, "espn");
+  assert.equal(r.payload, null, "resolveTrade must no longer build a platform payload");
+  assert.equal(r.writeUrl, null, "resolveTrade must no longer build a platform URL");
+});
+
+test("THE ESPN ADAPTOR builds the trade body and the URL, from the resolved teams", async () => {
+  // The assertions that used to live in the test above, now against the thing that actually decides
+  // the shape. They are stronger here: this is the code a second platform would have to implement.
+  const { espnPlatform } = await import("../src/league/espnPlatform.js");
+  assert.ok(espnPlatform.writes?.proposeTrade, "ESPN must declare a trade-proposal capability");
+  const req = espnPlatform.writes!.proposeTrade!({
+    season: 2026, leagueId: "462233", myTeamId: "8", otherTeamId: "14",
+    give: [{ playerId: "3116165" }], get: [{ playerId: "4426338" }], scoringPeriodId: 3,
+  });
+  assert.equal(req.operation, "TRADE_PROPOSAL",
+    "the operation is carried BESIDE the body, so the guard need not parse a platform's payload");
+  assert.match(req.url, /lm-api-writes\.fantasy\.espn\.com.*leagues\/462233\/transactions\/$/);
+  const p = JSON.parse(req.body);
   assert.equal(p.type, "TRADE_PROPOSAL");
   assert.equal(p.teamId, 8);
+  assert.equal(p.isLeagueManager, false);
   assert.deepEqual(p.items[0], { playerId: 3116165, type: "TRADE", fromTeamId: 8, toTeamId: 14 });
   assert.deepEqual(p.items[1], { playerId: 4426338, type: "TRADE", fromTeamId: 14, toTeamId: 8 });
-  assert.match(r.writeUrl, /lm-api-writes\.fantasy\.espn\.com.*leagues\/462233\/transactions\/$/);
+  // IN THE BODY, not injected afterwards: ESPN rejects a proposal without it, and a dry run that
+  // printed a body missing it would be showing something other than what gets sent.
+  assert.equal(p.scoringPeriodId, 3);
+});
+
+test("A PLATFORM WITH NO WRITE CAPABILITY is refused BY NAME, not by a failing URL", async () => {
+  // The point of making writes a capability. Yahoo used to be refused because a Yahoo URL failed an
+  // ESPN-shaped regex -- a refusal that reads like a bug. Absence is now a stated limit.
+  const { platformFor } = await import("../src/league/platform.js");
+  const { assertWritable } = await import("../src/league/writeIO.js");
+  const yahoo = await platformFor("yahoo");
+  assert.equal(yahoo.writes, undefined,
+    "yahoo must declare no write capability until one is built and observed against a real request");
+  assert.throws(
+    () => assertWritable(yahoo.writes, { url: "https://x", body: "{}", operation: "TRADE_PROPOSAL" }),
+    /declares no write capability/);
 });
 
 test("FAULT: giving a player you do not own is refused and NOT sendable", () => {

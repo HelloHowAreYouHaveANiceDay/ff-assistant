@@ -1,6 +1,6 @@
 # Decoupling the engine from Electron and from ESPN
 
-**Status: A, B and D LANDED 2026-09-19. C is DESIGNED AND UNBUILT, pending review.**
+**Status: A, B, C and D all LANDED 2026-09-19.**
 
 Owner decisions taken (2026-09-19):
 
@@ -200,8 +200,25 @@ Verified: full suite 1,286 pass / 0 fail. Two existing tests asserted the old `w
 and were updated to the moved field rather than weakened. Fault injection on the resolver: forcing it
 to always return the bridge fails 3 tests; flipping the default to cookie fails 2.
 
-## C — still to do
+## C — LANDED
 
-Unchanged from the design above. The one thing to re-check when it is built: `executeTradeProposal`
-still constructs an ESPN URL for `scoringPeriodId` at `proposeTrade.ts:147`. That read is the last
-transport leak in `src/inseason` and belongs behind the platform capability, not beside it.
+`Platform.writes?: PlatformWrites` — a URL pattern, a permitted-operation list, and a builder per
+operation. ESPN's entry is exactly what the tool could already do: the one transactions URL and
+`["TRADE_PROPOSAL"]`. Yahoo has none, so it is refused **by name** rather than by a Yahoo URL failing
+an ESPN-shaped regex — the difference between a stated limit and what reads like a bug.
+
+`assertWritable(platform.writes, req)` replaced `assertWritableUrl(url, body)`. Same property, same
+ESPN values; what moved is *whose* rules are applied. The providers still run the URL check inside
+`post`, so nothing reaches a platform unpoliced.
+
+The ESPN trade body and URL now live in `espnPlatform.ts`. `src/inseason/proposeTrade.ts` no longer
+knows ESPN's field names, its team-id types, or that a proposal needs a `scoringPeriodId` — and the
+hardcoded `ctx.platform !== "espn"` refusal is gone, replaced by the capability check, so a platform
+that learns to write needs no edit there.
+
+`scoringPeriodId` is now passed **into** the builder rather than injected into the payload
+afterwards, so the body a dry run prints is byte-identical to the body that is sent.
+
+**Not done, deliberately:** no new operation. There is still no `setLineup` or `claimWaiver` builder
+for any platform, and no Yahoo write. Adding one is a decision about what this tool may do to a real
+league — now a visible, per-platform edit rather than a diffuse one.

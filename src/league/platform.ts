@@ -270,6 +270,14 @@ export interface Platform {
   /** How the desktop app embeds this platform, where it does. OPTIONAL: a platform that never runs
    *  in Electron is legal and says so by absence rather than inventing an element id. */
   readonly webview?: WebviewSpec;
+  /**
+   * OPTIONAL CAPABILITY: what this platform may have written to it, and how to build it.
+   *
+   * Absent means this tool cannot write to the platform at all -- a STATED limit. A caller must
+   * refuse a missing capability by name rather than reaching for another platform's endpoint, which
+   * is the same rule `draftPicks?` and `rosterWeek?` already carry.
+   */
+  readonly writes?: import("./writeIO.js").PlatformWrites;
   /** The leagues this login can see. */
   discover(io: PlatformIO, wantSeason: number): Promise<DiscoveredLeague[]>;
   /**

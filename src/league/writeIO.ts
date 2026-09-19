@@ -79,13 +79,80 @@ export const MAX_WRITE_BODY = 1e5;
 export const ESPN_WRITE_TYPES: readonly string[] = ["TRADE_PROPOSAL"];
 
 /**
+ * ONE WRITE, ALREADY BUILT: where it goes, what it says, and WHICH OPERATION it is.
+ *
+ * `operation` is carried beside the body rather than dug back out of it, because the guard must not
+ * have to know each platform's payload shape to police it. ESPN puts the operation in `type`; a
+ * platform that puts it in the path, or in a header, still hands the same three fields here.
+ */
+export interface WriteRequest { url: string; body: string; operation: string }
+
+/**
+ * A PLATFORM'S WRITE CAPABILITY -- its endpoint, its permitted operations, and the builders.
+ *
+ * OPTIONAL ON `Platform`, and absence is the honest answer for a platform nobody has taught to
+ * write. Before this, "can Yahoo write?" was answered by a Yahoo URL failing an ESPN-shaped regex --
+ * a refusal that looks like a bug rather than a declared limit. Now a caller checks for the
+ * capability and refuses BY NAME, exactly as `draftPicks?` and `rosterWeek?` already work.
+ *
+ * EACH BUILDER IS SEPARATELY OPTIONAL for the same reason: a platform that can propose a trade but
+ * cannot set a lineup says so by omitting `setLineup`, rather than by throwing from inside it.
+ */
+export interface PlatformWrites {
+  /** The only URL this platform may be written to. */
+  readonly urlPattern: RegExp;
+  /** The only operations that may be sent there. Widening it is a decision about what this tool may
+   *  do to somebody's real league -- see ESPN_WRITE_TYPES for why the URL alone decides nothing. */
+  readonly operations: readonly string[];
+  proposeTrade?(ctx: TradeWriteCtx): WriteRequest;
+}
+
+/** What a trade proposal needs, in platform-neutral terms. `playerId` is the PLATFORM's id. */
+export interface TradeWriteCtx {
+  season: number;
+  leagueId: string;
+  myTeamId: string;
+  otherTeamId: string;
+  give: { playerId: string }[];
+  get: { playerId: string }[];
+  /** The platform's notion of "which week is this", where it needs one. ESPN rejects a proposal
+   *  without it; a platform that does not care ignores it. */
+  scoringPeriodId?: number | null;
+}
+
+/**
  * REFUSE ANYTHING NOT ON THE ALLOWLIST, loudly and by name.
  *
  * Throws rather than returning false: a caller that ignored a boolean would send the request, and
  * the whole point is that there is no path to ESPN's write API that skips this.
  */
-export function assertWritableUrl(url: string, body: string): void {
-  if (!ESPN_WRITE_URL_PATTERN.test(String(url))) {
+/**
+ * THE GUARD, NOW PER PLATFORM. `writes` is the capability the request is being policed against.
+ *
+ * It was `assertWritableUrl(url, body)` with ESPN's pattern and operations baked in, which made the
+ * only answer to "may Yahoo write?" a Yahoo URL failing an ESPN regex. The property is unchanged and
+ * the ESPN values are identical; what moved is WHOSE rules are being applied.
+ */
+export function assertWritable(writes: PlatformWrites | undefined, req: WriteRequest): void {
+  if (!writes) {
+    throw new Error(
+      "REFUSED to write: this platform declares no write capability. That is a stated limit, not a " +
+      "failure -- a platform that can write says so with a `writes` block on its Platform.",
+    );
+  }
+  assertWritableUrl(req.url, req.body, writes);
+  if (!writes.operations.includes(req.operation)) {
+    throw new Error(
+      `REFUSED to write a "${req.operation}" transaction. The permitted operations are: ` +
+      `${writes.operations.join(", ")}. Widening that list is a decision about what this tool may ` +
+      "do to a real league, not a refactor.",
+    );
+  }
+}
+
+export function assertWritableUrl(url: string, body: string, writes?: PlatformWrites): void {
+  const pattern = writes?.urlPattern ?? ESPN_WRITE_URL_PATTERN;
+  if (!pattern.test(String(url))) {
     throw new Error(
       `REFUSED to write to ${String(url).slice(0, 200)} -- the only permitted write endpoint is ` +
       "ESPN's league-transactions URL (lm-api-writes .../seasons/<Y>/segments/0/leagues/<id>/transactions). " +

@@ -6,7 +6,7 @@
 // deliberate, per-trade act.
 import { openDb, type DB } from "../db/db.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
-import { ESPN_READS_BASE, ESPN_WRITES_BASE } from "../data/espnApi.js";
+import { ESPN_READS_BASE } from "../data/espnApi.js";
 
 export interface TradePlayer { name: string; playerId: string; teamId: string }
 export interface TradeResolution {
@@ -14,6 +14,9 @@ export interface TradeResolution {
   problems: string[];
   season: number;
   leagueId: string | null;
+  /** WHICH PLATFORM this league is on -- the raw stored string, so an unknown one survives to be
+   *  refused by name rather than normalised to null. Decides whose write capability applies. */
+  platform: string | null;
   myTeamId: string | null;
   otherTeamId: string | null;
   otherTeamName: string | null;
@@ -52,9 +55,13 @@ export function resolveTrade(db: DB, giveNames: string[], getNames: string[], le
   const myTeamId = ctx.teamId;
   if (!leagueId) problems.push("no league in the store (sync the league first)");
   else if (!myTeamId) problems.push(`your team is not known: league ${leagueId} has no team_id (sync the league first)`);
-  // A trade is POSTED to a platform. Refusing here, by name, beats building an ESPN URL for a league
-  // that is not on ESPN.
-  if (leagueId && ctx.platform !== "espn") problems.push(`league ${leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} trade adaptor exists yet`);
+  // A trade is POSTED to a platform, and WHICH platform is recorded rather than assumed. This used
+  // to be `ctx.platform !== "espn"` -- a hardcoded name that would have had to be edited for every
+  // platform that ever learned to write. The authority is now the platform's own `writes`
+  // capability (step C), checked in `executeTradeProposal`, which refuses a platform that declares
+  // none BY NAME and does so on the dry run too.
+  const platform = ctx.platformRaw ?? ctx.platform ?? null;
+  if (leagueId && !platform) problems.push(`league ${leagueId} names no platform (sync the league first)`);
 
   const teamName = (id: string): string | null => {
     if (!leagueId) return null;
@@ -85,22 +92,13 @@ export function resolveTrade(db: DB, giveNames: string[], getNames: string[], le
 
   const ok = problems.length === 0 && !!myTeamId && !!otherTeamId && give.every((p) => p.playerId) && get.every((p) => p.playerId);
 
-  // ESPN trade-proposal transaction. Items carry the player and the direction; ESPN infers the
-  // counterparty from the toTeamId. Shown in the dry run because this is the one piece that cannot be
-  // proven correct without sending it.
-  const payload = ok ? {
-    isLeagueManager: false,
-    teamId: Number(myTeamId),
-    type: "TRADE_PROPOSAL",
-    items: [
-      ...give.map((p) => ({ playerId: Number(p.playerId), type: "TRADE", fromTeamId: Number(myTeamId), toTeamId: Number(otherTeamId) })),
-      ...get.map((p) => ({ playerId: Number(p.playerId), type: "TRADE", fromTeamId: Number(otherTeamId), toTeamId: Number(myTeamId) })),
-    ],
-  } : null;
-
-  const writeUrl = ok && leagueId ? `${ESPN_WRITES_BASE}/seasons/${season}/segments/0/leagues/${leagueId}/transactions/` : null;
-
-  return { ok, problems, season, leagueId, myTeamId, otherTeamId, otherTeamName, give, get, writeUrl, payload };
+  // THE BODY AND THE URL ARE THE PLATFORM'S, not this module's (step C, 2026-09-19). Building an
+  // ESPN transaction here meant the decision layer knew ESPN's field names, its team-id types and
+  // that a proposal needs a scoringPeriodId -- none of which is a decision about a trade. It is the
+  // last transport leak in src/inseason. `writeRequest` is filled by the caller, which has the
+  // platform; `resolveTrade` stays a pure resolution that any platform's builder can consume.
+  return { ok, problems, season, leagueId, platform, myTeamId, otherTeamId, otherTeamName, give, get,
+    writeUrl: null, payload: null };
 }
 
 export interface TradeProposalRun {
@@ -140,8 +138,21 @@ export async function executeTradeProposal(
   try { resolution = resolveTrade(db, giveNames, getNames, opts.leagueId); } finally { db.close(); }
   if (!resolution.ok) return { resolution, scoringPeriodId: null, sent: false };
 
+  // THE PLATFORM, AND ITS WRITE CAPABILITY. A platform that declares none is refused BY NAME rather
+  // than by its URL failing somebody else's regex -- the difference between a stated limit and what
+  // looks like a bug. Yahoo is exactly that case today.
+  const { platformFor } = await import("../league/platform.js");
+  const { assertWritable } = await import("../league/writeIO.js");
+  const plat = await platformFor(resolution.platform ?? "espn");
+  if (!plat.writes?.proposeTrade) {
+    return { resolution, scoringPeriodId: null, sent: false,
+      error: `${plat.id} declares no trade-proposal write capability, so this tool cannot propose a ` +
+        "trade there. That is a stated limit, not a failure -- see docs/platform-adapter.md." };
+  }
+
   // The current scoringPeriodId, read LIVE through the app session (else the store's current week),
-  // injected into the payload so what is validated is exactly what is sent.
+  // and handed to the BUILDER so the body a dry run prints is byte-identical to the body that is
+  // sent. It used to be injected into the payload afterwards, which meant the two could differ.
   let spid: number | null = null;
   try {
     const { bridgeAvailable, bridgeFetch } = await import("../browser/appBridge.js");
@@ -152,13 +163,29 @@ export async function executeTradeProposal(
     }
   } catch { /* fall through to the store */ }
   if (spid == null) { try { const { currentWeek } = await import("./copilotStore.js"); spid = currentWeek(dbPath, new Date(), resolution.leagueId).week; } catch { /* leave null */ } }
-  if (spid != null) (resolution.payload as { scoringPeriodId?: number }).scoringPeriodId = spid;
+  const req = plat.writes.proposeTrade({
+    season: resolution.season,
+    leagueId: String(resolution.leagueId),
+    myTeamId: String(resolution.myTeamId),
+    otherTeamId: String(resolution.otherTeamId),
+    give: resolution.give.map((p) => ({ playerId: p.playerId })),
+    get: resolution.get.map((p) => ({ playerId: p.playerId })),
+    scoringPeriodId: spid,
+  });
+  // Surfaced on the resolution so the dry run still SHOWS what would be sent -- the one piece that
+  // cannot be proven correct without sending it.
+  resolution.writeUrl = req.url;
+  resolution.payload = JSON.parse(req.body) as unknown;
 
   if (!opts.send) return { resolution, scoringPeriodId: spid, sent: false };
   if (spid == null) return { resolution, scoringPeriodId: null, sent: false, error: "cannot determine the current scoring period (need the app running) -- refusing to send without it" };
   try {
     const writer = opts.writer ?? (await import("../league/session.js")).resolveWriteIO();
-    const r = await writer.post(resolution.writeUrl!, JSON.stringify(resolution.payload));
+    // Policed against THIS platform's rules before any provider is touched. The providers run the
+    // url check too (nothing reaches ESPN without it); this adds the OPERATION check, which needs
+    // the capability and so cannot live inside a provider that has never heard of a platform.
+    assertWritable(plat.writes, req);
+    const r = await writer.post(req.url, req.body);
     // A NON-2xx IS AN OUTCOME, NOT A CRASH. ESPN puts the reason in the body of a refusal -- an
     // ineligible player, a locked roster, a trade deadline that has passed -- and throwing the
     // status away loses exactly the sentence the manager needs.

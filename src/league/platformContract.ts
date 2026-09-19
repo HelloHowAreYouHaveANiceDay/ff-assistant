@@ -63,6 +63,11 @@ export const PLATFORM_CONTRACT: ContractMember[] = [
     trap: "two platforms must never share a `partition`. One partition is one login, so sharing it means one platform is reading the other's session.",
   },
   {
+    name: "writes", kind: "property", required: false,
+    must: "a PlatformWrites: the ONE url this platform may be written to, the operations permitted there, and a builder per operation (`proposeTrade`). OMIT IT and this tool cannot write to your platform at all.",
+    trap: "omitting it is the HONEST answer until you have observed a real write. A caller refuses a missing capability by name; a half-built one that returns a plausible body sends somebody a real transaction. Each builder is separately optional for the same reason -- leave out `proposeTrade` rather than throwing from inside it.",
+  },
+  {
     name: "discover", kind: "method", required: true,
     must: "list the leagues this login can see, for the wanted season.",
     trap: "return an empty list when the login sees none; THROW when you could not tell. An empty list is an answer and a failure that returns one is indistinguishable from a user with no leagues.",

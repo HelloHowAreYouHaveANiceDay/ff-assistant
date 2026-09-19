@@ -81,11 +81,13 @@ The rest are in `platform-contract` output; they are not repeated here so there 
 
 ## Writes
 
-There is no write capability to implement. Writes are still ESPN-shaped: the allowlist in
-`src/league/writeIO.ts` is one ESPN URL and the operation list is `["TRADE_PROPOSAL"]`. A new platform
-is **read-only**, and says so by absence rather than by failing a URL pattern.
+Writes ARE a platform capability now (`Platform.writes?`): a URL pattern, a permitted-operation list,
+and a builder per operation. OMITTING it is the honest answer until you have observed a real write --
+a caller refuses a missing capability by name. Run `ff platform-contract` for the full shape.
 
-Making writes a platform capability is designed but unbuilt — step C of
+ESPN ships the only one: its transactions URL and `["TRADE_PROPOSAL"]`. There is **no** `setLineup`
+or `claimWaiver` builder for any platform, and no Yahoo write at all — adding one is a decision about
+what this tool may do to a real league, not a refactor. See step C of
 `docs/platform-decoupling-design-2026-09-19.md`.
 
 ## A skeleton

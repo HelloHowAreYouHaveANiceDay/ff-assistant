@@ -14,11 +14,12 @@
  * (`espnDiscoverFromLinks`, `espnSettingsFromPayload`) are covered by test/platform-espn.test.ts so a
  * drift between the two copies is visible rather than silent.
  */
-import { ESPN_READS_BASE } from "../data/espnApi.js";
+import { ESPN_READS_BASE, ESPN_WRITES_BASE } from "../data/espnApi.js";
 import { scoringFromEspn } from "../draft/scoring.js";
 import { ESPN_POS } from "./espnSlots.js";
 import { formatFromEspnSettings } from "./index.js";
 import type { DiscoveredLeague, LeagueSettings, Platform, PlatformRoster } from "./platform.js";
+import { ESPN_WRITE_TYPES, ESPN_WRITE_URL_PATTERN, type PlatformWrites } from "./writeIO.js";
 import type { LeagueTeam } from "./types.js";
 
 /** ESPN statId for a reception -- the PPR dial. */
@@ -171,9 +172,44 @@ export function espnRostersFromPayload(payload: unknown): PlatformRoster[] {
   }));
 }
 
+/**
+ * ESPN'S WRITE CAPABILITY. Exactly what the tool could already do -- one endpoint, one operation --
+ * expressed as a platform capability instead of a constant the guard reached for directly.
+ *
+ * THE PAYLOAD LIVES HERE NOW, not in `src/inseason/proposeTrade.ts`. Building an ESPN transaction
+ * body inside the decision layer was the last transport leak in that directory: the copilot knew
+ * ESPN's field names, its team-id types, and that a proposal needs a `scoringPeriodId`. None of
+ * that is a decision about a trade.
+ */
+const espnWrites: PlatformWrites = {
+  urlPattern: ESPN_WRITE_URL_PATTERN,
+  operations: ESPN_WRITE_TYPES,
+  proposeTrade(ctx) {
+    // Items carry the player and the DIRECTION; ESPN infers the counterparty from `toTeamId`.
+    const body = {
+      isLeagueManager: false,
+      teamId: Number(ctx.myTeamId),
+      type: "TRADE_PROPOSAL",
+      items: [
+        ...ctx.give.map((p) => ({ playerId: Number(p.playerId), type: "TRADE", fromTeamId: Number(ctx.myTeamId), toTeamId: Number(ctx.otherTeamId) })),
+        ...ctx.get.map((p) => ({ playerId: Number(p.playerId), type: "TRADE", fromTeamId: Number(ctx.otherTeamId), toTeamId: Number(ctx.myTeamId) })),
+      ],
+      // ESPN REJECTS A PROPOSAL WITHOUT IT. Carried in the body the caller will actually send, so
+      // what is validated in a dry run is what goes out -- it used to be injected afterwards.
+      ...(ctx.scoringPeriodId != null ? { scoringPeriodId: ctx.scoringPeriodId } : {}),
+    };
+    return {
+      url: `${ESPN_WRITES_BASE}/seasons/${ctx.season}/segments/0/leagues/${ctx.leagueId}/transactions/`,
+      body: JSON.stringify(body),
+      operation: "TRADE_PROPOSAL",
+    };
+  },
+};
+
 export const espnPlatform: Platform = {
   id: "espn",
   host: "espn.com",
+  writes: espnWrites,
   webview: { elementId: "espnview", partition: "persist:espn" },
   urls: {
     home: "https://fantasy.espn.com/football/",
