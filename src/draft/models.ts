@@ -161,7 +161,15 @@ export const MODELS: ModelSpec[] = [
       "predict), with the quantile heads split-conformally calibrated on train-only out-of-fold " +
       "residuals; K/DST stay on the linear intercept-only heads; FFToday's preseason projection " +
       "(`fftoday_proj`) is a default feature. It passed the pre-registered P5 gate on the pooled " +
-      "2015-2025 holdouts at RMSE 50.62 vs curve-only 55.54, pinball 11.32 vs 13.16, coverage 0.757 " +
+      "2015-2025 holdouts at RMSE 51.15 vs curve-only 55.54, pinball 11.38 vs 13.16, coverage 0.758 " +
+      // RE-GATED AND RE-SHIPPED 2026-09-19 after the `team_changed` correction. It was 50.62 / 11.32
+      // / 0.757 on the previous artifact, and the NEW numbers are slightly WORSE ON PURPOSE:
+      // `team_changed` used to compare against a player's END-of-season team, so for a mid-season
+      // trade the feature encoded the season's own future. A leaky feature flatters a holdout;
+      // removing the leak costs apparent accuracy, and a correction of this shape coming back BETTER
+      // would have been the result to distrust. Isolated from refit noise -- the trainer is
+      // deterministic (same data twice: mean |delta| 0.000), and the change alone moves 2026 board
+      // means by 2.120 pts/season. 
       "in [0.75, 0.85] with every rank band in [0.70, 0.90] (0.802 / 0.810 / 0.821 / 0.773 / 0.751 / " +
       "0.716), and the served model re-gated against the linear one with the same features at " +
       "+0.2485 pinball (9/9 seasons), holdout +0.3317 (5/5). Before D16 the linear Phase 2d artifact " +
