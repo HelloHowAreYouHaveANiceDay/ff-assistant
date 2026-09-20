@@ -41,11 +41,11 @@ function withStore(fn: (db: DB, path: string) => void | Promise<void>): Promise<
   setActiveLeagueId(db, A);
   // A board: 3 rows, as league A's.
   for (let i = 0; i < 3; i++) {
-    db.prepare("INSERT INTO board (player_id, season, row_json, updated_at) VALUES (?,?,?,?)")
-      .run(`p${i}`, SEASON, JSON.stringify({ Player: `P${i}`, Pos: "RB", Rank: i + 1, ProjPts: 100 - i }), now);
+    db.prepare("INSERT INTO board (league_id, player_id, season, row_json, updated_at) VALUES (?,?,?,?,?)")
+      .run(A, `p${i}`, SEASON, JSON.stringify({ Player: `P${i}`, Pos: "RB", Rank: i + 1, ProjPts: 100 - i }), now);
     db.prepare("INSERT INTO player (player_id, name, position, updated_at) VALUES (?,?,?,?)").run(`p${i}`, `P${i}`, "RB", now);
-    db.prepare("INSERT INTO player_value (player_id, season, our_value, our_rank, updated_at) VALUES (?,?,?,?,?)")
-      .run(`p${i}`, SEASON, 50 - i, i + 1, now);
+    db.prepare("INSERT INTO player_value (league_id, player_id, season, our_value, our_rank, updated_at) VALUES (?,?,?,?,?,?)")
+      .run(A, `p${i}`, SEASON, 50 - i, i + 1, now);
   }
   setBoardStamp(db, { leagueId: A, season: SEASON, scoringKey: "sc-a", builtAt: now });
   const done = () => {
@@ -67,48 +67,75 @@ test("a MATCHING stamp passes -- the positive control the refusal is worthless w
   });
 });
 
-test("a MISMATCHED stamp throws BY NAME and names the fix", () => {
+/**
+ * WAS "a MISMATCHED stamp throws BY NAME". The stamp comparison is GONE, and not because the
+ * protection was dropped -- because `board.league_id` makes the thing it protected against
+ * impossible. There are no rows of A's to hand to B; the refusal is now "B has no board", which is
+ * the honest question once the two can coexist.
+ *
+ * The property being defended is unchanged and is asserted directly below: asking as B must never
+ * yield A's three players, and must never yield an EMPTY board either (a league with nobody in it is
+ * the failure shape this repo pays for most).
+ */
+test("league B is refused BY NAME, and can never be handed league A's rows", () => {
   withStore((db) => {
-    assert.throws(() => assertBoardFor(db, B), /board is built for league AAA, not BBB/);
-    assert.throws(() => assertBoardFor(db, B), /ff league-set-active BBB/);
-    assert.throws(() => appDataPayload(db, SEASON, B), /board is built for league AAA, not BBB/);
-    assert.throws(() => valueBook(db, SEASON, B), /board is built for league AAA, not BBB/);
+    assert.throws(() => assertBoardFor(db, B), /no board has been built for league BBB/);
+    assert.throws(() => appDataPayload(db, SEASON, B), /no board has been built for league BBB/);
+    assert.throws(() => valueBook(db, SEASON, B), /no board has been built for league BBB/);
+    // A still gets its own, which is the positive half: a refusal-only world would pass this too.
+    assert.equal(appDataPayload(db, SEASON, A).players.length, 3);
   });
 });
 
 test("a board with rows and NO stamp is refused, not served to whoever asks", () => {
   withStore((db) => {
-    db.prepare("DELETE FROM settings WHERE key = 'board_stamp'").run();
-    assert.equal(getBoardStamp(db), null);
-    assert.throws(() => assertBoardFor(db, A), /carries no league stamp/);
+    // BOTH keys: the stamp is per-league now (`board_stamp:AAA`), with the global one kept as a
+    // derived mirror. Deleting only the mirror would leave the real stamp in place and this test
+    // would assert nothing.
+    db.prepare("DELETE FROM settings WHERE key IN ('board_stamp', 'board_stamp:' || ?)").run(A);
+    assert.equal(getBoardStamp(db, A), null);
+    assert.throws(() => assertBoardFor(db, A), /carries no stamp/);
   });
 });
 
 test("an EMPTY board is not a refusal -- it is the empty-board failure every reader already handles", () => {
   withStore((db) => {
     db.prepare("DELETE FROM board").run();
-    db.prepare("DELETE FROM settings WHERE key = 'board_stamp'").run();
+    db.prepare("DELETE FROM settings WHERE key IN ('board_stamp', 'board_stamp:' || ?)").run(A);
     assert.doesNotThrow(() => assertBoardFor(db, A));
   });
 });
 
-test("league-set-active CLEARS the board and stamps it pending when the rebuild cannot run", async () => {
+/**
+ * INVERTED ON PURPOSE (2026-09-20), and this is the test that used to encode the defect.
+ *
+ * It required that a switch DELETE league A's rows, for a good reason at the time: with one shared
+ * slot, leaving them in place meant serving A's dollars under B's name. Its own comment says so --
+ * "serving them as B's is the whole defect".
+ *
+ * `board.league_id` removes that dilemma. B cannot be handed A's rows whether or not A's rows exist,
+ * so there is nothing to buy by destroying them -- and destroying them is expensive: mid-season it
+ * takes the league you are actually playing offline until its board is rebuilt. The protected
+ * property is asserted exactly as hard as before; only the required outcome for A is reversed.
+ */
+test("league-set-active does NOT clear another league's board, and still refuses B by name", async () => {
   await withStore(async (db, path) => {
     // The rebuild needs points.csv and a reachable ESPN; in a temp store it throws, which is exactly
-    // the WP3/WP4 state for a league with no format artifacts. The REQUIREMENT is what happens then.
+    // the state of a league with no format artifacts. The REQUIREMENT is what happens then.
     const r = await switchActiveLeague(db, B, { dbPath: path, pointsPath: join(path, "no-such-points.csv") });
     assert.equal(r.active, B);
-    assert.equal(r.cleared, true, "the previous league's board must be cleared, not left in place");
     assert.equal(r.rebuilt, false);
     assert.match(r.reason ?? "", /could not be rebuilt for league BBB/);
-    assert.equal((db.prepare("SELECT COUNT(*) c FROM board").get() as { c: number }).c, 0,
-      "league A's 3 rows must be GONE -- serving them as B's is the whole defect");
-    assert.equal((db.prepare("SELECT COUNT(*) c FROM player_value").get() as { c: number }).c, 0);
-    assert.deepEqual(getBoardStamp(db), { leagueId: B, pending: true });
-    // And every reader now refuses BY NAME rather than returning an empty board that looks like a
-    // league with no players in it.
+    assert.equal((db.prepare("SELECT COUNT(*) c FROM board").get() as { c: number }).c, 3,
+      "league A's 3 rows must SURVIVE -- destroying the live league to onboard another was the cost");
+    assert.equal((db.prepare("SELECT COUNT(*) c FROM player_value").get() as { c: number }).c, 3);
+    assert.deepEqual(getBoardStamp(db, B), { leagueId: B, pending: true });
+    // B is still refused BY NAME rather than served an empty board that looks like a league with
+    // nobody in it -- the half of the contract that must NOT change.
     assert.throws(() => assertBoardFor(db, B), /board not built for league BBB/);
-    assert.throws(() => assertBoardFor(db, A), /board not built for league BBB/);
+    // ...and A, untouched, is still servable. This is the whole point of the change.
+    assert.doesNotThrow(() => assertBoardFor(db, A));
+    assert.equal(appDataPayload(db, SEASON, A).players.length, 3);
   });
 });
 
@@ -128,23 +155,27 @@ test("assemble REFUSES a league whose format has not been built -- it does NOT r
     const r = await switchActiveLeague(db, B, { dbPath: path });
     assert.match(r.reason ?? "", /no model has been built for that format/);
     assert.equal(r.rebuilt, false);
-    assert.deepEqual(getBoardStamp(db), { leagueId: B, pending: true });
+    assert.deepEqual(getBoardStamp(db, B), { leagueId: B, pending: true });
   });
 });
 
-test("player_value_position IS cleared now that WP3 restored its producer", () => {
+test("player_value_position is per-league too -- A's survives a switch to B", () => {
   withStore((db, path) => {
     // WP2 deliberately left this table alone: it had a CREATE on the live store, no producer in
     // `src/`, and clearing a table nothing can rebuild is irreversible loss (it cost 523 rows once).
     // WP3 restored the producer (`assemble`'s `upValPos`), its CREATE in schema.sql and its lineage
     // entry, so it joins board/player_value -- leaving another league's value POSITIONS behind is
     // the same defect as leaving its dollars behind.
-    db.prepare("INSERT INTO player_value_position (player_id, season, board_pos, value_pos, updated_at) VALUES ('p0',?,'RB','RB','now')").run(SEASON);
+    db.prepare("INSERT INTO player_value_position (league_id, player_id, season, board_pos, value_pos, updated_at) VALUES (?,'p0',?,'RB','RB','now')").run(A, SEASON);
     // `reportPath` keeps this test's rebuild from overwriting the REPO's data/player-report.csv, which
     // it did silently on every `npm test` (assemble writes that CSV unconditionally at the end).
     return switchActiveLeague(db, B, { dbPath: path, reportPath: join(path, "..", "report-clear.csv") }).then(() => {
-      assert.equal((db.prepare("SELECT COUNT(*) c FROM player_value_position").get() as { c: number }).c, 0,
-        "the previous league's value positions must be cleared with its board");
+      // It used to be required that this reach 0. Same reasoning as the board: A's value POSITIONS
+      // are keyed to A and can never be read as B's, so there is nothing to buy by deleting them.
+      const mine = db.prepare("SELECT COUNT(*) c FROM player_value_position WHERE league_id = ?").get(A) as { c: number };
+      assert.equal(mine.c, 1, "league A's value positions must survive a switch to league B");
+      const theirs = db.prepare("SELECT COUNT(*) c FROM player_value_position WHERE league_id = ?").get(B) as { c: number };
+      assert.equal(theirs.c, 0, "and B, whose rebuild could not run, has none of its own");
     });
   });
 });
@@ -207,26 +238,31 @@ test("a switch round-trip REPOPULATES player_value_position -- clearing is only 
       json: async () => ({}),
     })) as unknown as typeof globalThis.fetch;
     try {
-      // 1. AWAY: the switch clears all three tables and cannot rebuild for B.
+      // 1. AWAY: the switch can no longer rebuild for B, and -- since 2026-09-20 -- no longer clears
+      //    anything either. A's rows stay put, which is the point; see the inverted test above.
       const away = await switchActiveLeague(db, B, { dbPath: path, pointsPath: join(path, "no-such-points.csv"), reportPath });
       assert.equal(away.rebuilt, false);
-      assert.equal((db.prepare("SELECT COUNT(*) c FROM player_value_position").get() as { c: number }).c, 0,
-        "the clear half of the contract");
 
-      // 2. BACK: the rebuild for A must REFILL it -- this is the half nothing asserted.
-      const back = await switchActiveLeague(db, A, { dbPath: path, pointsPath, reportPath });
-      assert.equal(back.rebuilt, true, `the rebuild for A must succeed; it said: ${back.reason ?? "(no reason)"}`);
-      const boardN = (db.prepare("SELECT COUNT(*) c FROM board").get() as { c: number }).c;
-      const vpN = (db.prepare("SELECT COUNT(*) c FROM player_value").get() as { c: number }).c;
-      const vppN = (db.prepare("SELECT COUNT(*) c FROM player_value_position").get() as { c: number }).c;
+      // 2. THE HALF THAT STILL MATTERS: a real build must REFILL player_value_position beside the
+      //    board. The old version reached this through a switch BACK to A, which is now a no-op
+      //    (A was never cleared, so there is nothing to rebuild) -- so `assemble` is driven directly.
+      //    The property is unchanged and is the one that made the live "529 board rows, 0 value
+      //    positions" state diagnosable: a completed build cannot produce one without the other.
+      const { assemble } = await import("../src/data/assemble.js");
+      db.prepare("DELETE FROM player_value_position WHERE league_id = ?").run(A);
+      await assemble(path, pointsPath, A, { reportPath });
+      const boardN = (db.prepare("SELECT COUNT(*) c FROM board WHERE league_id = ?").get(A) as { c: number }).c;
+      const vpN = (db.prepare("SELECT COUNT(*) c FROM player_value WHERE league_id = ?").get(A) as { c: number }).c;
+      const vppN = (db.prepare("SELECT COUNT(*) c FROM player_value_position WHERE league_id = ?").get(A) as { c: number }).c;
       assert.ok(boardN > 0, "the board itself must come back, or this test is asserting nothing");
       assert.equal(vppN, boardN, "player_value_position must have one row per board row after a rebuild");
       assert.equal(vpN, boardN);
       // ONE TRANSACTION, ONE TIMESTAMP. This is the structural fact that makes the observed live state
       // (a full board beside an empty value-position table) impossible from a completed build.
       const stamps = db.prepare(
-        "SELECT (SELECT MAX(updated_at) FROM board) b, (SELECT MAX(updated_at) FROM player_value_position) v",
-      ).get() as { b: string; v: string };
+        "SELECT (SELECT MAX(updated_at) FROM board WHERE league_id = @lg) b, " +
+        "(SELECT MAX(updated_at) FROM player_value_position WHERE league_id = @lg) v",
+      ).get({ lg: A }) as { b: string; v: string };
       assert.equal(stamps.v, stamps.b, "board and player_value_position are written in the SAME transaction");
       // ...and the value position comes from ESPN's eligibility, not from the board position: the one
       // dual-eligible man carries both positions in his audit column.
@@ -244,7 +280,7 @@ test("switching BACK to the league the board already belongs to leaves it alone"
   withStore((db, path) => {
     return switchActiveLeague(db, A, { dbPath: path }).then((r) => {
       assert.equal(r.cleared, false, "a no-op switch must not destroy a good board");
-      assert.equal((db.prepare("SELECT COUNT(*) c FROM board").get() as { c: number }).c, 3);
+      assert.equal((db.prepare("SELECT COUNT(*) c FROM board WHERE league_id = ?").get(A) as { c: number }).c, 3);
       assert.deepEqual(r.stamp?.leagueId, A);
     });
   });

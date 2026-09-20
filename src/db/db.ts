@@ -79,9 +79,21 @@ export function localDraftId(leagueId: string | null | undefined): string {
 
 /** Apply schema.sql. CREATE ... IF NOT EXISTS throughout, so re-running is a no-op. */
 // Phase 2b (2026-09-15): the per-league HISTORY/state tables that must COEXIST across leagues get
-// `league_id` prepended to their PK. board/player_value/player_value_position are deliberately NOT here
-// -- they are regenerable, read pervasively, and stay single-slot "active-league cache" (rebuilt on a
-// league switch), which avoids a pervasive reader cascade. docs/multi-league-refactor.md.
+// `league_id` prepended to their PK. board/player_value/player_value_position are not in THIS list
+// because they migrate through `ACTIVE_SLOT_TABLES` instead -- their owner is the BOARD STAMP, not the
+// active league, and backfilling them with `activeLeagueId` would mis-file a store whose active league
+// had been switched without a rebuild.
+//
+// THEY USED TO BE OMITTED ENTIRELY, as a single-slot "active-league cache" rebuilt on a league switch,
+// "which avoids a pervasive reader cascade" (docs/multi-league-refactor.md). That deferral is now
+// SPENT, and the doc's own line 38 always listed all three under "MUST ADD league_id":
+//   - the rebuild-on-switch half was never built (finding S-8), so a switch served the previous
+//     league's dollars under the new league's name until the stamp guard was added to refuse it;
+//   - and the guard's refusal is itself the cost -- with one slot, serving a second league DELETES the
+//     first league's board, which mid-season takes the live league's lineup offline until it is
+//     rebuilt. That is not a cache miss, it is destruction of the thing you are still using.
+// So they are per-league now, and the reader cascade was paid: every reader already had a league in
+// scope, because `assertBoardFor` needed one.
 // GENUINELY per-league (a second league writes its own rows here). NOT team_odds (NFL game odds are
 // the same for every fantasy league) and NOT scorecard_* (they measure the shared MODEL's accuracy,
 // not a league) -- those are SHARED and must NOT be partitioned by league.
@@ -105,6 +117,7 @@ export function migrate(db: DB): void {
   migrateLocalDraftId(db);
   migrateScorecardFormatKey(db);
   migrateBoardStamp(db);
+  migrateBoardLeagueId(db);   // AFTER the stamp: the stamp is what says whose rows these are.
 }
 
 /**
@@ -284,51 +297,116 @@ export interface BoardStamp {
   pending?: boolean;
 }
 
-export function getBoardStamp(db: DB): BoardStamp | null {
-  const raw = getSetting(db, "board_stamp");
-  if (!raw) return null;
-  try {
-    const s = JSON.parse(raw) as BoardStamp;
-    return s && typeof s.leagueId === "string" ? s : null;
-  } catch { return null; }
+/** The per-league stamp key. The legacy global `board_stamp` is read as a fallback by `getBoardStamp`
+ *  and rewritten into this shape by `migrateBoardLeagueId`. */
+const boardStampKey = (leagueId: string): string => `board_stamp:${leagueId}`;
+
+/**
+ * THE STAMP FOR ONE LEAGUE'S BOARD.
+ *
+ * Was a single global `board_stamp`, because the board was a single slot. Now that `board` carries
+ * `league_id` in its key, each league has its own stamp and they coexist -- which is the whole point:
+ * building league B's board no longer destroys the record of league A's.
+ *
+ * The legacy global key is still READ when no per-league stamp exists AND it names this league, so a
+ * store mid-migration (or one rolled back to an older build) still answers correctly rather than
+ * reporting an unstamped board.
+ */
+export function getBoardStamp(db: DB, leagueId?: string | null): BoardStamp | null {
+  const parse = (raw: string | undefined): BoardStamp | null => {
+    if (!raw) return null;
+    try {
+      const s = JSON.parse(raw) as BoardStamp;
+      return s && typeof s.leagueId === "string" ? s : null;
+    } catch { return null; }
+  };
+  if (leagueId) {
+    const own = parse(getSetting(db, boardStampKey(leagueId)));
+    if (own) return own;
+    const legacy = parse(getSetting(db, "board_stamp"));
+    return legacy && legacy.leagueId === leagueId ? legacy : null;
+  }
+  return parse(getSetting(db, "board_stamp"));
 }
 
 export function setBoardStamp(db: DB, s: BoardStamp): void {
-  setSetting(db, "board_stamp", JSON.stringify(s));
-}
-
-/** Rows in the single-slot board. Cheap, and the three tables are written together. */
-function boardRowCount(db: DB): number {
-  try { return (db.prepare("SELECT COUNT(*) c FROM board").get() as { c: number }).c; } catch { return 0; }
+  setSetting(db, boardStampKey(s.leagueId), JSON.stringify(s));
+  // The legacy key is kept pointed at the ACTIVE league so an older build, or any reader that has not
+  // been given a league, still sees a coherent answer. DERIVED -- nothing in this repo reads it when a
+  // league is in hand.
+  if (s.leagueId === activeLeagueId(db)) setSetting(db, "board_stamp", JSON.stringify(s));
 }
 
 /**
- * REFUSE to serve the board to a league it was not built for.
+ * A LEAGUE FILTER for the three per-league slot tables (`board`, `player_value`,
+ * `player_value_position`).
  *
- * A missing stamp WITH rows present is also a refusal: it means the board predates the stamp and this
- * process cannot say whose it is. The one-time migration below stamps an existing board with the
- * ACTIVE league, so on a real store that state is reached only by hand-editing settings.
+ * EMPTY WHEN NO LEAGUE IS KNOWN, and that is deliberate rather than lazy. A store with no league row
+ * (a fresh clone, and several tests) writes its board under `league_id = ""`; filtering such a store
+ * by a null league would match nothing and every reader would report an empty board -- a league with
+ * nobody in it, which is this repo's most expensive failure shape. No league in hand means "read
+ * whatever is there", exactly as before partitioning.
+ *
+ * ONE SPELLING, so twenty call sites cannot drift into nineteen filtered reads and one unfiltered
+ * one -- which is the bug this partitioning exists to prevent, wearing a different hat.
+ */
+export function slotFilter(leagueId: string | null | undefined, alias = ""): { sql: string; args: string[] } {
+  const col = alias ? `${alias}.league_id` : "league_id";
+  return leagueId ? { sql: ` AND ${col} = ?`, args: [String(leagueId)] } : { sql: "", args: [] };
+}
+
+/** Rows in ONE LEAGUE's board. Cheap, and the three tables are written together. */
+function boardRowCount(db: DB, leagueId?: string | null): number {
+  try {
+    return leagueId
+      ? (db.prepare("SELECT COUNT(*) c FROM board WHERE league_id = ?").get(leagueId) as { c: number }).c
+      : (db.prepare("SELECT COUNT(*) c FROM board").get() as { c: number }).c;
+  } catch { return 0; }
+}
+
+/**
+ * REFUSE to serve a board this league has not had built.
+ *
+ * WHAT CHANGED, AND WHY THE OLD REFUSAL IS GONE. This used to end with "board is built for league A,
+ * not B", because there was ONE board and asking for the wrong league had to be caught by comparing a
+ * stamp. That refusal was correct but the underlying design was the problem: building B's board
+ * DELETED A's, so a second league could not be served without destroying the first -- on a game day,
+ * that meant the live league's lineup stopped working until it was rebuilt.
+ *
+ * `board.league_id` makes the cross-league serve STRUCTURALLY IMPOSSIBLE rather than merely caught:
+ * every read is filtered by league, so there are no rows of A's to hand back when B is asked for. The
+ * mismatch branch is therefore not "removed" -- it is unreachable by construction, which is the
+ * stronger form. test/board-multileague.test.ts asserts exactly that, in both directions.
+ *
+ * What remains is the honest question "has THIS league's board been built?", which is still a refusal.
  */
 export function assertBoardFor(db: DB, leagueId: string | null | undefined, what = "the board"): void {
   if (!leagueId) return;                       // a store with no league has no other league to confuse it with
-  const stamp = getBoardStamp(db);
+  const stamp = getBoardStamp(db, leagueId);
   if (stamp?.pending) {
     throw new Error(
       `board not built for league ${stamp.leagueId} -- it was cleared on the league switch and the rebuild ` +
       "has not succeeded (run `ff assemble --league " + stamp.leagueId + "`). " + what + " is unavailable.",
     );
   }
-  if (!boardRowCount(db)) return;              // an empty board is its own, visible failure in every reader
+  if (!boardRowCount(db, leagueId)) {
+    // NO ROWS FOR THIS LEAGUE. Under the single slot this returned quietly, because an empty board was
+    // "its own, visible failure in every reader" -- there was only one board, and if it was empty
+    // everything downstream was empty too. That is no longer true: another league's board can be full
+    // while this one has never been built, so silence here would let a reader return zero players and
+    // look like a league with nobody in it.
+    if (boardRowCount(db)) {
+      throw new Error(
+        `${what}: no board has been built for league ${leagueId} (other leagues in this store do have one) ` +
+        `-- run \`ff assemble --league ${leagueId}\`.`,
+      );
+    }
+    return;                                    // a wholly empty board table: unchanged behaviour
+  }
   if (!stamp) {
     throw new Error(
-      `${what}: the board carries no league stamp, so nothing can say which league's dollars these are ` +
-      `-- run \`ff assemble --league ${leagueId}\` to rebuild and stamp it.`,
-    );
-  }
-  if (stamp.leagueId !== leagueId) {
-    throw new Error(
-      `board is built for league ${stamp.leagueId}, not ${leagueId} -- run \`ff league-set-active ${leagueId}\` ` +
-      `(rebuild) or \`ff assemble --league ${leagueId}\``,
+      `${what}: league ${leagueId}'s board carries no stamp, so nothing can say when or under which rules ` +
+      `these dollars were built -- run \`ff assemble --league ${leagueId}\` to rebuild and stamp it.`,
     );
   }
 }
@@ -342,6 +420,74 @@ function migrateBoardStamp(db: DB): void {
   if (!id) return;
   const cfg = getConfig(db, id);
   setBoardStamp(db, { leagueId: id, season: cfg.season, scoringKey: scoringKey(cfg.scoring_rules), builtAt: nowIso() });
+}
+
+/**
+ * THE BOARD BECOMES PER-LEAGUE: `league_id` joins its primary key.
+ *
+ * WHY, and it is not tidiness. The board was a SINGLE SLOT -- `boardRowCount`'s own comment said so --
+ * so `ff assemble --league B` deleted league A's rows. With a live league mid-season that is
+ * destructive: serving a second league took the first one's lineup offline until it was rebuilt. The
+ * guard that caught it ("board is built for league A, not B") was doing its job; the shape underneath
+ * it was the defect.
+ *
+ * DELIBERATELY NOT FOLDED INTO `migrateLeagueIdPk`, which backfills every table it owns with
+ * `activeLeagueId`. The board's owner is its STAMP, not the active league, and those are only the same
+ * by convention. A store whose active league had been switched without a rebuild would have its rows
+ * attributed to the wrong league by that rule -- silently, and in exactly the direction that serves one
+ * league's dollars under another's name. So this runs AFTER `migrateBoardStamp` and takes the stamp.
+ *
+ * IDEMPOTENT (the key, not the column -- the S-5 lesson `migrateLeagueIdPk` records): a board whose PK
+ * already leads with `league_id` is skipped. Row count is asserted preserved, and the content is not
+ * touched at all -- only the key it is filed under.
+ */
+/** The three "active-league cache" tables, which `assemble` writes together and which therefore have
+ *  to become per-league together. Partitioning the board alone would leave a league switch still
+ *  clobbering the values that board is derived from. */
+const ACTIVE_SLOT_TABLES = ["board", "player_value", "player_value_position"];
+
+function migrateBoardLeagueId(db: DB): void {
+  for (const t of ACTIVE_SLOT_TABLES) migrateSlotTable(db, t);
+  // Re-file the legacy global stamp under its league, so the per-league reader finds it directly.
+  const legacy = getBoardStamp(db);
+  if (legacy) setSetting(db, boardStampKey(legacy.leagueId), JSON.stringify(legacy));
+}
+
+function migrateSlotTable(db: DB, table: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as ColInfo[];
+  if (!cols.length) return;                           // schema.sql owns creation
+  if (pkOf(cols)[0] === "league_id") return;          // already migrated
+  const rows = (db.prepare(`SELECT COUNT(*) c FROM "${table}"`).get() as { c: number }).c;
+  // WHOSE rows are these? The stamp, then the active league, and only then give up. A board with rows
+  // and no owner is NOT attributed to a guess -- it is left alone for a later open, because filing it
+  // under the wrong league is worse than leaving it unmigrated (readers refuse an unmigrated board by
+  // name; they would SERVE a mis-filed one).
+  const owner = getBoardStamp(db)?.leagueId ?? activeLeagueId(db);
+  if (rows && !owner) return;
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      const rest = cols.filter((c) => c.name !== "league_id");
+      const restNames = rest.map((c) => `"${c.name}"`).join(", ");
+      const colDDL = ['"league_id" TEXT NOT NULL',
+        ...rest.map((c) => `"${c.name}" ${c.type}${c.notnull ? " NOT NULL" : ""}${c.dflt_value != null ? ` DEFAULT ${c.dflt_value}` : ""}`)];
+      const newPk = ["league_id", ...pkOf(cols).filter((c) => c !== "league_id")].map((c) => `"${c}"`).join(", ");
+      const idx = db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL").all(table) as { sql: string }[];
+      db.exec(`CREATE TABLE "${table}__ml" (${colDDL.join(", ")}, PRIMARY KEY (${newPk}))`);
+      if (rows) db.prepare(`INSERT INTO "${table}__ml" ("league_id", ${restNames}) SELECT ?, ${restNames} FROM "${table}"`).run(owner);
+      db.exec(`DROP TABLE "${table}"`);
+      db.exec(`ALTER TABLE "${table}__ml" RENAME TO "${table}"`);
+      // DROP TABLE takes the indexes with it. Recreated and COUNTED, not recreated-and-hoped: a
+      // swallowed failure here is a silent full table scan nothing would ever report.
+      for (const ix of idx) db.exec(ix.sql);
+      const after = (db.prepare(`SELECT COUNT(*) c FROM "${table}"`).get() as { c: number }).c;
+      if (after !== rows) throw new Error(`migrateSlotTable: ${table} lost rows (${rows} -> ${after})`);
+      const nIdx = (db.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL").get(table) as { c: number }).c;
+      if (nIdx !== idx.length) throw new Error(`migrateSlotTable: ${table} has ${nIdx} explicit indexes, expected ${idx.length}`);
+    })();
+  } finally { db.pragma("foreign_keys = ON"); }
+
 }
 
 /** Phase 2a backfill: copy the legacy single `config` into the active league's per-league key

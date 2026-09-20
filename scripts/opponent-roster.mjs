@@ -19,11 +19,15 @@ if (!t) {
 
 // Auction value and positional rank are ours, from the value book -- not anything the platform says.
 const val = new Map();
+// OUR league's book. `player_value` is per-league since 2026-09-20; pricing an opponent's roster
+// off another league's dollars is the cross-league serve this partitioning exists to end.
+const orLg = (lg.db.prepare("SELECT value FROM settings WHERE key='active_league'").get() || {}).value ?? null;
 for (const r of lg.db.prepare(
   `SELECT p.name, pv.our_value, pv.pos_rank, re.overall_rank ecr
      FROM player_value pv JOIN player p USING(player_id)
-     LEFT JOIN ranking re ON re.player_id = pv.player_id AND re.source='fantasypros_ecr' AND re.season = pv.season`,
-).all()) val.set(nameKey(r.name), r);
+     LEFT JOIN ranking re ON re.player_id = pv.player_id AND re.source='fantasypros_ecr' AND re.season = pv.season
+   ${orLg ? "WHERE pv.league_id = ?" : ""}`,
+).all(...(orLg ? [orLg] : []))) val.set(nameKey(r.name), r);
 
 const byPos = t.roster.reduce((c, p) => ({ ...c, [p.pos]: (c[p.pos] || 0) + 1 }), {});
 console.log(`${t.name}${t.mine ? "  (us)" : ""} -- ${t.roster.length} players   shape ${Object.entries(byPos).map(([k, v]) => k + v).join(" ")}`);

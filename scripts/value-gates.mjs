@@ -24,6 +24,10 @@ const vgCtx = resolveLeagueContext(db, leagueFlag(process.argv));
 const cfg = vgCtx.config;
 // ONE LEAGUE, NAMED (S-9): `fact_draft_pick` now holds every league's picks.
 const LEAGUE = vgCtx.leagueId;
+// `player_value` is per-league since 2026-09-20. An unfiltered gate would sum two leagues' books
+// together and report a positional total nobody's league has.
+const VGQ = LEAGUE ? " AND pv.league_id = ?" : "";
+const VGP = LEAGUE ? [LEAGUE] : [];
 const ROOM = (cfg.teams ?? 16) * (cfg.budget ?? 200);
 const ROSTERED = (cfg.teams ?? 16) * (cfg.slots?.length ?? 12);
 
@@ -34,8 +38,8 @@ gate(ptRows >= 450, `points.csv rows = ${ptRows} (>= 450)`);
 // 2. book by position
 const rows = db.prepare(
   "SELECT p.position pos, count(*) n, sum(pv.our_value) total, max(pv.our_value) top " +
-  "FROM player_value pv JOIN player p USING(player_id) GROUP BY p.position ORDER BY total DESC",
-).all();
+  `FROM player_value pv JOIN player p USING(player_id) WHERE 1=1${VGQ} GROUP BY p.position ORDER BY total DESC`,
+).all(...VGP);
 console.log("\n  pos   n    book    top");
 for (const r of rows) console.log(`  ${String(r.pos).padEnd(4)} ${String(r.n).padStart(4)} ${String("$" + r.total).padStart(7)} ${String("$" + r.top).padStart(6)}`);
 console.log("");
@@ -73,8 +77,8 @@ const byPos = Object.fromEntries(rows.map((r) => [r.pos, r]));
 // ranges a position sits, so "$556 against $79-538" is a sentence an owner can act on.
 const bookTop = (() => {
   const all = db.prepare(
-    "SELECT p.position pos, pv.our_value v FROM player_value pv JOIN player p USING(player_id) ORDER BY pv.our_value DESC",
-  ).all().slice(0, ROSTERED);
+    `SELECT p.position pos, pv.our_value v FROM player_value pv JOIN player p USING(player_id) WHERE 1=1${VGQ} ORDER BY pv.our_value DESC`,
+  ).all(...VGP).slice(0, ROSTERED);
   const agg = {}; let tot = 0;
   for (const r of all) { agg[r.pos] = (agg[r.pos] ?? 0) + r.v; tot += r.v; }
   return { agg, tot };
@@ -211,8 +215,8 @@ const csv = fs.readFileSync("data/values.csv", "utf8").trim().split("\n").slice(
   .sort((a, b) => b.value - a.value).slice(0, 12);
 const dbTop = db.prepare(
   "SELECT p.name name, pv.our_value value FROM player_value pv JOIN player p USING(player_id) " +
-  "ORDER BY pv.our_value DESC, p.name LIMIT 40",
-).all();
+  `WHERE 1=1${VGQ} ORDER BY pv.our_value DESC, p.name LIMIT 40`,
+).all(...VGP);
 const dbNames = new Set(dbTop.slice(0, 12).map((r) => r.name));
 const missing = csv.filter((r) => !dbNames.has(r.name)).map((r) => `${r.name} $${r.value}`);
 gate(missing.length === 0, `values.csv top-12 == player_value top-12${missing.length ? " -- CSV-only: " + missing.join(", ") : ""}`);

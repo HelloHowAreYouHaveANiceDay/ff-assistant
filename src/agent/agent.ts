@@ -70,7 +70,7 @@ const BOARD_SQL = `
   FROM player_value pv JOIN player p USING(player_id)
   LEFT JOIN ranking re ON re.player_id=pv.player_id AND re.source='fantasypros_ecr' AND re.season=pv.season
   LEFT JOIN ranking rs ON rs.player_id=pv.player_id AND rs.source='espn'            AND rs.season=pv.season
-  WHERE pv.season=@season`;
+  WHERE pv.season=@season AND (@league IS NULL OR pv.league_id=@league)`;
 
 type Row = { name: string; pos: string; team: string; our_value: number; our_rank: number; pos_rank: string; proj_pts: number; tier: string; ecr: number; bye: number; espn: number };
 // vsECR/vsESPN = consensus rank minus OUR rank. POSITIVE = we rank them earlier than the room (a
@@ -99,7 +99,7 @@ function buildTools(dbPath: string | undefined, season: number) {
           const limit = args.limit && args.limit > 0 ? Math.min(args.limit, 60) : 12;
           assertBoardFor(db, activeLeagueId(db), "read_board");
           const sql = (pos && pos !== "ALL" ? BOARD_SQL + " AND p.position=@pos" : BOARD_SQL) + " ORDER BY pv.our_value DESC LIMIT @limit";
-          const rows = db.prepare(sql).all({ season, pos, limit }) as Row[];
+          const rows = db.prepare(sql).all({ season, pos, limit, league: activeLeagueId(db) }) as Row[];
           db.close();
           return { content: [{ type: "text", text: fmt(rows) }] };
         },
@@ -112,7 +112,7 @@ function buildTools(dbPath: string | undefined, season: number) {
           const db = openDb(dbPath);
           assertBoardFor(db, activeLeagueId(db), "player_detail");
           const row = db.prepare(BOARD_SQL + " AND lower(p.name) LIKE @q ORDER BY pv.our_value DESC LIMIT 1")
-            .get({ season, q: `%${(args.name || "").toLowerCase()}%` }) as Row | undefined;
+            .get({ season, q: `%${(args.name || "").toLowerCase()}%`, league: activeLeagueId(db) }) as Row | undefined;
           let extra = "";
           if (row) {
             const k = nameKey(row.name);

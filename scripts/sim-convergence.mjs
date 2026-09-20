@@ -55,7 +55,9 @@ for (const r of db.prepare(
 ).all(cfg.season)) byeOf.set(nameKey(r.name), r.bye);
 
 const board = new Map();
-for (const r of db.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(cfg.season)) {
+// Per-league board: the sim prices ONE league's pool with ONE league's dollars.
+for (const r of db.prepare(`SELECT player_id, row_json FROM board WHERE season=?${lgRow.league_id ? " AND league_id = ?" : ""}`)
+  .all(...(lgRow.league_id ? [cfg.season, lgRow.league_id] : [cfg.season]))) {
   const j = JSON.parse(r.row_json);
   board.set(r.player_id, { name: j.Player, pos: j.Pos, proj: j.ProjPts || 0, team: j.Team || "" });
 }

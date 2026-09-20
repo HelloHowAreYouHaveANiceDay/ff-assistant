@@ -35,7 +35,7 @@
  * rank; those are consumer concerns. If a column would change when our strategy changes, it does not
  * belong in staging.
  */
-import { openDb, nowIso, getConfig, type DB } from "../db/db.js";
+import { openDb, nowIso, getConfig, activeLeagueId, slotFilter, type DB } from "../db/db.js";
 import { resolveOrMint, crosswalkPeople, disputedIds, idBag } from "./identity.js";
 
 export interface RekeySummary {
@@ -188,9 +188,13 @@ export function buildStgPlayer(dbPath?: string): StgBuildResult {
     //    is visible and countable rather than inferred from a row that looks complete.
     // THE SEASON, BOUND AS A PARAMETER, from the config chokepoint -- not a correlated subselect into
     // the legacy `config` mirror, which is whichever league was made active last.
+    // THE ACTIVE LEAGUE'S board. Staging is a store-wide identity layer with no league of its own,
+    // and the board is per-league now, so an unfiltered read would union two leagues' pools and
+    // stage a player twice under one name key.
+    const stgF = slotFilter(activeLeagueId(db));
     for (const b of db.prepare(
-      "SELECT player_id, row_json FROM board WHERE season = ?",
-    ).all(getConfig(db).season) as { player_id: string; row_json: string }[]) {
+      `SELECT player_id, row_json FROM board WHERE season = ?${stgF.sql}`,
+    ).all(getConfig(db).season, ...stgF.args) as { player_id: string; row_json: string }[]) {
       const j = JSON.parse(b.row_json) as Record<string, unknown>;
       const pos = normPos(String(j.Pos ?? ""));
       if (!pos) continue;

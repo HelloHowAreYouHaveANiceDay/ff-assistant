@@ -135,7 +135,35 @@ rename in `migrate()` (`migrateLeagueIdPk`), existing rows backfilled to the act
   SHARED. They were wrongly migrated first, then reverted (rebuilt without `league_id`). Lesson: classify
   each table as league-data vs NFL/model-data before migrating; the tell was `DELETE FROM team_odds`
   wiping all leagues.
-- **Kept single-slot (active-league cache):** `board`, `player_value`, `player_value_position` -- the
+- **CLOSED 2026-09-20: `board`, `player_value` and `player_value_position` are PER LEAGUE.** They now
+  carry `league_id` at the head of their primary key, exactly as line 38 of this document always said
+  they must. `migrateSlotTable` converts an existing store in place (create-copy-drop-rename, row
+  count asserted); the live store migrated with its board content BYTE-IDENTICAL (sha `eac4bfee5a18`
+  before and after, 529 rows) and the ESPN lineup served the same eight men and the same 101.8 points
+  either side of it. Readers filter through one helper, `slotFilter(leagueId)`, which is EMPTY when
+  no league is known so a bare store reads exactly as it did before partitioning.
+
+  **What forced it, beyond tidiness:** the single slot meant `switchActiveLeague` began by deleting
+  all three tables for every league. Onboarding a second league mid-season therefore destroyed the
+  league you are actually playing -- its lineup stopped working until the board was rebuilt. The
+  stamp guard made that visible, which was the right fix for the shape the tables had, but visible
+  destruction is still destruction. Switching is now non-destructive and, for a league already built,
+  free.
+
+  **Backfilled from the STAMP, not the active league**, and deliberately not folded into
+  `migrateLeagueIdPk`: the board's owner is whoever built it, and a store whose active league had been
+  switched without a rebuild would have had its rows filed under the wrong league -- silently, in the
+  direction that serves one league's dollars under another's name.
+
+  Fault injection earned its keep twice here. Restoring the old `DELETE FROM board` left the first
+  version of the test GREEN, because switching to an ALREADY-BUILT league returns early and never
+  reaches the clear; the destructive path is switching to an UNBUILT one, which is the onboarding case.
+  And `switchActiveLeague` was reporting the GLOBAL stamp after a per-league switch -- null exactly
+  when a league is being onboarded, since the legacy key is written only for an active league that
+  already has a `league` row. Both are pinned in `test/board-multileague.test.ts`.
+
+- **Superseded (kept for the record) -- kept single-slot (active-league cache):** `board`,
+  `player_value`, `player_value_position` -- the
   INTENT was that they stay the active league's working set, regenerated whenever the active league
   switches, avoiding a pervasive reader cascade. **CORRECTION (2026-09-16 architecture review, finding
   S-8): the rebuild-on-switch half was never built.** `setActiveLeagueId` writes the two settings rows

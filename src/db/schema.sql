@@ -53,7 +53,11 @@ CREATE TABLE IF NOT EXISTS player_bio (
 -- OUR valuation + draft-season projection (proj_pts here is the full-season number; the L5
 -- `projection` table is the in-season WEEKLY grain -- different things, do not conflate)
 CREATE TABLE IF NOT EXISTS player_value (
-  player_id   TEXT PRIMARY KEY REFERENCES player(player_id),   -- legacy name_key
+  -- PER LEAGUE, with board and player_value_position (the three assemble writes together). A dollar
+  -- value is a statement about ONE league's economy; single-slot meant building league B's values
+  -- deleted league A's. migrateSlotTable converts existing stores.
+  league_id   TEXT NOT NULL,
+  player_id   TEXT REFERENCES player(player_id),   -- legacy name_key
   player_sk   INTEGER REFERENCES player_identity(player_sk),  -- stable identity: join HERE, not on the name
   season      INTEGER,
   our_value   INTEGER,
@@ -63,7 +67,8 @@ CREATE TABLE IF NOT EXISTS player_value (
   proj_pts    REAL,
   last_pts    REAL,
   last_gms    INTEGER,
-  updated_at  TEXT
+  updated_at  TEXT,
+  PRIMARY KEY (league_id, player_id)
 );
 
 -- per-source consensus rankings: one row per (player, source, season) -- ECR, ESPN, ...
@@ -242,12 +247,16 @@ CREATE INDEX IF NOT EXISTS idx_news_player ON news(player_id);
 -- Derived entirely from L1 by the assembler; rebuilt wholesale each assembly. NOT a source of
 -- truth -- the engine/agent read L1. Rebuild this whenever L1 changes.
 CREATE TABLE IF NOT EXISTS board (
+  -- PER LEAGUE. The board used to be a single slot, so building one league's board DELETED another's
+  -- (destructive mid-season: the live league's lineup went offline until it was rebuilt). Existing
+  -- stores are converted by migrateBoardLeagueId, which files the old rows under their STAMP's league.
+  league_id   TEXT NOT NULL,
   player_id   TEXT,                  -- legacy name_key
   player_sk   INTEGER REFERENCES player_identity(player_sk),  -- stable identity: join HERE, not on the name
   season      INTEGER,
   row_json    TEXT,
   updated_at  TEXT,
-  PRIMARY KEY (player_id, season)
+  PRIMARY KEY (league_id, player_id, season)
 );
 
 -- ================= L3: draft runtime (LIVE-UPSERT, per session) =================
@@ -1344,13 +1353,14 @@ CREATE TABLE IF NOT EXISTS player_eligibility (
 -- `player_value_position` entry on the `assemble` row of src/lineage/registry.ts. `switchActiveLeague`
 -- now clears it with the other two, which it could not safely do while nothing could rebuild it.
 CREATE TABLE IF NOT EXISTS player_value_position (
+  league_id      TEXT NOT NULL,      -- per league; see player_value
   player_id      TEXT,               -- name_key, the same key player_value uses
   season         INTEGER,
   board_pos      TEXT,               -- the position the projection carried
   value_pos      TEXT,               -- the eligible position the VOR was taken at
   eligible_json  TEXT,               -- the full eligible set, for audit
   updated_at     TEXT,
-  PRIMARY KEY (player_id, season)
+  PRIMARY KEY (league_id, player_id, season)
 );
 -- ================= RAW LAYER: this league's week-by-week rosters and transaction log =============
 --

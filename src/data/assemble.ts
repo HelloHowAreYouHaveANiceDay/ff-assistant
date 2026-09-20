@@ -153,30 +153,40 @@ export async function switchActiveLeague(
   // cannot run the rebuild can only ever assert the clear (which is exactly the W-2 gap).
   opts: { dbPath?: string; pointsPath?: string; rebuild?: boolean; reportPath?: string } = {},
 ): Promise<{ active: string; stamp: BoardStamp | null; rebuilt: boolean; cleared: boolean; reason?: string }> {
-  const prev = getBoardStamp(db);
+  // THE TARGET LEAGUE'S OWN stamp, not the global one. The legacy key is written only when the target
+  // is also the ACTIVE league and has a row in `league` -- i.e. it is null exactly when a league is
+  // being onboarded, which is the case this function exists to handle.
+  const prev = getBoardStamp(db, leagueId);
   setActiveLeagueId(db, leagueId);
   if (prev && prev.leagueId === leagueId && !prev.pending) {
     return { active: leagueId, stamp: prev, rebuilt: false, cleared: false };
   }
-  db.transaction(() => {
-    // All THREE now, because `player_value_position` has a producer again (WP3 restored it into
-    // `assemble` below, with its CREATE in schema.sql and its lineage entry). WP2 deliberately left
-    // it behind -- clearing a table with no producer is irreversible loss with no reader to protect,
-    // and doing it once cost 523 unrebuildable rows.
-    for (const t of ["board", "player_value", "player_value_position"]) {
-      try { db.prepare(`DELETE FROM "${t}"`).run(); } catch { /* table absent on a bare store */ }
-    }
-    setBoardStamp(db, { leagueId, pending: true });
-  })();
+  // NOTHING IS CLEARED ANY MORE, AND THAT IS THE POINT.
+  //
+  // This used to `DELETE FROM board / player_value / player_value_position` -- every row, every
+  // league -- because the three were a single slot and the incoming league needed it empty. The cost
+  // was that switching to league B DESTROYED league A's board: mid-season, the league you are
+  // actually playing loses its lineup until it is rebuilt. The stamp and the PENDING flag existed to
+  // make that destruction *visible*, which was the right fix for the shape the tables had.
+  //
+  // They are keyed by `league_id` now, so B's rows and A's coexist and `assemble` deletes only its
+  // own. A switch is therefore non-destructive and, when B has been built before, free.
+  const already = getBoardStamp(db, leagueId);
+  const hasRows = (db.prepare("SELECT COUNT(*) c FROM board WHERE league_id = ?").get(leagueId) as { c: number }).c > 0;
+  if (already && !already.pending && hasRows) {
+    // Already built for this league. Previously unreachable: the slot had just been wiped.
+    return { active: leagueId, stamp: already, rebuilt: false, cleared: false };
+  }
+  db.transaction(() => { setBoardStamp(db, { leagueId, pending: true }); })();
   if (opts.rebuild === false) {
-    return { active: leagueId, stamp: getBoardStamp(db), rebuilt: false, cleared: true, reason: "rebuild not requested" };
+    return { active: leagueId, stamp: getBoardStamp(db, leagueId), rebuilt: false, cleared: true, reason: "rebuild not requested" };
   }
   try {
     await assemble(opts.dbPath, opts.pointsPath, leagueId, { reportPath: opts.reportPath });
-    return { active: leagueId, stamp: getBoardStamp(db), rebuilt: true, cleared: true };
+    return { active: leagueId, stamp: getBoardStamp(db, leagueId), rebuilt: true, cleared: true };
   } catch (e) {
     return {
-      active: leagueId, stamp: getBoardStamp(db), rebuilt: false, cleared: true,
+      active: leagueId, stamp: getBoardStamp(db, leagueId), rebuilt: false, cleared: true,
       reason: `the board could not be rebuilt for league ${leagueId}: ${(e as Error).message}`,
     };
   }
@@ -406,11 +416,16 @@ export async function assemble(
   // it" from "the producer is disconnected" -- the two are indistinguishable from the stored state
   // alone, which is this repo's most expensive bug shape. So every build now STATES the outcome.
   let valPosWritten = 0;
+  // WHOSE ROWS THIS BUILD OWNS. The three slot tables are keyed by league now, so a rebuild must
+  // delete only THIS league's rows -- an unqualified DELETE would take the other league's board with
+  // it, which is precisely the destruction this partitioning exists to end. `""` is the no-league
+  // store's board: readers with no league in hand do not filter, so they still see it.
+  const boardLeague = lctx.leagueId ?? "";
   const tx = db.transaction(() => {
-    db.prepare("DELETE FROM player_value WHERE season=@s").run({ s: season });
+    db.prepare("DELETE FROM player_value WHERE season=@s AND league_id=@league").run({ s: season, league: boardLeague });
     db.prepare("DELETE FROM ranking WHERE source='espn' AND season=@s").run({ s: season });
-    db.prepare("DELETE FROM board WHERE season=@s").run({ s: season });
-    db.prepare("DELETE FROM player_value_position WHERE season=@s").run({ s: season });
+    db.prepare("DELETE FROM board WHERE season=@s AND league_id=@league").run({ s: season, league: boardLeague });
+    db.prepare("DELETE FROM player_value_position WHERE season=@s AND league_id=@league").run({ s: season, league: boardLeague });
     const upPlayer = db.prepare("INSERT INTO player (player_id, name, position, updated_at) VALUES (?,?,?,?) ON CONFLICT(player_id) DO NOTHING");
     // player_sk comes from STAGING, looked up by (name_key, position). Consumers get the stable id so
     // they can stop joining on names; player_id stays for the callers not yet migrated.
@@ -419,13 +434,13 @@ export async function assemble(
     // is gone: the layering rules forbid a consumer deciding identity, and "the name belongs to
     // exactly one staged player" is a decision -- one that silently reattaches a man his sources
     // reclassified to whoever else holds his name.
-    const upVal = db.prepare("INSERT INTO player_value (player_id, player_sk, season, our_value, our_rank, pos_rank, tier, proj_pts, last_pts, last_gms, updated_at) VALUES (@id,@sk,@s,@v,@rk,@pr,@t,@pp,@lp,@lg,@now)");
+    const upVal = db.prepare("INSERT INTO player_value (league_id, player_id, player_sk, season, our_value, our_rank, pos_rank, tier, proj_pts, last_pts, last_gms, updated_at) VALUES (@league,@id,@sk,@s,@v,@rk,@pr,@t,@pp,@lp,@lg,@now)");
     const upRank = db.prepare("INSERT INTO ranking (player_id, source, season, overall_rank, pos_rank, adp, fetched_at) VALUES (@id,'espn',@s,@rank,@pos,@adp,@now) ON CONFLICT(player_id,source,season) DO UPDATE SET overall_rank=excluded.overall_rank, pos_rank=excluded.pos_rank, adp=excluded.adp, fetched_at=excluded.fetched_at");
-    const upBoard = db.prepare("INSERT INTO board (player_id, player_sk, season, row_json, updated_at) VALUES (@id,@sk,@s,@json,@now)");
+    const upBoard = db.prepare("INSERT INTO board (league_id, player_id, player_sk, season, row_json, updated_at) VALUES (@league,@id,@sk,@s,@json,@now)");
     // WHICH POSITION THE DOLLAR VALUE WAS TAKEN AT. Written only when eligibility has actually been
     // ingested, so an EMPTY table means "not measured" rather than "everyone is single-eligible" --
     // the same distinction the `eligible` board column makes, and for the same reason.
-    const upValPos = db.prepare("INSERT INTO player_value_position (player_id, season, board_pos, value_pos, eligible_json, updated_at) VALUES (@id,@s,@bp,@vp,@ej,@now)");
+    const upValPos = db.prepare("INSERT INTO player_value_position (league_id, player_id, season, board_pos, value_pos, eligible_json, updated_at) VALUES (@league,@id,@s,@bp,@vp,@ej,@now)");
     const numOrNull = (x: unknown) => typeof x === "number" ? x : null;
     for (const r of rows) {
       const id = nameKey(r.player as string); if (!id) continue;
@@ -437,12 +452,12 @@ export async function assemble(
       // in the layer whose job identity is.
       const sk = typeof r.player_sk === "number" ? r.player_sk : null;
       if (sk == null) unresolved.push(String(r.player));
-      upVal.run({ id, sk, s: season, v: r.our_value, rk: r.rank, pr: r.pos_rank, t: r.tier, pp: numOrNull(r.proj_pts), lp: numOrNull(r.last_pts), lg: numOrNull(r.last_gms), now });
+      upVal.run({ league: boardLeague, id, sk, s: season, v: r.our_value, rk: r.rank, pr: r.pos_rank, t: r.tier, pp: numOrNull(r.proj_pts), lp: numOrNull(r.last_pts), lg: numOrNull(r.last_gms), now });
       if (typeof r.espn_rank === "number") upRank.run({ id, s: season, rank: r.espn_rank, pos: r.espn_pos || null, adp: numOrNull(r.espn_adp), now });
       const obj: Record<string, unknown> = {}; COLS.forEach((c, i) => (obj[HEAD[i]] = r[c]));
-      upBoard.run({ id, sk, s: season, json: JSON.stringify(obj), now });
+      upBoard.run({ league: boardLeague, id, sk, s: season, json: JSON.stringify(obj), now });
       if (eligKnown) {
-        upValPos.run({ id, s: season, bp: String(r.pos), vp: String(r.value_pos ?? r.pos),
+        upValPos.run({ league: boardLeague, id, s: season, bp: String(r.pos), vp: String(r.value_pos ?? r.pos),
           ej: JSON.stringify(elig.get(id) ?? [String(r.pos)]), now });
         valPosWritten++;
       }

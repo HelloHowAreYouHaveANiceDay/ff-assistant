@@ -27,6 +27,7 @@ import Database from "better-sqlite3";
 import { simulateSeasons, LEVEL_PRIOR_WEEKS, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "./season.js";
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
+import { slotFilter } from "../db/db.js";
 import { loadRosBlendFor, rosPerGame } from "./rosBlend.js";
 import { dataPath } from "../data/paths.js";
 import { loadEligibilityMap } from "../data/eligibility.js";
@@ -153,7 +154,8 @@ export async function loadSimContext(opts: {
   const outcomes = JSON.parse(readFileSync(fmt.model.require("rank-outcomes"), "utf8"));
   const corr = JSON.parse(readFileSync(fmt.model.require("correlation"), "utf8"));
   const board = new Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[] }>();
-  for (const r of db.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(cfg.season) as { player_id: string; row_json: string }[]) {
+  const boardF = slotFilter(ctx.leagueId);
+  for (const r of db.prepare(`SELECT player_id, row_json FROM board WHERE season=?${boardF.sql}`).all(cfg.season, ...boardF.args) as { player_id: string; row_json: string }[]) {
     const j = JSON.parse(r.row_json) as Record<string, unknown>;
     const eligible = eligByKey.get(r.player_id);
     board.set(r.player_id, { name: String(j.Player), pos: String(j.Pos), proj: Number(j.ProjPts) || 0, team: String(j.Team ?? ""), ...(eligible ? { eligible } : {}) });

@@ -6,9 +6,14 @@ import { nameKey } from "../src/draft/values.ts";
 import { optimalLineup } from "../src/inseason/lineup.ts";
 const { rosters } = JSON.parse(readFileSync("scratch-teams.json", "utf8"));
 const db = new Database("data/ff.db", { readonly: true });
+// THE ACTIVE LEAGUE'S board. `board` is per-league since 2026-09-20; an unfiltered read here would
+// union every league's pool and quietly double-count a player who is on two of them.
+const AUDIT_LG = (db.prepare("SELECT value FROM settings WHERE key='active_league'").get() || {}).value ?? null;
+const LGQ = AUDIT_LG ? " AND league_id = @lg" : "";
+const LGP = AUDIT_LG ? { lg: AUDIT_LG } : {};
 // QB landscape: our board proj, fftoday, ecr for all QBs
 const qb = [];
-for (const r of db.prepare("SELECT player_id, row_json FROM board WHERE season=2026").all()) {
+for (const r of db.prepare(`SELECT player_id, row_json FROM board WHERE season=2026${LGQ}`).all(LGP)) {
   const j = JSON.parse(r.row_json); if (j.Pos !== "QB") continue;
   qb.push({ pid: String(r.player_id), name: String(j.Player), our: Number(j.ProjPts) || 0, nk: nameKey(String(j.Player)) });
 }
@@ -39,11 +44,11 @@ console.log("  top5: " + scores.slice(0, 5).map((s) => `${s.abbrev}${s.us ? "*" 
 
 // Detroit correlation note: which 8==3 starters are Lions?
 const lionsNk = new Set();
-for (const r of db.prepare("SELECT row_json FROM board WHERE season=2026").all()) { const j = JSON.parse(r.row_json); if (j.Team === "DET") lionsNk.add(nameKey(String(j.Player))); }
+for (const r of db.prepare(`SELECT row_json FROM board WHERE season=2026${LGQ}`).all(LGP)) { const j = JSON.parse(r.row_json); if (j.Team === "DET") lionsNk.add(nameKey(String(j.Player))); }
 const us = teams.find((t) => t.tid === "8");
 console.log("\n8==3 starters on same NFL team (correlation risk):");
 const teamOf = new Map();
-for (const r of db.prepare("SELECT row_json FROM board WHERE season=2026").all()) { const j = JSON.parse(r.row_json); teamOf.set(nameKey(String(j.Player)), j.Team); }
+for (const r of db.prepare(`SELECT row_json FROM board WHERE season=2026${LGQ}`).all(LGP)) { const j = JSON.parse(r.row_json); teamOf.set(nameKey(String(j.Player)), j.Team); }
 const byNfl = {};
 for (const p of us.players) { const t = teamOf.get(nameKey(p.name)) ?? "?"; (byNfl[t] ??= []).push(`${p.name}(${p.pos})`); }
 for (const [t, ps] of Object.entries(byNfl)) if (ps.length > 1) console.log(`  ${t}: ${ps.join(", ")}`);

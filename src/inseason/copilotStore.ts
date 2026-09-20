@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
-import { getConfig, activeLeagueId, assertBoardFor, type AppConfig } from "../db/db.js";
+import { getConfig, activeLeagueId, assertBoardFor, slotFilter, type AppConfig } from "../db/db.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { scoringKey } from "../data/formatKey.js";
 import { resolveFormat } from "../data/formatResolve.js";
@@ -141,9 +141,10 @@ export function loadDepth(positions: string[], dbPath?: string, leagueId?: strin
   try {
     const season = configOf(db, leagueId).season;
     boardGuard(db, leagueId, "loadDepth");
+    const depthF = slotFilter(leagueId, "b");
     const rows = db.prepare(
-      "SELECT b.row_json, s.depth_order AS depth FROM board b LEFT JOIN player_status s USING(player_id) WHERE b.season = ?",
-    ).all(season) as { row_json: string; depth: number | null }[];
+      `SELECT b.row_json, s.depth_order AS depth FROM board b LEFT JOIN player_status s USING(player_id) WHERE b.season = ?${depthF.sql}`,
+    ).all(season, ...depthF.args) as { row_json: string; depth: number | null }[];
     const parsed = rows.map((r) => ({ j: JSON.parse(r.row_json) as Record<string, unknown>, depth: r.depth }));
     const poolSize: Record<string, number> = {};
     const poolRank = new Map<string, number>();
@@ -179,7 +180,8 @@ export function loadConsensusValues(dbPath?: string, leagueId?: string | null): 
       if (r.value != null) byId.set(r.player_id, Number(r.value));
     }
     const out = new Map<string, number>();
-    for (const r of db.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(season) as { player_id: string; row_json: string }[]) {
+    const cvF = slotFilter(leagueId);
+    for (const r of db.prepare(`SELECT player_id, row_json FROM board WHERE season=?${cvF.sql}`).all(season, ...cvF.args) as { player_id: string; row_json: string }[]) {
       const v = byId.get(r.player_id);
       if (v == null) continue;
       out.set(nameKey(String((JSON.parse(r.row_json) as { Player: string }).Player)), v);
@@ -231,7 +233,8 @@ export function loadProvenance(dbPath?: string, leagueId?: string | null): Prove
       try { key = scoringKey(lctx.config.scoring_rules); } catch { key = null; }
       const s = configOf(db, leagueId).season;
       boardGuard(db, leagueId, "loadProvenance");
-      const rows = (db.prepare("SELECT count(*) n FROM board WHERE season=?").get(s) as { n: number }).n;
+      const provF = slotFilter(leagueId);
+      const rows = (db.prepare(`SELECT count(*) n FROM board WHERE season=?${provF.sql}`).get(s, ...provF.args) as { n: number }).n;
       // The FORMAT's own artifacts, not the root's. Best-effort: an unbuilt format throws here and the
       // two stamps below are reported as null -- "we cannot say" -- rather than as the incumbent's.
       let mh: import("../data/formatResolve.js").ModelHandle | null = null;

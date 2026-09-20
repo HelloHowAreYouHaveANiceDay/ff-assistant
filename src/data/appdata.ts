@@ -1,6 +1,6 @@
 // The app's data payload (board + news + config), read from the store. Shared by `ff app-data`
 // (one-shot) and `ff serve` (the persistent helper), so there's one definition.
-import { getConfig, activeLeagueId, assertBoardFor, type DB } from "../db/db.js";
+import { getConfig, activeLeagueId, assertBoardFor, slotFilter, type DB } from "../db/db.js";
 import { LEVER_SPECS } from "../draft/levers.js";
 
 const NUM = new Set(["Rank", "Bye", "Age", "Wt", "40yd", "OurValue$", "vsECR", "ProjPts", "ECR", "ECR_Best", "ECR_Worst", "ESPN_Rank", "ESPN_ADP", "Rostered%", "Depth"]);
@@ -10,9 +10,10 @@ export function appDataPayload(db: DB, season: number, leagueId?: string | null)
   // single-slot and carries a stamp; a mismatch throws by name and names the fix.
   const lg = leagueId ?? activeLeagueId(db);
   assertBoardFor(db, lg, "app-data");
+  const f = slotFilter(lg);
   const players = (db.prepare(
-    "SELECT row_json FROM board WHERE season = ? ORDER BY CAST(json_extract(row_json,'$.Rank') AS INTEGER)",
-  ).all(season) as { row_json: string }[]).map((r) => JSON.parse(r.row_json) as Record<string, unknown>);
+    `SELECT row_json FROM board WHERE season = ?${f.sql} ORDER BY CAST(json_extract(row_json,'$.Rank') AS INTEGER)`,
+  ).all(season, ...f.args) as { row_json: string }[]).map((r) => JSON.parse(r.row_json) as Record<string, unknown>);
   for (const p of players) for (const k of Object.keys(p)) {
     const v = p[k];
     if (v === "" || v == null) continue;
@@ -37,8 +38,8 @@ export function appDataPayload(db: DB, season: number, leagueId?: string | null)
   // underneath a running app. The app loads the board once at boot; a `ff refresh` run from a
   // terminal changes SQLite and nothing tells the window, so a correctly-rebuilt board sits
   // invisible behind a correctly-loaded stale one. Both halves of that are silent without this.
-  const builtAt = (db.prepare("SELECT MAX(updated_at) AS m FROM board WHERE season = ?")
-    .get(season) as { m: string | null } | undefined)?.m ?? null;
+  const builtAt = (db.prepare(`SELECT MAX(updated_at) AS m FROM board WHERE season = ?${f.sql}`)
+    .get(season, ...f.args) as { m: string | null } | undefined)?.m ?? null;
   return { players, news, config, lastYr, leverSpecs: LEVER_SPECS, builtAt };
 }
 
@@ -50,10 +51,12 @@ export function appDataPayload(db: DB, season: number, leagueId?: string | null)
  *  second source of truth -- callers fall back to it only when the table is empty, and say so.
  *  scripts/value-gates.mjs asserts the two agree after a build. */
 export function valueBook(db: DB, season: number, leagueId?: string | null): { name: string; pos: string; value: number }[] {
-  assertBoardFor(db, leagueId ?? activeLeagueId(db), "valueBook");
+  const lg = leagueId ?? activeLeagueId(db);
+  assertBoardFor(db, lg, "valueBook");
+  const f = slotFilter(lg, "pv");
   return (db.prepare(
     "SELECT p.name AS name, p.position AS pos, pv.our_value AS value FROM player_value pv " +
-    "JOIN player p USING(player_id) WHERE pv.season = ? ORDER BY pv.our_value DESC",
-  ).all(season) as { name: string; pos: string; value: number }[])
+    `JOIN player p USING(player_id) WHERE pv.season = ?${f.sql} ORDER BY pv.our_value DESC`,
+  ).all(season, ...f.args) as { name: string; pos: string; value: number }[])
     .filter((r) => r.name && typeof r.value === "number" && !Number.isNaN(r.value));
 }

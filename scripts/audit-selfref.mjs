@@ -22,7 +22,9 @@ const MY_TEAM = String(lg.team_id);
 
 // --- board: player_id -> {name,pos,ourProj,player_sk} (exactly the sim's source) ---
 const board = new Map();
-for (const r of db.prepare("SELECT player_id, player_sk, row_json FROM board WHERE season=?").all(SEASON)) {
+// Per-league board: this audit is about ONE league's pool.
+for (const r of db.prepare(`SELECT player_id, player_sk, row_json FROM board WHERE season=?${lg.league_id ? " AND league_id = ?" : ""}`)
+  .all(...(lg.league_id ? [SEASON, lg.league_id] : [SEASON]))) {
   const j = JSON.parse(r.row_json);
   board.set(r.player_id, { name: String(j.Player), pos: String(j.Pos), proj: Number(j.ProjPts) || 0, sk: r.player_sk });
 }

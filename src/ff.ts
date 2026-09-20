@@ -12,7 +12,7 @@ import { inspectDraftDom } from "./draft/espnReader.js";
 import { loadRankings } from "./data/rankings.js";
 import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank.js";
 import { ingestAll } from "./data/ingest.js";
-import { openDb } from "./db/db.js";
+import { openDb, slotFilter, activeLeagueId } from "./db/db.js";
 import { dataPath } from "./data/paths.js";
 import { ESPN_READS_BASE } from "./data/espnApi.js";
 
@@ -326,8 +326,9 @@ async function cmdServe(rest: string[]) {
         // player rows and is far too expensive to poll.
         case "board-stamp": {
           const s = Number(params.season) || curSeason();
-          const row = db.prepare("SELECT MAX(updated_at) AS m, COUNT(*) AS n FROM board WHERE season = ?")
-            .get(s) as { m: string | null; n: number };
+          const stampF = slotFilter(activeLeagueId(db));
+          const row = db.prepare(`SELECT MAX(updated_at) AS m, COUNT(*) AS n FROM board WHERE season = ?${stampF.sql}`)
+            .get(s, ...stampF.args) as { m: string | null; n: number };
           // WHOSE BOARD (S-8), beside how old it is. `pending` means the league was switched and the
           // rebuild has not landed, so the app can say "no board for this league yet" instead of
           // rendering the previous league's dollars.
@@ -410,7 +411,8 @@ async function cmdServe(rest: string[]) {
 
           // The trace runs on the REAL board rows, and per position so the rank each factor is keyed
           // on is the rank the projection was actually built at.
-          const rows = db.prepare("SELECT row_json FROM board WHERE season=?").all(season) as { row_json: string }[];
+          const traceF = slotFilter(activeLeagueId(db));
+          const rows = db.prepare(`SELECT row_json FROM board WHERE season=?${traceF.sql}`).all(season, ...traceF.args) as { row_json: string }[];
           const parsed = rows.map((r) => JSON.parse(r.row_json) as Record<string, unknown>);
           const byPos: Record<string, { name: string; proj: number }[]> = {};
           for (const j of parsed) {
@@ -495,7 +497,10 @@ async function cmdServe(rest: string[]) {
           const lg = (aId
             ? db.prepare("SELECT league_id, name, season, team_id, scoring_json FROM league WHERE league_id = ?").get(aId)
             : undefined) as { league_id: string; name: string; season: number; team_id: string; scoring_json: string } | undefined;
-          const nPlayers = (db.prepare("SELECT count(*) c FROM player_value WHERE season = ?").get(cfg.season) as { c: number }).c;
+          // THIS LEAGUE's book. `onboarded` below is derived from it, so an unfiltered count would
+          // report a league as onboarded on the strength of ANOTHER league's values.
+          const npF = slotFilter(aId);
+          const nPlayers = (db.prepare(`SELECT count(*) c FROM player_value WHERE season = ?${npF.sql}`).get(cfg.season, ...npF.args) as { c: number }).c;
           result = { config: cfg, league: lg ?? null, players: nPlayers, onboarded: nPlayers > 0 && !!lg };
           break;
         }
@@ -1084,15 +1089,16 @@ async function cmdBuildStaging(rest: string[]) {
   // THE SEASON, BOUND, from the config chokepoint -- not a subselect into the legacy `config`
   // mirror, which is whichever league was made active last.
   const stgSeason = (await leagueCtx(rest, db)).config.season;
+  const covF = slotFilter(activeLeagueId(db), "b");
   const cov = db.prepare(
     `SELECT COUNT(*) n, SUM(EXISTS(SELECT 1 FROM stg_player s WHERE s.name_key=b.player_id)) matched
-     FROM board b WHERE b.season = ?`,
-  ).get(stgSeason) as { n: number; matched: number };
+     FROM board b WHERE b.season = ?${covF.sql}`,
+  ).get(stgSeason, ...covF.args) as { n: number; matched: number };
   console.log(`\n  board coverage: ${cov.matched}/${cov.n} current players resolve into staging`);
   const amb = db.prepare(
     `SELECT COUNT(*) c FROM board b JOIN stg_player s ON s.name_key=b.player_id
-     WHERE s.ambiguous=1 AND b.season = ?`,
-  ).get(stgSeason) as { c: number };
+     WHERE s.ambiguous=1 AND b.season = ?${covF.sql}`,
+  ).get(stgSeason, ...covF.args) as { c: number };
   console.log(`  of which ${amb.c} carry a name shared with another real player -- the rows where a`);
   console.log(`  name-based join can still silently return the wrong man.`);
   db.close();
@@ -3480,9 +3486,10 @@ async function cmdAutoDraft(rest: string[]) {
       const { openDb } = await import("./db/db.js");
       const db = openDb(valueOf(rest, "--db"));
       const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
+      const vF = slotFilter(activeLeagueId(db), "pv");
       const vrows = db
-        .prepare("SELECT p.name AS name, p.position AS pos, pv.our_value AS v FROM player_value pv JOIN player p USING(player_id) WHERE pv.season = ?")
-        .all(season) as { name: string; pos: string; v: number }[];
+        .prepare(`SELECT p.name AS name, p.position AS pos, pv.our_value AS v FROM player_value pv JOIN player p USING(player_id) WHERE pv.season = ?${vF.sql}`)
+        .all(season, ...vF.args) as { name: string; pos: string; v: number }[];
       db.close();
       for (const r of vrows) {
         const k = nameKey(r.name);
