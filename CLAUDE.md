@@ -179,6 +179,17 @@ that is defined but not wired reads exactly like a lever that does nothing.
   changed nothing. Use the **Edit/Write tools** for anything with escapes or quotes.
 - Backticks inside a double-quoted `python -c "..."` are **command substitution to bash**.
 - Bash-tool cwd resets between calls — always `cd <repo> && ...` in one call.
+- **NEVER read a gate's exit code through a pipe.** `npm run ff -- evaluate-weekly | tee log` reports
+  `tee`'s status, not the gate's — bash has no `pipefail` unless you set it. MEASURED 2026-09-20:
+  the same throwing command is `EXIT=1` direct and `EXIT=0` piped. This cost a false RCA — a gate run
+  whose fold failed was read as "exited with code 0" and written up as *`evaluate-weekly` swallows a
+  failed fold and exits 0*, which is the claim in commit `55dc9c0`'s message. **THAT CLAIM IS FALSE
+  and is retracted here.** `trainHoldout` (`src/weekly/evaluate.ts`) and `trainFold`
+  (`src/weekly/streamingEvaluate.ts`) both throw, neither fold loop catches, and `main().catch` in
+  `src/ff.ts` exits 1 — a failed fold aborts the run and NO verdict is printed, so the gate cannot
+  pass on fewer folds than it claims. Redirect to a file and read it (`> log 2>&1; echo $?`), or
+  `set -o pipefail` first. The general rule: a wrapper that reports success is indistinguishable from
+  a command that succeeded, so verify the wrapper before believing the status.
 - A backgrounded job survives a tool timeout and stays invisible to Git Bash `ps`; two concurrent
   backtests once turned a 2-minute job into a 2-hour stall. That stall was **orphaned background jobs**,
   NOT CPU oversubscription: a single `ff backtest` is **single-threaded -- MEASURED at 1.03 of 32 cores
