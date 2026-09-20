@@ -193,7 +193,14 @@ test("THE SEPT-1 PIN IS BACKED BY SEPT-1 DATA -- the label is a claim, and this 
     //
     // The count may only go DOWN. If it rises, something re-introduced the bug; if it reaches zero,
     // delete this arm and hold the whole table to zero.
-    const HISTORICAL_BACKLOG = 283;
+    // 283 -> 210 after the 1999-2025 rebuild (2026-09-19). The RESIDUAL has a known cause and is
+    // not the same bug: `teamFirst` comes from the nflverse STATS feed, which only carries weeks a
+    // player recorded something in, while `feat_player_week.team` comes from history-weekly, which
+    // carries weeks he was merely rostered. Marcus Nash 1999 is the shape -- rostered on BAL in
+    // week 1, first STATISTICAL week on DEN, so the pin says DEN. Closing it means giving the season
+    // pin the same per-week source the weekly table uses, which is a build-order change, not a
+    // one-liner.
+    const HISTORICAL_BACKLOG = 210;
     const hist = rows.filter((r) => r.season !== cur);
     assert.ok(hist.length <= HISTORICAL_BACKLOG,
       `historical pin/week-1 disagreements rose to ${hist.length} from the recorded ${HISTORICAL_BACKLOG}. ` +
