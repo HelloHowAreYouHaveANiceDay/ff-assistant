@@ -3,7 +3,7 @@
   "kind": "weekly",
   "zeroModel": "quantile",
   "fittedFrom": "tools/train_weekly.py",
-  "fittedAt": "2026-09-17",
+  "fittedAt": "2026-09-19",
   "seasons": [
     2010,
     2011,
@@ -27,8 +27,8 @@
   "population": "rostered",
   "trainMinLine": 0.0,
   "rowFilter": "in_population",
-  "populationHash": "a2771c1af4732f31",
-  "populationRows": 79567,
+  "populationHash": "a27d935df713db71",
+  "populationRows": 79580,
   "features": [],
   "coef": {
     "QB": {
@@ -39,10 +39,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.8765230239677236
+        "intercept": 0.8741843278660675
       },
       "p90": {
-        "intercept": 2.2676774144302723
+        "intercept": 2.253938727815684
       }
     },
     "RB": {
@@ -53,10 +53,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.7349080598312856
+        "intercept": 0.7348887925910509
       },
       "p90": {
-        "intercept": 2.9120088011150984
+        "intercept": 2.883969563482629
       }
     },
     "WR": {
@@ -67,10 +67,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.8225597685768506
+        "intercept": 0.811968901086597
       },
       "p90": {
-        "intercept": 2.6374808981556974
+        "intercept": 2.6289391810171883
       }
     },
     "TE": {
@@ -81,10 +81,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.6942744092191875
+        "intercept": 0.6774029101659087
       },
       "p90": {
-        "intercept": 2.6153830071804802
+        "intercept": 2.5550481524883373
       }
     },
     "K": {
@@ -95,10 +95,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.9227576158272427
+        "intercept": 0.922028785423763
       },
       "p90": {
-        "intercept": 2.001199196427504
+        "intercept": 1.998646067306372
       }
     },
     "DST": {
@@ -120,7 +120,7 @@
     "lo": 0.0,
     "hi": 4.0
   },
-  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 0) are 24.6% of the training rows.",
+  "notes": "season-line-only floor: mean intercept exactly 1.0, so the projection IS the preseason season line per game. Quantile intercepts are the EMPIRICAL ratio quantiles on the training seasons, which is a measured spread rather than an invented one. Zero weeks (pts <= 0) are 24.7% of the training rows.",
   "bandCalibration": {
     "method": "conformal-scale",
     "levels": {
@@ -132,91 +132,91 @@
     "perPos": {
       "QB": {
         "p10": 1.0,
-        "p90": 0.993752,
-        "n": 11055,
+        "p90": 1.00207,
+        "n": 11056,
         "nLo": 0,
         "oofBefore": {
-          "cover": 0.886658,
-          "below": 0.014654,
-          "above": 0.098688,
+          "cover": 0.885221,
+          "below": 0.01402,
+          "above": 0.10076,
           "belowGivenFloor": 0.0
         },
         "oofAfter": {
-          "cover": 0.885301,
-          "below": 0.014654,
-          "above": 0.100045,
+          "cover": 0.885944,
+          "below": 0.01402,
+          "above": 0.100036,
           "belowGivenFloor": 0.0
         }
       },
       "RB": {
         "p10": 1.0,
-        "p90": 0.99967,
-        "n": 19176,
+        "p90": 1.004604,
+        "n": 19199,
         "nLo": 0,
         "oofBefore": {
-          "cover": 0.891583,
-          "below": 0.008448,
-          "above": 0.099969,
+          "cover": 0.890723,
+          "below": 0.008282,
+          "above": 0.100995,
           "belowGivenFloor": 0.0
         },
         "oofAfter": {
-          "cover": 0.891531,
-          "below": 0.008448,
-          "above": 0.100021,
+          "cover": 0.891713,
+          "below": 0.008282,
+          "above": 0.100005,
           "belowGivenFloor": 0.0
         }
       },
       "WR": {
         "p10": 1.0,
-        "p90": 0.99942,
-        "n": 21461,
+        "p90": 1.001204,
+        "n": 21463,
         "nLo": 0,
         "oofBefore": {
-          "cover": 0.897954,
-          "below": 0.002097,
-          "above": 0.099949,
+          "cover": 0.897684,
+          "below": 0.002143,
+          "above": 0.100172,
           "belowGivenFloor": 0.0
         },
         "oofAfter": {
-          "cover": 0.897908,
-          "below": 0.002097,
-          "above": 0.099995,
+          "cover": 0.897824,
+          "below": 0.002143,
+          "above": 0.100033,
           "belowGivenFloor": 0.0
         }
       },
       "TE": {
         "p10": 1.0,
-        "p90": 1.000955,
-        "n": 10968,
+        "p90": 1.002896,
+        "n": 10960,
         "nLo": 0,
         "oofBefore": {
-          "cover": 0.897976,
-          "below": 0.001641,
-          "above": 0.100383,
+          "cover": 0.89781,
+          "below": 0.001642,
+          "above": 0.100547,
           "belowGivenFloor": 0.0
         },
         "oofAfter": {
-          "cover": 0.898341,
-          "below": 0.001641,
-          "above": 0.100018,
+          "cover": 0.898358,
+          "below": 0.001642,
+          "above": 0.1,
           "belowGivenFloor": 0.0
         }
       },
       "K": {
         "p10": 1.0,
-        "p90": 1.004365,
-        "n": 8557,
+        "p90": 1.002152,
+        "n": 8552,
         "nLo": 0,
         "oofBefore": {
-          "cover": 0.890265,
-          "below": 0.008765,
-          "above": 0.10097,
+          "cover": 0.890786,
+          "below": 0.00877,
+          "above": 0.100444,
           "belowGivenFloor": 0.0
         },
         "oofAfter": {
-          "cover": 0.891317,
-          "below": 0.008765,
-          "above": 0.099918,
+          "cover": 0.891137,
+          "below": 0.00877,
+          "above": 0.100094,
           "belowGivenFloor": 0.0
         }
       },
@@ -274,9 +274,9 @@
       },
       "expect": {
         "mean": 14.5,
-        "p50": 10.65616686755364,
+        "p50": 10.655887492570239,
         "p10": 0.0,
-        "p90": 42.21019365405559
+        "p90": 42.010086710617095
       }
     },
     {
@@ -311,9 +311,9 @@
       },
       "expect": {
         "mean": 11.0,
-        "p50": 9.048157454345358,
+        "p50": 8.931657911952568,
         "p10": 0.0,
-        "p90": 28.995462751582437
+        "p90": 28.95314866170246
       }
     },
     {
@@ -347,9 +347,9 @@
       },
       "expect": {
         "mean": 19.5,
-        "p50": 17.09219896737061,
+        "p50": 17.046594393388315,
         "p10": 0.0,
-        "p90": 43.943424835925775
+        "p90": 44.042785429154115
       }
     },
     {
@@ -384,9 +384,9 @@
       },
       "expect": {
         "mean": 7.5,
-        "p50": 5.207058069143907,
+        "p50": 5.080521826244315,
         "p10": 0.0,
-        "p90": 19.634105234642533
+        "p90": 19.218356789534575
       }
     },
     {
@@ -399,9 +399,9 @@
       },
       "expect": {
         "mean": 9.0,
-        "p50": 6.61417253848157,
+        "p50": 6.613999133319458,
         "p10": 0.0,
-        "p90": 26.199430543896572
+        "p90": 26.075226234176128
       }
     },
     {
@@ -436,9 +436,9 @@
       },
       "expect": {
         "mean": 13.0,
-        "p50": 10.693276991499058,
+        "p50": 10.555595714125761,
         "p10": 0.0,
-        "p90": 34.26736507005197
+        "p90": 34.217357509284724
       }
     }
   ]
