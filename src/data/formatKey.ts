@@ -113,6 +113,30 @@ export interface KeyableConfig {
   kicker?: KickerRules | null;
   defense?: DefenseRules | null;
   format?: { regWeeks?: number; playoffTeams?: number; playoffWeeks?: number[]; playoffRoundWeeks?: number; playoffReseed?: boolean; seeding?: string } | null;
+  /**
+   * REDRAFT, KEEPER OR DYNASTY -- and the reason it is keyed at the VALUE layer (Wall 3, 2026-09-20).
+   *
+   * A dynasty league and a redraft league can agree on every field above: same scoring, same slots,
+   * same team count, same calendar. They do NOT agree on what a player is worth, because in one of
+   * them you keep him. Before the Sleeper adaptor this was hypothetical -- nothing could express
+   * dynasty, so no two configs could collide on it. Sleeper publishes `settings.type` as a first-class
+   * flag, so it is expressible now, and two such leagues would otherwise SHARE a trained value book
+   * and a golden master with nothing to warn.
+   *
+   * ABSENT AND "redraft" ARE THE SAME KEY, DELIBERATELY. `canonical` drops `undefined`, and the
+   * normalisation below folds an explicit "redraft" into absence, so every key this repo has already
+   * computed is byte-identical -- asserted as a positive control in test/format-key-dynasty.test.ts.
+   * Only a league that says it is a keeper or dynasty league forks, which is the only case that
+   * should.
+   */
+  leagueType?: string | null;
+}
+
+/** The value-layer league type, or `undefined` when it is (or is equivalent to) plain redraft.
+ *  Folding "redraft" into absence is what keeps every pre-existing key unchanged. */
+export function keyableLeagueType(t: string | null | undefined): string | undefined {
+  const s = String(t ?? "").trim().toLowerCase();
+  return !s || s === "redraft" || s === "0" ? undefined : s;
 }
 
 /**
@@ -139,6 +163,8 @@ export function valueKey(cfg: KeyableConfig): string {
       .map((g) => ({ elig: [...g.elig].sort(), count: g.count }))
       .sort((a, b) => (a.elig.join("/") < b.elig.join("/") ? -1 : a.elig.join("/") > b.elig.join("/") ? 1 : a.count - b.count)),
     draftType: cfg.draftType ?? "auction",
+    // Present ONLY for a keeper/dynasty league, so a redraft config hashes exactly as it always has.
+    ...(keyableLeagueType(cfg.leagueType) ? { leagueType: keyableLeagueType(cfg.leagueType) } : {}),
   };
   return `vk-${hash12(canonicalJson(payload))}`;
 }

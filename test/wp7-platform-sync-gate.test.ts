@@ -27,6 +27,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { assertUnregistered } from "./helpers/unknown-platform.js";
 import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,7 +36,7 @@ import { dataPath } from "../src/data/paths.js";
 import { ownershipRowsFrom, writeOwnership } from "../src/data/ownershipSync.js";
 import { espnRostersFromPayload } from "../src/league/espnPlatform.js";
 import { yahooPlatform } from "../src/league/yahoo.js";
-import { platformFor } from "../src/league/platform.js";
+import { knownPlatforms, platformFor } from "../src/league/platform.js";
 import type { PlatformIO, PlatformRoster } from "../src/league/platform.js";
 import { fitPaths } from "../scripts/lib/format-paths.mjs";
 import { loadGolden, NoGoldenError } from "../scripts/lib/golden.mjs";
@@ -155,8 +156,18 @@ test("writeOwnership REFUSES to wipe real rows with an empty pull, and is league
 test("platformFor dispatches both adaptors and refuses an unknown platform BY NAME", async () => {
   assert.equal((await platformFor("espn")).id, "espn");
   assert.equal((await platformFor("yahoo")).id, "yahoo");
-  assert.equal((await platformFor("yahoo")).webview.host, yahooPlatform.webview.host);
-  await assert.rejects(() => platformFor("sleeper"), /no platform adaptor for "sleeper".*espn, yahoo/s);
+  // `host` is a PLATFORM fact and moved off `WebviewSpec` (2026-09-19). This line used to read
+  // `.webview.host` on BOTH sides, so it compared undefined to undefined and asserted nothing.
+  assert.equal((await platformFor("yahoo")).host, yahooPlatform.host);
+  assert.ok(yahooPlatform.host, "a platform must name a host -- an empty one would make the line above vacuous again");
+  // The id AND the expected list are derived; both were hardcoded, and both broke when a third
+  // adaptor landed. See test/helpers/unknown-platform.ts.
+  const unknown = assertUnregistered();
+  await assert.rejects(() => platformFor(unknown), (e: Error) => {
+    assert.match(e.message, new RegExp(`no platform adaptor for "${unknown}"`));
+    for (const id of knownPlatforms()) assert.ok(e.message.includes(id), `the refusal must list ${id}`);
+    return true;
+  });
   await assert.rejects(() => platformFor(null), /no platform adaptor for "unknown"/);
 });
 

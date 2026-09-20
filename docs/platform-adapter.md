@@ -154,3 +154,48 @@ Honest about what is still awkward, so nobody rediscovers it:
   registered in the running process, `ctx.platform` is `null`. The raw string survives as
   `platformRaw` and `platformFor` refuses it **by name**, so nothing is silently handed ESPN's
   adaptor — but a runtime registration must happen before the context is resolved, not after.
+
+## A worked example, and what building it changed in this contract
+
+`src/league/sleeper.ts` is the third adaptor and the first written against this document rather than
+alongside the contract. It is a good one to copy: read-only, public, ~350 lines, with
+`test/sleeper-adapter.test.ts` driving saved fixtures through `filePlatformIO` and
+`scripts/sleeper-live-check.ts` proving the live API still has that shape.
+
+Writing it found **three things this contract had assumed without saying so**, all now fixed. If you
+are adding a fourth platform, these are the ones most likely to bite you next:
+
+1. **`PlatformIO` is not necessarily authenticated.** It documented itself as "an AUTHENTICATED GET"
+   whose plain-fetch form "gets a login page". Sleeper needs no credential at all. Use
+   **`publicPlatformIO()`** for a public API. Do NOT pass an empty cookie to `cookiePlatformIO` --
+   it refuses one, deliberately, because for ESPN an empty session is a 401 that returns valid JSON
+   with no teams in it, which reads downstream as "the league is empty".
+2. **`discover(io, wantSeason)` assumes the session carries your identity.** For ESPN and Yahoo the
+   login IS the identity. A public API is anonymous, so it cannot know whose leagues to list. Take
+   the identity explicitly (Sleeper reads `FF_SLEEPER_USER`, or `hints.swid`, which is the contract's
+   existing "who are we on this platform" channel) and **refuse by name when it is missing** --
+   returning `[]` would make "you are in no leagues" indistinguishable from "nobody told me who you
+   are".
+3. **`syncSettings` had no caller from a terminal.** `ff sync-settings` is a separate ESPN-only
+   Playwright body that refuses every other platform by name, so an adaptor could satisfy this entire
+   contract and still have no way to put its league in the store. Use
+   **`npx tsx scripts/platform-onboard.ts --platform <id> --league <id> [--write]`** -- dry-run by
+   default, and it never touches `active_league`.
+
+### Two more rough edges it confirmed
+
+- **`discover_leagues` (`src/agent/agent.ts`) hand-enumerates ESPN and Yahoo halves.** Your platform
+  will not appear there until it iterates `knownPlatforms()`. `platformFor` and the CLI are fine; it
+  is that one MCP tool.
+- **Your league's scoring probably forks the model key, and then it cannot be served.** The model
+  directory is chosen by `scoringKey` alone, and there is deliberately no fallback to the `data/`
+  root. One field is enough: The Dy-nasty pays **-1** per interception where the incumbent pays -2,
+  which is `sc-f29ac5025aff` vs `sc-f6143a8dfb13` and a ~1 GB `data/formats/<key>/` build.
+  `scripts/sleeper-format-key.ts` shows the comparison for one league; the refusal names the two
+  commands that build it.
+
+### Do not reuse a real product name as your "unregistered platform" placeholder
+
+Seven tests used `"sleeper"` to mean "a platform with no adaptor". All seven broke the day a Sleeper
+adaptor landed -- each asserting that a registered platform is unknown. `test/helpers/unknown-platform.ts`
+now holds one id that cannot become real, and `assertUnregistered()` fails loudly if it ever does.

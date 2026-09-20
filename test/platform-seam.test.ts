@@ -12,6 +12,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { knownPlatforms, platformFor } from "../src/league/platform.js";
+import { assertUnregistered } from "./helpers/unknown-platform.js";
 import { espnDiscoverFromLinks, espnIdentityProblem, espnPlatform, espnSlotsToConfig, espnLeagueApiUrl } from "../src/league/espnPlatform.js";
 import { yahooPlatform } from "../src/league/yahoo.js";
 
@@ -22,7 +23,18 @@ test("the registry resolves every known platform and REFUSES an unknown one by n
   for (const id of knownPlatforms()) assert.equal((await platformFor(id)).id, id);
   // Positive first (a registry that could only ever throw would pass a refusal-only test), then the
   // refusal -- which is the thing `openLeague` could not reach before.
-  await assert.rejects(() => platformFor("sleeper"), /no platform adaptor for "sleeper".*espn, yahoo/s);
+  // The id and the expected list are both DERIVED. Hardcoding either is the rot that broke this
+  // test when a Sleeper adaptor landed: it asserted that a now-registered platform is unknown, and
+  // that the known list is exactly "espn, yahoo". See test/helpers/unknown-platform.ts.
+  const unknown = assertUnregistered();
+  await assert.rejects(
+    () => platformFor(unknown),
+    (e: Error) => {
+      assert.match(e.message, new RegExp(`no platform adaptor for "${unknown}"`));
+      for (const id of knownPlatforms()) assert.ok(e.message.includes(id), `the refusal must list ${id}`);
+      return true;
+    },
+  );
   await assert.rejects(() => platformFor(null), /no platform adaptor for "unknown"/);
   await assert.rejects(() => platformFor(""), /no platform adaptor for "unknown"/);
 });

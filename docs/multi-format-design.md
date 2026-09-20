@@ -802,3 +802,115 @@ own `data/history-points.csv` carries 24,579 IDP rows (LB/DB/DL) that are curren
 filler and whose VOR sits in `computeValues`'s denominator, and removing them moves the ESPN golden
 from 39.5%/96% to 36.0%/94%. That is a value change under the one rule (D13), so it is left on the
 table with its number attached rather than smuggled in inside a draft-seam refactor.
+
+## Wall 3 -- DYNASTY (2026-09-20): the ADAPTOR is closed, the VALUATION is open
+
+The third wall, found the same way the first two were: by pointing the repo at a real league it was
+never built for. **"The Dy-nasty"** on Sleeper -- `1353038434335195136`, 10 teams, `settings.type: 2`
+(dynasty), SUPER_FLEX, no kicker, half PPR, FAAB $100 -- with an unbroken `previous_league_id` chain
+back through **2021**.
+
+### What the real league did to the general problem
+
+A general "dynasty support" analysis produced six blockers. Four of them evaporated on contact with
+an actual league, which is the entire argument for not designing against an imagined one:
+
+| Blocker (general) | This league |
+|---|---|
+| Superflex valuation | **Already solved.** SUPER_FLEX maps to ESPN slot 7 (`OP`); `slotEligibility` returns QB/RB/WR/TE for `OP` and `SUPERFLEX` alike, so D24/D25.3 accepted it with NO change. This is the second real case for that abstraction. |
+| Taxi squads | `taxi_slots: 0`. Does not exist here. |
+| Non-standard scoring | Standard half PPR. `ScoringRules` covers it as-is. |
+| FAAB waivers | `train_faab.py` / `faab-model.json` already model this. |
+| Rookie picks as assets | **STILL OPEN.** `draft_rounds: 3`; trades price current-season title delta only. |
+| Dynasty valuation + its arbiter | **STILL OPEN.** See below. |
+
+### CLOSED: the adaptor (`src/league/sleeper.ts`, `test/sleeper-adapter.test.ts`)
+
+Read-only, public, no session. It satisfies the whole `Platform` contract and is ground-truthed:
+Sleeper publishes each roster's own week score beside per-player points, so **our week-1 starters sum
+to Sleeper's reported score on all 10 rosters, exactly**. Two faults were injected to prove the tests
+can fail -- and the first one CAUGHT A GAP: an off-by-one in the `starters[i] -> slot` alignment left
+all 22 tests green, because the sum is blind to which slot a starter holds. The test that closes it
+(`every week-1 starter is POSITION-ELIGIBLE for his slot`) was written against the broken code.
+
+**Two latent assumptions in the `Platform` contract surfaced, and both are fixed at their site:**
+
+1. `PlatformIO` documented itself as "an AUTHENTICATED GET" whose plain-fetch form "gets a login
+   page". Sleeper needs no credential at all. Fixed by `publicPlatformIO` -- a SECOND provider that
+   states the platform is public, rather than by weakening `cookiePlatformIO`, whose strictness about
+   empty jars is load-bearing for ESPN (a 401 there returns valid JSON with no teams in it).
+2. `discover(io, wantSeason)` assumed the IO carries our identity, because for ESPN and Yahoo the
+   session IS the identity. With no session, `sleeperUser()` must be told, and REFUSES BY NAME when
+   it is not -- "you are in no leagues" and "nobody told me who you are" must not be the same answer.
+
+**A third gap is closed by `scripts/platform-onboard.ts`:** `Platform.syncSettings` had NO caller from
+a terminal. `ff sync-settings` is a separate ESPN-only Playwright body that refuses every other
+platform by name, so an adaptor could satisfy the entire contract and still have no way to put its
+league in the store. The script is dry-run by default and never touches `active_league`.
+
+**Still hand-enumerated, and therefore still rotting:** `discover_leagues` in `src/agent/agent.ts`
+has an ESPN half and a Yahoo half written out by hand, so Sleeper is invisible to it. It should
+iterate `knownPlatforms()`. Not fixed here.
+
+### OPEN: the valuation, and the reason it is not merely unfinished
+
+`ValueLeague` is `{teams, budget, rosterSpots, starters, flexGroups}` -- there is no time dimension
+anywhere in it, and `computeValues` has five callers, ALL draft-time (in-season prices through
+`perGameStrength` and title delta instead). Dynasty value is a discounted stream of future surplus,
+which is a different function, not a parameter.
+
+**The harder half is that there is no arbiter.** `runBacktest` takes ONE season's points and has no
+incoming-roster parameter, so roster continuity -- the central dynamic of dynasty -- is not
+representable, and the one rule's gate cannot speak on a dynasty value change.
+
+The `previous_league_id` chain (2021-2026) is real multi-season history to build against, and that is
+genuinely better than an invented sim. **It is not a gate.** Five season-transitions in one league is
+far below this repo's own bar -- the unit of analysis is the SEASON, and the championship backtest's
+effective n is ~25. Enough to develop and sanity-check against; not enough to certify a value change,
+and it must not be allowed to pretend otherwise.
+
+### The serve, and what blocks it
+
+The league is in the store and resolves (`platform sleeper`, team 8, slots `QB RB RB WR WR TE FLEX
+FLEX OP DST`). It cannot be SERVED yet because its scoring forks the model key:
+
+```
+sleeper 1353038434335195136   sc-f29ac5025aff   rec=0.5 passTD=4 int=-1
+espn    462233 (incumbent)    sc-f6143a8dfb13   rec=0.5 passTD=4 int=-2
+```
+
+**One field -- an interception worth -1 instead of -2 -- and it needs its own `data/formats/<key>/`**
+(the Yahoo one is 981 MB). That is the design working as intended; a shared model would be silently
+wrong. `scripts/sleeper-format-key.ts` prints this comparison.
+
+### The key hazard this opened -- CLOSED, but not where I first put the guard
+
+`formatKey` hashed scoring, roster/eligibility, teams and the playoff calendar and **did not hash the
+league type**. Before this adaptor that was hypothetical, because dynasty was not expressible at all;
+Sleeper publishes `settings.type`, so it became real.
+
+**First fix, and it was not enough on its own.** `LeagueSettings.leagueType` is now a first-class
+optional field (absent means "this platform does not say"), threaded through `AppConfig` and hashed by
+`valueKey`. Absent and `"redraft"` normalise to the SAME key, so every key this repo had already
+computed is byte-identical and `data/formats/sc-a845f67652fb` is not orphaned -- asserted as a
+positive control before anything else in `test/format-key-dynasty.test.ts`.
+
+**It was very nearly a dead lever, twice.**
+
+1. `asKeyable` in `formatResolve.ts` builds the `KeyableConfig` field by field and did not carry
+   `leagueType`, so the field never reached `valueKey` in production while every unit test -- each
+   calling `valueKey` directly -- stayed green.
+2. Worse, and the reason the guard moved: **the model DIRECTORY is selected by `scoringKey` alone.**
+   `valueKey` and `formatKey` are recorded on the resolved format but select nothing (layers 2 and 3
+   "join as their layers are built"). So a dynasty league whose scoring matched the incumbent's would
+   take the `incumbent-root` alias and be handed the root's REDRAFT value book and golden master --
+   the exact silent cross-format serve that branch's own comment warns about, one layer up. A
+   different `valueKey` would have been computed, recorded, and read by nobody.
+
+So the guard that actually bites is a **named refusal in the incumbent-alias branch**: a keeper or
+dynasty league is refused the root model whatever its scoring is. Fault-injected -- disabling it makes
+the test fail -- with a positive control proving the same config still resolves without the flag.
+
+**Still open:** nothing yet keys a format DIRECTORY by `valueKey`, so two leagues that differ only
+below the scoring layer still share a directory. That is pre-existing and larger than Wall 3; the
+dynasty case is closed by the refusal above rather than by fixing the layering.

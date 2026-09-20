@@ -12,6 +12,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { UNKNOWN_PLATFORM, assertUnregistered } from "./helpers/unknown-platform.js";
 import Database from "better-sqlite3";
 import {
   migrate, getConfig, setConfig, setActiveLeagueId, setSetting, getSetting,
@@ -84,18 +85,18 @@ test("openLeague REFUSES a platform with NO adaptor BY NAME -- the branch that u
   const path = join(mkdtempSync(join(tmpdir(), "ff-platform-")), "ff.db");
   const { openDb } = await import("../src/db/db.js");
   const db = openDb(path);
-  db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES ('777777','sleeper','sleeper league',2026,'3','2026-09-16T00:00:00Z')").run();
+  db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES ('777777',?,'a league on no platform',2026,'3','2026-09-16T00:00:00Z')").run(assertUnregistered());
   setActiveLeagueId(db, "777777");
   setConfig(db, { teams: 12, slots: ["QB", "RB", "WR", "TE", "FLEX", "BE"] }, "777777");
   db.close();
 
   await assert.rejects(
     () => openLeague({ dbPath: path }),
-    // The LEAGUE is named; the platform reads "unknown" rather than "sleeper" because
-    // `LeaguePlatform` in src/data/leagueContext.ts is a CLOSED union (espn|yahoo) and `asPlatform`
-    // maps anything else to null. That is the safe direction -- an unrecognized platform cannot be
-    // mistaken for a recognized one -- but the raw string would make the refusal more useful, and
-    // carrying it is noted for WP5.
+    // The LEAGUE is named; the platform reads "unknown" because `asPlatform` maps any id the
+    // REGISTRY does not hold to null -- an unrecognised platform cannot be mistaken for a
+    // recognised one. (`LeaguePlatform` is no longer the closed `espn|yahoo` union this comment
+    // used to describe; it is `PlatformId`, and the narrowing is done by `isRegisteredPlatform`.
+    // `platformRaw` now carries the original string, which is what WP5 added.)
     /no adaptor for platform "unknown" \(league 777777\)/,
     "a league on a platform with no adaptor must be refused by name, not handed the ESPN adaptor",
   );

@@ -9,6 +9,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { UNKNOWN_PLATFORM, assertUnregistered } from "./helpers/unknown-platform.js";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,14 +168,14 @@ test("item 3: a league-shaped raw asset dispatches on the league's PLATFORM and 
   const path = join(dir, "t.db");
   const db = openDb(path);
   db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?,?,?,?,?,?)")
-    .run("ZZZ", "sleeper", "somewhere else", 2026, "3", nowIso());
+    .run("ZZZ", assertUnregistered(), "somewhere else", 2026, "3", nowIso());
   setSetting(db, "active_league", "ZZZ");
   db.close();
   try {
     const asset = RAW_ASSETS.find((a) => a.id === "league-rosters")!;
     await assert.rejects(
       () => asset.run(path, [2026], { leagueId: "ZZZ" }),
-      /sleeper/,
+      new RegExp(UNKNOWN_PLATFORM),
       "a platform with no adaptor is named, not silently given the ESPN body",
     );
     // ...and nothing was written under that league's id.

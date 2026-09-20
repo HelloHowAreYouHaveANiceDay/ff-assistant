@@ -101,6 +101,19 @@ export interface LeagueSettings {
    */
   teamId: string | null;
   acquisition: AcquisitionRules;
+  /**
+   * REDRAFT, KEEPER OR DYNASTY -- OPTIONAL, and absent means "this platform does not say".
+   *
+   * It is a FIRST-CLASS FIELD rather than a line in `rosterSettings` because it is a KEY INPUT:
+   * `valueKey` hashes it (Wall 3), since a dynasty league and a redraft league can agree on scoring,
+   * slots, teams and calendar and still disagree completely about what a player is worth. A fact that
+   * decides which trained model a league uses cannot live in the provenance blob, which is explicitly
+   * "not a consumer surface".
+   *
+   * Absent keys EXACTLY as before, so ESPN and Yahoo -- neither of which reports this today -- are
+   * unaffected and their existing format directories are not orphaned.
+   */
+  leagueType?: "redraft" | "keeper" | "dynasty" | null;
   /** The platform's OWN settings table, verbatim, as label -> value. Provenance, not a consumer
    *  surface: it is what makes a stored config auditable against the page it was read from. */
   rosterSettings: Record<string, string>;
@@ -227,6 +240,54 @@ export function cookiePlatformIO(cookie: string, opts: { timeoutMs?: number; use
 }
 
 /**
+ * A PROVIDER FOR A PLATFORM THAT NEEDS NO SESSION AT ALL.
+ *
+ * `PlatformIO` was written as "an AUTHENTICATED GET", and its own doc comment says a plain Node fetch
+ * "gets a login page". That was true of both shipped adaptors and false as a general claim: Sleeper
+ * publishes every read this repo needs -- league, settings, rosters, users, matchups -- on a public,
+ * unauthenticated API. Adding the third platform is what surfaced the assumption; before it, "needs a
+ * credential" and "is a platform" were indistinguishable, and the only way in was to hand the
+ * contract a cookie it did not want.
+ *
+ * WHY NOT REACH FOR `cookiePlatformIO("")`. It refuses an empty jar, and rightly: for ESPN an empty
+ * session is a 401 that returns valid JSON with no teams in it, which reads downstream as "the league
+ * is empty". That refusal must stay exactly as strict. The honest fix is a SECOND provider that says
+ * "no credential is required here", rather than weakening the one whose whole job is to insist.
+ *
+ * So this is not cookiePlatformIO with the cookie removed -- it is a different STATEMENT. A caller
+ * that picks this one is asserting the platform is public; a caller that picks the cookie one is
+ * asserting a session exists. Neither can be mistaken for the other at the call site.
+ */
+export function publicPlatformIO(opts: { timeoutMs?: number; userAgent?: string } = {}): PlatformIO {
+  const timeoutMs = opts.timeoutMs ?? 25000;
+  return {
+    async get(url, headers) {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, {
+          signal: ctl.signal,
+          headers: {
+            accept: "application/json, text/plain, */*",
+            ...(opts.userAgent ? { "user-agent": opts.userAgent } : {}),
+            ...(headers ?? {}),
+          },
+        });
+        const body = await res.text();
+        // Checked here for the same reason the cookie provider checks it: a non-OK response that
+        // still carries a body is the trap. Sleeper answers an unknown league id with 404 and a
+        // literal `null` body, which `JSON.parse` turns into a perfectly valid null that a careless
+        // reader treats as "this league has no settings" rather than "there is no such league".
+        if (!res.ok) {
+          throw new Error(`${res.status} ${res.statusText} for ${url.slice(0, 120)} -- body starts: ${body.slice(0, 160)}`);
+        }
+        return body;
+      } finally { clearTimeout(t); }
+    },
+  };
+}
+
+/**
  * A PROVIDER THAT READS FROM DISK, for the file-handoff loop.
  *
  * A browser task saves the API JSON into the workspace; this serves it back to the same pure parsers
@@ -311,6 +372,7 @@ export interface Platform {
 const REGISTRY = new Map<string, () => Promise<Platform>>([
   ["espn", async () => (await import("./espnPlatform.js")).espnPlatform],
   ["yahoo", async () => (await import("./yahoo.js")).yahooPlatform],
+  ["sleeper", async () => (await import("./sleeper.js")).sleeperPlatform],
 ]);
 
 /**

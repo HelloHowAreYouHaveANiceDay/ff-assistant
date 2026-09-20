@@ -17,6 +17,7 @@ import {
   PLATFORM_CONTRACT, checkPlatformShape, describeContract, describeShape,
 } from "../src/league/platformContract.js";
 import { knownPlatforms, platformFor } from "../src/league/platform.js";
+import { UNKNOWN_PLATFORM, assertUnregistered } from "./helpers/unknown-platform.js";
 
 /** The members of `interface Platform`, read from the source that declares it. */
 function interfaceMembers(): { name: string; optional: boolean }[] {
@@ -84,7 +85,7 @@ test("REAL ADAPTORS: espn and yahoo both pass, and report their capabilities hon
 test("A HALF-BUILT ADAPTER IS REJECTED, and the message NAMES what is missing", () => {
   // The whole point. An author registering something incomplete should be told which members are
   // absent, not handed a type error or a runtime failure three layers down.
-  const partial = { id: "sleeper", host: "sleeper.app", discover: async () => [] };
+  const partial = { id: UNKNOWN_PLATFORM, host: "example.invalid", discover: async () => [] };
   const r = checkPlatformShape(partial);
   assert.equal(r.ok, false, "an adaptor missing syncSettings/syncRosters/readTeam/urls must NOT pass");
   const named = r.missing.map((m) => m.name).sort();
@@ -153,8 +154,9 @@ test("knownPlatforms() is DERIVED from the registry, not retyped beside it", asy
 test("the refusal for an unknown platform points at the contract", async () => {
   // The refusal is where an author discovers their site is unsupported, so it is where they should
   // learn what supporting it takes.
-  await assert.rejects(() => platformFor("sleeper"), (e: Error) => {
-    assert.match(e.message, /no platform adaptor for "sleeper"/);
+  const unknown = assertUnregistered();
+  await assert.rejects(() => platformFor(unknown), (e: Error) => {
+    assert.match(e.message, new RegExp(`no platform adaptor for "${unknown}"`));
     assert.match(e.message, /platform-contract/, "the refusal must name the command that explains the contract");
     return true;
   });

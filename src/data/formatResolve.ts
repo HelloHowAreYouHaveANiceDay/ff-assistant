@@ -32,7 +32,7 @@ import { join } from "node:path";
 import type { DB, AppConfig } from "../db/db.js";
 import { dataPath, DATA_ROOT } from "./paths.js";
 import {
-  scoringKeyFor, valueKey, formatKey, INCUMBENT_SCORING_KEY, type KeyableConfig,
+  scoringKeyFor, valueKey, formatKey, keyableLeagueType, INCUMBENT_SCORING_KEY, type KeyableConfig,
 } from "./formatKey.js";
 import type { ScoringRules, KickerRules, DefenseRules } from "../draft/scoring.js";
 import { resolveValueLeague, type ValueLeague } from "../draft/values.js";
@@ -216,6 +216,12 @@ const asKeyable = (cfg: AppConfig): KeyableConfig => ({
   kicker: (cfg as unknown as { kicker?: KickerRules | null }).kicker ?? null,
   defense: (cfg as unknown as { defense?: DefenseRules | null }).defense ?? null,
   format: cfg.format as KeyableConfig["format"],
+  // REDRAFT / KEEPER / DYNASTY (Wall 3). Threaded the same way `kicker`/`defense` are, because
+  // `AppConfig` is not declared here. Omitting it would make the whole value-key guard a DEAD LEVER:
+  // `valueKey` would hash a field it was never handed, dynasty and redraft would key identically,
+  // and the unit test would still pass because it calls `valueKey` directly. Asserted end-to-end in
+  // test/format-key-dynasty.test.ts ("the flag survives the trip through AppConfig").
+  leagueType: (cfg as unknown as { leagueType?: string | null }).leagueType ?? null,
 });
 
 /** The directory a non-incumbent key lives in. One spelling, so a script and the resolver cannot
@@ -285,6 +291,26 @@ export function resolveFormatForConfig(cfg: AppConfig, leagueId: string | null):
     // league's own stored rules hash to it, so arriving here IS the assertion that the league's config
     // and the pinned constant agree. The inverse -- an ESPN league whose config drifted -- lands in the
     // branch below and gets a named throw ("no data/formats/sc-xxxx") rather than the root's files.
+    //
+    // ...BUT THE ALIAS IS KEYED ON SCORING ALONE, AND DYNASTY IS NOT A SCORING FACT (Wall 3).
+    //
+    // `valueKey` hashes `leagueType`, but nothing selects a directory by valueKey -- layers 2 and 3
+    // are recorded, not yet acted on (see formatKey.ts's header). So a DYNASTY league whose scoring
+    // happens to match the incumbent's would arrive here and be handed the root model, which is a
+    // REDRAFT model: the same silent cross-format serve this branch's own comment warns about, one
+    // layer up. The valueKey guard alone would not have stopped it -- it would only have recorded a
+    // different key that nobody reads.
+    //
+    // Refused BY NAME instead. A dynasty league needs its own value book whatever its scoring is.
+    if (keyableLeagueType(keyable.leagueType)) {
+      throw new Error(
+        `league ${leagueId ?? "?"} is a ${keyableLeagueType(keyable.leagueType)} league, and the incumbent root model ` +
+        `(${INCUMBENT_SCORING_KEY}) is a REDRAFT model. Its scoring matches, but what a player is WORTH does not: ` +
+        "in a keeper or dynasty league you keep him, which the root's value book and golden master know nothing about.\n" +
+        "  There is deliberately no alias here -- serving the root's numbers would be this league's decisions on a " +
+        "redraft model. See docs/multi-format-design.md \"Wall 3\".",
+      );
+    }
     return { ...common, model: INCUMBENT_MODEL, provenance: "incumbent-root" };
   }
 

@@ -11,6 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { UNKNOWN_PLATFORM, assertUnregistered } from "./helpers/unknown-platform.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -213,7 +214,8 @@ test("P-1: syncSettings dispatches on the league row's platform; an unknown plat
   assert.equal(espn.host, "espn.com");
   assert.notEqual(yahoo.host, espn.host, "each platform names its OWN session host");
 
-  await assert.rejects(() => platformFor("sleeper"), /no platform adaptor for "sleeper"/,
+  const unknown = assertUnregistered();
+  await assert.rejects(() => platformFor(unknown), new RegExp(`no platform adaptor for "${unknown}"`),
     "an unregistered platform is refused by name, never given ESPN's adaptor");
   await assert.rejects(() => platformFor(null), /no platform adaptor for "unknown"/);
 
@@ -233,13 +235,13 @@ test("P-1: syncSettings dispatches on the league row's platform; an unknown plat
 test("P-1: an unknown platform is NAMED in the refusal, not anonymised", async () => {
   const { db } = twoLeagueDb();
   db.prepare("INSERT INTO league (league_id, platform, name, season, team_id, last_synced_at) VALUES (?,?,?,?,?,?)")
-    .run("999", "sleeper", "somewhere else", 2026, "3", new Date().toISOString());
+    .run("999", assertUnregistered(), "somewhere else", 2026, "3", new Date().toISOString());
   const { resolveLeagueContext, requirePlatform } = await import("../src/data/leagueContext.js");
   const ctx = resolveLeagueContext(db, "999");
   assert.equal(ctx.platform, null, "the narrowed union cannot hold it");
-  assert.equal(ctx.platformRaw, "sleeper", "the raw string is kept so the refusal can name it");
+  assert.equal(ctx.platformRaw, UNKNOWN_PLATFORM, "the raw string is kept so the refusal can name it");
   assert.throws(() => requirePlatform(ctx, "espn", "ingest league-rosters", "syncRosters"),
-    /"sleeper".*syncRosters/s, "the refusal names the platform AND the adaptor method that is missing");
+    new RegExp(`"${UNKNOWN_PLATFORM}".*syncRosters`, "s"), "the refusal names the platform AND the adaptor method that is missing");
   db.close();
 });
 
