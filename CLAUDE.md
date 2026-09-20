@@ -188,7 +188,11 @@ that is defined but not wired reads exactly like a lever that does nothing.
   (`src/weekly/streamingEvaluate.ts`) both throw, neither fold loop catches, and `main().catch` in
   `src/ff.ts` exits 1 — a failed fold aborts the run and NO verdict is printed, so the gate cannot
   pass on fewer folds than it claims. Redirect to a file and read it (`> log 2>&1; echo $?`), or
-  `set -o pipefail` first. The general rule: a wrapper that reports success is indistinguishable from
+  `set -o pipefail` first. AND NEVER PRINT A VERDICT WORD THE COMMAND DID NOT COMPUTE: 23 calls in
+  that same session were `npx tsc --noEmit -p . 2>&1 | head -4 && echo CLEAN`, where `head` always
+  succeeds, so CLEAN came from `echo` and not from the typecheck. Use
+  `if npx tsc --noEmit -p .; then echo CLEAN; else echo FAILED; fi` -- unpiped, so the status is the
+  compiler's. The general rule: a wrapper that reports success is indistinguishable from
   a command that succeeded, so verify the wrapper before believing the status.
 - A backgrounded job survives a tool timeout and stays invisible to Git Bash `ps`; two concurrent
   backtests once turned a 2-minute job into a 2-hour stall. That stall was **orphaned background jobs**,
