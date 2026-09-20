@@ -122,42 +122,42 @@ test("item 3: every routine is leagueScoped now, and the plan carries --league o
       assert.ok(run, `league ${lg} runs actuals`);
       assert.deepEqual(run!.steps, [["sync-actuals", ["--league", lg]]]);
     }
-    // THE OTHER GATE IS STILL THERE: `roster` is ESPN-only, so the Yahoo league must not run it.
+    // THE ROSTER ROUTINE IS NO LONGER ESPN-GATED (2026-09-19), and that is the point of this block
+    // now. It carried `platforms: ["espn"]` on the strength of a comment -- "there is no yahoo
+    // syncRosters wiring yet" -- that WP13 itself made false: `league-rosters` and
+    // `league-transactions` dispatch per platform and `sync-rosters` goes through
+    // `plat.syncRosters`. The gate denied the Yahoo league three working steps because a FOURTH,
+    // `sync-pending-trades`, is ESPN-only. That one is now skipped inside `sync-league`, by name.
     //
-    // THIS USED TO BE `assert.match(skip.why, /no yahoo adaptor/)` -- a NAME-KEYED assertion on a
-    // human-readable sentence, which keeps passing if the reason's MEANING changes (and which says
-    // nothing at all about whether the step runs). What matters is the STRUCTURAL outcome: the step
-    // is not in the plan, and a runner that executes the plan makes ZERO calls for that league.
-    //
-    // The expectation is DERIVED from the routine definition rather than retyped, so it cannot go
-    // stale the way an enumerated one does.
+    // The structural assertion is unchanged in spirit and inverted in expectation: what matters is
+    // WHICH steps a runner would invoke per league, not a sentence about it.
     const rosterSteps = ROUTINES.roster.steps.map((s) => s[0]);
-    assert.ok(ROUTINES.roster.platforms && !ROUTINES.roster.platforms.includes("yahoo"),
-      "the premise: `roster` declares itself ESPN-only");
-    const skip = plan.skipped.find((x) => x.leagueId === "BBB" && x.routine === "roster");
-    assert.ok(skip, "the Yahoo league's roster routine is still skipped");
+    assert.equal(ROUTINES.roster.platforms, null,
+      "the premise: `roster` is platform-neutral now; its one ESPN-only sub-step is gated in sync-league");
 
-    // A RECORDING RUNNER: execute the plan the way the scheduler does and record every (verb, league)
-    // it would invoke. Nothing may be recorded for the Yahoo league's ESPN-only steps -- that is the
-    // fact the prose was standing in for.
+    // A RECORDING RUNNER: execute the plan the way the scheduler does and record every (verb,
+    // league) it would invoke.
     const called: { verb: string; leagueId: string }[] = [];
     for (const run of plan.runs) for (const [verb, args] of run.steps) {
       const i = args.indexOf("--league");
       called.push({ verb, leagueId: i >= 0 ? args[i + 1] : run.leagueId });
     }
-    assert.equal(called.filter((c) => c.leagueId === "BBB" && rosterSteps.includes(c.verb)).length, 0,
-      `the ESPN-only step(s) ${rosterSteps.join(", ")} must never be invoked for the Yahoo league`);
-    // POSITIVE CONTROL: the recorder is not simply empty -- the SAME steps DO run for the ESPN league,
-    // and the platform-neutral routine runs for both. A recorder that can only ever be empty would
-    // pass this test with the whole planner deleted.
+    // THE YAHOO LEAGUE NOW RUNS THEM. This is the assertion that would have failed before the fix,
+    // and it is the whole change: a league that can do most of the work does most of the work.
+    assert.equal(called.filter((c) => c.leagueId === "BBB" && rosterSteps.includes(c.verb)).length,
+      rosterSteps.length, "the Yahoo league must now run the roster routine's steps");
+    // POSITIVE CONTROL: the ESPN league is unaffected, and the platform-neutral routine still runs
+    // for both. A recorder that recorded everything would pass the line above and mean nothing.
     assert.equal(called.filter((c) => c.leagueId === "AAA" && rosterSteps.includes(c.verb)).length,
       rosterSteps.length, "positive control: the ESPN league DOES run every roster step");
     assert.deepEqual(called.filter((c) => c.verb === "sync-actuals").map((c) => c.leagueId).sort(),
       ["AAA", "BBB"], "positive control: the platform-neutral routine runs for BOTH leagues");
-    // The reason still has to NAME the platform it refused and the steps it refused to run -- checked
-    // against the data, not against a remembered sentence.
-    assert.ok(skip!.why.includes("yahoo"), "the refusal names the platform the row actually carries");
-    for (const v of rosterSteps) assert.ok(skip!.why.includes(v), `the refusal names the step \`${v}\``);
+    // AND NOTHING IS SKIPPED AT THE ROUTINE LEVEL ANY MORE for either league. The refusal that used
+    // to be asserted here -- "roster has no yahoo adaptor" -- was the bug: it named steps that work
+    // on Yahoo. The one genuinely ESPN-only step is now declined inside `sync-league`, which is a
+    // different layer and is asserted in its own test.
+    assert.equal(plan.skipped.filter((x) => x.routine === "roster").length, 0,
+      "the roster routine is being skipped at the routine level again");
     assert.equal(plan.skipped.filter((x) => /--league/.test(x.why)).length, 0, "nothing is skipped for want of the flag any more");
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
@@ -261,4 +261,30 @@ test("item 5: a league whose rules match a format directory fingerprints THAT di
     const broken = fingerprintDraftArbiter(db, "FMT");
     assert.equal(broken.parts[`file:${fmt.dir}/history-points.csv`], undefined, "a config that matches no directory hashes no directory");
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the ROSTER routine is no longer ESPN-gated, and the ESPN-only work is gated where it lives", () => {
+  /**
+   * MEASURED AND WRONG (2026-09-19). `roster` carried `platforms: ["espn"]` with the comment
+   * "there is no yahoo syncRosters wiring yet" -- which stopped being true when WP13 landed and
+   * nobody revisited the gate. Three of its four sub-steps are platform-neutral:
+   * `league-rosters` and `league-transactions` are platform-dispatched, and `sync-rosters` goes
+   * through `plat.syncRosters`. Only `sync-pending-trades` is ESPN-only, and it refuses by name on
+   * its own. So the routine-level gate denied a Yahoo league THREE working steps because of one
+   * that would have declined politely.
+   */
+  assert.equal(ROUTINES.roster.platforms, null,
+    "the roster routine is gated to a platform again -- its steps are platform-dispatched, and the " +
+    "one ESPN-only sub-step is skipped inside `sync-league` instead");
+
+  // AND THE ESPN-ONLY STEP IS STILL GATED, just where it actually is. Read from the source that
+  // declares it, so deleting the gate fails here rather than silently running a doomed step.
+  const src = readFileSync("src/ff.ts", "utf8");
+  assert.match(src, /const ESPN_ONLY_STEPS = new Set\(\["sync-pending-trades"\]\)/,
+    "the ESPN-only sub-step gate is gone from sync-league -- a Yahoo league would run it and report " +
+    "a FAILED step that structurally cannot pass");
+
+  // A SKIPPED STEP MUST NOT BE COUNTED AS AN OK STEP. It reported "4/4 ok" for a league that ran 3.
+  assert.match(src, /A SKIPPED STEP IS NOT AN OK STEP/,
+    "the sync-league summary is back to counting skipped steps as successes");
 });

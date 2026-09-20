@@ -168,7 +168,11 @@ export const ROUTINES: Record<string, Routine> = {
     what: "pull the league's roster + transaction + pending-trade state (needs the app's ESPN session)",
     steps: [["sync-league", ["--tier", "fast"]]],
     needsApp: true,
-    platforms: ["espn"],      // cmdSyncLeague builds ESPN URLs; there is no yahoo syncRosters wiring yet
+    // NOT ["espn"] any more. `league-rosters` and `league-transactions` are
+    // platform-dispatched (WP13) and `sync-rosters` calls `plat.syncRosters`, so all three run for
+    // any platform with an adaptor. The old comment here said "there is no yahoo syncRosters wiring
+    // yet", which stopped being true when WP13 landed and nobody revisited the gate.
+    platforms: null,
     leagueScoped: true,
   },
 };
@@ -308,9 +312,10 @@ export function planRoutines(db: DB, routineNames: string[], activeLeagueId: str
         });
         continue;
       }
+      const stepsFor = rt.steps;
       if (!rt.leagueScoped) {
         if (activeLeagueId != null && lg.leagueId === activeLeagueId) {
-          plan.runs.push({ leagueId: lg.leagueId, platform: lg.platform, routine: r, steps: rt.steps });
+          plan.runs.push({ leagueId: lg.leagueId, platform: lg.platform, routine: r, steps: stepsFor });
         } else {
           plan.skipped.push({
             leagueId: lg.leagueId, platform: lg.platform, routine: r,
@@ -321,7 +326,10 @@ export function planRoutines(db: DB, routineNames: string[], activeLeagueId: str
       }
       plan.runs.push({
         leagueId: lg.leagueId, platform: lg.platform, routine: r,
-        steps: rt.steps.map(([verb, args]) => [verb, [...args, "--league", lg.leagueId]] as [string, string[]]),
+        // `stepsFor`, NOT `rt.steps`: this is the league-scoped path, which is the one the `roster`
+        // routine actually takes -- filtering only the other push site would have left the
+        // per-step gate doing nothing where it was built to matter.
+        steps: stepsFor.map(([verb, args]) => [verb, [...args, "--league", lg.leagueId]] as [string, string[]]),
       });
     }
   }

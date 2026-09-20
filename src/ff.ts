@@ -1639,7 +1639,36 @@ async function cmdSyncLeague(rest: string[]) {
   }
   const t0 = Date.now();
   const failures: string[] = [];
+
+  /**
+   * SUB-STEPS THAT ONLY ONE PLATFORM HAS, skipped BY NAME rather than run and failed.
+   *
+   * `sync-pending-trades` polls ESPN's `mPendingTransactions` and refuses by name anywhere else. It
+   * still refuses correctly -- but running it for a Yahoo league meant every roster sync there
+   * reported a FAILED step that structurally cannot pass, and a failure line that always appears is
+   * a failure line people stop reading.
+   *
+   * The other three steps are platform-neutral: `league-rosters` and `league-transactions` have been
+   * platform-dispatched since WP13, and `sync-rosters` goes through `plat.syncRosters`. Which is why
+   * the `roster` ROUTINE no longer carries `platforms: ["espn"]` -- that gate denied a Yahoo league
+   * three working steps because of this one.
+   */
+  let skipped = 0;
+  const ESPN_ONLY_STEPS = new Set(["sync-pending-trades"]);
+  const stepPlatform = await (async () => {
+    try {
+      const { openDb } = await import("./db/db.js");
+      const db = openDb(valueOf(rest, "--db"));
+      try { return (await leagueCtx(rest, db)).platformRaw ?? null; } finally { db.close(); }
+    } catch { return null; }
+  })();
+
   for (const [verb, args] of plan.steps) {
+    if (ESPN_ONLY_STEPS.has(verb) && stepPlatform != null && stepPlatform !== "espn") {
+      console.log(`  skip ${[verb, ...args].join(" ").padEnd(34)} ESPN-only; this league is on ${stepPlatform}`);
+      skipped++;
+      continue;
+    }
     const s = Date.now();
     const label = [verb, ...args].join(" ");
     const r = spawnSync(process.execPath, ["--import", "tsx", "src/ff.ts", verb, ...args, ...passThrough], { stdio: "inherit" });
@@ -1647,7 +1676,11 @@ async function cmdSyncLeague(rest: string[]) {
     if (r.status === 0) console.log(`  ok   ${label.padEnd(34)} ${secs}s`);
     else { failures.push(`${label} exited ${r.status ?? "signal " + r.signal}`); console.log(`  FAIL ${label.padEnd(34)} ${secs}s`); }
   }
-  console.log(`\n${plan.steps.length - failures.length}/${plan.steps.length} steps ok in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  // A SKIPPED STEP IS NOT AN OK STEP. Counting it as one reported "4/4 ok" for a Yahoo league that
+  // ran three -- a summary that overstates what happened is worse than one that admits a gap.
+  const ranN = plan.steps.length - skipped;
+  console.log(`\n${ranN - failures.length}/${ranN} steps ok in ${((Date.now() - t0) / 1000).toFixed(1)}s` +
+    `${skipped ? `, ${skipped} skipped (not applicable to this platform)` : ""}`);
   for (const f of failures) console.log(`  FAILED  ${f}`);
   if (failures.length) process.exitCode = 1;   // so a poller can see it without parsing stdout
 }

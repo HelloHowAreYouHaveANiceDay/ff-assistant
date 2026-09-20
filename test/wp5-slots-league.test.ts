@@ -253,11 +253,13 @@ test("I-7: the routine set iterates the leagues with a seat, and skips a platfor
   assert.deepEqual(leagues.map((l) => l.leagueId), ["129048", "462233"], "both leagues have a team_id");
 
   const plan = planRoutines(db, ["actuals", "roster"], "462233");
-  // `roster` runs `sync-league`, which builds ESPN URLs -- the Yahoo league is skipped, naming it.
-  const yahooRoster = plan.skipped.find((s) => s.leagueId === "129048" && s.routine === "roster");
-  assert.ok(yahooRoster, "the Yahoo league's roster routine is skipped");
-  assert.match(yahooRoster!.why, /no yahoo adaptor/, `named: ${yahooRoster!.why}`);
-  assert.match(yahooRoster!.why, /sync-league/, "and it names the step that is ESPN-only");
+  // `roster` USED to be ESPN-gated and no longer is (2026-09-19): three of its four sub-steps are
+  // platform-dispatched, so gating the whole routine denied the Yahoo league work it can do. The
+  // one ESPN-only sub-step, `sync-pending-trades`, is declined inside `sync-league` instead.
+  const yahooRoster = plan.runs.find((r) => r.leagueId === "129048" && r.routine === "roster");
+  assert.ok(yahooRoster, "the Yahoo league's roster routine must RUN now, not be skipped wholesale");
+  assert.equal(plan.skipped.filter((s) => s.routine === "roster").length, 0,
+    "no league should be skipped at the roster-routine level any more");
 
   // EXPECTATION CHANGED BY WP13, AND THE SEMANTICS WITH IT. Until WP13 `actuals` was NOT
   // `leagueScoped` -- `ff sync-actuals`/`scorecard`/`refresh-decisions` took no `--league` -- so this
