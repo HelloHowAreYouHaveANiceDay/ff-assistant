@@ -134,3 +134,69 @@ test("the week table never lets week W see week W", (t) => {
   // lookahead, which would make every weekly model in this repo look excellent and be worthless.
   assert.equal(first.n, 0, `${first.n} week-1 rows claim prior games played`);
 });
+
+test("THE SEPT-1 PIN IS BACKED BY SEPT-1 DATA -- the label is a claim, and this enforces it", (t) => {
+  /**
+   * `feat_player_season.as_of` is hardcoded to `<season>-09-01` and CANNOT drift by rebuilding --
+   * which is right, and is not the same as the row being true as of that date. The builder reads
+   * LIVE dimension tables (`player.nfl_team`, via the ECR join) at build time, so a rebuild run in
+   * week 8 writes week-8 values under a September label and nothing notices. Sanders' row shows the
+   * shape today: `as_of 2026-09-01`, `updated_at 2026-09-12`.
+   *
+   * For a table the TRAINERS treat as preseason, that is lookahead -- pointed the opposite way from
+   * the serving bug in the same chain.
+   *
+   * THE CHECK. Week 1 is the first week that actually happened, so a player's week-1 team is the
+   * closest observable proxy for "his team at the start of the season". Where the season pin and the
+   * week-1 row disagree, the pin is carrying something week 1 did not know about.
+   *
+   * MEASURED CLEAN when written (2026-09-19): zero disagreements. This is a tripwire for a latent
+   * gap, not a fix for a live one -- it exists so that a mid-season `ff refresh` cannot quietly
+   * re-date the training inputs.
+   */
+  if (!HAVE_DB) return t.skip("no data/ff.db");
+  const db = openDb("data/ff.db");
+  try {
+    const rows = db.prepare(
+      `SELECT s.season, s.name, s.team AS pin, w.team AS wk1
+         FROM feat_player_season s
+         JOIN feat_player_week w
+           ON w.season = s.season AND w.feat_key = s.feat_key AND w.week = 1
+        WHERE s.team IS NOT NULL AND w.team IS NOT NULL AND s.team <> w.team`,
+    ).all() as { season: number; name: string; pin: string; wk1: string }[];
+    // A tripwire that can never fire is not a tripwire: assert the comparison actually ran.
+    const considered = (db.prepare(
+      `SELECT COUNT(*) c FROM feat_player_season s
+         JOIN feat_player_week w ON w.season = s.season AND w.feat_key = s.feat_key AND w.week = 1
+        WHERE s.team IS NOT NULL AND w.team IS NOT NULL`,
+    ).get() as { c: number }).c;
+    if (considered < 100) return t.skip(`only ${considered} comparable rows -- this store cannot answer`);
+
+    // TWO ARMS, because the fix landed in two halves and pretending otherwise would either hide the
+    // backlog or block on it.
+    //
+    // THE SERVED SEASON IS HELD TO ZERO. It is what this week's decisions are made from, it has been
+    // rebuilt with the corrected resolution, and it must stay clean.
+    const cur = (db.prepare("SELECT MAX(season) s FROM feat_player_season").get() as { s: number }).s;
+    const live = rows.filter((r) => r.season === cur);
+    assert.deepEqual(live.map((r) => `${r.name}: pin=${r.pin} wk1=${r.wk1}`), [],
+      `the ${cur} season pin disagrees with week 1 for ${live.length} player(s). This season is SERVED, ` +
+      "so a wrong team here means a NULL opponent and a matchup-blind projection. Rebuild: " +
+      "`ff build-features --seasons " + `${cur}-${cur}` + "` then `ff sync-actuals --force` then " +
+      "`ff build-streaming-features`.");
+
+    // THE HISTORY IS A RATCHET, not a pass. 283 player-seasons carry their END-of-season team under a
+    // September label -- the `u.team` last-wins bug, fixed in src/features/build.ts but NOT yet
+    // rebuilt for 1999-2025, because that changes feature VALUES beneath three fitted artifacts and
+    // is a refit-and-gate job rather than a rebuild. `populationHash` does NOT cover this: it watches
+    // who is in the population, not what their columns say.
+    //
+    // The count may only go DOWN. If it rises, something re-introduced the bug; if it reaches zero,
+    // delete this arm and hold the whole table to zero.
+    const HISTORICAL_BACKLOG = 283;
+    const hist = rows.filter((r) => r.season !== cur);
+    assert.ok(hist.length <= HISTORICAL_BACKLOG,
+      `historical pin/week-1 disagreements rose to ${hist.length} from the recorded ${HISTORICAL_BACKLOG}. ` +
+      "The last-wins team bug is back, or a rebuild wrote later data under the September label.");
+  } finally { db.close(); }
+});

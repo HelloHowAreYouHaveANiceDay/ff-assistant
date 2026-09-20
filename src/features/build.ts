@@ -73,7 +73,21 @@ function readHistory(pointsPath: string, weeklyPath: string): { season: Map<numb
   return { season, games };
 }
 
-interface Usage { games: number; fd: number; ts: number; attempts: number; rushYards: number; ays: number; wopr: number; team: string | null }
+/**
+ * `team` is the LAST week's team of that season; `teamFirst` is the FIRST. Both are needed and they
+ * are not interchangeable:
+ *
+ *   teamFirst  the shirt he was wearing when the season started -- what a row anchored at
+ *              `<season>-09-01` is entitled to know, and the current side of `team_changed`.
+ *   team       where he ENDED that season -- the prior side of `team_changed` a year later, and the
+ *              only thing a NEXT season's row may read about him.
+ *
+ * They were one field, assigned last-wins, so the Sept-1 pin carried the END-of-season team: a row
+ * labelled 1999-09-01 knew that al-Jabbar would finish on Cleveland when week 1 had him on Miami.
+ * 283 player-seasons, ~16-21 a season across the whole history, found by the pin/week-1 guard in
+ * test/features.test.ts.
+ */
+interface Usage { games: number; fd: number; ts: number; attempts: number; rushYards: number; ays: number; wopr: number; team: string | null; teamFirst: string | null }
 
 /** Prior-season usage, aggregated ONCE, from the cached nflverse player-week feed. Shares (target
  *  share, air-yards share, wopr) are averaged over games played; counting stats are summed and then
@@ -91,7 +105,7 @@ async function seasonUsage(yr: number, resolver: SkResolver): Promise<Map<string
     const team = canonTeam(pick(r, "team"));
     const sk = resolver.resolve({ gsis: pick(r, "player_id"), name, pos, team });
     const k = featKey(sk, nameKey(name), pos);
-    const u = out.get(k) ?? { games: 0, fd: 0, ts: 0, attempts: 0, rushYards: 0, ays: 0, wopr: 0, team: null };
+    const u = out.get(k) ?? { games: 0, fd: 0, ts: 0, attempts: 0, rushYards: 0, ays: 0, wopr: 0, team: null, teamFirst: null };
     u.games++;
     // `fd` is RECEIVING plus RUSHING first downs, matching the definition the shipped opportunity
     // model was fitted on. Receiving alone would score a running back on the smaller half of his
@@ -103,7 +117,10 @@ async function seasonUsage(yr: number, resolver: SkResolver): Promise<Map<string
     u.rushYards += num(r.rushing_yards);
     u.ays += num(r.air_yards_share);
     u.wopr += num(r.wopr);
+    // LAST wins for `team`, FIRST wins for `teamFirst`. The feed arrives in week order, so these
+    // are the two ends of his season and the Sept-1 pin must take the near one.
     u.team = team || u.team;
+    u.teamFirst = u.teamFirst || team || null;
     out.set(k, u);
   }
   return out;
@@ -270,11 +287,47 @@ export async function buildFeatures(opts: {
     const prior = hist.get(yr - 1);
     const priorUsage = await usageFor(yr - 1);
     // The CURRENT season's feed too, for `team` and `team_changed`. Not a leak: which shirt a man
-    // wears is settled before week 1, which is what `as_of` is anchored to. Reading it from the
+    // wears is settled before week 1, which is what `as_of` is anchored to -- PROVIDED the FIRST
+    // week's shirt is the one read. It was the last one until 2026-09-19, which made this paragraph
+    // true about the intent and false about the code. Reading it from the
     // cache map keyed by year -- as an earlier version did -- silently returned undefined for every
     // row, because that map is only populated one season BEHIND the loop, and `team_changed` was
     // therefore null on all 17,189 rows while looking perfectly well-formed.
     const curUsage = await usageFor(yr);
+
+    /**
+     * THE SEASON-OPENING DEPTH CHART, for a man who has SIGNED but not yet played.
+     *
+     * `teamFirst` comes from the player-week feed, so it is empty for anyone who has taken no snap
+     * -- and the fallback behind it is the ECR redraft page, a PRESEASON DRAFT RANKING that lists an
+     * unsigned player as "FA" and is not maintained for in-season signings. That is how 28 players
+     * ended up labelled FA in 2026, of whom 14 were on an NFL depth chart: no team means no schedule
+     * match, which means a NULL opponent, which means every `opp_*` matchup column imputes to its
+     * centred mean and the man is served at his floor.
+     *
+     * THE EARLIEST snapshot of the season is taken, not the latest: it is the closest thing the feed
+     * has to "the shirt he was wearing when the season started", which is what `as_of` claims. Using
+     * the newest would re-introduce the end-of-season problem this same build just fixed.
+     *
+     * It sits BEHIND `teamFirst`, so a player who has actually played is always described by where
+     * he played -- observed fact beats a published chart.
+     */
+    const depthTeam = new Map<string, string>();
+    try {
+      for (const r of db.prepare(
+        `SELECT gsis_id, full_name, position, team, as_of FROM raw_depth_chart
+          WHERE season = ? AND team IS NOT NULL AND team <> '' ORDER BY as_of ASC, week ASC`,
+      ).all(yr) as { gsis_id: string | null; full_name: string | null; position: string | null; team: string; as_of: string }[]) {
+        const nm = (r.full_name ?? "").trim(); if (!nm) continue;
+        const ps = normPos(String(r.position ?? "").toUpperCase());
+        if (!FEAT_POS.includes(ps)) continue;
+        const team = canonTeam(r.team);
+        if (!team) continue;
+        const sk = resolver.resolve({ gsis: r.gsis_id, name: nm, pos: ps, team });
+        const k = featKey(sk, nameKey(nm), ps);
+        if (!depthTeam.has(k)) depthTeam.set(k, team);   // earliest as_of wins
+      }
+    } catch { /* no depth chart in this store: the chain simply falls through as before */ }
     const ecr = ecrForSeason(db, yr, cfg.season, resolver);
 
     // POINT-IN-TIME CURVES: fitted on seasons strictly before yr. Rebuilt per season rather than
@@ -344,7 +397,10 @@ export async function buildFeatures(opts: {
         // would move a projection for a player we know nothing about.
         const bd = sk ? birth.get(sk) : undefined;
         const age = bd ? (Date.parse(`${yr}-09-01T00:00:00Z`) - Date.parse(`${bd}T00:00:00Z`)) / 3.15576e10 : null;
-        const cur2 = curUsage.get(key)?.team ?? null;
+        // teamFirst, NOT team. The comment at `curUsage` above already states the rule -- "which
+        // shirt a man wears is settled before week 1, which is what `as_of` is anchored to" -- and
+        // the implementation took the other end of the season, so the pin knew where he finished.
+        const cur2 = curUsage.get(key)?.teamFirst ?? depthTeam.get(key) ?? null;
         const team = cur2 ?? e?.team ?? pu?.team ?? r?.team ?? null;
         const priorTeam = pu?.team ?? null;
         const dc = drafted.get(key);
