@@ -93,6 +93,49 @@ interface Usage { games: number; fd: number; ts: number; attempts: number; rushY
  *  share, air-yards share, wopr) are averaged over games played; counting stats are summed and then
  *  divided by games. Both are "per game" and the distinction matters -- summing a share would make
  *  a durable player look like a high-share one. */
+/** One weekly row of the built history, already scored under OUR rules. */
+export interface WkRow { week: number; pts: number; team: string; name: string; pos: string; sk: string | null }
+
+/**
+ * history-weekly.csv -> per (season, key) weekly rows.
+ *
+ * EXTRACTED so the two builders read it through ONE parser. `buildWeekFeatures` needs the rows;
+ * `buildFeatures` needs only the first week's team, and when it derived that from a DIFFERENT feed
+ * -- the nflverse stats feed, which carries only weeks a player recorded something -- the season pin
+ * and `feat_player_week.team` disagreed for 210 player-seasons. Marcus Nash 1999 is the shape:
+ * rostered on Baltimore in week 1, first appears statistically on Denver, pin said DEN.
+ *
+ * Two parsers of one file, kept in step by hand, is the drift this repo keeps paying for. There is
+ * now one, and "whose shirt was he wearing in week 1" has a single answer by construction.
+ */
+export function readWeeklyRows(weeklyPath: string, want: Set<number>): Map<number, Map<string, WkRow[]>> {
+  const bySeason = new Map<number, Map<string, WkRow[]>>();
+  for (const line of readFileSync(weeklyPath, "utf8").trim().split(/\r?\n/).slice(1)) {
+    const f = line.split(",");
+    const yr = Number(f[0]); if (!want.has(yr)) continue;
+    const pos = (f[2] ?? "").toUpperCase(); if (!FEAT_POS.includes(pos)) continue;
+    const name = (f[1] ?? "").trim();
+    const sk = (f[6] ?? "").trim() || null;
+    const key = featKey(sk, nameKey(name), pos);
+    const m = bySeason.get(yr) ?? bySeason.set(yr, new Map()).get(yr)!;
+    (m.get(key) ?? m.set(key, []).get(key)!).push({ week: Number(f[3]), pts: Number(f[4]), team: (f[5] ?? "").trim(), name, pos, sk });
+  }
+  return bySeason;
+}
+
+/** The FIRST week's team per (season, key), from those same rows. */
+export function firstTeamBySeasonKey(bySeason: Map<number, Map<string, WkRow[]>>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [yr, byKey] of bySeason) {
+    for (const [key, list] of byKey) {
+      let bestWeek = Infinity, bestTeam = "";
+      for (const r of list) if (r.team && r.week < bestWeek) { bestWeek = r.week; bestTeam = r.team; }
+      if (bestTeam) out.set(`${yr}|${key}`, bestTeam);
+    }
+  }
+  return out;
+}
+
 async function seasonUsage(yr: number, resolver: SkResolver): Promise<Map<string, Usage>> {
   const out = new Map<string, Usage>();
   let rows: Record<string, string>[];
@@ -240,6 +283,9 @@ export async function buildFeatures(opts: {
     .all() as { player_sk: number; birthdate: string }[]) birth.set(String(r.player_sk), r.birthdate);
 
   const drafted = await draftCapital(resolver);
+
+  // The first week's team, from the SAME parse the weekly builder uses. See readWeeklyRows.
+  const firstTeamOf = firstTeamBySeasonKey(readWeeklyRows(weeklyPath, new Set(opts.seasons)));
 
   const seasons = opts.seasons.slice().sort((a, b) => a - b);
   const usageCache = new Map<number, Map<string, Usage>>();
@@ -400,7 +446,9 @@ export async function buildFeatures(opts: {
         // teamFirst, NOT team. The comment at `curUsage` above already states the rule -- "which
         // shirt a man wears is settled before week 1, which is what `as_of` is anchored to" -- and
         // the implementation took the other end of the season, so the pin knew where he finished.
-        const cur2 = curUsage.get(key)?.teamFirst ?? depthTeam.get(key) ?? null;
+        // history-weekly FIRST -- the same source `feat_player_week.team` reads, so the season pin
+        // and the week-1 row cannot disagree. Then the stats feed, then the opening depth chart.
+        const cur2 = firstTeamOf.get(`${yr}|${key}`) ?? curUsage.get(key)?.teamFirst ?? depthTeam.get(key) ?? null;
         const team = cur2 ?? e?.team ?? pu?.team ?? r?.team ?? null;
         const priorTeam = pu?.team ?? null;
         const dc = drafted.get(key);
@@ -487,19 +535,7 @@ async function buildWeekFeatures(db: DB, seasons: number[], weeklyPath: string, 
     return Number.isFinite(t) ? new Date(t - 864e5).toISOString().slice(0, 10) : iso;
   };
 
-  // per (season, key) weekly rows from the built history, which is already scored under OUR rules.
-  interface WkRow { week: number; pts: number; team: string; name: string; pos: string; sk: string | null }
-  const bySeason = new Map<number, Map<string, WkRow[]>>();
-  for (const line of readFileSync(weeklyPath, "utf8").trim().split(/\r?\n/).slice(1)) {
-    const f = line.split(",");
-    const yr = Number(f[0]); if (!want.has(yr)) continue;
-    const pos = (f[2] ?? "").toUpperCase(); if (!FEAT_POS.includes(pos)) continue;
-    const name = (f[1] ?? "").trim();
-    const sk = (f[6] ?? "").trim() || null;
-    const key = featKey(sk, nameKey(name), pos);
-    const m = bySeason.get(yr) ?? bySeason.set(yr, new Map()).get(yr)!;
-    (m.get(key) ?? m.set(key, []).get(key)!).push({ week: Number(f[3]), pts: Number(f[4]), team: (f[5] ?? "").trim(), name, pos, sk });
-  }
+  const bySeason = readWeeklyRows(weeklyPath, want);
 
   const ins = db.prepare(
     `INSERT INTO feat_player_week (feat_key, player_sk, season, week, as_of, name, pos, team, opponent,
@@ -539,12 +575,23 @@ async function buildWeekFeatures(db: DB, seasons: number[], weeklyPath: string, 
       db.prepare("DELETE FROM feat_player_week WHERE season = ?").run(yr);   // see the season table
       for (const [key, list] of m) {
         const played = new Map(list.map((r) => [r.week, r]));
-        const team = list[list.length - 1].team;
+        // THE SAME LAST-WINS BUG, ONE LEVEL DOWN. This was `list[list.length - 1].team` -- the LAST
+        // week he played -- used to fill every week he did NOT play, including week 1. Marcus Nash
+        // 1999 played weeks 2 (DEN) and 14 (BAL), so his week 1 was stamped BAL: a team he would not
+        // join for three months. The running value below is the most recent team observed AT OR
+        // BEFORE the week being written, so a row can never be told about a transfer that has not
+        // happened yet.
+        const ordered = [...list].sort((a, b) => a.week - b.week);
+        const firstTeam = ordered.find((r) => r.team)?.team ?? "";
         const sk = list[0].sk;
         const acc = { fd: 0, ts: 0, att: 0, ry: 0, pts: 0, g: 0 };
+        // Weeks BEFORE his first appearance take that first team -- the only non-future answer
+        // available, and the one the season pin now also uses, so the two agree by construction.
+        let running = firstTeam;
         for (let wk = 1; wk <= maxWeek; wk++) {
           const p = played.get(wk);
-          const tm = p?.team || team;
+          if (p?.team) running = p.team;
+          const tm = p?.team || running;
           const s = sched.get(`${yr}|${tm}|${wk}`);
           const anchor = s?.day ?? weekAnchor.get(`${yr}|${wk}`) ?? null;
           ins.run({

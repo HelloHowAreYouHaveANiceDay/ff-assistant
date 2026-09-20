@@ -193,14 +193,16 @@ test("THE SEPT-1 PIN IS BACKED BY SEPT-1 DATA -- the label is a claim, and this 
     //
     // The count may only go DOWN. If it rises, something re-introduced the bug; if it reaches zero,
     // delete this arm and hold the whole table to zero.
-    // 283 -> 210 after the 1999-2025 rebuild (2026-09-19). The RESIDUAL has a known cause and is
-    // not the same bug: `teamFirst` comes from the nflverse STATS feed, which only carries weeks a
-    // player recorded something in, while `feat_player_week.team` comes from history-weekly, which
-    // carries weeks he was merely rostered. Marcus Nash 1999 is the shape -- rostered on BAL in
-    // week 1, first STATISTICAL week on DEN, so the pin says DEN. Closing it means giving the season
-    // pin the same per-week source the weekly table uses, which is a build-order change, not a
-    // one-liner.
-    const HISTORICAL_BACKLOG = 210;
+    // 283 -> 210 -> 1. Two last-wins bugs, one per layer: `seasonUsage` overwrote the season pin
+    // with each later week, and `buildWeekFeatures` filled every UNPLAYED week with the LAST week he
+    // played. Marcus Nash 1999 played weeks 2 (DEN) and 14 (BAL), so his week 1 was stamped BAL -- a
+    // team he would not join for three months -- and the pin was then compared against it.
+    //
+    // THE SURVIVOR IS NOT THIS BUG. Ricky Williams 2003 carries `games: 29` in a 16-game season:
+    // two players of that name, Miami and Indianapolis, merged under one feat_key because neither
+    // has a distinguishing surrogate. That is an IDENTITY collision and it needs the resolver, not
+    // the team chain. Left at 1 deliberately and named, so nobody "fixes" it here.
+    const HISTORICAL_BACKLOG = 1;
     const hist = rows.filter((r) => r.season !== cur);
     assert.ok(hist.length <= HISTORICAL_BACKLOG,
       `historical pin/week-1 disagreements rose to ${hist.length} from the recorded ${HISTORICAL_BACKLOG}. ` +
