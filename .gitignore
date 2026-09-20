@@ -5,7 +5,15 @@ dist/
 .env.*
 data/*.db
 data/*.sqlite
-data/ff.db.bak*
+# EVERY sidecar of the store, not just the .bak ones. `data/*.db` above matches data/ff.db but NOT
+# data/ff.db.pre-team-rebuild -- no .db suffix -- and the pre-<change> backup AGENTS.md REQUIRES
+# before a destructive import is named exactly that. So the rule that says "back the store up first"
+# was producing several hundred MB of untracked, unignored league/roster/manager rows: precisely what
+# the dataset-export allowlist exists to keep out of a published artifact, one careless `git add`
+# from the history. Six such files sat in the tree for a whole session (2026-09-20).
+# The -wal/-shm forms use a HYPHEN, which no dot pattern catches; hence two lines.
+data/ff.db.*
+data/ff.db-*
 # per-format model working sets (regenerable; each has a ~1GB features.db). NOTE: a trailing "# ..."
 # on a pattern line is NOT a comment in .gitignore syntax -- it becomes part of the pattern, which is
 # how this directory was un-ignored for a day (2026-09-16).

@@ -617,8 +617,7 @@ is the credential. Everything below is a GET.
   table's `DST:XX` map for defences, whose ESPN ids are negative and absent from the cross-source
   file.
 - **Fetch path and cost.** `ff build-waiver-claims`, 0.2s, no network.
-- **Feeds.** `tools/train_faab.py` -> `data/faab-model.json` -> `waiver_targets` / `ff copilot
-  waivers`. Guarded by `scripts/faab-leakage.mjs`, which fault-injects five leaks.
+- **Feeds.** `tools/train_faab.py` -> `data/faab-model.json` -> `waiver_targets` / `ff waivers`. Guarded by `scripts/faab-leakage.mjs`, which fault-injects five leaks.
 
 ## 5.9 cfbfastR -- college production (the rookie college pillar)
 
