@@ -321,3 +321,73 @@ test("ROSTER_DEPTH re-measured from fact_roster_week agrees with the constant", 
     }
   } finally { db.close(); }
 });
+
+test("INCLUDING AN UNSETTLED SEASON changes the measured depth -- which is why the scope is not optional", (t) => {
+  /**
+   * THE RE-PIN THAT SHOULD NOT HAPPEN (measured again 2026-09-19).
+   *
+   * Measured over every season the roster feed covers, this league reports RB 54 and K 17 against
+   * the pinned 55 and 18 -- which reads as drift and invites a re-pin. It is not drift. It is
+   * COMPOSITION: 2026 is in progress and carries 16 teams against the settled seasons' 14.25 mean,
+   * so a couple of its league-weeks are weighted equally with a full season's seventeen and two
+   * positions tip through `Math.ceil`. Every underlying row is correct.
+   *
+   * Scoped to settled seasons the pins reproduce EXACTLY, all six -- asserted by the test above.
+   *
+   * WHY IT MATTERS MORE THAN A CONSTANT. `POPULATION_DEPTH = ROSTER_DEPTH + FA_MARGIN` decides
+   * which rows carry `in_population`, the depth is hashed INTO every artifact's `populationHash`,
+   * and three shipped artifacts are fitted on that population. Re-pinning RB 55->54 and K 18->17
+   * would redefine the population, invalidate all three, and require refits behind the D13 gate --
+   * to adopt numbers that are an artifact of a season that has not finished.
+   *
+   * This test exists so the contrast is RECORDED rather than rediscovered. When 2026 settles it
+   * joins the settled set, the test above re-measures, and a genuine move will fail it -- which is
+   * the moment to re-pin, deliberately, with the refits that implies.
+   */
+  let db: InstanceType<typeof Database>;
+  try { db = new Database("data/ff.db", { readonly: true, fileMustExist: true }); }
+  catch { t.diagnostic("SKIPPED: no data/ff.db"); return; }
+  try {
+    const league = (db.prepare("SELECT value FROM settings WHERE key = 'active_league'").get() as { value?: string } | undefined)?.value;
+    if (!league) { t.diagnostic("SKIPPED: no active league"); return; }
+    const settled = (db.prepare(
+      "SELECT season FROM fact_team_season WHERE league_id = ? AND settled = 1 GROUP BY season",
+    ).all(league) as { season: number }[]).map((r) => r.season);
+    const all = (db.prepare(
+      "SELECT DISTINCT season FROM fact_roster_week WHERE league_id = ? ORDER BY season",
+    ).all(league) as { season: number }[]).map((r) => r.season);
+    if (!settled.length || all.length === settled.length) {
+      // No unsettled season in the store: the contrast cannot be drawn, and saying so beats passing.
+      t.diagnostic("SKIPPED: every season with roster weeks is settled, so there is nothing to contrast.");
+      return;
+    }
+
+    const depths = (seasons: number[]): Record<string, number> => {
+      const inS = `AND season IN (${seasons.map(() => "?").join(",")})`;
+      const teams = (db.prepare(
+        `SELECT COUNT(*) * 1.0 / COUNT(DISTINCT season) AS t FROM (SELECT DISTINCT season, team_id FROM fact_roster_week WHERE league_id = ? ${inS})`,
+      ).get(league, ...seasons) as { t: number }).t;
+      const rows = db.prepare(
+        `SELECT pos, COUNT(*) * 1.0 / (SELECT COUNT(DISTINCT season || '|' || week) FROM fact_roster_week WHERE league_id = ? ${inS}) AS per
+           FROM fact_roster_week WHERE league_id = ? ${inS} AND pos IN ('QB','RB','WR','TE','K','DST') GROUP BY pos`,
+      ).all(league, ...seasons, league, ...seasons) as { pos: string; per: number }[];
+      const out: Record<string, number> = {};
+      for (const r of rows) out[r.pos] = Math.ceil((r.per / teams) * LEAGUE_TEAMS);
+      return out;
+    };
+
+    const s = depths(settled);
+    const a = depths(all);
+    // THE PINS ARE THE SETTLED MEASUREMENT. (The test above asserts this too; repeated here so this
+    // test cannot pass by comparing two wrong numbers to each other.)
+    for (const pos of Object.keys(ROSTER_DEPTH)) {
+      assert.equal(ROSTER_DEPTH[pos], s[pos], `${pos}: the pin must equal the SETTLED measurement`);
+    }
+    // AND THE UNSETTLED-INCLUSIVE ANSWER DIFFERS. If it ever stops differing, the scoping has become
+    // decorative and somebody should find that out here rather than assume it is still load-bearing.
+    const moved = Object.keys(ROSTER_DEPTH).filter((pos) => a[pos] !== s[pos]);
+    assert.ok(moved.length > 0,
+      "including the unsettled season no longer changes any depth -- the settled-only scope is doing " +
+      "nothing, so either the season settled or the measurement changed shape. Re-read both.");
+  } finally { db.close(); }
+});
