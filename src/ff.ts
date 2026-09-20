@@ -1918,13 +1918,18 @@ async function cmdIngestSource(rest: string[]) {
   const { ingestOne } = await import("./data/ingest.js");
   // Positional scan that SKIPS a flag's value -- the same shape `ff ingest-raw` uses. `find(a =>
   // !a.startsWith("--"))` reads "2018-2026" as the asset id when --seasons comes first.
-  const VALUE_FLAGS = new Set(["--db", "--seasons"]);
+  // `--league` IS A VALUE FLAG, and leaving it out was two bugs at once: the scan below would read
+  // `ff ingest-source --league 135... ecr` as asset id "135...", and the league was never forwarded
+  // at all -- so `ff ingest-source ecr --league <other>` fetched the ACTIVE league's consensus and
+  // then rebuilt the ACTIVE league's board. Measured 2026-09-20: aimed at a Sleeper league, it
+  // rebuilt the live ESPN one. Same shape as the copilot positional bug fixed earlier.
+  const VALUE_FLAGS = new Set(["--db", "--seasons", "--league"]);
   let id = "";
   for (let i = 0; i < rest.length; i++) {
     if (rest[i].startsWith("--")) { if (VALUE_FLAGS.has(rest[i])) i++; continue; }
     id = rest[i]; break;
   }
-  if (!id) { console.log("usage: ff ingest-source <id> [--seasons 2018-2026]"); return; }
+  if (!id) { console.log("usage: ff ingest-source <id> [--seasons 2018-2026] [--league <id>]"); return; }
   // FORWARD --seasons. A raw asset routed through this verb (the app's Data page calls exactly this)
   // otherwise silently falls back to its default range, so `ff ingest-source league-history
   // --seasons 2018-2026` would quietly ingest something other than what was asked for.
@@ -1937,7 +1942,7 @@ async function cmdIngestSource(rest: string[]) {
     for (let y = lo; y <= hi; y++) seasons.push(y);
   }
   const t0 = Date.now();
-  const r = await ingestOne(valueOf(rest, "--db"), id, { seasons });
+  const r = await ingestOne(valueOf(rest, "--db"), id, { seasons, leagueId: leagueArg(rest) ?? undefined });
   console.log(`materialized ${id}: ${r.rows} rows + rebuilt board (${Date.now() - t0}ms)`);
 }
 

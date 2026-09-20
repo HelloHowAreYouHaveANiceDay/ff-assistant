@@ -9,15 +9,36 @@ import { nameKey } from "../draft/values.js";
 const FANTASY_POS = new Set(["QB", "RB", "WR", "TE", "K", "DST"]);
 const num = (s: string): number | null => { if (s == null || s === "") return null; const n = Number(s); return Number.isFinite(n) ? n : null; };
 
-/** FantasyPros redraft-overall ECR -> player + ranking(source='fantasypros_ecr'). */
-async function ingestEcr(db: DB, SEASON: number): Promise<{ players: number; rankings: number }> {
+/**
+ * FantasyPros consensus -> player + ranking, under ONE variant's page_type and source.
+ *
+ * DEFAULTS TO THE BASELINE, so a call with no variant is byte-for-byte what this always did:
+ * `redraft-overall` into `source='fantasypros_ecr'`. A dynasty or superflex league asks for its own
+ * list (`dynasty-overall`, `dynasty-op`) and it lands under its own source, because `ranking` is
+ * already keyed by `(player_id, source, season)` -- the variants coexist and the incumbent's rows
+ * never move. See src/data/ecrVariant.ts for the measurement that motivated this.
+ *
+ * THE PLAYER UPSERT IS SHARED ON PURPOSE. A player is a player whatever list ranks him; only the
+ * RANKING is per-variant. What the variant must NOT share is `pos_rank`, which is derived from the
+ * ordering of THIS list -- deriving it from another list's order is the whole defect.
+ */
+async function ingestEcr(
+  db: DB, SEASON: number,
+  variant: { pageType: string; source: string } = { pageType: "redraft-overall", source: "fantasypros_ecr" },
+): Promise<{ players: number; rankings: number }> {
   const rows = (await fetchCsv(URLS.ecr))
-    .filter((r) => pick(r, "page_type") === "redraft-overall")
+    .filter((r) => pick(r, "page_type") === variant.pageType)
     .filter((r) => FANTASY_POS.has(pick(r, "pos").toUpperCase()))
     .map((r) => ({ r, ecr: num(pick(r, "ecr")) }))
     .filter((x) => x.ecr != null)
     .sort((a, b) => a.ecr! - b.ecr!);
-  if (rows.length === 0) throw new Error("ECR ingest produced 0 rows -- source shape changed?");
+  if (rows.length === 0) {
+    throw new Error(
+      `ECR ingest produced 0 rows for page_type "${variant.pageType}" -- either the feed's shape ` +
+      "changed or this variant is not published. REFUSING rather than writing an empty consensus, " +
+      "which downstream reads as \"the market has no opinion\" instead of \"we did not fetch it\".",
+    );
+  }
 
   const upPlayer = db.prepare(
     `INSERT INTO player (player_id, name, position, nfl_team, fp_id, updated_at)
@@ -28,7 +49,7 @@ async function ingestEcr(db: DB, SEASON: number): Promise<{ players: number; ran
   );
   const upRank = db.prepare(
     `INSERT INTO ranking (player_id, source, season, overall_rank, pos_rank, best, worst, rostered_pct, bye, fetched_at)
-     VALUES (@id, 'fantasypros_ecr', @season, @ecr, @pos_rank, @best, @worst, @owned, @bye, @ts)
+     VALUES (@id, @source, @season, @ecr, @pos_rank, @best, @worst, @owned, @bye, @ts)
      ON CONFLICT(player_id, source, season) DO UPDATE SET
        overall_rank=excluded.overall_rank, pos_rank=excluded.pos_rank, best=excluded.best,
        worst=excluded.worst, rostered_pct=excluded.rostered_pct, bye=excluded.bye, fetched_at=excluded.fetched_at`,
@@ -38,7 +59,9 @@ async function ingestEcr(db: DB, SEASON: number): Promise<{ players: number; ran
   const ts = nowIso();
   const run = db.transaction(() => {
     // full refresh: a player who dropped out of ECR should not linger
-    db.prepare(`DELETE FROM ranking WHERE source = 'fantasypros_ecr' AND season = ?`).run(SEASON);
+    // Full refresh OF THIS VARIANT ONLY. An unqualified delete would drop every other league's
+    // consensus on the way past, which is the cross-format write the source column exists to prevent.
+    db.prepare("DELETE FROM ranking WHERE source = ? AND season = ?").run(variant.source, SEASON);
     for (const { r, ecr } of rows) {
       const pos = pick(r, "pos").toUpperCase();
       const team = pick(r, "team", "tm");
@@ -53,7 +76,7 @@ async function ingestEcr(db: DB, SEASON: number): Promise<{ players: number; ran
       posSeen[pos] = (posSeen[pos] ?? 0) + 1;
       upPlayer.run({ id, name, pos, team, fp_id: pick(r, "id"), ts });
       upRank.run({
-        id, season: SEASON, ecr, pos_rank: `${pos}${posSeen[pos]}`,
+        id, source: variant.source, season: SEASON, ecr, pos_rank: `${pos}${posSeen[pos]}`,
         best: num(pick(r, "best")), worst: num(pick(r, "worst")),
         owned: num(pick(r, "player_owned_avg")), bye: num(pick(r, "bye")), ts,
       });
@@ -628,7 +651,19 @@ export async function ingestOne(dbPath: string | undefined, id: string, opts: { 
   const numQbs = cfg.slots.filter((s) => s === "QB" || s === "OP" || s === "SUPERFLEX" || s === "SF").length || 1;
   let rows = 0;
   switch (id) {
-    case "ecr": rows = (await ingestEcr(db, SEASON)).players; break;
+    case "ecr": {
+      // THE LEAGUE'S OWN CONSENSUS when one is asked for. With no `--league` this is the baseline
+      // redraft list exactly as before; with a dynasty or superflex league it fetches that league's
+      // published list into its own source, so the two coexist rather than overwrite.
+      const { ecrVariantFor } = await import("./ecrVariant.js");
+      const { getConfig } = await import("../db/db.js");
+      const c = getConfig(db, opts.leagueId ?? null) as unknown as { leagueType?: string | null; slots?: string[] };
+      const v = ecrVariantFor({ leagueType: c.leagueType, slots: c.slots });
+      if (!v.baseline) console.log(`  ecr: ${v.pageType} -> source "${v.source}" (this league's own market)`);
+      if (v.caveat) console.log(`  ecr CAVEAT: ${v.caveat}`);
+      rows = (await ingestEcr(db, SEASON, v)).players;
+      break;
+    }
     case "bio": rows = await ingestBio(db, SEASON); break;
     case "byes": rows = await ingestByes(db, SEASON); break;
     case "advanced": rows = (await ingestAdvanced(db, SEASON)).snap; break;
@@ -658,8 +693,14 @@ export async function ingestOne(dbPath: string | undefined, id: string, opts: { 
     auditIngest(db, { source: id, season: SEASON, rowsWritten: rows, readback: () => countTable(db, l1.writes[0], SEASON) });
   }
   db.close();
+  // REBUILD THE LEAGUE THIS INGEST WAS FOR, not whichever league happens to be active.
+  //
+  // Both of these took no league, so `ff ingest-source ecr --league <other>` re-projected and
+  // rebuilt the ACTIVE league's board. Measured 2026-09-20: a command aimed at a Sleeper league
+  // rebuilt the live ESPN one mid-season. The board is per-league now, so naming the league is both
+  // possible and required -- an unqualified rebuild is a write to a league nobody asked about.
   if (id === "ecr") await project(dbPath); // ECR changes the within-position rank -> re-derive the curve
-  await assemble(dbPath);                  // every source feeds the board -> rebuild it
+  await assemble(dbPath, undefined, opts.leagueId ?? null);   // every source feeds the board -> rebuild it
   return { rows };
 }
 

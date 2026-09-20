@@ -276,7 +276,36 @@ export async function assemble(
   // 5. reference data from the store, keyed by name_key
   type Ecr = { team: string; ecr: number; ecr_pos: string; best: number; worst: number; rostered: number };
   const ecr = new Map<string, Ecr>();
-  for (const r of db.prepare("SELECT p.player_id, p.name, p.position, p.nfl_team AS team, r.overall_rank AS ecr, r.pos_rank AS ecr_pos, r.best, r.worst, r.rostered_pct AS rostered FROM ranking r JOIN player p USING(player_id) WHERE r.source='fantasypros_ecr' AND r.season=@s").all({ s: season }) as (Ecr & { player_id: string; name: string; position: string })[]) {
+  /**
+   * THIS LEAGUE'S CONSENSUS, not every league's.
+   *
+   * `ranking` held one list -- FantasyPros `redraft-overall` -- and every league read it, which is
+   * right for a redraft one-QB league and wrong for anything else in a way nothing can see: a rank
+   * carries no statement about which game it describes. Measured, redraft vs dynasty over the top 12
+   * at each position is 25.4% identical, mean |d| 3.02, with veterans falling and rookies rising
+   * exactly as dynasty implies. See src/data/ecrVariant.ts.
+   *
+   * FALLS BACK LOUDLY. A league whose variant has not been ingested yet gets the baseline list AND a
+   * line saying so, because a board silently priced against the wrong market is the failure this
+   * whole per-format layer exists to prevent.
+   */
+  const { ecrVariantFor, ECR_SOURCE } = await import("./ecrVariant.js");
+  const ecrVar = ecrVariantFor({
+    leagueType: (cfg as unknown as { leagueType?: string | null }).leagueType,
+    slots: cfg.slots,
+  });
+  const ecrHave = (src: string): number =>
+    (db.prepare("SELECT COUNT(*) c FROM ranking WHERE source=? AND season=?").get(src, season) as { c: number }).c;
+  let ecrSource = ecrVar.source;
+  if (!ecrVar.baseline && !ecrHave(ecrSource)) {
+    console.log(`  consensus: this league is ${ecrVar.pageType}, but no rows are stored under "${ecrSource}".`);
+    console.log(`    FALLING BACK to "${ECR_SOURCE}" (one-QB redraft) -- run \`ff ingest-source ecr --league <id>\` to fetch the right list.`);
+    ecrSource = ECR_SOURCE;
+  } else if (!ecrVar.baseline) {
+    console.log(`  consensus: ${ecrVar.pageType} (${ecrHave(ecrSource)} rows) -- this league's own market, not the redraft one`);
+  }
+  if (ecrVar.caveat) console.log(`  consensus CAVEAT: ${ecrVar.caveat}`);
+  for (const r of db.prepare("SELECT p.player_id, p.name, p.position, p.nfl_team AS team, r.overall_rank AS ecr, r.pos_rank AS ecr_pos, r.best, r.worst, r.rostered_pct AS rostered FROM ranking r JOIN player p USING(player_id) WHERE r.source=@src AND r.season=@s").all({ s: season, src: ecrSource }) as (Ecr & { player_id: string; name: string; position: string })[]) {
     const e: Ecr = { team: r.team, ecr: r.ecr, ecr_pos: r.ecr_pos, best: r.best, worst: r.worst, rostered: r.rostered };
     ecr.set(r.player_id, e); // DST now key consistently by team abbr from ingest -- no nickname hack needed
   }
