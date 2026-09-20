@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { nameKey } from "../draft/values.js";
 import { DEFAULT_SCORING, type ScoringRules, type KickerRules, type DefenseRules } from "../draft/scoring.js";
 import { DEFAULT_LEVERS, type Levers } from "../draft/levers.js";
-import { scoringKey, INCUMBENT_SCORING_KEY } from "../data/formatKey.js";
+import { scoringKey, scoringKeyFor, INCUMBENT_SCORING_KEY } from "../data/formatKey.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_DB_PATH = process.env.FF_DB ?? "data/ff.db";
@@ -419,7 +419,10 @@ function migrateBoardStamp(db: DB): void {
   const id = activeLeagueId(db);
   if (!id) return;
   const cfg = getConfig(db, id);
-  setBoardStamp(db, { leagueId: id, season: cfg.season, scoringKey: scoringKey(cfg.scoring_rules), builtAt: nowIso() });
+  // The stamp names the format this board was built under, so it must be the key that SELECTS a
+  // format directory (kicker + defense folded in), not the bare offense hash.
+  const stampKey = scoringKeyFor({ rules: cfg.scoring_rules, kicker: (cfg as unknown as { kicker?: unknown }).kicker as never, defense: (cfg as unknown as { defense?: unknown }).defense as never });
+  setBoardStamp(db, { leagueId: id, season: cfg.season, scoringKey: stampKey, builtAt: nowIso() });
 }
 
 /**

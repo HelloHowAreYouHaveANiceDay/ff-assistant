@@ -79,6 +79,18 @@ function circle(teams: number): Week[] {
  * a league with no divisions. Callers get a valid schedule either way; `divisional` says which.
  */
 export function buildSchedule(teams: number, weeks: number, divisions = 0): { weeks: Week[]; divisional: boolean; divisionOf: number[] } {
+  // A DEGENERATE TEAM COUNT IS REFUSED BY NAME, because the arithmetic below hides it instead of
+  // failing: `circle(0)` returns an EMPTY round list, `w % 0` is NaN, `base[NaN]` is undefined, and
+  // the caller gets `Cannot read properties of undefined (reading 'filter')` from inside a schedule
+  // builder -- three layers from the actual problem, which is that the league has no teams in the
+  // store. Measured on a freshly onboarded league whose rosters had not been synced yet.
+  if (!Number.isInteger(teams) || teams < 2) {
+    throw new Error(
+      `buildSchedule: cannot build a schedule for ${teams} team(s). A league with fewer than two ` +
+      "teams has no matchups -- this normally means the league's rosters have never been synced, so " +
+      "the caller found no teams to schedule. Sync the league's rosters before simulating it.",
+    );
+  }
   const divisionOf = new Array(teams).fill(0);
   const size = divisions > 0 ? teams / divisions : 0;
   const canDivide = divisions === 4 && Number.isInteger(size) && size === 4 && teams === 16;

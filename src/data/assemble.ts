@@ -8,7 +8,7 @@ import { fetchCsv, pick, NFLVERSE } from "./nflverse.js";
 import { nameKey, computeValues, resolveValueLeague, type PointsRow } from "../draft/values.js";
 import { scoreWeek, type ScoringRules } from "../draft/scoring.js";
 import { openDb, nowIso, setBoardStamp, getBoardStamp, setActiveLeagueId, type DB, type BoardStamp } from "../db/db.js";
-import { dataPath } from "./paths.js";
+import { join } from "node:path";
 import { boardSpreads } from "../draft/spread.js";
 import { loadEligibilityMap } from "./eligibility.js";
 import { ESPN_READS_BASE } from "./espnApi.js";
@@ -483,7 +483,19 @@ export async function assemble(
   const san = (x: unknown) => String(x ?? "").replace(/,/g, " ").replace(/\n/g, " ").trim();
   const lines = [HEAD.join(",")];
   for (const r of rows) lines.push(COLS.map((c) => san(r[c])).join(","));
-  writeFileSync(opts.reportPath ?? dataPath("player-report.csv"), lines.join("\n") + "\n", "utf8");
+  // THE FORMAT'S OWN report, not the data ROOT's.
+  //
+  // This wrote `data/player-report.csv` UNCONDITIONALLY, so `ff assemble --league <other>` replaced
+  // the incumbent's 529-row report with the other league's 489 rows -- one league's board filed under
+  // another league's name, which is precisely the cross-format write the per-format directories
+  // exist to prevent. MEASURED 2026-09-20: after onboarding the Sleeper league the root report came
+  // back holding the Sleeper board, and nothing said so.
+  //
+  // `model.dir` is DATA_ROOT for the incumbent, so that file is byte-for-byte unchanged on the path
+  // everything else uses; a non-incumbent format writes beside its own artifacts. An explicit
+  // `reportPath` still wins -- that is what keeps a test's rebuild out of the repo's copy.
+  const reportOut = opts.reportPath ?? join(fmt.model.dir, "player-report.csv");
+  writeFileSync(reportOut, lines.join("\n") + "\n", "utf8");
   // THE STAMP, written LAST -- after the rows it describes. A stamp written first would survive a
   // build that threw halfway and claim a board that is not there.
   if (lctx.leagueId) {

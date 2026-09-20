@@ -48,9 +48,13 @@ test("the registry carries sleeper, and it resolves to the adaptor", async () =>
   const p = await platformFor("sleeper");
   assert.equal(p.id, "sleeper");
   assert.equal(p.host, "api.sleeper.app");
-  // Read-only and sessionless, both stated by ABSENCE per the contract.
+  // READ-ONLY is stated by ABSENCE (`writes`), because a missing capability must be refused by name.
   assert.equal(p.writes, undefined, "sleeper must declare no writes -- a write capability it does not have would be refused later, somewhere else");
-  assert.equal(p.webview, undefined, "sleeper needs no login, so it must not claim an Electron guest");
+  assert.equal(p.webview, undefined, "sleeper runs in no Electron guest, so it must not claim an element id");
+  // SESSIONLESS is stated POSITIVELY, and that distinction is load-bearing: absence of `webview` is
+  // an Electron fact and does not mean "no credential" (a platform can authenticate by cookie and
+  // never appear in the app). Only `session: "none"` makes `resolveIOFor` hand back a plain fetch.
+  assert.equal(p.session, "none", "sleeper must SAY it needs no session -- inferring it from webview would be the wrong fact");
 });
 
 test("SUPER_FLEX maps to ESPN's OP slot -- the D24 work is what makes this league expressible", () => {
@@ -326,4 +330,37 @@ test("FAULT: an unmatched url REFUSES instead of returning an empty body", async
   __resetSleeperPlayerCache();
   const empty = filePlatformIO({ "/players/nfl": join(FIX, "players.json") });
   await assert.rejects(() => sleeperPlatform.syncSettings(empty, LEAGUE, 2026), /no saved payload matches/);
+});
+
+/**
+ * THE SESSION DECLARATION IS CONNECTED, not merely present.
+ *
+ * `publicPlatformIO` existed for a while before anything could SELECT it: `resolveIO` took a bare
+ * host, so every generic verb sent Sleeper to the desktop app's bridge to look for a login that does
+ * not exist. The capability was built and the lever was not wired -- which reads exactly like a
+ * platform that is simply broken.
+ */
+test("CONNECTED: a sessionless platform resolves to a public IO, not the app bridge", async () => {
+  const { resolveIOFor, resolveIO } = await import("../src/league/session.js");
+  const { yahooPlatform } = await import("../src/league/yahoo.js");
+
+  assert.equal(sleeperPlatform.session, "none", "sleeper must SAY it needs no session");
+  assert.equal(yahooPlatform.session, undefined, "and a platform that does need one says nothing (absent = required)");
+
+  // The distinguishing signal is behavioural, not a name: the bridge IO reaches for the Electron app
+  // and fails with a bridge-shaped error; the public one performs a plain fetch. Pointing both at an
+  // unroutable host separates them by HOW they fail.
+  const pub = resolveIOFor(sleeperPlatform, { timeoutMs: 1500 });
+  const bridged = resolveIO(sleeperPlatform.host, { timeoutMs: 1500 });
+  assert.notEqual(pub, bridged, "the two must not be the same provider");
+
+  let pubErr = "";
+  try { await pub.get("https://api.sleeper.app.invalid/v1/state/nfl"); } catch (e) { pubErr = String((e as Error).message); }
+  assert.ok(pubErr, "the public IO must actually attempt the request");
+  assert.ok(!/bridge|app-bridge|9223/i.test(pubErr), `a public IO must not go through the app bridge; got: ${pubErr.slice(0, 120)}`);
+
+  // POSITIVE CONTROL on the override: an explicit `io` still wins for a sessionless platform, so a
+  // test double or proxy is not blocked by the new default.
+  const sentinel = { get: async () => "SENTINEL" };
+  assert.equal(await resolveIOFor(sleeperPlatform, { io: sentinel }).get("x"), "SENTINEL");
 });

@@ -319,6 +319,11 @@ export const sleeperPlatform: Platform = {
   host: SLEEPER_HOST,
   // No `webview`: Sleeper never runs in an Electron guest here, because it needs no login to read.
   // Absence is the statement -- see Platform.webview.
+  //
+  // `session: "none"` is the SEPARATE, EXPLICIT statement that reads need no credential at all. It is
+  // what makes `resolveIOFor` hand back `publicPlatformIO()`; without it every generic verb
+  // (`ff sync-rosters` and friends) would reach for an app bridge holding a login that does not exist.
+  session: "none",
   // No `writes`: this adaptor is read-only, so every write refuses by name.
 
   urls: {

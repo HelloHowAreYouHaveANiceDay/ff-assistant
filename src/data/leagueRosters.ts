@@ -461,8 +461,9 @@ export async function ingestPlatformRosterWeeks(opts: {
     const season = opts.season ?? ctx.rowSeason ?? ctx.config.season;
     const weeks = opts.weeks ?? settledWeeks(db, season, opts.today ?? localDate());
     if (!weeks.length) return { counts: { weeks: 0, available: 0, rows: 0, starters: 0, removed: 0 }, checks: readBackRosterWeeks(db, leagueId), findings: [], weeks: [], platform: plat.id };
-    const { resolveIO } = await import("../league/session.js");
-    const io = resolveIO(plat.host, { timeoutMs: 40000 });
+    const { resolveIOFor } = await import("../league/session.js");
+    // Through the PLATFORM, so a sessionless one gets a plain fetch rather than the app bridge.
+    const io = resolveIOFor(plat, { timeoutMs: 40000 });
     const pause = opts.pauseMs ?? 400;
     const fetched: RosterWeekFetch[] = [];
     for (const week of weeks) {

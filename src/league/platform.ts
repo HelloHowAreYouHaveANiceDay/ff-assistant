@@ -332,6 +332,20 @@ export interface Platform {
    *  in Electron is legal and says so by absence rather than inventing an element id. */
   readonly webview?: WebviewSpec;
   /**
+   * DOES READING THIS PLATFORM NEED A SESSION? Absent means "required", so every existing adaptor
+   * is unchanged.
+   *
+   * STATED, NOT INFERRED. The obvious shortcut is "no `webview` means no login", and it is wrong for
+   * the same reason `host` was lifted off `WebviewSpec`: whether a platform needs a credential is a
+   * PLATFORM fact, and an Electron-shaped field is not where it belongs. A platform could perfectly
+   * well authenticate by cookie and never appear in the app.
+   *
+   * `"none"` is what lets `resolveIOFor` hand back `publicPlatformIO()` instead of reaching for the
+   * app bridge. Without it, a public platform has the capability and no way to select it -- the
+   * adaptor works and every generic verb still tries to log in.
+   */
+  readonly session?: "required" | "none";
+  /**
    * OPTIONAL CAPABILITY: what this platform may have written to it, and how to build it.
    *
    * Absent means this tool cannot write to the platform at all -- a STATED limit. A caller must

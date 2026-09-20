@@ -63,6 +63,11 @@ export const PLATFORM_CONTRACT: ContractMember[] = [
     trap: "two platforms must never share a `partition`. One partition is one login, so sharing it means one platform is reading the other's session.",
   },
   {
+    name: "session", kind: "property", required: false,
+    must: "\"none\" if reading your platform needs NO credential at all (a public API), otherwise omit it -- absent means \"required\", so every existing adaptor is unchanged. `\"none\"` is what makes `resolveIOFor` hand you a plain fetch instead of the desktop app's bridge.",
+    trap: "do NOT leave it off and expect `webview`'s absence to imply it. They are different facts: a platform can authenticate by cookie and never appear in the Electron app. Sleeper declares it, and without the declaration every generic verb (`ff sync-rosters` and friends) reaches for a login that does not exist -- the capability is there and nothing can select it.",
+  },
+  {
     name: "writes", kind: "property", required: false,
     must: "a PlatformWrites: the ONE url this platform may be written to, the operations permitted there, and a builder per operation (`proposeTrade`). OMIT IT and this tool cannot write to your platform at all.",
     trap: "omitting it is the HONEST answer until you have observed a real write. A caller refuses a missing capability by name; a half-built one that returns a plausible body sends somebody a real transaction. Each builder is separately optional for the same reason -- leave out `proposeTrade` rather than throwing from inside it.",

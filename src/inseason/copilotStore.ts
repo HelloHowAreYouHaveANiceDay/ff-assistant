@@ -20,7 +20,7 @@ import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
 import { getConfig, activeLeagueId, assertBoardFor, slotFilter, type AppConfig } from "../db/db.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
-import { scoringKey } from "../data/formatKey.js";
+import { scoringKeyFor } from "../data/formatKey.js";
 import { resolveFormat } from "../data/formatResolve.js";
 import { nameKey } from "../draft/values.js";
 import type { VarianceModel } from "../draft/season.js";
@@ -230,7 +230,15 @@ export function loadProvenance(dbPath?: string, leagueId?: string | null): Prove
     try {
       const lctx = resolveLeagueContext(db as unknown as import("../db/db.js").DB, leagueId);
       let key: string | null;
-      try { key = scoringKey(lctx.config.scoring_rules); } catch { key = null; }
+      // `scoringKeyFor`, NOT `scoringKey`. The bare offense hash is not the key that selects a model
+      // DIRECTORY -- `resolveFormat` folds in the kicker and defense blocks -- so this caveat used to
+      // print a key naming no directory that exists (The Dy-nasty served "sc-f29ac5025aff" off a
+      // board stamped "sc-4b895724c893"). The caveat is how a reader learns WHICH model produced the
+      // number; a key that cannot be looked up is worse than none.
+      try {
+        const c = lctx.config as unknown as { kicker?: unknown; defense?: unknown };
+        key = scoringKeyFor({ rules: lctx.config.scoring_rules, kicker: c.kicker as never, defense: c.defense as never });
+      } catch { key = null; }
       const s = configOf(db, leagueId).season;
       boardGuard(db, leagueId, "loadProvenance");
       const provF = slotFilter(leagueId);

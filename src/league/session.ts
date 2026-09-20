@@ -30,7 +30,7 @@
  */
 import { readFileSync } from "node:fs";
 import {
-  bridgePlatformIO, cookiePlatformIO, type Platform, type PlatformIO,
+  bridgePlatformIO, cookiePlatformIO, publicPlatformIO, type Platform, type PlatformIO,
 } from "./platform.js";
 import { bridgeWriteIO, cookieWriteIO, type PlatformWriteIO } from "./writeIO.js";
 
@@ -96,6 +96,12 @@ export function resolveIO(host: string, opts: SessionOpts = {}): PlatformIO {
 /** A READ session for a platform, using the host it declares. The reason `host` was lifted off
  *  `WebviewSpec`: choosing a session is not a rendering question. */
 export function resolveIOFor(platform: Platform, opts: SessionOpts = {}): PlatformIO {
+  // AN EXPLICIT `io` OR `kind` STILL WINS, so a caller can force a transport for a public platform
+  // (a recording double in a test, a proxy) exactly as before. Only the DEFAULT changes: a platform
+  // that declares it needs no session gets a plain fetch rather than the app bridge.
+  if (!opts.io && !opts.kind && platform.session === "none" && !fromEnv().kind) {
+    return publicPlatformIO({ timeoutMs: opts.timeoutMs });
+  }
   return resolveIO(platform.host, opts);
 }
 

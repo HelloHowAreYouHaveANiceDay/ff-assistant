@@ -332,7 +332,10 @@ async function cmdServe(rest: string[]) {
           // WHOSE BOARD (S-8), beside how old it is. `pending` means the league was switched and the
           // rebuild has not landed, so the app can say "no board for this league yet" instead of
           // rendering the previous league's dollars.
-          result = { builtAt: row?.m ?? null, players: row?.n ?? 0, season: s, stamp: getBoardStamp(db) };
+          // THE ACTIVE LEAGUE'S stamp, matching the row counts above (which are league-filtered).
+          // A bare `getBoardStamp(db)` reads the legacy GLOBAL key, so it can describe a different
+          // league than the numbers beside it -- see cmdAssemble below for what that looks like.
+          result = { builtAt: row?.m ?? null, players: row?.n ?? 0, season: s, stamp: getBoardStamp(db, activeLeagueId(db)) };
           break;
         }
         case "app-data": result = appDataPayload(db, Number(params.season) || curSeason()); break;
@@ -595,9 +598,14 @@ async function cmdRefresh(rest: string[]) {
 async function cmdAssemble(rest: string[]) {
   const { assemble } = await import("./data/assemble.js");
   const n = await assemble(valueOf(rest, "--db"), valueOf(rest, "--points"), leagueArg(rest));
-  const { openDb, getBoardStamp } = await import("./db/db.js");
+  const { openDb, getBoardStamp, activeLeagueId: activeOf } = await import("./db/db.js");
   const sdb = openDb(valueOf(rest, "--db"));
-  const stamp = getBoardStamp(sdb);
+  // THE LEAGUE WE JUST ASSEMBLED, not the active one. `getBoardStamp(sdb)` reads the legacy GLOBAL
+  // key, which tracks the ACTIVE league -- so `ff assemble --league <other>` correctly wrote and
+  // stamped the other league's board and then printed "stamped league <active>, <active's key>".
+  // The data was right and the sentence was wrong, which is worse than either: it reads as a
+  // cross-league write that did not happen, and it would equally hide one that did.
+  const stamp = getBoardStamp(sdb, leagueArg(rest) ?? activeOf(sdb));
   sdb.close();
   console.log(`assembled ${n} players -> player_value + board + ranking:espn` +
     (stamp ? ` (stamped league ${stamp.leagueId}, season ${stamp.season}, ${stamp.scoringKey})` : ""));
@@ -1790,7 +1798,7 @@ async function cmdSyncSettings(rest: string[]) {
 async function cmdSyncRosters(rest: string[]) {
   const { openDb, nowIso } = await import("./db/db.js");
   const { platformFor } = await import("./league/platform.js");
-  const { resolveIO } = await import("./league/session.js");
+  const { resolveIOFor } = await import("./league/session.js");
   const { writeOwnership } = await import("./data/ownershipSync.js");
   const db = openDb(valueOf(rest, "--db"));
   // RESOLVE ONCE, DISPATCH ON THAT SAME ROW -- this verb DELETEs the league's ownership rows and
@@ -1804,7 +1812,10 @@ async function cmdSyncRosters(rest: string[]) {
   catch (e) { db.close(); return failStep(`league ${ctx.leagueId}: ${(e as Error).message}`); }
   let rosters;
   try {
-    rosters = await plat.syncRosters(resolveIO(plat.host), ctx.leagueId, season);
+    // `resolveIOFor(plat)`, not `resolveIO(plat.host)`: the PLATFORM knows whether it needs a
+    // session. Passing only the host throws that away, so a public platform would still be sent to
+    // the app bridge to look for a login it does not have.
+    rosters = await plat.syncRosters(resolveIOFor(plat), ctx.leagueId, season);
   } catch (e) {
     db.close();
     return failStep(`could not read ${plat.id} rosters for league ${ctx.leagueId}: ${String((e as Error).message).slice(0, 200)}`);
