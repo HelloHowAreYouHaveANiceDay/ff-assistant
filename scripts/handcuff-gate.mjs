@@ -146,7 +146,8 @@ for (const season of seasons.filter((s) => s >= FROM && s <= TO)) {
       const leadMissed = [];
       for (let w = 1; w <= REG; w++) if (w !== leadBye && !lead.cur.weeks.has(w)) leadMissed.push(w);
 
-      for (const b of men.slice(1, 3)) {
+      for (const [bi, b] of men.slice(1, 3).entries()) {
+        const depthOrder = bi + 2;                       // 2 or 3 -- the model fitted these separately
         if (b.priorTotal <= 0) continue;
         const basePerWk = b.priorTotal / REG;
         const lift = HANDCUFF_MODEL.backup * basePerWk + HANDCUFF_MODEL.lead * leadPerWk - basePerWk;
@@ -170,7 +171,7 @@ for (const season of seasons.filter((s) => s >= FROM && s <= TO)) {
           const missProb = leadMissProb(vm[armName], pos, frac);
           const playable = leadBye != null ? REG - 1 : REG;
           const predicted = lift * missProb * playable;
-          rows[armName].push({ season, pos, lead: lead.name, backup: b.name, predicted, realised, leadMissedGames: leadMissed.length, missProb, playable });
+          rows[armName].push({ season, pos, lead: lead.name, backup: b.name, predicted, realised, leadMissedGames: leadMissed.length, missProb, playable, depthOrder, lift });
         }
       }
     }
@@ -185,55 +186,126 @@ const corr = (a, b) => {
   return da && db ? num / (da * db) : NaN;
 };
 
-console.log(`\nHANDCUFF GATE -- ${FROM}-${TO}, leave-season-out, n=${rows.total.length} (lead, backup) pairs\n`);
-// THE HEADLINE, because it is the one apples-to-apples comparison in this file: a predicted
-// per-playable-week miss RATE against the rate those same leads actually missed. Everything below it
-// multiplies this by a lift, and the lift here is a PRIOR-SEASON PROXY for a projection -- good
-// enough to rank with, too crude to adjudicate a level. Read the rate; treat the EV level as
-// directional only.
+console.log(`\nHANDCUFF GATE -- ${FROM}-${TO}, leave-season-out, n=${rows.total.length} (lead, backup) pairs`);
+
+/**
+ * EVERY METRIC IS SPLIT BY DEPTH ORDER, and that is not presentation.
+ *
+ * Depth-2 and depth-3 are different populations with different model behaviour, and pooling them was
+ * this gate's first flaw -- it hid that the fitted lift is not merely too high but ORDERED BACKWARDS.
+ * `HANDCUFF_MODEL` is one equation with no depth term:
+ *
+ *     lift = activePerWk - base = 0.402*lead - 0.078*base
+ *
+ * so a WORSE backup, having a smaller base, is handed a LARGER lift. The docstring in handcuff.ts
+ * reports +4.42 pts/wk for depth-2 and +2.37 for depth-3 -- a split the shipped formula cannot
+ * express, and whose direction it inverts. Pooled, those two errors average into a single wrong
+ * number that looks like a calibration problem; split, it is visibly a SHAPE problem.
+ *
+ * The ALL row is kept so the pooled figures remain comparable to earlier runs, never as the headline.
+ */
+const DEPTHS = [{ k: 2, label: "depth-2" }, { k: 3, label: "depth-3" }, { k: null, label: "ALL" }];
+const at = (armName, d) => (d == null ? rows[armName] : rows[armName].filter((x) => x.depthOrder === d));
+
+// ---- 1. THE MISS RATE. A lead-level quantity, so it is IDENTICAL across depth by construction --
+// the same lead appears once per backup. Reported once, split only to show that it does not move.
 {
-  const actual = mean(rows.total.map((r) => r.leadMissedGames / r.playable));
-  console.log("  MISS RATE (per playable week) -- the quantity the two arms actually differ on");
-  console.log(`    ACTUAL, these same leads          ${actual.toFixed(3)}`);
-  for (const armName of ["total", "prior"]) {
-    const pred = mean(rows[armName].map((r) => r.missProb));
-    console.log(`    predicted ${(armName === "total" ? "shipped" : "fixed").padEnd(8)}              ${pred.toFixed(3)}   (${(pred / actual).toFixed(2)}x actual)`);
+  console.log("\n  MISS RATE (per playable week) -- the quantity the two arms differ on");
+  console.log("    depth        n     ACTUAL   shipped   fixed    shipped/act   fixed/act");
+  for (const { k, label } of DEPTHS) {
+    const r = at("total", k);
+    if (!r.length) continue;
+    const actual = mean(r.map((x) => x.leadMissedGames / x.playable));
+    const ship = mean(at("total", k).map((x) => x.missProb));
+    const fix = mean(at("prior", k).map((x) => x.missProb));
+    console.log(`    ${label.padEnd(9)} ${String(r.length).padStart(5)}    ${actual.toFixed(3)}     ${ship.toFixed(3)}   ${fix.toFixed(3)}        ${(ship / actual).toFixed(2)}x        ${(fix / actual).toFixed(2)}x`);
   }
+}
+
+// ---- 2. THE LIFT. Where the depth split actually bites.
+{
+  console.log("\n  LIFT per week, model vs realised (pairs whose lead missed at least one week)");
+  console.log("    depth        n   model   realised   ratio");
+  for (const { k, label } of DEPTHS) {
+    const g = at("total", k).filter((x) => x.leadMissedGames > 0);
+    if (!g.length) continue;
+    const modelLift = mean(g.map((x) => x.lift));
+    const realisedLift = mean(g.map((x) => x.realised / x.leadMissedGames));
+    console.log(`    ${label.padEnd(9)} ${String(g.length).padStart(5)}   ${modelLift.toFixed(2).padStart(5)}   ${realisedLift.toFixed(2).padStart(8)}   ${(modelLift / realisedLift).toFixed(2)}x`);
+  }
+  const d2 = at("total", 2).filter((x) => x.leadMissedGames > 0);
+  const d3 = at("total", 3).filter((x) => x.leadMissedGames > 0);
+  if (d2.length && d3.length) {
+    const mOrder = mean(d2.map((x) => x.lift)) - mean(d3.map((x) => x.lift));
+    const rOrder = mean(d2.map((x) => x.realised / x.leadMissedGames)) - mean(d3.map((x) => x.realised / x.leadMissedGames));
+    console.log(`    ORDERING  model depth2-depth3 ${mOrder >= 0 ? "+" : ""}${mOrder.toFixed(2)}   realised ${rOrder >= 0 ? "+" : ""}${rOrder.toFixed(2)}` +
+      `   ${Math.sign(mOrder) === Math.sign(rOrder) ? "same direction" : "*** INVERTED -- the model ranks the worse backup higher ***"}`);
+  }
+}
+
+// ---- 2b. THE LIFT BY POSITION, because HANDCUFF_MODEL was not fitted on all four.
+//
+// handcuff.ts's own docstring says "depth-2 backup, LEAD BACK out: +4.42 pts/wk, 307 cases" -- a
+// RUNNING BACK fit. The shipped formula carries no position term and `handcuffBoard` applies it to
+// QB, RB, WR and TE alike. If RB depth-2 recovers something near the fitted number while the other
+// positions do not, the lift is not simply "too high": it is an RB model being served at positions
+// it was never measured on, and the fix is scoping rather than recalibration.
+{
   console.log("");
-}
-console.log("  arm      mean pred   mean realised      bias        MAE     corr");
-for (const armName of ["total", "prior"]) {
-  const r = rows[armName];
-  const p = r.map((x) => x.predicted), a = r.map((x) => x.realised);
-  const bias = mean(p) - mean(a);
-  const mae = mean(r.map((x) => Math.abs(x.predicted - x.realised)));
-  console.log(`  ${(armName === "total" ? "shipped" : "fixed").padEnd(8)} ${mean(p).toFixed(2).padStart(9)} ${mean(a).toFixed(2).padStart(15)} ${bias.toFixed(2).padStart(9)} ${mae.toFixed(2).padStart(10)} ${corr(p, a).toFixed(3).padStart(8)}`);
-}
-
-// WHO IS IN THIS SAMPLE, because the headline means nothing without it: an EV averaged over leads
-// who never missed a game is dominated by zeros, and "well calibrated" could just mean "both arms
-// predict a small number and most realised values are 0".
-{
-  const r = rows.total;
-  const hurt = r.filter((x) => x.leadMissedGames > 0);
-  const missed = r.map((x) => x.leadMissedGames);
-  console.log(`
-  SAMPLE: ${hurt.length}/${r.length} pairs had the lead miss at least one week (${(100 * hurt.length / r.length).toFixed(1)}%)`);
-  console.log(`  lead games missed (bye excluded): mean ${mean(missed).toFixed(2)} of ~${REG - 1}  -> implied actual miss rate ${(mean(missed) / (REG - 1)).toFixed(3)}`);
-  console.log(`  mean realised | lead missed >=1 : ${mean(hurt.map((x) => x.realised)).toFixed(2)}   | lead never missed: ${mean(r.filter((x) => x.leadMissedGames === 0).map((x) => x.realised)).toFixed(2)}`);
-}
-
-// THE DECISION TEST. Ranking is what an owner actually uses -- "which handcuffs are worth a roster
-// spot" -- so score the TOP-K by predicted EV against the population, per season, then average.
-console.log(`\n  DECISION TEST: mean REALISED value of the top-${TOPK} handcuffs each season, by predicted EV`);
-console.log("  arm        top-K realised   all-pairs mean   edge");
-for (const armName of ["total", "prior"]) {
-  const perSeason = [];
-  for (const s of [...new Set(rows[armName].map((r) => r.season))]) {
-    const r = rows[armName].filter((x) => x.season === s).sort((a, b) => b.predicted - a.predicted);
-    if (r.length < TOPK) continue;
-    perSeason.push({ top: mean(r.slice(0, TOPK).map((x) => x.realised)), all: mean(r.map((x) => x.realised)) });
+  console.log("  LIFT by POSITION, depth-2 only (the case HANDCUFF_MODEL was fitted on)");
+  console.log("    pos       n   model   realised   ratio");
+  for (const pos of POS) {
+    const g = at("total", 2).filter((x) => x.pos === pos && x.leadMissedGames > 0);
+    if (!g.length) continue;
+    const m = mean(g.map((x) => x.lift));
+    const r = mean(g.map((x) => x.realised / x.leadMissedGames));
+    console.log(`    ${pos.padEnd(4)} ${String(g.length).padStart(6)}   ${m.toFixed(2).padStart(5)}   ${r.toFixed(2).padStart(8)}   ${(m / r).toFixed(2)}x`);
   }
-  const top = mean(perSeason.map((x) => x.top)), all = mean(perSeason.map((x) => x.all));
-  console.log(`  ${(armName === "total" ? "shipped" : "fixed").padEnd(8)} ${top.toFixed(2).padStart(14)} ${all.toFixed(2).padStart(16)} ${(top - all >= 0 ? "+" : "") + (top - all).toFixed(2)}`);
+}
+
+// ---- 3. THE EV, which is lift x rate and inherits both errors.
+{
+  console.log("\n  EXPECTED POINTS, predicted vs realised");
+  console.log("    depth     arm        pred   realised      bias      MAE     corr");
+  for (const { k, label } of DEPTHS) {
+    for (const armName of ["total", "prior"]) {
+      const r = at(armName, k);
+      if (!r.length) continue;
+      const pr = r.map((x) => x.predicted), ac = r.map((x) => x.realised);
+      console.log(`    ${label.padEnd(9)} ${(armName === "total" ? "shipped" : "fixed").padEnd(8)} ${mean(pr).toFixed(2).padStart(6)} ${mean(ac).toFixed(2).padStart(10)} ${(mean(pr) - mean(ac)).toFixed(2).padStart(9)} ${mean(r.map((x) => Math.abs(x.predicted - x.realised))).toFixed(2).padStart(8)} ${corr(pr, ac).toFixed(3).padStart(8)}`);
+    }
+  }
+}
+
+// ---- 4. THE SAMPLE, so no row above is read without knowing what is in it.
+{
+  console.log("\n  SAMPLE");
+  console.log("    depth     lead missed >=1wk   mean games missed   realised | missed   | never missed");
+  for (const { k, label } of DEPTHS) {
+    const r = at("total", k);
+    if (!r.length) continue;
+    const hurt = r.filter((x) => x.leadMissedGames > 0);
+    console.log(`    ${label.padEnd(9)} ${(100 * hurt.length / r.length).toFixed(1).padStart(13)}%   ${mean(r.map((x) => x.leadMissedGames)).toFixed(2).padStart(17)}   ${mean(hurt.map((x) => x.realised)).toFixed(2).padStart(15)}   ${mean(r.filter((x) => x.leadMissedGames === 0).map((x) => x.realised)).toFixed(2).padStart(13)}`);
+  }
+}
+
+// ---- 5. THE DECISION TEST. Ranking is what an owner actually uses -- "which handcuffs are worth a
+// roster spot" -- so score the TOP-K by predicted EV against that depth's own population, per season.
+{
+  console.log(`\n  DECISION TEST: mean REALISED value of the top-${TOPK} by predicted EV, each season`);
+  console.log("    depth     arm        top-K   population   edge");
+  for (const { k, label } of DEPTHS) {
+    for (const armName of ["total", "prior"]) {
+      const perSeason = [];
+      const all = at(armName, k);
+      for (const season of [...new Set(all.map((x) => x.season))]) {
+        const r = all.filter((x) => x.season === season).sort((a, b) => b.predicted - a.predicted);
+        if (r.length < TOPK) continue;
+        perSeason.push({ top: mean(r.slice(0, TOPK).map((x) => x.realised)), pop: mean(r.map((x) => x.realised)) });
+      }
+      if (!perSeason.length) { console.log(`    ${label.padEnd(9)} ${(armName === "total" ? "shipped" : "fixed").padEnd(8)}  (fewer than ${TOPK} pairs per season)`); continue; }
+      const top = mean(perSeason.map((x) => x.top)), pop = mean(perSeason.map((x) => x.pop));
+      console.log(`    ${label.padEnd(9)} ${(armName === "total" ? "shipped" : "fixed").padEnd(8)} ${top.toFixed(2).padStart(7)} ${pop.toFixed(2).padStart(12)}   ${(top - pop >= 0 ? "+" : "") + (top - pop).toFixed(2)}`);
+    }
+  }
 }
