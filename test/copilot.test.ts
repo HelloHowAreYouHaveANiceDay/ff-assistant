@@ -402,3 +402,65 @@ test("playoff SOS reports how many playoff-week games are actually priced", () =
   assert.equal(r.pricedPlayoffGames, 0, "unpriced playoff weeks were counted as priced");
   assert.ok(r.playoffGames > 0);
 });
+
+/**
+ * TWO DEFECTS IN THE INSURANCE SHORTLIST (2026-09-22), both found by asking it a real question --
+ * "should I handcuff Breece Hall with Braelon Allen?" -- and both making it recommend the wrong man.
+ */
+test("insurance EXCLUDES a free agent who cannot play, and keeps the healthy one behind him", async () => {
+  const { key } = await import("./fixtures/copilot-league.js");
+  const { emptyWeekState } = await import("../src/inseason/weekState.js");
+  const ctx = fixtureCtx();
+  // Two free-agent RBs: the higher-projected one is OUT, the lower one is healthy. A shortlist that
+  // ranks on SEASON projection without an availability filter takes the injured man -- his preseason
+  // number does not know he is hurt. Measured live: two IR backs took both slots and the healthy
+  // handcuff of the very player being insured was the first name cut.
+  ctx.board.set(key("Hurt Star"), { name: "Hurt Star", pos: "RB", proj: 240, team: "FA" });
+  ctx.board.set(key("Healthy Sub"), { name: "Healthy Sub", pos: "RB", proj: 200, team: "FA" });
+  const availability = new Map([[key("Hurt Star"), { status: "OUT" as const, detail: "Knee", source: "test" }]]);
+  const withWeek = { ...ctx, week: { ...emptyWeekState(), week: 3, availability } } as typeof ctx;
+
+  const r = depthRisk(withWeek, "RB Bravo A", { trials: 300, seeds: [7], insurers: 4 });
+  const names = r.insurance.map((i) => i.name);
+  assert.ok(!names.includes("Hurt Star"), `an OUT free agent is not insurance: ${names.join(", ")}`);
+  assert.ok(names.includes("Healthy Sub"), `the healthy back behind him must take the slot: ${names.join(", ")}`);
+});
+
+test("insurance prices the LEAD'S OWN BACKUP for the world he is added to -- one without the lead", () => {
+  const ctx = fixtureCtx();
+  const lead = ctx.teams[ctx.meIdx].roster.find((p) => p.name === "RB Bravo A")!;
+  const backupProj = 200;
+  // Same NFL team as the lead (a real handcuff) vs an unrelated free agent at the SAME projection.
+  // Only the first should be repriced; the second is the scoping control.
+  ctx.board.set("rbhandcuffa", { name: "RB Handcuff A", pos: "RB", proj: backupProj, team: lead.team! });
+  ctx.board.set("rbstrangerz", { name: "RB Stranger Z", pos: "RB", proj: backupProj, team: "NFLZZ" });
+
+  const r = depthRisk(ctx, "RB Bravo A", { trials: 600, seeds: [7, 101], insurers: 6 });
+  const cuff = r.insurance.find((i) => i.name === "RB Handcuff A");
+  const stranger = r.insurance.find((i) => i.name === "RB Stranger Z");
+  assert.ok(cuff && stranger, `both candidates must be shortlisted: ${r.insurance.map((i) => i.name).join(", ")}`);
+
+  // THE POINT: two men with IDENTICAL projections, and the one who inherits the vacated job must
+  // recover more. Before the fix both were added at 200 and scored the same, so the handcuff -- the
+  // player most likely to be the right answer -- was the one most under-valued.
+  //
+  // THE MARGIN MUST CLEAR THE SIM'S OWN NOISE FLOOR, and that is not pedantry: the first version of
+  // this test asserted only `cuff > stranger`, and with identical projections that is a COIN FLIP on
+  // simulation noise. Fault injection caught it -- disabling the conditional left the test GREEN,
+  // because the coin happened to land right. A margin the broken code cannot produce is the only
+  // form of this assertion worth having.
+  const margin = cuff.recoversPp - stranger.recoversPp;
+  assert.ok(margin > r.noiseFloorPp,
+    `the lead's own backup (${cuff.recoversPp}pp) must beat an unrelated FA of equal projection ` +
+    `(${stranger.recoversPp}pp) by more than the ${r.noiseFloorPp}pp noise floor; margin was ${margin.toFixed(2)}pp`);
+});
+
+test("the conditional uplift is the FITTED handcuff model, not a second spelling of it", async () => {
+  const { HANDCUFF_MODEL } = await import("../src/inseason/handcuff.js");
+  // The ratio depth-risk applies must reproduce `handcuffs`' own activePerWk/basePerWk. Live check
+  // that motivated this: Braelon Allen 72.2 behind Breece Hall 201.5 ->
+  //   0.922 + 0.402*(201.5/72.2) = 2.044, and `ff handcuffs` reported 9.22/4.51 = 2.044.
+  const ratio = HANDCUFF_MODEL.backup + HANDCUFF_MODEL.lead * (201.5 / 72.2);
+  assert.ok(Math.abs(ratio - 9.22 / 4.51) < 0.01,
+    `depth-risk's ratio ${ratio.toFixed(3)} must equal handcuffs' ${(9.22 / 4.51).toFixed(3)} -- if these drift, the two verbs disagree again`);
+});

@@ -39,7 +39,7 @@ import { slotAdmits } from "../draft/slots.js";
 // the copula call and the swap search are a module's worth of decisions with their own tests; this
 // file's job is to hand it the roster, the opponent and the week and to report what it said.
 import { winProbLineup, opponentStarters, type WeeklyBand, type WinProbOpts, type WinProbResult, type WinProbPlayer } from "./winprob.js";
-import { handcuffBoard, loadInjuryOutlook, type DepthEntry, type HandcuffRow, type InjuryOutlookSet } from "./handcuff.js";
+import { handcuffBoard, loadInjuryOutlook, HANDCUFF_MODEL, type DepthEntry, type HandcuffRow, type InjuryOutlookSet } from "./handcuff.js";
 import { rosterGaps, rosterOverfills, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
 import { dstAliasKey, nameKey } from "../draft/values.js";
 import { perGameStrength } from "../draft/rosBlend.js";
@@ -2092,16 +2092,72 @@ export function depthRisk(
   // A claim is cheaper than a trade, so the cheap options get their own slots on the shortlist.
   const byProj = <T extends { proj: number }>(a: T, b: T) => b.proj - a.proj;
   const half = Math.max(1, Math.floor(nIns / 2));
-  const freeCands = [...ctx.board.entries()].filter(([id, p]) => !ctx.ownedIds.has(id) && p.pos === at.pos)
+  /**
+   * A FREE AGENT WHO CANNOT PLAY IS NOT INSURANCE.
+   *
+   * This shortlist had NO availability filter while `waiver_targets` -- the verb that answers the
+   * same question, "who can I add" -- excludes unavailable men by name. Two surfaces, one question,
+   * different answers, and this was the one giving the wrong one.
+   *
+   * IT IS NOT A NEAR MISS. The pool is ranked by SEASON projection, and a man who went on IR last
+   * week still carries his full preseason number, so the injured out-project the healthy. MEASURED
+   * on league 462233, 2026-09-22, the top free-agent RBs were:
+   *
+   *     Jordan Mason   110.3   IR/Inactive (Thumb)   <- shortlisted
+   *     Dylan Sampson   73.9   IR/Inactive (Knee)    <- shortlisted
+   *     Braelon Allen   72.2   Active                <- cut, by one slot
+   *
+   * Both slots went to men on IR, and the healthy handcuff for the very back being insured was the
+   * first name dropped. The recommendation that came out of it ("add Jordan Mason") was acted on.
+   *
+   * The predicate is `unavailableReason`, the SAME one the lineup and the waiver pool use -- not a
+   * second spelling of "is he out", which is how the two surfaces drift apart again.
+   */
+  const insAvail = ctx.week.availability;
+  const freeCands = [...ctx.board.entries()]
+    .filter(([id, p]) => !ctx.ownedIds.has(id) && p.pos === at.pos)
+    .filter(([, p]) => unavailableReason({ name: p.name, pos: p.pos }, ctx.week.week, insAvail) == null)
     .map(([, p]) => ({ ...p, from: "free agent", free: true })).sort(byProj).slice(0, half);
   const rosteredCands = ctx.teams.flatMap((t, i) => i === ctx.meIdx ? [] : t.roster.filter((p) => p.pos === at.pos).map((p) => ({ ...p, from: t.name, free: false })))
     .sort(byProj).slice(0, nIns - freeCands.length);
   const pool = [...freeCands, ...rosteredCands];
 
+  /**
+   * A HANDCUFF IS PRICED FOR THE WORLD HE IS BEING ADDED TO -- one where the lead is GONE.
+   *
+   * This added every candidate at his ORDINARY season projection, including the backup of the very
+   * man being removed. That is structurally wrong in one direction only: it prices the handcuff at
+   * his with-the-lead-playing value inside a simulation whose entire premise is that the lead is not
+   * playing. So the players most likely to be the right answer were the ones most under-valued.
+   *
+   * MEASURED on league 462233, 2026-09-22 (Breece Hall, NYJ): Braelon Allen scored -0.55pp, i.e.
+   * "recovers nothing", while `ff handcuffs` -- which does hold the conditional -- has him at
+   * 9.22/wk against a 4.51/wk base if Hall is out. Two verbs, one question, opposite answers.
+   *
+   * `HANDCUFF_MODEL` is the FITTED conditional (0.922*backup + 0.402*lead, from 307 within-player
+   * cases over 27 seasons, src/inseason/handcuff.ts) -- reused, not re-derived, because a second
+   * spelling of "what is a backup worth when the starter sits" is how the two verbs drifted apart in
+   * the first place. Applied as a RATIO to the season projection, so the sim keeps taking the units
+   * it already takes.
+   *
+   * SCOPED TIGHTLY. It fires only for a candidate on the SAME NFL TEAM at the SAME position who
+   * projects BELOW the man being removed -- i.e. an actual backup of his. A free agent on another
+   * roster gains nothing from this absence and is priced exactly as before.
+   */
+  const isHandcuffOf = (r: { name: string; pos: string; team?: string; proj: number }): boolean =>
+    !!r.team && !!at.team && r.team === at.team && r.pos === at.pos && r.name !== at.name && r.proj < at.proj;
+  const conditionalProj = (r: { name: string; pos: string; team?: string; proj: number }): number => {
+    if (!isHandcuffOf(r) || r.proj <= 0) return r.proj;
+    // activePerWk / basePerWk, with per-week terms cancelling into the season ratio.
+    const ratio = HANDCUFF_MODEL.backup + HANDCUFF_MODEL.lead * (at.proj / r.proj);
+    return r.proj * ratio;
+  };
+
   const insurance = pool.map((r) => {
+    const proj = conditionalProj(r);
     const after = seeds.map((s) => {
       const t = ctx.clone();
-      t[ctx.meIdx].roster = withoutOf(t).concat([{ name: r.name, pos: r.pos, proj: r.proj, team: r.team, bye: null }]);
+      t[ctx.meIdx].roster = withoutOf(t).concat([{ name: r.name, pos: r.pos, proj, team: r.team, bye: null }]);
       return outcomeOf(ctx, t, trials, s);
     });
     const d = deltasOf(after, outBySeed, objective);
