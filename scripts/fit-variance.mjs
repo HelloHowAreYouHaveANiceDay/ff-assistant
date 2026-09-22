@@ -29,7 +29,24 @@ const rows = readFileSync(PATHS.weeklyCsv, "utf8").trim().split(/\r?\n/).slice(1
 
 // LEAVE-SEASON-OUT support for the calibration harness's un-leaked refit. Both unset -> shipped run.
 const FIT_EXCLUDE = process.env.FIT_EXCLUDE ? Number(process.env.FIT_EXCLUDE) : null;
-const FIT_OUT = PATHS.out;
+const FIT_OUT = process.env.FIT_OUT_OVERRIDE || PATHS.out;
+
+/**
+ * HOW THE TIER IS ASSIGNED -- `total` (shipped) or `prior` (hindsight-free).
+ *
+ * `total` ranks a player-season by the points he ACTUALLY scored that year, and the header below
+ * calls that "the same way a draft board ranks". It is not: a board ranks by PRESEASON projection,
+ * and for the availability number the difference is circular. Missing fourteen weeks PRODUCES a low
+ * total, so the bottom tiers absorb the injuries and the top tiers look durable by selection --
+ * while `leadMissProb` serves the lookup by PROJECTED pool rank. Train on hindsight, serve on
+ * foresight.
+ *
+ * `prior` ranks by the PREVIOUS season's total instead. It is hindsight-free, which is the property
+ * that matters, and it is an imperfect proxy for a projection in two known ways, both stated rather
+ * than hidden: a player with no prior season is dropped (rookies), and a man who missed last year
+ * ranks low here while a board might still draft him high.
+ */
+const TIER_MODE = process.env.TIER_MODE === "prior" ? "prior" : "total";
 
 // season -> pos -> name -> weekly points
 const bySeason = new Map();
@@ -58,12 +75,24 @@ const tierOf = (rank, n) => Math.min(TIERS - 1, Math.floor((rank / Math.max(1, n
 const cvSamples = {}, availSamples = {}, skewSamples = {};
 for (const p of POS) { cvSamples[p] = Array.from({ length: TIERS }, () => []); availSamples[p] = Array.from({ length: TIERS }, () => []); skewSamples[p] = Array.from({ length: TIERS }, () => []); }
 
-for (const [, byPos] of bySeason) {
+/** pos|name -> the PREVIOUS season's total, carried forward. Only read in `prior` tier mode. */
+const priorTotal = new Map();
+
+// ASCENDING SEASON ORDER, so "the previous season" means what it says. The map is built from file
+// order otherwise, and a shuffled history would silently give some player-seasons a LATER season as
+// their "prior" -- hindsight smuggled back in through the ordering.
+for (const season of [...bySeason.keys()].sort((a, b) => a - b)) {
+  const byPos = bySeason.get(season);
+  const thisSeasonTotals = [];
   for (const [pos, byName] of byPos) {
     const players = [...byName].map(([name, w]) => ({ name, w, total: w.reduce((a, b) => a + b, 0) }))
       .sort((a, b) => b.total - a.total);
-    players.forEach((pl, rank) => {
-      const t = tierOf(rank, players.length);
+    const ranked = TIER_MODE === "prior"
+      ? players.filter((p) => priorTotal.has(pos + "|" + p.name))
+        .sort((a, b) => priorTotal.get(pos + "|" + b.name) - priorTotal.get(pos + "|" + a.name))
+      : players;
+    ranked.forEach((pl, rank) => {
+      const t = tierOf(rank, ranked.length);
       // availability over ALL players at this tier -- including the week-2 injuries
       availSamples[pos][t].push(Math.min(1, pl.w.length / REG_WEEKS));
       // CV needs enough games to estimate a spread at all
@@ -76,7 +105,11 @@ for (const [, byPos] of bySeason) {
         }
       }
     });
+    for (const pl of players) thisSeasonTotals.push([pos + "|" + pl.name, pl.total]);
   }
+  // Written AFTER the season is sampled, never during -- a player's own season must not be able to
+  // rank him.
+  for (const [k, v] of thisSeasonTotals) priorTotal.set(k, v);
 }
 
 // FALLBACK placeholders, used ONLY when a position genuinely has no weekly rows.

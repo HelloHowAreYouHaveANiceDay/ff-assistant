@@ -143,8 +143,12 @@ const corr = JSON.parse(readFileSync("data/correlation-model.json", "utf8"));
 // projection artifact was already per-fold; this closes the leak in the other three inputs so the
 // Brier is honestly out-of-sample. Missing a fold file falls back to shipped (and is worth noticing).
 const UNLEAK = !!process.env.UNLEAK;
+// FOLD_MODELS_DIR lets an EXPERIMENT point the un-leaked arm at a different set of refits without
+// touching `data/fold-models/`. Added to compare two ways of fitting the variance model's
+// availability table; unset, the path is exactly what it always was.
+const FOLD_MODEL_DIR = process.env.FOLD_MODELS_DIR || "data/fold-models";
 const foldModel = (kind, season) => {
-  const p = `data/fold-models/${kind}-${season}.json`;
+  const p = `${FOLD_MODEL_DIR}/${kind}-${season}.json`;
   if (existsSync(p)) return JSON.parse(readFileSync(p, "utf8"));
   if (UNLEAK) console.warn(`  UNLEAK: no ${p} -- falling back to the SHIPPED (leaked) model for ${season}`);
   return null;
