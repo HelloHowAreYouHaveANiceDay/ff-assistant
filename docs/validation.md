@@ -7085,3 +7085,64 @@ context-affecting knob on this axis and the only one wired that way.
 **NOT SHIPPED. Default stays off**, and this is a REJECT rather than a sub-floor judgement call: the
 leave-one-season-out arm is worse than the control at both weeks, which is the opposite of D35's
 situation, where every fold preferred the change.
+
+## TWO-WAY PLAYERS LOST THEIR OFFENSIVE HISTORY (2026-09-23, owner-caught, FIXED + GATED)
+
+Owner: "he should have rows in 2025. he was pretty good in some games." He was right, and the data
+was there the whole time under a position that excluded it.
+
+`src/data/history.ts` routes any non-skill `position` through `idpGroup` and scores it with
+`scoreIdpWeek`. Travis Hunter's 2025 rows carry `CB`, so all seven weeks were scored as IDP -- while
+the SAME ROWS held 45 targets, 28 receptions, 298 yards and a TD that the IDP scorer ignores. The
+consequences compounded: no 2025 offensive history at all, so his 2026 preseason line was built from
+nothing (4.17/wk against a real 7.11 half-PPR rate), the K=6 blend anchored 75% on that, and he was
+invisible to every screen filtering to QB/RB/WR/TE.
+
+**THE THRESHOLD IS THE DESIGN.** Scoring offence wherever it appears would be WORSE than the bug.
+Measured over 1999-2025, 16 (season, player) groups carry offensive production under a defensive
+label and THIRTEEN are defenders who caught a goal-line pass -- Mike Vrabel (3 catches, 5 yards),
+J.J. Watt (3 catches, 4 yards), Champ Bailey, Brian Dawkins. Promoting those would inject noise into
+the rank-cohort trajectories the simulator bootstraps from, to fix players nobody rostered.
+`OFFENSIVE_TOUCH_MIN = 15` season touches admits the real cases and excludes every novelty. Spencer
+Havner 2009 sits just under at 14 and is NOT admitted -- the threshold working on a genuine
+borderline, not a number chosen to capture him.
+
+**TWO BUGS IN THE FIX, BOTH CAUGHT BY DIFFING BEFORE SWAPPING.**
+
+1. The first version keyed season touches by DISPLAY NAME and changed **736** weekly rows. The
+   changed names were Chris Johnson, Steve Smith, Roy Williams, Brandon Marshall, Kyle Williams,
+   D.J. Williams -- every one a skill player and a defender sharing a name, so defenders inherited
+   the offensive player's workload and got promoted. It is the same collision that made a cornerback
+   called Lamar Jackson appear to have 184 carries in an earlier diagnostic. Now keyed by `player_id`
+   (the gsis id).
+2. The promoted position was derived from carries-vs-targets, which cannot tell a tight end from a
+   receiver: Jordan Thomas is a TE and landed as a WR. `SkResolver.offensivePos()` now reads the
+   staged table, which has a position for all 12,122 players.
+
+**ALSO A FOOTGUN WORTH KNOWING:** `ff build-history` defaults to `--seasons 2014-<lastyear>`, so a
+bare invocation silently truncated history-weekly.csv from 422,500 rows (1999-2025) to 194,817.
+Caught because the files were backed up first; restored byte-identical.
+
+**RESULT: 42 weekly rows of 422,499 changed, exactly two groups.**
+
+```
+2018 Jordan Thomas  LB -> TE   (27 targets, 20 rec, 215 yds)
+2025 Travis Hunter  DB -> WR   (45 targets, 28 rec, 298 yds, 1 TD; 6.3/3.7/2.6/5.7/7.9/3.5/20.1)
+```
+
+**GATE (D13): PASSES, and the change is attributable.**
+
+```
+                before     after
+CHAMPIONSHIPS    39.5%  ->  39.4%     (golden 38.5, tolerance 3.0pp)
+playoffs         96%    ->  96%       unchanged
+per season       ONLY 2018 moved, 41% -> 39%; the other 24 byte-identical
+```
+
+Jordan Thomas 2018 is the only change inside the backtest window (Hunter 2025 is outside it), and
+2018 is the only season that moved. Suite 1389/1386, the one failure the pre-existing carsonwentz case.
+
+**WHAT THIS DOES NOT DO.** It does not update Hunter's 2026 projection. That needs the chain
+history -> features -> `train_projection.py` -> artifact -> board, which is D16 territory and a
+separate decision. Until then his served line stays 4.17 and the fix is only in the history the next
+model rebuild will read.

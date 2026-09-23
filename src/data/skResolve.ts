@@ -80,12 +80,30 @@ export interface SkResolver {
   resolve(opts: { gsis?: string | null; name: string; pos: string; team?: string | null }): PlayerKey | null;
   /** How many staged rows the maps were built from -- reported, never assumed. */
   staged: number;
+  /**
+   * The staged OFFENSIVE position for a gsis id, or null when unknown or not a skill position.
+   *
+   * Exists for the two-way case in `history.ts`: when a defensively-listed player turns out to have
+   * a real offensive workload, guessing his position from touch type only distinguishes RB from WR,
+   * and Jordan Thomas 2018 is a TIGHT END who would land as a WR. The staged table already knows --
+   * it has a primary position for all 12,122 players -- so this reads it rather than inferring it.
+   */
+  offensivePos(gsis: string | null | undefined): string | null;
 }
 
 export function buildSkResolver(db: DB): SkResolver {
   const rows = db.prepare(
     "SELECT player_sk, name_key, position, team, gsis_id FROM stg_player",
   ).all() as { player_sk: number; name_key: string; position: string; team: string | null; gsis_id: string | null }[];
+
+  // gsis -> staged position, for `offensivePos`. Only skill positions are returned; anything else is
+  // null so a caller cannot accidentally promote a defender on the strength of this lookup.
+  const SKILL = new Set(["QB", "RB", "WR", "TE"]);
+  const posByGsis = new Map<string, string>();
+  for (const r of rows) {
+    const p = (r.position || "").toUpperCase();
+    if (r.gsis_id && SKILL.has(p)) posByGsis.set(r.gsis_id, p);
+  }
 
   const byGsis = new Map<string, number | null>();          // null = the id is claimed by two people
   const byNamePosTeam = new Map<string, number | null>();
@@ -106,6 +124,7 @@ export function buildSkResolver(db: DB): SkResolver {
 
   return {
     staged: rows.length,
+    offensivePos(gsis) { return gsis ? (posByGsis.get(gsis) ?? null) : null; },
     resolve({ gsis, name, pos, team }) {
       const p = normPos(pos ?? "");
       if (p === "DST") return dstKey(team || name.replace(/\s+D\/?ST$/i, ""));

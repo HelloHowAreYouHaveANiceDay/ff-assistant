@@ -11,6 +11,9 @@ import { dataPath } from "./paths.js";
 import { dstKey, type SkResolver } from "./skResolve.js";
 
 const SKILL_POS = new Set(["QB", "RB", "WR", "TE"]);
+/** Season offensive touches (targets + carries) above which a defensively-listed player is scored as
+ *  a skill player instead. See the two-way block in `scoreSeasonWeekly` for why 15 and not 1. */
+const OFFENSIVE_TOUCH_MIN = 15;
 const clean = (s: string) => s.replace(/,/g, " ").trim();
 
 /**
@@ -65,6 +68,24 @@ async function scoreSeasonWeekly(
   if (!rows.length) return nil;
   let nW = 0, nP = 0, resolved = 0, unresolved = 0;
   const seasonAgg = new Map<string, { pos: string; pts: number; sk: string | null }>();
+  // PRE-PASS: season-level offensive volume per player. The two-way test below is a judgement about
+  // a SEASON ("does he have a second job") and cannot be made from one week's row.
+  // KEYED BY `player_id` (the gsis id), NEVER BY NAME. Keying this by display name promoted every
+  // DEFENDER who shares a name with a skill player: the first build changed 736 weekly rows, and
+  // the changed names were Chris Johnson, Steve Smith, Roy Williams, Brandon Marshall, Kyle
+  // Williams, D.J. Williams -- each one an offensive player and a defensive player who happen to be
+  // called the same thing. It is the same collision that made a cornerback called Lamar Jackson
+  // appear to have 184 carries, and it was caught only by diffing the rebuilt file against the old
+  // one before swapping it in.
+  const offTouches = new Map<string, { tgt: number; car: number; touches: number }>();
+  for (const r of rows) {
+    if (pick(r, "season_type") !== "REG") continue;
+    const pid = pick(r, "player_id"); if (!pid) continue;
+    const tgt = Number(pick(r, "targets")) || 0, car = Number(pick(r, "carries")) || 0;
+    const cur = offTouches.get(pid) ?? { tgt: 0, car: 0, touches: 0 };
+    cur.tgt += tgt; cur.car += car; cur.touches += tgt + car;
+    offTouches.set(pid, cur);
+  }
   for (const r of rows) {
     if (pick(r, "season_type") !== "REG") continue;
     const name = pick(r, "player_display_name"); if (!name) continue;
@@ -73,9 +94,46 @@ async function scoreSeasonWeekly(
     // IDP players are emitted under their FANTASY GROUP (DL/LB/DB), not their depth-chart position,
     // because that is the unit a roster slot is defined in. Included even though this league does
     // not use IDP -- see the benchmark note on DEFAULT_IDP.
-    const idp = (!SKILL_POS.has(rawPos) && !isK) ? idpGroup(rawPos) : null;
+    let idp = (!SKILL_POS.has(rawPos) && !isK) ? idpGroup(rawPos) : null;
     if (!SKILL_POS.has(rawPos) && !isK && !idp) continue;
-    const pos = idp ?? rawPos;
+
+    /**
+     * A TWO-WAY PLAYER IS SCORED ON THE SIDE HE ACTUALLY PRODUCED ON.
+     *
+     * The feed's `position` is a DEPTH-CHART label, and for a genuine two-way player it names only
+     * one of his two jobs. Travis Hunter's 2025 rows carry `CB`, so every week routed to
+     * `scoreIdpWeek` -- while the SAME ROW held 45 targets, 28 receptions and 298 receiving yards
+     * that the IDP scorer simply ignores. He therefore had no offensive history at all, his 2026
+     * preseason line was built from nothing (4.17/wk against a real 7.11 half-PPR rate), and he was
+     * invisible to every screen that filters to QB/RB/WR/TE.
+     *
+     * THE THRESHOLD IS THE WHOLE DESIGN. Scoring offence wherever it appears would be worse than the
+     * bug: MEASURED over 1999-2025, 16 (season, player) groups carry offensive production under a
+     * defensive label, and THIRTEEN of them are defenders who caught one or two goal-line passes --
+     * Mike Vrabel (3 catches, 5 yards), J.J. Watt (3 catches, 4 yards), Champ Bailey, Brian Dawkins.
+     * Promoting those into the WR/TE pool would inject noise into the rank-cohort trajectories the
+     * simulator bootstraps from, to "fix" players nobody ever rostered.
+     *
+     * 15 touches is what separates a real second job from a gimmick. MEASURED by rebuilding and
+     * diffing: it moves exactly TWO (season, player) groups, 42 weekly rows in 422,499 --
+     * Travis Hunter 2025 (45 targets, DB -> WR) and Jordan Thomas 2018 (27 targets, LB -> WR).
+     * Spencer Havner 2009 sits just under at 14 touches and is NOT admitted; that is the threshold
+     * doing its job on a genuine borderline rather than a number chosen to capture him. The position
+     * it lands on is derived from the PRODUCTION (carries vs targets), not guessed.
+     *
+     * IT IS A SEASON JUDGEMENT, NOT A WEEKLY ONE, and that distinction is load-bearing: Hunter's 45
+     * targets are spread over seven games, about 6 a week, so a per-week threshold would never fire.
+     * `offTouches` is pre-aggregated over the whole season above.
+     */
+    const off = offTouches.get(pick(r, "player_id"));
+    const promoted = !!idp && (off?.touches ?? 0) >= OFFENSIVE_TOUCH_MIN;
+    if (promoted) idp = null;
+    // A promoted player's position comes from the STAGED table when it knows him -- Jordan Thomas is
+    // a TE and touch type alone cannot tell a tight end from a receiver. The carries-vs-targets
+    // fallback only runs when the staged table has no skill position for that gsis.
+    const pos = idp ?? (SKILL_POS.has(rawPos) || isK ? rawPos
+      : (promoted ? (resolver?.offensivePos(pick(r, "player_id")) ?? ((off?.car ?? 0) > (off?.tgt ?? 0) ? "RB" : "WR"))
+        : rawPos));
     const week = Number(pick(r, "week")); if (!week) continue;
     const raw = idp ? scoreIdpWeek(r, model.idp) : isK ? scoreKickerWeek(r, model.kicker) : scoreWeek(r, model.rules, pos);
     const pts = Math.round(raw * 10) / 10;
