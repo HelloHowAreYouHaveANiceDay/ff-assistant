@@ -56,8 +56,35 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
   // A: injuries (try season, fall back to season-1 -- nflverse structured data lags). REG week 1.
   let inj: Record<string, string>[] = [];
   for (const s of [season, season - 1]) { try { inj = await fetchCsv(`${NFLVERSE}/injuries/injuries_${s}.csv`); break; } catch { /* try next */ } }
-  for (const r of inj) {
-    if (pick(r, "season_type") !== "REG" || Number(pick(r, "week")) !== 1) continue;
+  /**
+   * THE LATEST PUBLISHED WEEK, NOT WEEK 1.
+   *
+   * This read `Number(pick(r, "week")) !== 1`, so the injury half of the feed was frozen on week 1
+   * for the whole season. MEASURED 2026-09-23 (week 3): the 2026 file carried weeks 1 and 2, we
+   * ingested 21 rows from week 1 and discarded 27 from week 2 -- and Michael Pittman Jr., who was
+   * OUT on our own roster, appeared in week 2 as "Questionable - Foot" and was thrown away. The
+   * symptom was a feed that looked healthy (12 high-severity injuries listed) while being a month
+   * stale, which is worse than an empty one because nothing about it reads as broken.
+   *
+   * `maxWeek` rather than the current NFL week on purpose: nflverse publishes on its own schedule
+   * and asking for a week it has not written yet would empty the feed every Wednesday. The week
+   * actually used is REPORTED in the counts so a stale file is visible rather than inferred.
+   */
+  const usable = inj.filter((r) => pick(r, "season_type") === "REG"
+    && ["Out", "Doubtful", "Questionable"].includes(pick(r, "report_status"))
+    && POS.has(pick(r, "position")));
+  /**
+   * THE LATEST WEEK THAT ACTUALLY HAS USABLE ROWS -- filtered FIRST, then maxed.
+   *
+   * Taking the max week over all REG rows emptied the feed completely: nflverse had written week-3
+   * rows with no report_status filled in yet, so `maxWeek` selected week 3 and every row failed the
+   * status filter. 21 stale rows became 0 rows, which is a different bug with the same cause as the
+   * one being fixed -- reasoning about the week on a population other than the one being consumed.
+   */
+  const injWeeks = usable.map((r) => Number(pick(r, "week"))).filter((w) => Number.isFinite(w));
+  const injuryWeek = injWeeks.length ? Math.max(...injWeeks) : 0;
+  for (const r of usable) {
+    if (Number(pick(r, "week")) !== injuryWeek) continue;
     const status = pick(r, "report_status");
     if (!["Out", "Doubtful", "Questionable"].includes(status)) continue;
     const pos = pick(r, "position"); if (!POS.has(pos)) continue;
@@ -68,8 +95,17 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
   }
 
   // C: RSS headlines tagged to the fantasy players they name (whole first+last match)
+  /**
+   * A FEED THAT FAILS MUST BE NAMED. `catch { continue; }` made a dead source indistinguishable from
+   * a quiet one: six feeds are configured, and nothing anywhere said how many actually answered. The
+   * failures are collected and returned in the counts, so "rotowire contributed nothing" can be told
+   * apart from "rotowire is down" -- which on 2026-09-23 was the former (it fetched 5 items and
+   * named no player on the board), but only a direct probe could establish that.
+   */
+  const feedFailed: string[] = [];
   for (const [feed, url] of Object.entries(RSS)) {
-    let xml = ""; try { xml = await fetchText(url); } catch { continue; }
+    let xml = "";
+    try { xml = await fetchText(url); } catch (e) { feedFailed.push(`${feed}: ${(e as Error).message.slice(0, 60)}`); continue; }
     for (const it of parseRss(xml).slice(0, 60)) {
       const text = " " + (it.title + " " + it.desc).toLowerCase().replace(/\s+/g, " ") + " ";
       for (const [key, meta] of nameIndex) if (text.includes(" " + key + " ")) {
@@ -117,5 +153,19 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
 
   const byCat: Record<string, number> = {};
   for (const r of uniq) byCat[r.category] = (byCat[r.category] || 0) + 1;
+  /**
+   * PROVENANCE IS LOGGED, NOT RETURNED. The caller does
+   * `Object.values(await ingestNews(...)).reduce((a, b) => a + b, 0)` to get a ROW COUNT, which it
+   * writes to `ingest_audit` -- so returning `injury_week: 2` and `feeds_ok: 6` added 8 phantom rows
+   * to the audited total. The return contract is "counts BY CATEGORY" and nothing else belongs in it.
+   *
+   * What it says is the point, though: the week-1 injury freeze survived a whole season because
+   * nothing ever printed WHICH week the injury half was on, and a silent `catch` meant nothing
+   * printed whether a feed answered either.
+   */
+  const failNote = feedFailed.length ? `, FAILED ${feedFailed.join("; ")}` : "";
+  console.log(`  news provenance: injuries from week ${injuryWeek || "none"} of the nflverse file` +
+    ` (it publishes a week behind, so this trails the live ESPN player_status feed);` +
+    ` ${Object.keys(RSS).length - feedFailed.length}/${Object.keys(RSS).length} RSS feeds answered${failNote}`);
   return byCat;
 }
