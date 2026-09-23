@@ -188,6 +188,60 @@ test("FAULT: waivers REFUSE a drop that leaves the roster unable to fill a manda
   assert.ok(!r.targets[0].drops.some((d) => d.name === k.name), "the refused drop still appears as a scored option");
 });
 
+/**
+ * A HANDCUFF TO OUR OWN STARTER REACHES THE SHORTLIST, and the pool ranking cannot get him there.
+ *
+ * This is the defect from league 462233 on 2026-09-23 reproduced in miniature: our only running back
+ * has a backup on his NFL team who is a free agent, and `waiver_targets` -- the verb whose entire job
+ * is "who should I add" -- could not evaluate him, because value over replacement is a property of
+ * the PLAYER and insurance is a property of the player AND OUR ROSTER.
+ *
+ * The backup is deliberately projected far too low to be ranked in: at 40 points he is below every
+ * free agent in the fixture, so the ONLY way he can appear is the roster-conditional admission. A
+ * change that broke the admission cannot make this pass by ranking him higher.
+ */
+test("waivers: a free agent backing up OUR starter is admitted to the shortlist that VOR would never reach", () => {
+  const ctx = fixtureCtx();
+  const ourRb = [...ctx.teams[0].roster].filter((p) => p.pos === "RB").sort((a, b) => b.proj - a.proj)[0];
+  assert.ok(ourRb?.team, "fixture RB has no NFL team, so the handcuff predicate cannot be exercised");
+  ctx.board.set(key("Backup Back"), { name: "Backup Back", pos: "RB", proj: 40, team: ourRb.team! });
+
+  const r = waiverTargets(ctx, { trials: 200, seeds: [7], adds: 1, dropsPerAdd: 3, positions: ["RB"], handcuffAdds: 1 });
+  const hc = r.targets.find((t) => t.add === "Backup Back");
+  assert.ok(hc, `the handcuff never reached the shortlist: ${r.targets.map((t) => t.add).join(", ")}`);
+  assert.equal(hc.admittedAs, "handcuff");
+  assert.equal(hc.insures, ourRb.name, "the row does not name the man it insures");
+  // The ORDINARY candidate still arrives by the ordinary path -- the admission ADDS, never replaces.
+  const vorRow = r.targets.find((t) => t.add === "Free Runner");
+  assert.ok(vorRow, "admitting a handcuff displaced the VOR shortlist");
+  assert.equal(vorRow.admittedAs, "vor");
+  assert.equal(vorRow.insures, null);
+});
+
+test("FAULT: handcuffAdds 0 reproduces the pre-fix pool -- the admission is a real lever, not decoration", () => {
+  const ctx = fixtureCtx();
+  const ourRb = [...ctx.teams[0].roster].filter((p) => p.pos === "RB").sort((a, b) => b.proj - a.proj)[0];
+  ctx.board.set(key("Backup Back"), { name: "Backup Back", pos: "RB", proj: 40, team: ourRb.team! });
+
+  const off = waiverTargets(ctx, { trials: 200, seeds: [7], adds: 1, dropsPerAdd: 3, positions: ["RB"], handcuffAdds: 0 });
+  assert.ok(!off.targets.some((t) => t.add === "Backup Back"),
+    "the handcuff was admitted with the lever OFF, so the lever is not what admitted him");
+  assert.ok(off.targets.every((t) => t.admittedAs === "vor"), "a row claims handcuff admission with the lever off");
+});
+
+/**
+ * THE PREDICATE MUST BE ABLE TO SAY NO. A free agent at the same position who is NOT our starter's
+ * teammate is not insurance against anything, and admitting him would make the lever meaningless --
+ * it would simply be "add three more candidates", which is a different feature with a different cost.
+ */
+test("FAULT: a same-position free agent on ANOTHER NFL team is not admitted as a handcuff", () => {
+  const ctx = fixtureCtx();
+  ctx.board.set(key("Stranger Back"), { name: "Stranger Back", pos: "RB", proj: 40, team: "NOT-OUR-TEAM" });
+  const r = waiverTargets(ctx, { trials: 200, seeds: [7], adds: 1, dropsPerAdd: 3, positions: ["RB"], handcuffAdds: 3 });
+  assert.ok(!r.targets.some((t) => t.add === "Stranger Back"),
+    "a back on an unrelated NFL team was admitted as insurance for our starter");
+});
+
 test("FAAB guidance is zero for a non-positive delta and scales with it, capped at half the budget", () => {
   assert.equal(faabFor(0, 100), 0);
   assert.equal(faabFor(-2, 100), 0);

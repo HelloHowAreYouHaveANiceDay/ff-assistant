@@ -6493,3 +6493,45 @@ diagnosis-only.
 board's projection. The SHAPE is admitted out of sample; the constants (QB +8.10, RB +4.17, WR +2.47,
 TE +2.15) are calibrated to the proxy and must be refit against the real board line before they mean
 anything. `HANDCUFF_MODEL` is untouched pending that refit and owner sign-off (charter rule 1).
+
+## THE WAIVER VERB COULD NOT SEE A HANDCUFF -- and the simulator still cannot price one (2026-09-23)
+
+TWO defects, stacked. The first is fixed; the second is NAMED, not fixed.
+
+**1. ADMISSION (fixed).** `waiverTargets` ranked the free-agent pool by value over replacement and
+scored only the top `adds`. VOR is a property of the PLAYER; insurance is a property of the player
+AND OUR ROSTER. Measured on league 462233, 2026-09-23: our roster carried exactly ONE running back,
+Breece Hall. `ff depth-risk --player "Breece Hall"` put the cost of losing him at **-22.10pp** of
+playoff probability and named **Braelon Allen, a FREE AGENT, as recovering +10.10pp** against a
+2.04pp noise floor. `ff waivers` -- asked the literal question "who should I add" -- returned four
+targets, all negative, and never mentioned Allen. He was not rejected; he was never a candidate.
+
+Fixed by admitting free agents who back up one of OUR starters to the shortlist, beyond the VOR
+slice (`handcuffAdds`, default 3; `--handcuff-adds 0` reproduces the old pool EXACTLY, which is the
+positive control -- verified, same four names in the same order). Rows now carry `admittedAs`
+("vor" | "handcuff") and `insures`, because "the simulator considered him and said no" and "the
+simulator never saw him" must not render identically.
+
+**2. PRICING (NOT fixed -- structural).** With Allen admitted he scores **-1.40pp**. That is not a
+verdict on the insurance. The season simulator couples NFL teammates through a Gaussian copula keyed
+by POSITION PAIR, and in `data/correlation-model.json` every same-position pair is exactly zero:
+
+```
+RB-RB 0.00    TE-TE 0.00    WR-WR 0.00      (QB-WR 0.3475, QB-TE 0.2251 -- the real couplings)
+```
+
+So the lead's bad weeks and the backup's good weeks NEVER coincide by construction. The event that
+gives a handcuff all his value has no representation in the model, and a bench handcuff's delta is
+bounded above by roughly zero WHATEVER he is worth in reality -- he can only cost the man he
+displaces. `ff waivers` now says this on any handcuff row rather than letting the number pass as an
+evaluation.
+
+Those zeros are NOT an oversight: `teammateCorr` (src/draft/bootstrap.ts) sets them so two receivers
+on one team stop entering the copula as the SAME MAN, which was producing singular matrices and
+damping that team's real QB-WR coupling. Fixing that defect created this one, and nothing connected
+the two until now. A handcuff needs a NEGATIVE, conditional coupling (lead out => backup elevated),
+which a position-keyed correlation cannot express at all -- it is a different model, not a different
+constant.
+
+**UNTIL THEN, `depth-risk` IS THE VERB FOR INSURANCE VALUE.** It conditions on the lead being gone
+and reprices through `HANDCUFF_MODEL`, so it answers the question `waivers` structurally cannot.

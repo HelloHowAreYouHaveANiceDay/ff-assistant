@@ -61,6 +61,9 @@ export interface CopilotArgs {
   limit?: number;
   freeOnly?: boolean;
   maxGap?: number;
+  /** waiver_targets: extra shortlist slots for free agents backing up one of OUR starters.
+   *  0 disables the roster-conditional admission and reproduces the pre-fix pool exactly. */
+  handcuffAdds?: number;
   /** stream_recommend: the ONE position the decision is about. */
   pos?: string;
   /**
@@ -170,8 +173,37 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     case "waiver_targets": {
       const x = r as C.WaiverResult;
       if (!x.targets.length) return `No waiver claim scored. Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title. ${caveat(x.assumptions)}`;
-      const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
+      const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}${t.admittedAs === "handcuff" ? `, insures ${t.insures}` : ""}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
+      /**
+       * A HANDCUFF'S NUMBER IS NOT A VERDICT ON THE HANDCUFF, and saying nothing would be worse than
+       * the blindness it replaced: "never considered" at least looks like silence, while a confident
+       * -1.4pp looks like the simulator weighed the insurance and declined it. It did not.
+       *
+       * The season simulator draws NFL teammates through a Gaussian copula keyed by position pair,
+       * and in `data/correlation-model.json` EVERY same-position pair is exactly zero -- RB-RB 0.00,
+       * TE-TE 0.00, WR-WR 0.00. Two backs on one NFL team are sampled INDEPENDENTLY, and so is every
+       * other handcuff pair, at every position. So the event that gives a handcuff all his value
+       * (the lead is out, the backup is elevated) has no representation in the model: the lead's bad
+       * weeks and the backup's good weeks never coincide by construction. A bench handcuff can
+       * therefore only ever cost the man he displaces, and his delta is bounded above by roughly
+       * zero WHATEVER he is worth in reality.
+       *
+       * Those zeros are not an oversight -- `teammateCorr` (src/draft/bootstrap.ts) sets them so two
+       * receivers on one team stop entering the copula as the SAME MAN, which was producing singular
+       * matrices. Fixing that broke this, and nothing connected the two facts until now.
+       *
+       * `depth-risk` answers the conditional question directly -- it REMOVES the lead and reprices
+       * through HANDCUFF_MODEL -- so it is the verb to read for insurance value until the simulator
+       * can express the coupling.
+       */
+      const hc = x.targets.filter((t) => t.admittedAs === "handcuff");
+      const hcNote = hc.length
+        ? ` ${hc.length} candidate(s) are HANDCUFFS to our own starters (${hc.map((t) => `${t.add} behind ${t.insures}`).join(", ")}).` +
+          ` Their deltas UNDERSTATE insurance: the sim samples SAME-POSITION teammates independently (RB-RB, TE-TE and WR-WR are all 0.00), so "lead out, backup elevated" cannot occur and a bench handcuff can only score <=0 here.` +
+          ` Read ff depth-risk --player <starter> for the conditional value.`
+        : "";
       return `Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title; noise floor ${x.noiseFloorPp}pp. ${rows}.` +
+        hcNote +
         `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""}` +
         `${x.unavailableAdds?.length ? ` EXCLUDED ${x.unavailableAdds.length} free agent(s) who CANNOT PLAY: ` +
           `${x.unavailableAdds.slice(0, 4).map((u) => `${u.name} (${u.reason})`).join(", ")}.` : ""} ${caveat(x.assumptions)}`;
@@ -320,7 +352,7 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // naming the artifact it would need, instead of another room's measurement.
       // AVAILABILITY IS PASSED (2026-09-18). Without it this verb recommended bidding FAAB on a man
       // on injured reserve -- it built its add pool from the board and never asked who could play.
-      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId), leagueId: leagueId ?? provenance.leagueId, acquisition: S.loadAcquisition(dbPath, leagueId), dbPath });
+      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, handcuffAdds: a.handcuffAdds, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId), leagueId: leagueId ?? provenance.leagueId, acquisition: S.loadAcquisition(dbPath, leagueId), dbPath });
     case "trade_check":
       return C.tradeCheck(ctx, { give: a.give ?? [], get: a.get ?? [] }, { provenance, trials: a.trials ?? 1600, seeds: a.seed != null ? [a.seed] : [7, 101] });
     case "trade_finder":

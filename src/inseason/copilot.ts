@@ -1310,6 +1310,16 @@ export interface WaiverTarget extends ObjectiveDelta {
   /** The target costs more than the budget / more than we have left. Flagged, never silently capped. */
   faabOverBudget: boolean;
   faabOverRemaining: boolean;
+  /**
+   * HOW THIS MAN REACHED THE SHORTLIST. "vor" is the ordinary path -- top of the free-agent pool by
+   * value over replacement. "handcuff" means he would never have been ranked high enough to be
+   * scored at all, and was admitted because he backs up a man on OUR roster; `insures` names that
+   * man. The distinction is on the row because "the simulator evaluated him and said no" and "the
+   * simulator never saw him" are different answers that used to look identical.
+   */
+  admittedAs: "vor" | "handcuff";
+  /** The rostered starter this candidate backs up, when `admittedAs` is "handcuff". */
+  insures: string | null;
   drops: WaiverDrop[];
 }
 
@@ -1399,6 +1409,9 @@ export function waiverTargets(
   ctx: SimContext,
   o: BaseOpts & {
     adds?: number; dropsPerAdd?: number; faabBudget?: number; positions?: string[];
+    /** Extra shortlist slots for free agents who back up one of OUR starters. 0 disables the
+     *  roster-conditional admission entirely and reproduces the pre-fix pool exactly. */
+    handcuffAdds?: number;
     /** The win probability the recommended bid is solved for. Exposed because 0.7 is a CHOICE about
      *  how much of the budget to spend on certainty, not a measured quantity. */
     faabTargetWinPct?: number;
@@ -1440,6 +1453,9 @@ export function waiverTargets(
   const trials = o.trials ?? 800;
   const seeds = o.seeds ?? [7, 101];
   const nAdds = o.adds ?? 5;
+  /** How many roster-conditional handcuffs may be admitted BEYOND the VOR shortlist. Bounded because
+   *  each admission is a full paired simulation against every legal drop, not a free lookup. */
+  const nHandcuffAdds = o.handcuffAdds ?? 3;
   const nDrops = o.dropsPerAdd ?? 4;
   const target = o.faabTargetWinPct ?? 0.7;
 
@@ -1516,13 +1532,57 @@ export function waiverTargets(
     if (r == null) { missingReplacement.add(p.pos); return p.proj; }
     return p.proj - r * NFL_WEEKS;
   };
-  const free = [...ctx.board.entries()]
+  const eligible = [...ctx.board.entries()]
     .filter(([id]) => !ctx.ownedIds.has(id))
     .map(([, p]) => p)
     .filter((p) => (o.positions ? o.positions.includes(p.pos) : true))
     .sort((a, b) => vor(b) - vor(a))
-    .filter((p) => !isOut(p))
-    .slice(0, nAdds);
+    .filter((p) => !isOut(p));
+  const byVor = eligible.slice(0, nAdds);
+
+  /**
+   * A HANDCUFF TO OUR OWN STARTER IS WORTH MORE TO US THAN HIS VALUE OVER REPLACEMENT SAYS.
+   *
+   * VOR is a property of the PLAYER. Insurance is a property of the PLAYER AND OUR ROSTER, and this
+   * verb ranked on the first and then never scored anything outside the top `nAdds`. So the backup
+   * to the one man whose loss would wreck us could not reach the shortlist, because standing alone
+   * he is a backup and prices like one.
+   *
+   * MEASURED on league 462233, 2026-09-23. Our roster carried exactly ONE running back, Breece Hall.
+   * `ff depth-risk --player "Breece Hall"` put the cost of losing him at -22.10pp of playoff
+   * probability and named Braelon Allen -- a FREE AGENT -- as recovering +10.10pp of it, against a
+   * 2.04pp noise floor. `ff waivers`, asked the very question "who should I add", returned four
+   * targets, every one of them NEGATIVE, and did not mention Allen at all. He was not rejected; he
+   * was never a candidate. Two verbs, one question, and only one of them could see the answer.
+   *
+   * THIS ADMITS HIM TO THE SHORTLIST. IT DOES NOT PRICE HIM.
+   *
+   * That restraint is deliberate. `depth-risk` reprices its candidates through `HANDCUFF_MODEL`
+   * because it has CONDITIONED on the lead being gone, so it must move from the board's
+   * unconditional projection to a conditional one. Here the lead is still on the roster and healthy,
+   * the board's projection is already an unconditional expectation, and multiplying it by a
+   * conditional would double-count the very injury risk the number already carries. The simulator
+   * knows our roster shape -- that Hall is our only back -- so once the candidate is IN it can price
+   * the insurance itself, in the objective the rest of this verb is denominated in.
+   *
+   * SCOPED to a man at the same position on the same NFL team who projects BELOW ours -- an actual
+   * backup of his, the same predicate `depth-risk` uses, not a second spelling of it.
+   */
+  const myRoster = ctx.teams[ctx.meIdx].roster;
+  const leadFor = (p: { name: string; pos: string; team?: string; proj: number }): string | null =>
+    myRoster.find((m) => !!m.team && !!p.team && m.team === p.team && m.pos === p.pos
+      && nameKey(m.name) !== nameKey(p.name) && p.proj < m.proj)?.name ?? null;
+  const insuresBy = new Map<string, string>();
+  const admitted: typeof byVor = [];
+  for (const p of eligible) {
+    if (admitted.length >= nHandcuffAdds) break;
+    if (byVor.some((x) => nameKey(x.name) === nameKey(p.name))) continue;
+    const lead = leadFor(p);
+    if (!lead) continue;
+    insuresBy.set(nameKey(p.name), lead);
+    admitted.push(p);
+  }
+  const free = [...byVor, ...admitted];
 
   const baseBySeed = seeds.map((s) => outcomeOf(ctx, ctx.teams, trials, s));
   const basePlayoff = mean(baseBySeed.map((b) => b.playoffPct));
@@ -1609,6 +1669,8 @@ export function waiverTargets(
       // against a floor derived from the title rate is comparing two different distributions.
       clearsNoise: best.playoffsPp > floor,
       ...bidFor(add.name, add.pos, best.playoffsPp),
+      admittedAs: insuresBy.has(nameKey(add.name)) ? "handcuff" : "vor",
+      insures: insuresBy.get(nameKey(add.name)) ?? null,
       drops,
     });
   }

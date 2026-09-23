@@ -4260,7 +4260,7 @@ async function cmdCopilot(rest: string[], verbArg: string) {
    */
   const COPILOT_VALUE_FLAGS = new Set([
     "--schedule", "--trials", "--seed", "--week", "--player", "--give", "--get",
-    "--pos", "--limit", "--max-gap", "--league", "--objective", "--db",
+    "--pos", "--limit", "--max-gap", "--league", "--objective", "--db", "--handcuff-adds",
   ]);
   const { runCopilot, COPILOT_VERBS } = await import("./inseason/copilotActions.js");
   // The verb now arrives from the dispatcher rather than being scanned out of argv, so it cannot be
@@ -4280,7 +4280,7 @@ async function cmdCopilot(rest: string[], verbArg: string) {
   // here too or its own test fails.
   const KNOWN_FLAGS = new Set([
     "--league", "--db", "--schedule", "--trials", "--seed", "--week", "--player", "--give", "--get",
-    "--pos", "--limit", "--free", "--max-gap", "--json", "--objective",
+    "--pos", "--limit", "--free", "--max-gap", "--json", "--objective", "--handcuff-adds",
   ]);
   const VALUELESS = new Set(["--free", "--json"]);
   const unknown = rest.filter((r) => r.startsWith("--") && !KNOWN_FLAGS.has(r));
@@ -4317,6 +4317,7 @@ async function cmdCopilot(rest: string[], verbArg: string) {
     get: list("--get").length ? list("--get") : undefined,
     positions: list("--pos").length ? list("--pos") : undefined,
     limit: num("--limit"), freeOnly: rest.includes("--free"), maxGap: num("--max-gap"),
+    handcuffAdds: num("--handcuff-adds"),
     // `stream` is a ONE-position verb, so --pos takes a single value here rather than a list. The
     // list form still works and its first entry is used, because a caller who types the flag the
     // way every other verb takes it should get an answer rather than a usage error.
