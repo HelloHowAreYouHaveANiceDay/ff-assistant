@@ -6984,3 +6984,57 @@ player -- a dark column in the season it would actually be used, which is the D3
 
 **NOT SHIPPED.** The blend is read by `src/draft/season.ts` and `src/inseason/lineup.ts`; changing it
 is D18 territory and needs `season-calibration` plus sign-off.
+
+### THE SNAP/TARGET DIVERGENCE FEATURE: admitted, and it means the OPPOSITE of the hypothesis (2026-09-23)
+
+Built to catch the MHJ shape -- on the field, not thrown to -- after the raw-usage model failed that
+case because `prior_snap_share` (+2.83) and `line` (-2.75) nearly cancelled and raw target share was
+left fighting its own confound with snap share.
+
+**THE FEATURE.** `ts_gap` = target share MINUS the median target share at his SNAP-SHARE DECILE and
+position, the decile medians fitted on the TRAIN FOLD only. Orthogonal to snap share by
+construction, non-parametric, and it touches neither `prior_route_share` (0% coverage in 2026, the
+D30 dark-column trap) nor anything else unservable this season.
+
+```
+arm         pos     RMSE K=6   arm RMSE    paired d       SE     floor   verdict
+gap         ALL      4.3557     4.2613     +0.0944   0.0156    0.0454   ADMIT  (13/14)
+gap+snap    ALL      4.3557     4.2276     +0.1281   0.0191    0.0555   ADMIT  (13/14)
+gap+snap    WR       3.9213     3.8089     +0.1124   0.0355    0.1029   ADMIT  (11/14)
+gap+snap    RB       4.3299     4.2077     +0.1222   0.0363    0.1052   ADMIT  (10/14)
+gap+snap    TE       3.1935     3.0721     +0.1214   0.0450    0.1305   REJECT (11/14)
+usage       ALL      4.3557     4.2274     +0.1282   0.0206    0.0597   ADMIT  (12/14)
+```
+
+Shuffle control: every arm correctly NEGATIVE, 0/14 at `gap+snap` ALL. Clean.
+
+**IT IS NOT MORE ACCURATE THAN THE RAW-USAGE ARM** (+0.1281 vs +0.1282 -- indistinguishable). It is
+a REPARAMETERISATION: same information, orthogonal axes, interpretable coefficients, one fewer
+confound, and 13/14 seasons instead of 12/14. That is worth having; it is not a new edge.
+
+**AND THE DIRECTION IS THE REVERSE OF THE HYPOTHESIS.** `ts_gap` carries **-1.97**: being UNDER-
+targeted for your snap share predicts doing BETTER than the blend expects. Checked raw, with no
+model at all -- mean blend residual by `ts_gap` decile, monotone at every position:
+
+```
+WR   gap -0.098 -> resid +0.297   ...   gap +0.119 -> resid -1.341
+RB   gap -0.059 -> resid +0.867   ...   gap +0.095 -> resid -0.944
+TE   gap -0.079 -> resid +0.139   ...   gap +0.102 -> resid -0.973
+```
+
+This is MEAN REVERSION IN TARGET SHARE, not role-collapse detection. An unusually high target share
+per snap does not hold; an unusually low one tends to recover. **"On the field and not being thrown
+to" is, on the base rate, a BUY signal.**
+
+**SO THE ORIGINAL QUESTION HAS THE OPPOSITE ANSWER TO THE ONE IT IMPLIED.** Marvin Harrison Jr.'s
+`ts_gap` is -0.130, the most-negative WR decile, whose mean blend residual is **+0.297**. The model
+does not merely decline to mark him down -- the evidence says a player in his situation is if
+anything UNDER-priced at 7.08. Live week-3 adjustments: MHJ -0.03, Jameson Williams +0.02,
+Godwin +0.73, Pittman +1.01 (Pittman has the worst gap of the four and gets the largest RAISE).
+
+Individual variance is enormous and this is a decile mean, so it is a base rate and not a forecast
+for one player. But the role-collapse story, which is what both the question and the feature design
+assumed, is not what the fourteen seasons say.
+
+**NOT SHIPPED.** D18 territory: `season.ts` and `lineup.ts` read the blend. Needs
+`season-calibration` plus sign-off.
