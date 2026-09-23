@@ -6649,3 +6649,52 @@ position-specific rather than a property of the feature.
 **THIS IS A PRE-FILTER AND ADMITS NOTHING.** The rows are not independent (the same player appears
 many weeks, clustered within season), so these are descriptive correlations with no p-value and no
 paired-season floor behind them. Charter rule 2: the survivors have earned a screen, nothing more.
+
+### THE USAGE SCREEN -- real signal, but it does NOT clear the pre-specified floor (2026-09-23)
+
+`scripts/breakout-screen.mjs`. Leave-season-out, paired by season, 2.9*SE. Three arms:
+
+```
+A_shipped     rank by season_line_pg        -- what waiverTargets does today, through VOR
+B_incumbent   OLS[season_line_pg, t4_mean]  -- a FITTED incumbent, intended as the harder baseline
+C_usage       B + prior_snap_share, prior_route_share, td_ts, td_rush_yards, rz_share_td
+```
+
+PRIMARY METRIC, FIXED BEFORE ANY RESULT: realised rest-of-season points per game of each arm's
+TOP-5 from that week's free-agent pool, because a waiver claim is a ranking decision at K~3-5.
+
+**PRIMARY: REJECT everywhere.** Only WR clears against B (+0.773, floor 0.604, 8/8 seasons), and B
+turns out to be a WEAKER baseline than A at WR (-0.148), so that win is partly repair of a baseline
+I built. Against A -- what actually ships -- nothing clears at any position (WR +0.625 vs a 1.040
+floor, the closest). **I set C-vs-B as the verdict expecting B to be harder; it was not, and
+switching to the comparison that says ADMIT would be choosing the baseline after seeing the answer.**
+
+**THE SHUFFLE CONTROL EARNED ITS KEEP.** With labels shuffled within season, the QB cell produced a
+SPURIOUS ADMIT on the primary metric (C vs A +0.400 against a 0.364 floor, 6/8). QB free-agent pools
+are small enough that a top-5 of a ~10-man pool is most of the pool, so that cell can manufacture an
+edge from noise. Any QB verdict on this metric is untrustworthy, and it was the control that said so.
+
+**SECONDARY, POST-HOC AND LABELLED AS SUCH: rank correlation over the WHOLE pool.**
+
+```
+C_usage vs A_shipped      mean rho gain    floor     seasons
+RB                            +0.1718     0.0756       8/8
+WR                            +0.1539     0.0359       8/8
+TE                            +0.1331     0.0655       8/8
+QB                            +0.0698     0.0544       7/8
+shuffled control: every cell collapses to ~0.00 and NOTHING clears, at any position
+```
+
+So the signal is real -- large, consistent at all four positions, 8/8 seasons, and clean under a
+control that does catch false positives on the other metric. The honest reading is that the PRIMARY's
+reject is **underpowering, not absence**: top-5 of a ~20-man pool lets one hit swing a season, and
+there are only 8 seasons (the panel starts in 2018 with the league's roster history).
+
+**NOTHING IS PROMOTED.** Two metrics and shipping whichever clears is the winner's curse with two
+tickets, and this repo has a recorded case of exactly that (+3.4pp becoming +1.0pp on holdout). The
+rho result says the next step is worth taking, not that the feature is admitted.
+
+**THE NEXT STEP IS THE DECISION HARNESS, NOT A THIRD METRIC.** `src/inseason/backtest/policies.ts`
+already replays real waiver decisions (`standPat`, `addHottestFreeAgent`) against this league's own
+roster history. A usage-ranked policy scored there is an end-to-end answer in the currency that
+matters, on an arbiter this repo already trusts, instead of another ad-hoc statistic of mine.
