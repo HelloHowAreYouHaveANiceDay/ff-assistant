@@ -7038,3 +7038,50 @@ assumed, is not what the fourteen seasons say.
 
 **NOT SHIPPED.** D18 territory: `season.ts` and `lineup.ts` read the blend. Needs
 `season-calibration` plus sign-off.
+
+### THE GATE REJECTS THE DIVERGENCE CORRECTION -- and three dead levers had to be cleared first (2026-09-23)
+
+`ts_gap` cut the BLEND's own held-out RMSE 4.3557 -> 4.2276 (paired +0.1281, floor 0.0555, 13/14
+seasons, clean shuffle). Wired behind `FF_SIM_ROS_GAP` (default 0) into `src/draft/rosBlend.ts`
+(`loadRosGap`, `rosGapAdjust`), `src/draft/simContext.ts` and the gate, with the artifact fitted by
+`scripts/fit-ros-gap.mjs` to `data/ros-gap.json`.
+
+```
+season-calibration --artifact-dir data/fold-artifacts-d16, 2018-2025, 114 team-seasons, paired
+
+week 8    0 (off) 0.1245    1 (on) 0.1242   d -0.0005  SE 0.0025  t -0.20  3/8   REJECT
+          leave-one-season-out held-out 0.1269 against a 0.1245 control -- the LOO arm is WORSE
+week 11   0 (off) 0.0844    1 (on) 0.0835   d -0.0008  SE 0.0022  t -0.37  4/8   REJECT
+          leave-one-season-out held-out 0.0857 against a 0.0844 control -- WORSE again
+```
+
+Floor is 2.9*SE = 0.0073 (wk8) and 0.0064 (wk11); the effects are 0.0005 and 0.0008. **A BETTER
+POINT ESTIMATE OF REST-OF-SEASON POINTS DID NOT PRODUCE A BETTER-CALIBRATED PLAYOFF PROBABILITY.**
+That is the D13 discipline working exactly as intended -- the intermediate metric and the gate metric
+came apart, and the gate is the arbiter. Plausible mechanism: the correction moves individual men in
+both directions within a roster, so team totals partly cancel, and berth probability is a different
+loss on a different aggregate.
+
+**THREE DEAD LEVERS, STACKED, EACH HIDING THE NEXT.** The gate read EXACTLY 0.0000 in all eight
+seasons three separate times while the LIVE serve moved 1.9pp of playoff probability:
+
+1. The correction was wired into `loadSimContext`, which `season-calibration.mjs` never calls -- it
+   holds a SECOND COPY of the blend rule (the file says so about the streaming floor, one rule over).
+2. Wired into the gate's own copy, it read `process.env` inside `buildSeason`, which runs ONCE PER
+   SEASON BEFORE the sweep sets any knob.
+3. Building both blends and selecting by knob, the selection still sat OUTSIDE the
+   `for (const v of values) { setKnob(v) }` loop, so `withRos` was frozen at the entry environment.
+
+Each layer produced a pristine, perfectly symmetric null. It was caught by instrumenting the two
+blends directly: they differ for 136 of 181 rostered men with a max delta of 3.46 points per week, so
+a 0.0000 was arithmetically impossible and had to be plumbing.
+
+**THE DURABLE FINDING: the sweep axis can only move SIMULATION-time knobs.** `src/draft/season.ts`
+reads its env at call time, so `FF_SIM_LEVEL_SCALE` and friends work. Anything that changes the
+CONTEXT -- the blend, the replacement level, the pool -- is built before the sweep begins and must be
+computed both ways up front and selected inside the value loop. `FF_SIM_ROS_GAP` is the first
+context-affecting knob on this axis and the only one wired that way.
+
+**NOT SHIPPED. Default stays off**, and this is a REJECT rather than a sub-floor judgement call: the
+leave-one-season-out arm is worse than the control at both weeks, which is the opposite of D35's
+situation, where every fold preferred the change.

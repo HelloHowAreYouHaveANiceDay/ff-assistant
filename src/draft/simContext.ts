@@ -28,7 +28,7 @@ import { simulateSeasons, LEVEL_PRIOR_WEEKS, type SeasonTeamInput, type SeasonOd
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
 import { slotFilter } from "../db/db.js";
-import { loadRosBlendFor, rosPerGame } from "./rosBlend.js";
+import { loadRosBlendFor, rosPerGame, loadRosGap, rosGapAdjust } from "./rosBlend.js";
 import { dataPath } from "../data/paths.js";
 import { loadEligibilityMap } from "../data/eligibility.js";
 
@@ -315,6 +315,21 @@ export async function loadSimContext(opts: {
   // K is PER FORMAT (WP8): it minimises RMSE in points on a format's own lines (ESPN 6, Yahoo 5), so
   // the live caveat must quote the format's fit, not the incumbent's.
   const { blend: rosBlend, source: rosSource } = loadRosBlendFor(fmt.model);
+  /**
+   * USAGE AT THE DECISION WEEK, for the snap/target divergence correction (screened 2026-09-23,
+   * OFF unless `FF_SIM_ROS_GAP=1`). Read from `feat_player_week_model` at the LAST SETTLED week, so
+   * it is knowable at the moment the context is built -- the same as-of the rest of this block uses.
+   */
+  const useGap = process.env.FF_SIM_ROS_GAP === "1";
+  const rosGap = useGap ? loadRosGap() : null;
+  const usageByName = new Map<string, { td_ts: number | null; snap: number | null }>();
+  if (useGap && playedWeeks > 0) {
+    for (const r of db.prepare(
+      "SELECT name, pos, td_ts, prior_snap_share FROM feat_player_week_model WHERE season=? AND week=?",
+    ).all(cfg.season, playedWeeks + 1) as { name: string; pos: string; td_ts: number | null; prior_snap_share: number | null }[]) {
+      usageByName.set(`${nameKey(r.name)}|${r.pos}`, { td_ts: r.td_ts, snap: r.prior_snap_share });
+    }
+  }
   const rateByName = new Map<string, { k: number; pts: number }>();
   if (playedWeeks > 0) {
     for (const r of db.prepare(
@@ -326,13 +341,23 @@ export async function loadSimContext(opts: {
       cur.k++; cur.pts += r.pts ?? 0;
     }
   }
-  let rosApplied = 0;
+  let rosApplied = 0, rosGapApplied = 0;
   for (const tm of byTeam.values()) {
     for (const p of tm.roster) {
       const td = rateByName.get(`${nameKey(p.name)}|${p.pos}`);
       if (!td || td.k <= 0 || rosBlend.K === Infinity) continue;
       const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosBlend.K);
-      if (ros != null) { p.rosPerGame = ros; rosApplied++; }
+      if (ros != null) {
+        // The correction is 0 whenever the artifact is absent or the man has no usage row, so the
+        // blend is byte-identical to D18 unless BOTH the knob is on and real usage exists for him.
+        const u = usageByName.get(`${nameKey(p.name)}|${p.pos}`);
+        const adj = rosGap
+          ? rosGapAdjust({ pos: p.pos, line: p.proj / 17, k: td.k, td_ts: u?.td_ts ?? null, prior_snap_share: u?.snap ?? null }, rosGap)
+          : 0;
+        p.rosPerGame = Math.max(0, ros + adj);
+        rosApplied++;
+        if (adj !== 0) rosGapApplied++;
+      }
     }
   }
   // THE WEEK'S STATE, read BEFORE the handle closes. It is assembled here rather than lazily on the

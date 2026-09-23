@@ -49,6 +49,61 @@ export function rosPerGame(line: number | null, tdGames: number | null, tdPts: n
 }
 
 /**
+ * THE SNAP/TARGET DIVERGENCE CORRECTION to the D18 blend (screened 2026-09-23, NOT a default).
+ *
+ * The blend is a pure POINTS blend: it cannot tell a man who is on the field and not being thrown to
+ * from one whose role is intact and whose two games were noise. `ts_gap` -- target share minus the
+ * median target share at his SNAP-SHARE DECILE and position -- is orthogonal to snap share by
+ * construction and supplies exactly that missing axis. Held-out RMSE 4.3557 -> 4.2276 (paired
+ * +0.1281 against a 0.0555 floor, 13/14 seasons; shuffle control negative at 0/14).
+ *
+ * THE SIGN IS THE REVERSE OF THE HYPOTHESIS, and the artifact says so on its face: the `ts_gap`
+ * coefficient is NEGATIVE. Being under-targeted for your snaps predicts BEATING the blend, because
+ * target share mean-reverts. It is not a role-collapse detector; it was built as one and the data
+ * said otherwise.
+ *
+ * OFF BY DEFAULT. `FF_SIM_ROS_GAP=1` enables it. Absent artifact, missing `td_ts` or missing
+ * `prior_snap_share` all return 0 -- the blend is then exactly what it was, because a correction
+ * invented from a median fill for a player we have no usage for is a guess wearing a measurement's
+ * clothes. `prior_route_share` is deliberately not used: it has 0% coverage in 2026 and would be a
+ * dark column in the season this would actually serve.
+ */
+export interface RosGap {
+  feats: string[]; coef: number[]; fill: Record<string, number>;
+  curve: Record<string, { edges: number[]; median: number[] }>;
+}
+let _gapCache: { loaded: boolean; gap: RosGap | null } | null = null;
+export function loadRosGap(path?: string): RosGap | null {
+  if (_gapCache) return _gapCache.gap;
+  const p = path ?? dataPath("ros-gap.json");
+  let gap: RosGap | null = null;
+  if (existsSync(p)) {
+    const j = JSON.parse(readFileSync(p, "utf8")) as Partial<RosGap>;
+    if (j.feats && j.coef && j.curve && j.fill) gap = j as RosGap;
+  }
+  _gapCache = { loaded: true, gap };
+  return gap;
+}
+
+/** The correction in points per week, or 0 when it cannot be computed from real usage. */
+export function rosGapAdjust(
+  r: { pos: string; line: number; k: number; td_ts: number | null; prior_snap_share: number | null },
+  gap: RosGap | null,
+): number {
+  if (!gap || r.td_ts == null || r.prior_snap_share == null) return 0;
+  const c = gap.curve[r.pos];
+  if (!c) return 0;
+  let b = 0;
+  while (b < c.edges.length && r.prior_snap_share >= c.edges[b]) b++;
+  const row: Record<string, number> = {
+    line: r.line, k: r.k, ts_gap: r.td_ts - c.median[b], prior_snap_share: r.prior_snap_share,
+  };
+  let out = gap.coef[0];
+  for (let i = 0; i < gap.feats.length; i++) out += gap.coef[i + 1] * (row[gap.feats[i]] ?? gap.fill[gap.feats[i]]);
+  return Number.isFinite(out) ? out : 0;
+}
+
+/**
  * ONE PER-WEEK STRENGTH FOR A ROSTERED MAN (D33, 2026-09-17) -- and it is one function because it
  * was two numbers.
  *

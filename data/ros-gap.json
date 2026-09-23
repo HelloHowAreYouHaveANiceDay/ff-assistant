@@ -1,0 +1,132 @@
+{
+  "builtAt": "2026-09-23T16:59:11.524Z",
+  "fittedOn": "2012-2025",
+  "rows": 41471,
+  "K": 6,
+  "deciles": 10,
+  "estimand": "correction to the D18 blend: predicted (target - blend) from line, weeks elapsed, snap share, and ts_gap",
+  "tsGapDefinition": "td_ts minus the median td_ts at this player's snap-share decile and position",
+  "sign": "ts_gap coefficient is NEGATIVE: under-targeted for your snap share predicts OUTPERFORMING the blend (mean reversion in target share), which is the OPPOSITE of the role-collapse hypothesis it was built to test",
+  "validation": "leave-season-out held-out RMSE 4.3557 -> 4.2276, paired +0.1281, floor 0.0555, 13/14 seasons; shuffle control negative 0/14. See docs/validation.md 2026-09-23.",
+  "feats": [
+    "line",
+    "k",
+    "ts_gap",
+    "prior_snap_share"
+  ],
+  "coef": [
+    0.3672319211629242,
+    -0.25340326636073357,
+    -0.04763819764403147,
+    -2.359454778984744,
+    2.200519416068919
+  ],
+  "fill": {
+    "line": 6.962552993136875,
+    "k": 7,
+    "ts_gap": 0,
+    "prior_snap_share": 0.69
+  },
+  "curve": {
+    "QB": {
+      "edges": [
+        0.33,
+        0.81,
+        0.98,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "median": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "RB": {
+      "edges": [
+        0.08,
+        0.18,
+        0.26,
+        0.34,
+        0.42,
+        0.49,
+        0.57,
+        0.66,
+        0.76
+      ],
+      "median": [
+        0.019230769230769225,
+        0.034495279593318835,
+        0.049173076923076944,
+        0.058612440191387546,
+        0.0743174895435533,
+        0.08576309752780345,
+        0.09014387447112414,
+        0.10369534934036723,
+        0.1134755062391636,
+        0.12530937530937533
+      ]
+    },
+    "WR": {
+      "edges": [
+        0.28,
+        0.49,
+        0.62,
+        0.71,
+        0.78,
+        0.83,
+        0.87,
+        0.92,
+        0.96
+      ],
+      "median": [
+        0.0857142857142857,
+        0.12288624027754469,
+        0.1497821350762525,
+        0.1724412221028763,
+        0.1898148148148145,
+        0.20674177081499734,
+        0.21227867336152223,
+        0.22081785209864022,
+        0.23316030537392732,
+        0.24943336051845647
+      ]
+    },
+    "TE": {
+      "edges": [
+        0.28,
+        0.42,
+        0.52,
+        0.61,
+        0.68,
+        0.75,
+        0.81,
+        0.87,
+        0.94
+      ],
+      "median": [
+        0.07375661375661376,
+        0.08482726117029436,
+        0.10185943985236201,
+        0.121212121212121,
+        0.12931034482758644,
+        0.14303859140772926,
+        0.16232212885154051,
+        0.1655509178694662,
+        0.17837130541871926,
+        0.1882502835963934
+      ]
+    }
+  }
+}

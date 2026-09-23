@@ -49,7 +49,7 @@ import { loadArtifact } from "../src/model/projector.ts";
 import { boardProjection } from "../src/model/features.ts";
 import { nameKey, dstAliasKey } from "../src/draft/values.ts";
 import { playoffFieldFor } from "../src/features/picks.ts";
-import { rosPerGame, loadRosBlend } from "../src/draft/rosBlend.ts";
+import { rosPerGame, loadRosBlend, loadRosGap, rosGapAdjust } from "../src/draft/rosBlend.ts";
 import { loadConsensusPct, blendConsensus } from "../src/draft/consensusBlend.ts";
 import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 import { loadInjuryHorizonArtifact, horizonFor } from "../src/inseason/injuryHorizon.ts";
@@ -408,6 +408,7 @@ function buildSeason(season, atWeek = null) {
   // C differ in exactly one thing each.
   let played = null;
   const rosOf = new Map();
+  const rosOfGap = new Map();   // the same blend PLUS the snap/target correction; selected at sim time
   let rosK = Infinity;
   if (atWeek != null && atWeek > 1) {
     const playedWeeks = Math.min(atWeek - 1, reg);
@@ -433,12 +434,39 @@ function buildSeason(season, atWeek = null) {
         const cur = rate.get(String(r.player_sk)) ?? rate.set(String(r.player_sk), { k: 0, pts: 0 }).get(String(r.player_sk));
         cur.k++; cur.pts += r.pts ?? 0;
       }
+      /**
+       * THE SNAP/TARGET CORRECTION MUST BE APPLIED HERE TOO, and finding that out is the point.
+       *
+       * This file holds a SECOND COPY of the blend rule (the comment below on the streaming floor
+       * says the same thing about that rule). Wiring the correction into `src/draft/simContext.ts`
+       * alone moved the LIVE serve by 1.9pp of playoff probability and moved this gate by EXACTLY
+       * 0.0000 in all eight seasons -- because the gate never calls `loadSimContext`. A knob that
+       * the arbiter cannot see reads as a clean null, which is the most dangerous kind.
+       */
+      // BUILT UNCONDITIONALLY, because `buildSeason` runs ONCE PER SEASON BEFORE the sweep sets the
+      // knob -- the sweep axis can only move SIMULATION-time knobs (season.ts reads its env at call
+      // time), not context-build ones. Reading the env here produced EXACTLY 0.0000 in all eight
+      // seasons twice over: first because the gate never calls loadSimContext, then because the knob
+      // was read before it was set. Both times a live 1.9pp effect read as a pristine null.
+      const gapModel = loadRosGap();
+      const usage = new Map();
+      if (gapModel) {
+        for (const r of db.prepare(
+          "SELECT player_sk, td_ts, prior_snap_share, pos FROM feat_player_week_model WHERE season = ? AND week = ? AND player_sk IS NOT NULL",
+        ).all(season, playedWeeks + 1)) usage.set(String(r.player_sk), r);
+      }
       for (const t of teams) for (const p of t.roster) {
         const sk = skOf.get(p.name);
         const td = sk ? rate.get(sk) : null;
         if (!td || td.k <= 0) continue;
         const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosK);
-        if (ros != null) rosOf.set(p.name, ros);
+        if (ros == null) continue;
+        const u = sk ? usage.get(sk) : null;
+        const adj = gapModel
+          ? rosGapAdjust({ pos: u?.pos ?? p.pos, line: p.proj / 17, k: td.k, td_ts: u?.td_ts ?? null, prior_snap_share: u?.prior_snap_share ?? null }, gapModel)
+          : 0;
+        rosOf.set(p.name, ros);
+        rosOfGap.set(p.name, Math.max(0, ros + adj));
       }
     }
   }
@@ -494,7 +522,7 @@ function buildSeason(season, atWeek = null) {
   // September as-of, so it carries no curves and the knob is inert there -- deliberately.
   const knownInjury = atWeek == null ? null : buildKnownInjury(season, atWeek, skOf);
 
-  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosK, knownInjury };
+  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosOfGap, rosK, knownInjury };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -569,6 +597,11 @@ const SWEEP_DEFAULTS = {
   // SHIPPED DEFAULT IS 1 since 2026-09-23 -- it is a defect repair, not an edge. Sweeping it now
   // means sweeping AWAY from the shipped posture, so "0" is the old-behaviour arm, not the control.
   FF_SIM_BENCH_DNP: "1",
+  // THE SNAP/TARGET DIVERGENCE CORRECTION to the D18 blend (screened 2026-09-23). OFF is the
+  // shipped posture. It cut held-out RMSE on the BLEND's own estimand (4.3557 -> 4.2276, 13/14
+  // seasons) -- but that is not this gate's question, which is whether a better rest-of-season
+  // point estimate makes the PLAYOFF PROBABILITY better calibrated. Those can come apart.
+  FF_SIM_ROS_GAP: "0",
   FF_SIM_HANDCUFF: "0",
 };
 if (SWEEP) {
@@ -605,13 +638,21 @@ if (SWEEP) {
       bootstrap: { outcomes: useOutcomes, corr: useCorr, calibration: "scale" },
       allowIncompleteRosters: true,
     };
-    const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (s.rosOf.has(p.name) ? { ...p, rosPerGame: s.rosOf.get(p.name) } : { ...p })) }));
     const servedOpts = AT_WEEK == null
       ? base
       : { ...base, played: s.played ? { ...s.played, priorWeeks: LEVEL_PRIOR_WEEKS } : undefined };
     const cells = [];
     for (const v of values) {
       setKnob(v);
+      // ROSTER STRENGTH IS SELECTED HERE, AFTER `setKnob`, AND THAT PLACEMENT IS THE WHOLE POINT.
+      // `buildSeason` runs once per season and `withRos` used to be built once per season too, both
+      // BEFORE any knob was set -- so a context-affecting knob read at either place is frozen at
+      // whatever the environment held on entry. This produced EXACTLY 0.0000 in all eight seasons
+      // three times running, while the two blends provably differ for 136 of 181 rostered men with
+      // a max delta of 3.46 points per week. Anything that changes the CONTEXT rather than the
+      // simulation has to be selected inside this loop.
+      const rosPick = process.env.FF_SIM_ROS_GAP === "1" ? s.rosOfGap : s.rosOf;
+      const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (rosPick.has(p.name) ? { ...p, rosPerGame: rosPick.get(p.name) } : { ...p })) }));
       // The seam reads its env knob HERE rather than in `servedOpts` above, because the sweep sets
       // the knob per value and `servedOpts` is built once per season. Off, the option is absent and
       // `simulateSeasons` takes the branch it took before the seam existed.
@@ -754,7 +795,9 @@ if (AT_WEEK != null) {
       bootstrap: { outcomes: useOutcomes, corr: useCorr, calibration: "scale" },
       allowIncompleteRosters: true,
     };
-    const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (s.rosOf.has(p.name) ? { ...p, rosPerGame: s.rosOf.get(p.name) } : { ...p })) }));
+    // The knob is read HERE, at simulation time, which is the only place the sweep has set it.
+    const rosPick = process.env.FF_SIM_ROS_GAP === "1" ? s.rosOfGap : s.rosOf;
+    const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (rosPick.has(p.name) ? { ...p, rosPerGame: rosPick.get(p.name) } : { ...p })) }));
     const oddsBy = {
       A: simulateSeasons(s.teams, s.weeks, useVm, base),
       B: simulateSeasons(s.teams, s.weeks, useVm, { ...base, played: s.played ?? undefined }),
