@@ -6744,3 +6744,50 @@ mode's spurious QB top-K ADMIT is recorded above and is why the QB column is not
 
 **STILL NOT SHIPPED.** An admitted screen is not a deployed change (charter rule 1), and the
 end-to-end arbiter remains `src/inseason/backtest/policies.ts`, which replays real waiver decisions.
+
+### TREND FEATURES: the structural gap is real, closing it buys NOTHING (2026-09-23)
+
+Every feature screened so far is a LEVEL or a to-date average. `prior_snap_share` says how big a
+role IS; nothing said whether it is GROWING -- and a breakout is a role change. A player at 30% snaps
+and falling and one at 30% and climbing were the same row to every model here. That is a real
+structural gap, and it is NOT the rejected PBP work (`docs/feature-frontier.md` screened prior-SEASON
+aggregates on the PRESEASON projector; these are within-season deltas off the weekly play-by-play).
+
+**EIGHT PRE-REGISTERED CANDIDATES**, hypotheses fixed before any number was read: `d_tgt`,
+`d_carries`, `d_hv`, `d_air`, `d_tgt_share`, `d_snap` (all recent-2-weeks minus prior-weeks, strictly
+before w), plus `exp_years` and `draft_round`. Controls were raised to the WORKING MODEL -- both
+incumbents AND the already-admitted usage features -- so a candidate has to beat what we know works.
+
+**PRE-FILTER survivors** (|partial| >= 0.05):
+
+```
+d_snap       RB +0.110   QB +0.074   TE +0.043   WR +0.013
+exp_years    QB -0.139   TE -0.129   WR -0.117   RB -0.038      younger is better
+draft_round  TE -0.104   (RB/WR/QB collapse from raw -0.19..-0.27 to ~-0.03: already in the line)
+d_hv         RB +0.069
+```
+
+Target trend, air-yards trend and target-SHARE trend are ~0 everywhere -- another folk theory dead,
+alongside `teammates_out`.
+
+**THE SCREEN SAYS NO.** Arm D = C + [d_snap, exp_years, draft_round], one set for all positions
+(bespoke per-position sets would be selection inside the screen). 13 seasons, paired, 2.9*SE:
+
+```
+D_trend vs C_usage     RB -0.023   WR +0.080   TE -0.009   QB -0.167     all REJECT
+[rank rho]             RB +0.0013  WR +0.0014  TE +0.0065  QB -0.0030    none clears
+```
+
+**So role LEVEL is what matters and role CHANGE adds nothing once the level is known.** That is a
+real result and a useful one: "who is trending up" is what humans and most waiver tools chase, and it
+does not beat simply knowing who has the biggest role right now. `exp_years` had a genuine pre-filter
+partial (-0.12 to -0.14) that did not convert to a ranking gain at all.
+
+**A BUG THAT FAKED THIS SAME NULL.** The first arm-D run reported REJECT everywhere -- because the
+training-fold `fill` map covered only INCUMBENTS+USAGE while arm D also reads TREND, so
+`d_snap`/`exp_years`/`draft_round` fell through to `undefined`, NaN-poisoned the normal equations,
+and the solve degenerated to almost exactly `-season_line_pg`. Arm D scored IDENTICALLY to A_shipped
+with an EXACTLY negated rho, which is the tell that caught it. The right answer arrived by the wrong
+route first, and a null that agrees with the eventual truth is the hardest kind of bug to notice.
+
+**NET: the usage family remains the only thing that works, and WR remains the only admitted cell.**

@@ -74,6 +74,8 @@ const USAGE = process.argv.includes("--wide")
  * side of that bargain on an 8-season test.
  */
 const WIDE = process.argv.includes("--wide");
+/** Arm D needs the trend columns, which only the wide (synthetic-pool) builder computes. */
+const WIDE_ARMD = WIDE && !process.argv.includes("--no-arm-d");
 const ROSTERED_DEPTH = { QB: 22, RB: 48, WR: 57, TE: 22 };
 const WIDE_FROM = Number(arg("--wide-from", 2013));
 
@@ -122,8 +124,34 @@ function buildWide() {
     const depth = ROSTERED_DEPTH[wk[0].pos] ?? 40;
     for (let i = depth; i < wk.length; i++) out.push(wk[i]);
   }
-  return out.filter((r) => r.week <= MAX_WEEK && r.ros_games >= MIN_ROS
+  const panel = out.filter((r) => r.week <= MAX_WEEK && r.ros_games >= MIN_ROS
     && r.season_line_pg != null && r.t4_mean != null);
+  if (WIDE_ARMD) addTrend(panel, groups);
+  return panel;
+}
+
+/**
+ * The arm-D columns, built to the SAME point-in-time rule as `breakout-trend-prefilter.mjs`:
+ * everything is read from weeks STRICTLY BEFORE w, because w is the first week of the label.
+ */
+function addTrend(panel, groups) {
+  const RECENT = 2;
+  const ext = new Map();
+  for (const r of db.prepare(
+    `SELECT player_sk, season, draft_year, draft_round FROM feat_player_season_ext WHERE season BETWEEN ? AND ?`
+  ).all(WIDE_FROM, TO)) ext.set(`${r.season}|${r.player_sk}`, r);
+
+  for (const r of panel) {
+    const sp = `${r.season}|${r.player_sk}`;
+    const g = groups.get(sp) ?? [];
+    // Snap share arrives as a weekly LEVEL already carried forward, so its own lag IS the trend.
+    const prev = g.filter((x) => x.week < r.week - RECENT).map((x) => x.prior_snap_share).filter((v) => v != null);
+    r.d_snap = (r.prior_snap_share != null && prev.length)
+      ? r.prior_snap_share - prev.reduce((a, b) => a + b, 0) / prev.length : null;
+    const e = ext.get(sp);
+    r.exp_years = e?.draft_year ? r.season - e.draft_year : null;
+    r.draft_round = e?.draft_round ?? null;
+  }
 }
 
 /** HOW GOOD IS THE PROXY? Agreement between synthetic and REAL pool membership, where both exist. */
@@ -202,10 +230,26 @@ const spearman = (xs, ys) => {
   return da && dc ? num / Math.sqrt(da * dc) : NaN;
 };
 
+/**
+ * ARM D -- the trend/context survivors from `breakout-trend-prefilter.mjs`.
+ *
+ * ONE feature set for all four positions, deliberately. The pre-filter's survivors differ by
+ * position (d_snap at RB/QB, exp_years at WR/TE/QB, draft_round at TE) and fitting a bespoke set per
+ * position would be four hand-picked models chosen on the same data that scores them -- selection
+ * inside the screen. A single set lets the OLS put a zero where a feature does not belong, at the
+ * cost of a little noise, and costs one test per position instead of four choices per position.
+ *
+ * `d_hv` survived at RB (0.069) and is LEFT OUT on coverage, not on effect: it needs four prior
+ * appearances in the play-by-play and exists for 43% of RB rows, so 57% would be median-filled and
+ * the fill would BE the feature. Stated so its absence is not read as a rejection.
+ */
+const TREND = WIDE_ARMD ? ["d_snap", "exp_years", "draft_round"] : [];
+
 const ARMS = {
   A_shipped: null,                       // rank by season_line_pg directly -- no fit
   B_incumbent: INCUMBENTS,
   C_usage: [...INCUMBENTS, ...USAGE],
+  ...(WIDE_ARMD ? { D_trend: [...INCUMBENTS, ...USAGE, ...TREND] } : {}),
 };
 
 console.log(`\nWAIVER-BREAKOUT SCREEN -- league ${LEAGUE}, weeks 1-${MAX_WEEK}, top-${K} per (season, week, pos)`);
@@ -228,7 +272,8 @@ for (const pos of ["RB", "WR", "TE", "QB"]) {
   if (all.length < 500) { console.log(`  ${pos}: ${all.length} rows -- too thin\n`); continue; }
 
   // per season -> per arm -> mean realised ros/gm of the top-K, and the pool mean as the null.
-  const perSeason = { A_shipped: [], B_incumbent: [], C_usage: [], pool: [], rho: { A_shipped: [], B_incumbent: [], C_usage: [] } };
+  const perSeason = { pool: [], rho: {} };
+  for (const a2 of Object.keys(ARMS)) { perSeason[a2] = []; perSeason.rho[a2] = []; }
 
   for (const Y of seasons) {
     const train = all.filter((r) => r.season !== Y);
@@ -243,7 +288,14 @@ for (const pos of ["RB", "WR", "TE", "QB"]) {
     // MISSING VALUES ARE FILLED FROM THE TRAINING FOLD ONLY. A median taken over train+test would
     // let the held-out season inform its own imputation -- a small leak that is invisible in output.
     const fill = {};
-    for (const f of [...INCUMBENTS, ...USAGE]) fill[f] = median(train.map((r) => r[f]).filter((v) => v != null));
+    // EVERY feature ANY arm uses. This listed only INCUMBENTS+USAGE while arm D also reads TREND,
+    // so d_snap/exp_years/draft_round fell through `?? fill[f]` to `undefined`, NaN-poisoned the
+    // normal equations, and the solve degenerated to almost exactly -season_line_pg -- arm D scored
+    // identically to A_shipped with an exactly negated rho. It looked like a REJECT and was a BUG.
+    for (const f of [...INCUMBENTS, ...USAGE, ...TREND]) {
+      const vals = train.map((r) => r[f]).filter((v) => v != null && Number.isFinite(v));
+      fill[f] = vals.length ? median(vals) : 0;
+    }
 
     const preds = {};
     for (const [arm, feats] of Object.entries(ARMS)) {
@@ -253,8 +305,8 @@ for (const pos of ["RB", "WR", "TE", "QB"]) {
     const byWeek = new Map();
     for (const r of test) { if (!byWeek.has(r.week)) byWeek.set(r.week, []); byWeek.get(r.week).push(r); }
 
-    const topOf = { A_shipped: [], B_incumbent: [], C_usage: [] }, pool = [];
-    const rhoOf = { A_shipped: [], B_incumbent: [], C_usage: [] };
+    const topOf = {}, rhoOf = {}, pool = [];
+    for (const a2 of Object.keys(ARMS)) { topOf[a2] = []; rhoOf[a2] = []; }
     for (const [, wk] of byWeek) {
       if (wk.length < K * 2) continue;                  // a pool smaller than 2K is not a choice
       pool.push(mean(wk.map((r) => r.y)));
@@ -291,7 +343,10 @@ for (const pos of ["RB", "WR", "TE", "QB"]) {
     const floor = 2.9 * se;
     return { m, se, floor, wins: d.filter((x) => x > 0).length, n: d.length };
   };
-  for (const [cand, ref] of [["C_usage", "B_incumbent"], ["C_usage", "A_shipped"], ["B_incumbent", "A_shipped"]]) {
+  const COMPARISONS = WIDE_ARMD
+    ? [["D_trend", "C_usage"], ["C_usage", "B_incumbent"], ["D_trend", "B_incumbent"], ["B_incumbent", "A_shipped"]]
+    : [["C_usage", "B_incumbent"], ["C_usage", "A_shipped"], ["B_incumbent", "A_shipped"]];
+  for (const [cand, ref] of COMPARISONS) {
     const t = paired(cand, ref);
     console.log(`    ${cand} vs ${ref.padEnd(12)} mean ${t.m >= 0 ? "+" : ""}${t.m.toFixed(3)}  SE ${t.se.toFixed(3)}  floor ${t.floor.toFixed(3)}  ` +
       `${t.m > t.floor ? "ADMIT" : "REJECT"}  (${t.wins}/${t.n} seasons)`);
@@ -317,7 +372,7 @@ for (const pos of ["RB", "WR", "TE", "QB"]) {
     const se = sd / Math.sqrt(d.length);
     return { m, se, floor: 2.9 * se, wins: d.filter((x) => x > 0).length, n: d.length };
   };
-  for (const [cand, ref] of [["C_usage", "B_incumbent"], ["C_usage", "A_shipped"]]) {
+  for (const [cand, ref] of (WIDE_ARMD ? [["D_trend", "C_usage"], ["C_usage", "B_incumbent"]] : [["C_usage", "B_incumbent"], ["C_usage", "A_shipped"]])) {
     const t = pairedRho(cand, ref);
     console.log(`    [post-hoc, RANK RHO] ${cand} vs ${ref.padEnd(12)} mean ${t.m >= 0 ? "+" : ""}${t.m.toFixed(4)}  SE ${t.se.toFixed(4)}  floor ${t.floor.toFixed(4)}  ` +
       `${t.m > t.floor ? "clears" : "does not clear"}  (${t.wins}/${t.n})`);
