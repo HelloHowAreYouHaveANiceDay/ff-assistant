@@ -28,6 +28,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HANDCUFF_MODEL } from "../src/inseason/handcuff.js";
 import { leadMissProb } from "../src/inseason/handcuff.js";
+import { loadHistory, byeIndex, buildPairs, POS } from "./lib/handcuff-pairs.mjs";
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i >= 0 ? process.argv[i + 1] : d; };
 const FROM = Number(arg("--from", 2005)), TO = Number(arg("--to", 2025)), TOPK = Number(arg("--top", 20));
@@ -48,51 +49,20 @@ const FROM = Number(arg("--from", 2005)), TO = Number(arg("--to", 2025)), TOPK =
  * handcuff question is ever asked about. 36 is three per fantasy roster in a 12-team league.
  */
 const LEAD_MAX_RANK = Number(arg("--lead-max-rank", 36));
-const POS = ["QB", "RB", "WR", "TE"];
-const REG = 16;
-
-// season -> pos -> name -> { weeks: Map<week,pts>, team, total }
-const H = new Map();
-for (const line of readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
-  const f = line.split(",");
-  const s = Number(f[0]), name = f[1], pos = (f[2] ?? "").toUpperCase(), wk = Number(f[3]), pts = Number(f[4]), team = f[5];
-  if (!POS.includes(pos) || !Number.isFinite(pts) || !Number.isFinite(wk) || wk > REG) continue;
-  if (!H.has(s)) H.set(s, new Map());
-  const byPos = H.get(s);
-  if (!byPos.has(pos)) byPos.set(pos, new Map());
-  const byName = byPos.get(pos);
-  if (!byName.has(name)) byName.set(name, { weeks: new Map(), team, total: 0 });
-  const r = byName.get(name);
-  r.weeks.set(wk, pts); r.total += pts; r.team = team || r.team;
-}
-const seasons = [...H.keys()].sort((a, b) => a - b);
-
 /**
- * THE TEAM BYE, DERIVED -- season|team -> the week in which NOBODY on that team has a row.
+ * THE PAIRS COME FROM `lib/handcuff-pairs.mjs` -- the SAME builder `handcuff-lift-screen.mjs` uses.
  *
- * Without this the gate counts a bye as a missed game, which is not an injury and is not what the
- * model predicts: `leadMissProb` divides `avail` by 16/17 for exactly this reason -- to turn "games
- * of sixteen" into "per PLAYABLE week". Leaving the bye in inflated every measured miss rate by
- * roughly one game and made both arms look badly calibrated against a quantity neither was
- * predicting.
+ * They used to be built here, inline, and duplicated there. Two copies of a sample definition is how
+ * two experiments come to disagree about QB and leave nobody able to say which one is wrong -- the
+ * exact failure this repo keeps paying for. The docstrings for the two corrections that matter (the
+ * rosterable-lead cut and the derived bye) now live with the builder, next to the code that applies
+ * them, rather than being restated in each caller and drifting.
+ *
+ * VERIFIED BY CONTROL: swapping to the shared builder reproduced this gate's entire report
+ * byte-for-byte. An extraction that changed a number would have been a silent resample.
  */
-const BYE = new Map();
-for (const [season, byPos] of H) {
-  const weeksByTeam = new Map();
-  for (const [, byName] of byPos) {
-    for (const [, r] of byName) {
-      if (!r.team) continue;
-      if (!weeksByTeam.has(r.team)) weeksByTeam.set(r.team, new Set());
-      for (const w of r.weeks.keys()) weeksByTeam.get(r.team).add(w);
-    }
-  }
-  for (const [team, played] of weeksByTeam) {
-    // Only trust it when the team looks fully covered -- exactly one missing week out of sixteen.
-    const missing = [];
-    for (let w = 1; w <= REG; w++) if (!played.has(w)) missing.push(w);
-    if (missing.length === 1) BYE.set(season + "|" + team, missing[0]);
-  }
-}
+const H = loadHistory();
+const BYE = byeIndex(H);
 
 const tmp = mkdtempSync(join(tmpdir(), "hc-gate-"));
 const fit = (mode, exclude) => {
@@ -108,72 +78,25 @@ const fit = (mode, exclude) => {
 const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 const rows = { total: [], prior: [] };
 
-for (const season of seasons.filter((s) => s >= FROM && s <= TO)) {
-  const prevIdx = seasons.indexOf(season) - 1;
-  if (prevIdx < 0) continue;
-  const prev = H.get(seasons[prevIdx]);
-  const cur = H.get(season);
-  if (!prev || !cur) continue;
+const PAIRS = buildPairs(H, BYE, { from: FROM, to: TO, leadMaxRank: LEAD_MAX_RANK });
+
+for (const season of [...new Set(PAIRS.map((p) => p.season))].sort((x, y) => x - y)) {
   const vm = { total: fit("total", season), prior: fit("prior", season) };
 
-  for (const pos of POS) {
-    const prevByName = prev.get(pos), curByName = cur.get(pos);
-    if (!prevByName || !curByName) continue;
-    // POOL RANK from the PRIOR season -- the fraction `leadMissProb` is served with.
-    const pool = [...prevByName].map(([name, r]) => ({ name, total: r.total })).sort((a, b) => b.total - a.total);
-    const rankOf = new Map(pool.map((p, i) => [p.name, i]));
+  for (const p of PAIRS.filter((x) => x.season === season)) {
+    const lift = HANDCUFF_MODEL.backup * p.basePerWk + HANDCUFF_MODEL.lead * p.leadPerWk - p.basePerWk;
+    // A non-positive lift is not a handcuff recommendation, so it is not a row this gate scores.
+    // This is the GATE's filter, deliberately not the builder's -- the screen fits on those pairs.
+    if (lift <= 0) continue;
 
-    // Depth chart by prior-season total WITHIN (team, pos) -- hindsight-free, and the same shape
-    // `handcuffBoard` consumes (lead = 1, backups capped at the two behind him).
-    const byTeam = new Map();
-    for (const [name, r] of curByName) {
-      const p = prevByName.get(name);
-      if (!p || !r.team) continue;                       // no prior season -> no hindsight-free rank
-      if (!byTeam.has(r.team)) byTeam.set(r.team, []);
-      byTeam.get(r.team).push({ name, priorTotal: p.total, cur: r });
-    }
-    for (const [, men] of byTeam) {
-      men.sort((a, b) => b.priorTotal - a.priorTotal);
-      const lead = men[0];
-      if (!lead || lead.priorTotal <= 0 || men.length < 2) continue;
-      const leadPerWk = lead.priorTotal / REG;
-      const leadRank = rankOf.get(lead.name);
-      if (leadRank == null || leadRank >= LEAD_MAX_RANK) continue;   // not a man anyone handcuffs
-      const frac = leadRank / Math.max(1, pool.length);
-
-      // WHAT ACTUALLY HAPPENED: the weeks the lead did not appear.
-      const leadBye = BYE.get(season + "|" + lead.cur.team) ?? null;
-      const leadMissed = [];
-      for (let w = 1; w <= REG; w++) if (w !== leadBye && !lead.cur.weeks.has(w)) leadMissed.push(w);
-
-      for (const [bi, b] of men.slice(1, 3).entries()) {
-        const depthOrder = bi + 2;                       // 2 or 3 -- the model fitted these separately
-        if (b.priorTotal <= 0) continue;
-        const basePerWk = b.priorTotal / REG;
-        const lift = HANDCUFF_MODEL.backup * basePerWk + HANDCUFF_MODEL.lead * leadPerWk - basePerWk;
-        if (lift <= 0) continue;
-
-        // REALISED: what the backup scored in the lead's missed weeks, above what he was scoring in
-        // the weeks the lead PLAYED. Measuring him against himself, within the same season -- the
-        // same within-player design the handcuff model itself was fitted on.
-        const playedWeeks = [], missedPts = [];
-        for (let w = 1; w <= REG; w++) {
-          const pts = b.cur.weeks.get(w);
-          if (pts == null) continue;
-          if (w === leadBye) continue;                     // the bye is nobody's absence
-          if (lead.cur.weeks.has(w)) playedWeeks.push(pts); else missedPts.push(pts);
-        }
-        if (missedPts.length === 0 && leadMissed.length === 0) { /* lead never missed: realised 0 */ }
-        const observedBase = playedWeeks.length ? mean(playedWeeks) : basePerWk;
-        const realised = missedPts.reduce((a, p) => a + (p - observedBase), 0);
-
-        for (const armName of ["total", "prior"]) {
-          const missProb = leadMissProb(vm[armName], pos, frac);
-          const playable = leadBye != null ? REG - 1 : REG;
-          const predicted = lift * missProb * playable;
-          rows[armName].push({ season, pos, lead: lead.name, backup: b.name, predicted, realised, leadMissedGames: leadMissed.length, missProb, playable, depthOrder, lift });
-        }
-      }
+    for (const armName of ["total", "prior"]) {
+      const missProb = leadMissProb(vm[armName], p.pos, p.frac);
+      rows[armName].push({
+        season, pos: p.pos, lead: p.lead, backup: p.backup,
+        predicted: lift * missProb * p.playable, realised: p.realised,
+        leadMissedGames: p.leadMissedGames, missProb, playable: p.playable,
+        depthOrder: p.depthOrder, lift,
+      });
     }
   }
   process.stderr.write(`  ${season}: ${rows.total.filter((r) => r.season === season).length} pairs\n`);

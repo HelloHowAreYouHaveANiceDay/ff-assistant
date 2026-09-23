@@ -6451,3 +6451,45 @@ night before is what made the recovery possible.
 Caveat for the record: those values are IN-DRAFT JUDGEMENT CALLS, not backtested settings, and the
 stored config has been reset to the validated posture. `aggr 1.0` in particular is the worst cell in
 every sweep we have run.
+
+## THE HANDCUFF LIFT: the `lead` term is the broken part (2026-09-23, screened, NOT shipped)
+
+`scripts/handcuff-gate.mjs` established that the shipped `HANDCUFF_MODEL`
+(`activePerWk = 0.922*base + 0.402*lead`) is an RB-shaped model served at four positions, and that
+its depth ordering is INVERTED -- with no depth term, a worse backup's smaller base buys him a
+LARGER lift. `scripts/handcuff-lift-screen.mjs` screened replacements, leave-season-out, on the same
+pairs (one shared builder, `scripts/lib/handcuff-pairs.mjs`).
+
+Paired by SEASON against the repo's 2.9*SE floor, n=1772 pairs over 21 seasons:
+
+```
+arm           MAE    vs shipped   mean improvement     SE     floor    verdict
+shipped      4.353   --
+perPos       4.105   +0.248           0.2529        0.0322   0.0934    ADMIT  (20/21)
+perPosDepth  4.103   +0.250           0.2515        0.0272   0.0789    ADMIT  (21/21)
+flatPerPos   4.019   +0.334           0.3358        0.0447   0.1297    ADMIT  (20/21)
+levelPerPos  4.277   +0.076           0.0731        0.0606   0.1757    REJECT (13/21)
+```
+
+Head-to-head against `flatPerPos`, every other arm REJECTS -- including `perPosDepth`, so the
+depth split is real in the data but fully absorbed by a positional constant.
+
+**The finding: every arm that DROPS the `lead` term beats every arm that keeps it.** Positional bias
+goes from QB -3.51 / WR +1.70 to ~0.00 at all four positions.
+
+`levelPerPos` is the charter rule-4 control -- a bare per-position constant LEVEL that ignores `base`
+and `lead` entirely. It REJECTS, so the backup's own projection carries real signal and `flatPerPos`
+is not a positional average wearing a costume. Had it passed, the "win" would have meant the
+opposite of what it looks like.
+
+**BASELINES, SETTLED BY IDENTITY, not preference.** A handcuff is a BENCH player, so his base is
+points never collected; the decision-relevant quantity is the LEVEL. And
+`v - (observedActive - basePerWk) == (basePerWk + v) - observedActive`, so "lift vs projection" and
+"predict the level" are the same number written two ways -- asserted in the screen and CHECKED at
+runtime (max gap 3.55e-15). The causal baseline (vs `observedBase`) is retained and labelled
+diagnosis-only.
+
+**WHY NOTHING SHIPPED.** `basePerWk` in this harness is prior-season-total/16, a PROXY for the
+board's projection. The SHAPE is admitted out of sample; the constants (QB +8.10, RB +4.17, WR +2.47,
+TE +2.15) are calibrated to the proxy and must be refit against the real board line before they mean
+anything. `HANDCUFF_MODEL` is untouched pending that refit and owner sign-off (charter rule 1).
