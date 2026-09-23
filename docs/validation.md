@@ -6933,3 +6933,54 @@ was built for. The `weekly` seam stays on `waiverTargets` for experiments and is
 caller; `poolRanking.basis` reports which key ranked the pool, and `rankedByWeekly` is what caught a
 silently dead lever earlier in this same change (`nameKey` vs `lineupNameKey` missed all 332 lookups
 and reproduced the old shortlist exactly).
+
+## THE ROS BLEND AND USAGE: admitted pooled, and it does NOT fix the case that prompted it (2026-09-23)
+
+Asked why Marvin Harrison Jr. was still priced at 7.08/wk after two games of 3.8 and 0.0. The answer
+is that the D18 blend is `(K*line + k*rate)/(K+k)` with a FITTED K=6 -- held-out RMSE 4.3666 against
+4.9295 line-only and 5.1474 rate-only, all 14 folds choosing 6 -- so two games get 25% of the weight.
+That is correct for a POINTS slump. But his usage said something points cannot: 79% of snaps with a
+6% target share, i.e. on the field and not thrown to. The blend is a pure points blend.
+
+**THE SCREEN.** `scripts/ros-blend-usage-screen.mjs`, on `fit-ros-blend.mjs`'s exact frame and
+filters. The candidate predicts the BLEND'S ERROR (`target - blend(K=6)`) from usage, so a feature
+that re-expresses the level the blend already carries regresses to ~0 by construction and only
+missing information can score. Leave-season-out, paired by season, 2.9*SE:
+
+```
+pos      n        RMSE K=6   +usage    paired d      SE     floor   verdict
+ALL    41471        4.3557   4.2290     +0.1267  0.0227    0.0659   ADMIT  (12/14)
+WR     14896        3.9213   3.8153     +0.1060  0.0374    0.1085   REJECT (10/14)  misses by 0.0025
+RB     12479        4.3299   4.2176     +0.1123  0.0346    0.1005   ADMIT  (10/14)
+TE      6798        3.1935   3.0758     +0.1177  0.0441    0.1278   REJECT (11/14)
+QB      7298        5.8415   5.6581     +0.1834  0.0686    0.1990   REJECT (11/14)
+```
+
+Every position is positive (+0.106 to +0.183) and the per-position cells are simply underpowered at
+14 seasons; the pooled cell is the natural aggregate, not a cherry-pick. **Shuffle control, twice:
+correctly NEGATIVE everywhere (-0.04 to -0.13), 0/14 at ALL and RB** -- fitting shuffled residuals
+hurts, which is what a clean harness should do.
+
+For scale: the entire K fit buys 0.562 RMSE (4.929 line-only -> 4.367). Usage adds +0.127 on top,
+about 23% as much again.
+
+**AND IT DOES NOT FIX MARVIN HARRISON JR.** Applied to his live week-3 row the correction is
+**-0.17**, moving him 7.08 -> 6.91. The fitted mechanism is NOT role-collapse detection:
+
+```
+intercept +0.893   line -0.3117   k -0.0478
+td_ts -6.4202   prior_snap_share +2.8296   prior_route_share -0.2653   ts_x_line +0.4958
+```
+
+At his line the effective target-share coefficient is `-6.42 + 0.496*8.81 = -2.05`, but
+`prior_snap_share` carries +2.83 and he plays 79% of snaps -- so the two largest terms (snap +2.09,
+line -2.75) very nearly cancel. The model is mostly a global recalibration (the blend over-weights
+the line), not a detector of "playing but not targeted". **A pooled RMSE win and the specific case
+that motivated it are different claims, and this one delivers the first and not the second.**
+
+**A SERVING BLOCKER, not a modelling one.** `prior_route_share` has 0% coverage in 2026 (2016-2025
+only). Serving this model live today would fill route share with the training median for EVERY
+player -- a dark column in the season it would actually be used, which is the D30 failure mode.
+
+**NOT SHIPPED.** The blend is read by `src/draft/season.ts` and `src/inseason/lineup.ts`; changing it
+is D18 territory and needs `season-calibration` plus sign-off.
