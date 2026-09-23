@@ -6598,3 +6598,54 @@ The section above says NEITHER change was admitted. That remains true of the GAT
 being rewritten. On the owner's call ("bug fix and repin") `benchDrawnZeros` now ships ON by default
 as a DEFECT REPAIR rather than as an admitted edge -- see **D35** for the reasoning, the precedent it
 sets, and the proof that the D13 golden does not move. `handcuffCoupling` remains OFF and unadmitted.
+
+## IN-SEASON WAIVER BREAKOUTS: there IS signal beyond the incumbent (2026-09-23, PRE-FILTER only)
+
+`docs/feature-frontier.md` records NGS efficiency, the PBP situational-opportunity substrate and
+`prior_td_oe` as comprehensive nulls. Every one of those was screened on the PRESEASON projector --
+predict a SEASON TOTAL from PRIOR-SEASON features over the whole player population. This is a
+different question on a different population with different features:
+
+> of the men NOBODY ROSTERS in week w, who is about to be worth starting for the rest of the year
+
+so a null there is not a null here, and it is not.
+
+**THE PANEL.** `fact_fa_pool_week` -- who was on nobody's roster in week w of league 462233, with his
+rest-of-season points. Joined to `feat_player_week_model` at the same (season, week).
+
+**POINT-IN-TIME.** `ros_pts` is built `g.week >= f.week`, so THE LABEL INCLUDES WEEK w -- verified
+against the data (ros[w] - ros[w+1] equals that player's week-w points), not just read off the SQL.
+Features therefore must be knowable before week w's kickoff, which is exactly what
+`feat_player_week_model` is. `actual_pts` is part of the label and is never a feature.
+
+**A CONFOUND I INTRODUCED AND THEN REMOVED.** `ecr_wk_rank` exists only for 2020-2024 (61% of rows)
+while the usage features span 2018-2025, so the first table compared columns computed on different,
+non-random subsamples. `--require-ecr` puts every feature on the SAME rows. It also drops 2019,
+which is not optional: `ranking_history` holds exactly ONE 2019 scrape, dated 2019-12-27, so a
+"week 3" ECR there is a December opinion about a September week. 2020-2024 carry 15-20 distinct
+in-season scrape dates each, which is what makes them knowable.
+
+**SURVIVORS** (partial rank correlation, net of BOTH incumbents -- `season_line_pg`, the season line
+`waiverTargets` ranks on today, and `t4_mean`, the trailing form `policies.ts` chases; n=17,969):
+
+```
+                        RB      WR      TE      QB      (partial vs LEVEL = ros points per game)
+ecr_wk_rank          -0.320  -0.315  -0.403  -0.361     strongest at every position
+prior_route_share     0.152   0.269   0.305   0.168     consistent, and OURS -- no external feed
+prior_snap_share      0.153   0.261   0.258   0.149
+td_ts                -0.042   0.113   0.173   0.009     WR/TE only
+td_rush_yards         0.132   0.032   0.020  -0.029     RB only
+rz_share_td           0.146   0.090   0.090   0.090     modest but present everywhere
+```
+
+**THE FOLK THEORY IS A NULL.** `teammates_out` -- "the man ahead of him is hurt", which is how every
+human explains a waiver breakout -- measures -0.007 / -0.022 / +0.035 / -0.045 raw and ~0.00 partial
+at all four positions. That is a real result, not a shrug.
+
+**LEVEL IN DISGUISE, CAUGHT BY THE PARTIAL.** `td_ppg` at RB is raw 0.386 and partial 0.011 -- it is
+the season line wearing a costume. At WR/TE it survives (0.123/0.122), so the diagnosis is
+position-specific rather than a property of the feature.
+
+**THIS IS A PRE-FILTER AND ADMITS NOTHING.** The rows are not independent (the same player appears
+many weeks, clustered within season), so these are descriptive correlations with no p-value and no
+paired-season floor behind them. Charter rule 2: the survivors have earned a screen, nothing more.
