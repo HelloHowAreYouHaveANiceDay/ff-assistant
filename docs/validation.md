@@ -6842,3 +6842,52 @@ TE        REJECT by 0.018 (rho clears)  REJECT (rho clears 5/5)
    league where others follow consensus waiver advice, the realised edge is smaller than +0.375 and
    possibly much smaller. The usage edge does not have this problem -- it is computed from our own
    data and nobody else in the league is running it.
+
+### THE DECISION HARNESS OVERTURNS THE SCREENS -- and finds a much bigger, simpler edge (2026-09-23)
+
+`scripts/waiver-policy-backtest.mjs` drives `backtestWaivers`, which replays all 1,883 real adds this
+league made and scores our top-K against the room's on realised rest-of-season points per game. Only
+the SORT KEY differs between arms.
+
+```
+arm                                  our ppg   room ppg    edge   weeks won
+PRODUCTION proxy (season line)          6.53       6.83   -0.30        42%
+PRODUCTION proxy (season line VOR)      5.12       6.83   -1.71         9%
+weekly CHALLENGER artifact              8.07       6.83   +1.24        80%
+  + my fitted usage @ WR                7.91       6.83   +1.08        75%
+  + my fitted usage+ECR @ WR,QB         7.38       6.83   +0.55        65%
+  + my fitted usage+ECR @ ALL           7.38       6.83   +0.55        67%
+```
+
+**MY FITTED RANKINGS MAKE THE ARTIFACT WORSE.** The reason is not subtle once found: the harness's
+baseline `proj` is NOT the season line, it is the D27/D30 weekly projector -- a 26-feature
+gradient-boosted model that ALREADY carries `prior_snap_share`, `prior_route_share`, `td_ts`,
+`td_rush_yards`, `ecr_wk_rank` and `ecr_wk_sd`. **Every feature this session "found" was already in
+it.** The screens beat `season_line_pg` because `season_line_pg` is a poor waiver ranking, not
+because the features were new. I rediscovered the weekly model, with an OLS, badly.
+
+**THE SCREENS WERE NOT WRONG, THEY WERE MIS-BASELINED -- and `--model floor` proves it.** The floor
+artifact's projection IS the season line per game, and under it the harness's own shipped arm reads
+**6.46, identical to the cent to my reconstructed production proxy** (which validates the proxy).
+Against THAT baseline my fitted arms do exactly what the screens said:
+
+```
+--model floor:   shipped/season-line 6.46   usage+ECR @ WR,QB 7.00   usage+ECR @ ALL 7.33  (+0.87)
+```
+
+So both results are true at once: usage+ECR beats the season line by ~+0.87, and the weekly artifact
+beats BOTH by more.
+
+**THE ACTIONABLE FINDING IS PLUMBING, NOT A MODEL.** Production `waiverTargets` ranks its shortlist
+by value-over-replacement on the BOARD's SEASON projection. On this harness that ranking scores
+**5.12-6.53 and LOSES TO THE ROOM'S OWN MANAGERS** (9-42% of weeks). The weekly artifact -- already
+fitted, already gated, already rebuilt every week, already serving the lineup -- scores **8.07 and
+wins 80% of weeks**. The gap is +1.5 to +3.0 ppg, against +0.87 for the best thing I fitted.
+
+This is also the mechanism behind the Braelon Allen blindness fixed earlier today: a weak shortlist
+ranking means good candidates are never simulated at all.
+
+**NOT SHIPPED.** Re-pointing the shortlist is a change to a deployed decision surface and needs the
+usual gate plus sign-off. One real tension to settle first: the weekly artifact is a ONE-WEEK
+projection being used to rank a REST-OF-SEASON decision. It wins by a lot anyway, which is a fact
+about the data, not a licence to ignore the mismatch.

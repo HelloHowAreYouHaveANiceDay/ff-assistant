@@ -97,6 +97,19 @@ export function backtestWaivers(
      *  matchup-neutral (dvp-zeroed) copy of the challenger without adding a ModelName or a data file.
      *  Nothing in the shipped path passes it, so the default behaviour is byte-identical. */
     artifactOverride?: WeekModel;
+    /**
+     * OPTIONAL RANKING SEAM. Replaces the week-w projection as the sort key, and NOTHING else --
+     * the pool, the choice set, the scoring window and the top-K size are untouched, so a difference
+     * in the result is attributable to the ranking alone. Returning `null` falls back to the
+     * projection for that player, which is what a model with a missing feature row must do rather
+     * than rank him at zero.
+     *
+     * It exists because the waiver screens (docs/validation.md, 2026-09-23) admitted in-season USAGE
+     * at WR and the expert consensus at WR/QB as better POOL RANKINGS than the season line, and a
+     * ranking that never reaches a decision harness is a statistic, not an edge. Absent, this
+     * function is byte-identical to the shipped behaviour.
+     */
+    ranker?: (p: { player_sk: string; pos: string }, season: number, week: number, proj: number) => number | null;
   },
 ): { weeks: WaiverWeek[]; summary: WaiverSummary } {
   const artifact = opts.artifactOverride ?? loadModel(opts.model);
@@ -160,7 +173,10 @@ export function backtestWaivers(
       const ranked = pool
         .map((p) => ({ p, proj: ctx.players.get(p.player_sk)?.proj ?? null }))
         .filter((x) => x.proj != null && x.proj >= (opts.poolMinLine ?? 0))
-        .sort((a, b) => (b.proj as number) - (a.proj as number))
+        // The SORT KEY may be overridden; the projection itself is still what gets reported, so the
+        // `proj` column keeps meaning the same thing across arms.
+        .map((x) => ({ ...x, key: opts.ranker?.(x.p, season, week, x.proj as number) ?? (x.proj as number) }))
+        .sort((a, b) => b.key - a.key)
         .slice(0, resolved.length);
 
       out.push({
