@@ -1,8 +1,12 @@
-// TS port of the league-neutral news aggregator (was tools/build_player_news.py). Three feed-visible
+// TS port of the league-neutral news aggregator (was tools/build_player_news.py). FOUR feed-visible
 // sources -- all direct TS fetches, no Python:
-//   - nflverse INJURIES (CSV)            -> category=injury
+//   - ESPN PLAYER STATUS (local table)   -> category=injury     FRESHEST: 116 players, current to
+//                                          the hour, and the only source that knew our own OUT man
+//   - nflverse INJURIES (CSV)            -> category=injury     lags by a published week
 //   - RSS HEADLINES (6 feeds)            -> category=headline  (tagged to players in the DB)
 //   - SLEEPER trending add/drop (JSON)   -> category=trending  (via dynastyprocess id crosswalk)
+// `news` is a SNAPSHOT (full refresh each run); `news_history` accumulates the same rows keyed by
+// story so age and persistence are answerable. See the write block for why they are separate.
 // Deliberately drops the nflverse depth-chart "role" source: it's a 52MB download whose rows are
 // NOT shown in the feed (build_app_data filters to injury/headline/trending); the only loss is the
 // board's minor "Depth" badge. Writes the news table (source of truth) + data/player-news.csv (kept
@@ -11,6 +15,7 @@ import { writeFileSync } from "node:fs";
 import { fetchText, fetchCsv, pick, NFLVERSE, DPROC } from "./nflverse.js";
 import { dataPath } from "./paths.js";
 import { nameKey } from "../draft/values.js";
+import { normalizeStatus } from "../inseason/availability.js";
 import { type DB } from "../db/db.js";
 
 const POS = new Set(["QB", "RB", "WR", "TE", "K"]);
@@ -94,6 +99,39 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
       detail: injury ? `${status} - ${injury}` : status, source: "nflverse-injury", asof: new Date().toISOString(), url: "" });
   }
 
+  /**
+   * B: ESPN PLAYER STATUS -- the freshest injury source we have, and it was not in the feed at all.
+   *
+   * `player_status` is already ingested for the lineup (`unavailableReason` reads it) and it beats
+   * the nflverse half on both axes: 116 players carry a status against nflverse's 27, and it is
+   * current to the hour rather than to the last PUBLISHED week. MEASURED 2026-09-23: Michael
+   * Pittman Jr. was `Out - Ankle` here on 09-22 while nflverse week 2 still said
+   * `Questionable - Foot`. Two sources, two different injuries -- so both are kept and each is
+   * labelled, rather than one silently overwriting the other.
+   *
+   * SEVERITY COMES FROM `normalizeStatus`, the SAME function the lineup uses to decide who can play.
+   * A second spelling of "is he out" here would be a second answer to that question, which is the
+   * drift this repo keeps paying for -- IR, PUP, DNR and Out all map to OUT through one vocabulary.
+   */
+  const statusRows = db.prepare(
+    `SELECT p.name, p.position AS pos, p.nfl_team AS team, ps.injury_status, ps.injury_body, ps.updated_at
+       FROM player_status ps JOIN player p USING(player_id)
+      WHERE ps.injury_status IS NOT NULL AND ps.injury_status <> ''`,
+  ).all() as { name: string; pos: string; team: string; injury_status: string; injury_body: string | null; updated_at: string }[];
+  let statusKept = 0;
+  for (const r of statusRows) {
+    if (!POS.has(r.pos)) continue;
+    const norm = normalizeStatus(r.injury_status);
+    if (norm === "ACTIVE") continue;                    // nothing to report about a healthy man
+    rows.push({
+      player: r.name, pos: r.pos, team: r.team || "", category: "injury",
+      severity: norm === "OUT" ? "high" : "medium",
+      detail: r.injury_body ? `${r.injury_status} - ${r.injury_body}` : r.injury_status,
+      source: "espn-status", asof: r.updated_at || new Date().toISOString(), url: "",
+    });
+    statusKept++;
+  }
+
   // C: RSS headlines tagged to the fantasy players they name (whole first+last match)
   /**
    * A FEED THAT FAILS MUST BE NAMED. `catch { continue; }` made a dead source indistinguishable from
@@ -139,9 +177,35 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
 
   // write news table (full refresh); player_id mirrors nameKey; url decoded (%2C -> ,) as Python did
   const ins = db.prepare("INSERT INTO news (player_id, player_name, pos, team, category, severity, detail, source, asof, url) VALUES (?,?,?,?,?,?,?,?,?,?)");
+  /**
+   * HISTORY ACCUMULATES IN `news_history`; `news` STAYS A FULL REFRESH.
+   *
+   * Three consumers (assemble.ts, appdata.ts, agent.ts) read `news` with `ORDER BY id` as a proxy
+   * for freshness, which is only true BECAUSE the table is rebuilt each run. Letting rows pile up
+   * there would quietly make the board show each player's OLDEST headline -- a stale-news bug of
+   * exactly the kind just fixed in the injury half. So the serving path is left byte-identical and
+   * the history lands beside it.
+   *
+   * `times_seen` and `first_seen` are what make "is this story building or fading" answerable:
+   * a headline on its fifth consecutive ingest is a running story, one seen once is a blip, and the
+   * snapshot in `news` cannot distinguish them.
+   */
+  const upHist = db.prepare(
+    `INSERT INTO news_history (player_id, player_name, category, detail, source, severity, url, first_seen, last_seen, times_seen)
+     VALUES (?,?,?,?,?,?,?,?,?,1)
+     ON CONFLICT(player_id, category, detail, source) DO UPDATE SET
+       last_seen = excluded.last_seen, times_seen = news_history.times_seen + 1,
+       severity = excluded.severity, url = excluded.url, player_name = excluded.player_name`);
+  // RETENTION. Unbounded growth would eventually make the history slower to query than it is worth,
+  // and a story nobody has re-reported in three weeks is not live news. Pruned by last_seen, so a
+  // long-running story is kept however old its first_seen is.
+  const cutoff = new Date(Date.now() - 21 * 86400e3).toISOString();
+  const now = new Date().toISOString();
   db.transaction(() => {
     db.prepare("DELETE FROM news").run();
     for (const r of uniq) ins.run(nameKey(r.player), r.player, r.pos, r.team, r.category, r.severity, r.detail, r.source, r.asof, r.url.replace(/%2C/g, ","));
+    for (const r of uniq) upHist.run(nameKey(r.player), r.player, r.category, r.detail, r.source, r.severity, r.url.replace(/%2C/g, ","), r.asof, now);
+    db.prepare("DELETE FROM news_history WHERE last_seen < ?").run(cutoff);
   })();
 
   // player-news.csv, byte-compatible with the Python writer (fields comma->';'; url stays %2C-encoded)
@@ -164,7 +228,8 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
    * printed whether a feed answered either.
    */
   const failNote = feedFailed.length ? `, FAILED ${feedFailed.join("; ")}` : "";
-  console.log(`  news provenance: injuries from week ${injuryWeek || "none"} of the nflverse file` +
+  console.log(`  news provenance: ${statusKept} injury rows from ESPN player_status (freshest);` +
+    ` nflverse week ${injuryWeek || "none"} of its file` +
     ` (it publishes a week behind, so this trails the live ESPN player_status feed);` +
     ` ${Object.keys(RSS).length - feedFailed.length}/${Object.keys(RSS).length} RSS feeds answered${failNote}`);
   return byCat;

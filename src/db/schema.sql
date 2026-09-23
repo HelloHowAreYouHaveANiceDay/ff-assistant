@@ -241,6 +241,32 @@ CREATE TABLE IF NOT EXISTS news (
 );
 CREATE INDEX IF NOT EXISTS idx_news_player ON news(player_id);
 
+-- NEWS HISTORY: how long a story has been running, and whether it is still live.
+--
+-- SEPARATE FROM `news` ON PURPOSE. `news` is FULL-REFRESHED every ingest and three consumers
+-- (assemble.ts, appdata.ts, agent.ts) read it with `ORDER BY id` as a proxy for freshness -- which
+-- is only true BECAUSE of the refresh. Accumulating history in that table would silently make the
+-- board show the OLDEST headline per player instead of the newest. So history accumulates here and
+-- the serving path is untouched, byte for byte.
+--
+-- The natural key is the STORY (player, category, detail, source): the same headline re-fetched on
+-- three consecutive runs is one row whose `last_seen` advances and whose `times_seen` climbs, which
+-- is what makes "is this chatter building or fading" answerable at all.
+CREATE TABLE IF NOT EXISTS news_history (
+  player_id    TEXT NOT NULL,
+  player_name  TEXT,
+  category     TEXT NOT NULL,
+  detail       TEXT NOT NULL,
+  source       TEXT NOT NULL,
+  severity     TEXT,
+  url          TEXT,
+  first_seen   TEXT NOT NULL,        -- when this story first appeared in any ingest
+  last_seen    TEXT NOT NULL,        -- the most recent ingest that still carried it
+  times_seen   INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (player_id, category, detail, source)
+);
+CREATE INDEX IF NOT EXISTS idx_news_history_player ON news_history(player_id, last_seen);
+
 -- ============= L2: presentation (MATERIALIZED view of L1; ONE writer) =============
 
 -- the fully-assembled per-player row the Players UI consumes (row_json keyed by display headers).

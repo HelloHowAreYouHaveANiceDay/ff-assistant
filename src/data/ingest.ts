@@ -581,7 +581,10 @@ export const L1_ASSETS: L1Asset[] = [
   { id: "boris", reads: ["src_boris"], writes: ["boris_tier"] },
   { id: "adp", reads: ["src_ffc"], writes: ["adp"] },
   { id: "market", reads: ["src_fcalc"], writes: ["market_value"] },
-  { id: "news", reads: ["src_rss", "player"], writes: ["news"] },
+  // `player_status` is a READ now (the freshest injury source, added 2026-09-23) and `news_history`
+  // a WRITE (the accumulating story log beside the `news` snapshot). Declared rather than excluded:
+  // `test/dag-lineage.test.ts` refuses a schema table with no producer and says so in its message.
+  { id: "news", reads: ["src_rss", "player", "player_status"], writes: ["news", "news_history"] },
 ];
 
 /** Print the per-season landing counts. A raw sweep whose only output is a grand total cannot show
