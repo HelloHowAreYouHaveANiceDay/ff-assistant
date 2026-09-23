@@ -51,6 +51,33 @@ import { seedField } from "./schedule.js";
 import { slotAdmits, splitTemplate } from "./slots.js";
 import { perGameStrength } from "./rosBlend.js";
 import type { SeedingRule } from "../league/types.js";
+import { existsSync, readFileSync } from "node:fs";
+import { dataPath } from "../data/paths.js";
+
+/**
+ * THE FITTED HANDCUFF COUPLING, scaled and cached.
+ *
+ * Read from `data/handcuff-coupling.json` (written by `scripts/fit-handcuff-coupling.mjs`) only when
+ * `FF_SIM_HANDCUFF > 0` asks for it, so a machine without the artifact behaves exactly as before
+ * rather than throwing. A MISSING artifact returns null and the coupling stays off -- it must never
+ * silently substitute a guessed ratio, because a coupling of 1.15 that nobody measured is
+ * indistinguishable in the output from one that was.
+ *
+ * `scale` multiplies the DEVIATION from 1, not the ratio: scale 0 is no coupling, 1 is as fitted,
+ * and 3 triples the effect for a positive control.
+ */
+let _hcCache: { scale: number; value: Record<string, number> | null } | null = null;
+function scaledHandcuffCoupling(scale: number): Record<string, number> | null {
+  if (_hcCache && _hcCache.scale === scale) return _hcCache.value;
+  let value: Record<string, number> | null = null;
+  const p = dataPath("handcuff-coupling.json");
+  if (existsSync(p)) {
+    const j = JSON.parse(readFileSync(p, "utf8")) as { byPos?: Record<string, number> };
+    if (j.byPos) value = Object.fromEntries(Object.entries(j.byPos).map(([k, r]) => [k, 1 + scale * (Number(r) - 1)]));
+  }
+  _hcCache = { scale, value };
+  return value;
+}
 
 export interface VarianceModel {
   tiers: number;
@@ -200,6 +227,32 @@ export interface SeasonOpts {
    * from weeks a player's team actually played and would otherwise double-count them.
    */
   bootstrap?: { outcomes: RankOutcomes; corr: CorrelationModel; calibration?: "none" | "scale" };
+  /**
+   * HOW MUCH A BACKUP'S OUTPUT RISES IN THE WEEKS HIS LEAD IS OUT, per position -- the one thing the
+   * teammate copula structurally cannot express, because its same-position correlations are all
+   * exactly zero by design (see the coupling block in `simulateSeasons` for why they must be).
+   *
+   * A pure RE-TIMING: each drawn season total is preserved exactly and only the weeks the points
+   * land in change, because the bootstrap's trajectories already carry a backup's elevated weeks in
+   * their marginal and inflating them would double-count. Fitted by
+   * `scripts/fit-handcuff-coupling.mjs`; 1.0 or a missing position means no coupling, and OMITTING
+   * the field is byte-identical to the behaviour before it existed.
+   *
+   * BOOTSTRAP MODE ONLY, and that is correct rather than an oversight: the parametric branch invents
+   * each week independently and has no drawn trajectory in which to move mass. `simContext.ts`
+   * always passes `bootstrap`, so this is live on every served path.
+   */
+  handcuffCoupling?: Record<string, number> | null;
+  /**
+   * BENCH A MAN WHOSE DRAWN WEEK IS A DNP. Bootstrap mode only; omitted = the old behaviour exactly.
+   *
+   * Without it the simulator STARTS an inactive player and scores his zero, because `weekOf` returns
+   * a DNP as the number 0 and `available` was `actual != null`. That makes a bench handcuff worth
+   * nothing no matter how the teammate correlation is modelled -- the backup is never in the lineup
+   * on the weeks that are his whole reason for being rostered. `handcuffCoupling` and this option
+   * are therefore two halves of ONE fix and neither does anything useful alone.
+   */
+  benchDrawnZeros?: boolean;
   /**
    * THE SEASON SO FAR (2026-09-14, D18). `weeks` regular-season weeks are already SETTLED; the
    * simulation starts at week `weeks + 1` with every team's record and points-for seeded from what
@@ -602,6 +655,32 @@ export function simulateSeasons(
   const levelScale = _envNum("FF_SIM_LEVEL_SCALE");
   const levelFactor = effShrink * (levelScale ?? 1);
   const weeklyVarScale = _envNum("FF_SIM_WEEKLY_VAR");
+  /**
+   * THE HANDCUFF COUPLING, with an env override so it can be FORCED OFF and forced to a known value
+   * without editing a caller -- the positive control this repo requires before any null is believed.
+   * `FF_SIM_HANDCUFF=0` disables it outright; any other number overrides EVERY position's ratio, so
+   * an exaggerated value must move the output or the lever is not connected.
+   */
+  /** Bench a man whose drawn week is a DNP zero, so his backup can start. See the seam in
+   *  `scoreTeamWeek` for why this is availability rather than lookahead. `FF_SIM_BENCH_DNP=1`
+   *  forces it on for a positive control without editing a caller. */
+  const benchDrawnZeros = _envNum("FF_SIM_BENCH_DNP") === 1 || opts.benchDrawnZeros === true;
+  /**
+   * `FF_SIM_HANDCUFF` is a SCALE ON THE FITTED DEVIATION, not a raw ratio, so the sweep axis has a
+   * meaningful control and a meaningful positive control:
+   *
+   *   0  OFF -- the shipped posture, and the sweep's CONTROL. Byte-identical to before the feature.
+   *   1  the fitted per-position ratios from data/handcuff-coupling.json, as measured.
+   *   3  deviations tripled -- an exaggeration that MUST move the output, or the lever is dead.
+   *
+   * A raw override would have collapsed four fitted positions to one number, which is the shape the
+   * shipped HANDCUFF_MODEL already got wrong; scaling `(R - 1)` keeps the per-position structure.
+   * `opts.handcuffCoupling` still wins outright, so the unit tests drive exact ratios.
+   */
+  const hcScale = _envNum("FF_SIM_HANDCUFF") ?? 0;
+  const handcuffCoupling = opts.handcuffCoupling !== undefined
+    ? opts.handcuffCoupling
+    : (hcScale > 0 ? scaledHandcuffCoupling(hcScale) : null);
   const knownInjury = opts.knownInjury;
   // M2d KNOB (new dependence), 2026-09-16. `FF_SIM_TEAM_SD` is the sd of a per-FANTASY-TEAM, per-trial
   // lognormal (mean 1) multiplier applied to every man on that roster for the whole season. The
@@ -712,6 +791,88 @@ export function simulateSeasons(
         }
       }
     }
+
+    /**
+     * THE HANDCUFF COUPLING -- a RE-TIMING of a backup's points, never an inflation of them.
+     *
+     * WHAT WAS WRONG. Teammates are coupled by a Gaussian copula keyed by POSITION PAIR, and every
+     * same-position pair in `data/correlation-model.json` is exactly zero (RB-RB 0.00, TE-TE 0.00,
+     * WR-WR 0.00). Those zeros are deliberate -- `teammateCorr` sets them so two receivers on one
+     * team stop entering the copula as the SAME MAN and producing singular matrices -- but the side
+     * effect is that a lead's missed weeks and his backup's big weeks NEVER coincide. The one event
+     * that gives a handcuff all his value had no representation in the model, so a bench handcuff
+     * could only ever cost the man he displaced. MEASURED 2026-09-23 on league 462233: `depth-risk`
+     * put Braelon Allen at +10.10pp of recovered playoff probability behind Breece Hall while
+     * `waivers` scored adding him at -1.40pp, and the -1.40 was structural, not a judgement.
+     *
+     * WHY RE-TIMING AND NOT A LIFT. The backup's drawn trajectory is a REAL historical season of a
+     * similarly-ranked player, so it ALREADY contains the weeks he was elevated because the starter
+     * ahead of him got hurt. His marginal is right. Scaling him up in the lead's missed weeks would
+     * count that elevation a second time. What is missing is purely the JOINT -- WHICH weeks his
+     * points land in -- and that is exactly what decides his value, because a handcuff's points only
+     * score when you start him, and you start him when the lead is out. So this moves mass between
+     * weeks and PRESERVES EACH DRAWN SEASON TOTAL EXACTLY. No player gets better; his good weeks
+     * stop landing on your bench.
+     *
+     * THE TARGET is `E[backup/wk | lead OUT] / E[backup/wk | lead PLAYED]`, fitted within player and
+     * within season by `scripts/fit-handcuff-coupling.mjs` off the same (lead, backup) pairs the
+     * handcuff gate and lift screen use. The simulator's implicit value is 1.0, which the fit
+     * rejects with a tight leave-season-out spread nowhere near it:
+     *
+     *     QB 2.129 (2.049-2.232)   RB 1.659 (1.635-1.678)
+     *     TE 1.359 (1.331-1.386)   WR 1.214 (1.198-1.225)      n = 1528 pairs, 2005-2025
+     *
+     * SOLVED, NOT ITERATED. With S_out and S_in the backup's drawn points in the lead's missed and
+     * played weeks, and k / m the played-week counts on each side, scaling the two blocks by a and b
+     * subject to (total preserved) a*S_out + b*S_in = S_out + S_in and (ratio imposed)
+     * (a*S_out/k) / (b*S_in/m) = R gives a closed form. Zeros stay zeros, so the drawn injury shape
+     * and every availability question are untouched.
+     *
+     * SCOPED to pairs WITHIN one fantasy roster, because `seasonDraw[si]` is that roster's own draw.
+     * That is where the decision lives -- whether to spend a bench slot insuring your own starter.
+     * A lead and backup split across two fantasy teams are left independent, which understates an
+     * opponent's recovery from an injury and is a smaller, second-order error than the one this
+     * removes. Stated rather than hidden: it is a known limit of where the coupling is applied.
+     */
+    if (seasonDraw && handcuffCoupling) {
+      for (const drawn of seasonDraw) {
+        const men = [...drawn.keys()].filter((pp) => !!pp.team && !!pp.pos);
+        for (const backup of men) {
+          // THE LEAD IS THE BEST MAN AT HIS POSITION ON HIS NFL TEAM, on this roster, by the level
+          // the simulator itself is using -- not by draft cost or by name. A pair is a handcuff only
+          // if the backup projects BELOW him, the same predicate `depth-risk` and the waiver
+          // admission use.
+          let lead = null;
+          for (const m of men) {
+            if (m === backup || m.team !== backup.team || m.pos !== backup.pos) continue;
+            if ((m.projPerGame ?? 0) <= (backup.projPerGame ?? 0)) continue;
+            if (!lead || (m.projPerGame ?? 0) > (lead.projPerGame ?? 0)) lead = m;
+          }
+          if (!lead) continue;
+          const R = handcuffCoupling[backup.pos];
+          if (!(R > 1)) continue;                       // 1.0 or missing = no coupling, by design
+          const lt = drawn.get(lead), bt = drawn.get(backup);
+          if (!lt || !bt || lt.weeks.length !== bt.weeks.length) continue;
+
+          let sOut = 0, sIn = 0, kOut = 0, mIn = 0;
+          for (let w = 0; w < bt.weeks.length; w++) {
+            if (bt.weeks[w] <= 0) continue;             // the backup did not play: not ours to move
+            if (lt.weeks[w] <= 0) { sOut += bt.weeks[w]; kOut++; } else { sIn += bt.weeks[w]; mIn++; }
+          }
+          // Both blocks must be non-empty for the contrast to exist. A trial in which the lead never
+          // missed a week, or the backup never played beside him, is left exactly alone.
+          if (kOut === 0 || mIn === 0 || sOut <= 0 || sIn <= 0) continue;
+
+          // a*sOut + b*sIn = sOut + sIn  and  (a*sOut/kOut) = R * (b*sIn/mIn)
+          const b = (sOut + sIn) / (sIn + (R * kOut * sIn) / mIn);
+          const a = (R * b * sIn * kOut) / (mIn * sOut);
+          if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) continue;
+
+          const weeks = bt.weeks.map((v, w) => (v <= 0 ? 0 : v * (lt.weeks[w] <= 0 ? a : b)));
+          drawn.set(backup, { weeks, total: bt.total });
+        }
+      }
+    }
     // --- one team, one week ------------------------------------------------------------------------
     // ONE scoring path, used by the regular season, the playoff bracket AND the playoff-week strength
     // measure. It used to be written out three times; a quantity meant to be comparable with the
@@ -774,7 +935,32 @@ export function simulateSeasons(
             knownInjury.tailHazard, knownInjury.fromWeek,
             opts.weeks + (opts.playoffWeekCount ?? PLAYOFF_WEEKS),
           ).has(gameWeek);
-          const actual = onBye || !pp || inEpisode ? null : weekOf(drawn.get(pp), gameWeek);
+          /**
+           * A MAN WHO DID NOT PLAY MUST NOT OCCUPY A STARTING SLOT.
+           *
+           * In the pool's schema a 0 is "he did not appear that week" (bootstrap.ts: "the weeks his
+           * team played, in order, with a 0 where he did not appear"). But `weekOf` returns that 0
+           * as a NUMBER, so `available: actual != null` was true for every man in every week, and
+           * the lineup started a player who was not active -- scoring his zero and leaving his
+           * replacement on the bench. A bye already sets `actual = null` and benches him correctly;
+           * an injury did not.
+           *
+           * THIS IS NOT LOOKAHEAD, and the distinction is the one this repo already draws in
+           * `unavailableReason`: the lineup is still SET on the season-long true mean and never on
+           * the sampled score. Knowing a man's points before kickoff would be lookahead. Knowing he
+           * is INACTIVE is what every real manager knows on Sunday morning, and it is the entire
+           * mechanism by which a handcuff is ever worth a roster spot.
+           *
+           * WHY IT IS A FLAG. It changes what every team scores in every week a starter is out, so
+           * it moves the D13 golden and must clear `scripts/season-calibration.mjs` before it can
+           * become a default. Omitted = the old behaviour exactly.
+           *
+           * The cost: a week a man genuinely played and scored exactly 0.0 is indistinguishable
+           * from a DNP in this schema and is benched too. That is rare and, for a starter, nearly
+           * harmless -- benching a true zero costs nothing and gains his replacement's points.
+           */
+          const raw = onBye || !pp || inEpisode ? null : weekOf(drawn.get(pp), gameWeek);
+          const actual = benchDrawnZeros && raw === 0 ? null : raw;
           // `eligible` rides along verbatim -- see SeasonPlayer. Track D made position a set
           // everywhere the board touches and stopped at THIS seam, so a dual-eligible man could not
           // cover the slot the simulated roster was actually short at.

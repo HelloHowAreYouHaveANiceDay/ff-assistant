@@ -124,6 +124,10 @@ export function buildPairs(H, BYE, { from, to, leadMaxRank = 36 } = {}) {
           out.push({
             season, pos, depthOrder, lead: lead.name, backup: b.name,
             basePerWk, leadPerWk, frac, playable, leadMissedGames,
+            // How many weeks the contrast is built from on EACH side. `observedBase` silently falls
+            // back to the projection proxy when `playedWeeks` is 0, so a caller fitting a
+            // within-player ratio must be able to exclude that case rather than measure the proxy.
+            playedWeeks: playedPts.length, activeWeeks: missedPts.length,
             observedBase, observedActive, realised,
           });
         }

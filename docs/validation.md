@@ -6535,3 +6535,59 @@ constant.
 
 **UNTIL THEN, `depth-risk` IS THE VERB FOR INSURANCE VALUE.** It conditions on the lead being gone
 and reprices through `HANDCUFF_MODEL`, so it answers the question `waivers` structurally cannot.
+
+## THE SIMULATOR CANNOT VALUE A HANDCUFF -- two defects found, both fixed, NEITHER ADMITTED (2026-09-23)
+
+Chasing why `waivers` scored Braelon Allen at -1.40pp while `depth-risk` had him at +10.10pp, the
+season simulator turned out to be unable to represent a handcuff AT ALL, for two independent
+reasons. Both are now implemented behind flags. Both are OFF, because neither clears the floor.
+
+**DEFECT 1 -- the dependence.** Teammates couple through a Gaussian copula keyed by POSITION PAIR,
+and every same-position entry is exactly zero (RB-RB 0.00, TE-TE 0.00, WR-WR 0.00; compare QB-WR
+0.3475). The lead's missed weeks and the backup's big weeks could never coincide. Those zeros are
+deliberate -- `teammateCorr` sets them so two receivers stop entering the copula as the SAME MAN and
+producing singular matrices -- so that fix caused this one.
+
+**DEFECT 2 -- the lineup, and this one is the binding constraint.** `weekOf` returns a DNP as the
+NUMBER 0, and availability was `actual != null`, so the simulator STARTED an inactive player and
+scored his zero. A bench handcuff was therefore never in the lineup on the only weeks he exists for,
+and NO correlation model could have rescued him. Two halves of one fix; neither does much alone.
+
+**THE COUPLING IS A RE-TIMING, NOT A LIFT.** The bootstrap draws a REAL historical season of a
+similarly-ranked player, which already contains the weeks he was elevated when the starter ahead of
+him got hurt -- his marginal is right. Inflating him in the lead's missed weeks would count that
+twice. So mass MOVES between weeks and each drawn season total is preserved exactly (solved in
+closed form, not iterated). Fitted target, `scripts/fit-handcuff-coupling.mjs`, n=1528 pairs:
+
+```
+QB 2.129 (LOO 2.049-2.232)   RB 1.659 (1.635-1.678)   TE 1.359 (1.331-1.386)   WR 1.214 (1.198-1.225)
+```
+
+The simulator's implicit value is 1.0, which every one of those leave-season-out spreads excludes.
+
+**THE GATE SAYS NO.** `season-calibration.mjs --at-week 8 --artifact-dir data/fold-artifacts-d16`,
+2018-2025, 114 team-seasons, 3000 trials, paired by season:
+
+```
+arm                        playoff Brier   paired d      SE       t    wins   verdict
+control (both OFF)              0.1288          --        --      --     --   --
+benchDrawnZeros only            0.1245     -0.0047   0.0042   -1.13    5/8   REJECT
+bench + coupling (fitted)       0.1245     -0.0048   0.0042   -1.14    6/8   REJECT
+bench + coupling x3 (control)   0.1243     -0.0047   0.0042   -1.12    5/8   REJECT
+coupling alone (bench OFF)      0.1287     ~-0.0001      --      --     --   REJECT
+```
+
+Floor is 2.9*SE = 0.0122; the effect is 0.0048, about 1.1 SE. NOT ADMITTED. The lever IS connected
+-- per-season Brier moves monotonically with the scale (2018: 0.1670 / 0.1666 / 0.1657) and every one
+of the 8 leave-one-season-out folds chose benching -- so this is a real but small effect, not a dead
+lever. It is still sub-floor.
+
+**THE INTERPRETATION, AND WHY IT IS NOT A REASON TO SHIP.** This gate scores playoff-probability
+calibration over ALL 114 team-seasons, while the effect exists only on rosters that carry a handcuff
+pair, in the weeks that lead is out -- a thin slice, heavily diluted. That is a real argument that
+the instrument is underpowered for this change. It is NOT an argument for promoting it: "the gate
+could not see it" is precisely the reasoning D13/D14/D15 exist to refuse. Both knobs stay off.
+
+Open for the owner: `benchDrawnZeros` is arguably a straight BUG (nobody would defend starting an
+inactive player) rather than a model tuning, and a bug fix and an edge may not carry the same burden
+of proof. That is a decision, not a measurement, so it is recorded here rather than taken.

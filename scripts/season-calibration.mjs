@@ -558,6 +558,16 @@ const SWEEP_DEFAULTS = {
   FF_SIM_LEVEL_PRIOR_WEEKS: String(LEVEL_PRIOR_WEEKS),
   // OFF is the shipped posture. The seam is a model change and D13 plus owner sign-off govern it.
   FF_SIM_KNOWN_INJURY: "0",
+  // THE HANDCUFF PAIR (2026-09-23). Two knobs, registered together because NEITHER DOES ANYTHING
+  // ALONE and sweeping one at a time would measure two nulls and conclude there was no effect:
+  //   FF_SIM_BENCH_DNP  1 = do not START a man whose drawn week is a DNP, so his backup can play.
+  //                     Without it the lineup starts the injured lead and scores his zero, and a
+  //                     bench handcuff is never in the lineup on the only weeks he matters.
+  //   FF_SIM_HANDCUFF   scale on the FITTED per-position deviation (data/handcuff-coupling.json).
+  //                     0 = off, 1 = as fitted, 3 = tripled (positive control).
+  // Both OFF is the shipped posture; D13 and owner sign-off govern either becoming a default.
+  FF_SIM_BENCH_DNP: "0",
+  FF_SIM_HANDCUFF: "0",
 };
 if (SWEEP) {
   const eq = SWEEP.indexOf("=");
