@@ -6891,3 +6891,45 @@ ranking means good candidates are never simulated at all.
 usual gate plus sign-off. One real tension to settle first: the weekly artifact is a ONE-WEEK
 projection being used to rank a REST-OF-SEASON decision. It wins by a lot anyway, which is a fact
 about the data, not a licence to ignore the mismatch.
+
+### RETRACTION: the weekly-artifact waiver ranking is a POSITIONAL-MIX ARTIFACT (2026-09-23)
+
+The section above concluded that production `waiverTargets` leaves +1.5 to +3.0 realised points per
+game on the table by ranking its shortlist with value-over-replacement instead of the weekly
+projector. **THAT CONCLUSION IS WRONG AND IS RETRACTED HERE.**
+
+Wiring the weekly projector into the live shortlist produced a top-5 of **four quarterbacks**
+(Watson, Jones, Brissett, Willis) -- which is the exact defect `waiverTargets`' own VOR docstring
+says it exists to prevent: "season point totals are not comparable across positions... so the top
+`nAdds` were QUARTERBACKS every single time, in every league, forever."
+
+`backtestWaivers` scores RAW realised points per game, which is position-blind. Decomposed:
+
+```
+                     raw ppg   mix-only   skill (raw - mix)
+weekly artifact         8.07       9.16              -1.09
+room                    6.83       6.83              -0.00
+
+positional mix:   artifact picks QB 54% / RB 8% / WR 29%      room picks QB 13% / RB 20% / WR 18%
+realised by pos:  QB 11.52   K 6.69   RB 6.61   WR 6.46   DST 5.71   TE 5.08
+```
+
+Quarterbacks realise 11.52 against 6.61 for backs, the artifact arm picks 54% QBs against the room's
+13%, and **the mix ALONE predicts 9.16 for those picks while it delivered 8.07** -- so within
+position the weekly artifact is a WORSE picker than the room by 1.09 ppg. The headline +1.24 was
+mix, and it was hiding a real deficit underneath.
+
+**THE HARNESS LIMIT THIS EXPOSES, which is the durable finding:** `backtestWaivers` cannot compare
+two rankings whose POSITIONAL MIX differs. Its metric rewards taking quarterbacks regardless of
+whether a roster needs one, and nothing in its output says so. Any future ranking experiment on it
+must report the mix decomposition above or it is measuring position, not skill.
+
+**THE EARLIER SCREENS ARE NOT AFFECTED, and the distinction matters.** `breakout-screen.mjs` ranks
+and scores WITHIN position -- every cell is one position's pool -- so cross-position mix cannot
+explain any of it. The usage admit at WR and the ECR admits at WR/QB stand.
+
+**NOT SHIPPED, AND NOW DELIBERATELY NOT.** Production keeps VOR, which is doing exactly the job it
+was built for. The `weekly` seam stays on `waiverTargets` for experiments and is not passed by the
+caller; `poolRanking.basis` reports which key ranked the pool, and `rankedByWeekly` is what caught a
+silently dead lever earlier in this same change (`nameKey` vs `lineupNameKey` missed all 332 lookups
+and reproduced the old shortlist exactly).

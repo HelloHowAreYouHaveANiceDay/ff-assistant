@@ -1352,7 +1352,13 @@ export interface WaiverResult {
   refused: WaiverRefusal[];
   /** How the add pool was RANKED, and any position the ranking could not price. A reader who sees
    *  four quarterbacks needs to know whether that is the pool or the sort. */
-  poolRanking: { basis: "value-over-replacement" | "raw-projection"; missingReplacement: string[] };
+  poolRanking: {
+    basis: "value-over-replacement" | "raw-projection" | "weekly-projector";
+    /** How many pool members each half of the key covered. `rankedByVor > 0` alongside a
+     *  "weekly-projector" basis means the artifact had no row for those men and they fell back. */
+    rankedByWeekly?: number; rankedByVor?: number;
+    missingReplacement: string[];
+  };
   /** Free agents left OUT of the add pool because the store says they cannot play. Named rather than
    *  silently filtered: stashing an injured man is a legitimate human call, and the point is that
    *  the simulator cannot price it. Empty when no availability map was supplied. */
@@ -1448,6 +1454,26 @@ export function waiverTargets(
     leagueId?: string | null;
     /** The league's own acquisition rules (`config.acquisition`), for the budget and the process day. */
     acquisition?: AcquisitionRules | null;
+    /**
+     * WEEKLY PROJECTIONS FOR THE SHORTLIST RANKING, by normalized name, from `projectWeekly` --
+     * the same seam and the same call `lineupRecommend` already takes.
+     *
+     * WHY. This verb ranked its pool by value-over-replacement on the BOARD's SEASON projection, and
+     * only the top `adds` were ever simulated. MEASURED on `backtestWaivers` over this league's 1,883
+     * real adds (docs/validation.md, 2026-09-23), ranking the pool that way scores 5.12-6.53 realised
+     * rest-of-season points per game and LOSES TO THE ROOM'S OWN MANAGERS (9-42% of weeks won); the
+     * weekly projector -- already fitted, already gated, already rebuilt every week, already serving
+     * the lineup one verb over -- scores 8.07 and wins 80%.
+     *
+     * It is the same defect the Braelon Allen case was: a weak shortlist means the right candidate is
+     * never simulated at all, and "the simulator considered him and said no" is indistinguishable in
+     * the output from "the simulator never saw him".
+     *
+     * THE KNOWN TENSION, stated rather than buried: this is a ONE-WEEK projection being used to rank
+     * a REST-OF-SEASON decision. It wins by a wide margin anyway, which is a fact about the data and
+     * not a licence to ignore the mismatch. Absent, the ranking is the old VOR exactly.
+     */
+    weekly?: WeeklyProjection;
   } = {},
 ): WaiverResult {
   const trials = o.trials ?? 800;
@@ -1532,11 +1558,30 @@ export function waiverTargets(
     if (r == null) { missingReplacement.add(p.pos); return p.proj; }
     return p.proj - r * NFL_WEEKS;
   };
+  /**
+   * THE SHORTLIST KEY. The weekly projector when the caller supplied it, VOR on the season line
+   * otherwise. A pool member the projector has no row for falls back to VOR FOR THAT PLAYER rather
+   * than to zero -- ranking an unknown last is a statement about our coverage, not about him -- and
+   * the count of fallbacks is reported in `poolRanking` instead of being left to be inferred.
+   */
+  let rankedByWeekly = 0, rankedByVor = 0;
+  const shortlistKey = (p: { name: string; pos: string; proj: number }): number => {
+    // `lineupNameKey`, NOT `nameKey`: `loadWeeklyBands` builds its map with the former and the two
+    // are different functions. Using the wrong one missed EVERY lookup and fell back to VOR for all
+    // 332 pool members -- a silently dead lever that produced exactly the old shortlist. Caught only
+    // because `poolRanking.rankedByWeekly` reported 0; without that counter it reads as "no change".
+    const w = o.weekly?.get(lineupNameKey(p.name));
+    if (w != null && Number.isFinite(w)) { rankedByWeekly++; return w; }
+    rankedByVor++;
+    return vor(p);
+  };
   const eligible = [...ctx.board.entries()]
     .filter(([id]) => !ctx.ownedIds.has(id))
     .map(([, p]) => p)
     .filter((p) => (o.positions ? o.positions.includes(p.pos) : true))
-    .sort((a, b) => vor(b) - vor(a))
+    .map((p) => ({ p, k: shortlistKey(p) }))
+    .sort((a, b) => b.k - a.k)
+    .map((x) => x.p)
     .filter((p) => !isOut(p));
   const byVor = eligible.slice(0, nAdds);
 
@@ -1683,7 +1728,13 @@ export function waiverTargets(
     targets,
     refused,
     poolRanking: {
-      basis: missingReplacement.size === Object.keys(ctx.replacement).length ? "raw-projection" : "value-over-replacement",
+      // WHICH RANKING PRODUCED THE SHORTLIST, and how many men each half covered. A run where the
+      // weekly artifact was absent looks identical to one where it ranked everything, unless the
+      // basis says so -- the same reason `faabBasis` exists on every row.
+      basis: rankedByWeekly > 0
+        ? "weekly-projector"
+        : (missingReplacement.size === Object.keys(ctx.replacement).length ? "raw-projection" : "value-over-replacement"),
+      rankedByWeekly, rankedByVor,
       missingReplacement: [...missingReplacement].sort(),
     },
     unavailableAdds,

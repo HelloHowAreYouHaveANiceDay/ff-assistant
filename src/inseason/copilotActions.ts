@@ -353,6 +353,15 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // AVAILABILITY IS PASSED (2026-09-18). Without it this verb recommended bidding FAAB on a man
       // on injured reserve -- it built its add pool from the board and never asked who could play.
       return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, handcuffAdds: a.handcuffAdds, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId), leagueId: leagueId ?? provenance.leagueId, acquisition: S.loadAcquisition(dbPath, leagueId), dbPath });
+      // THE WEEKLY-PROJECTOR SHORTLIST IS NOT WIRED, AND THAT IS A DECISION. Passing
+      // `weekly: S.loadWeeklyBands(...)?.weekly` here ranks the pool by the weekly artifact, which
+      // on `backtestWaivers` scores 8.07 realised ppg against value-over-replacement's 5.12 -- and
+      // that apparent win is a POSITIONAL-MIX ARTIFACT, not skill. See docs/validation.md
+      // (2026-09-23): the harness scores RAW points per game, quarterbacks realise 11.52 against
+      // 6.61 for backs, and the artifact arm picks 54% QBs against the room's 13%. Mix alone
+      // predicts 9.14 for those picks; it delivered 8.07, so WITHIN position it is worse than the
+      // room. VOR exists precisely to stop an all-QB shortlist and it is doing its job. The seam
+      // stays on `waiverTargets` for experiments; production keeps VOR.
     case "trade_check":
       return C.tradeCheck(ctx, { give: a.give ?? [], get: a.get ?? [] }, { provenance, trials: a.trials ?? 1600, seeds: a.seed != null ? [a.seed] : [7, 101] });
     case "trade_finder":
