@@ -6698,3 +6698,49 @@ rho result says the next step is worth taking, not that the feature is admitted.
 already replays real waiver decisions (`standPat`, `addHottestFreeAgent`) against this league's own
 roster history. A usage-ranked policy scored there is an end-to-end answer in the currency that
 matters, on an arbiter this repo already trusts, instead of another ad-hoc statistic of mine.
+
+### WIDE MODE -- the league's roster history was never the limit (2026-09-23)
+
+The screen above ran on 8 seasons because `fact_fa_pool_week` starts in 2018, which is how far back
+THIS LEAGUE's rosters go. That constraint belongs to a different question. The league decides only
+WHO WAS AVAILABLE; identifying the breakout is answered from player data, and the rest-of-season
+label is already computed purely from `feat_player_week_model` (the ros subselects in
+`rosterState.ts` touch no league table). Tying the screen to 2018 imported someone else's limit onto
+a test that was visibly underpowered -- owner's catch, and it changed the result.
+
+`--wide` rebuilds the pool synthetically: below each position's typical rostered depth by
+`season_line_pg`, CALIBRATED from this league's own real pool (median rostered per league-week:
+QB 22, RB 48, WR 57, TE 22). 2013-2025 = **13 seasons**. `prior_route_share` is dropped (2016+ only)
+in exchange; it and `prior_snap_share` were near-substitutes in the pre-filter.
+
+**THE PROXY'S COST, MEASURED RATHER THAN HOPED.** Synthetic membership agrees with the real pool on
+87.7% of 61,984 rows -- but **8.3% of the synthetic pool was ACTUALLY ROSTERED**, i.e. men who could
+not have been claimed, and disproportionately the good ones (being good is why somebody rostered
+them). So wide-mode top-K is OPTIMISTIC and the `vs A_shipped` rows are NOT decision-valid.
+
+That diagnosis makes a testable prediction -- form-based arms should inflate most -- and it is
+confirmed: `B_incumbent vs A_shipped` reads **+2.0 to +2.7 (ADMIT)** on the synthetic pool against
+**+0.39 / -0.15 / +0.50 / +0.46 (all REJECT)** on the real one. Same arms, same metric; the
+difference is entirely the contamination. **Read `C_usage vs B_incumbent`**: both arms rank the same
+contaminated pool and differ ONLY in the usage features, so the selection bias is common and cancels.
+
+**THE USAGE INCREMENT, C vs B, in both constructions:**
+
+```
+        real pool, 8 seasons              synthetic pool, 13 seasons        rank rho (wide)
+RB      +0.472  floor 1.132  REJECT       +0.255  floor 0.517  REJECT       +0.0239 clears 12/13
+WR      +0.773  floor 0.604  ADMIT 8/8    +0.561  floor 0.450  ADMIT 11/13  +0.0261 clears 13/13
+TE      +0.335  floor 0.622  REJECT       +0.546  floor 0.564  REJECT 9/13  +0.0499 clears 11/13
+QB      -0.167         REJECT             +0.385  floor 0.521  REJECT       +0.0102 does NOT clear
+```
+
+**WR IS ADMITTED** -- it clears on the pre-specified decision metric in TWO independent pool
+constructions, over different season counts and different feature sets, and the shuffle control is
+clean in both modes. TE is a hair under its floor (+0.546 vs 0.564) and clears on rho; RB rejects on
+the decision metric but clears on rho 12/13; QB is a null on both.
+
+Shuffle controls: wide mode collapses every cell to ~0 and nothing clears anywhere. (The narrow
+mode's spurious QB top-K ADMIT is recorded above and is why the QB column is not trusted there.)
+
+**STILL NOT SHIPPED.** An admitted screen is not a deployed change (charter rule 1), and the
+end-to-end arbiter remains `src/inseason/backtest/policies.ts`, which replays real waiver decisions.
