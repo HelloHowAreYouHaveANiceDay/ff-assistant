@@ -244,7 +244,8 @@ export interface SeasonOpts {
    */
   handcuffCoupling?: Record<string, number> | null;
   /**
-   * BENCH A MAN WHOSE DRAWN WEEK IS A DNP. Bootstrap mode only; omitted = the old behaviour exactly.
+   * BENCH A MAN WHOSE DRAWN WEEK IS A DNP. Bootstrap mode only. DEFAULT ON since 2026-09-23;
+   * `false` restores the old behaviour exactly.
    *
    * Without it the simulator STARTS an inactive player and scores his zero, because `weekOf` returns
    * a DNP as the number 0 and `available` was `actual != null`. That makes a bench handcuff worth
@@ -661,10 +662,20 @@ export function simulateSeasons(
    * `FF_SIM_HANDCUFF=0` disables it outright; any other number overrides EVERY position's ratio, so
    * an exaggerated value must move the output or the lever is not connected.
    */
-  /** Bench a man whose drawn week is a DNP zero, so his backup can start. See the seam in
-   *  `scoreTeamWeek` for why this is availability rather than lookahead. `FF_SIM_BENCH_DNP=1`
-   *  forces it on for a positive control without editing a caller. */
-  const benchDrawnZeros = _envNum("FF_SIM_BENCH_DNP") === 1 || opts.benchDrawnZeros === true;
+  /**
+   * ON BY DEFAULT since 2026-09-23 (owner sign-off), because starting an inactive player is a BUG
+   * and not a modelling posture. See the seam in `scoreTeamWeek` for why reading a DNP is
+   * availability rather than lookahead.
+   *
+   * IT DID NOT CLEAR THE ADMISSION FLOOR, and that is recorded rather than glossed: on
+   * `season-calibration --at-week 8`, 2018-2025, it moves the playoff Brier 0.1288 -> 0.1245,
+   * paired d -0.0047 against a 2.9*SE floor of 0.0122 -- about 1.1 SE, with 5/8 seasons and 8/8
+   * leave-one-season-out folds preferring it. It ships as a DEFECT REPAIR on the owner's call that
+   * a bug and an edge do not carry the same burden of proof, NOT as an admitted edge.
+   *
+   * `FF_SIM_BENCH_DNP=0`, or `benchDrawnZeros: false`, restores the old behaviour exactly.
+   */
+  const benchDrawnZeros = opts.benchDrawnZeros ?? (_envNum("FF_SIM_BENCH_DNP") !== 0);
   /**
    * `FF_SIM_HANDCUFF` is a SCALE ON THE FITTED DEVIATION, not a raw ratio, so the sweep axis has a
    * meaningful control and a meaningful positive control:

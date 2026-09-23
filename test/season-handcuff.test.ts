@@ -141,7 +141,10 @@ test("FAULT: when every man STARTS, the coupling moves the season total by EXACT
  */
 test("handcuff coupling is CONNECTED, and only together with benching the DNP -- each half alone is inert", () => {
   const ts = Array.from({ length: 8 }, (_, i) => mk(String(i + 1), true));
-  const b = baseFor(ts);
+  // benchDrawnZeros is now the SHIPPED DEFAULT, so the "before" arm has to ask for the old
+  // behaviour by name. Leaving it implicit would silently compare two benching runs and the
+  // "each half alone is inert" claim would become untestable.
+  const b = { ...baseFor(ts), benchDrawnZeros: false };
   const off = simulateSeasons(ts, weeks, vm, b);
   const couplingOnly = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: RATIOS });
   const both = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: RATIOS, benchDrawnZeros: true });

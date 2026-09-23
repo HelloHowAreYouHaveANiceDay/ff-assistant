@@ -6591,3 +6591,10 @@ could not see it" is precisely the reasoning D13/D14/D15 exist to refuse. Both k
 Open for the owner: `benchDrawnZeros` is arguably a straight BUG (nobody would defend starting an
 inactive player) rather than a model tuning, and a bug fix and an edge may not carry the same burden
 of proof. That is a decision, not a measurement, so it is recorded here rather than taken.
+
+### UPDATE 2026-09-23 -- `benchDrawnZeros` SHIPPED; the coupling did not
+
+The section above says NEITHER change was admitted. That remains true of the GATE VERDICT and is not
+being rewritten. On the owner's call ("bug fix and repin") `benchDrawnZeros` now ships ON by default
+as a DEFECT REPAIR rather than as an admitted edge -- see **D35** for the reasoning, the precedent it
+sets, and the proof that the D13 golden does not move. `handcuffCoupling` remains OFF and unadmitted.

@@ -311,6 +311,6 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   week cannot be backfilled; with the column absent the model degrades toward its season-line anchor
   and gives back the +0.036 pooled CRPS the consensus was admitted on (5/0 covered seasons).
   `ff evaluate-weekly`'s flagless `--features` is that artifact's own list, not the trainer's `all`.
-- Recorded decisions D0-D34 (do not silently reverse): `docs/decisions.md`
+- Recorded decisions D0-D35 (do not silently reverse): `docs/decisions.md`
 - Current multi-league/multi-format finding list + fix plan: `docs/architecture-review-2026-09-16.md`
 - Planning/roadmap lives in the wiki, not here: `wiki/projects/project--ff-assistant.md`

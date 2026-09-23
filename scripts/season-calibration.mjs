@@ -566,7 +566,9 @@ const SWEEP_DEFAULTS = {
   //   FF_SIM_HANDCUFF   scale on the FITTED per-position deviation (data/handcuff-coupling.json).
   //                     0 = off, 1 = as fitted, 3 = tripled (positive control).
   // Both OFF is the shipped posture; D13 and owner sign-off govern either becoming a default.
-  FF_SIM_BENCH_DNP: "0",
+  // SHIPPED DEFAULT IS 1 since 2026-09-23 -- it is a defect repair, not an edge. Sweeping it now
+  // means sweeping AWAY from the shipped posture, so "0" is the old-behaviour arm, not the control.
+  FF_SIM_BENCH_DNP: "1",
   FF_SIM_HANDCUFF: "0",
 };
 if (SWEEP) {

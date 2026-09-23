@@ -1904,3 +1904,61 @@ marginal call at the second FLEX is Loveland over the best man on the bench -- 2
 Iterate **ad-hoc**, not via `/pave`, to keep the loop fast. The roadmap stays `exec: off`; work
 is driven directly in follow-up sessions against the specs. Flip to `/pave` + `exec: on` only
 once the spine stabilizes and parallel factory execution is worth the overhead.
+
+## D35 -- the season simulator STOPS STARTING INACTIVE PLAYERS (2026-09-23 measured, owner: "bug fix and repin", **APPLIED**)
+
+`weekOf` returns a DNP as the NUMBER `0`, and the bootstrap branch set `available: actual != null`.
+`actual` was therefore never null, so **every rostered man was startable in every week**, and the
+simulator put an inactive player in a starting slot and scored his zero. A bye was benched correctly
+(`actual = null`); an injury was not.
+
+`benchDrawnZeros` now benches him, and is **ON by default**. `FF_SIM_BENCH_DNP=0` or
+`benchDrawnZeros: false` restores the old behaviour exactly.
+
+**THIS IS NOT LOOKAHEAD**, and the distinction is the one `unavailableReason` already draws
+everywhere else: the lineup is still SET on the season-long true mean and never on the sampled
+score. Knowing a man's points before kickoff would be lookahead. Knowing he is INACTIVE is what
+every manager knows on Sunday morning.
+
+**IT DID NOT CLEAR THE ADMISSION FLOOR, AND SHIPPED ANYWAY -- ON THE OWNER'S CALL.** On
+`season-calibration --at-week 8 --artifact-dir data/fold-artifacts-d16`, 2018-2025, 114 team-seasons:
+
+```
+control (old behaviour)   playoff Brier 0.1288
+benchDrawnZeros ON                      0.1245   paired d -0.0047  SE 0.0042  t -1.13  5/8 seasons
+```
+
+Floor is 2.9*SE = 0.0122; the effect is ~1.1 SE. Every one of the 8 leave-one-season-out folds chose
+it and the direction is right, but by the D14/D15 standard that is a REJECT. It ships as a **defect
+repair** on the owner's judgement that a bug and an edge do not carry the same burden of proof --
+nobody would defend starting an inactive player as a modelling posture. Recorded this way so the
+precedent is explicit and cannot be cited later as "an edge that cleared the gate".
+
+**THE D13 GOLDEN DOES NOT MOVE, AND WAS NOT RE-PINNED.** Proven twice: the flagless championship
+backtest is byte-for-byte identical with the flag on and off (39.5% / 96%, same per-season line), and
+structurally `src/draft/backtest.ts` and `src/draft/sim.ts` never call `simulateSeasons` at all --
+the backtest scores rosters on REAL weekly results, where there are no drawn zeros to bench. This
+change is confined to the in-season simulator (season odds, the copilot, waivers, depth-risk), whose
+gate is `season-calibration.mjs`, which is the number above. Re-pinning an unchanged number would
+have implied a measurement moved when none did.
+
+**A STALE PIN, PRE-EXISTING AND NOT TOUCHED HERE.** `data/golden.json` carries `titlePct` 38.5 (the
+D15 figure) while the flagless run has measured **39.5%** since 2026-09-16 --
+`docs/architecture-review-2026-09-16.md` records 39.5%/96% with the identical per-season line, which
+this session reproduced byte-for-byte. It is inside the 3.0pp tolerance so the gate passes, and it
+has nothing to do with D35. Correcting it is a separate decision with its own diagnosis.
+
+**WHAT MOVED, LIVE** (league 462233, 2026 week 3, `--player "Breece Hall"`):
+
+```
+                                   before        after
+cost of losing Hall              -22.10pp     -32.40pp
+Braelon Allen recovers           +10.10pp     +20.95pp
+base playoff probability           69.55%       71.95%
+```
+
+Benching the inactive makes DEPTH matter, which is the expected direction: once an injured starter
+no longer occupies his slot scoring zero, the man behind him is worth what he actually provides.
+`ff waivers` moved Allen from -1.40pp to -1.00pp -- still negative, because the OTHER half of the
+handcuff fix (`handcuffCoupling`, the same-position teammate dependence) remains OFF, unadmitted,
+and the waiver caveat still says so.
