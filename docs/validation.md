@@ -7192,3 +7192,44 @@ because it is correct, not because it moved anything.
 `scripts/avail-tier-screen.mjs`, `scripts/calibration.mjs`, `scripts/fit-kdst.mjs`,
 `scripts/kdst-sweep.mjs`, `scripts/yahoo-ros-analysis.mjs`. The K/DST ones are the lowest risk --
 kicker and defence names do not collide the way skill-player names do.
+
+### THE NAME-TO-ID MIGRATION, AND THE RE-FITS (2026-09-23)
+
+Everything that joined history rows on a DISPLAY NAME now keys on `player_sk`, falling back to the
+name only where no key exists (1.6% of skill-position weekly rows -- dropping those would trade a
+rare collision for a systematic hole, and name-keying them is exactly the old behaviour).
+
+**MIGRATED:** `scripts/lib/handcuff-pairs.mjs`, `scripts/fit-variance.mjs` (both in the previous
+commit), plus `scripts/avail-tier-screen.mjs`, `scripts/calibration.mjs`, `scripts/fit-kdst.mjs`,
+`scripts/kdst-sweep.mjs`. `calibration.mjs` had TWO prior-season rank lookups, not one -- the
+`count == 2` that an assert flagged as AMBIGUOUS rather than missing, which is why both moved
+together instead of one silently staying on names.
+
+**DELIBERATELY NOT MIGRATED, because the exposure was measured at zero:**
+
+- `src/draft/spread.ts` keys a CURRENT-BOARD map by name. `points.csv` has no duplicate names at
+  all, so there is nothing to collide. Changing shipped code for a risk that does not exist is worse
+  than leaving it.
+- `scripts/yahoo-ros-analysis.mjs` joins live actuals to the PROJECTION side, which carries no
+  `player_sk` -- migrating it means threading ids through `computeValues`, a real change to shipped
+  value code. And 2026's only two name collisions are **Byron Young (DL/LB) and Marcus Harris
+  (DB/DL)**, both defence-only, so neither reaches a skill-position join.
+
+**RE-FITS AND GATES, all after the migration:**
+
+```
+fit-variance          10 of 24 avail cells moved, max |delta| 0.00110
+fit-handcuff-coupling QB 2.129->2.127  RB 1.659->1.666  WR 1.214->1.219  TE 1.359->1.354
+                      every leave-season-out spread still excludes 1.0
+fit-kdst              "flat -- no measured signal" for both K and DST; dry run, no artifact written
+calibration.mjs       0.24pp mean abs deviation from uniform (under 1pp is good);
+                      outer deciles 20.7% vs 20.0% expected; worst position QB at 1.06pp
+handcuff gate         n=3215; miss 0.48x, lift 1.98x, ordering STILL INVERTED
+season-calibration    week 8 arm D = 0.1245 -- IDENTICAL to the pre-migration baseline
+suite                 1389/1386, the pre-existing carsonwentz failure
+```
+
+**NOTHING MOVED A VERDICT.** The handcuff model is still ~2x high on lift and ~0.5x on miss rate with
+its depth ordering inverted; the D18 seeded arm is unchanged to four decimals; the bootstrap's stated
+uncertainty is still honest. The migration lands because joining people on their names is wrong, not
+because it rescued a number -- and knowing precisely how little it moved is the useful part.

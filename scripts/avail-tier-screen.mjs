@@ -33,13 +33,18 @@ const bySeason = new Map();
 for (const line of rows) {
   const f = line.split(",");
   const s = Number(f[0]), name = f[1], pos = (f[2] ?? "").toUpperCase(), pts = Number(f[4]);
+  // KEYED BY player_sk (col 7), NAME ONLY AS FALLBACK. Name-keying merges two different men who
+  // share one -- 14 (season, pos, name) groups in this file do, all of them stars (Steve Smith,
+  // Adrian Peterson, Zach Miller, Mike Williams). Merged, 2009 Adrian Peterson has 32 appearances
+  // in a 16-game season, which is precisely the kind of player an AVAILABILITY screen must not see.
+  const key = f[6] || name;
   if (!POS.includes(pos) || !Number.isFinite(pts)) continue;
   if (!bySeason.has(s)) bySeason.set(s, new Map());
   const m = bySeason.get(s);
   if (!m.has(pos)) m.set(pos, new Map());
   const b = m.get(pos);
-  if (!b.has(name)) b.set(name, { n: 0, tot: 0 });
-  const r = b.get(name); r.n++; r.tot += pts;
+  if (!b.has(key)) b.set(key, { name, n: 0, tot: 0 });
+  const r = b.get(key); r.n++; r.tot += pts;
 }
 const seasons = [...bySeason.keys()].sort((a, b) => a - b);
 
@@ -48,7 +53,7 @@ function priorTotalsAsOf(season) {
   const m = new Map();
   for (const s of seasons) {
     if (s >= season) break;
-    for (const [pos, byName] of bySeason.get(s)) for (const [name, r] of byName) m.set(pos + "|" + name, r.tot);
+    for (const [pos, byName] of bySeason.get(s)) for (const [key, r] of byName) m.set(pos + "|" + key, r.tot);
   }
   return m;
 }

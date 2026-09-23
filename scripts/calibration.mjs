@@ -31,12 +31,17 @@ const TEST_SEASONS = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025
 const byKey = new Map();       // season|name -> {season,name,pos,team,weeks:Map}
 const teamWeeks = new Map();   // season|team -> Set(weeks)
 for (const line of readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
-  const [season, name, pos, week, pts, team] = line.split(",");
+  const [season, name, pos, week, pts, team, sk] = line.split(",");
   if (!POS.includes(pos)) continue;
   const s = Number(season), w = Number(week), p = Number(pts);
   if (!Number.isFinite(s) || !Number.isFinite(w) || !Number.isFinite(p)) continue;
-  const k = `${s}|${name}`;
-  if (!byKey.has(k)) byKey.set(k, { season: s, name, pos, team, weeks: new Map() });
+  // IDENTITY IS `player_sk`, NOT THE DISPLAY NAME. The prior-season rank join below looks a player
+  // up a year later; keyed by name it joins one Steve Smith's finish to the other Steve Smith's
+  // season. Fallback to name for the 1.6% of skill rows with no key -- that is the old behaviour,
+  // so it is no worse, and dropping them would trade a rare collision for a systematic hole.
+  const id = sk || name;
+  const k = `${s}|${id}`;
+  if (!byKey.has(k)) byKey.set(k, { season: s, id, name, pos, team, weeks: new Map() });
   byKey.get(k).weeks.set(w, p);
   if (team) {
     const tk = `${s}|${team}`;
@@ -54,7 +59,7 @@ for (const s of seasons) {
     players.filter((p) => p.season === s && p.pos === pos)
       .map((p) => ({ p, tot: [...p.weeks.values()].reduce((a, b) => a + b, 0) }))
       .sort((a, b) => b.tot - a.tot)
-      .forEach((x, i) => finishRank.set(`${s}|${x.p.name}`, i + 1));
+      .forEach((x, i) => finishRank.set(`${s}|${x.p.id}`, i + 1));
   }
 }
 
@@ -63,7 +68,7 @@ function poolsExcluding(exclude) {
   const raw = {};
   for (const p of players) {
     if (p.season === exclude) continue;
-    const prior = finishRank.get(`${p.season - 1}|${p.name}`);
+    const prior = finishRank.get(`${p.season - 1}|${p.id}`);
     if (!prior || prior > (MAX_RANK[p.pos] ?? 60)) continue;
     const played = teamWeeks.get(`${p.season}|${p.team}`);
     if (!played || played.size < 8) continue;
@@ -98,7 +103,7 @@ for (const testSeason of TEST_SEASONS) {
   const pools = poolsExcluding(testSeason);
   for (const p of players) {
     if (p.season !== testSeason) continue;
-    const prior = finishRank.get(`${p.season - 1}|${p.name}`);
+    const prior = finishRank.get(`${p.season - 1}|${p.id}`);
     if (!prior || prior > (MAX_RANK[p.pos] ?? 60)) continue;
     const pool = pools[p.pos]?.[prior];
     if (!pool || pool.length < 20) continue;

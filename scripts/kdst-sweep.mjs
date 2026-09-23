@@ -43,8 +43,11 @@ async function csv(url, tag) {
 // --- residuals: what a rank-only projection gets wrong at K and DST --------------------------------
 const tot = new Map();
 for (const line of readFileSync("data/history-points.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
-  const [s, name, pos, pts] = line.split(",");
-  if (pos === "K" || pos === "DST") tot.set(`${Number(s)}|${name}`, { pos, pts: Number(pts), name, season: Number(s) });
+  // history-points.csv is season,name,pos,points,player_sk -- key on the id, fall back to the name.
+  // K and DST names collide far less than skill names do, so this is consistency rather than a
+  // measured defect; it costs nothing and removes the class of bug entirely.
+  const [s, name, pos, pts, sk] = line.split(",");
+  if (pos === "K" || pos === "DST") tot.set(`${Number(s)}|${sk || name}`, { pos, pts: Number(pts), name, season: Number(s) });
 }
 const seasons = [...new Set([...tot.values()].map((v) => v.season))].sort().filter((s) => s >= 2007);
 const rank = new Map();
@@ -212,9 +215,11 @@ const kTeam = new Map();
 {
   const seen = new Map();
   for (const line of readFileSync("data/history-weekly.csv", "utf8").trim().split(/\r?\n/).slice(1)) {
-    const [s, name, pos, , , team] = line.split(",");
+    // history-weekly.csv is season,name,pos,week,points,team,player_sk -- same key as the totals map
+    // above, or the two halves of this join disagree about who a row belongs to.
+    const [s, name, pos, , , team, sk] = line.split(",");
     if (pos !== "K" || !team) continue;
-    const k = `${s}|${name}`;
+    const k = `${s}|${sk || name}`;
     if (!seen.has(k)) seen.set(k, new Map());
     const m = seen.get(k); m.set(team, (m.get(team) ?? 0) + 1);
   }
