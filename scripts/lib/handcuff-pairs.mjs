@@ -25,13 +25,26 @@ export function loadHistory(path = "data/history-weekly.csv") {
   for (const line of readFileSync(path, "utf8").trim().split(/\r?\n/).slice(1)) {
     const f = line.split(",");
     const s = Number(f[0]), name = f[1], pos = (f[2] ?? "").toUpperCase(), wk = Number(f[3]), pts = Number(f[4]), team = f[5];
+    const sk = f[6];
     if (!POS.includes(pos) || !Number.isFinite(pts) || !Number.isFinite(wk) || wk > REG) continue;
     if (!H.has(s)) H.set(s, new Map());
     const byPos = H.get(s);
     if (!byPos.has(pos)) byPos.set(pos, new Map());
     const byName = byPos.get(pos);
-    if (!byName.has(name)) byName.set(name, { weeks: new Map(), team, total: 0 });
-    const r = byName.get(name);
+    /**
+     * KEYED BY `player_sk`, FALLING BACK TO NAME. Keying by display name MERGES two different
+     * players who share one: 14 (season, position, name) groups in history-weekly do exactly that,
+     * and they are stars -- Steve Smith in six seasons, Adrian Peterson in three, Zach Miller three,
+     * Mike Williams two. Merged, 2009 Adrian Peterson becomes one "player" with 32 games in a
+     * 16-game season and 307 points, which is not a depth chart entry that exists.
+     *
+     * The fallback is not laziness: 1.6% of skill-position weekly rows carry no `player_sk`, and
+     * dropping them would trade a rare collision for a systematic hole. Name-keying those is exactly
+     * what this did for every row before, so the fallback is strictly no worse than the status quo.
+     */
+    const key = sk || name;
+    if (!byName.has(key)) byName.set(key, { name, weeks: new Map(), team, total: 0 });
+    const r = byName.get(key);
     r.weeks.set(wk, pts); r.total += pts; r.team = team || r.team;
   }
   return H;
@@ -79,21 +92,23 @@ export function buildPairs(H, BYE, { from, to, leadMaxRank = 36 } = {}) {
     for (const pos of POS) {
       const prevByName = prev.get(pos), curByName = cur.get(pos);
       if (!prevByName || !curByName) continue;
-      const pool = [...prevByName].map(([name, r]) => ({ name, total: r.total })).sort((a, b) => b.total - a.total);
-      const rankOf = new Map(pool.map((p, i) => [p.name, i]));
+      // Ranked by KEY, not by display name -- see loadHistory. `rankOf` must be keyed the same way
+      // the pool is built or two same-named men share one rank.
+      const pool = [...prevByName].map(([key, r]) => ({ key, name: r.name, total: r.total })).sort((a, b) => b.total - a.total);
+      const rankOf = new Map(pool.map((p, i) => [p.key, i]));
 
       const byTeam = new Map();
-      for (const [name, r] of curByName) {
-        const p = prevByName.get(name);
+      for (const [key, r] of curByName) {
+        const p = prevByName.get(key);
         if (!p || !r.team) continue;
         if (!byTeam.has(r.team)) byTeam.set(r.team, []);
-        byTeam.get(r.team).push({ name, priorTotal: p.total, cur: r });
+        byTeam.get(r.team).push({ key, name: r.name, priorTotal: p.total, cur: r });
       }
       for (const [, men] of byTeam) {
         men.sort((a, b) => b.priorTotal - a.priorTotal);
         const lead = men[0];
         if (!lead || lead.priorTotal <= 0 || men.length < 2) continue;
-        const leadRank = rankOf.get(lead.name);
+        const leadRank = rankOf.get(lead.key);
         if (leadRank == null || leadRank >= leadMaxRank) continue;
         const leadPerWk = lead.priorTotal / REG;
         const frac = leadRank / Math.max(1, pool.length);

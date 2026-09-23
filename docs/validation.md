@@ -7146,3 +7146,49 @@ Jordan Thomas 2018 is the only change inside the backtest window (Hunter 2025 is
 history -> features -> `train_projection.py` -> artifact -> board, which is D16 territory and a
 separate decision. Until then his served line stays 4.17 and the fix is only in the history the next
 model rebuild will read.
+
+### AUDIT: what else joins on NAME instead of id? (2026-09-23, owner-prompted)
+
+After two name-collision bugs in one session -- a cornerback called Lamar Jackson appearing to have
+184 carries in a diagnostic, and my own history fix promoting Chris Johnson / Steve Smith / Roy
+Williams / Brandon Marshall / Kyle Williams / D.J. Williams -- the owner asked the right question:
+what else is keyed that way?
+
+**THE EXPOSURE, MEASURED.** `history-weekly.csv` carries `player_sk` in column 7. Of 37,575
+(season, name) groups, **127 map to more than one player**. Filtered to skill positions, 28 remain;
+filtered to the same POSITION as well -- which is how the consumers actually group -- **14 remain,
+and every one is a star**:
+
+```
+Steve Smith      2007, 2008, 2009, 2010, 2011, 2012  (WR; in 2009 BOTH scored 176.9 and 217.5)
+Adrian Peterson  2007, 2008, 2009                    (RB; 2009 = 300.0 and 7.2)
+Zach Miller      2009, 2010, 2011                    (TE)
+Mike Williams    2010, 2011                          (WR; 2010 = 119.6 and 190.9)
+```
+
+Merged, 2009 Adrian Peterson becomes one player with **32 appearances in a 16-game season**.
+
+**TWO CONSUMERS WERE EXPOSED, BOTH NOW KEYED BY `player_sk` WITH A NAME FALLBACK** (1.6% of
+skill-position weekly rows carry no `player_sk`; dropping them would trade a rare collision for a
+systematic hole, and name-keying those is exactly the old behaviour):
+
+- `scripts/lib/handcuff-pairs.mjs` -- builds the (lead, backup) pairs BOTH handcuff experiments score.
+- `scripts/fit-variance.mjs` -- fits `avail`, which feeds `leadMissProb`, which prices every handcuff
+  EV. This is where a 32-game player hurts most: he lands in tier 0 as a man who cannot miss.
+
+**IMPACT: REAL DEFECT, IMMATERIAL EFFECT -- and that is worth knowing precisely.**
+
+```
+handcuff gate     n 3227 -> 3215 pairs;  miss rate 0.48x -> 0.47x;  lift 2.00x -> 1.98x
+                  NO verdict changes: the model is still ~2x high on lift and ~0.5x on miss rate
+variance model    largest avail delta -0.0012 (WR tier 2); most cells +-0.0002 or exactly 0.0000
+```
+
+So the morning's handcuff conclusions and the shipped variance model both survive. The fix lands
+because it is correct, not because it moved anything.
+
+**STILL NAME-KEYED, NOT FIXED, AND LISTED SO IT IS NOT FORGOTTEN:** `src/draft/spread.ts`
+(`spreads.set(p.name, ...)`, current-season board only, so no historical collision), plus
+`scripts/avail-tier-screen.mjs`, `scripts/calibration.mjs`, `scripts/fit-kdst.mjs`,
+`scripts/kdst-sweep.mjs`, `scripts/yahoo-ros-analysis.mjs`. The K/DST ones are the lowest risk --
+kicker and defence names do not collide the way skill-player names do.

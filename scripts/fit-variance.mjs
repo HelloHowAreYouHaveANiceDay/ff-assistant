@@ -48,10 +48,21 @@ const FIT_OUT = process.env.FIT_OUT_OVERRIDE || PATHS.out;
  */
 const TIER_MODE = process.env.TIER_MODE === "prior" ? "prior" : "total";
 
-// season -> pos -> name -> weekly points
+/**
+ * season -> pos -> PLAYER -> weekly points, keyed by `player_sk` and falling back to the name.
+ *
+ * Keying by display name merged two different men who share one. It matters here more than almost
+ * anywhere else: this file fits `avail`, the per-tier probability a player is available, from how
+ * many weeks each player appears. MERGED, 2009 Adrian Peterson has 32 appearances in a 16-game
+ * season -- a man who cannot miss -- and he lands in tier 0, exactly the bucket `leadMissProb`
+ * reads when pricing whether a starter will need his handcuff. 14 (season, pos, name) groups do
+ * this, and every one of them is a star: Steve Smith in six seasons, Adrian Peterson in three,
+ * Zach Miller three, Mike Williams two.
+ */
 const bySeason = new Map();
 for (const line of rows) {
-  const [season, name, pos, week, pts] = line.split(",");
+  const [season, name, pos, week, pts, , sk] = line.split(",");
+  const key = sk || name;
   if (FIT_EXCLUDE != null && Number(season) === FIT_EXCLUDE) continue;   // leave-season-out
   if (!POS.includes(pos)) continue;
   const s = Number(season), p = Number(pts);
@@ -60,8 +71,8 @@ for (const line of rows) {
   const m = bySeason.get(s);
   if (!m.has(pos)) m.set(pos, new Map());
   const byName = m.get(pos);
-  if (!byName.has(name)) byName.set(name, []);
-  byName.get(name).push(p);
+  if (!byName.has(key)) byName.set(key, []);
+  byName.get(key).push(p);
 }
 
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
