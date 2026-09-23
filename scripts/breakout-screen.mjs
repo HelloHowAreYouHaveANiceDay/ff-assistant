@@ -36,7 +36,7 @@ const LEAGUE = arg("--league", "462233");
  * schedule. Including it silently added a ninth season of near-garbage to an 8-season paired test.
  * Found by reading the season list the script printed, which is why it prints it.
  */
-const TO = Number(arg("--to", 2025));
+const TO = Number(arg("--to", process.argv.includes("--ecr") ? 2024 : 2025));
 /** POSITIVE CONTROL: shuffle the outcome within season. Every arm must collapse to the pool mean.
  *  An edge that survives a shuffled label is measuring the harness, not the players. */
 const SHUFFLE = process.argv.includes("--shuffle");
@@ -77,7 +77,25 @@ const WIDE = process.argv.includes("--wide");
 /** Arm D needs the trend columns, which only the wide (synthetic-pool) builder computes. */
 const WIDE_ARMD = WIDE && !process.argv.includes("--no-arm-d");
 const ROSTERED_DEPTH = { QB: 22, RB: 48, WR: 57, TE: 22 };
-const WIDE_FROM = Number(arg("--wide-from", 2013));
+/**
+ * ARM E -- the expert weekly consensus, the strongest partial the pre-filter found (-0.32 to -0.40,
+ * larger than any usage feature) and the last untested candidate.
+ *
+ * IT COSTS SEASONS. `ecr_wk_rank` exists for 2020-2024 ONLY: 2025 has zero coverage and 2019 holds a
+ * single 2019-12-27 scrape (a December opinion about a September week, excluded as lookahead). So
+ * arm E is judged on FIVE paired seasons against thirteen for everything else, and a 2.9*SE floor on
+ * n=5 is a weak instrument -- the SE itself is estimated from five numbers. Stated here, not after.
+ *
+ * MISSING ECR IS ENCODED, NOT DROPPED. Only ~60% of pool rows carry a rank, and the missingness is
+ * INFORMATIVE: an unranked free agent is one no expert thought worth ranking. Dropping those rows
+ * would change the pool arm C is being compared against and re-run the subsample confound the
+ * pre-filter already had to fix. So a missing rank becomes WORST-rank plus an explicit
+ * `ecr_missing` indicator, the pool stays identical to arm C's, and "is he ranked at all" is
+ * allowed to be part of what the feature contributes -- which is honest, because in practice it is.
+ */
+const ECR = process.argv.includes("--ecr");
+const ECR_FEATS = ["ecr_wk_rank", "ecr_missing"];
+const WIDE_FROM = Number(arg("--wide-from", ECR ? 2020 : 2013));
 
 const db = new Database("data/ff.db", { readonly: true });
 const rows = WIDE ? buildWide() : db.prepare(`
@@ -97,7 +115,7 @@ const rows = WIDE ? buildWide() : db.prepare(`
  */
 function buildWide() {
   const all = db.prepare(`
-    SELECT season, week, pos, player_sk, name, pts, ${[...INCUMBENTS, ...USAGE].join(", ")}
+    SELECT season, week, pos, player_sk, name, pts, ecr_wk_rank, ${[...INCUMBENTS, ...USAGE].join(", ")}
       FROM feat_player_week_model
      WHERE season BETWEEN ? AND ? AND pos IN ('QB','RB','WR','TE')
      ORDER BY season, player_sk, week
@@ -127,7 +145,30 @@ function buildWide() {
   const panel = out.filter((r) => r.week <= MAX_WEEK && r.ros_games >= MIN_ROS
     && r.season_line_pg != null && r.t4_mean != null);
   if (WIDE_ARMD) addTrend(panel, groups);
+  if (ECR) addEcr(panel);
   return panel;
+}
+
+/**
+ * The arm-E columns. A missing rank becomes WORST-rank FOR THAT (season, week, position) plus one --
+ * computed per cell rather than as a global constant, because pool sizes differ by position and week
+ * and a single sentinel would mean "slightly bad" at WR and "catastrophic" at QB.
+ */
+function addEcr(panel) {
+  const byCell = new Map();
+  for (const r of panel) {
+    const k = `${r.season}|${r.week}|${r.pos}`;
+    if (!byCell.has(k)) byCell.set(k, []);
+    byCell.get(k).push(r);
+  }
+  for (const [, cell] of byCell) {
+    const ranked = cell.map((r) => r.ecr_wk_rank).filter((v) => v != null);
+    const worst = ranked.length ? Math.max(...ranked) : 0;
+    for (const r of cell) {
+      r.ecr_missing = r.ecr_wk_rank == null ? 1 : 0;
+      if (r.ecr_wk_rank == null) r.ecr_wk_rank = worst + 1;
+    }
+  }
 }
 
 /**
@@ -250,6 +291,7 @@ const ARMS = {
   B_incumbent: INCUMBENTS,
   C_usage: [...INCUMBENTS, ...USAGE],
   ...(WIDE_ARMD ? { D_trend: [...INCUMBENTS, ...USAGE, ...TREND] } : {}),
+  ...(ECR ? { E_ecr: [...INCUMBENTS, ...USAGE, ...ECR_FEATS] } : {}),
 };
 
 console.log(`\nWAIVER-BREAKOUT SCREEN -- league ${LEAGUE}, weeks 1-${MAX_WEEK}, top-${K} per (season, week, pos)`);
@@ -292,7 +334,7 @@ for (const pos of ["RB", "WR", "TE", "QB"]) {
     // so d_snap/exp_years/draft_round fell through `?? fill[f]` to `undefined`, NaN-poisoned the
     // normal equations, and the solve degenerated to almost exactly -season_line_pg -- arm D scored
     // identically to A_shipped with an exactly negated rho. It looked like a REJECT and was a BUG.
-    for (const f of [...INCUMBENTS, ...USAGE, ...TREND]) {
+    for (const f of [...INCUMBENTS, ...USAGE, ...TREND, ...(ECR ? ECR_FEATS : [])]) {
       const vals = train.map((r) => r[f]).filter((v) => v != null && Number.isFinite(v));
       fill[f] = vals.length ? median(vals) : 0;
     }
@@ -343,7 +385,9 @@ for (const pos of ["RB", "WR", "TE", "QB"]) {
     const floor = 2.9 * se;
     return { m, se, floor, wins: d.filter((x) => x > 0).length, n: d.length };
   };
-  const COMPARISONS = WIDE_ARMD
+  const COMPARISONS = ECR
+    ? [["E_ecr", "C_usage"], ["C_usage", "B_incumbent"], ["E_ecr", "B_incumbent"]]
+    : WIDE_ARMD
     ? [["D_trend", "C_usage"], ["C_usage", "B_incumbent"], ["D_trend", "B_incumbent"], ["B_incumbent", "A_shipped"]]
     : [["C_usage", "B_incumbent"], ["C_usage", "A_shipped"], ["B_incumbent", "A_shipped"]];
   for (const [cand, ref] of COMPARISONS) {
@@ -372,7 +416,7 @@ for (const pos of ["RB", "WR", "TE", "QB"]) {
     const se = sd / Math.sqrt(d.length);
     return { m, se, floor: 2.9 * se, wins: d.filter((x) => x > 0).length, n: d.length };
   };
-  for (const [cand, ref] of (WIDE_ARMD ? [["D_trend", "C_usage"], ["C_usage", "B_incumbent"]] : [["C_usage", "B_incumbent"], ["C_usage", "A_shipped"]])) {
+  for (const [cand, ref] of (ECR ? [["E_ecr", "C_usage"]] : WIDE_ARMD ? [["D_trend", "C_usage"], ["C_usage", "B_incumbent"]] : [["C_usage", "B_incumbent"], ["C_usage", "A_shipped"]])) {
     const t = pairedRho(cand, ref);
     console.log(`    [post-hoc, RANK RHO] ${cand} vs ${ref.padEnd(12)} mean ${t.m >= 0 ? "+" : ""}${t.m.toFixed(4)}  SE ${t.se.toFixed(4)}  floor ${t.floor.toFixed(4)}  ` +
       `${t.m > t.floor ? "clears" : "does not clear"}  (${t.wins}/${t.n})`);

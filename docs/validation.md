@@ -6791,3 +6791,54 @@ with an EXACTLY negated rho, which is the tell that caught it. The right answer 
 route first, and a null that agrees with the eventual truth is the hardest kind of bug to notice.
 
 **NET: the usage family remains the only thing that works, and WR remains the only admitted cell.**
+
+### THE EXPERT CONSENSUS (ECR) ON WAIVERS: ADMITTED at WR and QB (2026-09-23)
+
+The last untested candidate, and the strongest partial the pre-filter found (-0.32 to -0.40, larger
+than any usage feature). Arm E = C_usage + `ecr_wk_rank` + `ecr_missing`.
+
+**IT COSTS SEASONS, AND THAT IS THE MAIN CAVEAT.** `ecr_wk_rank` exists for 2020-2024 ONLY -- 2025
+has zero coverage, and 2019 holds a single 2019-12-27 scrape (a December opinion about a September
+week, excluded as lookahead). So arm E is judged on FIVE paired seasons against thirteen for
+everything else, and a 2.9*SE floor on n=5 estimates the SE from five numbers. Both admits below are
+5/5 on the sign, which is supportive but is not the same as a well-powered test.
+
+**MISSING ECR IS ENCODED, NOT DROPPED.** ~40% of pool rows carry no rank, and the missingness is
+informative -- an unranked free agent is one no expert thought worth ranking. Dropping those rows
+would change the pool arm C is compared against and reinstate the subsample confound the pre-filter
+already had to fix. A missing rank becomes WORST-rank for that (season, week, position) plus one,
+with an explicit `ecr_missing` indicator, so the pool stays identical to arm C's.
+
+```
+E_ecr vs C_usage        mean      SE     floor   verdict           rank rho (post-hoc)
+RB                    -0.010   0.112    0.325   REJECT  2/5        +0.0285 clears 5/5
+WR                    +0.375   0.084    0.243   ADMIT   5/5        +0.0257 clears 5/5
+TE                    +0.173   0.093    0.270   REJECT  3/5        +0.0177 clears 5/5
+QB                    +1.517   0.299    0.866   ADMIT   5/5        +0.0382 does not clear
+```
+
+**SHUFFLE CONTROL, RUN TWICE:** every cell rejects, every mean near zero, no false positive anywhere
+-- including QB, which manufactured a spurious ADMIT in the narrow real-pool construction. That
+earlier false positive was a property of that construction, not of this one.
+
+**WHERE THIS LEAVES THE WHOLE SEARCH:**
+
+```
+          usage (13 seasons)            ECR (5 seasons)
+WR        ADMIT  +0.561 / +0.773        ADMIT  +0.375 on top of usage
+QB        null   +0.385 REJECT          ADMIT  +1.517  -- the largest single effect found
+RB        REJECT (rho clears 12/13)     REJECT (rho clears 5/5)
+TE        REJECT by 0.018 (rho clears)  REJECT (rho clears 5/5)
+```
+
+**TWO COSTS THAT ARE NOT IN THE TABLE.**
+
+1. OPERATIONAL. D27 already records that the served weekly artifact depends on the `rankings`
+   routine running EVERY week, because the feed publishes only its latest scrape and a missed week
+   cannot be backfilled. Putting ECR into the waiver ranking deepens a dependency that is already
+   the most fragile thing in the weekly stack.
+2. STRATEGIC, and it is not measurable here. ECR is PUBLIC information. This screen measures the
+   edge against a baseline that ignores it, not against opponents who read the same rankings. In a
+   league where others follow consensus waiver advice, the realised edge is smaller than +0.375 and
+   possibly much smaller. The usage edge does not have this problem -- it is computed from our own
+   data and nobody else in the league is running it.
