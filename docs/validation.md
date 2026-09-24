@@ -7579,3 +7579,53 @@ to fit it on. That is the binding constraint on round three, not the screening.
 A note on what did NOT go wrong: the skew column is not dead. Coverage tracks `ecr_wk_rank` to
 within 0.5pp per season across 37575 rows, spanning -0.920 to 1.000. The lever was connected and
 the model declined it.
+
+### THE MARKET PRICE IS REAL AND REDUNDANT: DFS SALARY REJECTS, AND EXPLAINS THE OTHER SIX (2026-09-24)
+
+```
+  PRE-REGISTERED (2014-2021, the eight seasons RotoGuru covers)
+    improvement  -0.01635 CRPS   floor 0.01636   2/6 seasons   CI [-0.02617, -0.00562]   REJECT
+    selection 2014-2020          -0.01874        floor 0.01711  1/6   CI [-0.02803, -0.00709]
+```
+
+HARMFUL, not null: the CI excludes zero on the negative side on BOTH blocks.
+
+**AND THE SIGNAL IS UNAMBIGUOUSLY THERE**, which is what makes this the informative rejection. The
+join's positive control: salary quartile -> realised points **3.03, 4.48, 7.87, 11.70, 17.95**, a
+6x monotone spread over 47307 rows. The market knows exactly what it is doing. Adding what it knows
+to this model still makes the model worse.
+
+**WHY, MEASURED RATHER THAN THEORISED.** On the 9503 rows where both exist (2020-2021),
+`dfs_salary_pct` against `ecr_wk_rank`, within position:
+
+```
+  QB -0.905     RB -0.858     WR -0.927     TE -0.867
+```
+
+The book and the panel price the same player from the same public information. DFS salary is ~90%
+a restatement of a column the model already fits, so it buys parameters and no information -- and
+on per-position heads of 9.7k-19k rows, parameters cost.
+
+**SO THE RULE SHARPENS AGAIN, AND THIS TIME IT PREDICTS.** "A direct forecast of the target" was
+necessary and still not sufficient. The operative condition is:
+
+> a forecast helps only if the model does not ALREADY carry another forecast of the same thing.
+
+`ecr_wk_rank` was admitted because it was the FIRST weekly forecast in the design. Any SECOND
+market-or-expert forecast arrives ~0.9 correlated with it. That is a property of the class, not of
+DraftKings.
+
+**THIS IS WHAT THE FREE EXPERIMENT BOUGHT.** The plan was to pay for player-prop history
+(ParlayAPI, four seasons). Props are priced by books off the same public information as salaries
+and the consensus, so the same redundancy applies -- the purchase would very likely have bought a
+seventh rejection. Eight free seasons answered it for nothing, with twice the statistical power the
+paid block would have had. Run the free proxy before the paid acquisition.
+
+**WHERE THE REMAINING HEADROOM IS NOT:** more forecasts. Seven candidates, seven rejections, two
+harmful. The model's 26 features already contain the market's view.
+
+**WHERE IT MIGHT BE:** `ecr_wk_rank` -- the one thing that works -- is only 55-69% covered, and
+absent entirely in 2025 and in 2026 week 1. Since salary proxies it at r ~ -0.9, the interesting
+question is not "add salary as a column" (answered: no) but "use salary to FILL ecr's gaps",
+raising the effective coverage of the single feature with a measured +0.04134. That is a different
+experiment with a different mechanism, and it is the one this result points at.
