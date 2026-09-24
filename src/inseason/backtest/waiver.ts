@@ -58,6 +58,16 @@ export interface AddRow {
 
 export interface WaiverWeek {
   season: number; week: number;
+  /** Best-K by REALISED ros ppg from the same pool -- the hindsight ceiling nobody could hit.
+   *  NULL where no pool member has a realised line. POSITION-BLIND: see roomCeilAtMix. */
+  ceilingPpg: number | null;
+  /** The ceiling rebuilt to each side's OWN positional composition that week, so capture cannot
+   *  be raised by drifting toward quarterbacks. The comparable one. */
+  roomCeilAtMix: number | null;
+  ourCeilAtMix: number | null;
+  /** The positions that ceiling is made of, so a ceiling built entirely of quarterbacks is visible
+   *  rather than inferred (see the mix decomposition -- raw ppg is position-blind). */
+  ceilingByPos: string[];
   roomAdds: AddRow[];
   ourAdds: { playerSk: string; name: string; pos: string; proj: number; rosPpg: number | null; rosPts: number | null }[];
   dollars: number;
@@ -68,6 +78,22 @@ export interface WaiverSummary {
   weeks: number; roomAdds: number; ourAdds: number; poolMatchRate: number;
   roomPpg: number; ourPpg: number;
   roomTotalRos: number; ourTotalRos: number; dollars: number;
+  /**
+   * THE HINDSIGHT CEILING and what each side left on the table against it. `ourPpg` and `roomPpg`
+   * alone are a relative benchmark -- better or worse than the room -- which says nothing about how
+   * much of the available value anybody captured. This is the waiver equivalent of the lineup
+   * backtest's "hindsight optimum / bench left".
+   */
+  ceilingPpg: number;
+  ourLeft: number;
+  roomLeft: number;
+  /** Share of the ceiling captured, 0-1. The comparable-across-seasons form of `left`. */
+  ourCapture: number;
+  roomCapture: number;
+  /** Capture against each side's MIX-MATCHED ceiling. The plain capture above is position-blind
+   *  and an arm can raise it by taking quarterbacks; these cannot be gamed that way. */
+  ourCaptureAtMix: number;
+  roomCaptureAtMix: number;
   /**
    * POSITIONAL MIX. `ourPpg` and `roomPpg` are position-BLIND, so an arm that takes more
    * quarterbacks scores higher without picking better. `mixOnly` is what this arm's positional
@@ -190,8 +216,63 @@ export function backtestWaivers(
         .sort((a, b) => b.key - a.key)
         .slice(0, resolved.length);
 
+      /**
+       * THE HINDSIGHT CEILING -- the same thing `optimalLineup` is to the lineup backtest, and it
+       * was missing here.
+       *
+       * Without it this harness can only say "better or worse than the room", which is a RELATIVE
+       * benchmark: it flatters you when the opposition is bad and damns you when they are good, and
+       * either way it never answers "how much of what was actually there did we get". The lineup
+       * backtest has had the right shape all along -- manager, hindsight optimum, tool -- and reports
+       * points LEFT ON THE BENCH. This is that denominator for waivers.
+       *
+       * It is the best K by REALISED rest-of-season points per game out of the SAME pool the room
+       * and we both chose from, K being the number of adds the room actually made that week. Nobody
+       * could have picked it: it uses the answer sheet. That is the point of a ceiling.
+       *
+       * Only pool members with a realised line are eligible -- a man with no remaining weekly rows
+       * has no outcome to rank on, and scoring him as zero would let the ceiling be dragged down by
+       * players the label cannot see rather than by anything about the decision.
+       */
+      const realisedPool = pool
+        .map((p) => ({ p, f: rosFrom(p.player_sk) }))
+        .filter((x) => x.f.ros_games > 0)
+        .map((x) => ({ playerSk: x.p.player_sk, pos: x.p.pos, ppg: x.f.ros_pts / x.f.ros_games }))
+        .sort((a, b) => b.ppg - a.ppg);
+      const ceilingPicks = realisedPool.slice(0, resolved.length);
+
+      /**
+       * THE MIX-MATCHED CEILING, and the plain one above is NOT ENOUGH WITHOUT IT.
+       *
+       * The unconstrained ceiling takes the best K by realised points regardless of position, and
+       * because quarterbacks realise far more than anyone else it comes out 48.3% QB. An arm that
+       * also takes quarterbacks then "captures" more of it WITHOUT PICKING BETTER -- the identical
+       * defect that got a result retracted on this harness, reappearing one level up in the
+       * denominator instead of the numerator.
+       *
+       * So each side also gets a ceiling built to ITS OWN positional composition that week: if an
+       * arm took 2 RB and 1 TE, its mix-matched ceiling is the best 2 RB and best 1 TE in the pool.
+       * Capture against THAT asks the only fair question -- given the positions you chose to take,
+       * how close to the best available did you get -- and a side cannot raise it by drifting
+       * toward quarterbacks.
+       */
+      const ceilAtMix = (picks: { pos: string }[]): number | null => {
+        const want = new Map<string, number>();
+        for (const p of picks) want.set(p.pos, (want.get(p.pos) ?? 0) + 1);
+        const got: number[] = [];
+        for (const [pos, k] of want) {
+          const best = realisedPool.filter((x) => x.pos === pos).slice(0, k);
+          for (const b of best) got.push(b.ppg);
+        }
+        return got.length ? mean(got) : null;
+      };
+
       out.push({
         season, week, dollars: resolved.reduce((s, a) => s + a.bid, 0),
+        ceilingPpg: ceilingPicks.length ? r2(mean(ceilingPicks.map((c) => c.ppg))) : null,
+        ceilingByPos: ceilingPicks.map((c) => c.pos),
+        roomCeilAtMix: ceilAtMix(resolved),
+        ourCeilAtMix: ceilAtMix(ranked.map((x) => ({ pos: x.p.pos }))),
         roomAdds: resolved,
         ourAdds: ranked.map((x) => {
           const f = rosFrom(x.p.player_sk);
@@ -273,6 +354,14 @@ export function backtestWaivers(
     const rows = [...roomScored, ...ourScored].filter((a) => a.pos === pos).map((a) => a.rosPpg as number);
     if (rows.length) ratePpg.set(pos, mean(rows));
   }
+  // The ceiling is averaged over the WEEKS that produced one, not over adds: it is one number per
+  // week by construction, and weighting it by add count would let a heavy-claim week speak twice.
+  const ceilingWeeks = out.map((w) => w.ceilingPpg).filter((v): v is number => v != null);
+  const ceiling = ceilingWeeks.length ? mean(ceilingWeeks) : 0;
+  const ourCeilMixW = out.map((w) => w.ourCeilAtMix).filter((v): v is number => v != null);
+  const roomCeilMixW = out.map((w) => w.roomCeilAtMix).filter((v): v is number => v != null);
+  const ourCeilMix = ourCeilMixW.length ? mean(ourCeilMixW) : 0;
+  const roomCeilMix = roomCeilMixW.length ? mean(roomCeilMixW) : 0;
   const ourMix = mixOf(ourScored, ratePpg);
   const roomMix = mixOf(roomScored, ratePpg);
   const ourRaw = mean(ourScored.map((a) => a.rosPpg as number));
@@ -296,6 +385,12 @@ export function backtestWaivers(
       roomPpg: r2(mean(roomScored.map((a) => a.rosPpg as number))),
       ourPpg: r2(mean(ourScored.map((a) => a.rosPpg as number))),
       roomTotalRos: r2(roomRos), ourTotalRos: r2(ourRos), dollars: r2(dollars),
+      ceilingPpg: r2(ceiling),
+      ourLeft: r2(ceiling - ourRaw), roomLeft: r2(ceiling - roomRaw),
+      ourCapture: r3(ceiling > 0 ? ourRaw / ceiling : 0),
+      roomCapture: r3(ceiling > 0 ? roomRaw / ceiling : 0),
+      ourCaptureAtMix: r3(ourCeilMix > 0 ? ourRaw / ourCeilMix : 0),
+      roomCaptureAtMix: r3(roomCeilMix > 0 ? roomRaw / roomCeilMix : 0),
       roomPerDollar: r3(roomRos / Math.max(1, dollars)), ourPerDollar: r3(ourRos / Math.max(1, dollars)),
       weeksWon: r3(weeksWon / Math.max(1, weeksScored)),
       bidBuckets: buckets, seasons,

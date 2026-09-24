@@ -33,6 +33,16 @@ for (const model of ["floor", "challenger"]) {
   console.log(`  weeks with a claim ${s.weeks}   room adds scored ${s.roomAdds}   our adds scored ${s.ourAdds}`);
   console.log(`  the room's add was in our week-w free-agent pool ${(s.poolMatchRate * 100).toFixed(1)}% of the time`);
   console.log(`  realised rest-of-season points per game:  room ${s.roomPpg}   ours ${s.ourPpg}`);
+  // THE CEILING -- best-K by REALISED ppg from the same pool, which nobody could have picked.
+  // Without it "room vs ours" is a relative benchmark that says nothing about how much of the
+  // available value either side captured. This is the waiver twin of the lineup backtest's
+  // "hindsight optimum / bench left".
+  console.log(`  HINDSIGHT CEILING ${s.ceilingPpg} ppg  ->  room captured ${(100 * s.roomCapture).toFixed(1)}% (left ${s.roomLeft})`);
+  console.log(`                                        ours captured ${(100 * s.ourCapture).toFixed(1)}% (left ${s.ourLeft})`);
+  // MIX-MATCHED: the ceiling rebuilt to each side's OWN positional composition. The plain
+  // ceiling is 48% quarterbacks, so a QB-heavy arm captures more of it WITHOUT PICKING BETTER --
+  // the retracted defect reappearing in the denominator. These two are the comparable pair.
+  console.log(`  MIX-MATCHED capture (the comparable one): room ${(100 * s.roomCaptureAtMix).toFixed(1)}%   ours ${(100 * s.ourCaptureAtMix).toFixed(1)}%`);
   console.log(`  our top-K beat the room's K in ${(s.weeksWon * 100).toFixed(1)}% of weeks`);
   console.log(`  total realised ROS points: room ${s.roomTotalRos}   ours ${s.ourTotalRos}   on the room's $${s.dollars} of FAAB`);
   console.log(`  per FAAB dollar (DOLLAR-MATCHED -- same claims, same dollars): room ${s.roomPerDollar}   ours ${s.ourPerDollar}`);

@@ -7784,3 +7784,48 @@ what makes any answer to it checkable.
 This is also the concrete cost of the gap: Malachi Fields (NYG, 81% snap share, 16.3% target share,
 WR2 on his depth chart) is exactly the profile the usage screen admits at WR, and he is invisible to
 a shortlist ranked on a rookie's 1.65 season line.
+
+### THE WAIVER HARNESS GETS A CEILING -- AND IT HAD TO BE MIX-MATCHED TO MEAN ANYTHING (2026-09-24)
+
+`backtestWaivers` scored our top-K against THE ROOM'S ACTUAL CLAIMS and nothing else. That is a
+RELATIVE benchmark: it flatters you when the opposition is bad and damns you when they are good,
+and it never answers "how much of what was actually there did we get". The lineup backtest has had
+the right shape all along -- manager, HINDSIGHT OPTIMUM, tool, and points left on the bench. This
+gives waivers the same denominator.
+
+**THE FIRST VERSION OF THE CEILING WAS WRONG IN THE EXACT WAY THIS HARNESS WAS ALREADY RETRACTED
+FOR.** Best-K by realised points, position-blind, comes out **48.3% quarterbacks** (QB realise 8.46
+a game against 5.33 for backs). Our arm is 54% QB and the room is 13%, so our "capture" of that
+ceiling is inflated for the same reason our raw ppg was -- the defect moved from the numerator into
+the denominator and would have read as a 9-point advantage.
+
+So each side also gets a ceiling rebuilt to ITS OWN positional composition that week: took 2 RB and
+1 TE, your ceiling is the best 2 RB and best 1 TE in that pool. Capture against that asks the only
+fair question -- given the positions you chose, how close to the best available did you get -- and
+cannot be raised by drifting toward quarterbacks.
+
+```
+                                room     ours
+  raw ppg                       6.83     8.07     +1.24   <- mix artifact
+  capture of PLAIN ceiling     51.7%    61.1%     +9.4pp  <- still mix-contaminated
+  MIX-MATCHED capture          62.8%    64.1%     +1.3pp  <- the comparable one
+  hindsight ceiling 13.21 ppg; both sides leave roughly half of it on the table
+```
+
+**SO WE ARE NOT BETTER THAN THE ROOM AT WAIVERS.** +1.3pp of capture is inside anything this
+harness can resolve. The +1.24 ppg headline was positional mix, and the honest summary of both
+decision surfaces is the same:
+
+```
+  lineup   -0.55 pts/team-week, 47.4% of weeks, CI [-1.635, +0.323]   -- a tie with the managers
+  waivers  +1.3pp mix-matched capture                                  -- a tie with the room
+```
+
+**A DISAGREEMENT BETWEEN THE TWO MIX-CONTROLLED STATISTICS, STATED RATHER THAN RESOLVED BY
+PICKING.** The `skill` decomposition (raw minus what the arm's shares predict) reads ours -0.30 and
+the room +0.89; mix-matched capture reads us slightly ahead. They benchmark against different
+references: `skill` against the AVERAGE player at each position, capture against the BEST AVAILABLE
+at each position. `skill` also has a known weakness -- its per-position rates are computed over the
+UNION of both arms, so an arm that takes many quarterbacks partly sets the quarterback rate it is
+judged against. Capture-at-mix uses the POOL as its reference, which is external to both arms, and
+is the better of the two for that reason. Neither supports "we beat the room".
