@@ -202,7 +202,23 @@ for (const a of ARMS) {
     `${((our - room >= 0 ? "+" : "") + (our - room).toFixed(2)).padStart(8)}` +
     `${(100 * s.weeksWon).toFixed(0).padStart(10)}%` +
     `${String(s.ourAdds).padStart(9)}`);
-  perArm.push({ name: a.name, seasons: s.seasons });
+  perArm.push({ name: a.name, seasons: s.seasons, mix: s.mix });
 }
 console.log(`\n  The shipped arm is the control: it must reproduce the number this harness already`);
 console.log(`  records, or the seam changed something it was not supposed to.`);
+
+// THE MIX DECOMPOSITION -- required of any ranking experiment on this harness by the 2026-09-23
+// retraction. `our ppg` above is position-BLIND, so an arm that takes more quarterbacks scores
+// higher WITHOUT PICKING BETTER. SKILL is raw minus what the arm's positional shares alone predict,
+// and it is the only column here that compares two arms fairly.
+const rate = perArm[0]?.mix?.ratePpg ?? [];
+console.log(`\n  MIX DECOMPOSITION -- realised ppg by position: ${rate.map((r) => `${r.pos} ${r.ppg}`).join("  ")}`);
+console.log(`\n  arm                                  raw   mixOnly    SKILL   QB share`);
+const line = (name, m) => {
+  const raw = m.mixOnly + m.skill;
+  const qb = m.byPos.find((b) => b.pos === "QB")?.share ?? 0;
+  console.log(`  ${name.padEnd(34)} ${raw.toFixed(2).padStart(5)} ${m.mixOnly.toFixed(2).padStart(9)} ` +
+    `${((m.skill >= 0 ? "+" : "") + m.skill.toFixed(2)).padStart(8)} ${(100 * qb).toFixed(0).padStart(9)}%`);
+};
+for (const a of perArm) if (a.mix?.ours) line(a.name, a.mix.ours);
+if (perArm[0]?.mix?.room) line("THE ROOM (reference)", perArm[0].mix.room);

@@ -68,6 +68,17 @@ export interface WaiverSummary {
   weeks: number; roomAdds: number; ourAdds: number; poolMatchRate: number;
   roomPpg: number; ourPpg: number;
   roomTotalRos: number; ourTotalRos: number; dollars: number;
+  /**
+   * POSITIONAL MIX. `ourPpg` and `roomPpg` are position-BLIND, so an arm that takes more
+   * quarterbacks scores higher without picking better. `mixOnly` is what this arm's positional
+   * SHARES alone predict; `skill` is raw minus mix and is the only cross-arm comparable number
+   * here. A 2026-09-23 result was retracted for missing exactly this.
+   */
+  mix: {
+    ratePpg: { pos: string; ppg: number }[];
+    ours: { byPos: { pos: string; n: number; share: number }[]; mixOnly: number; skill: number };
+    room: { byPos: { pos: string; n: number; share: number }[]; mixOnly: number; skill: number };
+  };
   roomPerDollar: number; ourPerDollar: number;
   /** Share of weeks where our top-K beat the room's K on mean realised points per game. */
   weeksWon: number;
@@ -220,6 +231,53 @@ export function backtestWaivers(
     return { bucket: b.bucket, n: sub.length, meanBid: r2(mean(sub.map((a) => a.bid))), meanPpg: r2(mean(sub.map((a) => a.rosPpg as number))) };
   });
 
+  /**
+   * THE POSITIONAL-MIX DECOMPOSITION, without which THIS HARNESS'S HEADLINE IS NOT READABLE.
+   *
+   * `roomPpg` and `ourPpg` are RAW realised points per game, and raw points are not comparable
+   * across positions: over this league's history quarterbacks realise about 11.5 a game against
+   * 6.6 for backs and 5.1 for tight ends. So an arm that simply takes more quarterbacks scores
+   * higher here WITHOUT PICKING BETTER, and nothing in the old summary said so.
+   *
+   * That is not hypothetical. On 2026-09-23 a ranking experiment on this harness reported +1.24 ppg
+   * over the room and was RETRACTED: the arm took 54% quarterbacks against the room's 13%, the mix
+   * ALONE accounted for 9.16 of its 8.07, and WITHIN position it was a WORSE picker than the room
+   * by 1.09. The retraction's instruction was that any future ranking experiment here must report
+   * this decomposition -- so it is computed here rather than left to each caller to remember.
+   *
+   *   mixOnly = sum over positions of (this arm's SHARE of picks at that position)
+   *                                 x (realised ppg at that position)
+   *   skill   = raw ppg - mixOnly
+   *
+   * THE PER-POSITION RATES COME FROM THE UNION OF BOTH ARMS, deliberately. Scoring each arm against
+   * its own realised rates would let an arm define the benchmark it is measured by, and a ranking
+   * that picks one lucky quarterback would then be credited with a high "quarterback rate" rather
+   * than with luck. One common reference, both arms.
+   */
+  const mixOf = (rows: { pos: string; rosPpg: number | null }[], ratePpg: Map<string, number>) => {
+    const n = rows.length;
+    if (!n) return { mixOnly: 0, byPos: [] as { pos: string; n: number; share: number }[] };
+    const counts = new Map<string, number>();
+    for (const r of rows) counts.set(r.pos, (counts.get(r.pos) ?? 0) + 1);
+    let mixOnly = 0;
+    const byPos: { pos: string; n: number; share: number }[] = [];
+    for (const [pos, c] of [...counts].sort((a, b) => b[1] - a[1])) {
+      const share = c / n;
+      byPos.push({ pos, n: c, share: r3(share) });
+      mixOnly += share * (ratePpg.get(pos) ?? 0);
+    }
+    return { mixOnly, byPos };
+  };
+  const ratePpg = new Map<string, number>();
+  for (const pos of new Set([...roomScored, ...ourScored].map((a) => a.pos))) {
+    const rows = [...roomScored, ...ourScored].filter((a) => a.pos === pos).map((a) => a.rosPpg as number);
+    if (rows.length) ratePpg.set(pos, mean(rows));
+  }
+  const ourMix = mixOf(ourScored, ratePpg);
+  const roomMix = mixOf(roomScored, ratePpg);
+  const ourRaw = mean(ourScored.map((a) => a.rosPpg as number));
+  const roomRaw = mean(roomScored.map((a) => a.rosPpg as number));
+
   const seasons = [...new Set(out.map((w) => w.season))].sort().map((s) => {
     const ws = out.filter((w) => w.season === s);
     return {
@@ -241,6 +299,12 @@ export function backtestWaivers(
       roomPerDollar: r3(roomRos / Math.max(1, dollars)), ourPerDollar: r3(ourRos / Math.max(1, dollars)),
       weeksWon: r3(weeksWon / Math.max(1, weeksScored)),
       bidBuckets: buckets, seasons,
+      // WITHOUT THIS BLOCK ourPpg/roomPpg CANNOT BE COMPARED. See mixOf above.
+      mix: {
+        ratePpg: [...ratePpg].sort((a, b) => b[1] - a[1]).map(([pos, ppg]) => ({ pos, ppg: r2(ppg) })),
+        ours: { byPos: ourMix.byPos, mixOnly: r2(ourMix.mixOnly), skill: r2(ourRaw - ourMix.mixOnly) },
+        room: { byPos: roomMix.byPos, mixOnly: r2(roomMix.mixOnly), skill: r2(roomRaw - roomMix.mixOnly) },
+      },
     },
   };
 }
