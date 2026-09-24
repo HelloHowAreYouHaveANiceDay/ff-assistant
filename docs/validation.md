@@ -7436,3 +7436,50 @@ The honest summary of the night: **the weekly model is at a local optimum that c
 screens cannot climb out of, and residual-correlation screening is a REJECTION tool, not a
 discovery tool.** A future candidate should be judged on whether it plausibly carries information
 the anchors CANNOT, not on how orthogonal its residual correlation looks.
+
+### PER-POSITION WEEKLY GATING, AND A DESIGN ARGUMENT THAT DID NOT SURVIVE ITS OWN MEASUREMENT (2026-09-24)
+
+`evaluate-weekly` now emits `bySeasonPos` (season -> position -> model -> score) and
+`weekly-paired-floor.mjs` takes `--pos QB`, closing an asymmetry with the season track, whose
+`gate-variant.mjs` has had `--pos` for a while.
+
+**THE STATED REASON FOR BUILDING IT WAS WRONG.** The argument was that the pooled floor cannot see
+a position-gated feature: QB is 9712 of 55229 scored rows (17.6%), so against a pooled floor of
+~0.0022 CRPS a QB feature would need 0.0022/0.176 = 0.0125 CRPS at QB "merely to be visible", and a
+real +0.005 would be "dismissed as noise". The arithmetic is right; the conclusion does not follow.
+
+Measured on the opponent arm, with both arms re-scored from their KEPT fold artifacts so no
+retraining was needed:
+
+```
+  pooled : effect -0.00250  SE 0.00076  ->  |t| = 3.302
+  QB-only: effect -0.01813  SE 0.00559  ->  |t| = 3.241        1.9% apart
+```
+
+A POS_GATED change leaves every other position EXACTLY unchanged, so each season's pooled delta is
+exactly (that season's QB row share) x (its QB delta) -- checked at 0.1419 against a share of
+0.1419. Dilution multiplies the EFFECT and the SE by the same factor and cancels in the ratio.
+**The pooled gate was never blind. It simply reports in units nobody can weigh.**
+
+WHAT `--pos` IS ACTUALLY WORTH, all three real:
+  - INTERPRETATION. "-0.018 CRPS at QB" is the size of the thing. "-0.0025 pooled" is the same fact
+    in units that make a serious regression look like a rounding error.
+  - POWER WHERE THE CHANGE IS NOT CLEANLY GATED. A shared-dictionary column the model uses
+    differently per position mixes signs and magnitudes when pooled; there the cross-section
+    separates them and does add power.
+  - DIAGNOSIS: which position moved, which pooling destroys.
+
+VERIFIED, not assumed:
+```
+  per-season byPos reconciles with the pooled byPos block: |diff| <= 1.6e-14, row counts exact
+  QB delta from the cross-section: -0.0183, matching the independently computed byPos delta
+  pooled path unchanged: -0.00250, byte-identical to the pre-change run
+  an eval JSON without bySeasonPos: --pos REFUSES and says how to regenerate
+  an unknown --pos: exits rather than reporting a verdict on zero seasons
+```
+
+A note on the re-score itself, because it was surprising: `rescore-base` differs from `base2` MORE
+than from the pre-rebuild `base`. That is not drift. `rescore-base` REUSES folds trained before the
+rebuild and scores them on post-rebuild rows, while `base2` trained fresh folds on post-rebuild
+data -- so the MODELS differ, not the rows. Both re-scored arms got identical treatment, so the
+pair remains matched and the QB gate above is valid.

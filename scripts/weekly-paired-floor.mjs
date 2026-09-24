@@ -29,6 +29,8 @@ const val = (k, d) => { const i = argv.indexOf(k); return i >= 0 && i + 1 < argv
 const basePath = val("--baseline", null);
 const candPath = val("--candidate", null);
 const model = val("--model", "weekly");
+// --pos QB: score ONE position's rows. Required reading for a POS_GATED candidate -- see crpsBySeason.
+const pos = val("--pos", null);
 if (!basePath || !candPath) { console.error("usage: --baseline <json> --candidate <json> [--model weekly]"); process.exit(1); }
 // `--seasons 2020-2024`: restrict the WHOLE comparison to a season block, for a candidate column that
 // only EXISTS over part of the range. Without it a feature present in five of fourteen seasons is
@@ -45,9 +47,48 @@ const holdout = new Set(holdoutSpec
 const base = JSON.parse(readFileSync(basePath, "utf8"));
 const cand = JSON.parse(readFileSync(candPath, "utf8"));
 
-/** Map<season, pooled CRPS of `model`> from an eval JSON's bySeason block. */
+/**
+ * Map<season, CRPS of `model`> -- POOLED over positions, or for ONE position when `--pos` is given.
+ *
+ * WHY `--pos` EXISTS -- AND WHAT IT DOES NOT DO, because the first version of this comment claimed
+ * the opposite and was wrong.
+ *
+ * The claim was: pooling dilutes a position-gated change by that position's row share (QB is 9712
+ * of 55229 = 17.6%), so a QB feature needs 0.0022/0.176 = 0.0125 CRPS at QB to clear the pooled
+ * floor, and a real +0.005 is "dismissed as noise". MEASURED on the 2026-09-24 opponent arm, that
+ * conclusion is false:
+ *
+ *     pooled : effect -0.00250  SE 0.00076  -> |t| = 3.302
+ *     QB-only: effect -0.01813  SE 0.00559  -> |t| = 3.241      (1.9% apart)
+ *
+ * A POS_GATED change leaves the other positions EXACTLY unchanged, so each season's pooled delta is
+ * exactly (QB row share) x (QB delta) -- checked at 0.1419 against a share of 0.1419. The dilution
+ * multiplies the effect and the SE alike and cancels in the ratio. **--pos does not buy power on a
+ * cleanly gated candidate.**
+ *
+ * It buys three other things, all real:
+ *   - INTERPRETATION: "-0.018 CRPS at QB" is the size of the thing; "-0.0025 pooled" is the same
+ *     fact in units nobody can weigh.
+ *   - POWER WHERE THE CHANGE IS *NOT* CLEANLY GATED: a shared column the model uses differently by
+ *     position mixes signs and magnitudes when pooled, and there this genuinely separates them.
+ *   - DIAGNOSIS: which position moved, which pooling destroys.
+ */
 function crpsBySeason(ev) {
   const m = new Map();
+  if (pos) {
+    const block = ev.bySeasonPos;
+    if (!block) {
+      console.error(`--pos ${pos} needs bySeasonPos, which this eval JSON does not carry.`);
+      console.error("  It predates the cross-section -- re-run `ff evaluate-weekly`. With");
+      console.error("  --keep-artifacts/--reuse-artifacts the folds are reused, so it only re-scores.");
+      process.exit(1);
+    }
+    for (const [y, byPos] of Object.entries(block)) {
+      const s = byPos?.[pos]?.[model];
+      if (s && Number.isFinite(s.crps)) m.set(Number(y), s.crps);
+    }
+    return m;
+  }
   for (const [y, byModel] of Object.entries(ev.bySeason ?? {})) {
     const s = byModel?.[model];
     if (s && Number.isFinite(s.crps)) m.set(Number(y), s.crps);
@@ -63,11 +104,11 @@ const seasons = [...baseM.keys()]
 if (seasons.length < 3) { console.error(`only ${seasons.length} shared seasons -- need >=3 for a season floor`); process.exit(1); }
 
 const fmt = (x, d = 4) => (Number.isFinite(x) ? x.toFixed(d) : "NA");
-console.log(`WEEKLY PAIRED-SEASON FLOOR -- model "${model}", metric pooled CRPS (lower is better)`);
+console.log(`WEEKLY PAIRED-SEASON FLOOR -- model "${model}", metric ${pos ? `${pos}-ONLY` : "pooled"} CRPS (lower is better)`);
 console.log(`  baseline: ${basePath}`);
 console.log(`  candidate: ${candPath}`);
 console.log(`  ${seasons.length} shared held-out seasons: ${seasons.join(", ")}`);
-console.log("\n  per-season pooled CRPS (base -> cand, improvement = base - cand):");
+console.log(`\n  per-season ${pos ? `${pos}-only` : "pooled"} CRPS (base -> cand, improvement = base - cand):`);
 for (const y of seasons) {
   const b = baseM.get(y), c = candM.get(y), d = b - c;
   console.log(`    ${y}  ${fmt(b)} -> ${fmt(c)}   ${d >= 0 ? "+" : ""}${fmt(d)}${holdout.has(y) ? "   (holdout)" : ""}`);

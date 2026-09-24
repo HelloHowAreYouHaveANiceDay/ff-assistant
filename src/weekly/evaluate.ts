@@ -207,6 +207,9 @@ export interface WeeklyEvalResult {
   byPos: Record<string, Record<string, Scored>>;
   byBand: Record<string, Record<string, Scored>>;
   bySeason: Record<string, Record<string, Scored>>;
+  /** season -> position -> model -> score. The cross-section the pooled floor cannot see;
+   *  `weekly-paired-floor.mjs --pos QB` reads it. See where it is built for the dilution math. */
+  bySeasonPos: Record<string, Record<string, Record<string, Scored>>>;
   lineup: Record<string, Record<string, { meanCaptured: number; winShare: number; drawnRosters: number }>>;
   /**
    * MONTE-CARLO CONVERGENCE OF THE DECISION METRIC. Present only when `rosterConvergence` was asked
@@ -968,6 +971,48 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
   for (const b of ["1-12", "13-24", "25-48", "49+"]) { const r = all.filter((x) => x.band === b); if (r.length) byBand[b] = cut(r); }
   const bySeason: Record<string, Record<string, Scored>> = {};
   for (const yr of opts.seasons) { const r = all.filter((x) => x.season === yr); if (r.length) bySeason[String(yr)] = cut(r); }
+  /**
+   * THE SEASON x POSITION CROSS-SECTION -- for INTERPRETATION and for candidates that are not
+   * cleanly gated. NOT, as this comment originally claimed, for statistical power.
+   *
+   * THE ORIGINAL JUSTIFICATION WAS WRONG AND IS RECORDED HERE BECAUSE IT IS AN EASY MISTAKE TO
+   * REPEAT. The argument was: the pooled floor dilutes a position-gated change by that position's
+   * row share (QB is 9712 of 55229 = 17.6%), so a QB feature must be worth 0.0022/0.176 = 0.0125
+   * CRPS at QB "merely to become visible", and a real +0.005 is "dismissed as noise". The first
+   * half is true. The conclusion does not follow, and MEASUREMENT on the 2026-09-24 opponent arm
+   * says so:
+   *
+   *     pooled : effect -0.00250  SE 0.00076  -> |t| = 3.302
+   *     QB-only: effect -0.01813  SE 0.00559  -> |t| = 3.241      (1.9% apart)
+   *
+   * When a change is POS_GATED, the other positions are EXACTLY unchanged, so each season's pooled
+   * delta is precisely (that season's QB row share) x (its QB delta) -- verified at 0.1419 vs a
+   * share of 0.1419. Dilution therefore scales the EFFECT and the SE by the same factor, and it
+   * cancels in the ratio. The pooled gate is just as sensitive; it merely reports in units nobody
+   * can interpret.
+   *
+   * SO WHAT IS THIS FOR:
+   *   - INTERPRETATION. "the QB head got 0.018 CRPS worse" is the honest size of the thing. The
+   *     same fact as "pooled moved 0.0025", in units a person can weigh.
+   *   - CANDIDATES THAT ARE NOT CLEANLY GATED. A shared-dictionary column the model uses
+   *     differently per position mixes signals of different sign and size when pooled, and THERE
+   *     the cross-section adds real power rather than only clarity.
+   *   - DIAGNOSIS: which position a change helped or hurt, which pooling destroys.
+   *
+   * Cheap: `cut` already scores an arbitrary row subset, and these are the same rows sliced a
+   * second way. It adds no fit and no model.
+   */
+  const bySeasonPos: Record<string, Record<string, Record<string, Scored>>> = {};
+  for (const yr of opts.seasons) {
+    const inYear = all.filter((x) => x.season === yr);
+    if (!inYear.length) continue;
+    const perPos: Record<string, Record<string, Scored>> = {};
+    for (const p of POS_SCORED) {
+      const r = inYear.filter((x) => x.pos === p);
+      if (r.length) perPos[p] = cut(r);
+    }
+    bySeasonPos[String(yr)] = perPos;
+  }
   const scenarios = opts.scenarios ?? SCENARIOS;
   // The two shapes by NAME, read off the template rather than typed as literals -- a second
   // format's scenarios are named for their own roster sizes, and a hardcoded "standard-15" would
@@ -1084,7 +1129,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     // 2d: the columns exist, they are built with a cutoff of kickoff minus four days, and they are
     // empty, because the feed's dated filings land at kickoff minus two or later.
     pendingDataTrack: [...PENDING_DATA_TRACK_FIELDS],
-    pooled, byPos, byBand, bySeason, lineup, rosterConvergence, predictions, gate, gateByPos,
+    pooled, byPos, byBand, bySeason, bySeasonPos, lineup, rosterConvergence, predictions, gate, gateByPos,
   };
 }
 
