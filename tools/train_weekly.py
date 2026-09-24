@@ -154,6 +154,11 @@ CENTER = [
     # any other level column. src/weekly/features.ts ecrWeekTable carries the as-of rule and the era
     # bound -- the archive is 2020-2024 only, so this is NULL in every other season AND at live serve.
     "ecr_wk_rank", "ecr_wk_sd",
+    # THE PANEL ASYMMETRY. Same external source and cadence as the two above -- a human panel is
+    # the ONE provenance that has produced an admitted weekly feature here. NOT POS_GATED, for the
+    # same reason ecr_wk_rank is not: the panel ranks every position and there is no argument that
+    # its shape means something at one and nothing at another.
+    "ecr_wk_skew",
     # THE AVAILABILITY BLOCK. Every one of these is keyed to this team's own kickoff rather than to
     # the league week's first kickoff; src/weekly/features.ts CONTEXT_FIELDS carries each column's
     # as-of rule and the reason the anchor is different.
@@ -269,7 +274,8 @@ ALL_FEATURES = RATIO_TO_LINE + CENTER + INDICATOR
 SELECT_COLS = [
     "feat_key", "player_sk", "season", "week", "name", "pos", "season_line_pg",
     "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts", "td_attempts", "td_rush_yards",
-    "rz_share_td", "prior_vol_cv", "prior_air_yards_share", "prior_wopr", "ecr_wk_rank", "ecr_wk_sd",
+    "rz_share_td", "prior_vol_cv", "prior_air_yards_share", "prior_wopr",
+    "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew",
     "home", "spread_line", "total_line", "implied_team_total", "days_rest",
     "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
     "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",

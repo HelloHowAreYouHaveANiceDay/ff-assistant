@@ -1265,6 +1265,9 @@ CREATE TABLE IF NOT EXISTS feat_player_week_model (
   -- kickoff minus two days (src/weekly/features.ts ecrWeekTable). The archive covers 2020-2024 only,
   -- so every other season -- and the live season -- is NULL by construction. 2026-09-16 candidate.
   ecr_wk_rank     REAL,
+  -- The panel ASYMMETRY: where the consensus sits between best and worst, in [-1, +1].
+  -- +1 = all dissent is downside, -1 = all upside. 2026-09-24 candidate; sd cannot express it.
+  ecr_wk_skew     REAL,
   ecr_wk_sd       REAL,
   dvp_mult        REAL,              -- opponent defence-vs-position multiplier, weeks < w + prior yr
   dvp_n           INTEGER,           -- opponent games inside season Y that fed it

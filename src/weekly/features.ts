@@ -74,6 +74,9 @@ export const WEEKLY_FEATURE_FIELDS = [
   // the era bound: the archive's weekly scrapes exist for 2020-2024 ONLY, so every other season is
   // MISSING by construction and the live season has no row at all.
   "ecr_wk_rank", "ecr_wk_sd",
+  // THE PANEL ASYMMETRY (2026-09-24 candidate). Same source and cadence as the two above; see
+  // ecrWeekTable for the definition and for why sd cannot carry it.
+  "ecr_wk_skew",
   "home", "spread_line", "total_line", "implied_team_total", "days_rest",
   "season_line_pg", "week_no",
   // ---- THE AVAILABILITY BLOCK, from feat_player_week_context (the data track). See CONTEXT_FIELDS
@@ -612,23 +615,40 @@ const ECR_POS_ALIAS: Record<string, string> = { PK: "K", DEF: "DST", "D/ST": "DS
 
 export function ecrWeekTable(db: DB, season: number): {
   /** `cutoff` is an ISO date: this team's kickoff minus two days. */
-  get(cutoff: string, name: string, pos: string): { ecr: number; sd: number | null } | null;
+  get(cutoff: string, name: string, pos: string): { ecr: number; sd: number | null; skew: number | null } | null;
   /** The scrape dates the season carries, ascending. Reported, so an empty column is never silent. */
   dates: string[];
 } {
   const rows = db.prepare(
-    `SELECT scrape_date, player_id, pos, ecr, sd FROM ranking_history
+    `SELECT scrape_date, player_id, pos, ecr, sd, best, worst FROM ranking_history
       WHERE source = 'fantasypros' AND ecr_type = 'wp' AND season = ?`,
-  ).all(season) as { scrape_date: string; player_id: string; pos: string; ecr: number; sd: number | null }[];
+  ).all(season) as {
+    scrape_date: string; player_id: string; pos: string; ecr: number;
+    sd: number | null; best: number | null; worst: number | null;
+  }[];
   // date -> `${name_key}|${pos}` -> value. One map per scrape so a lookup can never silently mix two.
-  const byDate = new Map<string, Map<string, { ecr: number; sd: number | null }>>();
+  const byDate = new Map<string, Map<string, { ecr: number; sd: number | null; skew: number | null }>>();
   for (const r of rows) {
     const pos = ECR_POS_ALIAS[(r.pos ?? "").toUpperCase()] ?? (r.pos ?? "").toUpperCase();
     if (!WEEKLY_POS.includes(pos)) continue;                 // IDP lists exist here; we field none
     const m = byDate.get(r.scrape_date) ?? byDate.set(r.scrape_date, new Map()).get(r.scrape_date)!;
     // A player ranked twice at one position on one date cannot happen (it is the primary key), so
     // the first writer wins and there is nothing to reconcile.
-    m.set(`${r.player_id}|${pos}`, { ecr: r.ecr, sd: r.sd });
+    // THE PANEL SHAPE, which `sd` cannot express: a standard deviation is a moment and says
+    // nothing about WHICH SIDE the disagreement sits on. +1 means every dissenting voice is
+    // BELOW the consensus (downside risk); -1 means they are all above it (unpriced upside).
+    // MEASURED: skew correlates -0.012 with sd and keeps 96.9% of its spread after regressing
+    // out the two ECR columns already fitted -- a separate dimension of the SAME external
+    // source, which is the provenance that separated the one admitted weekly feature from four
+    // derived rejects (docs/validation.md, 2026-09-24).
+    // Narrowed with locals rather than a non-null assertion: `worst > best` is a REAL condition
+    // here (the panel can agree exactly, and then the shape is undefined, not zero) and a `!`
+    // would hide that a row with no spread must be NULL rather than 0.
+    const lo = r.best, hi = r.worst;
+    const skew = lo != null && hi != null && hi > lo
+      ? ((hi - r.ecr) - (r.ecr - lo)) / (hi - lo)
+      : null;
+    m.set(`${r.player_id}|${pos}`, { ecr: r.ecr, sd: r.sd, skew });
   }
   const dates = [...byDate.keys()].sort();
   const dayOf = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 864e5;
@@ -669,7 +689,7 @@ const WEEK_MODEL_BASE_COLS = [
   "feat_key", "player_sk", "season", "week", "as_of", "name", "pos", "team", "opponent", "home",
   "is_bye", "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
   "td_attempts", "td_rush_yards", "rz_share_td", "prior_vol_cv",
-  "prior_air_yards_share", "prior_wopr", "ecr_wk_rank", "ecr_wk_sd",
+  "prior_air_yards_share", "prior_wopr", "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew",
   "dvp_mult", "dvp_n", "spread_line", "total_line",
   "implied_team_total", "days_rest", "pts",
 ];
@@ -887,7 +907,8 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
           // which is the whole archive, and NULL for anyone the panel did not rank that week.
           ...(() => {
             const e = ecrWk.get(ecrWeekCutoff(sched, season, r.team, r.week) ?? "", r.name, r.pos);
-            return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null };
+            return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null,
+                     ecr_wk_skew: e ? finite(e.skew) : null };
           })(),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           // schedule and market columns as published preseason / pre-kickoff.
@@ -927,7 +948,7 @@ export function weeklyCoverage(db: DB, seasons?: number[]): {
   const cols = [
     "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
     "td_attempts", "td_rush_yards", "dvp_mult", "home", "spread_line", "total_line",
-    "implied_team_total", "days_rest", "pts", "ecr_wk_rank", "ecr_wk_sd",
+    "implied_team_total", "days_rest", "pts", "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew",
     ...CONTEXT_FIELDS.map((c) => c.name),
   ];
   // A column this store does not HAVE reports 0, exactly like a column it has and never filled.
@@ -953,7 +974,7 @@ export function weeklyCoverage(db: DB, seasons?: number[]): {
 export const COVERAGE_COLUMNS: string[] = [
   "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
   "td_attempts", "td_rush_yards", "dvp_mult", "home", "spread_line", "total_line",
-  "implied_team_total", "days_rest", "ecr_wk_rank", "ecr_wk_sd",
+  "implied_team_total", "days_rest", "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew",
   ...CONTEXT_FIELDS.map((c) => String(c.name)),
 ];
 
@@ -1060,7 +1081,7 @@ export interface WeeklyRow {
  * SERVING path (`projectStreamingWith` reads through this loader) on every store that has not been
  * migrated. A store that lacks them reads NULL, which is the same statement the 2025+ seasons make.
  */
-export const ECR_WEEK_FIELDS = ["ecr_wk_rank", "ecr_wk_sd"] as const;
+export const ECR_WEEK_FIELDS = ["ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew"] as const;
 export function presentEcrWeekFields(db: DB): string[] {
   const have = new Set((db.prepare("PRAGMA table_info(feat_player_week_model)").all() as { name: string }[])
     .map((c) => c.name));
@@ -1128,6 +1149,7 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
       prior_air_yards_share: r.prior_air_yards_share == null ? null : Number(r.prior_air_yards_share),
       prior_wopr: r.prior_wopr == null ? null : Number(r.prior_wopr),
       ecr_wk_rank: r.ecr_wk_rank == null ? null : Number(r.ecr_wk_rank),
+      ecr_wk_skew: r.ecr_wk_skew == null ? null : Number(r.ecr_wk_skew),
       ecr_wk_sd: r.ecr_wk_sd == null ? null : Number(r.ecr_wk_sd),
       home: r.home == null ? null : Number(r.home),
       spread_line: r.spread_line == null ? null : Number(r.spread_line),
@@ -1332,7 +1354,8 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
           prior_wopr: finite(p.player_sk != null ? priorRole.get(String(p.player_sk))?.wopr ?? null : null),
           ...(() => {
             const e = ecrWk.get(ecrWeekCutoff(sched, season, p.team, week) ?? "", p.name, p.pos);
-            return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null };
+            return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null,
+                     ecr_wk_skew: e ? finite(e.skew) : null };
           })(),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           spread_line: spread, total_line: total, implied_team_total: implied,
