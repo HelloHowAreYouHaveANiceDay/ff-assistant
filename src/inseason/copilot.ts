@@ -2413,10 +2413,25 @@ export function depthRisk(
 
 export interface PowerRow {
   rank: number; teamId: string; team: string; us: boolean;
-  startPts: number; byPos: Record<string, number>;
+  /** PRESEASON full-season points of the best eight on `proj`. Reported, NOT ranked on: it is
+   *  frozen at the preseason line and knows nothing of the season so far. */
+  startPts: number;
+  /** THE RANKED QUANTITY: best eight on the D18 blend (`rosPerGame`), per game. This is what
+   *  lineupRecommend and the simulator price a rostered man at. */
+  rosPtsPerGame: number;
+  byPos: Record<string, number>;
   playoffPct: number; titlePct: number;
 }
-export interface PowerResult { rows: PowerRow[]; leagueMeanStartPts: number; ourRank: number; objective: Objective; assumptions: Assumptions }
+export interface PowerResult {
+  rows: PowerRow[];
+  /** Mean PRESEASON starter points. Reported for continuity; not the ranked quantity. */
+  leagueMeanStartPts: number;
+  /** Mean of the RANKED quantity -- best eight on the D18 blend, per game. */
+  leagueMeanRosPtsPerGame: number;
+  /** Which column ordered the table, so a quoted rank carries its basis. */
+  rankedOn: string;
+  ourRank: number; objective: Objective; assumptions: Assumptions;
+}
 
 /**
  * Rank the league by best starting lineup on OUR projections, with each team's simulated odds beside
@@ -2431,23 +2446,62 @@ export function powerRankings(ctx: SimContext, o: BaseOpts = {}): PowerResult {
   const trials = o.trials ?? 2000;
   const seed = o.seed ?? 7;
   const odds = ctx.run(ctx.teams, trials, seed);
+  /**
+   * RANKED ON THE BLEND (`rosPerGame`), NOT THE PRESEASON PROJECTION -- and the difference is not
+   * cosmetic.
+   *
+   * `p.proj` is the preseason season line times 17. It is FROZEN: nothing that has happened this
+   * season touches it. `p.rosPerGame` is the D18 blend (K=6 on played weeks) and is what
+   * `lineupRecommend` and the season simulator both price a rostered man at. Ranking on `proj`
+   * while the caveat says "ROS lines blend K=6 on 191 men" made this verb disagree with every
+   * other one that shares its context.
+   *
+   * MEASURED on league 462233, week 3 2026, with two weeks settled:
+   *   - the shipped `proj` ranking had us #1 by 35 points over NICK (1407 vs 1372);
+   *     on the blend it is #1 by 0.2 over SLOP (86.2 vs 86.0) -- a tie, not a cushion.
+   *   - MOOS ranked #13 on `proj` and #4 on the blend, which is why its simulated playoff odds
+   *     (69.1%) looked impossible beside its roster rank. The ODDS were right; this verb was stale.
+   *   - the `proj` optimal-8 started Bo Nix over Jared Goff, because Nix's PRESEASON number is
+   *     higher, while the blend has Goff 16.42 to Nix 13.85 and the lineup verb starts Goff.
+   *   - Colston Loveland carried 11.19/gm on `proj` having scored 0.8 points in two games; the
+   *     blend prices him at 8.50.
+   *
+   * BOTH NUMBERS ARE REPORTED. `startPts` keeps its meaning (preseason, full-season points) so
+   * nothing that read it now reads something else silently, and `rosPtsPerGame` is the ranked
+   * quantity. A reader who sees them disagree is seeing the season so far.
+   *
+   * PRESEASON FALLBACK: with no settled week there is no blend, so `rosPerGame` is absent and this
+   * falls back to `proj / 17` -- the same ordering `proj` would have given, which is correct when
+   * there is nothing to update with.
+   */
+  const perGame = (p: { proj: number; rosPerGame?: number | null }): number =>
+    p.rosPerGame != null && Number.isFinite(p.rosPerGame) ? p.rosPerGame : p.proj / 17;
   const rows = ctx.teams.map((t, i) => {
-    const starters = optimalLineup(t.roster.map((p) => ({ ...p, available: true })), ctx.slots, ctx.flexOk).starters;
     const byPos: Record<string, number> = {};
     for (const p of t.roster) byPos[p.pos] = (byPos[p.pos] ?? 0) + 1;
+    // Two lineups, because the best eight ON THE BLEND need not be the best eight on the preseason
+    // line -- that divergence is the Nix/Goff case above, and collapsing them would hide it.
+    const preStarters = optimalLineup(t.roster.map((p) => ({ ...p, available: true })), ctx.slots, ctx.flexOk).starters;
+    const rosStarters = optimalLineup(
+      t.roster.map((p) => ({ ...p, available: true, proj: perGame(p) })), ctx.slots, ctx.flexOk,
+    ).starters;
     return {
       rank: 0, teamId: t.id, team: t.name, us: i === ctx.meIdx,
-      startPts: Math.round(starters.reduce((a, s) => a + s.proj, 0)),
+      startPts: Math.round(preStarters.reduce((a, s) => a + s.proj, 0)),
+      rosPtsPerGame: r2(rosStarters.reduce((a, s) => a + s.proj, 0)),
       byPos,
       playoffPct: r2(100 * odds[i].playoffs),
       titlePct: r2(100 * odds[i].champion),
     };
-  }).sort((a, b) => b.startPts - a.startPts);
+  }).sort((a, b) => b.rosPtsPerGame - a.rosPtsPerGame);
   rows.forEach((r, i) => { r.rank = i + 1; });
   const objective = objectiveFor(100 * odds[ctx.meIdx].playoffs, o.secureThresholdPct);
   return {
     rows,
     leagueMeanStartPts: Math.round(mean(rows.map((r) => r.startPts))),
+    leagueMeanRosPtsPerGame: r2(mean(rows.map((r) => r.rosPtsPerGame))),
+    // NAMED so a reader cannot mistake which column ordered the table.
+    rankedOn: "rosPerGame (D18 blend)" as const,
     ourRank: rows.findIndex((r) => r.us) + 1,
     objective,
     assumptions: assumptionsOf(ctx, "simulation", o, trials, [seed], objective),

@@ -256,8 +256,13 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     }
     case "power_rankings": {
       const x = r as C.PowerResult;
-      return `We are #${x.ourRank} of ${x.rows.length} (league mean ${x.leagueMeanStartPts} starter pts). Top: ` +
-        x.rows.slice(0, 4).map((t) => `${t.rank}. ${t.team} ${t.startPts}pts / ${t.titlePct}% title`).join("; ") + `. ${caveat(x.assumptions)}`;
+      // RANKED ON THE BLEND, and the summary says so: the preseason total is printed beside it
+      // because the two disagree once a season is under way, and a reader quoting one without the
+      // other is quoting a preseason opinion as a current standing.
+      return `We are #${x.ourRank} of ${x.rows.length} on REST-OF-SEASON strength ` +
+        `(league mean ${x.leagueMeanRosPtsPerGame} pts/gm; preseason mean ${x.leagueMeanStartPts} season pts). Top: ` +
+        x.rows.slice(0, 4).map((t) => `${t.rank}. ${t.team} ${t.rosPtsPerGame}/gm (preseason ${t.startPts}) / ${t.titlePct}% title`).join("; ") +
+        `. Ranked on ${x.rankedOn}. ${caveat(x.assumptions)}`;
     }
     case "stream_recommend": {
       const x = r as C.StreamRecommendResult;
