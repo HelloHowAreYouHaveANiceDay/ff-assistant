@@ -1268,6 +1268,9 @@ CREATE TABLE IF NOT EXISTS feat_player_week_model (
   -- The panel ASYMMETRY: where the consensus sits between best and worst, in [-1, +1].
   -- +1 = all dissent is downside, -1 = all upside. 2026-09-24 candidate; sd cannot express it.
   ecr_wk_skew     REAL,
+  -- DFS salary as a within-(week, position) percentile in [0,1]. A market price on expected
+  -- weekly points; era-comparable where raw dollars are not. 2026-09-24 candidate.
+  dfs_salary_pct  REAL,
   ecr_wk_sd       REAL,
   dvp_mult        REAL,              -- opponent defence-vs-position multiplier, weeks < w + prior yr
   dvp_n           INTEGER,           -- opponent games inside season Y that fed it
@@ -1287,6 +1290,41 @@ CREATE INDEX IF NOT EXISTS idx_fpwm_pos ON feat_player_week_model (season, week,
 -- A third baseline the weekly model has to beat to be worth serving. `as_of` is when the snapshot
 -- was taken, and it is the whole value of the table: a projection read after the games is not a
 -- projection.
+-- DAILY-FANTASY SALARIES from RotoGuru (dk/fd/yh), one row per player-week-book.
+--
+-- WHY A MARKET PRICE IS A FEATURE AND NOT A STAT. A DFS salary is a commercial operator's PRICE on
+-- a player's expected weekly fantasy points, repriced every week with money at stake. That puts it
+-- in the one class this repo has ever admitted a weekly feature from: a DIRECT FORECAST OF THE
+-- TARGET, not a recombination of rows the model already holds (docs/validation.md, 2026-09-24).
+--
+-- COVERAGE IS 2014-2021 AND THAT IS THE WHOLE ARCHIVE. Verified per year against the feed: DK and
+-- FD return ~350-470 rows a week for 2014-2021 and the HEADER ONLY for 2022 onward; Yahoo starts
+-- 2018. So this is history without a live tail, which is exactly why it is worth running FIRST --
+-- it costs nothing and answers, on EIGHT seasons, whether the market-forecast class helps at all
+-- before anyone pays for player-prop history that covers four.
+--
+-- `dfs_points` IS THE REALISED OUTCOME AND MUST NEVER BECOME A FEATURE. It is the points the man
+-- actually scored that week. It is stored because it makes the feed self-checking (a salary that
+-- does not correlate with its own book's points would mean the parse is misaligned), and it is a
+-- LOOKAHEAD LANDMINE for anyone who later reaches for it as an input. `salary` is knowable before
+-- kickoff; `dfs_points` is knowable only after.
+CREATE TABLE IF NOT EXISTS raw_dfs_salary (
+  season      INTEGER NOT NULL,
+  week        INTEGER NOT NULL,
+  book        TEXT    NOT NULL,          -- dk | fd | yh
+  gid         TEXT,                      -- RotoGuru's own player id, kept for provenance
+  name        TEXT    NOT NULL,
+  name_key    TEXT    NOT NULL,          -- joined on (season, week, name_key, pos); 99.4% accurate
+  pos         TEXT    NOT NULL,
+  team        TEXT,                      -- RotoGuru vocabulary (kan/sfo/lvr), NOT ours
+  opp         TEXT,
+  home        INTEGER,
+  dfs_points  REAL,                      -- REALISED. Never a feature. See above.
+  salary      INTEGER,
+  fetched_at  TEXT,
+  PRIMARY KEY (season, week, book, name_key, pos)
+);
+
 CREATE TABLE IF NOT EXISTS raw_espn_projection (
   season          INTEGER,
   week            INTEGER,

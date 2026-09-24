@@ -159,6 +159,11 @@ CENTER = [
     # same reason ecr_wk_rank is not: the panel ranks every position and there is no argument that
     # its shape means something at one and nothing at another.
     "ecr_wk_skew",
+    # DFS SALARY PERCENTILE. A market price on expected weekly points -- the same class as the
+    # expert consensus (a direct forecast of the target), and NOT POS_GATED for the same reason:
+    # the book prices every position and there is no argument its price means something at one
+    # and nothing at another.
+    "dfs_salary_pct",
     # THE AVAILABILITY BLOCK. Every one of these is keyed to this team's own kickoff rather than to
     # the league week's first kickoff; src/weekly/features.ts CONTEXT_FIELDS carries each column's
     # as-of rule and the reason the anchor is different.
@@ -275,7 +280,7 @@ SELECT_COLS = [
     "feat_key", "player_sk", "season", "week", "name", "pos", "season_line_pg",
     "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts", "td_attempts", "td_rush_yards",
     "rz_share_td", "prior_vol_cv", "prior_air_yards_share", "prior_wopr",
-    "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew",
+    "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew", "dfs_salary_pct",
     "home", "spread_line", "total_line", "implied_team_total", "days_rest",
     "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
     "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",

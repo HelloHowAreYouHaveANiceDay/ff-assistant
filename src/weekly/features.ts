@@ -77,6 +77,9 @@ export const WEEKLY_FEATURE_FIELDS = [
   // THE PANEL ASYMMETRY (2026-09-24 candidate). Same source and cadence as the two above; see
   // ecrWeekTable for the definition and for why sd cannot carry it.
   "ecr_wk_skew",
+  // DFS SALARY as a within-slate percentile (2026-09-24 candidate). A market price on expected
+  // weekly points -- see dfsSalaryTable for the era-comparability argument and the join.
+  "dfs_salary_pct",
   "home", "spread_line", "total_line", "implied_team_total", "days_rest",
   "season_line_pg", "week_no",
   // ---- THE AVAILABILITY BLOCK, from feat_player_week_context (the data track). See CONTEXT_FIELDS
@@ -544,6 +547,76 @@ export function rzShareTable(db: DB, season: number): {
  *
  * Keyed by `player_sk`. Never by name -- this repo has paid twice for name-keyed joins.
  */
+/**
+ * DFS SALARY AS A WITHIN-SLATE PERCENTILE. key `${week}|${name_key}|${pos}` -> [0, 1].
+ *
+ * WHAT THIS IS. A DraftKings salary is a commercial operator's PRICE on a player's expected weekly
+ * fantasy points, repriced every week with money at stake. That is a DIRECT FORECAST OF THE TARGET
+ * -- the one class this repo has ever admitted a weekly feature from (`ecr_wk_rank`, +0.04134
+ * pooled CRPS, 19x its floor), as against six rejections for columns derived from rows the model
+ * already holds or for meta-information about a forecast.
+ *
+ * WHY A PERCENTILE AND NOT THE DOLLARS. Raw salary is not comparable across eras: the cap, the
+ * slate size and the pricing scale all drift, so a $7,700 quarterback in 2014 and in 2021 are
+ * different animals. The percentile WITHIN (week, position) is scale-free -- it asks only "how
+ * expensive was he relative to the men he was listed beside", which is the same question in every
+ * season. It is also what makes a model fitted on 2014-2021 coherent if it is ever served against
+ * a live slate whose dollar scale has moved again.
+ *
+ * POINT IN TIME BY CONSTRUCTION: a salary is published BEFORE the slate locks, and the percentile
+ * is computed only among the men priced on that same slate. Nothing here can see a result.
+ * `raw_dfs_salary.dfs_points` is the realised outcome and is deliberately NOT read by this
+ * function -- reading it would be lookahead, and it exists in the table only as a parse check.
+ *
+ * COVERAGE IS ~54% OF OUR ROWS AND THAT IS EXPECTED, NOT A FAULT. DK prices the slate, not every
+ * rostered man; the misses are backup quarterbacks and deep bench. Measured on 2020 week 5: 324 of
+ * our 602 skill rows matched, which is 94% of THEIR skill rows -- the same coverage profile as
+ * `ecr_wk_rank` (55-66%), whose panel likewise does not rank everybody.
+ *
+ * The join is (season, week, name_key, pos). `team` is deliberately not a key: RotoGuru uses its
+ * own vocabulary (kan/sfo/lvr/tam/nor) and mapping it would turn a vocabulary error into a missing
+ * player. Verified instead as a CHECK -- of 324 matched rows only 2 disagreed on a real team
+ * (0.6%), the rest being five known code pairs.
+ */
+export function dfsSalaryTable(db: DB, season: number, book = "dk"): Map<string, number> {
+  const out = new Map<string, number>();
+  let rows: { week: number; name_key: string; pos: string; salary: number }[];
+  try {
+    rows = db.prepare(
+      `SELECT week, name_key, pos, salary FROM raw_dfs_salary
+        WHERE season = ? AND book = ? AND salary IS NOT NULL AND salary > 0`,
+    ).all(season, book) as typeof rows;
+  } catch {
+    return out;                                   // a store without the table says nothing
+  }
+  // Percentile within (week, position). Ties share the average rank so two men priced identically
+  // cannot be ordered by whatever the row order happened to be.
+  const groups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const g = `${r.week}|${r.pos}`;
+    (groups.get(g) ?? groups.set(g, []).get(g)!).push(r);
+  }
+  for (const [, g] of groups) {
+    if (g.length < 2) continue;                   // a percentile over one man is not a percentile
+    const sorted = [...g].sort((a, b) => a.salary - b.salary);
+    const rankOf = new Map<number, number>();     // salary -> average 0-based rank among ties
+    let i = 0;
+    while (i < sorted.length) {
+      let j = i;
+      while (j + 1 < sorted.length && sorted[j + 1].salary === sorted[i].salary) j++;
+      const avg = (i + j) / 2;
+      rankOf.set(sorted[i].salary, avg);
+      i = j + 1;
+    }
+    for (const r of g) {
+      const rank = rankOf.get(r.salary);
+      if (rank == null) continue;
+      out.set(`${r.week}|${r.name_key}|${r.pos}`, rank / (g.length - 1));
+    }
+  }
+  return out;
+}
+
 export function priorSeasonRole(db: DB, season: number): Map<string, { airShare: number | null; wopr: number | null }> {
   const out = new Map<string, { airShare: number | null; wopr: number | null }>();
   for (const r of db.prepare(
@@ -689,7 +762,7 @@ const WEEK_MODEL_BASE_COLS = [
   "feat_key", "player_sk", "season", "week", "as_of", "name", "pos", "team", "opponent", "home",
   "is_bye", "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
   "td_attempts", "td_rush_yards", "rz_share_td", "prior_vol_cv",
-  "prior_air_yards_share", "prior_wopr", "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew",
+  "prior_air_yards_share", "prior_wopr", "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew", "dfs_salary_pct",
   "dvp_mult", "dvp_n", "spread_line", "total_line",
   "implied_team_total", "days_rest", "pts",
 ];
@@ -818,6 +891,7 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
     const rzShare = rzShareTable(db, season);
     const priorVol = priorSeasonVol(db, season);
     const priorRole = priorSeasonRole(db, season);
+    const dfsSal = dfsSalaryTable(db, season);
     const ecrWk = ecrWeekTable(db, season);
     const ctx = contextFor(db, season);
     const raw = db.prepare(
@@ -910,6 +984,8 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
             return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null,
                      ecr_wk_skew: e ? finite(e.skew) : null };
           })(),
+          // The market's PRICE on this man for this slate, as a within-(week, position) percentile.
+          dfs_salary_pct: finite(dfsSal.get(`${r.week}|${nameKey(r.name)}|${r.pos}`) ?? null),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           // schedule and market columns as published preseason / pre-kickoff.
           spread_line: finite(r.spread_line), total_line: finite(r.total_line),
@@ -948,7 +1024,7 @@ export function weeklyCoverage(db: DB, seasons?: number[]): {
   const cols = [
     "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
     "td_attempts", "td_rush_yards", "dvp_mult", "home", "spread_line", "total_line",
-    "implied_team_total", "days_rest", "pts", "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew",
+    "implied_team_total", "days_rest", "pts", "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew", "dfs_salary_pct",
     ...CONTEXT_FIELDS.map((c) => c.name),
   ];
   // A column this store does not HAVE reports 0, exactly like a column it has and never filled.
@@ -974,7 +1050,7 @@ export function weeklyCoverage(db: DB, seasons?: number[]): {
 export const COVERAGE_COLUMNS: string[] = [
   "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
   "td_attempts", "td_rush_yards", "dvp_mult", "home", "spread_line", "total_line",
-  "implied_team_total", "days_rest", "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew",
+  "implied_team_total", "days_rest", "ecr_wk_rank", "ecr_wk_sd", "ecr_wk_skew", "dfs_salary_pct",
   ...CONTEXT_FIELDS.map((c) => String(c.name)),
 ];
 
@@ -1150,6 +1226,7 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
       prior_wopr: r.prior_wopr == null ? null : Number(r.prior_wopr),
       ecr_wk_rank: r.ecr_wk_rank == null ? null : Number(r.ecr_wk_rank),
       ecr_wk_skew: r.ecr_wk_skew == null ? null : Number(r.ecr_wk_skew),
+      dfs_salary_pct: r.dfs_salary_pct == null ? null : Number(r.dfs_salary_pct),
       ecr_wk_sd: r.ecr_wk_sd == null ? null : Number(r.ecr_wk_sd),
       home: r.home == null ? null : Number(r.home),
       spread_line: r.spread_line == null ? null : Number(r.spread_line),
@@ -1286,6 +1363,7 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
   const rzShare = rzShareTable(db, season);
   const priorVol = priorSeasonVol(db, season);
   const priorRole = priorSeasonRole(db, season);
+  const dfsSal = dfsSalaryTable(db, season);
   // The live season has NO weekly-consensus rows in `ranking_history` (the archive stops in 2024), so
   // this reads empty and every forward row is NULL. That is the honest state and it is why the column
   // is a candidate rather than a serve: see `ecrWeekTable`'s era bound.
@@ -1357,6 +1435,7 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
             return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null,
                      ecr_wk_skew: e ? finite(e.skew) : null };
           })(),
+          dfs_salary_pct: finite(dfsSal.get(`${week}|${nameKey(p.name)}|${p.pos}`) ?? null),
           dvp_mult: d ? d.mult : null, dvp_n: d ? d.n : null,
           spread_line: spread, total_line: total, implied_team_total: implied,
           days_rest: daysRest,

@@ -647,6 +647,7 @@ function addColumns(db: DB): void {
     // the archive covers 2020-2024 only, so every other season is NULL by construction.
     ["feat_player_week_model", "ecr_wk_rank", "REAL"],
     ["feat_player_week_model", "ecr_wk_skew", "REAL"],
+    ["feat_player_week_model", "dfs_salary_pct", "REAL"],
     ["feat_player_week_model", "ecr_wk_sd", "REAL"],
     // WHAT THE SCORE WAS, not merely who played whom. `raw_league_matchup` carried the pairing and
     // nothing else, so the warehouse could not answer "what were the scores" for any week without
