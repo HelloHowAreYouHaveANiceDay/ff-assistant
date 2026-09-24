@@ -7687,3 +7687,55 @@ CAVEAT, stated rather than buried: `lineup` is reported POOLED with no per-seaso
 there is no paired SE on that side and no significance can be claimed for any single arm. The
 argument above rests on the LARGE-SCALE ordering and on five-of-six directional agreement, not on
 any one delta.
+
+### THE WAIVER ENGINE JUDGED A PAIRED DELTA AGAINST AN UNPAIRED FLOOR (2026-09-24)
+
+`waiverTargets` simulates every add/drop under COMMON RANDOM NUMBERS and differences PER SEED --
+`deltasOf` is correct, and its docstring explains exactly why pairing must be preserved. Then
+`clearsNoise` compared that paired delta against `noiseFloorPp`, which is the standard error of a
+difference between two INDEPENDENT proportions (the 1.4 is sqrt(2)). The design's whole purpose was
+discarded at the last step.
+
+MEASURED, week 3 2026, shipped settings (500 trials x 2 seeds): binomial floor **2.79pp** against
+paired standard errors of **0.02-0.15pp**. Every candidate was reported "does not clear the noise
+floor".
+
+**THE FIRST FIX ATTEMPT WAS ALSO WRONG AND THE RUN CAUGHT IT.** Comparing against the 2-seed paired
+SE gave ratios of 3 to 75 sigma -- which are garbage, because an SE from two seeds has ONE degree
+of freedom. Re-running at 8 seeds FLIPPED THE SIGN on three of seven candidates (Kmet -1.5 ->
++0.65, Borregales -1.4 -> +0.65, Barner -0.7 -> +0.3). The 2-seed estimates were not estimates.
+
+So the fix is two things, and only one of them would have been dangerous alone:
+  - **more SEEDS**, not more trials. For a fixed budget of n seeds x t trials the variance of the
+    mean paired delta is (within/t + between)/n: raising n shrinks BOTH terms, raising t shrinks
+    only the first. Default moved from 2x500 to 8x250 -- better precision AND usable degrees of
+    freedom, at twice the simulations rather than four times.
+  - **judge on the paired SE** at the draft track's own 2.9 multiplier, with the SE floored at one
+    trial's resolution over sqrt(seeds) so a lucky zero spread cannot read as certainty.
+
+STABILITY, checked rather than assumed (8 seeds, 250 -> 1000 trials):
+```
+  Cole Kmet        +0.65 -> +0.60     stable, clears
+  Andy Borregales  +0.65 -> +0.64     stable, clears
+  Braelon Allen    -1.35 -> -1.22     stable, negative
+  AJ Barner        +0.30 -> -0.30     FLIPPED -- noise
+  Theo Johnson     -0.70 -> -0.06     unstable
+```
+
+**AND THE SURPRISE HAD TO BE EXPLAINED BEFORE IT COULD BE USED.** A backup KICKER improving playoff
+odds by 0.64pp is not believable on its face. It is not the add: every clearing row pairs with
+DROPPING MICHAEL PITTMAN JR., who is OUT with an ankle and is our WR5. Same add, different drop:
+
+```
+  Borregales + drop Pittman  +0.64      Kmet + drop Pittman  +0.60
+  Borregales + drop Godwin   -0.80      Kmet + drop Godwin   -0.91
+  Borregales + drop Likely   -7.15      Kmet + drop Likely   -6.06
+```
+
+The engine is saying PITTMAN'S ROSTER SPOT IS DEAD WEIGHT, worth about +0.6pp used on almost
+anybody. The signal is in the drop. That is a real, interpretable recommendation, and at 0.6pp
+against the old 2.79pp floor it was invisible -- which is what the defect cost: not a wrong number,
+a hidden one.
+
+`tradeCheck` and `depthRisk` use the same hardcoded `[7, 101]` and the same unpaired floor. Not
+touched here: they need the same treatment and their own verification, not a copy-paste.

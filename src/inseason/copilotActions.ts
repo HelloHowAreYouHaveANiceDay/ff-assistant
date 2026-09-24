@@ -89,6 +89,27 @@ export interface CopilotRun<T = unknown> {
   logId: number;
 }
 
+/**
+ * SEEDS FOR THE WAIVER SCORER, and why there are eight rather than two.
+ *
+ * Every move is simulated under COMMON RANDOM NUMBERS, so the statistic that decides it is the
+ * spread of the PER-SEED deltas -- and with two seeds that spread has ONE degree of freedom, which
+ * is not an estimate of anything. The verdict was therefore falling back on an unpaired binomial
+ * floor 20-140x too wide, and every candidate in week 3 of 2026 was reported "does not clear the
+ * noise floor" while sitting 3 to 75 paired standard errors from zero.
+ *
+ * MORE SEEDS BEAT MORE TRIALS PER SEED, for a fixed simulation budget. With n seeds of t trials the
+ * variance of the mean paired delta is (within/t + between)/n: raising n shrinks BOTH terms, while
+ * raising t shrinks only the first. Eight seeds of 250 trials therefore dominates two of 500 on
+ * precision as well as on degrees of freedom, at twice the total simulations rather than four
+ * times -- which is the cost actually paid for the fix.
+ *
+ * Arbitrary but FIXED values: a seed set that moved run to run would make two identical questions
+ * give two different answers, and the point of common random numbers is that they do not.
+ */
+export const WAIVER_SEEDS = [7, 101, 211, 307, 401, 509, 601, 701];
+export const WAIVER_TRIALS_DEFAULT = 250;
+
 const pct = (n: number) => `${n.toFixed(2)}%`;
 const pp = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}pp`;
 
@@ -390,7 +411,7 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // naming the artifact it would need, instead of another room's measurement.
       // AVAILABILITY IS PASSED (2026-09-18). Without it this verb recommended bidding FAAB on a man
       // on injured reserve -- it built its add pool from the board and never asked who could play.
-      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? 500, seeds: a.seed != null ? [a.seed] : [7, 101], adds: a.limit ?? 4, dropsPerAdd: 3, handcuffAdds: a.handcuffAdds, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId), leagueId: leagueId ?? provenance.leagueId, acquisition: S.loadAcquisition(dbPath, leagueId), dbPath });
+      return C.waiverTargets(ctx, { provenance, trials: a.trials ?? WAIVER_TRIALS_DEFAULT, seeds: a.seed != null ? [a.seed] : WAIVER_SEEDS, adds: a.limit ?? 4, dropsPerAdd: 3, handcuffAdds: a.handcuffAdds, positions: a.positions, faabBudget: S.loadFaabBudget(dbPath, leagueId), leagueId: leagueId ?? provenance.leagueId, acquisition: S.loadAcquisition(dbPath, leagueId), dbPath });
       // THE WEEKLY-PROJECTOR SHORTLIST IS NOT WIRED, AND THAT IS A DECISION. Passing
       // `weekly: S.loadWeeklyBands(...)?.weekly` here ranks the pool by the weekly artifact, which
       // on `backtestWaivers` scores 8.07 realised ppg against value-over-replacement's 5.12 -- and

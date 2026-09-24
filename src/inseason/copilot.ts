@@ -322,6 +322,46 @@ export function noiseFloorPp(baseTitlePct: number, trials: number): number {
   return r2(100 * Math.sqrt((p * (1 - p)) / Math.max(1, trials)) * 1.4);
 }
 
+/**
+ * THE PAIRED FLOOR -- and why the binomial one above is the wrong test for a scored MOVE.
+ *
+ * `noiseFloorPp` is the standard error of a difference between two INDEPENDENT proportions: the
+ * 1.4 is sqrt(2), combining two unpaired samples. But every move here is simulated under COMMON
+ * RANDOM NUMBERS -- the same seeds, the same draws, differing by one roster slot -- specifically so
+ * that the trial-to-trial variation CANCELS. Judging a paired delta against an unpaired floor
+ * throws away the whole point of the design, and it is enormously over-conservative.
+ *
+ * MEASURED on this league, week 3, 2026 (the shipped 500 trials x 2 seeds):
+ *
+ *     binomial floor 2.79pp     actual paired SE 0.02-0.15pp     ratio 20-140x
+ *
+ * Every candidate that week sat 3 to 75 paired standard errors from zero and every one was
+ * reported as "does not clear the noise floor". The engine could resolve them perfectly well; the
+ * test could not. The advice happened to be right (all seven were NEGATIVE, so "make no claim" was
+ * correct) but it was right by accident, and a genuinely POSITIVE +1pp add would have been
+ * discarded the same way.
+ *
+ * This is the discipline the DRAFT track already has -- CLAUDE.md: "seeds are common random
+ * numbers, so every trial is a matched pair -- use paired analysis, not two aggregate percentages"
+ * -- which the in-season track never inherited. 2.9 is that track's admission multiplier
+ * (scripts/lib/arbiter.mjs), reused here so one repo has one bar.
+ *
+ * THE SE FLOOR IS NOT COSMETIC. With few seeds the observed spread can be zero by luck, and 0 as a
+ * denominator would declare any positive delta infinitely significant. A simulated playoff rate
+ * cannot resolve finer than one trial's worth (100/trials points), so the standard error is floored
+ * at one such step divided by sqrt(seeds) -- the tightest value the simulation could honestly
+ * report.
+ */
+export const PAIRED_SE_MULT = 2.9;
+export const MIN_SEEDS_FOR_PAIRED = 3;
+
+export function pairedFloorPp(seRaw: number | null, trials: number, seeds: number): number | null {
+  if (seRaw == null || seeds < MIN_SEEDS_FOR_PAIRED) return null;
+  const granularity = 100 / Math.max(1, trials);
+  const floored = Math.max(seRaw, granularity / Math.sqrt(Math.max(1, seeds)));
+  return r2(PAIRED_SE_MULT * floored);
+}
+
 // ---------------------------------------------------------------------------------------------
 // SEASON ODDS
 // ---------------------------------------------------------------------------------------------
@@ -1237,6 +1277,7 @@ function deltasOf(after: Outcome[], base: Outcome[], objective: Objective): Obje
     titlePp: pairedDelta(dTitle).delta,
     rankValue: objective.primary === "playoffs" ? p.delta : po.delta,
     se: objective.primary === "playoffs" ? p.se : po.se,
+    seRaw: objective.primary === "playoffs" ? p.seRaw : po.seRaw,
   };
 }
 
@@ -1261,10 +1302,16 @@ function deltasOf(after: Outcome[], base: Outcome[], objective: Objective): Obje
  * `null` is the honest answer, and it is a different TYPE, so a consumer that formats it has to
  * decide what to print rather than silently rendering "+/-0".
  */
-function pairedDelta(perSeed: number[]): { delta: number; se: number | null } {
+function pairedDelta(perSeed: number[]): { delta: number; se: number | null; seRaw: number | null } {
+  const raw = perSeed.length < 2 ? null : sd(perSeed) / Math.sqrt(perSeed.length);
   return {
     delta: r2(mean(perSeed)),
-    se: perSeed.length < 2 ? null : r2(sd(perSeed) / Math.sqrt(perSeed.length)),
+    // `se` stays ROUNDED because it is a display number and every other field here is rounded.
+    se: raw == null ? null : r2(raw),
+    // `seRaw` is the one a DECISION may use. The rounded form is unusable as a denominator: these
+    // paired standard errors run 0.02-0.15pp, so r2 discards most of the value and an SE of 0.004
+    // rounds to 0.00 -- which would make any positive delta look infinitely significant.
+    seRaw: raw,
   };
 }
 
@@ -1281,12 +1328,18 @@ export interface ObjectiveDelta {
   titlePp: number;
   rankValue: number;
   /** Sampling error across SEEDS. Null when only one seed was run -- see `pairedDelta`: a single
-   *  sample has no measurable spread, and 0 would read as certainty. */
+   *  sample has no measurable spread, and 0 would read as certainty. DISPLAY ONLY: it is rounded
+   *  to two places, which is lossy at the 0.02-0.15pp these actually run at. */
   se: number | null;
+  /** The same quantity UNROUNDED. Anything that DIVIDES by the standard error must use this one. */
+  seRaw?: number | null;
 }
 export interface WaiverDrop extends ObjectiveDelta { name: string; pos: string; proj: number }
 export interface WaiverRefusal { add: string; drop: string; pos: string; why: string }
 export interface WaiverTarget extends ObjectiveDelta {
+  /** The 2.9*SE paired bar this row was judged against, or null where too few seeds were run
+   *  and the unpaired binomial floor was used instead. Present so a reader can see WHICH. */
+  pairedFloorPp?: number | null;
   add: string; pos: string; proj: number;
   drop: string; dropPos: string;
   afterPlayoffPct: number;
@@ -1348,6 +1401,9 @@ export interface WaiverResult {
   basePlayoffWeekPts: number;
   baseTitlePct: number;
   noiseFloorPp: number;
+  /** Which test decided `clearsNoise` on every row: the PAIRED 2.9*SE bar, or the unpaired
+   *  binomial fallback when too few seeds were run to estimate a spread. They differ by 20-140x. */
+  noiseBasis?: "paired-2.9se" | "binomial-unpaired";
   targets: WaiverTarget[];
   refused: WaiverRefusal[];
   /** How the add pool was RANKED, and any position the ranking could not price. A reader who sees
@@ -1712,7 +1768,15 @@ export function waiverTargets(
       afterTitlePct: r2(baseTitle + best.titlePp),
       // The noise floor is computed for the PRIMARY quantity, always. Comparing a playoff delta
       // against a floor derived from the title rate is comparing two different distributions.
-      clearsNoise: best.playoffsPp > floor,
+      //
+      // PAIRED WHERE THERE ARE ENOUGH SEEDS TO ESTIMATE A SPREAD, binomial otherwise -- and the
+      // result NAMES which was used, because the two differ by 20-140x and a reader who cannot
+      // tell them apart cannot weigh the verdict. See `pairedFloorPp`.
+      clearsNoise: (() => {
+        const pf = pairedFloorPp(best.seRaw ?? null, trials, seeds.length);
+        return pf == null ? best.playoffsPp > floor : best.playoffsPp > pf;
+      })(),
+      pairedFloorPp: pairedFloorPp(best.seRaw ?? null, trials, seeds.length),
       ...bidFor(add.name, add.pos, best.playoffsPp),
       admittedAs: insuresBy.has(nameKey(add.name)) ? "handcuff" : "vor",
       insures: insuresBy.get(nameKey(add.name)) ?? null,
@@ -1725,6 +1789,9 @@ export function waiverTargets(
     basePlayoffWeekPts: r2(basePoPts),
     baseTitlePct: r2(baseTitle),
     noiseFloorPp: noiseFloorPp(basePlayoff, trials),
+    // WHICH TEST DECIDED clearsNoise. The two bars differ by 20-140x, so a consumer quoting a
+    // verdict without naming its basis is quoting a number whose meaning it does not know.
+    noiseBasis: seeds.length >= MIN_SEEDS_FOR_PAIRED ? "paired-2.9se" : "binomial-unpaired",
     targets,
     refused,
     poolRanking: {
