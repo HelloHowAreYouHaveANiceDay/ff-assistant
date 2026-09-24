@@ -64,6 +64,10 @@ export const WEEKLY_FEATURE_FIELDS = [
   "td_fd", "td_ts", "td_attempts", "td_rush_yards",
   "rz_share_td",   // rolling season-to-date red-zone touch share (pbp), point-in-time -- 2026-09-15 candidate
   "prior_vol_cv",  // prior-season weekly CV (volatility), always-present -- 2026-09-15 candidate
+  // PRIOR-SEASON ROLE SHAPE (2026-09-23 candidates, scripts/segment-screen.mjs). Archetype, not
+  // level: how DEEP a receiver was targeted and how CONCENTRATED his team's target share was on
+  // him, both from the completed prior season, so both are knowable on September 1.
+  "prior_air_yards_share", "prior_wopr",
   // THE WEEKLY EXPERT CONSENSUS (M2a, 2026-09-16 candidate). FantasyPros' WEEKLY positional consensus
   // rank and its dispersion, from `ranking_history` where `ecr_type = 'wp'`, taken from the LATEST
   // scrape dated at or before this team's Friday cutoff. See `ecrWeekTable` for the as-of rule and
@@ -518,6 +522,39 @@ export function rzShareTable(db: DB, season: number): {
  * SD, so it is a pure boom/bust signal rather than a level proxy (the pre-filter showed raw SD is
  * 0.58-correlated with the level the model already carries).
  */
+/**
+ * PRIOR-SEASON ROLE SHAPE, per player: air-yards share and WOPR, read straight off
+ * `feat_player_season` for season-1.
+ *
+ * These are ARCHETYPE columns, not level columns, and that is the point of adding them. The
+ * segment screen (scripts/segment-screen.mjs) found both carrying residual signal the served
+ * artifact does not have: prior air-yards share at 3.4x its own shuffle null for WR on the MEAN
+ * and 3.2x on the BAND (deep threats are genuinely boom/bust), and prior WOPR at 4.1x on the MEAN
+ * for WR. Neither is a segment result -- both fired on MAIN, which means the honest reading is
+ * "an ordinary missing feature", and they are wired as ordinary features here rather than as
+ * machinery for splitting heads.
+ *
+ * POINT IN TIME BY CONSTRUCTION, and cheaply so: every `prior_*` column on `feat_player_season` is
+ * derived from the COMPLETED season-1 and the row itself is pinned as-of September 1. There is no
+ * week-of-season accumulation to get wrong here, which is the one thing that makes this pair
+ * cheaper to trust than the rolling opponent block.
+ *
+ * Keyed by `player_sk`. Never by name -- this repo has paid twice for name-keyed joins.
+ */
+export function priorSeasonRole(db: DB, season: number): Map<string, { airShare: number | null; wopr: number | null }> {
+  const out = new Map<string, { airShare: number | null; wopr: number | null }>();
+  for (const r of db.prepare(
+    `SELECT player_sk, prior_air_yards_share AS a, prior_wopr AS w
+       FROM feat_player_season WHERE season = ? AND player_sk IS NOT NULL`,
+  ).all(season) as { player_sk: string; a: number | null; w: number | null }[]) {
+    out.set(String(r.player_sk), {
+      airShare: r.a == null || !Number.isFinite(Number(r.a)) ? null : Number(r.a),
+      wopr: r.w == null || !Number.isFinite(Number(r.w)) ? null : Number(r.w),
+    });
+  }
+  return out;
+}
+
 export function priorSeasonVol(db: DB, season: number): Map<string, number> {
   const rows = db.prepare(
     "SELECT player_sk, pts FROM feat_player_week WHERE season = ? AND player_sk IS NOT NULL AND pts IS NOT NULL AND pts > 0",
@@ -631,7 +668,8 @@ export function ecrWeekCutoff(sched: ScheduleInfo, season: number, team: string 
 const WEEK_MODEL_BASE_COLS = [
   "feat_key", "player_sk", "season", "week", "as_of", "name", "pos", "team", "opponent", "home",
   "is_bye", "season_line_pg", "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts",
-  "td_attempts", "td_rush_yards", "rz_share_td", "prior_vol_cv", "ecr_wk_rank", "ecr_wk_sd",
+  "td_attempts", "td_rush_yards", "rz_share_td", "prior_vol_cv",
+  "prior_air_yards_share", "prior_wopr", "ecr_wk_rank", "ecr_wk_sd",
   "dvp_mult", "dvp_n", "spread_line", "total_line",
   "implied_team_total", "days_rest", "pts",
 ];
@@ -759,6 +797,7 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
     const dvp = dvpTable(db, season);
     const rzShare = rzShareTable(db, season);
     const priorVol = priorSeasonVol(db, season);
+    const priorRole = priorSeasonRole(db, season);
     const ecrWk = ecrWeekTable(db, season);
     const ctx = contextFor(db, season);
     const raw = db.prepare(
@@ -841,6 +880,9 @@ export async function buildInto(db: DB, opts: BuildOpts): Promise<BuildResult> {
           rz_share_td: finite(rzShare.get(r.week, r.player_sk, r.team)),
           // prior-season weekly CV (volatility), constant across the season and always known.
           prior_vol_cv: finite(r.player_sk != null ? priorVol.get(String(r.player_sk)) ?? null : null),
+          // prior-season role shape, constant across the season and knowable on September 1.
+          prior_air_yards_share: finite(r.player_sk != null ? priorRole.get(String(r.player_sk))?.airShare ?? null : null),
+          prior_wopr: finite(r.player_sk != null ? priorRole.get(String(r.player_sk))?.wopr ?? null : null),
           // WEEKLY EXPERT CONSENSUS as of this team's kickoff minus two days. NULL outside 2020-2024,
           // which is the whole archive, and NULL for anyone the panel did not rank that week.
           ...(() => {
@@ -1052,6 +1094,7 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
     `SELECT m.feat_key, m.player_sk, m.season, m.week, m.name, m.pos, m.team, m.opponent, m.home,
             m.season_line_pg, m.td_games, m.td_ppg, m.t4_mean, m.t4_sd, m.td_fd, m.td_ts,
             m.td_attempts, m.td_rush_yards, m.rz_share_td, m.prior_vol_cv,
+            m.prior_air_yards_share, m.prior_wopr,
             m.dvp_mult, m.dvp_n, m.spread_line, m.total_line,
             m.implied_team_total, m.days_rest
             ${ecrWk.length ? ", " + ecrWk.map((c) => `m.${c}`).join(", ") : ""}
@@ -1082,6 +1125,8 @@ export function loadWeeklyRows(db: DB, season: number, week?: number): WeeklyRow
       td_rush_yards: r.td_rush_yards == null ? null : Number(r.td_rush_yards),
       rz_share_td: r.rz_share_td == null ? null : Number(r.rz_share_td),
       prior_vol_cv: r.prior_vol_cv == null ? null : Number(r.prior_vol_cv),
+      prior_air_yards_share: r.prior_air_yards_share == null ? null : Number(r.prior_air_yards_share),
+      prior_wopr: r.prior_wopr == null ? null : Number(r.prior_wopr),
       ecr_wk_rank: r.ecr_wk_rank == null ? null : Number(r.ecr_wk_rank),
       ecr_wk_sd: r.ecr_wk_sd == null ? null : Number(r.ecr_wk_sd),
       home: r.home == null ? null : Number(r.home),
@@ -1218,6 +1263,7 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
   const dvp = dvpTable(db, season);
   const rzShare = rzShareTable(db, season);
   const priorVol = priorSeasonVol(db, season);
+  const priorRole = priorSeasonRole(db, season);
   // The live season has NO weekly-consensus rows in `ranking_history` (the archive stops in 2024), so
   // this reads empty and every forward row is NULL. That is the honest state and it is why the column
   // is a candidate rather than a serve: see `ecrWeekTable`'s era bound.
@@ -1282,6 +1328,8 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
           })(),
           rz_share_td: finite(rzShare.get(week, p.player_sk, p.team)),
           prior_vol_cv: finite(p.player_sk != null ? priorVol.get(String(p.player_sk)) ?? null : null),
+          prior_air_yards_share: finite(p.player_sk != null ? priorRole.get(String(p.player_sk))?.airShare ?? null : null),
+          prior_wopr: finite(p.player_sk != null ? priorRole.get(String(p.player_sk))?.wopr ?? null : null),
           ...(() => {
             const e = ecrWk.get(ecrWeekCutoff(sched, season, p.team, week) ?? "", p.name, p.pos);
             return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null };

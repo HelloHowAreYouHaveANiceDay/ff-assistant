@@ -1257,6 +1257,10 @@ CREATE TABLE IF NOT EXISTS feat_player_week_model (
   td_rush_yards   REAL,
   rz_share_td     REAL,              -- rolling season-to-date red-zone touch share (pbp), weeks < w -- 2026-09-15 candidate
   prior_vol_cv    REAL,              -- prior-season weekly CV (volatility), always known -- 2026-09-15 candidate
+  -- PRIOR-SEASON ROLE SHAPE -- archetype rather than level, both from the COMPLETED prior season
+  -- and so knowable on September 1. 2026-09-23 candidates (scripts/segment-screen.mjs).
+  prior_air_yards_share REAL,        -- how DEEP he was targeted last year
+  prior_wopr            REAL,        -- how CONCENTRATED his team's target share was on him
   -- FantasyPros WEEKLY positional consensus, from the latest `wp` scrape at or before this team's
   -- kickoff minus two days (src/weekly/features.ts ecrWeekTable). The archive covers 2020-2024 only,
   -- so every other season -- and the live season -- is NULL by construction. 2026-09-16 candidate.

@@ -144,6 +144,11 @@ CENTER = [
     "td_games", "spread_line", "total_line",
     "implied_team_total", "days_rest", "week_no", "season_line_pg",
     "td_fd", "td_ts", "td_attempts", "td_rush_yards", "rz_share_td", "prior_vol_cv",
+    # PRIOR-SEASON ROLE SHAPE. Centred like any other prior-season column. POS_GATED below to the
+    # pass catchers: a running back has no meaningful air-yards share, and fitting one for him
+    # measures the target feed's coverage rather than his job -- the same reason prior_route_share
+    # excludes QB.
+    "prior_air_yards_share", "prior_wopr",
     # WEEKLY EXPERT CONSENSUS (M2a candidate, 2026-09-16). The FantasyPros weekly positional consensus
     # rank and the panel's dispersion around it, as of this team's kickoff minus two days. Centred like
     # any other level column. src/weekly/features.ts ecrWeekTable carries the as-of rule and the era
@@ -153,9 +158,26 @@ CENTER = [
     # the league week's first kickoff; src/weekly/features.ts CONTEXT_FIELDS carries each column's
     # as-of rule and the reason the anchor is different.
     "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
+    # THE OPPONENT BLOCK, from feat_player_week_stream (src/weekly/streamingFeatures.ts). POINT IN
+    # TIME: each is accumulated over weeks STRICTLY BEFORE w of season Y, blended with all of Y-1 and
+    # shrunk toward the league mean, so week 1 carries no current-season term at all. VERIFIED on the
+    # stored table rather than trusted from the code -- `opp_pa_pos_n` is 0 for every week-1 row and
+    # its per-week MAX is exactly w-1, which a leaked build (leakOpponentThroughWeek) could not be.
+    #
+    # POS_GATED TO QB. D19 dropped defence-versus-position as neutral POOLED across positions; that
+    # verdict does not settle one position's case. The QB pre-filter (scripts/qb-opponent-prefilter.mjs)
+    # is what earned these a screen: opp_pa_pos partials at 0.0684 against a measured shuffle-null p95
+    # of 0.0209, and -- the actual reason it is interesting -- it RETAINS 88% of its raw correlation
+    # under partialling (0.0777 -> 0.0684) where total_line retains 27% and td_ppg 11%. It is a weak
+    # signal that is nearly ORTHOGONAL to the market block the head already reads, which is the only
+    # kind worth adding.
+    "opp_pa_pos", "opp_def_sacks_pg", "opp_def_takeaways_pg", "opp_pass_yds_allowed_pg",
 ]
 INDICATOR = [
     "home",
+    # Stadium, same source and the same QB gate. A dome is not an opponent, but it arrives on the
+    # same row from the same table and cleared the same pre-filter (partial 0.0282, 12/14 seasons).
+    "roof_dome",
     "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited",
     # NOT an injury signal: 1 where the feed published a dated report for this league-week at all.
     # From 2025 it stopped publishing dates, so every status is NULL for reasons that have nothing
@@ -176,9 +198,19 @@ POS_GATED = {
     "rz_share_td": {"RB", "WR", "TE"},
     # prior-season volatility applies to every skill scorer's spread.
     "prior_vol_cv": {"RB", "WR", "TE"},
+    "prior_air_yards_share": {"WR", "TE"},
+    "prior_wopr": {"WR", "TE"},
     # A quarterback runs no routes. The charted route share is a receiver's workload column and
     # fitting it for QB measures the participation feed's coverage, not his job.
     "prior_route_share": {"RB", "WR", "TE"},
+    # THE OPPONENT BLOCK IS QB-ONLY, and that is the experiment rather than an assumption. It is
+    # gated here so a QB-segment result cannot be diluted ~4x by three positions it was never
+    # screened for; RB/WR/TE each need their own pre-filter before they earn the same column.
+    "opp_pa_pos": {"QB"},
+    "opp_def_sacks_pg": {"QB"},
+    "opp_def_takeaways_pg": {"QB"},
+    "opp_pass_yds_allowed_pg": {"QB"},
+    "roof_dome": {"QB"},
 }
 
 # The columns stage one is not allowed to be run without. A two-part model whose first stage sees
@@ -220,18 +252,36 @@ MASKABLE_GROUPS = {
     # no value at all. Masking it at 0.97 is the honest match to the serve regime -- a tree that never
     # saw the column absent would route a 2026 lineup into an out-of-distribution leaf (D19, gate 7).
     "ecr":   ["ecr_wk_rank", "ecr_wk_sd"],
+    # THE OPPONENT BLOCK GETS ITS OWN GROUP, and omitting it would be the D19 gate-7 blocker again.
+    # These columns need a schedule and an opponent, so a FORWARD/ROS week has none -- and the lineup
+    # verb projects forward weeks every time it runs. A tree that never saw the block absent routes
+    # an all-imputed forward row into an out-of-distribution leaf and prices a locked starter at a
+    # few points. MEASURED on the live store: 2026 coverage is 8670/9414 = 92% for opp_pa_pos and
+    # 7345/9414 = 78% for roof_dome, i.e. absent on roughly the forward tail, so 0.25 is the honest
+    # match to the serve regime rather than a guess.
+    "opp":   ["opp_pa_pos", "opp_def_sacks_pg", "opp_def_takeaways_pg",
+              "opp_pass_yds_allowed_pg", "roof_dome"],
 }
-MASK_DROP_P = {"avail": 0.97, "usage": 0.6, "odds": 0.5, "form": 0.4, "ecr": 0.97}
+MASK_DROP_P = {"avail": 0.97, "usage": 0.6, "odds": 0.5, "form": 0.4, "ecr": 0.97, "opp": 0.25}
 
 ALL_FEATURES = RATIO_TO_LINE + CENTER + INDICATOR
 
 SELECT_COLS = [
     "feat_key", "player_sk", "season", "week", "name", "pos", "season_line_pg",
     "td_games", "td_ppg", "t4_mean", "t4_sd", "td_fd", "td_ts", "td_attempts", "td_rush_yards",
-    "rz_share_td", "prior_vol_cv", "ecr_wk_rank", "ecr_wk_sd",
+    "rz_share_td", "prior_vol_cv", "prior_air_yards_share", "prior_wopr", "ecr_wk_rank", "ecr_wk_sd",
     "home", "spread_line", "total_line", "implied_team_total", "days_rest",
     "prior_snap_share", "prior_route_share", "depth_rank", "teammates_out",
     "inj_out", "inj_doubtful", "inj_questionable", "prac_dnp", "prac_limited", "inj_feed",
+]
+
+# The opponent block lives in a DIFFERENT table (feat_player_week_stream) and is reached by a LEFT
+# JOIN, so it is listed separately and every name is qualified. LEFT, not INNER: a model row with no
+# streaming row must survive as NULL and be imputed, never be dropped from the population -- an inner
+# join here would silently change WHICH ROWS the model is fitted on, which is a different experiment
+# from the one being run and would make the paired comparison meaningless.
+STREAM_COLS = [
+    "opp_pa_pos", "opp_def_sacks_pg", "opp_def_takeaways_pg", "opp_pass_yds_allowed_pg", "roof_dome",
 ]
 
 
@@ -269,7 +319,7 @@ def load_rows(db_path, lo, hi, population):
     """
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    where = "pts IS NOT NULL" if population == "played" else "COALESCE(is_bye, 0) = 0"
+    where = "m.pts IS NOT NULL" if population == "played" else "COALESCE(m.is_bye, 0) = 0"
     # THE DECISION POPULATION, READ AND NOT RECOMPUTED. A missing or unbuilt column is a REFUSAL and
     # not a fallback to "everything": falling back would silently fit the old, wider set while the
     # artifact claimed the new one, which is the same class of defect this whole change is about.
@@ -290,11 +340,42 @@ def load_rows(db_path, lo, hi, population):
         sys.exit(
             "train_weekly: the `" + POPULATION_COLUMN + "` column exists but no row in " +
             str(lo) + "-" + str(hi) + " has been built. Run `ff build-weekly-population`.")
+    has_stream = con.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='feat_player_week_stream'"
+    ).fetchone()[0] > 0
+    # A store without the streaming table reads every opponent column as NULL, which is exactly what
+    # a store that HAS the table and no value says. That is fine for the model -- both impute -- but
+    # it must not be silent, because "the join was never made" and "the opponent is unknown" are very
+    # different facts about a run and only one of them is a data problem.
+    if not has_stream:
+        print("train_weekly: feat_player_week_stream ABSENT -- the opponent block will be NULL for "
+              "every row. Run `ff build-weekly-features` to populate it.", file=sys.stderr)
+    # RESOLVE EVERY COLUMN AGAINST THE ACTUAL TABLE instead of assuming the declaration matches the
+    # store. A column added to SELECT_COLS before its migration has run makes this query throw, and
+    # because `evaluate-weekly` re-invokes this trainer PER FOLD, that turns an unrelated in-flight
+    # experiment into a pile of dead folds -- which is exactly what it did on 2026-09-23, killing
+    # three running evaluations whose feature lists did not even mention the new columns.
+    #
+    # Missing columns are served as NULL and NAMED on stderr. Silence is not an option: "the column
+    # is not in this store" and "the column is there and empty" are the same NULL to the model and
+    # completely different facts about the run.
+    have = {r[1] for r in con.execute("PRAGMA table_info(feat_player_week_model)").fetchall()}
+    missing_model = [c for c in SELECT_COLS if c not in have]
+    if missing_model:
+        print("train_weekly: feat_player_week_model is MISSING " + ", ".join(missing_model) +
+              " -- served as NULL. Run the migration (any `ff` verb opens the db and applies it), "
+              "then `ff build-weekly-features` to populate.", file=sys.stderr)
+    sel = [("m." + c if c in have else "NULL AS " + c) for c in SELECT_COLS] + [
+        ("s." + c if has_stream else "NULL AS " + c) for c in STREAM_COLS]
     cur = con.execute(
-        "SELECT " + ", ".join(SELECT_COLS) + ", COALESCE(pts, 0.0) AS pts"
-        " FROM feat_player_week_model"
-        " WHERE season BETWEEN ? AND ? AND " + where + " AND season_line_pg IS NOT NULL"
-        "   AND " + POPULATION_COLUMN + " = 1",
+        "SELECT " + ", ".join(sel) + ", COALESCE(m.pts, 0.0) AS pts"
+        " FROM feat_player_week_model m"
+        + (" LEFT JOIN feat_player_week_stream s"
+           "   ON s.season = m.season AND s.week = m.week AND s.feat_key = m.feat_key"
+           if has_stream else "")
+        + " WHERE m.season BETWEEN ? AND ? AND " + where
+        + " AND m.season_line_pg IS NOT NULL"
+          "   AND m." + POPULATION_COLUMN + " = 1",
         (lo, hi),
     )
     rows = []
