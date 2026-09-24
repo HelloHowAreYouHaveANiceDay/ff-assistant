@@ -178,14 +178,32 @@ interface EcrRow { rank: number; sd: number | null; name: string; pos: string; t
  * the first week of September -- the last consensus published before anyone plays. An in-season
  * scrape here would be lookahead wearing a preseason label.
  *
- * The CURRENT season comes from `ranking` instead, because that is the table the live board is built
- * from and this feature has to be the same number the board indexes its curve at. Reading the
- * archive for the live season would give the model a slightly different consensus from the one the
- * auction is actually priced against.
+ * THE CURRENT SEASON IS PINNED THE SAME WAY, AND THAT IS A CORRECTION (2026-09-23).
+ *
+ * It used to read the live `ranking` table unconditionally, reasoning that the feature should match
+ * the number the board indexes its curve at. That is true ON DRAFT DAY and false every day after:
+ * `ranking` is overwritten by each ECR scrape, so rebuilding features in week 3 stamps WEEK-3
+ * consensus onto a row labelled `<season>-09-01`. MEASURED when it happened: 345 of 401 rows changed
+ * `ecr_pos_rank`, the board moved a mean 8.33 points (max 56.5), and the suite's own guard --
+ * "THE SEPT-1 PIN IS BACKED BY SEPT-1 DATA -- the label is a claim, and this enforces it" -- failed.
+ * A model then fitted on those rows is fitted on lookahead.
+ *
+ * So the current season now takes the SAME archived preseason-window scrape every other season does.
+ * The live table is used only when TODAY is inside that window, where the two are the same thing by
+ * construction. Outside it, with no archive, this REFUSES BY NAME rather than silently relabelling
+ * week-3 data: `--as-of-today` is the escape hatch, and it moves the LABEL instead of faking it.
  */
-function ecrForSeason(db: DB, yr: number, currentSeason: number, resolver: SkResolver): Map<string, EcrRow> {
+export class PreseasonPinError extends Error {}
+
+function ecrForSeason(db: DB, yr: number, currentSeason: number, resolver: SkResolver, asOfToday = false): Map<string, EcrRow> {
   const out = new Map<string, EcrRow>();
-  if (yr === currentSeason) {
+  // Inside the preseason window the live table IS the preseason consensus; so is an explicit
+  // `--as-of-today` rebuild, whose rows are labelled with today rather than with September 1.
+  const inWindow = (() => {
+    const d = new Date(); const mm = d.getMonth() + 1, dd = d.getDate();
+    return d.getFullYear() === yr && (mm === 8 || (mm === 9 && dd <= 7));
+  })();
+  if (yr === currentSeason && (inWindow || asOfToday)) {
     const rows = db.prepare(
       "SELECT p.name, p.position AS pos, p.nfl_team AS team, r.overall_rank AS ecr FROM ranking r " +
       "JOIN player p USING(player_id) WHERE r.source='fantasypros_ecr' AND r.season=@s ORDER BY r.overall_rank",
@@ -208,6 +226,19 @@ function ecrForSeason(db: DB, yr: number, currentSeason: number, resolver: SkRes
       PRESEASON_WINDOW_SQL,
     ).all({ s: yr }) as typeof raw;
   } catch { return out; }
+  // THE CURRENT SEASON CANNOT FALL BACK TO NOTHING. A past season with no archive yields an empty
+  // map and the ECR columns are simply null -- honest, and the model has a declared missing value
+  // for them. The LIVE season with no archive is different: it would otherwise reach the live table
+  // and relabel today's consensus as September 1st, which is the bug this refuses.
+  if (yr === currentSeason && !raw.length) {
+    throw new PreseasonPinError(
+      `no archived preseason consensus for ${yr} (ranking_history ecr_type='ro' in the Aug/Sep-1-7 window), ` +
+      `and today is outside that window -- so a row labelled ${yr}-09-01 cannot be backed by ${yr}-09-01 data. ` +
+      `Rebuilding from the live \`ranking\` table would stamp in-season consensus under a preseason label ` +
+      `(measured 2026-09-23: 345 of 401 rows changed, board moved 8.33 pts mean). ` +
+      `Either run \`ff ingest-ecr-history\` so the window is populated, or pass --as-of-today to rebuild ` +
+      `with rows HONESTLY labelled today instead of September 1.`);
+  }
   if (!raw.length) return out;
   let latest = "";
   for (const r of raw) if (r.scrape_date > latest) latest = r.scrape_date;
@@ -261,6 +292,10 @@ export async function buildFeatures(opts: {
   dbPath?: string; seasons: number[];
   pointsPath?: string; weeklyPath?: string;
   weeks?: boolean;
+  /** Rebuild the CURRENT season from the LIVE consensus and label the rows with TODAY rather than
+   *  with September 1. The escape hatch for `PreseasonPinError`: it moves the label to match the
+   *  data instead of stamping in-season consensus under a preseason date. */
+  asOfToday?: boolean;
 }): Promise<BuildFeaturesResult> {
   const db = openDb(opts.dbPath);
   const cfg = getConfig(db);
@@ -374,7 +409,7 @@ export async function buildFeatures(opts: {
         if (!depthTeam.has(k)) depthTeam.set(k, team);   // earliest as_of wins
       }
     } catch { /* no depth chart in this store: the chain simply falls through as before */ }
-    const ecr = ecrForSeason(db, yr, cfg.season, resolver);
+    const ecr = ecrForSeason(db, yr, cfg.season, resolver, opts.asOfToday === true);
 
     // POINT-IN-TIME CURVES: fitted on seasons strictly before yr. Rebuilt per season rather than
     // once, which is the whole reason this column can be a feature at all.
@@ -419,7 +454,12 @@ export async function buildFeatures(opts: {
     const keys = new Set<string>(rows ? [...rows.keys()] : []);
     if (isCurrent) for (const k of ecr.keys()) keys.add(k);
 
-    const asOf = `${yr}-09-01`;
+    // THE LABEL FOLLOWS THE DATA. Under `--as-of-today` the current season's rows are built from the
+    // live consensus, so they are stamped with today -- never with September 1, which is the lie the
+    // pin guard exists to catch. Past seasons are unaffected: their data really is preseason.
+    const asOf = (opts.asOfToday === true && yr === cfg.season)
+      ? new Date().toISOString().slice(0, 10)
+      : `${yr}-09-01`;
     let withEcr = 0, withUsage = 0, withAge = 0, n = 0, resolved = 0;
     db.transaction(() => {
       // REPLACE THE SEASON, do not merge into it. `feat_key` is the surrogate key, so the upsert on

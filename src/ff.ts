@@ -2999,7 +2999,13 @@ async function cmdBuildFeatures(rest: string[]) {
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const seasons: number[] = []; for (let y = lo; y <= hi; y++) seasons.push(y);
   const t0 = Date.now();
-  const r = await buildFeatures({ dbPath: valueOf(rest, "--db"), seasons, weeks: !rest.includes("--no-weeks") });
+  // `--as-of-today` rebuilds the CURRENT season from the live consensus and LABELS the rows today.
+  // Without it, a current-season rebuild outside the preseason window REFUSES rather than stamping
+  // in-season ECR under a September-1 pin. See PreseasonPinError in src/features/build.ts.
+  const r = await buildFeatures({
+    dbPath: valueOf(rest, "--db"), seasons, weeks: !rest.includes("--no-weeks"),
+    asOfToday: rest.includes("--as-of-today"),
+  });
   console.log(`feat_player_season: ${r.seasonRows} rows over ${r.seasons.length} seasons ` +
     `(${((r.seasonResolved / Math.max(1, r.seasonRows)) * 100).toFixed(1)}% with player_sk)`);
   console.log(`feat_player_week:   ${r.weekRows} rows ` +

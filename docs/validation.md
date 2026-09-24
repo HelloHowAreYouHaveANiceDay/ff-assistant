@@ -7233,3 +7233,51 @@ suite                 1389/1386, the pre-existing carsonwentz failure
 its depth ordering inverted; the D18 seeded arm is unchanged to four decimals; the bootstrap's stated
 uncertainty is still honest. The migration lands because joining people on their names is wrong, not
 because it rescued a number -- and knowing precisely how little it moved is the useful part.
+
+## THE SEPT-1 PIN IS NOW ENFORCED AT THE SOURCE, NOT JUST BY A TEST (2026-09-23)
+
+`ecrForSeason` read the LIVE `ranking` table for the current season, reasoning that the feature
+should match the number the board indexes its curve at. True ON DRAFT DAY, false every day after:
+`ranking` is overwritten by each ECR scrape, so rebuilding features in week 3 stamps WEEK-3
+consensus onto rows labelled `<season>-09-01`.
+
+**WHAT IT COST WHEN IT HAPPENED.** Rebuilding 2026 features mid-season changed `ecr_pos_rank` on
+**345 of 401 rows**, moved the board a mean **8.33 points** (max 56.5 -- Keenan Allen 15.1 -> 71.6),
+and a projector retrained on those rows was fitted on lookahead. The suite's own guard caught it --
+*"THE SEPT-1 PIN IS BACKED BY SEPT-1 DATA -- the label is a claim, and this enforces it"* -- which is
+the only reason it was not shipped. The retrain was discarded and the artifact reverted.
+
+**THE FIX.** The current season now takes the SAME archived preseason-window scrape every other
+season does. The live table is used only when TODAY is inside that window, where the two are the
+same thing by construction. Outside it, with no archive, `buildFeatures` throws `PreseasonPinError`
+naming the problem and both remedies. `--as-of-today` is the escape hatch and it moves the LABEL to
+today rather than faking a September date -- the label follows the data, always.
+
+**VERIFIED BY POSITIVE CONTROL, both directions:**
+
+```
+build-features --seasons 1999-2026   REFUSES: "no archived preseason consensus for 2026 ... a row
+                                     labelled 2026-09-01 cannot be backed by 2026-09-01 data"
+build-features --seasons 1999-2025   builds normally, 18s
+after:  feat_player_season 2026 = 523 rows, every as_of = 2026-09-01   (pin intact, untouched)
+        Travis Hunter 2025 = WR, 49.8 pts / 7 games                    (the history fix landed)
+        Travis Hunter 2026 prior_pts = null                            (correctly still frozen)
+```
+
+**AND THE HONEST CONSEQUENCE.** Hunter's served line stays 71. His corrected 2025 history reaches
+the 2025 FEATURE row, but his 2026 row is pinned to September 1 and cannot legitimately absorb it
+until a real preseason rebuild. That is the system working: a data fix found in week 3 does not get
+to rewrite what the model "knew" in August. The alternative -- relabelling -- is what was just
+rejected.
+
+**REMAINING GAP, NOT CLOSED:** `ranking_history` is fed only by the bulk FantasyPros archive
+(`ingest-ecr-history`), which holds nothing for 2026 -- its `ro`/`rp` types stop at 2025-08-08. So
+the 2026 September-1 consensus is simply gone and cannot be reconstructed. Snapshotting the live
+`ranking` table into `ranking_history` on every ECR ingest would make future mid-season rebuilds
+possible instead of merely refused. That is the durable other half and it is not done here.
+
+**A TEST-SUITE DEFECT SURFACED BY ALL THIS.** With no process holding `data/ff.db`, a read-only test
+connection in WAL mode breaks a concurrent read-write migration in `openDb` (`SQLITE_READONLY`).
+PROVEN: `backtest-pool.test.ts` alone passes; run with `board-stamp.test.ts` both its tests fail. It
+was invisible all session because the Electron app kept `-shm` alive, which means the standing
+"1389/1386" baseline was measured WITH the app running. The suite is not self-contained.
