@@ -492,7 +492,15 @@ function localDate(d = new Date()): string {
 }
 
 export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: number[]; pauseMs?: number; leagueId?: string; refetch?: boolean })
-  : Promise<{ counts: RosterWeekCounts; checks: RosterWeekCheck[]; findings: GuardFinding[]; refetched: number }> {
+  : Promise<{
+    counts: RosterWeekCounts; checks: RosterWeekCheck[]; findings: GuardFinding[];
+    /** Live weeks that actually came back from ESPN. NOT the number attempted -- see the loop. */
+    refetched: number;
+    /** Live weeks that were attempted and FAILED, and so were served from stale cache. */
+    failed: number;
+    /** The distinct reasons those fetches failed, for the caller to print. */
+    failNotes: string[];
+  }> {
   const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
   const db = openDb(opts.dbPath);
   try {
@@ -506,6 +514,17 @@ export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: numb
     // bug this replaced, and it is only visible if the number is printed.
     const kick = weekKickoffs(db);
     let refetched = 0;
+    // ATTEMPTED IS NOT FETCHED, AND THE OLD COUNT CONFLATED THEM. `refetched` counted `willFetch`,
+    // i.e. the INTENTION to go to the network, and `fetchRosterWeek` swallows every failure into
+    // `{available:false, note}` so it can keep going. So on 2026-09-23, with the desktop app shut
+    // down, all sixteen live weeks FAILED with "app bridge not available", every read silently fell
+    // back to a four-hour-old cache, and the run cheerfully printed "16 week(s) refetched from
+    // ESPN". The owner spotted the stale lineup; nothing in the pipeline did.
+    //
+    // A wrapper that reports success is indistinguishable from a command that succeeded. So count
+    // what actually came back, and carry the failures' reasons out for the caller to print.
+    let failed = 0;
+    const failNotes = new Set<string>();
     for (const season of opts.seasons) {
       for (let w = 1; w <= weeksInSeason(season); w++) {
         const before = Date.now();
@@ -513,13 +532,17 @@ export async function ingestLeagueRosters(opts: { dbPath?: string; seasons: numb
         const freshAfter = opts.refetch ? new Date() : weekPayloadFreshAfter(kick, season, w);
         const captured = cacheCapturedAt(key);
         const willFetch = !captured || (freshAfter != null && captured < freshAfter);
-        if (willFetch) refetched++;
-        fetched.push(await fetchRosterWeek(leagueId, season, w, { freshAfter }));
+        const got = await fetchRosterWeek(leagueId, season, w, { freshAfter });
+        if (willFetch) {
+          if (got.available) refetched++;
+          else { failed++; if (got.note) failNotes.add(got.note); }
+        }
+        fetched.push(got);
         if (willFetch && Date.now() - before < pause) await new Promise((r) => setTimeout(r, pause));
       }
     }
     const counts = loadLeagueRosterWeeks(db, leagueId, fetched, nowIso());
     const checks = readBackRosterWeeks(db, leagueId);
-    return { counts, checks, findings: checkRosterWeeks(checks), refetched };
+    return { counts, checks, findings: checkRosterWeeks(checks), refetched, failed, failNotes: [...failNotes] };
   } finally { db.close(); }
 }

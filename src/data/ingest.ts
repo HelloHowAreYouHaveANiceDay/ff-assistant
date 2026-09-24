@@ -511,6 +511,13 @@ export const RAW_ASSETS: RawAsset[] = [
       // rule did not fire, which is exactly the failure this line exists to make visible.
       console.log(`  raw_league_roster_week: ${r.refetched} week(s) refetched from ESPN, the rest served from cache` +
         `; ${r.counts.removed} stale row(s) removed (men no longer on that week's roster)`);
+      // A FAILED FETCH IS LOUD, because the fallback is a silent read of stale cache and the whole
+      // point of this asset is that the live week is live. See the note in ingestLeagueRosters.
+      if (r.failed) {
+        console.log(`  raw_league_roster_week: ${r.failed} live week(s) FAILED to fetch and were served ` +
+          `from CACHE -- these rows may be stale:`);
+        for (const n of r.failNotes) console.log(`    - ${n}`);
+      }
       for (const f of r.findings) console.log(`  raw_league_roster_week ${f.season}: ${f.what} (${f.got} > ${f.limit})`);
       return r.counts.rows;
     },
