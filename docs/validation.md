@@ -7384,3 +7384,55 @@ evaluator prints progress there too, so `eval-X.json` is banner + progress + JSO
 `weekly-paired-floor.mjs` does a plain `JSON.parse` on that path. Every gate above would have
 thrown. Found while recovering from an unrelated OOM, not by any check -- a reminder that a
 harness nobody has run is not a harness.
+
+### PHASE 2: PRIOR ROLE SHAPE (adot / WOPR) ALSO REJECTS, AND THE REBUILD CONTROL IS CLEAN (2026-09-24)
+
+The last two segment-screen candidates, wired as ordinary WR/TE features and measured against a
+baseline RE-RUN ON THE REBUILT TABLE (`base2`), because the rebuild rewrites the very table a
+pre-rebuild baseline was fitted from.
+
+```
+                              ALL 14 seasons   2.9*SE floor   wins    bootstrap 95% CI
+adot (prior_air_yards_share
+      + prior_wopr, WR/TE)      -0.00072         0.00218       4/10   [-0.00202, +0.00075]
+```
+
+REJECT on all three blocks (selection -0.00049, 2/7; holdout -0.00114, 2/3). Per position, pooled:
+WR -0.0016, TE -0.0022, and QB/RB EXACTLY 0.0000 -- `POS_GATED` verified again on an otherwise
+identical pair.
+
+**THE REBUILD CONTROL, which is the part that makes the above trustworthy.** `base2` vs phase-1
+`base` -- same 26 features, same everything, only the rebuild between them:
+
+```
+  improvement: +0.00041 CRPS   floor 0.00170   8/6 seasons   CI [-0.00075, +0.00151]
+  VERDICT: REJECT
+```
+
+Here a REJECT is the DESIRED result and the word is misleading out of context: it means the two
+arms are INDISTINGUISHABLE, i.e. the rebuild moved nothing material. Had `base2` drifted from
+`base` by more than the floor, every phase-2 number would have been measuring the rebuild rather
+than the columns, and the adot verdict would have been worthless. The control is what licenses
+reading it at all. Row count moved 187566 -> 187601 (+35, the live 2026 season), and every
+historical season's line came from its own blind artifact (`--artifact-dir data/fold-artifacts-d16`,
+logged per season).
+
+**FIVE CANDIDATES, FIVE REJECTIONS.** The segment programme produced no admitted feature:
+
+```
+  cand  QB opponent block        -0.00251   HARMFUL (CI excludes zero, 2/12)
+  rz    rz_share_td              -0.00126   null
+  vol   prior_vol_cv             +0.00008   null (pre-registered as such)
+  adot  air-yards share + WOPR   -0.00072   null
+```
+
+Every one had screen evidence: MAIN effects at 3.4x-5.4x their own shuffle nulls, a partial
+correlation 3.3x its null that retained 88% of its raw signal. The screens were not wrong about
+the SIGNAL BEING PRESENT. They were silent about what a column COSTS, and on per-position heads
+fitted on 9.7k-19k rows that cost dominates. The served 26-feature artifact is better than any of
+the 27-to-31-feature variants tried against it.
+
+The honest summary of the night: **the weekly model is at a local optimum that cheap residual
+screens cannot climb out of, and residual-correlation screening is a REJECTION tool, not a
+discovery tool.** A future candidate should be judged on whether it plausibly carries information
+the anchors CANNOT, not on how orthogonal its residual correlation looks.
