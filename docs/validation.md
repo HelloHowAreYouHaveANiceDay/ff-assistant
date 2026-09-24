@@ -7739,3 +7739,48 @@ a hidden one.
 
 `tradeCheck` and `depthRisk` use the same hardcoded `[7, 101]` and the same unpaired floor. Not
 touched here: they need the same treatment and their own verification, not a copy-paste.
+
+### THE "waivers vs stream DISAGREE" GAP IS BY DESIGN, AND THE HARNESS CANNOT SCORE IT (2026-09-24)
+
+`waiverTargets` ranks the free-agent pool by value-over-replacement (`rankedByVor: 332,
+rankedByWeekly: 0`); `stream_recommend` ranks it by this week's projection. In week 3 2026 they
+disagreed completely -- the waiver shortlist was four TEs, a DST and a kicker with NO WR, while
+`stream` had Rashod Bateman free at 9.35 weekly points. That looks like a defect. It is not.
+
+**IT WAS INVESTIGATED AND RETRACTED YESTERDAY.** Ranking the live shortlist with the weekly
+projector produced a top-5 of FOUR QUARTERBACKS -- the exact failure VOR's own docstring says it
+exists to prevent ("season point totals are not comparable across positions... the top nAdds were
+QUARTERBACKS every single time"). VOR is in production deliberately.
+
+**AND THE OBVIOUS TEST CANNOT SETTLE IT.** Re-running `waiver-policy-backtest.mjs` today gives:
+
+```
+  arm                                our ppg   room ppg    edge   weeks won
+  PRODUCTION proxy (season line)        6.53      6.83     -0.30      42%
+  PRODUCTION proxy (season line VOR)    5.13      6.83     -1.70       9%
+  shipped (projection)                  8.07      6.83     +1.24      80%
+  usage @ WR                            7.91      6.83     +1.08      74%
+```
+
+Reading "VOR 5.13 vs projection 8.07" as "VOR is costing us 3 points a game" is the RETRACTED
+CLAIM RUNNING IN REVERSE. `backtestWaivers` scores RAW points per game, which is position-blind:
+the 8.07 arm gets there by taking 54% quarterbacks (who realise 11.52 against 6.61 for backs), and
+the mix ALONE predicts 9.16 for its picks -- so within position it is a WORSE picker than the room
+by 1.09. The retraction's durable instruction is that any ranking experiment on this harness must
+report the mix decomposition, and `backtestWaivers`'s summary does not expose one
+(`roomPpg`/`ourPpg`/`weeksWon`/`bidBuckets`, no `byPos`). So the experiment cannot be run validly
+without changing the harness first.
+
+**WHAT IS ACTUALLY KNOWN, and it is not nothing.** `breakout-screen.mjs` ranks WITHIN position, so
+cross-position mix cannot explain it, and its usage admit at WR and ECR admits at WR/QB stand. So:
+within a position, a usage-aware ranking beats the season line. Across positions, VOR is the thing
+keeping the shortlist from being all quarterbacks.
+
+**THE REAL GAP, STATED PROPERLY:** not "VOR versus weekly" -- it is *how to inject a within-position
+usage signal into a cross-position VOR ranking without reintroducing the mix defect*. That is a
+well-posed problem. The enabling step is a `byPos` block on `backtestWaivers`'s summary, which is
+what makes any answer to it checkable.
+
+This is also the concrete cost of the gap: Malachi Fields (NYG, 81% snap share, 16.3% target share,
+WR2 on his depth chart) is exactly the profile the usage screen admits at WR, and he is invisible to
+a shortlist ranked on a rookie's 1.65 season line.
