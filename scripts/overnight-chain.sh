@@ -76,9 +76,32 @@ done
 # 931MB against 1.7TB free. This repo has already lost a database to an unguarded file operation;
 # the backup is the cheapest possible insurance against losing another.
 BK=data/ff.db.bak-chain-$(date '+%Y%m%d-%H%M%S')
-say "backing up ff.db -> $BK"
-cp data/ff.db "$BK" || { say "ABORT: backup failed"; exit 1; }
-say "  backup size: $(wc -c < "$BK") bytes"
+say "backing up ff.db -> $BK (VACUUM INTO, not cp)"
+# `cp` IS THE WRONG TOOL HERE AND THE DESKTOP APP IS WHY. The store runs in WAL mode, so the
+# committed state is split between ff.db and ff.db-wal; a byte copy of the main file taken while
+# another process holds it can miss the WAL entirely and produce a TORN backup -- one that looks
+# fine (right size, right name) and restores to a corrupt database. That is the worst possible
+# failure for a safety net, because it only reveals itself when you need it.
+#
+# VACUUM INTO goes through SQLite, which takes a read transaction and writes a consistent,
+# fully-checkpointed database. Then integrity_check PROVES the copy is readable rather than
+# assuming it: this repo has already lost a store to an unguarded file operation, and a backup
+# nobody verified is a backup nobody has.
+node - "$BK" <<'NODE'
+const Database = require("better-sqlite3");
+const out = process.argv[2];
+const db = new Database("data/ff.db", { readonly: true });
+db.prepare("VACUUM INTO ?").run(out);
+db.close();
+const chk = new Database(out, { readonly: true });
+const r = chk.prepare("PRAGMA integrity_check").get();
+const v = r.integrity_check ?? Object.values(r)[0];
+chk.close();
+console.log("integrity_check: " + v);
+if (String(v) !== "ok") process.exit(1);
+NODE
+[ $? = 0 ] || { say "ABORT: backup failed or did not verify"; exit 1; }
+say "  backup verified: $(wc -c < "$BK") bytes"
 
 # --artifact-dir IS NOT OPTIONAL. Without it every historical season's line is projected from an
 # artifact that has SEEN that season, which silently contaminates the entire weekly table with
