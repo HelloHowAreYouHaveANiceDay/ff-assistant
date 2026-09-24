@@ -7483,3 +7483,56 @@ than from the pre-rebuild `base`. That is not drift. `rescore-base` REUSES folds
 rebuild and scores them on post-rebuild rows, while `base2` trained fresh folds on post-rebuild
 data -- so the MODELS differ, not the rows. Both re-scored arms got identical treatment, so the
 pair remains matched and the QB gate above is valid.
+
+### WHY THE FEATURE PROGRAMME FAILED: WRONG CLASS, NOT WRONG SCREEN (2026-09-24)
+
+Calibration against the only weekly feature this repo has ever ADMITTED, all on pooled CRPS:
+
+```
+  arm    effect      floor     effect/floor   what it is
+  cand  -0.00251   0.00220       -1.14        QB opponent block (5 cols)   DERIVED
+  rz    -0.00126   0.00207       -0.61        rz_share_td                  DERIVED
+  vol   +0.00008   0.00284       +0.03        prior_vol_cv                 DERIVED
+  adot  -0.00072   0.00218       -0.33        air-yards share + WOPR       DERIVED
+  ---------------------------------------------------------------------------------
+  ecr   +0.04134   0.01650       +2.51        WEEKLY EXPERT CONSENSUS      EXTERNAL
+```
+
+On our 14-season SE, `ecr_wk_rank`'s +0.04134 would be **19x the floor**. Our four candidates ran
+from +0.03x to -1.14x. These are not marginal misses; they are two orders of magnitude short.
+
+**SO THE GATE IS NOT TOO STRICT. A REAL FEATURE CLEARS IT BY 19x.** And the distinguishing property
+is not cleverness, it is PROVENANCE. Every one of the four rejects was DERIVED from data the model
+already holds -- opponent columns from the same box scores its history comes from, `rz_share_td`
+from the same play-by-play, air-yards share and WOPR from the same targets, `prior_vol_cv` from the
+same weekly points. A boosted tree can already express any monotone recombination of what it has;
+a derived column buys parameters, not information. `ecr_wk_rank` is a human panel's weekly forecast:
+information that does not exist anywhere in the store's own history.
+
+**THIS RETIRES A PROPOSAL I MADE HOURS EARLIER.** The plan's item 2 was a capacity-cost baseline --
+fit k pure-noise columns per position to price what a column COSTS, then require net = signal -
+cost. It is second-order and not worth building: even a column with ZERO capacity cost would be
+worth about 0.002 here, and the bar is 0.04. Pricing the cost cannot rescue candidates that are
+twenty times too small on the signal side.
+
+**THE DIRECTION THAT FOLLOWS:** stop screening recombinations of the existing store and go acquire
+EXTERNAL forecasts. The direct analogue of the one thing that worked is **Vegas player props**
+(passing/rushing/receiving yardage lines, anytime-TD prices) -- a market forecast of the INDIVIDUAL
+player, exactly as `spread_line`/`total_line` are a market forecast of the team and are already
+among the most-used columns. `raw_nfl_game` carries team odds and there is no player-prop table, so
+this is new ingestion rather than a new transformation. Weather is the same class but NOT free:
+`raw_nfl_game.temp`/`wind` are REALISED values, so fitting them is lookahead; it needs a forecast
+feed keyed to the Friday cutoff.
+
+**AND PROTECTING WHAT WE ALREADY HAVE BEATS EVERY CANDIDATE SCREENED.** `ecr_wk_rank` is live-fed
+and its coverage this season is patchy:
+
+```
+  2026  wk1 0.0%   wk2 82.5%   wk3 69.1%   wk4 3.9%          2025: 0.0% (absent all season)
+```
+
+Week 1's scrape was MISSED OUTRIGHT. A missed week cannot be backfilled -- the feed publishes only
+its latest scrape -- so every week the `rankings` routine does not run gives back a feature worth
+19x the admission floor, which is more than the entire five-candidate programme was ever going to
+earn. For the week-3 decision the serve was healthy: 9 of our 10 skill players carried it, the only
+gap being Michael Pittman Jr., who is OUT with an ankle and whom the panel therefore does not rank.
