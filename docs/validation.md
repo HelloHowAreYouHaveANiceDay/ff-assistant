@@ -7536,3 +7536,46 @@ its latest scrape -- so every week the `rankings` routine does not run gives bac
 19x the admission floor, which is more than the entire five-candidate programme was ever going to
 earn. For the week-3 decision the serve was healthy: 9 of our 10 skill players carried it, the only
 gap being Michael Pittman Jr., who is OUT with an ankle and whom the panel therefore does not rank.
+
+### ROUND TWO: PROVENANCE IS NECESSARY AND NOT SUFFICIENT EITHER (2026-09-24)
+
+`ecr_wk_skew` -- the expert panel's ASYMMETRY, ((worst-ecr)-(ecr-best))/(worst-best) -- REJECTS on
+the block it was pre-registered on.
+
+```
+  PRE-REGISTERED (2020-2024, where the weekly archive exists; the block ecr_wk_rank was admitted on)
+    improvement  -0.00293 CRPS   floor 0.00622   1/4 seasons   CI [-0.00601, +0.00123]   REJECT
+    holdout 2021-2024            -0.00271        floor 0.00799   1/3               REJECT
+  CONTEXT (all 14 seasons; 9 identical by construction, so this is diluted, not a second test)
+    improvement  -0.00033         floor 0.00290   7/7 seasons                              REJECT
+  per position: QB -0.0014  RB -0.0004  WR +0.0010  TE -0.0029
+```
+
+**SIX CANDIDATES, SIX REJECTIONS.** And this one was the best-motivated of them: it cleared the only
+disqualifier that has ever mattered (correlation -0.012 with `sd`, retaining 96.9% of its spread
+after the two fitted ECR columns), and it came from the ONE provenance that has ever produced an
+admitted weekly feature.
+
+**SO THE PROVENANCE RULE NEEDS SHARPENING, AND THIS IS THE USEFUL PART.** "External" was the wrong
+abstraction. What `ecr_wk_rank` is, precisely, is a DIRECT FORECAST OF THE TARGET: a panel of humans
+predicting the very quantity the model predicts, weekly, for that player. `ecr_wk_skew` is not a
+forecast at all -- it is META-INFORMATION ABOUT a forecast, the shape of the panel's disagreement.
+That is a different kind of object, and it turns out to be the wrong kind.
+
+The three classes now have evidence behind them:
+
+```
+  DERIVED from our own rows          4 candidates, 4 rejections (one harmful)
+  META-INFORMATION about a forecast  1 candidate,  1 rejection
+  A DIRECT FORECAST OF THE TARGET    1 candidate,  1 ADMISSION at 19x the floor
+```
+
+The prediction this makes is testable and it is the queue for round three: **Vegas player props**
+(per-player yardage lines and anytime-TD prices) are direct forecasts of the target's components,
+and ESPN's own `proj_pts` is a direct forecast of the target itself. `raw_espn_projection` is
+already in the store and is exactly the right class -- and holds ONLY 2026, so there is no history
+to fit it on. That is the binding constraint on round three, not the screening.
+
+A note on what did NOT go wrong: the skew column is not dead. Coverage tracks `ecr_wk_rank` to
+within 0.5pp per season across 37575 rows, spanning -0.920 to 1.000. The lever was connected and
+the model declined it.
