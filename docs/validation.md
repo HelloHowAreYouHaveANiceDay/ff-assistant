@@ -7325,3 +7325,62 @@ is a WEAKER prior than the model's missing-value default. The full retrain reach
 independently (69.8). The bug was real, the fix is right, and the player is not better than the board
 already thought. Finding that out cost a corrupted database and a discarded retrain; the fix itself
 is two carried-over columns.
+
+### THE QB OPPONENT BLOCK: A STRONG PRE-FILTER, AND THE MODEL SAYS NO (2026-09-24)
+
+Three weekly arms, each differing from a byte-identical baseline by one thing. All three REJECT on
+the paired-season floor, and the most promising one does not merely fail -- it HARMS.
+
+```
+arm   what                          ALL 14 seasons    2.9*SE floor   wins   bootstrap 95% CI
+cand  QB opponent block (5 cols)    -0.00251 CRPS       0.00220       2/12   [-0.00405, -0.00124]
+rz    rz_share_td (RB/WR/TE)        -0.00126            0.00207       6/8    [-0.00271, +0.00001]
+vol   prior_vol_cv (RB/WR/TE)       +0.00008            0.00284       9/5    [-0.00189, +0.00178]
+```
+
+**`cand` IS NOT A NULL. Its bootstrap CI EXCLUDES ZERO ON THE NEGATIVE SIDE** on all fourteen
+seasons AND on the nine selection seasons (-0.00200, 1/8, [-0.00298, -0.00103]). Twelve of fourteen
+seasons got worse. Adding the opponent block to the QB head makes the model measurably worse.
+
+**THE POOLED NUMBER UNDERSTATES IT ~6x, and the per-position table is also a positive control on
+POS_GATED** (pooled over seasons, so direction and magnitude only -- there is no paired SE here):
+
+```
+arm    QB        RB        WR        TE
+cand  -0.0183   +0.0000   +0.0000   +0.0000     <- moves QB and NOTHING else
+rz    +0.0000   -0.0020   -0.0019   -0.0015     <- moves RB/WR/TE and NOTHING else
+vol   +0.0000   -0.0005   +0.0012   -0.0005
+```
+
+The non-gated positions are EXACTLY 0.0000, to four decimals, on arms that are otherwise identical.
+That proves the gating is real and the arms differ only where they claim to. The real QB cost is
+**-0.0183 CRPS**, diluted to -0.0025 because QB is 17.6% of scored rows.
+
+**WHY THE PRE-FILTER WAS WRONG, WHICH IS THE PART WORTH KEEPING.** `opp_pa_pos` looked like the
+best candidate this repo has screened in a while: partial correlation 0.0684 against a measured
+shuffle-null p95 of 0.0209, same-signed in 13 of 14 seasons, and -- the reason it was compelling --
+it RETAINED 88% of its raw correlation under partialling where `total_line` retained 27%. It really
+is nearly orthogonal to the market block. All of that was true and none of it mattered.
+
+A partial correlation measures whether SIGNAL EXISTS. It cannot measure what ADDING A COLUMN COSTS.
+The QB head is fitted on ~9.7k rows; going 23 -> 28 features spends variance, and the boosted heads
+already extract the market non-linearly. The information was real, the incremental value was
+negative, and a LINEAR screen against realised points is structurally blind to that trade.
+
+So: **orthogonality is necessary but not sufficient, and a pre-filter is a cheap way to REJECT
+candidates, never a reason to expect a gain.** D19 dropped defence-versus-position as neutral under
+boosting; this extends that verdict rather than overturning it -- at QB specifically, with a
+purpose-built point-in-time opponent block, it is not neutral but harmful.
+
+`vol` was PRE-REGISTERED IN THE RUNNER AS AN EXPECTED NULL before any number existed (its segment
+screen was 1.5x its own shuffle null, which is noise-shaped; it was run because the machine had
+idle cores, not because the evidence improved). It returned +0.00008 with 9/5 seasons -- a null, as
+predicted. Recording the prediction in advance is what makes that reading worth anything.
+
+Nothing admitted, so no family FDR correction is owed. Three candidates tested, three rejected.
+
+**AND THE GATE HAD NEVER BEEN RUN END TO END.** `npm run` prints its banner to stdout and the
+evaluator prints progress there too, so `eval-X.json` is banner + progress + JSON, and
+`weekly-paired-floor.mjs` does a plain `JSON.parse` on that path. Every gate above would have
+thrown. Found while recovering from an unrelated OOM, not by any check -- a reminder that a
+harness nobody has run is not a harness.
