@@ -340,6 +340,44 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
           `${dark.join(", ")}. The projector serves each as its declared missing value, so these totals ` +
           "lean harder on the season-line anchor than a normal week's do.";
       }
+      // THE EXPERT CONSENSUS, CHECKED ON THE MEN WE ARE ACTUALLY STARTING.
+      //
+      // `liveWeekCoverage` above only reports a column that is 100% ABSENT across the week, which is
+      // the right alarm for a dead FEED and the wrong one for this. `ecr_wk_rank` is live-scraped,
+      // the feed publishes only its latest scrape, and a missed week CANNOT be backfilled -- so its
+      // coverage is partial by nature (2026: wk1 0%, wk2 82.5%, wk3 69.1%). A week where the scrape
+      // was skipped for half the league still reads as "present" to a 100%-absent test, and the
+      // starters it silently dropped are exactly the ones a lineup turns on.
+      //
+      // It is singled out from the other 25 because it is the ONLY weekly feature this repo has ever
+      // admitted, at +0.04134 pooled CRPS -- 19x the floor its rivals were measured against. A
+      // starter missing it is being projected with materially less information than the fitted model
+      // assumed, and the caveat says so by name rather than in aggregate.
+      //
+      // A caveat ONLY: no projection, ranking or slot changes here.
+      try {
+        const db = openDb(dbPath);
+        try {
+          const have = new Set(
+            (db.prepare(
+              "SELECT name FROM feat_player_week_model WHERE season=? AND week=? AND ecr_wk_rank IS NOT NULL",
+            ).all(ctx.season, wk) as { name: string }[]).map((r) => String(r.name)),
+          );
+          // Only skill positions: the panel does not rank K or DST, so flagging them would cry wolf
+          // every week and train the reader to ignore the line.
+          const missing = res.starters
+            .filter((s) => ["QB", "RB", "WR", "TE"].includes(s.pos) && !have.has(s.name))
+            .map((s) => `${s.name} (${s.pos})`);
+          if (missing.length) {
+            res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; ${missing.length} STARTER(S) ` +
+              `CARRY NO WEEKLY EXPERT CONSENSUS: ${missing.join(", ")}. That column is the only weekly ` +
+              "feature ever admitted here (+0.04134 CRPS, 19x the floor); where it is absent the projection " +
+              "leans on the season-line anchor instead. A man who is OUT is legitimately unranked -- but a " +
+              "healthy starter missing it means the `rankings` routine did not run for this week, and a " +
+              "missed scrape cannot be backfilled.";
+          }
+        } finally { db.close(); }
+      } catch { /* a store without the column says nothing rather than failing a lineup */ }
       return {
         ...res,
         weekSource: a.week != null ? "caller" : S.currentWeek(dbPath, new Date(), leagueId).source,
