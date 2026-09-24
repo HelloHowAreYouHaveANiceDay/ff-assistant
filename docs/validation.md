@@ -7629,3 +7629,61 @@ absent entirely in 2025 and in 2026 week 1. Since salary proxies it at r ~ -0.9,
 question is not "add salary as a column" (answered: no) but "use salary to FILL ecr's gaps",
 raising the effective coverage of the single feature with a measured +0.04134. That is a different
 experiment with a different mechanism, and it is the one this result points at.
+
+### IS CRPS THE RIGHT GATE? YES -- AND THE REJECTIONS ARE CORROBORATED BY THE DECISION METRIC (2026-09-24)
+
+Twenty-odd candidates have been rejected on pooled CRPS. Before screening another it was worth
+asking whether that metric tracks the thing that wins matchups, or whether some rejections were the
+proxy talking. Both halves were answered from artifacts already on disk -- no new training.
+
+**(a) AT LARGE SCALE, CRPS IS SOUND.** Across the five models the evaluator scores side by side:
+
+```
+  model           CRPS      meanCaptured   winShare
+  zero            7.4095       65.333        0.2691
+  season_line     3.3897       76.785        0.2143
+  shipped_week    3.3940       76.855        0.0000
+  trailing4       3.3851       80.730        0.5669
+  weekly          2.7475       85.801        0.7278
+
+  Spearman(CRPS rank, capture rank) = -0.900   (-1.000 is perfect)
+```
+
+The single inversion is season_line vs shipped_week, which differ by 0.004 CRPS -- noise, not a
+disagreement about anything.
+
+**(b) AT THE MARGIN, THE DECISION METRIC INDEPENDENTLY AGREES WITH FIVE OF THE SIX REJECTIONS.**
+
+```
+  candidate                  dCRPS     dCaptured   dWinShare   signs agree
+  QB opponent block        -0.00253     -0.0068     -0.0002        yes
+  rz_share_td              -0.00122     -0.0484     -0.0028        yes
+  prior_vol_cv             +0.00012     -0.0467     -0.0018        NO
+  air-yards share + WOPR   -0.00072     -0.2708     -0.0088        yes
+  ecr_wk_skew              -0.00041     -0.0616     -0.0026        yes
+  dfs_salary_pct           -0.02420     +0.1239     +0.0045        NO
+```
+
+FIVE OF SIX CANDIDATES MADE THE LINEUP WORSE TOO. The rejections are not an artifact of the gate's
+metric; a second, mechanically different measure -- points actually captured over 72900 drawn
+rosters -- reaches the same verdict without being asked to. Sign agreement is 4 of 6, which at six
+points is indistinguishable from chance and is NOT evidence of correlation at the margin; the load
+here is carried by the levels, not the agreement count.
+
+**AND THE MAGNITUDES SETTLE THE STRATEGIC QUESTION.** The weekly model captures **85.80** points
+against **80.73** for a trailing-4 baseline and **76.78** for the season line -- it is worth 5 to 9
+points a week. The largest decision-level move any of the six candidates produced was **0.27**
+points a week, and most were under 0.07. A marginal feature is fighting for **1-5% of the value the
+model already delivers**, in a lineup whose closest real call this week was 1.9 points inside a
+16-point band.
+
+**CONCLUSION, AND IT CLOSES A LINE OF WORK RATHER THAN OPENING ONE.** The gate is not the problem
+and does not need replacing. The feature frontier is genuinely close to exhausted: ~20 candidates,
+two tracks, essentially all rejected, and the decision metric agrees. Further single-column
+screening is not where the remaining edge is, and saying so is more useful than a twenty-first
+candidate.
+
+CAVEAT, stated rather than buried: `lineup` is reported POOLED with no per-season breakdown, so
+there is no paired SE on that side and no significance can be claimed for any single arm. The
+argument above rests on the LARGE-SCALE ordering and on five-of-six directional agreement, not on
+any one delta.
