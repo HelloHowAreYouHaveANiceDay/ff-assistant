@@ -27,15 +27,24 @@ say() { echo "[$(date '+%H:%M:%S')] $*"; }
 say "=== CHAIN START ==="
 
 # ---- 1. WAIT for the three in-flight arms -------------------------------------------------------
-say "waiting for base/cand/rz to finish..."
-until [ -f "$S/status-base.txt" ] && [ -f "$S/status-cand.txt" ] && [ -f "$S/status-rz.txt" ]; do
+ARMS="base cand rz vol"
+say "waiting for $ARMS (and the golden backtest) to finish..."
+# The backtest is in the wait set even though it gates nothing here: it READS the store, and step 3
+# rebuilds it. Letting a rebuild land under a running backtest is the same class of mistake as
+# editing the trainer under a running fold.
+until [ -f "$S/status-base.txt" ] && [ -f "$S/status-cand.txt" ] && \
+      [ -f "$S/status-rz.txt" ] && [ -f "$S/status-vol.txt" ] && \
+      [ -f "$S/status-backtest.txt" ]; do
   sleep 60
 done
-for a in base cand rz; do say "  $a exit=$(cat "$S/status-$a.txt")"; done
+for a in $ARMS backtest; do say "  $a exit=$(cat "$S/status-$a.txt")"; done
+
+say "--- GOLDEN BACKTEST (regression check on today's history/feature changes) ---"
+grep -iE "playoff|champion|title|golden|GATE|PASS|FAIL" "$S/backtest.txt" | tail -12
 
 # A non-zero exit, or an implausibly small json, means the arm died. Gating a dead arm would
 # compare noise to noise, so the chain refuses rather than printing a verdict it cannot support.
-for a in base cand rz; do
+for a in $ARMS; do
   st=$(cat "$S/status-$a.txt")
   sz=$(wc -c < "$S/eval-$a.json")
   if [ "$st" != "0" ] || [ "$sz" -lt 10000 ]; then
@@ -44,10 +53,17 @@ for a in base cand rz; do
     exit 1
   fi
 done
-say "all three arms produced real output."
+say "all arms produced real output."
 
 # ---- 2. GATE the two pairings -------------------------------------------------------------------
-for pair in "cand:QB opponent block (5 cols, POS_GATED QB)" "rz:rz_share_td (RB/WR/TE)"; do
+# prior_vol_cv is PRE-REGISTERED HERE AS AN EXPECTED NULL. Its segment-screen evidence was 1.5x
+# its own shuffle null, which is noise-shaped, and I advised against running it. It is in the
+# family because the machine had idle cores, NOT because the evidence improved -- and it is listed
+# here, before the numbers exist, precisely so that an ADMIT on it cannot later be told as though
+# it had been expected. It counts against the family FDR whatever it returns.
+for pair in "cand:QB opponent block (5 cols, POS_GATED QB)" \
+            "rz:rz_share_td (RB/WR/TE)" \
+            "vol:prior_vol_cv (RB/WR/TE) -- PRE-REGISTERED EXPECTED NULL, screen was 1.5x"; do
   arm=${pair%%:*}; desc=${pair#*:}
   say "--- PAIRED FLOOR: base vs $arm -- $desc"
   node --import tsx scripts/weekly-paired-floor.mjs \
@@ -102,15 +118,19 @@ fi
 
 # ---- 5. base2 + the adot/WOPR arm, both on the REBUILT table ------------------------------------
 sed 's/$/,prior_air_yards_share,prior_wopr/' "$S/base-features.txt" > "$S/adot-features.txt"
-say "base2 (re-run on the rebuilt table -- the pre-rebuild base is not a valid pair)"
+# CONCURRENT, not sequential. Both READ the rebuilt table and neither writes it, so there is no
+# ordering constraint between them -- running one after the other left half the machine idle for no
+# reason. The REBUILD above is what had to be serialised; this pair never did.
+say "base2 + adot, CONCURRENTLY (independent readers of the rebuilt table)"
 npm run ff -- evaluate-weekly --json --features "$(cat "$S/base-features.txt")" \
-  > "$S/eval-base2.json" 2> "$S/eval-base2.err"; echo $? > "$S/status-base2.txt"
-say "  base2 exit=$(cat "$S/status-base2.txt")"
-
-say "adot arm (base + prior_air_yards_share + prior_wopr, POS_GATED WR/TE)"
+  > "$S/eval-base2.json" 2> "$S/eval-base2.err" &
+P1=$!
 npm run ff -- evaluate-weekly --json --features "$(cat "$S/adot-features.txt")" \
-  > "$S/eval-adot.json" 2> "$S/eval-adot.err"; echo $? > "$S/status-adot.txt"
-say "  adot exit=$(cat "$S/status-adot.txt")"
+  > "$S/eval-adot.json" 2> "$S/eval-adot.err" &
+P2=$!
+wait $P1; echo $? > "$S/status-base2.txt"
+wait $P2; echo $? > "$S/status-adot.txt"
+say "  base2 exit=$(cat "$S/status-base2.txt")  adot exit=$(cat "$S/status-adot.txt")"
 
 if [ "$(cat "$S/status-base2.txt")" = "0" ] && [ "$(cat "$S/status-adot.txt")" = "0" ]; then
   say "--- PAIRED FLOOR: base2 vs adot"
