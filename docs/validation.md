@@ -7281,3 +7281,47 @@ connection in WAL mode breaks a concurrent read-write migration in `openDb` (`SQ
 PROVEN: `backtest-pool.test.ts` alone passes; run with `board-stamp.test.ts` both its tests fail. It
 was invisible all session because the Electron app kept `-shm` alive, which means the standing
 "1389/1386" baseline was measured WITH the app running. The suite is not self-contained.
+
+### THE REBUILD, DONE PROPERLY: CARRY THE PINS, RECOMPUTE THE REST (2026-09-23)
+
+Refusing outright was too blunt. Only TWO families of columns on a current-season row are live
+snapshots -- the ECR pair (`ecr_pos_rank`, `ecr_sd`) and `team`. Everything else derives from the
+PRIOR SEASON, which was complete and knowable before September 1. When the prior season's history is
+CORRECTED, recomputing those columns adds no lookahead: it restores what the row should have said on
+September 1 all along.
+
+So a current-season rebuild outside the preseason window now CARRIES OVER both pins from the stored
+rows and recomputes only the history-derived columns. The refusal survives for the one genuinely
+unrecoverable case: no archive AND no stored rows.
+
+**THE TEAM PIN NEEDED THE SAME TREATMENT, AND ONLY A REBUILD REVEALED IT.** `team` resolves through
+`firstTeamOf` (history-weekly's first team) FIRST, precisely so the season pin and the week-1 row
+agree -- but history-weekly has no CURRENT-season rows, so for the live season that lookup is empty
+and resolution falls through to the live ECR/player join. A week-3 rebuild therefore stamps a man's
+CURRENT shirt onto a September row. Caught by the suite on exactly two players: **Jaleel McLaughlin
+(wk1 DEN, now CLE)** and **Tutu Atwell (wk1 MIA, now LAR)**. This is the latent gap the guard's own
+docstring predicted -- "a tripwire for a latent gap, not a fix for a live one".
+
+**TWO INVARIANTS, BOTH CHECKED AFTER THE REBUILD:**
+
+```
+ecr_pos_rank moved on pre-existing 2026 rows ............ 0 of 523   (must be 0)
+2026 pin vs week-1 team disagreements ................... 0          (must be 0)
+as_of ................................................... 2026-09-01 throughout
+```
+
+**THE RESULT, AND IT IS THE WHOLE POINT OF THE CHAIN:**
+
+```
+Travis Hunter 2026: prior_pts 49.8, prior_games 7, prior_pos_rank 96   (was all null)
+                    ecr_pos_rank 73, team JAC                          (pinned, untouched)
+board: EXACTLY ONE player moved -- Travis Hunter 71 -> 70.8 (-0.2)
+suite: pin guard PASSES; back to the baseline failures
+```
+
+**AND THE ANSWER IS A SHRUG, WHICH IS WORTH STATING PLAINLY.** Correcting a season of wrongly-scored
+history moves his projection by **-0.2 points**. His real 2025 -- 49.8 points over 7 games, WR96 --
+is a WEAKER prior than the model's missing-value default. The full retrain reached the same place
+independently (69.8). The bug was real, the fix is right, and the player is not better than the board
+already thought. Finding that out cost a corrupted database and a discarded retrain; the fix itself
+is two carried-over columns.

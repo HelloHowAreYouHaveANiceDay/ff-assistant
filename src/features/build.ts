@@ -230,12 +230,39 @@ function ecrForSeason(db: DB, yr: number, currentSeason: number, resolver: SkRes
   // map and the ECR columns are simply null -- honest, and the model has a declared missing value
   // for them. The LIVE season with no archive is different: it would otherwise reach the live table
   // and relabel today's consensus as September 1st, which is the bug this refuses.
+  /**
+   * NO ARCHIVE, OUTSIDE THE WINDOW: REUSE THE ECR ALREADY PINNED ON THE STORED ROWS.
+   *
+   * Refusing outright was too blunt, and it blocked a legitimate need. Only ONE family of columns
+   * here is a live-consensus snapshot -- `ecr_pos_rank` / `ecr_sd`. Everything else on the row
+   * (`prior_pts`, `prior_games`, `prior_pos_rank`, age, draft capital) derives from the PRIOR
+   * SEASON, which was complete and knowable before September 1. When the prior season's history is
+   * CORRECTED -- as it was for Travis Hunter, whose 2025 receiving was scored as IDP under a `DB`
+   * label -- recomputing those columns does not add lookahead. It restores what the row should have
+   * said on September 1 all along.
+   *
+   * So the ECR columns are carried over verbatim from the rows already in the table, and only the
+   * history-derived columns are rebuilt. A player with no stored row gets a null ECR, which is
+   * honest: we genuinely do not know what his September-1 consensus rank was.
+   *
+   * THE INVARIANT THIS MUST SATISFY, and it is checkable after any rebuild: every pre-existing row's
+   * `ecr_pos_rank` is BYTE-IDENTICAL afterwards. If one moved, live consensus leaked in.
+   */
   if (yr === currentSeason && !raw.length) {
+    const stored = db.prepare(
+      "SELECT feat_key, name, pos, team, ecr_pos_rank AS rank, ecr_sd AS sd FROM feat_player_season " +
+      "WHERE season=@s AND ecr_pos_rank IS NOT NULL",
+    ).all({ s: yr }) as { feat_key: string; name: string; pos: string; team: string | null; rank: number; sd: number | null }[];
+    if (stored.length) {
+      for (const r of stored) out.set(r.feat_key, { rank: r.rank, sd: r.sd, name: r.name, pos: r.pos, team: r.team });
+      return out;
+    }
     throw new PreseasonPinError(
       `no archived preseason consensus for ${yr} (ranking_history ecr_type='ro' in the Aug/Sep-1-7 window), ` +
       `and today is outside that window -- so a row labelled ${yr}-09-01 cannot be backed by ${yr}-09-01 data. ` +
       `Rebuilding from the live \`ranking\` table would stamp in-season consensus under a preseason label ` +
       `(measured 2026-09-23: 345 of 401 rows changed, board moved 8.33 pts mean). ` +
+      `and this season has NO stored rows to carry a pinned consensus over from. ` +
       `Either run \`ff ingest-ecr-history\` so the window is populated, or pass --as-of-today to rebuild ` +
       `with rows HONESTLY labelled today instead of September 1.`);
   }
@@ -410,6 +437,26 @@ export async function buildFeatures(opts: {
       }
     } catch { /* no depth chart in this store: the chain simply falls through as before */ }
     const ecr = ecrForSeason(db, yr, cfg.season, resolver, opts.asOfToday === true);
+    /**
+     * THE PINNED TEAM, CARRIED OVER FOR THE SAME REASON THE PINNED ECR IS.
+     *
+     * `team` resolves through `firstTeamOf` (history-weekly's first team) FIRST precisely so the
+     * season pin and the week-1 row agree -- but history-weekly has no CURRENT-season rows, so for
+     * the live season that lookup is empty and resolution falls through to the live ECR/player join.
+     * A rebuild in week 3 then stamps a man's CURRENT shirt onto a September row. MEASURED: Jaleel
+     * McLaughlin (wk1 DEN, now CLE) and Tutu Atwell (wk1 MIA, now LAR) both moved, and the suite's
+     * `THE SEPT-1 PIN IS BACKED BY SEPT-1 DATA` guard failed on exactly those two.
+     *
+     * So when a current-season row already exists, its team is preserved. Same rule, same reason as
+     * the ECR carry-over: the stored row was written when the pin was true, and nothing observed
+     * since is entitled to overwrite it.
+     */
+    const pinnedTeam = new Map<string, string>();
+    if (yr === cfg.season && opts.asOfToday !== true) {
+      for (const r of db.prepare(
+        "SELECT feat_key, team FROM feat_player_season WHERE season=@s AND team IS NOT NULL",
+      ).all({ s: yr }) as { feat_key: string; team: string }[]) pinnedTeam.set(r.feat_key, r.team);
+    }
 
     // POINT-IN-TIME CURVES: fitted on seasons strictly before yr. Rebuilt per season rather than
     // once, which is the whole reason this column can be a feature at all.
@@ -489,7 +536,7 @@ export async function buildFeatures(opts: {
         // history-weekly FIRST -- the same source `feat_player_week.team` reads, so the season pin
         // and the week-1 row cannot disagree. Then the stats feed, then the opening depth chart.
         const cur2 = firstTeamOf.get(`${yr}|${key}`) ?? curUsage.get(key)?.teamFirst ?? depthTeam.get(key) ?? null;
-        const team = cur2 ?? e?.team ?? pu?.team ?? r?.team ?? null;
+        const team = pinnedTeam.get(key) ?? cur2 ?? e?.team ?? pu?.team ?? r?.team ?? null;
         const priorTeam = pu?.team ?? null;
         const dc = drafted.get(key);
         const g = pu?.games ?? 0;
