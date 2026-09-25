@@ -246,3 +246,43 @@ test("the ESPN vocabulary maps onto the report vocabulary, and Doubtful is not f
   assert.equal(espnStatusToReport(null), null);
   assert.equal(espnStatusToReport(""), null);
 });
+
+test("the IN-PROGRESS week is refreshed per TEAM: a team yet to play gets today's status, a team that kicked off keeps its pre-kickoff row", () => {
+  const dbPath = fresh();
+  // A second week-1 game three days after the opener, and a receiver on it.
+  const db = openDb(dbPath);
+  const late = `${SEASON}-09-${String(3 + 7 + 3).padStart(2, "0")}`;
+  db.prepare(
+    `INSERT INTO raw_nfl_game (game_id, season, week, game_type, home_team, away_team, gameday,
+        spread_line, total_line, home_rest, away_rest, fetched_at)
+     VALUES (?,?,1,'REG','CCC','DDD',?, -1.0, 44.0, 7, 7, 'x')`,
+  ).run(`${SEASON}_1_CCC_DDD`, SEASON, late);
+  db.prepare("INSERT INTO player_identity (player_sk) VALUES (106)").run();
+  db.prepare("INSERT INTO player (player_id, name, position, nfl_team) VALUES ('fred-fox','Fred Fox','WR','CCC')").run();
+  db.prepare("INSERT INTO stg_player (player_sk, name_key, name, position, team, ambiguous, source, updated_at) VALUES (106,'fred-fox','Fred Fox','WR','CCC',0,'test','x')").run();
+  db.prepare(
+    `INSERT INTO feat_player_week_model (feat_key, player_sk, season, week, as_of, name, pos, team, opponent, home, is_bye, season_line_pg, updated_at)
+     VALUES ('K106','106',?,1,?,'Fred Fox','WR','CCC','DDD',1,0,10.0,'x')`,
+  ).run(SEASON, late);
+  db.close();
+
+  // Before any kickoff: everyone healthy, written to week 1.
+  for (const k of ["aaron-alpha", "fred-fox"]) setStatus(dbPath, k, null);
+  const pre = buildLiveWeekContext({ dbPath, season: SEASON, now: `${SEASON}-09-08` });
+  assert.equal(pre.week, 1);
+  assert.equal(pre.pendingWeek, null);
+
+  // The opener has kicked off; both men pick up a Questionable afterwards.
+  setStatus(dbPath, "aaron-alpha", "Questionable");
+  setStatus(dbPath, "fred-fox", "Questionable");
+  const mid = buildLiveWeekContext({ dbPath, season: SEASON, now: KICK(1) });
+  assert.equal(mid.week, 2, "the target still moves on to next week");
+  assert.equal(mid.pendingWeek, 1, "week 1 is in progress (CCC-DDD is still ahead)");
+  assert.equal(mid.pendingRows, 1, "only the man whose game is still ahead is refreshed");
+
+  const d2 = openDb(dbPath);
+  const ctx = contextFor(d2, SEASON);
+  d2.close();
+  assert.equal(ctx.get("1|106")!.inj_questionable, 1, "the pending team's man did not get today's status");
+  assert.equal(ctx.get("1|101")!.inj_questionable, 0, "a man whose game had KICKED OFF was rewritten after kickoff");
+});

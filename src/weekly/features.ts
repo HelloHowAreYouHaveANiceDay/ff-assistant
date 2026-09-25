@@ -1360,7 +1360,21 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
   const played = new Map<string, Map<number, typeof playedRows[number]>>();
   for (const r of playedRows) (played.get(r.feat_key) ?? played.set(r.feat_key, new Map()).get(r.feat_key)!).set(r.week, r);
   const playedWeeks = [...new Set(playedRows.map((r) => r.week))].sort((a, b) => a - b);
-  const lastSettled = playedWeeks.length ? playedWeeks[playedWeeks.length - 1] : 0;
+  // THE LAST FULLY SETTLED WEEK -- every scheduled game of it before today. NOT the last week with ANY
+  // points: Thursday night puts week-w rows in the store while most of week w is unplayed, and treating
+  // w as settled then kept every not-yet-played man on his Sept-1 team for the week being decided
+  // (found 2026-09-25, week 3: Grupe IND, McLaughlin DEN after the B1 fix).
+  // LOCAL calendar date, because `gameday` is a US local date (UTC reads as tomorrow after 8pm ET).
+  const today = new Date().toLocaleDateString("en-CA");
+  const lastDay = new Map<number, string>();
+  for (const [k, d] of sched.teamGameDay) {
+    const [y, , w] = k.split("|");
+    if (Number(y) !== season) continue;
+    const wk = Number(w);
+    if (!lastDay.has(wk) || d > lastDay.get(wk)!) lastDay.set(wk, d);
+  }
+  let lastSettled = 0;
+  for (const w of [...lastDay.keys()].sort((a, b) => a - b)) { if (lastDay.get(w)! < today) lastSettled = w; else break; }
 
   // THE TEAM, PER WEEK (architecture review 2026-09-24, B1). This used to be `p.team` -- the
   // season row's team, which is PINNED to the Sept-1 shirt -- for every week of the season, so a man

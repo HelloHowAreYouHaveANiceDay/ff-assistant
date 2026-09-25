@@ -447,6 +447,16 @@ export interface LiveWeekContextResult {
   skipped: string | null;
   /** Every week whose first kickoff is already behind the snapshot, i.e. what the rule excluded. */
   kickedOff: number[];
+  /**
+   * THE WEEK IN PROGRESS (2026-09-25). A week whose first game has kicked off but whose last has not:
+   * after Thursday night the target moves to NEXT week, and the week actually being decided kept
+   * whatever was written before Thursday. The point-in-time rule is per TEAM, not per week -- for a
+   * team whose game is still ahead, today's snapshot is still before ITS kickoff -- so those rows are
+   * refreshed; teams that have kicked off keep their pre-kickoff rows untouched.
+   */
+  pendingWeek: number | null;
+  /** Rows refreshed for the in-progress week (teams whose game is strictly after the snapshot day). */
+  pendingRows: number;
 }
 
 export interface LiveWeekContextOpts {
@@ -510,7 +520,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
   const asOfDay = opts.now ? opts.now.slice(0, 10) : localToday();
   const res: LiveWeekContextResult = {
     season, week: null, asOf, rows: 0, withStatus: 0, withDepth: 0, withSnap: 0, withRoute: 0,
-    missingFeeds: [], outs: 0, fromNews: 0, unresolved: 0, uncovered: 0, skipped: null, kickedOff: [],
+    missingFeeds: [], outs: 0, fromNews: 0, unresolved: 0, uncovered: 0, skipped: null, kickedOff: [], pendingWeek: null, pendingRows: 0,
   };
 
   // ---- THE TARGET WEEK, from raw_nfl_game kickoffs. ----
@@ -525,12 +535,18 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
   const ordered = [...firstKickoff.entries()].sort((a, b) => a[0] - b[0]);
   res.kickedOff = ordered.filter(([, d]) => d <= asOfDay).map(([w]) => w);
   const target = ordered.find(([, d]) => d > asOfDay);
-  if (!target) {
+  // The in-progress week: kicked off, with at least one game still ahead of the snapshot day.
+  const lastGame = new Map<number, string>();
+  for (const g of db.prepare(
+    "SELECT week, MAX(gameday) AS d FROM raw_nfl_game WHERE season = ? AND game_type = 'REG' AND gameday IS NOT NULL GROUP BY week",
+  ).all(season) as { week: number; d: string }[]) lastGame.set(Number(g.week), String(g.d));
+  const pending = [...res.kickedOff].reverse().find((w) => (lastGame.get(w) ?? "") > asOfDay) ?? null;
+  if (!target && pending == null) {
     res.skipped = `every ${season} regular-season week has kicked off as of ${asOfDay} -- there is no week ahead to write context for`;
     return res;
   }
-  res.week = target[0];
-  const week = target[0];
+  res.week = target ? target[0] : null;
+  res.pendingWeek = pending;
 
   // ---- WHO IS DESIGNATED, from the two feeds the copilot's OUT refusal reads. ----
   // Keyed by name_key, which is what `player_status.player_id` and `news.player_id` both are, then
@@ -575,20 +591,33 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
     res.fromNews++;
   }
 
+  const resolver = buildSourceResolver(db);
+  for (const [table, feed] of [["raw_snap_count", "nflverse snap_counts"], ["raw_participation", "nflverse pbp_participation"]] as const) {
+    const c = (db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE season = ?`).get(season) as { c: number }).c;
+    if (!c) res.missingFeeds.push(`${feed} (${table}) has no ${season} rows`);
+  }
+  const sched = schedule(db, [season]);
+  const now = nowIso();
+
+  /** Write one week. `pendingOnly`: only men whose team's game is strictly after the snapshot day, as
+   *  an UPSERT with no delete -- the in-progress week's kicked-off teams keep their pre-kickoff rows. */
+  const writeWeek = (week: number, pendingOnly: boolean): string | null => {
   // ---- THE UNIVERSE: the forward feature rows for the target week. ----
-  const universe = db.prepare(
+  const universe0 = db.prepare(
     `SELECT player_sk, pos, team FROM feat_player_week_model
       WHERE season = ? AND week = ? AND player_sk IS NOT NULL AND COALESCE(is_bye, 0) = 0`,
   ).all(season, week) as { player_sk: string; pos: string; team: string | null }[];
-  if (!universe.length) {
-    res.skipped = `feat_player_week_model has no ${season} week ${week} rows -- run \`ff build-weekly-features --forward\` first`;
-    return res;
+  if (!universe0.length) {
+    return `feat_player_week_model has no ${season} week ${week} rows -- run \`ff build-weekly-features --forward\` first`;
   }
+  const universe = pendingOnly
+    ? universe0.filter((u) => { const d = u.team ? sched.get(`${season}|${u.team}|${week}`)?.gameday : null; return d != null && d > asOfDay; })
+    : universe0;
 
   // teammates_out: same team, same position, Out, excluding himself. Built from the SAME map the
   // per-player column comes from, so the count and the status cannot disagree.
   const outsBy = new Map<string, Set<number>>();
-  for (const u of universe) {
+  for (const u of universe0) {
     const sk = Number(u.player_sk);
     if (!Number.isInteger(sk) || !u.team) continue;
     if (live.get(sk)?.report !== "Out") continue;
@@ -613,16 +642,8 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
   // A feed with no rows for the season yields an empty map and a NULL column, which is the honest
   // value. `missingFeeds` names it so a caveat can say WHICH feed is dark rather than implying the
   // model saw everything.
-  const resolver = buildSourceResolver(db);
   const snap = priorWeekSnap(db, season, resolver, week);
   const route = priorWeekRoute(db, season, resolver, week);
-  for (const [table, feed] of [["raw_snap_count", "nflverse snap_counts"], ["raw_participation", "nflverse pbp_participation"]] as const) {
-    const c = (db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE season = ?`).get(season) as { c: number }).c;
-    if (!c) res.missingFeeds.push(`${feed} (${table}) has no ${season} rows`);
-  }
-
-  const sched = schedule(db, [season]);
-  const now = nowIso();
   const ins = db.prepare(
     `INSERT INTO feat_player_week_context (player_sk, season, week, as_of, team, pos, opponent, home,
        days_rest, roof, spread_line, total_line, implied_team_total, temp_observed, wind_observed,
@@ -660,6 +681,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
         rsf: l?.report ?? null, out: mates, depth: l?.depth ?? null, now,
         src: known.has(sk) ? "live" : "live-unresolved",
       });
+      if (pendingOnly) { res.pendingRows++; continue; }
       res.rows++;
       if (!known.has(sk)) res.uncovered++;
       if (l?.report) res.withStatus++;
@@ -677,6 +699,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
       const sk = Number(u.player_sk);
       if (!Number.isInteger(sk)) continue;
       const l = live.get(sk);
+      if (pendingOnly) { res.pendingRows++; continue; }
       res.rows++;
       if (!known.has(sk)) res.uncovered++;
       if (l?.report) res.withStatus++;
@@ -688,11 +711,20 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
   } else {
     db.transaction(() => {
       // ONLY the target week. Not the season: the historical builder owns the finished weeks and
-      // deleting them here would drop every dated filing this store has for the year.
-      db.prepare("DELETE FROM feat_player_week_context WHERE season = ? AND week = ?").run(season, week);
+      // deleting them here would drop every dated filing this store has for the year. The pending
+      // week is never deleted -- its kicked-off teams' rows are the point-in-time record.
+      if (!pendingOnly) db.prepare("DELETE FROM feat_player_week_context WHERE season = ? AND week = ?").run(season, week);
       apply();
     })();
   }
+  return null;
+  };
+
+  if (res.week != null) {
+    const why = writeWeek(res.week, false);
+    if (why) { res.skipped = why; res.unresolved = unresolved; return res; }
+  }
+  if (res.pendingWeek != null) writeWeek(res.pendingWeek, true);
 
   res.unresolved = unresolved;
   return res;
