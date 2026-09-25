@@ -84,7 +84,7 @@ if (has("--help") || has("-h")) {
   process.exit(0);
 }
 
-let BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config. GOLDEN MASTER on the PRIMARY axis = 80.2% PLAYOFF (title% ~18.9% is context, D13; D38 re-pin); BOTH title-edges DEMOTED (consensusBlend=0 D14, benchDiscount=0.25 D15), so the shipped flagless config IS the pre-edge base. Pass --consensus-blend 1 --bench-discount 0.35 --golden 97.0 --golden-title 42.3 to reproduce the old title-tuned posture.
+let BASE_FLAGS = val("--base-flags", "--full --no-lookahead --inflation"); // the shipped flagless arbiter config. GOLDEN MASTER on the PRIMARY axis = 83.9% PLAYOFF (title% ~20.4% is context, D13; D39 re-pin); BOTH title-edges DEMOTED (consensusBlend=0 D14, benchDiscount=0.25 D15), so the shipped flagless config IS the pre-edge base. Pass --consensus-blend 1 --bench-discount 0.35 --golden 97.0 --golden-title 42.3 to reproduce the old title-tuned posture.
 const TREATMENT = val("--treatment", "--no-rookies");                        // the flag(s) to ADD for the treatment arm
 const SEASONS = val("--seasons", "1999-2024");
 const N = val("--n", "150");
@@ -93,9 +93,9 @@ const K = val("--k", null);                       // test-group size; default fl
 const N_PATHS = Number(val("--paths", "200"));
 const PATH_SEED = Number(val("--path-seed", "12345"));
 const LEDGER = val("--ledger", "data/experiments.jsonl");
-const GOLDEN = Number(val("--golden", "80.2"));   // PRIMARY-axis consistency target. RE-PINNED 96.0 -> 85.6 by D37, -> 80.2 by D38 (calibrated su/rho) (2026-09-24: our no-lookahead view now carries the room's error; data/golden.json is the source of truth and overrides this default). HISTORY: = shipped-config PLAYOFF% golden master (D13). 96.0% source: ledger config_hash e625249e (benchDiscount 0.25, consensusBlend 0) full_set_baseline_playoff_pct 96.107. Both title-edges demoted (D14/D15) so this pre-edge base IS the shipped posture. Pass --golden 97.0 (with --consensus-blend 1 --bench-discount 0.35) to check the old title-tuned config.
+const GOLDEN = Number(val("--golden", "83.9"));   // PRIMARY-axis consistency target. RE-PINNED 96.0 -> 85.6 (D37) -> 80.2 (D38) -> 83.9 (D39, room side calibrated) (2026-09-24: our no-lookahead view now carries the room's error; data/golden.json is the source of truth and overrides this default). HISTORY: = shipped-config PLAYOFF% golden master (D13). 96.0% source: ledger config_hash e625249e (benchDiscount 0.25, consensusBlend 0) full_set_baseline_playoff_pct 96.107. Both title-edges demoted (D14/D15) so this pre-edge base IS the shipped posture. Pass --golden 97.0 (with --consensus-blend 1 --bench-discount 0.35) to check the old title-tuned config.
 const GOLDEN_TOL = Number(val("--golden-tol", "3.0")); // +/- pp of Monte-Carlo slack
-const GOLDEN_TITLE = Number(val("--golden-title", "18.9")); // D38 re-pin (D37 22.6, before that 38.0). // SECONDARY/context only -- NOT a gate (title% is the no-skill axis, P16 FAILED). Printed for reference. 38.0% = shipped pre-edge base after the 2026-09-24 look-ahead fix (37.973%, was 38.48 with the all-season age/opportunity multipliers); old title-tuned posture was 42.3.
+const GOLDEN_TITLE = Number(val("--golden-title", "20.4")); // D39 re-pin (D38 18.9, D37 22.6, before that 38.0). // SECONDARY/context only -- NOT a gate (title% is the no-skill axis, P16 FAILED). Printed for reference. 38.0% = shipped pre-edge base after the 2026-09-24 look-ahead fix (37.973%, was 38.48 with the all-season age/opportunity multipliers); old title-tuned posture was 42.3.
 // SELECTION-BLIND HOLDOUT (WS2). A lever/config search must not TUNE on the holdout block: the effect
 // that drives the verdict is computed on the SELECTION seasons only, and the holdout is reported once
 // as a separate CONFIRM. Locked to the canonical HOLDOUT_SEASONS unless overridden with

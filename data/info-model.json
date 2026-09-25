@@ -1,0 +1,53 @@
+{
+  "_what": "The arbiter's information model for this format (docs/decisions.md D38/D39): each forecaster's view is p (1 + k * delta + s * z), delta = (Y - p)/p clipped to [-1, 3]; our z shares rho with the room's. Read by `ff backtest`; `--room-info legacy` ignores it.",
+  "scoringKey": "sc-f6143a8dfb13",
+  "league": "462233",
+  "roomKappa": 0.4554,
+  "roomSd": 0.3414,
+  "ourKappa": 0.5247,
+  "ourSd": 0.3902,
+  "rho": 0.8762,
+  "deltaClip": [
+    -1,
+    3
+  ],
+  "intervals90": {
+    "km": [
+      0.3855,
+      0.5325
+    ],
+    "sm": [
+      0.3084,
+      0.3686
+    ],
+    "ku": [
+      0.443,
+      0.5879
+    ],
+    "su": [
+      0.3567,
+      0.4206
+    ],
+    "rho": [
+      0.8667,
+      0.8883
+    ]
+  },
+  "measuredOn": {
+    "seasons": [
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ],
+    "playerSeasons": 1152,
+    "pool": 192,
+    "minPrior": 30,
+    "foldArtifacts": "data\\fold-artifacts-d16",
+    "featuresDb": "data\\ff.db"
+  },
+  "command": "node scripts/calibrate-our-info.mjs --write",
+  "measuredAt": "2026-09-25"
+}

@@ -269,8 +269,8 @@ test("a format with NO golden is REFUSED BY NAME -- never defaulted to the incum
 
 test("the shipped incumbent golden carries exactly the numbers cpcv.mjs pinned (D13/D15)", () => {
   const g = loadGolden(INCUMBENT_MODEL, "incumbent");
-  assert.equal(g.playoffPct, 80.2, "the PRIMARY gate -- the playoff axis the sim has measured skill on (D38)");
-  assert.equal(g.titlePct, 18.9, "CONTEXT only");
+  assert.equal(g.playoffPct, 83.9, "the PRIMARY gate -- the playoff axis the sim has measured skill on (D39)");
+  assert.equal(g.titlePct, 20.4, "CONTEXT only");
   assert.equal(g.tolerancePp, 3.0);
 });
 

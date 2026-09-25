@@ -85,6 +85,9 @@ const FORMAT_ARTIFACTS = {
   // The root file stays exactly where it is and the incumbent still reads it, byte-identical.
   "ros-blend": { root: "ros-blend.json", fmt: "ros-blend.json", what: "the rest-of-season blend weight K (D18)" },
   golden: { root: "golden.json", fmt: "golden.json", what: "this format's championship gate number" },
+  // D39: the arbiter's information model (room and our k/s, shared rho), calibrated per FORMAT by
+  // scripts/calibrate-our-info.mjs -- a PPR superflex board and consensus differ from a half-PPR one.
+  "info-model": { root: "info-model.json", fmt: "info-model.json", what: "the arbiter's calibrated information model" },
   scoring: { root: "scoring.json", fmt: "scoring.json", what: "the scoring preimage of the format key" },
   manifest: { root: "manifest.json", fmt: "manifest.json", what: "what built this format dir, and how honestly" },
 } as const;

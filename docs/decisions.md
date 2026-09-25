@@ -2077,3 +2077,53 @@ season's actuals), while the real consensus is MORE accurate than last season's 
 ~0.44-0.53 vs 0.50-0.81) -- the calibration matches the two views' relative accuracy and agreement, not
 the room's absolute accuracy. (2) Yahoo is pinned under the INCUMBENT's calibration; its own su/rho are
 unmeasured. (3) Six seasons.
+
+
+## D39 -- the ROOM's side is measured, and each FORMAT gets its own calibration; goldens RE-PINNED (2026-09-25, owner: "Fix yahoos calibration settings. Measure room side properly", **APPLIED**)
+
+**The room model could not represent reality.** The replay's room was last season's points times
+(1 + 0.30 z) -- by construction WORSE than last season's points. The real consensus is BETTER than them
+(RMSE/p 0.44-0.53 vs 0.49-0.80 for the incumbent). No noise level fixes that; the frame had to change.
+Both forecasters are now
+
+```
+room  M = p (1 + km delta + sm zm)
+us    U = p (1 + ku delta + su (rho zm + sqrt(1 - rho^2) zu))       delta = (Y - p)/p, clipped [-1, 3]
+```
+
+k is how much of the change that actually happened a forecaster saw coming; s is its noise. Measured by
+regressing each forecaster's change-from-last-year on the realised change (season fixed effects):
+slope = k, residual sd = s, residual correlation = rho. The strategy under test still sees ONLY its view;
+k is measured from real point-in-time projections, so this simulates forecasters of their real skill
+rather than leaking the outcome to either side. `scripts/calibrate-our-info.mjs [--league <id>] --write`
+-> the format's `info-model.json` (new FORMAT_ARTIFACTS entry); `ff backtest` refuses a format without one
+unless `--room-info legacy` (= D38 exactly).
+
+```
+                      room k   room s   our k   our s   rho     pool           (90% season-bootstrap intervals in the files)
+incumbent 462233      0.455    0.341    0.525   0.390   0.876   192 rostered
+Yahoo 129048          0.465    0.368    0.686   0.576   0.849   204 rostered   (its OWN features.db + blind folds)
+controls (incumbent): board := consensus -> ours == room's k/s, rho 1.000; board := last year -> k 0, s 0
+```
+
+Direct accuracy, independent of the regression (RMSE/p, room vs ours): incumbent roughly tied (ours
+better 2020-21, worse 2022-25 by <=0.03); Yahoo ours WORSE in 2021-2023 (0.58/0.62/0.70 vs 0.52/0.58/0.63),
+better in 2024, tied 2020/2025. The regression separates what raw RMSE mixes: breakout seasons both miss
+dominate raw RMSE; capped at +300% they do not.
+
+```
+                              titles    playoffs   random    (legacy flag reproduces D38 exactly in both)
+incumbent 1999-2024 -> pin    20.373    83.947     6.3/43.8  data/golden.json 83.9 / 20.4
+   paired vs D38: playoffs +3.73pp [1.44, 5.52] 21/25 up; titles +1.44pp [-0.67, 3.33]
+Yahoo 1999-2025 -> pin        11.256    71.795     8.3/66.7  88.3/17.8 -> 71.8 / 11.3
+   paired vs D38: playoffs -16.46pp [-18.46, -14.59] 0/26 up; titles -6.59pp [-7.82, -5.18]
+```
+
+**Read the Yahoo number as a finding, not a regression.** Its board sees more of the real change than
+its consensus (0.69 vs 0.47) but carries far more noise (0.58 vs 0.37), and in a SNAKE a misjudged
+player is lost outright rather than overpaid. Under a realistic room our Yahoo draft edge is thin (71.8%
+playoffs against 66.7% random). The Yahoo projector (a WP8 candidate build) is the lever: its noise, not
+its information, is what costs it. The consensus for Yahoo is the 1-QB positional ECR read on the Yahoo
+scoring curve -- there is no superflex archive -- which is a limit on the room model stated, not hidden.
+
+Six seasons per format; `sm`, `km` and the rest are re-measurable with the one command above each preseason.

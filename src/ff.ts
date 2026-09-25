@@ -2468,6 +2468,8 @@ async function cmdBacktest(rest: string[]) {
     const sk = (f[4] ?? "").trim();
     if (sk) (ptsBySk.get(yr) ?? ptsBySk.set(yr, new Map()).get(yr)!).set(sk, { name: f[1].trim(), pos: f[2].trim().toUpperCase() });
   }
+  // Y per player per season, for the forecasters' information term (D39).
+  const truthByYear = new Map<number, Map<string, number>>([...pts.entries()].map(([y, rs]) => [y, new Map(rs.map((r) => [r.name, r.points]))]));
   const wk = new Map<number, Map<string, Map<number, number>>>();
   for (const f of rows(valueOf(rest, "--weekly") ?? btFmt.model.require("history-weekly"))) {
     const yr = Number(f[0]); if (yr < lo || yr > hi) continue;
@@ -2487,9 +2489,28 @@ async function cmdBacktest(rest: string[]) {
   // view for A/B.
   const ourInfo = (valueOf(rest, "--our-info") ?? "market") as string;
   if (ourInfo !== "market" && ourInfo !== "clean") throw new Error(`--our-info must be market or clean (got ${JSON.stringify(ourInfo)})`);
-  const OUR_INFO_SD = 0.31, OUR_INFO_RHO = 0.80;          // D38, calibrated
-  const ourRho = Number(valueOf(rest, "--our-rho") ?? OUR_INFO_RHO);
+  const OUR_INFO_SD = 0.31, OUR_INFO_RHO = 0.80;          // D38 (room-info legacy only)
+  // THE ROOM'S SIDE, CALIBRATED PER FORMAT (D39). Both forecasters are p (1 + k delta + s z): k is how
+  // much of the real change each saw coming. The room used to be k = 0, s = 0.30 ASSUMED -- it could
+  // only be WORSE than last season's points, while the real consensus beats them. The format's
+  // `info-model.json` (scripts/calibrate-our-info.mjs --league <id> --write) supplies room k/s and our
+  // k/s/rho; `--room-info legacy` is the D38 model exactly (k = 0, room 0.30, ours 0.31/0.80). A
+  // format with no calibration is REFUSED by name rather than borrowing another format's numbers.
+  const roomInfo = (valueOf(rest, "--room-info") ?? "calibrated") as string;
+  if (roomInfo !== "calibrated" && roomInfo !== "legacy") throw new Error(`--room-info must be calibrated or legacy (got ${JSON.stringify(roomInfo)})`);
+  let infoCal: { roomKappa: number; roomSd: number; ourKappa: number; ourSd: number; rho: number } | null = null;
+  if (rest.includes("--no-lookahead") && roomInfo === "calibrated" && valueOf(rest, "--market") !== "ecr") {
+    const { existsSync: exI, readFileSync: rfI } = await import("node:fs");
+    const ip = btFmt.model.path("info-model");
+    if (!exI(ip)) {
+      throw new Error(`no calibrated information model for format ${btFmt.model.scoringKey} (${ip}). Run ` +
+        `\`node scripts/calibrate-our-info.mjs${leagueArg(rest) ? ` --league ${leagueArg(rest)}` : ""} --write\`, or pass --room-info legacy.`);
+    }
+    infoCal = JSON.parse(rfI(ip, "utf8"));
+  }
+  const ourRho = Number(valueOf(rest, "--our-rho") ?? (infoCal ? infoCal.rho : OUR_INFO_RHO));
   if (!(ourRho >= -1 && ourRho <= 1)) throw new Error(`--our-rho must be in [-1, 1] (got ${valueOf(rest, "--our-rho")})`);
+  const ourSdDefault = infoCal ? infoCal.ourSd : OUR_INFO_SD;
   // G3: the pre-2026-09-24 single sequential bot-noise stream, for A/B.
   const botNoiseSequential = rest.includes("--bot-noise-sequential");
   // G6: the pre-2026-09-24 rookie pool (only rookies who show up in the season's own actuals), for A/B.
@@ -3024,7 +3045,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? (ourInfo === "clean" ? 0 : (ourSd ?? OUR_INFO_SD)) : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed, btFmt.model.path("variance"), { model: btModel, ourSlot, adp: adpByYear.get(yr), botIdioSd: btModel.kind === "snake" ? botIdioSd : undefined, sequentialBotNoise: botNoiseSequential }, { ourRho: noLookahead && ourInfo === "market" ? ourRho : undefined, projGames: projYr >= 2021 ? 17 : 16 }); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? (ourInfo === "clean" ? 0 : (ourSd ?? ourSdDefault)) : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed, btFmt.model.path("variance"), { model: btModel, ourSlot, adp: adpByYear.get(yr), botIdioSd: btModel.kind === "snake" ? botIdioSd : undefined, sequentialBotNoise: botNoiseSequential }, { ourRho: noLookahead && ourInfo === "market" ? ourRho : undefined, projGames: projYr >= 2021 ? 17 : 16, ...(infoCal ? { truth: truthByYear.get(yr), roomKappa: infoCal.roomKappa, ourKappa: ourInfo === "clean" ? 0 : infoCal.ourKappa, roomSd: valueOf(rest, "--market-noise") != null ? marketSd : infoCal.roomSd } : {}) }); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a
@@ -3035,7 +3056,7 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${ageCurve && noLookahead && projMode !== "artifact" ? "age-curve " : ""}${oppModel && noLookahead && projMode !== "artifact" ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}${noLookahead ? (ourInfo === "clean" ? " our-info(clean, legacy)" : ` our-info(sd ${ourSd ?? OUR_INFO_SD}, rho ${ourRho})`) : ""}${botNoiseSequential ? " bot-noise(sequential, legacy)" : ""}${rookiesPlayedOnly ? " rookies(played-only, legacy)" : ""}`;
+  const mode = `${ageCurve && noLookahead && projMode !== "artifact" ? "age-curve " : ""}${oppModel && noLookahead && projMode !== "artifact" ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}${noLookahead ? (ourInfo === "clean" ? " our-info(clean, legacy)" : ` our-info(sd ${ourSd ?? ourSdDefault}, rho ${ourRho}${infoCal ? `, k ${infoCal.ourKappa}` : ""})`) : ""}${infoCal ? ` room-info(calibrated: k ${infoCal.roomKappa}, sd ${valueOf(rest, "--market-noise") != null ? marketSd : infoCal.roomSd})` : (noLookahead && roomInfo === "legacy" ? " room-info(legacy)" : "")}${botNoiseSequential ? " bot-noise(sequential, legacy)" : ""}${rookiesPlayedOnly ? " rookies(played-only, legacy)" : ""}`;
   console.log(`FORMAT  weeks 1-${btRegWeeks}, ${btPlayoffTeams}-team playoff, seeding ${seeding}, bracket ${btReseed ? "reseeds" : "fixed"}` +
     `  (from the ${btFormat.source} format block${seedingArg || valueOf(rest, "--reg-weeks") || valueOf(rest, "--playoff-teams") || reseedArg ? ", overridden on the command line" : ""})`);
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${btPlayoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(shared ${marketNoiseGiven ? String(marketSd) : "measured band sd"}, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);

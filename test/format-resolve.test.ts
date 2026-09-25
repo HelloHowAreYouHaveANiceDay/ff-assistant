@@ -90,6 +90,8 @@ test("the INCUMBENT resolves to the data/ ROOT, and every path is byte-identical
       values: dataPath("values.csv"),
       "def-ratings": dataPath("def-ratings.csv"),
       golden: dataPath("golden.json"),
+      // D39: the arbiter's calibrated information model, per format; the incumbent's at the root.
+      "info-model": dataPath("info-model.json"),
       scoring: dataPath("scoring.json"),
       manifest: dataPath("manifest.json"),
     };

@@ -193,7 +193,19 @@ export interface DraftOptions {
  * lineup choice (every man is divided by the same number), so it moves nothing in the flagless arm;
  * it matters where a preseason rate is compared against realised per-game points (waivers, churn).
  */
-export interface InfoModel { ourRho?: number; projGames?: number }
+export interface InfoModel {
+  ourRho?: number; projGames?: number;
+  /**
+   * THE FORECASTERS' INFORMATION (D39). Each view is p (1 + kappa * delta + sd * z), delta = the change
+   * that actually happened, (Y - p)/p, clipped to [-1, 3]. `truth` is Y per player (a player the pool
+   * holds who never played is Y = 0, delta = -1). kappa = 0 everywhere is the pre-D39 model, in which
+   * the room could only ever be WORSE than last season's points; the real consensus is BETTER than
+   * them, which only a kappa > 0 can represent. Calibrated per format: scripts/calibrate-our-info.mjs.
+   */
+  truth?: Map<string, number>; roomKappa?: number; ourKappa?: number;
+  /** The room's measured noise, replacing `marketSd` in the default (non-ECR) market. */
+  roomSd?: number;
+}
 
 export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams: number = required("playoffTeams"), regWeeks: number = required("regWeeks"), avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false, seeding: SeedingRule = required("seeding"), playoffReseed: boolean = required("playoffReseed"), variancePath?: string, draft: DraftOptions = {}, info: InfoModel = {}): BacktestResult {
   const G = info.projGames ?? 17;
@@ -216,12 +228,18 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   //   ecr      the real consensus projection times exp(e), e ~ N(0, the MEASURED sd at his rank
   //            band), median-preserving so the market is not biased up or down by its own error
   const zMarket = new Map<string, number>();
+  const km = info.roomKappa ?? 0, ku = info.ourKappa ?? 0;
+  const deltaOf = (p: PointsRow): number => {
+    if (!info.truth || p.points <= 0) return 0;
+    return Math.max(-1, Math.min(3, ((info.truth.get(p.name) ?? 0) - p.points) / p.points));
+  };
   const projMarket: PointsRow[] = seasonPoints.map((p) => {
     const base = market.proj?.get(p.name) ?? p.points;
     const z = gauss(rngM);
     zMarket.set(p.name, z);
     if (!market.proj && !market.sdByName) {
-      return { ...p, points: Math.max(0, p.points * (1 + z * marketSd)) };
+      // km = 0 and roomSd unset is the pre-D39 room exactly.
+      return { ...p, points: Math.max(0, p.points * (1 + km * deltaOf(p) + z * (info.roomSd ?? marketSd))) };
     }
     const sd = market.sdByName?.get(p.name) ?? marketSd;
     return { ...p, points: Math.max(0, base * Math.exp(z * sd - 0.5 * sd * sd)) };
@@ -231,7 +249,7 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   const projUs = new Map(seasonPoints.map((p) => {
     const zOwn = gauss(rngU);
     const z = rho === 0 ? zOwn : rho * (zMarket.get(p.name) ?? 0) + rhoC * zOwn;
-    return [p.name, Math.max(0, p.points * (1 + z * us))];
+    return [p.name, Math.max(0, p.points * (1 + ku * deltaOf(p) + z * us))];
   }));
   const projMap = new Map(projMarket.map((p) => [p.name, p.points]));
   // OUR values. Optional injury lever: discount by prior-season availability (avail = games/regWeeks),
