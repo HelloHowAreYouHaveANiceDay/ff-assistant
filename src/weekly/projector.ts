@@ -305,6 +305,57 @@ export interface WeeklyProjRow {
    * card prints is the band the sampler draws. Two-part artifacts only.
    */
   knots?: { u: number[]; v: number[] };
+  /** True when this row's p10/p90 were REBUILT from peers because its ratio hit the clamp (see
+   *  `uncapBands`). Its mean and p50 are the model's, untouched. */
+  bandUncapped?: boolean;
+}
+
+/** The preseason line below which the weekly heads were never trained (tools/train_weekly.py
+ *  TRAIN_MIN_LINE). Peers for a band rebuild are drawn only from at or above it. */
+export const WEEKLY_TRAINED_MIN_LINE = 3.0;
+
+/**
+ * THE CLAMPED-RATIO BAND, REBUILT FROM PEERS (2026-09-25).
+ *
+ * The weekly heads predict a RATIO to the preseason line, clamped to [0, clamps.hi = 4], trained on
+ * lines >= 3. A man whose line is tiny -- a back nobody expected to play who now has a role -- needs a
+ * ratio above the clamp, so his mean AND his upper grid pin at line x 4 and the band collapses onto
+ * the mean (Jonah Coleman: mean 3.4, p90 3.5). MEASURED, 2022-2025 RB/WR/TE weeks 3-13
+ * (scripts/weekly-band-coverage.ts): the realised week landed above the served p90 38.1% of the time
+ * for lines < 1.5 and 18.9% for 1.5-3, against 9.1% in the trained range.
+ *
+ * For a row whose p90 is pinned at the clamp, p10 and p90 are rebuilt from the SHAPE of its 40 nearest
+ * uncapped peers -- same position, trained-range line, nearest MEAN, same batch (week): p90 = mean x
+ * median(p90/mean), p10 = mean x median(p10/mean), never narrowing the band the model served. The mean
+ * and p50 are NOT touched, so no lineup, waiver or trade number moves. The row's `knots` are dropped
+ * (they are the capped grid); a sampler falls back to its three-knot band for these men only.
+ * `FF_WEEKLY_UNCAP_BAND=0` serves the capped band exactly as before.
+ */
+export function uncapBands(rows: WeeklyProjRow[], lineOf: Map<string, number>, clampHi: number, k = 40): WeeklyProjRow[] {
+  const capped = (r: WeeklyProjRow): boolean => {
+    const line = lineOf.get(r.feat_key);
+    return line != null && line > 0 && r.mean > 0 && r.p90 >= line * clampHi * 0.999;
+  };
+  const refsByPos = new Map<string, WeeklyProjRow[]>();
+  for (const r of rows) {
+    const line = lineOf.get(r.feat_key);
+    if (line == null || line < WEEKLY_TRAINED_MIN_LINE || r.mean <= 0 || capped(r)) continue;
+    (refsByPos.get(r.pos) ?? refsByPos.set(r.pos, []).get(r.pos)!).push(r);
+  }
+  const median = (a: number[]): number => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  return rows.map((r) => {
+    if (!capped(r)) return r;
+    const refs = refsByPos.get(r.pos) ?? [];
+    if (refs.length < 20) return r;                  // too few peers to borrow a shape from: leave as served
+    const near = [...refs].sort((a, b) => Math.abs(a.mean - r.mean) - Math.abs(b.mean - r.mean)).slice(0, k);
+    const k90 = median(near.map((x) => x.p90 / x.mean));
+    const k10 = median(near.map((x) => x.p10 / x.mean));
+    const p90 = Math.max(r.p90, r.mean * k90, r.p50);
+    const p10 = Math.min(r.p10, r.mean * k10, r.p50);
+    const { knots: _drop, ...rest } = r;
+    void _drop;
+    return { ...rest, p10, p90, bandUncapped: true };
+  });
 }
 
 export interface WeeklyInputRow {
@@ -391,6 +442,7 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
   const twoPart = a.zeroModel === "two-part";
   const grid = a.quantileGrid ?? DEFAULT_QUANTILE_GRID;
   const out: WeeklyProjRow[] = [];
+  const lineOf = new Map<string, number>();   // for `uncapBands`, which needs each row's line
   // The boosted heads serve the positions they name; every other position (and any head a boosted
   // position does not carry) stays linear. `featIdx` maps a feature name to its column in the full
   // design so a position's reduced vector can be built in the boosted head-set's own `features` order.
@@ -402,6 +454,7 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
   for (const row of rows) {
     const line = row.season_line_pg;
     if (line == null || !Number.isFinite(line) || line <= 0) continue;
+    lineOf.set(row.feat_key, line);
     const byPos = a.coef[row.pos];
     if (!byPos) continue;
     const x = a.features.map((s) => weeklyFeatureValue(s, row));
@@ -507,7 +560,7 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
       knots: mixtureKnots(pZero, grid, vals.map((v) => line * v), { p10, p50, p90 }),
     });
   }
-  return out;
+  return process.env.FF_WEEKLY_UNCAP_BAND === "0" ? out : uncapBands(out, lineOf, a.clamps.hi);
 }
 
 /**

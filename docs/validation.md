@@ -8178,3 +8178,30 @@ expert weekly rank (+5.0e-3 log-loss, 4/5 seasons) and DFS salary (+3.8e-3, 3/4)
 4-5 seasons and do not clear 2.9 SE. The served RATE itself is the signal: each week's top 5 claimable free
 agents by rate break out 24-32% of the time, 6-8x the base rate. By rate band: TE 5-6 pts/wk 26% (n=65),
 4-5 13%; WR 5-6 9%, 7-8 12%; RB 5-7 5-9%. Re-run the ECR/DFS arms once more seasons carry those columns.
+
+## The weekly band collapses for small-line players -- range rebuilt; the MEAN bias is open (2026-09-25)
+
+**Found** answering "who is the highest-floor free agent?": 22 of 120 claimable RB/WR/TE bands had collapsed
+onto the mean (Jonah Coleman mean 3.4, p10-p90 2.1-3.5; one row with p90 below its mean -- that one, Jonathon
+Brooks, is correct: pZero 0.91 puts p90 on the zero atom). Cause: the weekly heads predict a RATIO to the
+preseason line, clamped to [0, 4] (`CLAMP_HI` in tools/train_weekly.py) and trained on lines >= 3. A back
+with a 0.9 line who now has a role needs a ratio above 4, so his mean AND his upper grid pin at line x 4.
+
+`scripts/weekly-band-coverage.ts`, RB/WR/TE 2022-2025 weeks 3-13 (the served artifact):
+
+| preseason line | n | above p90 before | above p90 after | served mean vs realised | realised < p50 |
+|---|---|---|---|---|---|
+| < 1.5 | 3,232 | 38.1% | 32.9% | 1.43 vs 2.62 (-1.20) | 29% |
+| 1.5-3 | 2,262 | 18.9% | 14.7% | 3.68 vs 4.14 (-0.46) | 37% |
+| >= 3 | 6,219 | 9.1% | 8.7% | 8.21 vs 8.63 (-0.42) | 45% |
+
+**APPLIED (range only, owner: "yea"):** `uncapBands` (src/weekly/projector.ts) rebuilds p10/p90 of a row whose
+p90 is pinned at the clamp from the shape of its 40 nearest uncapped trained-range peers (same position, nearest
+mean, same week); never narrows; drops that row's knots; mean and p50 untouched (asserted: 0 of 1,682 rows moved).
+`FF_WEEKLY_UNCAP_BAND=0` restores the old band. Test: test/weekly-uncap-band.test.ts.
+
+**OPEN -- a model change, gate + owner sign-off required:** the MEAN is biased low for these men by 46% (lines
+< 1.5) -- the same clamp, and they were never in training. They are exactly the role-change free agents a
+waiver decision is about. Fix candidates: raise CLAMP_HI, and/or anchor the ratio on max(line, a floor) and
+train on the small-line rows; either is a retrain gated by `ff evaluate-weekly` (paired, season-level) on the
+full population AND on the small-line cells.
