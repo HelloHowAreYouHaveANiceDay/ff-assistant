@@ -8167,3 +8167,14 @@ Re-run, kickers (1,652 team-weeks, ours playing):
 DST is unchanged (every defence plays): IMPLIED -0.12 NULL (3/8). Streaming the kicker on the team projected
 to score the most has no edge here -- the week's team total moves a kicker ~0.06 pts per point, far inside
 his 4.6-point weekly spread. Bye weeks remain the one reliable stream (K +7.9 to +9.9, DST +5.5 to +7.2).
+
+## Waiver breakouts -- predictable only through the rate we already serve (2026-09-25)
+
+`node scripts/breakout-screen.mjs` (league 462233's real pools, 2018-2025, weeks 3-8; 8,534 claimable active
+skill-position free agents; BREAKOUT = rest-of-regular-season pts per scheduled week >= RB/WR 10, TE 8, QB 15;
+3.8% base rate). Logistic, leave-one-season-out, each candidate added to the served rest-of-season rate:
+snap share, snap trend, route share, WOPR, depth rank, teammates out -- all NULL (air-yards share WORSE);
+expert weekly rank (+5.0e-3 log-loss, 4/5 seasons) and DFS salary (+3.8e-3, 3/4) lean positive but cover only
+4-5 seasons and do not clear 2.9 SE. The served RATE itself is the signal: each week's top 5 claimable free
+agents by rate break out 24-32% of the time, 6-8x the base rate. By rate band: TE 5-6 pts/wk 26% (n=65),
+4-5 13%; WR 5-6 9%, 7-8 12%; RB 5-7 5-9%. Re-run the ECR/DFS arms once more seasons carry those columns.
