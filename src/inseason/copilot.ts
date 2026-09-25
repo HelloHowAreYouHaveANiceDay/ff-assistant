@@ -1370,7 +1370,7 @@ export interface WaiverTarget extends ObjectiveDelta {
    * man. The distinction is on the row because "the simulator evaluated him and said no" and "the
    * simulator never saw him" are different answers that used to look identical.
    */
-  admittedAs: "vor" | "handcuff";
+  admittedAs: "vor" | "handcuff" | "need";
   /** The rostered starter this candidate backs up, when `admittedAs` is "handcuff". */
   insures: string | null;
   drops: WaiverDrop[];
@@ -1474,6 +1474,9 @@ export function waiverTargets(
     /** Extra shortlist slots for free agents who back up one of OUR starters. 0 disables the
      *  roster-conditional admission entirely and reproduces the pre-fix pool exactly. */
     handcuffAdds?: number;
+    /** Per skill position where we have NO depth (rostered <= dedicated starting slots), how many of
+     *  its best free agents join the shortlist. Default 2; 0 reproduces the pre-2026-09-25 pool. */
+    needAdds?: number;
     /** The win probability the recommended bid is solved for. Exposed because 0.7 is a CHOICE about
      *  how much of the budget to spend on certainty, not a measured quantity. */
     faabTargetWinPct?: number;
@@ -1683,6 +1686,38 @@ export function waiverTargets(
     insuresBy.set(nameKey(p.name), lead);
     admitted.push(p);
   }
+  /**
+   * A POSITION WHERE WE HAVE NO DEPTH GETS ITS BEST FREE AGENTS ONTO THE SHORTLIST (2026-09-25).
+   *
+   * VOR ranks the POOL against the LEAGUE's replacement level. In a 16-team league with two FLEX
+   * spots RB replacement is high, so a healthy starting-calibre back ranks below a middling TE,
+   * kicker or defence -- and the handcuff admission above only reaches a backup on OUR starter's own
+   * team, who shares his bye. MEASURED on league 462233, week 3: our roster held exactly ONE running
+   * back; the default run evaluated three TEs, a kicker and a defence and never saw Rico Dowdle, who
+   * scores +1.75pp playoffs against a 0.41pp paired floor -- the best claim available, by 4x.
+   *
+   * Admitted, not priced: the simulator already knows our roster shape and prices the claim in the
+   * same objective as every other row. Skill positions only (streaming a lone K/DST is normal). A
+   * man on the same NFL team as our starter there is skipped: he shares the bye he would cover.
+   */
+  const nNeedAdds = o.needAdds ?? 2;
+  const dedicated = (pos: string) => ctx.slots.filter((sl) => sl === pos).length;
+  const needBy = new Map<string, string>();
+  for (const pos of ["QB", "RB", "WR", "TE"]) {
+    if (o.positions && !o.positions.includes(pos)) continue;
+    const have = myRoster.filter((m) => m.pos === pos);
+    if (have.length > dedicated(pos)) continue;
+    const teams = new Set(have.map((m) => m.team).filter(Boolean));
+    let n = 0;
+    for (const p of eligible) {
+      if (n >= nNeedAdds) break;
+      if (p.pos !== pos || (p.team && teams.has(p.team))) continue;
+      if ([...byVor, ...admitted].some((x) => nameKey(x.name) === nameKey(p.name))) continue;
+      needBy.set(nameKey(p.name), `${pos} depth ${have.length} for ${dedicated(pos)} starting slot(s)`);
+      admitted.push(p);
+      n++;
+    }
+  }
   const free = [...byVor, ...admitted];
 
   const baseBySeed = seeds.map((s) => outcomeOf(ctx, ctx.teams, trials, s));
@@ -1778,7 +1813,7 @@ export function waiverTargets(
       })(),
       pairedFloorPp: pairedFloorPp(best.seRaw ?? null, trials, seeds.length),
       ...bidFor(add.name, add.pos, best.playoffsPp),
-      admittedAs: insuresBy.has(nameKey(add.name)) ? "handcuff" : "vor",
+      admittedAs: insuresBy.has(nameKey(add.name)) ? "handcuff" : needBy.has(nameKey(add.name)) ? "need" : "vor",
       insures: insuresBy.get(nameKey(add.name)) ?? null,
       drops,
     });

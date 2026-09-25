@@ -194,7 +194,7 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     case "waiver_targets": {
       const x = r as C.WaiverResult;
       if (!x.targets.length) return `No waiver claim scored. Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title. ${caveat(x.assumptions)}`;
-      const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}${t.admittedAs === "handcuff" ? `, insures ${t.insures}` : ""}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
+      const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}${t.admittedAs === "handcuff" ? `, insures ${t.insures}` : t.admittedAs === "need" ? ", depth need" : ""}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
       /**
        * A HANDCUFF'S NUMBER IS NOT A VERDICT ON THE HANDCUFF, and saying nothing would be worse than
        * the blindness it replaced: "never considered" at least looks like silence, while a confident
@@ -223,7 +223,11 @@ function summarize(verb: CopilotVerb, r: unknown): string {
           ` Their deltas UNDERSTATE insurance: the sim samples SAME-POSITION teammates independently (RB-RB, TE-TE and WR-WR are all 0.00), so "lead out, backup elevated" cannot occur and a bench handcuff can only score <=0 here.` +
           ` Read ff depth-risk --player <starter> for the conditional value.`
         : "";
-      return `Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title; noise floor ${x.noiseFloorPp}pp. ${rows}.` +
+      // THE FLOOR THAT DECIDED THE VERDICTS. This printed the UNPAIRED binomial floor (3.98pp in week 3)
+      // while every row's `clearsNoise` was judged against the PAIRED one (0.41pp) -- so the headline
+      // said nothing could clear it while rows without "(inside noise)" had. Quote the paired bar.
+      const pf = x.noiseBasis === "paired-2.9se" ? x.targets.find((t) => t.pairedFloorPp != null)?.pairedFloorPp : null;
+      return `Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title; noise floor ${pf != null ? `${pf}pp (paired, the bar each row is judged on; unpaired ${x.noiseFloorPp}pp)` : `${x.noiseFloorPp}pp`}. ${rows}.` +
         hcNote +
         `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""}` +
         `${x.unavailableAdds?.length ? ` EXCLUDED ${x.unavailableAdds.length} free agent(s) who CANNOT PLAY: ` +

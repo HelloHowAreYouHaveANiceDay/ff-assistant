@@ -218,6 +218,27 @@ test("waivers: a free agent backing up OUR starter is admitted to the shortlist 
   assert.equal(vorRow.insures, null);
 });
 
+/**
+ * A POSITION WHERE WE HAVE NO DEPTH GETS ITS BEST FREE AGENTS ONTO THE SHORTLIST (2026-09-25).
+ *
+ * League 462233, week 3: one rostered running back, and the default run evaluated three TEs, a kicker
+ * and a defence -- never Rico Dowdle (+1.75pp, the best claim by 4x). Here our roster is cut to ONE
+ * back and a free-agent back on ANOTHER team (so not a handcuff) is projected below every other free
+ * agent, so only the depth-need admission can reach him.
+ */
+test("waivers: a position with NO depth admits its best free agents, which VOR alone never reaches", () => {
+  const ctx = fixtureCtx();
+  const rbs = [...ctx.teams[0].roster].filter((p) => p.pos === "RB").sort((a, b) => b.proj - a.proj);
+  ctx.teams[0].roster = ctx.teams[0].roster.filter((p) => p.pos !== "RB" || p === rbs[0]);
+  ctx.board.set(key("Depth Back"), { name: "Depth Back", pos: "RB", proj: 30, team: "ZZZ" });
+  const r = waiverTargets(ctx, { trials: 200, seeds: [7], adds: 1, dropsPerAdd: 3, handcuffAdds: 0 });
+  const row = r.targets.find((t) => t.add === "Depth Back");
+  assert.ok(row, `the depth-need back never reached the shortlist: ${r.targets.map((t) => t.add).join(", ")}`);
+  assert.equal(row.admittedAs, "need");
+  const off = waiverTargets(ctx, { trials: 200, seeds: [7], adds: 1, dropsPerAdd: 3, handcuffAdds: 0, needAdds: 0 });
+  assert.ok(!off.targets.some((t) => t.add === "Depth Back"), "needAdds 0 still admitted him -- the lever is not what did");
+});
+
 test("FAULT: handcuffAdds 0 reproduces the pre-fix pool -- the admission is a real lever, not decoration", () => {
   const ctx = fixtureCtx();
   const ourRb = [...ctx.teams[0].roster].filter((p) => p.pos === "RB").sort((a, b) => b.proj - a.proj)[0];

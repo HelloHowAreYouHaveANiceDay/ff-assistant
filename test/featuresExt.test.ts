@@ -217,7 +217,7 @@ test("feat_player_week_context: every ARCHIVE Friday injury status is backed by 
   assert.equal(badDateless.c, 0, "a Friday status not backed by that week's consolidated report (dateless season)");
 });
 
-test("feat_player_week_context: every LIVE row precedes its week's first kickoff", { skip: skipIf("feat_player_week_context") }, () => {
+test("feat_player_week_context: every LIVE row precedes its own TEAM's kickoff that week", { skip: skipIf("feat_player_week_context") }, () => {
   const db = open();
   // THE LIVE ROWS' OWN GUARANTEE, and it is a different one. There is no filing behind a live status
   // to back-join to, so what has to hold instead is the point-in-time rule the live builder places
@@ -225,13 +225,17 @@ test("feat_player_week_context: every LIVE row precedes its week's first kickoff
   // taken after it is contaminated by a game already played -- a man carted off on Thursday is "Out"
   // in a feed read on Friday -- and would be information from the future wearing a week label,
   // exactly the failure the archive guard catches by a different route.
+  //
+  // PER TEAM, since 2026-09-25: the live builder refreshes the IN-PROGRESS week for teams whose game is
+  // still ahead (after Thursday night the week is being decided while most of it is unplayed). The
+  // guarantee that matters is unchanged in substance and sharper in form: a row's snapshot precedes
+  // THAT PLAYER'S TEAM'S kickoff -- a week-level first kickoff was a coarser stand-in for it.
   const rows = db.prepare(
-    `SELECT ctx.season, ctx.week, ctx.as_of, k.first_kick FROM feat_player_week_context ctx
-     JOIN (SELECT season, week, MIN(gameday) AS first_kick FROM raw_nfl_game
-            WHERE game_type = 'REG' AND gameday IS NOT NULL GROUP BY season, week) k
-       ON k.season = ctx.season AND k.week = ctx.week
-     WHERE ctx.source = 'live'`,
-  ).all() as { season: number; week: number; as_of: string; first_kick: string }[];
+    `SELECT ctx.season, ctx.week, ctx.team, ctx.as_of, g.gameday AS first_kick FROM feat_player_week_context ctx
+     JOIN raw_nfl_game g ON g.season = ctx.season AND g.week = ctx.week AND g.game_type = 'REG'
+       AND g.gameday IS NOT NULL AND (g.home_team = ctx.team OR g.away_team = ctx.team)
+     WHERE ctx.source IN ('live', 'live-unresolved')`,
+  ).all() as { season: number; week: number; team: string; as_of: string; first_kick: string }[];
   db.close();
   if (!rows.length) {
     // A store built before the live builder ran has no such rows, and that is not a failure. It IS
@@ -241,7 +245,7 @@ test("feat_player_week_context: every LIVE row precedes its week's first kickoff
   }
   const late = rows.filter((r) => r.as_of.slice(0, 10) >= r.first_kick);
   assert.deepEqual(late, [],
-    "a live context row was stamped at or after its own week's first kickoff, so its injury " +
+    "a live context row was stamped at or after its own team's kickoff that week, so its injury " +
     "designations could already reflect a game that has been played");
   // And the rows must be for a season the ARCHIVE does not cover, or the archive builder should own
   // them: two builders writing the same week would leave the surviving guarantee up to run order.
