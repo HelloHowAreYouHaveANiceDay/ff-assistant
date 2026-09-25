@@ -53,6 +53,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import sqlite3
 import sys
 from datetime import date
@@ -60,6 +61,9 @@ from datetime import date
 import numpy as np
 
 SCHEMA = 2
+# The weekly artifact FILENAMES the serve table reads (src/weekly/streamingServe.ts WEEKLY_SERVE).
+# A write to one of these is refused without --allow-served-overwrite (review 2026-09-24, W2).
+SERVED_WEEKLY_FILES = {"weekly-artifact.json", "weekly-artifact-lineonly.json"}
 POS_FITTED = ["QB", "RB", "WR", "TE"]
 POS_INTERCEPT_ONLY = ["K", "DST"]
 
@@ -1362,7 +1366,19 @@ def main():
                          "absent falls back on the season-line anchor instead of an OOD leaf. 0 = off "
                          "(the pre-robustness heads that collapse the live serve).")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--allow-served-overwrite", action="store_true",
+                    help="permit --out to name a SERVED artifact file (weekly-artifact.json, "
+                         "weekly-artifact-lineonly.json). Without it such a write is refused.")
     args = ap.parse_args()
+    # THE SERVED FILES ARE NOT A SCRATCH PATH (architecture review 2026-09-24, W2). This script's
+    # defaults (--features all, --zero-model quantile, --learner linear) are NOT the served recipe,
+    # and --out defaulted to the served file -- so a bare `train_weekly.py` silently replaced the
+    # boosted two-part model QB-TE are served from with a different model the loader would accept.
+    # A write to a served filename must now be asked for by name.
+    if os.path.basename(args.out) in SERVED_WEEKLY_FILES and not args.allow_served_overwrite:
+        sys.exit("train_weekly: --out " + args.out + " is a SERVED artifact. Refusing to overwrite it "
+                 "without --allow-served-overwrite (and the served recipe's flags: see the artifact's "
+                 "own `trainerArgv`). Write to a temp path, gate it, then swap.")
     if args.learner == "gbm" and args.zero_model != "two-part":
         sys.exit("train_weekly: --learner gbm is only defined for --zero-model two-part (the shipped "
                  "serve). The boosted heads mirror the two-part stages; there is no boosted quantile "
@@ -1530,6 +1546,9 @@ def main():
         "kind": "weekly",
         "zeroModel": zero_model,
         "fittedFrom": "tools/train_weekly.py",
+        # THE RECIPE (review 2026-09-24, W2): the exact flags this artifact was fitted with, so a
+        # re-fit can reproduce it and a reader can tell which of the trainer's many modes it is.
+        "trainerArgv": sys.argv[1:],
         "fittedAt": date.today().isoformat(),
         "seasons": seasons,
         "holdoutSeason": holdout,

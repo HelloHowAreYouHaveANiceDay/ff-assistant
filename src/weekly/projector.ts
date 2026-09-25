@@ -296,6 +296,15 @@ export interface WeeklyProjRow {
    *  artifact does NOT get a fabricated one here; the evaluator reads its ladder instead, which is
    *  an honest statement of what that model can and cannot claim. */
   pZero?: number;
+  /**
+   * THE FULL INVERSE CDF the two-part mixture defines, in POINTS: `u` ascending levels in (0, 1),
+   * `v` the non-decreasing values at them, the zero atom at u = pZero. Carried so a sampler (winprob)
+   * draws from the model's whole grid instead of re-guessing a shape from p10/p50/p90 -- the
+   * three-knot rebuild moved the sampled mean by -19%..+7% against the served mean (architecture
+   * review 2026-09-24, B4). The served (calibrated) p10/p90 are knots on it, so the band a lineup
+   * card prints is the band the sampler draws. Two-part artifacts only.
+   */
+  knots?: { u: number[]; v: number[] };
 }
 
 export interface WeeklyInputRow {
@@ -488,17 +497,42 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
       }
       return vals[vals.length - 1];
     };
+    const p10 = line * calBand(mixQ(0.10), "lo", mixQ(0.50));
+    const p50 = line * mixQ(0.50);
+    const p90 = line * calBand(mixQ(0.90), "hi", mixQ(0.50));
     out.push({
       feat_key: row.feat_key, player_sk: row.player_sk, name: row.name, pos: row.pos,
       season: row.season, week: row.week,
-      mean,
-      p10: line * calBand(mixQ(0.10), "lo", mixQ(0.50)),
-      p50: line * mixQ(0.50),
-      p90: line * calBand(mixQ(0.90), "hi", mixQ(0.50)),
-      pZero,
+      mean, p10, p50, p90, pZero,
+      knots: mixtureKnots(pZero, grid, vals.map((v) => line * v), { p10, p50, p90 }),
     });
   }
   return out;
+}
+
+/**
+ * The mixture's knots in points (see `WeeklyProjRow.knots`). The grid levels are mapped through the
+ * atom (u = pZero + (1 - pZero) g); the served p10/p50/p90 replace whatever the grid says at 0.10,
+ * 0.50 and 0.90 so the calibrated band is on the curve; values are forced non-decreasing.
+ */
+export function mixtureKnots(
+  pZero: number, grid: number[], vals: number[], served: { p10: number; p50: number; p90: number },
+): { u: number[]; v: number[] } {
+  const pts = new Map<number, number>();
+  const z = Math.min(1, Math.max(0, pZero));
+  if (z > 0) pts.set(z, 0);
+  for (let i = 0; i < grid.length; i++) {
+    const u = z + (1 - z) * grid[i];
+    if (u > z && u < 1) pts.set(u, vals[i]);
+  }
+  for (const [u, v] of [[0.10, served.p10], [0.50, served.p50], [0.90, served.p90]] as [number, number][]) {
+    if (u > z && Number.isFinite(v)) pts.set(u, v);
+  }
+  const u = [...pts.keys()].sort((a, b) => a - b);
+  const v: number[] = [];
+  let prev = 0;
+  for (const k of u) { const x = Math.max(prev, Math.max(0, pts.get(k)!)); v.push(x); prev = x; }
+  return { u, v };
 }
 
 /**

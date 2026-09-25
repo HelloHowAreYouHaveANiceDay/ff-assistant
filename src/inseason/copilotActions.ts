@@ -360,6 +360,16 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
               "; their men are priced at what they actually scored. Anyone locked but still PLAYING keeps his projection."
             : " -- nothing is locked, so every slot is still movable.");
       }
+      // AN ARTIFACT THAT DID NOT LOAD IS NAMED, WITH ITS REASON (review 2026-09-24, W1). A refused
+      // artifact (failed golden check) used to be swallowed: its positions fell back to the season
+      // line while the serve assumption still named the file, so the note described a model that
+      // produced none of the numbers.
+      const why = withBands?.missingWhy ?? {};
+      if (Object.keys(why).length) {
+        res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; WEEKLY MODEL NOT LOADED for ` +
+          Object.entries(why).map(([p, w]) => `${p} (${w})`).join(", ") +
+          " -- those positions are priced on the season-line fallback, not the weekly model.";
+      }
       if (dark.length) {
         res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; DEGRADED -- ${dark.length} model ` +
           `feature(s) are 100% ABSENT at this week and were populated at the same week in prior seasons: ` +

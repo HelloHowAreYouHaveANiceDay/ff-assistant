@@ -42,7 +42,7 @@ import { loadArtifact, type ProjectionArtifact } from "../model/projector.js";
 import { backtestProjection, boardProjection } from "../model/features.js";
 import { fitRookieCurve, rookieProjections } from "../draft/rookieModel.js";
 import { STREAM_FIELD_NAMES, presentStreamFields } from "./streamingFields.js";
-import { buildSourceResolver } from "../features/sources/resolve.js";
+import { buildSourceResolver, resolvePlayerTable } from "../features/sources/resolve.js";
 // TYPE-ONLY, and it must stay that way: formatResolve.ts imports projector.ts (for the two weekly
 // artifact filename constants) and projector.ts imports THIS file, so a VALUE import here closes a
 // runtime cycle and the artifact table hits a TDZ error at module load. A type import is erased.
@@ -219,12 +219,12 @@ export function contextFor(db: DB, season: number): Map<string, ContextRow> {
   const out = new Map<string, ContextRow>();
   const rows = db.prepare(
     `SELECT week, player_sk, prior_snap_share, prior_route_share, depth_rank, teammates_out,
-            report_status_fri, practice_status_fri
+            report_status_fri, practice_status_fri, source
        FROM feat_player_week_context WHERE season = ?`,
   ).all(season) as {
     week: number; player_sk: number; prior_snap_share: number | null; prior_route_share: number | null;
     depth_rank: number | null; teammates_out: number | null;
-    report_status_fri: string | null; practice_status_fri: string | null;
+    report_status_fri: string | null; practice_status_fri: string | null; source: string | null;
   }[];
   // Which league-weeks the feed actually spoke in. A week where NOBODY carries a status is a silent
   // feed, not a healthy league: 2025 has 6,068 injury rows and not one of them is dated, so every
@@ -236,7 +236,10 @@ export function contextFor(db: DB, season: number): Map<string, ContextRow> {
       prior_snap_share: r.prior_snap_share, prior_route_share: r.prior_route_share,
       depth_rank: r.depth_rank,
       teammates_out: spoke.has(r.week) ? (r.teammates_out ?? 0) : null,
-      ...(spoke.has(r.week)
+      // A LIVE row whose player the status feed never resolved is UNKNOWN, not healthy (review
+      // 2026-09-24, B2): absence from a dated report means "not injured" only for a man the report
+      // could have named. Everyone else in a spoken week keeps the archive's absence-is-healthy rule.
+      ...(spoke.has(r.week) && r.source !== "live-unresolved"
         ? injuryIndicators(r.report_status_fri, r.practice_status_fri)
         : { inj_out: null, inj_doubtful: null, inj_questionable: null, prac_dnp: null, prac_limited: null }),
       inj_feed: spoke.has(r.week) ? 1 : 0,
@@ -1290,6 +1293,23 @@ export async function buildForwardWeeks(opts: ForwardOpts): Promise<ForwardResul
   try { return await buildForwardInto(db, opts); } finally { db.close(); }
 }
 
+/**
+ * The team a LIVE-season row is written under (review 2026-09-24, B1). In order: the team he
+ * actually played for that week; for a week not yet played (after the last settled week), his
+ * CURRENT roster team; otherwise the most recent team observed before the week; otherwise the
+ * season row's Sept-1 team.
+ */
+export function forwardTeamAt(o: {
+  played: Map<number, { team: string | null }> | undefined; week: number; lastSettled: number;
+  currentTeam: string | null; seasonTeam: string | null;
+}): string | null {
+  const own = o.played?.get(o.week)?.team;
+  if (own) return own;
+  if (o.week > o.lastSettled && o.currentTeam) return o.currentTeam;
+  if (o.played) for (let w = o.week - 1; w >= 1; w--) { const t = o.played.get(w)?.team; if (t) return t; }
+  return o.seasonTeam;
+}
+
 export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<ForwardResult> {
   const season = opts.season;
   const artifact = loadWeeklyBaseArtifact(opts.artifactPath, opts.model);
@@ -1333,15 +1353,35 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
       }
     }
   }
-  const firstUnpriced = weeks.find((w) => board.some((p) => p.team && game.get(`${p.team}|${w}`) && game.get(`${p.team}|${w}`)!.spread == null)) ?? -1;
-
   // Whatever of this season has already been played, for the to-date and trailing columns.
   const playedRows = db.prepare(
-    "SELECT feat_key, week, pts, td_games, td_fd, td_ts, td_attempts, td_rush_yards, td_pts FROM feat_player_week WHERE season = ? AND pts IS NOT NULL",
-  ).all(season) as { feat_key: string; week: number; pts: number; td_games: number | null; td_fd: number | null; td_ts: number | null; td_attempts: number | null; td_rush_yards: number | null; td_pts: number | null }[];
+    "SELECT feat_key, week, team, pts, td_games, td_fd, td_ts, td_attempts, td_rush_yards, td_pts FROM feat_player_week WHERE season = ? AND pts IS NOT NULL",
+  ).all(season) as { feat_key: string; week: number; team: string | null; pts: number; td_games: number | null; td_fd: number | null; td_ts: number | null; td_attempts: number | null; td_rush_yards: number | null; td_pts: number | null }[];
   const played = new Map<string, Map<number, typeof playedRows[number]>>();
   for (const r of playedRows) (played.get(r.feat_key) ?? played.set(r.feat_key, new Map()).get(r.feat_key)!).set(r.week, r);
   const playedWeeks = [...new Set(playedRows.map((r) => r.week))].sort((a, b) => a - b);
+  const lastSettled = playedWeeks.length ? playedWeeks[playedWeeks.length - 1] : 0;
+
+  // THE TEAM, PER WEEK (architecture review 2026-09-24, B1). This used to be `p.team` -- the
+  // season row's team, which is PINNED to the Sept-1 shirt -- for every week of the season, so a man
+  // traded or signed elsewhere in September kept his old opponent, spread, rest days, `opp_*` block
+  // and `teammates_out` all year (Blake Grupe served as IND while rostered by NYJ; Jaleel McLaughlin
+  // as DEN while on CLE). The historical builder already uses a RUNNING team; this now does the same
+  // for settled weeks, and for the weeks NOT YET PLAYED it uses the CURRENT roster team from the
+  // live `player` table (resolved through real ids, not name keys) -- the only point-in-time answer
+  // for a week that has not happened. Sept-1 stays the answer on the preseason SEASON row.
+  const currentTeam = new Map<number, string | null>();
+  for (const { sk, team } of resolvePlayerTable(db).values()) {
+    const t = team ? canonTeam(team) : null;
+    if (!currentTeam.has(sk)) currentTeam.set(sk, t);
+    else if (currentTeam.get(sk) !== t) currentTeam.set(sk, null);   // two rows disagree: trust neither
+  }
+  const teamAt = (p: { feat_key: string; player_sk: string | null; team: string | null }, week: number): string | null =>
+    forwardTeamAt({
+      played: played.get(p.feat_key), week, lastSettled, seasonTeam: p.team,
+      currentTeam: p.player_sk != null ? currentTeam.get(Number(p.player_sk)) ?? null : null,
+    });
+  const firstUnpriced = weeks.find((w) => board.some((p) => { const t = teamAt(p, w); return t && game.get(`${t}|${w}`) && game.get(`${t}|${w}`)!.spread == null; })) ?? -1;
 
   // THE TO-DATE RATIOS, READ FROM THIS WEEK'S OWN ROW (WP17).
   //
@@ -1382,7 +1422,8 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
       if (!WEEKLY_POS.includes(p.pos)) continue;
       const hist = played.get(p.feat_key);
       for (const week of weeks) {
-        const g = p.team ? game.get(`${p.team}|${week}`) : undefined;
+        const team = teamAt(p, week);
+        const g = team ? game.get(`${team}|${week}`) : undefined;
         const asOf = sched.weekAsOf.get(`${season}|${week}`) ?? `${season}-09-01`;
         const prior: number[] = [];
         if (hist) for (let w = week - 1; w >= 1 && prior.length < 4; w--) { const v = hist.get(w); if (v) prior.push(v.pts); }
@@ -1396,17 +1437,17 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
         const ptsSoFar = hist ? [...hist.entries()].filter(([w]) => w < week).reduce((s, [, v]) => s + v.pts, 0) : 0;
 
         let daysRest: number | null = null;
-        if (p.team) {
-          const thisDay = sched.teamGameDay.get(`${season}|${p.team}|${week}`);
+        if (team) {
+          const thisDay = sched.teamGameDay.get(`${season}|${team}|${week}`);
           let prevDay: string | undefined;
-          for (let w = week - 1; w >= 1 && !prevDay; w--) prevDay = sched.teamGameDay.get(`${season}|${p.team}|${w}`);
+          for (let w = week - 1; w >= 1 && !prevDay; w--) prevDay = sched.teamGameDay.get(`${season}|${team}|${w}`);
           if (thisDay && prevDay) {
             const d = (Date.parse(`${thisDay}T00:00:00Z`) - Date.parse(`${prevDay}T00:00:00Z`)) / 864e5;
             daysRest = Number.isFinite(d) && d > 0 ? d : null;
           }
         }
 
-        const o = week === firstUnpriced && p.team ? odds.get(p.team) : undefined;
+        const o = week === firstUnpriced && team ? odds.get(team) : undefined;
         const spread = g?.spread ?? o?.spread ?? null;
         const total = g?.total ?? o?.total ?? null;
         const implied = g?.implied ?? o?.implied ?? null;
@@ -1414,7 +1455,7 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
 
         ins.run({
           feat_key: p.feat_key, player_sk: p.player_sk, season, week, as_of: asOf,
-          name: p.name, pos: p.pos, team: p.team, opponent: g?.opp ?? null,
+          name: p.name, pos: p.pos, team, opponent: g?.opp ?? null,
           home: g ? g.home : null, is_bye: g ? 0 : 1,
           season_line_pg: finite(line.get(p.feat_key) ?? null),
           td_games: games, td_ppg: games ? ptsSoFar / games : null,
@@ -1426,12 +1467,12 @@ export async function buildForwardInto(db: DB, opts: ForwardOpts): Promise<Forwa
               td_attempts: finite(own?.td_attempts ?? null), td_rush_yards: finite(own?.td_rush_yards ?? null),
             };
           })(),
-          rz_share_td: finite(rzShare.get(week, p.player_sk, p.team)),
+          rz_share_td: finite(rzShare.get(week, p.player_sk, team)),
           prior_vol_cv: finite(p.player_sk != null ? priorVol.get(String(p.player_sk)) ?? null : null),
           prior_air_yards_share: finite(p.player_sk != null ? priorRole.get(String(p.player_sk))?.airShare ?? null : null),
           prior_wopr: finite(p.player_sk != null ? priorRole.get(String(p.player_sk))?.wopr ?? null : null),
           ...(() => {
-            const e = ecrWk.get(ecrWeekCutoff(sched, season, p.team, week) ?? "", p.name, p.pos);
+            const e = ecrWk.get(ecrWeekCutoff(sched, season, team, week) ?? "", p.name, p.pos);
             return { ecr_wk_rank: e ? e.ecr : null, ecr_wk_sd: e ? finite(e.sd) : null,
                      ecr_wk_skew: e ? finite(e.skew) : null };
           })(),

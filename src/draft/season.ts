@@ -374,15 +374,20 @@ function emptySlotPoints(slot: string, opts: SeasonOpts): number {
  * survivor holds its position in the tree. The only mechanical difference is the sort, which is
  * exactly why a bracket can be simulated wrong for years without a symptom.
  */
-export function playoffWinner(seeds: number[], beat: (a: number, b: number) => number, reseed: boolean): number {
+export function playoffWinner(seeds: number[], beat: (a: number, b: number, round: number) => number, reseed: boolean): number {
   let alive = seeds.map((team, seed) => ({ team, seed }));
+  // ROUND, not matchup (architecture review 2026-09-24, B3). Every game of a round is played in the
+  // same NFL week; the caller used to count MATCHUPS, which put a 7-team bracket's games on weeks
+  // +1..+6 and let a season-ending injury (masked only through the real playoff weeks) heal mid-bracket.
+  let round = 0;
   while (alive.length > 1) {
+    round++;
     const byes = 2 ** Math.ceil(Math.log2(alive.length)) - alive.length;
     const bye = alive.slice(0, byes), play = alive.slice(byes);
     const winners: { team: number; seed: number }[] = [];
     for (let i = 0; i < play.length / 2; i++) {
       const a = play[i], b = play[play.length - 1 - i];
-      winners.push(beat(a.team, b.team) === a.team ? a : b);
+      winners.push(beat(a.team, b.team, round) === a.team ? a : b);
     }
     alive = [...bye, ...winners];
     if (reseed) alive.sort((x, y) => x.seed - y.seed);
@@ -1056,21 +1061,14 @@ export function simulateSeasons(
     const seeds = seedField([...Array(N).keys()].map((t) => ({ wins: wins[t], pts: pts[t] })),
       opts.playoffTeams, opts.seeding ?? "record", opts.divisionOf);
     for (const s of seeds) playoffs[s]++;
-    // playoff weeks: a fresh sampled week per matchup, same generative model
-    const playoffWeek = new Map<number, number>();
-    // A matchup counter, because the bracket exposes no round index and playoff draws still need a
-    // key that varies between rounds. This part CANNOT be perfectly aligned across arms and it is
-    // worth saying why: a trade that changes the standings changes who is in the bracket at all, so
-    // there is no correspondence to preserve. The regular season -- fourteen of the weeks, and what
-    // determines seeding -- is fully aligned, which is where the variance reduction comes from.
-    let poRound = 0;
-    const beat = (a: number, b: number) => {
-      poRound++;
-      const draw = (t: number) => playoffWeek.get(t) ?? scoreTeamWeek(t, opts.weeks + poRound, 100 + poRound, false, true);
-      // redraw both sides each ROUND so a team is not locked to one score all playoffs
-      playoffWeek.clear();
-      const sa = draw(a); playoffWeek.set(a, sa);
-      const sb = draw(b); playoffWeek.set(b, sb);
+    // playoff weeks: each team scores one fresh sampled week per ROUND, same generative model, keyed
+    // (week, 100+round) so every game of a round is the same NFL week (review 2026-09-24, B3). This
+    // part CANNOT be perfectly aligned across arms: a trade that changes the standings changes who
+    // is in the bracket at all, so there is no correspondence to preserve. The regular season --
+    // what determines seeding -- is fully aligned, which is where the variance reduction comes from.
+    const beat = (a: number, b: number, round: number) => {
+      const sa = scoreTeamWeek(a, opts.weeks + round, 100 + round, false, true);
+      const sb = scoreTeamWeek(b, opts.weeks + round, 100 + round, false, true);
       return sa >= sb ? a : b;
     };
     champs[playoffWinner(seeds, beat, opts.playoffReseed ?? true)]++;

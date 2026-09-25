@@ -66,6 +66,9 @@ export interface WeeklyBand {
   p50: number;
   p90: number;
   pZero?: number | null;
+  /** The projector's full mixture inverse CDF in points (two-part artifacts). When present the
+   *  sampler draws from it instead of rebuilding a shape from three quantiles (review 2026-09-24, B4). */
+  knots?: { u: number[]; v: number[] } | null;
   /** Where the band came from, carried so a result can say how many were real. */
   source?: string;
 }
@@ -119,14 +122,21 @@ export function quantileFn(band: WeeklyBand): (u: number) => number {
   const lv: number[] = [z];
   const va: number[] = [0];
   let prev = 0;
-  for (const [l, v] of [[0.10, band.p10], [0.50, band.p50], [0.90, band.p90]] as [number, number][]) {
-    if (!(l > z)) continue;                       // the atom swallows this level entirely
+  // THE MODEL'S OWN GRID when the projector published it (two-part artifacts, B4); the three served
+  // levels otherwise. The three-knot rebuild threw away four of the mixture's seven levels and
+  // invented a linear shape between the rest.
+  const knots: [number, number][] = band.knots && band.knots.u.length === band.knots.v.length && band.knots.u.length >= 3
+    ? band.knots.u.map((u, i) => [u, band.knots!.v[i]] as [number, number])
+    : [[0.10, band.p10], [0.50, band.p50], [0.90, band.p90]];
+  for (const [l, v] of knots) {
+    if (!(l > z) || !(l < 1)) continue;           // the atom swallows this level entirely
     const w = Math.max(prev, Math.max(0, v));
     lv.push(l); va.push(w); prev = w;
   }
-  // The upper tail. One more p90-to-p50 step beyond p90, or a 25% step where p50 == p90 (which is
-  // what a near-certain zero looks like) so the tail is never exactly flat.
-  const top = Math.max(prev, band.p90, band.mean);
+  // The upper tail. Beyond the last published level, one more step of the p90-to-p50 width, or a 25%
+  // step where p50 == p90 (what a near-certain zero looks like) so the tail is never exactly flat.
+  // With the full grid the last level is well past 0.90, so this assumption now carries far less mass.
+  const top = Math.max(prev, band.p90);
   const step = Math.max(band.p90 - band.p50, 0.25 * top, 0.5);
   lv.push(1); va.push(top + step);
 
@@ -576,10 +586,22 @@ export function winProbLineup(
 
   const caveats = [
     "P(win) is a one-week head-to-head probability under this sampler, not a season objective: nothing here knows the standings, and a team that must win out should take more variance than this returns.",
-    `the marginal of every sampled player IS his published band (p10/p50/p90${all.some((p) => p.band?.pZero != null) ? " and P(zero week)" : ""}); no distribution was fitted in between`,
+    `the marginal of every sampled player IS his published band (${all.some((p) => p.band?.knots) ? "the projector's full quantile grid" : "p10/p50/p90"}${all.some((p) => p.band?.pZero != null) ? " and P(zero week)" : ""}); no distribution was fitted in between`,
     `dependence is a Gaussian copula over NFL TEAMMATES only (${m.coupledGroups} group(s), ${m.coupledPlayers} player(s)), at ${coupling}x the measured pairwise correlation; players on different NFL teams are drawn independently`,
     "the upper tail beyond p90 is EXTENDED by one further p90-p50 step -- the one assumption in the marginal, made because capping the ceiling at p90 would bias the search against variance",
   ];
+  // THE TWO HEADS DISAGREE (review 2026-09-24, B4). The expected-points lineup ranks on the model's
+  // MEAN head; this sampler draws from its QUANTILE heads, fitted independently. Where the two imply
+  // means more than 25% apart the EP and P(win) objectives are not describing the same player, and
+  // nothing downstream can say which head is right -- so name them rather than average them away.
+  const gap = all.filter((p) => p.band && p.band.mean >= 3).map((p) => {
+    const q = quantileFn(p.band!);
+    let s = 0; for (let i = 0; i < 400; i++) s += q((i + 0.5) / 400);
+    return { name: p.name, served: p.band!.mean, sampled: s / 400 };
+  }).filter((g) => Math.abs(g.sampled / g.served - 1) > 0.25);
+  if (gap.length) {
+    caveats.push(`MEAN vs BAND DISAGREE for ${gap.length} player(s): ${gap.map((g) => `${g.name} (EP ${r2(g.served)} vs band ${r2(g.sampled)})`).join(", ")} -- the expected-points lineup and this P(win) are pricing them differently`);
+  }
   if (m.pointMass) caveats.push(`${m.pointMass} of ${all.length} sampled players had NO band and were drawn as a POINT MASS at their mean -- a zero-variance player, which the floor side of this search will prefer for the wrong reason`);
   if (o.noSearch) caveats.push("THE SWAP SEARCH WAS DISABLED (noSearch): this is the expected-points lineup with a P(win) attached, nothing more");
 

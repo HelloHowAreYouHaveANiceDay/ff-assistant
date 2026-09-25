@@ -36,6 +36,7 @@ import {
   CHALLENGER_WEEKLY_ARTIFACT, type WeeklyArtifact,
 } from "./projector.js";
 import { loadWeeklyRows, loadSchedule, type ScheduleInfo } from "./features.js";
+import { POPULATION_COLUMN } from "./population.js";
 import { makeProjections } from "../projections.js";
 import { score, lineupRegret, type Scored1, type Pred } from "./evaluate.js";
 import { fetchEspnWeekly, storeEspnWeekly } from "./espnProjections.js";
@@ -199,6 +200,10 @@ export function ensureScorecardMetaColumn(db: DB): void {
   if (!have.has(SCORECARD_META_COLUMN)) {
     db.exec(`ALTER TABLE scorecard_prediction ADD COLUMN ${SCORECARD_META_COLUMN} TEXT`);
   }
+  // B8 (review 2026-09-24): the frozen median and P(zero week), so a scored row is scored on the
+  // distribution it published rather than on its mean standing in for its median.
+  if (!have.has("p50")) db.exec("ALTER TABLE scorecard_prediction ADD COLUMN p50 REAL");
+  if (!have.has("p_zero")) db.exec("ALTER TABLE scorecard_prediction ADD COLUMN p_zero REAL");
 }
 
 export interface ScorecardOpts {
@@ -385,7 +390,7 @@ function weeklyPredictions(
     const subset = rows.filter((r) => serves.has(r.pos));
     if (!subset.length) continue;
     for (const r of projectWeekly({ artifact: art, rows: subset })) {
-      put(r.feat_key, r.name, r.pos, "weekly", { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90 });
+      put(r.feat_key, r.name, r.pos, "weekly", { mean: r.mean, p10: r.p10, p50: r.p50, p90: r.p90, ...(r.pZero != null ? { pZero: r.pZero } : {}) });
     }
   }
   for (const r of projectWeekly({ artifact: lineOnly, rows })) {
@@ -685,8 +690,8 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         ensureScorecardMetaColumn(db);
         const ins = db.prepare(
           `INSERT OR IGNORE INTO scorecard_prediction
-             (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at, ${SCORECARD_META_COLUMN})
-           VALUES (@fk,@season,@week,'weekly',@model,@subject,@name,@pos,@value,@p10,@p90,@asOf,@now,@meta)`,
+             (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, p50, p_zero, as_of, created_at, ${SCORECARD_META_COLUMN})
+           VALUES (@fk,@season,@week,'weekly',@model,@subject,@name,@pos,@value,@p10,@p90,@p50,@pz,@asOf,@now,@meta)`,
         );
         const now = nowIso();
         // WHICH ARTIFACT PRODUCED THIS ROW, plus the date the mapping last changed. Only on the
@@ -725,7 +730,9 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
               const info = ins.run({
                 fk: fmtKey, season: opts.season, week, model: m, subject: key, name: v.name, pos: v.pos,
                 value: p.mean, p10: Number.isFinite(p.p10) ? p.p10 : null,
-                p90: Number.isFinite(p.p90) ? p.p90 : null, asOf, now, meta: metaFor(m, v.pos),
+                p90: Number.isFinite(p.p90) ? p.p90 : null,
+                p50: Number.isFinite(p.p50) ? p.p50 : null, pz: p.pZero != null && Number.isFinite(p.pZero) ? p.pZero : null,
+                asOf, now, meta: metaFor(m, v.pos),
               });
               if (info.changes) { res.snapshot.taken++; res.snapshot.byModel[m] = (res.snapshot.byModel[m] ?? 0) + 1; }
             }
@@ -749,8 +756,8 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         } else {
           const insC = db.prepare(
             `INSERT OR IGNORE INTO scorecard_prediction
-               (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, as_of, created_at)
-             VALUES (@fk,@season,@week,'weekly_challenger','two_part',@subject,@name,@pos,@value,@p10,@p90,@asOf,@now)`,
+               (format_key, season, week, kind, model, subject, name, pos, value, p10, p90, p50, p_zero, as_of, created_at)
+             VALUES (@fk,@season,@week,'weekly_challenger','two_part',@subject,@name,@pos,@value,@p10,@p90,@p50,@pz,@asOf,@now)`,
           );
           const nowC = nowIso();
           const rowsC = loadWeeklyRows(db, opts.season, week).filter((r) => r.season_line_pg != null);
@@ -760,7 +767,9 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
               const info = insC.run({
                 fk: fmtKey, season: opts.season, week, subject: p.feat_key, name: p.name, pos: p.pos,
                 value: p.mean, p10: Number.isFinite(p.p10) ? p.p10 : null,
-                p90: Number.isFinite(p.p90) ? p.p90 : null, asOf, now: nowC,
+                p90: Number.isFinite(p.p90) ? p.p90 : null,
+                p50: Number.isFinite(p.p50) ? p.p50 : null, pz: p.pZero != null && Number.isFinite(p.pZero) ? p.pZero : null,
+                asOf, now: nowC,
               });
               if (info.changes) res.challenger.taken++;
             }
@@ -952,7 +961,11 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
 
     // ---------------- SCORE ----------------
     if (opts.score !== false) {
+      ensureScorecardMetaColumn(db);                  // the p50/p_zero columns the scoring reads
       const weeks = settledWeeks(db, opts.season, sched, today);
+      let legacyMedian = 0, outOfPopulation = 0;
+      const hasPopCol = (db.prepare("PRAGMA table_info(feat_player_week_model)").all() as { name: string }[])
+        .some((c) => c.name === POPULATION_COLUMN);
       if (!weeks.length) notes.push(`no settled weeks of ${opts.season} to score as of ${today}`);
       const all: Scored1[] = [];
       // Both kinds are scored, each against its own frozen rows. The challenger is scored SEPARATELY
@@ -961,8 +974,8 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
       // shipped models would read as a lineup somebody could have set.
       for (const [week, kind] of weeks.flatMap((w) => SCORECARD_KINDS.map((k) => [w, k] as [number, ScorecardKind]))) {
         const frozen = db.prepare(
-          "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE format_key = ? AND season = ? AND week = ? AND kind = ?",
-        ).all(fmtKey, opts.season, week, kind) as { model: string; subject: string; name: string; pos: string; value: number; p10: number | null; p90: number | null }[];
+          "SELECT model, subject, name, pos, value, p10, p90, p50, p_zero FROM scorecard_prediction WHERE format_key = ? AND season = ? AND week = ? AND kind = ?",
+        ).all(fmtKey, opts.season, week, kind) as { model: string; subject: string; name: string; pos: string; value: number; p10: number | null; p90: number | null; p50: number | null; p_zero: number | null }[];
         if (!frozen.length) {
           if (kind === "weekly") notes.push(`week ${week} is settled but was never snapshotted -- nothing to score`);
           else if (kind === "stream") notes.push(`week ${week} has no frozen streaming picks -- nothing to score for ${kind}`);
@@ -974,11 +987,18 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           else if (week >= CHALLENGER_FIRST_WEEK) notes.push(`week ${week} has no challenger snapshot -- nothing to score for ${kind}`);
           continue;
         }
+        // THE GATE'S POPULATION (review 2026-09-24, B8). The snapshot freezes every row with a season
+        // line (~510 a week); the weekly gate scores only the decision population (`in_population`,
+        // ~300). Scoring the wider set made the live CRPS a number about a different population than
+        // the one every serve decision was gated on. A row whose feature row carries no population
+        // flag (NULL -- never built) is kept, so a store without the column is not silently emptied.
         const actual = new Map<string, number>();
         for (const r of db.prepare(
-          "SELECT feat_key, pts, is_bye FROM feat_player_week_model WHERE season = ? AND week = ?",
-        ).all(opts.season, week) as { feat_key: string; pts: number | null; is_bye: number | null }[]) {
-          if (!r.is_bye) actual.set(r.feat_key, r.pts ?? 0);
+          `SELECT feat_key, pts, is_bye, ${hasPopCol ? POPULATION_COLUMN : "NULL"} AS inpop FROM feat_player_week_model WHERE season = ? AND week = ?`,
+        ).all(opts.season, week) as { feat_key: string; pts: number | null; is_bye: number | null; inpop: number | null }[]) {
+          if (r.is_bye) continue;
+          if (r.inpop === 0) { outOfPopulation++; continue; }
+          actual.set(r.feat_key, r.pts ?? 0);
         }
         // THE CHALLENGER NEEDS A BASELINE IN THE SAME ROW SET, or its lineup column is unscoreable:
         // `lineupRegret` measures points captured against `SC_BASELINE`, and the challenger kind
@@ -999,7 +1019,7 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
         // number the whole M2c workflow exists to produce.
         const WHOLE_FIELD_KINDS = new Set<ScorecardKind>(["weekly_challenger", "weekly_ecr_candidate", "weekly_sunday"]);
         const companions = !WHOLE_FIELD_KINDS.has(kind) ? [] : db.prepare(
-          "SELECT model, subject, name, pos, value, p10, p90 FROM scorecard_prediction WHERE format_key = ? AND season = ? AND week = ? AND kind = 'weekly'",
+          "SELECT model, subject, name, pos, value, p10, p90, p50, p_zero FROM scorecard_prediction WHERE format_key = ? AND season = ? AND week = ? AND kind = 'weekly'",
         ).all(fmtKey, opts.season, week) as typeof frozen;
         const bySubject = new Map<string, Scored1>();
         for (const f of [...frozen, ...companions]) {
@@ -1010,9 +1030,16 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
           }).get(f.subject)!;
           // A point-only model gets no interval, and its CRPS and coverage are therefore not
           // reported. Fabricating a band here would let a point forecast score as a distribution.
+          // THE FROZEN MEDIAN, not the mean (review 2026-09-24, B8). A row frozen before the p50 column
+          // existed has no median to score, and its band is then treated as ABSENT (CRPS/coverage
+          // withheld) rather than scored with the mean standing in -- which for a two-part row is a
+          // different number (TE golden: mean 4.34, p50 0) and made the live CRPS a different metric.
+          const hasMedian = f.p50 != null && Number.isFinite(f.p50);
+          if (!hasMedian && f.p10 != null && f.p90 != null) legacyMedian++;
           s.by[f.model] = {
             mean: f.value,
-            p10: f.p10 ?? NaN, p50: f.value, p90: f.p90 ?? NaN,
+            p10: hasMedian ? f.p10 ?? NaN : NaN, p50: hasMedian ? f.p50! : NaN, p90: hasMedian ? f.p90 ?? NaN : NaN,
+            ...(f.p_zero != null && Number.isFinite(f.p_zero) ? { pZero: f.p_zero } : {}),
           };
         }
         if (kind === "weekly") all.push(...bySubject.values());
@@ -1036,6 +1063,15 @@ export async function runScorecard(opts: ScorecardOpts): Promise<ScorecardResult
             lineupWinShare: (sc ? lr[sc]?.[m]?.winShare : undefined) ?? NaN,
           });
         }
+      }
+
+      if (legacyMedian) {
+        notes.push(`${legacyMedian} frozen row(s) predate the stored median (review 2026-09-24, B8): their CRPS and ` +
+          "coverage are WITHHELD rather than scored with the mean standing in for the median; RMSE and lineup still score.");
+      }
+      if (outOfPopulation) {
+        notes.push(`${outOfPopulation} row(s) outside the decision population (in_population = 0) were not scored -- ` +
+          "the live series now scores the population the weekly gate is measured on.");
       }
 
       // Persist the scored rows. Rebuildable BY DESIGN, unlike the predictions.

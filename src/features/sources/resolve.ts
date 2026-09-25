@@ -57,6 +57,39 @@ function put(m: Map<string, number | null>, k: string, sk: number): void {
   else if (m.get(k) !== sk) m.set(k, null);
 }
 
+/**
+ * THE LIVE `player` TABLE, RESOLVED TO `player_sk` THROUGH ITS REAL IDS.
+ *
+ * `player.player_id` is a NAME KEY ("justinjefferson"), and so is `player_status.player_id` and
+ * `news.player_id`. Joining those to staging by name key alone -- and skipping every name staging
+ * flags ambiguous -- is how Justin Jefferson, Lamar Jackson and Michael Pittman Jr. (each sharing a
+ * name with a defensive player or a retired namesake) went unresolved on the live week, and were then
+ * written as HEALTHY with no depth rank (architecture review 2026-09-24, B2). The `player` row carries
+ * gsis and ESPN ids for ~75% of men and a current team for ~93%, so resolve through the full ladder:
+ * gsis, espn, (name, pos, team), (name, pos). Unresolved rows are left out, never guessed.
+ *
+ * Returns player_id -> { sk, team } where team is the CURRENT NFL team (canonicalised by the caller).
+ */
+export function resolvePlayerTable(db: DB, resolver: SourceResolver = buildSourceResolver(db)): Map<string, { sk: number; team: string | null; by: Rule }> {
+  const out = new Map<string, { sk: number; team: string | null; by: Rule }>();
+  // LAST RESORT, and the only rule the old join had: the player_id IS a staged name key, and exactly
+  // one NON-ambiguous staged row carries it. Kept so nothing that used to resolve stops resolving.
+  const byKey = new Map<string, number | null>();
+  for (const s of db.prepare(
+    "SELECT player_sk, name_key FROM stg_player WHERE name_key IS NOT NULL AND COALESCE(ambiguous, 0) = 0",
+  ).all() as { player_sk: number; name_key: string }[]) put(byKey, s.name_key, s.player_sk);
+  for (const r of db.prepare(
+    "SELECT player_id, name, position, nfl_team, gsis_id, espn_id FROM player",
+  ).all() as { player_id: string; name: string | null; position: string | null; nfl_team: string | null; gsis_id: string | null; espn_id: string | null }[]) {
+    const team = r.nfl_team && r.nfl_team !== "FA" ? r.nfl_team : null;
+    const res = resolver.resolve({ gsis: r.gsis_id, espn: r.espn_id, name: r.name, pos: r.position, team });
+    if (res.sk != null) { out.set(r.player_id, { sk: res.sk, team, by: res.by }); continue; }
+    const k = byKey.get(r.player_id);
+    if (k != null) out.set(r.player_id, { sk: k, team, by: "name-pos" });
+  }
+  return out;
+}
+
 export function buildSourceResolver(db: DB): SourceResolver {
   const staged = db.prepare(
     "SELECT player_sk, name_key, position, team, gsis_id, espn_id, sleeper_id, pfr_id, fantasypros_id FROM stg_player",

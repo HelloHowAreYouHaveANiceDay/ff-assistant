@@ -88,3 +88,11 @@ test("FAULT INJECTION: runBacktest refuses to invent a calendar, a field size or
     ...args, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 7),
   /regWeeks must be passed/, "an omitted regWeeks must be loud");
 });
+
+test("every game of a round is played in the SAME week -- the round index, not a matchup count (review 2026-09-24, B3)", () => {
+  // 7 teams: round 1 has three games, round 2 two, the final one. A matchup counter reports
+  // 1,2,3,4,5,6; the bracket has three weeks.
+  const rounds: number[] = [];
+  seasonWinner([0, 1, 2, 3, 4, 5, 6], (a: number, _b: number, round: number) => { rounds.push(round); return a; }, true);
+  assert.deepEqual(rounds, [1, 1, 1, 2, 2, 3]);
+});

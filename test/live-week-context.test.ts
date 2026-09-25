@@ -96,11 +96,16 @@ test("a designated player reaches the MODEL's availability columns, not just the
   setStatus(dbPath, "aaron-alpha", "Out");
   setStatus(dbPath, "brett-bravo", "Questionable");
   setStatus(dbPath, "dave-delta", "Doubtful");
+  // Carl and Evan are COVERED by the feed with no designation -- that is what "healthy" looks like in
+  // ESPN's status table. A man with no row at all is a different fact (see the uncovered test below).
+  setStatus(dbPath, "carl-charlie", null);
+  setStatus(dbPath, "evan-echo", null);
 
   const r = buildLiveWeekContext({ dbPath, season: SEASON, now: `${SEASON}-09-08` });
   assert.equal(r.skipped, null, String(r.skipped));
   assert.equal(r.week, 1, "a snapshot before every kickoff belongs to week 1");
   assert.equal(r.rows, PLAYERS.length);
+  assert.equal(r.uncovered, 0);
   assert.equal(r.withStatus, 3);
   assert.equal(r.outs, 1);
 
@@ -123,6 +128,43 @@ test("a designated player reaches the MODEL's availability columns, not just the
   assert.equal(of(101).teammates_out, 0, "a player counted himself as his own team-mate out");
   assert.equal(of(104).teammates_out, 0, "the quarterback counted a receiver as a positional team-mate");
   assert.equal(of(105).teammates_out, 0, "a player on the OTHER team counted the injury");
+});
+
+test("a man the status feed does not cover is MISSING, not healthy (review 2026-09-24, B2)", () => {
+  const dbPath = fresh();
+  setStatus(dbPath, "aaron-alpha", "Out");         // the feed spoke this week
+  setStatus(dbPath, "brett-bravo", null);          // covered, healthy
+  // carl-charlie has NO player_status row at all.
+  const r = buildLiveWeekContext({ dbPath, season: SEASON, now: `${SEASON}-09-08` });
+  assert.equal(r.uncovered, 3, "carl, dave and evan have no status row and must be counted uncovered");
+  const db = openDb(dbPath);
+  const ctx = contextFor(db, SEASON);
+  db.close();
+  assert.equal(ctx.get("1|102")!.inj_questionable, 0, "a covered, undesignated man must read healthy (0)");
+  assert.equal(ctx.get("1|103")!.inj_questionable, null, "an UNCOVERED man was served as healthy -- the B2 bug");
+  assert.equal(ctx.get("1|103")!.inj_out, null);
+  assert.equal(ctx.get("1|101")!.inj_out, 1);
+});
+
+test("an AMBIGUOUS name resolves through the player row's gsis id, not the name key (review 2026-09-24, B2)", () => {
+  const dbPath = fresh();
+  const db = openDb(dbPath);
+  // A namesake: a second staged "Aaron Alpha" at LB. Staging flags both ambiguous -- exactly the
+  // Justin Jefferson / Lamar Jackson shape -- and the old name-key join then resolved NEITHER.
+  db.prepare("INSERT INTO player_identity (player_sk) VALUES (?)").run(199);
+  db.prepare(
+    "INSERT INTO stg_player (player_sk, name_key, name, position, team, ambiguous, gsis_id, source, updated_at) VALUES (199,'aaron-alpha','Aaron Alpha','LB','ZZZ',1,'00-LB','test','x')",
+  ).run();
+  db.prepare("UPDATE stg_player SET ambiguous = 1, gsis_id = '00-WR' WHERE player_sk = 101").run();
+  db.prepare("UPDATE player SET gsis_id = '00-WR' WHERE player_id = 'aaron-alpha'").run();
+  db.close();
+  setStatus(dbPath, "aaron-alpha", "Questionable");
+  const r = buildLiveWeekContext({ dbPath, season: SEASON, now: `${SEASON}-09-08` });
+  assert.equal(r.withStatus, 1, "the ambiguous-named designation reached nobody");
+  const db2 = openDb(dbPath);
+  const ctx = contextFor(db2, SEASON);
+  db2.close();
+  assert.equal(ctx.get("1|101")!.inj_questionable, 1, "the WR's designation did not reach the WR");
 });
 
 test("FAULT INJECTION on the as-of rule: a snapshot after a week's first kickoff belongs to the NEXT week", () => {

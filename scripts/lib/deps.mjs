@@ -231,6 +231,15 @@ export function fingerprintDraftArbiter(db, leagueId = argvLeague()) {
       parts["config:settings.config"] = cfg ? sha(String(cfg.value)).slice(0, 16) : "UNSET";
     } catch { parts["config:settings.config"] = "ERR"; }
   }
+  // RUN-CHANGING ENVIRONMENT (review 2026-09-24, G4). FF_STRATEGY, FF_RANK_DECAY, FF_V3_* and FF_SIM_*
+  // all change the arbiter's output, and none was in the hash -- so an `FF_STRATEGY=v3` run was logged
+  // as the shipped config. Only variables that are SET contribute, so a clean environment adds nothing
+  // and every existing ledger row's hash is unchanged. Store/path plumbing is excluded (it names WHERE
+  // the inputs are, which the file and table parts above already fingerprint).
+  const ENV_EXCLUDE = new Set(["FF_DB", "FF_DATA", "FF_LIVE_READ_TIMEOUT_MS"]);
+  for (const k of Object.keys(process.env).filter((k) => k.startsWith("FF_") && !ENV_EXCLUDE.has(k)).sort()) {
+    parts[`env:${k}`] = String(process.env[k]);
+  }
   const hash = sha(JSON.stringify(Object.keys(parts).sort().map((k) => [k, parts[k]]))).slice(0, 16);
   return { hash, parts };
 }

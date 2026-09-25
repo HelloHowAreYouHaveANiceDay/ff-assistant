@@ -197,8 +197,9 @@ that is defined but not wired reads exactly like a lever that does nothing.
 - A backgrounded job survives a tool timeout and stays invisible to Git Bash `ps`; two concurrent
   backtests once turned a 2-minute job into a 2-hour stall. That stall was **orphaned background jobs**,
   NOT CPU oversubscription: a single `ff backtest` is **single-threaded -- MEASURED at 1.03 of 32 cores
-  (3.2%), 2026-09-14** (the `runPool` worker pool in `src/draft/simPool.ts` is used by nothing but its
-  own self-test; the season loop is a plain synchronous `for`). So N concurrent backtests use N cores of
+  (3.2%), 2026-09-14** (the `runPool` worker pool in `src/draft/simPool.ts` is not on the backtest path
+  -- only `scripts/waiver-sweep.mjs` uses it, and since 2026-09-24 it runs the caller's own
+  `ctx.opts()` rather than a rebuilt option set; the season loop is a plain synchronous `for`). So N concurrent backtests use N cores of
   32 and do NOT oversubscribe -- the real hazards are orphans invisible to `ps` and the shared `data/ff.db`
   writer. If you DO want to parallelise a sweep, use the `src/util/pool.ts` primitive (`pMap` +
   `withCpuSlot`; the global `cpuBudget` bounds the whole tree), each backtest a single-core task -- the

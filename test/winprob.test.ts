@@ -258,3 +258,28 @@ test("the opponent's assumed lineup is HIS best legal one on HIS own projections
   const s = opponentStarters(roster, ["QB", "WR", "BE"], ["RB", "WR", "TE"]);
   assert.deepEqual(s.map((p) => p.name).sort(), ["OQB", "OWR1"]);
 });
+
+test("the sampler draws from the projector's FULL grid when it publishes one (review 2026-09-24, B4)", async () => {
+  const { quantileFn: qf } = await import("../src/inseason/winprob.js");
+  // A right-skewed played distribution the three-knot rebuild cannot see: the 0.7 level sits far above
+  // the straight line p50 -> p90 would draw.
+  const band = { mean: 10, p10: 2, p50: 6, p90: 20, pZero: 0.05,
+    knots: { u: [0.05, 0.10, 0.2, 0.5, 0.7, 0.9], v: [0, 2, 3, 6, 16, 20] } };
+  const q = qf(band);
+  assert.ok(Math.abs(q(0.7) - 16) < 1e-9, "the 0.7 knot was not honoured");
+  assert.equal(q(0.03), 0, "the zero atom was lost");
+  const three = qf({ ...band, knots: null });
+  assert.ok(Math.abs(three(0.7) - 13) < 1e-9, "the fallback is the three-knot line p50 -> p90, which puts 0.7 at 13");
+});
+
+test("mixtureKnots puts the SERVED (calibrated) p10/p50/p90 on the curve, non-decreasing", async () => {
+  const { mixtureKnots } = await import("../src/weekly/projector.js");
+  const k = mixtureKnots(0.2, [0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9], [1, 2, 3, 4, 6, 9, 14], { p10: 0, p50: 4.5, p90: 15 });
+  assert.equal(k.u[0], 0.2);
+  assert.equal(k.v[0], 0);
+  const at = (u: number) => k.v[k.u.findIndex((x) => Math.abs(x - u) < 1e-12)];
+  assert.equal(at(0.5), 4.5, "the served p50 is not the knot at 0.50");
+  assert.equal(at(0.9), 15, "the served (calibrated) p90 is not the knot at 0.90");
+  for (let i = 1; i < k.v.length; i++) assert.ok(k.v[i] >= k.v[i - 1], "knots crossed");
+  for (let i = 1; i < k.u.length; i++) assert.ok(k.u[i] > k.u[i - 1], "levels not ascending");
+});

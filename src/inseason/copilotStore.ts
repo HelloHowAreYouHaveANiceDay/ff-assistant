@@ -455,7 +455,7 @@ export function loadWeeklyProjection(
  */
 export function loadWeeklyBands(
   season: number, week: number, dbPath?: string, leagueId?: string | null,
-): { weekly: Map<string, number>; bands: Map<string, WeeklyBand> } | null {
+): { weekly: Map<string, number>; bands: Map<string, WeeklyBand>; missingWhy: Record<string, string> } | null {
   const db = open(dbPath);
   try {
     const projected = projectStreamingWith(db as unknown as StreamDb, season, week, formatModelFor(db, leagueId));
@@ -467,9 +467,9 @@ export function loadWeeklyBands(
       const prev = weekly.get(k);
       if (prev != null && prev >= p.mean) continue;
       weekly.set(k, p.mean);
-      bands.set(k, { mean: p.mean, p10: p.p10, p50: p.p50, p90: p.p90, pZero: p.pZero });
+      bands.set(k, { mean: p.mean, p10: p.p10, p50: p.p50, p90: p.p90, pZero: p.pZero, ...(p.knots ? { knots: p.knots } : {}) });
     }
-    return { weekly, bands };
+    return { weekly, bands, missingWhy: projected.missingWhy ?? {} };
   } finally { db.close(); }
 }
 

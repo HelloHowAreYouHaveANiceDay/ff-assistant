@@ -208,7 +208,8 @@ export const MODELS: ModelSpec[] = [
   // ------------------------------------------------------------------------------------------
   {
     key: "weekly", file: SHIPPED_WEEKLY_ARTIFACT, required: true, artifact: "weekly-lineonly", nestedLift: null, claimedLift: null,
-    what: "THE SHIPPED weekly model, and it is the FLOOR: mean intercept exactly 1.0, so the " +
+    what: "SERVES K ONLY (WEEKLY_SERVE; review 2026-09-24, W3 -- this text said it served everything). " +
+      "The FLOOR: mean intercept exactly 1.0, so the " +
       "projection IS the preseason season line per game. Its quantile intercepts are the empirical " +
       "ratio quantiles on the training seasons -- a measured spread rather than an invented one. " +
       "`lineupRecommend` and `ff scorecard`'s `weekly` kind both load THIS file, by one constant " +
@@ -234,7 +235,9 @@ export const MODELS: ModelSpec[] = [
   },
   {
     key: "weekly-challenger", file: CHALLENGER_WEEKLY_ARTIFACT, required: false, artifact: "weekly", nestedLift: null, claimedLift: null,
-    what: "THE CHALLENGER, and it FAILED its gate by five thousandths. Two-part: a per-position " +
+    what: "SERVES QB, RB, WR AND TE (WEEKLY_SERVE, D11/D17/D19/D27/D32; review 2026-09-24, W3). Despite " +
+      "the constant's name (CHALLENGER_WEEKLY_ARTIFACT) this is the MAIN served weekly model -- the " +
+      "boosted two-part artifact. HISTORY, kept for the record: it originally FAILED its gate by five thousandths. Two-part: a per-position " +
       "logistic on P(pts <= 0) over the whole rostered population, then ridge for E[ratio | played] " +
       "with pinball quantile heads at seven levels. On the same 14 folds it beats every baseline on " +
       "every accuracy metric by a wide margin -- RMSE 5.268 against the floor's 5.928, CRPS 2.150 " +
@@ -276,8 +279,9 @@ export const MODELS: ModelSpec[] = [
     // a stale or missing streaming artifact would have degraded the lineup at three positions in
     // silence, which is precisely the failure the registry's own header describes.
     key: "streaming", file: STREAMING_ARTIFACT, required: false, artifact: "streaming", nestedLift: null, claimedLift: null,
-    what: "THE STREAMING MODEL, and what ships at ALL SIX POSITIONS as of the 2026-09-09 owner " +
-      "decision. The weekly two-part structure plus the twelve point-in-time opponent-and-" +
+    what: "SERVES NOTHING TODAY (WEEKLY_SERVE maps no position to it; SHIPPED_STREAMING_POSITIONS is " +
+      "empty -- review 2026-09-24, W3). HISTORY: it shipped at all six positions on 2026-09-09 until " +
+      "D11/D17 moved every position off it. The weekly two-part structure plus the twelve point-in-time opponent-and-" +
       "environment columns of `feat_player_week_stream`, with K and DST FITTED rather than " +
       "intercept-only. It originally passed all three gate clauses at QB, K and DST and failed " +
       "clause (c) at RB, WR and TE on the pre-unification population; re-run on the decision " +

@@ -1386,6 +1386,17 @@ def main():
                 if r["prior_pos_rank"] is not None and 1 <= r["prior_pos_rank"] <= MAX_RANK]
     bmeans = bucket_means(fit_rows)
     specs = build_specs(fit_rows, bmeans, args.shrink_k)
+    # A DECLARED FEATURE THE DATA COULD NOT SUPPORT IS NAMED, NOT SILENTLY DROPPED (review 2026-09-24,
+    # P5). build_specs skips any feature with < 200 non-null rows (or no bucket means / zero spread),
+    # so the fitted feature set was decided by coverage: the 2012/2013 fold artifacts lack
+    # depth_rank_sep1 while the shipped one has it, and a thin format store would ship a different
+    # model with no error. Printed even under --quiet, and recorded on the artifact.
+    declared = list(CENTER_FEATURES) + list(INDICATOR_FEATURES) + list(RATIO_FEATURES.keys())
+    fitted_names = {s["name"] for s in specs}
+    dropped_features = [n for n in declared if n not in fitted_names]
+    if dropped_features:
+        print("train_projection: WARNING -- declared feature(s) dropped for insufficient data: " +
+              ", ".join(dropped_features), file=sys.stderr)
 
     fixed = None
     if args.fixed_variant:
@@ -1470,6 +1481,9 @@ def main():
         "schema": SCHEMA,
         "kind": "projection",
         "fittedFrom": "tools/train_projection.py",
+        "trainerArgv": sys.argv[1:],
+        # Declared features the data could not support (P5). Empty on a full-coverage fit.
+        "droppedFeatures": dropped_features,
         "fittedAt": date.today().isoformat(),
         "seasons": seasons,
         "holdoutSeason": holdout,

@@ -88,3 +88,11 @@ test("SIM COMPOSITION FAULT: the even split DOES stockpile more TEs (guard is co
 test("SIM COMPOSITION: no K/DST is ever bought above the $2 cap on the full draft path", () => {
   assert.ok(teStats(ourValues).kdst <= 2, "a K/DST cleared $2 -- the maxBid cap is not binding live");
 });
+
+test("OUR maxKDst lever does not reprice the ROOM (review 2026-09-24, B9)", () => {
+  // A bots-only room: nothing of ours bids, so the only way our cap can move a single price is by
+  // leaking into the bots' value book -- which is what `cfg.maxKDst` in the room book used to do.
+  const run = (maxKDst: number) => draftFieldSeats(points, ourValues, { ...cfg, maxKDst }, 11, SIM_LEAGUE, { includeUs: false })
+    .picks.map((p) => `${p.name}:${p.price}`).join("|");
+  assert.equal(run(2), run(9), "the bots drafted differently when only OUR K/DST cap changed");
+});

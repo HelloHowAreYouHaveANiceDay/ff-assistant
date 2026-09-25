@@ -123,6 +123,9 @@ const poolInit = {
   varianceModelPath: "data/variance-model.json",
   outcomesPath: "data/rank-outcomes.json",
   corrPath: "data/correlation-model.json",
+  // THE SAME OPTIONS THE BASE RAN WITH (review 2026-09-24, S1): the worker used to rebuild its own and
+  // drop the season-so-far seed, the bracket rules and divisions, so BASE and every arm differed.
+  simOpts: (({ trials: _t, seed: _s, poolRank: _p, bootstrap: _b, ...rest }) => rest)(ctx.opts(0, 0)),
 };
 const jobs = [];
 for (const { add, drop } of pairs) {

@@ -20,7 +20,7 @@
  * becomes a trap the moment there are two: two hand-kept lists overlap, and a position in both is
  * served by whichever list the caller happened to consult. One table cannot express that state.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { dataPath } from "../data/paths.js";
 import { resolveFormat, INCUMBENT_MODEL, type ModelHandle, type ArtifactName } from "../data/formatResolve.js";
@@ -209,6 +209,8 @@ export interface StreamProj {
    *  re-project to recover one head is a second path to the same number. */
   p50: number;
   p90: number;
+  /** The full mixture inverse CDF in points (two-part only) -- see `WeeklyProjRow.knots`. */
+  knots?: { u: number[]; v: number[] };
   /** P(zero week). Only a two-part artifact publishes one; the floor does not, and a fabricated
    *  value here would let the floor claim a calibration it does not have. */
   pZero: number | null;
@@ -227,6 +229,10 @@ export interface StreamProjections {
   artifactByPos: Record<string, string>;
   /** Positions whose artifact could not be read at all, named rather than silently empty. */
   missing: string[];
+  /** WHY each missing position's artifact did not load -- absent file vs a REFUSED one (a failed
+   *  golden check, an unknown feature). Review 2026-09-24, W1: the reason used to be swallowed, so a
+   *  refused artifact read exactly like a missing one and the serve note still named the file. */
+  missingWhy: Record<string, string>;
 }
 
 const open = (dbPath?: string) => new Database(dbPath ?? dataPath("ff.db"), { readonly: true });
@@ -263,8 +269,13 @@ export function weeklyArtifactPath(model: ModelHandle, file: string): string {
   return model.path(name);
 }
 
-function tryLoad(file: string, model: ModelHandle): WeeklyArtifact | null {
-  try { return loadWeeklyArtifact(JSON.parse(readFileSync(weeklyArtifactPath(model, file), "utf8"))); } catch { return null; }
+export function tryLoadWeeklyArtifact(file: string, model: ModelHandle): { art: WeeklyArtifact | null; why: string | null } {
+  let path: string;
+  try { path = weeklyArtifactPath(model, file); } catch (e) { return { art: null, why: (e as Error).message }; }
+  if (!existsSync(path)) return { art: null, why: `${file} is not built (${path})` };
+  try { return { art: loadWeeklyArtifact(JSON.parse(readFileSync(path, "utf8"))), why: null }; } catch (e) {
+    return { art: null, why: `${file} was REFUSED at load: ${(e as Error).message.split("\n")[0]}` };
+  }
 }
 
 /**
@@ -353,15 +364,18 @@ export function projectStreamingWith(
   const files = [...new Set(STREAM_SERVE_POS.map(artifactForPos))];
   const arts = new Map<string, WeeklyArtifact>();
   const missing: string[] = [];
+  const missingWhy: Record<string, string> = {};
+  const whyOf = new Map<string, string>();
   for (const f of files) {
-    const a = tryLoad(f, mh);
+    const { art: a, why } = tryLoadWeeklyArtifact(f, mh);
     if (a) arts.set(f, opts?.mapArtifact ? opts.mapArtifact(a, f) : a);
+    else if (why) whyOf.set(f, why);
   }
   const artifactByPos: Record<string, string> = {};
   for (const p of STREAM_SERVE_POS) {
     const f = artifactForPos(p);
     if (arts.has(f)) artifactByPos[p] = f;
-    else missing.push(p);
+    else { missing.push(p); missingWhy[p] = whyOf.get(f) ?? `${f} did not load`; }
   }
   if (!arts.size) return null;
 
@@ -394,12 +408,13 @@ export function projectStreamingWith(
           feat_key: p.feat_key, player_sk: p.player_sk ?? null, name: p.name, pos: p.pos, team: teamOf.get(p.feat_key) ?? null,
           mean: p.mean, p10: p.p10, p50: p.p50, p90: p.p90,
           pZero: p.pZero ?? null,
+          ...(p.knots ? { knots: p.knots } : {}),
           rank: rank.get(p.feat_key) ?? 9999,
           artifact: file,
         });
       }
     }
-    return { season, week, rows: out, artifactByPos, missing };
+    return { season, week, rows: out, artifactByPos, missing, missingWhy };
   } finally { close(); }
 }
 

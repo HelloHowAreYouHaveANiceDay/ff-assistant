@@ -124,6 +124,46 @@ test("POSITIVE CONTROL ON THE SCORER: a settled week is scored, and a better mod
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("the scorer uses the FROZEN MEDIAN and the decision POPULATION (review 2026-09-24, B8)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ff-scorecard-b8-"));
+  const dbPath = join(dir, "sc.db");
+  const db = openDb(dbPath);
+  seed(db);
+  db.prepare("UPDATE feat_player_week_model SET pts = season_line_pg * 1.6 WHERE season = ? AND week = 2").run(SEASON);
+  db.close();
+  try {
+    await runScorecard({ dbPath, season: SEASON, week: 2, today: `${SEASON}-09-04`, sched: sched(),
+      artifactPath: artifactAt(dir, 1.6), score: false });
+    const d = openDb(dbPath);
+    const withMedian = (d.prepare(
+      "SELECT COUNT(*) c FROM scorecard_prediction WHERE season = ? AND week = 2 AND model = 'weekly' AND p50 IS NOT NULL",
+    ).get(SEASON) as { c: number }).c;
+    assert.ok(withMedian > 0, "the snapshot froze no median -- scoring would fall back to the mean");
+    d.close();
+    const scoreNow = async () => (await runScorecard({ dbPath, season: SEASON, today: `${SEASON}-09-09`, sched: sched(),
+      artifactPath: artifactAt(dir, 1.6), snapshot: false })).scored.find((r) => r.week === 2 && r.model === "weekly")!;
+    const full = await scoreNow();
+    assert.ok(Number.isFinite(full.crps), "a row with a frozen median must get a CRPS");
+
+    // POPULATION: take one scored subject out of the decision population; n must drop by one.
+    const d2 = openDb(dbPath);
+    d2.exec("ALTER TABLE feat_player_week_model ADD COLUMN in_population INTEGER");
+    const one = d2.prepare("SELECT feat_key FROM feat_player_week_model WHERE season = ? AND week = 2 AND COALESCE(is_bye,0)=0 LIMIT 1").get(SEASON) as { feat_key: string };
+    d2.prepare("UPDATE feat_player_week_model SET in_population = 0 WHERE season = ? AND week = 2 AND feat_key = ?").run(SEASON, one.feat_key);
+    d2.close();
+    const pop = await scoreNow();
+    assert.equal(pop.n, full.n - 1, "a row outside the decision population was still scored");
+
+    // LEGACY: a frozen row with no median has its band WITHHELD, not scored with the mean as median.
+    const d3 = openDb(dbPath);
+    d3.prepare("UPDATE scorecard_prediction SET p50 = NULL WHERE season = ? AND week = 2").run(SEASON);
+    d3.close();
+    const legacy = await scoreNow();
+    assert.ok(Number.isNaN(legacy.crps), `a row with no frozen median scored CRPS ${legacy.crps} -- the mean stood in for the median`);
+    assert.ok(Number.isFinite(legacy.rmse), "RMSE needs no median and must still score");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("imminentWeek is the earliest week whose first kickoff is still ahead", () => {
   const s = sched();
   assert.equal(imminentWeek(s, SEASON, `${SEASON}-09-01`), 1);

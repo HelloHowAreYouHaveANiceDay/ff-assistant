@@ -19,6 +19,8 @@
 // The verdict is the number to quote in the admission trace, not a hand-read 12.03->12.02.
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { createHash } from "node:crypto";
+import Database from "better-sqlite3";
 import { evaluateProjection, score } from "../src/model/evaluate.ts";
 import { admissionVerdict } from "./lib/arbiter.mjs";
 import { parseHoldout, splitSeasons, assertSelectionBlind } from "./lib/holdout.mjs";
@@ -55,7 +57,21 @@ const cachePath = val("--baseline-cache", null);
 // --json <file>: dump BOTH arms' per-season pinball plus the verdicts, so a driver can build a per-era /
 // per-season table without re-running anything or re-parsing stdout.
 const jsonOut = val("--json", null);
-const cacheKey = `${dbPath ?? "data/ff.db"}|${seasons[0]}-${seasons[seasons.length - 1]}|${pos ?? "ALL"}`;
+// THE KEY INCLUDES WHAT THE ARM WAS FITTED FROM (review 2026-09-24, F7): the trainer's source and the
+// feature tables' version. Keyed on db path / seasons / position alone, a feature rebuild or a trainer
+// change between runs silently reused a STALE baseline arm against a fresh treatment arm.
+const inputsVersion = (() => {
+  const h = createHash("sha256").update(readFileSync("tools/train_projection.py"));
+  try {
+    const db = new Database(dbPath ?? "data/ff.db", { readonly: true });
+    for (const t of ["feat_player_season", "feat_player_season_ext"]) {
+      try { h.update(JSON.stringify(db.prepare(`SELECT COUNT(*) n, MAX(updated_at) u FROM ${t}`).get())); } catch { h.update(`${t}:absent`); }
+    }
+    db.close();
+  } catch { h.update("db:unreadable"); }
+  return h.digest("hex").slice(0, 12);
+})();
+const cacheKey = `${dbPath ?? "data/ff.db"}|${seasons[0]}-${seasons[seasons.length - 1]}|${pos ?? "ALL"}|${inputsVersion}`;
 function readCache() {
   if (!cachePath || !existsSync(cachePath)) return null;
   try { return JSON.parse(readFileSync(cachePath, "utf8")); } catch { return null; }

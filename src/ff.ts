@@ -2542,18 +2542,24 @@ async function cmdBacktest(rest: string[]) {
   const btReseed = reseedArg != null ? reseedArg === "true" : btFormat.playoffReseed;
   if (!Number.isFinite(btRegWeeks) || btRegWeeks <= 0) throw new Error(`--reg-weeks must be a positive number (got ${JSON.stringify(valueOf(rest, "--reg-weeks"))}).`);
   if (!Number.isFinite(btPlayoffTeams) || btPlayoffTeams <= 0) throw new Error(`--playoff-teams must be a positive number (got ${JSON.stringify(valueOf(rest, "--playoff-teams"))}).`);
-  // AGE CURVE ON BY DEFAULT, matching the shipped board. projections.ts applies it, so a backtest
-  // that skipped it would be validating a system we do not actually run -- the exact mismatch that
-  // let the FLEX-baseline and K/DST bugs survive. `--no-age-curve` is the escape hatch for A/B.
+  // AGE CURVE AND OPPORTUNITY ARE OFF BY DEFAULT, AND OPT-IN (architecture review 2026-09-24, B6).
+  // They were ON by default on the claim that the board applies them. It does not: both are RETIRED
+  // (src/draft/models.ts), the shipped projector carries age and usage as fitted features, and its
+  // multiplicative stage is empty. Worse, each file is ONE fit over every season -- age-curve.json
+  // from all of history-points.csv, opportunity-model.json stamped season 2025 and fitted against a
+  // curve that had seen the future (defect D1) -- so applying them to 1999-2024 put look-ahead into
+  // the arbiter. Measured: flagless 39.3% titles / 96% playoffs WITH them, 38.0% / 96% without; the
+  // gated playoff axis does not move. `--age-curve` / `--opportunity` reproduce the old arm for A/B;
+  // `--no-age-curve` / `--no-opportunity` are accepted as no-ops so recorded commands still run.
   const { ageFactor } = await import("./draft/age.js");
   const { opportunityFactor } = await import("./draft/opportunity.js");
   const fsMod = await import("node:fs");
   const agePath = dataPath("age-curve.json");
-  const ageCurve = (!rest.includes("--no-age-curve") && fsMod.existsSync(agePath))
+  const ageCurve = (rest.includes("--age-curve") && fsMod.existsSync(agePath))
     ? JSON.parse(fsMod.readFileSync(agePath, "utf8"))
     : null;
   const oppPath = dataPath("opportunity-model.json");
-  const oppModel = (!rest.includes("--no-opportunity") && fsMod.existsSync(oppPath))
+  const oppModel = (rest.includes("--opportunity") && fsMod.existsSync(oppPath))
     ? JSON.parse(fsMod.readFileSync(oppPath, "utf8"))
     : null;
   const dumpPath = valueOf(rest, "--dump-trials");
@@ -2975,7 +2981,7 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${ageCurve && noLookahead ? "age-curve " : ""}${oppModel && noLookahead ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${ageCurve && noLookahead && projMode !== "artifact" ? "age-curve " : ""}${oppModel && noLookahead && projMode !== "artifact" ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
   console.log(`FORMAT  weeks 1-${btRegWeeks}, ${btPlayoffTeams}-team playoff, seeding ${seeding}, bracket ${btReseed ? "reseeds" : "fixed"}` +
     `  (from the ${btFormat.source} format block${seedingArg || valueOf(rest, "--reg-weeks") || valueOf(rest, "--playoff-teams") || reseedArg ? ", overridden on the command line" : ""})`);
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${btPlayoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(shared ${marketNoiseGiven ? String(marketSd) : "measured band sd"}, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);
@@ -4436,6 +4442,7 @@ async function cmdBuildLiveContext(rest: string[]) {
   console.log(`  ${r.rows} context rows${rest.includes("--dry-run") ? " WOULD be written (--dry-run)" : " written"}`);
   console.log(`  ${r.withStatus} carry a designation, of which ${r.outs} are Out (${r.fromNews} escalated by the news feed)`);
   console.log(`  ${r.withDepth} carry a depth-chart rank`);
+  console.log(`  ${r.uncovered} not covered by the status feed -- served with availability MISSING, not healthy`);
   if (r.unresolved) {
     console.log(`  ${r.unresolved} designation(s) reached no surrogate key and carry no row -- that is ` +
       "a coverage fact, not an absence of injuries");

@@ -23,7 +23,7 @@ import { openDb, nowIso, type DB } from "../../db/db.js";
 import { normPos } from "../../data/stgPlayer.js";
 import { normalizeStatus } from "../../inseason/copilot.js";
 import { localToday } from "../../inseason/copilotStore.js";
-import { buildSourceResolver, type SourceResolver } from "./resolve.js";
+import { buildSourceResolver, resolvePlayerTable, type SourceResolver } from "./resolve.js";
 
 export interface WeekContextResult {
   seasons: number[]; rows: number;
@@ -440,6 +440,9 @@ export interface LiveWeekContextResult {
   /** Designations that reached no surrogate key, so no row carries them. A coverage fact, reported
    *  rather than dropped: it is the difference between "nobody is out" and "we could not tell". */
   unresolved: number;
+  /** Universe members the live status feed does not cover (no resolved player_status/news row):
+   *  written 'live-unresolved', served with availability MISSING rather than healthy. */
+  uncovered: number;
   /** Non-null means NOTHING was written, and says why. */
   skipped: string | null;
   /** Every week whose first kickoff is already behind the snapshot, i.e. what the rule excluded. */
@@ -507,7 +510,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
   const asOfDay = opts.now ? opts.now.slice(0, 10) : localToday();
   const res: LiveWeekContextResult = {
     season, week: null, asOf, rows: 0, withStatus: 0, withDepth: 0, withSnap: 0, withRoute: 0,
-    missingFeeds: [], outs: 0, fromNews: 0, unresolved: 0, skipped: null, kickedOff: [],
+    missingFeeds: [], outs: 0, fromNews: 0, unresolved: 0, uncovered: 0, skipped: null, kickedOff: [],
   };
 
   // ---- THE TARGET WEEK, from raw_nfl_game kickoffs. ----
@@ -533,12 +536,17 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
   // Keyed by name_key, which is what `player_status.player_id` and `news.player_id` both are, then
   // resolved to the surrogate key through stg_player. A designation that cannot be resolved to a
   // player_sk is COUNTED, not silently dropped: an unresolvable name is a coverage fact.
+  //
+  // RESOLVED THROUGH THE `player` ROW'S REAL IDS, not the name key (architecture review 2026-09-24,
+  // B2). The name-key join skipped every name staging flags ambiguous -- Justin Jefferson, Lamar
+  // Jackson, Michael Pittman Jr., DJ Moore, Marvin Harrison Jr. -- and those men were then written
+  // with no status and no depth, which `contextFor` read as HEALTHY. `resolvePlayerTable` walks gsis,
+  // espn, (name, pos, team), (name, pos), so a namesake at another position cannot capture the row.
   const skOf = new Map<string, number>();
-  for (const r of db.prepare(
-    "SELECT player_sk, name_key, position FROM stg_player WHERE name_key IS NOT NULL AND COALESCE(ambiguous, 0) = 0",
-  ).all() as { player_sk: number; name_key: string; position: string | null }[]) {
-    if (!skOf.has(r.name_key)) skOf.set(r.name_key, r.player_sk);
-  }
+  for (const [pid, r] of resolvePlayerTable(db)) skOf.set(pid, r.sk);
+  // Who the status feed COVERS at all, resolved or not. A universe member in this set is known;
+  // one outside it is written 'live-unresolved' so `contextFor` serves his availability as MISSING.
+  const known = new Set<number>();
 
   interface Live { report: string | null; depth: number | null; source: string }
   const live = new Map<number, Live>();
@@ -548,6 +556,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
   ).all() as { player_id: string; injury_status: string | null; depth_order: number | null }[]) {
     const sk = skOf.get(r.player_id);
     if (sk == null) { if (r.injury_status) unresolved++; continue; }
+    known.add(sk);
     live.set(sk, { report: espnStatusToReport(r.injury_status), depth: r.depth_order ?? null, source: "player_status" });
   }
   // News ESCALATES only, exactly as `loadAvailability` does -- a high-severity injury headline can
@@ -559,6 +568,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
     if (String(r.severity ?? "").toLowerCase() !== "high" || !r.player_id) continue;
     const sk = skOf.get(r.player_id);
     if (sk == null) { unresolved++; continue; }
+    known.add(sk);
     const cur = live.get(sk);
     if (cur?.report === "Out") continue;
     live.set(sk, { report: "Out", depth: cur?.depth ?? null, source: "news(injury/high)" });
@@ -619,7 +629,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
        prior_snap_share, prior_route_share, report_status_wed, report_status_fri,
        practice_status_wed, practice_status_fri, teammates_out, depth_rank, source, updated_at)
      VALUES (@sk,@season,@week,@asOf,@team,@pos,@opp,@home,@rest,@roof,@spread,@total,@implied,
-       @temp,@wind,@snap,@route,NULL,@rsf,NULL,NULL,@out,@depth,'live',@now)
+       @temp,@wind,@snap,@route,NULL,@rsf,NULL,NULL,@out,@depth,@src,@now)
      ON CONFLICT(season, week, player_sk) DO UPDATE SET
        as_of=excluded.as_of, team=excluded.team, pos=excluded.pos, opponent=excluded.opponent,
        home=excluded.home, days_rest=excluded.days_rest, roof=excluded.roof,
@@ -648,8 +658,10 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
         spread: g?.spread ?? null, total: g?.total ?? null, implied: g?.implied ?? null,
         temp: g?.temp ?? null, wind: g?.wind ?? null, snap: sSnap, route: sRoute,
         rsf: l?.report ?? null, out: mates, depth: l?.depth ?? null, now,
+        src: known.has(sk) ? "live" : "live-unresolved",
       });
       res.rows++;
+      if (!known.has(sk)) res.uncovered++;
       if (l?.report) res.withStatus++;
       if (l?.report === "Out") res.outs++;
       if (l?.depth != null) res.withDepth++;
@@ -666,6 +678,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
       if (!Number.isInteger(sk)) continue;
       const l = live.get(sk);
       res.rows++;
+      if (!known.has(sk)) res.uncovered++;
       if (l?.report) res.withStatus++;
       if (l?.report === "Out") res.outs++;
       if (l?.depth != null) res.withDepth++;

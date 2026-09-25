@@ -277,13 +277,17 @@ export async function evaluateProjection(opts: {
       // that the flag was wired: none of the embargoed seasons may appear in the fitted artifact's
       // training `seasons`. This is the consumer checking the producer's emitted bytes -- a
       // `--embargo` that the Python side silently dropped fails HERE, loudly, not silently.
-      if (trained && embargo > 0) {
-        const leaked = embargoedSeasons(yr, embargo).filter((s) => trained!.seasons.includes(s));
-        if (leaked.length) {
-          throw new Error(`embargo ${embargo} not honoured for holdout ${yr}: training seasons still include ${leaked.join(",")}`);
-        }
-      }
     } catch (e) { note = `trainer failed: ${(e as Error).message.split("\n")[0]}`; }
+    // THE EMBARGO CHECK IS OUTSIDE THE TRY, AND FATAL (review 2026-09-24, P4). It used to sit inside
+    // it: the throw was caught into a `note`, `trained` was already set, and the LEAKED artifact was
+    // scored below with `trainerOk` still true -- so admit-feature/gate-variant consumed it as clean.
+    // A guard whose failure is caught and then ignored is not a guard.
+    if (trained && embargo > 0) {
+      const leaked = embargoedSeasons(yr, embargo).filter((s) => trained!.seasons.includes(s));
+      if (leaked.length) {
+        throw new Error(`embargo ${embargo} not honoured for holdout ${yr}: training seasons still include ${leaked.join(",")}`);
+      }
+    }
 
     let trainedRows: EvalRow[] = [];
     if (trained) {

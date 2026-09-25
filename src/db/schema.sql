@@ -1361,6 +1361,11 @@ CREATE TABLE IF NOT EXISTS scorecard_prediction (
   value           REAL,
   p10             REAL,
   p90             REAL,
+  -- The model's own MEDIAN and P(zero week) (review 2026-09-24, B8). Before these, scoring used the
+  -- MEAN as the median, which for a two-part row is a different number (TE: mean 4.34, p50 0) and made
+  -- the live CRPS a different metric from the gate's. NULL on rows frozen before the columns existed.
+  p50             REAL,
+  p_zero          REAL,
   as_of           TEXT,
   created_at      TEXT,
   PRIMARY KEY (format_key, season, week, kind, model, subject)

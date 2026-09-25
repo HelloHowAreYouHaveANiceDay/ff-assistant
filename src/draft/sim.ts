@@ -12,6 +12,9 @@ import { availForRank, availFromVarianceModel, calibrateSurrogateDollars, SURROG
 import { computeValues, resolveValueLeague, type PointsRow } from "./values.js";
 import { loadManagers, makeBotBidder, assignSeats, type BotBidder, type ManagerProfile } from "./managers.js";
 import { planDrainNomination, payersFrom } from "./nomination.js";
+
+/** The bots' K/DST price cap. Independent of our `maxKDst` lever (B9). */
+export const ROOM_MAX_KDST = 2;
 import { positionInflationFactors } from "./inflation.js";
 
 export interface SimLeague { teams: number; budget: number; slots: string[]; }
@@ -391,7 +394,11 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
         ecrPosRank: posRank.get(p.name) ?? null, ecrSd: null,
         moneyLeft: 1, slotsLeft: 1, pickShare: 0, leagueMoney,
       })]))
-      : new Map(computeValues(points, resolveValueLeague(lg), cfg.maxKDst ?? 2).map((v) => [v.name, v.value]));
+      // THE ROOM'S K/DST CAP IS THE ROOM'S, NOT OURS (review 2026-09-24, B9). This was `cfg.maxKDst`
+      // -- OUR lever -- so `--max-kdst X` repriced every bot's kickers and defences too, and the
+      // measured delta was "the whole room changed". Fixed at the shipped $2, the way the snake room
+      // fixes its own bench multiplier (BOT_BENCH_MULT).
+      : new Map(computeValues(points, resolveValueLeague(lg), ROOM_MAX_KDST).map((v) => [v.name, v.value]));
   const studRank = new Map([...trueVal.entries()].sort((a, b) => b[1] - a[1]).map(([n], i) => [n, i]));
   const { leagueShare } = loadManagers();
 

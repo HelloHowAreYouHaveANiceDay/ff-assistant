@@ -34,6 +34,14 @@ interface InitData {
   varianceModelPath: string;
   outcomesPath: string;
   corrPath: string;
+  /**
+   * THE CALLER'S OWN SIMULATOR OPTIONS (review 2026-09-24, S1) -- `loadSimContext().opts(...)` minus
+   * trials/seed/poolRank/bootstrap, which the worker supplies. Without it the worker rebuilt its own
+   * option set and dropped the D18 standings seed and priorWeeks, seeding, divisions, playoffReseed
+   * and playoffWeekCount -- so every worker arm simulated a fresh season on a default
+   * bracket while the caller's BASE ran the real one, and the two were printed side by side.
+   */
+  simOpts?: Record<string, unknown>;
 }
 export interface SwapJob {
   /** index into the candidate list, echoed back so results can be reassembled in order */
@@ -60,6 +68,7 @@ const poolRank = new Map(init.poolRank);
 
 function run(teams: SeasonTeamInput[], trials: number, seed: number) {
   return simulateSeasons(teams, init.weeks, vm, {
+    ...(init.simOpts ?? {}),
     weeks: init.weeks.length, playoffTeams: init.playoffTeams, slots: init.slots,
     projSd: init.projSd, trials, seed, poolRank, flexOk: init.flexOk, replacement: init.replacement,
     bootstrap: { outcomes, corr, calibration: "scale" },
