@@ -694,7 +694,7 @@ if (argv.includes("--waiver-backtest")) {
         played: s.played ? { ...s.played, priorWeeks: LEVEL_PRIOR_WEEKS } : undefined,
       };
       const t0 = Date.now();
-      const rows = replayWeek({ db, league: LEAGUE, s, season, W, vm: useVm, baseOpts, trials: wbTrials, seeds: wbSeeds, nAdds: wbAdds, nDrops: wbDrops, future });
+      const rows = replayWeek({ db, league: LEAGUE, s, season, W, vm: useVm, baseOpts, trials: wbTrials, seeds: wbSeeds, nAdds: wbAdds, nDrops: wbDrops, future, noSim: argv.includes("--wb-no-sim") });
       writeFileSync(wbOut, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", { flag: "a" });
       const moved = (arm) => rows.filter((r) => r.arm === arm && r.moved).length;
       console.log(`  ${season} wk${W}: ${s.teams.length} teams, ${((Date.now() - t0) / 1000).toFixed(0)}s; moves SIM ${moved("SIM")} SIM_OLD ${moved("SIM_OLD")} RATE ${moved("RATE")} ORACLE ${moved("ORACLE")}`);

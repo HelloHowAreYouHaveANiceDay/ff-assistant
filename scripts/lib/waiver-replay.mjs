@@ -45,7 +45,7 @@ export function loadFuture(db, season) {
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 
 export function replayWeek(o) {
-  const { db, league, s, season, W, vm, baseOpts, trials, seeds, nAdds, nDrops, future } = o;
+  const { db, league, s, season, W, vm, baseOpts, trials, seeds, nAdds, nDrops, future, noSim = false } = o;
   const flexOk = baseOpts.flexOk;
   const N = s.teams.length;
 
@@ -106,8 +106,10 @@ export function replayWeek(o) {
   // ---- the simulator, paired by seed, one base per arm shared by every team ----
   const teamsFor = (arm, i = -1, roster = null) => s.teams.map((t, j) => ({ ...t, roster: withRates(j === i ? roster : t.roster, arm) }));
   const optsFor = (arm, seed) => ({ ...baseOpts, trials, seed, ...(arm === "old" ? { handcuffCoupling: null } : {}) });
-  const base = { new: seeds.map((sd) => simulateSeasons(teamsFor("new"), s.weeks, vm, optsFor("new", sd))),
-                 old: seeds.map((sd) => simulateSeasons(teamsFor("old"), s.weeks, vm, optsFor("old", sd))) };
+  const base = noSim ? { new: [], old: [] } : {
+    new: seeds.map((sd) => simulateSeasons(teamsFor("new"), s.weeks, vm, optsFor("new", sd))),
+    old: seeds.map((sd) => simulateSeasons(teamsFor("old"), s.weeks, vm, optsFor("old", sd))),
+  };
   const probOf = (odds, id) => odds.find((x) => x.id === id)?.playoffs ?? 0;
 
   const dedicated = (pos) => s.slots.filter((sl) => sl === pos).length;
@@ -168,9 +170,34 @@ export function replayWeek(o) {
       out.push({ season, W, team: t.id, arm, moved: !!mv, add: mv?.add ?? null, drop: mv?.drop ?? null, simDelta: mv?.delta ?? null, ...sc, ...extra });
     };
 
-    const movesNew = simArm("new");
-    const bestNew = movesNew.length ? movesNew.reduce((a, b) => (b.delta > a.delta ? b : a)) : null;
-    rowOf("SIM", bestNew && bestNew.delta > bestNew.floor ? bestNew : null);
+    // EXP -- OPTION 3 (2026-09-25): rank a claim by the EXPECTED rest-of-season STARTING-LINEUP points
+    // it adds, from point-in-time information only: each remaining week the lineup is picked on the
+    // usage rate among men not on bye (the schedule is known) and not ruled out now (week W only --
+    // nobody knows week W+3's injury report), and the starters' RATES are summed. No simulator, no
+    // playoff probability: the quantity the realised scorer rewards, predicted instead of observed.
+    // Thresholds pre-registered as three arms (EXP0 / EXP5 / EXP10 points over the rest of the season).
+    {
+      const outNow = (p) => { const sk = skOfName.get(p.name); return !!(sk && future.get(sk)?.get(W)?.out); };
+      const expPts = (roster) => {
+        let tot = 0;
+        for (let w = W; w <= s.reg; w++) {
+          const players = roster.map((p) => ({ name: p.name, pos: p.pos, proj: rNewOf(p), available: p.bye !== w && !(w === W && outNow(p)) }));
+          tot += optimalLineup(players, s.slots, flexOk).totalProj;
+        }
+        return tot;
+      };
+      const before = expPts(mine);
+      let best = null;
+      for (const add of [...pool].sort((a, b) => b.rNew - a.rNew).slice(0, 20)) {
+        for (const d of [...mine].sort((a, b) => rNewOf(a) - rNewOf(b)).slice(0, 4)) {
+          const after = mine.filter((p) => p !== d).concat([faAsPlayer(add)]);
+          if (!legal(i, after)) continue;
+          const gain = expPts(after) - before;
+          if (!best || gain > best.delta) best = { add: add.name, drop: d.name, after, delta: gain };
+        }
+      }
+      for (const [arm, th] of [["EXP0", 0], ["EXP5", 5], ["EXP10", 10]]) rowOf(arm, best && best.delta > th ? best : null);
+    }
     // ANTI -- THE NEGATIVE CONTROL: drop our BEST man (highest rate) for the WORST free agent at his
     // position (same position, so the roster stays legal). Unambiguously harmful; the scorer must see
     // it as a large loss. (The simulator's worst CANDIDATE was tried first and is not a control: every
@@ -180,9 +207,6 @@ export function replayWeek(o) {
       const worst = top ? [...pool].filter((f) => f.pos === top.pos).sort((a, b) => a.rNew - b.rNew)[0] : null;
       rowOf("ANTI", top && worst ? { add: worst.name, drop: top.name, after: mine.filter((p) => p !== top).concat([faAsPlayer(worst)]), delta: null } : null);
     }
-    const movesOld = simArm("old");
-    const bestOld = movesOld.length ? movesOld.reduce((a, b) => (b.delta > a.delta ? b : a)) : null;
-    rowOf("SIM_OLD", bestOld && bestOld.delta > bestOld.floor ? bestOld : null);
     // RATE: best free agent by usage rate vs the lowest-rate legal drop.
     {
       const bestFa = [...pool].sort((a, b) => b.rNew - a.rNew).find((f) => dropsFor("new", f).length);
@@ -190,6 +214,14 @@ export function replayWeek(o) {
       const mv = bestFa && dr && bestFa.rNew - rNewOf(dr.d) >= RATE_MIN ? { add: bestFa.name, drop: dr.d.name, after: dr.after, delta: null } : null;
       rowOf("RATE", mv);
     }
+    if (noSim) { rowOf("STAND", null); continue; }
+
+    const movesNew = simArm("new");
+    const bestNew = movesNew.length ? movesNew.reduce((a, b) => (b.delta > a.delta ? b : a)) : null;
+    rowOf("SIM", bestNew && bestNew.delta > bestNew.floor ? bestNew : null);
+    const movesOld = simArm("old");
+    const bestOld = movesOld.length ? movesOld.reduce((a, b) => (b.delta > a.delta ? b : a)) : null;
+    rowOf("SIM_OLD", bestOld && bestOld.delta > bestOld.floor ? bestOld : null);
     // ORACLE: best realised gain over every simulated candidate move.
     {
       let best = null, bestPts = 0;

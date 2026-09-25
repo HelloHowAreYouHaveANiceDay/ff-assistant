@@ -26,7 +26,7 @@ const decisions = byArm.get("STAND")?.size ?? 0;
 console.log(`\nWAIVER DECISION REPLAY -- ${seasons.join(",")}; ${decisions} team-week decisions (every team as us, at each checkpoint)`);
 console.log("each arm vs STAND, per decision, season as the unit:\n");
 console.log("  arm        moved     realised pts gained / decision                         playoff flips / 100 decisions");
-for (const arm of ["SIM", "SIM_OLD", "RATE", "ANTI", "ORACLE"]) {
+for (const arm of ["SIM", "SIM_OLD", "RATE", "EXP0", "EXP5", "EXP10", "ANTI", "ORACLE"]) {
   const m = byArm.get(arm); if (!m) continue;
   const rs = [...m.values()];
   const pts = verdict(seasons.map((y) => mean(rs.filter((r) => r.season === y).map((r) => r.dPts))));
@@ -35,7 +35,7 @@ for (const arm of ["SIM", "SIM_OLD", "RATE", "ANTI", "ORACLE"]) {
 }
 
 console.log("\nHEAD-TO-HEAD, paired on the same (season, week, team):");
-for (const [a, b] of [["SIM", "SIM_OLD"], ["SIM", "RATE"], ["SIM", "STAND"], ["RATE", "STAND"]]) {
+for (const [a, b] of [["SIM", "SIM_OLD"], ["SIM", "RATE"], ["SIM", "STAND"], ["RATE", "STAND"], ["EXP0", "SIM"], ["EXP5", "SIM"], ["EXP10", "SIM"], ["EXP5", "RATE"]]) {
   const A = byArm.get(a), B = byArm.get(b); if (!A || !B) continue;
   const per = seasons.map((y) => mean([...A.values()].filter((r) => r.season === y && B.has(key(r))).map((r) => r.dPts - B.get(key(r)).dPts)));
   const perPo = seasons.map((y) => 100 * mean([...A.values()].filter((r) => r.season === y && B.has(key(r))).map((r) => r.dPo - B.get(key(r)).dPo)));

@@ -7996,3 +7996,33 @@ best man for the worst free agent at his position.
 Leakage, stated: projections are blind (d16 folds); the D41 usage correction is blind via
 `data/fold-artifacts-ros-usage/` (new, `ros-usage-screen.mjs --write-folds`); the handcuff ratios
 (LOO spread RB 1.635-1.678) and the blend K are in sample, a small flattering of SIM.
+
+
+### Option 3: rank claims on EXPECTED rest-of-season LINEUP POINTS -- admitted in the replay (2026-09-25)
+
+Owner: "try 3". Arm EXP (scripts/lib/waiver-replay.mjs): for each candidate (add, drop) -- top 20 free
+agents by usage rate x the 4 lowest-rate legal drops -- sum, over weeks W..end of regular season, the
+starters' RATES of the lineup picked each week among men not on bye (schedule known) and not ruled out
+at week W; take the best move if its gain exceeds a PRE-REGISTERED threshold (EXP0 / EXP5 / EXP10
+points over the rest of the season). Point-in-time only, no simulator.
+
+At the three sim checkpoints (weeks 4/7/10, 342 decisions): EXP0 +2.63, EXP5 +3.68, EXP10 +3.83 per
+decision (all NULL, floors ~4.3-4.6); EXP vs SIM +2.0/+3.0/+3.2 (NULL, 6/8 each).
+
+Dense, no-sim (weeks 3-12, 1,140 decisions; SIM not run -- ~1 h/season):
+
+```
+arm      moved       realised pts / decision   floor    seasons up   verdict    playoff flips/100
+EXP10    732/1140    +4.19  SE 1.05            3.06     7/8          BETTER     +0.27 NULL
+EXP5     979/1140    +3.83  SE 1.19            3.45     7/8          BETTER     +0.03 NULL
+EXP0    1109/1140    +3.22  SE 1.39            4.02     7/8          NULL       +0.12 NULL
+RATE    1120/1140    +2.58  SE 1.26            3.65     6/8          NULL       +0.15 NULL
+ANTI    1140/1140   -60.48  SE 3.55           10.30     0/8          WORSE      -9.10 WORSE
+EXP5 - RATE  +1.25 (floor 2.98, 5/8) NULL
+```
+
+Two of three pre-registered thresholds clear, and the stricter the better -- "act only when the lineup
+gain is real". The effect is small (~4 points over the rest of a season, ~0.3/week) and does not move
+playoff odds measurably, but it is the first waiver objective in this repo with a resolvable realised
+edge; the simulator's playoff-probability objective has none at the three checkpoints it was run.
+NOT wired into `waiverTargets` yet -- that is a served-decision change (charter rule 1).
