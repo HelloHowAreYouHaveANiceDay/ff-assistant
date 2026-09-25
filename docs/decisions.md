@@ -2276,3 +2276,36 @@ expected pts) and Brian Robinson Jr. (+5.8); nothing clears 10, so the answer is
 
 Tests: test/copilot-objective.test.ts's ranking test rewritten to pin the new contract (ranked on
 expGainPts in every regime; the regime moves the window -- fault-injected, the switch disabled fails it).
+
+### D42 amendment -- four gaps in the expected-points ranking (2026-09-25, owner: "let's fix the tool's gaps too")
+
+Found answering "with Santos questionable, would we stream a kicker?", which the tool could not answer:
+
+1. **The like-for-like swap was never priced.** Drops came from our cheapest bodies only, so while our kicker
+   out-projected the bench, "claim a kicker, drop ours" did not exist -- the only kicker move on offer was
+   carrying two. Every add is now also priced against our weakest man at its own position.
+2. **QUESTIONABLE counted as certain to play.** It now counts at `QUESTIONABLE_PLAY_RATE` = 64.5%, MEASURED
+   over 17,666 final-report Questionable designations 2013-2025 (`raw_injury` joined to any snap in
+   `raw_snap_count`; K 65.9% n=123, QB 44.9%). Control from the same join: Out 0.7%, Doubtful 1.1%.
+   The lineup is chosen on rate x 0.645, i.e. before his status resolves -- exact for a late game.
+3. **A free agent whose game had kicked off was credited with this week.** Thursday's kickers were scored as
+   if they could still play for us. `ctx.week.locked` now removes the add's current week.
+4. **Free agents missing from the consensus ranking had NO bye**, and 217 of 1,012 board rows had no NFL team
+   (every defence among them). A man who never misses a week wins every like-for-like swap by exactly one
+   bye: Shrader-for-Santos read +8.3, all of it this defect. The bye now falls back to the team's open week
+   in `raw_nfl_game`, the team to the `player` table (or a defence's own name); 25 rows remain without a
+   bye, all genuinely unsigned (team FA).
+
+Plus `--status "Name=Q|OUT|DOUBTFUL|ACTIVE"` (CLI) / `status` (MCP) overrides this week's availability for one
+call -- the feeds lag the Friday report.
+
+**Live, league 462233 week 3, on the replay-validated regular-season window:** the straight Santos -> Shrader
+swap is +0.9 expected pts healthy, +3.4 if Santos is Q, +8.1 if OUT. The "carry two" rows (+8.2 healthy) are
+mostly Santos's week-10 bye, which a manager covers by claiming a kicker IN week 10 -- the ranking does not
+model that later option, so carry-two rows at K/DST are overstated.
+
+**OPEN (owner):** the bye fix moved base playoff odds 69.45% -> 70.15%, across the 70% secure threshold
+(inside the 4pp noise floor), which switches the ranking to playoff weeks only -- where every claim reads ~0
+and this week's availability cannot register. That secure window was never replay-validated (see D42).
+
+Tests: test/waiver-exp-gaps.test.ts, each assertion fault-injected (fix removed -> fails).

@@ -183,6 +183,17 @@ export type Regime = "insecure" | "secure";
  */
 export const PLAYOFF_SECURE_THRESHOLD_PCT = 70;
 
+/**
+ * HOW OFTEN A MAN LISTED QUESTIONABLE ON THE FINAL INJURY REPORT ACTUALLY PLAYS: 64.5%.
+ * MEASURED 2026-09-25 over 17,666 regular-season Questionable designations, 2013-2025
+ * (`raw_injury.report_status` joined to any offensive/defensive/special-teams snap in
+ * `raw_snap_count`, only weeks his team played). By position: QB 44.9% (n=381), RB 62.0%,
+ * WR 66.6%, TE 65.4%, K 65.9% (n=123). The same join gives Out 0.7% and Doubtful 1.1% -- the
+ * control that says the join itself is sound. One pooled rate: the per-position rates other than
+ * QB sit inside a few points of it and the small cells are noise.
+ */
+export const QUESTIONABLE_PLAY_RATE = 0.645;
+
 export interface Objective {
   regime: Regime;
   /** What the recommendation is RANKED on. */
@@ -1519,6 +1530,9 @@ export function waiverTargets(
      * ever do it.
      */
     availability?: AvailabilityMap;
+    /** NFL teams whose game this week has kicked off. Absent = `ctx.week.locked`. A free agent on one
+     *  of them adds nothing THIS week to the expected-points ranking. */
+    locked?: Set<string>;
     /** Injection seams, so the replay and the tests can drive the same code path the live tool does
      *  rather than a reimplementation of it. */
     faabModel?: FaabModel | null;
@@ -1753,10 +1767,28 @@ export function waiverTargets(
   const expMin = o.expMinPts ?? 10;
   const firstWk = ctx.played?.nextWeek ?? 1;
   const lastWk = ctx.weeks.length;
-  const outNow = (p: { name: string }): boolean => (o.availability ?? ctx.week.availability).get(nameKey(p.name))?.status === "OUT";
+  /**
+   * THIS WEEK'S CHANCE HE PLAYS (2026-09-25). OUT is 0. QUESTIONABLE is the measured base rate
+   * `QUESTIONABLE_PLAY_RATE`, not 1: counting a Q man as certain made a streamed kicker worth only
+   * his bye week while our own kicker was questionable for a Monday-night game. The rate multiplies
+   * his expected points and the lineup is chosen on that -- i.e. the lineup is set BEFORE his status
+   * resolves, which is exact when his game is the late one (the case that matters: once he is ruled
+   * out, every alternative has already played) and conservative when it is early.
+   *
+   * A FREE AGENT WHOSE GAME HAS KICKED OFF cannot score for us this week: ESPN locks him at kickoff,
+   * so a claim processed now starts him next week at the earliest. Thursday's kickers were being
+   * credited with a week they had already played for somebody else's bench.
+   */
+  const avail = o.availability ?? ctx.week.availability;
+  const playRate = (p: { name: string }): number => {
+    const st = avail.get(nameKey(p.name))?.status;
+    return st === "OUT" ? 0 : st === "QUESTIONABLE" ? QUESTIONABLE_PLAY_RATE : 1;
+  };
   const rateOf = (p: { proj: number; rosPerGame?: number }): number =>
     p.rosPerGame != null && Number.isFinite(p.rosPerGame) ? p.rosPerGame : p.proj / NFL_WEEKS;
-  type ExpPlayer = { name: string; pos: string; proj: number; rosPerGame?: number; bye?: number | null; eligible?: string[] };
+  type ExpPlayer = { name: string; pos: string; proj: number; rosPerGame?: number; bye?: number | null; eligible?: string[]; team?: string; lockedNow?: boolean };
+  const lockedTeams = o.locked ?? ctx.week.locked;
+  const isLocked = (p: { team?: string }): boolean => !!p.team && lockedTeams.has(String(p.team).toUpperCase());
   // THE WINDOW FOLLOWS THE REGIME for the RANKING (set below, once the objective is known): the
   // rest of the regular season while the seed is in doubt -- the form the replay validated -- and the
   // league's playoff weeks once it is secure, which is the switch every other verb here already makes.
@@ -1766,7 +1798,9 @@ export function waiverTargets(
     let tot = 0;
     for (let w = win[0]; w <= win[1]; w++) {
       tot += optimalLineup(roster.map((p) => ({
-        name: p.name, pos: p.pos, proj: rateOf(p), available: p.bye !== w && !(w === firstWk && outNow(p)),
+        name: p.name, pos: p.pos,
+        proj: rateOf(p) * (w === firstWk ? playRate(p) : 1),
+        available: p.bye !== w && !(w === firstWk && (playRate(p) === 0 || p.lockedNow)),
         ...(p.eligible ? { eligible: p.eligible } : {}),
       })), ctx.slots, ctx.flexOk).totalProj;
     }
@@ -1782,13 +1816,27 @@ export function waiverTargets(
     rosterGaps([{ ...ctx.teams[ctx.meIdx], roster: after }], ctx.slots, ctx.flexOk).length === 0 &&
     rosterOverfills([{ ...ctx.teams[ctx.meIdx], roster: after }], ctx.posMax).length === 0;
   const expGainOf = (add: ExpPlayer, drop: { name: string }): number | null => {
-    const after = myRoster.filter((p) => p.name !== drop.name).concat([{ ...add } as (typeof myRoster)[number]]);
+    const after = myRoster.filter((p) => p.name !== drop.name)
+      .concat([{ ...add, lockedNow: isLocked(add) } as (typeof myRoster)[number]]);
     return expLegal(after) ? expPts(after) - baseExp() : null;
+  };
+  /**
+   * THE DROPS A CLAIM IS PRICED AGAINST: our lowest-rate men (the replay's breadth) PLUS the
+   * like-for-like swap -- our weakest man at the added player's own position. Without the second,
+   * "claim a kicker, drop our kicker" was never priced whenever our kicker out-projected the bench,
+   * and the only kicker move on offer was carrying two of them.
+   */
+  const samePosDrop = (add: { pos: string }) =>
+    myRoster.filter((m) => m.pos === add.pos).sort((a, b) => rateOf(a) - rateOf(b))[0];
+  const expDropsFor = (add: { pos: string }) => {
+    const out = [...myRoster].sort((a, b) => rateOf(a) - rateOf(b)).slice(0, 4);
+    const sp = samePosDrop(add);
+    return sp && !out.some((d) => d.name === sp.name) ? [...out, sp] : out;
   };
   const expBest = new Map<string, number>();
   const byRate = [...eligible].sort((a, b) => rateOf(b) - rateOf(a)).slice(0, 20);
   for (const add of byRate) {
-    for (const d of [...myRoster].sort((a, b) => rateOf(a) - rateOf(b)).slice(0, 4)) {
+    for (const d of expDropsFor(add)) {
       const g = expGainOf(add, d);
       if (g != null && (!expBest.has(nameKey(add.name)) || g > expBest.get(nameKey(add.name))!)) expBest.set(nameKey(add.name), g);
     }
@@ -1856,10 +1904,14 @@ export function waiverTargets(
   for (const add of free) {
     // Cheapest first: the lowest-projection bodies are the real drop candidates, and evaluating all
     // twelve against five adds is minutes of simulation for rows nobody reads.
-    const candidates = [...mine].sort((a, b) => a.proj - b.proj).slice(0, Math.max(1, nDrops) + 3);
+    // The like-for-like swap is ALWAYS priced (see `samePosDrop`), on top of the cheapest bodies.
+    const sp = samePosDrop(add);
+    const cheap = [...mine].sort((a, b) => a.proj - b.proj).slice(0, Math.max(1, nDrops) + 3)
+      .filter((c) => !sp || c.name !== sp.name);
+    const candidates = sp ? [mine.find((m) => m.name === sp.name) ?? sp, ...cheap] : cheap;
     const drops: WaiverDrop[] = [];
     for (const cand of candidates) {
-      if (drops.length >= nDrops) break;
+      if (drops.length >= nDrops + (sp ? 1 : 0)) break;
       const probe = ctx.clone();
       probe[ctx.meIdx].roster = probe[ctx.meIdx].roster.filter((p) => p.name !== cand.name).concat([{ ...add }]);
       const gaps = [...rosterGaps([probe[ctx.meIdx]], ctx.slots, ctx.flexOk),

@@ -134,6 +134,34 @@ export async function loadSimContext(opts: {
   for (const r of db.prepare(
     "SELECT p.name, r.bye FROM player p JOIN ranking r ON r.player_id=p.player_id AND r.source='fantasypros_ecr' AND r.season=?",
   ).all(cfg.season) as { name: string; bye: number }[]) byeOf.set(nameKey(r.name), r.bye);
+  /**
+   * THE BYE FROM THE SCHEDULE, when the consensus ranking has none (2026-09-25). The ranking covers
+   * only the men it ranks, so a kicker it skipped -- Spencer Shrader, Daniel Carlson -- entered with
+   * NO bye and a man who never misses a week wins every like-for-like swap by exactly one bye week
+   * (+8.3 "expected lineup points" for Shrader-for-Santos, all of it this artifact). A team's bye is a
+   * fact about `raw_nfl_game`: the one regular-season week it has no game. The team itself falls back
+   * to the `player` table, and for a defence to its own name ("DEN D/ST"), since 217 of 1,012 board
+   * rows carry no Team.
+   */
+  const teamBye = new Map<string, number>();
+  {
+    const g = db.prepare("SELECT week, home_team h, away_team a FROM raw_nfl_game WHERE season=? AND game_type='REG'")
+      .all(cfg.season) as { week: number; h: string; a: string }[];
+    const weeksOf = new Map<string, Set<number>>();
+    for (const r of g) for (const t of [r.h, r.a]) { if (!weeksOf.has(t)) weeksOf.set(t, new Set()); weeksOf.get(t)!.add(r.week); }
+    const all = new Set(g.map((r) => r.week));
+    for (const [t, ws] of weeksOf) {
+      const off = [...all].filter((w) => !ws.has(w));
+      if (off.length === 1) teamBye.set(t, off[0]);
+    }
+  }
+  const teamOfId = new Map<string, string>();
+  for (const r of db.prepare("SELECT player_id, nfl_team FROM player WHERE nfl_team IS NOT NULL AND nfl_team <> ''").all() as { player_id: string; nfl_team: string }[]) {
+    teamOfId.set(r.player_id, r.nfl_team.toUpperCase());
+  }
+  const teamFor = (id: string, name: string, pos: string, team: string): string =>
+    team || teamOfId.get(id) || (pos === "DST" ? (name.match(/^([A-Z]{2,3})\s+D\/ST$/)?.[1] ?? "") : "");
+  const byeFor = (name: string, team: string): number | null => byeOf.get(nameKey(name)) ?? teamBye.get(team) ?? null;
 
   // ESPN's eligibility, read from the STAGED table rather than re-derived from the board's Eligible
   // string: the board column is a display of this, and two readings of one fact is how they drift.
@@ -160,7 +188,8 @@ export async function loadSimContext(opts: {
     const eligible = eligByKey.get(r.player_id);
     // THE BYE TRAVELS WITH THE BOARD ROW (D42). Only rostered men were given one (below), so a free
     // agent added by a waiver claim entered the simulator with NO bye and 'played' through it.
-    board.set(r.player_id, { name: String(j.Player), pos: String(j.Pos), proj: Number(j.ProjPts) || 0, team: String(j.Team ?? ""), bye: byeOf.get(nameKey(String(j.Player))) ?? null, ...(eligible ? { eligible } : {}) });
+    const team = teamFor(r.player_id, String(j.Player), String(j.Pos), String(j.Team ?? ""));
+    board.set(r.player_id, { name: String(j.Player), pos: String(j.Pos), proj: Number(j.ProjPts) || 0, team, bye: byeFor(String(j.Player), team), ...(eligible ? { eligible } : {}) });
   }
   const ownedIds = new Set<string>();
   const byTeam = new Map<string, SeasonTeamInput>();
@@ -180,7 +209,7 @@ export async function loadSimContext(opts: {
     if (!b) { unmatched.push(r.player_id); continue; }
     if (alias) ownedIds.add(alias);
     if (!byTeam.has(r.team_id)) byTeam.set(r.team_id, { id: r.team_id, name: r.team_abbrev || r.owner, roster: [] });
-    byTeam.get(r.team_id)!.roster.push({ ...b, bye: byeOf.get(nameKey(b.name)) ?? null, slot: r.slot ?? null, playerId: r.player_id });
+    byTeam.get(r.team_id)!.roster.push({ ...b, bye: byeFor(b.name, b.team), slot: r.slot ?? null, playerId: r.player_id });
   }
   // A roster row that matches nothing used to be skipped in silence, which is why the defect above
   // survived: an incomplete roster and a correct one produce the same output, and the simulator

@@ -28,6 +28,7 @@ import { finishedTeams } from "./weekState.js";
 import { stalenessCaveat } from "../data/feeds.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { loadSimContext, type SimContext } from "../draft/simContext.js";
+import { nameKey } from "../draft/values.js";
 import * as C from "./copilot.js";
 import * as S from "./copilotStore.js";
 import { loadStreamingProjection } from "../weekly/streamingServe.js";
@@ -78,6 +79,35 @@ export interface CopilotArgs {
    * opponent to be probable against.
    */
   objective?: "expected" | "winprob";
+  /**
+   * THE OWNER'S OWN READ OF WHO CAN PLAY THIS WEEK, by player name: `{ "Cairo Santos": "Q" }`.
+   * OUT / DOUBTFUL / Q[UESTIONABLE] / ACTIVE. It OVERRIDES the feeds for this call only (nothing is
+   * written), because the feeds lag -- the Friday report reaches ESPN before our store does. A name
+   * that matches nobody rostered or on the board is REFUSED, never silently ignored.
+   */
+  status?: Record<string, string>;
+}
+
+/** Apply `args.status` to a COPY of the context's week state; returns the context unchanged when absent. */
+export function withStatusOverrides(ctx: SimContext, status: Record<string, string> | undefined): SimContext {
+  if (!status || !Object.keys(status).length) return ctx;
+  const known = new Set<string>([
+    ...ctx.teams.flatMap((t) => t.roster.map((p) => nameKey(p.name))),
+    ...[...ctx.board.values()].map((p) => nameKey(p.name)),
+  ]);
+  const availability = new Map(ctx.week.availability);
+  for (const [name, raw] of Object.entries(status)) {
+    const k = nameKey(name);
+    if (!known.has(k)) throw new Error(`status override: "${name}" matches no rostered or free-agent player`);
+    const s = String(raw).trim().toUpperCase();
+    const st = s === "Q" || s === "QUESTIONABLE" ? "QUESTIONABLE" as const
+      : s === "OUT" || s === "O" || s === "DOUBTFUL" || s === "D" ? "OUT" as const
+      : s === "ACTIVE" || s === "A" ? "ACTIVE" as const : null;
+    if (!st) throw new Error(`status override: "${raw}" for ${name} is not OUT | DOUBTFUL | Q | ACTIVE`);
+    if (st === "ACTIVE") availability.delete(k);
+    else availability.set(k, { status: st, source: "manual(--status)", detail: `owner override: ${s}` });
+  }
+  return { ...ctx, week: { ...ctx.week, availability } };
 }
 
 export interface CopilotRun<T = unknown> {
@@ -560,7 +590,7 @@ export async function runCopilot(
     // than silently answering for the active league.
     const leagueId = args.league;
     if (leagueId != null) resolveLeagueContext(db, leagueId);          // validates; throws by name
-    const ctx = opts.ctx ?? await copilotContext(args.schedule, leagueId, opts.dbPath);
+    const ctx = withStatusOverrides(opts.ctx ?? await copilotContext(args.schedule, leagueId, opts.dbPath), args.status);
     const result = dispatch(verb, ctx, args, opts.dbPath, leagueId);
     const summary = summarize(verb, result);
     // WRITTEN BEFORE THE RETURN, not after. `status` is `recommended` rather than `done` because

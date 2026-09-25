@@ -4347,7 +4347,7 @@ async function cmdCopilot(rest: string[], verbArg: string) {
    */
   const COPILOT_VALUE_FLAGS = new Set([
     "--schedule", "--trials", "--seed", "--week", "--player", "--give", "--get",
-    "--pos", "--limit", "--max-gap", "--league", "--objective", "--db", "--handcuff-adds",
+    "--pos", "--limit", "--max-gap", "--league", "--objective", "--db", "--handcuff-adds", "--status",
   ]);
   const { runCopilot, COPILOT_VERBS } = await import("./inseason/copilotActions.js");
   // The verb now arrives from the dispatcher rather than being scanned out of argv, so it cannot be
@@ -4367,7 +4367,7 @@ async function cmdCopilot(rest: string[], verbArg: string) {
   // here too or its own test fails.
   const KNOWN_FLAGS = new Set([
     "--league", "--db", "--schedule", "--trials", "--seed", "--week", "--player", "--give", "--get",
-    "--pos", "--limit", "--free", "--max-gap", "--json", "--objective", "--handcuff-adds",
+    "--pos", "--limit", "--free", "--max-gap", "--json", "--objective", "--handcuff-adds", "--status",
   ]);
   const VALUELESS = new Set(["--free", "--json"]);
   const unknown = rest.filter((r) => r.startsWith("--") && !KNOWN_FLAGS.has(r));
@@ -4382,6 +4382,7 @@ async function cmdCopilot(rest: string[], verbArg: string) {
       `  --schedule real|generated|auto   real THROWS if the app is unreachable; auto says which it used\n` +
       `  --trials N  --seed N  --week N  --player "Name"  --give "A,B"  --get "C"  --pos RB,WR\n` +
       `  --limit N   --free   --max-gap 0.15   --json\n` +
+      `  --status "Name=Q,Name=OUT"       override this week's availability (OUT|DOUBTFUL|Q|ACTIVE)\n` +
       `  --league <id>                    which league to answer for (default: the ACTIVE league;\n` +
       `                                   an id naming no league is REFUSED, never silently swapped)\n` +
       `  --objective expected|winprob   LINEUP only. Default expected. winprob maximises P(beating\n` +
@@ -4412,6 +4413,15 @@ async function cmdCopilot(rest: string[], verbArg: string) {
     // REJECTED BY NAME rather than silently defaulted: a typo'd objective that quietly returned the
     // expected-points lineup would be a caller who believes he asked for something he did not get.
     objective: objectiveOf(valueOf(rest, "--objective")),
+    // --status "Cairo Santos=Q,Other Man=OUT": the owner's read of this week's availability, for
+    // this call only. Refused by name when a name or a status is not recognised.
+    status: list("--status").length
+      ? Object.fromEntries(list("--status").map((kv) => {
+          const i = kv.lastIndexOf("=");
+          if (i <= 0) throw new Error(`--status "${kv}" is not Name=STATUS`);
+          return [kv.slice(0, i).trim(), kv.slice(i + 1).trim()];
+        }))
+      : undefined,
   };
 
   const run = await runCopilot(verb, { ...args, league: leagueArg(rest) }, { dbPath: valueOf(rest, "--db") });
