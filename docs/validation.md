@@ -7880,3 +7880,54 @@ otherwise.
 of the whole decision-engine investigation is unchanged: we tie the room on lineups (-0.55
 pts/team-week) and on waivers (+1.3pp capture), and no reformulation of the ranking question has
 moved that.
+
+### LEARNING-TO-RANK, EVALUATED PROPERLY: WORSE THAN LEAST SQUARES ON IDENTICAL INPUTS (2026-09-24)
+
+Three attempts, the first two of which tested my normalisation rather than the idea.
+
+**v1 -- AND MY DIAGNOSIS OF IT WAS WRONG.** It returned the raw pairwise score for skill positions
+and fell back to `proj` for K/DST, so a standardised logit (~+/-3) competed with points (~6-25) in
+one sort and the FALLBACK outranked everything modelled: 57% K, 43% DST, and the best mix-matched
+capture in the table (68.7%) on a skill of -0.2. I wrote that up as "K and DST have null features so
+they were median-filled". **THAT IS FALSE** -- K carries season_line_pg 79% / t4_mean 84%, DST 100%
+/ 94%. They were never scored at all, because the training query filtered them out. A scale bug, not
+a data one.
+
+**v2** put everything on a within-cell percentile, which fixed the scale and deleted the signal: a
+pure within-position rank carries no cross-position value, so it takes the best kicker over the
+third-best back. 41.3%.
+
+**v3, THE REAL TEST.** A separate pairwise model per position on the features that position actually
+carries (DST gets four, the rest five), fitted leave-season-out; each man scored against his own
+(season, week, position) cell to a percentile; that percentile mapped back to POINTS through the
+position's realised ros-ppg quantile function computed from the OTHER seasons. Ordering from the
+model, level from what the position actually pays out.
+
+**AND THE CONTROL THAT MAKES IT A TEST OF THE LOSS.** Comparing a 5-feature linear model to the
+shipped 26-feature GBM answers "is my small model worse", which needs no experiment. So the
+comparison partner is OLS on THE SAME five features, the same per-position split, the same folds and
+the same percentile-to-points map -- differing only in the objective.
+
+```
+  arm                                  raw ppg   MIX-MATCHED capture   skill   QB share
+  shipped (26-feat GBM)                   8.07            64.1%       -0.30       54%
+  THE ROOM (reference)                    6.83            62.8%       +0.30       13%
+  B0 CONTROL: OLS, same 5 feats           6.85            54.8%       -0.69       48%
+  B  rank-loss, same 5 feats              4.39            35.8%       -1.20       58%
+```
+
+**REJECT, and this time fairly: the rank loss is 19 points of capture WORSE than least squares on
+identical inputs.** Its mix (58% QB) is close to the shipped arm's (54%), so capture is comparable
+here rather than mix-driven -- the trap that spoiled v1.
+
+**A CALIBRATION WORTH KEEPING:** the shipped 26-feature boosted projection beats a 5-feature OLS by
+**9.3 points of capture** (64.1 vs 54.8). Against ~20 rejected feature candidates it is easy to
+conclude the projection model does nothing; measured against a thin linear baseline on the same
+decision, it is doing substantial work.
+
+**WHAT REMAINS UNTESTED, stated so the next attempt does not repeat these three.** Uniform pairwise
+loss weights ALL pairs equally, so it spends capacity separating the 200th pool member from the
+201st while the decision only ever consumes the top ~5. The variants built for that -- top-k
+weighted, LambdaRank-style -- are the ones with a reason to help here, and none has been tried.
+"Rank loss does not help" is NOT established; "uniform pairwise rank loss on five features is worse
+than least squares on the same five" is.
