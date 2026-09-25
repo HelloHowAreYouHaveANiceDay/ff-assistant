@@ -1612,10 +1612,17 @@ export function waiverTargets(
    * reinstate the bug for exactly the positions the store knows least about.
    */
   const missingReplacement = new Set<string>();
-  const vor = (p: { pos: string; proj: number }): number => {
+  // THE SHORTLIST RANKS ON WHAT THE SIMULATOR WILL PRICE (D41). With the rest-of-season rate on the
+  // board (free agents carry `rosPerGame` since D41), ranking the pool on the PRESEASON projection
+  // would keep excluding exactly the men whose role changed -- Shipley at 0.6 preseason, 4.0 now --
+  // while the simulator, once they were in, priced them on the rate. Rate x 17 is the season-scale
+  // equivalent of `proj`, so the replacement subtraction is unchanged.
+  const seasonScale = (p: { proj: number; rosPerGame?: number }): number =>
+    p.rosPerGame != null && Number.isFinite(p.rosPerGame) ? p.rosPerGame * NFL_WEEKS : p.proj;
+  const vor = (p: { pos: string; proj: number; rosPerGame?: number }): number => {
     const r = ctx.replacement[p.pos];
-    if (r == null) { missingReplacement.add(p.pos); return p.proj; }
-    return p.proj - r * NFL_WEEKS;
+    if (r == null) { missingReplacement.add(p.pos); return seasonScale(p); }
+    return seasonScale(p) - r * NFL_WEEKS;
   };
   /**
    * THE SHORTLIST KEY. The weekly projector when the caller supplied it, VOR on the season line

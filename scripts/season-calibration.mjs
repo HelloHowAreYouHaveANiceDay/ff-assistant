@@ -49,7 +49,7 @@ import { loadArtifact } from "../src/model/projector.ts";
 import { boardProjection } from "../src/model/features.ts";
 import { nameKey, dstAliasKey } from "../src/draft/values.ts";
 import { playoffFieldFor } from "../src/features/picks.ts";
-import { rosPerGame, loadRosBlend, loadRosGap, rosGapAdjust } from "../src/draft/rosBlend.ts";
+import { rosPerGame, loadRosBlend, loadRosGap, rosGapAdjust, loadRosUsage, rosUsageAdjust } from "../src/draft/rosBlend.ts";
 import { loadConsensusPct, blendConsensus } from "../src/draft/consensusBlend.ts";
 import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 import { loadInjuryHorizonArtifact, horizonFor } from "../src/inseason/injuryHorizon.ts";
@@ -409,6 +409,7 @@ function buildSeason(season, atWeek = null) {
   let played = null;
   const rosOf = new Map();
   const rosOfGap = new Map();   // the same blend PLUS the snap/target correction; selected at sim time
+  const rosOfUsage = new Map(); // the same blend PLUS the D41 usage correction; selected at sim time
   let rosK = Infinity;
   if (atWeek != null && atWeek > 1) {
     const playedWeeks = Math.min(atWeek - 1, reg);
@@ -455,6 +456,30 @@ function buildSeason(season, atWeek = null) {
           "SELECT player_sk, td_ts, prior_snap_share, pos FROM feat_player_week_model WHERE season = ? AND week = ? AND player_sk IS NOT NULL",
         ).all(season, playedWeeks + 1)) usage.set(String(r.player_sk), r);
       }
+      // D41 USAGE CORRECTION, built UNCONDITIONALLY for the same reason as the gap map above, with
+      // the SAME definitions as scripts/ros-usage-screen.mjs and src/draft/simContext.ts: at the
+      // checkpoint week playedWeeks + 1, snap = prior_snap_share, ts = td_ts, trend = snap minus the
+      // mean of his non-bye prior_snap_share values before the checkpoint.
+      const usageModel = loadRosUsage();
+      const usageAt = new Map();
+      if (usageModel) {
+        const cp = playedWeeks + 1;
+        const hist = new Map();
+        for (const r of db.prepare(
+          "SELECT player_sk, week, is_bye, td_ts, prior_snap_share FROM feat_player_week_model WHERE season = ? AND week <= ? AND player_sk IS NOT NULL",
+        ).all(season, cp)) {
+          const k = String(r.player_sk);
+          (hist.get(k) ?? hist.set(k, []).get(k)).push(r);
+        }
+        for (const [k, ws] of hist) {
+          const at = ws.find((w) => w.week === cp);
+          if (!at) continue;
+          const earlier = ws.filter((w) => w.week < cp && !w.is_bye).map((w) => w.prior_snap_share).filter((x) => x != null);
+          const snap = at.prior_snap_share;
+          const trend = snap != null && earlier.length ? snap - earlier.reduce((a, x) => a + x, 0) / earlier.length : null;
+          usageAt.set(k, { snap, ts: at.td_ts, trend });
+        }
+      }
       for (const t of teams) for (const p of t.roster) {
         const sk = skOf.get(p.name);
         const td = sk ? rate.get(sk) : null;
@@ -467,6 +492,11 @@ function buildSeason(season, atWeek = null) {
           : 0;
         rosOf.set(p.name, ros);
         rosOfGap.set(p.name, Math.max(0, ros + adj));
+        const uu = sk ? usageAt.get(sk) : null;
+        const adjU = usageModel
+          ? rosUsageAdjust({ pos: p.pos, line: p.proj / 17, k: td.k, snap: uu?.snap ?? null, ts: uu?.ts ?? null, trend: uu?.trend ?? null }, usageModel)
+          : 0;
+        rosOfUsage.set(p.name, Math.max(0, ros + adjU));
       }
     }
   }
@@ -522,7 +552,7 @@ function buildSeason(season, atWeek = null) {
   // September as-of, so it carries no curves and the knob is inert there -- deliberately.
   const knownInjury = atWeek == null ? null : buildKnownInjury(season, atWeek, skOf);
 
-  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosOfGap, rosK, knownInjury };
+  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosOfGap, rosOfUsage, rosK, knownInjury };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -602,6 +632,9 @@ const SWEEP_DEFAULTS = {
   // seasons) -- but that is not this gate's question, which is whether a better rest-of-season
   // point estimate makes the PLAYOFF PROBABILITY better calibrated. Those can come apart.
   FF_SIM_ROS_GAP: "0",
+  // D41 (2026-09-25): the usage correction to the blend, context-built both ways and selected INSIDE
+  // the value loop. "1" is the shipped posture; "0" is the plain D18 blend.
+  FF_SIM_ROS_USAGE: "1",
   // D40 (2026-09-25): the coupling ships ON; "0" is now the old-behaviour arm.
   FF_SIM_HANDCUFF: "1",
 };
@@ -652,7 +685,7 @@ if (SWEEP) {
       // three times running, while the two blends provably differ for 136 of 181 rostered men with
       // a max delta of 3.46 points per week. Anything that changes the CONTEXT rather than the
       // simulation has to be selected inside this loop.
-      const rosPick = process.env.FF_SIM_ROS_GAP === "1" ? s.rosOfGap : s.rosOf;
+      const rosPick = process.env.FF_SIM_ROS_USAGE !== "0" ? s.rosOfUsage : process.env.FF_SIM_ROS_GAP === "1" ? s.rosOfGap : s.rosOf;
       const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (rosPick.has(p.name) ? { ...p, rosPerGame: rosPick.get(p.name) } : { ...p })) }));
       // The seam reads its env knob HERE rather than in `servedOpts` above, because the sweep sets
       // the knob per value and `servedOpts` is built once per season. Off, the option is absent and
@@ -797,7 +830,7 @@ if (AT_WEEK != null) {
       allowIncompleteRosters: true,
     };
     // The knob is read HERE, at simulation time, which is the only place the sweep has set it.
-    const rosPick = process.env.FF_SIM_ROS_GAP === "1" ? s.rosOfGap : s.rosOf;
+    const rosPick = process.env.FF_SIM_ROS_USAGE !== "0" ? s.rosOfUsage : process.env.FF_SIM_ROS_GAP === "1" ? s.rosOfGap : s.rosOf;
     const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (rosPick.has(p.name) ? { ...p, rosPerGame: rosPick.get(p.name) } : { ...p })) }));
     const oddsBy = {
       A: simulateSeasons(s.teams, s.weeks, useVm, base),

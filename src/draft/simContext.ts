@@ -28,7 +28,7 @@ import { simulateSeasons, LEVEL_PRIOR_WEEKS, type SeasonTeamInput, type SeasonOd
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
 import { slotFilter } from "../db/db.js";
-import { loadRosBlendFor, rosPerGame, loadRosGap, rosGapAdjust } from "./rosBlend.js";
+import { loadRosBlendFor, rosPerGame, loadRosGap, rosGapAdjust, loadRosUsage, rosUsageAdjust } from "./rosBlend.js";
 import { dataPath } from "../data/paths.js";
 import { loadEligibilityMap } from "../data/eligibility.js";
 
@@ -50,7 +50,7 @@ export interface SimContext {
   /** `eligible` is ESPN's own eligible-position SET, present only for a player who is startable at
    *  more than one of QB/RB/WR/TE. Absent means "[his own position]", which is every player on the
    *  2026 board -- so a consumer that ignores the field behaves exactly as it did. */
-  board: Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[] }>;
+  board: Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[]; rosPerGame?: number }>;
   ownedIds: Set<string>;
   /** The league's starting template and FLEX eligibility, so a caller building a hypothetical roster
    *  can ask whether it is legal (rosterGaps) instead of finding out when the simulator refuses. */
@@ -153,7 +153,7 @@ export async function loadSimContext(opts: {
   const vm = JSON.parse(readFileSync(fmt.model.require("variance"), "utf8")) as VarianceModel;
   const outcomes = JSON.parse(readFileSync(fmt.model.require("rank-outcomes"), "utf8"));
   const corr = JSON.parse(readFileSync(fmt.model.require("correlation"), "utf8"));
-  const board = new Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[] }>();
+  const board = new Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[]; rosPerGame?: number }>();
   const boardF = slotFilter(ctx.leagueId);
   for (const r of db.prepare(`SELECT player_id, row_json FROM board WHERE season=?${boardF.sql}`).all(cfg.season, ...boardF.args) as { player_id: string; row_json: string }[]) {
     const j = JSON.parse(r.row_json) as Record<string, unknown>;
@@ -341,24 +341,73 @@ export async function loadSimContext(opts: {
       cur.k++; cur.pts += r.pts ?? 0;
     }
   }
-  let rosApplied = 0, rosGapApplied = 0;
+  /**
+   * THE USAGE CORRECTION (D41) -- last week's snap share, its TREND against his earlier weeks, and
+   * target share to date, at the next unsettled week (`playedWeeks + 1`), the same checkpoint and the
+   * same definitions `scripts/ros-usage-screen.mjs` fitted and validated on. ON by default;
+   * `FF_SIM_ROS_USAGE=0` restores the plain D18 blend. It SUPERSEDES the 2026-09-23 ros-gap
+   * correction (whose fit excluded every line < 3 player), so the two never stack.
+   */
+  const useUsage = process.env.FF_SIM_ROS_USAGE !== "0";
+  const rosUsage = useUsage ? loadRosUsage() : null;
+  const usageAt = new Map<string, { snap: number | null; ts: number | null; trend: number | null }>();
+  if (rosUsage && playedWeeks > 0) {
+    const cp = playedWeeks + 1;
+    const hist = new Map<string, { week: number; snap: number | null; ts: number | null; bye: number | null }[]>();
+    for (const r of db.prepare(
+      "SELECT name, pos, week, is_bye, td_ts, prior_snap_share FROM feat_player_week_model WHERE season=? AND week<=?",
+    ).all(cfg.season, cp) as { name: string; pos: string; week: number; is_bye: number | null; td_ts: number | null; prior_snap_share: number | null }[]) {
+      const key = `${nameKey(r.name)}|${r.pos}`;
+      (hist.get(key) ?? hist.set(key, []).get(key)!).push({ week: r.week, snap: r.prior_snap_share, ts: r.td_ts, bye: r.is_bye });
+    }
+    for (const [key, ws] of hist) {
+      const at = ws.find((w) => w.week === cp);
+      if (!at) continue;
+      const earlier = ws.filter((w) => w.week < cp && !w.bye).map((w) => w.snap).filter((x): x is number => x != null);
+      const trend = at.snap != null && earlier.length ? at.snap - earlier.reduce((a, x) => a + x, 0) / earlier.length : null;
+      usageAt.set(key, { snap: at.snap, ts: at.ts, trend });
+    }
+  }
+  const restOfSeason = (p: { name: string; pos: string; proj: number }): { ros: number; adj: number } | null => {
+    const key = `${nameKey(p.name)}|${p.pos}`;
+    const td = rateByName.get(key);
+    if (!td || td.k <= 0 || rosBlend.K === Infinity) return null;
+    const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosBlend.K);
+    if (ros == null) return null;
+    let adj = 0;
+    if (rosUsage) {
+      const u = usageAt.get(key);
+      adj = rosUsageAdjust({ pos: p.pos, line: p.proj / 17, k: td.k, snap: u?.snap ?? null, ts: u?.ts ?? null, trend: u?.trend ?? null }, rosUsage);
+    } else if (rosGap) {
+      // The correction is 0 whenever the artifact is absent or the man has no usage row, so the
+      // blend is byte-identical to D18 unless BOTH the knob is on and real usage exists for him.
+      const u = usageByName.get(key);
+      adj = rosGapAdjust({ pos: p.pos, line: p.proj / 17, k: td.k, td_ts: u?.td_ts ?? null, prior_snap_share: u?.snap ?? null }, rosGap);
+    }
+    return { ros, adj };
+  };
+  let rosApplied = 0, rosGapApplied = 0, rosFreeApplied = 0;
   for (const tm of byTeam.values()) {
     for (const p of tm.roster) {
-      const td = rateByName.get(`${nameKey(p.name)}|${p.pos}`);
-      if (!td || td.k <= 0 || rosBlend.K === Infinity) continue;
-      const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosBlend.K);
-      if (ros != null) {
-        // The correction is 0 whenever the artifact is absent or the man has no usage row, so the
-        // blend is byte-identical to D18 unless BOTH the knob is on and real usage exists for him.
-        const u = usageByName.get(`${nameKey(p.name)}|${p.pos}`);
-        const adj = rosGap
-          ? rosGapAdjust({ pos: p.pos, line: p.proj / 17, k: td.k, td_ts: u?.td_ts ?? null, prior_snap_share: u?.snap ?? null }, rosGap)
-          : 0;
-        p.rosPerGame = Math.max(0, ros + adj);
-        rosApplied++;
-        if (adj !== 0) rosGapApplied++;
-      }
+      const r = restOfSeason(p);
+      if (!r) continue;
+      p.rosPerGame = Math.max(0, r.ros + r.adj);
+      rosApplied++;
+      if (r.adj !== 0) rosGapApplied++;
     }
+  }
+  /**
+   * FREE AGENTS GET THE SAME RULE (D41). The blend used to be applied inside the ROSTER loop only, so
+   * a waiver candidate entered the simulator at his PRESEASON line (`rosPerGame ?? proj / 17`) while
+   * every man he was compared against carried his games played -- one question, two pricing rules,
+   * the D33 defect one table over. Jonah Coleman's 13-point week counted for nothing.
+   */
+  for (const [id, b] of board) {
+    if (ownedIds.has(id)) continue;
+    const r = restOfSeason(b);
+    if (!r) continue;
+    b.rosPerGame = Math.max(0, r.ros + r.adj);
+    rosFreeApplied++;
   }
   // THE WEEK'S STATE, read BEFORE the handle closes. It is assembled here rather than lazily on the
   // returned object because a context that reads the store after `db.close()` is a context that
@@ -524,7 +573,9 @@ export async function loadSimContext(opts: {
     : undefined;
   if (playedWeeks > 0) {
     console.warn(`season so far: ${playedWeeks} settled week(s) seed the standings (${seedSource.join("; ")}); ` +
-      `rest-of-season lines blend K=${rosBlend.K === Infinity ? "Infinity (line only)" : rosBlend.K} (${rosSource}) on ${rosApplied} rostered men with games played`);
+      `rest-of-season lines blend K=${rosBlend.K === Infinity ? "Infinity (line only)" : rosBlend.K} (${rosSource}) on ${rosApplied} rostered men with games played` +
+      ` and ${rosFreeApplied} free agents` +
+      (rosUsage ? `; usage correction (D41) moved ${rosGapApplied} rostered rates` : rosGap ? `; ros-gap correction on ${rosGapApplied}` : "; no usage correction"));
   }
 
   const mkOpts = (trials: number, seed: number) => ({

@@ -49,6 +49,53 @@ export function rosPerGame(line: number | null, tdGames: number | null, tdPts: n
 }
 
 /**
+ * THE USAGE CORRECTION to the D18 blend (D41, 2026-09-25) -- the rest-of-season rate finally sees a
+ * ROLE CHANGE, for every player a waiver claim can reach.
+ *
+ * The blend `(K*line + k*rate)/(K+k)` is a pure POINTS blend with one K for everybody: a backup priced
+ * at 0.6 pts/g whose snap share went 18% -> 51% when the starter got hurt was still ~1 pt/g. Fitted by
+ * `scripts/ros-usage-screen.mjs --write` on EVERY player with a season line (the old ros-gap fit
+ * excluded exactly that player: line < 3, outside the decision population), per position, from:
+ * the line, weeks elapsed, last week's snap share and its interaction with the line, target share to
+ * date, and the snap TREND (last week's share minus his earlier mean). Leave-season-out, 2013-2025:
+ * against a no-snap recalibration of the blend (the broader-lever control) it adds +0.0754 RMSE
+ * overall (13/13) and +0.1484 on RBs with a line < 3 and a real snap share (11/13).
+ *
+ * Returns the correction in points per game, or 0 without an artifact, a position fit, or a played
+ * week (k = 0 has nothing to correct -- the screen never fits a checkpoint before week 1 is played).
+ */
+export interface RosUsage { features: string[]; coef: Record<string, number[]> }
+let _usageCache: { usage: RosUsage | null } | null = null;
+export function loadRosUsage(path?: string): RosUsage | null {
+  if (_usageCache && !path) return _usageCache.usage;
+  const p = path ?? dataPath("ros-usage.json");
+  let usage: RosUsage | null = null;
+  if (existsSync(p)) {
+    const j = JSON.parse(readFileSync(p, "utf8")) as Partial<RosUsage>;
+    if (Array.isArray(j.features) && j.coef) usage = j as RosUsage;
+  }
+  if (!path) _usageCache = { usage };
+  return usage;
+}
+export function rosUsageAdjust(
+  r: { pos: string; line: number; k: number; snap: number | null; ts: number | null; trend: number | null },
+  usage: RosUsage | null,
+): number {
+  if (!usage || !(r.k > 0)) return 0;
+  const c = usage.coef[r.pos];
+  if (!c) return 0;
+  const x: Record<string, number> = {
+    line: r.line, k: r.k,
+    snap: r.snap ?? 0, snap_missing: r.snap == null ? 1 : 0, snap_x_line: (r.snap ?? 0) * r.line,
+    ts: r.ts ?? 0, ts_missing: r.ts == null ? 1 : 0,
+    trend: r.trend ?? 0, trend_missing: r.trend == null ? 1 : 0,
+  };
+  let out = c[0];
+  for (let i = 0; i < usage.features.length; i++) out += c[i + 1] * (x[usage.features[i]] ?? 0);
+  return Number.isFinite(out) ? out : 0;
+}
+
+/**
  * THE SNAP/TARGET DIVERGENCE CORRECTION to the D18 blend (screened 2026-09-23, NOT a default).
  *
  * The blend is a pure POINTS blend: it cannot tell a man who is on the field and not being thrown to

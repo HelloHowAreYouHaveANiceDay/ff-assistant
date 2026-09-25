@@ -1,0 +1,75 @@
+{
+  "builtAt": "2026-09-25T12:39:08.295Z",
+  "fittedOn": "2013-2025",
+  "rows": 78708,
+  "K": 6,
+  "estimand": "correction to the D18 blend: predicted (mean points per game over the rest of the season) - (K*line + k*rate)/(K+k), per position, OLS with a light ridge",
+  "features": [
+    "line",
+    "k",
+    "snap",
+    "snap_missing",
+    "snap_x_line",
+    "ts",
+    "ts_missing",
+    "trend",
+    "trend_missing"
+  ],
+  "featureDefinitions": {
+    "snap": "prior_snap_share at the checkpoint week (the carried-forward share of his last played week); missing -> 0 with snap_missing = 1",
+    "snap_x_line": "snap * line (line = preseason per-game line)",
+    "ts": "td_ts, target share to date; missing -> 0 with ts_missing = 1",
+    "trend": "snap minus the mean of his prior_snap_share over the weeks before the checkpoint; missing -> 0 with trend_missing = 1"
+  },
+  "coef": {
+    "QB": [
+      1.439618932394502,
+      -0.3221557963929551,
+      -0.03556497040852502,
+      0.010036643340376683,
+      -1.0447292623975326,
+      0.13938658420049022,
+      0.006059896648831442,
+      0.3888301002556749,
+      5.006283689391575,
+      1.0520852528932756
+    ],
+    "RB": [
+      1.1966062363951755,
+      -0.36280714699742633,
+      -0.033096305578552476,
+      2.084658105406448,
+      -0.1748866356438541,
+      0.13210974727000835,
+      -0.5230488886704326,
+      -0.14882906896384163,
+      2.6516805595294493,
+      0.3775818402763189
+    ],
+    "WR": [
+      0.6272491986119035,
+      -0.32315609375372073,
+      -0.02660095531581408,
+      1.0204015514220912,
+      -0.31863649233722613,
+      0.12914324600808325,
+      0.2802469561151608,
+      0.3159635689931044,
+      1.6257153531548731,
+      0.3148410079150933
+    ],
+    "TE": [
+      0.3772379602461279,
+      -0.2445149501963151,
+      -0.01763430257311993,
+      0.6369323421555696,
+      -0.17019103790446083,
+      0.019119865601768704,
+      1.521604385361985,
+      0.11948121361379005,
+      1.7352717477093598,
+      0.38100244523917104
+    ]
+  },
+  "validation": "scripts/ros-usage-screen.mjs, 2013-2025 leave-season-out: vs the blend ALL 3.4918 -> 3.3299 (13/13); vs the no-snap recalibration (the broader-lever control) ALL +0.0754 13/13 ADMIT, waiver slice +0.0584 12/13 ADMIT, RB slice +0.1484 11/13 ADMIT; shuffle control lands on the no-snap arm"
+}

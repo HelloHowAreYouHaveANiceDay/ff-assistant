@@ -2175,3 +2175,59 @@ Default `FF_SIM_HANDCUFF` 0 -> 1 (src/draft/season.ts); `FF_SIM_HANDCUFF=0` or `
 restores the old behaviour exactly. The draft golden does not move: the championship backtest never
 calls `simulateSeasons`. The ratios are within-player ratios fitted on the incumbent's history and are
 applied to every format; a format-specific refit is `scripts/fit-handcuff-coupling.mjs`.
+
+
+## D41 -- the rest-of-season rate sees ROLE CHANGE, and free agents are priced like everyone else (2026-09-25, owner: "Lets fix the model"; ON by owner choice on a split season gate, **APPLIED**)
+
+Found checking week-3 waivers: every RB whose backfield share was rising (Shipley 18%->51%, Coleman
+6%->40%, Bigsby 11%->34%) scored negative, and Shipley was never evaluated. Three stacked causes:
+
+1. **Free agents were not blended.** `simContext` applied the D18 blend inside the ROSTER loop only, so
+   a waiver candidate entered the simulator at his preseason line / 17 while every man he displaced
+   carried his games played -- the D33 defect one table over. Now the board's free agents get the same
+   rule (`rosPerGame` on board entries).
+2. **The shortlist ranked on the preseason projection**, so a man whose role changed never reached the
+   simulator. It now ranks on the rest-of-season rate where one exists.
+3. **The blend could not see usage.** `(K*line + k*rate)/(K+k)` is a pure points blend with one K.
+   `scripts/ros-usage-screen.mjs` fits a per-position correction on EVERY player with a season line
+   (the 2026-09-23 ros-gap fit excluded every line < 3 player) from the line, weeks elapsed, last
+   week's snap share (x line), target share to date and the snap TREND. Leave-season-out, 2013-2025,
+   78,708 (player, checkpoint) rows:
+
+```
+                         vs the D18 blend             vs the NO-SNAP recalibration (broader-lever control)
+all players              3.4918 -> 3.3299  13/13      +0.0754  13/13  ADMIT
+line >= 3 (starters)     4.3353 -> 4.1402  13/13      +0.0980  13/13  ADMIT
+line <  3                2.4413 -> 2.3187  13/13      +0.0443  12/13  ADMIT
+waiver slice (line<3, snap>=30%)  3.1334 -> 2.9355    +0.0584  12/13  ADMIT
+  RB waiver slice        4.4213 -> 3.9623  12/13      +0.1484  11/13  ADMIT
+shuffle control (snap permuted within season) lands ON the no-snap arm (3.4039 vs 3.4054)
+```
+
+The no-snap arm is itself a large gain (the fixed-K blend misprices by line level); usage adds on top
+of it, not instead of it. Served as `data/ros-usage.json`, `loadRosUsage` / `rosUsageAdjust`
+(src/draft/rosBlend.ts), applied in `simContext` and in season-calibration's own copy of the blend,
+built both ways up front and selected inside the sweep loop (the 2026-09-23 dead-lever lesson). It
+supersedes the ros-gap correction; the two never stack.
+
+**THE SEASON GATE IS SPLIT, and it shipped on the owner's call rather than on a clean do-no-harm.**
+`season-calibration --artifact-dir data/fold-artifacts-d16`, 2018-2025, 114 team-seasons, paired:
+
+```
+week 8    Brier 0.1246 -> 0.1261   d +0.0014 [-0.0050, 0.0074]  3/8   LOO picks OFF 7/8 (held-out 0.1265)
+week 11   Brier 0.0845 -> 0.0806   d -0.0040 [-0.0099, 0.0015]  5/8   LOO picks ON 8/8 (held-out 0.0806)
+```
+
+Neither is significant and they point opposite ways. This is the same intermediate-vs-gate divergence
+the ros-gap correction hit (better player estimates, not reliably better berth calibration), with a
+better shape at the later checkpoint. The owner chose ON because every in-season decision consumes the
+per-player rate, which is admitted everywhere out of sample, including starters. Recorded so it is not
+later cited as "an edge that cleared the season gate". `FF_SIM_ROS_USAGE=0` restores the plain blend.
+
+**What moved, live** (league 462233, week 3). Rest-of-season per game, preseason -> now: Coleman
+0.89 -> 4.89, Shipley 0.62 -> 4.02, Bigsby 3.67 -> 5.41, Robinson 3.80 -> 5.79, Dowdle 6.82 -> 4.71;
+ours Loveland 11.19 -> 6.95, Likely 6.44 -> 8.62. RB waivers (drop Pittman): Robinson +1.55pp (clears
+its 1.51 paired floor), Allen +1.20, Bigsby +0.90, Shipley +0.85, Coleman +0.50, Dowdle -0.95 (was the
+only positive, +1.75, before). Base playoffs 71.85% -> 69.45%. The paired floors widened to 1-2.5pp
+because the corrected rates vary more across seeds. The draft golden does not move (the championship
+backtest never reads the rest-of-season rate).
