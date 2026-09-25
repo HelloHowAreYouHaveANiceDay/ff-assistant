@@ -94,6 +94,11 @@ export interface PlayerWeek {
   playerSk: string; name: string; pos: string;
   /** The projector's mean, or null where it produced no row (no season line). NULL IS NOT ZERO. */
   proj: number | null;
+  /** The projector's p90 -- the UPSIDE. Carried because a bench stash is worth the chance he
+   *  becomes startable, not his average: a man with a 4.6 mean and a 6.6 ceiling never enters a
+   *  lineup, while the same mean with a 14 ceiling sometimes wins a week. Null on the same terms
+   *  as `proj`. */
+  p90: number | null;
   /** The point-in-time fallback when the projector has no row: points per game through week w-1.
    *  `lineupRecommend` falls back to the season projection over 17; that number does not exist for a
    *  past season, and td_ppg is the closest quantity that is knowable at the same moment. */
@@ -128,6 +133,7 @@ export function loadWeekContext(
   const template = cache?.template ?? startingTemplate(db, leagueId, season);
 
   const proj = new Map<string, number>();
+  const p90 = new Map<string, number>();
   // The served arm goes through the SAME router the live seam does, not a second copy of the table.
   const projected = artifact === SERVED
     ? (projectStreamingWith(db, season, week)?.rows ?? [])
@@ -135,7 +141,13 @@ export function loadWeekContext(
   for (const p of projected) {
     if (p.player_sk == null) continue;
     const prev = proj.get(p.player_sk);
-    if (prev == null || p.mean > prev) proj.set(p.player_sk, p.mean);
+    if (prev == null || p.mean > prev) {
+      proj.set(p.player_sk, p.mean);
+      // Kept from the SAME row that won on mean, so the two numbers always describe one projection
+      // rather than a mean from one duplicate row and a ceiling from another.
+      const up = (p as { p90?: number }).p90;
+      if (up != null && Number.isFinite(up)) p90.set(p.player_sk, up);
+    }
   }
 
   const meta = db.prepare(
@@ -158,6 +170,7 @@ export function loadWeekContext(
     players.set(m.player_sk, {
       playerSk: m.player_sk, name: m.name, pos: m.pos,
       proj: proj.get(m.player_sk) ?? null,
+      p90: p90.get(m.player_sk) ?? null,
       fallback: m.td_ppg ?? null,
       available: whyNot == null, whyNot,
       actual: m.pts ?? 0,

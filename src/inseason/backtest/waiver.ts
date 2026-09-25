@@ -146,7 +146,34 @@ export function backtestWaivers(
      * ranking that never reaches a decision harness is a statistic, not an edge. Absent, this
      * function is byte-identical to the shipped behaviour.
      */
-    ranker?: (p: { player_sk: string; pos: string }, season: number, week: number, proj: number) => number | null;
+    ranker?: (
+      p: { player_sk: string; pos: string }, season: number, week: number, proj: number,
+      /** The projector's own record for this man, so a ranker can use the CEILING (p90) rather
+       *  than the mean. Passing a proxy when the real quantity is on the context would be a
+       *  self-weakened test. */
+      pw?: { proj: number | null; p90: number | null },
+    ) => number | null;
+    /**
+     * ROSTER-CONDITIONAL RANKING SEAM. Supplying this switches the harness from ONE global top-K to
+     * ONE PER CLAIMING TEAM, each ranked against that team's own roster and taking the number of
+     * adds it actually made.
+     *
+     * It exists because the default `ranker` cannot see a roster -- its arguments are a player and a
+     * projection -- so our arm has always answered "who are the best K free agents in the league"
+     * while every manager answered "who helps my team". Those are different problems, and the
+     * measured tie between them (mix-matched capture 64.1% vs 62.8%) was a comparison across two
+     * questions rather than two answers to one.
+     */
+    rosterRanker?: (
+      p: { player_sk: string; pos: string },
+      proj: number,
+      team: {
+        teamId: string;
+        roster: { playerSk: string; name: string; pos: string }[];
+        template: string[];
+        players: Map<string, { proj: number | null; p90: number | null; pos: string }>;
+      },
+    ) => number;
   },
 ): { weeks: WaiverWeek[]; summary: WaiverSummary } {
   const artifact = opts.artifactOverride ?? loadModel(opts.model);
@@ -207,14 +234,55 @@ export function backtestWaivers(
       // OUR TOP-K, from the same pool, ranked by the week-w projection. Only players the projector
       // produced a row for: a pool member with no season line has no projection, and ranking him at
       // zero would put every unknown at the bottom for a reason that is not a measurement.
-      const ranked = pool
+      const eligible = pool
         .map((p) => ({ p, proj: ctx.players.get(p.player_sk)?.proj ?? null }))
-        .filter((x) => x.proj != null && x.proj >= (opts.poolMinLine ?? 0))
+        .filter((x) => x.proj != null && x.proj >= (opts.poolMinLine ?? 0));
+
+      /**
+       * ONE GLOBAL TOP-K, OR ONE PER CLAIMING TEAM -- and the difference is the whole point of the
+       * roster-conditional arm.
+       *
+       * The default ranks the pool ONCE and takes the best K in the league, which answers "who are
+       * the best K free agents". Every manager in the room is answering a different and harder
+       * question -- "who helps MY team" -- so the two sides have never been solving the same problem,
+       * and we were being graded on the easier one.
+       *
+       * When `rosterRanker` is supplied the pool is ranked SEPARATELY FOR EACH TEAM that claimed
+       * that week, and that team takes as many as it actually took. Same pool, same choice set, same
+       * scoring window, same K in total; only the question changes. Duplicate picks across teams are
+       * allowed for the same reason the room's are: two managers can want the same man, and
+       * de-duplicating would silently shrink our K below theirs.
+       */
+      type Elig = (typeof eligible)[number];
+      const rankBy = (key: (x: Elig) => number, k: number) =>
+        [...eligible].map((x) => ({ ...x, key: key(x) })).sort((a, b) => b.key - a.key).slice(0, k);
+
+      let ranked: (Elig & { key: number })[];
+      if (opts.rosterRanker) {
+        // Per-team: each claiming team ranks the pool against ITS OWN roster and takes its own K.
+        const perTeam = new Map<string, number>();
+        for (const a of resolved) perTeam.set(a.teamId, (perTeam.get(a.teamId) ?? 0) + 1);
+        ranked = [];
+        for (const [teamId, k] of perTeam) {
+          const roster = ctx.rosters.get(teamId) ?? [];
+          ranked.push(...rankBy(
+            (x) => opts.rosterRanker!(
+              { player_sk: x.p.player_sk, pos: x.p.pos }, x.proj as number,
+              { teamId, roster, template: ctx.template, players: ctx.players },
+            ),
+            k,
+          ));
+        }
+      } else {
         // The SORT KEY may be overridden; the projection itself is still what gets reported, so the
         // `proj` column keeps meaning the same thing across arms.
-        .map((x) => ({ ...x, key: opts.ranker?.(x.p, season, week, x.proj as number) ?? (x.proj as number) }))
-        .sort((a, b) => b.key - a.key)
-        .slice(0, resolved.length);
+        ranked = rankBy(
+          (x) => opts.ranker?.(
+            x.p, season, week, x.proj as number, ctx.players.get(x.p.player_sk),
+          ) ?? (x.proj as number),
+          resolved.length,
+        );
+      }
 
       /**
        * THE HINDSIGHT CEILING -- the same thing `optimalLineup` is to the lineup backtest, and it

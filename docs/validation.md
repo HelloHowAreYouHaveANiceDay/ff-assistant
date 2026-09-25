@@ -7829,3 +7829,54 @@ at each position. `skill` also has a known weakness -- its per-position rates ar
 UNION of both arms, so an arm that takes many quarterbacks partly sets the quarterback rate it is
 judged against. Capture-at-mix uses the POOL as its reference, which is external to both arms, and
 is the better of the two for that reason. Neither supports "we beat the room".
+
+### THREE DIFFERENT ESTIMATORS, NOT THREE MORE FEATURES -- ALL THREE REJECT (2026-09-24)
+
+~20 feature candidates have been screened and essentially all rejected; every one asked "can we
+predict a player better". These asked the untested question instead: ARE WE RANKING THE RIGHT
+QUANTITY? Aimed at the larger measured gap -- lineups leave ~13% of the hindsight ceiling (mostly
+irreducible), waivers leave ~37%.
+
+```
+  arm                              raw ppg   MIX-MATCHED capture   QB share
+  shipped (projection, global)        8.07            64.1%          54%
+  THE ROOM (reference)                6.83            62.8%          13%
+  A roster-conditional                6.54            63.3%          18%
+  B rank-loss (fixed)                 4.50            41.3%          18%
+  C option value (p90 ceiling)        7.96            63.3%          54%
+```
+
+**A -- ROSTER-CONDITIONAL.** The harness's ranker could not see a roster at all (its arguments were
+a player and a projection), so our arm answered "who are the best K free agents in the league" while
+every manager answered "who helps my team" -- two different problems, and we were graded on the
+easier one. `rosterRanker` now ranks the pool SEPARATELY FOR EACH CLAIMING TEAM against its own
+roster, scoring each candidate by his marginal gain to that team's best legal lineup. It behaves
+sensibly -- QB share falls 54% -> 18%, close to the room's 13%, because it stops taking quarterbacks
+nobody needs -- and it does NOT capture more: 63.3% against 64.1%. REJECT.
+
+**C -- OPTION VALUE.** Rank a bench add by its p90 rather than its mean, on the reasoning that a
+stash is worth the chance he becomes startable. Reads the projector's REAL p90 (now carried on the
+week context) rather than a proxy. 63.3% against 64.1%, same positional mix as shipped. REJECT.
+
+**B -- RANK-LOSS, AND IT IS NOT A CLEAN TEST IN EITHER DIRECTION.** The first version returned the
+raw pairwise score, which is on a scale incomparable with `proj`; every feature it uses is a SKILL
+POSITION column that is null for kickers and defences, so those were median-filled, scored highest,
+and the arm picked **57% K and 43% DST**. It then posted the BEST mix-matched capture in the table,
+68.7%, while its skill was -0.2. Rescored on a within-cell percentile it posts the WORST, 41.3%.
+A 27-point swing from one scale fix. Learning-to-rank remains UNTESTED here; what was tested was my
+normalisation, twice.
+
+**THE DURABLE FINDING IS ABOUT THE METRIC, AND IT IS THE THIRD TIME THIS DEFECT HAS APPEARED.**
+Mix-matched capture controls for the LEVEL difference between positions and NOT for the SPREAD.
+Headroom (p90/mean of realised ros ppg among actual adds) is **K 1.42, DST 1.48** against **WR 1.71,
+QB 1.66, RB 1.76, TE 1.76** -- so an arm that loads on kickers and defences captures a large share of
+a small opportunity and looks excellent. The position-blindness has now been found in the NUMERATOR
+(raw ppg, retracted 2026-09-23), the DENOMINATOR (the plain ceiling, 48.3% QB, caught while building
+it) and now the HEADROOM. Any future arm on this harness must report its positional mix beside its
+capture, and a capture that rises while raw ppg falls should be assumed to be mix until shown
+otherwise.
+
+**NOTHING ADMITTED.** The shipped absolute-projection ranking survives all three. The honest summary
+of the whole decision-engine investigation is unchanged: we tie the room on lineups (-0.55
+pts/team-week) and on waivers (+1.3pp capture), and no reformulation of the ranking question has
+moved that.
