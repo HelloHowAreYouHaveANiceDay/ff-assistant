@@ -1962,3 +1962,37 @@ no longer occupies his slot scoring zero, the man behind him is worth what he ac
 `ff waivers` moved Allen from -1.40pp to -1.00pp -- still negative, because the OTHER half of the
 handcuff fix (`handcuffCoupling`, the same-position teammate dependence) remains OFF, unadmitted,
 and the waiver caveat still says so.
+
+## D36 -- the arbiter stops reading its look-ahead multipliers; both goldens RE-PINNED (2026-09-24, owner: "do all 3", **APPLIED**)
+
+`ff backtest` loaded `age-curve.json` and `opportunity-model.json` BY DEFAULT and multiplied every
+no-lookahead projection by them, on a comment's claim that the board applies them. It does not: both
+are RETIRED (the shipped projector carries age and usage as fitted features; its multiplicative stage
+is empty). And each file is ONE fit over every season -- `age-curve.json` from all of
+`history-points.csv`, `opportunity-model.json` stamped season 2025 and fitted against a curve that had
+seen the future (defect D1) -- so the 1999-2024 replay carried look-ahead into our own book. They are
+now opt-in (`--age-curve` / `--opportunity`). Review: docs/architecture-review-2026-09-24-modeling.md B6.
+
+```
+incumbent  flagless (1999-2024, n150)   with multipliers 39.3% titles / 96% playoffs
+                                        without          37.973% / 96.107%   -> pinned 96.0 / 38.0
+Yahoo 129048 (1999-2025, n150)          with multipliers 39.846% / 99.179%  (= the old 99.2/39.8 pin)
+                                        without          40.615% / 99.590%   -> pinned 99.6 / 40.6
+```
+
+**The PRIMARY (playoff) gate of the incumbent does not move** -- 96.107% is the ledger's e625249e
+value exactly. Title is context (D13). The incumbent per-season line after the change is in the
+review doc, section 6.
+
+**A PRE-EXISTING DRIFT, EXPLAINED BEFORE RE-PINNING (charter rule 3).** D35 recorded the flagless run
+at 39.5% on 2026-09-23 10:24; the pre-change run today read 39.3%, with 2018 (41->39), 2019 (36->35)
+and 2024 (40->37) moved and every other season identical. The gitignored `data/history-points.csv` and
+`history-weekly.csv` were regenerated 2026-09-23 17:07 -- after D35, and the history fix e778cda's
+message describes (Travis Hunter's 2025 line). ATTRIBUTED by timestamp and by the seasons touched; not
+proven by a diff, because no pre-regeneration copy of the CSVs exists. No code on the backtest path
+changed between the two measurements.
+
+**Also measured, and why the arbiter's BASE projection is NOT switched yet.** The shipped GBM
+projector (blind `data/fold-artifacts-d16`) vs last-year actuals, 2013-2024 paired: playoffs -0.44pp
+[-2.83, +1.50], titles +2.39pp [-4.22, +8.11] -- indistinguishable. Blind folds exist only for
+2012-2025, so `--projection artifact` cannot cover the golden span until pre-2012 folds are built.

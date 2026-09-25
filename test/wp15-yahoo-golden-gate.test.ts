@@ -60,7 +60,7 @@ function withLeagueStore(fn: (dbPath: string, db: ReturnType<typeof openDb>) => 
   }
 }
 
-test("a Yahoo-format league resolves to its OWN golden master -- 99.2 playoffs / 39.8 titles", { skip: !existsSync(FORMAT_DIR) && "the format directory is gitignored; skipped on a clone without it" }, () => {
+test("a Yahoo-format league resolves to its OWN golden master -- 99.6 playoffs / 40.6 titles", { skip: !existsSync(FORMAT_DIR) && "the format directory is gitignored; skipped on a clone without it" }, () => {
   withLeagueStore((_p, db) => {
     // The two calls `scripts/cpcv.mjs` makes, in its order.
     const fmt = resolveFormat(db, "129048");
@@ -70,8 +70,8 @@ test("a Yahoo-format league resolves to its OWN golden master -- 99.2 playoffs /
     const pinned = JSON.parse(readFileSync(join(FORMAT_DIR, "golden.json"), "utf8")) as { draftType?: string };
     assert.equal(fmt.spec.draftType, pinned.draftType, "the resolved draft type must be the one the golden was measured under");
     const g = loadGolden(fmt.model, fmt.scoringKey);
-    assert.equal(g.playoffPct, 99.2, "the PRIMARY gate for this format (D13 applies per format)");
-    assert.equal(g.titlePct, 39.8, "CONTEXT only, never gated");
+    assert.equal(g.playoffPct, 99.6, "the PRIMARY gate for this format (D13 applies per format)");
+    assert.equal(g.titlePct, 40.6, "CONTEXT only, never gated");
     assert.equal(g.tolerancePp, 3.0);
     // ...and it is NOT the incumbent's, which is the failure the no-fallback rule exists to prevent.
     assert.notEqual(g.playoffPct, 96.0);

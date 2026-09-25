@@ -13,11 +13,11 @@ real time. Read it before changing strategy, the sim, or anything that produces 
 predict the single-elim title (title Brier 0.0659 vs uniform 0.0652, P16 FAILED). This is D13
 (`docs/decisions.md`); the arbiter (`scripts/cpcv.mjs`) gates on the playoff column, golden master
 96.0% playoff (`--golden`, re-pinned by D15 now both title-edges are demoted), and prints title% as
-secondary (`--golden-title` 38.5%).
+secondary (`--golden-title` 38.0%, re-pinned 2026-09-24 when the backtest's look-ahead age/opportunity multipliers became opt-in).
 
 ```
 npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
-# shipped default: ~96% playoffs (PRIMARY gate) / ~38.5% championships (context; random 6.3%). The two former
+# shipped default: ~96% playoffs (PRIMARY gate) / ~38.0% championships (context; random 6.3%). The two former
 # "edges" -- consensusBlend=1 and benchDiscount=0.35 -- were BOTH DEMOTED (D14/D15): each was title-only and
 # NULL on the playoff gate the sim can actually predict, and neither survives family FDR. Shipped posture is now
 # consensusBlend=0 and benchDiscount=0.25 (still a real discount; 0 collapses depth). `--consensus-blend 1` /
@@ -230,8 +230,8 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   `scripts/yahoo-{analysis,waiver-trade,ros-analysis}.mjs`. Snake-draft value and the per-format gate are
   both CLOSED (2026-09-16): the snake `DraftModel` is `src/draft/draftModel.ts` (WP11, reached by
   `ff backtest --league <id>` when the format's `draftType` is snake), and the gate is a per-format
-  `golden.json` read by `scripts/cpcv.mjs --league <id>` (WP7) -- `data/golden.json` 96.0/38.5 for the
-  incumbent, `data/formats/sc-a845f67652fb/golden.json` 99.2/39.8 for Yahoo 129048. CAVEAT, and it is on
+  `golden.json` read by `scripts/cpcv.mjs --league <id>` (WP7) -- `data/golden.json` 96.0/38.0 for the
+  incumbent, `data/formats/sc-a845f67652fb/golden.json` 99.6/40.6 for Yahoo 129048 (re-pinned 2026-09-24 with the incumbent). CAVEAT, and it is on
   the file itself: the Yahoo number is a **CANDIDATE GOLDEN** -- an executor-pinned regression tripwire,
   not an owner-signed posture like D13/D14/D15 -- and its playoff axis is nearly saturated (8-of-12
   field), so read it as a downward tripwire and the title column for direction.
