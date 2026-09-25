@@ -26,6 +26,8 @@
 import { simulateSeasons, rosterGaps } from "../../src/draft/season.ts";
 import { optimalLineup } from "../../src/inseason/lineup.ts";
 import { nameKey } from "../../src/draft/values.ts";
+import { slotAdmits } from "../../src/draft/slots.ts";
+import { expectedLineupPoints, availByPosFrom } from "../../src/inseason/expectedLineup.ts";
 
 const RATE_MIN = 1.0;
 const SKILL = ["QB", "RB", "WR", "TE"];
@@ -73,8 +75,33 @@ export function replayWeek(o) {
   const faAsPlayer = (f) => ({ name: f.name, pos: f.pos, proj: f.proj, team: f.team, bye: f.bye, rosNew: f.rNew, rosOld: f.rOld });
 
   // ---- realised scoring ----
-  const realised = (roster) => {
-    const weekly = [];
+  // STREAMING FILL (2026-09-25). A slot the roster cannot fill in a week is filled by a STREAMER: the
+  // second-best free agent (by rate, as of the decision week) at a position the slot admits who plays
+  // that week, scored on HIS ACTUAL points -- `simContext`'s replacement rule, realised. The first
+  // version of this scorer scored an empty slot ZERO, which no manager takes: it rewarded carrying a
+  // spare kicker for a bye with a whole kicker's points, and EXP10 was admitted against it. Both are
+  // recorded -- `weekly` (streaming fill, the arbiter now) and `weekly0` (the old zero rule).
+  const poolByPos = new Map();
+  for (const f of pool) (poolByPos.get(f.pos) ?? poolByPos.set(f.pos, []).get(f.pos)).push(f);
+  for (const l of poolByPos.values()) l.sort((a, b) => b.rNew - a.rNew);
+  const streamerPts = (slot, w, onRoster, taken) => {
+    let best = null;
+    for (const pos of slotAdmits(slot, flexOk)) {
+      const avail = (poolByPos.get(pos) ?? []).filter((f) => {
+        if (onRoster.has(f.name) || taken.has(f.name)) return false;
+        const fw = future.get(f.sk)?.get(w);
+        return !!fw && !fw.bye && !fw.out;
+      });
+      const pick = avail[1] ?? avail[0];                       // second-best: fifteen others stream too
+      if (pick && (!best || pick.rNew > best.rNew)) best = pick;
+    }
+    if (!best) return 0;
+    taken.add(best.name);
+    return future.get(best.sk)?.get(w)?.pts ?? 0;
+  };
+  const realisedBoth = (roster) => {
+    const weekly = [], weekly0 = [];
+    const onRoster = new Set(roster.map((p) => p.name));
     for (let w = W; w <= s.reg; w++) {
       const players = roster.map((p) => {
         const sk = skOfName.get(p.name);
@@ -83,10 +110,15 @@ export function replayWeek(o) {
       });
       const lu = optimalLineup(players, s.slots, flexOk);
       const byName = new Map(players.map((p) => [p.name, p._pts]));
-      weekly.push(lu.starters.reduce((a, st) => a + (byName.get(st.name) ?? 0), 0));
+      const got = lu.starters.reduce((a, st) => a + (byName.get(st.name) ?? 0), 0);
+      const taken = new Set();
+      const fill = lu.starters.filter((st) => st.name === "(empty)").reduce((a, st) => a + streamerPts(st.slot, w, onRoster, taken), 0);
+      weekly0.push(got);
+      weekly.push(got + fill);
     }
-    return weekly;
+    return { weekly, weekly0 };
   };
+  const realised = (roster) => realisedBoth(roster).weekly;
   const actualStarted = new Map();
   for (const r of db.prepare("SELECT week, team_id, started_pts FROM fact_lineup_week WHERE league_id = ? AND season = ? AND week >= ?").all(league, season, W)) {
     actualStarted.set(`${r.week}|${r.team_id}`, r.started_pts ?? 0);
@@ -119,10 +151,15 @@ export function replayWeek(o) {
   for (let i = 0; i < N; i++) {
     const t = s.teams[i];
     const mine = t.roster;
-    const standWeekly = realised(mine);
+    const standBoth = realisedBoth(mine);
+    const standWeekly = standBoth.weekly;
     const standPts = standWeekly.reduce((a, x) => a + x, 0);
+    const standPts0 = standBoth.weekly0.reduce((a, x) => a + x, 0);
     const standPo = madePlayoffs(i, standWeekly);
-    const score = (roster) => { const wk = realised(roster); return { dPts: wk.reduce((a, x) => a + x, 0) - standPts, dPo: madePlayoffs(i, wk) - standPo }; };
+    const score = (roster) => {
+      const b = realisedBoth(roster);
+      return { dPts: b.weekly.reduce((a, x) => a + x, 0) - standPts, dPts0: b.weekly0.reduce((a, x) => a + x, 0) - standPts0, dPo: madePlayoffs(i, b.weekly) - standPo };
+    };
 
     const candidatesFor = (arm) => {
       const r = arm === "old" ? (f) => f.rOld : (f) => f.rNew;
@@ -166,7 +203,7 @@ export function replayWeek(o) {
       return moves;
     };
     const rowOf = (arm, mv, extra = {}) => {
-      const sc = mv ? score(mv.after) : { dPts: 0, dPo: 0 };
+      const sc = mv ? score(mv.after) : { dPts: 0, dPts0: 0, dPo: 0 };
       out.push({ season, W, team: t.id, arm, moved: !!mv, add: mv?.add ?? null, drop: mv?.drop ?? null, simDelta: mv?.delta ?? null, ...sc, ...extra });
     };
 
@@ -197,6 +234,50 @@ export function replayWeek(o) {
         }
       }
       for (const [arm, th] of [["EXP0", 0], ["EXP5", 5], ["EXP10", 10]]) rowOf(arm, best && best.delta > th ? best : null);
+    }
+    // EXPL / EXPF (2026-09-25) -- the SHARED implementation (src/inseason/expectedLineup.ts), the one
+    // the live verb calls, over the live verb's candidate breadth: top 20 free agents by rate x our 4
+    // lowest-rate men PLUS the like-for-like swap (our weakest man at the add's position).
+    //   EXPL  the live D42 arithmetic (byes only; an empty slot scores 0) -- EXP plus the swap.
+    //   EXPF  the full model: future-week injuries at the tier-0 healthy rate (the bench covers a
+    //         missed start) and an unfillable slot at the replacement level (streaming).
+    // Thresholds pre-registered: 0 / 5 / 10 expected points over the rest of the regular season.
+    {
+      const availByPos = availByPosFrom(vm);
+      const toExp = (roster) => roster.map((p) => ({ name: p.name, pos: p.pos, rate: rNewOf(p), bye: p.bye ?? null, playRate: (() => { const sk = skOfName.get(p.name) ?? p.sk; return sk && future.get(sk)?.get(W)?.out ? 0 : 1; })() }));
+      for (const [tag, full] of [["EXPL", false], ["EXPF", true]]) {
+        const eo = { slots: s.slots, flexOk, from: W, to: s.reg, firstWk: W, ...(full ? { availByPos, replacement: s.replacement, draws: 48 } : {}) };
+        const before = expectedLineupPoints(toExp(mine), eo);
+        let best = null;
+        for (const add of [...pool].sort((a, b) => b.rNew - a.rNew).slice(0, 20)) {
+          const lows = [...mine].sort((a, b) => rNewOf(a) - rNewOf(b)).slice(0, 4);
+          const same = [...mine].filter((m) => m.pos === add.pos).sort((a, b) => rNewOf(a) - rNewOf(b))[0];
+          for (const d of same && !lows.includes(same) ? [...lows, same] : lows) {
+            const after = mine.filter((p) => p !== d).concat([faAsPlayer(add)]);
+            if (!legal(i, after)) continue;
+            const gain = expectedLineupPoints(toExp(after), eo) - before;
+            if (!best || gain > best.delta) best = { add: add.name, drop: d.name, after, delta: gain };
+          }
+        }
+        for (const th of [0, 5, 10]) rowOf(`${tag}${th}`, best && best.delta > th ? best : null);
+      }
+    }
+    // HINDSIGHT -- THE POSITIVE CONTROL for the scorer (2026-09-25): over the same candidate breadth
+    // as EXPL/EXPF, the move with the best REALISED gain (or stand). A scorer that cannot show THIS
+    // gaining points cannot show any rule gaining points, and a null for every rule would mean nothing.
+    {
+      let best = null, bestPts = 0;
+      for (const add of [...pool].sort((a, b) => b.rNew - a.rNew).slice(0, 20)) {
+        const lows = [...mine].sort((a, b) => rNewOf(a) - rNewOf(b)).slice(0, 4);
+        const same = [...mine].filter((m) => m.pos === add.pos).sort((a, b) => rNewOf(a) - rNewOf(b))[0];
+        for (const d of same && !lows.includes(same) ? [...lows, same] : lows) {
+          const after = mine.filter((p) => p !== d).concat([faAsPlayer(add)]);
+          if (!legal(i, after)) continue;
+          const sc = score(after);
+          if (sc.dPts > bestPts) { bestPts = sc.dPts; best = { add: add.name, drop: d.name, after, delta: null }; }
+        }
+      }
+      rowOf("HINDSIGHT", best);
     }
     // ANTI -- THE NEGATIVE CONTROL: drop our BEST man (highest rate) for the WORST free agent at his
     // position (same position, so the roster stays legal). Unambiguously harmful; the scorer must see

@@ -28,6 +28,7 @@ import { simulateSeasons, LEVEL_PRIOR_WEEKS, type SeasonTeamInput, type SeasonOd
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
 import { slotFilter } from "../db/db.js";
+import { availByPosFrom } from "../inseason/expectedLineup.js";
 import { loadRosBlendFor, rosKFor, rosPerGame, loadRosGap, rosGapAdjust, loadRosUsage, rosUsageAdjust } from "./rosBlend.js";
 import { dataPath } from "../data/paths.js";
 import { loadEligibilityMap } from "../data/eligibility.js";
@@ -62,6 +63,9 @@ export interface SimContext {
   posMax?: Record<string, number>;
   /** Per-position WEEKLY points freely available off waivers -- the streaming floor. */
   replacement: Record<string, number>;
+  /** Per-position probability a man plays in a FUTURE week (tier-0 availability, bye divided out) --
+   *  what the expected-lineup model draws injuries from. Optional so hand-built fixtures need not carry it. */
+  availByPos?: Record<string, number>;
   /** The league's calendar and playoff format, WITH its provenance. Consumers that need the playoff
    *  weeks or the field size read them here rather than re-deriving them from a literal. */
   format: import("../league/types.js").LeagueFormat;
@@ -634,7 +638,7 @@ export async function loadSimContext(opts: {
   });
   return {
     teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds, format,
-    slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement,
+    slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement, availByPos: availByPosFrom(vm),
     posMax: (cfg as { posMax?: Record<string, number> }).posMax,
     played: { weeks: playedWeeks, nextWeek, source: seedSource, rosBlendK: rosBlend.K, rosBlendSource: rosSource, rosApplied, today, seedBlocked },
     // ASSEMBLED ONCE, above. Every verb reads `ctx.week` rather than loading availability, locks and

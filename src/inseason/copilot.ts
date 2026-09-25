@@ -33,6 +33,7 @@
  * is something to log. The action-log write happens in the callers (the `ff` in-season verbs, the MCP tools), so
  * the black-box recorder sees every piece of advice given even though no roster move follows it.
  */
+import { expectedLineupPoints } from "./expectedLineup.js";
 import { optimalLineup } from "./lineup.js";
 import { slotAdmits } from "../draft/slots.js";
 // Track H. The one-week HEAD-TO-HEAD objective. Imported rather than inlined because the sampler,
@@ -1502,6 +1503,9 @@ export function waiverTargets(
     handcuffAdds?: number;
     /** D42: the expected-lineup-points gain a claim must clear to be RECOMMENDED. Default 10. */
     expMinPts?: number;
+    /** Which expected-lineup model ranks claims: "d42" (byes only, empty slot = 0) or "full" (adds
+     *  future-week injuries and replacement-level streaming). See src/inseason/expectedLineup.ts. */
+    expModel?: "d42" | "full";
     /** Per skill position where we have NO depth (rostered <= dedicated starting slots), how many of
      *  its best free agents join the shortlist. Default 2; 0 reproduces the pre-2026-09-25 pool. */
     needAdds?: number;
@@ -1797,18 +1801,19 @@ export function waiverTargets(
   // and this week's availability could not register at all.
   const nPoWks = ctx.format?.playoffWeeks?.length ?? PLAYOFF_WEEKS;
   const expWin: [number, number] = firstWk <= lastWk ? [firstWk, lastWk] : [firstWk, lastWk + nPoWks];
-  const expPts = (roster: ExpPlayer[], win: [number, number] = expWin): number => {
-    let tot = 0;
-    for (let w = win[0]; w <= win[1]; w++) {
-      tot += optimalLineup(roster.map((p) => ({
-        name: p.name, pos: p.pos,
-        proj: rateOf(p) * (w === firstWk ? playRate(p) : 1),
-        available: p.bye !== w && !(w === firstWk && (playRate(p) === 0 || p.lockedNow)),
-        ...(p.eligible ? { eligible: p.eligible } : {}),
-      })), ctx.slots, ctx.flexOk).totalProj;
-    }
-    return tot;
-  };
+  // THE SHARED IMPLEMENTATION (src/inseason/expectedLineup.ts), the one the replay also calls.
+  // `expModel: "full"` adds future-week injuries (the bench covers a missed start) and streaming (an
+  // unfillable slot scores the replacement level, not zero); "d42" is the arithmetic D42 admitted.
+  const expModel = o.expModel ?? "d42";
+  const expPts = (roster: ExpPlayer[], win: [number, number] = expWin): number =>
+    expectedLineupPoints(roster.map((p) => ({
+      name: p.name, pos: p.pos, rate: rateOf(p), bye: p.bye ?? null,
+      playRate: playRate(p), locked: !!p.lockedNow,
+      ...(p.eligible ? { eligible: p.eligible } : {}),
+    })), {
+      slots: ctx.slots, flexOk: ctx.flexOk, from: win[0], to: win[1], firstWk,
+      ...(expModel === "full" ? { availByPos: ctx.availByPos, replacement: ctx.replacement } : {}),
+    });
   const baseExpCache = new Map<string, number>();
   const baseExp = (win: [number, number] = expWin): number => {
     const k = win.join("-");

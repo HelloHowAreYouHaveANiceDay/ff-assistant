@@ -2335,3 +2335,12 @@ claim list. Nothing else on our roster moves (checked on identical store state).
 Applied live: our playoff odds 72.0% -> 68.8% on identical store state, ALL of it MIN D/ST's two-week hot start
 being discounted (7.84 -> 6.97/wk); the league-mean DST barely moves (6.28 -> 6.31). Per-format artifacts are
 gitignored and were written from each format's own `fit-ros-blend.mjs --league <id> --pos DST`.
+
+### D42 -- ADMISSION DOES NOT SURVIVE A CORRECTED SCORER (2026-09-25; live behaviour NOT yet changed -- owner decision pending)
+
+The replay that admitted D42 scored an unfillable lineup slot as zero, so claims that covered a bye were paid
+for points a manager would have streamed. Re-scored with a realised streamer (docs/validation.md, "Waiver
+replay, re-scored with STREAMING"): EXP10 -2.08 pts/decision NULL (1/8 seasons up), down from +5.00 BETTER;
+no ex-ante rule beats standing pat; the positive control (hindsight) gains +31.8 (8/8), so the scorer can see
+a gain. The full expected-lineup model (injuries + streaming, `expModel: "full"`) is the least-bad rule
+(EXPF10 -1.56 NULL) and is built and tested but not served.

@@ -8026,3 +8026,50 @@ gain is real". The effect is small (~4 points over the rest of a season, ~0.3/we
 playoff odds measurably, but it is the first waiver objective in this repo with a resolvable realised
 edge; the simulator's playoff-probability objective has none at the three checkpoints it was run.
 NOT wired into `waiverTargets` yet -- that is a served-decision change (charter rule 1).
+
+## Waiver replay, re-scored with STREAMING -- the D42 edge was the scorer's (2026-09-25)
+
+**The scorer was wrong.** The waiver decision replay scored a lineup slot the roster could not fill as ZERO.
+No manager takes that zero: in a bye week they add a kicker, a defence, a quarterback. So any claim that
+covered a bye was credited with a whole starter's points, and EXP10 (D42) was admitted against that scorer.
+The realised scorer now fills an empty slot with a STREAMER -- the second-best free agent (by rate, as of the
+decision week) at a position the slot admits who played that week -- scored on his ACTUAL points
+(`simContext`'s replacement rule, realised). Each row keeps both: `dPts` (streaming) and `dPts0` (zero);
+`scripts/waiver-decision-report.mjs --scorer stream|zero`.
+
+**New arms**, all through ONE implementation (`src/inseason/expectedLineup.ts`, also what the live verb calls):
+`EXPL` = live D42 arithmetic + the like-for-like swap; `EXPF` = the full model (future-week injuries at the
+tier-0 healthy rate, the bench covering missed starts; unfillable slots at the replacement level).
+`HINDSIGHT` = the positive control: over the same candidate breadth, the move with the best REALISED gain.
+
+1,140 decisions, 2018-2025, weeks 3-12, blind per-season artifacts (`--artifact-dir data/fold-artifacts-d16`,
+`--wb-no-sim`), season as the unit, realised pts per decision vs STAND:
+
+| arm | moved | streaming scorer | zero scorer (the original) |
+|---|---|---|---|
+| RATE | 1120 | -1.52 NULL (4/8 up) | +2.54 NULL |
+| EXP10 (D42, live) | 685 | **-2.08 NULL (1/8 up)** | **+5.00 BETTER (7/8)** |
+| EXPL10 | 685 | -2.07 NULL | +5.04 BETTER |
+| EXPF10 | 386 | -1.56 NULL (3/8 up) | -1.45 NULL |
+| EXPF0 | 1108 | -5.59 WORSE | -4.17 NULL |
+| HINDSIGHT (positive control) | 1087 | **+31.77 BETTER (8/8)** | +33.42 BETTER |
+| ANTI (negative control) | 1140 | -60.74 WORSE | -60.48 WORSE |
+
+Paired: EXPF10 - EXP10 +0.51 (6/8 up, NULL) on the streaming scorer; -6.44 WORSE on the zero scorer -- the
+full model gave up exactly the bye-cover credit the zero scorer paid for.
+
+**Reading.** Both controls work: the scorer sees a harmful move (-61) and a good one (+32, 8/8), so a null for
+every rule is a real null, not a blind scorer. There IS value in the free-agent pool (~32 pts per decision in
+hindsight), and no ex-ante rule here captures any of it; every rule is slightly negative once streaming is
+priced -- consistent with selecting free agents on a noisy two-week rate (the winner's curse). **D42's
+admission does not survive the corrected scorer.** EXPF10 is the least-bad rule and the most faithful
+description of a claim's trade-off (depth covers injuries; byes cost only the gap to a streamer), but it has
+no measured edge either.
+
+Also measured on the way: `expectedLineupPoints` refactor is exact (test/waiver-exp-gaps.test.ts pins the D42
+deltas; EXPL10 - EXP10 = +0.01, the like-for-like swap alone). Controls in test/expected-lineup.test.ts,
+fault-injected (replacement fill removed; injury double-count `rate` instead of `rate / a`).
+
+**OPEN -- season simulator.** `season.ts` prices a healthy week at `rosPerGame`, which already counts missed
+games as zeros, AND draws injuries on top -- the double count `expectedLineupPoints` avoids with `rate / a`.
+Not changed here: the season sim is gated by `season-calibration.mjs`, whose fitted terms may absorb it.
