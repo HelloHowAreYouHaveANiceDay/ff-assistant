@@ -2318,7 +2318,7 @@ weeks once P(playoffs) >= 70%) was never replay-validated, and a 0.7pp move -- i
 league 462233 onto it in week 3, where every claim read ~0 and this week's availability could not register.
 test/copilot-objective.test.ts pins it (fault-injected: restoring the regime switch fails it).
 
-**DST rest-of-season weight (CANDIDATE, awaiting owner sign-off -- `data/ros-blend.json` NOT changed).** The
+**DST rest-of-season weight (owner: "make the fix", 2026-09-25, **APPLIED** -- ESPN `byPos.DST = 20`; Yahoo 129048 20, 14/14 folds; Sleeper 30, 12/14 folds, where the borrowed K=6 was clearly worse than line-only, 2.512 vs 2.450).** The
 pooled blend K=6 was fitted on QB/RB/WR/TE only (`fit-ros-blend.mjs`) and borrowed by K and DST. Fitted per
 position (`--pos`, 2012-2025, leave-one-season-out):
 
@@ -2331,3 +2331,7 @@ For DST the borrowed K is WORSE than ignoring the season; kickers are already at
 an optional `byPos` (`rosKFor`, simContext AND season-calibration), absent = byte-identical. Live with
 `byPos: {DST: 20}`: MIN D/ST 7.84 -> 6.97, LV D/ST's two-week hot start 7.71 -> 6.26, and LV D/ST leaves the
 claim list. Nothing else on our roster moves (checked on identical store state).
+
+Applied live: our playoff odds 72.0% -> 68.8% on identical store state, ALL of it MIN D/ST's two-week hot start
+being discounted (7.84 -> 6.97/wk); the league-mean DST barely moves (6.28 -> 6.31). Per-format artifacts are
+gitignored and were written from each format's own `fit-ros-blend.mjs --league <id> --pos DST`.

@@ -45,5 +45,25 @@
       6
     ]
   },
-  "notes": "ros_pw = (K*line + k*rate)/(K+k), per SCHEDULED week (missed games are zeros, the simulator's frame); k = non-bye weeks elapsed, K in weeks. Fitted by scripts/fit-ros-blend.mjs on the weekly model table's BLIND per-season lines (D17); selection season-grouped. Read by src/draft/rosBlend.ts."
+  "notes": "ros_pw = (K*line + k*rate)/(K+k), per SCHEDULED week (missed games are zeros, the simulator's frame); k = non-bye weeks elapsed, K in weeks. Fitted by scripts/fit-ros-blend.mjs on the weekly model table's BLIND per-season lines (D17); selection season-grouped. Read by src/draft/rosBlend.ts.",
+  "byPos": {
+    "DST": 20
+  },
+  "byPosFit": {
+    "DST": {
+      "K": 20,
+      "fittedOn": "2012-2025",
+      "fittedAt": "2026-09-25",
+      "triples": 5984,
+      "heldOutRmse": 2.62732,
+      "rmseAtPooledK": 2.7278,
+      "lineOnly": 2.72618,
+      "kPerFold": "20 x14",
+      "by": "node --import tsx scripts/fit-ros-blend.mjs --pos DST"
+    },
+    "K": {
+      "note": "fitted K=8 (6-8 per fold), RMSE 2.6978 vs 2.6981 at the pooled 6 -- no change, uses pooled K"
+    }
+  },
+  "byPosSignedOff": "owner, 2026-09-25"
 }
