@@ -2,6 +2,10 @@
  * WEEKLY BAND COVERAGE BY PRESEASON LINE (2026-09-25).
  *
  *   node --import tsx scripts/weekly-band-coverage.ts [--seasons 2022-2025] [--artifact data/weekly-artifact.json]
+ *                                                     [--artifact-dir <dir of weekly-<season>.json fold artifacts>]
+ *
+ * `--artifact-dir` scores each season with the fold artifact trained WITHOUT it (the files
+ * `ff evaluate-weekly --keep-artifacts` writes) -- the out-of-fold read a candidate is judged on.
  *
  * The weekly model predicts a RATIO to the preseason line, clamped to [0, 4], and was trained on lines
  * >= 3. A player whose line is tiny (a back nobody expected to play who now has a role) needs a ratio
@@ -16,12 +20,15 @@ import { projectWeekly, loadWeeklyArtifact } from "../src/weekly/projector.js";
 const argv = process.argv.slice(2);
 const val = (f: string, d: string) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : d; };
 const [LO, HI] = val("--seasons", "2022-2025").split("-").map(Number);
-const art = loadWeeklyArtifact(JSON.parse(readFileSync(val("--artifact", "data/weekly-artifact.json"), "utf8")));
+const DIR = argv.includes("--artifact-dir") ? val("--artifact-dir", "") : null;
+const served = DIR ? null : loadWeeklyArtifact(JSON.parse(readFileSync(val("--artifact", "data/weekly-artifact.json"), "utf8")));
+const artFor = (season: number) => served ?? loadWeeklyArtifact(JSON.parse(readFileSync(`${DIR}/weekly-${season}.json`, "utf8")));
 const db = openDb() as any;
 const outcome = db.prepare("SELECT feat_key, pts, is_bye FROM feat_player_week_model WHERE season=? AND week=?");
 type A = { n: number; above: number; below: number; posP10: number; capped: number; sumMean: number; sumPts: number; sumP50: number; belowP50: number };
 const acc: Record<string, A> = {};
 for (let season = LO; season <= HI; season++) {
+  const art = artFor(season);
   for (let week = 3; week <= 13; week++) {
     const rows = loadWeeklyRows(db, season, week) as any[];
     const out = new Map((outcome.all(season, week) as any[]).map((r) => [r.feat_key, r]));

@@ -1316,6 +1316,7 @@ def boosted_self_check(perpos, checks, tol=1e-9):
 
 
 def main():
+    global CLAMP_HI   # rebound from --clamp-hi below; declared first because the argparser reads it
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="data/ff.db")
     ap.add_argument("--seasons", default="2010-2025")
@@ -1365,11 +1366,21 @@ def main():
                          "serve regime so a locked starter with the whole availability/usage block "
                          "absent falls back on the season-line anchor instead of an OOD leaf. 0 = off "
                          "(the pre-robustness heads that collapse the live serve).")
+    ap.add_argument("--clamp-hi", type=float, default=CLAMP_HI,
+                    help="upper clamp on the predicted RATIO to the season line (default 4.0). A player "
+                         "whose line is small but who now has a role needs a ratio above 4; at 4 his "
+                         "mean AND upper grid pin at line x 4 (docs/validation.md, 2026-09-25). Stamped "
+                         "on the artifact's `clamps`, which the projector serves.")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--allow-served-overwrite", action="store_true",
                     help="permit --out to name a SERVED artifact file (weekly-artifact.json, "
                          "weekly-artifact-lineonly.json). Without it such a write is refused.")
     args = ap.parse_args()
+    # The clamp is a module constant read by every head, the band calibration and the artifact stamp;
+    # rebinding it here is the one place it can change, so all of them see the same value.
+    if not (args.clamp_hi > CLAMP_LO):
+        sys.exit("train_weekly: --clamp-hi must exceed the lower clamp " + str(CLAMP_LO))
+    CLAMP_HI = float(args.clamp_hi)
     # THE SERVED FILES ARE NOT A SCRATCH PATH (architecture review 2026-09-24, W2). This script's
     # defaults (--features all, --zero-model quantile, --learner linear) are NOT the served recipe,
     # and --out defaulted to the served file -- so a bare `train_weekly.py` silently replaced the

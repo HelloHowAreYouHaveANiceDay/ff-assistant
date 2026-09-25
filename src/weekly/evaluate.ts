@@ -774,6 +774,10 @@ export interface EvalOpts {
    *  share one trained set of folds. Off by default (every fold is retrained), so no normal run can
    *  serve a stale fold. */
   reuseArtifacts?: boolean;
+  /** EXTRA trainer arguments appended to every fold's `train_weekly.py` call (e.g. ["--clamp-hi", "8"]):
+   *  the way a CANDIDATE recipe is gated against the served one on the same folds. Absent = the
+   *  served recipe exactly. */
+  trainerArgs?: string[];
   /**
    * WHICH FORMAT IS BEING EVALUATED (WP8). The harness reads the CANDIDATE artifact -- the file the
    * trainer last produced -- to learn which model kind and learner every fold must fit. That file was
@@ -797,7 +801,7 @@ export interface EvalOpts {
  *  artifact came from, so the thing evaluated is the thing that would ship. */
 function trainHoldout(
   dbPath: string, trainSeasons: number[], holdout: number, features: string, out: string,
-  zeroModel: string, recalibrateZero: boolean, learner: string, reuse = false,
+  zeroModel: string, recalibrateZero: boolean, learner: string, reuse = false, extraArgs: string[] = [],
 ): WeeklyArtifact | null {
   const lo = Math.min(...trainSeasons), hi = Math.max(...trainSeasons);
   // MEASUREMENT-ONLY reuse: a fold already on disk is the SAME training regardless of any serve-time
@@ -812,6 +816,7 @@ function trainHoldout(
       "--db", dbPath, "--seasons", `${lo}-${hi}`, "--holdout-season", String(holdout),
       "--features", features, "--zero-model", zeroModel, "--learner", learner, "--out", out, "--quiet",
       ...(recalibrateZero ? ["--recalibrate-zero"] : []),
+      ...extraArgs,
     ], { stdio: "pipe" });
   } catch (e) {
     throw new Error(`train_weekly failed for holdout ${holdout}: ${e instanceof Error ? e.message : e}`, { cause: e });
@@ -911,7 +916,7 @@ export async function evaluateWeekly(opts: EvalOpts): Promise<WeeklyEvalResult> 
     for (const yr of opts.seasons) {
       // The recalibration is chosen INSIDE the fold, by the trainer, on the rows the trainer sees --
       // which are the training seasons with `yr` removed. It never touches the season being scored.
-      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`), zeroModel, !!opts.recalibrateZero, learner, !!opts.reuseArtifacts);
+      const art = trainHoldout(dbPath, opts.trainSeasons, yr, features, join(dir, `weekly-${yr}.json`), zeroModel, !!opts.recalibrateZero, learner, !!opts.reuseArtifacts, opts.trainerArgs ?? []);
       if (art && (art.zeroModel ?? "quantile") !== zeroModel) {
         throw new Error(`fold ${yr} produced a "${art.zeroModel}" artifact but the shipping artifact ` +
           `is "${zeroModel}" -- the folds are not measuring the model that would ship`);

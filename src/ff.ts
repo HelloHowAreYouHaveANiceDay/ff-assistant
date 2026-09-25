@@ -4290,6 +4290,8 @@ async function cmdEvaluateWeekly(rest: string[]) {
       return v === "availability" ? AVAIL : v.split(",").map((s) => s.trim()).filter(Boolean);
     })(),
     reuseArtifacts: rest.includes("--reuse-artifacts"),
+    // `--trainer-args "--clamp-hi 8"`: a CANDIDATE recipe, appended to every fold's trainer call.
+    trainerArgs: valueOf(rest, "--trainer-args")?.split(/\s+/).filter(Boolean),
   };
   // `--resolve-only`: print WHAT WOULD BE PASSED and run nothing. The control on this wiring is that
   // the flagless (incumbent) run resolves the same arguments it resolved before `--league` existed,

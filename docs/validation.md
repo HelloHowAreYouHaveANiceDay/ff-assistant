@@ -8205,3 +8205,24 @@ mean, same week); never narrows; drops that row's knots; mean and p50 untouched 
 waiver decision is about. Fix candidates: raise CLAMP_HI, and/or anchor the ratio on max(line, a floor) and
 train on the small-line rows; either is a retrain gated by `ff evaluate-weekly` (paired, season-level) on the
 full population AND on the small-line cells.
+
+## Weekly clamp 4 -> 8: fixes the small-line mean, exposes an extreme-projection defect -- NOT shipped (2026-09-25)
+
+`ff evaluate-weekly --trainer-args "--clamp-hi 8"` vs the served recipe, 14 season-held-out folds each
+(positive control: the candidate folds carry `clamps.hi = 8` and the argv, the control `4`).
+
+Small-line players, out-of-fold (`scripts/weekly-band-coverage.ts --artifact-dir`, 2018-2025): mean bias
+lines < 1.5 -1.45 -> -0.52, 1.5-3 -0.39 -> -0.03; above-p90 35.6% -> 29.0%, 17.4% -> 13.4%. The goal, met.
+
+Rostered population, paired by season: pinball (p10/p50/p90) BETTER at QB (11/14), RB (14/14), WR (13/14),
+TE 13/14 (NULL on SE); lineup regret +0.14 / +0.16 pts per lineup. BUT the MEAN's RMSE is worse at WR (+0.05,
+3/14) and TE (+0.27, 2/14), and 70% of the TE loss is 20 of 9,655 rows: established stars in extreme game
+environments projected at the CLAMP -- Travis Kelce 2021 wk7 40.2 at cap 4 (80.4 at cap 8; actual 10), Austin
+Hooper 2017 wk2 28.4 (actual 1.7). That is a defect of the SERVED model, masked by the clamp: the boosted
+heads extrapolate on rare combinations (game total 55+, team total ~30, a hot start, depth 1 -- Hooper swings
+18 points on `total_line` alone). Live 2026 wk3: Kenneth Walker III line 11.5 -> 34.3, Zay Flowers 10.6 -> 26.7,
+Nico Collins 11.3 -> 24.9; 2021: 21 of 2,808 established player-weeks at >= 2.5x line.
+
+NEXT (not done): fix the extrapolation (tree regularisation -- a larger min leaf / l2 on the ratio heads -- or a
+ceiling on the MEAN for established lines), then re-gate cap 8 on top. Tooling added: `train_weekly.py
+--clamp-hi`, `ff evaluate-weekly --trainer-args`, `weekly-band-coverage.ts --artifact-dir`.
