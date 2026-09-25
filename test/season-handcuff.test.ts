@@ -78,14 +78,28 @@ const baseFor = (ts: SeasonTeamInput[]) => ({
   bootstrap: { outcomes: outcomes as never, corr, calibration: "none" as const },
 });
 
-test("handcuff coupling: omitting it is byte-identical to the behaviour before it existed", () => {
+test("handcuff coupling: null and all-ones are byte-identical to the behaviour before it existed", () => {
   const ts = Array.from({ length: 8 }, (_, i) => mk(String(i + 1), true));
   const b = baseFor(ts);
-  const off = simulateSeasons(ts, weeks, vm, b);
-  const explicitNull = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: null });
+  const off = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: null });
   const allOnes = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: { QB: 1, RB: 1, WR: 1, TE: 1 } });
-  assert.deepEqual(explicitNull, off, "an explicit null is not the same as omitting the field");
   assert.deepEqual(allOnes, off, "a ratio of 1.0 must be a no-op -- it is the null this models against");
+});
+
+test("D40: OMITTING the field takes the default -- ON, the fitted ratios -- and FF_SIM_HANDCUFF=0 turns it off", () => {
+  const ts = Array.from({ length: 8 }, (_, i) => mk(String(i + 1), true));
+  const b = baseFor(ts);
+  const prev = process.env.FF_SIM_HANDCUFF;
+  try {
+    delete process.env.FF_SIM_HANDCUFF;
+    const dflt = simulateSeasons(ts, weeks, vm, b);
+    const off = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: null });
+    assert.notDeepEqual(dflt, off, "the default did not couple -- D40's default is not wired");
+    process.env.FF_SIM_HANDCUFF = "0";
+    assert.deepEqual(simulateSeasons(ts, weeks, vm, b), off, "FF_SIM_HANDCUFF=0 did not restore the old behaviour");
+  } finally {
+    if (prev === undefined) delete process.env.FF_SIM_HANDCUFF; else process.env.FF_SIM_HANDCUFF = prev;
+  }
 });
 
 /**
@@ -107,7 +121,7 @@ test("FAULT: when every man STARTS, the coupling moves the season total by EXACT
   // benched DNP leaves an empty slot that scores the replacement level instead of his zero -- so
   // varying it here alongside the coupling would move two things at once and prove neither.
   const b = { ...baseFor(ts), slots: allStart, benchDrawnZeros: true };
-  const off = simulateSeasons(ts, weeks, vm, b);
+  const off = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: null });
   const on = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: RATIOS });
 
   // POINTS are conserved EXACTLY. This is the assertion that separates a re-timing from an
@@ -145,7 +159,7 @@ test("handcuff coupling is CONNECTED, and only together with benching the DNP --
   // behaviour by name. Leaving it implicit would silently compare two benching runs and the
   // "each half alone is inert" claim would become untestable.
   const b = { ...baseFor(ts), benchDrawnZeros: false };
-  const off = simulateSeasons(ts, weeks, vm, b);
+  const off = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: null });
   const couplingOnly = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: RATIOS });
   const both = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: RATIOS, benchDrawnZeros: true });
   assert.deepEqual(couplingOnly, off,
@@ -162,7 +176,7 @@ test("handcuff coupling is CONNECTED, and only together with benching the DNP --
 test("the coupling adds value ON TOP of benching the DNP -- the dependence is doing work, not just the availability fix", () => {
   const ts = Array.from({ length: 8 }, (_, i) => mk(String(i + 1), true));
   const b = { ...baseFor(ts), benchDrawnZeros: true };
-  const benchOnly = simulateSeasons(ts, weeks, vm, b);
+  const benchOnly = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: null });
   const both = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: RATIOS });
   assert.ok(both[0].meanPoints > benchOnly[0].meanPoints,
     `the coupling added nothing once the DNP was benched: ${both[0].meanPoints} vs ${benchOnly[0].meanPoints}`);
@@ -180,7 +194,7 @@ test("FAULT: a same-position backup on a DIFFERENT NFL team is not coupled", () 
   // benchDrawnZeros ON in BOTH arms: with it off the coupling is inert for everyone and this test
   // would pass whether or not the NFL-team scoping works.
   const b = { ...baseFor(stranger), benchDrawnZeros: true };
-  const off = simulateSeasons(stranger, weeks, vm, b);
+  const off = simulateSeasons(stranger, weeks, vm, { ...b, handcuffCoupling: null });
   const on = simulateSeasons(stranger, weeks, vm, { ...b, handcuffCoupling: RATIOS });
   assert.deepEqual(on, off, "a backup on an unrelated NFL team was coupled to our starter");
 });
@@ -193,7 +207,7 @@ test("FAULT: a same-position backup on a DIFFERENT NFL team is not coupled", () 
 test("FAULT: a ratio below 1.0 is inert, not a backwards coupling", () => {
   const ts = Array.from({ length: 8 }, (_, i) => mk(String(i + 1), true));
   const b = { ...baseFor(ts), benchDrawnZeros: true };
-  const off = simulateSeasons(ts, weeks, vm, b);
+  const off = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: null });
   const backwards = simulateSeasons(ts, weeks, vm, { ...b, handcuffCoupling: { QB: 0.5, RB: 0.5, WR: 0.5, TE: 0.5 } });
   assert.deepEqual(backwards, off, "a sub-1 ratio was applied instead of being refused");
 });

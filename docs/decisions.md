@@ -2127,3 +2127,51 @@ its information, is what costs it. The consensus for Yahoo is the 1-QB positiona
 scoring curve -- there is no superflex archive -- which is a limit on the room model stated, not hidden.
 
 Six seasons per format; `sm`, `km` and the rest are re-measurable with the one command above each preseason.
+
+
+## D40 -- the season simulator values a handcuff: the coupling ships ON, on its OWN gate (2026-09-25, owner: "Lets fix our waiver simulation model/season sim to account for injury handcuff", **APPLIED**)
+
+The coupling built on 2026-09-23 (9765bb4) re-times a backup's drawn season into the weeks his lead
+misses -- season total conserved, per-position ratio fitted on real (lead, backup) pairs (QB 2.129,
+RB 1.659, TE 1.359, WR 1.214). It stayed OFF because `season-calibration`'s playoff Brier could not
+see it: that instrument averages over every team-season, and the coupling only acts on rosters holding
+a pair in the lead's missed weeks.
+
+**THE RIGHT INSTRUMENT, and it says ADMIT.** `scripts/handcuff-coupling-gate.mjs` scores the thing the
+coupling changes: a backup's points in the weeks his lead was out, predicted by the simulator's own
+arithmetic (independence: T/(n_in+n_out); coupled: T*R/(R*n_out+n_in), T the season total the bootstrap
+conserves), with R fitted LEAVE-SEASON-OUT, paired by season, 2.9*SE floor:
+
+```
+2005-2025, 1533 pairs, 5634 backup-weeks without the lead
+arm                MAE/wk   mean d    SE      floor    seasons better   verdict
+independence       1.925    --
+coupling x0.5      1.676    0.2486   0.0252  0.0732   21/21            ADMIT
+coupling (fitted)  1.651    0.2740   0.0437  0.1268   19/21            ADMIT   (-14% error)
+coupling x1.5      1.744    0.1809   0.0570  0.1652   15/21            ADMIT
+coupling x3        2.242   -0.3177   0.0873  0.2533    3/21            REJECT (worse)   <- magnitude control
+per position: QB +0.618, RB +0.468, WR +0.073, TE +0.041 per week
+```
+
+The x3 arm LOSES, so the metric prefers the right magnitude rather than rewarding any coupling. Both
+arms condition on the season total, deliberately: that is what the simulator does.
+
+**AND IT DOES NO HARM where the old gate can look** (`season-calibration --at-week 8`, 2018-2025, 114
+team-seasons, 3000 trials): playoff Brier 0.1246 -> 0.1246, paired d -0.0001 [-0.0004, 0.0003];
+reliability bins unchanged; D18 seeded-vs-unseeded dominance intact 8/8 at every value; 7/8 LOSO
+folds choose the larger coupling.
+
+This is NOT "the gate could not see it, so ship it" (the reasoning D13-D15 refuse): the change has
+its own out-of-sample gate that it clears by 6.3 SE, and the broad gate shows no harm.
+
+**What it moves, live** (league 462233, week 3, waivers, coupling off -> on): Cole Kmet (insures
+Loveland) +0.65 -> +1.20pp; Braelon Allen (insures Hall) -1.35 -> -1.05pp; Theo Johnson (third TE)
+-0.70 -> -1.30pp; Rico Dowdle (not a handcuff) +1.75 -> +1.70pp. Insurance is now priced in
+EXPECTATION -- weighted by how often the lead actually misses -- which is the number a claim needs;
+`depth-risk` remains the CONDITIONAL view (lead already out). A same-team backup shares his lead's bye,
+which no coupling can cover.
+
+Default `FF_SIM_HANDCUFF` 0 -> 1 (src/draft/season.ts); `FF_SIM_HANDCUFF=0` or `handcuffCoupling: null`
+restores the old behaviour exactly. The draft golden does not move: the championship backtest never
+calls `simulateSeasons`. The ratios are within-player ratios fitted on the incumbent's history and are
+applied to every format; a format-specific refit is `scripts/fit-handcuff-coupling.mjs`.

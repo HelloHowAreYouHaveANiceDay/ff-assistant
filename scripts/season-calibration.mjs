@@ -602,7 +602,8 @@ const SWEEP_DEFAULTS = {
   // seasons) -- but that is not this gate's question, which is whether a better rest-of-season
   // point estimate makes the PLAYOFF PROBABILITY better calibrated. Those can come apart.
   FF_SIM_ROS_GAP: "0",
-  FF_SIM_HANDCUFF: "0",
+  // D40 (2026-09-25): the coupling ships ON; "0" is now the old-behaviour arm.
+  FF_SIM_HANDCUFF: "1",
 };
 if (SWEEP) {
   const eq = SWEEP.indexOf("=");

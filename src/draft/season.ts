@@ -235,8 +235,9 @@ export interface SeasonOpts {
    * A pure RE-TIMING: each drawn season total is preserved exactly and only the weeks the points
    * land in change, because the bootstrap's trajectories already carry a backup's elevated weeks in
    * their marginal and inflating them would double-count. Fitted by
-   * `scripts/fit-handcuff-coupling.mjs`; 1.0 or a missing position means no coupling, and OMITTING
-   * the field is byte-identical to the behaviour before it existed.
+   * `scripts/fit-handcuff-coupling.mjs`; 1.0 or a missing position means no coupling. OMITTING the
+   * field takes the env default -- the fitted ratios since D40 (`FF_SIM_HANDCUFF=0` or an explicit
+   * `null` turns it off, byte-identical to the behaviour before it existed).
    *
    * BOOTSTRAP MODE ONLY, and that is correct rather than an oversight: the parametric branch invents
    * each week independently and has no drawn trajectory in which to move mass. `simContext.ts`
@@ -685,15 +686,17 @@ export function simulateSeasons(
    * `FF_SIM_HANDCUFF` is a SCALE ON THE FITTED DEVIATION, not a raw ratio, so the sweep axis has a
    * meaningful control and a meaningful positive control:
    *
-   *   0  OFF -- the shipped posture, and the sweep's CONTROL. Byte-identical to before the feature.
-   *   1  the fitted per-position ratios from data/handcuff-coupling.json, as measured.
+   *   0  OFF -- the pre-D40 posture. Byte-identical to before the feature.
+   *   1  the fitted per-position ratios from data/handcuff-coupling.json -- THE DEFAULT since D40
+   *      (2026-09-25): its own gate (scripts/handcuff-coupling-gate.mjs) ADMITS it out of sample,
+   *      and season-calibration shows it does no harm (paired d -0.0001, CI [-0.0004, 0.0003]).
    *   3  deviations tripled -- an exaggeration that MUST move the output, or the lever is dead.
    *
    * A raw override would have collapsed four fitted positions to one number, which is the shape the
    * shipped HANDCUFF_MODEL already got wrong; scaling `(R - 1)` keeps the per-position structure.
    * `opts.handcuffCoupling` still wins outright, so the unit tests drive exact ratios.
    */
-  const hcScale = _envNum("FF_SIM_HANDCUFF") ?? 0;
+  const hcScale = _envNum("FF_SIM_HANDCUFF") ?? 1;   // D40: ON by default
   const handcuffCoupling = opts.handcuffCoupling !== undefined
     ? opts.handcuffCoupling
     : (hcScale > 0 ? scaledHandcuffCoupling(hcScale) : null);

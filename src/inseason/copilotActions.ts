@@ -220,8 +220,8 @@ function summarize(verb: CopilotVerb, r: unknown): string {
       const hc = x.targets.filter((t) => t.admittedAs === "handcuff");
       const hcNote = hc.length
         ? ` ${hc.length} candidate(s) are HANDCUFFS to our own starters (${hc.map((t) => `${t.add} behind ${t.insures}`).join(", ")}).` +
-          ` Their deltas UNDERSTATE insurance: the sim samples SAME-POSITION teammates independently (RB-RB, TE-TE and WR-WR are all 0.00), so "lead out, backup elevated" cannot occur and a bench handcuff can only score <=0 here.` +
-          ` Read ff depth-risk --player <starter> for the conditional value.`
+          ` Since D40 the season sim RE-TIMES a backup's season into the weeks his lead misses (fitted per position, e.g. RB x1.66), so these rows price the insurance in EXPECTATION -- weighted by how often the lead actually misses. That is the right number for a claim, and it is small unless the lead is fragile; ff depth-risk --player <starter> gives the CONDITIONAL value (lead already out).` +
+          ` A same-team backup also shares his lead's BYE, which he cannot cover.`
         : "";
       // THE FLOOR THAT DECIDED THE VERDICTS. This printed the UNPAIRED binomial floor (3.98pp in week 3)
       // while every row's `clearsNoise` was judged against the PAIRED one (0.41pp) -- so the headline
