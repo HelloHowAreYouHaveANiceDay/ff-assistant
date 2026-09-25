@@ -95,7 +95,7 @@ test("marginal: a QB behind a healthy starter is worth far less than the same QB
 // A BENCH KICKER OR DEFENCE IS DEAD ROSTER
 // =============================================================================================
 
-test("marginal: the bench cannot tell two kickers apart, and CAN tell two running backs apart", () => {
+test("marginal: at a streamed position the bench tells two men apart far less than at running back", () => {
   // "A BENCH K IS WORTH ABOUT ZERO" IS NOT DIRECTLY TESTABLE HERE and the first version of this test
   // tried anyway. In a fixture where all sixteen rosters are identical the playoff race is a
   // knife-edge, so ANY change to the twelfth man moves P(playoffs) several points -- the bench kicker
@@ -105,17 +105,28 @@ test("marginal: the bench cannot tell two kickers apart, and CAN tell two runnin
   // good the man is cannot matter. Two kickers seventy points apart must be worth the same on the
   // bench; two backs two hundred points apart must not, which is the positive control that the
   // measurement can separate anything at all.
-  const kGood = P("Kip Free", "K", 110), kBad = P("Kurt Free", "K", 40);
-  const dGood = P("Dirk Free", "DST", 100), dBad = P("Dale Free", "DST", 30);
-  const rbGood = P("Rand Free", "RB", 260), rbBad = P("Reed Free", "RB", 60);
-  const book = new MarginalBook(mkState(baseRoster({ 11: null }), ["BE"], [kGood, kBad, dGood, dBad, rbGood, rbBad]), env,
-    { ...BOOK, fillExclude: ["Kip Free", "Kurt Free", "Dirk Free", "Dale Free", "Rand Free", "Reed Free"] });
-  const dK = Math.abs(book.marginal(kGood).playoffsPp - book.marginal(kBad).playoffsPp);
-  const dD = Math.abs(book.marginal(dGood).playoffsPp - book.marginal(dBad).playoffsPp);
-  const dR = Math.abs(book.marginal(rbGood).playoffsPp - book.marginal(rbBad).playoffsPp);
-  assert.ok(dK <= 2, `two bench kickers 70 points apart differed by ${dK}pp -- the bench K slot is not dead here`);
-  assert.ok(dD <= 2, `two bench defences 70 points apart differed by ${dD}pp`);
-  assert.ok(dR > 2, `two bench backs 200 points apart differed by only ${dR}pp -- the bench cannot tell anyone apart, so the two lines above prove nothing`);
+  //
+  // PAIRED, 2026-09-25. Each comparison is now the SAME man (same name, so the same keyed draws) in
+  // two otherwise identical books, differing only in his projection. The first version compared six
+  // differently-named men -- six unpaired random streams -- and its "<= 2pp" passed only on the luck
+  // of one seed under a week draw that was not a normal (season.ts `perfRng`); fixing the draw failed
+  // it. Paired, a better bench kicker is consistently worth +2-4pp, which is REAL, not dead roster:
+  // the lineup is set on a noisy true mean, so a good bench kicker sometimes starts. The claim that
+  // survives is the RATIO: at a streamed position the bench is worth a fraction of what it is worth
+  // at running back (measured 0.07-0.25 of it over seeds 21-24).
+  const pair = (name: string, pos: string, good: number, bad: number): number => {
+    const at = (proj: number) => {
+      const p = P(name, pos, proj);
+      return new MarginalBook(mkState(baseRoster({ 11: null }), ["BE"], [p]), env, { ...BOOK, fillExclude: [name] }).marginal(p).playoffsPp;
+    };
+    return Math.abs(at(good) - at(bad));
+  };
+  const dK = pair("Kip Free", "K", 110, 40);
+  const dD = pair("Dirk Free", "DST", 100, 30);
+  const dR = pair("Rand Free", "RB", 260, 60);
+  assert.ok(dR > 2, `two bench backs 200 points apart differed by only ${dR}pp -- the bench cannot tell anyone apart, so the lines below prove nothing`);
+  assert.ok(dK < 0.4 * dR, `a bench kicker 70 points better moved ${dK}pp against ${dR}pp for a back -- the bench K slot is not near-dead here`);
+  assert.ok(dD < 0.4 * dR, `a bench defence 70 points better moved ${dD}pp against ${dR}pp for a back`);
 });
 
 // =============================================================================================
@@ -125,24 +136,29 @@ test("marginal: the bench cannot tell two kickers apart, and CAN tell two runnin
 test("marginal: a backup whose bye collides with our only tight end is worth less than the identical man on a different bye", () => {
   // The roster's only real TE, `Tate Zed`, is on bye in week 7 and the depth TE is removed, so the
   // slot genuinely has one body. Two candidates identical in every way except the week they are off.
+  //
+  // PAIRED, 2026-09-25: the SAME man ("Cy Free", same keyed draws) with bye 7 in one book and bye 11
+  // in another. The first version compared "Cyrus Free" with "Cedric Free" -- two unpaired streams --
+  // and passed on one seed's luck; with the week draw fixed (season.ts `perfRng`) it read -8pp. The
+  // replacement fill is OFF here: with it, the collision costs only the gap to a streamed tight end
+  // (~8 points once), below this fixture's resolution. At 200 trials the gap is positive on 5/5 seeds
+  // (21-25, +0.5 to +3.5pp) and at least the no-clash gap on 5/5.
+  const envNoRep: MarginalEnv = { ...env, opts: (t, s) => ({ ...ctx.opts(t, s), replacement: undefined }) };
+  const at = (roster: MarginalPlayer[], bye: number) => {
+    const p = P("Cy Free", "TE", 200, bye);
+    return new MarginalBook(mkState(roster, ["BE"], [p]), envNoRep, { ...BOOK, trials: 200, fillExclude: ["Cy Free"] }).marginal(p).playoffsPp;
+  };
   const roster = baseRoster({ 11: null });
-  const clash = P("Cyrus Free", "TE", 200, 7);
-  const clear = P("Cedric Free", "TE", 200, 11);
-  const book = new MarginalBook(mkState(roster, ["BE"], [clash, clear]), env, BOOK);
-  const a = book.marginal(clash), b = book.marginal(clear);
-  assert.ok(b.playoffsPp > a.playoffsPp,
-    `bye-11 measured ${b.playoffsPp}pp and bye-7 (colliding with our only TE) ${a.playoffsPp}pp -- the bye is not reaching the marginal`);
+  const gapWith = at(roster, 11) - at(roster, 7);
+  assert.ok(gapWith > 0,
+    `bye-11 minus bye-7 (colliding with our only TE) measured ${gapWith}pp -- the bye is not reaching the marginal`);
 
   // FAULT INJECTION. Take the collision away -- our tight end now plays every week -- and the gap
-  // between the two candidates must shrink, because the only thing distinguishing them was the week
-  // they cover. If it does not, the assertion above was reading two different RNG streams and would
-  // have passed on any pair of names.
+  // must not grow, because the only thing distinguishing the two was the week he covers.
   const noClash = baseRoster({ 6: P("Tate Zed", "TE", 150, null), 11: null });
-  const book2 = new MarginalBook(mkState(noClash, ["BE"], [clash, clear]), env, BOOK);
-  const gapWith = b.playoffsPp - a.playoffsPp;
-  const gapWithout = book2.marginal(clear).playoffsPp - book2.marginal(clash).playoffsPp;
-  assert.ok(gapWithout < gapWith,
-    `the gap was ${gapWith}pp with the collision and ${gapWithout}pp without it -- removing the collision changed nothing, so the collision was not what produced it`);
+  const gapWithout = at(noClash, 11) - at(noClash, 7);
+  assert.ok(gapWithout <= gapWith,
+    `the gap was ${gapWith}pp with the collision and ${gapWithout}pp without it -- removing the collision did not shrink it, so the collision was not what produced it`);
 });
 
 // =============================================================================================

@@ -659,6 +659,13 @@ const SWEEP_DEFAULTS = {
   FF_SIM_ROS_USAGE: "1",
   // D40 (2026-09-25): the coupling ships ON; "0" is now the old-behaviour arm.
   FF_SIM_HANDCUFF: "1",
+  // 2026-09-25: the parametric (playoff-week) path's injury double count. "0" = shipped; "1" scores a
+  // healthy week at mean / pHealthy (tier-0 injury rate). Moves the BRACKET and playoff-week strength
+  // only -- served regular-season weeks are bootstrap -- so read the TITLE column for it.
+  FF_SIM_PLAYOFF_HEALTHY: "0",
+  // 2026-09-25: the parametric week draw's frozen uniform (u === v in Box-Muller) is FIXED; "1"
+  // restores it -- the old-behaviour arm, like FF_SIM_BENCH_DNP=0.
+  FF_SIM_PERF_RNG_LEGACY: "0",
 };
 // ---------------------------------------------------------------------------------------------
 // --waiver-backtest: THE WAIVER DECISION REPLAY (2026-09-25). Replays what the copilot's waiver pricing

@@ -8073,3 +8073,57 @@ fault-injected (replacement fill removed; injury double-count `rate` instead of 
 **OPEN -- season simulator.** `season.ts` prices a healthy week at `rosPerGame`, which already counts missed
 games as zeros, AND draws injuries on top -- the double count `expectedLineupPoints` avoids with `rate / a`.
 Not changed here: the season sim is gated by `season-calibration.mjs`, whose fitted terms may absorb it.
+
+## Season simulator: two defects in the parametric path (2026-09-25)
+
+The parametric path scores the fantasy PLAYOFF weeks (the bracket, playoff-week strength) and every caller
+without a bootstrap (`rosterMarginal`, fixtures). Served REGULAR-season weeks are bootstrap and untouched.
+
+**1. The week draw was not a normal -- FIXED (default).** `sampleWeek` was handed
+`() => unitDraw(seed, trial, week, pid, purpose)`, which returns the same uniform on every call, so
+Box-Muller drew u === v: `sqrt(-2 ln u) cos(2 pi u)` has mean +0.056, sd 1.056, and puts the lognormal week
+**+8.7% above its mean** at cv 0.6 (measured: a forced one-QB playoff week 10.36 vs 9.56 expected). Fixed by
+`perfRng` (first uniform unchanged, second from the `drawGauss` purpose constant); `FF_SIM_PERF_RNG_LEGACY=1`
+restores it. Gate (preseason, 2018-2025, 114 team-seasons, blind artifacts): playoff Brier 0.2301 both
+arms, paired d exactly 0 (regular season does not use this path); title Brier 0.0640 fixed vs 0.0639 legacy.
+
+**2. The injury double count -- MEASURED, NOT SHIPPED.** A per-week mean is per SCHEDULED week: actual points
+per scheduled week run 1.005x the preseason line (QB), 1.040x (RB), 1.013x (WR), 0.934x (TE), 0.981x (K),
+1.059x (DST), 2012-2025. This path then draws injuries on top, so a playoff week's expectation is
+mean x pHealthy (0.906-0.963). `FF_SIM_PLAYOFF_HEALTHY=1` scores a healthy week at mean / pHealthy (tier-0
+injury rate for everyone -- a low tier's availability is mostly a backup not playing, already in his mean).
+Gate: playoff Brier unchanged (exactly 0), title Brier 0.0643 vs 0.0640 -- slightly WORSE on an axis with no
+skill (uniform 0.0652). Not admitted; default stays OFF. Historically the two defects roughly cancelled
+(+8.7% vs -4 to -9%).
+
+**Tests that passed on luck.** Two `roster-marginal` tests compared DIFFERENTLY NAMED players -- unpaired
+random streams -- and passed only under the broken draw. Rewritten PAIRED (the same man in two books):
+the TE bye collision (replacement fill off) is +0.5 to +3.5pp on 5/5 seeds at 200 trials; a better bench
+kicker is worth +2-4pp (real: lineups are set on a noisy mean), so that test now asserts it is < 0.4x the
+running-back gap (measured 0.07-0.25x). test/season-playoff-healthy.test.ts pins both defects.
+
+## K / DST streaming replay -- matchup streaming has no edge here; bye-week streaming does (2026-09-25)
+
+`node --import tsx scripts/stream-replay.mjs` (league 462233, 2018-2025, weeks 3+). One decision per
+(season, week, team, position) against HOLD = start the best of the men we rostered that week. A free agent
+counts only if he was in the league's pool at week w-1 AND week w. Projection is point-in-time: the
+rest-of-season blend (`rosKFor`: DST 20, K 6) plus a Vegas matchup term fitted leave-one-season-out --
+b(DST) = -0.36 pts per point of the OPPONENT's implied total (stable, -0.355 to -0.372 across folds),
+b(K) = +0.06 per point of his own team's.
+
+| | DST, ours playing (1,640) | K, ours playing (1,652) | DST, ours on bye (21) | K, ours on bye (11) |
+|---|---|---|---|---|
+| STREAM (best claimable, rate + matchup) | +0.18 NULL (5/8) | -0.30 NULL (2/8) | **+7.17 BETTER (8/8)** | **+9.93 BETTER (7/7)** |
+| STREAM2 (second-best claimable) | -0.21 NULL (1/8) | +0.06 NULL (3/8) | +3.01 NULL | +5.40 BETTER |
+| RATE (no matchup term) | **-1.12 WORSE (0/8)** | -0.29 NULL | +5.33 NULL | +8.31 BETTER |
+| HINDSIGHT (positive control) | +9.22 BETTER (8/8) | +8.00 BETTER (8/8) | +17.68 | +13.57 |
+
+Reading: the matchup signal is real (the coefficient) but in a 16-team league where the whole room streams,
+the free agent with the better matchup is usually a worse unit, and the two cancel -- week-to-week matchup
+streaming is ~0 pts/week. Selecting a free agent on RATE alone loses in every season (the winner's curse
+again, as in the waiver replay). The only reliable K/DST stream is the BYE week -- which is exactly how the
+full expected-lineup model prices it (the gap to a streamer, not a whole starter). The bye cells are small
+because this league's managers already stream byes in reality (HOLD is their actual roster).
+
+Not tested: the D20 DST matchup model in place of the implied-total term (it needs blind historical
+predictions per week).

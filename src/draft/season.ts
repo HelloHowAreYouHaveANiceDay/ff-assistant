@@ -328,6 +328,21 @@ export const PLAYOFF_WEEKS = 3;
  */
 export const LEVEL_PRIOR_WEEKS = 1;
 
+/**
+ * A KEYED STREAM for `sampleWeek` (2026-09-25). The call site used to pass
+ * `() => unitDraw(seed, trial, week, pid, purpose)` -- a closure that returns the SAME uniform on
+ * every call -- so `gauss` drew u === v, and `sqrt(-2 ln u) cos(2 pi u)` is not a standard normal: the
+ * lognormal week came out ~8% ABOVE its mean at cv 0.6 (measured, test/season-playoff-healthy.test.ts).
+ * The first uniform is unchanged (common random numbers survive); the second comes from the purpose
+ * XOR'd with the constant `drawGauss` already uses for its own second uniform.
+ */
+function perfRng(seed: number, trial: number, week: number, pidN: number, purpose: number): () => number {
+  // `FF_SIM_PERF_RNG_LEGACY=1` restores the frozen closure -- for the season gate's control arm only.
+  if (process.env.FF_SIM_PERF_RNG_LEGACY === "1") return () => unitDraw(seed, trial, week, pidN, purpose);
+  let k = 0;
+  return () => unitDraw(seed, trial, week, pidN, k++ === 0 ? purpose : (purpose ^ 0x5bf03635) + k);
+}
+
 function gauss(rng: () => number): number {
   const u = Math.max(1e-9, rng()), v = rng();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
@@ -683,6 +698,19 @@ export function simulateSeasons(
    */
   const benchDrawnZeros = opts.benchDrawnZeros ?? (_envNum("FF_SIM_BENCH_DNP") !== 0);
   /**
+   * THE PARAMETRIC PATH'S INJURY DOUBLE COUNT (2026-09-25). A player's per-week mean (`perGame`: the
+   * preseason line or the D18 blend) is per SCHEDULED week -- missed games already counted as zeros;
+   * MEASURED 2012-2025: actual points per scheduled week run 1.005x the line (QB), 1.040x (RB),
+   * 1.013x (WR). This path then ALSO draws injuries, so a man's expected week came out at his mean x
+   * his healthy rate -- 0.906x (TE) to 0.963x (QB) of the line. The bootstrap path (every served
+   * regular-season week) rescales its pools to the mean INCLUDING zeros and is right; this path runs
+   * the fantasy PLAYOFF weeks (the bracket, playoff-week strength) and any caller without a bootstrap.
+   * On: a healthy week scores (and is set on) mean / pHealthy, so the expectation is the mean again
+   * and only the bench's cover of a missed week remains. `FF_SIM_PLAYOFF_HEALTHY=1`; default OFF
+   * until the season gate and the owner say otherwise.
+   */
+  const healthyMean = _envNum("FF_SIM_PLAYOFF_HEALTHY") === 1;
+  /**
    * `FF_SIM_HANDCUFF` is a SCALE ON THE FITTED DEVIATION, not a raw ratio, so the sweep axis has a
    * meaningful control and a meaningful positive control:
    *
@@ -999,6 +1027,11 @@ export function simulateSeasons(
           // designation produces a bit-identical trial. Only the THRESHOLD changes, never the draw.
           const u = unitDraw(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffInjury : PURPOSE.injury);
           const curve = knownInjury?.curves.get(p.name) ?? null;
+          // With `healthyMean` the INJURY rate is the tier-0 one for everybody: a low tier's fitted
+          // availability is mostly a backup NOT PLAYING, which his per-scheduled-week mean already
+          // carries as zeros -- dividing by it would turn a healthy week into a starter's week.
+          const pHealthy = Math.min(1, (m.avail[healthyMean ? 0 : tier] ?? 0.85) / (16 / 17));
+          const meanWhenHealthy = (trueMean.get(p) ?? 0) / (healthyMean ? Math.max(0.05, pHealthy) : 1);
           let healthy: boolean;
           if (curve) {
             // ONE uniform per (player, trial) for the whole episode -- drawn off the season key so
@@ -1014,9 +1047,9 @@ export function simulateSeasons(
             // made him MORE available than an undesignated one, because the episode was replacing
             // his availability for the whole season rather than for the weeks it covers. Being on
             // the injury report is not a health benefit.
-            healthy = episode.has(gameWeek) ? false : u < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+            healthy = episode.has(gameWeek) ? false : u < pHealthy;
           } else {
-            healthy = u < Math.min(1, (m.avail[tier] ?? 0.85) / (16 / 17));
+            healthy = u < pHealthy;
           }
           const cvBase = m.cv[tier] ?? 0.8;
           let cv = (p.pos === "K" || p.pos === "DST") ? cvBase * kScale : cvBase;
@@ -1025,11 +1058,11 @@ export function simulateSeasons(
           if (weeklyVarScale != null && weeklyVarScale !== 1) cv *= weeklyVarScale;
           const actual = (onBye || !healthy)
             ? null
-            : sampleWeek(trueMean.get(p) ?? 0, cv, () => unitDraw(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffPerf : PURPOSE.perf));
+            : sampleWeek(meanWhenHealthy, cv, perfRng(seedNum, trial, keyWeek, pid(p.name), playoffDraw ? PURPOSE.playoffPerf : PURPOSE.perf));
           // `eligible` rides along verbatim -- see SeasonPlayer. Track D made position a set
           // everywhere the board touches and stopped at THIS seam, so a dual-eligible man could not
           // cover the slot the simulated roster was actually short at.
-          return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual, ...(p.eligible ? { eligible: p.eligible } : {}) };
+          return { name: p.name, pos: p.pos, proj: meanWhenHealthy, available: actual != null, actual, ...(p.eligible ? { eligible: p.eligible } : {}) };
         });
       }
       // Lineup is set on the TRUE mean (what a competent manager approximates), scored on the
