@@ -8127,3 +8127,23 @@ because this league's managers already stream byes in reality (HOLD is their act
 
 Not tested: the D20 DST matchup model in place of the implied-total term (it needs blind historical
 predictions per week).
+
+## Does league 462233 stream K and DST? -- DST yes (enough to price the market), K barely (2026-09-25)
+
+`node scripts/league-streaming-behaviour.mjs` over 2018-2025 (the premise behind reading the streaming
+replay's null as "the room already streams"). Per team-season:
+
+| | started unit changed, week to week | distinct started / season | adds / season | holder / mixed / streamer |
+|---|---|---|---|---|
+| DST | 25% of weeks (39% in 2018 -> 21% in 2025) | 3.4 | 2.8 | 42% / 32% / 26% |
+| K | 14% | 2.6 | 2.0 | 55% / 40% / 5% |
+
+So NOT everyone streams -- most managers hold. But enough do to take the matchups. Across units, the five
+easiest DST matchups each week (opponent implied total) are rostered 91% of the time vs 30% for the five
+hardest. That comparison is confounded by unit quality, so the clean test is WITHIN a unit: the same defence
+is rostered in 70% of its own easiest-third weeks vs 38% of its hardest-third (188 unit-seasons rostered part
+of the year) -- this room moves DSTs on matchups. The same kicker: 54% vs 44% (169) -- barely.
+
+Correction to the streaming replay's reading: for DST the null IS the room pricing the matchups (the good
+ones are gone). For K it is NOT competition -- kicker matchups are left on the wire -- it is that the kicker
+matchup signal is weak (+0.06 pts per point of own implied total, ~0.6 pts across a 10-point spread).
