@@ -41,7 +41,6 @@ function ctxWith(mult: number): SimContext {
   ctx.board.set(key("Weekly Upgrade"), { name: "Weekly Upgrade", pos: "WR", proj: 235 * mult, team: "FA" });
   return ctx;
 }
-const rankOf = (r: { targets: { add: string }[] }, name: string) => r.targets.findIndex((t) => t.add === name);
 // Small and shared. Every one of these runs the REAL simulator, so the three waiver passes are
 // computed once at module scope rather than once per assertion -- the first version of this file
 // took two and a half minutes to say the same things.
@@ -76,22 +75,26 @@ test("seasonOdds exposes the regime and the threshold, and the two fixtures real
   assert.equal(weak.assumptions.objective.regime, "insecure", "the objective is not travelling in the assumptions block");
 });
 
-test("SECURE: a playoff-week upgrade outranks a season-long one; INSECURE: the order reverses", () => {
-  // WHAT THIS DOES AND DOES NOT SHOW. The regime is a function of the roster, so these two arms
-  // differ in two ways at once -- a stronger team AND a different objective -- and the reversal is
-  // evidence that the pair behaves differently, not that the switch alone caused it. The switch is
-  // isolated in the fault-injection test below, where the roster is held fixed.
-  const insecure = INSECURE, secure = SECURE;
-  assert.equal(insecure.objective.regime, "insecure");
-  assert.equal(secure.objective.regime, "secure");
-
-  const iRunner = rankOf(insecure, "Free Runner"), iCover = rankOf(insecure, "Bye Cover");
-  const sRunner = rankOf(secure, "Free Runner"), sCover = rankOf(secure, "Bye Cover");
-  assert.ok(iRunner >= 0 && iCover >= 0 && sRunner >= 0 && sCover >= 0, "a candidate was not scored in one of the regimes");
-  assert.ok(iRunner < iCover,
-    `insecure: the season-long add ranked ${iRunner} and the playoff-week add ${iCover} -- the regular season is what is at stake here`);
-  assert.ok(sCover < sRunner,
-    `secure: the playoff-week add ranked ${sCover} and the season-long add ${sRunner} -- once the seed is safe the only weeks left are 15-17`);
+test("D42: every regime RANKS ON EXPECTED LINEUP POINTS, and the regime moves the WINDOW those points are summed over", () => {
+  // Since D42 (2026-09-25) the ranking is the expected rest-of-season STARTING-LINEUP points a claim
+  // adds -- the objective the waiver decision replay admitted -- not the simulated delta. The regime
+  // still switches, but what it switches is the window: the rest of the regular season while the seed
+  // is in doubt, the playoff weeks once it is secure. (This test used to pin the OLD mechanism: that a
+  // deep-roster back ranked first on simulated playoff odds. By expected lineup points he adds nothing
+  // -- he would not start -- and he no longer reaches the shortlist, which is the change.)
+  assert.equal(INSECURE.objective.regime, "insecure");
+  assert.equal(SECURE.objective.regime, "secure");
+  for (const r of [INSECURE, SECURE, FORCED_INSECURE]) {
+    const g = r.targets.map((t) => t.expGainPts);
+    for (let i = 1; i < g.length; i++) assert.ok(g[i - 1] >= g[i], `not ranked on expected lineup points: ${g.join(", ")}`);
+  }
+  // THE SWITCH, ISOLATED -- same roster, only the regime differs. Bye Cover fills our one-deep TE
+  // slot, whose starter is off in week 6: that week is inside the regular-season window and outside
+  // the playoff window, so the two regimes MUST price him differently.
+  const sec = SECURE.targets.find((t) => t.add === "Bye Cover");
+  const ins = FORCED_INSECURE.targets.find((t) => t.add === "Bye Cover");
+  assert.ok(sec && ins, "Bye Cover was not scored in one of the regimes");
+  assert.notEqual(sec!.expGainPts, ins!.expGainPts, "the regime did not move the expected-points window -- the switch is not wired");
 });
 
 test("SECURE: ranking on P(playoffs) would be a coin toss, which is why the switch exists", () => {

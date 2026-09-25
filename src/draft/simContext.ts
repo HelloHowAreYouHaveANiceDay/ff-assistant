@@ -50,7 +50,7 @@ export interface SimContext {
   /** `eligible` is ESPN's own eligible-position SET, present only for a player who is startable at
    *  more than one of QB/RB/WR/TE. Absent means "[his own position]", which is every player on the
    *  2026 board -- so a consumer that ignores the field behaves exactly as it did. */
-  board: Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[]; rosPerGame?: number }>;
+  board: Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[]; rosPerGame?: number; bye?: number | null }>;
   ownedIds: Set<string>;
   /** The league's starting template and FLEX eligibility, so a caller building a hypothetical roster
    *  can ask whether it is legal (rosterGaps) instead of finding out when the simulator refuses. */
@@ -153,12 +153,14 @@ export async function loadSimContext(opts: {
   const vm = JSON.parse(readFileSync(fmt.model.require("variance"), "utf8")) as VarianceModel;
   const outcomes = JSON.parse(readFileSync(fmt.model.require("rank-outcomes"), "utf8"));
   const corr = JSON.parse(readFileSync(fmt.model.require("correlation"), "utf8"));
-  const board = new Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[]; rosPerGame?: number }>();
+  const board = new Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[]; rosPerGame?: number; bye?: number | null }>();
   const boardF = slotFilter(ctx.leagueId);
   for (const r of db.prepare(`SELECT player_id, row_json FROM board WHERE season=?${boardF.sql}`).all(cfg.season, ...boardF.args) as { player_id: string; row_json: string }[]) {
     const j = JSON.parse(r.row_json) as Record<string, unknown>;
     const eligible = eligByKey.get(r.player_id);
-    board.set(r.player_id, { name: String(j.Player), pos: String(j.Pos), proj: Number(j.ProjPts) || 0, team: String(j.Team ?? ""), ...(eligible ? { eligible } : {}) });
+    // THE BYE TRAVELS WITH THE BOARD ROW (D42). Only rostered men were given one (below), so a free
+    // agent added by a waiver claim entered the simulator with NO bye and 'played' through it.
+    board.set(r.player_id, { name: String(j.Player), pos: String(j.Pos), proj: Number(j.ProjPts) || 0, team: String(j.Team ?? ""), bye: byeOf.get(nameKey(String(j.Player))) ?? null, ...(eligible ? { eligible } : {}) });
   }
   const ownedIds = new Set<string>();
   const byTeam = new Map<string, SeasonTeamInput>();

@@ -194,7 +194,8 @@ function summarize(verb: CopilotVerb, r: unknown): string {
     case "waiver_targets": {
       const x = r as C.WaiverResult;
       if (!x.targets.length) return `No waiver claim scored. Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title. ${caveat(x.assumptions)}`;
-      const rows = x.targets.slice(0, 4).map((t) => `ADD ${t.add} (${t.pos}${t.admittedAs === "handcuff" ? `, insures ${t.insures}` : t.admittedAs === "need" ? ", depth need" : ""}) / DROP ${t.drop}: ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
+      // D42: ranked on EXPECTED LINEUP POINTS; the simulated playoff delta follows as context.
+      const rows = x.targets.slice(0, 4).map((t) => `${t.recommended ? "RECOMMENDED " : ""}ADD ${t.add} (${t.pos}${t.admittedAs === "handcuff" ? `, insures ${t.insures}` : t.admittedAs === "need" ? ", depth need" : ""}) / DROP ${t.drop}: ${t.expGainPts >= 0 ? "+" : ""}${t.expGainPts.toFixed(1)} expected lineup pts rest of season; sim ${pp(t.playoffsPp)} playoffs, ${t.playoffWeekPts >= 0 ? "+" : ""}${t.playoffWeekPts.toFixed(1)} pts in ${poWks(x.assumptions)}, ${pp(t.titlePp)} title${t.clearsNoise ? "" : " (inside noise)"}, FAAB ~${t.faab}`).join("; ");
       /**
        * A HANDCUFF'S NUMBER IS NOT A VERDICT ON THE HANDCUFF, and saying nothing would be worse than
        * the blindness it replaced: "never considered" at least looks like silence, while a confident
@@ -227,7 +228,11 @@ function summarize(verb: CopilotVerb, r: unknown): string {
       // while every row's `clearsNoise` was judged against the PAIRED one (0.41pp) -- so the headline
       // said nothing could clear it while rows without "(inside noise)" had. Quote the paired bar.
       const pf = x.noiseBasis === "paired-2.9se" ? x.targets.find((t) => t.pairedFloorPp != null)?.pairedFloorPp : null;
-      return `Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title; noise floor ${pf != null ? `${pf}pp (paired, the bar each row is judged on; unpaired ${x.noiseFloorPp}pp)` : `${x.noiseFloorPp}pp`}. ${rows}.` +
+      const standPat = !x.targets.some((t) => t.recommended)
+        ? "NO CLAIM CLEARS THE BAR -- the replay-validated rule is to STAND PAT this week (the best adds nothing worth a roster spot yet). "
+        : "";
+      return `${standPat}RANKED ON EXPECTED LINEUP POINTS (D42; recommended at >= 10 -- the waiver replay admitted this at +4.2 realised pts/decision, while the simulated playoff delta below had no measurable skill). ` +
+        `Base ${pct(x.basePlayoffPct)} playoffs / ${pct(x.baseTitlePct)} title; noise floor ${pf != null ? `${pf}pp (paired, the bar each row is judged on; unpaired ${x.noiseFloorPp}pp)` : `${x.noiseFloorPp}pp`}. ${rows}.` +
         hcNote +
         `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""}` +
         `${x.unavailableAdds?.length ? ` EXCLUDED ${x.unavailableAdds.length} free agent(s) who CANNOT PLAY: ` +

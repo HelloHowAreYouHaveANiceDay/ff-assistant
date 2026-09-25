@@ -2240,3 +2240,39 @@ leave-season-out folds (`data/fold-artifacts-ros-usage/`, now the gate's default
 Same split, not significant, week 8 slightly worse than first reported. The waiver decision replay
 (docs/validation.md, 2026-09-25) found the copilot's claim pricing with D41 at +0.64 realised pts per
 decision vs standing pat (NULL), +4.13 vs the pre-D41 copilot (NULL).
+
+
+## D42 -- waiver claims are RANKED ON EXPECTED LINEUP POINTS, not simulated playoff probability (2026-09-25, owner: "try 3" -> "yes", **APPLIED**)
+
+The waiver decision replay (docs/validation.md, 2026-09-25) found the copilot's claim pricing -- the
+simulated change in playoff probability -- has no measurable skill (+0.64 realised pts per decision vs
+standing pat, NULL; 3% of the hindsight ceiling). Ranking the same claims on the EXPECTED rest-of-season
+STARTING-LINEUP points they add was admitted: over 1,140 decisions (2018-2025, weeks 3-12), acting only
+at >= 10 points gained +4.19 realised pts per decision (floor 3.06, 7/8 seasons), >= 5 gained +3.83
+(floor 3.45, 7/8); the simple best-rate rule +2.58 (NULL). Small -- about 0.3 points a week -- and it
+does not move playoff odds measurably, but it is the first waiver objective here with a resolvable edge.
+
+**What changed in `waiverTargets`:**
+- Every candidate (top 20 free agents by rest-of-season rate x our 4 lowest-rate legal drops -- the
+  replay's breadth) is scored by expected lineup points: each week the lineup is picked on the rate
+  among men not on bye and not ruled out now, and the starters' rates are summed, after minus before.
+- The shortlist is the top `adds` by that gain (the VOR slice only tops it up); the handcuff and
+  depth-need admissions are kept. Those rows are still SIMULATED, and the playoff delta ships beside
+  the ranking as context.
+- Rows are ranked on `expGainPts`; `recommended` = gain >= 10 (the replay's EXP10), `expMinPts` overrides.
+  With nothing recommended the summary says STAND PAT.
+- The window follows the regime: the rest of the regular season while the seed is in doubt (the form
+  the replay validated), the league playoff weeks once it is secure. The secure form is NOT separately
+  validated -- it inherits the existing regime switch.
+- The reported `objective.primary` is now what the verb ranks on, so its caveat cannot say "ranked on
+  playoffs" beside a list ordered by expected points.
+
+**Also fixed on the way:** board free agents carried NO bye (only rostered men were given one in
+`simContext`), so every waiver simulation let an added free agent "play" through his bye. Board rows
+now carry it (208 of 332 free agents have one; the rest have no consensus rank to take it from).
+
+**Live, league 462233 week 3:** the best claims are a second kicker or defence covering a bye (+7-8
+expected pts) and Brian Robinson Jr. (+5.8); nothing clears 10, so the answer is stand pat.
+
+Tests: test/copilot-objective.test.ts's ranking test rewritten to pin the new contract (ranked on
+expGainPts in every regime; the regime moves the window -- fault-injected, the switch disabled fails it).

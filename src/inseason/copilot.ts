@@ -40,7 +40,7 @@ import { slotAdmits } from "../draft/slots.js";
 // file's job is to hand it the roster, the opponent and the week and to report what it said.
 import { winProbLineup, opponentStarters, type WeeklyBand, type WinProbOpts, type WinProbResult, type WinProbPlayer } from "./winprob.js";
 import { handcuffBoard, loadInjuryOutlook, HANDCUFF_MODEL, type DepthEntry, type HandcuffRow, type InjuryOutlookSet } from "./handcuff.js";
-import { rosterGaps, rosterOverfills, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
+import { rosterGaps, rosterOverfills, PLAYOFF_WEEKS, type SeasonTeamInput, type SeasonOdds, type VarianceModel } from "../draft/season.js";
 import { dstAliasKey, nameKey } from "../draft/values.js";
 import { perGameStrength } from "../draft/rosBlend.js";
 import {
@@ -186,7 +186,8 @@ export const PLAYOFF_SECURE_THRESHOLD_PCT = 70;
 export interface Objective {
   regime: Regime;
   /** What the recommendation is RANKED on. */
-  primary: "playoffs" | "playoff-week strength";
+  primary: "playoffs" | "playoff-week strength"
+    | "expected lineup points (rest of regular season)" | "expected lineup points (playoff weeks)";
   secondary: "playoff-week strength" | "playoffs";
   alongside: "title";
   thresholdPct: number;
@@ -1334,9 +1335,23 @@ export interface ObjectiveDelta {
   /** The same quantity UNROUNDED. Anything that DIVIDES by the standard error must use this one. */
   seRaw?: number | null;
 }
-export interface WaiverDrop extends ObjectiveDelta { name: string; pos: string; proj: number }
+export interface WaiverDrop extends ObjectiveDelta {
+  name: string; pos: string; proj: number;
+  /** D42: expected rest-of-season STARTING-LINEUP points this (add, drop) adds -- the ranking quantity. */
+  expGainPts: number;
+}
 export interface WaiverRefusal { add: string; drop: string; pos: string; why: string }
 export interface WaiverTarget extends ObjectiveDelta {
+  /**
+   * D42 -- THE RANKING QUANTITY: expected rest-of-season starting-lineup points the claim adds. Each
+   * remaining week the lineup is picked on the rest-of-season rate among men not on bye and not ruled
+   * out now; the starters' rates are summed, after minus before. The waiver decision replay (docs/
+   * validation.md, 2026-09-25) admitted this objective at >= 10 points (+4.19 realised pts/decision,
+   * 7/8 seasons) where the simulated playoff delta had no measurable skill.
+   */
+  expGainPts: number;
+  /** expGainPts >= the recommendation threshold (default 10, the replay's EXP10). */
+  recommended: boolean;
   /** The 2.9*SE paired bar this row was judged against, or null where too few seeds were run
    *  and the unpaired binomial floor was used instead. Present so a reader can see WHICH. */
   pairedFloorPp?: number | null;
@@ -1474,6 +1489,8 @@ export function waiverTargets(
     /** Extra shortlist slots for free agents who back up one of OUR starters. 0 disables the
      *  roster-conditional admission entirely and reproduces the pre-fix pool exactly. */
     handcuffAdds?: number;
+    /** D42: the expected-lineup-points gain a claim must clear to be RECOMMENDED. Default 10. */
+    expMinPts?: number;
     /** Per skill position where we have NO depth (rostered <= dedicated starting slots), how many of
      *  its best free agents join the shortlist. Default 2; 0 reproduces the pre-2026-09-25 pool. */
     needAdds?: number;
@@ -1725,13 +1742,74 @@ export function waiverTargets(
       n++;
     }
   }
-  const free = [...byVor, ...admitted];
+  /**
+   * D42 -- THE EXPECTED-LINEUP-POINTS RANKING, and the shortlist it builds.
+   *
+   * Replay-admitted objective (see WaiverTarget.expGainPts). Cheap -- no simulator -- so it is computed
+   * for the top 20 free agents by rest-of-season rate against our 4 lowest-rate legal drops, the SAME
+   * candidate breadth the replay measured; the top `adds` by it form the shortlist that is then also
+   * SIMULATED, so the playoff delta still ships beside it as context.
+   */
+  const expMin = o.expMinPts ?? 10;
+  const firstWk = ctx.played?.nextWeek ?? 1;
+  const lastWk = ctx.weeks.length;
+  const outNow = (p: { name: string }): boolean => (o.availability ?? ctx.week.availability).get(nameKey(p.name))?.status === "OUT";
+  const rateOf = (p: { proj: number; rosPerGame?: number }): number =>
+    p.rosPerGame != null && Number.isFinite(p.rosPerGame) ? p.rosPerGame : p.proj / NFL_WEEKS;
+  type ExpPlayer = { name: string; pos: string; proj: number; rosPerGame?: number; bye?: number | null; eligible?: string[] };
+  // THE WINDOW FOLLOWS THE REGIME for the RANKING (set below, once the objective is known): the
+  // rest of the regular season while the seed is in doubt -- the form the replay validated -- and the
+  // league's playoff weeks once it is secure, which is the switch every other verb here already makes.
+  // The SHORTLIST always uses the regular-season window.
+  let expWin: [number, number] = [firstWk, lastWk];
+  const expPts = (roster: ExpPlayer[], win: [number, number] = expWin): number => {
+    let tot = 0;
+    for (let w = win[0]; w <= win[1]; w++) {
+      tot += optimalLineup(roster.map((p) => ({
+        name: p.name, pos: p.pos, proj: rateOf(p), available: p.bye !== w && !(w === firstWk && outNow(p)),
+        ...(p.eligible ? { eligible: p.eligible } : {}),
+      })), ctx.slots, ctx.flexOk).totalProj;
+    }
+    return tot;
+  };
+  const baseExpCache = new Map<string, number>();
+  const baseExp = (win: [number, number] = expWin): number => {
+    const k = win.join("-");
+    if (!baseExpCache.has(k)) baseExpCache.set(k, expPts(myRoster, win));
+    return baseExpCache.get(k)!;
+  };
+  const expLegal = (after: typeof myRoster): boolean =>
+    rosterGaps([{ ...ctx.teams[ctx.meIdx], roster: after }], ctx.slots, ctx.flexOk).length === 0 &&
+    rosterOverfills([{ ...ctx.teams[ctx.meIdx], roster: after }], ctx.posMax).length === 0;
+  const expGainOf = (add: ExpPlayer, drop: { name: string }): number | null => {
+    const after = myRoster.filter((p) => p.name !== drop.name).concat([{ ...add } as (typeof myRoster)[number]]);
+    return expLegal(after) ? expPts(after) - baseExp() : null;
+  };
+  const expBest = new Map<string, number>();
+  const byRate = [...eligible].sort((a, b) => rateOf(b) - rateOf(a)).slice(0, 20);
+  for (const add of byRate) {
+    for (const d of [...myRoster].sort((a, b) => rateOf(a) - rateOf(b)).slice(0, 4)) {
+      const g = expGainOf(add, d);
+      if (g != null && (!expBest.has(nameKey(add.name)) || g > expBest.get(nameKey(add.name))!)) expBest.set(nameKey(add.name), g);
+    }
+  }
+  const byExp = byRate.filter((p) => expBest.has(nameKey(p.name)))
+    .sort((a, b) => expBest.get(nameKey(b.name))! - expBest.get(nameKey(a.name))!).slice(0, nAdds);
+  const seenFree = new Set<string>();
+  // Expected-points shortlist first; the VOR slice only tops it up to `adds`; the handcuff and
+  // depth-need admissions are ALWAYS kept (they are why those rules exist).
+  const free = [...byExp, ...byVor.slice(0, Math.max(0, nAdds - byExp.length)), ...admitted]
+    .filter((p) => (seenFree.has(nameKey(p.name)) ? false : (seenFree.add(nameKey(p.name)), true)));
 
   const baseBySeed = seeds.map((s) => outcomeOf(ctx, ctx.teams, trials, s));
   const basePlayoff = mean(baseBySeed.map((b) => b.playoffPct));
   const baseTitle = mean(baseBySeed.map((b) => b.titlePct));
   const basePoPts = mean(baseBySeed.map((b) => b.poPts));
   const objective = objectiveFor(basePlayoff, o.secureThresholdPct);
+  if (objective.regime === "secure") {
+    const nPo = ctx.format?.playoffWeeks?.length ?? PLAYOFF_WEEKS;
+    expWin = [lastWk + 1, lastWk + nPo];
+  }
   const mine = ctx.teams[ctx.meIdx].roster;
   const refused: WaiverRefusal[] = [];
   const targets: WaiverTarget[] = [];
@@ -1795,15 +1873,18 @@ export function waiverTargets(
         teams[ctx.meIdx].roster = teams[ctx.meIdx].roster.filter((p) => p.name !== cand.name).concat([{ ...add }]);
         return outcomeOf(ctx, teams, trials, s);
       });
-      drops.push({ name: cand.name, pos: cand.pos, proj: r2(cand.proj), ...deltasOf(after, baseBySeed, objective) });
+      drops.push({ name: cand.name, pos: cand.pos, proj: r2(cand.proj), ...deltasOf(after, baseBySeed, objective),
+        expGainPts: r2(expGainOf(add, cand) ?? -Infinity) });
     }
     if (!drops.length) continue;
-    drops.sort((a, b) => b.rankValue - a.rankValue);
+    // D42: the drop that adds the most EXPECTED LINEUP POINTS, not the best simulated delta.
+    drops.sort((a, b) => b.expGainPts - a.expGainPts || b.rankValue - a.rankValue);
     const best = drops[0];
     const floor = noiseFloorPp(basePlayoff, trials);
     targets.push({
       add: add.name, pos: add.pos, proj: r2(add.proj),
       drop: best.name, dropPos: best.pos,
+      expGainPts: best.expGainPts, recommended: best.expGainPts >= expMin,
       playoffsPp: best.playoffsPp, playoffWeekPts: best.playoffWeekPts, titlePp: best.titlePp,
       rankValue: best.rankValue, se: best.se,
       afterPlayoffPct: r2(basePlayoff + best.playoffsPp),
@@ -1825,7 +1906,15 @@ export function waiverTargets(
       drops,
     });
   }
-  targets.sort((a, b) => b.rankValue - a.rankValue);
+  targets.sort((a, b) => b.expGainPts - a.expGainPts || b.rankValue - a.rankValue);
+  // D42: the objective this verb REPORTS is the one it ranks on, so a caveat built from it cannot say
+  // "ranked on playoffs" beside a list ordered by expected lineup points.
+  const waiverObjective: Objective = {
+    ...objective,
+    primary: objective.regime === "secure" ? "expected lineup points (playoff weeks)" : "expected lineup points (rest of regular season)",
+    note: `ranked on the EXPECTED starting-lineup points a claim adds over ${objective.regime === "secure" ? "the league playoff weeks (the seed is secure)" : "the rest of the regular season"} ` +
+      `(D42, admitted by the waiver decision replay); recommended at >= ${expMin}. ${objective.note}`,
+  };
   return {
     basePlayoffPct: r2(basePlayoff),
     basePlayoffWeekPts: r2(basePoPts),
@@ -1848,9 +1937,9 @@ export function waiverTargets(
     },
     unavailableAdds,
     faabBudget: budget,
-    objective,
+    objective: waiverObjective,
     assumptions: {
-      ...assumptionsOf(ctx, "simulation", o, trials, seeds, objective),
+      ...assumptionsOf(ctx, "simulation", o, trials, seeds, waiverObjective),
       faab: {
         basis: usingModel ? "model" : "rule",
         artifact: usingModel ? artifact.path : null,
