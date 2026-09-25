@@ -7931,3 +7931,29 @@ loss weights ALL pairs equally, so it spends capacity separating the 200th pool 
 weighted, LambdaRank-style -- are the ones with a reason to help here, and none has been tried.
 "Rank loss does not help" is NOT established; "uniform pairwise rank loss on five features is worse
 than least squares on the same five" is.
+
+
+## PLAY-BY-PLAY OPPORTUNITY ON TOP OF THE D41 USAGE MODEL: rejected (2026-09-25)
+
+Question (owner): what about target share / air-yards share for WR, TE and RB? `td_ts` (target share to
+date) is ALREADY in the served D41 correction. `scripts/ros-usage-pbp-screen.mjs` adds, from
+`raw_pbp_player_week` (player / team share per game, weeks strictly before the checkpoint): target-share
+TREND, air-yards share to date + trend, carry share to date + trend. Leave-season-out 2013-2025, 78,708
+rows, paired by season against the SERVED feature set refit in the same folds, 2.9*SE floor:
+
+```
+addition        ALL       RB                 WR        TE        QB
++tgt_trend      +0.0018   +0.0050 ADMIT 11/13  +0.0012   +0.0021   -0.0017     (all others NULL)
++air_yards      +0.0017   +0.0048 ADMIT 11/13  +0.0001   +0.0011   +0.0013
++carries        +0.0006   +0.0047 ADMIT 10/13  +0.0002   +0.0014   -0.0048
++all three      +0.0010   +0.0049 NULL   9/13  +0.0007   +0.0023   -0.0048
+shuffled        NULL everywhere
+```
+
+For scale, the served usage terms themselves are worth +0.075. WR/TE: nothing -- snap share, its
+trend and target share to date already carry it. RB: each single addition clears by a hair, TOGETHER
+they are NULL -- redundant with each other and with snap share, and three borderline passes among twenty
+comparisons is the selection trap (checklist item 5). NOT ADDED.
+
+Also found: the live 2026 `raw_pbp_player_week` stops at week 1 (the actuals routine refreshes snap
+counts, not play-by-play), so any pbp feature would serve dark this season until that ingest is wired.
