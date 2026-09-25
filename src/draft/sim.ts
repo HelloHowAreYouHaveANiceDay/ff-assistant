@@ -16,6 +16,7 @@ import { planDrainNomination, payersFrom } from "./nomination.js";
 /** The bots' K/DST price cap. Independent of our `maxKDst` lever (B9). */
 export const ROOM_MAX_KDST = 2;
 import { positionInflationFactors } from "./inflation.js";
+import { draw, nameKey32, PURPOSE } from "./rng.js";
 
 export interface SimLeague { teams: number; budget: number; slots: string[]; }
 /** Build the sim/backtest league from the app config, so it simulates the USER's exact format
@@ -39,6 +40,9 @@ function gauss(rng: () => number): number { const u = Math.max(1e-9, rng()), v =
 
 export interface Pick { name: string; pos: string; team: number; price: number; }
 export interface DraftFieldOpts { includeUs?: boolean; profiles?: ManagerProfile[]; drainNom?: boolean; greedyNom?: boolean;
+  /** The pre-2026-09-24 bot noise: ONE sequential stream shared by every bid (review G3). Off by
+   *  default -- each (player, seat) now draws from its own keyed stream. `--bot-noise-sequential`. */
+  sequentialBotNoise?: boolean;
   /** The FORMAT's variance model, for the V3 strategy's availability tiers (WP7). Omitted = the
    *  incumbent's copy at the data/ root, which is what this always read. */
   variancePath?: string;
@@ -496,6 +500,12 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
       if (openIdxFor(t, pos) < 0) continue;
       const aff = affordable(t);
       if (aff < 1) continue;
+      // KEYED BOT NOISE (review 2026-09-24, G3). The bots used to draw from ONE sequential stream,
+      // consumed only for bots that were eligible and could afford the player -- so the moment a
+      // lever changed who won one player, every later draw landed on a different bot and player and
+      // the two arms of a paired comparison stopped sharing their noise. Each (trial seed, player,
+      // seat) now has its own stream, so a bid's noise depends only on who is bidding on whom.
+      const brng = opts.sequentialBotNoise ? rng : mulberry32(Math.floor(draw(seed, 0, ti, nameKey32(name), PURPOSE.botBid) * 4294967296));
       let max: number;
       if (t.us) {
         // Populate the live board + all-team budgets ONLY when repricing is on (per-bid O(available)).
@@ -544,21 +554,21 @@ export function draftFieldSeats(points: PointsRow[], ourValues: Map<string, numb
           leagueMoney,
         };
         const [mu, sd] = priceNoiseFor(overallRank.get(name) ?? 9999);
-        let bid = priceFor(priceModel, pos, st) * Math.exp(mu + gauss(rng) * sd);
+        let bid = priceFor(priceModel, pos, st) * Math.exp(mu + gauss(brng) * sd);
         const prof = seatProfiles[ti];
-        if (prof && prof.maxBuy > 0) bid = Math.min(bid, prof.maxBuy * (0.95 + rng() * 0.35));
+        if (prof && prof.maxBuy > 0) bid = Math.min(bid, prof.maxBuy * (0.95 + brng() * 0.35));
         max = Math.min(Math.max(1, Math.round(bid)), aff);
       } else {
         const base = trueVal.get(name) ?? 1;
         const rank = studRank.get(name) ?? 999;
-        max = Math.min(bidders[ti]!(base, pos, rank, t.spentPos, rng), aff); // real-manager bid model
+        max = Math.min(bidders[ti]!(base, pos, rank, t.spentPos, brng), aff); // real-manager bid model
       }
       // The bot's OWN view, on top of whichever book it priced from. Applied here rather than inside
       // each book so the three books are perturbed identically and a comparison between them is a
       // comparison of the books.
       if (!t.us && opts.botIdioSd) {
         const s = opts.botIdioSd;
-        max = Math.min(Math.max(1, Math.round(max * Math.exp(gauss(rng) * s - 0.5 * s * s))), aff);
+        max = Math.min(Math.max(1, Math.round(max * Math.exp(gauss(brng) * s - 0.5 * s * s))), aff);
       }
       if (max > bestMax) { secondMax = bestMax; bestTeam = ti; bestMax = max; }
       else if (max > secondMax) secondMax = max;

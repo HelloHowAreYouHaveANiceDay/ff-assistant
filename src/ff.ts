@@ -2459,9 +2459,14 @@ async function cmdBacktest(rest: string[]) {
   const range = (valueOf(rest, "--seasons") ?? `2014-${new Date().getFullYear() - 1}`).split("-").map(Number);
   const [lo, hi] = [range[0], range[1] ?? range[0]];
   const pts = new Map<number, { name: string; pos: string; points: number }[]>();
+  // player_sk -> that season's row, so a drafted rookie can be matched to his actuals by IDENTITY
+  // rather than by name (review 2026-09-24, G6: "Beanie Wells" in the draft is "Chris Wells" here).
+  const ptsBySk = new Map<number, Map<string, { name: string; pos: string }>>();
   for (const f of rows(valueOf(rest, "--points") ?? btFmt.model.require("history-points"))) {
     const yr = Number(f[0]); if (yr < lo || yr > hi) continue;
     (pts.get(yr) ?? pts.set(yr, []).get(yr)!).push({ name: f[1].trim(), pos: f[2].trim().toUpperCase(), points: Number(f[3]) });
+    const sk = (f[4] ?? "").trim();
+    if (sk) (ptsBySk.get(yr) ?? ptsBySk.set(yr, new Map()).get(yr)!).set(sk, { name: f[1].trim(), pos: f[2].trim().toUpperCase() });
   }
   const wk = new Map<number, Map<string, Map<number, number>>>();
   for (const f of rows(valueOf(rest, "--weekly") ?? btFmt.model.require("history-weekly"))) {
@@ -2471,6 +2476,21 @@ async function cmdBacktest(rest: string[]) {
   }
   const marketSd = Number(valueOf(rest, "--market-noise") ?? 0.30);
   const ourSd = valueOf(rest, "--our-noise") != null ? Number(valueOf(rest, "--our-noise")) : undefined; // < marketSd => value edge
+  // OUR INFORMATION UNDER --no-lookahead (review 2026-09-24, G1). It was `ourSd = 0`: our book was
+  // last season's actuals EXACTLY while the room saw the same numbers through a shared N(0, 0.30)
+  // error -- a built-in information edge that put the baseline at 96% playoffs and left the gate
+  // ~4pp of headroom. Default now: our error is the room's scale (`--our-noise`, else marketSd),
+  // correlated with the room's own draw at `--our-rho` (default 0.5 -- an ASSUMPTION, not a
+  // measurement: we share half the consensus's information). `--our-info clean` restores the old,
+  // noise-free view for A/B.
+  const ourInfo = (valueOf(rest, "--our-info") ?? "market") as string;
+  if (ourInfo !== "market" && ourInfo !== "clean") throw new Error(`--our-info must be market or clean (got ${JSON.stringify(ourInfo)})`);
+  const ourRho = Number(valueOf(rest, "--our-rho") ?? 0.5);
+  if (!(ourRho >= -1 && ourRho <= 1)) throw new Error(`--our-rho must be in [-1, 1] (got ${valueOf(rest, "--our-rho")})`);
+  // G3: the pre-2026-09-24 single sequential bot-noise stream, for A/B.
+  const botNoiseSequential = rest.includes("--bot-noise-sequential");
+  // G6: the pre-2026-09-24 rookie pool (only rookies who show up in the season's own actuals), for A/B.
+  const rookiesPlayedOnly = rest.includes("--rookies-played-only");
   const ourWeeklySd = valueOf(rest, "--our-weekly-noise") != null ? Number(valueOf(rest, "--our-weekly-noise")) : undefined;
   const botWeeklySd = valueOf(rest, "--bot-weekly-noise") != null ? Number(valueOf(rest, "--bot-weekly-noise")) : undefined;
   const full = rest.includes("--full"); // run the REAL lineup optimizer (inseason/lineup.ts) for our team
@@ -2785,6 +2805,7 @@ async function cmdBacktest(rest: string[]) {
   // which keeps names in the `pts`/`wk` namespace (a name that did not match would score 0 and
   // penalise rookies unfairly); the projection itself is draft capital only, knowable in August.
   let rookieDraft: Map<string, { pos: string; overall: number }> | null = null;
+  const draftClass = new Map<number, { name: string; pos: string; overall: number; sk: string | null }[]>();
   let rookieModel: typeof import("./draft/rookieModel.js") | null = null;
   let rookieDb: ReturnType<typeof import("./db/db.js").openDb> | null = null;
   const normNm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim();
@@ -2794,8 +2815,17 @@ async function cmdBacktest(rest: string[]) {
     rookieModel = await import("./draft/rookieModel.js");
     rookieDb = openDb(valueOf(rest, "--db"));
     rookieDraft = new Map();
-    for (const d of rookieDb.prepare("SELECT season, position pos, pick, pfr_player_name name FROM raw_nfl_draft_pick WHERE position IN ('QB','RB','WR','TE') AND pick > 0 AND pfr_player_name IS NOT NULL").all() as { season: number; pos: string; pick: number; name: string }[])
+    for (const d of rookieDb.prepare(
+      `SELECT d.season, d.position pos, d.pick, d.pfr_player_name name,
+              (SELECT MIN(s.player_sk) FROM stg_player s WHERE s.gsis_id = d.gsis_id AND d.gsis_id IS NOT NULL) sk
+         FROM raw_nfl_draft_pick d
+        WHERE d.position IN ('QB','RB','WR','TE') AND d.pick > 0 AND d.pfr_player_name IS NOT NULL
+        ORDER BY d.season, d.pick`,
+    ).all() as { season: number; pos: string; pick: number; name: string; sk: number | null }[]) {
       rookieDraft.set(`${normNm(d.name)}|${d.season}`, { pos: d.pos, overall: d.pick });
+      (draftClass.get(d.season) ?? draftClass.set(d.season, []).get(d.season)!)
+        .push({ name: d.name, pos: d.pos, overall: d.pick, sk: d.sk != null ? String(d.sk) : null });
+    }
   }
 
   // ============================================================================================
@@ -2950,15 +2980,36 @@ async function cmdBacktest(rest: string[]) {
       const rc = rookieModel.fitRookieCurve(rookieDb, { beforeSeason: yr });
       const have = new Set(proj.map((r) => normNm(r.name)));
       const add: { name: string; pos: string; points: number }[] = [];
-      for (const r of pts.get(yr) ?? []) {
-        const nk = normNm(r.name);
-        if (have.has(nk)) continue;                       // already in the pool (a returning veteran)
-        const dc = rookieDraft.get(`${nk}|${yr}`);
-        if (!dc) continue;                                // not a rookie drafted this year
-        const p = rookieModel.rookiePoints(rc, r.pos, dc.overall);
-        if (p == null) continue;
-        add.push({ name: r.name, pos: r.pos, points: p });
-        have.add(nk);
+      if (rookiesPlayedOnly) {
+        for (const r of pts.get(yr) ?? []) {
+          const nk = normNm(r.name);
+          if (have.has(nk)) continue;                       // already in the pool (a returning veteran)
+          const dc = rookieDraft.get(`${nk}|${yr}`);
+          if (!dc) continue;                                // not a rookie drafted this year
+          const p = rookieModel.rookiePoints(rc, r.pos, dc.overall);
+          if (p == null) continue;
+          add.push({ name: r.name, pos: r.pos, points: p });
+          have.add(nk);
+        }
+      } else {
+        // THE WHOLE DRAFT CLASS (review 2026-09-24, G6). The pool used to admit only rookies who
+        // appear in THIS season's actuals -- survivorship: a camp bust or a rookie hurt in August was
+        // never on the board, so the arbiter could never overpay for one. Now every drafted skill
+        // rookie is priced by draft capital (knowable in April). He is matched to his actuals by
+        // player_sk first, then by name; one who never played is in the pool under his draft name,
+        // has no weekly rows, and scores zero -- exactly what drafting him would have cost.
+        const byNk = new Map((pts.get(yr) ?? []).map((r) => [normNm(r.name), r]));
+        const bySk = ptsBySk.get(yr);
+        for (const d of draftClass.get(yr) ?? []) {
+          const r = (d.sk && bySk?.get(d.sk)) || byNk.get(normNm(d.name));
+          const name = r ? r.name : d.name, pos = r ? r.pos : d.pos;
+          const nk = normNm(name);
+          if (have.has(nk)) continue;
+          const p = rookieModel.rookiePoints(rc, pos, d.overall);
+          if (p == null) continue;
+          add.push({ name, pos, points: p });
+          have.add(nk);
+        }
       }
       if (add.length) { proj = [...proj, ...add]; rookiesAdded.set(yr, add.length); }
     }
@@ -2970,7 +3021,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? 0 : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed, btFmt.model.path("variance"), { model: btModel, ourSlot, adp: adpByYear.get(yr), botIdioSd: btModel.kind === "snake" ? botIdioSd : undefined }); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? (ourInfo === "clean" ? 0 : (ourSd ?? marketSd)) : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed, btFmt.model.path("variance"), { model: btModel, ourSlot, adp: adpByYear.get(yr), botIdioSd: btModel.kind === "snake" ? botIdioSd : undefined, sequentialBotNoise: botNoiseSequential }, { ourRho: noLookahead && ourInfo === "market" ? ourRho : undefined, projGames: projYr >= 2021 ? 17 : 16 }); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a
@@ -2981,7 +3032,7 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${ageCurve && noLookahead && projMode !== "artifact" ? "age-curve " : ""}${oppModel && noLookahead && projMode !== "artifact" ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}`;
+  const mode = `${ageCurve && noLookahead && projMode !== "artifact" ? "age-curve " : ""}${oppModel && noLookahead && projMode !== "artifact" ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}${noLookahead ? (ourInfo === "clean" ? " our-info(clean, legacy)" : ` our-info(sd ${ourSd ?? marketSd}, rho ${ourRho})`) : ""}${botNoiseSequential ? " bot-noise(sequential, legacy)" : ""}${rookiesPlayedOnly ? " rookies(played-only, legacy)" : ""}`;
   console.log(`FORMAT  weeks 1-${btRegWeeks}, ${btPlayoffTeams}-team playoff, seeding ${seeding}, bracket ${btReseed ? "reseeds" : "fixed"}` +
     `  (from the ${btFormat.source} format block${seedingArg || valueOf(rest, "--reg-weeks") || valueOf(rest, "--playoff-teams") || reseedArg ? ", overridden on the command line" : ""})`);
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${btPlayoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(shared ${marketNoiseGiven ? String(marketSd) : "measured band sd"}, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);

@@ -50,7 +50,16 @@ export const PURPOSE = {
   /** The SEASON-level bootstrap draw: which whole player-season this trial gives him. Drawn once per
    *  trial at week 0, so it is keyed like every other draw and two paired runs stay paired. */
   season: 0x8000,
+  /** An auction BOT's bid noise for one (player, seat) -- review 2026-09-24, G3. */
+  botBid: 0x9000,
 } as const;
+
+/** FNV-1a over a player's name: a stable integer key for a keyed draw that has no PlayerIds table. */
+export function nameKey32(name: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < name.length; i++) { h ^= name.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h >>> 0;
+}
 
 /**
  * A uniform in [0,1) keyed by identity. Same arguments always give the same value; different

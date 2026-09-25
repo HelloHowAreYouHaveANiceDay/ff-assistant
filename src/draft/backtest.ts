@@ -118,8 +118,8 @@ function weekScore(roster: { name: string; pos: string; proj: number }[], week: 
 /** FULL-SYSTEM week score for our team: run the REAL lineup optimizer (inseason/lineup.ts) using OUR
  *  per-game projection, on the players who actually PLAYED that week (availability), score by ACTUAL.
  *  This exercises the production lineup code end-to-end (not a synthetic noise proxy). */
-function realWeekScore(roster: { name: string; pos: string; proj: number }[], week: number, weekly: Weekly, lg: SimLeague, perGame: Map<string, number>): number {
-  const players = roster.map((p) => ({ name: p.name, pos: p.pos, proj: perGame.get(p.name) ?? p.proj / 17, available: weekly.get(p.name)?.get(week) != null }));
+function realWeekScore(roster: { name: string; pos: string; proj: number }[], week: number, weekly: Weekly, lg: SimLeague, perGame: Map<string, number>, games = 17): number {
+  const players = roster.map((p) => ({ name: p.name, pos: p.pos, proj: perGame.get(p.name) ?? p.proj / games, available: weekly.get(p.name)?.get(week) != null }));
   const res = optimalLineup(players, lg.slots);
   let total = 0;
   for (const s of res.starters) { const a = weekly.get(s.name)?.get(week); if (a != null) total += a; }
@@ -177,9 +177,27 @@ export interface DraftOptions {
    * snake's flagless arm instead of a flag the banner prints and the model never reads.
    */
   botIdioSd?: number;
+  /** AUCTION: restore the pre-G3 single sequential bot-noise stream (`--bot-noise-sequential`). */
+  sequentialBotNoise?: boolean;
 }
 
-export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams: number = required("playoffTeams"), regWeeks: number = required("regWeeks"), avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false, seeding: SeedingRule = required("seeding"), playoffReseed: boolean = required("playoffReseed"), variancePath?: string, draft: DraftOptions = {}): BacktestResult {
+/**
+ * THE ARBITER'S INFORMATION MODEL (review 2026-09-24, G1 and P2).
+ *
+ * `ourRho` -- how much of the room's shared projection error WE share. Our projection is
+ * truth-proxy x (1 + ourSd * (rho * z_market + sqrt(1 - rho^2) * z_own)), where z_market is the SAME
+ * draw the room's view was built from. Undefined = 0 (independent), which is the pre-G1 formula.
+ *
+ * `projGames` -- the games in the season the projection was TAKEN from (16 before 2021, 17 after).
+ * Every per-game conversion used a literal 17, including on 16-game seasons. It is a pure scale for
+ * lineup choice (every man is divided by the same number), so it moves nothing in the flagless arm;
+ * it matters where a preseason rate is compared against realised per-game points (waivers, churn).
+ */
+export interface InfoModel { ourRho?: number; projGames?: number }
+
+export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValues: Map<string, number>, cfg: V2Config, seed: number, lg: SimLeague = SIM_LEAGUE, marketSd = 0.30, ourSd?: number, ourWeeklySd?: number, botWeeklySd?: number, realLineup = false, ourWaivers = false, drainNom = false, greedyNom = false, playoffTeams: number = required("playoffTeams"), regWeeks: number = required("regWeeks"), avail: Map<string, number> = new Map(), injuryLever = 0, botBook: "vor" | "rank" | "price" = "vor", homogeneous = false, divisions = 0, market: MarketModel = {}, botChurn = false, seeding: SeedingRule = required("seeding"), playoffReseed: boolean = required("playoffReseed"), variancePath?: string, draft: DraftOptions = {}, info: InfoModel = {}): BacktestResult {
+  const G = info.projGames ?? 17;
+  const rho = Math.max(-1, Math.min(1, info.ourRho ?? 0));
   const REG_WEEKS = Array.from({ length: regWeeks }, (_, i) => i + 1); // fantasy regular-season weeks
   const valueLeague = resolveValueLeague(lg);
   // A POSITION WITH NO SLOT NEVER ENTERS THE HARNESS. Identity for ESPN (it starts a K and a DST);
@@ -197,15 +215,24 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   //   default  our own projection times (1 + e), e ~ N(0, marketSd) -- one shared draw
   //   ecr      the real consensus projection times exp(e), e ~ N(0, the MEASURED sd at his rank
   //            band), median-preserving so the market is not biased up or down by its own error
+  const zMarket = new Map<string, number>();
   const projMarket: PointsRow[] = seasonPoints.map((p) => {
     const base = market.proj?.get(p.name) ?? p.points;
+    const z = gauss(rngM);
+    zMarket.set(p.name, z);
     if (!market.proj && !market.sdByName) {
-      return { ...p, points: Math.max(0, p.points * (1 + gauss(rngM) * marketSd)) };
+      return { ...p, points: Math.max(0, p.points * (1 + z * marketSd)) };
     }
     const sd = market.sdByName?.get(p.name) ?? marketSd;
-    return { ...p, points: Math.max(0, base * Math.exp(gauss(rngM) * sd - 0.5 * sd * sd)) };
+    return { ...p, points: Math.max(0, base * Math.exp(z * sd - 0.5 * sd * sd)) };
   });
-  const projUs = new Map(seasonPoints.map((p) => [p.name, Math.max(0, p.points * (1 + gauss(rngU) * us))]));
+  // Draw order is unchanged (one gauss(rngU) per player, as before), so rho = 0 is bit-identical.
+  const rhoC = Math.sqrt(1 - rho * rho);
+  const projUs = new Map(seasonPoints.map((p) => {
+    const zOwn = gauss(rngU);
+    const z = rho === 0 ? zOwn : rho * (zMarket.get(p.name) ?? 0) + rhoC * zOwn;
+    return [p.name, Math.max(0, p.points * (1 + z * us))];
+  }));
   const projMap = new Map(projMarket.map((p) => [p.name, p.points]));
   // OUR values. Optional injury lever: discount by prior-season availability (avail = games/regWeeks),
   // modelling "pay less for injury-prone players". injuryLever=0 => baseline (no discount). Only OUR
@@ -236,6 +263,7 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
     // is the snake's own channel (see DraftOptions) and is undefined for the auction, which keeps the
     // incumbent's flagless arm exactly as it was.
     botIdioSd: market.idioSd ?? draft.botIdioSd,
+    sequentialBotNoise: draft.sequentialBotNoise,
   };
   const draftedTeams = model.runDraft(projMarket, lg, fieldSpec, { values: useValues, cfg, drainNom, greedyNom, slot: draft.ourSlot }, seed);
   const rosters: { name: string; pos: string; proj: number }[][] = draftedTeams.map((team) =>
@@ -245,7 +273,7 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   // In-season LINEUP skill: our team (0) can set each week's lineup by a WEEKLY projection
   // (actual + forecast noise, sd ourWeeklySd) instead of the season average -> starts the right
   // players that week. Bots stay naive (season projection). Isolates the lineup-management edge.
-  const ourPerGame = new Map([...projUs.entries()].map(([n, v]) => [n, v / 17])); // our weekly talent estimate
+  const ourPerGame = new Map([...projUs.entries()].map(([n, v]) => [n, v / G])); // our weekly talent estimate
   const selFor = (t: number, wk: number): Map<string, number> | undefined => {
     const sd = t === 0 ? ourWeeklySd : botWeeklySd;
     if (sd == null) return undefined; // naive: start by season projection
@@ -255,7 +283,7 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   };
   // FULL-SYSTEM: our team (0) uses the REAL lineup optimizer on OUR projection; others use the sel model.
   const wkS = (t: number, wk: number) => (realLineup && t === 0)
-    ? realWeekScore(rosters[t], wk, weekly, lg, ourPerGame)
+    ? realWeekScore(rosters[t], wk, weekly, lg, ourPerGame, G)
     : weekScore(rosters[t], wk, weekly, lg, selFor(t, wk));
 
   // In-season WAIVERS (our team): each week, using ONLY prior-week production (no lookahead), swap our
@@ -279,7 +307,7 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
   // early weeks trust the draft projection, later weeks trust actuals. Stops us dropping a
   // slow-starting stud for a hot-hand free agent who regresses (naive trailing-avg churn LOSES).
   const rosPerGame = (name: string, wk: number): number => {
-    const pre = (projMap.get(name) ?? 0) / 17;
+    const pre = (projMap.get(name) ?? 0) / G;
     const { avg, g } = trailAvg(name, wk);
     if (g === 0) return pre;
     const w = Math.min(1, (wk - 1) / 9); // weight on actuals ramps to 1 by ~week 10
@@ -306,7 +334,7 @@ export function runBacktest(seasonPoints: PointsRow[], weekly: Weekly, _ourValue
       .filter((x) => x.g >= 2).sort((a, b) => b.ros - a.ros)[0];
     if (!fa || !(fa.ros > weakest.ros + 3)) return;      // only a CLEAR rest-of-season upgrade
     rosters[team] = rosters[team].filter((p) => p !== weakest.p)
-      .concat([{ name: fa.n, pos: posOf.get(fa.n)!, proj: projMap.get(fa.n) ?? fa.ros * 17 }]);
+      .concat([{ name: fa.n, pos: posOf.get(fa.n)!, proj: projMap.get(fa.n) ?? fa.ros * G }]);
     freeAgents.splice(freeAgents.indexOf(fa.n), 1);
     freeAgents.push(weakest.p.name);
   };

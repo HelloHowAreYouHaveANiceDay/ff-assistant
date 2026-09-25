@@ -4,8 +4,8 @@
   "formatKey": "fk-3a298dfdeb32",
   "league": "129048",
   "draftType": "snake",
-  "playoffPct": 99.6,
-  "titlePct": 40.6,
+  "playoffPct": 92.1,
+  "titlePct": 21.8,
   "tolerancePp": 3.0,
   "baseFlags": "--full --no-lookahead",
   "seasons": "1999-2025",
@@ -29,5 +29,6 @@
     ],
     "measuredBy": "data/trials/wp11-yahoo-base.tsv (3,900 rows); docs/validation.md 'Snake DraftModel, first run'"
   },
-  "_rePin_2026_09_24": "RE-PINNED 99.2/39.8 -> 99.6/40.6 on 2026-09-24 (owner sign-off): the backtest's age/opportunity multipliers became opt-in (review 2026-09-24 B6) -- each was one fit over every season applied to every replayed season, i.e. look-ahead, and they were on by default for this format too. Measured 99.590% / 40.615% over 3,900 trials; the same command with --age-curve --opportunity reproduces the old pin (99.179% / 39.846%)."
+  "_rePin_2026_09_24": "RE-PINNED 99.2/39.8 -> 99.6/40.6 on 2026-09-24 (owner sign-off): the backtest's age/opportunity multipliers became opt-in (review 2026-09-24 B6) -- each was one fit over every season applied to every replayed season, i.e. look-ahead, and they were on by default for this format too. Measured 99.590% / 40.615% over 3,900 trials; the same command with --age-curve --opportunity reproduces the old pin (99.179% / 39.846%).",
+  "_rePin_2026_09_24_D37": "RE-PINNED 99.6/40.6 -> 92.1/21.8 on 2026-09-24 (owner sign-off, D37): the same information-model change as the incumbent (our view noised at the room's scale, rho 0.5; draft-class rookies). Measured 92.051% / 21.769% over 3,900 trials. The playoff axis is no longer saturated (it was 99.6%), which is what the _saturation note below asked for."
 }

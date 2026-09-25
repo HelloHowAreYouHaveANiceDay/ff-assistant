@@ -1996,3 +1996,39 @@ changed between the two measurements.
 projector (blind `data/fold-artifacts-d16`) vs last-year actuals, 2013-2024 paired: playoffs -0.44pp
 [-2.83, +1.50], titles +2.39pp [-4.22, +8.11] -- indistinguishable. Blind folds exist only for
 2012-2025, so `--projection artifact` cannot cover the golden span until pre-2012 folds are built.
+
+## D37 -- the arbiter stops handing us a noise-free view; bot noise keyed; rookies from the draft class; goldens RE-PINNED (2026-09-24, owner: "do all 3" / "run the attribution arms and re-pin", **APPLIED**)
+
+Review 2026-09-24, G1/G3/G6/P2 (docs/architecture-review-2026-09-24-modeling.md).
+
+- **G1, our information.** Under `--no-lookahead` the arbiter set `ourSd = 0`: our book was last
+  season's actuals EXACTLY, while the room saw the same numbers through a shared N(0, 0.30) error. We
+  were a noise-free observer of the room's own information, which put the baseline at 96% playoffs in
+  a 7-of-16 field and left the gate ~4pp of headroom -- it could mostly only fail a lever. Our view now
+  carries the room's scale (`--our-noise`, else `marketSd`), correlated with the room's own draw at
+  `--our-rho` (default **0.5 -- an assumption, not a measurement**). `--our-info clean` restores it.
+- **G3, keyed bot noise.** Every bot bid drew from ONE sequential stream consumed only for eligible,
+  solvent bots, so once a lever changed one winner every later draw shifted and paired arms lost their
+  common noise. Each (trial seed, player, seat) now has its own stream. `--bot-noise-sequential`.
+- **G6, rookie pool.** Only rookies who appear in the season's own actuals were in the pool
+  (survivorship). The whole draft class is now priced by draft capital, matched to actuals by
+  `player_sk` then name; one who never played scores zero. `--rookies-played-only`.
+- **P2, games per season.** Per-game conversions divide by the projection season's games (16 before
+  2021). A pure scale for lineup choice, so it moves nothing flagless; it matters for waivers/churn.
+
+```
+                               titles     playoffs    (1999-2024, n150, 3750 trials; paired over 25 seasons)
+legacy (all three restored)    37.973%    96.107%     = the D36 pin, byte-for-byte per season
+ALL NEW  -> pinned             22.560%    85.600%     data/golden.json 85.6 / 22.6
+  attribution (all-new minus one), playoffs / titles:
+    our-info      -10.59pp [-12.40, -8.77]  /  -16.72pp [-19.76, -13.76]
+    keyed noise    +0.21pp [ -1.44,  2.03]  /   +0.69pp [ -1.04,  2.64]
+    draft class    -0.32pp [ -1.63,  0.96]  /   -0.32pp [ -1.92,  1.28]
+Yahoo 129048 (1999-2025)       21.769%    92.051%     -> 92.1 / 21.8 (was 99.6 / 40.6)
+```
+
+Two independent runs of all six arms were identical line for line. **Consequence for every older
+ledger row:** its baseline was measured under the old information model, so a delta recorded there
+is not comparable to one measured now -- re-measure a candidate against THIS baseline (checklist item
+2). The rho assumption is the next thing to measure: the gate's headroom and every lever's measured
+effect depend on how much of the consensus's error our real board shares.

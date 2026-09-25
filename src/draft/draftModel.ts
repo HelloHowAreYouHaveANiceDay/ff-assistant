@@ -79,6 +79,8 @@ export interface DraftFieldSpec {
    * decay to turn it into one would be a second, unmeasured model wearing the archive's authority.
    */
   adp?: Map<string, number>;
+  /** AUCTION ONLY: restore the pre-G3 single sequential bot-noise stream (`--bot-noise-sequential`). */
+  sequentialBotNoise?: boolean;
 }
 
 /** OUR side of the table. */
@@ -119,7 +121,7 @@ export const AuctionModel: DraftModel = {
       drainNom: ours.drainNom, greedyNom: ours.greedyNom,
       botBook: field.botBook, homogeneous: field.homogeneous,
       botIdioSd: field.botIdioSd, variancePath: field.variancePath,
-      profiles: field.profiles,
+      profiles: field.profiles, sequentialBotNoise: field.sequentialBotNoise,
     };
     const picks = draftField(pool, ours.values, ours.cfg, seed, league, opts);
     const rosters: DraftedTeam[] = Array.from({ length: league.teams }, () => []);
