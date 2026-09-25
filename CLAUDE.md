@@ -12,13 +12,14 @@ real time. Read it before changing strategy, the sim, or anything that produces 
 0.2370 vs uniform 0.2451). **Title% is reported alongside as CONTEXT, not the gate** -- the sim CANNOT
 predict the single-elim title (title Brier 0.0659 vs uniform 0.0652, P16 FAILED). This is D13
 (`docs/decisions.md`); the arbiter (`scripts/cpcv.mjs`) gates on the playoff column, golden master
-85.6% playoff (`--golden`; re-pinned by D37 2026-09-24 -- was 96.0 from D15), and prints title% as
-secondary (`--golden-title` 22.6%). D36 removed the backtest's look-ahead age/opportunity multipliers; D37 removed
-our noise-free information edge (`--our-info clean` / `--bot-noise-sequential` / `--rookies-played-only` reproduce 96.1/38.0).
+80.2% playoff (`--golden`; re-pinned by D38 2026-09-24 -- D37 85.6, D15 96.0), and prints title% as
+secondary (`--golden-title` 18.9%). D36 removed the backtest's look-ahead age/opportunity multipliers; D37 removed
+our noise-free information edge (`--our-info clean` / `--bot-noise-sequential` / `--rookies-played-only` reproduce 96.1/38.0);
+D38 CALIBRATED that information model (su 0.31, rho 0.80: `node scripts/calibrate-our-info.mjs`).
 
 ```
 npm run ff -- backtest --full --no-lookahead --inflation --seasons 1999-2024 --n 150
-# shipped default: ~85.6% playoffs (PRIMARY gate) / ~22.6% championships (context; random 6.3%) since D37. The two former
+# shipped default: ~80.2% playoffs (PRIMARY gate) / ~18.9% championships (context; random 6.3%) since D38. The two former
 # "edges" -- consensusBlend=1 and benchDiscount=0.35 -- were BOTH DEMOTED (D14/D15): each was title-only and
 # NULL on the playoff gate the sim can actually predict, and neither survives family FDR. Shipped posture is now
 # consensusBlend=0 and benchDiscount=0.25 (still a real discount; 0 collapses depth). `--consensus-blend 1` /
@@ -231,8 +232,8 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   `scripts/yahoo-{analysis,waiver-trade,ros-analysis}.mjs`. Snake-draft value and the per-format gate are
   both CLOSED (2026-09-16): the snake `DraftModel` is `src/draft/draftModel.ts` (WP11, reached by
   `ff backtest --league <id>` when the format's `draftType` is snake), and the gate is a per-format
-  `golden.json` read by `scripts/cpcv.mjs --league <id>` (WP7) -- `data/golden.json` 85.6/22.6 for the
-  incumbent, `data/formats/sc-a845f67652fb/golden.json` 92.1/21.8 for Yahoo 129048 (re-pinned by D37 with the incumbent). CAVEAT, and it is on
+  `golden.json` read by `scripts/cpcv.mjs --league <id>` (WP7) -- `data/golden.json` 80.2/18.9 for the
+  incumbent, `data/formats/sc-a845f67652fb/golden.json` 88.3/17.8 for Yahoo 129048 (re-pinned by D38 with the incumbent). CAVEAT, and it is on
   the file itself: the Yahoo number is a **CANDIDATE GOLDEN** -- an executor-pinned regression tripwire,
   not an owner-signed posture like D13/D14/D15 -- and its playoff axis is nearly saturated (8-of-12
   field), so read it as a downward tripwire and the title column for direction.

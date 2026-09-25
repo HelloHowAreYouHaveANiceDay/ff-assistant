@@ -2480,12 +2480,15 @@ async function cmdBacktest(rest: string[]) {
   // last season's actuals EXACTLY while the room saw the same numbers through a shared N(0, 0.30)
   // error -- a built-in information edge that put the baseline at 96% playoffs and left the gate
   // ~4pp of headroom. Default now: our error is the room's scale (`--our-noise`, else marketSd),
-  // correlated with the room's own draw at `--our-rho` (default 0.5 -- an ASSUMPTION, not a
-  // measurement: we share half the consensus's information). `--our-info clean` restores the old,
-  // noise-free view for A/B.
+  // correlated with the room's own draw at `--our-rho`. Both defaults are CALIBRATED (D38,
+  // scripts/calibrate-our-info.mjs, 2020-2025, the 192 players this league rosters): our blind board
+  // vs the point-in-time consensus vs the realised season gives su = 0.31 [0.28, 0.33] and
+  // rho = 0.80 [0.77, 0.84] at the room's sm = 0.30. `--our-info clean` restores the old, noise-free
+  // view for A/B.
   const ourInfo = (valueOf(rest, "--our-info") ?? "market") as string;
   if (ourInfo !== "market" && ourInfo !== "clean") throw new Error(`--our-info must be market or clean (got ${JSON.stringify(ourInfo)})`);
-  const ourRho = Number(valueOf(rest, "--our-rho") ?? 0.5);
+  const OUR_INFO_SD = 0.31, OUR_INFO_RHO = 0.80;          // D38, calibrated
+  const ourRho = Number(valueOf(rest, "--our-rho") ?? OUR_INFO_RHO);
   if (!(ourRho >= -1 && ourRho <= 1)) throw new Error(`--our-rho must be in [-1, 1] (got ${valueOf(rest, "--our-rho")})`);
   // G3: the pre-2026-09-24 single sequential bot-noise stream, for A/B.
   const botNoiseSequential = rest.includes("--bot-noise-sequential");
@@ -3021,7 +3024,7 @@ async function cmdBacktest(rest: string[]) {
     const priorWk = wk.get(projYr);
     if (injuryLever && priorWk) { let maxG = 1; for (const w of priorWk.values()) maxG = Math.max(maxG, w.size); for (const [nm, w] of priorWk) avail.set(nm, w.size / maxG); }
     let c = 0;
-    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? (ourInfo === "clean" ? 0 : (ourSd ?? marketSd)) : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed, btFmt.model.path("variance"), { model: btModel, ourSlot, adp: adpByYear.get(yr), botIdioSd: btModel.kind === "snake" ? botIdioSd : undefined, sequentialBotNoise: botNoiseSequential }, { ourRho: noLookahead && ourInfo === "market" ? ourRho : undefined, projGames: projYr >= 2021 ? 17 : 16 }); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
+    for (let s = 0; s < nPerSeason; s++) { const r = runBacktest(proj, wk.get(yr)!, new Map(), cfg, s + 1 + yr * 1000, lg, marketSd, noLookahead ? (ourInfo === "clean" ? 0 : (ourSd ?? OUR_INFO_SD)) : ourSd, ourWeeklySd, botWeeklySd, full, waivers, drainNom, greedyNom, btPlayoffTeams, btRegWeeks, avail, injuryLever, botBook, homogeneous, divisions, marketMode === "ecr" ? { proj: marketProjByYear.get(yr), sdByName: marketSdByYear.get(yr), idioSd: botIdioSd } : {}, botChurn, seeding, btReseed, btFmt.model.path("variance"), { model: btModel, ourSlot, adp: adpByYear.get(yr), botIdioSd: btModel.kind === "snake" ? botIdioSd : undefined, sequentialBotNoise: botNoiseSequential }, { ourRho: noLookahead && ourInfo === "market" ? ourRho : undefined, projGames: projYr >= 2021 ? 17 : 16 }); if (r.champ) { champ++; c++; } if (r.madePlayoffs) playoffs++; total++;
       // Per-TRIAL dump. The aggregate rate cannot support the statistics this needs: seeds are
       // COMMON RANDOM NUMBERS across configs (seed = s+1+yr*1000 depends only on season+index), so
       // two configs meet the same market noise and the same bot seats. That makes every trial a
@@ -3032,7 +3035,7 @@ async function cmdBacktest(rest: string[]) {
     }
     perYear.push(`${yr}:${((c / nPerSeason) * 100).toFixed(0)}%`);
   }
-  const mode = `${ageCurve && noLookahead && projMode !== "artifact" ? "age-curve " : ""}${oppModel && noLookahead && projMode !== "artifact" ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}${noLookahead ? (ourInfo === "clean" ? " our-info(clean, legacy)" : ` our-info(sd ${ourSd ?? marketSd}, rho ${ourRho})`) : ""}${botNoiseSequential ? " bot-noise(sequential, legacy)" : ""}${rookiesPlayedOnly ? " rookies(played-only, legacy)" : ""}`;
+  const mode = `${ageCurve && noLookahead && projMode !== "artifact" ? "age-curve " : ""}${oppModel && noLookahead && projMode !== "artifact" ? "opportunity " : ""}${full ? "FULL-SYSTEM(real lineup)" : "draft-only"}${waivers ? "+waivers" : ""}${botChurn ? "+bot-churn" : ""}${drainNom ? "+drain-nom" : ""}${cfg.inflation ? "+inflation" : ""}${cfg.posInflation ? "+pos-inflation" : ""}${cfg.scarcity ? "+scarcity" : ""}${cfg.budgetPressure ? `+budget-pressure(${cfg.maxPressure})` : ""}${cfg.maxAtPos && Object.keys(cfg.maxAtPos).length ? `+max-at-pos(${JSON.stringify(cfg.maxAtPos)})` : ""}${injuryLever ? `+injury-lever(${injuryLever})` : ""}${projMode === "artifact" ? "+PROJECTOR-ARTIFACT" : ""}${marketMode === "ecr" ? "+MARKET-ECR" : ""}${noLookahead ? " no-lookahead(prev-yr proj)" : ""}${noLookahead ? (ourInfo === "clean" ? " our-info(clean, legacy)" : ` our-info(sd ${ourSd ?? OUR_INFO_SD}, rho ${ourRho})`) : ""}${botNoiseSequential ? " bot-noise(sequential, legacy)" : ""}${rookiesPlayedOnly ? " rookies(played-only, legacy)" : ""}`;
   console.log(`FORMAT  weeks 1-${btRegWeeks}, ${btPlayoffTeams}-team playoff, seeding ${seeding}, bracket ${btReseed ? "reseeds" : "fixed"}` +
     `  (from the ${btFormat.source} format block${seedingArg || valueOf(rest, "--reg-weeks") || valueOf(rest, "--playoff-teams") || reseedArg ? ", overridden on the command line" : ""})`);
   console.log(`BACKTEST ${mode}  ${lg.teams}-team $${lg.budget} ${conf.scoring} ${btPlayoffTeams}-team-playoff | reserve=${cfg.starterReserve} maxShare=${cfg.maxShare}  market ${marketMode === "ecr" ? `ECR(shared ${marketNoiseGiven ? String(marketSd) : "measured band sd"}, bot idio ${botIdioSd})` : marketSd}${ourSd != null && !noLookahead ? ` ourSd ${ourSd}` : ""}  book ${botBook}`);

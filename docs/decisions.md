@@ -2032,3 +2032,48 @@ ledger row:** its baseline was measured under the old information model, so a de
 is not comparable to one measured now -- re-measure a candidate against THIS baseline (checklist item
 2). The rho assumption is the next thing to measure: the gate's headroom and every lever's measured
 effect depend on how much of the consensus's error our real board shares.
+
+
+## D38 -- the arbiter's information model is CALIBRATED, not assumed; goldens RE-PINNED (2026-09-24, owner: "yes, run the calibration", **APPLIED**)
+
+D37 gave our no-lookahead book the room's error scale with an ASSUMED correlation of 0.5 to the
+room's own draw. `scripts/calibrate-our-info.mjs` now measures both, on the only span with a
+point-in-time consensus AND a blind board (2020-2025): our board (`boardProjection`, blind
+`data/fold-artifacts-d16`) and the consensus (curve read at the real ECR rank, blind) -- built exactly
+as `ff backtest --market ecr` builds them -- against the realised season, over the 192 players this
+league rosters (top by consensus, prior >= 30 pts). Two moments, both DIFFERENCES between the views so
+the unpredictable part of the outcome cancels:
+
+```
+accuracy gap   mean(eB^2) - mean(eC^2) = su^2 - sm^2      (e = (view - Y) / p)
+disagreement   var((B - C) / p)        = su^2 + sm^2 - 2 rho su sm       sm held at the room's 0.30
+
+pooled 1152 player-seasons:  su = 0.309 [0.279, 0.332]   rho = 0.804 [0.768, 0.841]   (season bootstrap, 90%)
+positive controls:  board := consensus  -> su 0.300, rho 1.000 exactly
+                    board := last year  -> su 0.498, rho 0.435 (a worse, less aligned board reads as one)
+sensitivity:        pool 150 -> 0.321 / 0.852;  pool 250 -> 0.315 / 0.719;  pool 350 -> 0.380 / 0.612;
+                    prior >= 60 -> 0.315 / 0.788
+```
+
+Our board is about as accurate as the consensus (better in 2020-21, worse 2022-25) and shares most of
+its error. Defaults are now `OUR_INFO_SD = 0.31`, `OUR_INFO_RHO = 0.80` (src/ff.ts).
+
+```
+                            titles    playoffs   (1999-2024, n150)
+D37 (0.30 / 0.5)            22.560    85.600     reproduced exactly with --our-noise 0.30 --our-rho 0.5
+D38 calibrated -> pinned    18.933    80.213     data/golden.json 80.2 / 18.9
+  paired D38 - D37: playoffs -5.39pp [-6.35, -4.48] (t -11.3), titles -3.63pp [-5.71, -1.60]
+Yahoo 129048 (1999-2025)    17.846    88.256     -> 88.3 / 17.8
+```
+
+**WHY A HIGHER rho LOWERS THE NUMBER** (explained before re-pinning, charter rule 3). In this model our
+edge is the part of the room's mistake we do NOT share: our view minus the room's carries the room's
+draw with coefficient su*rho - sm -- -0.15 at D37's values, -0.05 calibrated. A board that mostly
+agrees with the consensus cannot arbitrage the consensus's mispricing; the smaller independent error
+(less winner's curse) does not make up for it.
+
+**Caveats.** (1) The room model itself is unchanged and unmeasured in this frame (sm = 0.30 around last
+season's actuals), while the real consensus is MORE accurate than last season's actuals (RMSE/p
+~0.44-0.53 vs 0.50-0.81) -- the calibration matches the two views' relative accuracy and agreement, not
+the room's absolute accuracy. (2) Yahoo is pinned under the INCUMBENT's calibration; its own su/rho are
+unmeasured. (3) Six seasons.

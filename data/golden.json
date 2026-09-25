@@ -2,8 +2,8 @@
   "_what": "THE INCUMBENT FORMAT'S GATE NUMBERS. These are the pinned D15 numbers, written down here rather than left as defaults inside scripts/cpcv.mjs so that a per-format gate reads every format the same way -- `data/formats/<key>/golden.json` for a built format, this file for the incumbent (whose model files live at the data/ root).",
   "scoringKey": "sc-f6143a8dfb13",
   "league": "462233",
-  "playoffPct": 85.6,
-  "titlePct": 22.6,
+  "playoffPct": 80.2,
+  "titlePct": 18.9,
   "tolerancePp": 3.0,
   "baseFlags": "--full --no-lookahead --inflation",
   "seasons": "1999-2024",
@@ -12,5 +12,6 @@
   "_titlePct": "SECONDARY / CONTEXT ONLY, never gated: the sim has NO measured skill on the single-elim title (title Brier 0.0659 vs uniform 0.0652, P16 FAILED). RE-PINNED 38.5 -> 38.0 on 2026-09-24 (owner sign-off): the backtest's age/opportunity multipliers became opt-in (review 2026-09-24 B6) because each was ONE fit over every season applied to 1999-2024 -- look-ahead. Measured 37.973% titles / 96.107% playoffs over 3750 trials, per-season line in docs/architecture-review-2026-09-24-modeling.md section 6; the playoff gate value is unchanged. Previously ledger e625249e full_set_baseline_pct 38.48. The old title-tuned posture (--consensus-blend 1 --bench-discount 0.35) was 97.0 / 42.3.",
   "_tolerancePp": "+/- pp of Monte-Carlo slack on the consistency check, unchanged from cpcv.mjs's --golden-tol default.",
   "_pinnedBy": "docs/decisions.md D13/D14/D15; docs/architecture-review-2026-09-16.md F-9 (WP7).",
-  "_rePin_2026_09_24_D37": "RE-PINNED 96.0/38.0 -> 85.6/22.6 on 2026-09-24 (owner sign-off, D37). Under --no-lookahead the arbiter gave US last season's actuals EXACTLY while the room saw them through a shared N(0, 0.30) error -- a built-in information edge that saturated the gate at 96% playoffs. Our error is now the room's scale, correlated with the room's draw at --our-rho 0.5 (an ASSUMPTION); bot bid noise is keyed per (player, seat); the rookie pool is the whole draft class. Measured 85.600% playoffs / 22.560% titles over 3750 trials; the legacy flags (--our-info clean --bot-noise-sequential --rookies-played-only) reproduce the previous 96.107/37.973 line byte-for-byte. Paired attribution: our-info -10.59pp playoffs [-12.40,-8.77]; keyed noise +0.21 [-1.44,2.03]; draft-class rookies -0.32 [-1.63,0.96]."
+  "_rePin_2026_09_24_D37": "RE-PINNED 96.0/38.0 -> 85.6/22.6 on 2026-09-24 (owner sign-off, D37). Under --no-lookahead the arbiter gave US last season's actuals EXACTLY while the room saw them through a shared N(0, 0.30) error -- a built-in information edge that saturated the gate at 96% playoffs. Our error is now the room's scale, correlated with the room's draw at --our-rho 0.5 (an ASSUMPTION); bot bid noise is keyed per (player, seat); the rookie pool is the whole draft class. Measured 85.600% playoffs / 22.560% titles over 3750 trials; the legacy flags (--our-info clean --bot-noise-sequential --rookies-played-only) reproduce the previous 96.107/37.973 line byte-for-byte. Paired attribution: our-info -10.59pp playoffs [-12.40,-8.77]; keyed noise +0.21 [-1.44,2.03]; draft-class rookies -0.32 [-1.63,0.96].",
+  "_rePin_2026_09_24_D38": "RE-PINNED on 2026-09-24 by D38 (owner: \"yes, run the calibration\"): the information model's su/rho are now CALIBRATED (scripts/calibrate-our-info.mjs: our blind board vs the point-in-time consensus vs realised seasons, 2020-2025, the 192 players this league rosters -> su 0.31 [0.28,0.33], rho 0.80 [0.77,0.84]) instead of D37's assumed 0.30/0.5. Measured 80.213% playoffs / 18.933% titles over 3750 trials (was 85.6/22.6 under D37); paired vs D37: playoffs -5.39pp [-6.35,-4.48], titles -3.63pp [-5.71,-1.60]."
 }
