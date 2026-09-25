@@ -28,7 +28,7 @@ import { simulateSeasons, LEVEL_PRIOR_WEEKS, type SeasonTeamInput, type SeasonOd
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
 import { slotFilter } from "../db/db.js";
-import { loadRosBlendFor, rosPerGame, loadRosGap, rosGapAdjust, loadRosUsage, rosUsageAdjust } from "./rosBlend.js";
+import { loadRosBlendFor, rosKFor, rosPerGame, loadRosGap, rosGapAdjust, loadRosUsage, rosUsageAdjust } from "./rosBlend.js";
 import { dataPath } from "../data/paths.js";
 import { loadEligibilityMap } from "../data/eligibility.js";
 
@@ -402,8 +402,9 @@ export async function loadSimContext(opts: {
   const restOfSeason = (p: { name: string; pos: string; proj: number }): { ros: number; adj: number } | null => {
     const key = `${nameKey(p.name)}|${p.pos}`;
     const td = rateByName.get(key);
-    if (!td || td.k <= 0 || rosBlend.K === Infinity) return null;
-    const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosBlend.K);
+    const Kp = rosKFor(rosBlend, p.pos);          // DST carries its own fitted weight when present
+    if (!td || td.k <= 0 || Kp === Infinity) return null;
+    const ros = rosPerGame(p.proj / 17, td.k, td.pts, Kp);
     if (ros == null) return null;
     let adj = 0;
     if (rosUsage) {
@@ -604,7 +605,8 @@ export async function loadSimContext(opts: {
     : undefined;
   if (playedWeeks > 0) {
     console.warn(`season so far: ${playedWeeks} settled week(s) seed the standings (${seedSource.join("; ")}); ` +
-      `rest-of-season lines blend K=${rosBlend.K === Infinity ? "Infinity (line only)" : rosBlend.K} (${rosSource}) on ${rosApplied} rostered men with games played` +
+      `rest-of-season lines blend K=${rosBlend.K === Infinity ? "Infinity (line only)" : rosBlend.K}` +
+      `${rosBlend.byPos && Object.keys(rosBlend.byPos).length ? ` (${Object.entries(rosBlend.byPos).map(([p, k]) => `${p} ${k}`).join(", ")})` : ""} (${rosSource}) on ${rosApplied} rostered men with games played` +
       ` and ${rosFreeApplied} free agents` +
       (rosUsage ? `; usage correction (D41) moved ${rosGapApplied} rostered rates` : rosGap ? `; ros-gap correction on ${rosGapApplied}` : "; no usage correction"));
   }

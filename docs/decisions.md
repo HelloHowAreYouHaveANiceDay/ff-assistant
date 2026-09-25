@@ -2309,3 +2309,25 @@ model that later option, so carry-two rows at K/DST are overstated.
 and this week's availability cannot register. That secure window was never replay-validated (see D42).
 
 Tests: test/waiver-exp-gaps.test.ts, each assertion fault-injected (fix removed -> fails).
+
+### D42 amendment 2 -- the waiver window is the CALENDAR, not the regime (2026-09-25, owner: "make that change", **APPLIED**)
+
+Waivers rank on expected lineup points over the rest of the REGULAR SEASON whatever the playoff regime,
+and over the remaining playoff weeks only once the regular season is over. The regime-driven window (playoff
+weeks once P(playoffs) >= 70%) was never replay-validated, and a 0.7pp move -- inside a 4pp floor -- flipped
+league 462233 onto it in week 3, where every claim read ~0 and this week's availability could not register.
+test/copilot-objective.test.ts pins it (fault-injected: restoring the regime switch fails it).
+
+**DST rest-of-season weight (CANDIDATE, awaiting owner sign-off -- `data/ros-blend.json` NOT changed).** The
+pooled blend K=6 was fitted on QB/RB/WR/TE only (`fit-ros-blend.mjs`) and borrowed by K and DST. Fitted per
+position (`--pos`, 2012-2025, leave-one-season-out):
+
+| pos | triples | RMSE @K=6 | line only | best K (held out) | RMSE @best |
+|---|---|---|---|---|---|
+| DST | 5,984 | 2.728 | 2.726 | 20 (14/14 folds) | 2.627 |
+| K   | 5,989 | 2.698 | 3.042 | 8 (6-8 per fold) | 2.698 |
+
+For DST the borrowed K is WORSE than ignoring the season; kickers are already at their optimum. Code now reads
+an optional `byPos` (`rosKFor`, simContext AND season-calibration), absent = byte-identical. Live with
+`byPos: {DST: 20}`: MIN D/ST 7.84 -> 6.97, LV D/ST's two-week hot start 7.71 -> 6.26, and LV D/ST leaves the
+claim list. Nothing else on our roster moves (checked on identical store state).

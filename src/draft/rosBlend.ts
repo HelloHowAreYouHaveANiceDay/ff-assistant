@@ -30,6 +30,14 @@ export const ROS_BLEND_FILE = "ros-blend.json";
 export interface RosBlend {
   /** Prior weight in games. Infinity = line only. */
   K: number;
+  /**
+   * PER-POSITION PRIOR WEIGHTS where a position was fitted on its own (2026-09-25). `K` was fitted on
+   * QB/RB/WR/TE only and borrowed by K and DST; for DST it is WORSE than ignoring the season (held-out
+   * RMSE 2.728 at K=6 vs 2.726 line-only) -- two weeks of a defence are mostly matchup noise. DST fits
+   * K=20 in all 14 leave-one-season-out folds (2.627). Kickers fit ~6-8, so they keep `K`.
+   * `scripts/fit-ros-blend.mjs --pos DST`. Absent = every position uses `K`, byte-identical to before.
+   */
+  byPos?: Record<string, number>;
   fittedOn?: string;
   fittedAt?: string;
   /** RMSE of rest-of-season per-game points by K, from the fit, for the record. */
@@ -193,5 +201,14 @@ export function loadRosBlend(path?: string): { blend: RosBlend; source: "fitted"
   const j = JSON.parse(readFileSync(p, "utf8")) as Partial<RosBlend>;
   const K = j.K == null ? Infinity : (typeof j.K === "string" && j.K === "Infinity" ? Infinity : Number(j.K));
   if (!(K >= 0)) throw new Error(`${p}: K must be a non-negative number or "Infinity", got ${JSON.stringify(j.K)}`);
+  for (const [pos, v] of Object.entries(j.byPos ?? {})) {
+    if (!(Number(v) >= 0)) throw new Error(`${p}: byPos.${pos} must be a non-negative number, got ${JSON.stringify(v)}`);
+  }
   return { blend: { ...j, K }, source: "fitted" };
 }
+
+/** The prior weight for one position: its own fit when it has one, else the pooled `K`. */
+export const rosKFor = (blend: RosBlend, pos: string): number => {
+  const v = blend.byPos?.[pos];
+  return v != null && Number.isFinite(Number(v)) ? Number(v) : blend.K;
+};

@@ -39,6 +39,10 @@ const [LO, HI] = val("--seasons", "2012-2025").split("-").map(Number);
 const MIN_LINE = Number(val("--min-line", "3"));
 const MIN_REMAINING = Number(val("--min-remaining", "3"));
 const FRAME = val("--frame", "scheduled");
+// --pos: which positions the fit pools. Default the four skill positions -- the population K=6 was
+// fitted on. K and DST are fitted SEPARATELY (2026-09-25): two weeks of a defence are mostly matchup
+// noise, and borrowing the skill positions' K over-reacts to a hot start.
+const POS = val("--pos", "QB,RB,WR,TE").split(",").map((x) => x.trim().toUpperCase()).filter((x) => /^(QB|RB|WR|TE|K|DST)$/.test(x));
 const paths = fitDbPaths("ros-blend", "data/ff.db", "data/ros-blend.json", argv);
 const OUT = val("--out", paths.out);
 if (FRAME !== "scheduled" && FRAME !== "played") throw new Error(`--frame must be scheduled or played, got ${FRAME}`);
@@ -53,7 +57,7 @@ for (let season = LO; season <= HI; season++) {
     `SELECT m.feat_key, m.week, m.pts, m.is_bye, m.season_line_pg, w.td_games, w.td_pts
        FROM feat_player_week_model m
        JOIN feat_player_week w ON w.season = m.season AND w.week = m.week AND w.feat_key = m.feat_key
-      WHERE m.season = ? AND m.in_population = 1 AND m.pos IN ('QB','RB','WR','TE')
+      WHERE m.season = ? AND m.in_population = 1 AND m.pos IN (${POS.map((x) => `'${x}'`).join(",")})
       ORDER BY m.feat_key, m.week`,
   ).all(season);
   const byKey = new Map();
@@ -126,6 +130,7 @@ for (const k of [1, 2, 3, 4, 6, 8, 12]) {
 if (FRAME === "scheduled") {
   const out = {
     K: best.K === Infinity ? "Infinity" : best.K,
+    pos: POS,
     frame: FRAME, fittedOn: `${LO}-${HI}`, fittedAt: new Date().toISOString().slice(0, 10),
     rows: rows.length, minLine: MIN_LINE, minRemaining: MIN_REMAINING,
     rmseByK: Object.fromEntries(Object.entries(pooled).map(([k, v]) => [k, Number(v.toFixed(5))])),

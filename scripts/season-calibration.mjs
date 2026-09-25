@@ -49,7 +49,7 @@ import { loadArtifact } from "../src/model/projector.ts";
 import { boardProjection } from "../src/model/features.ts";
 import { nameKey, dstAliasKey } from "../src/draft/values.ts";
 import { playoffFieldFor } from "../src/features/picks.ts";
-import { rosPerGame, loadRosBlend, loadRosGap, rosGapAdjust, loadRosUsage, rosUsageAdjust } from "../src/draft/rosBlend.ts";
+import { rosPerGame, rosKFor, loadRosBlend, loadRosGap, rosGapAdjust, loadRosUsage, rosUsageAdjust } from "../src/draft/rosBlend.ts";
 import { loadConsensusPct, blendConsensus } from "../src/draft/consensusBlend.ts";
 import { resolveLeagueContext, requireLeagueId } from "../src/data/leagueContext.ts";
 import { loadInjuryHorizonArtifact, horizonFor } from "../src/inseason/injuryHorizon.ts";
@@ -432,6 +432,7 @@ function buildSeason(season, atWeek = null) {
     played = { weeks: playedWeeks, wins, pts };
     const { blend } = loadRosBlend();
     rosK = blend.K;
+    const rosKOf = (pos) => rosKFor(blend, pos);   // DST carries its own fitted weight when present
     if (rosK !== Infinity) {
       const rate = new Map();
       for (const r of db.prepare("SELECT player_sk, pts, is_bye FROM feat_player_week WHERE season = ? AND week <= ? AND player_sk IS NOT NULL").all(season, playedWeeks)) {
@@ -493,7 +494,7 @@ function buildSeason(season, atWeek = null) {
         const sk = skOf.get(p.name);
         const td = sk ? rate.get(sk) : null;
         if (!td || td.k <= 0) continue;
-        const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosK);
+        const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosKOf(p.pos));
         if (ros == null) continue;
         const u = sk ? usage.get(sk) : null;
         const adj = gapModel
@@ -510,7 +511,7 @@ function buildSeason(season, atWeek = null) {
       rateFor = (sk, line, pos) => {
         const td = sk != null ? rate.get(String(sk)) : null;
         if (!td || td.k <= 0) return { plain: line, usage: line, k: 0 };
-        const ros = rosPerGame(line, td.k, td.pts, rosK) ?? line;
+        const ros = rosPerGame(line, td.k, td.pts, rosKOf(pos)) ?? line;
         const uu = usageAt.get(String(sk));
         const adjU = usageModel
           ? rosUsageAdjust({ pos, line, k: td.k, snap: uu?.snap ?? null, ts: uu?.ts ?? null, trend: uu?.trend ?? null }, usageModel)

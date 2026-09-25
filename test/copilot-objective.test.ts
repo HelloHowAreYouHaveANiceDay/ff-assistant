@@ -75,7 +75,7 @@ test("seasonOdds exposes the regime and the threshold, and the two fixtures real
   assert.equal(weak.assumptions.objective.regime, "insecure", "the objective is not travelling in the assumptions block");
 });
 
-test("D42: every regime RANKS ON EXPECTED LINEUP POINTS, and the regime moves the WINDOW those points are summed over", () => {
+test("D42: every regime RANKS ON EXPECTED LINEUP POINTS, and the WINDOW is the calendar, not the regime", () => {
   // Since D42 (2026-09-25) the ranking is the expected rest-of-season STARTING-LINEUP points a claim
   // adds -- the objective the waiver decision replay admitted -- not the simulated delta. The regime
   // still switches, but what it switches is the window: the rest of the regular season while the seed
@@ -88,13 +88,28 @@ test("D42: every regime RANKS ON EXPECTED LINEUP POINTS, and the regime moves th
     const g = r.targets.map((t) => t.expGainPts);
     for (let i = 1; i < g.length; i++) assert.ok(g[i - 1] >= g[i], `not ranked on expected lineup points: ${g.join(", ")}`);
   }
-  // THE SWITCH, ISOLATED -- same roster, only the regime differs. Bye Cover fills our one-deep TE
-  // slot, whose starter is off in week 6: that week is inside the regular-season window and outside
-  // the playoff window, so the two regimes MUST price him differently.
+  // SAME ROSTER, ONLY THE REGIME DIFFERS (2026-09-25, owner): the window no longer follows the
+  // regime, because P(playoffs) crossing 70% on noise flipped a live league onto the unvalidated
+  // playoff-weeks window, where every claim read ~0. Bye Cover covers our one-deep TE's week-6 bye --
+  // inside the regular season -- so he must be priced IDENTICALLY, and positively, in both regimes.
   const sec = SECURE.targets.find((t) => t.add === "Bye Cover");
   const ins = FORCED_INSECURE.targets.find((t) => t.add === "Bye Cover");
   assert.ok(sec && ins, "Bye Cover was not scored in one of the regimes");
-  assert.notEqual(sec!.expGainPts, ins!.expGainPts, "the regime did not move the expected-points window -- the switch is not wired");
+  assert.equal(sec!.expGainPts, ins!.expGainPts, "the regime moved the expected-points window");
+  assert.ok(sec!.expGainPts > 0, "the bye week is not inside the window");
+  assert.match(SECURE.objective.primary, /rest of regular season/);
+});
+
+test("D42: once the regular season is OVER the window is the remaining playoff weeks", () => {
+  // The calendar half of the rule: past the last regular-season week, only playoff weeks remain. A
+  // week-6 bye is then in the past and Bye Cover is worth nothing for it.
+  const ctx = ctxWith(1);
+  ctx.played = { ...(ctx.played ?? {}), weeks: ctx.weeks.length, nextWeek: ctx.weeks.length + 1 } as typeof ctx.played;
+  const r = waiverTargets(ctx, { ...WAIVER, adds: 2 });
+  assert.match(r.objective.primary, /playoff weeks/);
+  const bc = r.targets.find((t) => t.add === "Bye Cover");
+  assert.ok(bc, "Bye Cover was not scored past the regular season");
+  assert.ok(bc!.expGainPts < (INSECURE.targets.find((t) => t.add === "Bye Cover")?.expGainPts ?? 0), "the past bye is still being credited");
 });
 
 test("SECURE: ranking on P(playoffs) would be a coin toss, which is why the switch exists", () => {

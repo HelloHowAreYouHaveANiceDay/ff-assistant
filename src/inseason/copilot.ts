@@ -1789,11 +1789,14 @@ export function waiverTargets(
   type ExpPlayer = { name: string; pos: string; proj: number; rosPerGame?: number; bye?: number | null; eligible?: string[]; team?: string; lockedNow?: boolean };
   const lockedTeams = o.locked ?? ctx.week.locked;
   const isLocked = (p: { team?: string }): boolean => !!p.team && lockedTeams.has(String(p.team).toUpperCase());
-  // THE WINDOW FOLLOWS THE REGIME for the RANKING (set below, once the objective is known): the
-  // rest of the regular season while the seed is in doubt -- the form the replay validated -- and the
-  // league's playoff weeks once it is secure, which is the switch every other verb here already makes.
-  // The SHORTLIST always uses the regular-season window.
-  let expWin: [number, number] = [firstWk, lastWk];
+  // THE WINDOW IS THE CALENDAR, NOT THE REGIME (owner, 2026-09-25): the rest of the regular season --
+  // the only form the waiver replay validated -- and the league's remaining playoff weeks once the
+  // regular season is over. It used to follow the playoff-probability regime, switching to playoff
+  // weeks only when P(playoffs) crossed 70%; that estimate is noisy (a 0.7pp move flipped league
+  // 462233 across the line in week 3, inside a 4pp floor), and on the far side every claim read ~0
+  // and this week's availability could not register at all.
+  const nPoWks = ctx.format?.playoffWeeks?.length ?? PLAYOFF_WEEKS;
+  const expWin: [number, number] = firstWk <= lastWk ? [firstWk, lastWk] : [firstWk, lastWk + nPoWks];
   const expPts = (roster: ExpPlayer[], win: [number, number] = expWin): number => {
     let tot = 0;
     for (let w = win[0]; w <= win[1]; w++) {
@@ -1854,10 +1857,6 @@ export function waiverTargets(
   const baseTitle = mean(baseBySeed.map((b) => b.titlePct));
   const basePoPts = mean(baseBySeed.map((b) => b.poPts));
   const objective = objectiveFor(basePlayoff, o.secureThresholdPct);
-  if (objective.regime === "secure") {
-    const nPo = ctx.format?.playoffWeeks?.length ?? PLAYOFF_WEEKS;
-    expWin = [lastWk + 1, lastWk + nPo];
-  }
   const mine = ctx.teams[ctx.meIdx].roster;
   const refused: WaiverRefusal[] = [];
   const targets: WaiverTarget[] = [];
@@ -1963,8 +1962,8 @@ export function waiverTargets(
   // "ranked on playoffs" beside a list ordered by expected lineup points.
   const waiverObjective: Objective = {
     ...objective,
-    primary: objective.regime === "secure" ? "expected lineup points (playoff weeks)" : "expected lineup points (rest of regular season)",
-    note: `ranked on the EXPECTED starting-lineup points a claim adds over ${objective.regime === "secure" ? "the league playoff weeks (the seed is secure)" : "the rest of the regular season"} ` +
+    primary: firstWk > lastWk ? "expected lineup points (playoff weeks)" : "expected lineup points (rest of regular season)",
+    note: `ranked on the EXPECTED starting-lineup points a claim adds over ${firstWk > lastWk ? "the remaining league playoff weeks" : "the rest of the regular season (whatever the playoff regime -- the only window the replay validated)"} ` +
       `(D42, admitted by the waiver decision replay); recommended at >= ${expMin}. ${objective.note}`,
   };
   return {
