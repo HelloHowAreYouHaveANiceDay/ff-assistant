@@ -21,6 +21,8 @@
 //   STREAM     start the best of ours + claimable free agents by projection (rate + matchup).
 //   STREAM2    the SECOND-best claimable free agent (a stand-in for losing the first to a rival).
 //   RATE       same as STREAM but projection = rate only (no matchup) -- isolates the matchup term.
+//   IMPLIED    the matchup ALONE: start whichever of ours + the best claimable has the highest own
+//              implied total (K) / faces the lowest opponent implied total (DST). No rate at all.
 //   HINDSIGHT  the best realised score among ours + claimable (positive control; not achievable).
 // Reported by season (the unit), split into weeks our man is on BYE and weeks he is not -- the bye
 // weeks are where any streamer wins; the matchup question is the NON-bye weeks.
@@ -105,11 +107,24 @@ for (let season = LO; season <= HI; season++) {
         const rate = rateAt(season, sk, pos, w);
         if (rate == null) return null;
         const x = xOf(r);
-        return { sk, bye: !!r.is_bye, pts: r.is_bye ? 0 : (r.pts ?? 0), rate, proj: r.is_bye ? -1 : rate + (x == null ? 0 : f.b * (x - f.xbar)), projRate: r.is_bye ? -1 : rate };
+        // impl: the MATCHUP ALONE, higher = better (own implied for K, minus the opponent's for DST).
+        const impl = r.is_bye || x == null ? -1e9 : (pos === "K" ? x : -x);
+        return { sk, bye: !!r.is_bye, pts: r.is_bye ? 0 : (r.pts ?? 0), rate, impl, proj: r.is_bye ? -1 : rate + (x == null ? 0 : f.b * (x - f.xbar)), projRate: r.is_bye ? -1 : rate };
       };
-      const claim = (poolAt.get(`${season}|${w}|${pos}`) ?? []).filter((sk) => inPool.has(`${season}|${w - 1}|${sk}`)).map(info).filter(Boolean);
+      // ACTIVE ONLY (2026-09-25): a free agent counts only if he PLAYED in his team's most recent game
+      // before w -- knowable at the time. 40% of pooled kicker-weeks are men who did not play (backups,
+      // cut or inactive kickers still carrying a team's label); a rule keyed on the TEAM's implied total
+      // picked them 54% of the time on high-scoring teams and scored zeros (the first IMPLIED run, -2.91).
+      const activeBefore = (sk) => {
+        const wkMap = bySk.get(`${season}|${sk}`);
+        if (!wkMap) return false;
+        const prior = [...wkMap.entries()].filter(([wk, r]) => wk < w && !r.is_bye).sort((a, b) => b[0] - a[0])[0];
+        return !!prior && prior[1].pts != null;
+      };
+      const claim = (poolAt.get(`${season}|${w}|${pos}`) ?? []).filter((sk) => inPool.has(`${season}|${w - 1}|${sk}`) && activeBefore(sk)).map(info).filter(Boolean);
       const byProj = [...claim].sort((a, b) => b.proj - a.proj);
       const byRate = [...claim].sort((a, b) => b.projRate - a.projRate);
+      const byImpl = [...claim].sort((a, b) => b.impl - a.impl);
       for (const t of teams) {
         const mine = (ours.get(`${season}|${w}|${t}|${pos}`) ?? []).map(info).filter(Boolean);
         if (!mine.length) continue;
@@ -119,8 +134,9 @@ for (let season = LO; season <= HI; season++) {
         const stream = pick([...mine, ...byProj.slice(0, 1)], "proj");
         const stream2 = pick([...mine, ...byProj.slice(1, 2)], "proj");
         const rate = pick([...mine, ...byRate.slice(0, 1)], "projRate");
+        const impl = pick([...mine, ...byImpl.slice(0, 1)], "impl");
         const hind = pick([...mine, ...claim], "pts");
-        for (const [arm, p] of [["STREAM", stream], ["STREAM2", stream2], ["RATE", rate], ["HINDSIGHT", hind]]) {
+        for (const [arm, p] of [["STREAM", stream], ["STREAM2", stream2], ["RATE", rate], ["IMPLIED", impl], ["HINDSIGHT", hind]]) {
           out.push({ season, pos, bye, arm, gain: (p?.pts ?? 0) - hold.pts, moved: p && p.sk !== hold.sk });
         }
       }
@@ -141,7 +157,7 @@ for (const pos of POS) {
     const sub = out.filter((r) => r.pos === pos && r.bye === bye);
     const n = sub.filter((r) => r.arm === "STREAM").length;
     console.log(`\n  ${pos} -- ${bye ? "OUR MAN ON BYE" : "our man playing"} (${n} team-weeks)`);
-    for (const arm of ["STREAM", "STREAM2", "RATE", "HINDSIGHT"]) {
+    for (const arm of ["STREAM", "STREAM2", "RATE", "IMPLIED", "HINDSIGHT"]) {
       const a = sub.filter((r) => r.arm === arm);
       const per = [...new Set(a.map((r) => r.season))].sort().map((y) => mean(a.filter((r) => r.season === y).map((r) => r.gain)));
       console.log(`    ${arm.padEnd(10)} moved ${String(a.filter((r) => r.moved).length).padStart(4)}/${a.length}   ${verdict(per)}`);

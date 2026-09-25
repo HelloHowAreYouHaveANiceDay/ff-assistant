@@ -8147,3 +8147,23 @@ of the year) -- this room moves DSTs on matchups. The same kicker: 54% vs 44% (1
 Correction to the streaming replay's reading: for DST the null IS the room pricing the matchups (the good
 ones are gone). For K it is NOT competition -- kicker matchups are left on the wire -- it is that the kicker
 matchup signal is weak (+0.06 pts per point of own implied total, ~0.6 pts across a 10-point spread).
+
+### K / DST streaming replay -- amendment: ACTIVE free agents only, and the IMPLIED-total rule (2026-09-25)
+
+A new arm, IMPLIED, streams on the matchup alone (the highest own implied total for K; the lowest opponent
+implied total for DST). Its first run read **-2.91 pts/wk WORSE (0/8)** for kickers -- a data artifact: 40%
+of pooled kicker-weeks are men who did not play (backups, cut or inactive kickers still carrying a team
+label), and a rule keyed on the TEAM's total picked them 54% of the time on high-scoring teams. Every arm now
+requires a free agent to have PLAYED in his team's most recent game before the week (knowable at the time).
+Re-run, kickers (1,652 team-weeks, ours playing):
+
+| arm | before (unfiltered pool) | after (active only) |
+|---|---|---|
+| STREAM (rate + matchup) | -0.30 NULL | -0.21 NULL (2/8) |
+| RATE | -0.29 NULL | -0.17 NULL |
+| IMPLIED (highest team implied total) | -2.91 WORSE (artifact) | **-0.22 NULL (4/8)** |
+| HINDSIGHT | +8.00 | +7.86 BETTER |
+
+DST is unchanged (every defence plays): IMPLIED -0.12 NULL (3/8). Streaming the kicker on the team projected
+to score the most has no edge here -- the week's team total moves a kicker ~0.06 pts per point, far inside
+his 4.6-point weekly spread. Bye weeks remain the one reliable stream (K +7.9 to +9.9, DST +5.5 to +7.2).
