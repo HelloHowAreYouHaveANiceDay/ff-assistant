@@ -7957,3 +7957,42 @@ comparisons is the selection trap (checklist item 5). NOT ADDED.
 
 Also found: the live 2026 `raw_pbp_player_week` stops at week 1 (the actuals routine refreshes snap
 counts, not play-by-play), so any pbp feature would serve dark this season until that ingest is wired.
+
+
+## THE WAIVER DECISION REPLAY: the copilot's claim pricing has no measurable skill (2026-09-25)
+
+The first backtest of the copilot's waiver RECOMMENDATION as a decision. Every earlier waiver harness
+scored a different pricing path; this one replays the season-simulator claim pricing itself.
+`season-calibration.mjs --waiver-backtest` rebuilds each historical checkpoint week with the gate's own
+`buildSeason` (real rosters, blind d16 projections, schedule, settled standings), prices every claim
+from the real week-(W-1) free-agent pool, for EVERY team as "us", and scores on what happened: each
+week the lineup is picked by the point-in-time rate among men not on bye or ruled out, and scored on
+ACTUAL points; opponents keep their actual started points (`scripts/lib/waiver-replay.mjs`,
+`scripts/waiver-decision-report.mjs`). 2018-2025, weeks 4/7/10, 342 decisions, 200 trials x 3 seeds.
+
+```
+arm (vs STAND, per decision)   moved   realised pts          seasons up   playoff flips/100
+SIM      (copilot, D40+D41)    195     +0.64  floor 5.08     3/8  NULL     -1.12  NULL
+SIM_OLD  (before 2026-09-25)   217     -3.50  floor 4.55     3/8  NULL     -1.45  NULL
+RATE     (best rate >= +1/g)   335     +0.80  floor 4.85     6/8  NULL     -0.22  NULL
+ANTI     (negative control)    342    -65.22  floor 12.08    0/8  WORSE    -9.97  WORSE
+ORACLE   (hindsight ceiling)   303    +23.48  floor 6.87     8/8  BETTER   +3.24  BETTER
+head-to-head: SIM - SIM_OLD +4.13 (floor 8.53, 5/8) NULL;  SIM - RATE -0.16 NULL
+SIM captures 3% of the hindsight ceiling
+```
+
+The controls behave (ANTI -65, ORACLE +23.5, both 8/8 one-signed), so the harness sees a move's value.
+The copilot's claim pricing does NOT: it is indistinguishable from standing pat and from the simple
+best-rate rule. Today's fixes (D40 coupling, D41 rates and free-agent pricing) move it the right way
+(-3.5 -> +0.6 per decision) but not measurably. The whole prize is small -- even hindsight gains about
+23 points over the rest of a season, ~2 a week -- and the per-claim playoff-probability deltas are
+dominated by simulation noise at this stake. Consistent with the earlier waiver-harness finding that
+no model arm had skill.
+
+A first ANTI arm -- the simulator's WORST candidate move -- GAINED +11.8 in the 2022 wk7 probe and was
+replaced: every candidate only swaps a low bench body, so it is not a control. The ANTI above drops our
+best man for the worst free agent at his position.
+
+Leakage, stated: projections are blind (d16 folds); the D41 usage correction is blind via
+`data/fold-artifacts-ros-usage/` (new, `ros-usage-screen.mjs --write-folds`); the handcuff ratios
+(LOO spread RB 1.635-1.678) and the blend K are in sample, a small flattering of SIM.

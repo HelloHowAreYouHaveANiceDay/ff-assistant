@@ -407,6 +407,10 @@ function buildSeason(season, atWeek = null) {
   // a missed game a zero). Both are built here and applied per ARM in the run loop, so arms A, B and
   // C differ in exactly one thing each.
   let played = null;
+  // THE SAME RATE RULE FOR ANYONE, by player_sk and preseason line (for free agents in the waiver
+  // replay -- the rostered maps below are this closure applied to rostered men). Returns the plain
+  // D18 blend and the D41 usage-corrected rate; a man with no played week gets his line.
+  let rateFor = (_sk, line) => ({ plain: line, usage: line, k: 0 });
   const rosOf = new Map();
   const rosOfGap = new Map();   // the same blend PLUS the snap/target correction; selected at sim time
   const rosOfUsage = new Map(); // the same blend PLUS the D41 usage correction; selected at sim time
@@ -460,7 +464,12 @@ function buildSeason(season, atWeek = null) {
       // the SAME definitions as scripts/ros-usage-screen.mjs and src/draft/simContext.ts: at the
       // checkpoint week playedWeeks + 1, snap = prior_snap_share, ts = td_ts, trend = snap minus the
       // mean of his non-bye prior_snap_share values before the checkpoint.
-      const usageModel = loadRosUsage();
+      // BLIND TO THIS SEASON when a leave-season-out fold exists (scripts/ros-usage-screen.mjs
+      // --write-folds). The served data/ros-usage.json has seen every season, so scoring a season with
+      // it is in sample for the correction -- the D41 season sweep of 2026-09-25 was, and this is its
+      // fix. `--usage-in-sample` reproduces that for comparison.
+      const usageFold = `${val("--usage-fold-dir", "data/fold-artifacts-ros-usage")}/ros-usage-${season}.json`;
+      const usageModel = !argv.includes("--usage-in-sample") && existsSync(usageFold) ? loadRosUsage(usageFold) : loadRosUsage();
       const usageAt = new Map();
       if (usageModel) {
         const cp = playedWeeks + 1;
@@ -498,6 +507,16 @@ function buildSeason(season, atWeek = null) {
           : 0;
         rosOfUsage.set(p.name, Math.max(0, ros + adjU));
       }
+      rateFor = (sk, line, pos) => {
+        const td = sk != null ? rate.get(String(sk)) : null;
+        if (!td || td.k <= 0) return { plain: line, usage: line, k: 0 };
+        const ros = rosPerGame(line, td.k, td.pts, rosK) ?? line;
+        const uu = usageAt.get(String(sk));
+        const adjU = usageModel
+          ? rosUsageAdjust({ pos, line, k: td.k, snap: uu?.snap ?? null, ts: uu?.ts ?? null, trend: uu?.trend ?? null }, usageModel)
+          : 0;
+        return { plain: ros, usage: Math.max(0, ros + adjU), k: td.k };
+      };
     }
   }
 
@@ -552,7 +571,9 @@ function buildSeason(season, atWeek = null) {
   // September as-of, so it carries no curves and the knob is inert there -- deliberately.
   const knownInjury = atWeek == null ? null : buildKnownInjury(season, atWeek, skOf);
 
-  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosOfGap, rosOfUsage, rosK, knownInjury };
+  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosOfGap, rosOfUsage, rosK, knownInjury,
+    // for the waiver replay (--waiver-backtest): price and place ANY player the same way
+    lookup, nflTeam, bye, skOf, rostered, rateFor };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -638,6 +659,50 @@ const SWEEP_DEFAULTS = {
   // D40 (2026-09-25): the coupling ships ON; "0" is now the old-behaviour arm.
   FF_SIM_HANDCUFF: "1",
 };
+// ---------------------------------------------------------------------------------------------
+// --waiver-backtest: THE WAIVER DECISION REPLAY (2026-09-25). Replays what the copilot's waiver pricing
+// would have claimed at each checkpoint week, for every team as "us", on the real rosters and
+// free-agent pools, and scores it on what actually happened (scripts/lib/waiver-replay.mjs). Writes
+// one JSON line per (season, week, team, arm) to --wb-out; scripts/waiver-decision-report.mjs reads
+// them. Uses THIS file's buildSeason, so the replay and the season gate cannot disagree about a week.
+// ---------------------------------------------------------------------------------------------
+if (argv.includes("--waiver-backtest")) {
+  const { replayWeek, loadFuture } = await import("./lib/waiver-replay.mjs");
+  const checkpoints = val("--checkpoints", "4,7,10").split(",").map(Number);
+  const wbTrials = Number(val("--wb-trials", "200"));
+  const wbSeeds = val("--wb-seeds", "7,8,9").split(",").map(Number);
+  const wbAdds = Number(val("--wb-adds", "4"));
+  const wbDrops = Number(val("--wb-drops", "2"));
+  const wbOut = val("--wb-out", null);
+  if (!wbOut) throw new Error("--waiver-backtest needs --wb-out <file.jsonl>");
+  writeFileSync(wbOut, "");
+  for (const season of seasons) {
+    const future = loadFuture(db, season);
+    for (const W of checkpoints) {
+      const s = buildSeason(season, W);
+      if (s.skip) { console.log(`  ${season} wk${W} SKIPPED -- ${s.skip}`); continue; }
+      if (W > s.reg) { console.log(`  ${season} wk${W} SKIPPED -- past the regular season`); continue; }
+      const useVm = UNLEAK ? (foldModel("variance", season) ?? vm) : vm;
+      const useOutcomes = UNLEAK ? (foldModel("outcomes", season) ?? outcomes) : outcomes;
+      const useCorr = UNLEAK ? (foldModel("correlation", season) ?? corr) : corr;
+      const baseOpts = {
+        weeks: s.weeks.length, playoffTeams: s.field, slots: s.slots, flexOk: ["RB", "WR", "TE"],
+        seeding: s.seasonSeeding, divisionOf: s.divisionOf, playoffReseed: s.seasonReseed,
+        projSd: 0.30, replacement: s.replacement, poolRank: s.poolRank,
+        bootstrap: { outcomes: useOutcomes, corr: useCorr, calibration: "scale" },
+        allowIncompleteRosters: true,
+        played: s.played ? { ...s.played, priorWeeks: LEVEL_PRIOR_WEEKS } : undefined,
+      };
+      const t0 = Date.now();
+      const rows = replayWeek({ db, league: LEAGUE, s, season, W, vm: useVm, baseOpts, trials: wbTrials, seeds: wbSeeds, nAdds: wbAdds, nDrops: wbDrops, future });
+      writeFileSync(wbOut, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", { flag: "a" });
+      const moved = (arm) => rows.filter((r) => r.arm === arm && r.moved).length;
+      console.log(`  ${season} wk${W}: ${s.teams.length} teams, ${((Date.now() - t0) / 1000).toFixed(0)}s; moves SIM ${moved("SIM")} SIM_OLD ${moved("SIM_OLD")} RATE ${moved("RATE")} ORACLE ${moved("ORACLE")}`);
+    }
+  }
+  process.exit(0);
+}
+
 if (SWEEP) {
   const eq = SWEEP.indexOf("=");
   const knob = eq < 0 ? SWEEP : SWEEP.slice(0, eq);

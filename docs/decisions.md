@@ -2231,3 +2231,12 @@ its 1.51 paired floor), Allen +1.20, Bigsby +0.90, Shipley +0.85, Coleman +0.50,
 only positive, +1.75, before). Base playoffs 71.85% -> 69.45%. The paired floors widened to 1-2.5pp
 because the corrected rates vary more across seeds. The draft golden does not move (the championship
 backtest never reads the rest-of-season rate).
+
+
+**D41 CORRECTION (2026-09-25, same day).** The season sweep above scored every season with the SERVED
+`data/ros-usage.json`, which was fitted on all of 2013-2025 -- in sample for the correction. Re-run with
+leave-season-out folds (`data/fold-artifacts-ros-usage/`, now the gate's default): week 8 d +0.0023
+[-0.0033, 0.0076] 3/8, LOO picks OFF 8/8; week 11 d -0.0039 [-0.0094, 0.0013] 5/8, LOO picks ON 8/8.
+Same split, not significant, week 8 slightly worse than first reported. The waiver decision replay
+(docs/validation.md, 2026-09-25) found the copilot's claim pricing with D41 at +0.64 realised pts per
+decision vs standing pat (NULL), +4.13 vs the pre-D41 copilot (NULL).

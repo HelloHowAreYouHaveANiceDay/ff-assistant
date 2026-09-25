@@ -178,3 +178,29 @@ if (argv.includes("--write")) {
   }, null, 2) + "\n");
   console.log(`\n  wrote ${OUT}`);
 }
+
+// --write-folds <dir>: ONE ARTIFACT PER HELD-OUT SEASON, each fitted on every OTHER season with the same
+// feature map. The served artifact above has seen every season, so any replay or gate that scores a
+// season with it is IN SAMPLE for the correction; `season-calibration.mjs` reads
+// <dir>/ros-usage-<season>.json when it exists (2026-09-25, found building the waiver replay).
+const FOLD_DIR_OUT = val("--write-folds", null);
+if (FOLD_DIR_OUT) {
+  const { writeFileSync, mkdirSync } = await import("node:fs");
+  mkdirSync(FOLD_DIR_OUT, { recursive: true });
+  const FEAT_NAMES = ["line", "k", "snap", "snap_missing", "snap_x_line", "ts", "ts_missing", "trend", "trend_missing"];
+  for (const Y of seasons) {
+    const coef = {};
+    for (const pos of POS) {
+      const tr = rows.filter((r) => r.pos === pos && r.season !== Y);
+      const f = ols(tr.map(FEATS["usage+trend"]), tr.map((r) => r.target - r.base));
+      const zero = new Array(FEAT_NAMES.length).fill(0);
+      const c0 = f(zero);
+      coef[pos] = [c0, ...FEAT_NAMES.map((_, i) => { const x = [...zero]; x[i] = 1; return f(x) - c0; })];
+    }
+    writeFileSync(`${FOLD_DIR_OUT}/ros-usage-${Y}.json`, JSON.stringify({
+      builtAt: new Date().toISOString(), holdoutSeason: Y, fittedOn: `${LO}-${HI} except ${Y}`, K,
+      features: FEAT_NAMES, coef,
+    }, null, 2) + "\n");
+  }
+  console.log(`\n  wrote ${seasons.length} leave-season-out folds to ${FOLD_DIR_OUT}`);
+}
