@@ -2344,3 +2344,28 @@ replay, re-scored with STREAMING"): EXP10 -2.08 pts/decision NULL (1/8 seasons u
 no ex-ante rule beats standing pat; the positive control (hindsight) gains +31.8 (8/8), so the scorer can see
 a gain. The full expected-lineup model (injuries + streaming, `expModel: "full"`) is the least-bad rule
 (EXPF10 -1.56 NULL) and is built and tested but not served.
+
+## D43 -- waivers rank on the FULL expected-lineup model, and recommend NOTHING by default (2026-09-25, owner: "deploy it", **APPLIED**)
+
+**Supersedes D42's recommendation.** D42 ranked claims on expected lineup points counting only byes, and
+flagged a claim RECOMMENDED at >= 10 points on the strength of a replay that scored an unfillable slot as
+ZERO. Re-scored with a realised streamer in that slot (docs/validation.md, "Waiver replay, re-scored with
+STREAMING"), no waiver rule beats standing pat: D42's EXP10 -2.08 pts/decision NULL (1/8 seasons up), the
+full model at >= 10 -1.56 NULL, best-rate -1.52 NULL; hindsight +31.8 BETTER (8/8) proves the scorer sees gains.
+
+**What changed:**
+- `waiverTargets` ranks on `expectedLineupPoints` with `expModel: "full"` by default -- future-week injuries at
+  the tier-0 healthy rate (a bench man covers missed starts; each man's own expectation unchanged via
+  rate / a) and replacement-level streaming for an unfillable slot. `expModel: "d42"` reproduces D42.
+- The `recommended` field and the `expMinPts` threshold are REMOVED. No rule has earned them.
+- The served summary (terminal and MCP) leads with "DEFAULT: STAND PAT unless you know something these numbers
+  cannot see (a role change, a long-term injury)" and describes expGainPts as an EXPLANATION of each claim's
+  trade-off. The MCP tool description says the same and tells the Assistant to say so whenever it quotes a row.
+
+**Live, league 462233 week 3 (after the Shrader-for-Santos move):** every claim is under +1 expected point
+(kickers/defences +0.7-0.9, Brian Robinson Jr. -0.7, Tank Bigsby -1.3); D42 had shown the kickers at +7 and
+Robinson at +5.7, almost all of it bye cover a manager would stream.
+
+Tests: test/waiver-exp-gaps.test.ts pins the default (fault-injected: restoring "d42" as the default fails it),
+the absence of the flag, and the kickoff lock under BOTH models (D42 costs the add's whole week; the full model
+costs his week minus the streamed replacement).

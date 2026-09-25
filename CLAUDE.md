@@ -316,6 +316,10 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   week cannot be backfilled; with the column absent the model degrades toward its season-line anchor
   and gives back the +0.036 pooled CRPS the consensus was admitted on (5/0 covered seasons).
   `ff evaluate-weekly`'s flagless `--features` is that artifact's own list, not the trainer's `all`.
-- Recorded decisions D0-D35 (do not silently reverse): `docs/decisions.md`
+- Recorded decisions D0-D43 (do not silently reverse): `docs/decisions.md`. **Waivers (D43): ranked on the
+  full expected-lineup model (`src/inseason/expectedLineup.ts`: future injuries + replacement-level streaming),
+  and they RECOMMEND NOTHING by default** -- no waiver rule beat standing pat in the 2018-2025 replay once
+  streaming was priced (`--waiver-backtest`, `scripts/waiver-decision-report.mjs`). A rule that claims an edge
+  must beat STAND on the streaming scorer, with the HINDSIGHT and ANTI controls both firing.
 - Current multi-league/multi-format finding list + fix plan: `docs/architecture-review-2026-09-16.md`
 - Planning/roadmap lives in the wiki, not here: `wiki/projects/project--ff-assistant.md`

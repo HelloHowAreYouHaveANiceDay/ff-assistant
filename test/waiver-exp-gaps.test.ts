@@ -58,15 +58,34 @@ test("gap 2: our kicker QUESTIONABLE raises the swap's gain by his missing 35.5%
 
 test("gap 3: a free agent whose game has kicked off adds nothing THIS week", () => {
   // Fault-injected: without `lockedNow` on the add the two gains are equal.
-  const a = ctxWithKicker();
-  const open = swapGain(waiverTargets(a.ctx, OPTS), a.ourK);
-  const b = ctxWithKicker();
-  b.ctx.week = { ...b.ctx.week, locked: new Set(["FA"]) };
-  const locked = swapGain(waiverTargets(b.ctx, OPTS), b.ourK);
-  // Locking the free agent removes exactly HIS week: the swap no longer gets his points this week
-  // (and, having dropped ours, leaves the K slot empty -- which is why this row now ranks last).
-  const want = (a.ourKProj + 5) / 17;
-  assert.ok(Math.abs(open - locked - want) < 0.1, `kickoff lock moved the swap by ${(open - locked).toFixed(2)}, expected ${want.toFixed(2)}`);
+  // Pinned under BOTH models, because they price the consequence differently.
+  for (const expModel of ["d42", "full"] as const) {
+    const a = ctxWithKicker();
+    const open = swapGain(waiverTargets(a.ctx, { ...OPTS, expModel }), a.ourK);
+    const b = ctxWithKicker();
+    b.ctx.week = { ...b.ctx.week, locked: new Set(["FA"]) };
+    const locked = swapGain(waiverTargets(b.ctx, { ...OPTS, expModel }), b.ourK);
+    // Locking the free agent removes HIS week. Having dropped ours, the K slot is empty this week:
+    // D42 scores that empty slot 0, so the lock costs his whole week; the full model (D43) scores it
+    // at the replacement kicker a manager would stream, so the lock costs only his week MINUS that.
+    const want = (a.ourKProj + 5) / 17 - (expModel === "full" ? a.ctx.replacement.K : 0);
+    assert.ok(Math.abs(open - locked - want) < 0.1, `[${expModel}] kickoff lock moved the swap by ${(open - locked).toFixed(2)}, expected ${want.toFixed(2)}`);
+  }
+});
+
+test("D43: the DEFAULT ranking is the full model, and no row carries a 'recommended' flag", () => {
+  // The free agents' games have kicked off, which leaves the swap's K slot EMPTY this week -- the one
+  // place the two models must disagree (streamed replacement vs zero). A clean like-for-like swap
+  // with no depth and no empty slot is priced identically by both, so it cannot show the switch.
+  const locked = () => { const c = ctxWithKicker().ctx; c.week = { ...c.week, locked: new Set(["FA"]) }; return c; };
+  const drops = (r: ReturnType<typeof waiverTargets>) => r.targets.flatMap((t) => t.drops.map((d) => [t.add, d.name, d.expGainPts]));
+  const def = waiverTargets(locked(), OPTS);
+  const full = waiverTargets(locked(), { ...OPTS, expModel: "full" });
+  const d42 = waiverTargets(locked(), { ...OPTS, expModel: "d42" });
+  assert.deepEqual(drops(def), drops(full), "the default is not the full model");
+  assert.notDeepEqual(drops(def), drops(d42), "default and d42 agree where they must differ -- the switch is not reaching the ranking");
+  for (const t of def.targets) assert.ok(!("recommended" in t), "a waiver row still carries the withdrawn 'recommended' flag");
+  assert.match(def.objective.note, /no waiver rule beat standing pat/);
 });
 
 test("status override: unknown names and statuses are REFUSED by name; ACTIVE clears a feed status", () => {

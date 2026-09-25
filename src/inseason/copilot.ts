@@ -1355,15 +1355,14 @@ export interface WaiverDrop extends ObjectiveDelta {
 export interface WaiverRefusal { add: string; drop: string; pos: string; why: string }
 export interface WaiverTarget extends ObjectiveDelta {
   /**
-   * D42 -- THE RANKING QUANTITY: expected rest-of-season starting-lineup points the claim adds. Each
-   * remaining week the lineup is picked on the rest-of-season rate among men not on bye and not ruled
-   * out now; the starters' rates are summed, after minus before. The waiver decision replay (docs/
-   * validation.md, 2026-09-25) admitted this objective at >= 10 points (+4.19 realised pts/decision,
-   * 7/8 seasons) where the simulated playoff delta had no measurable skill.
+   * THE RANKING QUANTITY (D43): expected rest-of-season starting-lineup points the claim adds, from
+   * `expectedLineupPoints` with future-week injuries (the bench covers a missed start) and streaming
+   * (an unfillable slot scores the replacement level). It EXPLAINS a claim's trade-off; it is not a
+   * validated decision rule -- no waiver rule beat standing pat in the 2018-2025 replay once
+   * streaming was priced (this one, at >= 10: -1.56 pts/decision NULL), so there is no
+   * "recommended" flag. D42's flag was withdrawn with its admission.
    */
   expGainPts: number;
-  /** expGainPts >= the recommendation threshold (default 10, the replay's EXP10). */
-  recommended: boolean;
   /** The 2.9*SE paired bar this row was judged against, or null where too few seeds were run
    *  and the unpaired binomial floor was used instead. Present so a reader can see WHICH. */
   pairedFloorPp?: number | null;
@@ -1501,10 +1500,9 @@ export function waiverTargets(
     /** Extra shortlist slots for free agents who back up one of OUR starters. 0 disables the
      *  roster-conditional admission entirely and reproduces the pre-fix pool exactly. */
     handcuffAdds?: number;
-    /** D42: the expected-lineup-points gain a claim must clear to be RECOMMENDED. Default 10. */
-    expMinPts?: number;
-    /** Which expected-lineup model ranks claims: "d42" (byes only, empty slot = 0) or "full" (adds
-     *  future-week injuries and replacement-level streaming). See src/inseason/expectedLineup.ts. */
+    /** Which expected-lineup model ranks claims: "full" (DEFAULT since D43: future-week injuries and
+     *  replacement-level streaming) or "d42" (byes only, an empty slot = 0 -- reproduces D42's ranking).
+     *  See src/inseason/expectedLineup.ts. */
     expModel?: "d42" | "full";
     /** Per skill position where we have NO depth (rostered <= dedicated starting slots), how many of
      *  its best free agents join the shortlist. Default 2; 0 reproduces the pre-2026-09-25 pool. */
@@ -1768,7 +1766,6 @@ export function waiverTargets(
    * candidate breadth the replay measured; the top `adds` by it form the shortlist that is then also
    * SIMULATED, so the playoff delta still ships beside it as context.
    */
-  const expMin = o.expMinPts ?? 10;
   const firstWk = ctx.played?.nextWeek ?? 1;
   const lastWk = ctx.weeks.length;
   /**
@@ -1804,7 +1801,7 @@ export function waiverTargets(
   // THE SHARED IMPLEMENTATION (src/inseason/expectedLineup.ts), the one the replay also calls.
   // `expModel: "full"` adds future-week injuries (the bench covers a missed start) and streaming (an
   // unfillable slot scores the replacement level, not zero); "d42" is the arithmetic D42 admitted.
-  const expModel = o.expModel ?? "d42";
+  const expModel = o.expModel ?? "full";   // D43
   const expPts = (roster: ExpPlayer[], win: [number, number] = expWin): number =>
     expectedLineupPoints(roster.map((p) => ({
       name: p.name, pos: p.pos, rate: rateOf(p), bye: p.bye ?? null,
@@ -1940,7 +1937,7 @@ export function waiverTargets(
     targets.push({
       add: add.name, pos: add.pos, proj: r2(add.proj),
       drop: best.name, dropPos: best.pos,
-      expGainPts: best.expGainPts, recommended: best.expGainPts >= expMin,
+      expGainPts: best.expGainPts,
       playoffsPp: best.playoffsPp, playoffWeekPts: best.playoffWeekPts, titlePp: best.titlePp,
       rankValue: best.rankValue, se: best.se,
       afterPlayoffPct: r2(basePlayoff + best.playoffsPp),
@@ -1968,8 +1965,8 @@ export function waiverTargets(
   const waiverObjective: Objective = {
     ...objective,
     primary: firstWk > lastWk ? "expected lineup points (playoff weeks)" : "expected lineup points (rest of regular season)",
-    note: `ranked on the EXPECTED starting-lineup points a claim adds over ${firstWk > lastWk ? "the remaining league playoff weeks" : "the rest of the regular season (whatever the playoff regime -- the only window the replay validated)"} ` +
-      `(D42, admitted by the waiver decision replay); recommended at >= ${expMin}. ${objective.note}`,
+    note: `ranked on the EXPECTED starting-lineup points a claim adds over ${firstWk > lastWk ? "the remaining league playoff weeks" : "the rest of the regular season"}, pricing future injuries and streaming (D43). ` +
+      `It EXPLAINS each claim's trade-off; no waiver rule beat standing pat in the 2018-2025 replay, so none is recommended. ${objective.note}`,
   };
   return {
     basePlayoffPct: r2(basePlayoff),
