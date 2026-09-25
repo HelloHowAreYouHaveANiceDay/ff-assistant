@@ -1,0 +1,126 @@
+{
+  "decision": "league 462233, 2026 week 3: TE + 2 FLEX (the only contested slots)",
+  "recorded_at": "2026-09-25T20:52:08.596Z",
+  "lineups": {
+    "A_model": {
+      "TE": "Colston Loveland",
+      "FLEX": [
+        "Isaiah Likely",
+        "Jameson Williams"
+      ],
+      "why": "the live weekly model's optimal lineup"
+    },
+    "B_override": {
+      "TE": "Isaiah Likely",
+      "FLEX": [
+        "Chris Godwin Jr.",
+        "Jameson Williams"
+      ],
+      "why": "owner/assistant override: Keenum (3rd-string) starts for CHI; Loveland 0.4 ppg; ESPN 7.7"
+    }
+  },
+  "decisive": {
+    "A": "Colston Loveland",
+    "B": "Chris Godwin Jr."
+  },
+  "predicted_totals": {
+    "live_model": {
+      "A": 32.7,
+      "B": 27.92
+    },
+    "frozen_0917": {
+      "A": 28.04,
+      "B": 26.97
+    },
+    "espn": {
+      "A": 26.9,
+      "B": 26.3
+    }
+  },
+  "variables_the_model_cannot_see": [
+    "CHI QB: Caleb Williams (hamstring) out per Rapoport; Bagent in concussion protocol -> Case Keenum, first game since 2023",
+    "NYG QB: Jaxson Dart out for the regular season -> Jameis Winston (already played most of week 2)",
+    "the live model's Loveland mean is +4.0 from depth_rank=1 (TE1), an input the 9/17 freeze did not have (depth chart ingested 9/17 19:39Z, freeze 04:04Z)"
+  ],
+  "predictions": {
+    "Isaiah Likely": {
+      "live_model": {
+        "mean": 9.52,
+        "p10": 2.4,
+        "p90": 17.92
+      },
+      "frozen_0917": {
+        "mean": 10.24,
+        "p10": 1.57,
+        "p90": 19.24
+      },
+      "espn": 9.9
+    },
+    "Colston Loveland": {
+      "live_model": {
+        "mean": 12.35,
+        "p10": 0.3,
+        "p90": 22.37
+      },
+      "frozen_0917": {
+        "mean": 7.53,
+        "p10": 0,
+        "p90": 20.34
+      },
+      "espn": 7.7
+    },
+    "Chris Godwin Jr.": {
+      "live_model": {
+        "mean": 7.57,
+        "p10": 1.62,
+        "p90": 18.08
+      },
+      "frozen_0917": {
+        "mean": 6.46,
+        "p10": 0,
+        "p90": 16.1
+      },
+      "espn": 7.1
+    },
+    "Jameson Williams": {
+      "live_model": {
+        "mean": 10.83,
+        "p10": 2.95,
+        "p90": 24.22
+      },
+      "frozen_0917": {
+        "mean": 10.27,
+        "p10": 0.92,
+        "p90": 22.61
+      },
+      "espn": 9.3
+    },
+    "Marvin Harrison Jr.": {
+      "live_model": {
+        "mean": 6.83,
+        "p10": 0,
+        "p90": 17.67
+      },
+      "frozen_0917": {
+        "mean": 7.56,
+        "p10": 0,
+        "p90": 18.79
+      },
+      "espn": 5.8
+    },
+    "Michael Pittman Jr.": {
+      "live_model": {
+        "mean": 4.31,
+        "p10": 0,
+        "p90": 14.69
+      },
+      "frozen_0917": {
+        "mean": 6.26,
+        "p10": 0,
+        "p90": 15.13
+      },
+      "espn": 8.9
+    }
+  },
+  "scoring": "after MNF: node --import tsx scripts/lineup-vet.ts data/decisions/2026-wk3-lineup.json -- realised = ESPN applied points (raw_league_roster_week) for the listed players"
+}
