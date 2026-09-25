@@ -26,8 +26,15 @@ const db = openDb() as any;
 const espnPts = db.prepare("SELECT applied_points p FROM raw_league_roster_week WHERE league_id=? AND season=? AND week=? AND name=? ORDER BY fetched_at DESC LIMIT 1");
 const featPts = db.prepare("SELECT pts p FROM feat_player_week WHERE season=? AND week=? AND name=? AND pts IS NOT NULL");
 
+// A SCORE COUNTS ONLY ONCE HIS GAME IS FINAL. ESPN's weekly row carries applied_points = 0 before
+// kickoff, so reading it early scored an unplayed week as a 0-0 tie -- found by this script's own dry
+// run on the Friday it was written. Final = both scores present in raw_nfl_game for his team's game.
+const teamOf = db.prepare("SELECT team FROM feat_player_week WHERE season=? AND week=? AND name=?");
+const finalGame = db.prepare("SELECT 1 FROM raw_nfl_game WHERE season=? AND week=? AND (home_team=? OR away_team=?) AND home_score IS NOT NULL AND away_score IS NOT NULL");
 const actual: Record<string, number | null> = {};
 for (const n of Object.keys(rec.predictions)) {
+  const team = teamOf.get(season, week, n)?.team;
+  if (!team || !finalGame.get(season, week, team, team)) { actual[n] = null; continue; }
   const e = espnPts.get(LEAGUE, season, week, n)?.p;
   actual[n] = e != null ? Number(e) : (featPts.get(season, week, n)?.p ?? null);
 }
