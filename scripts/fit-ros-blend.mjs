@@ -37,6 +37,8 @@ const argv = process.argv.slice(2);
 const val = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : d; };
 const [LO, HI] = val("--seasons", "2012-2025").split("-").map(Number);
 const MIN_LINE = Number(val("--min-line", "3"));
+// --max-line: fit ONE line band (e.g. the small lines the default fit excludes: --min-line 0 --max-line 3).
+const MAX_LINE = Number(val("--max-line", "Infinity"));
 const MIN_REMAINING = Number(val("--min-remaining", "3"));
 const FRAME = val("--frame", "scheduled");
 // --pos: which positions the fit pools. Default the four skill positions -- the population K=6 was
@@ -64,7 +66,7 @@ for (let season = LO; season <= HI; season++) {
   for (const r of weeks) (byKey.get(r.feat_key) ?? byKey.set(r.feat_key, []).get(r.feat_key)).push(r);
   for (const [, ws] of byKey) {
     const line = ws[0].season_line_pg;
-    if (line == null || line < MIN_LINE) continue;
+    if (line == null || line < MIN_LINE || line >= MAX_LINE) continue;
     const nonBye = ws.filter((r) => !r.is_bye);
     const played = nonBye.filter((r) => r.pts != null);
     for (const cp of ws) {
