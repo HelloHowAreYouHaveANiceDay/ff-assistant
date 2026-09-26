@@ -2369,3 +2369,18 @@ Robinson at +5.7, almost all of it bye cover a manager would stream.
 Tests: test/waiver-exp-gaps.test.ts pins the default (fault-injected: restoring "d42" as the default fails it),
 the absence of the flag, and the kickoff lock under BOTH models (D42 costs the add's whole week; the full model
 costs his week minus the streamed replacement).
+
+## D44 -- the served weekly model: clamp 8, a line-dependent mean cap, coherence (2026-09-25, owner: "yes", **APPLIED**)
+
+`data/weekly-artifact.json` is now the full-data (2010-2025) retrain with `train_weekly.py --clamp-hi 8`, same
+recipe as before (gbm, two-part, the 26 served features), carrying `meanCap: {pts: 12, floor: 2.5}` -- which also
+switches on coherence (mean held to p90 where p90 > 0) and the below-trained-line shape trigger in `uncapBands`.
+Gate and out-of-fold evidence: docs/validation.md ("Weekly model candidate ... GATE PASSED"). Why: the 4x clamp
+under-projected active small-line players by 41% (-1.08 pts) and HID a served-model defect -- established stars
+in extreme game environments projected at the clamp (Kelce 2021 wk7 40.2; live wk3 Kenneth Walker III 34.3).
+
+What it moves: the lineup optimiser, `ff stream`, win probability and weekly scorecards frozen from now on. NOT the
+waiver ranking (rest-of-season rates) and NOT the season simulator. Week 3 (frozen 9/17) and week 4 (frozen 9/24)
+scorecards keep the old model's numbers. Live wk3 serve-check: lineup unchanged (99.2 projected); best free RB now
+Kendre Miller 10.46 (was 5.2). Rollback: `git checkout <previous> -- data/weekly-artifact.json`, or
+`FF_WEEKLY_MEAN_CAP=off` for the serve-time rules alone.
