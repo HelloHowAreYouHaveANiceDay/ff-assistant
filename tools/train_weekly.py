@@ -1065,7 +1065,7 @@ def fit_position_boosted(rows, specs, pos, args):
     if int((yz == 0).sum()) < 500:
         return None, None, None, None
     hp = dict(max_depth=args.gbm_depth, learning_rate=0.05, max_iter=args.gbm_iter,
-              min_samples_leaf=30, l2_regularization=1.0, early_stopping=False, random_state=0)
+              min_samples_leaf=args.gbm_min_leaf, l2_regularization=args.gbm_l2, early_stopping=False, random_state=0)
 
     # ---- MISSINGNESS AUGMENTATION (MASKABLE_GROUPS / MASK_DROP_P). Duplicate a fraction of rows with
     # serve-time blocks masked to NaN so the trees learn the 2026 regime and fall back on the anchors.
@@ -1349,6 +1349,11 @@ def main():
                          "serve. Two-part only; K/DST stay intercept-only.")
     ap.add_argument("--gbm-depth", type=int, default=3, help="gbm: max tree depth (D16 screen setting).")
     ap.add_argument("--gbm-iter", type=int, default=300, help="gbm: boosting rounds (D16 screen setting).")
+    ap.add_argument("--gbm-min-leaf", type=int, default=30,
+                    help="gbm: min_samples_leaf for every head (default 30, the served setting). Larger stops a "
+                         "few extreme-ratio rows carving leaves that fire on rare feature combinations "
+                         "(Kelce 2021 wk7 projected 40.2; docs/validation.md 2026-09-25).")
+    ap.add_argument("--gbm-l2", type=float, default=1.0, help="gbm: l2_regularization (default 1.0, served).")
     ap.add_argument("--conformal-k", type=int, default=5,
                     help="gbm: player-grouped folds for the train-only conformal calibration of the "
                          "boosted quantile heads. 0 = off (the pre-calibration heads).")
@@ -1545,7 +1550,7 @@ def main():
             "learner": "gbm",
             "positions": list(perpos.keys()),
             "params": {"max_depth": args.gbm_depth, "max_iter": args.gbm_iter,
-                       "learning_rate": 0.05, "min_samples_leaf": 30, "l2": 1.0,
+                       "learning_rate": 0.05, "min_samples_leaf": args.gbm_min_leaf, "l2": args.gbm_l2,
                        "conformalK": int(args.conformal_k or 0),
                        "augFrac": float(args.aug_frac or 0.0)},
             "perPos": perpos,

@@ -39,6 +39,18 @@ test("uncapped rows are returned byte-identical, and a thin peer set leaves a ca
   assert.strictEqual(thin.find((r) => r.feat_key === "capped"), rows[30]);
 });
 
+test("byShape rebuilds a COLLAPSED small-line band that is not on the clamp -- and only below the trained line", () => {
+  const { rows, lineOf } = batch();
+  // 0.9 line at clamp 8: ratio 7.4, band 2.1-7.0 around 6.7 (Jonah Coleman wk3) -- under the pin.
+  rows[30] = row("capped", 6.7, 2.1, 6.5, 7.0); lineOf.set("capped", 0.9);
+  assert.strictEqual(uncapBands(rows, lineOf, 8).find((r) => r.feat_key === "capped"), rows[30], "the pin test alone must not fire");
+  const c = uncapBands(rows, lineOf, 8, 40, true).find((r) => r.feat_key === "capped")!;
+  assert.ok(c.bandUncapped && c.p90 > 6.7 * 1.9, `p90 ${c.p90}`);
+  // The same shape on an ESTABLISHED line is the mean overshooting, not a collapse: left alone.
+  lineOf.set("capped", 10.6);
+  assert.strictEqual(uncapBands(rows, lineOf, 8, 40, true).find((r) => r.feat_key === "capped"), rows[30]);
+});
+
 test("the rebuild never NARROWS a band the model served", () => {
   const { rows, lineOf } = batch();
   rows[30] = row("capped", 3.4, 0.1, 3.3, 3.6 * 10);     // already wider than the peers' shape, but pinned

@@ -220,6 +220,10 @@ export interface WeeklyArtifact {
   /** THE BAND CALIBRATION (D32). Absent on every artifact written before it existed, and an absent
    *  field serves the OLD band byte-for-byte -- see `WeeklyBandCalibration`. */
   bandCalibration?: WeeklyBandCalibration;
+  /** THE LINE-DEPENDENT CAP ON THE MEAN RATIO (2026-09-25). The ratio may exceed `floor` only while the
+   *  mean stays under `pts` points: cap = max(floor, min(clamps.hi, pts / line)). Absent = no cap (every
+   *  artifact written before the field). `FF_WEEKLY_MEAN_CAP="pts,floor"` overrides it for a gate run. */
+  meanCap?: { pts: number; floor: number };
   fittedFrom: string;
   fittedAt?: string;
   seasons: number[];
@@ -331,10 +335,18 @@ export const WEEKLY_TRAINED_MIN_LINE = 3.0;
  * (they are the capped grid); a sampler falls back to its three-knot band for these men only.
  * `FF_WEEKLY_UNCAP_BAND=0` serves the capped band exactly as before.
  */
-export function uncapBands(rows: WeeklyProjRow[], lineOf: Map<string, number>, clampHi: number, k = 40): WeeklyProjRow[] {
+export function uncapBands(rows: WeeklyProjRow[], lineOf: Map<string, number>, clampHi: number, k = 40, byShape = false): WeeklyProjRow[] {
+  // `byShape` (with the mean cap, 2026-09-25): also rebuild a band that has COLLAPSED -- p90 under 1.25x
+  // the mean -- whether or not it sits exactly on the clamp. At clamp 8 a 0.9-line back sits at 7.4x,
+  // just under the pin, with a band of 2.1-7.0 around a 6.7 mean (Jonah Coleman wk3).
   const capped = (r: WeeklyProjRow): boolean => {
     const line = lineOf.get(r.feat_key);
-    return line != null && line > 0 && r.mean > 0 && r.p90 >= line * clampHi * 0.999;
+    if (line == null || line <= 0 || r.mean <= 0) return false;
+    if (r.p90 >= line * clampHi * 0.999) return true;
+    // Shape-collapse is an OUT-OF-DOMAIN symptom (line below the trained minimum). On an established line
+    // a p90 near the mean means the MEAN overshot -- that is `COHERENCE`'s case, and rebuilding the band
+    // there doubled Zay Flowers's p90 to 41.7 off a mean the coherence rule had just held to 20.5.
+    return byShape && line < WEEKLY_TRAINED_MIN_LINE && (r.pZero ?? 0) < 0.5 && r.p90 < 1.25 * r.mean;
   };
   const refsByPos = new Map<string, WeeklyProjRow[]>();
   for (const r of rows) {
@@ -443,6 +455,16 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
   const grid = a.quantileGrid ?? DEFAULT_QUANTILE_GRID;
   const out: WeeklyProjRow[] = [];
   const lineOf = new Map<string, number>();   // for `uncapBands`, which needs each row's line
+  // The line-dependent mean cap: the artifact's own `meanCap`, or `FF_WEEKLY_MEAN_CAP="pts,floor"` for a
+  // gate run ("off" disables it even when the artifact carries one).
+  const meanCap = (() => {
+    const v = process.env.FF_WEEKLY_MEAN_CAP;
+    if (v === "off") return null;
+    if (!v) return a.meanCap && a.meanCap.pts > 0 && a.meanCap.floor > 0 ? a.meanCap : null;
+    const [pts, floor] = v.split(",").map(Number);
+    if (!(pts > 0) || !(floor > 0)) throw new Error(`FF_WEEKLY_MEAN_CAP "${v}" is not "pts,floor"`);
+    return { pts, floor };
+  })();
   // The boosted heads serve the positions they name; every other position (and any head a boosted
   // position does not carry) stays linear. `featIdx` maps a feature name to its column in the full
   // design so a position's reduced vector can be built in the boosted head-set's own `features` order.
@@ -479,6 +501,13 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
       const v = lin(h);
       return Number.isFinite(v) ? Math.min(a.clamps.hi, Math.max(a.clamps.lo, v)) : NaN;
     };
+    // THE LINE-DEPENDENT CAP ON THE MEAN RATIO (candidate, 2026-09-25; off unless configured). A small
+    // line may need a large ratio (a 1-point back now scoring 4); an established line may not -- the
+    // boosted mean head extrapolates on ratio-to-line inputs and projected Kelce 2021 wk7 at 40.2 off a
+    // 10.1 line. Cap = max(floor, min(clamps.hi, pts / line)): the ratio may exceed `floor` only while
+    // the mean stays under `pts` points. The quantile heads keep the artifact clamp.
+    const meanRatio = (r: number): number =>
+      !meanCap || !Number.isFinite(r) ? r : Math.min(r, Math.max(meanCap.floor, Math.min(a.clamps.hi, meanCap.pts / line)));
     /**
      * THE CALIBRATED BAND, in RATIO units (D32). A SCALE, so a p10 sitting on the zero atom stays on
      * it -- see `WeeklyBandCalibration` for why an additive shift is the wrong instrument here.
@@ -497,7 +526,7 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
     };
 
     if (!twoPart) {
-      const mean = line * clamped("mean");
+      const mean = line * meanRatio(clamped("mean"));
       if (!Number.isFinite(mean)) continue;
       const med = clamped("p50");
       out.push({
@@ -513,7 +542,7 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
 
     // ---- THE TWO-PART MIXTURE. F(y) = pZero + (1 - pZero) * F_played(y). ----
     const z = lin("zero");
-    const ratio = clamped("mean");
+    const ratio = meanRatio(clamped("mean"));
     if (!Number.isFinite(z) || !Number.isFinite(ratio)) continue;
     const pZero = logistic(z);
     // E[points] = P(he plays) * E[ratio | he plays] * line. The mean head of a two-part artifact is
@@ -553,14 +582,20 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
     const p10 = line * calBand(mixQ(0.10), "lo", mixQ(0.50));
     const p50 = line * mixQ(0.50);
     const p90 = line * calBand(mixQ(0.90), "hi", mixQ(0.50));
+    // COHERENCE (with the mean cap, 2026-09-25): a mean above its own model's p90 is not a distribution
+    // (Zay Flowers wk3: mean 22.7, p90 20.5 off one hot game and a 29% snap share). Where p90 > 0 -- i.e.
+    // not a man mostly on the zero atom -- the mean is held to p90. Not pinned rows: there p90 is the
+    // clamp, not the model's view, and `uncapBands` rebuilds it.
+    const pinned = p90 >= line * a.clamps.hi * 0.999;
+    const meanOut = meanCap && p90 > 0 && !pinned ? Math.min(mean, p90) : mean;
     out.push({
       feat_key: row.feat_key, player_sk: row.player_sk, name: row.name, pos: row.pos,
       season: row.season, week: row.week,
-      mean, p10, p50, p90, pZero,
+      mean: meanOut, p10, p50, p90, pZero,
       knots: mixtureKnots(pZero, grid, vals.map((v) => line * v), { p10, p50, p90 }),
     });
   }
-  return process.env.FF_WEEKLY_UNCAP_BAND === "0" ? out : uncapBands(out, lineOf, a.clamps.hi);
+  return process.env.FF_WEEKLY_UNCAP_BAND === "0" ? out : uncapBands(out, lineOf, a.clamps.hi, 40, !!meanCap);
 }
 
 /**

@@ -8226,3 +8226,42 @@ Nico Collins 11.3 -> 24.9; 2021: 21 of 2,808 established player-weeks at >= 2.5x
 NEXT (not done): fix the extrapolation (tree regularisation -- a larger min leaf / l2 on the ratio heads -- or a
 ceiling on the MEAN for established lines), then re-gate cap 8 on top. Tooling added: `train_weekly.py
 --clamp-hi`, `ff evaluate-weekly --trainer-args`, `weekly-band-coverage.ts --artifact-dir`.
+
+## Weekly model candidate: clamp 8 + a line-dependent mean cap + coherence -- GATE PASSED, awaiting owner sign-off (2026-09-25)
+
+Follows "clamp 4 -> 8 ... NOT shipped". Three candidates were tried against the served recipe on the same
+14 season-held-out folds (`scripts/weekly-candidate-compare.ts`, out-of-fold; `ff evaluate-weekly`):
+
+- **Bigger leaves (min_samples_leaf 200, with and without clamp 8): REFUTED.** Worse RMSE almost everywhere,
+  MORE extreme projections (279 vs 208), lineup regret 85.33 vs 85.80. The extremes are not small-leaf noise.
+  Reading: the heads' INPUTS are ratios to the line too (to-date points / line ...); small-line rows carry huge
+  input AND outcome ratios, and the learned "big input ratio -> big outcome ratio" fires on established stars
+  with a hot start in a high-total game.
+- **Clamp 8 (trained) + serve-time rules, CANDIDATE:**
+  1. `meanCap {pts 12, floor 2.5}` on the artifact: the MEAN ratio may exceed 2.5 only while the mean stays
+     under 12 points -- a 1-point back can reach 8x, a 10-point star is held to 2.5x. Quantiles keep clamp 8.
+     Values set BEFORE the first run and not tuned.
+  2. COHERENCE: the mean is held to the model's own p90 where p90 > 0 (Zay Flowers wk3 was mean 22.7 / p90 20.5).
+  3. `uncapBands` also rebuilds a COLLAPSED band (p90 < 1.25 x mean), but only below the trained line (< 3) --
+     on an established line that shape is the mean overshooting, which rule 2 handles (unscoped, it doubled
+     Flowers's p90 to 41.7).
+  All three switch on only with the artifact's `meanCap`; the served artifact has none, so it is unchanged.
+
+Final read, exact code, out-of-fold 2012-2025 vs the served recipe:
+
+| | QB | RB | WR | TE |
+|---|---|---|---|---|
+| RMSE of mean, paired by season | -0.013 (9/14) | -0.075 (10/14) | **-0.048 (13/14) BETTER** | -0.159 (12/14) |
+| pinball p10/p50/p90 | **BETTER 11/14** | **BETTER 14/14** | **BETTER 13/14** | 13/14 (NULL on SE) |
+
+Established players projected >= 2.5x their line: 208 -> 0 (realised mean on those rows 12.7). Small-line men who
+PLAYED LAST WEEK (the waiver population; not "played this week", which conditions on the outcome): lines < 1.5
+bias -1.08 -> -0.03, 1.5-3 -0.13 -> +0.18. `ff evaluate-weekly` with the candidate: GATE PASSED, every clause
+((a) pooled CRPS 2.7040 vs the control's 2.7213; (b) coverage 0.838; (c) zero share off 0.003); lineup regret
+85.99 vs 85.80 (standard-15), 91.08 vs 90.85 (deep-18); W1-W6 identical to the control.
+
+Live week 3 (full-data candidate, `train_weekly.py --clamp-hi 8`, same recipe, 2010-2025): owner's contested
+players unchanged to 0.1 except Likely 9.5 -> 10.4; Kenneth Walker III 34.3 -> 28.2, Zay Flowers 26.7 -> 20.5,
+Nico Collins 24.9 -> 21.7; small-line free agents rise with real bands (Jonah Coleman 3.4 (0.2-7.4) -> 6.7
+(0.4-14.4)); 0 collapsed small-line bands, 0 means above p90, max p90 36.7. Known limit: Flowers/Collins still sit
+well above their expert ranks (WR38 / WR84) -- one hot game, and signals the model does not read.
