@@ -432,7 +432,7 @@ function buildSeason(season, atWeek = null) {
     played = { weeks: playedWeeks, wins, pts };
     const { blend } = loadRosBlend();
     rosK = blend.K;
-    const rosKOf = (pos) => rosKFor(blend, pos);   // DST carries its own fitted weight when present
+    const rosKOf = (pos, line) => rosKFor(blend, pos, line);   // DST: its own weight; small lines: their band (byLine)
     if (rosK !== Infinity) {
       const rate = new Map();
       for (const r of db.prepare("SELECT player_sk, pts, is_bye FROM feat_player_week WHERE season = ? AND week <= ? AND player_sk IS NOT NULL").all(season, playedWeeks)) {
@@ -494,7 +494,7 @@ function buildSeason(season, atWeek = null) {
         const sk = skOf.get(p.name);
         const td = sk ? rate.get(sk) : null;
         if (!td || td.k <= 0) continue;
-        const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosKOf(p.pos));
+        const ros = rosPerGame(p.proj / 17, td.k, td.pts, rosKOf(p.pos, p.proj / 17));
         if (ros == null) continue;
         const u = sk ? usage.get(sk) : null;
         const adj = gapModel
@@ -511,7 +511,7 @@ function buildSeason(season, atWeek = null) {
       rateFor = (sk, line, pos) => {
         const td = sk != null ? rate.get(String(sk)) : null;
         if (!td || td.k <= 0) return { plain: line, usage: line, k: 0 };
-        const ros = rosPerGame(line, td.k, td.pts, rosKOf(pos)) ?? line;
+        const ros = rosPerGame(line, td.k, td.pts, rosKOf(pos, line)) ?? line;
         const uu = usageAt.get(String(sk));
         const adjU = usageModel
           ? rosUsageAdjust({ pos, line, k: td.k, snap: uu?.snap ?? null, ts: uu?.ts ?? null, trend: uu?.trend ?? null }, usageModel)

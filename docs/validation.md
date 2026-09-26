@@ -8265,3 +8265,32 @@ players unchanged to 0.1 except Likely 9.5 -> 10.4; Kenneth Walker III 34.3 -> 2
 Nico Collins 24.9 -> 21.7; small-line free agents rise with real bands (Jonah Coleman 3.4 (0.2-7.4) -> 6.7
 (0.4-14.4)); 0 collapsed small-line bands, 0 means above p90, max p90 36.7. Known limit: Flowers/Collins still sit
 well above their expert ranks (WR38 / WR84) -- one hot game, and signals the model does not read.
+
+## Rest-of-season rate by preseason line: better per player, WORSE for waivers -- NOT shipped (2026-09-25)
+
+The waiver ranking prices every man at the D18/D41 rest-of-season rate, whose prior weight K = 6 was fitted on
+lines >= 3. Fitted per line band (`fit-ros-blend.mjs --min-line a --max-line b`, leave-one-season-out, the
+rostered population): lines < 1.5 K = 1-2 (held-out RMSE 5.95 -> 5.28), 1.5-3 K = 2 in 14/14 folds (3.77 -> 3.56).
+Code support: `ros-blend.json` `byLine` bands / `FF_ROS_BLEND_BYLINE`, read by `rosKFor(blend, pos, line)` in
+simContext and the season gate. Live: Kendre Miller 3.47 -> 4.75, Jonah Coleman 4.89 -> 7.29; established men
+unchanged.
+
+Waiver replay (2018-2025, wks 3-12, blind artifacts, streaming scorer), same code, env only:
+
+| arm vs STAND | control (K 6) | byLine 1.5:1, 3:2 | small lines K 12 |
+|---|---|---|---|
+| EXPF10 (served) | -1.56 NULL | **-8.48 WORSE (0/8)** | -2.24 NULL |
+| EXP10 (D42) | -2.08 NULL | **-7.28 WORSE (0/8)** | -2.36 NULL |
+| RATE | -1.52 NULL | -3.46 NULL | -1.66 NULL |
+| HINDSIGHT / ANTI | +31.8 / -60.7 | +31.1 / -60.7 | +31.5 / -58.4 |
+
+Reading: accurate on AVERAGE for one rostered man is not the same as RANKING a pool of free agents with one or two
+games each -- a lighter prior lets small-sample noise through and a max-rate rule picks the luckiest (the winner's
+curse). Heavier shrinkage does not help either, so no prior weight creates a waiver edge; the stand-pat finding
+(D43) holds. `byLine` is NOT in the served blend. Consequence, by design: a small-line free agent's waiver rate
+(Miller 3.5) stays far below the weekly model's this-week projection (10.5) -- the weekly number is for STARTING
+him this week; the waiver rate is shrunk because that ranks the pool better.
+
+Also retracted in this session: "the weekly projector is not wired into waivers" is NOT a gap. Leaving it
+unwired is a recorded decision (copilotActions.ts, 2026-09-23): its 8.07 vs 5.12 realised ppg was a positional-mix
+artifact (54% QBs vs the room's 13%); within position it was worse than the room.

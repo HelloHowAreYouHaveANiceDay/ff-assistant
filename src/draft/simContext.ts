@@ -406,7 +406,7 @@ export async function loadSimContext(opts: {
   const restOfSeason = (p: { name: string; pos: string; proj: number }): { ros: number; adj: number } | null => {
     const key = `${nameKey(p.name)}|${p.pos}`;
     const td = rateByName.get(key);
-    const Kp = rosKFor(rosBlend, p.pos);          // DST carries its own fitted weight when present
+    const Kp = rosKFor(rosBlend, p.pos, p.proj / 17);   // DST: its own weight; small lines: their band (byLine)
     if (!td || td.k <= 0 || Kp === Infinity) return null;
     const ros = rosPerGame(p.proj / 17, td.k, td.pts, Kp);
     if (ros == null) return null;

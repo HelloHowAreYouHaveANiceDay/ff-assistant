@@ -38,6 +38,16 @@ export interface RosBlend {
    * `scripts/fit-ros-blend.mjs --pos DST`. Absent = every position uses `K`, byte-identical to before.
    */
   byPos?: Record<string, number>;
+  /**
+   * PRIOR WEIGHTS BY PRESEASON LINE BAND (2026-09-25), ascending `maxLine`: the first band whose
+   * `maxLine` exceeds the line applies. `K` was fitted on lines >= 3 only; a man nobody expected to play
+   * whose games now show a role was held at 75% of a near-zero line (Kendre Miller: rate 3.5, weekly
+   * model 10.5). Fitted per band (`fit-ros-blend.mjs --min-line a --max-line b`, leave-one-season-out):
+   * lines < 1.5 K=1-2 (held-out RMSE 5.95 at K=6 -> 5.28), 1.5-3 K=2 in 14/14 folds (3.77 -> 3.56).
+   * `byPos` wins over `byLine` (a defence keeps its own weight). Absent = `K`, byte-identical.
+   * `FF_ROS_BLEND_BYLINE="1.5:1,3:2"` overrides it for a gate run ("off" disables).
+   */
+  byLine?: { maxLine: number; K: number }[];
   fittedOn?: string;
   fittedAt?: string;
   /** RMSE of rest-of-season per-game points by K, from the fit, for the record. */
@@ -207,8 +217,26 @@ export function loadRosBlend(path?: string): { blend: RosBlend; source: "fitted"
   return { blend: { ...j, K }, source: "fitted" };
 }
 
-/** The prior weight for one position: its own fit when it has one, else the pooled `K`. */
-export const rosKFor = (blend: RosBlend, pos: string): number => {
+/** The line bands in force: the env override for a gate run, else the blend's own. */
+function lineBands(blend: RosBlend): { maxLine: number; K: number }[] | null {
+  const env = process.env.FF_ROS_BLEND_BYLINE;
+  if (env === "off") return null;
+  if (env) {
+    return env.split(",").map((s) => {
+      const [m, k] = s.split(":").map(Number);
+      if (!(m > 0) || !(k >= 0)) throw new Error(`FF_ROS_BLEND_BYLINE "${env}" is not "maxLine:K,..."`);
+      return { maxLine: m, K: k };
+    }).sort((a, b) => a.maxLine - b.maxLine);
+  }
+  return blend.byLine?.length ? [...blend.byLine].sort((a, b) => a.maxLine - b.maxLine) : null;
+}
+
+/** The prior weight for one player: his position's own fit when it has one (DST), else his preseason
+ *  line's band when the blend carries bands, else the pooled `K`. `line` is per scheduled week. */
+export const rosKFor = (blend: RosBlend, pos: string, line?: number | null): number => {
   const v = blend.byPos?.[pos];
-  return v != null && Number.isFinite(Number(v)) ? Number(v) : blend.K;
+  if (v != null && Number.isFinite(Number(v))) return Number(v);
+  const bands = line != null && Number.isFinite(line) ? lineBands(blend) : null;
+  const band = bands?.find((b) => line! < b.maxLine);
+  return band ? band.K : blend.K;
 };
