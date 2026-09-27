@@ -8294,3 +8294,24 @@ him this week; the waiver rate is shrunk because that ranks the pool better.
 Also retracted in this session: "the weekly projector is not wired into waivers" is NOT a gap. Leaving it
 unwired is a recorded decision (copilotActions.ts, 2026-09-23): its 8.07 vs 5.12 realised ppg was a positional-mix
 artifact (54% QBs vs the room's 13%); within position it was worse than the room.
+
+## Roster moves: NO headroom -- even perfect knowledge of future rosters does not improve playoff odds (2026-09-25)
+
+The season simulator freezes every roster at the checkpoint. Headroom test: `season-calibration.mjs --sweep
+FF_SIM_ORACLE_ROSTERS=0,1 --at-week W --artifact-dir data/fold-artifacts-d16`, where "1" fields each team's ACTUAL
+roster in every later week (`SeasonTeamInput.rosterByWeek`, from `fact_roster_week`) -- hindsight about who
+plays, never about how they score (late arrivals priced at `rateFor` as of the checkpoint). 2018-2025, 114
+team-seasons, paired:
+
+| checkpoint | frozen | oracle rosters | paired d |
+|---|---|---|---|
+| week 4 | 0.2134 | 0.2148 | +0.0014 SE 0.0050 (4/8) |
+| week 8 | 0.1291 | 0.1292 | -0.0001 SE 0.0035 (4/8) |
+
+Connected (non-zero paired deltas; leave-one-season-out picks the oracle in some folds; test/season-roster-by-week
+.test.ts: a late star plays, and absent the field is identical). Why: this league's moves are small -- 180-300
+executed adds a season, 11-19 per team (~1 per team-week, mostly bench/K/DST churn), and NO executed trades
+2018-2025 in the store -- so the checkpoint roster is already the season's roster where it matters. A model of
+roster moves cannot beat this ceiling; not worth building. (Correction: an earlier message in this session
+quoted 750-1,500 "transactions" a season -- those were table ROWS, including draft picks, failed claims and both
+halves of each add/drop.)

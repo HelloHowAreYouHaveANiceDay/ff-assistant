@@ -120,7 +120,25 @@ export interface SeasonPlayer {
    */
   eligible?: string[];
 }
-export interface SeasonTeamInput { id: string; name: string; roster: SeasonPlayer[] }
+export interface SeasonTeamInput {
+  id: string; name: string; roster: SeasonPlayer[];
+  /**
+   * THE ROSTER EACH WEEK, when it is known to change (2026-09-25 -- the roster-move HEADROOM test:
+   * `season-calibration.mjs` with `FF_SIM_ORACLE_ROSTERS=1` feeds each team's ACTUAL future rosters).
+   * Week w's lineup is chosen from `rosterByWeek[w]`, falling back to `roster`. Every man who appears
+   * in any week is drawn once per trial (level, season, tier) exactly as a `roster` man is -- keyed by
+   * NAME, `roster` first. Absent: the simulator is unchanged.
+   */
+  rosterByWeek?: Record<number, SeasonPlayer[]>;
+}
+/** Every player a team may field over the season: `roster` plus any `rosterByWeek` man, one per name. */
+function teamUniverse(tm: SeasonTeamInput): SeasonPlayer[] {
+  if (!tm.rosterByWeek) return tm.roster;
+  const byName = new Map<string, SeasonPlayer>();
+  for (const p of tm.roster) if (!byName.has(p.name)) byName.set(p.name, p);
+  for (const r of Object.values(tm.rosterByWeek)) for (const p of r) if (!byName.has(p.name)) byName.set(p.name, p);
+  return [...byName.values()];
+}
 export interface SeasonOpts {
   weeks: number;
   playoffTeams: number;
@@ -617,8 +635,9 @@ export function simulateSeasons(
   // treated as barely-playing depth. `poolRank` supplies each player's rank in the full projection
   // pool so the tiers line up with the fit.
   const tierOf = new Map<SeasonPlayer, number>();
-  for (const tm of teams) {
-    for (const p of tm.roster) {
+  const universes = teams.map(teamUniverse);
+  for (const uni of universes) {
+    for (const p of uni) {
       const pr = opts.poolRank?.get(p.name);
       tierOf.set(p, pr ? tierFor(pr.rank / Math.max(1, pr.of), vm.tiers) : 0);
     }
@@ -747,8 +766,8 @@ export function simulateSeasons(
   // seeded standings + projections identify the eventual field), not remaining-week variance at all.
   const deterministic = _envNum("FF_SIM_DETERMINISTIC") === 1;
   const boot = opts.bootstrap
-    ? teams.map((tm) => {
-      const pp: PoolPlayer[] = tm.roster.map((p) => ({
+    ? teams.map((_tm, ti) => {
+      const pp: PoolPlayer[] = universes[ti].map((p) => ({
         name: p.name, pos: p.pos, team: p.team,
         rank: (opts.poolRank?.get(p.name)?.rank ?? 0) + 1,
         projPerGame: perGame(p),
@@ -769,8 +788,7 @@ export function simulateSeasons(
       ? teams.map((tm) => Math.exp(drawGauss(seedNum, trial, 0, pid(`__roster__${tm.id}`), 0x9000) * teamSd - 0.5 * teamSd ** 2))
       : null;
     for (let ti = 0; ti < teams.length; ti++) {
-      const tm = teams[ti];
-      for (const p of tm.roster) {
+      for (const p of universes[ti]) {
         const sdEff = opts.projSd * levelFactor;
         const err = (!boot && sdEff > 0) ? Math.exp(drawGauss(seedNum, trial, 0, pid(p.name), PURPOSE.projErr) * sdEff - 0.5 * sdEff ** 2) : 1;
         trueMean.set(p, Math.max(0, perGame(p) * err * (teamShock ? teamShock[ti] : 1)));
@@ -958,11 +976,18 @@ export function simulateSeasons(
     // paired delta. A dead lever gives EXACTLY +0.0000 under common random numbers.
     const scoreTeamWeek = (ti: number, gameWeek: number, keyWeek: number, byes: boolean, playoffDraw: boolean): number => {
       const tm = teams[ti];
+      // This week's roster, mapped onto the universe's objects (the maps below are keyed by object).
+      const weekRoster: SeasonPlayer[] = (() => {
+        const r = tm.rosterByWeek?.[gameWeek];
+        if (!r) return tm.roster;
+        const uniByName = new Map(universes[ti].map((p) => [p.name, p]));
+        return r.map((p) => uniByName.get(p.name) ?? p);
+      })();
       let players: { name: string; pos: string; proj: number; available: boolean; actual: number | null; eligible?: string[] }[];
       if (boot && !playoffDraw) {
         const b = boot[ti];
         const drawn = seasonDraw![ti];
-        players = tm.roster.map((p) => {
+        players = weekRoster.map((p) => {
           const onBye = byes && p.bye === gameWeek;
           const pp = b.byName.get(p.name);
           // THE KNOWN-INJURY SEAM APPLIES HERE TOO, and leaving it out of this branch made it dead
@@ -1014,7 +1039,7 @@ export function simulateSeasons(
           return { name: p.name, pos: p.pos, proj: trueMean.get(p) ?? 0, available: actual != null, actual, ...(p.eligible ? { eligible: p.eligible } : {}) };
         });
       } else {
-        players = tm.roster.map((p) => {
+        players = weekRoster.map((p) => {
           const tier = tierOf.get(p) ?? 0;
           const m = vm.pos[p.pos] ?? vm.pos.WR;
           const onBye = byes && p.bye === gameWeek;

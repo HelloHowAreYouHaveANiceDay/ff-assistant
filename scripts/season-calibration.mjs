@@ -572,7 +572,30 @@ function buildSeason(season, atWeek = null) {
   // September as-of, so it carries no curves and the knob is inert there -- deliberately.
   const knownInjury = atWeek == null ? null : buildKnownInjury(season, atWeek, skOf);
 
-  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosOfGap, rosOfUsage, rosK, knownInjury,
+  // THE ROSTER-MOVE HEADROOM ORACLE (2026-09-25). Each team's ACTUAL roster in every week from the
+  // checkpoint on, from fact_roster_week -- HINDSIGHT about who they will field, never about how
+  // anybody will score: a man who arrives later is priced at `rateFor` as of the checkpoint, exactly
+  // as the waiver replay prices a free agent. Attached to the simulation only when the value loop's
+  // `FF_SIM_ORACLE_ROSTERS=1`; built always (cheap) because `buildSeason` runs before any knob is set.
+  const oracleRosters = new Map();   // team id -> { [week]: player[] }
+  if (atWeek != null) {
+    const rows = db.prepare(
+      "SELECT week, team_id, name, pos, player_sk FROM fact_roster_week WHERE league_id = ? AND season = ? AND week >= ? AND week <= 17",
+    ).all(LEAGUE, season, atWeek);
+    for (const r of rows) {
+      const pr = lookup(r.name, r.pos);
+      if (!pr) continue;
+      const tm = nflTeam.get(`${nameKey(pr.name)}|${pr.pos}`) ?? nflTeam.get(`${nameKey(r.name)}|${r.pos}`) ?? null;
+      if (!rosOfUsage.has(pr.name)) {
+        const rf = rateFor(r.player_sk != null ? String(r.player_sk) : null, pr.mean / 17, pr.pos);
+        if (rf.k > 0) { rosOf.set(pr.name, rf.plain); rosOfGap.set(pr.name, rf.plain); rosOfUsage.set(pr.name, rf.usage); }
+      }
+      const byWeek = oracleRosters.get(String(r.team_id)) ?? oracleRosters.set(String(r.team_id), {}).get(String(r.team_id));
+      (byWeek[r.week] ??= []).push({ name: pr.name, pos: pr.pos, proj: pr.mean, team: tm ?? "", bye: tm ? (bye.get(tm) ?? null) : null });
+    }
+  }
+
+  return { season, teams, weeks, slots, reg, field, fieldSource, seasonSeeding, seasonReseed, poolRank, replacement, matched, missed, divisionOf, played, rosOf, rosOfGap, rosOfUsage, rosK, knownInjury, oracleRosters,
     // for the waiver replay (--waiver-backtest): price and place ANY player the same way
     lookup, nflTeam, bye, skOf, rostered, rateFor };
 }
@@ -666,6 +689,9 @@ const SWEEP_DEFAULTS = {
   // 2026-09-25: the parametric week draw's frozen uniform (u === v in Box-Muller) is FIXED; "1"
   // restores it -- the old-behaviour arm, like FF_SIM_BENCH_DNP=0.
   FF_SIM_PERF_RNG_LEGACY: "0",
+  // 2026-09-25: the ROSTER-MOVE HEADROOM ORACLE -- "1" fields each team's ACTUAL future rosters (hindsight
+  // on who plays, never on how they score). Measurement only; there is no shipped posture to move.
+  FF_SIM_ORACLE_ROSTERS: "0",
 };
 // ---------------------------------------------------------------------------------------------
 // --waiver-backtest: THE WAIVER DECISION REPLAY (2026-09-25). Replays what the copilot's waiver pricing
@@ -759,7 +785,14 @@ if (SWEEP) {
       // a max delta of 3.46 points per week. Anything that changes the CONTEXT rather than the
       // simulation has to be selected inside this loop.
       const rosPick = process.env.FF_SIM_ROS_USAGE !== "0" ? s.rosOfUsage : process.env.FF_SIM_ROS_GAP === "1" ? s.rosOfGap : s.rosOf;
-      const withRos = s.teams.map((t) => ({ ...t, roster: t.roster.map((p) => (rosPick.has(p.name) ? { ...p, rosPerGame: rosPick.get(p.name) } : { ...p })) }));
+      const priced = (p) => (rosPick.has(p.name) ? { ...p, rosPerGame: rosPick.get(p.name) } : { ...p });
+      // FF_SIM_ORACLE_ROSTERS=1: each team fields its ACTUAL roster week by week (the headroom oracle).
+      const oracle = process.env.FF_SIM_ORACLE_ROSTERS === "1";
+      const withRos = s.teams.map((t) => {
+        const byWeek = oracle ? s.oracleRosters?.get(t.id) : null;
+        return { ...t, roster: t.roster.map(priced),
+          ...(byWeek ? { rosterByWeek: Object.fromEntries(Object.entries(byWeek).map(([w, r]) => [w, r.map(priced)])) } : {}) };
+      });
       // The seam reads its env knob HERE rather than in `servedOpts` above, because the sweep sets
       // the knob per value and `servedOpts` is built once per season. Off, the option is absent and
       // `simulateSeasons` takes the branch it took before the seam existed.
