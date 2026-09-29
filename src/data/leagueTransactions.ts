@@ -412,7 +412,12 @@ export async function ingestPendingTrades(opts: { dbPath?: string; leagueId?: st
     let payload: unknown;
     try { payload = JSON.parse(await bridgeFetch(url, {}, 20000)); }
     catch (e) { console.log(`pending-trades: fetch failed (${(e as Error).message}) -- is the app running + logged in?`); return { pending: 0, proposals: 0 }; }
-    const parsed = parseTransactionWeek(payload, season, 0);   // each row's real week comes from its scoringPeriodId
+    // mPendingTransactions carries its list under `pendingTransactions`, not mTransactions2's
+    // `transactions` -- parsed as-is, this captured ZERO pending items on every run (found
+    // 2026-09-29 with a live pending claim in hand). Re-keyed for the shared parser.
+    const pend = (payload as { pendingTransactions?: unknown })?.pendingTransactions;
+    if (!Array.isArray(pend)) { console.log("pending-trades: payload carried no pendingTransactions array -- nothing captured"); return { pending: 0, proposals: 0 }; }
+    const parsed = parseTransactionWeek({ transactions: pend }, season, 0);   // each row's real week comes from its scoringPeriodId
     upsertTransactionRows(db, leagueId, parsed.rows, nowIso());
     const proposals = new Set(parsed.rows.filter((r) => r.type === "TRADE_PROPOSAL").map((r) => r.transactionId)).size;
     console.log(`pending-trades: ${parsed.rows.length} pending item(s), ${proposals} trade proposal(s) captured with full terms -> raw_league_transaction`);

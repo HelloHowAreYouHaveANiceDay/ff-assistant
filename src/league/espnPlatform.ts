@@ -204,7 +204,40 @@ const espnWrites: PlatformWrites = {
       operation: "TRADE_PROPOSAL",
     };
   },
+  // A FAAB CLAIM and its CANCEL, shaped on what ESPN itself records for this league: a pending claim
+  // is `WAIVER/EXECUTE` with `bidAmount` and ADD+DROP items; a withdrawal is `WAIVER/CANCEL` carrying
+  // the same items and `relatedTransactionId` = the pending claim's id (observed 2025 wk1, team 8).
+  waiverClaim(ctx) {
+    return {
+      url: `${ESPN_WRITES_BASE}/seasons/${ctx.season}/segments/0/leagues/${ctx.leagueId}/transactions/`,
+      body: JSON.stringify({ ...espnWaiverBase(ctx), bidAmount: ctx.bid, executionType: "EXECUTE" }),
+      operation: "WAIVER",
+    };
+  },
+  cancelWaiverClaim(ctx) {
+    return {
+      url: `${ESPN_WRITES_BASE}/seasons/${ctx.season}/segments/0/leagues/${ctx.leagueId}/transactions/`,
+      body: JSON.stringify({ ...espnWaiverBase(ctx), bidAmount: 0, executionType: "CANCEL", relatedTransactionId: ctx.claimId }),
+      operation: "WAIVER",
+    };
+  },
 };
+
+function espnWaiverBase(ctx: Omit<import("./writeIO.js").WaiverClaimCtx, "bid">) {
+  const me = Number(ctx.myTeamId);
+  return {
+    isLeagueManager: false,
+    isActingAsTeamOwner: false,
+    teamId: me,
+    type: "WAIVER",
+    ...(ctx.memberId ? { memberId: ctx.memberId } : {}),
+    scoringPeriodId: ctx.scoringPeriodId,
+    items: [
+      { playerId: Number(ctx.addPlayerId), type: "ADD", fromTeamId: 0, toTeamId: me, fromLineupSlotId: -1, toLineupSlotId: -1 },
+      ...(ctx.dropPlayerId ? [{ playerId: Number(ctx.dropPlayerId), type: "DROP", fromTeamId: me, toTeamId: 0, fromLineupSlotId: -1, toLineupSlotId: -1 }] : []),
+    ],
+  };
+}
 
 export const espnPlatform: Platform = {
   id: "espn",

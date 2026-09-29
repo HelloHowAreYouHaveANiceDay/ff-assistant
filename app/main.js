@@ -520,11 +520,16 @@ function startBridge() {
         // -- so the url check above does not restrict them and never did. Kept in step with
         // ESPN_WRITE_TYPES in src/league/writeIO.ts; test/write-contract.test.ts asserts the two
         // lists agree, because this file cannot import that one.
-        const ALLOWED_WRITE_TYPES = ["TRADE_PROPOSAL"];
+        const ALLOWED_WRITE_TYPES = ["TRADE_PROPOSAL", "WAIVER"];
+        // A WAIVER may only place (EXECUTE) or cancel (CANCEL) a claim -- same as ESPN_WAIVER_EXECUTION_TYPES.
+        const ALLOWED_WAIVER_EXECUTION_TYPES = ["EXECUTE", "CANCEL"];
         let tparsed;
         try { tparsed = JSON.parse(tbody); } catch { return reply(400, { error: "body is not valid JSON, so the operation cannot be checked" }); }
         if (!tparsed || !ALLOWED_WRITE_TYPES.includes(tparsed.type)) {
           return reply(400, { error: `refusing to write a "${tparsed && tparsed.type}" transaction; permitted: ${ALLOWED_WRITE_TYPES.join(", ")}` });
+        }
+        if (tparsed.type === "WAIVER" && !ALLOWED_WAIVER_EXECUTION_TYPES.includes(tparsed.executionType)) {
+          return reply(400, { error: `refusing a WAIVER with executionType "${tparsed.executionType}"; permitted: ${ALLOWED_WAIVER_EXECUTION_TYPES.join(", ")}` });
         }
         try {
           // RESOLVE THE GUEST BY HOST, like every sibling route (fixed WP14; audit 2.3). This was the

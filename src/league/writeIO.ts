@@ -75,8 +75,18 @@ export const MAX_WRITE_BODY = 1e5;
  *
  * Adding a type here is a decision about what this tool may do to somebody's real league. It is not
  * a refactor and it should be uncomfortable to make.
+ *
+ * WAIVER ADDED 2026-09-29, owner-signed ("Go", after being told it widens what the tool may write).
+ * It covers exactly two executionTypes, both observed in this league's own feed: EXECUTE (place a
+ * FAAB claim, which sits PENDING until the nightly process) and CANCEL (withdraw one, pointing at it
+ * by `relatedTransactionId`). A claim moves no player until ESPN processes it, and until then it can
+ * be cancelled -- which is why this type, and not FREEAGENT (an instant, irreversible add) or ROSTER
+ * (lineup), was the one admitted. The executionType is checked too: see ESPN_WAIVER_EXECUTION_TYPES.
  */
-export const ESPN_WRITE_TYPES: readonly string[] = ["TRADE_PROPOSAL"];
+export const ESPN_WRITE_TYPES: readonly string[] = ["TRADE_PROPOSAL", "WAIVER"];
+
+/** A WAIVER body may only place or cancel a claim. `PROCESS` is ESPN's own nightly executor. */
+export const ESPN_WAIVER_EXECUTION_TYPES: readonly string[] = ["EXECUTE", "CANCEL"];
 
 /**
  * ONE WRITE, ALREADY BUILT: where it goes, what it says, and WHICH OPERATION it is.
@@ -105,6 +115,29 @@ export interface PlatformWrites {
    *  do to somebody's real league -- see ESPN_WRITE_TYPES for why the URL alone decides nothing. */
   readonly operations: readonly string[];
   proposeTrade?(ctx: TradeWriteCtx): WriteRequest;
+  /** Place a FAAB waiver claim (add + drop). It sits pending until the platform processes it. */
+  waiverClaim?(ctx: WaiverClaimCtx): WriteRequest;
+  /** Withdraw a pending claim. There is no edit: an edit is a new claim plus this. */
+  cancelWaiverClaim?(ctx: WaiverCancelCtx): WriteRequest;
+}
+
+/** A FAAB claim, in platform-neutral terms. `playerId`s are the PLATFORM's ids. */
+export interface WaiverClaimCtx {
+  season: number;
+  leagueId: string;
+  myTeamId: string;
+  /** The logged-in member, where the platform records one on a claim (ESPN does). */
+  memberId?: string | null;
+  addPlayerId: string;
+  /** Null for a claim into an open roster spot. */
+  dropPlayerId: string | null;
+  bid: number;
+  scoringPeriodId: number;
+}
+
+/** Cancelling a pending claim: its id, and the same add/drop it carried. */
+export interface WaiverCancelCtx extends Omit<WaiverClaimCtx, "bid"> {
+  claimId: string;
 }
 
 /** What a trade proposal needs, in platform-neutral terms. `playerId` is the PLATFORM's id. */
@@ -180,6 +213,15 @@ export function assertWritableUrl(url: string, body: string, writes?: PlatformWr
       "endpoint allowlist does not restrict them -- this does. Widening it is a decision about what " +
       "this tool may do to a real league, not a refactor.",
     );
+  }
+  if (type === "WAIVER") {
+    const et = (parsed as { executionType?: unknown }).executionType;
+    if (typeof et !== "string" || !ESPN_WAIVER_EXECUTION_TYPES.includes(et)) {
+      throw new Error(
+        `REFUSED to write a WAIVER with executionType "${typeof et === "string" ? et : "(missing)"}". ` +
+        `Permitted: ${ESPN_WAIVER_EXECUTION_TYPES.join(", ")} -- place or cancel a claim, nothing else.`,
+      );
+    }
   }
 }
 

@@ -2384,3 +2384,25 @@ waiver ranking (rest-of-season rates) and NOT the season simulator. Week 3 (froz
 scorecards keep the old model's numbers. Live wk3 serve-check: lineup unchanged (99.2 projected); best free RB now
 Kendre Miller 10.46 (was 5.2). Rollback: `git checkout <previous> -- data/weekly-artifact.json`, or
 `FF_WEEKLY_MEAN_CAP=off` for the serve-time rules alone.
+
+## D45 -- the tool may PLACE and CANCEL FAAB waiver claims (2026-09-29, owner: "Go", **APPLIED**)
+
+`ESPN_WRITE_TYPES` (src/league/writeIO.ts) and the app's `ALLOWED_WRITE_TYPES` (app/main.js) now permit `WAIVER`
+beside `TRADE_PROPOSAL` -- and ONLY with `executionType` EXECUTE (place a claim) or CANCEL (withdraw one, by
+`relatedTransactionId`); both lists are asserted identical by test/write-contract.test.ts. FREEAGENT (an instant,
+irreversible add) and ROSTER (lineups) stay refused. Why a claim: it sits PENDING until ESPN's nightly process and
+can be withdrawn until then. Surface: `ff claim --list | --add P [--drop P] --bid N | --edit <id|player> --bid N |
+--cancel <id|player>`, a dry run unless `--send` (src/inseason/waiverClaim.ts). Payloads are shaped on this
+league's own recorded claims (ours, 2025 wk1) and were verified live: place $1 -> edit $2 -> edit $3 -> cancel on
+Sadiq/Pittman, every step confirmed in mPendingTransactions and mTransactions2, nothing left pending.
+
+Measured on the way, and built in:
+- ESPN refuses a second pending claim with the SAME add+drop (HTTP 409), and has no edit operation. An edit is
+  therefore CANCEL then PLACE; a refused new bid RE-PLACES the old one.
+- ESPN's read replica lags its writes by 1-2s; verification polls (up to ~15s) instead of trusting one re-read.
+- `mPendingTransactions` returns its list under `pendingTransactions`, not `transactions`. The claim reader fails
+  closed without it -- and `ingestPendingTrades` (sync-pending-trades) had read the wrong key since it was written,
+  capturing ZERO pending items every run. Fixed in the same change.
+- Claims process strictly highest-bid-first across the whole league (711/711 pairs, 59 runs, 2022-2026), so two
+  claims dropping the SAME player at different bids behave as "A, else B": the loser of the pair fails
+  FAILED_PLAYERALREADYDROPPED. Never give two of your own claims equal bids.

@@ -19,7 +19,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  ESPN_WRITE_URL_PATTERN, MAX_WRITE_BODY, ESPN_WRITE_TYPES, assertWritableUrl,
+  ESPN_WRITE_URL_PATTERN, MAX_WRITE_BODY, ESPN_WRITE_TYPES, ESPN_WAIVER_EXECUTION_TYPES, assertWritableUrl,
   cookieWriteIO, recordingWriteIO,
 } from "../src/league/writeIO.js";
 
@@ -68,11 +68,12 @@ test("the app's PERMITTED OPERATIONS are identical to the shared list", () => {
     "app/main.js and src/league/writeIO.ts disagree about which operations may be written.");
 });
 
-test("a WAIVER or LINEUP body is REFUSED at the permitted url", () => {
+test("a FREE-AGENT or LINEUP body is REFUSED at the permitted url", () => {
   // THE REGRESSION THIS EXISTS FOR. Every body below goes to a url the allowlist permits, because
   // it is the same url a trade uses. Before the operation check they would all have been sent.
+  // (WAIVER left this list 2026-09-29 -- owner-signed -- and is policed by executionType below.)
   const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
-  for (const t of ["WAIVER", "FREEAGENT", "ROSTER", "TRADE_ACCEPT", "DRAFT"]) {
+  for (const t of ["FREEAGENT", "ROSTER", "FUTURE_ROSTER", "TRADE_ACCEPT", "DRAFT"]) {
     assert.throws(() => assertWritableUrl(url, JSON.stringify({ type: t, items: [] })), /REFUSED to write a/,
       `a ${t} transaction was NOT refused -- ESPN serves it from the permitted url`);
   }
@@ -81,14 +82,58 @@ test("a WAIVER or LINEUP body is REFUSED at the permitted url", () => {
   assert.throws(() => assertWritableUrl(url, "not json"), /not valid JSON/);
 });
 
-test("the ONE permitted operation still goes through -- the guard can say yes", () => {
+test("a WAIVER may only PLACE or CANCEL a claim -- any other executionType is refused", () => {
+  const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
+  for (const et of ["PROCESS", "UPHOLD", "", undefined]) {
+    assert.throws(() => assertWritableUrl(url, JSON.stringify({ type: "WAIVER", executionType: et, items: [] })), /REFUSED to write a WAIVER/,
+      `a WAIVER with executionType ${String(et)} was NOT refused`);
+  }
+  // Positive controls: the two it exists to permit.
+  for (const et of ESPN_WAIVER_EXECUTION_TYPES) assertWritableUrl(url, JSON.stringify({ type: "WAIVER", executionType: et, items: [] }));
+  assert.deepEqual([...ESPN_WAIVER_EXECUTION_TYPES], ["EXECUTE", "CANCEL"]);
+});
+
+test("the app's WAIVER executionTypes are identical to the shared list", () => {
+  const main = readFileSync("app/main.js", "utf8");
+  const line = main.split("\n").find((l) => l.includes("const ALLOWED_WAIVER_EXECUTION_TYPES"));
+  assert.ok(line, "could not find ALLOWED_WAIVER_EXECUTION_TYPES in app/main.js");
+  const m = /\[([^\]]*)\]/.exec(line!);
+  const appTypes = m![1].split(",").map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  assert.deepEqual(appTypes, [...ESPN_WAIVER_EXECUTION_TYPES]);
+});
+
+test("the permitted operations still go through -- the guard can say yes", () => {
   // A guard that can only ever refuse is indistinguishable from a broken one, and would have
   // silently disabled `ff propose-trade --send` while every negative test above stayed green.
   const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
   assertWritableUrl(url, JSON.stringify({ type: "TRADE_PROPOSAL", isLeagueManager: false, items: [] }));
-  assert.equal(ESPN_WRITE_TYPES.length, 1,
-    "the permitted-operation list grew. That is a decision about what this tool may do to a real " +
+  assertWritableUrl(url, JSON.stringify({ type: "WAIVER", executionType: "EXECUTE", bidAmount: 1, items: [] }));
+  assert.deepEqual([...ESPN_WRITE_TYPES], ["TRADE_PROPOSAL", "WAIVER"],
+    "the permitted-operation list changed. That is a decision about what this tool may do to a real " +
     "league -- if it was deliberate, update this assertion deliberately.");
+});
+
+test("the ESPN claim and cancel bodies match what ESPN itself records, and pass the guard", async () => {
+  // Shapes observed in league 462233's own feed (2025 wk1, team 8): a pending claim is WAIVER/EXECUTE
+  // with bidAmount and ADD+DROP items; its withdrawal is WAIVER/CANCEL with relatedTransactionId.
+  const { espnPlatform } = await import("../src/league/espnPlatform.js");
+  const w = espnPlatform.writes!;
+  const ctx = { season: 2026, leagueId: "462233", myTeamId: "13", memberId: "{ABC}", addPlayerId: "4372561", dropPlayerId: "15835", scoringPeriodId: 4 };
+  const claim = w.waiverClaim!({ ...ctx, bid: 7 });
+  const c = JSON.parse(claim.body);
+  assert.equal(c.type, "WAIVER"); assert.equal(c.executionType, "EXECUTE"); assert.equal(c.bidAmount, 7);
+  assert.equal(c.teamId, 13); assert.equal(c.scoringPeriodId, 4); assert.equal(c.memberId, "{ABC}");
+  assert.deepEqual(c.items.map((i: { type: string; playerId: number; toTeamId: number; fromTeamId: number }) => [i.type, i.playerId, i.fromTeamId, i.toTeamId]),
+    [["ADD", 4372561, 0, 13], ["DROP", 15835, 13, 0]]);
+  assert.equal(claim.operation, "WAIVER");
+  assertWritableUrl(claim.url, claim.body);
+  const cancel = w.cancelWaiverClaim!({ ...ctx, claimId: "c8e63ab8" });
+  const x = JSON.parse(cancel.body);
+  assert.equal(x.executionType, "CANCEL"); assert.equal(x.relatedTransactionId, "c8e63ab8"); assert.equal(x.bidAmount, 0);
+  assert.deepEqual(x.items, c.items, "a cancel must carry the same add/drop as the claim it withdraws");
+  assertWritableUrl(cancel.url, cancel.body);
+  // No drop -> an ADD-only claim.
+  assert.equal(JSON.parse(w.waiverClaim!({ ...ctx, dropPlayerId: null, bid: 1 }).body).items.length, 1);
 });
 
 test("the app's body cap matches the shared one", () => {

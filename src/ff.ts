@@ -106,6 +106,8 @@ async function main() {
       return cmdSchedule(rest);
     case "propose-trade":
       return cmdProposeTrade(rest);
+    case "claim":
+      return cmdClaim(rest);
     case "format":
       return cmdFormat(rest);
     case "calibrate":
@@ -2170,6 +2172,56 @@ async function cmdInseasonTick(rest: string[]) {
   console.log(`\n${okN}/${results.length} steps ok in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   if (rest.includes("--json")) console.log(JSON.stringify({ ran, unknown, results, ok: okN === results.length }));
   if (okN !== results.length) process.exitCode = 1;   // so a poller / the app can see it without parsing stdout
+}
+
+/**
+ * `ff claim` -- FAAB waiver claims, under the propose-trade discipline: a DRY RUN unless `--send`.
+ *   ff claim --list
+ *   ff claim --add "Player" [--drop "Player"] --bid N [--send]
+ *   ff claim --edit <claim id | added player> --bid N [--send]     (new claim first, then cancel the old)
+ *   ff claim --cancel <claim id | added player> [--send]
+ * Everything is read live through the app's ESPN session, and every send is verified by re-reading
+ * ESPN's pending claims. See src/inseason/waiverClaim.ts.
+ */
+async function cmdClaim(rest: string[]) {
+  const W = await import("./inseason/waiverClaim.js");
+  const dbPath = valueOf(rest, "--db");
+  const leagueId = leagueArg(rest);
+  const send = rest.includes("--send");
+  const bidRaw = valueOf(rest, "--bid");
+  const bid = bidRaw == null ? NaN : Number(bidRaw);
+  const showPending = (label: string, p: import("./inseason/waiverClaim.js").PendingClaim[]) => {
+    console.log(`${label} (${p.length}):`);
+    for (const c of p) console.log(`  $${String(c.bid).padEnd(4)} ${c.addName}${c.dropName ? ` / drop ${c.dropName}` : ""}  [id ${c.id}]  week ${c.scoringPeriodId}`);
+  };
+  if (rest.includes("--list")) {
+    const st = await W.readClaimState(dbPath, leagueId);
+    console.log(`league ${st.leagueId} team ${st.myTeamId}, scoring period ${st.scoringPeriodId}: FAAB $${st.remaining} of $${st.budget} left (min bid $${st.minimumBid}); pending bids total $${st.pendingTotal}`);
+    showPending("PENDING CLAIMS", st.pending);
+    return;
+  }
+  let run: import("./inseason/waiverClaim.js").ClaimRun;
+  const add = valueOf(rest, "--add"), edit = valueOf(rest, "--edit"), cancel = valueOf(rest, "--cancel");
+  if (add && Number.isFinite(bid)) run = await W.placeClaim({ add, drop: valueOf(rest, "--drop") ?? null, bid, send, dbPath, leagueId });
+  else if (edit && Number.isFinite(bid)) run = await W.editClaim({ which: edit, bid, send, dbPath, leagueId });
+  else if (cancel) run = await W.cancelClaim({ which: cancel, send, dbPath, leagueId });
+  else {
+    console.log('usage: ff claim --list | --add "P" [--drop "P"] --bid N | --edit <id|player> --bid N | --cancel <id|player>   [--send]');
+    process.exitCode = 1; return;
+  }
+  const st = run.state;
+  console.log(`CLAIM ${run.action.toUpperCase()} -- league ${st.leagueId} team ${st.myTeamId}, scoring period ${st.scoringPeriodId}, FAAB $${st.remaining}/$${st.budget} left`);
+  run.describe.forEach((d, i) => console.log(`  ${i + 1}. ${d}`));
+  if (run.problems.length) { console.log("  PROBLEMS:"); run.problems.forEach((p) => console.log(`    - ${p}`)); }
+  run.requests.forEach((r, i) => console.log(`\n  request ${i + 1}: POST ${r.url}\n  ${r.body}`));
+  const blocking = run.problems.filter((p) => !p.startsWith("note:"));
+  if (blocking.length) { console.log("\n  NOT SENDABLE -- fix the problems above. Nothing was sent."); process.exitCode = 1; return; }
+  if (!send) { console.log("\n  DRY RUN -- nothing was sent. Re-run with --send to submit."); return; }
+  run.responses.forEach((r, i) => console.log(`\n  response ${i + 1}: HTTP ${r.status} ${r.body.slice(0, 300)}`));
+  if (run.error) console.log(`\n  ERROR: ${run.error}`);
+  console.log(`\n  VERIFIED: ${run.verified ?? "(no re-read)"}`);
+  if (run.after) showPending("  ESPN PENDING CLAIMS NOW", run.after);
+  if (run.error || !run.verified || /NOT FOUND|STILL PENDING|MISSING|CHECK ESPN/.test(run.verified)) process.exitCode = 1;
 }
 
 /**

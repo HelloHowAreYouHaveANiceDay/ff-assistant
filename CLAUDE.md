@@ -316,7 +316,11 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   week cannot be backfilled; with the column absent the model degrades toward its season-line anchor
   and gives back the +0.036 pooled CRPS the consensus was admitted on (5/0 covered seasons).
   `ff evaluate-weekly`'s flagless `--features` is that artifact's own list, not the trainer's `all`.
-- Recorded decisions D0-D43 (do not silently reverse): `docs/decisions.md`. **Waivers (D43): ranked on the
+- **Waiver claims are writable (D45):** `ff claim` places/edits/cancels FAAB claims through the app, dry-run
+  unless `--send`, every send verified by re-reading ESPN. ESPN has no edit (409 on a duplicate add+drop), so an
+  edit is cancel-then-place; claims process highest-bid-first league-wide, so claims sharing a DROP chain as
+  "A, else B". `mPendingTransactions` lists under `pendingTransactions`, not `transactions`.
+- Recorded decisions D0-D45 (do not silently reverse): `docs/decisions.md`. **Waivers (D43): ranked on the
   full expected-lineup model (`src/inseason/expectedLineup.ts`: future injuries + replacement-level streaming),
   and they RECOMMEND NOTHING by default** -- no waiver rule beat standing pat in the 2018-2025 replay once
   streaming was priced (`--waiver-backtest`, `scripts/waiver-decision-report.mjs`). A rule that claims an edge
