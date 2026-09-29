@@ -3,24 +3,7 @@
   "kind": "weekly",
   "zeroModel": "quantile",
   "fittedFrom": "tools/train_weekly.py",
-  "trainerArgv": [
-    "--db",
-    "data/ff.db",
-    "--seasons",
-    "2010-2025",
-    "--holdout-season",
-    "none",
-    "--season-line-only",
-    "--zero-model",
-    "quantile",
-    "--population",
-    "rostered",
-    "--band-conformal-k",
-    "5",
-    "--out",
-    "C:/Users/TLDR/AppData/Local/Temp/claude/H--working-ff-assistant/8146f491-ea5e-4d80-ac79-9c2b598730a0/scratchpad/lineonly-cand.json"
-  ],
-  "fittedAt": "2026-09-29",
+  "fittedAt": "2026-09-19",
   "seasons": [
     2010,
     2011,
@@ -44,8 +27,8 @@
   "population": "rostered",
   "trainMinLine": 0.0,
   "rowFilter": "in_population",
-  "populationHash": "08d241f862443aae",
-  "populationRows": 79587,
+  "populationHash": "a27d935df713db71",
+  "populationRows": 79580,
   "features": [],
   "coef": {
     "QB": {
@@ -84,7 +67,7 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.8115972217723494
+        "intercept": 0.811968901086597
       },
       "p90": {
         "intercept": 2.6289391810171883
@@ -98,10 +81,10 @@
         "intercept": 0.0
       },
       "p50": {
-        "intercept": 0.6785206158615137
+        "intercept": 0.6774029101659087
       },
       "p90": {
-        "intercept": 2.557219089792749
+        "intercept": 2.5550481524883373
       }
     },
     "K": {
@@ -185,37 +168,37 @@
       },
       "WR": {
         "p10": 1.0,
-        "p90": 1.00148,
+        "p90": 1.001204,
         "n": 21463,
         "nLo": 0,
         "oofBefore": {
-          "cover": 0.897778,
-          "below": 0.002097,
-          "above": 0.100126,
+          "cover": 0.897684,
+          "below": 0.002143,
+          "above": 0.100172,
           "belowGivenFloor": 0.0
         },
         "oofAfter": {
-          "cover": 0.897871,
-          "below": 0.002097,
+          "cover": 0.897824,
+          "below": 0.002143,
           "above": 0.100033,
           "belowGivenFloor": 0.0
         }
       },
       "TE": {
         "p10": 1.0,
-        "p90": 1.002592,
-        "n": 10967,
+        "p90": 1.002896,
+        "n": 10960,
         "nLo": 0,
         "oofBefore": {
-          "cover": 0.897602,
-          "below": 0.001641,
-          "above": 0.100757,
+          "cover": 0.89781,
+          "below": 0.001642,
+          "above": 0.100547,
           "belowGivenFloor": 0.0
         },
         "oofAfter": {
-          "cover": 0.898331,
-          "below": 0.001641,
-          "above": 0.100027,
+          "cover": 0.898358,
+          "below": 0.001642,
+          "above": 0.1,
           "belowGivenFloor": 0.0
         }
       },
@@ -328,9 +311,9 @@
       },
       "expect": {
         "mean": 11.0,
-        "p50": 8.927569439495842,
+        "p50": 8.931657911952568,
         "p10": 0.0,
-        "p90": 28.96113012105603
+        "p90": 28.95314866170246
       }
     },
     {
@@ -401,9 +384,9 @@
       },
       "expect": {
         "mean": 7.5,
-        "p50": 5.088904618961353,
+        "p50": 5.080521826244315,
         "p10": 0.0,
-        "p90": 19.22885551255119
+        "p90": 19.218356789534575
       }
     },
     {
@@ -453,9 +436,9 @@
       },
       "expect": {
         "mean": 13.0,
-        "p50": 10.550763883040542,
+        "p50": 10.555595714125761,
         "p10": 0.0,
-        "p90": 34.22679014306622
+        "p90": 34.217357509284724
       }
     }
   ]

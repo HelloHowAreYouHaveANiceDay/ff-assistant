@@ -2406,3 +2406,24 @@ Measured on the way, and built in:
 - Claims process strictly highest-bid-first across the whole league (711/711 pairs, 59 runs, 2022-2026), so two
   claims dropping the SAME player at different bids behave as "A, else B": the loser of the pair fails
   FAILED_PLAYERALREADYDROPPED. Never give two of your own claims equal bids.
+
+## D46 -- the line-only weekly floor re-pinned to the current population (2026-09-29, owner: "swap it in", **APPLIED**)
+
+`data/weekly-artifact-lineonly.json` (serves K; the floor for any QB-TE man the served weekly model has no row for)
+was fitted 2026-09-19 against populationHash `a27d935df713db71` (79,580 rows). The population was rebuilt before
+D44's 2026-09-25 refit (`08d241f862443aae`, 79,587 -- which weekly-artifact.json already declares), and this file
+was never refit, so the population guard refused it. Refit with its own recipe (`--season-line-only --zero-model
+quantile --population rostered --seasons 2010-2025 --band-conformal-k 5`, now stamped as `trainerArgv`).
+
+Gate (docs: this entry; evidence in the 2026-09-29 session):
+- the whole delta is 7 TE training rows (10,960 -> 10,967); K, QB, RB, DST quantile ratios move by exactly 0,
+  WR <= 0.0004, TE <= 0.0022; every mean intercept stays 1.0; band scales identical except WR/TE (4th decimal);
+- the population guard PASSES the candidate and still refuses the old file (both verdicts shown);
+- the projector loads it and reproduces its golden rows; live week-4 serve over 523 players: K (34), DST, QB, RB
+  unchanged to 1e-9, TE/WR p50/p90 move <= 0.016 pts, no mean moves -- comparator proven live against the two-part
+  artifact (moves up to 16 pts).
+
+md5 `22bb90af749adc58333ac0763e4072a4` -> **`8bd0e9d6fdc229617645ec116c90f4cf`**. ROLLBACK:
+`Copy-Item data\weekly-artifact-lineonly.pre-refit-2026-09-29.json data\weekly-artifact-lineonly.json -Force`,
+then the md5 must be `22bb90af...`. The streaming artifact (`streaming-artifact.json`, same stale population, serves
+nothing per D11) was NOT refit -- its three guard tests stay red until it is refit or retired.

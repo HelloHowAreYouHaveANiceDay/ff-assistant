@@ -197,6 +197,12 @@ that is defined but not wired reads exactly like a lever that does nothing.
   `if npx tsc --noEmit -p .; then echo CLEAN; else echo FAILED; fi` -- unpiped, so the status is the
   compiler's. The general rule: a wrapper that reports success is indistinguishable from
   a command that succeeded, so verify the wrapper before believing the status.
+- **`npm test` with NOTHING holding `data/ff.db` open throws `attempt to write a readonly database`** in
+  2-4 store-backed tests (backtest-pool, the conditional-curve pair -- which ones varies by run). Parallel test
+  processes race to create the WAL `-shm` while none exists; with the desktop app (or any one connection)
+  holding the store, the -shm persists and the race is gone. MEASURED 2026-09-29: the same tree failed 6-8
+  with the app closed, 4 with one held connection, and each flaky test passed 3/3 alone. Before blaming a
+  change for those failures, hold a connection (or open the app) and re-run.
 - A backgrounded job survives a tool timeout and stays invisible to Git Bash `ps`; two concurrent
   backtests once turned a 2-minute job into a 2-hour stall. That stall was **orphaned background jobs**,
   NOT CPU oversubscription: a single `ff backtest` is **single-threaded -- MEASURED at 1.03 of 32 cores
