@@ -59,7 +59,9 @@ export const PRODUCERS: Producer[] = [
     what: "the weekly-model feature table: per-player-week season line, trailing form, matchup and rest",
     // verified: src/weekly/features.ts -- reads feat_player_season/feat_player_week/
     // feat_player_week_context/team_odds, writes feat_player_week_model
-    reads: ["feat_player_season", "feat_player_week", "feat_player_week_context", "team_odds"],
+    // (+ raw_dfs_salary: `dfsSalaryTable` in the same file, `FROM raw_dfs_salary`, called from both
+    //  the history build and the live build -- added 2026-09-29 when the lineage guard caught it.)
+    reads: ["feat_player_season", "feat_player_week", "feat_player_week_context", "team_odds", "raw_dfs_salary"],
     writes: ["feat_player_week_model"],
   },
   {
@@ -200,6 +202,15 @@ export const PRODUCERS: Producer[] = [
     // `FROM raw_college_player_season`; `INSERT INTO feat_player_prospect`.
     reads: ["raw_combine", "raw_nfl_draft_pick", "raw_college_team_season", "raw_college_player_season", "player_xref"],
     writes: ["feat_player_prospect"],
+  },
+  {
+    id: "ingest-rotoguru-salary",
+    what: "eight free seasons of DraftKings/FanDuel weekly salaries from RotoGuru (the market-forecast probe)",
+    // verified: scripts/ingest-rotoguru-salary.mts -- fetches rotoguru1.com fyday.pl per (season, week,
+    // book); `INSERT INTO raw_dfs_salary`. Script-only (no `ff` verb); added 2026-09-24 (a5650a1)
+    // without a declaration here, which the dag-lineage guard caught.
+    reads: ["src_rotoguru"],
+    writes: ["raw_dfs_salary"],
   },
   {
     id: "ledger sync",
