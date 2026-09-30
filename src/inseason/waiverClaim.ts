@@ -70,6 +70,11 @@ export async function readClaimState(dbPath?: string, leagueIdArg?: string | nul
   // mPendingTransactions puts its list under `pendingTransactions`, NOT `transactions` (mTransactions2's
   // key). Reading the wrong key reported "0 pending" with a real claim live on ESPN (2026-09-29), so a
   // payload with no such array FAILS CLOSED rather than reading as "no claims".
+  // ESPN OMITS THE KEY when nothing is pending (HTTP 200, no `pendingTransactions` at all -- measured
+  // 2026-09-30 right after a processing run, cross-checked against mTransactions2: 0 unresolved). So an
+  // absent key reads as "none pending" ONLY when the rest of the league payload arrived intact; anything
+  // else still fails closed.
+  if (j.pendingTransactions === undefined && Array.isArray(j.teams) && j.teams.length && j.settings) j.pendingTransactions = [];
   if (!Array.isArray(j.pendingTransactions)) throw new Error("ESPN's mPendingTransactions payload carried no pendingTransactions array -- cannot tell which claims are pending");
   const acq = j.settings?.acquisitionSettings ?? {};
   if (!acq.isUsingAcquisitionBudget) throw new Error("this league does not use a FAAB budget -- nothing here knows how to claim without one");
