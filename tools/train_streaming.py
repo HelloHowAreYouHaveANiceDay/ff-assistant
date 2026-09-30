@@ -264,12 +264,23 @@ def main():
 
     # ---- THE OVERRIDES, applied to the imported module so every downstream function sees them. ----
     stream_on = args.features != "weekly-only"
-    tw.CENTER = list(tw.CENTER) + (STREAM_CENTER if stream_on else [])
-    tw.INDICATOR = list(tw.INDICATOR) + (STREAM_INDICATOR if stream_on else [])
+    # ORDER-PRESERVING DE-DUPLICATION. train_weekly's dictionary later gained five of these columns
+    # itself (bdd6247: opp_pa_pos, opp_def_sacks_pg, opp_def_takeaways_pg, opp_pass_yds_allowed_pg,
+    # roof_dome), so a plain concatenation listed them TWICE and every refit emitted duplicate feature
+    # specs (37 served -> 42 on a like-for-like refit, found 2026-09-29).
+    tw.CENTER = list(dict.fromkeys(list(tw.CENTER) + (STREAM_CENTER if stream_on else [])))
+    tw.INDICATOR = list(dict.fromkeys(list(tw.INDICATOR) + (STREAM_INDICATOR if stream_on else [])))
     tw.ALL_FEATURES = tw.RATIO_TO_LINE + tw.CENTER + tw.INDICATOR
     gates = dict(tw.POS_GATED)
     gates.update(AVAILABILITY_GATED)
     if stream_on:
+        # THIS FILE OWNS THE GATING OF ITS OWN COLUMNS. train_weekly later declared five of them with a
+        # QB-only gate (bdd6247); `update` only overrides keys STREAM_GATED names, so opp_pa_pos and
+        # roof_dome -- ungated here by design -- silently inherited QB-only and were zeroed at every
+        # other position (found on the 2026-09-29 re-pin: TE.mean.opp_pa_pos 0.635 -> 0.000). Clear
+        # the inherited gate first; STREAM_GATED then applies exactly as it did when this was fitted.
+        for c in STREAM_ALL:
+            gates.pop(c, None)
         gates.update(STREAM_GATED)
     tw.POS_GATED = gates
     # 4. EVERY POSITION IS FITTED. K and DST were intercept-only because there was nothing to give

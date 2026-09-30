@@ -2427,3 +2427,25 @@ md5 `22bb90af749adc58333ac0763e4072a4` -> **`8bd0e9d6fdc229617645ec116c90f4cf`**
 `Copy-Item data\weekly-artifact-lineonly.pre-refit-2026-09-29.json data\weekly-artifact-lineonly.json -Force`,
 then the md5 must be `22bb90af...`. The streaming artifact (`streaming-artifact.json`, same stale population, serves
 nothing per D11) was NOT refit -- its three guard tests stay red until it is refit or retired.
+
+## D47 -- the streaming artifact refit on the current population, and two trainer bugs fixed (2026-09-29, owner: "Swap it", **APPLIED**)
+
+`data/streaming-artifact.json` serves NO position (`SHIPPED_STREAMING_POSITIONS` is empty since D11), so nothing live
+moves; it was refit because the population guard refused it (`c3497aba3c714197`/70,028 -> store `0138f7538ad11577`/
+70,035). The like-for-like refit exposed two `tools/train_streaming.py` bugs, both caused by `train_weekly.py`
+changing underneath it after the 2026-09-19 fit (bdd6247, 2026-09-23, declared five of the streaming columns itself):
+- **Duplicate features.** `tw.CENTER + STREAM_CENTER` listed those five twice, so a refit of the 37-feature model
+  emitted 42 specs. Now an order-preserving de-duplication.
+- **Silently QB-gated columns.** bdd6247 gated those five to QB; `gates.update(STREAM_GATED)` only overrides keys it
+  names, so `opp_pa_pos` and `roof_dome` (ungated here by design) were zeroed at every other position. The trainer
+  now clears the inherited gate on its own columns before applying STREAM_GATED.
+- Also: `--features all` now yields 50 columns (the dictionary grew), so the refit names the 37 served features
+  explicitly -- the D23 trap, again.
+
+NOT a pure re-pin, and said so before the swap: 31 of 2,052 coefficients move by > 0.05, concentrated in the WR
+zero head (intercept 1.13 -> 0.38), because the borrowed two-part fitter changed across six train_weekly.py commits
+since 09-19 (not bisected). Golden rows: QB/K/DST/RB(line 14.5) unchanged to ~0.01; WR(line 11) mean 5.87 -> 5.56,
+P(zero) 0.208 -> 0.252; RB(line 9) +0.25; TE -0.12. Any re-promotion must pass `ff evaluate-streaming` on its own.
+md5 `f60ed742b78050b0c622f3608a7a1ccb` -> **`9abfe84d30e5f30c4cd3924543ba7d08`**; rollback copy
+`data/streaming-artifact.pre-refit-2026-09-29.json`. Suite with a held connection: 1,428 pass, 1 fail (the
+Ogletree/Palmer staging test, unrelated).
