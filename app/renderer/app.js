@@ -409,6 +409,8 @@ function setBrowserPlatform(plat) {
   const esp = document.getElementById("espnview"), yah = document.getElementById("yahooview");
   if (esp) esp.classList.toggle("off", plat !== "espn");
   if (yah) yah.classList.toggle("off", plat !== "yahoo");
+  // The Yahoo guest is parked on about:blank until first needed (index.html); load it on first open.
+  if (plat === "yahoo" && yah && yah.getURL && /^(about:blank)?$/.test(yah.getURL() || "")) yah.loadURL(PLATFORM_HOME.yahoo);
   for (const b of document.querySelectorAll("#lv-plat .plat")) b.classList.toggle("on", b.dataset.plat === plat);
   const wv = activeWv(), urlEl = document.getElementById("lv-url");
   if (wv && urlEl && wv.getURL) urlEl.textContent = wv.getURL();

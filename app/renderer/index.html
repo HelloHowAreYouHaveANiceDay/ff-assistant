@@ -47,7 +47,10 @@
              and the platform toggle only ever changed which one the toolbar acted on.) -->
         <div id="wvstack">
           <webview id="espnview" partition="persist:espn" src="https://fantasy.espn.com/football/" allowpopups></webview>
-          <webview id="yahooview" partition="persist:yahoo" src="https://football.fantasysports.yahoo.com/" allowpopups class="off"></webview>
+          <!-- LAZY (2026-10-01): mounted and attached (still a CDP target) but parked on about:blank until
+               the Yahoo tab is opened or the engine asks the bridge for Yahoo -- the always-loaded Yahoo
+               page was running a ~24-origin ad auction in the background. See main.js ensureGuest. -->
+          <webview id="yahooview" partition="persist:yahoo" src="about:blank" allowpopups class="off"></webview>
         </div>
       </div>
     </div>

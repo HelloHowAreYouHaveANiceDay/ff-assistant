@@ -43,16 +43,24 @@ function ensureDb() {
 function ffSpawn(args, opts = {}) {
   // packaged: NODE_PATH points at the engine's bundled deps (copied as "deps" since electron-builder
   // won't ship a folder literally named node_modules via extraResources)
+  // dev: `node --import tsx src/ff.ts` DIRECTLY -- what `npm run ff` (= `tsx src/ff.ts`) ran, minus the
+  // shell. Through `npm run ... { shell: true }` every job was cmd -> npm -> tsx cli -> node, ~60 MB of
+  // wrappers per job, and the PID the app held was cmd's, so a kill did not reliably reach the engine.
   return app.isPackaged
-    ? cp.spawn(NODE_BIN, [ENGINE_JS, ...args], { env: { ...process.env, FF_DB: DB_PATH, FF_DATA: app.getPath("userData"), NODE_PATH: path.join(process.resourcesPath, "engine", "deps") }, ...opts })
-    : cp.spawn("npm", ["--silent", "run", "ff", "--", ...args], { cwd: REPO, shell: true, ...opts });
+    ? cp.spawn(NODE_BIN, [ENGINE_JS, ...args], { env: { ...process.env, FF_DB: DB_PATH, FF_DATA: app.getPath("userData"), NODE_PATH: path.join(process.resourcesPath, "engine", "deps") }, windowsHide: true, ...opts })
+    : cp.spawn("node", ["--import", "tsx", "src/ff.ts", ...args], { cwd: REPO, windowsHide: true, ...opts });
 }
+// EVERY one-shot job the app has in flight, so quitting can end them. Measured 2026-10-01: before-quit
+// stopped only `serve`, and an `inseason-tick` started by the scheduler kept running after the window
+// closed (618 MB, still working minutes later, invisible because the app was gone).
+const inflight = new Set();
 function ffRun(args) {
   return new Promise((res) => {
     const p = ffSpawn(args); let out = "";
+    inflight.add(p);
     p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (out += d));
-    p.on("close", (c) => { res({ ok: c === 0, out: out.slice(-1800) }); noticeBoardChange(); });
-    p.on("error", (e) => res({ ok: false, out: String(e) }));
+    p.on("close", (c) => { inflight.delete(p); res({ ok: c === 0, out: out.slice(-1800) }); noticeBoardChange(); });
+    p.on("error", (e) => { inflight.delete(p); res({ ok: false, out: String(e) }); });
   });
 }
 
@@ -318,6 +326,44 @@ function guestWebContents({ host = "espn.com", urlIncludes } = {}) {
   pool.sort((a, b) => url(b).length - url(a).length);
   return pool[0] || null;
 }
+// A FRAME WALK THAT SURVIVES DEAD FRAMES (2026-10-01). `mainFrame.framesInSubtree` builds every frame
+// in one call and throws "Render frame was disposed before WebFrameMain could be accessed" if ANY of
+// them is gone -- which, with the ad block cancelling ad iframes mid-creation, was every call on the
+// Yahoo guest (4/4 measured). Walk the tree one frame at a time and skip any that throws.
+function liveFrames(guest) {
+  const out = [];
+  const walk = (f) => {
+    let url, name;
+    try { url = f.url; name = f.name; } catch (_) { return; }
+    out.push({ frame: f, url: url || "", name: name || "" });
+    let kids = [];
+    try { kids = f.frames || []; } catch (_) { kids = []; }
+    for (const k of kids) walk(k);
+  };
+  try { walk(guest.mainFrame); } catch (_) { /* guest gone mid-walk */ }
+  return out;
+}
+// THE LAZY GUEST (2026-10-01). The Yahoo webview is mounted on about:blank (index.html) so its ad
+// auction does not run all session. When a bridge route asks for a host whose guest is parked, find
+// the parked guest BY PARTITION (never "any webview" -- see P-3 above), load that platform's home,
+// wait for it, then resolve normally. A host with no parked guest behaves exactly as before.
+const LAZY_GUESTS = { "fantasysports.yahoo.com": { partition: "persist:yahoo", home: "https://football.fantasysports.yahoo.com/" } };
+async function ensureGuest(host) {
+  const found = guestWebContents({ host });
+  if (found) return found;
+  const lazy = LAZY_GUESTS[host];
+  if (!lazy) return null;
+  const { webContents, session } = require("electron");
+  const part = session.fromPartition(lazy.partition);
+  const parked = webContents.getAllWebContents().find((wc) => { try { return wc.getType() === "webview" && !wc.isDestroyed() && wc.session === part; } catch (_) { return false; } });
+  if (!parked) return null;
+  await new Promise((resolve) => {
+    const t = setTimeout(resolve, 30000);
+    parked.once("did-stop-loading", () => { clearTimeout(t); resolve(); });
+    parked.loadURL(lazy.home).catch(() => { clearTimeout(t); resolve(); });
+  });
+  return guestWebContents({ host });
+}
 // (A back-compat `espnGuestWebContents(urlIncludes)` wrapper lived here. Its own comment claimed
 // "the existing ESPN routes call this", and a grep found ZERO call sites -- every route had already
 // been converted to guestWebContents({host}). Removed in WP14, audit 2.3.)
@@ -395,12 +441,13 @@ function startBridge() {
         if (selector != null && typeof selector !== "string") return reply(400, { error: "selector must be a string" });
         if (match != null && typeof match !== "string") return reply(400, { error: "match must be a string" });
         try {
-          const guest = guestWebContents({ host: fhost });
+          const guest = await ensureGuest(fhost);
           if (!guest || guest.isDestroyed()) return reply(200, { error: `no guest on ${fhost} (open that platform's browser tab first) -- refusing to read another platform's webview instead` });
           if (waitMs) await new Promise((r) => setTimeout(r, waitMs));
-          const frames = guest.mainFrame.framesInSubtree.map((f) => ({ url: f.url, name: f.name }));
+          const live = liveFrames(guest);
+          const frames = live.map((x) => ({ url: x.url, name: x.name }));
           if (!match) return reply(200, { frames });
-          const frame = guest.mainFrame.framesInSubtree.find((f) => (f.url || "").includes(match));
+          const frame = (live.find((x) => x.url.includes(match)) || {}).frame;
           if (!frame) return reply(200, { error: `no frame url contained "${match}"`, frames });
           // Chat message lists are virtualized -- only rows near the viewport are in the DOM. When
           // asked, wheel the largest scrollable element up to load earlier messages before scraping.
@@ -454,12 +501,12 @@ function startBridge() {
         if (frameMatch != null && typeof frameMatch !== "string") return reply(400, { error: "frame must be a string" });
         if (!selector && !textMatch) return reply(400, { error: "give a selector or text" });
         try {
-          const guest = guestWebContents({ host: clickHost });
+          const guest = await ensureGuest(clickHost);
           if (!guest || guest.isDestroyed()) return reply(503, { error: `no guest on ${clickHost} (open that platform's browser tab first) -- refusing to click in another platform's webview instead` });
           // Click in a NESTED frame when asked (the chat lives in a cross-origin iframe); else the top document.
           let targetFrame = guest.mainFrame;
           if (frameMatch) {
-            const f = guest.mainFrame.framesInSubtree.find((fr) => (fr.url || "").includes(frameMatch));
+            const f = (liveFrames(guest).find((x) => x.url.includes(frameMatch)) || {}).frame;
             if (!f) return reply(200, { ok: false, err: `no frame url contained "${frameMatch}"` });
             targetFrame = f;
           }
@@ -573,7 +620,7 @@ function startBridge() {
       try {
         // Resolve the GUEST by host (never `win` + getElementById -- see the 2026-09-13 note above),
         // with no fallback: if that platform's webview is not mounted, say so.
-        const guest = guestWebContents({ host: fetchHost });
+        const guest = await ensureGuest(fetchHost);
         if (!guest || guest.isDestroyed()) return reply(503, { error: `no guest on ${fetchHost} (open that platform's browser tab and sign in) -- refusing to fetch with another platform's session` });
         // Built by JSON-encoding the url and init separately so nothing the caller sends can break
         // out of the string literal it lands in -- this is code being assembled, not data.
@@ -600,7 +647,26 @@ function startBridge() {
   });
 }
 
+// ADS OFF IN THE GUESTS (2026-10-01). Each cross-origin ad frame is its own renderer process under
+// site isolation; the Yahoo guest alone ran ~24 ad-auction origins. Blocking them at the request layer
+// of the two guest partitions removes those processes (and their CPU). The list and its "never block a
+// fantasy/login host" guarantee live in app/blockHosts.js, tested without Electron.
+function blockAdsInGuests() {
+  const { session } = require("electron");
+  const { isBlockedUrl } = require("./blockHosts.js");
+  let blocked = 0;
+  for (const part of ["persist:espn", "persist:yahoo"]) {
+    session.fromPartition(part).webRequest.onBeforeRequest({ urls: ["*://*/*"] }, (details, cb) => {
+      const cancel = details.resourceType !== "mainFrame" && isBlockedUrl(details.url);
+      if (cancel) blocked++;
+      cb({ cancel });
+    });
+  }
+  ipcMain.handle("mc:adsBlocked", () => blocked);
+}
+
 app.whenReady().then(() => {
+  blockAdsInGuests(); // before any guest loads
   ensureDb();   // packaged first-run: copy the seeded store into writable userData
   startServe(); // one long-lived DB helper for the whole session
   startBridge();// loopback door so the engine can use the app's authenticated webview
@@ -611,5 +677,8 @@ app.whenReady().then(() => {
 app.on("before-quit", () => {
   if (schedulerTimer) { clearTimeout(schedulerTimer); schedulerTimer = null; }
   try { if (serve && serve.pid) cp.execSync(`taskkill /F /T /PID ${serve.pid}`); } catch (_) { /* gone */ }
+  // ...and every in-flight job (a scheduler tick, a sync), by its exact PID tree -- see `inflight`.
+  for (const p of inflight) { try { if (p.pid) cp.execSync(`taskkill /F /T /PID ${p.pid}`); } catch (_) { /* gone */ } }
+  inflight.clear();
 });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });

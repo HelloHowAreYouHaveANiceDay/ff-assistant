@@ -122,6 +122,13 @@ app's embedded ESPN webview, driven with `--app` (see the trap below). It carrie
 and is the only surface the draft/in-season verbs actually control. If a task needs the browser, reach
 for the `--app` path or the `ff-draft` MCP tools, not Chrome. (Standing owner instruction 2026-09-13.)
 
+**App memory (2026-10-01 hotfix).** The guests' ad/tracker hosts are blocked per partition
+(`app/blockHosts.js`, tested), the Yahoo guest is parked on about:blank until its tab opens or a bridge
+route asks for Yahoo (`ensureGuest`), frame reads walk the tree with `liveFrames` (a blocked ad frame
+made `framesInSubtree` throw on every call), jobs spawn as `node --import tsx src/ff.ts` (no shell/npm --
+so a process search must match `ff\.ts`, not the repo path), and quitting kills every in-flight job.
+Measured: 27 renderers / ~1.1 GB Chromium -> 5 / ~640-710 MB.
+
 **RUN EXACTLY ONE APP INSTANCE — multiple instances split-brain (2026-09-13, cost ~an hour).** The
 MCP browser tools attach to a FIXED CDP port (9223, first instance to bind wins); the app bridge is
 whatever the NEWEST instance wrote to `data/app-bridge.json`. With two instances up, those are
