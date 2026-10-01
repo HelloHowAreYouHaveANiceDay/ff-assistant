@@ -2180,6 +2180,7 @@ async function cmdInseasonTick(rest: string[]) {
  *   ff claim --add "Player" [--drop "Player"] --bid N [--send]
  *   ff claim --edit <claim id | added player> --bid N [--send]     (new claim first, then cancel the old)
  *   ff claim --cancel <claim id | added player> [--send]
+ *   ff claim --fa-add "Player" [--drop "Player"] [--send]    (INSTANT free-agent add, D48 -- cannot be undone)
  * Everything is read live through the app's ESPN session, and every send is verified by re-reading
  * ESPN's pending claims. See src/inseason/waiverClaim.ts.
  */
@@ -2201,12 +2202,13 @@ async function cmdClaim(rest: string[]) {
     return;
   }
   let run: import("./inseason/waiverClaim.js").ClaimRun;
-  const add = valueOf(rest, "--add"), edit = valueOf(rest, "--edit"), cancel = valueOf(rest, "--cancel");
-  if (add && Number.isFinite(bid)) run = await W.placeClaim({ add, drop: valueOf(rest, "--drop") ?? null, bid, send, dbPath, leagueId });
+  const add = valueOf(rest, "--add"), edit = valueOf(rest, "--edit"), cancel = valueOf(rest, "--cancel"), faAdd = valueOf(rest, "--fa-add");
+  if (faAdd) run = await W.addFreeAgent({ add: faAdd, drop: valueOf(rest, "--drop") ?? null, send, dbPath, leagueId });
+  else if (add && Number.isFinite(bid)) run = await W.placeClaim({ add, drop: valueOf(rest, "--drop") ?? null, bid, send, dbPath, leagueId });
   else if (edit && Number.isFinite(bid)) run = await W.editClaim({ which: edit, bid, send, dbPath, leagueId });
   else if (cancel) run = await W.cancelClaim({ which: cancel, send, dbPath, leagueId });
   else {
-    console.log('usage: ff claim --list | --add "P" [--drop "P"] --bid N | --edit <id|player> --bid N | --cancel <id|player>   [--send]');
+    console.log('usage: ff claim --list | --add "P" [--drop "P"] --bid N | --edit <id|player> --bid N | --cancel <id|player> | --fa-add "P" [--drop "P"]   [--send]');
     process.exitCode = 1; return;
   }
   const st = run.state;

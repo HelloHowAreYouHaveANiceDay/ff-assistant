@@ -2449,3 +2449,18 @@ P(zero) 0.208 -> 0.252; RB(line 9) +0.25; TE -0.12. Any re-promotion must pass `
 md5 `f60ed742b78050b0c622f3608a7a1ccb` -> **`9abfe84d30e5f30c4cd3924543ba7d08`**; rollback copy
 `data/streaming-artifact.pre-refit-2026-09-29.json`. Suite with a held connection: 1,428 pass, 1 fail (the
 Ogletree/Palmer staging test, unrelated).
+
+## D48 -- the tool may make INSTANT free-agent adds (2026-09-30, owner: "Extend the tool to allow FA adds", **APPLIED**)
+
+Widens D45: `ESPN_WRITE_TYPES` and the app's `ALLOWED_WRITE_TYPES` now also permit `FREEAGENT`, and only with
+executionType `EXECUTE` (`ESPN_FREEAGENT_EXECUTION_TYPES` / `ALLOWED_FREEAGENT_EXECUTION_TYPES`, asserted identical by
+test/write-contract.test.ts). ROSTER (lineups) and every other type stay refused. The owner was told the cost before
+choosing it over doing the move by hand: unlike a claim, an FA add executes on receipt and cannot be withdrawn (the
+dropped man goes to waivers).
+
+Surface: `ff claim --fa-add "P" [--drop "P"]`, dry run unless `--send` (`addFreeAgent`, src/inseason/waiverClaim.ts).
+It REFUSES a player on WAIVERS (that is a claim), and judges success on the LIVE ROSTER (added man on, dropped man
+off), polled through the read replica's lag -- never on a 200 alone. Body shape: this league's own record of our 2026
+wk3 kicker add (FREEAGENT/EXECUTE, bidAmount 0, ADD+DROP). First use, verified: add Jaylen Wright / drop Marvin
+Harrison Jr., 2026-09-30, roster confirmed. Tests: refusal of non-EXECUTE types + positive control, app/shared parity,
+the body against the recorded shape; fault-injected (widening either list fails the suite).

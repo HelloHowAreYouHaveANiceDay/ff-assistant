@@ -325,8 +325,10 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
 - **Waiver claims are writable (D45):** `ff claim` places/edits/cancels FAAB claims through the app, dry-run
   unless `--send`, every send verified by re-reading ESPN. ESPN has no edit (409 on a duplicate add+drop), so an
   edit is cancel-then-place; claims process highest-bid-first league-wide, so claims sharing a DROP chain as
-  "A, else B". `mPendingTransactions` lists under `pendingTransactions`, not `transactions`.
-- Recorded decisions D0-D45 (do not silently reverse): `docs/decisions.md`. **Waivers (D43): ranked on the
+  "A, else B". `mPendingTransactions` lists under `pendingTransactions`, not `transactions` -- and OMITS it
+  when nothing is pending. **Instant free-agent adds too (D48):** `ff claim --fa-add "P" [--drop "P"]`, refused
+  for a player on waivers, verified on the live roster; it cannot be undone. Lineup (ROSTER) writes stay refused.
+- Recorded decisions D0-D48 (do not silently reverse): `docs/decisions.md`. **Waivers (D43): ranked on the
   full expected-lineup model (`src/inseason/expectedLineup.ts`: future injuries + replacement-level streaming),
   and they RECOMMEND NOTHING by default** -- no waiver rule beat standing pat in the 2018-2025 replay once
   streaming was priced (`--waiver-backtest`, `scripts/waiver-decision-report.mjs`). A rule that claims an edge

@@ -83,10 +83,19 @@ export const MAX_WRITE_BODY = 1e5;
  * be cancelled -- which is why this type, and not FREEAGENT (an instant, irreversible add) or ROSTER
  * (lineup), was the one admitted. The executionType is checked too: see ESPN_WAIVER_EXECUTION_TYPES.
  */
-export const ESPN_WRITE_TYPES: readonly string[] = ["TRADE_PROPOSAL", "WAIVER"];
+export const ESPN_WRITE_TYPES: readonly string[] = ["TRADE_PROPOSAL", "WAIVER", "FREEAGENT"];
 
 /** A WAIVER body may only place or cancel a claim. `PROCESS` is ESPN's own nightly executor. */
 export const ESPN_WAIVER_EXECUTION_TYPES: readonly string[] = ["EXECUTE", "CANCEL"];
+
+/**
+ * FREEAGENT ADDED 2026-09-30, owner-signed (chose "Extend the tool to allow FA adds" over doing it by
+ * hand, after being told it widens D45). An instant add+drop of a player NOT on waivers: it executes
+ * immediately and cannot be withdrawn -- the dropped man goes to waivers -- which is why D45 left it
+ * out and why `ff claim --fa-add` refuses anyone on WAIVERS (that is a claim) and verifies the result
+ * on the live roster. EXECUTE only; the shape is this league's own (our week-3 kicker add).
+ */
+export const ESPN_FREEAGENT_EXECUTION_TYPES: readonly string[] = ["EXECUTE"];
 
 /**
  * ONE WRITE, ALREADY BUILT: where it goes, what it says, and WHICH OPERATION it is.
@@ -119,6 +128,8 @@ export interface PlatformWrites {
   waiverClaim?(ctx: WaiverClaimCtx): WriteRequest;
   /** Withdraw a pending claim. There is no edit: an edit is a new claim plus this. */
   cancelWaiverClaim?(ctx: WaiverCancelCtx): WriteRequest;
+  /** An INSTANT free-agent add (+ optional drop). Executes immediately; cannot be withdrawn. */
+  freeAgentAdd?(ctx: Omit<WaiverClaimCtx, "bid">): WriteRequest;
 }
 
 /** A FAAB claim, in platform-neutral terms. `playerId`s are the PLATFORM's ids. */
@@ -220,6 +231,15 @@ export function assertWritableUrl(url: string, body: string, writes?: PlatformWr
       throw new Error(
         `REFUSED to write a WAIVER with executionType "${typeof et === "string" ? et : "(missing)"}". ` +
         `Permitted: ${ESPN_WAIVER_EXECUTION_TYPES.join(", ")} -- place or cancel a claim, nothing else.`,
+      );
+    }
+  }
+  if (type === "FREEAGENT") {
+    const et = (parsed as { executionType?: unknown }).executionType;
+    if (typeof et !== "string" || !ESPN_FREEAGENT_EXECUTION_TYPES.includes(et)) {
+      throw new Error(
+        `REFUSED to write a FREEAGENT with executionType "${typeof et === "string" ? et : "(missing)"}". ` +
+        `Permitted: ${ESPN_FREEAGENT_EXECUTION_TYPES.join(", ")}.`,
       );
     }
   }

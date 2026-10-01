@@ -214,6 +214,15 @@ const espnWrites: PlatformWrites = {
       operation: "WAIVER",
     };
   },
+  // An INSTANT free-agent add: `FREEAGENT/EXECUTE`, bidAmount 0, the same ADD+DROP items -- the shape
+  // ESPN recorded for our own 2026 wk3 kicker add. Executes on receipt; there is no cancel.
+  freeAgentAdd(ctx) {
+    return {
+      url: `${ESPN_WRITES_BASE}/seasons/${ctx.season}/segments/0/leagues/${ctx.leagueId}/transactions/`,
+      body: JSON.stringify({ ...espnWaiverBase(ctx), type: "FREEAGENT", bidAmount: 0, executionType: "EXECUTE" }),
+      operation: "FREEAGENT",
+    };
+  },
   cancelWaiverClaim(ctx) {
     return {
       url: `${ESPN_WRITES_BASE}/seasons/${ctx.season}/segments/0/leagues/${ctx.leagueId}/transactions/`,

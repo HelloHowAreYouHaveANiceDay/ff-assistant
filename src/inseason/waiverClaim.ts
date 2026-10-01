@@ -144,7 +144,7 @@ async function ourRosterIds(st: ClaimState, g: Get): Promise<Set<string>> {
 }
 
 export interface ClaimRun {
-  action: "place" | "cancel" | "edit";
+  action: "place" | "cancel" | "edit" | "fa-add";
   state: ClaimState;
   problems: string[];
   requests: WriteRequest[];
@@ -310,5 +310,52 @@ export async function editClaim(o: { which: string; bid: number; send?: boolean;
   run.verified = fresh && oldGone ? `new claim PENDING at $${o.bid} (id ${fresh.id}); old claim ${c.id} cancelled`
     : same ? `CHECK ESPN: the bid was NOT changed -- a $${c.bid} claim is pending (id ${same.id})`
     : `CHECK ESPN: NO claim for ${c.addName} is pending`;
+  return run;
+}
+
+/**
+ * AN INSTANT FREE-AGENT ADD (D48). Unlike a claim it executes on receipt and cannot be withdrawn -- the
+ * dropped man goes to waivers -- so the guards are stricter: the added player must be a FREEAGENT right
+ * now (one on WAIVERS is refused: that is a claim), the drop must be ours, and success is judged on the
+ * LIVE ROSTER (added man on it, dropped man off it), polled through the read replica's lag, never on a
+ * 200 alone.
+ */
+export async function addFreeAgent(o: { add: string; drop?: string | null; send?: boolean; dbPath?: string; leagueId?: string | null; writer?: PlatformWriteIO; get?: Get }): Promise<ClaimRun> {
+  const g = o.get ?? await bridgeGet();
+  const st = await readClaimState(o.dbPath, o.leagueId, g);
+  const run: ClaimRun = { action: "fa-add", state: st, problems: [], requests: [], describe: [], sent: false, responses: [], verified: null };
+  let addId = "", dropId: string | null = null;
+  try {
+    const add = await findPoolPlayer(st, o.add, g);
+    if (add.status !== "FREEAGENT") run.problems.push(`${add.name} is ${add.status}, not a free agent -- use a claim (ff claim --add ... --bid N) instead`);
+    const roster = await ourRosterIds(st, g);
+    const drop = o.drop ? findOurPlayer(st, roster, o.drop) : null;
+    addId = add.id; dropId = drop?.id ?? null;
+    const { platformFor } = await import("../league/platform.js");
+    const plat = await platformFor("espn");
+    if (!plat.writes?.freeAgentAdd) throw new Error("ESPN declares no free-agent-add write capability");
+    run.requests.push(plat.writes.freeAgentAdd({ season: st.season, leagueId: st.leagueId, myTeamId: st.myTeamId, memberId: st.memberId,
+      addPlayerId: add.id, dropPlayerId: drop?.id ?? null, scoringPeriodId: st.scoringPeriodId }));
+    run.describe.push(`INSTANT ADD ${add.name} [${add.id}]${drop ? ` / DROP ${drop.name} [${drop.id}]` : ""} -- executes immediately, cannot be undone`);
+  } catch (e) { run.problems.push(String(e instanceof Error ? e.message : e)); }
+  if (!o.send || blocking(run.problems).length || !run.requests.length) return run;
+  const { assertWritable } = await import("../league/writeIO.js");
+  const { platformFor } = await import("../league/platform.js");
+  const plat = await platformFor("espn");
+  const w = o.writer ?? (await import("../league/session.js")).resolveWriteIO();
+  assertWritable(plat.writes, run.requests[0]);
+  const r = await w.post(run.requests[0].url, run.requests[0].body);
+  run.responses.push(r);
+  if (r.status >= 400) { run.error = `ESPN refused with HTTP ${r.status} via ${w.via}: ${r.body.slice(0, 400)}`; return run; }
+  run.sent = true;
+  // Verify on the roster itself, through the replica lag.
+  let ok = false;
+  for (let i = 0; i < 8 && !ok; i++) {
+    if (i) await new Promise((res) => setTimeout(res, 2000));
+    const ids = await ourRosterIds(st, g);
+    ok = ids.has(addId) && (dropId == null || !ids.has(dropId));
+  }
+  run.verified = ok ? `roster confirmed: ${st.names.get(addId) ?? addId} is on it${dropId ? `, ${st.names.get(dropId) ?? dropId} is off it` : ""}`
+    : "CHECK ESPN: the roster does not show the add/drop yet";
   return run;
 }

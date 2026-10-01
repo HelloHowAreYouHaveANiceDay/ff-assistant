@@ -19,7 +19,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  ESPN_WRITE_URL_PATTERN, MAX_WRITE_BODY, ESPN_WRITE_TYPES, ESPN_WAIVER_EXECUTION_TYPES, assertWritableUrl,
+  ESPN_WRITE_URL_PATTERN, MAX_WRITE_BODY, ESPN_WRITE_TYPES, ESPN_WAIVER_EXECUTION_TYPES, ESPN_FREEAGENT_EXECUTION_TYPES, assertWritableUrl,
   cookieWriteIO, recordingWriteIO,
 } from "../src/league/writeIO.js";
 
@@ -68,12 +68,13 @@ test("the app's PERMITTED OPERATIONS are identical to the shared list", () => {
     "app/main.js and src/league/writeIO.ts disagree about which operations may be written.");
 });
 
-test("a FREE-AGENT or LINEUP body is REFUSED at the permitted url", () => {
+test("a LINEUP or other non-permitted body is REFUSED at the permitted url", () => {
   // THE REGRESSION THIS EXISTS FOR. Every body below goes to a url the allowlist permits, because
   // it is the same url a trade uses. Before the operation check they would all have been sent.
-  // (WAIVER left this list 2026-09-29 -- owner-signed -- and is policed by executionType below.)
+  // (WAIVER left this list 2026-09-29 and FREEAGENT 2026-09-30 -- both owner-signed -- and are
+  //  policed by executionType below.)
   const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
-  for (const t of ["FREEAGENT", "ROSTER", "FUTURE_ROSTER", "TRADE_ACCEPT", "DRAFT"]) {
+  for (const t of ["ROSTER", "FUTURE_ROSTER", "TRADE_ACCEPT", "DRAFT"]) {
     assert.throws(() => assertWritableUrl(url, JSON.stringify({ type: t, items: [] })), /REFUSED to write a/,
       `a ${t} transaction was NOT refused -- ESPN serves it from the permitted url`);
   }
@@ -102,13 +103,45 @@ test("the app's WAIVER executionTypes are identical to the shared list", () => {
   assert.deepEqual(appTypes, [...ESPN_WAIVER_EXECUTION_TYPES]);
 });
 
+test("a FREEAGENT may only EXECUTE -- any other executionType is refused", () => {
+  const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
+  for (const et of ["CANCEL", "PROCESS", "", undefined]) {
+    assert.throws(() => assertWritableUrl(url, JSON.stringify({ type: "FREEAGENT", executionType: et, items: [] })), /REFUSED to write a FREEAGENT/,
+      `a FREEAGENT with executionType ${String(et)} was NOT refused`);
+  }
+  assertWritableUrl(url, JSON.stringify({ type: "FREEAGENT", executionType: "EXECUTE", items: [] }));
+  assert.deepEqual([...ESPN_FREEAGENT_EXECUTION_TYPES], ["EXECUTE"]);
+});
+
+test("the app's FREEAGENT executionTypes are identical to the shared list", () => {
+  const main = readFileSync("app/main.js", "utf8");
+  const line = main.split("\n").find((l) => l.includes("const ALLOWED_FREEAGENT_EXECUTION_TYPES"));
+  assert.ok(line, "could not find ALLOWED_FREEAGENT_EXECUTION_TYPES in app/main.js");
+  const m = /\[([^\]]*)\]/.exec(line!);
+  const appTypes = m![1].split(",").map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  assert.deepEqual(appTypes, [...ESPN_FREEAGENT_EXECUTION_TYPES]);
+});
+
+test("the ESPN free-agent add body matches what ESPN recorded for our own add, and passes the guard", async () => {
+  // Observed: our 2026 wk3 kicker add -- FREEAGENT/EXECUTE, bidAmount 0, ADD+DROP items.
+  const { espnPlatform } = await import("../src/league/espnPlatform.js");
+  const req = espnPlatform.writes!.freeAgentAdd!({ season: 2026, leagueId: "462233", myTeamId: "8", memberId: "{ABC}", addPlayerId: "4571557", dropPlayerId: "17427", scoringPeriodId: 4 });
+  const b = JSON.parse(req.body);
+  assert.equal(b.type, "FREEAGENT"); assert.equal(b.executionType, "EXECUTE"); assert.equal(b.bidAmount, 0); assert.equal(b.teamId, 8);
+  assert.deepEqual(b.items.map((i: { type: string; playerId: number; fromTeamId: number; toTeamId: number }) => [i.type, i.playerId, i.fromTeamId, i.toTeamId]),
+    [["ADD", 4571557, 0, 8], ["DROP", 17427, 8, 0]]);
+  assert.equal(req.operation, "FREEAGENT");
+  assertWritableUrl(req.url, req.body);
+});
+
 test("the permitted operations still go through -- the guard can say yes", () => {
   // A guard that can only ever refuse is indistinguishable from a broken one, and would have
   // silently disabled `ff propose-trade --send` while every negative test above stayed green.
   const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
   assertWritableUrl(url, JSON.stringify({ type: "TRADE_PROPOSAL", isLeagueManager: false, items: [] }));
   assertWritableUrl(url, JSON.stringify({ type: "WAIVER", executionType: "EXECUTE", bidAmount: 1, items: [] }));
-  assert.deepEqual([...ESPN_WRITE_TYPES], ["TRADE_PROPOSAL", "WAIVER"],
+  assertWritableUrl(url, JSON.stringify({ type: "FREEAGENT", executionType: "EXECUTE", bidAmount: 0, items: [] }));
+  assert.deepEqual([...ESPN_WRITE_TYPES], ["TRADE_PROPOSAL", "WAIVER", "FREEAGENT"],
     "the permitted-operation list changed. That is a decision about what this tool may do to a real " +
     "league -- if it was deliberate, update this assertion deliberately.");
 });
