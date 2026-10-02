@@ -268,10 +268,23 @@ export async function ingestBorisTiers(db: DB, scoring = "HALF"): Promise<number
  * `INSERT OR IGNORE` and is not inside the DELETE-and-rewrite transaction: nothing in this function
  * can ever remove a retained scrape.
  *
- * BACKFILL IS IMPOSSIBLE. The feed publishes one file, the latest scrape, with no history endpoint;
- * every scrape before this change was overwritten in place and is gone. The archive therefore
- * resumes at the first ingest after this ships and has a permanent hole from 2025-01 to now.
+ * BACKFILL (CORRECTED 2026-10-02). This used to say backfill was impossible -- "one file, the latest
+ * scrape, no history endpoint". The file lives in a GIT repo that commits it about twice a day, so
+ * every past scrape is recoverable from its history; `scripts/backfill-weekly-ecr.mts` replays those
+ * versions through this same mapping (`weeklyCsvToSnapshotRows`) and append. It closed the 2025 hole
+ * (DIM-1855).
  */
+/** ONE mapping from an `fp_latest_weekly.csv` row to a retained snapshot row -- shared by the live
+ *  ingest below and the git-history backfill (scripts/backfill-weekly-ecr.mts), so the two cannot
+ *  store the same feed differently. */
+export function weeklyCsvToSnapshotRows(rows: Record<string, string>[]) {
+  return rows.map((r) => ({
+    name: pick(r, "player_name"), pos: pick(r, "pos"), team: pick(r, "team"),
+    ecr: Number(pick(r, "ecr")), sd: num(pick(r, "sd")), best: int(pick(r, "best")), worst: int(pick(r, "worst")),
+    scrapeDate: pick(r, "scrape_date"),
+  }));
+}
+
 export async function ingestWeekly(db: DB): Promise<{ live: number; archived: number; archiveIgnored: number; scrapeDates: string[]; fanOut: WeeklyFanOutRow[] }> {
   const rows = await fetchCsv(`${DPROC}/fp_latest_weekly.csv`).catch(() => [] as Record<string, string>[]);
   const scraped = rows[0] ? pick(rows[0], "scrape_date") : "";
@@ -291,11 +304,7 @@ export async function ingestWeekly(db: DB): Promise<{ live: number; archived: nu
   // point-in-time rule is stated against, and stamping a stale scrape with today would be the one
   // error the freshness bound cannot catch.
   const { appendWeeklyRankSnapshot, fanOutWeeklyRankSnapshot } = await import("./ecrHistory.js");
-  const snapRows = rows.map((r) => ({
-    name: pick(r, "player_name"), pos: pick(r, "pos"), team: pick(r, "team"),
-    ecr: Number(pick(r, "ecr")), sd: num(pick(r, "sd")), best: int(pick(r, "best")), worst: int(pick(r, "worst")),
-    scrapeDate: pick(r, "scrape_date"),
-  }));
+  const snapRows = weeklyCsvToSnapshotRows(rows);
   const fallback = nowIso().slice(0, 10);
   const snap = appendWeeklyRankSnapshot(db, snapRows, fallback);
   // AND INTO EVERY FORMAT STORE'S OWN COPY (D29). A format's `features.db` carries its own frozen
