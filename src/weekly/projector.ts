@@ -224,6 +224,10 @@ export interface WeeklyArtifact {
    *  mean stays under `pts` points: cap = max(floor, min(clamps.hi, pts / line)). Absent = no cap (every
    *  artifact written before the field). `FF_WEEKLY_MEAN_CAP="pts,floor"` overrides it for a gate run. */
   meanCap?: { pts: number; floor: number };
+  /** THE MEDIAN FLOOR (D49, 2026-10-02): for a man with pZero < 0.5, the served mean is never below his
+   *  own p50. Absent/false = no floor. `FF_WEEKLY_MEAN_FLOOR=1` forces it on and `=off` forces it off,
+   *  for a gate run. Like `meanCap`, a SERVE-TIME field the trainer does not write: re-add on a retrain. */
+  meanFloor?: boolean;
   fittedFrom: string;
   fittedAt?: string;
   seasons: number[];
@@ -595,7 +599,18 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
       knots: mixtureKnots(pZero, grid, vals.map((v) => line * v), { p10, p50, p90 }),
     });
   }
-  return process.env.FF_WEEKLY_UNCAP_BAND === "0" ? out : uncapBands(out, lineOf, a.clamps.hi, 40, !!meanCap);
+  const banded = process.env.FF_WEEKLY_UNCAP_BAND === "0" ? out : uncapBands(out, lineOf, a.clamps.hi, 40, !!meanCap);
+  // THE MEDIAN FLOOR (CANDIDATE, 2026-10-02; OFF unless FF_WEEKLY_MEAN_FLOOR=1). The mirror of
+  // coherence: for a man more likely than not to play, a mean BELOW his own model's median is the mean
+  // head breaking, not a distribution -- fantasy scores skew right, so E >= median. In-sample 2018-2025
+  // the WRs where mean < 0.8*p50 realised 12.9 against a mean of 6.4 (p50 10.6); live 2026 wk4 Garrett
+  // Wilson mean 8.2 vs p50 11.3, Ja'Marr Chase 10.8 vs 17.1. Rule and threshold fixed BEFORE the gate.
+  // Applied AFTER `uncapBands` and to the MEAN ONLY: raising the mean first made uncapBands read a band
+  // as collapsed and rebuild it (caught by test/weekly-mean-floor.test.ts) -- the floor must not move a band.
+  const floorEnv = process.env.FF_WEEKLY_MEAN_FLOOR;
+  const floorOn = floorEnv === "1" ? true : floorEnv === "off" ? false : a.meanFloor === true;
+  if (!floorOn || !twoPart) return banded;
+  return banded.map((r) => ((r.pZero ?? 0) < 0.5 && r.p50 > 0 && r.mean < r.p50 ? { ...r, mean: r.p50 } : r));
 }
 
 /**
@@ -779,6 +794,17 @@ export function loadWeeklyArtifact(json: unknown, opts: { checkGolden?: boolean;
 
 /** THE CONTRACT TEST, carried ON the artifact. See tools/train_weekly.py for the producing side. */
 export function checkWeeklyGolden(a: WeeklyArtifact, tol = 1e-6): void {
+  // The golden block pins the TRAINED model (trainer vs projector). The median floor is a serve-time
+  // rule applied after the heads, which the trainer never computes -- so the contract is checked with it
+  // OFF, and a floor-on gate run can still load its folds (2026-10-02). Restored before returning.
+  // OFF both ways: the env switch forced off, and the artifact's own `meanFloor` stripped (D49) -- a
+  // served artifact carrying the floor would otherwise fail its own golden check at load.
+  const floorWas = process.env.FF_WEEKLY_MEAN_FLOOR;
+  process.env.FF_WEEKLY_MEAN_FLOOR = "off";
+  try { checkWeeklyGoldenInner({ ...a, meanFloor: false }, tol); }
+  finally { if (floorWas === undefined) delete process.env.FF_WEEKLY_MEAN_FLOOR; else process.env.FF_WEEKLY_MEAN_FLOOR = floorWas; }
+}
+function checkWeeklyGoldenInner(a: WeeklyArtifact, tol: number): void {
   for (const [i, g] of (a.golden ?? []).entries()) {
     const rows = projectWeekly({
       artifact: { ...a, golden: [] },

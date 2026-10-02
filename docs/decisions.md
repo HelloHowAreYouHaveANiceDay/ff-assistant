@@ -2464,3 +2464,30 @@ off), polled through the read replica's lag -- never on a 200 alone. Body shape:
 wk3 kicker add (FREEAGENT/EXECUTE, bidAmount 0, ADD+DROP). First use, verified: add Jaylen Wright / drop Marvin
 Harrison Jr., 2026-09-30, roster confirmed. Tests: refusal of non-EXECUTE types + positive control, app/shared parity,
 the body against the recorded shape; fault-injected (widening either list fails the suite).
+
+## D49 -- the served weekly mean is floored at its own median (2026-10-02, owner: "ship it", **APPLIED**)
+
+`data/weekly-artifact.json` now carries `meanFloor: true`: for a man with P(zero week) < 0.5, the served MEAN is never
+below his own p50 (the mixture median). Bands, p50 and pZero are untouched; applied after `uncapBands`, mean only.
+`FF_WEEKLY_MEAN_FLOOR=1|off` forces it for a gate run. Like `meanCap` it is a serve-time field the trainer does not
+write -- RE-ADD IT on any retrain of the served artifact.
+
+Why: the mean head falls below its own median for a subset of rows and is then badly wrong (in-sample 2018-2025, WRs
+with mean < 0.8*p50 realised 12.9 vs mean 6.4, p50 10.6; 0.8-1.0*p50, n=452, realised 15.1 vs 11.9). Live 2026 wk4:
+Garrett Wilson 8.2 vs p50 11.3, Ja'Marr Chase 10.8 vs 17.1, several young WRs at a mean of exactly 0.0 with p50 ~4.
+Likely driver: the ECR features were fitted on 2020-2024 only (DIM-1855). The mean feeds the expected-points
+lineup, `ff stream` and week projections; the win-probability lineup reads the bands and was unaffected.
+
+Gate (docs/validation.md, same 14 out-of-fold served-recipe folds, mean cap on in both arms; the control reproduces
+D44 exactly): gate clauses unchanged (they score the bands -- the floor cannot move them); RMSE of the mean, paired by
+season, BETTER at RB (11/14), WR (13/14), TE (13/14), QB null (9/14); lineup regret 85.99 -> 86.12 (standard-15),
+91.08 -> 91.25 (deep-18). Costs, stated before sign-off: 101 established rows now above 2.5x their line (calibrated,
+15.5 projected vs 15.4 realised -- not D44's extrapolation defect, but it relaxes D44's guarantee there); small-line
+mean bias +0.1-0.2 pts (lines < 1.5 who played: -0.03 -> +0.17). Live wk4: 82 of 523 projections raised, none
+lowered; our lineup unchanged (Wilson/J. Williams swap FLEX order); P(win) vs Turd 79.0% -> 74.2% because Turd's
+Puka Nacua was one of the under-projected (5.4 -> 10.1).
+
+ROLLBACK: `Copy-Item data\weekly-artifact.pre-d49-2026-10-02.json data\weekly-artifact.json -Force` (md5 aa64dd52...),
+or `FF_WEEKLY_MEAN_FLOOR=off`. md5 aa64dd52d2f090a6a1d16719a159c884 -> 7b17ef5702961372fcbf0bcc5df9d606.
+Tests: test/weekly-mean-floor.test.ts (off = unchanged, never lowers, bands untouched, likely-misses untouched, the
+floor fires; served artifact carries it and still passes its golden check); fault-injected (floor disabled -> fails).

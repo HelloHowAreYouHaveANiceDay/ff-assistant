@@ -8315,3 +8315,32 @@ executed adds a season, 11-19 per team (~1 per team-week, mostly bench/K/DST chu
 roster moves cannot beat this ceiling; not worth building. (Correction: an earlier message in this session
 quoted 750-1,500 "transactions" a season -- those were table ROWS, including draft picks, failed claims and both
 halves of each add/drop.)
+
+## The weekly MEAN below its own median: a median floor -- GATE PASSED, SHIPPED as D49 (2026-10-02)
+
+Found from Garrett Wilson wk4 (mean 8.2, p10 3.9 / p50 11.3 / p90 21.4; WR6 ECR, 15.6 to-date ppg, 94% snaps).
+Mean = line 9.22 x (1 - 0.021) x mean-head ratio 0.91; the cap (2.5x) and coherence do not bind -- the mean head
+disagrees with its own quantile heads. One-at-a-time on Wilson: `ecr_wk_sd` 1.01 -> WR median moves the mean +12.6
+(p50 -0.1); `t4_sd` -> missing +9.2; `teammates_out` 3 -> 0 +3.8. ECR is fitted on 2020-2024 only (0% coverage
+2010-2018 and 2025; DIM-1855).
+
+In-sample replay of the served artifact, 2018-2025, starter-like rows (line >= 6, pZero < 0.25), keyed per
+player-WEEK with DNP weeks scored 0 (an earlier replay keyed per player and dropped NULL weeks -- both wrong, caught
+before use): pZero calibrated (1.3% vs 0.3% ... 82.7% vs 86.1%); mean unbiased overall (QB +0.1, RB 0.0, WR -0.1,
+TE -0.6). But WR mean < 0.8*p50 (n 63): realised 12.9 / mean 6.4 / p50 10.6; 0.8-1.0 (n 452): 15.1 / 11.9 / 12.6;
+ECR top-12 & mean < 0.8*p50 (n 8): 17.2 / 9.0 / 14.3. RB and QB the same sign on fewer rows. Live wk4: 27 of 160
+starters have mean < p50 (~2x the historical WR rate).
+
+Candidate (rule and threshold fixed before any run): mean := max(mean, p50) where pZero < 0.5, after `uncapBands`
+(applying it before moved bands -- caught by the test). Out-of-fold, `ff evaluate-weekly --trainer-args "--clamp-hi
+8" --keep-artifacts`, both arms `FF_WEEKLY_MEAN_CAP=12,2.5`, candidate `FF_WEEKLY_MEAN_FLOOR=1` on the same reused
+folds (control reproduces D44: CRPS 2.7040, coverage 0.838, zero share off 0.003):
+
+| | QB | RB | WR | TE |
+|---|---|---|---|---|
+| RMSE of mean, paired by season | -0.017 (9/14) NULL | **-0.024 (11/14) BETTER** | **-0.021 (13/14) BETTER** | **-0.038 (13/14) BETTER** |
+| pinball p10/p50/p90 | 0 (bands untouched) | 0 | 0 | 0 |
+
+Gate clauses identical (they read the bands: the gate cannot see a mean-only defect -- the lineup-regret line can).
+Lineup regret 85.99 -> 86.12 / 91.08 -> 91.25. Costs: 101 established rows >= 2.5x line (15.5 vs 15.4 realised);
+small-line bias +0.1-0.2. A line-scoped floor would be post-hoc and is NOT done; pre-register it if wanted.
