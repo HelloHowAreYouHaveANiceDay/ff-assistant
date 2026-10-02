@@ -8344,3 +8344,20 @@ folds (control reproduces D44: CRPS 2.7040, coverage 0.838, zero share off 0.003
 Gate clauses identical (they read the bands: the gate cannot see a mean-only defect -- the lineup-regret line can).
 Lineup regret 85.99 -> 86.12 / 91.08 -> 91.25. Costs: 101 established rows >= 2.5x line (15.5 vs 15.4 realised);
 small-line bias +0.1-0.2. A line-scoped floor would be post-hoc and is NOT done; pre-register it if wanted.
+
+## DIM-1855: 2025 weekly ECR backfilled; retraining with it is NOT shipped (2026-10-02)
+
+The missing 2025 weekly consensus was recovered from the git history of DynastyProcess's `fp_latest_weekly.csv`
+(`scripts/backfill-weekly-ecr.mts`, commit feed7b6): 120 scrapes, 90,526 rows; 2025 population ECR coverage 0% -> 79%;
+population guard unchanged; 187/187 sampled ranks predate the player's own game.
+
+Then the served recipe was retrained out-of-fold on it (14 folds, cap + floor on in both arms, control re-scored on the
+same backfilled rows): gate PASS (CRPS 2.7013 vs 2.7019, coverage 0.838 vs 0.837, zero share 0.003 vs 0.005); lineup
+regret 86.20 vs 86.14 / 91.36 vs 91.28; mean RMSE paired by season better at all four positions but NULL everywhere
+(QB 10/14, RB/WR/TE 9/14); small-line bias 0.18-0.63 -> 0.10-0.56. A real but sub-floor gain.
+
+The symptom check decided it. Full-data retrain, week 4, floor off: starters with mean < p50 27 -> 15, and Wilson's
+`ecr_wk_sd` sensitivity +12.6 -> 0.0 -- the ECR part is fixed -- but his `t4_sd` sensitivity +9.2 -> +14.9 and the
+remaining cases got WORSE (Wilson mean 4.1 vs p50 11.1, Chase 4.6 vs 16.8, McMillan 2.6 vs 11.2). The defect is in the
+boosted MEAN head, not in the ECR data; it moved to the next input. D49's median floor is what protects the serve.
+NOT shipped. Root cause filed separately (mean-head instability).
