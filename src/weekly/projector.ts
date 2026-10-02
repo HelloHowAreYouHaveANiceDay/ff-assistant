@@ -228,6 +228,11 @@ export interface WeeklyArtifact {
    *  own p50. Absent/false = no floor. `FF_WEEKLY_MEAN_FLOOR=1` forces it on and `=off` forces it off,
    *  for a gate run. Like `meanCap`, a SERVE-TIME field the trainer does not write: re-add on a retrain. */
   meanFloor?: boolean;
+  /** WHERE THE TWO-PART MEAN COMES FROM (DIM-1856, 2026-10-02). "head" / absent = the boosted mean head
+   *  (E[ratio | played] x (1 - pZero) x line). "mixture" = the integral of the model's OWN inverse CDF --
+   *  the knots `mixtureKnots` publishes, extended to u = 1 by the win-probability sampler's tail rule
+   *  (`mixtureMean`). `FF_WEEKLY_MEAN_SOURCE=head|mixture` overrides it for a gate run. Serve-time. */
+  meanSource?: "head" | "mixture";
   fittedFrom: string;
   fittedAt?: string;
   seasons: number[];
@@ -607,10 +612,21 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
   // Wilson mean 8.2 vs p50 11.3, Ja'Marr Chase 10.8 vs 17.1. Rule and threshold fixed BEFORE the gate.
   // Applied AFTER `uncapBands` and to the MEAN ONLY: raising the mean first made uncapBands read a band
   // as collapsed and rebuild it (caught by test/weekly-mean-floor.test.ts) -- the floor must not move a band.
+  // THE MIXTURE MEAN (DIM-1856). The boosted mean head disagrees with its own quantile heads for a subset
+  // of men and is then badly wrong (one feature swings it 10-15 pts while p50 moves <0.2). Replace it with
+  // the mean OF the distribution the model publishes -- the exact curve `quantileFn` samples, so the mean
+  // a lineup reads and the mean the win-probability sim realises are one number. Not a band-rebuilt row
+  // (`bandUncapped`): its band was rebuilt FROM the head mean and carries no knots, so integrating it would
+  // be circular. Rule fixed BEFORE the gate.
+  const srcEnv = process.env.FF_WEEKLY_MEAN_SOURCE;
+  const mixOn = srcEnv === "mixture" ? true : srcEnv === "head" ? false : a.meanSource === "mixture";
+  const sourced = mixOn && twoPart
+    ? banded.map((r) => (r.knots && !r.bandUncapped ? { ...r, mean: mixtureMean(r) } : r))
+    : banded;
   const floorEnv = process.env.FF_WEEKLY_MEAN_FLOOR;
   const floorOn = floorEnv === "1" ? true : floorEnv === "off" ? false : a.meanFloor === true;
-  if (!floorOn || !twoPart) return banded;
-  return banded.map((r) => ((r.pZero ?? 0) < 0.5 && r.p50 > 0 && r.mean < r.p50 ? { ...r, mean: r.p50 } : r));
+  if (!floorOn || !twoPart) return sourced;
+  return sourced.map((r) => ((r.pZero ?? 0) < 0.5 && r.p50 > 0 && r.mean < r.p50 ? { ...r, mean: r.p50 } : r));
 }
 
 /**
@@ -618,6 +634,31 @@ export function projectWeekly(opts: { artifact: WeeklyArtifact; rows: WeeklyInpu
  * atom (u = pZero + (1 - pZero) g); the served p10/p50/p90 replace whatever the grid says at 0.10,
  * 0.50 and 0.90 so the calibrated band is on the curve; values are forced non-decreasing.
  */
+/**
+ * E[points] of a published band: the exact integral of the piecewise-linear inverse CDF that
+ * `quantileFn` (src/inseason/winprob.ts) samples -- 0 on the atom, a ramp from (pZero, 0) through the
+ * knots, and the tail from the last knot to u = 1 at top + max(p90 - p50, 0.25 top, 0.5). Kept in
+ * lockstep with that function by test/weekly-mixture-mean.test.ts.
+ */
+export function mixtureMean(band: { p10: number; p50: number; p90: number; pZero?: number | null; knots?: { u: number[]; v: number[] } | null }): number {
+  const z = Math.min(1, Math.max(0, band.pZero ?? 0));
+  const lv: number[] = [z], va: number[] = [0];
+  let prev = 0;
+  const k = band.knots && band.knots.u.length === band.knots.v.length && band.knots.u.length >= 3
+    ? band.knots.u.map((u, i) => [u, band.knots!.v[i]] as [number, number])
+    : [[0.10, band.p10], [0.50, band.p50], [0.90, band.p90]] as [number, number][];
+  for (const [l, v] of k) {
+    if (!(l > z) || !(l < 1)) continue;
+    const w = Math.max(prev, Math.max(0, v));
+    lv.push(l); va.push(w); prev = w;
+  }
+  const top = Math.max(prev, band.p90);
+  lv.push(1); va.push(top + Math.max(band.p90 - band.p50, 0.25 * top, 0.5));
+  let e = 0;
+  for (let i = 1; i < lv.length; i++) e += (lv[i] - lv[i - 1]) * (va[i] + va[i - 1]) / 2;
+  return e;
+}
+
 export function mixtureKnots(
   pZero: number, grid: number[], vals: number[], served: { p10: number; p50: number; p90: number },
 ): { u: number[]; v: number[] } {
@@ -800,9 +841,14 @@ export function checkWeeklyGolden(a: WeeklyArtifact, tol = 1e-6): void {
   // OFF both ways: the env switch forced off, and the artifact's own `meanFloor` stripped (D49) -- a
   // served artifact carrying the floor would otherwise fail its own golden check at load.
   const floorWas = process.env.FF_WEEKLY_MEAN_FLOOR;
+  const srcWas = process.env.FF_WEEKLY_MEAN_SOURCE;
   process.env.FF_WEEKLY_MEAN_FLOOR = "off";
-  try { checkWeeklyGoldenInner({ ...a, meanFloor: false }, tol); }
-  finally { if (floorWas === undefined) delete process.env.FF_WEEKLY_MEAN_FLOOR; else process.env.FF_WEEKLY_MEAN_FLOOR = floorWas; }
+  process.env.FF_WEEKLY_MEAN_SOURCE = "head";   // the mixture mean is serve-time too (DIM-1856)
+  try { checkWeeklyGoldenInner({ ...a, meanFloor: false, meanSource: "head" }, tol); }
+  finally {
+    if (floorWas === undefined) delete process.env.FF_WEEKLY_MEAN_FLOOR; else process.env.FF_WEEKLY_MEAN_FLOOR = floorWas;
+    if (srcWas === undefined) delete process.env.FF_WEEKLY_MEAN_SOURCE; else process.env.FF_WEEKLY_MEAN_SOURCE = srcWas;
+  }
 }
 function checkWeeklyGoldenInner(a: WeeklyArtifact, tol: number): void {
   for (const [i, g] of (a.golden ?? []).entries()) {

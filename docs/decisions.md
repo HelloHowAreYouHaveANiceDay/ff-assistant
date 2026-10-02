@@ -2491,3 +2491,33 @@ ROLLBACK: `Copy-Item data\weekly-artifact.pre-d49-2026-10-02.json data\weekly-ar
 or `FF_WEEKLY_MEAN_FLOOR=off`. md5 aa64dd52d2f090a6a1d16719a159c884 -> 7b17ef5702961372fcbf0bcc5df9d606.
 Tests: test/weekly-mean-floor.test.ts (off = unchanged, never lowers, bands untouched, likely-misses untouched, the
 floor fires; served artifact carries it and still passes its golden check); fault-injected (floor disabled -> fails).
+
+## D50 -- the served weekly mean is the mean of its own distribution (2026-10-02, owner: "ship", **APPLIED**, DIM-1856)
+
+`data/weekly-artifact.json` now carries `meanSource: "mixture"`: for every two-part row with published knots, the
+served MEAN is the integral of the model's own inverse CDF (`mixtureMean`, src/weekly/projector.ts) -- 0 on the
+zero atom, the published quantile knots, and the tail past the last knot extended to u = 1 by the win-probability
+sampler's rule (top + max(p90 - p50, 0.25 top, 0.5)). It is the exact mean of what `quantileFn` samples, so the
+expected-points lineup and P(win) now price a man off one distribution. The boosted MEAN head is no longer served.
+Not applied to band-rebuilt rows (`bandUncapped`: their band was rebuilt from the head mean -- circular) and not to
+one-part rows. D49's median floor stays on after it (it fires on 9 of 160 live wk4 starters instead of 27). Bands,
+p50 and pZero untouched. `FF_WEEKLY_MEAN_SOURCE=head|mixture` forces it for a gate run; the golden contract check
+forces "head". Serve-time field the trainer does not write: RE-ADD IT (with `meanCap`, `meanFloor`) on any retrain.
+
+Why: the mean head disagrees with its own quantile heads and is then badly wrong (D49; DIM-1855's retrain moved the
+instability from `ecr_wk_sd` to `t4_sd` rather than removing it). Rule fixed before the gate, nothing tuned.
+
+Gate (docs/validation.md; same 14 out-of-fold served-recipe folds as D49, cap + floor on in BOTH arms, control =
+the D49 serve): gate clauses identical; RMSE of the mean paired by season BETTER at RB -0.111 (14/14, 6.9 SE),
+WR -0.075 (14/14, 6.1 SE), TE -0.125 (14/14, 5.3 SE), QB null (8/14); lineup regret 86.14 -> 86.48 (standard-15),
+91.28 -> 91.79 (deep-18); small-line mean bias better in all four buckets. Cost: established rows >= 2.5x line
+105 -> 121 (calibrated: 16.1 projected vs 15.6 realised). Live wk4: starters' average delta -0.03; biggest moves
+Walker 26.4 -> 20.4, Evans 12.7 -> 7.4, JSN 19.9 -> 16.0, Bowers 15.4 -> 11.8, McBride 13.7 -> 11.4; Wilson 11.3 ->
+12.2, Nacua 10.1 -> 11.7, McMillan 11.5 -> 12.9. Our lineup unchanged under both objectives (FLEX order swaps);
+P(win) vs Turd 74.21% -> 73.76%, which is Monte Carlo noise from the reordered draw (bands identical; SE ~1pp).
+
+ROLLBACK: `Copy-Item data\weekly-artifact.pre-d50-2026-10-02.json data\weekly-artifact.json -Force`, or
+`FF_WEEKLY_MEAN_SOURCE=head`. md5 7b17ef5702961372fcbf0bcc5df9d606 -> 448e5cc9e88b03e056e9fda9f7fe43ae.
+Tests: test/weekly-mixture-mean.test.ts (equals a numeric integral of `quantileFn` incl. both tail branches --
+fault-injected on 0.25 and on 0.5, each fails; mean-only; band-rebuilt rows untouched; the switch fires live; the
+served artifact carries it, serves it with no env switch, and still passes its golden check).

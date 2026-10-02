@@ -8361,3 +8361,21 @@ The symptom check decided it. Full-data retrain, week 4, floor off: starters wit
 remaining cases got WORSE (Wilson mean 4.1 vs p50 11.1, Chase 4.6 vs 16.8, McMillan 2.6 vs 11.2). The defect is in the
 boosted MEAN head, not in the ECR data; it moved to the next input. D49's median floor is what protects the serve.
 NOT shipped. Root cause filed separately (mean-head instability).
+
+## DIM-1856: serve the mean OF the distribution, not the boosted mean head -- GATE PASSED, SHIPPED as D50 (2026-10-02)
+
+Candidate (fixed before any run): mean := integral of the mixture inverse CDF the win-probability sampler draws
+from (`mixtureMean` == mean of `quantileFn`), for two-part rows with knots and not band-rebuilt; D49's floor still
+applied after. Out-of-fold on the reused D49 folds, both arms `FF_WEEKLY_MEAN_CAP=12,2.5 FF_WEEKLY_MEAN_FLOOR=1`,
+candidate `FF_WEEKLY_MEAN_SOURCE=mixture` (control re-scored on today's rows: CRPS/coverage/zero share as D49).
+
+| | QB | RB | WR | TE |
+|---|---|---|---|---|
+| RMSE of mean, paired by season | -0.010 (8/14) NULL | **-0.111 (14/14) BETTER** | **-0.075 (14/14) BETTER** | **-0.125 (14/14) BETTER** |
+| pinball p10/p50/p90 | 0 (bands untouched) | 0 | 0 | 0 |
+
+Lineup regret 86.14 -> 86.48 / 91.28 -> 91.79 (D49 itself was +0.13 / +0.17). Extremes (line >= 5, >= 2.5x line):
+105 rows 15.5 vs 15.2 realised -> 121 rows 16.1 vs 15.6. Small-line bias (projected - realised): 0.33 -> 0.20,
+0.63 -> 0.53, 0.18 -> -0.10, 0.54 -> 0.30. Live wk4 (floor off): starters with mean < p50 27 (head) -> 9 (mixture).
+The tail rule past the last grid level (0.90) carries ~10% of the mass and is the one assumption; it was taken
+unchanged from the sampler, not tuned. Logs: session scratchpad floorgate/{ctl1856,mix1856,cmp1856}.log.
