@@ -447,6 +447,21 @@ CREATE TABLE IF NOT EXISTS stg_player (
 );
 CREATE INDEX IF NOT EXISTS idx_stg_namekey ON stg_player (name_key, position);
 CREATE INDEX IF NOT EXISTS idx_stg_ambig ON stg_player (ambiguous);
+-- stg_player_alias: ANOTHER SPELLING of a staged player (2026-10-06). A board writes "Andrew Ogletree"
+-- where the crosswalk writes "Drew Ogletree"; the board's name_key resolves to the staged person through
+-- here instead of being staged a second time. Written ONLY by build-staging (src/data/stgPlayer.ts),
+-- only when the surname and position agree and exactly one staged player answers to the variant.
+-- Rebuilt with stg_player, so it is derived; never hand-edited. A real staged name_key always wins.
+CREATE TABLE IF NOT EXISTS stg_player_alias (
+  name_key   TEXT NOT NULL,          -- the spelling a feed used (e.g. andrewogletree)
+  position   TEXT NOT NULL,
+  player_sk  INTEGER NOT NULL,       -- the staged person it stands for
+  alias_of   TEXT NOT NULL,          -- that person's staged name_key (e.g. drewogletree)
+  reason     TEXT NOT NULL,          -- nickname
+  source     TEXT,                   -- where the spelling was seen (board:<league_id>)
+  updated_at TEXT,
+  PRIMARY KEY (name_key, position)
+);
 
 -- CROSS-SOURCE PLAYER IDENTITY (DynastyProcess db_playerids). The player table has carried empty
 -- gsis_id/espn_id columns since the start with a comment calling them the crosswalk seam; this is

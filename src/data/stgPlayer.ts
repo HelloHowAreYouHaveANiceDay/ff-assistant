@@ -35,8 +35,9 @@
  * rank; those are consumer concerns. If a column would change when our strategy changes, it does not
  * belong in staging.
  */
-import { openDb, nowIso, getConfig, activeLeagueId, slotFilter, type DB } from "../db/db.js";
+import { openDb, nowIso, getConfig, activeLeagueId, type DB } from "../db/db.js";
 import { resolveOrMint, crosswalkPeople, disputedIds, idBag } from "./identity.js";
+import { nicknameKeys } from "./nicknames.js";
 
 export interface RekeySummary {
   rows: number; unchanged: number; moved: number; merged: number; split: number; dropped: number;
@@ -46,6 +47,9 @@ export interface RekeySummary {
 
 export interface StgBuildResult {
   rows: number; withGsis: number; ambiguous: number; fromBoardOnly: number;
+  /** Board spellings resolved to a staged person as ANOTHER SPELLING (stg_player_alias), and the
+   *  ones refused because more than one staged person answered to the variant. */
+  aliased: number; aliasRefused: number;
   /** How identity was decided, per rule. `minted` here is the number of people the REGISTRY did not
    *  already know -- the figure that says whether staging is reading the registry or writing it. */
   matched: Record<string, number>;
@@ -147,7 +151,7 @@ export function buildStgPlayer(dbPath?: string): StgBuildResult {
        ambiguous=excluded.ambiguous, updated_at=excluded.updated_at`,
   );
   const res: StgBuildResult = {
-    rows: 0, withGsis: 0, ambiguous: 0, fromBoardOnly: 0, matched: {},
+    rows: 0, withGsis: 0, ambiguous: 0, fromBoardOnly: 0, aliased: 0, aliasRefused: 0, matched: {},
     rekey: { rows: 0, unchanged: 0, moved: 0, merged: 0, split: 0, dropped: 0 },
   };
 
@@ -182,22 +186,38 @@ export function buildStgPlayer(dbPath?: string): StgBuildResult {
       if (amb) res.ambiguous++;
     }
 
-    // 2. anyone on our board the crosswalk does NOT know -- rookies and late additions mostly.
+    // 2. anyone on a board the crosswalk does NOT know -- rookies and late additions mostly.
     //    Added rather than dropped, because a staging layer that silently loses current players is
     //    worse than one that admits it does not have their ids. They carry source='board' so the gap
     //    is visible and countable rather than inferred from a row that looks complete.
     // THE SEASON, BOUND AS A PARAMETER, from the config chokepoint -- not a correlated subselect into
     // the legacy `config` mirror, which is whichever league was made active last.
-    // THE ACTIVE LEAGUE'S board. Staging is a store-wide identity layer with no league of its own,
-    // and the board is per-league now, so an unfiltered read would union two leagues' pools and
-    // stage a player twice under one name key.
-    const stgF = slotFilter(activeLeagueId(db));
+    // EVERY LEAGUE'S board (2026-10-06), the ACTIVE league's first. Staging is a store-wide identity
+    // layer, and reading only the active board left every other league's board-only men unstaged --
+    // the Yahoo board's "Andrew Ogletree" resolved to nobody while ESPN was active. The double-staging
+    // risk that once justified the filter is closed by the guards below, which see rows this loop has
+    // already written: a name staged once (by the crosswalk OR by an earlier board) is never staged
+    // again, so a man on two boards -- even at two positions -- is one row, classified by the active
+    // league when it lists him.
+    const active = activeLeagueId(db) ?? "";
+    const seen = new Set<string>();
+    const delAlias = db.prepare("DELETE FROM stg_player_alias");
+    delAlias.run();
+    const insAlias = db.prepare(
+      `INSERT OR IGNORE INTO stg_player_alias (name_key, position, player_sk, alias_of, reason, source, updated_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    );
+    const hasAlias = db.prepare("SELECT 1 FROM stg_player_alias WHERE name_key = ? AND position = ?");
+    const atKeyPos = db.prepare("SELECT player_sk, name_key FROM stg_player WHERE name_key = ? AND position = ?");
     for (const b of db.prepare(
-      `SELECT player_id, row_json FROM board WHERE season = ?${stgF.sql}`,
-    ).all(getConfig(db).season, ...stgF.args) as { player_id: string; row_json: string }[]) {
+      `SELECT league_id, player_id, row_json FROM board WHERE season = ?
+        ORDER BY (league_id = ?) DESC, league_id, player_id`,
+    ).all(getConfig(db).season, active) as { league_id: string; player_id: string; row_json: string }[]) {
       const j = JSON.parse(b.row_json) as Record<string, unknown>;
       const pos = normPos(String(j.Pos ?? ""));
       if (!pos) continue;
+      if (seen.has(`${b.player_id}|${pos}`)) continue;
+      seen.add(`${b.player_id}|${pos}`);
       // Match on NAME_KEY ALONE first, not name_key+position. Two sources routinely disagree about a
       // player's position -- our board had Max Bredeson at RB while the crosswalk has him at TE --
       // and requiring both to agree created a SECOND row for the same man, which is exactly the
@@ -210,6 +230,24 @@ export function buildStgPlayer(dbPath?: string): StgBuildResult {
       if (byName.c === 1) continue;
       const known = db.prepare("SELECT 1 FROM stg_player WHERE name_key = ? AND position = ?").get(b.player_id, pos);
       if (known) continue;
+      if (hasAlias.get(b.player_id, pos)) continue;
+      // ANOTHER SPELLING OF SOMEONE STAGED (src/data/nicknames.ts). Only for a name staging has never
+      // seen: surname kept verbatim, position must agree, and EXACTLY ONE staged person may answer --
+      // two candidates is a coin flip, refused, and the row falls through to be staged on its own as
+      // before. Recorded as an alias, never as a second row for the same man.
+      if (byName.c === 0) {
+        const hits = new Map<number, string>();
+        for (const v of nicknameKeys(String(j.Player ?? ""))) {
+          for (const r of atKeyPos.all(v, pos) as { player_sk: number; name_key: string }[]) hits.set(r.player_sk, r.name_key);
+        }
+        if (hits.size === 1) {
+          const [[sk, of]] = [...hits];
+          insAlias.run(b.player_id, pos, sk, of, "nickname", `board:${b.league_id}`, now);
+          res.aliased++;
+          continue;
+        }
+        if (hits.size > 1) res.aliasRefused++;
+      }
       const r = resolveOrMint(db, { name: String(j.Player ?? ""), nameKey: b.player_id, position: pos, ids: {} }, disputed);
       res.matched[r.matchedBy] = (res.matched[r.matchedBy] ?? 0) + 1;
       ins.run({
@@ -262,6 +300,10 @@ function writeRekey(
 
   const edges: [number, number][] = [];
   const dropped: number[] = [];
+  const aliasOf = new Map<string, number>();
+  for (const a of db.prepare("SELECT name_key, position, player_sk FROM stg_player_alias").all() as { name_key: string; position: string; player_sk: number }[]) {
+    aliasOf.set(`${a.name_key}|${normPos(a.position)}`, a.player_sk);
+  }
   for (const o of oldRows) {
     const cands = byNatural.get(`${o.name_key}|${normPos(o.position)}`) ?? [];
     if (cands.length === 1) { edges.push([o.player_sk, cands[0].sk]); continue; }
@@ -277,6 +319,11 @@ function writeRekey(
     // one that is wrong in the reassuring direction only because it gets acted on.
     const same = o.birthdate ? (byNameBirth.get(`${o.name_key}|${o.birthdate}`) ?? []) : [];
     if (same.length === 1) { edges.push([o.player_sk, same[0]]); continue; }
+    // OR the old row's spelling is now RECORDED AS ANOTHER SPELLING of a staged man (stg_player_alias):
+    // a board-only row "Kenny Gainwell" (no ids) that the nickname rule now resolves to the crosswalk's
+    // Kenneth Gainwell. That is a MERGE into him -- the two rows were always one man -- not a loss.
+    const al = aliasOf.get(`${o.name_key}|${normPos(o.position)}`);
+    if (al != null) { edges.push([o.player_sk, al]); continue; }
     dropped.push(o.player_sk);
   }
 

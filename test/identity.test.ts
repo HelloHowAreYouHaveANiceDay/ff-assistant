@@ -81,6 +81,26 @@ test("pickStaged prefers position+team, tolerates a blank team, and refuses to g
   assert.equal(pickStaged([{ position: "WR", team: null, birthdate: "1995-05-05" }], "WR", "SEA")!.birthdate, "1995-05-05");
 });
 
+test("pickStaged: a board team of FA is no team, not a contradiction (released men resolve)", () => {
+  // Darius Slayton, released: staged at NYG, the board says FA. FA used to contradict NYG -> null.
+  const slayton: StgIdentity[] = [{ position: "WR", team: "NYG", birthdate: "1997-01-12", sk: 2629 }];
+  assert.equal(pickStaged(slayton, "WR", "FA")?.sk, 2629);
+  // ...while a REAL different team still contradicts (the Marvin Harrison guard is untouched).
+  assert.equal(pickStaged(slayton, "WR", "ARI"), null);
+});
+
+test("pickStaged: a generational suffix on the board name splits a suffix-collided key -- and only a suffix", () => {
+  const two: StgIdentity[] = [
+    { position: "WR", team: "CAR", birthdate: "2003-10-23", sk: 1, name: "Chris Brazzell II" },
+    { position: "WR", team: null, birthdate: "1976-05-22", sk: 2, name: "Chris Brazzell" },
+  ];
+  assert.equal(pickStaged(two, "WR", "", "Chris Brazzell II")?.sk, 1);
+  // A suffix-less board name would match the 1976 man EXACTLY -- the wrong man. Refused instead.
+  assert.equal(pickStaged(two, "WR", "", "Chris Brazzell"), null);
+  // No board name at all: the old behaviour, a refusal.
+  assert.equal(pickStaged(two, "WR", ""), null);
+});
+
 // --- FAULT INJECTION -------------------------------------------------------------------------------
 
 test("FAULT INJECTION: the old name-only bio join produces the defect this file exists to catch", () => {

@@ -77,7 +77,7 @@ export const PRODUCERS: Producer[] = [
     //    ranking -> feat_player_season -> points.csv -> ranking cycle for two partitions that never
     //    actually feed each other. Table-level lineage cannot see the partition; this is the one
     //    place that limitation had to be resolved by hand rather than by a finer-grained node.
-    reads: ["stg_player", "player_bio", "team_bye", "ranking", "adp", "market_value", "news",
+    reads: ["stg_player", "stg_player_alias", "player_bio", "team_bye", "ranking", "adp", "market_value", "news",
       "raw_espn_eligibility", "player_value", "player_value_position", "board", "points.csv",
       "rank-outcomes.json", "correlation-model.json"],
     writes: ["player_value", "player_value_position", "board"],

@@ -1072,7 +1072,9 @@ async function cmdBuildStaging(rest: string[]) {
   console.log(`stg_player: ${r.rows.toLocaleString()} rows`);
   console.log(`  ${r.withGsis.toLocaleString()} carry a trusted gsis_id (the key is player_sk for every row)`);
   console.log(`  ${r.ambiguous.toLocaleString()} flagged ambiguous (name shared with another real player)`);
-  console.log(`  ${r.fromBoardOnly} on our board but absent from the crosswalk -- kept, with no ids`);
+  console.log(`  ${r.fromBoardOnly} on a board but absent from the crosswalk -- kept, with no ids`);
+  console.log(`  ${r.aliased} board spelling(s) resolved as ANOTHER SPELLING of a staged player (stg_player_alias)` +
+    (r.aliasRefused ? `; ${r.aliasRefused} refused (more than one staged player answered -- staged on their own)` : ""));
   // HOW identity was decided. `minted` is the number the REGISTRY did not already know: it is the
   // one figure that distinguishes staging READING the registry from staging writing its own keys,
   // which is what it silently did for a year while every count above looked healthy.
@@ -1099,12 +1101,18 @@ async function cmdBuildStaging(rest: string[]) {
   // THE SEASON, BOUND, from the config chokepoint -- not a subselect into the legacy `config`
   // mirror, which is whichever league was made active last.
   const stgSeason = (await leagueCtx(rest, db)).config.season;
+  // COVERAGE PER LEAGUE: staging reads every league's board, so every league's board is checked. A
+  // board row resolves when its name_key is staged OR is a recorded other spelling of a staged man.
+  const resolves = `(EXISTS(SELECT 1 FROM stg_player s WHERE s.name_key=b.player_id)
+     OR EXISTS(SELECT 1 FROM stg_player_alias a WHERE a.name_key=b.player_id))`;
+  const activeLg = activeLeagueId(db) ?? "";
+  console.log("\n  board coverage (every league's board is staged):");
+  for (const c of db.prepare(
+    `SELECT b.league_id, COUNT(*) n, SUM(${resolves}) matched FROM board b WHERE b.season = ? GROUP BY b.league_id ORDER BY b.league_id`,
+  ).all(stgSeason) as { league_id: string; n: number; matched: number }[]) {
+    console.log(`    league ${c.league_id || "(none)"}${c.league_id === activeLg ? " (active)" : ""}: ${c.matched}/${c.n} current players resolve into staging`);
+  }
   const covF = slotFilter(activeLeagueId(db), "b");
-  const cov = db.prepare(
-    `SELECT COUNT(*) n, SUM(EXISTS(SELECT 1 FROM stg_player s WHERE s.name_key=b.player_id)) matched
-     FROM board b WHERE b.season = ?${covF.sql}`,
-  ).get(stgSeason, ...covF.args) as { n: number; matched: number };
-  console.log(`\n  board coverage: ${cov.matched}/${cov.n} current players resolve into staging`);
   const amb = db.prepare(
     `SELECT COUNT(*) c FROM board b JOIN stg_player s ON s.name_key=b.player_id
      WHERE s.ambiguous=1 AND b.season = ?${covF.sql}`,

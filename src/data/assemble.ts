@@ -11,6 +11,7 @@ import { openDb, nowIso, setBoardStamp, getBoardStamp, setActiveLeagueId, type D
 import { join } from "node:path";
 import { boardSpreads } from "../draft/spread.js";
 import { loadEligibilityMap } from "./eligibility.js";
+import { normTeam } from "./stgPlayer.js";
 import { ESPN_READS_BASE } from "./espnApi.js";
 
 // last-year (season-1) REG fantasy points + games played under the LEAGUE's scoring, keyed by name_key
@@ -56,8 +57,13 @@ function fmtHt(h: string): string {
   return Number.isFinite(inches) ? `${Math.floor(inches / 12)}'${inches % 12}"` : h;
 }
 
-/** One staged identity row: who this name stands for, per the registry. */
-export interface StgIdentity { position: string | null; team: string | null; birthdate: string | null; sk?: number }
+/** One staged identity row: who this name stands for, per the registry. `name` is the staged full
+ *  name (suffix included) -- read only to split a suffix-collided key, see `pickStaged`. */
+export interface StgIdentity { position: string | null; team: string | null; birthdate: string | null; sk?: number; name?: string | null }
+/** A board name ending in a generational suffix. */
+const SUFFIX_RE = /\s(jr|sr|ii|iii|iv|v)\.?$/i;
+/** Full name for an exact comparison: case, periods and runs of spaces do not count. */
+const fullNameNorm = (s: string): string => s.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
 /** The bio columns age/experience were being read from, keyed by NAME ALONE -- which is the defect. */
 export interface BioRow { birth_date?: string | null; exp?: number | null }
 
@@ -76,14 +82,30 @@ export interface BioRow { birth_date?: string | null; exp?: number | null }
  *   - a unique candidate whose team does not CONTRADICT the board's -> accept (teams are sometimes
  *     blank, and an offseason trade should degrade to the bio row rather than to a stranger)
  *   - anything else                                -> null, and the caller falls back or blanks
+ *
+ * TWO REFINEMENTS (2026-10-06), both about evidence the old rule threw away:
+ *   - A board team of FA / NA is NO TEAM, not a team. Darius Slayton and Devin Neal were released,
+ *     the board said "FA", and against their staged NYG / NO rows that read as a CONTRADICTION -- so
+ *     both resolved to nobody on all three leagues' boards. `normTeam` (the staging layer's own
+ *     vocabulary) maps it to blank, which contradicts nothing.
+ *   - A GENERATIONAL SUFFIX on the board name is evidence. `nameKey` strips it, so "Chris Brazzell II"
+ *     (b. 2003, CAR) and a "Chris Brazzell" born in 1976 are one key at one position, and position +
+ *     team could not split them. When the board name carries Jr./Sr./II/III/IV/V and EXACTLY ONE
+ *     candidate's staged name matches it in full, that is him. A suffix-less board name is NOT used
+ *     this way: "Chris Brazzell" would match the 1976 man exactly, which is the wrong man.
  */
-export function pickStaged(candidates: StgIdentity[], pos: string, team: string): StgIdentity | null {
-  const P = (pos ?? "").toUpperCase(), T = (team ?? "").toUpperCase();
+export function pickStaged(candidates: StgIdentity[], pos: string, team: string, boardName?: string): StgIdentity | null {
+  const P = (pos ?? "").toUpperCase(), T = (normTeam(team) ?? "").toUpperCase();
   const agrees = (r: StgIdentity) => !r.team || !T || r.team.toUpperCase() === T;
   const exact = candidates.filter((r) => (r.position ?? "").toUpperCase() === P && agrees(r) && r.team && T);
   if (exact.length === 1) return exact[0];
   const byPos = candidates.filter((r) => (r.position ?? "").toUpperCase() === P && agrees(r));
   if (byPos.length === 1) return byPos[0];
+  if (byPos.length > 1 && boardName && SUFFIX_RE.test(boardName.trim())) {
+    const want = fullNameNorm(boardName);
+    const named = byPos.filter((r) => r.name != null && fullNameNorm(r.name) === want);
+    if (named.length === 1) return named[0];
+  }
   const any = candidates.filter(agrees);
   if (any.length === 1) return any[0];
   return null;
@@ -326,9 +348,19 @@ export async function assemble(
   // only when that name belongs to exactly one player -- because a consumer that resolved identity by
   // a DIFFERENT rule than the layer above it is the whole failure being retired.
   const stgByName = new Map<string, StgIdentity[]>();
-  for (const r of db.prepare("SELECT name_key, position, birthdate, team, player_sk FROM stg_player").all() as { name_key: string; position: string; birthdate: string; team: string; player_sk: number }[]) {
-    (stgByName.get(r.name_key) ?? stgByName.set(r.name_key, []).get(r.name_key)!)
-      .push({ position: r.position, team: r.team, birthdate: r.birthdate, sk: r.player_sk });
+  const stgBySk = new Map<number, StgIdentity>();
+  for (const r of db.prepare("SELECT name_key, name, position, birthdate, team, player_sk FROM stg_player").all() as { name_key: string; name: string | null; position: string; birthdate: string; team: string; player_sk: number }[]) {
+    const s: StgIdentity = { position: r.position, team: r.team, birthdate: r.birthdate, sk: r.player_sk, name: r.name };
+    (stgByName.get(r.name_key) ?? stgByName.set(r.name_key, []).get(r.name_key)!).push(s);
+    stgBySk.set(r.player_sk, s);
+  }
+  // ANOTHER SPELLING OF A STAGED MAN (stg_player_alias, written by build-staging): the board's
+  // "Andrew Ogletree" is staging's "Drew Ogletree". Added under the board's key only where that key
+  // names nobody staged -- a real staged name_key always wins over an alias.
+  for (const a of db.prepare("SELECT name_key, player_sk FROM stg_player_alias").all() as { name_key: string; player_sk: number }[]) {
+    const s = stgBySk.get(a.player_sk);
+    if (!s || stgByName.has(a.name_key)) continue;
+    stgByName.set(a.name_key, [s]);
   }
   const byes = new Map<string, number>();
   for (const t of db.prepare("SELECT team, bye FROM team_bye WHERE season=@s").all({ s: season }) as { team: string; bye: number }[]) byes.set(t.team, t.bye);
@@ -359,7 +391,7 @@ export async function assemble(
     // position) lookup plus a name-only fallback for the key -- so one board row could be aged as
     // one man and keyed as another. `pickStaged` is the stricter of the two (it uses TEAM), which is
     // what lets Marvin Harrison Jr. resolve at all now that his father is also staged.
-    const staged = pickStaged(cands, v.pos, team);
+    const staged = pickStaged(cands, v.pos, team, v.name);
     const { age, exp } = resolveAgeExp(staged, b ?? null, cands.length > 1, asof);
     const lyRow = ly.get(k); const es = espn.get(k);
     rows.push({

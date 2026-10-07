@@ -100,13 +100,18 @@ test("an ambiguous crosswalk key reaches staging as SEVERAL rows, one per record
 test("every current board player resolves -- staging cannot lose the people we act on", (t) => {
   if (!ready) return t.skip("stg_player not built");
   const db = open();
+  // EVERY league's board (staging reads all of them since 2026-10-06), and a row resolves when its
+  // name_key is staged OR is a recorded other spelling of a staged man (stg_player_alias).
+  let hasAlias = false;
+  try { hasAlias = !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='stg_player_alias'").get(); } catch { /* old store */ }
   const gap = db.prepare(
-    `SELECT COUNT(*) c FROM board b
+    `SELECT b.league_id, b.player_id FROM board b
      WHERE b.season = ?
-       AND NOT EXISTS (SELECT 1 FROM stg_player s WHERE s.name_key = b.player_id)`,
-  ).get(getConfig(db).season) as { c: number };
+       AND NOT EXISTS (SELECT 1 FROM stg_player s WHERE s.name_key = b.player_id)
+       ${hasAlias ? "AND NOT EXISTS (SELECT 1 FROM stg_player_alias a WHERE a.name_key = b.player_id)" : ""}`,
+  ).all(getConfig(db).season) as { league_id: string; player_id: string }[];
   db.close();
-  assert.equal(gap.c, 0);
+  assert.equal(gap.length, 0, `unresolved board rows (run ff build-staging): ${gap.slice(0, 6).map((g) => `${g.league_id}:${g.player_id}`).join(", ")}`);
 });
 
 test("ambiguity is FLAGGED rather than resolved by guessing", (t) => {
