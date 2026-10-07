@@ -46,13 +46,11 @@ export function loadFuture(db, season) {
 
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 
-export function replayWeek(o) {
-  const { db, league, s, season, W, vm, baseOpts, trials, seeds, nAdds, nDrops, future, noSim = false } = o;
-  const flexOk = baseOpts.flexOk;
-  const N = s.teams.length;
-
-  // ---- who is who, and every man's two rates ----
-  const skOfName = new Map(s.skOf);                        // projection name -> player_sk (rostered)
+/**
+ * THE CLAIMABLE FREE-AGENT POOL at a checkpoint: the real week-(W-1) pool, minus men ruled out at W,
+ * each at both rates. Shared by the replay and season-calibration's streaming floor.
+ */
+export function claimablePool({ db, league, s, season, W, future }) {
   const pool = [];
   for (const r of db.prepare(
     "SELECT player_sk, name, pos FROM fact_fa_pool_week WHERE league_id = ? AND season = ? AND week = ? AND player_sk IS NOT NULL",
@@ -65,10 +63,43 @@ export function replayWeek(o) {
     const teamAbbr = s.nflTeam.get(`${nameKey(pr.name)}|${pr.pos}`) ?? "";
     const line = pr.mean / 17;
     const rf = s.rateFor(sk, line, pr.pos);
-    skOfName.set(pr.name, sk);
     pool.push({ name: pr.name, pos: pr.pos, proj: pr.mean, team: teamAbbr, bye: teamAbbr ? (s.bye.get(teamAbbr) ?? null) : null,
       sk, rNew: rf.usage, rOld: line });
   }
+  return pool;
+}
+
+/** The streaming floor (2026-10-02): the second-best CLAIMABLE man per position by usage rate --
+ *  `simContext`'s live rule. Positions with no claimable man keep `fallback`'s value. */
+export function streamFloor(pool, fallback) {
+  const rep = { ...fallback };
+  const byPos = {};
+  for (const f of pool) (byPos[f.pos] ??= []).push(f.rNew);
+  for (const [pos, list] of Object.entries(byPos)) { list.sort((a, b) => b - a); rep[pos] = Math.max(0, list[Math.min(1, list.length - 1)] ?? 0); }
+  return rep;
+}
+
+export function replayWeek(o) {
+  const { db, league, s, season, W, vm, baseOpts: baseOptsIn, trials, seeds, nAdds, nDrops, future, noSim = false } = o;
+  const flexOk = baseOptsIn.flexOk;
+  const N = s.teams.length;
+
+  // ---- who is who, and every man's two rates ----
+  const skOfName = new Map(s.skOf);                        // projection name -> player_sk (rostered)
+  const pool = claimablePool({ db, league, s, season, W, future });
+  for (const f of pool) skOfName.set(f.name, f.sk);
+  // STREAMING OVER A STARTER (2026-10-02; `FF_STREAM_OVER_STARTERS=off` = the old replay exactly). The
+  // live fix in src/draft/season.ts + src/inseason/expectedLineup.ts, mirrored here so the arbiter
+  // measures it: (1) the floor is the second-best CLAIMABLE free agent by usage rate -- the pool
+  // already excludes men ruled out at W -- not the second-best preseason mean of every unrostered man;
+  // (2) the expected-lineup and simulator arms stream over a starter below it; (3) the realised scorer
+  // may start a streamer (scored on HIS actual points) over a starter whose rate is below the
+  // streamer's, not only into an empty slot.
+  const STREAM = process.env.FF_STREAM_OVER_STARTERS !== "off";
+  const rep = STREAM ? streamFloor(pool, s.replacement) : { ...s.replacement };
+  const baseOpts = STREAM ? { ...baseOptsIn, replacement: rep, streamOverStarters: true } : baseOptsIn;
+  const nSlotsByPos = {};
+  for (const sl of s.slots) for (const pos of slotAdmits(sl, flexOk)) nSlotsByPos[pos] = (nSlotsByPos[pos] ?? 0) + 1;
   const rNewOf = (p) => (s.rosOfUsage.has(p.name) ? s.rosOfUsage.get(p.name) : p.rosNew ?? p.proj / 17);
   const rOldOf = (p) => (s.rosOf.has(p.name) ? s.rosOf.get(p.name) : p.rosOld ?? p.proj / 17);
   const withRates = (roster, arm) => roster.map((p) => ({ ...p, rosPerGame: arm === "old" ? rOldOf(p) : rNewOf(p) }));
@@ -108,12 +139,33 @@ export function replayWeek(o) {
         const fw = sk ? future.get(sk)?.get(w) : null;
         return { name: p.name, pos: p.pos, proj: rNewOf(p), available: !!fw && !fw.bye && !fw.out, _pts: fw?.pts ?? 0 };
       });
-      const lu = optimalLineup(players, s.slots, flexOk);
-      const byName = new Map(players.map((p) => [p.name, p._pts]));
+      const lu0 = optimalLineup(players, s.slots, flexOk);
+      const byName0 = new Map(players.map((p) => [p.name, p._pts]));
+      weekly0.push(lu0.starters.reduce((a, st) => a + (byName0.get(st.name) ?? 0), 0));
+      // The streaming scorer. With STREAM the candidate streamers join the lineup pool at their rate
+      // (second-best claimable man at each position that week, then the next, one per slot admitting
+      // the position -- fifteen others stream too), so a streamer starts over a lower-rate starter.
+      const streamers = [];
+      if (STREAM) {
+        for (const [pos, n] of Object.entries(nSlotsByPos)) {
+          const avail = (poolByPos.get(pos) ?? []).filter((f) => {
+            if (onRoster.has(f.name)) return false;
+            const fw = future.get(f.sk)?.get(w);
+            return !!fw && !fw.bye && !fw.out;
+          });
+          for (let k = 0; k < n; k++) {
+            const f = avail[1 + k];
+            if (!f) break;
+            streamers.push({ name: `(stream ${pos} ${k + 1})`, pos, proj: f.rNew, available: true, _pts: future.get(f.sk)?.get(w)?.pts ?? 0 });
+          }
+        }
+      }
+      const all = streamers.length ? [...players, ...streamers] : players;
+      const lu = streamers.length ? optimalLineup(all, s.slots, flexOk) : lu0;
+      const byName = new Map(all.map((p) => [p.name, p._pts]));
       const got = lu.starters.reduce((a, st) => a + (byName.get(st.name) ?? 0), 0);
       const taken = new Set();
       const fill = lu.starters.filter((st) => st.name === "(empty)").reduce((a, st) => a + streamerPts(st.slot, w, onRoster, taken), 0);
-      weekly0.push(got);
       weekly.push(got + fill);
     }
     return { weekly, weekly0 };
@@ -163,7 +215,7 @@ export function replayWeek(o) {
 
     const candidatesFor = (arm) => {
       const r = arm === "old" ? (f) => f.rOld : (f) => f.rNew;
-      const vor = (f) => r(f) - (s.replacement[f.pos] ?? 0);
+      const vor = (f) => r(f) - (rep[f.pos] ?? 0);
       const list = [...pool].sort((a, b) => vor(b) - vor(a)).slice(0, nAdds);
       if (arm === "new") {   // D41's depth-need admission (skill positions where we have no depth)
         for (const pos of SKILL) {
@@ -246,7 +298,7 @@ export function replayWeek(o) {
       const availByPos = availByPosFrom(vm);
       const toExp = (roster) => roster.map((p) => ({ name: p.name, pos: p.pos, rate: rNewOf(p), bye: p.bye ?? null, playRate: (() => { const sk = skOfName.get(p.name) ?? p.sk; return sk && future.get(sk)?.get(W)?.out ? 0 : 1; })() }));
       for (const [tag, full] of [["EXPL", false], ["EXPF", true]]) {
-        const eo = { slots: s.slots, flexOk, from: W, to: s.reg, firstWk: W, ...(full ? { availByPos, replacement: s.replacement, draws: 48 } : {}) };
+        const eo = { slots: s.slots, flexOk, from: W, to: s.reg, firstWk: W, ...(full ? { availByPos, replacement: rep, draws: 48 } : {}) };
         const before = expectedLineupPoints(toExp(mine), eo);
         let best = null;
         for (const add of [...pool].sort((a, b) => b.rNew - a.rNew).slice(0, 20)) {

@@ -661,6 +661,10 @@ const SWEEP_DEFAULTS = {
   FF_SIM_LEVEL_PRIOR_WEEKS: String(LEVEL_PRIOR_WEEKS),
   // OFF is the shipped posture. The seam is a model change and D13 plus owner sign-off govern it.
   FF_SIM_KNOWN_INJURY: "0",
+  // STREAMING OVER A STARTER (2026-10-02): "on" = the in-season context's rule -- the floor from the
+  // claimable pool at the checkpoint by usage rate (scripts/lib/waiver-replay.mjs streamFloor) AND
+  // `streamOverStarters`; "off" = the old floor copy below, empty slots only. Needs --at-week.
+  FF_STREAM_OVER_STARTERS: "on",
   // THE HANDCUFF PAIR (2026-09-23). Two knobs, registered together because NEITHER DOES ANYTHING
   // ALONE and sweeping one at a time would measure two nulls and conclude there was no effect:
   //   FF_SIM_BENCH_DNP  1 = do not START a man whose drawn week is a DNP, so his backup can play.
@@ -737,6 +741,17 @@ if (argv.includes("--waiver-backtest")) {
   process.exit(0);
 }
 
+// The live streaming floor at a checkpoint (FF_STREAM_OVER_STARTERS=on), from the replay's claimable
+// pool so the two gates and `simContext` share one rule. Cached per season.
+const _floorCache = new Map();
+async function streamFloorFor(season, s, W) {
+  if (_floorCache.has(season)) return _floorCache.get(season);
+  const { claimablePool, streamFloor, loadFuture } = await import("./lib/waiver-replay.mjs");
+  const rep = streamFloor(claimablePool({ db, league: LEAGUE, s, season, W, future: loadFuture(db, season) }), s.replacement);
+  _floorCache.set(season, rep);
+  return rep;
+}
+
 if (SWEEP) {
   const eq = SWEEP.indexOf("=");
   const knob = eq < 0 ? SWEEP : SWEEP.slice(0, eq);
@@ -796,9 +811,14 @@ if (SWEEP) {
       // The seam reads its env knob HERE rather than in `servedOpts` above, because the sweep sets
       // the knob per value and `servedOpts` is built once per season. Off, the option is absent and
       // `simulateSeasons` takes the branch it took before the seam existed.
-      const armOpts = process.env.FF_SIM_KNOWN_INJURY === "1" && s.knownInjury
+      const armOpts0 = process.env.FF_SIM_KNOWN_INJURY === "1" && s.knownInjury
         ? { ...servedOpts, knownInjury: s.knownInjury }
         : servedOpts;
+      // Same placement rule: the streaming floor is CONTEXT, so it is selected per value, here.
+      const streamOn = knob === "FF_STREAM_OVER_STARTERS" && process.env.FF_STREAM_OVER_STARTERS !== "off" && AT_WEEK != null;
+      const armOpts = streamOn
+        ? { ...armOpts0, streamOverStarters: true, replacement: await streamFloorFor(season, s, AT_WEEK) }
+        : armOpts0;
       const odds = simulateSeasons(AT_WEEK == null ? s.teams : withRos, s.weeks, useVm, armOpts);
       const byId = new Map(odds.map((o) => [o.id, o]));
       const seasonRows = s.teams.map((t) => ({ season, team: t.name, p: byId.get(t.id)?.playoffs ?? s.field / s.teams.length, y: t.outcome.playoffs ? 1 : 0 }));

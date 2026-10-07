@@ -46,13 +46,30 @@ test("gap 1: a kicker claim is priced against dropping OUR kicker, not only agai
 
 test("gap 2: our kicker QUESTIONABLE raises the swap's gain by his missing 35.5% of one week", () => {
   // Fault-injected: with playRate returning 1 for QUESTIONABLE the two gains are equal.
+  // Pinned with a LOW kicker floor: since streaming over a starter (2026-10-02) a Q kicker below the
+  // floor is streamed over in the base lineup too, and his status stops mattering -- the next test.
+  const lowFloor = (c: SimContext): SimContext => { c.replacement = { ...c.replacement, K: 0.5 }; return c; };
   const a = ctxWithKicker();
-  const healthy = swapGain(waiverTargets(a.ctx, OPTS), a.ourK);
+  const healthy = swapGain(waiverTargets(lowFloor(a.ctx), OPTS), a.ourK);
   const b = ctxWithKicker();
-  const q = withStatusOverrides(b.ctx, { [b.ourK]: "Q" });
+  const q = withStatusOverrides(lowFloor(b.ctx), { [b.ourK]: "Q" });
   const hurt = swapGain(waiverTargets(q, OPTS), b.ourK);
   const ourRate = a.ourKProj / 17;
   const want = ourRate * (1 - QUESTIONABLE_PLAY_RATE);
+  assert.ok(Math.abs(hurt - healthy - want) < 0.1, `Q moved the swap by ${(hurt - healthy).toFixed(2)}, expected ${want.toFixed(2)}`);
+});
+
+test("stream over a starter: with the floor above a Q kicker's 64.5%, the base streams and Q moves the swap only down to the floor", () => {
+  // The 2026-10-02 rule (SeasonOpts.streamOverStarters / expectedLineup weekTotal). Fault-injected:
+  // with FF_STREAM_OVER_STARTERS=off the Q move is the full 35.5% again and this fails.
+  const a = ctxWithKicker();
+  const ourRate = a.ourKProj / 17;
+  const floor = ourRate * 0.85;                       // above 64.5% of him, below all of him
+  const setFloor = (c: SimContext): SimContext => { c.replacement = { ...c.replacement, K: floor }; return c; };
+  const healthy = swapGain(waiverTargets(setFloor(a.ctx), OPTS), a.ourK);
+  const b = ctxWithKicker();
+  const hurt = swapGain(waiverTargets(withStatusOverrides(setFloor(b.ctx), { [b.ourK]: "Q" }), OPTS), b.ourK);
+  const want = ourRate - floor;                       // max(him, floor) - max(0.645 him, floor)
   assert.ok(Math.abs(hurt - healthy - want) < 0.1, `Q moved the swap by ${(hurt - healthy).toFixed(2)}, expected ${want.toFixed(2)}`);
 });
 

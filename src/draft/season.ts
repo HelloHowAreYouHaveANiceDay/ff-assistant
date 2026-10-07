@@ -205,6 +205,17 @@ export interface SeasonOpts {
    */
   replacement?: Record<string, number>;
   /**
+   * STREAM OVER A SUB-REPLACEMENT STARTER, not only into an EMPTY slot (2026-10-02). With `replacement`
+   * alone a slot scored the streaming floor only when nobody on the roster could fill it, so a roster
+   * forced to start its 1.75-point third RB in a bye week scored 1.75 -- and DROPPING him "gained" the
+   * 7.5-point floor. Every waiver row then read "drop the scrub for anything" (league 462233 wk4: +7.06
+   * for a second kicker, 6.34 of it the RB slot in the NYJ bye week). On: each slot admits a streamed
+   * free agent at the position's replacement level, and the lineup takes him whenever he beats the
+   * roster. Requires `replacement`. Off/absent = the old behaviour exactly; only the in-season context
+   * sets it, so every draft path is untouched. `FF_STREAM_OVER_STARTERS=off` forces it off.
+   */
+  streamOverStarters?: boolean;
+  /**
    * ALSO report expected STARTING-LINEUP POINTS IN THE FANTASY PLAYOFF WEEKS (the three weeks after
    * the regular season), per team, as `playoffWeekPts`.
    *
@@ -391,6 +402,31 @@ export function sampleWeek(mean: number, cv: number, rng: () => number): number 
  * would actually get by claiming the best free agent at that position -- and for FLEX, the best of
  * the positions eligible to fill it.
  */
+/**
+ * THE STREAMED FREE AGENTS a lineup may start (see `SeasonOpts.streamOverStarters`): for each
+ * position, one virtual man per slot that admits it, at that position's replacement level. Shared with
+ * `src/inseason/expectedLineup.ts` so the waiver arithmetic and the season sim stream identically.
+ */
+export function streamCandidates(slots: string[], flexOk: string[] | undefined, replacement: Record<string, number>): { name: string; pos: string; proj: number }[] {
+  const nByPos: Record<string, number> = {};
+  for (const slot of slots) {
+    if (slot === "BE" || slot === "IR") continue;
+    for (const p of slotAdmits(slot, flexOk ?? ["RB", "WR", "TE"])) nByPos[p] = (nByPos[p] ?? 0) + 1;
+  }
+  const out: { name: string; pos: string; proj: number }[] = [];
+  for (const [pos, n] of Object.entries(nByPos)) {
+    const v = replacement[pos];
+    if (!(v > 0)) continue;
+    for (let i = 1; i <= n; i++) out.push({ name: `(stream ${pos} ${i})`, pos, proj: v });
+  }
+  return out;
+}
+
+/** Whether streaming over a starter is on for this run (the option, unless the env forces it off). */
+export function streamingOn(o: { streamOverStarters?: boolean; replacement?: Record<string, number> }): boolean {
+  return !!o.streamOverStarters && !!o.replacement && process.env.FF_STREAM_OVER_STARTERS !== "off";
+}
+
 function emptySlotPoints(slot: string, opts: SeasonOpts): number {
   const rep = opts.replacement;
   if (!rep) return 0;
@@ -626,6 +662,7 @@ export function simulateSeasons(
   const ids = new PlayerIds();
   const pid = (name: string) => ids.id(name);
   const kScale = opts.kdstCvScale ?? 1;
+  const streams = streamingOn(opts) ? streamCandidates(opts.slots, opts.flexOk, opts.replacement!) : [];
 
   // TIERING MUST MATCH HOW THE MODEL WAS FITTED, and getting this wrong is silent and severe.
   // fit-variance.mjs tiers within the FULL seasonal player pool at a position. Tiering by rank among
@@ -1092,10 +1129,14 @@ export function simulateSeasons(
       }
       // Lineup is set on the TRUE mean (what a competent manager approximates), scored on the
       // sampled week -- never on the sampled value itself, which would be lookahead.
-      const res = optimalLineup(players, opts.slots, opts.flexOk);
+      // STREAMING OVER A STARTER: the virtual free agents join the pool and score their floor exactly.
+      const pool = streams.length
+        ? [...players, ...streams.map((v) => ({ ...v, available: true, actual: v.proj as number | null }))]
+        : players;
+      const res = optimalLineup(pool, opts.slots, opts.flexOk);
       let total = 0;
       for (const s of res.starters) {
-        const hit = players.find((x) => x.name === s.name);
+        const hit = pool.find((x) => x.name === s.name);
         if (hit?.actual != null) total += hit.actual;
         else if (s.name === "(empty)") total += emptySlotPoints(s.slot, opts);
       }

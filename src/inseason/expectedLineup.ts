@@ -29,6 +29,7 @@
 import { optimalLineup } from "./lineup.js";
 import { slotAdmits } from "../draft/slots.js";
 import { draw, nameKey32 } from "../draft/rng.js";
+import { streamCandidates } from "../draft/season.js";
 
 export interface ExpLineupPlayer {
   name: string;
@@ -70,7 +71,13 @@ const emptyFill = (slot: string, o: ExpLineupOpts): number => {
 };
 
 function weekTotal(players: { name: string; pos: string; proj: number; available: boolean; eligible?: string[] }[], o: ExpLineupOpts): number {
-  const lu = optimalLineup(players, o.slots, o.flexOk);
+  // STREAMING OVER A STARTER (2026-10-02), the same rule as `SeasonOpts.streamOverStarters`: a slot
+  // takes the replacement-level free agent whenever he beats the roster, not only when it is empty.
+  // Before, dropping a sub-replacement man forced to start in a bye week "gained" the whole floor.
+  const streams = o.replacement && process.env.FF_STREAM_OVER_STARTERS !== "off"
+    ? streamCandidates(o.slots, o.flexOk, o.replacement).map((v) => ({ ...v, available: true }))
+    : [];
+  const lu = optimalLineup(streams.length ? [...players, ...streams] : players, o.slots, o.flexOk);
   let t = lu.totalProj;
   if (o.replacement) for (const s of lu.starters) if (s.name === "(empty)") t += emptyFill(s.slot, o);
   return t;

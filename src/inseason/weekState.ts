@@ -89,10 +89,28 @@ export function emptyWeekState(season: number, week: number): WeekState {
 
 /** `player_status` + escalating news + ESPN's game-day designations, by `nameKey`. Escalation only:
  *  a later source can rule a man OUT, never clear one who already is. */
-function buildAvailability(db: DB): { map: AvailabilityMap; sources: WeekState["sources"] } {
+/**
+ * `pinned` = a POINT-IN-TIME read (simContext's `asOfWeek`): only the game-day feed's rows stamped
+ * that week. `player_status` and `news` keep only their latest scrape, so reading them for an earlier
+ * week would hand the replay an injury it could not have known about; they are skipped, not filtered.
+ */
+function buildAvailability(db: DB, pinned?: { season: number; week: number }): { map: AvailabilityMap; sources: WeekState["sources"] } {
   const map: AvailabilityMap = new Map();
   const sources: WeekState["sources"] = [];
   const count = (id: string, rows: number, asOf: string | null) => sources.push({ id, rows, asOf });
+
+  if (pinned) {
+    const gd = db.prepare(
+      "SELECT name, status, as_of FROM raw_gameday_status WHERE season=? AND week=? AND name IS NOT NULL AND status IS NOT NULL",
+    ).all(pinned.season, pinned.week) as { name: string; status: string; as_of: string | null }[];
+    for (const r of gd) {
+      if (normalizeStatus(r.status) !== "OUT") continue;
+      const k = nameKey(r.name);
+      if (k) map.set(k, { status: "OUT", source: "gameday(espn)", detail: `ESPN game-day ${r.status} (week ${pinned.week})` });
+    }
+    count("gameday-status", gd.length, gd.reduce<string | null>((a, r) => (a == null || (r.as_of ?? "") > a ? r.as_of : a), null));
+    return { map, sources };
+  }
 
   const ps = db.prepare(
     "SELECT player_id, injury_status, injury_body, updated_at FROM player_status WHERE injury_status IS NOT NULL",
@@ -139,13 +157,13 @@ function buildAvailability(db: DB): { map: AvailabilityMap; sources: WeekState["
  * reproducible: the same store and the same instant give the same answer.
  */
 export function loadWeekState(
-  db: DB, opts: { season: number; week: number; leagueId?: string | null; now?: Date },
+  db: DB, opts: { season: number; week: number; leagueId?: string | null; now?: Date; availabilityWeek?: number },
 ): WeekState {
   const { season, week } = opts;
   const now = opts.now ?? new Date();
   unknownStatusesSeen.clear();
 
-  const { map, sources } = buildAvailability(db);
+  const { map, sources } = buildAvailability(db, opts.availabilityWeek != null ? { season, week: opts.availabilityWeek } : undefined);
   const locked = lockedNflTeams(db, season, week, now);
   const finished = finishedNflTeams(db, season, week, now);
   const scheduledTeams = weekKickoffTimes(db, season, week).size;

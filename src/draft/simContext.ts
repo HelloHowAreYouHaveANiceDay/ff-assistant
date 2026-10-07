@@ -110,6 +110,24 @@ export interface SimContext {
 function localIso(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+/** The `today` a point-in-time replay entering week W stands at: the day after week W-1's last NFL
+ *  game day, or week 1's first game day (nothing settled). Throws when the schedule lacks the week. */
+function asOfToday(db: InstanceType<typeof Database>, season: number, w: number): string {
+  if (!Number.isInteger(w) || w < 1) throw new Error(`asOfWeek must be a week >= 1, got ${w}`);
+  const q = (wk: number) => db.prepare(
+    "SELECT MIN(gameday) first, MAX(gameday) last FROM raw_nfl_game WHERE season=? AND week=? AND game_type='REG' AND gameday IS NOT NULL",
+  ).get(season, wk) as { first: string | null; last: string | null };
+  if (w === 1) {
+    const r = q(1);
+    if (!r.first) throw new Error(`asOfWeek 1: raw_nfl_game has no week-1 game days for ${season}`);
+    return r.first;
+  }
+  const r = q(w - 1);
+  if (!r.last) throw new Error(`asOfWeek ${w}: raw_nfl_game has no week-${w - 1} game days for ${season}`);
+  const d = new Date(`${r.last}T12:00:00`);
+  d.setDate(d.getDate() + 1);
+  return localIso(d);
+}
 export async function loadSimContext(opts: {
   schedule?: "real" | "generated" | "auto";
   /** YYYY-MM-DD; defaults to today. A backtest or a test passes the day it is asking about. */
@@ -122,6 +140,22 @@ export async function loadSimContext(opts: {
    *  before 2026-09-17 the flag reached the provenance loaders but this context always opened the
    *  live store, and a `--db` run answered from the live rosters while saying nothing. */
   dbPath?: string;
+  /**
+   * POINT-IN-TIME REPLAY: "the odds as they would have been computed ENTERING week W" (2026-10-06,
+   * for the model bump chart's look-back columns). Omitted = live, byte-identical to before.
+   *
+   * What it pins, and how:
+   *   - `today`        -> the day after week W-1's last NFL game day (week 1: its first game day), so
+   *                       the D18 seed, the rest-of-season blend and the D41 usage read exactly the
+   *                       W-1 settled weeks -- those three were already as-of `playedWeeks`.
+   *   - ROSTERS        -> every team's week-W roster from `raw_league_roster_week`, NOT `ownership`
+   *                       (which is today's). Residual leak, stated: a week-W roster includes moves
+   *                       made during week W itself (Thursday-Sunday adds), not only the Wednesday run.
+   *   - AVAILABILITY   -> only ESPN's game-day feed rows stamped week W (`raw_gameday_status`);
+   *                       `player_status` and `news` hold only their latest scrape and are skipped.
+   * NOT pinned (also stated): the board's season projections are today's build.
+   */
+  asOfWeek?: number;
 } = {}): Promise<SimContext> {
   const want = opts.schedule ?? "auto";
 
@@ -198,10 +232,33 @@ export async function loadSimContext(opts: {
   const ownedIds = new Set<string>();
   const byTeam = new Map<string, SeasonTeamInput>();
   const unmatched: string[] = [];
+  // THE ROSTER SOURCE: today's `ownership`, or -- for a point-in-time replay (`asOfWeek`) -- every
+  // team's week-W roster, keyed exactly as `ownershipRowsFrom` keys a live sync (name key; a defense
+  // by its abbreviation), with the team's label borrowed from the live rows (a label, not a fact).
+  let ownershipRows: { player_id: string; team_id: string; team_abbrev: string; owner: string; slot: string | null }[];
+  if (opts.asOfWeek != null) {
+    const label = new Map<string, { team_abbrev: string; owner: string }>();
+    for (const r of db.prepare("SELECT DISTINCT team_id, team_abbrev, owner FROM ownership WHERE league_id=?").all(lgRow.league_id) as { team_id: string; team_abbrev: string; owner: string }[]) {
+      label.set(String(r.team_id), { team_abbrev: r.team_abbrev, owner: r.owner });
+    }
+    const rw = db.prepare(
+      "SELECT team_id, name, position FROM raw_league_roster_week WHERE league_id=? AND season=? AND week=?",
+    ).all(lgRow.league_id, cfg.season, opts.asOfWeek) as { team_id: string; name: string; position: string }[];
+    if (!rw.length) throw new Error(`asOfWeek ${opts.asOfWeek}: no rows in raw_league_roster_week for league ${lgRow.league_id} season ${cfg.season} -- run ff ingest-raw league-rosters`);
+    ownershipRows = rw.map((r) => {
+      const isDst = /^D\/?ST$/i.test(String(r.position));
+      const base = isDst ? nameKey(String(r.name).replace(/\s*D\/?ST\s*$/i, "").trim()) : nameKey(r.name);
+      const pid = isDst ? (dstAliasKey(base) ?? base) : base;
+      const l = label.get(String(r.team_id));
+      return { player_id: pid, team_id: String(r.team_id), team_abbrev: l?.team_abbrev ?? `T${r.team_id}`, owner: l?.owner ?? "", slot: null };
+    });
+  } else {
+    ownershipRows = db.prepare("SELECT player_id, team_id, team_abbrev, owner, slot FROM ownership WHERE league_id=?").all(lgRow.league_id) as typeof ownershipRows;
+  }
   // `slot` is carried so a surface that must know WHERE a man currently sits can ask -- the lineup
   // serve needs it to honour a kickoff lock (src/inseason/kickoffLock.ts): a locked man holds the
   // slot he is in, and "which slot" is a fact about the league roster, not about the board.
-  for (const r of db.prepare("SELECT player_id, team_id, team_abbrev, owner, slot FROM ownership WHERE league_id=?").all(lgRow.league_id) as { player_id: string; team_id: string; team_abbrev: string; owner: string; slot: string | null }[]) {
+  for (const r of ownershipRows) {
     ownedIds.add(r.player_id);
     // ESPN keys defenses by NICKNAME ("packers"); the board keys them by ABBREVIATION ("gb"). The
     // alias table for exactly this has existed in values.ts since the draft-room lookup needed it,
@@ -256,7 +313,7 @@ export async function loadSimContext(opts: {
   // zeros. A week with one game still to play is NOT settled: a team's score is not a score until
   // its last starter has played, so the Monday-night week stays "unplayed" until Tuesday.
   // =============================================================================================
-  const today = opts.today ?? localIso(new Date());
+  const today = opts.asOfWeek != null ? asOfToday(db, cfg.season, opts.asOfWeek) : (opts.today ?? localIso(new Date()));
   const settled: number[] = [];
   for (const r of db.prepare(
     "SELECT g.week, MAX(g.gameday) last FROM raw_nfl_game g WHERE g.season=? AND g.game_type='REG' AND g.gameday IS NOT NULL GROUP BY g.week ORDER BY g.week",
@@ -287,6 +344,10 @@ export async function loadSimContext(opts: {
   if (seedBlocked) { settled.length = 0; console.warn(`season so far: NOT SEEDED -- ${seedBlocked}`); }
   const playedWeeks = settled.length;
   const nextWeek = playedWeeks + 1;
+  // A replay that could not seed the weeks it claims to stand after is not that week's answer.
+  if (opts.asOfWeek != null && nextWeek !== opts.asOfWeek) {
+    throw new Error(`asOfWeek ${opts.asOfWeek}: only ${playedWeeks} week(s) are settled with scored rows as of ${today} -- expected ${opts.asOfWeek - 1} (sync actuals / league-rosters for the missing weeks)`);
+  }
   // Team scores for the settled weeks: the STARTED lineup ESPN applied, from the roster snapshot,
   // scored by ESPN's applied points where the snapshot was taken after the games, else by the store's
   // synced actuals for the same men (the snapshot was taken before kickoff and still holds the
@@ -448,7 +509,10 @@ export async function loadSimContext(opts: {
   // THE WEEK'S STATE, read BEFORE the handle closes. It is assembled here rather than lazily on the
   // returned object because a context that reads the store after `db.close()` is a context that
   // works in a test and throws in the CLI -- which is exactly what the first version of this did.
-  const week = loadWeekState(db, { season: cfg.season, week: nextWeek, leagueId: lgRow.league_id });
+  const week = loadWeekState(db, {
+    season: cfg.season, week: nextWeek, leagueId: lgRow.league_id,
+    ...(opts.asOfWeek != null ? { now: new Date(`${today}T12:00:00`), availabilityWeek: opts.asOfWeek } : {}),
+  });
   db.close();
 
   // THE FORMAT, from the block that has a source. `cfg.regWeeks ?? 14` used to live here, alongside
@@ -578,17 +642,28 @@ export async function loadSimContext(opts: {
   const NFL_WEEKS = 17;
   const replacement: Record<string, number> = {};
   {
+    // THE FLOOR IN THE SAME UNITS AS THE MEN IT IS COMPARED AGAINST (2026-10-02). It used to rank free
+    // agents by their PRESEASON board projection and include men who cannot play: league 462233 wk4's
+    // RB floor 7.54 was Jonathon Brooks (OUT) and its WR floor 7.74 Alec Pierce (OUT), while the best
+    // healthy free agents ran ~5.0 and ~6.6 on their rest-of-season rate. Harmless-ish while the floor
+    // only filled EMPTY slots; with streaming over a starter (SeasonOpts.streamOverStarters) an inflated
+    // RB floor benches half the league's RB2s. Now: each free agent at `rosPerGame` (the D18 rate every
+    // rostered man is priced at; proj / 17 when he has none), and a man OUT this week is not streamable.
+    // `FF_STREAM_OVER_STARTERS=off` restores the old floor along with the old lineup rule.
+    const legacy = process.env.FF_STREAM_OVER_STARTERS === "off";
     const freeByPos: Record<string, number[]> = {};
     for (const [id, p] of board) {
       if (ownedIds.has(id)) continue;
-      (freeByPos[p.pos] ??= []).push(p.proj);
+      if (legacy) { (freeByPos[p.pos] ??= []).push(p.proj / NFL_WEEKS); continue; }
+      if (week.availability.get(nameKey(p.name))?.status === "OUT") continue;
+      const rate = p.rosPerGame != null && Number.isFinite(p.rosPerGame) ? p.rosPerGame : p.proj / NFL_WEEKS;
+      (freeByPos[p.pos] ??= []).push(rate);
     }
     for (const [pos, list] of Object.entries(freeByPos)) {
       list.sort((a, b) => b - a);
-      const seasonPts = list[Math.min(REPLACEMENT_INDEX, list.length - 1)] ?? 0;
-      // Season projection -> per SCHEDULED NFL WEEK. A streamed player is started for one week, not a
-      // season -- and the number he is compared against is `proj / 17`, so this divides by 17 too.
-      replacement[pos] = Math.max(0, seasonPts / NFL_WEEKS);
+      // Per SCHEDULED NFL WEEK: a streamed player is started for one week, and the number he is
+      // compared against is a per-week rate.
+      replacement[pos] = Math.max(0, list[Math.min(REPLACEMENT_INDEX, list.length - 1)] ?? 0);
     }
   }
 
@@ -633,6 +708,7 @@ export async function loadSimContext(opts: {
     flexOk: cfg.flex_ok,
     projSd: 0.30,
     replacement,
+    streamOverStarters: true,   // see SeasonOpts.streamOverStarters (2026-10-02)
     trials, seed, poolRank,
     bootstrap: { outcomes, corr, calibration: "scale" as const },
   });
