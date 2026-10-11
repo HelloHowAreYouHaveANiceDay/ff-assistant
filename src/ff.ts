@@ -62,6 +62,8 @@ async function main() {
       return cmdValuesCheck(rest);
     case "news":
       return cmdNews(rest);
+    case "news-watch":
+      return cmdNewsWatch(rest);
     case "cheatsheet":
       return cmdCheatsheet(rest);
     case "project":
@@ -1348,6 +1350,65 @@ async function cmdValuesCheck(rest: string[]) {
   console.log(`  absent (rookies / outside top-${topN}, expected): ${absent.length}`);
   if (rest.includes("--list-absent")) console.log("   " + absent.join(", "));
   if (fuzzy.length) process.exitCode = 1;
+}
+
+/**
+ * `ff news-watch --state <file> [--league <id>] [--seed] [--dry-run] [--replay <fromISO> <toISO> [--step <min>]]`
+ *
+ * The between-posts alarm (src/inseason/newsWatch.ts). Reads the store only -- the caller refreshes
+ * first (`sync-rosters`, `ingest-source status`, `ingest-source news`). Prints alert text, or, when
+ * there is nothing new, the Hermes cron wake gate `{"wakeAgent": false}` as the last line so the
+ * scheduled agent is never started. `--seed` marks everything current as seen and alerts nothing
+ * (first run). `--replay` walks a past window in `--step` minute ticks against ownership rolled
+ * back to each tick, with a throwaway state -- the dry run that answers "would it have fired?".
+ */
+async function cmdNewsWatch(rest: string[]) {
+  const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
+  const { openDb } = await import("./db/db.js");
+  const W = await import("./inseason/newsWatch.js");
+  const db = openDb(valueOf(rest, "--db"));
+  const ctx = await leagueCtx(rest, db);
+  if (!ctx.leagueId || !ctx.teamId) { db.close(); return failStep("news-watch: no league/team resolved (pass --league)"); }
+  const season = ctx.rowSeason ?? ctx.config.season;
+  const relevance = W.loadRelevance(db, ctx.leagueId);
+  const empty = (): import("./inseason/newsWatch.js").WatchState => ({ seen: {}, lastAlert: {} });
+
+  const ri = rest.indexOf("--replay");
+  if (ri >= 0) {
+    const from = new Date(rest[ri + 1]), to = new Date(rest[ri + 2]);
+    const step = Number(valueOf(rest, "--step") ?? 20) * 60e3;
+    if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime())) { db.close(); return failStep("--replay needs <fromISO> <toISO>"); }
+    // Seed at `from` so the replay starts with the feed as it stood, then tick forward.
+    let state = W.pickAlerts(W.loadItems(db, from), { owner: W.loadOwnership(db, ctx.leagueId, season, from), ourTeam: ctx.teamId, relevance, state: empty(), now: from }).state;
+    let fired = 0;
+    for (let t = from.getTime() + step; t <= to.getTime(); t += step) {
+      const now = new Date(t);
+      const r = W.pickAlerts(W.loadItems(db, now), { owner: W.loadOwnership(db, ctx.leagueId, season, now), ourTeam: ctx.teamId, relevance, state, now });
+      state = r.state;
+      if (r.alerts.length) { fired += r.alerts.length; console.log(`=== tick ${now.toISOString()} ===\n${W.renderAlerts(r.alerts, { ownershipAgeMin: null })}`); }
+    }
+    console.log(`replay ${from.toISOString()} -> ${to.toISOString()} step ${step / 60e3}m: ${fired} alert(s)`);
+    db.close();
+    return;
+  }
+
+  const statePath = valueOf(rest, "--state");
+  if (!statePath) { db.close(); return failStep("news-watch: --state <file> is required (keep it outside the repo)"); }
+  const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : empty();
+  const now = new Date();
+  const r = W.pickAlerts(W.loadItems(db), { owner: W.loadOwnership(db, ctx.leagueId, season), ourTeam: ctx.teamId, relevance, state, now });
+  const own = db.prepare("SELECT max(updated_at) AS u FROM ownership WHERE league_id=?").get(ctx.leagueId) as { u: string | null };
+  const ownershipAgeMin = own?.u ? Math.round((now.getTime() - Date.parse(own.u)) / 60e3) : null;
+  db.close();
+  const seeding = rest.includes("--seed");
+  if (!rest.includes("--dry-run")) writeFileSync(statePath, JSON.stringify(seeding ? { ...r.state, lastAlert: {} } : r.state));
+  if (seeding || !r.alerts.length) {
+    console.log(seeding ? `seeded ${Object.keys(r.state.seen).length} feed rows as seen` : "no new alerts");
+    console.log(JSON.stringify({ wakeAgent: false }));
+    return;
+  }
+  console.log(`BREAKING NEWS (league ${ctx.leagueId}, our team ${ctx.teamId}) -- ${r.alerts.length} alert(s)`);
+  console.log(W.renderAlerts(r.alerts, { ownershipAgeMin }));
 }
 
 // Draft-day NEWS view (Layer 2 tailoring): consume the GENERAL league-neutral feed

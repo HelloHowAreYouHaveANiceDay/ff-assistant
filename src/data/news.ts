@@ -17,6 +17,7 @@ import { dataPath } from "./paths.js";
 import { nameKey } from "../draft/values.js";
 import { normalizeStatus } from "../inseason/availability.js";
 import { type DB } from "../db/db.js";
+import { classifyHeadline } from "./headlineKind.js";
 
 const POS = new Set(["QB", "RB", "WR", "TE", "K"]);
 const RSS: Record<string, string> = {
@@ -147,7 +148,9 @@ export async function ingestNews(db: DB, season: number): Promise<Record<string,
     for (const it of parseRss(xml).slice(0, 60)) {
       const text = " " + (it.title + " " + it.desc).toLowerCase().replace(/\s+/g, " ") + " ";
       for (const [key, meta] of nameIndex) if (text.includes(" " + key + " ")) {
-        rows.push({ player: meta.name, pos: meta.pos, team: meta.team, category: "headline", severity: "low",
+        // Severity from what KIND of story it is (src/data/headlineKind.ts): a trade / release /
+        // season-ending injury / new starter is a value change, not colour. Was always "low".
+        rows.push({ player: meta.name, pos: meta.pos, team: meta.team, category: "headline", severity: classifyHeadline(it.title).severity,
           detail: it.title, source: `rss:${feed}`, asof: isoDate(it.date), url: it.link.replace(/,/g, "%2C") });
       }
     }
