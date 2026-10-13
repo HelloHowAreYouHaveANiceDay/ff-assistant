@@ -28,7 +28,7 @@ import { simulateSeasons, LEVEL_PRIOR_WEEKS, type SeasonTeamInput, type SeasonOd
 import { buildSchedule } from "./schedule.js";
 import { nameKey, dstAliasKey } from "./values.js";
 import { slotFilter } from "../db/db.js";
-import { availByPosFrom } from "../inseason/expectedLineup.js";
+import { availByPosFrom, replacementByWeekFrom } from "../inseason/expectedLineup.js";
 import { loadRosBlendFor, rosKFor, rosPerGame, loadRosGap, rosGapAdjust, loadRosUsage, rosUsageAdjust } from "./rosBlend.js";
 import { dataPath } from "../data/paths.js";
 import { loadEligibilityMap } from "../data/eligibility.js";
@@ -71,6 +71,9 @@ export interface SimContext {
   posMax?: Record<string, number>;
   /** Per-position WEEKLY points freely available off waivers -- the streaming floor. */
   replacement: Record<string, number>;
+  /** The same floor PER NFL WEEK, with that week's bye free agents excluded (src/inseason/expectedLineup.ts
+   *  `replacementByWeekFrom`). Optional: absent = every week uses `replacement` (fixtures, legacy). */
+  replacementByWeek?: Record<number, Record<string, number>>;
   /** Per-position probability a man plays in a FUTURE week (tier-0 availability, bye divided out) --
    *  what the expected-lineup model draws injuries from. Optional so hand-built fixtures need not carry it. */
   availByPos?: Record<string, number>;
@@ -197,8 +200,24 @@ export async function loadSimContext(opts: {
   for (const r of db.prepare("SELECT player_id, nfl_team FROM player WHERE nfl_team IS NOT NULL AND nfl_team <> ''").all() as { player_id: string; nfl_team: string }[]) {
     teamOfId.set(r.player_id, r.nfl_team.toUpperCase());
   }
+  // "FA" IS NOT A TEAM (2026-10-13, D52). 25 free board rows carried Team "FA" from the preseason file
+  // (and the `player` table says the same), so they had NO bye and played every week in the waiver
+  // arithmetic. The weekly feature table is rebuilt from nflverse's live rosters, so for a man signed
+  // since August it knows his team: the latest 2026 row whose team is a real club resolves it (14 of
+  // the 25 on 2026-10-13). A man whose every row says "FA" is genuinely unsigned (the other 11) and keeps "FA" -- no
+  // game in any week -- and the streaming floor below leaves him out.
+  const teamOfWeekly = new Map<string, string>();
+  try {
+    for (const r of db.prepare(
+      `SELECT name, pos, team FROM feat_player_week_model m
+        WHERE season = ? AND team IS NOT NULL AND team <> '' AND team <> 'FA'
+          AND week = (SELECT MAX(week) FROM feat_player_week_model x WHERE x.season = m.season AND x.feat_key = m.feat_key)`,
+    ).all(cfg.season) as { name: string; pos: string; team: string }[]) teamOfWeekly.set(`${nameKey(r.name)}|${r.pos}`, r.team.toUpperCase());
+  } catch { /* a store without the weekly table (a fixture): nothing to resolve from */ }
+  const real = (t: string | undefined): string => (t && t !== "FA" ? t : "");
   const teamFor = (id: string, name: string, pos: string, team: string): string =>
-    team || teamOfId.get(id) || (pos === "DST" ? dstTeamFromName(name) : "");
+    real(team) || real(teamOfId.get(id)) || teamOfWeekly.get(`${nameKey(name)}|${pos}`) ||
+    (pos === "DST" ? dstTeamFromName(name) : "") || team || teamOfId.get(id) || "";
   // ONE RESOLVER (src/draft/byes.ts), used for the board and the rosters here AND carried on the
   // context as `byeOf`, so a free agent priced off the board (the stream pool) gets the same answer.
   const byeResolver = makeByeResolver(byeOf, teamBye);
@@ -644,6 +663,9 @@ export async function loadSimContext(opts: {
    *  imports this module, and the cycle would be a startup failure rather than a wrong number. */
   const NFL_WEEKS = 17;
   const replacement: Record<string, number> = {};
+  // The same floor per NFL week with that week's bye free agents left out (D52, 2026-10-13); read
+  // by the expected-lineup waiver arithmetic. Undefined under FF_STREAM_OVER_STARTERS=off (legacy).
+  let replacementByWeek: Record<number, Record<string, number>> | undefined;
   {
     // THE FLOOR IN THE SAME UNITS AS THE MEN IT IS COMPARED AGAINST (2026-10-02). It used to rank free
     // agents by their PRESEASON board projection and include men who cannot play: league 462233 wk4's
@@ -655,18 +677,27 @@ export async function loadSimContext(opts: {
     // `FF_STREAM_OVER_STARTERS=off` restores the old floor along with the old lineup rule.
     const legacy = process.env.FF_STREAM_OVER_STARTERS === "off";
     const freeByPos: Record<string, number[]> = {};
+    const freeRates: { pos: string; rate: number; bye: number | null }[] = [];
     for (const [id, p] of board) {
       if (ownedIds.has(id)) continue;
       if (legacy) { (freeByPos[p.pos] ??= []).push(p.proj / NFL_WEEKS); continue; }
       if (week.availability.get(nameKey(p.name))?.status === "OUT") continue;
+      // Unsigned (team still "FA" after the weekly-table resolution above): no game in any week, so
+      // not streamable. Number-neutral on 2026-10-13 (none ranked top-2 anywhere), correct if one does.
+      if (p.team === "FA") continue;
       const rate = p.rosPerGame != null && Number.isFinite(p.rosPerGame) ? p.rosPerGame : p.proj / NFL_WEEKS;
       (freeByPos[p.pos] ??= []).push(rate);
+      freeRates.push({ pos: p.pos, rate, bye: p.bye ?? null });
     }
     for (const [pos, list] of Object.entries(freeByPos)) {
       list.sort((a, b) => b - a);
       // Per SCHEDULED NFL WEEK: a streamed player is started for one week, and the number he is
       // compared against is a per-week rate.
       replacement[pos] = Math.max(0, list[Math.min(REPLACEMENT_INDEX, list.length - 1)] ?? 0);
+    }
+    // FF_REPLACEMENT_BY_WEEK=off: every week uses the flat floor (the pre-D52 rule), for a gate run.
+    if (!legacy && process.env.FF_REPLACEMENT_BY_WEEK !== "off") {
+      replacementByWeek = replacementByWeekFrom(freeRates, Array.from({ length: 18 }, (_, i) => i + 1), replacement);
     }
   }
 
@@ -717,7 +748,7 @@ export async function loadSimContext(opts: {
   });
   return {
     teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds, byeOf: byeResolver, format,
-    slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement, availByPos: availByPosFrom(vm),
+    slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement, ...(replacementByWeek ? { replacementByWeek } : {}), availByPos: availByPosFrom(vm),
     posMax: (cfg as { posMax?: Record<string, number> }).posMax,
     played: { weeks: playedWeeks, nextWeek, source: seedSource, rosBlendK: rosBlend.K, rosBlendSource: rosSource, rosApplied, today, seedBlocked },
     // ASSEMBLED ONCE, above. Every verb reads `ctx.week` rather than loading availability, locks and

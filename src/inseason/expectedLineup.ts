@@ -56,6 +56,12 @@ export interface ExpLineupOpts {
   availByPos?: Record<string, number>;
   /** Per-position weekly points for a slot the roster cannot fill. Absent = an empty slot scores 0. */
   replacement?: Record<string, number>;
+  /**
+   * THE SAME FLOOR, PER WEEK, with the free agents on bye THAT week excluded (2026-10-13, see
+   * `replacementByWeekFrom`). A week it names overrides `replacement`; a week it does not name (or
+   * no map at all) falls back to `replacement`, which is the old flat rule exactly.
+   */
+  replacementByWeek?: Record<number, Record<string, number>>;
   draws?: number;
   seed?: number;
 }
@@ -83,12 +89,17 @@ function weekTotal(players: { name: string; pos: string; proj: number; available
   return t;
 }
 
-export function expectedLineupPoints(roster: ExpLineupPlayer[], o: ExpLineupOpts): number {
-  const nDraws = Math.max(1, o.draws ?? 64);
-  const seed = o.seed ?? 1;
+export function expectedLineupPoints(roster: ExpLineupPlayer[], oIn: ExpLineupOpts): number {
+  const nDraws = Math.max(1, oIn.draws ?? 64);
+  const seed = oIn.seed ?? 1;
   const ids = roster.map((p) => nameKey32(p.name));
+  // The week's floor: the per-week map when it names this week, else the flat one (unchanged rule).
+  const byWk = oIn.replacementByWeek;
+  const optsFor = (w: number): ExpLineupOpts =>
+    oIn.replacement && byWk?.[w] ? { ...oIn, replacement: byWk[w] } : oIn;
   let tot = 0;
-  for (let w = o.from; w <= o.to; w++) {
+  for (let w = oIn.from; w <= oIn.to; w++) {
+    const o = optsFor(w);
     if (w === o.firstWk || !o.availByPos) {
       const known = w === o.firstWk;
       tot += weekTotal(roster.map((p) => {
@@ -123,5 +134,35 @@ export function expectedLineupPoints(roster: ExpLineupPlayer[], o: ExpLineupOpts
 export function availByPosFrom(vm: { pos: Record<string, { avail: number[] }> }): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [pos, m] of Object.entries(vm.pos)) out[pos] = Math.min(1, (m.avail?.[0] ?? 0.85) / (16 / 17));
+  return out;
+}
+
+/** The SECOND-best free agent's weekly rate per position -- the streaming floor's rule (simContext:
+ *  fifteen other managers stream too, so not the best). One spelling, used per week below. */
+export const REPLACEMENT_INDEX = 1;
+export function replacementFloor(free: { pos: string; rate: number }[]): Record<string, number> {
+  const byPos: Record<string, number[]> = {};
+  for (const f of free) if (Number.isFinite(f.rate)) (byPos[f.pos] ??= []).push(f.rate);
+  const out: Record<string, number> = {};
+  for (const [pos, list] of Object.entries(byPos)) {
+    list.sort((a, b) => b - a);
+    out[pos] = Math.max(0, list[Math.min(REPLACEMENT_INDEX, list.length - 1)] ?? 0);
+  }
+  return out;
+}
+
+/**
+ * THE STREAMING FLOOR PER WEEK, BYE-AWARE (2026-10-13, D52). The flat floor took the second-best free
+ * agent's season rate and used it in EVERY week, including the week that man (or the best one) is on
+ * bye -- so in a bye week the floor was a man who could not be started. Here, for each week, the free
+ * agents whose `bye` is that week are dropped before the same top-2 rule is applied. A position whose
+ * every free agent is on bye that week keeps `fallback`'s value (never invents a zero). Nothing else
+ * differs from the flat floor: same pool, same rate, same index.
+ */
+export function replacementByWeekFrom(
+  free: { pos: string; rate: number; bye?: number | null }[], weeks: number[], fallback: Record<string, number>,
+): Record<number, Record<string, number>> {
+  const out: Record<number, Record<string, number>> = {};
+  for (const w of weeks) out[w] = { ...fallback, ...replacementFloor(free.filter((f) => f.bye !== w)) };
   return out;
 }

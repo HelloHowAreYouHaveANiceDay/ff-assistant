@@ -206,6 +206,9 @@ export interface StreamProj {
   /** This week's NFL opponent from the feature row. NULL = his team has NO GAME this week (a bye, or
    *  `team` is "FA": unsigned). Absent = the producer did not say (hand-built rows). */
   opponent?: string | null;
+  /** True when the serve zeroed this row because his team has no game this week (opponent NULL, or
+   *  team "FA") -- see `projectStreamingWith`. Absent on every row with a game. */
+  noGame?: true;
   mean: number;
   p10: number;
   /** The median head. Carried because a WEEKLY BAND is p10/p50/p90 and a consumer that has to
@@ -401,6 +404,16 @@ export function projectStreamingWith(
     }
     const teamOf = new Map(rows.map((r) => [r.feat_key, r.team]));
     const oppOf = new Map(rows.map((r) => [r.feat_key, r.opponent]));
+    // NO GAME, NO POINTS (2026-10-13, D52 in docs/decisions.md). A feature row whose `opponent` is NULL
+    // is a man whose team does not play this week -- a bye, or `team` "FA" (unsigned) -- yet the model
+    // projects him off his season line like anyone else: DET D/ST served 6.72 in Detroit's week-6 bye.
+    // Every consumer (stream, lineup, scorecard picks) then had to remember to filter, and the ones that
+    // did not froze bye/unsigned picks. So the SERVE says it: such a row is served as a certain zero
+    // (mean/p10/p50/p90 0, P(zero) 1, `noGame: true`). Rows with a game are untouched, byte for byte.
+    // Guarded on the week having ANY opponent: a week whose schedule was never joined (every opponent
+    // NULL) is "not known", not "nobody plays", and is served as before.
+    const scheduleKnown = rows.some((r) => r.opponent != null);
+    const noGameOf = (key: string): boolean => scheduleKnown && (oppOf.get(key) == null || teamOf.get(key) === "FA");
 
     const out: StreamProj[] = [];
     for (const [file, art] of arts) {
@@ -408,6 +421,14 @@ export function projectStreamingWith(
       const subset = rows.filter((r) => serves.has(r.pos));
       if (!subset.length) continue;
       for (const p of projectWeekly({ artifact: art, rows: subset })) {
+        if (noGameOf(p.feat_key)) {
+          out.push({
+            feat_key: p.feat_key, player_sk: p.player_sk ?? null, name: p.name, pos: p.pos, team: teamOf.get(p.feat_key) ?? null,
+            opponent: null, mean: 0, p10: 0, p50: 0, p90: 0, pZero: 1, noGame: true,
+            rank: rank.get(p.feat_key) ?? 9999, artifact: file,
+          });
+          continue;
+        }
         out.push({
           feat_key: p.feat_key, player_sk: p.player_sk ?? null, name: p.name, pos: p.pos, team: teamOf.get(p.feat_key) ?? null,
           opponent: oppOf.get(p.feat_key) ?? null,
@@ -430,14 +451,23 @@ export function projectStreamingWith(
  * context (it is a record of predictions, not of a roster), so it cannot know the REAL pool; the
  * preseason-line rank is the same stand-in `streamingEvaluate.ts` uses, and it is point-in-time
  * because the line is frozen in August.
+ *
+ * A MAN WITH NO GAME IS NOT A PICK (2026-10-13). This used to choose out of every pool row, so 8 of
+ * the 132 frozen 2026 stream rows were men who could not score: CIN D/ST on its week-6 bye, Caleb
+ * Douglas (MIA, wk6 WR_line), Jalen Royals (KC, wk5), and the unsigned Tommy Myers (wk4/5 TE) and
+ * Antonio Williams (wk2 RB). A row whose `opponent` is NULL (bye, or team "FA") or that the serve
+ * flagged `noGame` is dropped before either pick -- the model's AND the board's, since a board pick
+ * of a bye man is just as unplayable. A row with no `opponent` field at all (hand-built) is kept.
+ * The frozen past rows are NOT rewritten (write-once, docs/weekly.md section 4).
  */
 export function topStreamPick(
   rows: StreamProj[], poolDepth: Record<string, number>,
 ): Record<string, { model: StreamProj | null; line: StreamProj | null }> {
   const out: Record<string, { model: StreamProj | null; line: StreamProj | null }> = {};
+  const plays = (r: StreamProj): boolean => !r.noGame && r.opponent !== null && r.team !== "FA";
   for (const pos of STREAM_SERVE_POS) {
     const depth = poolDepth[pos] ?? 0;
-    const pool = rows.filter((r) => r.pos === pos && r.rank > depth);
+    const pool = rows.filter((r) => r.pos === pos && r.rank > depth && plays(r));
     if (!pool.length) continue;
     // Two picks, frozen side by side: OURS (the serving model's) and the one a manager makes by
     // reading the preseason board. A frozen pick with nothing to be regret AGAINST is a number with

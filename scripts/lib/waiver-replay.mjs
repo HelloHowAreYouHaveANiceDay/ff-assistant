@@ -27,7 +27,7 @@ import { simulateSeasons, rosterGaps } from "../../src/draft/season.ts";
 import { optimalLineup } from "../../src/inseason/lineup.ts";
 import { nameKey } from "../../src/draft/values.ts";
 import { slotAdmits } from "../../src/draft/slots.ts";
-import { expectedLineupPoints, availByPosFrom } from "../../src/inseason/expectedLineup.ts";
+import { expectedLineupPoints, availByPosFrom, replacementByWeekFrom } from "../../src/inseason/expectedLineup.ts";
 
 const RATE_MIN = 1.0;
 const SKILL = ["QB", "RB", "WR", "TE"];
@@ -298,7 +298,12 @@ export function replayWeek(o) {
       const availByPos = availByPosFrom(vm);
       const toExp = (roster) => roster.map((p) => ({ name: p.name, pos: p.pos, rate: rNewOf(p), bye: p.bye ?? null, playRate: (() => { const sk = skOfName.get(p.name) ?? p.sk; return sk && future.get(sk)?.get(W)?.out ? 0 : 1; })() }));
       for (const [tag, full] of [["EXPL", false], ["EXPF", true]]) {
-        const eo = { slots: s.slots, flexOk, from: W, to: s.reg, firstWk: W, ...(full ? { availByPos, replacement: rep, draws: 48 } : {}) };
+        // D52 (2026-10-13): the floor PER WEEK with that week's bye free agents left out -- the live
+        // rule (simContext `replacementByWeek`). FF_REPLACEMENT_BY_WEEK=off replays the flat floor.
+        const repByWeek = full && STREAM && process.env.FF_REPLACEMENT_BY_WEEK !== "off"
+          ? replacementByWeekFrom(pool.map((f) => ({ pos: f.pos, rate: f.rNew, bye: f.bye })), Array.from({ length: s.reg - W + 1 }, (_, k) => W + k), rep)
+          : null;
+        const eo = { slots: s.slots, flexOk, from: W, to: s.reg, firstWk: W, ...(full ? { availByPos, replacement: rep, draws: 48, ...(repByWeek ? { replacementByWeek: repByWeek } : {}) } : {}) };
         const before = expectedLineupPoints(toExp(mine), eo);
         let best = null;
         for (const add of [...pool].sort((a, b) => b.rNew - a.rNew).slice(0, 20)) {

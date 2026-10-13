@@ -1820,7 +1820,7 @@ export function waiverTargets(
       ...(p.eligible ? { eligible: p.eligible } : {}),
     })), {
       slots: ctx.slots, flexOk: ctx.flexOk, from: win[0], to: win[1], firstWk,
-      ...(expModel === "full" ? { availByPos: ctx.availByPos, replacement: ctx.replacement } : {}),
+      ...(expModel === "full" ? { availByPos: ctx.availByPos, replacement: ctx.replacement, ...(ctx.replacementByWeek ? { replacementByWeek: ctx.replacementByWeek } : {}) } : {}),
     });
   const baseExpCache = new Map<string, number>();
   const baseExp = (win: [number, number] = expWin): number => {
@@ -2530,9 +2530,13 @@ export function depthRisk(
 
   const insurance = pool.map((r) => {
     const proj = conditionalProj(r);
+    // HIS BYE, not `bye: null` (2026-10-13). A candidate added with no bye played all 17 weeks inside
+    // the sim, so every insurer's `recoversPp` was inflated by one free week of his points. A rostered
+    // candidate carries his own; a free agent asks the context's one resolver (src/draft/byes.ts).
+    const bye = (r as { bye?: number | null }).bye ?? ctx.byeOf(r.name, r.team ?? null, r.pos);
     const after = seeds.map((s) => {
       const t = ctx.clone();
-      t[ctx.meIdx].roster = withoutOf(t).concat([{ name: r.name, pos: r.pos, proj, team: r.team, bye: null }]);
+      t[ctx.meIdx].roster = withoutOf(t).concat([{ name: r.name, pos: r.pos, proj, team: r.team, bye }]);
       return outcomeOf(ctx, t, trials, s);
     });
     const d = deltasOf(after, outBySeed, objective);

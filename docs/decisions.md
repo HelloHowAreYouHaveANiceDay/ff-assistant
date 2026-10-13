@@ -2521,3 +2521,65 @@ ROLLBACK: `Copy-Item data\weekly-artifact.pre-d50-2026-10-02.json data\weekly-ar
 Tests: test/weekly-mixture-mean.test.ts (equals a numeric integral of `quantileFn` incl. both tail branches --
 fault-injected on 0.25 and on 0.5, each fails; mean-only; band-rebuilt rows untouched; the switch fires live; the
 served artifact carries it, serves it with no env switch, and still passes its golden check).
+
+## D52 -- a man with no game this week is priced as one: stream picks, depth-risk insurers, the streaming floor (2026-10-13, owner: libo "yes" in Slack 2026-10-13, **APPLIED**)
+
+Follow-up to a5a4e92 (the shared bye resolver `src/draft/byes.ts`, `ctx.byeOf`). Three consumers still treated a man
+on bye, or unsigned, as playing:
+
+1. **Scorecard stream picks.** `topStreamPick` (src/weekly/streamingServe.ts) now drops every pool row with no game
+   (`opponent` NULL, team "FA", or `noGame`) before BOTH picks, the model's and the board's. 7 of the 132 frozen 2026
+   stream rows had no game: Antonio Williams (unsigned, wk2 RB and RB_line), Tommy Myers (unsigned, wk4 and wk5 TE),
+   Jalen Royals (KC bye, wk5 WR), CIN D/ST (bye, wk6 DST), Caleb Douglas (MIA bye, wk6 WR_line). The eighth reported
+   case, Yahoo's wk4 TE_line Chig Okonkwo (subject 1602), does have a game: 1602 is a key in that format's own
+   features.db (WAS vs IND), and it shows "no feature row" only when looked up in the incumbent store.
+   **The frozen rows are NOT rewritten.** `scorecard_prediction` is write-once (docs/weekly.md section 4) and the repo
+   has no re-score or amend mechanism. Scoring already skips `is_bye` rows. Streaming hit rate over the settled weeks
+   2-5 (hit = realised points >= frozen projection; a no-game pick scores 0):
+   - Model picks: 13/66 = 19.7% as recorded, 13/62 = 21.0% with no-game picks excluded.
+   - Board picks: 11/51 = 21.6% as recorded, 11/50 = 22.0% excluded.
+   - All picks: 24/117 = 20.5% as recorded, 24/112 = 21.4% excluded.
+   The two week-6 no-game picks are not settled yet.
+2. **Depth-risk insurance** (`depthRisk`, src/inseason/copilot.ts) added every candidate with `bye: null`, so he
+   played through his bye. Each candidate now carries his own bye, or `ctx.byeOf(name, team, pos)` for a free
+   agent. Temp-store before/after, league 462233 team 8, `depth-risk "Bo Nix"` (1000 trials x 2 seeds; base 27.85%
+   and cost +2.65pp unchanged), recoversPp:
+   - Josh Allen: 16.85 -> 14.85
+   - Lamar Jackson: 11.55 -> 9.70
+   - Malik Willis (FA, MIA bye wk6): 4.65 -> 2.45
+   - Daniel Jones (FA): 3.85 -> 3.35
+   The noise floor is 1.98pp.
+3. **Streaming floor, per week.** `loadSimContext` now also carries `replacementByWeek`, built by
+   `replacementByWeekFrom` (src/inseason/expectedLineup.ts): for each NFL week it applies the same rule as the flat
+   floor (same pool, same rate, second best) after dropping the free agents on bye that week. If every free agent
+   at a position is on bye, that position keeps the flat value. `expectedLineupPoints` (waivers, D43) reads it
+   whenever `replacement` is set. The SEASON SIMULATOR still uses the flat floor, so playoff% does not move.
+   `FF_REPLACEMENT_BY_WEEK=off` restores the flat floor for a gate run.
+   - Live 462233 moves: wk7 RB 4.31 -> 4.10, wk9-10 WR 6.40 -> 6.28, wk11 QB 10.94 -> 10.70, plus several moves of
+     0.01-0.05.
+   - D43 replay (2018-2025, wks 3-12, 1,140 decisions, blind artifacts, `--wb-no-sim`), flat -> per-week:
+     EXPF10 -1.47 NULL (113 moves) -> -1.47 NULL (123 moves, 0/8 seasons up); EXPF5 -2.42 -> -2.22 NULL; EXPF0
+     -3.57 -> -3.69 NULL. HINDSIGHT is +23.4 BETTER and ANTI -31.4 WORSE in both arms. **STAND PAT remains the
+     default.**
+
+Cheap leaks closed in the same change:
+- **The serve boundary.** `projectStreamingWith` serves a row with no game (opponent NULL or team "FA", in a week
+  whose schedule is joined) as mean/p10/p50/p90 0, P(zero) 1, `noGame: true`. Example: DET D/ST served 6.72 in its
+  wk6 bye. Rows with a game are unchanged: on the week-6 temp store every stream pool row with a game is identical,
+  and the DET/MIA D/ST, Achane, Perine, Oliver, Sample and Dulcich bye rows drop out of the "best free" lists.
+- **Board team "FA".** 25 free board rows (league 462233) had team "FA" and therefore no bye. `loadSimContext` now
+  treats "FA" as unknown and takes the team from the latest 2026 weekly feature row, which resolves 14 of them
+  (e.g. Darius Slayton NYG, Jake Browning TB, Ben Sauls NYG). The other 11 are genuinely unsigned (Tyreek Hill,
+  Brandin Cooks, Zach Ertz, Taysom Hill, Tommy Myers, Joe Mixon, Kareem Hunt, Austin Ekeler, Miles Sanders, Antonio
+  Gibson, Juice Wells Jr.). They keep "FA" and are left out of the streaming floor; none ranked in the top 2
+  anywhere, so the flat floor did not move.
+
+Temp-store before/after (HEAD vs this change, same `db.backup()` copy, FF_CDP_PORT=9224):
+- `ff waivers`: base 29.45% playoffs both arms. Top rows: Tate/Wright +2.67 -> +2.68 expected points, Fitzgerald
+  +0.42 -> +0.41, Godwin +0.37 -> +0.38. GB D/ST is unchanged, and the D43 STAND PAT header is unchanged.
+- `ff lineup --week 6`: identical (55.3 pts).
+- `ff stream --week 6`: same adds and decisions at DST, RB, WR and TE (ADD BUF D/ST 6.71).
+
+Tests: test/bye-leaks.test.ts covers the stream pick, the depth-risk insurer's bye, the per-week floor (rule and
+`expectedLineupPoints`) and the serve-boundary zero against the store. Each was fault-injected (cutting the fix
+fails exactly its test).
