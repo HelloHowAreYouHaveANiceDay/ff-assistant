@@ -1130,6 +1130,9 @@ export interface StreamPlayer {
   name: string;
   pos: string;
   team: string | null;
+  /** This week's NFL opponent, when the producer knows it. Explicit NULL = no NFL game this week
+   *  (bye, or unsigned -- nflverse team "FA"), so he cannot score. Absent = not known. */
+  opponent?: string | null;
   /** Projected points for THIS week. */
   proj: number;
   p10: number;
@@ -1202,10 +1205,18 @@ export function streamRecommend(
   const limit = o.limit ?? 8;
   const roster = ctx.teams[ctx.meIdx].roster;
   const byeOf = new Map(roster.map((p) => [nameKey(p.name), p.bye ?? null]));
+  // A FREE AGENT'S BYE comes from the context's resolver -- the one that stamped the roster's -- and
+  // not from our roster map, which only knows our own men. Before 2026-10-13 every pool row read
+  // `bye: null`, so a defence on bye was recommended as the week's add (DET D/ST, week 6).
+  const byeFor = (p: StreamPlayer): number | null => byeOf.get(nameKey(p.name)) ?? ctx.byeOf(p.name, p.team, p.pos);
 
   const decorate = (p: StreamPlayer): StreamPlayer => ({
     ...p,
-    unavailable: unavailableReason({ name: p.name, pos: p.pos, bye: byeOf.get(nameKey(p.name)) ?? null }, week, availability),
+    unavailable: unavailableReason({ name: p.name, pos: p.pos, bye: byeFor(p) }, week, availability)
+      // NO GAME AT ALL: the weekly row says his team has no opponent this week. Catches what the
+      // bye resolver cannot -- an unsigned man (nflverse team "FA") whose stale row still projects
+      // points, which the frozen scorecard picked as a TE stream in weeks 4 and 5.
+      ?? (p.opponent === null ? `no NFL game in week ${week} (team ${p.team ?? "unknown"})` : null),
   });
   const all = (o.pool ?? []).filter((p) => p.pos === pos).map(decorate);
   const ours = all.filter((p) => p.ours).sort((a, b) => b.proj - a.proj);

@@ -203,6 +203,9 @@ export interface StreamProj {
   name: string;
   pos: string;
   team: string | null;
+  /** This week's NFL opponent from the feature row. NULL = his team has NO GAME this week (a bye, or
+   *  `team` is "FA": unsigned). Absent = the producer did not say (hand-built rows). */
+  opponent?: string | null;
   mean: number;
   p10: number;
   /** The median head. Carried because a WEEKLY BAND is p10/p50/p90 and a consumer that has to
@@ -397,6 +400,7 @@ export function projectStreamingWith(
       list.forEach((p, i) => rank.set(p.key, i + 1));
     }
     const teamOf = new Map(rows.map((r) => [r.feat_key, r.team]));
+    const oppOf = new Map(rows.map((r) => [r.feat_key, r.opponent]));
 
     const out: StreamProj[] = [];
     for (const [file, art] of arts) {
@@ -406,6 +410,7 @@ export function projectStreamingWith(
       for (const p of projectWeekly({ artifact: art, rows: subset })) {
         out.push({
           feat_key: p.feat_key, player_sk: p.player_sk ?? null, name: p.name, pos: p.pos, team: teamOf.get(p.feat_key) ?? null,
+          opponent: oppOf.get(p.feat_key) ?? null,
           mean: p.mean, p10: p.p10, p50: p.p50, p90: p.p90,
           pZero: p.pZero ?? null,
           ...(p.knots ? { knots: p.knots } : {}),

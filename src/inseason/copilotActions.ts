@@ -313,9 +313,14 @@ function summarize(verb: CopilotVerb, r: unknown): string {
         ? ` ADD ${x.add.add} / DROP ${x.add.drop}${x.add.legal ? "" : " -- ILLEGAL"}: ` +
           `${x.add.gainPts >= 0 ? "+" : ""}${x.add.gainPts.toFixed(1)} pts this week${x.add.why ? ` (${x.add.why})` : ""}.`
         : " No free player at this position beats what we already have.";
-      const top = x.pool.slice(0, 3).map((p) => `${p.name} ${p.proj}`).join(", ");
+      // AVAILABLE free men only: a defence on bye listed as "best free" is the same wrong advice as
+      // recommending him (2026-10-13). The JSON `pool` keeps them, flagged in `unavailable`.
+      const freeOk = x.pool.filter((p) => p.unavailable == null);
+      const nOut = x.pool.length - freeOk.length;
+      const top = freeOk.slice(0, 3).map((p) => `${p.name} ${p.proj}`).join(", ");
       return `Week ${x.week} ${x.pos}: ${who}.${claim}` +
         `${top ? ` Best free: ${top}.` : ""}` +
+        `${nOut ? ` (${nOut} listed free man/men skipped: bye or OUT.)` : ""}` +
         `${x.refused.length ? ` Refused ${x.refused.length} drop(s) that leave a slot unfillable.` : ""} ${caveat(x.assumptions)}`;
     }
     case "playoff_sos": {
@@ -552,6 +557,7 @@ function streamProjections(ctx: SimContext, week: number, dbPath: string | undef
     const k = C.lineupNameKey(r.name);
     return {
       name: r.name, pos: r.pos, team: r.team,
+      ...(r.opponent !== undefined ? { opponent: r.opponent } : {}),
       proj: Math.round(r.mean * 100) / 100,
       p10: Math.round(r.p10 * 100) / 100,
       p90: Math.round(r.p90 * 100) / 100,

@@ -32,6 +32,7 @@ import { availByPosFrom } from "../inseason/expectedLineup.js";
 import { loadRosBlendFor, rosKFor, rosPerGame, loadRosGap, rosGapAdjust, loadRosUsage, rosUsageAdjust } from "./rosBlend.js";
 import { dataPath } from "../data/paths.js";
 import { loadEligibilityMap } from "../data/eligibility.js";
+import { makeByeResolver, teamByesFromGames, dstTeamFromName, type ByeResolver } from "./byes.js";
 
 export interface SimContext {
   teams: SeasonTeamInput[];
@@ -53,6 +54,13 @@ export interface SimContext {
    *  2026 board -- so a consumer that ignores the field behaves exactly as it did. */
   board: Map<string, { name: string; pos: string; proj: number; team: string; eligible?: string[]; rosPerGame?: number; bye?: number | null }>;
   ownedIds: Set<string>;
+  /**
+   * THE BYE OF ANY MAN, rostered or not (src/draft/byes.ts) -- the same resolver that stamped `bye`
+   * on the board and the rosters. REQUIRED, because a consumer whose candidates are not board rows
+   * (the stream pool) had no way to ask and silently treated every free agent as playing; a fixture
+   * with no schedule says so with `NO_BYES`.
+   */
+  byeOf: ByeResolver;
   /** The league's starting template and FLEX eligibility, so a caller building a hypothetical roster
    *  can ask whether it is legal (rosterGaps) instead of finding out when the simulator refuses. */
   slots: string[];
@@ -181,25 +189,20 @@ export async function loadSimContext(opts: {
    * to the `player` table, and for a defence to its own name ("DEN D/ST"), since 217 of 1,012 board
    * rows carry no Team.
    */
-  const teamBye = new Map<string, number>();
-  {
-    const g = db.prepare("SELECT week, home_team h, away_team a FROM raw_nfl_game WHERE season=? AND game_type='REG'")
-      .all(cfg.season) as { week: number; h: string; a: string }[];
-    const weeksOf = new Map<string, Set<number>>();
-    for (const r of g) for (const t of [r.h, r.a]) { if (!weeksOf.has(t)) weeksOf.set(t, new Set()); weeksOf.get(t)!.add(r.week); }
-    const all = new Set(g.map((r) => r.week));
-    for (const [t, ws] of weeksOf) {
-      const off = [...all].filter((w) => !ws.has(w));
-      if (off.length === 1) teamBye.set(t, off[0]);
-    }
-  }
+  const teamBye = teamByesFromGames(
+    db.prepare("SELECT week, home_team h, away_team a FROM raw_nfl_game WHERE season=? AND game_type='REG'")
+      .all(cfg.season) as { week: number; h: string; a: string }[],
+  );
   const teamOfId = new Map<string, string>();
   for (const r of db.prepare("SELECT player_id, nfl_team FROM player WHERE nfl_team IS NOT NULL AND nfl_team <> ''").all() as { player_id: string; nfl_team: string }[]) {
     teamOfId.set(r.player_id, r.nfl_team.toUpperCase());
   }
   const teamFor = (id: string, name: string, pos: string, team: string): string =>
-    team || teamOfId.get(id) || (pos === "DST" ? (name.match(/^([A-Z]{2,3})\s+D\/ST$/)?.[1] ?? "") : "");
-  const byeFor = (name: string, team: string): number | null => byeOf.get(nameKey(name)) ?? teamBye.get(team) ?? null;
+    team || teamOfId.get(id) || (pos === "DST" ? dstTeamFromName(name) : "");
+  // ONE RESOLVER (src/draft/byes.ts), used for the board and the rosters here AND carried on the
+  // context as `byeOf`, so a free agent priced off the board (the stream pool) gets the same answer.
+  const byeResolver = makeByeResolver(byeOf, teamBye);
+  const byeFor = (name: string, team: string): number | null => byeResolver(name, team);
 
   // ESPN's eligibility, read from the STAGED table rather than re-derived from the board's Eligible
   // string: the board column is a display of this, and two readings of one fact is how they drift.
@@ -713,7 +716,7 @@ export async function loadSimContext(opts: {
     bootstrap: { outcomes, corr, calibration: "scale" as const },
   });
   return {
-    teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds, format,
+    teams, weeks, meIdx, season: cfg.season, syntheticSchedule, board, ownedIds, byeOf: byeResolver, format,
     slots: cfg.slots as string[], flexOk: cfg.flex_ok as string[] | undefined, replacement, availByPos: availByPosFrom(vm),
     posMax: (cfg as { posMax?: Record<string, number> }).posMax,
     played: { weeks: playedWeeks, nextWeek, source: seedSource, rosBlendK: rosBlend.K, rosBlendSource: rosSource, rosApplied, today, seedBlocked },

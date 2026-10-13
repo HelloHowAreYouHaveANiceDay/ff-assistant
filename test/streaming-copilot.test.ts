@@ -15,6 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { streamRecommend, type AvailabilityMap, type StreamPlayer } from "../src/inseason/copilot.js";
 import { fixtureCtx, key } from "./fixtures/copilot-league.js";
+import { makeByeResolver, teamByesFromGames, NO_BYES } from "../src/draft/byes.js";
 import { artifactForPos, WEEKLY_SERVE, topStreamPick, DST_STREAM_ARTIFACT, type StreamProj } from "../src/weekly/streamingServe.js";
 import { SHIPPED_WEEKLY_ARTIFACT, CHALLENGER_WEEKLY_ARTIFACT } from "../src/weekly/projector.js";
 
@@ -209,4 +210,93 @@ test("topStreamPick: picks out of the POOL only, and freezes the board's pick be
   // not being read at all.
   assert.equal(topStreamPick(rows, { DST: 0 }).DST.model!.name, "Rostered Ace",
     "moving the pool boundary changed nothing -- topStreamPick is not reading it");
+});
+
+// =============================================================================================
+// A FREE AGENT ON BYE (2026-10-13 regression)
+// =============================================================================================
+
+/**
+ * MEASURED: `ff stream --pos DST --week 6` (league 462233, 2026) recommended adding DET D/ST at 6.72
+ * projected while Detroit was on bye, and listed MIA D/ST and CIN/MIA skill players with
+ * `unavailable: null`. The bye was looked up on OUR roster only, so every free agent "played".
+ * The free agent's bye now comes from `ctx.byeOf` -- the resolver that stamped the roster's.
+ */
+function byeCtx(byeOf = makeByeResolver(new Map(), teamByesFromGames([
+  // Week 5: everybody plays. Week 6: DET and MIA are off. Week 7: everybody plays.
+  { week: 5, h: "DET", a: "BUF" }, { week: 5, h: "MIA", a: "NYG" },
+  { week: 6, h: "BUF", a: "NYG" },
+  { week: 7, h: "DET", a: "MIA" }, { week: 7, h: "BUF", a: "NYG" },
+]))) {
+  return { ...fixtureCtx(), byeOf };
+}
+function byePool(ctx: ReturnType<typeof fixtureCtx>): StreamPlayer[] {
+  const mine = ctx.teams[ctx.meIdx].roster.find((p) => p.pos === "DST")!;
+  return [
+    P({ name: mine.name, pos: "DST", proj: 3, ours: true, rostered: true }),
+    // Best projection, team on BYE, and the team only in the NAME (team null) -- the DST spelling.
+    P({ name: "DET D/ST", pos: "DST", proj: 6.72, team: null }),
+    P({ name: "MIA D/ST", pos: "DST", proj: 6.5, team: "MIA" }),
+    P({ name: "BUF D/ST", pos: "DST", proj: 6.71, team: "BUF" }),
+  ];
+}
+
+test("stream: a FREE AGENT whose NFL team is on bye is unavailable and is never the add", () => {
+  const ctx = byeCtx();
+  const r = streamRecommend(ctx, 6, "DST", { pool: byePool(ctx) });
+  const det = r.pool.find((p) => p.name === "DET D/ST")!;
+  const mia = r.pool.find((p) => p.name === "MIA D/ST")!;
+  assert.equal(det.unavailable, "bye week 6", "DET D/ST (team only in its name) is on bye in week 6");
+  assert.equal(mia.unavailable, "bye week 6", "MIA D/ST is on bye in week 6");
+  assert.equal(r.pool.find((p) => p.name === "BUF D/ST")!.unavailable, null);
+  assert.ok(r.add, "BUF D/ST plays and beats our 3.0");
+  assert.equal(r.add!.add, "BUF D/ST", `a defence on bye was recommended: ${JSON.stringify(r.add)}`);
+  assert.ok(Math.abs(r.add!.gainPts - 3.71) < 1e-6, `gain was ${r.add!.gainPts}, want 3.71`);
+});
+
+test("FAULT (the other direction): off the bye week the same free agent IS the add", () => {
+  // Positive control: the resolver is connected and week-specific, not marking DET out forever.
+  const ctx = byeCtx();
+  const r = streamRecommend(ctx, 7, "DST", { pool: byePool(ctx) });
+  assert.equal(r.pool.find((p) => p.name === "DET D/ST")!.unavailable, null);
+  assert.equal(r.add!.add, "DET D/ST");
+  // And with the resolver disconnected (NO_BYES) week 6 reproduces the bug -- so the test above is
+  // failing for the right reason when the wiring is cut.
+  const cut = byeCtx(NO_BYES);
+  assert.equal(streamRecommend(cut, 6, "DST", { pool: byePool(cut) }).add!.add, "DET D/ST");
+});
+
+test("teamByesFromGames: one missing week is the bye; a partial schedule yields no guess", () => {
+  const b = teamByesFromGames([
+    { week: 1, h: "A", a: "B" }, { week: 2, h: "A", a: "C" }, { week: 3, h: "B", a: "C" },
+  ]);
+  assert.equal(b.get("A"), 3);
+  assert.equal(b.get("B"), 2);
+  assert.equal(b.get("C"), 1);
+  const partial = teamByesFromGames([{ week: 1, h: "A", a: "B" }, { week: 2, h: "C", a: "D" }, { week: 3, h: "C", a: "D" }]);
+  assert.equal(partial.get("A"), undefined, "A misses two weeks -- not knowable, so no bye");
+  // The consensus bye by name wins over the schedule, exactly as the board has always resolved it.
+  const r = makeByeResolver(new Map([["johnsmith", 9]]), b);
+  assert.equal(r("John Smith", "A"), 9);
+  assert.equal(r("Jane Doe", "A"), 3);
+  assert.equal(r("Jane Doe", null), null);
+});
+
+test("stream: a free agent whose weekly row has NO opponent (unsigned, team FA) is unavailable", () => {
+  // The bye resolver cannot see this: nflverse team "FA" has no schedule. The weekly feature row's
+  // null opponent is the fact. MEASURED: the scorecard froze Tommy Myers (team FA, 6.27) as the TE
+  // stream pick in 2026 weeks 4 and 5.
+  const ctx = byeCtx();
+  const mine = ctx.teams[ctx.meIdx].roster.find((p) => p.pos === "DST")!;
+  const pool = [
+    P({ name: mine.name, pos: "DST", proj: 3, ours: true, rostered: true }),
+    P({ name: "Unsigned Guy", pos: "DST", proj: 9, team: "FA", opponent: null }),
+    P({ name: "NYG D/ST", pos: "DST", proj: 5, team: "NYG", opponent: "BUF" }),
+  ];
+  const r = streamRecommend(ctx, 6, "DST", { pool });
+  assert.match(r.pool.find((p) => p.name === "Unsigned Guy")!.unavailable ?? "", /no NFL game in week 6/);
+  assert.equal(r.add!.add, "NYG D/ST");
+  // Absent opponent (a producer that does not say) is NOT read as "no game" -- the old behaviour.
+  const r2 = streamRecommend(ctx, 6, "DST", { pool: pool.map((p) => ({ ...p, opponent: undefined })) });
+  assert.equal(r2.add!.add, "Unsigned Guy");
 });

@@ -17,6 +17,7 @@ import { loadFaabModel, FAAB_ARTIFACT_PATH, type FaabLiveState } from "../src/in
 import { adjudicate } from "../src/inseason/backtest/faab.js";
 import type { SimContext } from "../src/draft/simContext.js";
 import { emptyWeekState } from "../src/inseason/weekState.js";
+import { NO_BYES } from "../src/draft/byes.js";
 import type { SeasonTeamInput, SeasonOdds } from "../src/draft/season.js";
 
 const SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "K", "DST"];
@@ -46,7 +47,7 @@ function fixtureCtx(): SimContext {
       playoffWeekPts: total(x) / 10,
     })) as unknown as SeasonOdds[],
     clone: (t?: SeasonTeamInput[]) => JSON.parse(JSON.stringify(t ?? teams)) as SeasonTeamInput[],
-    board, ownedIds: new Set(teams.flatMap((t) => t.roster.map((p) => p.name.toLowerCase().replace(/\s+/g, "")))),
+    board, byeOf: NO_BYES, ownedIds: new Set(teams.flatMap((t) => t.roster.map((p) => p.name.toLowerCase().replace(/\s+/g, "")))),
     slots: SLOTS, flexOk: ["RB", "WR", "TE"], replacement: {},
     format: { regWeeks: 14, playoffTeams: 4 } as SimContext["format"],
     // A local fixture with no live week says so by name. The `as unknown as SimContext` cast here
