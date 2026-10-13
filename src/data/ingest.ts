@@ -449,6 +449,49 @@ export const RAW_ASSETS: RawAsset[] = [
       return r.total;
     },
   },
+  // SCHEME, play grain (2026-10-12). See src/data/schemeSources.ts and the raw_play_scheme schema comment.
+  {
+    id: "play-scheme",
+    table: "raw_play_scheme",
+    what: "nflverse pbp_participation at the PLAY grain (2016-2025; no 2026 file is published): formation, personnel, box, pass rushers, pressure, time to throw, the targeted route, and man/zone + coverage shell",
+    defaultSeasons: [2016, new Date().getFullYear()],
+    reads: ["src_nflverse"],
+    writes: ["raw_play_scheme"],
+    async run(dbPath, seasons) {
+      const { ingestRawPlayScheme } = await import("./schemeSources.js");
+      const r = await ingestRawPlayScheme({ dbPath, seasons });
+      reportSeasons(r);
+      return r.total;
+    },
+  },
+  {
+    id: "ftn",
+    table: "raw_ftn_play",
+    what: "FTN Data charting via nflverse at the PLAY grain (2022+, live season included): play-action, motion, RPO, screen, no-huddle, QB location, box, blitzers, catchable/contested/drop (CC-BY-SA 4.0, FTN Data)",
+    defaultSeasons: [2022, new Date().getFullYear()],
+    reads: ["src_nflverse"],
+    writes: ["raw_ftn_play"],
+    async run(dbPath, seasons) {
+      const { ingestRawFtn } = await import("./schemeSources.js");
+      const r = await ingestRawFtn({ dbPath, seasons });
+      reportSeasons(r);
+      return r.total;
+    },
+  },
+  {
+    id: "pbp-play",
+    table: "raw_pbp_play",
+    what: "nflverse play-by-play at a SLIM PLAY grain (2016+, scrimmage plays): passer/receiver/rusher, result, EPA, shotgun/no-huddle, pass depth+direction, run gap, and xpass/pass_oe (pass rate over expected)",
+    defaultSeasons: [2016, new Date().getFullYear()],
+    reads: ["src_nflverse"],
+    writes: ["raw_pbp_play"],
+    async run(dbPath, seasons) {
+      const { ingestRawPbpPlay } = await import("./schemeSources.js");
+      const r = await ingestRawPbpPlay({ dbPath, seasons });
+      reportSeasons(r);
+      return r.total;
+    },
+  },
   {
     id: "adp-history",
     table: "raw_adp_history",

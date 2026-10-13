@@ -277,6 +277,14 @@ export async function buildForwardBoardInto(db: DB, opts: {
     const snapReport = await ingestRawSnapCountsInto(db, { seasons: [season], refresh: true });
     live.snapRows = snapReport.total;
   } catch (e) { live.note = `snap-count refresh skipped: ${String((e as Error).message).slice(0, 160)}`; }
+  // The live season's play-by-play, for the served `rz_share_td` (season-to-date red-zone share). It
+  // was fetched once in September and never again, so the feature read week 1 only through week 5.
+  try {
+    const { ingestRawPbpInto } = await import("../data/rawSources.js");
+    const pbpReport = await ingestRawPbpInto(db, { seasons: [season] });
+    const bad = pbpReport.seasons.find((s) => !s.ok);
+    if (bad) live.note = `${live.note ? live.note + "; " : ""}pbp refresh failed: ${bad.note ?? "unknown"}`;
+  } catch (e) { live.note = `${live.note ? live.note + "; " : ""}pbp refresh skipped: ${String((e as Error).message).slice(0, 160)}`; }
   try {
     const { buildLiveWeekContextInto } = await import("../features/sources/weekContext.js");
     const ctx = buildLiveWeekContextInto(db, { season });

@@ -145,6 +145,12 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
   plays, and Keenan Allen at 33/33 is the top non-quarterback. 2026 has no asset yet.
 - **Feeds.** `prior_route_share` in both new feature tables.
 - **Status.** ingested (this branch).
+- **Play grain, scheme (2026-10-12).** `raw_play_scheme` (`ff ingest-raw play-scheme`) keeps the PLAY
+  rows' scheme columns: formation, personnel, box, pass rushers, pressure, time to throw, the targeted
+  `route`, `defense_man_zone_type`, `defense_coverage_type`. Measured: 478,989 plays 2016-2025; coverage
+  type is charted on ~40-50% of plays (the dropbacks) from **2018** on and is empty for 2016-2017;
+  joins `raw_pbp_play` on (season, game_id, play_id) at 100% (2025). **No 2026 file is published**, so
+  coverage is unavailable for the live season. Feeds nothing yet.
 
 ### 1.5a Play-by-play (situational opportunity) -- `pbp/play_by_play_<season>.csv`
 
@@ -172,9 +178,17 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
 - **Face validity, 2024 (REG+POST):** S.Barkley 439 carries / 79 rz / 18 rush TD; J.Chase 127 rec / 17
   rec TD; J.Burrow 43 pass TD -- all match the real season. `as_of` resolves on 100%. Aggregator is a
   pure function (`aggregatePbp`) with a hermetic fault-injection test (`test/pbpAggregate.test.ts`).
-- **Feeds.** Nothing yet -- this branch lands the RAW opportunity substrate; the feature-layer columns
-  (red-zone touch share, aDOT, high-value-touch rate) that join it into `feat_player_week` are the next
-  step and must clear the paired-season floor before anything ships.
+- **Feeds.** `rz_share_td` (served weekly model, season-to-date red-zone touch share) reads the live
+  season; the prior-season pbp candidates (docs/feature-frontier.md) read finished seasons.
+- **Live-season freshness (2026-10-12).** The disk cache never expired, so `pbp-2026` stayed at week 1
+  from Sep 15 to Oct 12 and `rz_share_td` was computed from one game. Now a file for the live season
+  (`liveNflSeason()`) re-fetches once its cache is older than `LIVE_FEED_MAX_AGE_HOURS` (6h), for every
+  per-season feed, and `buildForwardBoardInto` (every `sync-actuals`) refreshes the live season's pbp
+  alongside the snap counts. `test/schemeSources.test.ts` holds the fault-injected guard.
+- **Play grain (2026-10-12).** `raw_pbp_play` (`ff ingest-raw pbp-play`): scrimmage plays only, with
+  passer/receiver/rusher ids, result, EPA, shotgun/no-huddle, pass depth/direction, run gap, and
+  `xpass` / `pass_oe` (pass rate over expected). 349,871 plays 2016-2025 + 2026 to date. The row a
+  scheme split (targets vs man/zone, play-action) is computed from.
 - **Status.** ingested (this branch).
 
 ### 1.6 FTN charting -- `ftn_charting_<season>.csv`
@@ -185,12 +199,14 @@ asset name. Probe it before adding a feed; do not type a filename from memory.
 - **Grain / key.** (nflverse_game_id, ftn_play_id). Play level; **no player id at all** -- it joins to
   participation or pbp by play, not to a player directly.
 - **As-of.** The game; prior-only.
-- **Seasons, measured.** 2022-2025 only. 8.3MB / ~48,000 plays per season.
-- **Feeds.** Nothing. Four seasons of a play-level feed with no player key is a poor fit for a
-  season-long auction model: it cannot produce a per-player column without going through
-  participation first, and it covers 4 of 27 backtest seasons.
-- **Status.** proposed, low priority. Recorded here so the next person does not re-discover the
-  4-season limit after building the join.
+- **Seasons, measured.** 2022-2026. 8.3MB / ~48,000 plays per season. **The live season IS published**
+  (2026 weeks 1-4 on 2026-10-12, about a week behind) -- the only current scheme source.
+- **Raw table.** `raw_ftn_play` (`ff ingest-raw ftn`), keyed by the NFLVERSE play id so it joins
+  `raw_pbp_play` / `raw_play_scheme` directly. 196,211 plays 2022-2026. License CC-BY-SA 4.0 -- attribute
+  FTN Data.
+- **Feeds.** Nothing yet. Still only 4 finished seasons, so a candidate built from it has a thin
+  backtest; it is ingested for the scheme-fit screen and for in-season descriptive use.
+- **Status.** ingested (2026-10-12).
 
 ### 1.7 Next Gen Stats -- `nextgen_stats/ngs_{passing,receiving,rushing}.csv.gz`
 

@@ -27,7 +27,7 @@
  */
 import { openDb, nowIso, type DB } from "../db/db.js";
 import {
-  fetchCsvCached, cacheTag, rawTag, URLS, NFLVERSE, canonTeam, pick,
+  fetchCsvCached, cacheTag, rawTag, URLS, NFLVERSE, canonTeam, pick, liveNflSeason, LIVE_FEED_MAX_AGE_HOURS,
   injuriesUrl, depthChartsUrl, snapCountsUrl, draftPicksUrl, participationUrl, pbpUrl, contractsUrl,
 } from "./nflverse.js";
 
@@ -157,7 +157,9 @@ export async function perSeasonFeed(
   for (const season of seasons) {
     let rows: Record<string, string>[];
     try {
-      rows = await fetchCsvCached(url(season), tag(season), refresh);
+      // The live season's file still grows weekly: give its cache a max age (LIVE_FEED_MAX_AGE_HOURS).
+      const maxAge = season >= liveNflSeason() ? LIVE_FEED_MAX_AGE_HOURS : null;
+      rows = await fetchCsvCached(url(season), tag(season), refresh, maxAge);
     } catch (e) {
       out.push({ season, ok: false, rows: 0, note: String((e as Error).message).slice(0, 120) });
       continue;
@@ -542,7 +544,8 @@ export async function ingestRawNgs(opts: { dbPath?: string; refresh?: boolean } 
   );
   const perSeason = new Map<number, number>();
   for (const [statType, file] of [["rec", "receiving"], ["rush", "rushing"], ["pass", "passing"]] as const) {
-    const rows = await fetchCsvCached(`${NFLVERSE}/nextgen_stats/ngs_${file}.csv.gz`, rawTag.ngs(statType), opts.refresh ?? false);
+    // ONE combined file for every season, the live one included, so it is always a growing file.
+    const rows = await fetchCsvCached(`${NFLVERSE}/nextgen_stats/ngs_${file}.csv.gz`, rawTag.ngs(statType), opts.refresh ?? false, LIVE_FEED_MAX_AGE_HOURS);
     db.transaction(() => {
       for (const r of rows) {
         const season = int(pick(r, "season")), week = int(pick(r, "week")), gsis = str(pick(r, "player_gsis_id"));
@@ -869,6 +872,13 @@ export function aggregatePbp(rows: Record<string, string>[]): Map<string, PbpPla
 
 export async function ingestRawPbp(opts: { dbPath?: string; seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
   const db = openDb(opts.dbPath);
+  try { return await ingestRawPbpInto(db, opts); } finally { db.close(); }
+}
+
+/** The same ingest against a connection the caller holds -- `buildForwardBoardInto` refreshes the live
+ *  season's play-by-play on every board rebuild (the served `rz_share_td` reads it), exactly as it does
+ *  the snap counts. See `ingestRawSnapCountsInto` for why a second connection is not opened. */
+export async function ingestRawPbpInto(db: DB, opts: { seasons?: number[]; refresh?: boolean } = {}): Promise<IngestReport> {
   const now = nowIso();
   const gameday = new Map<string, string | null>();
   for (const g of db.prepare("SELECT game_id, gameday FROM raw_nfl_game").all() as { game_id: string; gameday: string | null }[]) {
@@ -914,7 +924,6 @@ export async function ingestRawPbp(opts: { dbPath?: string; seasons?: number[]; 
     })();
     return n;
   });
-  db.close();
   return { table: "raw_pbp_player_week", seasons, total: totalOf(seasons) };
 }
 

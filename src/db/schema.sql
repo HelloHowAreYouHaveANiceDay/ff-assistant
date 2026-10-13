@@ -1060,6 +1060,67 @@ CREATE TABLE IF NOT EXISTS raw_participation (
   PRIMARY KEY (season, week, gsis_id, team));
 CREATE INDEX IF NOT EXISTS idx_raw_part_gsis ON raw_participation (gsis_id, season, week);
 
+-- SCHEME, at the PLAY grain (2026-10-12). Three tables, one per source feed, all keyed by the nflverse
+-- (season, game_id, play_id) so the feature layer can join them to each other and to a target. They
+-- exist for one question raw_participation's aggregate cannot answer: does the OFFENSE a player is in
+-- (formation, personnel, play-action, motion, PROE) and the DEFENSE he faces (man vs zone, coverage
+-- shell, box, pressure) explain his production -- the "scheme fit" question (e.g. MHJ in Arizona).
+-- The play grain is deliberate this time: a fit feature is a split of a player's targets by a play
+-- attribute, and that split cannot be recovered from any per-week rollup. Nothing here is a feature;
+-- no served model reads these tables (docs/feature-frontier.md is where a candidate built from them
+-- would be screened).
+--
+-- raw_play_scheme -- from nflverse pbp_participation (the same file raw_participation aggregates).
+-- COVERAGE: 2016-2025 only. nflverse published no 2026 participation file (checked against the release
+-- API 2026-10-12), so the coverage/route columns are NULL for the live season by construction. `route`
+-- is the TARGETED receiver's route, not a per-player field (see raw_participation above).
+CREATE TABLE IF NOT EXISTS raw_play_scheme (
+  season INTEGER NOT NULL, week INTEGER, game_id TEXT NOT NULL, play_id INTEGER NOT NULL,
+  team TEXT,                       -- possession team
+  as_of TEXT,                      -- the game day, from raw_nfl_game
+  offense_formation TEXT, offense_personnel TEXT, defense_personnel TEXT,
+  defenders_in_box INTEGER, number_of_pass_rushers INTEGER, n_offense INTEGER, n_defense INTEGER,
+  ngs_air_yards REAL, time_to_throw REAL, was_pressure INTEGER,
+  route TEXT, defense_man_zone_type TEXT, defense_coverage_type TEXT,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, game_id, play_id));
+CREATE INDEX IF NOT EXISTS idx_raw_play_scheme_team ON raw_play_scheme (season, team, week);
+
+-- raw_ftn_play -- FTN Data charting via nflverse (CC-BY-SA 4.0, attribute FTN Data). 2022+, and the
+-- LIVE season is published (2026 through week 4 on 2026-10-12): the only scheme source that is current.
+-- Booleans land as 0/1. `play_id` is FTN's `nflverse_play_id`, the join key to the other two tables.
+CREATE TABLE IF NOT EXISTS raw_ftn_play (
+  season INTEGER NOT NULL, week INTEGER, game_id TEXT NOT NULL, play_id INTEGER NOT NULL,
+  as_of TEXT, ftn_play_id INTEGER,
+  starting_hash TEXT, qb_location TEXT, n_offense_backfield INTEGER, n_defense_box INTEGER,
+  is_no_huddle INTEGER, is_motion INTEGER, is_play_action INTEGER, is_screen_pass INTEGER, is_rpo INTEGER,
+  is_trick_play INTEGER, is_qb_out_of_pocket INTEGER, is_interception_worthy INTEGER, is_throw_away INTEGER,
+  read_thrown TEXT, is_catchable_ball INTEGER, is_contested_ball INTEGER, is_created_reception INTEGER,
+  is_drop INTEGER, is_qb_sneak INTEGER, n_blitzers INTEGER, n_pass_rushers INTEGER, is_qb_fault_sack INTEGER,
+  date_pulled TEXT, fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, game_id, play_id));
+
+-- raw_pbp_play -- a SLIM play grain from nflverse play-by-play (2016+): who was targeted / carried /
+-- threw, the result, and the scheme columns pbp itself carries (shotgun, no-huddle, pass depth and
+-- direction, run gap, and nflfastR's expected-pass `xpass` / `pass_oe` -- pass rate over expected, the
+-- standard play-calling-tendency measure). raw_pbp_player_week remains the per-week rollup; this is
+-- the row a scheme split is computed from. Only scrimmage plays (pass or run) are kept.
+CREATE TABLE IF NOT EXISTS raw_pbp_play (
+  season INTEGER NOT NULL, week INTEGER, game_id TEXT NOT NULL, play_id INTEGER NOT NULL,
+  as_of TEXT, season_type TEXT, posteam TEXT, defteam TEXT, play_type TEXT,
+  qtr INTEGER, down INTEGER, ydstogo INTEGER, yardline_100 INTEGER, score_differential INTEGER, wp REAL,
+  shotgun INTEGER, no_huddle INTEGER, qb_dropback INTEGER, qb_scramble INTEGER, sack INTEGER,
+  pass_attempt INTEGER, rush_attempt INTEGER, complete_pass INTEGER,
+  pass_length TEXT, pass_location TEXT, run_location TEXT, run_gap TEXT,
+  passer_id TEXT, receiver_id TEXT, rusher_id TEXT,
+  yards_gained REAL, air_yards REAL, yards_after_catch REAL, epa REAL, touchdown INTEGER,
+  cp REAL, xpass REAL, pass_oe REAL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (season, game_id, play_id));
+CREATE INDEX IF NOT EXISTS idx_raw_pbp_play_recv ON raw_pbp_play (receiver_id, season, week);
+CREATE INDEX IF NOT EXISTS idx_raw_pbp_play_rush ON raw_pbp_play (rusher_id, season, week);
+CREATE INDEX IF NOT EXISTS idx_raw_pbp_play_team ON raw_pbp_play (season, posteam, week);
+
 -- SITUATIONAL OPPORTUNITY, aggregated at ingest from nflverse play-by-play (1999+). We do NOT store the
 -- ~50k plays x ~370 cols per season; this is the fantasy-relevant rollup the frozen box score cannot
 -- give: HIGH-VALUE touches (red-zone / inside-10 / inside-5 / goal-to-go carries and targets), air yards

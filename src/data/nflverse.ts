@@ -125,6 +125,8 @@ export const participationUrl = (season: number) => `${NFLVERSE}/pbp_participati
 /** Full play-by-play, one file per season (1999+, ~10-25MB gz / ~50k plays each). We do NOT store the
  *  raw plays -- the ingester aggregates each season to one row per player-week (see raw_pbp_player_week). */
 export const pbpUrl = (season: number) => `${NFLVERSE}/pbp/play_by_play_${season}.csv`;
+/** FTN Data charting (2022+), per season, live season included. CC-BY-SA 4.0 -- attribute FTN Data. */
+export const ftnUrl = (season: number) => `${NFLVERSE}/ftn_charting/ftn_charting_${season}.csv`;
 export const contractsUrl = `${NFLVERSE}/contracts/historical_contracts.csv.gz`;
 /** Cache tags for the per-season raw feeds. Same rule as `cacheTag`: never type a tag twice. */
 export const rawTag = {
@@ -133,17 +135,46 @@ export const rawTag = {
   snapCounts: (s: number) => `snap-counts-${s}`,
   participation: (s: number) => `participation-${s}`,
   pbp: (s: number) => `pbp-${s}`,
+  ftn: (s: number) => `ftn-${s}`,
   contracts: "contracts",
   ngs: (phase: string) => `ngs-${phase}`,
 } as const;
 
-export async function fetchCsvCached(url: string, tag: string, refresh = false): Promise<Record<string, string>[]> {
-  const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
+/**
+ * The NFL season a date belongs to: January and February are the previous season's playoffs.
+ * Used to decide which per-season file is still GROWING (see `LIVE_FEED_MAX_AGE_HOURS`).
+ */
+export function liveNflSeason(now: Date = new Date()): number {
+  return now.getMonth() < 2 ? now.getFullYear() - 1 : now.getFullYear();
+}
+
+/**
+ * How old a cached copy of a file that is STILL BEING APPENDED TO may get before it is re-fetched.
+ *
+ * WHY THIS EXISTS. The disk cache below was written for finished seasons, where a file never changes
+ * and re-downloading it is pure waste. The live season's file gains a week every Tuesday, and a
+ * cache with no age limit turns "fetched once in September" into "frozen at week 1 forever": the
+ * 2026 play-by-play sat at week 1 until 2026-10-12, so the served `rz_share_td` feature was computed
+ * from one game for five weeks with nothing failing. A file that can still change gets a max age;
+ * a finished one keeps the cache-forever behaviour.
+ */
+export const LIVE_FEED_MAX_AGE_HOURS = 6;
+
+/** PURE: should a cached file of this age be re-fetched? `maxAgeHours` null = never (finished file). */
+export function cacheIsStale(mtimeMs: number, nowMs: number, maxAgeHours: number | null | undefined): boolean {
+  if (maxAgeHours == null) return false;
+  return nowMs - mtimeMs > maxAgeHours * 3600_000;
+}
+
+export async function fetchCsvCached(url: string, tag: string, refresh = false, maxAgeHours: number | null = null): Promise<Record<string, string>[]> {
+  const { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } = await import("node:fs");
   const { gzipSync, gunzipSync: gunzip } = await import("node:zlib");
   const { dataPath } = await import("./paths.js");
   const dir = dataPath("cache");
   const p = `${dir}/${tag}.csv.gz`;
-  if (!refresh && existsSync(p)) return parseCsv(gunzip(readFileSync(p)).toString("utf8"));
+  if (!refresh && existsSync(p) && !cacheIsStale(statSync(p).mtimeMs, Date.now(), maxAgeHours)) {
+    return parseCsv(gunzip(readFileSync(p)).toString("utf8"));
+  }
   const text = await fetchText(url);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(p, gzipSync(Buffer.from(text)));
