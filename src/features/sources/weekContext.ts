@@ -128,6 +128,39 @@ function priorWeekRoute(db: DB, season: number, resolver: SourceResolver, maxWee
   return out;
 }
 
+/**
+ * D53 -- THE SNAP PROXY FOR A DARK ROUTE FEED (serve-time imputation, live builder ONLY).
+ *
+ * nflverse never published `pbp_participation_2026`, so `prior_route_share` is NULL on every live
+ * row and the served 26-feature GBM (fit 2010-2025 WITH the column) sends skill rows down its
+ * missing-value branch, which underuses `prior_snap_share`. Filling the slot with a per-position
+ * linear map of snap share beat the masked serve on 14 blind folds (+0.00443 CRPS, floor 0.00302,
+ * 13/0 seasons; ~+0.07 pts per lineup per week). It is IMPUTATION, not route information: the map
+ * carries nothing beyond snap share, and a refit without the column scores the same
+ * (scratch route-proxy-screen.md; docs/decisions.md D53).
+ *
+ * Coefficients: OLS `route ~ snap` per position on feat_player_week_model 2016-2025 (every row with
+ * both columns; no outcomes used), clipped to [0,1] at serve. Pinned here, not refit at serve.
+ * QB is in the map but the served QB head does not carry the feature, so QB rows do not move.
+ *
+ * Used ONLY when the season has NO participation rows at all; the true value always wins when the
+ * file exists. Never applied by the historical builder: 2013-2015 are natively route-less TRAINING
+ * seasons and must stay NULL.
+ */
+export const ROUTE_FROM_SNAP: Readonly<Record<string, { a: number; b: number }>> = {
+  QB: { a: -0.031829, b: 1.034754 },
+  RB: { a: -0.000988, b: 0.983601 },
+  WR: { a: -0.000654, b: 1.063375 },
+  TE: { a: -0.047191, b: 1.049764 },
+};
+
+/** The D53 proxy for one row, or null where there is no map (K/DST) or no prior snap share. */
+export function routeFromSnap(pos: string, snap: number | null): number | null {
+  const m = ROUTE_FROM_SNAP[normPos(pos)];
+  if (!m || snap == null || !Number.isFinite(snap)) return null;
+  return Math.min(1, Math.max(0, m.a + m.b * snap));
+}
+
 interface Report { status: string | null; practice: string | null; team: string; pos: string; asOf: string }
 
 /** All injury rows for the season that carry a date, by (week, player_sk). A week can hold several
@@ -427,6 +460,10 @@ export interface LiveWeekContextResult {
    *  column the M2h ablation measured at -0.71 points per lineup per week. */
   withSnap: number;
   withRoute: number;
+  /** Of `withRoute`, rows whose value is the D53 snap proxy rather than charted participation. */
+  routeImputed: number;
+  /** Where `prior_route_share` came from this run: the true feed, the D53 proxy, or nowhere. */
+  routeSource: "participation" | "proxy:snap" | null;
   /**
    * Feeds this season has NO rows for, named. A serve caveat has to be able to say WHICH column is
    * absent -- `pbp_participation` stops publishing after 2025 upstream (404 for 2026), so
@@ -467,6 +504,9 @@ export interface LiveWeekContextOpts {
   now?: string;
   /** Write the rows. False measures what WOULD be written and touches nothing. */
   write?: boolean;
+  /** D53: fill `prior_route_share` from the snap proxy when the season has no participation rows.
+   *  Default true. The Yahoo format stores pass false: the screen measured the ESPN artifact only. */
+  routeProxy?: boolean;
 }
 
 /** ESPN's designation vocabulary, mapped onto the injury REPORT vocabulary the features speak.
@@ -520,6 +560,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
   const asOfDay = opts.now ? opts.now.slice(0, 10) : localToday();
   const res: LiveWeekContextResult = {
     season, week: null, asOf, rows: 0, withStatus: 0, withDepth: 0, withSnap: 0, withRoute: 0,
+    routeImputed: 0, routeSource: null,
     missingFeeds: [], outs: 0, fromNews: 0, unresolved: 0, uncovered: 0, skipped: null, kickedOff: [], pendingWeek: null, pendingRows: 0,
   };
 
@@ -592,10 +633,25 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
   }
 
   const resolver = buildSourceResolver(db);
+  let participationRows = 0;
   for (const [table, feed] of [["raw_snap_count", "nflverse snap_counts"], ["raw_participation", "nflverse pbp_participation"]] as const) {
     const c = (db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE season = ?`).get(season) as { c: number }).c;
-    if (!c) res.missingFeeds.push(`${feed} (${table}) has no ${season} rows`);
+    if (table === "raw_participation") participationRows = c;
+    if (!c) res.missingFeeds.push(`${feed} (${table}) has no ${season} rows` +
+      (table === "raw_participation" && opts.routeProxy !== false
+        ? " -- prior_route_share IMPUTED from prior_snap_share (D53 proxy:snap)" : ""));
   }
+  // D53: the proxy only when the season has NO charted participation at all. A partial file is real
+  // data and is served as-is, NULLs included.
+  const useProxy = participationRows === 0 && opts.routeProxy !== false;
+  res.routeSource = participationRows > 0 ? "participation" : useProxy ? "proxy:snap" : null;
+  const routeOf = (route: Map<string, number>, key: string, pos: string, snap: number | null): { v: number | null; imputed: boolean } => {
+    const v = route.get(key);
+    if (v != null) return { v, imputed: false };
+    if (!useProxy) return { v: null, imputed: false };
+    const p = routeFromSnap(pos, snap);
+    return { v: p, imputed: p != null };
+  };
   const sched = schedule(db, [season]);
   const now = nowIso();
 
@@ -672,7 +728,8 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
       const outSet = u.team ? outsBy.get(`${u.team}|${pos}`) : undefined;
       const mates = outSet ? outSet.size - (outSet.has(sk) ? 1 : 0) : 0;
       const sSnap = snap.get(`${week}|${sk}`) ?? null;
-      const sRoute = route.get(`${week}|${sk}`) ?? null;
+      const rt = routeOf(route, `${week}|${sk}`, pos, sSnap);
+      const sRoute = rt.v;
       ins.run({
         sk, season, week, asOf, team: u.team, pos,
         opp: g?.opponent ?? null, home: g ? g.home : null, rest: g?.rest ?? null, roof: g?.roof ?? null,
@@ -689,6 +746,7 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
       if (l?.depth != null) res.withDepth++;
       if (sSnap != null) res.withSnap++;
       if (sRoute != null) res.withRoute++;
+      if (rt.imputed) res.routeImputed++;
     }
   };
 
@@ -705,8 +763,11 @@ export function buildLiveWeekContextInto(db: DB, opts: LiveWeekContextOpts): Liv
       if (l?.report) res.withStatus++;
       if (l?.report === "Out") res.outs++;
       if (l?.depth != null) res.withDepth++;
-      if (snap.get(`${week}|${sk}`) != null) res.withSnap++;
-      if (route.get(`${week}|${sk}`) != null) res.withRoute++;
+      const sSnap = snap.get(`${week}|${sk}`) ?? null;
+      const rt = routeOf(route, `${week}|${sk}`, normPos(u.pos ?? ""), sSnap);
+      if (sSnap != null) res.withSnap++;
+      if (rt.v != null) res.withRoute++;
+      if (rt.imputed) res.routeImputed++;
     }
   } else {
     db.transaction(() => {

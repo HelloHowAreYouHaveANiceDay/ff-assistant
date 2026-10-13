@@ -158,6 +158,8 @@ export interface ForwardBoardResult {
  */
 export async function buildForwardBoard(opts: {
   dbPath?: string; season?: number; actualsPath?: string;
+  /** D53 snap proxy for a dark route feed (see `ROUTE_FROM_SNAP`). Default true; format stores pass false. */
+  routeProxy?: boolean;
 }): Promise<ForwardBoardResult> {
   const db = openDb(opts.dbPath);
   try {
@@ -166,7 +168,7 @@ export async function buildForwardBoard(opts: {
 }
 
 export async function buildForwardBoardInto(db: DB, opts: {
-  season?: number; actualsPath?: string;
+  season?: number; actualsPath?: string; routeProxy?: boolean;
 }): Promise<ForwardBoardResult> {
   const season = opts.season ?? getConfig(db).season;
   // JUSTIFIED dataPath (WP3 grep): the INCUMBENT default of `opts.actualsPath`. `ff sync-actuals`
@@ -287,7 +289,7 @@ export async function buildForwardBoardInto(db: DB, opts: {
   } catch (e) { live.note = `${live.note ? live.note + "; " : ""}pbp refresh skipped: ${String((e as Error).message).slice(0, 160)}`; }
   try {
     const { buildLiveWeekContextInto } = await import("../features/sources/weekContext.js");
-    const ctx = buildLiveWeekContextInto(db, { season });
+    const ctx = buildLiveWeekContextInto(db, { season, routeProxy: opts.routeProxy });
     live.contextRows = ctx.rows; live.withSnap = ctx.withSnap; live.withRoute = ctx.withRoute;
     if (ctx.skipped) live.note = `${live.note ? live.note + "; " : ""}live context skipped: ${ctx.skipped}`;
     else if (ctx.missingFeeds.length) live.note = `${live.note ? live.note + "; " : ""}${ctx.missingFeeds.join("; ")}`;

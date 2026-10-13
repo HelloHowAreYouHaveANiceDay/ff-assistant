@@ -2691,3 +2691,42 @@ Temp-store before/after (HEAD vs this change, same `db.backup()` copy, FF_CDP_PO
 Tests: test/bye-leaks.test.ts covers the stream pick, the depth-risk insurer's bye, the per-week floor (rule and
 `expectedLineupPoints`) and the serve-boundary zero against the store. Each was fault-injected (cutting the fix
 fails exactly its test).
+
+## D53 -- serve a snap-share proxy for `prior_route_share` when the season has no participation file (2026-10-13, owner: admin (Slack U0A3J35PENN) "option b" in #ff-assistant 2026-10-13, **APPLIED**)
+
+**Problem.** nflverse never published `pbp_participation_2026`, so the weekly projector's `prior_route_share` was
+NULL on every 2026 row (the DEGRADED banner every week). The served 26-feature GBM, fit 2010-2025 with the column,
+then sends skill rows down its missing-value branch, which underuses `prior_snap_share`.
+
+**Measured** (route-proxy screen, Hermes scratch `route-proxy-screen.md`; 14 blind folds 2012-2025, served
+trainerArgv plus `--holdout-season`, decision population, paired-season 2.9*SE floor):
+- Proxy (B) vs masked (A), ALL6 pooled CRPS: **+0.00443**, floor 0.00302, **13/0** seasons (2012 tie by construction).
+  Selection-blind 2012-2021: +0.00353, floor 0.00211, 9/0.
+- Lineup: about +0.07 pts per std-15 lineup per week (floor 0.047). WR +0.0105 (PASS), RB +0.0055, TE null, QB 0.
+- **Imputation, not route information.** The proxy adds nothing beyond snap share (rho(proxy, pts | level, snap)
+  = -0.006 +/- 0.009), and a refit without the column (D) scores the same (B vs D -0.00106, floor 0.00163). Option
+  D was the equal-value alternative and was NOT taken: it is a re-pin, and it gives up the true column's edge
+  (C vs B +0.0017 on route seasons) if nflverse ever publishes the file.
+
+**Decision.** `buildLiveWeekContextInto` (src/features/sources/weekContext.ts) fills `prior_route_share` with
+`routeFromSnap(pos, prior_snap_share)` = clip01(a + b*snap) when the season has NO `raw_participation` rows at all.
+Coefficients `ROUTE_FROM_SNAP` are pinned in code: OLS per position on feat_player_week_model 2016-2025, no outcomes
+(QB -0.031829+1.034754s, RB -0.000988+0.983601s, WR -0.000654+1.063375s, TE -0.047191+1.049764s). K/DST and rows
+with no prior snap stay NULL.
+- The true value always wins when any participation row exists for the season; a partial file is served as-is.
+- Live builder only. The historical builder is untouched, so 2013-2015 (natively route-less training seasons)
+  stay NULL and no training data changes. The served artifact is unchanged.
+- ESPN incumbent only. Format stores (Yahoo) pass `routeProxy: false` (sync-actuals format branch,
+  `build-format-features.mjs --forward-only`): the screen measured the ESPN artifact only. `ff build-live-context
+  --no-route-proxy` turns it off by hand.
+- Visibility: `missingFeeds` still names the participation feed and adds "prior_route_share IMPUTED from
+  prior_snap_share (D53 proxy:snap)"; `LiveWeekContextResult.routeImputed` / `routeSource` count it; the lineup
+  basis note says the column is imputed (the dark-column tripwire no longer fires for it, by design).
+
+**Serve-check** (served artifact, 2026 weeks 2-6, masked vs proxy; scratch `route-proxy/servecheck.mts`):
+QB, K and DST are bit-identical every week. RB moves ~100/143 rows (mean |d| 0.08-0.13 pts), WR ~140/175
+(0.14-0.20), TE ~67/81 (0.12-0.24). Net direction: WR slightly down (-0.02 to -0.12 mean), RB/TE slightly up.
+
+Tests: test/live-usage-columns.test.ts -- proxy lands and is counted with no participation file; positions/clip;
+`routeProxy:false` serves NULL; a season with participation rows serves the charted value and imputes nobody.
+Fault-injected (forcing the proxy off fails exactly the proxy test).

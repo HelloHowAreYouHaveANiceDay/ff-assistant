@@ -97,7 +97,9 @@ if (has("--forward-only")) {
   const { buildForwardBoard } = await import("../src/weekly/forwardBoard.ts");
   const { buildForwardWeeks } = await import("../src/weekly/features.ts");
   console.log(`[${el()}] forward board for ${season} -> ${featDb} (actuals ${actuals})`);
-  const b = await buildForwardBoard({ dbPath: featDb, season, actualsPath: actuals });
+  // D53's route proxy was screened on the ESPN artifact only; a format store keeps the masked serve
+  // until its own screen says otherwise.
+  const b = await buildForwardBoard({ dbPath: featDb, season, actualsPath: actuals, routeProxy: false });
   console.log(`[${el()}]   feat_player_week: ${b.weekRows} rows (${b.withPts} with actual pts), ` +
     `${b.keys} players x ${b.maxWeek} weeks`);
   const f = await buildForwardWeeks({ dbPath: featDb, season, model: fmt.model });

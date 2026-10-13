@@ -30,7 +30,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, type DB } from "../src/db/db.js";
-import { buildLiveWeekContext } from "../src/features/sources/weekContext.js";
+import { buildLiveWeekContext, routeFromSnap, ROUTE_FROM_SNAP } from "../src/features/sources/weekContext.js";
 import { contextFor, liveWeekCoverage, ensureContextColumns } from "../src/weekly/features.js";
 import { assertUsageWired } from "../src/weekly/forwardBoard.js";
 
@@ -177,4 +177,68 @@ test("the live-week tripwire calls a dark column DARK, and a populated one OK", 
   const never = liveWeekCoverage(db, SEASON, 2).find((c) => c.column === "prior_route_share")!;
   assert.equal(never.status, "none");
   db.close();
+});
+
+// ==================================================================================================
+// D53 -- the snap proxy for a dark route feed. Three directions: no participation file -> the proxy
+// lands (and is counted as imputed); the proxy switched off -> NULL, exactly as before; a season WITH
+// participation rows -> the charted value wins and nobody is imputed, NULLs included.
+// ==================================================================================================
+
+test("D53: with no participation file the live week's route share is the snap proxy, and is counted", () => {
+  const dbPath = fresh();
+  const r = buildLiveWeekContext({ dbPath, season: SEASON, now: `${SEASON}-09-13` });
+  assert.equal(r.week, 2);
+  assert.equal(r.routeSource, "proxy:snap");
+  assert.equal(r.routeImputed, PLAYERS.length);
+  assert.equal(r.withRoute, PLAYERS.length);
+  assert.ok(r.missingFeeds.some((m) => m.includes("raw_participation") && m.includes("D53")),
+    `the imputation was not named: ${JSON.stringify(r.missingFeeds)}`);
+  const db = openDb(dbPath);
+  const ctx = contextFor(db, SEASON);
+  db.close();
+  for (const p of PLAYERS) {
+    const m = ROUTE_FROM_SNAP[p.pos];
+    assert.ok(Math.abs(ctx.get(`2|${p.sk}`)!.prior_route_share! - Math.min(1, Math.max(0, m.a + m.b * p.snap))) < 1e-12,
+      `${p.name}'s week-2 route share is not the pinned map of his snap share`);
+  }
+  // Week 1 has no prior snap, so no proxy either: the proxy never invents usage.
+  assert.equal(ctx.get(`1|201`)?.prior_route_share ?? null, null);
+});
+
+test("D53: the proxy maps only skill positions, clips to [0,1], and needs a snap share", () => {
+  assert.equal(routeFromSnap("K", 0.9), null);
+  assert.equal(routeFromSnap("DST", 0.9), null);
+  assert.equal(routeFromSnap("WR", null), null);
+  assert.equal(routeFromSnap("WR", 1), 1, "a full-snap WR must clip at 1");
+  assert.equal(routeFromSnap("TE", 0), 0, "a zero-snap TE must clip at 0");
+});
+
+test("D53 OFF: routeProxy false serves NULL, as before", () => {
+  const dbPath = fresh();
+  const r = buildLiveWeekContext({ dbPath, season: SEASON, now: `${SEASON}-09-13`, routeProxy: false });
+  assert.equal(r.withRoute, 0);
+  assert.equal(r.routeImputed, 0);
+  assert.equal(r.routeSource, null);
+});
+
+test("D53: a season WITH participation rows serves the charted value and imputes nobody", () => {
+  const dbPath = fresh();
+  const db = openDb(dbPath);
+  // Only Aaron is charted. Brett and Carl must stay NULL: a partial file is real data.
+  db.prepare(
+    `INSERT INTO raw_participation (season, week, gsis_id, team, pass_plays, team_pass_plays, fetched_at)
+     VALUES (?,1,?,?,30,40,'x')`,
+  ).run(SEASON, PLAYERS[0].gsis, PLAYERS[0].team);
+  db.close();
+  const r = buildLiveWeekContext({ dbPath, season: SEASON, now: `${SEASON}-09-13` });
+  assert.equal(r.routeSource, "participation");
+  assert.equal(r.routeImputed, 0);
+  assert.equal(r.withRoute, 1);
+  const db2 = openDb(dbPath);
+  const ctx = contextFor(db2, SEASON);
+  db2.close();
+  assert.equal(ctx.get(`2|201`)!.prior_route_share, 0.75);
+  assert.equal(ctx.get(`2|202`)!.prior_route_share, null);
+  assert.equal(ctx.get(`2|203`)!.prior_route_share, null);
 });

@@ -2118,7 +2118,8 @@ async function cmdSyncActuals(rest: string[]) {
     const { buildForwardBoard } = await import("./weekly/forwardBoard.js");
     const { buildForwardWeeks } = await import("./weekly/features.js");
     console.log(`  format ${actualsFmt.scoringKey}: rebuilding the forward board into ${featDb} (its own feature tables)...`);
-    const fb = await buildForwardBoard({ dbPath: featDb, season, actualsPath: r.path });
+    // routeProxy off: D53 was screened on the incumbent (ESPN) artifact only.
+    const fb = await buildForwardBoard({ dbPath: featDb, season, actualsPath: r.path, routeProxy: false });
     console.log(`  forward board: ${fb.keys} players x ${fb.maxWeek} weeks -> feat_player_week ${fb.weekRows} rows (${fb.withPts} with actual pts)`);
     const fw = await buildForwardWeeks({ dbPath: featDb, season, model: actualsFmt.model });
     console.log(`  feat_player_week_model: ${fw.rows} rows, ${fw.players} players x ${fw.weeks} weeks; ` +
@@ -4644,6 +4645,7 @@ async function cmdBuildLiveContext(rest: string[]) {
   if (!Number.isFinite(season)) { const db = openDb(dbPath); season = getConfig(db).season; db.close(); }
   const r = buildLiveWeekContext({
     dbPath, season, now: valueOf(rest, "--now"), write: !rest.includes("--dry-run"),
+    routeProxy: !rest.includes("--no-route-proxy"),
   });
   if (rest.includes("--json")) { console.log(JSON.stringify(r, null, 2)); return; }
   console.log(`LIVE CONTEXT ${r.season} -- snapshot as of ${r.asOf}`);
@@ -4652,6 +4654,8 @@ async function cmdBuildLiveContext(rest: string[]) {
   console.log(`  ${r.rows} context rows${rest.includes("--dry-run") ? " WOULD be written (--dry-run)" : " written"}`);
   console.log(`  ${r.withStatus} carry a designation, of which ${r.outs} are Out (${r.fromNews} escalated by the news feed)`);
   console.log(`  ${r.withDepth} carry a depth-chart rank`);
+  console.log(`  ${r.withSnap} carry a prior snap share, ${r.withRoute} a prior route share` +
+    (r.routeImputed ? ` (${r.routeImputed} IMPUTED from snap share -- D53 proxy:snap, no ${r.season} participation file)` : ""));
   console.log(`  ${r.uncovered} not covered by the status feed -- served with availability MISSING, not healthy`);
   if (r.unresolved) {
     console.log(`  ${r.unresolved} designation(s) reached no surrogate key and carry no row -- that is ` +

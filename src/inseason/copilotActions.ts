@@ -369,6 +369,7 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
       // week by hand (docs/weekly-missingness-ablation-2026-09-16.md). The caveat now NAMES the
       // columns, so a reader can tell a degraded lineup from a full one without running a script.
       const dark: string[] = [];
+      let routeImputed = 0;
       // WHO IS ALREADY PLAYING is now on the CONTEXT (`ctx.week`), assembled once by
       // `loadSimContext` -- it used to be read here, at this one call site, which is precisely why
       // the other nine verbs had none of it. Only the two COUNTS the caveat prints are read out.
@@ -385,6 +386,11 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
             nflOpp.set(String(r.team).toUpperCase(), String(r.opponent).toUpperCase());
           }
           for (const c of liveWeekCoverage(db, ctx.season, wk)) if (c.status === "dark") dark.push(c.column);
+          // D53: a route share served from the snap proxy is not "dark" to the tripwire, so it is
+          // named here instead -- the caveat must still say the column is not charted data.
+          const part = db.prepare("SELECT COUNT(*) AS c FROM raw_participation WHERE season = ?").get(ctx.season) as { c: number } | undefined;
+          const filled = db.prepare("SELECT COUNT(*) AS c FROM feat_player_week_model WHERE season = ? AND week = ? AND prior_route_share IS NOT NULL").get(ctx.season, wk) as { c: number } | undefined;
+          if (!part?.c && filled?.c) routeImputed = filled.c;
         } catch { /* an old store without the model table says nothing rather than failing a lineup */ }
         finally { db.close(); }
       }
@@ -415,6 +421,11 @@ function dispatch(verb: CopilotVerb, ctx: SimContext, a: CopilotArgs, dbPath?: s
         res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; WEEKLY MODEL NOT LOADED for ` +
           Object.entries(why).map(([p, w]) => `${p} (${w})`).join(", ") +
           " -- those positions are priced on the season-line fallback, not the weekly model.";
+      }
+      if (routeImputed) {
+        res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; prior_route_share is IMPUTED from prior_snap_share ` +
+          `on ${routeImputed} rows (D53 proxy:snap -- nflverse published no ${ctx.season} participation file). ` +
+          "Measured as an imputation fix (~+0.07 pts/lineup/week), not route information.";
       }
       if (dark.length) {
         res.assumptions.basisNote = `${res.assumptions.basisNote ?? ""}; DEGRADED -- ${dark.length} model ` +
