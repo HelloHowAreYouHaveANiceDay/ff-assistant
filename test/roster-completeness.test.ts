@@ -19,7 +19,13 @@ import { loadSimContext } from "../src/draft/simContext.js";
 import { assertRostersCanFillLineup } from "../src/draft/season.js";
 import { dstAliasKey, nameKey } from "../src/draft/values.js";
 import { resolveLeagueContext } from "../src/data/leagueContext.js";
-import type { DB } from "../src/db/db.js";
+import { DEFAULT_DB_PATH, type DB } from "../src/db/db.js";
+
+// ONE STORE FOR EVERY CHECK BELOW. These read the store the tools read -- `data/ff.db`, or the store
+// `FF_DB` names. The board checks used to hardcode `data/ff.db` while `loadSimContext` resolved its
+// own path, so the file could not be pointed at a candidate store (a rebuilt board awaiting sign-off)
+// without the two halves reading different stores. With `FF_DB` unset this is byte-identical.
+const STORE = DEFAULT_DB_PATH;
 
 // --- the structural guard itself ------------------------------------------------------------------
 // Both directions are asserted. A guard that can only ever REFUSE is dead code that reads exactly
@@ -137,8 +143,8 @@ test("eligibility is inert for a single-eligible roster -- same answer with the 
 });
 
 test("every rostered player resolves onto the board", async (t) => {
-  if (!existsSync("data/ff.db")) return t.skip("no local store");
-  const db = new Database("data/ff.db", { readonly: true });
+  if (!existsSync(STORE)) return t.skip("no local store");
+  const db = new Database(STORE, { readonly: true });
   // ONE RESOLVER, ONE CONFIG -- this read the legacy `config` mirror and then picked its league with
   // an unordered `.get()`, the two defects the production code just lost.
   const ctx = resolveLeagueContext(db as unknown as DB);
@@ -156,8 +162,8 @@ test("every rostered player resolves onto the board", async (t) => {
 });
 
 test("no team is short of a position its lineup must start", async (t) => {
-  if (!existsSync("data/ff.db")) return t.skip("no local store");
-  const db = new Database("data/ff.db", { readonly: true });
+  if (!existsSync(STORE)) return t.skip("no local store");
+  const db = new Database(STORE, { readonly: true });
   const cfg = resolveLeagueContext(db as unknown as DB).config;
   db.close();
 
@@ -166,7 +172,7 @@ test("no team is short of a position its lineup must start", async (t) => {
   // hang for 533 seconds whenever the app was running (I-8). The production timeout bounds that now;
   // asking for the schedule this test does not use would still have cost the timeout on every run.
   let ctx;
-  try { ctx = await loadSimContext({ schedule: "generated" }); } catch { return t.skip("context unavailable"); }
+  try { ctx = await loadSimContext({ schedule: "generated", dbPath: STORE }); } catch { return t.skip("context unavailable"); }
   if (!ctx.teams.length) return t.skip("no teams");
 
   // FLEX is excluded deliberately: it is fillable from several positions, so a count against it
@@ -187,8 +193,8 @@ test("no team is short of a position its lineup must start", async (t) => {
 test("the DST namespaces really are different, so the alias is load-bearing", async (t) => {
   // Guards against a future refactor that "simplifies away" the alias because the two id spaces look
   // interchangeable. They are not, and this states the fact the join depends on.
-  if (!existsSync("data/ff.db")) return t.skip("no local store");
-  const db = new Database("data/ff.db", { readonly: true });
+  if (!existsSync(STORE)) return t.skip("no local store");
+  const db = new Database(STORE, { readonly: true });
   const cfg = resolveLeagueContext(db as unknown as DB).config;
   const dstBoard = (db.prepare("SELECT player_id, row_json FROM board WHERE season=?").all(cfg.season) as { player_id: string; row_json: string }[])
     .filter((r) => JSON.parse(r.row_json).Pos === "DST").map((r) => r.player_id);

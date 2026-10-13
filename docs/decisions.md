@@ -2522,6 +2522,114 @@ Tests: test/weekly-mixture-mean.test.ts (equals a numeric integral of `quantileF
 fault-injected on 0.25 and on 0.5, each fails; mean-only; band-rebuilt rows untouched; the switch fires live; the
 served artifact carries it, serves it with no env switch, and still passes its golden check).
 
+## D51 -- the live-season universe is the consensus PLUS the prior season's scorers still in the league (2026-10-13, owner: libo "yes" in Slack, conditional on fixing the Hollywood/Marquise Brown duplicate first, **APPLIED**)
+
+Problem. The live season's feature universe was exactly the preseason consensus (ECR). A man it skipped never got a
+feature row, a projection, a board row or a place in the season simulator. The typical case is a backup QB promoted in
+October: Tyler Huntley has started for team 15 (SLOP) since week 5. `loadSimContext` dropped him with only a WARNING, so
+team 15 was simulated a QB short and every playoff/waiver/trade number in the league carried that hole. The backtest
+never had it, because its pool is the prior season's scored players, ranked or not.
+
+Change.
+- `buildFeatures` (live season only) adds `liveUniverseExtras` (src/features/build.ts):
+  - every prior-season scorer with evidence he is still in the league (2026 depth chart, 2026 usage, or rostered in one
+    of our leagues);
+  - every rostered man with a prior season or draft capital. A rostered man with neither is skipped and named.
+- DST is left to the consensus. A man the consensus or the extras already carry is not added twice, under any key: the
+  key itself, name+position, or a staging alias (`stg_player_alias`) of a consensus spelling.
+- `assemble` runs the QB consensus blend over the consensus universe only, and the extras pass through unblended. The
+  blend is percentile-within-pool, and widening the pool reshuffled QB point slots with no projection moving (Tua
+  167.9 -> 92.7, 2026-10-08). The restriction applies to the INCUMBENT format only. Yahoo and Sleeper boards project
+  from their own `data/formats/<key>/features.db`, which D51 does not touch. The 10-13 dry run caught the unrestricted
+  version shrinking Yahoo's blend pool by 52 men and reshuffling 18 Yahoo QB lines.
+
+The owner's condition: the Brown duplicate, fixed in staging.
+- FantasyPros and the boards call him "Hollywood Brown"; the crosswalk calls him "Marquise Brown" (gsis 00-0035662,
+  sk 2612). No first-name rule reaches that spelling, so build-staging minted a board-only stub (sk 12119, no ids), and
+  the widened universe carried him twice: the consensus row on the stub (17.9) and his prior season as an extra (40.3).
+- `src/data/nicknames.ts` gains `PLAYING_NAMES`: hand-checked, one man per entry, whole name, both directions. It goes
+  through the existing alias rules (same position, exactly one staged answer). Its only entry is hollywoodbrown ->
+  marquisebrown. build-staging now records the alias and stages no stub.
+- `identity_rekey` records 12119 -> 2612 as `merged`. Because a key moved, the rebuild REPLACED the map, so the 10-07
+  Gainwell/Hibner merge rows survive only in the backup.
+- `scorecard_prediction`: 22 subjects migrated 12119 -> 2612, and 10 collided on the merge and were left alone.
+- On every board his row now resolves to sk 2612 (Age blank -> 29.2). His ProjPts (17.9) and value did not move.
+
+Other same-person checks over the 741 rows: ids, generational suffix, surname+team, and the stub list. Brown was the
+only twin. Three more staging stubs have a legal-name twin in the crosswalk but no second row on any board: Chig /
+Chigoziem Okonkwo, Andy / Andres Borregales, Juice Wells Jr. / Antwane Wells. They are deliberately not aliased (see
+the follow-ups).
+
+Two extras lost their board NAME lookup (not their identity) and failed test/stgPlayer.test.ts after the first swap:
+`natecarter` and `jalenmorenocropper`. Their feature rows already carried the crosswalk's keys (feat_key 606 Nathan
+Carter, gsis 00-0040547, RB ATL; 1270 Jalen Cropper, gsis 00-0038740, WR NO). The prior-season feed spells them
+differently, and "nate" is a Nathaniel spelling in GROUPS, so no first-name rule reached Nathan. Both were added to
+`PLAYING_NAMES` (hand-checked, one man each) and the swap was re-run at 16:11 after a second backup. Result: points.csv
+byte-identical; on every board only those two rows moved, player_sk null -> 606/1270 and Age filled; no ProjPts or
+value moved. Cedrick Wilson Jr., Charlie Jones and Jacoby Jones still carry a NULL board key ON PURPOSE: each name has
+two staged men, both flagged ambiguous, so staging refuses to guess.
+
+Evidence (live store 2026-10-13, after a dry run on a copy of the backup that the live result matches byte-for-byte):
+- Universe:
+  - `feat_player_season` 2026: 523 -> 741 rows (523 consensus + 217 prior-season scorers + 1 rostered-only).
+  - `points.csv`: 523 -> 740 rows.
+  - Board 462233: 523 -> 740 rows. Boards 129048 and 1353038434335195136 keep 505 and 489 rows.
+  - Rostered men with no board row: 1 -> 0. Huntley now has a row: QB, 22.2.
+- Consensus numbers vs a HEAD-code control rebuilt on the same day's store:
+  - points.csv: 0 of 523 rows differ.
+  - Board 462233: 0 ProjPts / OurValue$ moved.
+  - Boards 129048 and 1353038434335195136: 0 ProjPts / OurValue$ moved.
+- Against the pre-swap points.csv (built 10-08), 5 rows differ: McCarthy 33 -> 20.9, Cooks 14.6 -> 5.8, Ertz
+  9.1 -> 0.8, and the p90 of Wease and Z. Scott (+0.1 each).
+  - The HEAD control reproduces all 5, so they are five days of feature drift, not D51.
+  - Through the QB blend, McCarthy's drop reshuffles 9 backup-QB board slots (Bagent 44.4 -> 37, Leonard 30.3 -> 44.4,
+    ...). None of those men is rostered in 462233.
+- `season-odds` (462233, real schedule, 5 settled weeks):
+  - The "matched no board row: tylerhuntley" warning is gone.
+  - Against the HEAD board on the same data: max |d playoffs| 0.5pp, and mean points are identical for 15 of 16 teams
+    (SLOP -0.5 over the season, Huntley's team).
+  - Against the pre-swap board: max 1.4pp. Ours went 28.7 -> 30.1% playoffs and 2.0 -> 1.9% title. The +1 mean point for
+    us and COOK comes from the drift above.
+- Waivers: in the 10-13 temp-store comparison, the 7 targets, their order and their bids were the same (see
+  scratch/live-universe-report.md).
+- No backtest: no consensus number moved, so this is an identity change only.
+- Tests:
+  - New: test/live-universe.test.ts (7) and the Hollywood Brown cases in test/stg-alias.test.ts.
+  - Fault-injected: removing the alias guard fails the live-universe case, and removing the PLAYING_NAMES entry fails
+    both staging cases.
+  - test/roster-completeness.test.ts reads `FF_DB`. On the live store it was 14/15 before the swap (tylerhuntley) and
+    is 15/15 after.
+
+Known limits, each a follow-up and none fixed here:
+1. Huntley is priced at his Sept-1 backup line (22.2 for the season, ~1.3/game) although he is SLOP's starter. The D18
+   blend credits his played weeks only as they land. Read D51 as "no man silently dropped", not "promoted backups
+   correctly valued". Whether current usage should feed the live row is its own question.
+2. The rostered-only rookie Antonio Williams (WR WAS, sk 50) gets a feature row, but the projector returns 0, so
+   `projections` drops him (it keeps mean > 0 only). His name also collides with the consensus RB Antonio Williams on
+   the name-keyed board.
+3. 17 extras carry an FFToday rank but skip the QB blend (336 ranked of 740; the blend pool is consensus-only). Whether
+   the blend should see the wider pool is a lever question for the arbiter.
+4. Consensus rows keep the key pinned on Sept 1. Hollywood Brown (12119), Kenny Gainwell (12112) and Matt Hibner (12120)
+   still project off stub keys, without their own history. Re-keying them onto 2612/1834/163 moves their lines, so it
+   needs its own before/after.
+5. The three stub twins above (Okonkwo, Borregales, Wells) are not aliased. Doing it re-keys a consensus man's board row
+   (age, played weeks) and moves numbers.
+6. The extras' evidence is thin in places. The 2026 depth-chart feed is as of 2026-09-09, and the free-agent kickers
+   carry 106-112 pt preseason lines.
+
+Swap procedure (as run):
+1. Back up the store.
+2. Run `build-staging`, then `build-features --seasons 2026 --no-weeks`, then `build-features-ext --seasons 2026
+   --no-weeks`. The ext table's universe IS `feat_player_season`, so it must follow `build-features`.
+3. Run `projections --league 462233`.
+4. Run `assemble --league <id>` for 462233, 129048 and 1353038434335195136.
+5. Check that test/roster-completeness passes on the live store.
+
+ROLLBACK, with the app closed: restore `data/ff.db.bak-pre-d51-20261013-114308` over `data/ff.db` (drop the -wal and
+-shm) and `data/points.pre-d51-20261013-114308.bak.csv` over `data/points.csv`. Or revert the commit and re-run the
+swap procedure. The state just before the 16:11 Carter/Cropper re-run is `data/ff.db.bak-pre-d51b-20261013-161111`
+(+ `data/points.pre-d51b-20261013-161111.bak.csv`).
+
 ## D52 -- a man with no game this week is priced as one: stream picks, depth-risk insurers, the streaming floor (2026-10-13, owner: libo "yes" in Slack 2026-10-13, **APPLIED**)
 
 Follow-up to a5a4e92 (the shared bye resolver `src/draft/byes.ts`, `ctx.byeOf`). Three consumers still treated a man

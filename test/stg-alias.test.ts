@@ -47,6 +47,13 @@ test("nicknameKeys: swaps the first name only, both directions, never returns it
   assert.ok(!nicknameKeys("Josh Palmer").includes("joshpalmer"));
   assert.deepEqual(nicknameKeys("Puka Nacua"), []);
   assert.deepEqual(nicknameKeys("Cher"), []);
+  // a PLAYING NAME is one listed man, both directions, and not a first-name rule
+  assert.deepEqual(nicknameKeys("Hollywood Brown"), ["marquisebrown"]);
+  assert.ok(nicknameKeys("Marquise Brown").includes("hollywoodbrown"));
+  assert.deepEqual(nicknameKeys("Hollywood Smith"), []);
+  assert.ok(nicknameKeys("Nate Carter").includes("nathancarter"));
+  assert.ok(nicknameKeys("Jalen Moreno-Cropper").includes("jalencropper"));
+  assert.ok(!nicknameKeys("Nate Smith").includes("nathansmith"), "a playing name is one man, not a first-name rule");
   // deliberately NOT equivalent: separate given names in practice
   assert.ok(!firstNameVariants("john").includes("jon"));
   assert.ok(!firstNameVariants("christian").includes("chris"));
@@ -68,6 +75,31 @@ test("build-staging aliases a nickname to the staged man instead of staging him 
     assert.ok(db.prepare("SELECT 1 FROM stg_player_alias WHERE name_key='joshpalmer' AND alias_of='joshuapalmer'").get());
     assert.ok(r.aliased >= 2);
     db.close();
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
+});
+
+test("a PLAYING NAME on a board is aliased to the crosswalk's legal name, never staged as a stub (Hollywood Brown)", () => {
+  // Live 2026-10-13: the board's "Hollywood Brown" was staged as a board-only stub (sk 12119, no ids)
+  // beside the crosswalk's Marquise Brown (sk 2612), and the D51 live universe carried him twice.
+  const { path, dir } = fixture();
+  try {
+    let db = openDb(path);
+    const season = (JSON.parse((db.prepare("SELECT value FROM settings WHERE key='config'").get() as { value: string }).value) as { season: number }).season;
+    db.prepare(`INSERT INTO player_ids (name_key, position, name, team, birthdate, gsis_id, ambiguous, updated_at)
+                VALUES ('marquisebrown','WR','Marquise Brown','PHI','1997-06-04','00-0035662',0,'x')`).run();
+    db.prepare("INSERT INTO board (league_id, player_id, player_sk, season, row_json, updated_at) VALUES ('A','hollywoodbrown',NULL,?,?,'x')")
+      .run(season, JSON.stringify({ Player: "Hollywood Brown", Pos: "WR", Team: "PHI" }));
+    db.close();
+    buildStgPlayer(path);
+    db = openDb(path);
+    const real = db.prepare("SELECT player_sk FROM stg_player WHERE name_key='marquisebrown'").get() as { player_sk: number };
+    const alias = db.prepare("SELECT player_sk, alias_of FROM stg_player_alias WHERE name_key='hollywoodbrown' AND position='WR'").get() as { player_sk: number; alias_of: string } | undefined;
+    const stub = db.prepare("SELECT 1 FROM stg_player WHERE name_key='hollywoodbrown'").get();
+    db.close();
+    assert.ok(alias, "Hollywood Brown must be recorded as another spelling of Marquise Brown");
+    assert.equal(alias!.player_sk, real.player_sk);
+    assert.equal(alias!.alias_of, "marquisebrown");
+    assert.equal(stub, undefined, "no second staged person for the same man");
   } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 

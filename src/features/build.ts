@@ -286,6 +286,86 @@ function ecrForSeason(db: DB, yr: number, currentSeason: number, resolver: SkRes
   return out;
 }
 
+/**
+ * THE LIVE SEASON'S EXTRA ROWS, beyond the preseason consensus.
+ *
+ * 1. Every PRIOR-season scored man (the backtest's own pool definition) with evidence he is still in
+ *    the league this season: on this season's depth chart, or has played this season, or is rostered
+ *    in one of our leagues. Without that filter the retired and the released would enter the board
+ *    as free agents.
+ * 2. Every man rostered in one of our leagues this season who has SOMETHING to project from -- a
+ *    prior season or draft capital. A rostered man with neither is SKIPPED and named: the projector
+ *    would impute every feature, and an all-imputed row is a guess wearing a number.
+ *
+ * Membership is a CURRENT-day fact (who is rostered today), but every column the row carries is
+ * still prior-season data, so the Sept-1 label stays honest about the values. DST is left to the
+ * consensus, which ranks all 32.
+ */
+export function liveUniverseExtras(
+  db: DB, yr: number, resolver: SkResolver,
+  ecr: Map<string, { name: string; pos: string }>,
+  prior: Map<string, SeasonRow> | undefined,
+  depthTeam: Map<string, string>,
+  curUsage: Map<string, Usage>,
+  drafted: Map<string, { year: number; round: number; pick: number }>,
+): { rows: Map<string, { name: string; pos: string; nameKey: string }>; fromPrior: number; fromRostered: number; skippedNoBasis: string[] } {
+  const rostered = new Map<string, { name: string; pos: string }>();
+  try {
+    for (const r of db.prepare(
+      `SELECT w.name, w.position FROM raw_league_roster_week w
+        JOIN (SELECT league_id, MAX(week) wk FROM raw_league_roster_week WHERE season = @s AND as_of_start <= date('now') GROUP BY league_id) m
+          ON m.league_id = w.league_id AND m.wk = w.week
+        WHERE w.season = @s`,
+    ).all({ s: yr }) as { name: string; position: string }[]) {
+      const pos = normPos(String(r.position ?? "").toUpperCase());
+      if (!FEAT_POS.includes(pos) || pos === "DST") continue;
+      const nm = String(r.name ?? "").trim(); if (!nm) continue;
+      const sk = resolver.resolve({ name: nm, pos });
+      rostered.set(featKey(sk, nameKey(nm), pos), { name: nm, pos });
+    }
+  } catch { /* no league rosters in this store: the rostered arm is simply empty */ }
+
+  // A man the consensus already carries -- under ANY key. The crosswalk still holds a few men under
+  // two surrogate keys (Kenny Gainwell: 1834 in history, 12112 in the ECR feed); matching on the key
+  // alone added him a second time and `project` then kept the HIGHER of his two projections, moving
+  // a consensus man's number. Name+position is the guard; the duplicate itself is a staging defect.
+  const inConsensus = new Set<string>([...ecr.values()].map((e) => `${nameKey(e.name)}|${normPos(e.pos)}`));
+  // ...AND UNDER ANOTHER NAME. The consensus row's key is CARRIED over from the September-1 pin, so
+  // a man the consensus spells differently from his history ("Hollywood Brown" vs "Marquise Brown")
+  // sits under a stub key no name guard can connect to his real one. Staging is the authority on
+  // who a spelling IS (stg_player_alias, written by build-staging): the real key that a consensus
+  // spelling is an alias of counts as already carried. Without it he entered twice -- the consensus
+  // stub at 17.9 and his prior season at 40.3.
+  const aliasSk = new Map<string, string>();
+  try {
+    for (const a of db.prepare("SELECT name_key, position, player_sk FROM stg_player_alias").all() as { name_key: string; position: string; player_sk: number }[]) {
+      aliasSk.set(`${a.name_key}|${normPos(a.position)}`, String(a.player_sk));
+    }
+  } catch { /* no alias table in this store: the name guard alone, as before */ }
+  const consensusSk = new Set<string>();
+  for (const e of ecr.values()) { const s = aliasSk.get(`${nameKey(e.name)}|${normPos(e.pos)}`); if (s) consensusSk.add(s); }
+  const known = (k: string, name: string, pos: string) => ecr.has(k) || consensusSk.has(k) || inConsensus.has(`${nameKey(name)}|${pos}`);
+  const rows = new Map<string, { name: string; pos: string; nameKey: string }>();
+  let fromPrior = 0, fromRostered = 0;
+  const skippedNoBasis: string[] = [];
+  for (const [k, p] of prior ?? new Map<string, SeasonRow>()) {
+    if (p.pos === "DST" || known(k, p.name, p.pos)) continue;
+    if (depthTeam.has(k) || curUsage.has(k) || rostered.has(k)) {
+      rows.set(k, { name: p.name, pos: p.pos, nameKey: p.nameKey }); fromPrior++;
+    }
+  }
+  // The same name+position guard WITHIN the extras: a rostered man whose roster name resolves to a
+  // different key than his prior-season row would otherwise enter twice, and `project` would keep
+  // the higher of the two numbers instead of the one his history supports.
+  const added = new Set<string>([...rows.values()].map((r) => `${r.nameKey}|${r.pos}`));
+  for (const [k, m] of rostered) {
+    if (rows.has(k) || known(k, m.name, m.pos) || added.has(`${nameKey(m.name)}|${m.pos}`)) continue;
+    if (prior?.has(k) || drafted.has(k)) { rows.set(k, { name: m.name, pos: m.pos, nameKey: nameKey(m.name) }); added.add(`${nameKey(m.name)}|${m.pos}`); fromRostered++; }
+    else skippedNoBasis.push(`${m.name} (${m.pos})`);
+  }
+  return { rows, fromPrior, fromRostered, skippedNoBasis };
+}
+
 /** nflverse draft picks, keyed the same way as everything else. A ROOKIE PRIOR: it is the only thing
  *  we know about a player with no prior season at all, and it is the feature most likely to matter
  *  for exactly the rows where every other prior column is null. */
@@ -498,8 +578,26 @@ export async function buildFeatures(opts: {
 
     // The universe. A completed season is everyone who was SCORED; the live season has no scored
     // players yet, so it is everyone the consensus ranks.
+    //
+    // EXCEPT THAT "EVERYONE THE CONSENSUS RANKS" WAS THE WHOLE LIVE UNIVERSE, and the consensus is a
+    // PRESEASON draft ranking: a man it skipped -- a backup QB promoted in October -- never got a row,
+    // so never got a projection, a board row or a place in the season simulator (Tyler Huntley and
+    // Carson Wentz, 2026, each dropped from a rival's roster with only a WARNING). The backtest never
+    // had this hole: its pool is the PRIOR season's scored players, ranked or not. So the live
+    // universe is extended with exactly that population, filtered to men with evidence they are still
+    // in the league, plus anyone rostered in one of our leagues who has a prior season or draft
+    // capital to project from. See `liveUniverseExtras`.
     const keys = new Set<string>(rows ? [...rows.keys()] : []);
-    if (isCurrent) for (const k of ecr.keys()) keys.add(k);
+    const extraMeta = new Map<string, { name: string; pos: string; nameKey: string }>();
+    if (isCurrent) {
+      for (const k of ecr.keys()) keys.add(k);
+      const ext = liveUniverseExtras(db, yr, resolver, ecr, prior, depthTeam, curUsage, drafted);
+      for (const [k, m] of ext.rows) { if (!keys.has(k)) { keys.add(k); extraMeta.set(k, m); } }
+      console.log(`  ${yr} live universe: ${ecr.size} consensus + ${extraMeta.size} extra ` +
+        `(${ext.fromPrior} prior-season scorers still in the league, ${ext.fromRostered} rostered-only); ` +
+        `${ext.skippedNoBasis.length} rostered men skipped with nothing to project from` +
+        (ext.skippedNoBasis.length ? `: ${ext.skippedNoBasis.slice(0, 10).join(", ")}${ext.skippedNoBasis.length > 10 ? " ..." : ""}` : ""));
+    }
 
     // THE LABEL FOLLOWS THE DATA. Under `--as-of-today` the current season's rows are built from the
     // live consensus, so they are stamped with today -- never with September 1, which is the lie the
@@ -524,8 +622,11 @@ export async function buildFeatures(opts: {
         // no scored history at all, so the consensus is the only source -- and taking the position
         // from the key instead (`key.split("|").pop()`) silently returned the surrogate key itself
         // for every resolved player, which produced a board of one row and no error.
-        const pos = r?.pos ?? e?.pos ?? "";
-        const name = r?.name ?? e?.name ?? "";
+        // An extended-universe row (no scored season, no consensus) is named by its prior season or,
+        // for a rostered rookie, by the league roster -- `extraMeta`.
+        const xm = extraMeta.get(key);
+        const pos = r?.pos ?? e?.pos ?? pr?.pos ?? xm?.pos ?? "";
+        const name = r?.name ?? e?.name ?? pr?.name ?? xm?.name ?? "";
         // Age at as_of, from the registry. Missing stays NULL -- never a league-average guess, which
         // would move a projection for a player we know nothing about.
         const bd = sk ? birth.get(sk) : undefined;

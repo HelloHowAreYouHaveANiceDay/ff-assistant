@@ -278,9 +278,36 @@ export async function assemble(
     const { loadConsensusPct, blendConsensus } = await import("../draft/consensusBlend.js");
     const pct = loadConsensusPct(db);
     const ranked = points.filter((p) => pct.has(`${season}|${p.pos}|${nameKey(p.name)}`)).length;
-    points = blendConsensus(points, (pos, name) => pct.get(`${season}|${pos}|${nameKey(name)}`) ?? null, blendWeights);
+    /**
+     * THE BLEND RUNS OVER THE CONSENSUS UNIVERSE ONLY. The blend is percentile-based WITHIN the pool
+     * (`ourPct = i / (n - 1)`), so its output depends on how many men sit in it. When the live
+     * universe was widened to the prior season's scorers (2026-10-08: +27 QBs, all at the bottom)
+     * every QB's percentile shifted and the blend reshuffled the pool's point slots -- Tua 167.9 ->
+     * 92.7, Browning 50.7 -> 115.3 -- with not one projection having moved. The widening was an
+     * identity fix, not a lever change, so the men it added are passed through UNBLENDED and the men
+     * who were already here are blended against exactly the pool they always were. Whether the
+     * blend should see the wider pool is a lever question for the arbiter, not a side effect.
+     */
+    // ONLY FOR THE INCUMBENT FORMAT. The store's `feat_player_season` is the incumbent's universe --
+    // the one D51 widened. A format-dir league (Yahoo 129048, Sleeper) projects its pool from its OWN
+    // features.db, which D51 did not touch; filtering that pool by the incumbent's consensus set
+    // shrank Yahoo's QB blend pool by 52 men and reshuffled 18 QB lines with no projection moving
+    // (caught on the 2026-10-13 dry run). Those pools blend over themselves, exactly as before.
+    const consensusSet = new Set<string>();
+    if (fmt.provenance === "incumbent-root") {
+      try {
+        for (const r of db.prepare("SELECT name, pos FROM feat_player_season WHERE season=@s AND ecr_pos_rank IS NOT NULL")
+          .all({ s: season }) as { name: string; pos: string }[]) consensusSet.add(`${r.pos}|${nameKey(r.name)}`);
+      } catch { /* no feature table in this store: every row is treated as consensus, as before */ }
+    }
+    const inPool = (p: PointsRow) => !consensusSet.size || consensusSet.has(`${p.pos}|${nameKey(p.name)}`);
+    const pool = points.filter(inPool), extra = points.filter((p) => !inPool(p));
+    const blended = new Map(blendConsensus(pool, (pos, name) => pct.get(`${season}|${pos}|${nameKey(name)}`) ?? null, blendWeights)
+      .map((p) => [`${p.pos}|${p.name}`, p] as const));
+    points = points.map((p) => blended.get(`${p.pos}|${p.name}`) ?? p);
     const shown = Object.entries(blendWeights).filter(([, w]) => w > 0).map(([p, w]) => `${p}=${w}`).join(" ") || "none";
-    console.log(`  consensus-blend [${shown}]: re-ranked the board toward FFToday (${ranked}/${points.length} players ranked, season ${season})`);
+    console.log(`  consensus-blend [${shown}]: re-ranked the board toward FFToday (${ranked}/${points.length} players ranked, season ${season}; ` +
+      `${extra.length} outside the consensus universe passed through unblended)`);
   }
   const projByName = new Map(points.map((p) => [p.name, p.points]));
   // ESPN'S OWN ELIGIBILITY, when it has been ingested. `loadEligibilityMap` carries only players who
