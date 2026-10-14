@@ -567,7 +567,7 @@ function startBridge() {
         // -- so the url check above does not restrict them and never did. Kept in step with
         // ESPN_WRITE_TYPES in src/league/writeIO.ts; test/write-contract.test.ts asserts the two
         // lists agree, because this file cannot import that one.
-        const ALLOWED_WRITE_TYPES = ["TRADE_PROPOSAL", "WAIVER", "FREEAGENT"];
+        const ALLOWED_WRITE_TYPES = ["TRADE_PROPOSAL", "WAIVER", "FREEAGENT", "ROSTER"];
         // A WAIVER may only place (EXECUTE) or cancel (CANCEL) a claim -- same as ESPN_WAIVER_EXECUTION_TYPES.
         const ALLOWED_WAIVER_EXECUTION_TYPES = ["EXECUTE", "CANCEL"];
         // A FREEAGENT add may only EXECUTE -- same as ESPN_FREEAGENT_EXECUTION_TYPES.
@@ -582,6 +582,21 @@ function startBridge() {
         }
         if (tparsed.type === "FREEAGENT" && !ALLOWED_FREEAGENT_EXECUTION_TYPES.includes(tparsed.executionType)) {
           return reply(400, { error: `refusing a FREEAGENT with executionType "${tparsed.executionType}"; permitted: ${ALLOWED_FREEAGENT_EXECUTION_TYPES.join(", ")}` });
+        }
+        // A ROSTER (lineup change, D54) may only EXECUTE, and every item must be a LINEUP move inside
+        // our team -- same as ESPN_ROSTER_EXECUTION_TYPES / ESPN_ROSTER_ITEM_TYPES.
+        const ALLOWED_ROSTER_EXECUTION_TYPES = ["EXECUTE"];
+        const ALLOWED_ROSTER_ITEM_TYPES = ["LINEUP"];
+        if (tparsed.type === "ROSTER") {
+          if (!ALLOWED_ROSTER_EXECUTION_TYPES.includes(tparsed.executionType)) {
+            return reply(400, { error: `refusing a ROSTER with executionType "${tparsed.executionType}"; permitted: ${ALLOWED_ROSTER_EXECUTION_TYPES.join(", ")}` });
+          }
+          const its = Array.isArray(tparsed.items) ? tparsed.items : [];
+          if (!its.length) return reply(400, { error: "refusing a ROSTER with no items" });
+          for (const it of its) {
+            if (!it || !ALLOWED_ROSTER_ITEM_TYPES.includes(it.type)) return reply(400, { error: `refusing a ROSTER item of type "${it && it.type}"; permitted: ${ALLOWED_ROSTER_ITEM_TYPES.join(", ")}` });
+            if ((it.fromTeamId !== undefined && Number(it.fromTeamId) !== 0) || (it.toTeamId !== undefined && Number(it.toTeamId) !== 0)) return reply(400, { error: "refusing a LINEUP item that names another team" });
+          }
         }
         try {
           // RESOLVE THE GUEST BY HOST, like every sibling route (fixed WP14; audit 2.3). This was the

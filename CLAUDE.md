@@ -334,7 +334,8 @@ Verified end-to-end on a clean clone: gates pass, config cross-checks, 72/72 tes
   edit is cancel-then-place; claims process highest-bid-first league-wide, so claims sharing a DROP chain as
   "A, else B". `mPendingTransactions` lists under `pendingTransactions`, not `transactions` -- and OMITS it
   when nothing is pending. **Instant free-agent adds too (D48):** `ff claim --fa-add "P" [--drop "P"]`, refused
-  for a player on waivers, verified on the live roster; it cannot be undone. Lineup (ROSTER) writes stay refused.
+  for a player on waivers, verified on the live roster; it cannot be undone. **Lineups too (D54):** `ff set-lineup [--week W] [--send]`
+  writes `lineup_recommend`'s starters with the fewest moves (ROSTER/EXECUTE, LINEUP items only), refuses locked men, verified on the live roster.
 - Recorded decisions D0-D51 (do not silently reverse): `docs/decisions.md`. **Weekly mean (D49/D50): served as the mean of the model's own quantile distribution (`meanSource: "mixture"`), floored at p50 (`meanFloor`) -- both serve-time artifact fields a retrain must RE-ADD.** **Waivers (D43): ranked on the
   full expected-lineup model (`src/inseason/expectedLineup.ts`: future injuries + replacement-level streaming),
   and they RECOMMEND NOTHING by default** -- no waiver rule beat standing pat in the 2018-2025 replay once

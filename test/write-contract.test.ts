@@ -74,7 +74,8 @@ test("a LINEUP or other non-permitted body is REFUSED at the permitted url", () 
   // (WAIVER left this list 2026-09-29 and FREEAGENT 2026-09-30 -- both owner-signed -- and are
   //  policed by executionType below.)
   const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
-  for (const t of ["ROSTER", "FUTURE_ROSTER", "TRADE_ACCEPT", "DRAFT"]) {
+  // (ROSTER left this list 2026-10-14, owner-signed D54 -- policed by executionType + item type below.)
+  for (const t of ["FUTURE_ROSTER", "TRADE_ACCEPT", "DRAFT"]) {
     assert.throws(() => assertWritableUrl(url, JSON.stringify({ type: t, items: [] })), /REFUSED to write a/,
       `a ${t} transaction was NOT refused -- ESPN serves it from the permitted url`);
   }
@@ -141,7 +142,8 @@ test("the permitted operations still go through -- the guard can say yes", () =>
   assertWritableUrl(url, JSON.stringify({ type: "TRADE_PROPOSAL", isLeagueManager: false, items: [] }));
   assertWritableUrl(url, JSON.stringify({ type: "WAIVER", executionType: "EXECUTE", bidAmount: 1, items: [] }));
   assertWritableUrl(url, JSON.stringify({ type: "FREEAGENT", executionType: "EXECUTE", bidAmount: 0, items: [] }));
-  assert.deepEqual([...ESPN_WRITE_TYPES], ["TRADE_PROPOSAL", "WAIVER", "FREEAGENT"],
+  assertWritableUrl(url, JSON.stringify({ type: "ROSTER", executionType: "EXECUTE", items: [{ playerId: 1, type: "LINEUP", fromLineupSlotId: 20, toLineupSlotId: 23 }] }));
+  assert.deepEqual([...ESPN_WRITE_TYPES], ["TRADE_PROPOSAL", "WAIVER", "FREEAGENT", "ROSTER"],
     "the permitted-operation list changed. That is a decision about what this tool may do to a real " +
     "league -- if it was deliberate, update this assertion deliberately.");
 });

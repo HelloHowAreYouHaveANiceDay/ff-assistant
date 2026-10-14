@@ -2730,3 +2730,27 @@ QB, K and DST are bit-identical every week. RB moves ~100/143 rows (mean |d| 0.0
 Tests: test/live-usage-columns.test.ts -- proxy lands and is counted with no participation file; positions/clip;
 `routeProxy:false` serves NULL; a season with participation rows serves the charted value and imputes nobody.
 Fault-injected (forcing the proxy off fails exactly the proxy test).
+
+## D54 -- the tool may SET THE LINEUP (2026-10-14, owner: libo in Slack #ff-assistant, "Fix assistant so you can update lineup", **APPLIED**)
+
+Widens D45/D48: `ESPN_WRITE_TYPES` and the app's `ALLOWED_WRITE_TYPES` now also permit `ROSTER`, EXECUTE only
+(`ESPN_ROSTER_EXECUTION_TYPES` / `ALLOWED_ROSTER_EXECUTION_TYPES`), and EVERY item must be a `LINEUP` move with no
+other team named (`ESPN_ROSTER_ITEM_TYPES` / `ALLOWED_ROSTER_ITEM_TYPES`; fromTeamId/toTeamId absent or 0) -- so a
+ROSTER body cannot carry an add, a drop or a trade. Both copies asserted identical by test/lineup-write.test.ts.
+Why this one is low-risk: a lineup move changes no roster and can be undone by another move until the man's game locks.
+
+Surface: `ff set-lineup [--week W] [--objective expected|winprob] [--status "Name=OUT"] [--send]`, a dry run unless
+`--send` (src/inseason/lineupWrite.ts). It reads the live roster through the app (slots, eligibleSlots, lineupLocked),
+runs the same `lineup_recommend` as `ff lineup` (logged in action_log), maps the starters onto ESPN's slots with the
+FEWEST moves (keep anyone already in an eligible starting slot, then shortest augmenting path -- a WR in FLEX vs WR
+is never shuffled), benches unwanted starters, never touches IR, REFUSES to move a locked man, and judges success on
+a re-read of the roster (polled through replica lag), never on a 200 alone. Body: this league's recorded lineup
+moves (ROSTER/EXECUTE, items LINEUP with from/to lineup slot ids).
+
+First use, verified: 2026 wk6, Kendre Miller BE -> FLEX (the one empty FLEX), HTTP 200, roster re-read confirmed,
+a second dry run reports no moves. Found on the way: a depth-first matcher produced a 4-move chain for that one move;
+the matcher is now breadth-first. Tests: guard refusals (executionType, ADD/DROP items, another team, no items) +
+positive control, app parity, body shape, slot mapping (one move, no-op, swap, forced shift, IR, unseatable),
+DST alias match, dry run sends nothing, send verified / a 200 that changed nothing reported, locked man refused;
+fault-injected (guard, app list, locked check, verifier, keep step each fail exactly their test).
+Not on any schedule: the cron posts still only recommend; a scheduled auto-set needs its own sign-off.

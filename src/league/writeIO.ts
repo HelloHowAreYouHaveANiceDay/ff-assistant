@@ -83,7 +83,7 @@ export const MAX_WRITE_BODY = 1e5;
  * be cancelled -- which is why this type, and not FREEAGENT (an instant, irreversible add) or ROSTER
  * (lineup), was the one admitted. The executionType is checked too: see ESPN_WAIVER_EXECUTION_TYPES.
  */
-export const ESPN_WRITE_TYPES: readonly string[] = ["TRADE_PROPOSAL", "WAIVER", "FREEAGENT"];
+export const ESPN_WRITE_TYPES: readonly string[] = ["TRADE_PROPOSAL", "WAIVER", "FREEAGENT", "ROSTER"];
 
 /** A WAIVER body may only place or cancel a claim. `PROCESS` is ESPN's own nightly executor. */
 export const ESPN_WAIVER_EXECUTION_TYPES: readonly string[] = ["EXECUTE", "CANCEL"];
@@ -96,6 +96,16 @@ export const ESPN_WAIVER_EXECUTION_TYPES: readonly string[] = ["EXECUTE", "CANCE
  * on the live roster. EXECUTE only; the shape is this league's own (our week-3 kicker add).
  */
 export const ESPN_FREEAGENT_EXECUTION_TYPES: readonly string[] = ["EXECUTE"];
+
+/**
+ * ROSTER ADDED 2026-10-14, owner-signed (libo in Slack: "Fix assistant so you can update lineup", D54).
+ * A ROSTER transaction is a LINEUP change: it moves our own men between slots and changes no roster.
+ * EXECUTE only, and EVERY item must be a `LINEUP` move inside our team (fromTeamId/toTeamId absent or
+ * 0) -- so a ROSTER body cannot carry an ADD, a DROP or a player from another team. Shape: this
+ * league's own recorded lineup moves (ROSTER/EXECUTE, items LINEUP with from/to lineup slot ids).
+ */
+export const ESPN_ROSTER_EXECUTION_TYPES: readonly string[] = ["EXECUTE"];
+export const ESPN_ROSTER_ITEM_TYPES: readonly string[] = ["LINEUP"];
 
 /**
  * ONE WRITE, ALREADY BUILT: where it goes, what it says, and WHICH OPERATION it is.
@@ -130,6 +140,18 @@ export interface PlatformWrites {
   cancelWaiverClaim?(ctx: WaiverCancelCtx): WriteRequest;
   /** An INSTANT free-agent add (+ optional drop). Executes immediately; cannot be withdrawn. */
   freeAgentAdd?(ctx: Omit<WaiverClaimCtx, "bid">): WriteRequest;
+  /** Move our own men between lineup slots for one scoring period. Changes no roster. */
+  setLineup?(ctx: LineupWriteCtx): WriteRequest;
+}
+
+/** A lineup change, in platform-neutral terms: slot ids and player ids are the PLATFORM's. */
+export interface LineupWriteCtx {
+  season: number;
+  leagueId: string;
+  myTeamId: string;
+  memberId?: string | null;
+  scoringPeriodId: number;
+  moves: { playerId: string; fromSlotId: number; toSlotId: number }[];
 }
 
 /** A FAAB claim, in platform-neutral terms. `playerId`s are the PLATFORM's ids. */
@@ -241,6 +263,24 @@ export function assertWritableUrl(url: string, body: string, writes?: PlatformWr
         `REFUSED to write a FREEAGENT with executionType "${typeof et === "string" ? et : "(missing)"}". ` +
         `Permitted: ${ESPN_FREEAGENT_EXECUTION_TYPES.join(", ")}.`,
       );
+    }
+  }
+  if (type === "ROSTER") {
+    const p = parsed as { executionType?: unknown; items?: unknown };
+    if (typeof p.executionType !== "string" || !ESPN_ROSTER_EXECUTION_TYPES.includes(p.executionType)) {
+      throw new Error(
+        `REFUSED to write a ROSTER with executionType "${typeof p.executionType === "string" ? p.executionType : "(missing)"}". ` +
+        `Permitted: ${ESPN_ROSTER_EXECUTION_TYPES.join(", ")}.`,
+      );
+    }
+    if (!Array.isArray(p.items) || !p.items.length) throw new Error("REFUSED to write a ROSTER with no items -- a lineup change moves at least one man.");
+    for (const it of p.items as { type?: unknown; fromTeamId?: unknown; toTeamId?: unknown }[]) {
+      if (typeof it?.type !== "string" || !ESPN_ROSTER_ITEM_TYPES.includes(it.type)) {
+        throw new Error(`REFUSED to write a ROSTER item of type "${String(it?.type)}" -- a ROSTER body may only carry LINEUP moves (no adds, drops or trades).`);
+      }
+      for (const k of ["fromTeamId", "toTeamId"] as const) {
+        if (it[k] !== undefined && Number(it[k]) !== 0) throw new Error(`REFUSED to write a LINEUP item with ${k}=${String(it[k])} -- a lineup move stays inside our team.`);
+      }
     }
   }
 }

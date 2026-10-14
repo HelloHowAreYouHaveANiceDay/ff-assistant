@@ -223,6 +223,24 @@ const espnWrites: PlatformWrites = {
       operation: "FREEAGENT",
     };
   },
+  // A LINEUP CHANGE (D54): `ROSTER/EXECUTE`, one `LINEUP` item per man moved, carrying his from/to
+  // lineup slot -- the shape this league records for every lineup move. No team ids: it stays ours.
+  setLineup(ctx) {
+    if (!ctx.moves.length) throw new Error("setLineup: no moves");
+    return {
+      url: `${ESPN_WRITES_BASE}/seasons/${ctx.season}/segments/0/leagues/${ctx.leagueId}/transactions/`,
+      body: JSON.stringify({
+        isLeagueManager: false,
+        teamId: Number(ctx.myTeamId),
+        type: "ROSTER",
+        ...(ctx.memberId ? { memberId: ctx.memberId } : {}),
+        scoringPeriodId: ctx.scoringPeriodId,
+        executionType: "EXECUTE",
+        items: ctx.moves.map((m) => ({ playerId: Number(m.playerId), type: "LINEUP", fromLineupSlotId: m.fromSlotId, toLineupSlotId: m.toSlotId })),
+      }),
+      operation: "ROSTER",
+    };
+  },
   cancelWaiverClaim(ctx) {
     return {
       url: `${ESPN_WRITES_BASE}/seasons/${ctx.season}/segments/0/leagues/${ctx.leagueId}/transactions/`,

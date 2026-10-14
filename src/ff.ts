@@ -110,6 +110,8 @@ async function main() {
       return cmdProposeTrade(rest);
     case "claim":
       return cmdClaim(rest);
+    case "set-lineup":
+      return cmdSetLineup(rest);
     case "format":
       return cmdFormat(rest);
     case "calibrate":
@@ -2294,6 +2296,42 @@ async function cmdClaim(rest: string[]) {
   console.log(`\n  VERIFIED: ${run.verified ?? "(no re-read)"}`);
   if (run.after) showPending("  ESPN PENDING CLAIMS NOW", run.after);
   if (run.error || !run.verified || /NOT FOUND|STILL PENDING|MISSING|CHECK ESPN/.test(run.verified)) process.exitCode = 1;
+}
+
+/**
+ * `ff set-lineup [--week W] [--objective expected|winprob] [--status "Name=OUT"] [--send]` -- put the
+ * copilot's recommended lineup on ESPN (D54). A DRY RUN unless `--send`: it reads the live roster
+ * through the app, runs the same `lineup_recommend` as `ff lineup`, maps it onto ESPN's slots with the
+ * fewest moves, refuses to move a man whose game has locked, and on `--send` verifies every move on a
+ * re-read of the roster. See src/inseason/lineupWrite.ts.
+ */
+async function cmdSetLineup(rest: string[]) {
+  const L = await import("./inseason/lineupWrite.js");
+  const KNOWN = new Set(["--week", "--objective", "--status", "--league", "--db", "--send"]);
+  const unknown = rest.filter((r) => r.startsWith("--") && !KNOWN.has(r));
+  if (unknown.length) { console.error(`ff set-lineup: unknown flag(s) ${unknown.join(", ")}. Known: ${[...KNOWN].join(" ")}`); process.exitCode = 2; return; }
+  const weekRaw = valueOf(rest, "--week");
+  const objective = valueOf(rest, "--objective") as "expected" | "winprob" | undefined;
+  if (objective && objective !== "expected" && objective !== "winprob") { console.error(`--objective must be expected|winprob`); process.exitCode = 2; return; }
+  const statusRaw = valueOf(rest, "--status");
+  const status = statusRaw ? Object.fromEntries(statusRaw.split(",").map((kv) => kv.split("=").map((s) => s.trim())).filter((kv) => kv.length === 2 && kv[0])) : undefined;
+  const send = rest.includes("--send");
+  const run = await L.setLineup({ week: weekRaw == null ? undefined : Number(weekRaw), send, dbPath: valueOf(rest, "--db"), leagueId: leagueArg(rest), objective, status });
+  const lv = run.live;
+  console.log(`SET LINEUP -- league ${lv.leagueId} team ${lv.myTeamId}, scoring period ${run.week}${run.totalProj != null ? `, recommended total ${run.totalProj}` : ""}`);
+  console.log(`  recommended starters: ${run.starters.map((s) => `${s.slot} ${s.name} (${s.proj})`).join(", ")}`);
+  if (!run.moves.length) console.log("  ESPN already has this lineup -- no moves.");
+  run.moves.forEach((m, i) => console.log(`  ${i + 1}. ${m.name}: ${L.slotName(m.from)} -> ${L.slotName(m.to)}`));
+  if (run.problems.length) { console.log("  PROBLEMS:"); run.problems.forEach((p) => console.log(`    - ${p}`)); }
+  if (run.request) console.log(`\n  request: POST ${run.request.url}\n  ${run.request.body}`);
+  const blocking = run.problems.filter((p) => !p.startsWith("note:"));
+  if (blocking.length) { console.log("\n  NOT SENDABLE -- fix the problems above. Nothing was sent."); process.exitCode = 1; return; }
+  if (!run.request) return;
+  if (!send) { console.log("\n  DRY RUN -- nothing was sent. Re-run with --send to submit."); return; }
+  if (run.response) console.log(`\n  response: HTTP ${run.response.status} ${run.response.body.slice(0, 300)}`);
+  if (run.error) console.log(`\n  ERROR: ${run.error}`);
+  console.log(`\n  VERIFIED: ${run.verified ?? "(no re-read)"}`);
+  if (run.error || !run.verified || /CHECK ESPN/.test(run.verified)) process.exitCode = 1;
 }
 
 /**
