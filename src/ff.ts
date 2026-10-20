@@ -2320,7 +2320,7 @@ async function cmdSetLineup(rest: string[]) {
   const lv = run.live;
   console.log(`SET LINEUP -- league ${lv.leagueId} team ${lv.myTeamId}, scoring period ${run.week}${run.totalProj != null ? `, recommended total ${run.totalProj}` : ""}`);
   console.log(`  recommended starters: ${run.starters.map((s) => `${s.slot} ${s.name} (${s.proj})`).join(", ")}`);
-  if (!run.moves.length) console.log("  ESPN already has this lineup -- no moves.");
+  if (!run.moves.length && !run.problems.some((p) => !p.startsWith("note:"))) console.log("  ESPN already has this lineup -- no moves.");
   run.moves.forEach((m, i) => console.log(`  ${i + 1}. ${m.name}: ${L.slotName(m.from)} -> ${L.slotName(m.to)}`));
   if (run.problems.length) { console.log("  PROBLEMS:"); run.problems.forEach((p) => console.log(`    - ${p}`)); }
   if (run.request) console.log(`\n  request: POST ${run.request.url}\n  ${run.request.body}`);
