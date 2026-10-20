@@ -237,7 +237,9 @@ export async function setLineup(o: {
       run.starters = res.starters; run.totalProj = res.totalProj ?? null;
       for (const f of res.flags ?? []) run.problems.push(`note: lineup flag: ${f}`);
     }
-    const wanted = new Set(run.starters.map((s) => matchStarter(live.entries, s).playerId));
+    // "(empty)" is lineup.ts's placeholder for a slot nobody can fill (e.g. our only D/ST on bye); it
+    // is no roster man, so it must not be matched -- the slot-count note below reports the gap.
+    const wanted = new Set(run.starters.filter((s) => s.name !== "(empty)").map((s) => matchStarter(live.entries, s).playerId));
     const nSlots = startingSlots(live.slotCounts).length;
     if (wanted.size < nSlots) run.problems.push(`note: only ${wanted.size} starters for ${nSlots} starting slots -- ${nSlots - wanted.size} slot(s) stay EMPTY`);
     const target = assignSlots(live.entries, wanted, live.slotCounts);

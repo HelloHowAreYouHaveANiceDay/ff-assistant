@@ -134,6 +134,15 @@ test("setLineup: dry run builds the one move and sends nothing", async () => {
   assert.equal(w.sent.length, 0); assert.equal(run.sent, false);
 });
 
+test("setLineup: an \"(empty)\" placeholder (only D/ST on bye) is skipped, not matched against the roster", async () => {
+  const { get } = fakeEspn(LIVE);
+  const rows = STARTER_ROWS.map((r) => (r.name === "buf" ? { ...r, name: "(empty)", proj: 0 } : r));
+  const run = await setLineup({ starters: rows, get, writer: recordingWriteIO(), ...ctxOverride() });
+  assert.deepEqual(run.problems.filter((p) => !p.startsWith("note:")), []);
+  assert.ok(run.problems.some((p) => /slot\(s\) stay EMPTY/.test(p)));
+  assert.ok(run.moves.some((m) => m.name === "miller" && m.to === 23));
+});
+
 test("setLineup: send posts once and VERIFIES on the re-read; a write ESPN ignored is reported", async () => {
   const fake = fakeEspn(LIVE);
   const applying = { via: "fake", async post(_u: string, body: string) {
