@@ -172,7 +172,7 @@ export function optimalLineup(players: RosterPlayer[], slots: string[], flexOk?:
 
   // Flags the user cares about: a benched AVAILABLE player out-projecting a starter at an eligible
   // slot (means the assignment was constrained), and starters that are actually unavailable.
-  const weakestStarter = Math.min(...starters.filter((s) => s.proj > 0).map((s) => s.proj));
+  const weakestEligible = (p: RosterPlayer): number => { let w = Infinity; for (let s = 0; s < startSlots.length; s++) { const o = occupant[s]; if (o && o.proj > 0 && accepts(startSlots[s], p)) w = Math.min(w, o.proj); } return w; };
   // A LOCKED bench man is excluded from this flag. He out-projects a starter for the same reason
   // every played man does -- his game is over -- and telling a manager to start him is the advice
   // this constraint exists to stop. He is reported separately, as a fact rather than an option.
@@ -181,7 +181,7 @@ export function optimalLineup(players: RosterPlayer[], slots: string[], flexOk?:
   for (const b of bench) {
     const src = players.find((p) => p.name === b.name && p.pos === b.pos && !used.has(p));
     if (src && lockedByName.has(src)) continue;
-    if (b.available && b.proj > weakestStarter + 0.5) flags.push(`bench ${b.name} (${b.proj}) out-projects a starter -- roster-slot constrained`);
+    if (src && b.available && b.proj > weakestEligible(src) + 0.5) flags.push(`bench ${b.name} (${b.proj}) out-projects a starter -- roster-slot constrained`);
   }
   if (benchLocked.length) {
     flags.push(`LOCKED, cannot be started: ${benchLocked.map((p) => `${p.name} (${p.proj})`).join(", ")} -- ` +
