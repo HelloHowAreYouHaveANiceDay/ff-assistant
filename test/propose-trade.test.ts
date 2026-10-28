@@ -123,3 +123,43 @@ test("FAULT: an unknown player name is refused, not silently dropped", () => {
   assert.equal(r.ok, false);
   assert.ok(r.problems.some((p) => /no roster player matches "Nobody At All"/.test(p)));
 });
+
+// A TRADED / WAIVER-MOVED PLAYER has roster rows on more than one team: the draft week and a stale
+// far-future placeholder on his old team, the reached weeks on his new one. He is ONE person, on the
+// team he is on NOW. (Live case 2026-10-27: Bo Nix, drafted by team 14, ours since week 2 -- the
+// resolver called him ambiguous and refused to let us trade him.)
+function seedMoved(withOwnership: boolean) {
+  const db = openDb(join(mkdtempSync(join(tmpdir(), "ff-trade5-")), "t.db"));
+  db.prepare("INSERT INTO league (season, league_id, platform, team_id, last_synced_at) VALUES (2026, '462233', 'espn', '8', '2026-09-10T00:00:00Z')").run();
+  setActiveLeagueId(db, '462233');
+  setConfig(db, { season: 2026 }, '462233');
+  db.prepare("INSERT INTO raw_league_team_season (league_id, season, team_id, name, fetched_at) VALUES ('462233',2026,'8','Mine','x'),('462233',2026,'14','Old','x'),('462233',2026,'11','Theirs','x')").run();
+  const ros = db.prepare("INSERT INTO raw_league_roster_week (league_id, season, week, team_id, espn_player_id, name, fetched_at) VALUES ('462233',2026,?,?,?,?,'x')");
+  ros.run(1, "14", "4426338", "Bo Nix");          // drafted by team 14
+  for (const w of [2, 3, 7, 8]) ros.run(w, "8", "4426338", "Bo Nix"); // ours since week 2
+  ros.run(14, "14", "4426338", "Bo Nix");         // stale preseason placeholder for a future week
+  ros.run(7, "11", "4882093", "Bhayshul Tuten");
+  // Weeks 1-7 settled -> the league has reached week 8.
+  const m = db.prepare("INSERT INTO raw_league_matchup (league_id, season, week, home_id, away_id, home_score, away_score, fetched_at) VALUES ('462233',2026,?,'8','11',100,90,'x')");
+  for (let w = 1; w <= 7; w++) m.run(w);
+  if (withOwnership) db.prepare("INSERT INTO ownership (league_id, player_id, owner, team_abbrev, slot, team_id, updated_at) VALUES ('462233','bonix','me','ME','BE','8','x')").run();
+  return db;
+}
+
+test("a player moved between teams resolves ONCE, to his current team (ownership)", () => {
+  const db = seedMoved(true);
+  const r = resolveTrade(db, ["Bo Nix"], ["Bhayshul Tuten"]);
+  db.close();
+  assert.equal(r.ok, true, `expected sendable, got problems: ${r.problems.join("; ")}`);
+  assert.equal(r.give.length, 1);
+  assert.equal(r.give[0].teamId, "8");
+  assert.equal(r.otherTeamId, "11");
+});
+
+test("without an ownership row, the latest REACHED week decides -- never a future placeholder", () => {
+  const db = seedMoved(false);
+  const r = resolveTrade(db, ["Bo Nix"], ["Bhayshul Tuten"]);
+  db.close();
+  assert.equal(r.ok, true, `expected sendable, got problems: ${r.problems.join("; ")}`);
+  assert.equal(r.give[0].teamId, "8", "the week-14 placeholder on team 14 must not win");
+});

@@ -7,6 +7,7 @@
 import { openDb, type DB } from "../db/db.js";
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { ESPN_READS_BASE } from "../data/espnApi.js";
+import { nameKey } from "../draft/values.js";
 
 export interface TradePlayer { name: string; playerId: string; teamId: string }
 export interface TradeResolution {
@@ -36,12 +37,38 @@ function findPlayer(db: DB, leagueId: string, season: number, name: string): Tra
   // FILTERED BY LEAGUE (S-9/P-2). The roster feed holds every league's rows and the team ids overlap,
   // so an unfiltered match could resolve a give to ANOTHER league's roster and then assert it is not
   // on your team -- or worse, agree that it is.
+  //
+  // ONE ROW PER PLAYER, ON HIS CURRENT TEAM. raw_league_roster_week keeps a snapshot for EVERY week,
+  // including stale far-future weeks (a preseason fetch can sit in week 14) and the weeks before a
+  // trade. A DISTINCT over (name, id, team) therefore returned a traded man once per team he has ever
+  // been on: "Bo Nix" came back as team 14 (draft) AND team 8 (now), tripped the ambiguity guard on
+  // one person, and the give-ownership check then read the stale team-14 row and refused to trade a
+  // player we own. Collapse by ESPN id; the team is `ownership` (the live roster, re-synced every
+  // news-watch run, keyed by nameKey) when it knows him, else his row from the latest week that has
+  // already been reached (never a future-week placeholder).
   const rows = db.prepare(
-    `SELECT DISTINCT name, espn_player_id AS playerId, team_id AS teamId
+    `SELECT name, espn_player_id AS playerId, team_id AS teamId, week
        FROM raw_league_roster_week
       WHERE league_id = ? AND season = ? AND lower(name) LIKE '%' || lower(?) || '%'`,
-  ).all(leagueId, season, name) as TradePlayer[];
-  return rows;
+  ).all(leagueId, season, name) as (TradePlayer & { week: number })[];
+  const reached = db.prepare(
+    `SELECT MAX(week) AS w FROM raw_league_matchup
+      WHERE league_id = ? AND season = ? AND (COALESCE(home_score, 0) > 0 OR COALESCE(away_score, 0) > 0)`,
+  ).get(leagueId, season) as { w: number | null } | undefined;
+  const nowWeek = reached?.w != null ? reached.w + 1 : Infinity;
+  const owned = db.prepare("SELECT team_id AS teamId FROM ownership WHERE league_id = ? AND player_id = ?");
+  const byId = new Map<string, TradePlayer & { week: number }>();
+  for (const r of rows) {
+    const cur = byId.get(r.playerId);
+    const ok = r.week <= nowWeek;
+    const curOk = cur ? cur.week <= nowWeek : false;
+    // Prefer a reached week over a future placeholder, then the later of two reached weeks.
+    if (!cur || (ok && !curOk) || (ok === curOk && (ok ? r.week > cur.week : r.week < cur.week))) byId.set(r.playerId, r);
+  }
+  return [...byId.values()].map((r) => {
+    const o = owned.get(leagueId, nameKey(r.name)) as { teamId: string | null } | undefined;
+    return { name: r.name, playerId: r.playerId, teamId: o?.teamId ?? r.teamId };
+  });
 }
 
 export function resolveTrade(db: DB, giveNames: string[], getNames: string[], leagueIdArg?: string | null): TradeResolution {
