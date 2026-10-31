@@ -204,33 +204,12 @@ function createWindow() {
 // The persistent helper: ONE long-lived `ff serve` process holding the DB open. Fast reads/writes
 // go over its stdin/stdout as NDJSON ({id,method,params} -> {id,ok,result}), so there's no per-op
 // process spawn and no native SQLite in Electron. Auto-(re)starts on demand.
-let serve = null, serveBuf = "", serveReady = null, serveReadyRes = null, pending = new Map(), reqId = 0;
-function startServe() {
-  serve = ffSpawn(["serve"]);
-  serveReady = new Promise((res) => (serveReadyRes = res));
-  serve.stdout.on("data", (d) => {
-    serveBuf += d;
-    let i;
-    while ((i = serveBuf.indexOf("\n")) >= 0) {
-      const line = serveBuf.slice(0, i).trim(); serveBuf = serveBuf.slice(i + 1);
-      if (!line.startsWith("{")) continue;
-      let o; try { o = JSON.parse(line); } catch { continue; }
-      if (o.event === "ready") { serveReadyRes && serveReadyRes(); continue; }
-      const p = pending.get(o.id);
-      if (p) { pending.delete(o.id); o.ok ? p.resolve(o.result) : p.reject(new Error(o.error)); }
-    }
-  });
-  const die = () => { serve = null; for (const p of pending.values()) p.reject(new Error("serve closed")); pending.clear(); };
-  serve.on("close", die); serve.on("error", die);
-}
+// The client (start/ready/timeouts) lives in app/serveClient.js so it can be tested without Electron;
+// see the header there for why an exit before "ready" must reject instead of hanging (issue #24).
+const { createServeClient } = require("./serveClient.js");
+const serveClient = createServeClient({ spawn: () => ffSpawn(["serve"]) });
 function rpc(method, params) {
-  if (!serve) startServe();
-  return serveReady.then(() => new Promise((resolve, reject) => {
-    const id = ++reqId;
-    pending.set(id, { resolve, reject });
-    serve.stdin.write(JSON.stringify({ id, method, params: params || {} }) + "\n");
-    setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error("rpc timeout: " + method)); } }, 30000);
-  })).then((r) => {
+  return serveClient.rpc(method, params).then((r) => {
     // The second chokepoint. `board-stamp` is excluded because noticeBoardChange() issues it -- a
     // generic hook here without that exclusion is an infinite mutual recursion, not a slow path.
     // `lineage-stamp`/`models-stamp` are its own probes too (SILENT_RPC_METHODS), same reason.
@@ -319,8 +298,10 @@ function guestWebContents({ host = "espn.com", urlIncludes } = {}) {
   try { guests = webContents.getAllWebContents().filter((wc) => { try { return wc.getType && wc.getType() === "webview" && !wc.isDestroyed(); } catch (_) { return false; } }); }
   catch (_) { return null; }
   const url = (wc) => { try { return wc.getURL() || ""; } catch (_) { return ""; } };
-  const re = new RegExp(String(host).replace(/[.]/g, "\\."));
-  const pool = guests.filter((wc) => re.test(url(wc)));
+  // HOSTNAME match with a dot boundary (issue #25), not a regex over the whole url: a signed-out Yahoo
+  // guest sits on login.yahoo.com with `.done=https%3A%2F%2Ffootball.fantasysports.yahoo.com...` in its
+  // query, and the unanchored test counted it as on fantasysports.yahoo.com.
+  const pool = guests.filter((wc) => urlOnHost(url(wc), host));
   if (!pool.length) return null;
   if (urlIncludes) { const m = pool.find((wc) => url(wc).includes(urlIncludes)); if (m) return m; }
   pool.sort((a, b) => url(b).length - url(a).length);
@@ -372,7 +353,7 @@ async function ensureGuest(host) {
 // Electron (app/bridgeHosts.js, test/platform-bridge-allowlist.test.ts). A `host` that is not a key
 // there is refused before any guest is resolved; an omitted one means espn.com, so every pre-existing
 // caller is unchanged.
-const { BRIDGE_HOSTS, resolveBridgeHost } = require("./bridgeHosts.js");
+const { BRIDGE_HOSTS, resolveBridgeHost, urlOnHost } = require("./bridgeHosts.js");
 
 // The listening port, so `mc:bridgeInfo` can tell the Status page what the engine is knocking on
 // (the token stays here and in data/app-bridge.json; it never reaches the renderer).
@@ -683,7 +664,7 @@ function blockAdsInGuests() {
 app.whenReady().then(() => {
   blockAdsInGuests(); // before any guest loads
   ensureDb();   // packaged first-run: copy the seeded store into writable userData
-  startServe(); // one long-lived DB helper for the whole session
+  serveClient.warm(); // one long-lived DB helper for the whole session
   startBridge();// loopback door so the engine can use the app's authenticated webview
   startScheduler(); // in-season routine timer (obeys the stored schedule; OFF by default)
   createWindow();
@@ -691,7 +672,7 @@ app.whenReady().then(() => {
 });
 app.on("before-quit", () => {
   if (schedulerTimer) { clearTimeout(schedulerTimer); schedulerTimer = null; }
-  try { if (serve && serve.pid) cp.execSync(`taskkill /F /T /PID ${serve.pid}`); } catch (_) { /* gone */ }
+  try { const serve = serveClient.current(); if (serve && serve.pid) cp.execSync(`taskkill /F /T /PID ${serve.pid}`); } catch (_) { /* gone */ }
   // ...and every in-flight job (a scheduler tick, a sync), by its exact PID tree -- see `inflight`.
   for (const p of inflight) { try { if (p.pid) cp.execSync(`taskkill /F /T /PID ${p.pid}`); } catch (_) { /* gone */ } }
   inflight.clear();

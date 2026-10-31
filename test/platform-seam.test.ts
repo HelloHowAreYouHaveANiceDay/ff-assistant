@@ -11,13 +11,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import { knownPlatforms, platformFor } from "../src/league/platform.js";
 import { assertUnregistered } from "./helpers/unknown-platform.js";
 import { espnDiscoverFromLinks, espnIdentityProblem, espnPlatform, espnSlotsToConfig, espnLeagueApiUrl } from "../src/league/espnPlatform.js";
 import { yahooPlatform } from "../src/league/yahoo.js";
 
 const require = createRequire(import.meta.url);
-const { resolveBridgeHost, bridgeUrlAllowed, BRIDGE_HOSTS } = require("../app/bridgeHosts.js");
+const { resolveBridgeHost, bridgeUrlAllowed, BRIDGE_HOSTS, urlOnHost } = require("../app/bridgeHosts.js");
 
 test("the registry resolves every known platform and REFUSES an unknown one by name", async () => {
   for (const id of knownPlatforms()) assert.equal((await platformFor(id)).id, id);
@@ -141,4 +142,30 @@ test("the allowlist is PER HOST: a url may not be fetched with another platform'
   assert.equal(bridgeUrlAllowed("espn.com", "http://fantasy.espn.com/x"), false);
   assert.equal(bridgeUrlAllowed("espn.com", "https://espn.com.evil.test/x"), false);
   assert.equal(bridgeUrlAllowed("yahoo", "https://fantasysports.yahoo.com.evil.test/x"), false);
+});
+
+test("a guest is ON a host by its HOSTNAME, not by the host appearing anywhere in its url (issue #25)", () => {
+  // The signed-out Yahoo guest: on login.yahoo.com, with the platform in its return address.
+  const yahooLogin = "https://login.yahoo.com/?.src=fantasy&.done=https%3A%2F%2Ffootball.fantasysports.yahoo.com%2Ff1%2F129048";
+  assert.equal(urlOnHost(yahooLogin, "fantasysports.yahoo.com"), false);
+  assert.equal(urlOnHost("https://football.fantasysports.yahoo.com/f1/129048", "fantasysports.yahoo.com"), true);
+  assert.equal(urlOnHost("https://fantasysports.yahoo.com/", "fantasysports.yahoo.com"), true);
+  // ESPN: subdomains count, a lookalike or a mention in the path/query does not.
+  assert.equal(urlOnHost("https://fantasy.espn.com/football/team?leagueId=462233", "espn.com"), true);
+  assert.equal(urlOnHost("https://FANTASY.ESPN.COM/x", "espn.com"), true);
+  assert.equal(urlOnHost("https://registerdisney.go.com/login?return=https://fantasy.espn.com/", "espn.com"), false);
+  assert.equal(urlOnHost("https://notespn.com/", "espn.com"), false);
+  assert.equal(urlOnHost("https://espn.com.evil.test/", "espn.com"), false);
+  assert.equal(urlOnHost("about:blank", "espn.com"), false);
+  assert.equal(urlOnHost("", "espn.com"), false);
+  assert.equal(urlOnHost("https://fantasy.espn.com/", ""), false);
+  // Every allowlisted host resolves its own guest.
+  for (const h of Object.keys(BRIDGE_HOSTS)) assert.equal(urlOnHost(`https://www.${h}/`, h), true);
+});
+
+test("main.js picks guests with urlOnHost, not a regex over the whole url", () => {
+  const src = readFileSync(new URL("../app/main.js", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("function guestWebContents("), src.indexOf("function guestWebContents(") + 1500);
+  assert.match(body, /urlOnHost\(url\(wc\), host\)/);
+  assert.doesNotMatch(body, /new RegExp/);
 });

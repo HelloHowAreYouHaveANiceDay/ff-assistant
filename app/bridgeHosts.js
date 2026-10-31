@@ -36,4 +36,20 @@ function bridgeUrlAllowed(host, url) {
   return !!h && BRIDGE_HOSTS[h].test(String(url));
 }
 
-module.exports = { BRIDGE_HOSTS, PLATFORM_HOST, resolveBridgeHost, bridgeUrlAllowed };
+/**
+ * True when `url`'s HOSTNAME is `host` or a subdomain of it (dot boundary, case-insensitive) -- the
+ * rule guestWebContents picks a guest by, and the same one `isBlockedUrl` (blockHosts.js) uses.
+ *
+ * Never a substring/regex over the whole url (issue #25): a signed-out Yahoo guest is on
+ * login.yahoo.com with the return address `...fantasysports.yahoo.com...` in its query string, and
+ * percent-encoding leaves the dots alone, so the old unanchored test said it was on the platform.
+ */
+function urlOnHost(url, host) {
+  const want = String(host || "").toLowerCase();
+  if (!want) return false;
+  let h;
+  try { h = new URL(String(url)).hostname.toLowerCase(); } catch (_) { return false; }
+  return h === want || h.endsWith("." + want);
+}
+
+module.exports = { BRIDGE_HOSTS, PLATFORM_HOST, resolveBridgeHost, bridgeUrlAllowed, urlOnHost };

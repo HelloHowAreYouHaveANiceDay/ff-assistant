@@ -26,6 +26,9 @@
     "files": [
       "main.js",
       "preload.js",
+      "bridgeHosts.js",
+      "blockHosts.js",
+      "serveClient.js",
       "renderer/**/*"
     ],
     "extraResources": [
