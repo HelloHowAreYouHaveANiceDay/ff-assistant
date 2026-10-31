@@ -353,7 +353,7 @@ async function ensureGuest(host) {
 // Electron (app/bridgeHosts.js, test/platform-bridge-allowlist.test.ts). A `host` that is not a key
 // there is refused before any guest is resolved; an omitted one means espn.com, so every pre-existing
 // caller is unchanged.
-const { BRIDGE_HOSTS, resolveBridgeHost, urlOnHost } = require("./bridgeHosts.js");
+const { BRIDGE_HOSTS, resolveBridgeHost, urlOnHost, bridgeUrlAllowed } = require("./bridgeHosts.js");
 
 // The listening port, so `mc:bridgeInfo` can tell the Status page what the engine is knocking on
 // (the token stays here and in data/app-bridge.json; it never reaches the renderer).
@@ -612,7 +612,7 @@ function startBridge() {
       // `host` omitted = espn.com, so every pre-existing caller behaves exactly as before.
       const fetchHost = resolveBridgeHost(host);
       if (!fetchHost) return reply(400, { error: `unknown host "${host}" -- known: ${Object.keys(BRIDGE_HOSTS).join(", ")}` });
-      if (!BRIDGE_HOSTS[fetchHost].test(String(url))) return reply(400, { error: `url must be https and on ${fetchHost}` });
+      if (!bridgeUrlAllowed(fetchHost, url)) return reply(400, { error: `url must be https (default port, no credentials) and on ${fetchHost}` });
       try {
         // Resolve the GUEST by host (never `win` + getElementById -- see the 2026-09-13 note above),
         // with no fallback: if that platform's webview is not mounted, say so.

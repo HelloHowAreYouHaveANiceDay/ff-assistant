@@ -142,6 +142,25 @@ test("the allowlist is PER HOST: a url may not be fetched with another platform'
   assert.equal(bridgeUrlAllowed("espn.com", "http://fantasy.espn.com/x"), false);
   assert.equal(bridgeUrlAllowed("espn.com", "https://espn.com.evil.test/x"), false);
   assert.equal(bridgeUrlAllowed("yahoo", "https://fantasysports.yahoo.com.evil.test/x"), false);
+  // A lookalike that merely ENDS in the host is refused (the old `[a-z0-9.-]*espn\.com/` prefix let it in).
+  assert.equal(bridgeUrlAllowed("espn.com", "https://notespn.com/x"), false);
+  assert.equal(bridgeUrlAllowed("yahoo", "https://evilfantasysports.yahoo.com/x"), false);
+  // The apex and real subdomains still pass, in any case; a host-less query mention does not.
+  assert.equal(bridgeUrlAllowed("espn.com", "https://espn.com/x"), true);
+  assert.equal(bridgeUrlAllowed("espn.com", "https://LM-API-READS.FANTASY.ESPN.COM/apis/v3/x"), true);
+  assert.equal(bridgeUrlAllowed("espn.com", "https://example.com/?u=https://fantasy.espn.com/"), false);
+  // userinfo, an explicit port, and junk are refused.
+  assert.equal(bridgeUrlAllowed("espn.com", "https://fantasy.espn.com@evil.test/x"), false);
+  assert.equal(bridgeUrlAllowed("espn.com", "https://user:pw@fantasy.espn.com/x"), false);
+  assert.equal(bridgeUrlAllowed("espn.com", "https://fantasy.espn.com:8443/x"), false);
+  assert.equal(bridgeUrlAllowed("espn.com", "not a url"), false);
+  assert.equal(bridgeUrlAllowed("espn.com", ""), false);
+});
+
+test("main.js /fetch gates on bridgeUrlAllowed, not a per-host regex", () => {
+  const src = readFileSync(new URL("../app/main.js", import.meta.url), "utf8");
+  assert.match(src, /if \(!bridgeUrlAllowed\(fetchHost, url\)\)/);
+  assert.doesNotMatch(src, /BRIDGE_HOSTS\[[a-zA-Z]+\]\.test\(/);
 });
 
 test("a guest is ON a host by its HOSTNAME, not by the host appearing anywhere in its url (issue #25)", () => {
