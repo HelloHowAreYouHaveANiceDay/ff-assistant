@@ -3,14 +3,14 @@
 // and the only honest way to tell "the field is not published" from "we asked wrong" is to look at
 // the raw blocks rather than guess at a filter.
 //
-// Read-only. One GET through src/browser/appBridge.ts. Never writes to ESPN.
+// Read-only. One GET through src/browser/broSession.ts. Never writes to ESPN.
 //   node --import tsx scripts/weekly-espn-probe.mjs [season] [week] [--league <id>]
 //
 // WHICH LEAGUE (D-2, 2026-09-16): this resolved with `ORDER BY last_synced_at DESC LIMIT 1` and then
 // built ESPN URLs for whatever came back -- so on a two-league store it probed ESPN under a YAHOO
 // league id and reported the 404/empty payload as "the field is not published". One resolver,
 // `--league <id>`, and a named refusal for a non-ESPN league before any fetch.
-import { bridgeFetch, bridgeAvailable } from "../src/browser/appBridge.js";
+import { broFetch, broAvailable } from "../src/browser/broSession.js";
 import { openDb } from "../src/db/db.js";
 import { resolveLeagueContext, requirePlatform } from "../src/data/leagueContext.js";
 
@@ -18,7 +18,7 @@ const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? proces
 const positional = process.argv.slice(2).filter((a, i, xs) => a !== "--league" && xs[i - 1] !== "--league");
 const season = Number(positional[0] ?? 2026);
 const week = Number(positional[1] ?? 1);
-if (!bridgeAvailable()) { console.log("app bridge not available -- open the desktop app"); process.exit(2); }
+if (!(await broAvailable())) { console.log("bro espn session unavailable -- run `bim bro auth --site espn`"); process.exit(2); }
 
 const db = openDb();
 const lg = { league_id: requirePlatform(resolveLeagueContext(db, arg("--league", undefined)), "espn", "weekly-espn-probe") };
@@ -41,7 +41,7 @@ const attempts = [
 for (const a of attempts) {
   let players;
   try {
-    const body = await bridgeFetch(a.url, { "x-fantasy-filter": JSON.stringify(a.filter) });
+    const body = await broFetch(a.url, { "x-fantasy-filter": JSON.stringify(a.filter) });
     players = JSON.parse(body).players ?? [];
   } catch (e) { console.log(`${a.name}: FAILED -- ${e.message}`); continue; }
   const kinds = new Map();

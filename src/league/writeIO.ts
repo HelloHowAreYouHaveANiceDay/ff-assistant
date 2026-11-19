@@ -300,22 +300,13 @@ export interface PlatformWriteIO {
  * The app applies its own allowlist after this one, which is the defence in depth: two independent
  * checks, neither relying on the other being correct.
  */
-export function bridgeWriteIO(timeoutMs = 25000): PlatformWriteIO {
+export function broWriteIO(timeoutMs = 25000): PlatformWriteIO {
   return {
-    via: "the desktop app's authenticated ESPN webview",
+    via: "the bim bro `espn` session",
     async post(url, body) {
-      assertWritableUrl(url, body);
-      const { bridgeWriteTransaction } = await import("../browser/appBridge.js");
-      // `bridgeWriteTransaction` throws on a >=400, which loses the status. It is caught and
-      // re-expressed as a result, because a refusal from ESPN is an outcome to report, not a crash.
-      try {
-        return { status: 200, body: await bridgeWriteTransaction(url, body, timeoutMs) };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        const m = /ESPN returned HTTP (\d{3}):\s*([\s\S]*)$/.exec(msg);
-        if (m) return { status: Number(m[1]), body: m[2] };
-        throw e;                       // a transport failure is not an ESPN answer
-      }
+      assertWritableUrl(url, body);     // FIRST: nothing reaches `bim` unless the contract allows it
+      const { broPost } = await import("../browser/broSession.js");
+      return broPost(url, body, timeoutMs);
     },
   };
 }

@@ -9,7 +9,6 @@ import { openDb, getConfig, setConfig, getMyRoster, setMyRoster, logAction, comp
 import { resolveLeagueContext } from "../data/leagueContext.js";
 import { nameKey } from "../draft/values.js";
 import { LEVER_META, clampLever, applyLevers } from "../draft/levers.js";
-import { browserTools } from "./browserTools.js";
 import { ESPN_READS_BASE } from "../data/espnApi.js";
 
 // ESPN fantasy id maps (defaultPositionId / lineupSlotId)
@@ -26,7 +25,7 @@ const espnLeagueUrl = (season: number, leagueId: string, views: string[]) =>
  * platform instead of building ESPN URLs for whatever id they resolved: the adaptor is handed an IO
  * and never learns which browser it is talking to.
  *
- * ONE SPELLING (WP7): the body lives in `src/league/platform.ts` as `bridgePlatformIO`, so
+ * ONE SPELLING (WP7): the body lives in `src/league/platform.ts` as `broPlatformIO`, so
  * `ff sync-rosters` and this file cannot drift into two slightly different transports -- which is
  * exactly what had happened (the roster sync held its own Playwright/CDP body).
  */
@@ -389,13 +388,12 @@ function buildTools(dbPath: string | undefined, season: number) {
               followed = ` (followed blocked popup -> ${abs})`;
             }
             await page.waitForTimeout(1500);
-            const after = await page.evaluate((el) => { const wv = document.getElementById(el) as unknown as { getURL?: () => string; getTitle?: () => string }; return { url: wv?.getURL ? wv.getURL() : "", title: wv?.getTitle ? wv.getTitle() : "" }; }, g.elementId);
+            const after = await wvInfo();
             await browser?.close().catch(() => {});
             return { content: [{ type: "text", text: `${res}${followed} -> ${after.url || "(same page)"} | ${after.title || ""}` }] };
           } catch (e) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "click error: " + String(e).slice(0, 140) }] }; }
         },
       ),
-      ...(browserTools(tool as never, dbPath) as never[]),
       tool(
         "discover_leagues",
         "Browse MY fantasy homes on EVERY platform that has an adaptor (ESPN and Yahoo) and list my leagues/teams (leagueId, season, team) by reading the pages. Saves them to the store, each row stamped with the platform that found it.",
@@ -781,42 +779,49 @@ export function boardServer(dbPath: string | undefined, season: number) {
   });
 }
 
-// The app's RENDERER page (file://) over CDP. We drive the embedded ESPN webview THROUGH it: the
-// webview guest is a CDP target of type "webview" (playwright won't wrap it as a page), but the
-// renderer holds the <webview> element whose loadURL/executeJavaScript we can call. Showing Live
-// Draft first both attaches the guest and lets the user watch the agent browse (copresent).
-async function rendererPage(): Promise<{ browser: import("playwright-core").Browser | null; page: import("playwright-core").Page | null }> {
-  const port = process.env.FF_CDP_PORT ?? "9223";
+// D55: the agent's browse helpers run through the bim bro `espn` session (src/browser/broSession.ts),
+// not an Electron renderer. `page` is a thin shim kept so call sites keep their shape.
+// Yahoo is not supported (owner decision 2026-11-18): any guest other than espn is refused by name.
+type BroPage = { waitForTimeout(ms: number): Promise<void> };
+const broPage: BroPage = { waitForTimeout: (ms) => new Promise((r) => setTimeout(r, ms)) };
+async function rendererPage(): Promise<{ browser: { close(): Promise<void> } | null; page: BroPage | null }> {
   try {
-    const { chromium } = await import("playwright-core");
-    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-    const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://")) ?? null;
-    return { browser, page };
+    const { ensureSession } = await import("../browser/broSession.js");
+    await ensureSession("espn");
+    return { browser: { close: async () => {} }, page: broPage };
   } catch { return { browser: null, page: null }; }
 }
-// Show Live Draft (attaches the webview) and navigate it to url; returns the guest's url+title.
-async function wvNavigate(page: import("playwright-core").Page, url: string, elementId = "espnview"): Promise<{ url: string; title: string }> {
-  await page.evaluate(([u, el]) => { const w = window as unknown as { setView?: (v: string) => void }; if (w.setView) w.setView("live"); const wv = document.getElementById(el) as unknown as { loadURL?: (u: string) => void }; if (wv?.loadURL) wv.loadURL(u); }, [url, elementId]);
-  await page.waitForTimeout(4500);
-  return await page.evaluate((el) => { const wv = document.getElementById(el) as unknown as { getURL?: () => string; getTitle?: () => string }; return { url: wv?.getURL ? wv.getURL() : "", title: wv?.getTitle ? wv.getTitle() : "" }; }, elementId);
+function onlyEspn(elementId: string): void {
+  if (elementId !== "espnview") throw new Error("Yahoo not supported -- the bro cutover (D55) dropped Yahoo; ESPN is the only live platform");
 }
-// Run JS inside the webview guest and return the result (string). `elementId` names WHICH guest --
-// the app mounts one per platform, and defaulting to ESPN is what made every browse tool ESPN-only.
-async function wvEval(page: import("playwright-core").Page, js: string, elementId = "espnview"): Promise<string> {
-  return await page.evaluate(async ([code, el]) => { const wv = document.getElementById(el) as unknown as { executeJavaScript?: (c: string) => Promise<string> }; if (!wv?.executeJavaScript) return ""; try { return await wv.executeJavaScript(code); } catch { return ""; } }, [js, elementId]);
+// Navigate the espn session's tab to url; returns the tab's url+title.
+async function wvNavigate(_page: BroPage, url: string, elementId = "espnview"): Promise<{ url: string; title: string }> {
+  onlyEspn(elementId);
+  const { broGoto } = await import("../browser/broSession.js");
+  await broGoto("espn", url);
+  await broPage.waitForTimeout(3000);
+  return wvInfo();
 }
-// Authenticated ESPN fantasy READ through the app's logged-in webview: the fetch runs in the guest's
-// fantasy.espn.com page context, so its espn_s2/SWID cookies ride along (credentials:'include'). The
-// league API lives on lm-api-reads.* which honors CORS+credentials from the fantasy.espn.com origin.
-async function espnGet<T = unknown>(page: import("playwright-core").Page, url: string): Promise<T | null> {
-  const cur = await wvEval(page, "location.href");
-  if (!/fantasy\.espn\.com/.test(cur)) await wvNavigate(page, "https://fantasy.espn.com/football/");
-  const raw = await wvEval(page, `fetch(${JSON.stringify(url)},{credentials:'include'}).then(function(r){return r.ok?r.text():('HTTP '+r.status)}).catch(function(e){return 'ERR '+e.message})`);
-  if (!raw || raw.startsWith("HTTP") || raw.startsWith("ERR")) return null;
-  try { return JSON.parse(raw) as T; } catch { return null; }
+async function wvInfo(): Promise<{ url: string; title: string }> {
+  const { broEval } = await import("../browser/broSession.js");
+  const v = await broEval("espn", "JSON.stringify({url:location.href,title:document.title})");
+  try { return JSON.parse(String(v)) as { url: string; title: string }; } catch { return { url: "", title: "" }; }
 }
-// My SWID (identifies my team among the league's owners), read from the guest's cookies.
-async function espnSwid(page: import("playwright-core").Page): Promise<string> {
+// Run JS in the espn tab and return the result as a string.
+async function wvEval(_page: BroPage, js: string, elementId = "espnview"): Promise<string> {
+  onlyEspn(elementId);
+  const { broEval } = await import("../browser/broSession.js");
+  try { const v = await broEval("espn", js); return typeof v === "string" ? v : JSON.stringify(v ?? ""); } catch (e) { return "ERR:" + (e as Error).message; }
+}
+// Authenticated ESPN fantasy READ in the bro session (credentials ride along in the page context).
+async function espnGet<T = unknown>(_page: BroPage, url: string): Promise<T | null> {
+  try {
+    const { broFetch } = await import("../browser/broSession.js");
+    return JSON.parse(await broFetch(url)) as T;
+  } catch { return null; }
+}
+// My SWID (identifies my team among the league's owners), read from the page's cookies.
+async function espnSwid(page: BroPage): Promise<string> {
   return await wvEval(page, "(document.cookie.match(/SWID=([^;]+)/)||[])[1]||''");
 }
 // `activeLeague` lived here -- a THIRD answer to "which league" (last-synced, current season

@@ -5,14 +5,12 @@
  * the `x-fantasy-filter` header, and `defaultPositionId` (ESPN numbers positions; 4 is a tight end).
  * Consumers see nothing but the types in ./types.
  *
- * Transport is the app's embedded webview via WebviewPage.fetchText, so requests carry the user's
+ * Transport is the bim bro `espn` session (src/browser/broSession.ts), so requests carry the user's
  * real session. We never hold ESPN credentials, and the same path serves any authenticated site --
- * a Sleeper or Yahoo adaptor reuses it unchanged.
+ * (ESPN only; Yahoo is not supported after D55).
  */
 import type { Database as DB } from "better-sqlite3";
-import { attachWebview } from "../browser/webviewPage.js";
-import type { WebviewPage } from "../browser/webviewPage.js";
-import type { Browser } from "playwright-core";
+import { broPage, type BroPage } from "../browser/broSession.js";
 import type { AcquisitionRules, DraftPick, FreeAgent, LeagueFormat, LeagueProvider, LeagueSchedule, LeagueShape, LeagueTeam, SeasonSnapshot } from "./types.js";
 // The calendar is a fact with a source; these two functions are where it is read and validated.
 // (index.ts imports this adaptor DYNAMICALLY, so this static edge does not close a cycle.)
@@ -72,8 +70,8 @@ export function seasonFormat(ss: Record<string, unknown> | undefined): SeasonSna
 export class EspnLeague implements LeagueProvider {
   readonly platform = "espn";
   private constructor(
-    private readonly browser: Browser,
-    private readonly wv: WebviewPage,
+
+    private readonly wv: BroPage,
     private readonly leagueId: string,
     private readonly teamId: string,
     private readonly cfg: EspnConfig,
@@ -92,16 +90,12 @@ export class EspnLeague implements LeagueProvider {
     const cfg = ctx.config as unknown as EspnConfig;
     if (!Array.isArray(cfg.slots) || !cfg.slots.length) throw new Error(`config:${row.league_id} has no lineup slots -- re-sync the league.`);
 
-    const { browser, raw: wv } = await attachWebview();
+    const wv = broPage("espn");
     if (!/fantasy\.espn\.com/.test(await wv.refreshUrl())) {
       await wv.goto("https://fantasy.espn.com/football/");
       await wv.waitForTimeout(4000);
-      if (!/fantasy\.espn\.com/.test(await wv.refreshUrl())) {
-        await browser.close().catch(() => {});
-        throw new Error("could not bring the webview to ESPN -- open the app and log in.");
-      }
     }
-    return new EspnLeague(browser, wv, row.league_id, String(row.team_id), cfg);
+    return new EspnLeague(wv, row.league_id, String(row.team_id), cfg);
   }
 
   /** The shape, with the calendar taken from the stored FORMAT BLOCK rather than a literal 14.
@@ -423,5 +417,5 @@ export class EspnLeague implements LeagueProvider {
     return { divisions, games };
   }
 
-  async close(): Promise<void> { await this.browser.close().catch(() => {}); }
+  async close(): Promise<void> { /* bro session stays up; nothing to release */ }
 }

@@ -15,7 +15,7 @@
  * the active league, so an inactive onboard cannot disturb the incumbent's config either.
  */
 import Database from "better-sqlite3";
-import { platformFor, publicPlatformIO, bridgePlatformIO, knownPlatforms, type PlatformIO } from "../src/league/platform.js";
+import { platformFor, publicPlatformIO, broPlatformIO, knownPlatforms, type PlatformIO } from "../src/league/platform.js";
 import { slotEligibility } from "../src/draft/slots.js";
 import { valueKey } from "../src/data/formatKey.js";
 
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
    * on the DECLARATION rather than on the platform's name means a fourth adaptor gets the right
    * transport without editing this line.
    */
-  const io: PlatformIO = plat.webview ? bridgePlatformIO(plat.host) : publicPlatformIO();
+  const io: PlatformIO = plat.webview ? broPlatformIO(plat.host) : publicPlatformIO();
   console.log(`platform ${plat.id} | host ${plat.host} | transport ${plat.webview ? "app bridge (login required)" : "public fetch (no session)"}`);
 
   const s = await plat.syncSettings(io, leagueId!, season);

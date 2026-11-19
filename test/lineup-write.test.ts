@@ -28,18 +28,6 @@ test("a ROSTER body may only EXECUTE LINEUP moves inside our team", () => {
   assert.throws(() => assertWritableUrl(URL, JSON.stringify({ type: "ROSTER", executionType: "EXECUTE" })), /no items/);
 });
 
-test("the app's ROSTER rules are identical to the shared lists", () => {
-  const main = readFileSync("app/main.js", "utf8");
-  const list = (name: string) => {
-    const line = main.split("\n").find((l) => l.includes(`const ${name}`));
-    assert.ok(line, `could not find ${name} in app/main.js`);
-    const m = new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(line!);
-    return m![1].split(",").map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
-  };
-  assert.deepEqual(list("ALLOWED_ROSTER_EXECUTION_TYPES"), [...ESPN_ROSTER_EXECUTION_TYPES]);
-  assert.deepEqual(list("ALLOWED_ROSTER_ITEM_TYPES"), [...ESPN_ROSTER_ITEM_TYPES]);
-});
-
 test("the ESPN lineup body matches the shape this league records for a lineup move, and passes the guard", async () => {
   // Recorded (raw_league_transaction, 2026 wk6): ROSTER / EXECUTE, items LINEUP with from/to lineup slot.
   const { espnPlatform } = await import("../src/league/espnPlatform.js");

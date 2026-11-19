@@ -30,11 +30,11 @@
  */
 import { readFileSync } from "node:fs";
 import {
-  bridgePlatformIO, cookiePlatformIO, publicPlatformIO, type Platform, type PlatformIO,
+  broPlatformIO, cookiePlatformIO, publicPlatformIO, type Platform, type PlatformIO,
 } from "./platform.js";
-import { bridgeWriteIO, cookieWriteIO, type PlatformWriteIO } from "./writeIO.js";
+import { broWriteIO, cookieWriteIO, type PlatformWriteIO } from "./writeIO.js";
 
-export type SessionKind = "bridge" | "cookie";
+export type SessionKind = "bro" | "cookie";
 
 export interface SessionOpts {
   /** An already-built provider. Wins over everything -- this is how a test or an embedding agent
@@ -54,7 +54,8 @@ export interface SessionOpts {
  *  untestable in the same process. */
 function fromEnv(): { kind?: SessionKind; cookieFile?: string } {
   const raw = String(process.env.FF_SESSION ?? "").trim().toLowerCase();
-  const kind = raw === "bridge" || raw === "cookie" ? (raw as SessionKind) : undefined;
+  if (raw === "bridge") throw new Error("FF_SESSION=bridge is gone: the Electron app was retired by D55. Use bro (default) or cookie.");
+  const kind = raw === "bro" || raw === "cookie" ? (raw as SessionKind) : undefined;
   const cookieFile = String(process.env.FF_SESSION_COOKIE_FILE ?? "").trim() || undefined;
   // A cookie file with no explicit kind is an unambiguous request for the cookie session; requiring
   // both would be a footgun whose only symptom is silently using the wrong login.
@@ -81,16 +82,16 @@ function cookieFor(opts: SessionOpts, env: { cookieFile?: string }): string {
  *  produced a number -- a read nobody can attribute is a read nobody can audit. */
 export function sessionKind(opts: SessionOpts = {}): SessionKind | "supplied" {
   if (opts.io || opts.writeIO) return "supplied";
-  return opts.kind ?? fromEnv().kind ?? "bridge";
+  return opts.kind ?? fromEnv().kind ?? "bro";
 }
 
 /** A READ session for `host`. */
 export function resolveIO(host: string, opts: SessionOpts = {}): PlatformIO {
   if (opts.io) return opts.io;
   const env = fromEnv();
-  const kind = opts.kind ?? env.kind ?? "bridge";
+  const kind = opts.kind ?? env.kind ?? "bro";
   if (kind === "cookie") return cookiePlatformIO(cookieFor(opts, env), { timeoutMs: opts.timeoutMs });
-  return bridgePlatformIO(host, opts.timeoutMs ?? 25000);
+  return broPlatformIO(host, opts.timeoutMs ?? 25000);
 }
 
 /** A READ session for a platform, using the host it declares. The reason `host` was lifted off
@@ -109,7 +110,7 @@ export function resolveIOFor(platform: Platform, opts: SessionOpts = {}): Platfo
 export function resolveWriteIO(opts: SessionOpts = {}): PlatformWriteIO {
   if (opts.writeIO) return opts.writeIO;
   const env = fromEnv();
-  const kind = opts.kind ?? env.kind ?? "bridge";
+  const kind = opts.kind ?? env.kind ?? "bro";
   if (kind === "cookie") return cookieWriteIO(cookieFor(opts, env), { timeoutMs: opts.timeoutMs });
-  return bridgeWriteIO(opts.timeoutMs ?? 25000);
+  return broWriteIO(opts.timeoutMs ?? 25000);
 }

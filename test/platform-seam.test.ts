@@ -18,7 +18,6 @@ import { espnDiscoverFromLinks, espnIdentityProblem, espnPlatform, espnSlotsToCo
 import { yahooPlatform } from "../src/league/yahoo.js";
 
 const require = createRequire(import.meta.url);
-const { resolveBridgeHost, bridgeUrlAllowed, BRIDGE_HOSTS, urlOnHost } = require("../app/bridgeHosts.js");
 
 test("the registry resolves every known platform and REFUSES an unknown one by name", async () => {
   for (const id of knownPlatforms()) assert.equal((await platformFor(id)).id, id);
@@ -107,84 +106,4 @@ test("the ESPN identity guard fires on a payload for another league, and on an u
   assert.equal(espnIdentityProblem({ id: 462233 }, "462233"), null);         // the positive case
   assert.match(String(espnIdentityProblem({ id: 129048 }, "462233")), /asked for league 462233 but the payload is league 129048/);
   assert.match(String(espnIdentityProblem({}, "462233")), /carries no league id/);
-});
-
-test("the bridge host allowlist: default espn, platform names, and NO fallback", () => {
-  assert.deepEqual(Object.keys(BRIDGE_HOSTS).sort(), ["espn.com", "fantasysports.yahoo.com"]);
-  // Omitted host = espn.com. This is what keeps every pre-existing caller byte-identical.
-  assert.equal(resolveBridgeHost(undefined), "espn.com");
-  assert.equal(resolveBridgeHost(""), "espn.com");
-  assert.equal(resolveBridgeHost("espn.com"), "espn.com");
-  // A caller may name the PLATFORM instead of the host.
-  assert.equal(resolveBridgeHost("yahoo"), "fantasysports.yahoo.com");
-  assert.equal(resolveBridgeHost("ESPN"), "espn.com");
-  // An unknown host is NULL -- never a default guest, which is the P-3 bug in miniature.
-  assert.equal(resolveBridgeHost("example.com"), null);
-  assert.equal(resolveBridgeHost("yahoo.com"), null);
-  assert.equal(resolveBridgeHost("sleeper.app"), null);
-});
-
-test("the allowlist is PER HOST: a url may not be fetched with another platform's session", () => {
-  const espnRead = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/462233?view=mTeam";
-  const yahooPage = "https://football.fantasysports.yahoo.com/f1/129048/settings";
-  // positive: each host may fetch its own urls
-  assert.equal(bridgeUrlAllowed("espn.com", espnRead), true);
-  assert.equal(bridgeUrlAllowed(undefined, espnRead), true);
-  assert.equal(bridgeUrlAllowed("yahoo", yahooPage), true);
-  // negative: crossed over, refused both ways
-  assert.equal(bridgeUrlAllowed("espn.com", yahooPage), false);
-  assert.equal(bridgeUrlAllowed("yahoo", espnRead), false);
-  // and nothing else at all
-  assert.equal(bridgeUrlAllowed("espn.com", "https://example.com/"), false);
-  assert.equal(bridgeUrlAllowed("yahoo", "https://yahoo.com/"), false);
-  assert.equal(bridgeUrlAllowed("example.com", "https://example.com/"), false);
-  // http, and a host that merely CONTAINS the allowed one, are both refused
-  assert.equal(bridgeUrlAllowed("espn.com", "http://fantasy.espn.com/x"), false);
-  assert.equal(bridgeUrlAllowed("espn.com", "https://espn.com.evil.test/x"), false);
-  assert.equal(bridgeUrlAllowed("yahoo", "https://fantasysports.yahoo.com.evil.test/x"), false);
-  // A lookalike that merely ENDS in the host is refused (the old `[a-z0-9.-]*espn\.com/` prefix let it in).
-  assert.equal(bridgeUrlAllowed("espn.com", "https://notespn.com/x"), false);
-  assert.equal(bridgeUrlAllowed("yahoo", "https://evilfantasysports.yahoo.com/x"), false);
-  // The apex and real subdomains still pass, in any case; a host-less query mention does not.
-  assert.equal(bridgeUrlAllowed("espn.com", "https://espn.com/x"), true);
-  assert.equal(bridgeUrlAllowed("espn.com", "https://LM-API-READS.FANTASY.ESPN.COM/apis/v3/x"), true);
-  assert.equal(bridgeUrlAllowed("espn.com", "https://example.com/?u=https://fantasy.espn.com/"), false);
-  // userinfo, an explicit port, and junk are refused.
-  assert.equal(bridgeUrlAllowed("espn.com", "https://fantasy.espn.com@evil.test/x"), false);
-  assert.equal(bridgeUrlAllowed("espn.com", "https://user:pw@fantasy.espn.com/x"), false);
-  assert.equal(bridgeUrlAllowed("espn.com", "https://fantasy.espn.com:8443/x"), false);
-  assert.equal(bridgeUrlAllowed("espn.com", "not a url"), false);
-  assert.equal(bridgeUrlAllowed("espn.com", ""), false);
-});
-
-test("main.js /fetch gates on bridgeUrlAllowed, not a per-host regex", () => {
-  const src = readFileSync(new URL("../app/main.js", import.meta.url), "utf8");
-  assert.match(src, /if \(!bridgeUrlAllowed\(fetchHost, url\)\)/);
-  assert.doesNotMatch(src, /BRIDGE_HOSTS\[[a-zA-Z]+\]\.test\(/);
-});
-
-test("a guest is ON a host by its HOSTNAME, not by the host appearing anywhere in its url (issue #25)", () => {
-  // The signed-out Yahoo guest: on login.yahoo.com, with the platform in its return address.
-  const yahooLogin = "https://login.yahoo.com/?.src=fantasy&.done=https%3A%2F%2Ffootball.fantasysports.yahoo.com%2Ff1%2F129048";
-  assert.equal(urlOnHost(yahooLogin, "fantasysports.yahoo.com"), false);
-  assert.equal(urlOnHost("https://football.fantasysports.yahoo.com/f1/129048", "fantasysports.yahoo.com"), true);
-  assert.equal(urlOnHost("https://fantasysports.yahoo.com/", "fantasysports.yahoo.com"), true);
-  // ESPN: subdomains count, a lookalike or a mention in the path/query does not.
-  assert.equal(urlOnHost("https://fantasy.espn.com/football/team?leagueId=462233", "espn.com"), true);
-  assert.equal(urlOnHost("https://FANTASY.ESPN.COM/x", "espn.com"), true);
-  assert.equal(urlOnHost("https://registerdisney.go.com/login?return=https://fantasy.espn.com/", "espn.com"), false);
-  assert.equal(urlOnHost("https://notespn.com/", "espn.com"), false);
-  assert.equal(urlOnHost("https://espn.com.evil.test/", "espn.com"), false);
-  assert.equal(urlOnHost("about:blank", "espn.com"), false);
-  assert.equal(urlOnHost("", "espn.com"), false);
-  assert.equal(urlOnHost("https://fantasy.espn.com/", ""), false);
-  // Every allowlisted host resolves its own guest.
-  for (const h of Object.keys(BRIDGE_HOSTS)) assert.equal(urlOnHost(`https://www.${h}/`, h), true);
-});
-
-test("main.js picks guests with urlOnHost, not a regex over the whole url", () => {
-  const src = readFileSync(new URL("../app/main.js", import.meta.url), "utf8");
-  const body = src.slice(src.indexOf("function guestWebContents("), src.indexOf("function guestWebContents(") + 1500);
-  assert.match(body, /urlOnHost\(url\(wc\), host\)/);
-  assert.doesNotMatch(body, /new RegExp/);
 });

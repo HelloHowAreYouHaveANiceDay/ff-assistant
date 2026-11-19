@@ -38,7 +38,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { gunzipSync, gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { openDb, nowIso, type DB } from "../db/db.js";
-import { bridgeFetch } from "../browser/appBridge.js";
+import { broFetch } from "../browser/broSession.js";
 import { DATA_ROOT } from "./paths.js";
 import { ESPN_READS_BASE as HOST } from "./espnApi.js";
 import { round3 } from "../round3.js";
@@ -122,7 +122,7 @@ export async function espnGet(
   const fresh = opts?.freshAfter ?? null;
   const captured = existsSync(f) ? statSync(f).mtime : null;
   if (captured && !(fresh && captured < fresh)) return JSON.parse(gunzipSync(readFileSync(f)).toString("utf8"));
-  const txt = await bridgeFetch(url, headers, 60000);
+  const txt = await broFetch(url, headers, 60000);
   let j: unknown;
   try { j = JSON.parse(txt); } catch { throw new Error(`ESPN returned non-JSON for ${key}: ${txt.slice(0, 160)}`); }
   writeFileSync(f, gzipSync(Buffer.from(JSON.stringify(j), "utf8")));

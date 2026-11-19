@@ -182,9 +182,9 @@ export async function executeTradeProposal(
   // sent. It used to be injected into the payload afterwards, which meant the two could differ.
   let spid: number | null = null;
   try {
-    const { bridgeAvailable, bridgeFetch } = await import("../browser/appBridge.js");
-    if (bridgeAvailable()) {
-      const b = await bridgeFetch(`${ESPN_READS_BASE}/seasons/${resolution.season}/segments/0/leagues/${resolution.leagueId}?view=mStatus`);
+    const { broAvailable, broFetch } = await import("../browser/broSession.js");
+    if (await broAvailable()) {
+      const b = await broFetch(`${ESPN_READS_BASE}/seasons/${resolution.season}/segments/0/leagues/${resolution.leagueId}?view=mStatus`);
       const sp = (JSON.parse(b) as { scoringPeriodId?: number }).scoringPeriodId;
       if (Number.isFinite(sp)) spid = Number(sp);
     }

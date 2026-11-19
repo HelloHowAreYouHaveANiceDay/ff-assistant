@@ -8,7 +8,7 @@
  * projection is worth roughly +12 championship points at equal accuracy; this is the weekly test of
  * the same claim.
  *
- * READ-ONLY, THROUGH THE BRIDGE. src/browser/appBridge.ts posts a fetch into the desktop app's
+ * READ-ONLY, THROUGH THE BRIDGE. src/browser/broSession.ts posts a fetch into the desktop app's
  * logged-in webview. No ESPN write of any kind happens here and none can: the only route used is
  * `/fetch`, with a GET URL.
  *
@@ -19,7 +19,7 @@
  * nothing -- it does not fall back to a season block divided by games, which would be our arithmetic
  * wearing ESPN's name and would make the third baseline a fourth copy of the first.
  */
-import { bridgeAvailable, bridgeFetch } from "../browser/appBridge.js";
+import { broAvailable, broFetch } from "../browser/broSession.js";
 import { nowIso, type DB } from "../db/db.js";
 import { ESPN_READS_BASE as HOST } from "../data/espnApi.js";
 
@@ -50,8 +50,8 @@ export interface EspnFetchResult {
 export async function fetchEspnWeekly(opts: {
   season: number; week: number; leagueId?: string; limit?: number;
 }): Promise<EspnFetchResult> {
-  if (!bridgeAvailable()) {
-    return { ok: false, reason: "app bridge not available -- open the desktop app and log in to ESPN", rows: [], players: 0 };
+  if (!(await broAvailable())) {
+    return { ok: false, reason: "bro espn session unavailable -- run `bim bro auth --site espn`", rows: [], players: 0 };
   }
   const limit = opts.limit ?? 800;
   // THE WEEK GOES IN THE URL, as `scoringPeriodId`. Measured, not guessed
@@ -66,9 +66,9 @@ export async function fetchEspnWeekly(opts: {
   const filter = { players: { limit, sortPercOwned: { sortPriority: 1, sortAsc: false } } };
   let body: string;
   try {
-    body = await bridgeFetch(url, { "x-fantasy-filter": JSON.stringify(filter) });
+    body = await broFetch(url, { "x-fantasy-filter": JSON.stringify(filter) });
   } catch (e) {
-    return { ok: false, reason: `bridge fetch failed: ${e instanceof Error ? e.message : e}`, rows: [], players: 0 };
+    return { ok: false, reason: `bro fetch failed: ${e instanceof Error ? e.message : e}`, rows: [], players: 0 };
   }
   let json: { players?: EspnEntry[] };
   try { json = JSON.parse(body) as { players?: EspnEntry[] }; }

@@ -11,7 +11,7 @@
 // ESPN publishes `appliedTotal` per player per week -- the points it actually awarded. We recompute
 // the same player-weeks from nflverse and compare.
 import Database from "better-sqlite3";
-import { attachWebview } from "../src/browser/webviewPage.ts";
+import { broPage } from "../src/browser/broSession.ts";
 import { scoreWeek, scoreKickerWeek, scoreDefenseWeek, DEFAULT_SCORING } from "../src/draft/scoring.ts";
 import { fetchCsv } from "../src/data/nflverse.ts";
 import { resolveLeagueContext } from "../src/data/leagueContext.ts";
@@ -37,7 +37,7 @@ const lg = vsLeague.leagueId ? { league_id: vsLeague.leagueId } : undefined;
 db.close();
 const scoring = cfg.scoring_rules ?? DEFAULT_SCORING;
 
-const { browser, raw: wv } = await attachWebview();
+const wv = broPage("espn");
 if (!/fantasy\.espn\.com/.test(await wv.refreshUrl())) { await wv.goto("https://fantasy.espn.com/football/"); await wv.waitForTimeout(4000); }
 // mRoster on the LEAGUE endpoint (not the schedule) is the view that populates fullName AND
 // defaultPositionId alongside the scored stats. The matchup view returns stats only, which is why a
@@ -55,7 +55,6 @@ for (const WK of WEEKS) {
         team: ESPN_TEAM[st.proTeamId] ?? null, applied: st.appliedTotal });
     }
 }
-await browser.close();
 console.log(`ESPN: ${espn.length} scored player-weeks over weeks ${WEEKS.join(", ")} of ${YR}`);
 
 // --- our side, from nflverse -------------------------------------------------------------------

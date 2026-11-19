@@ -42,23 +42,23 @@ const cookieFileWith = (text: string): string => {
   return f;
 };
 
-test("THE DEFAULT IS THE BRIDGE -- an existing install is unchanged", () => {
+test("THE DEFAULT IS BRO -- the Electron bridge is gone (D55)", () => {
   withEnv(CLEAN, () => {
-    assert.equal(sessionKind(), "bridge");
+    assert.equal(sessionKind(), "bro");
     // `via` is the attributable name of the transport, so asserting it is asserting WHICH session
     // was built -- not merely that something was. (An earlier draft of this line compared
     // `resolveIO(...).constructor === Object ? "ok" : "ok"`, which passes on every possible input.)
-    assert.equal(resolveWriteIO().via, "the desktop app's authenticated ESPN webview");
+    assert.equal(resolveWriteIO().via, "the bim bro `espn` session");
   });
 });
 
-test("IT CAN RETURN A COOKIE SESSION -- the resolver is not a bridge with extra steps", () => {
+test("IT CAN RETURN A COOKIE SESSION -- the resolver is not bro with extra steps", () => {
   // The positive control. Without this, every assertion above passes on a module that resolves
   // nothing, which is exactly the seven hardcoded calls it was written to replace.
   withEnv(CLEAN, () => {
     const w = resolveWriteIO({ kind: "cookie", cookie: "SWID=abc; espn_s2=def" });
     assert.equal(w.via, "a supplied ESPN cookie");
-    assert.notEqual(w.via, resolveWriteIO().via, "the cookie session and the bridge must differ");
+    assert.notEqual(w.via, resolveWriteIO().via, "the cookie session and bro must differ");
   });
 });
 
@@ -71,7 +71,7 @@ test("THE ENVIRONMENT can select it, for an agent that cannot pass flags", () =>
   // AND IT IS READ AT CALL TIME, not captured at import: the line above and the line below run in
   // the same process against the same module instance. A resolver that cached the environment when
   // it was first imported would still say "cookie" here.
-  withEnv(CLEAN, () => assert.equal(sessionKind(), "bridge"));
+  withEnv(CLEAN, () => assert.equal(sessionKind(), "bro"));
 });
 
 test("A COOKIE FILE ALONE is an unambiguous request for a cookie session", () => {
@@ -99,12 +99,19 @@ test("A COOKIE SESSION WITH NO COOKIE THROWS rather than quietly using the app's
   });
 });
 
-test("AN UNKNOWN FF_SESSION VALUE falls back to the bridge rather than failing closed on a typo", () => {
+test("AN UNKNOWN FF_SESSION VALUE falls back to bro rather than failing closed on a typo", () => {
   // Deliberate, and the opposite of the write allowlist's rule. A misspelled session name should not
   // brick every read verb; it should behave as it always did. The write GUARD is where failing
   // closed matters, and it is unaffected by this.
   withEnv({ FF_SESSION: "chrome", FF_SESSION_COOKIE_FILE: undefined }, () => {
-    assert.equal(sessionKind(), "bridge");
+    assert.equal(sessionKind(), "bro");
+  });
+});
+
+test("FF_SESSION=bridge is REJECTED with a message naming D55 (the app is gone)", () => {
+  withEnv({ FF_SESSION: "bridge", FF_SESSION_COOKIE_FILE: undefined }, () => {
+    assert.throws(() => sessionKind(), /D55/);
+    assert.throws(() => resolveIO("espn.com"), /D55/);
   });
 });
 
@@ -123,14 +130,14 @@ test("A: the platform's host is readable WITHOUT going through the Electron webv
   assert.ok(!("host" in (espn.webview as object)), "host must no longer live on the webview spec");
 });
 
-test("D: the Yahoo adapter does not statically import the Electron bridge", async () => {
+test("D: the Yahoo adapter does not statically import the bro transport", async () => {
   // A Yahoo-only agent should not pull the desktop app into its module graph. Asserted on the
   // SOURCE rather than on behaviour, because a static import has its effect at load time and a
   // behavioural test would happily pass with it present.
   const { readFileSync } = await import("node:fs");
   const src = readFileSync("src/league/yahoo.ts", "utf8");
   const importLines = src.split("\n").filter((l) => /^\s*import .*from ["']/.test(l));
-  assert.ok(!importLines.some((l) => l.includes("appBridge")),
+  assert.ok(!importLines.some((l) => l.includes("broSession")),
     `src/league/yahoo.ts statically imports the app bridge again: ${
-      importLines.filter((l) => l.includes("appBridge")).join(" | ")}`);
+      importLines.filter((l) => l.includes("broSession")).join(" | ")}`);
 });

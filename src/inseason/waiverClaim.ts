@@ -35,9 +35,9 @@ export interface ClaimState {
 type Get = (url: string, headers?: Record<string, string>) => Promise<unknown>;
 
 async function bridgeGet(): Promise<Get> {
-  const { bridgeAvailable, bridgeFetch } = await import("../browser/appBridge.js");
-  if (!bridgeAvailable()) throw new Error("the desktop app is not running -- claims are read and written through its ESPN session");
-  return async (url, headers) => JSON.parse(await bridgeFetch(url, headers));
+  const { broAvailable, broFetch } = await import("../browser/broSession.js");
+  if (!(await broAvailable())) throw new Error("bim bro is unavailable -- claims are read and written through the bro espn session");
+  return async (url, headers) => JSON.parse(await broFetch(url, headers));
 }
 
 interface EspnTeam {

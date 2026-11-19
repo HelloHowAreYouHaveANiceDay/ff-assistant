@@ -2,7 +2,7 @@
  * A SESSION PROVIDER THAT CANNOT ANSWER MUST SAY SO. IT MUST NOT ANSWER "EMPTY".
  *
  * `PlatformIO` is one method -- "GET this URL with the user's session, return the body" -- and for a
- * long time `bridgePlatformIO` was its only implementation, so the repo assumed every caller could
+ * long time the app bridge was its only implementation (now `broPlatformIO`), so the repo assumed every caller could
  * speak the Electron app's bridge protocol. `cookiePlatformIO` and `filePlatformIO` are the two ways
  * in that do not need the app: a cookie plus a plain fetch, and a map from URL token to saved file.
  *

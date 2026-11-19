@@ -185,8 +185,14 @@ export interface PlatformIO {
  * with three slightly different transports -- which is how the roster sync came to hold its own
  * Playwright/CDP body while `league_sync` went through the bridge.
  */
-export function bridgePlatformIO(host: string, timeoutMs = 25000): PlatformIO {
-  return { get: async (url, headers) => (await import("../browser/appBridge.js")).bridgeFetch(url, headers, timeoutMs, { host }) };
+export function broPlatformIO(host: string, timeoutMs = 25000): PlatformIO {
+  return {
+    get: async (url, headers) => {
+      const bro = await import("../browser/broSession.js");
+      bro.siteForHost(host);          // Yahoo / unknown hosts are refused by name before any bim call
+      return bro.broFetch(url, headers, timeoutMs);
+    },
+  };
 }
 
 /**

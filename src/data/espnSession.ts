@@ -17,7 +17,7 @@
  * sync has.
  *
  * IO IS INJECTED, ALWAYS. It takes a `PlatformIO` (src/league/platform.ts) rather than building a
- * transport, so the same probe covers the Electron bridge (`bridgePlatformIO`), a server-side
+ * transport, so the same probe covers the Electron bridge (`broPlatformIO`), a server-side
  * cookie session (`cookiePlatformIO`) and a saved-payload file handoff (`filePlatformIO`). A probe
  * that constructed its own `fetch` would be measuring a session nobody uses.
  *
@@ -121,7 +121,7 @@ function seasonOf(payload: unknown): number | null {
 export async function probeEspnSession(io: PlatformIO, leagueId: string, season: number): Promise<SessionProbe> {
   // Argument bugs throw. A caller that probed the empty string would otherwise get back a tidy
   // `ok: false` and conclude the session is dead, which is a diagnosis of the wrong machine.
-  if (!io || typeof io.get !== "function") throw new Error("probeEspnSession: needs a PlatformIO with a get(). Pass bridgePlatformIO/cookiePlatformIO/filePlatformIO -- the probe never builds its own transport.");
+  if (!io || typeof io.get !== "function") throw new Error("probeEspnSession: needs a PlatformIO with a get(). Pass broPlatformIO/cookiePlatformIO/filePlatformIO -- the probe never builds its own transport.");
   const id = String(leagueId ?? "").trim();
   if (!id) throw new Error("probeEspnSession: empty leagueId. Probing for no league cannot tell you anything about the session.");
   if (!Number.isFinite(season)) throw new Error(`probeEspnSession: season must be a number, got ${JSON.stringify(season)}.`);

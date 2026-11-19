@@ -11,7 +11,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 
-const MAIN = readFileSync("app/main.js", "utf8");
 
 test("the stamp MOVES when the board is rewritten (the positive direction)", (t) => {
   if (!existsSync("data/ff.db")) return t.skip("no local store");
@@ -51,34 +50,3 @@ test("the stamp does NOT move when nothing happens (it can also say 'unchanged')
   db.close();
 });
 
-// The notification hangs on the two chokepoints every `ff` invocation passes through. If it were
-// hung on a list of board-mutating commands instead, that list would rot as tools are added -- there
-// are 25 MCP tools today and several rewrite values.
-test("notification is wired to BOTH engine chokepoints, not to a command list", () => {
-  assert.match(MAIN, /p\.on\("close"[\s\S]{0,160}?noticeBoardChange\(\)/,
-    "ffRun (one-shot verbs) must notify on completion");
-  assert.match(MAIN, /if \(method !== "board-stamp"\) debouncedNotice\(\)/,
-    "rpc (the serve helper) must notify, excluding only its own probe");
-  // The exclusion is not cosmetic: without it noticeBoardChange -> rpc -> noticeBoardChange forever.
-  const notice = MAIN.slice(MAIN.indexOf("async function noticeBoardChange"));
-  assert.match(notice.slice(0, 400), /rpc\("board-stamp"\)/,
-    "noticeBoardChange must probe via board-stamp, the method rpc excludes");
-});
-
-test("main sends the STAMP, so the renderer decides rather than trusting the ping", () => {
-  assert.match(MAIN, /webContents\.send\("mc:boardChanged",\s*s\)/,
-    "the payload must be the stamp object, not a bare event");
-  assert.match(MAIN, /s\.builtAt !== lastBoardStamp/,
-    "main must only push when the stamp actually moved");
-});
-
-test("the renderer keeps an independent poll as a backstop to the push", () => {
-  const src = readFileSync("app/renderer/app.js", "utf8");
-  // WP14: the banner that bounds this slice is `showNoBoardBanner` now -- data.js is deleted, so
-  // there is no snapshot to fall back to and the bar states "NO LIVE BOARD" instead of "SNAPSHOT
-  // DATA from <date>". The function it bounds is unchanged.
-  const fn = src.slice(src.indexOf("function watchForRebuild"), src.indexOf("function showNoBoardBanner"));
-  assert.match(fn, /onBoardChanged/, "must subscribe to the push");
-  assert.match(fn, /setInterval\(/, "must ALSO poll -- push depends on main being wired, which is the bug class here");
-  assert.match(fn, /stamp === seenAt/, "both paths must compare the same stamp so either can win");
-});

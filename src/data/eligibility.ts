@@ -7,7 +7,7 @@
  * may this player be started in" -- `eligibleSlots` on every `kona_player_info` player object -- was
  * fetched for free on every board build and thrown away. This ingests it.
  *
- * READ-ONLY, THROUGH THE BRIDGE. src/browser/appBridge.ts posts a GET into the desktop app's
+ * READ-ONLY, THROUGH THE BRIDGE. src/browser/broSession.ts posts a GET into the desktop app's
  * logged-in webview. No ESPN write happens here and none can: the only route used is `/fetch`.
  *
  * THE SLOT TABLE IS THE WHOLE SUBTLETY, so it is written out rather than inferred. ESPN's
@@ -23,7 +23,7 @@
  * the failure mode this comment exists to prevent. Only the DEDICATED ids become positions; the combo
  * and bench ids are recorded raw and otherwise ignored.
  */
-import { bridgeAvailable, bridgeFetch } from "../browser/appBridge.js";
+import { broAvailable, broFetch } from "../browser/broSession.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { nowIso, type DB } from "../db/db.js";
@@ -91,8 +91,8 @@ export function mapEligibility(season: number, p: EspnPlayerObj, fallbackId?: nu
 export async function fetchEspnEligibility(opts: {
   season: number; limit?: number; leagueId?: string;
 }): Promise<EligibilityFetch> {
-  if (!bridgeAvailable()) {
-    return { ok: false, reason: "app bridge not available -- open the desktop app and log in to ESPN", rows: [], players: 0 };
+  if (!(await broAvailable())) {
+    return { ok: false, reason: "bro espn session unavailable -- run `bim bro auth --site espn`", rows: [], players: 0 };
   }
   const limit = opts.limit ?? 2000;
   const base = opts.leagueId
@@ -101,8 +101,8 @@ export async function fetchEspnEligibility(opts: {
   const url = `${base}?view=kona_player_info`;
   const filter = { players: { limit, sortDraftRanks: { sortPriority: 1, sortAsc: true, value: "STANDARD" } } };
   let body: string;
-  try { body = await bridgeFetch(url, { "x-fantasy-filter": JSON.stringify(filter) }); }
-  catch (e) { return { ok: false, reason: `bridge fetch failed: ${e instanceof Error ? e.message : e}`, rows: [], players: 0 }; }
+  try { body = await broFetch(url, { "x-fantasy-filter": JSON.stringify(filter) }); }
+  catch (e) { return { ok: false, reason: `bro fetch failed: ${e instanceof Error ? e.message : e}`, rows: [], players: 0 }; }
   let json: { players?: EspnEntry[] };
   try { json = JSON.parse(body) as { players?: EspnEntry[] }; }
   catch { return { ok: false, reason: `ESPN returned non-JSON (${body.slice(0, 100)})`, rows: [], players: 0 }; }

@@ -1,23 +1,8 @@
-/**
- * THE WRITE ALLOWLIST, AND THE FACT THAT IT LIVES IN TWO PLACES THAT CANNOT SHARE CODE.
- *
- * Until 2026-09-18 the only thing restricting what this system could write to ESPN was a regex
- * inside `app/main.js`. That guard is real, but it belonged to ONE TRANSPORT: `bridgeWriteTransaction`
- * posts to the app, and the app checks the url. Giving writes a portable provider -- the whole point
- * of a write path an agent outside the desktop app can drive -- would have created a second route to
- * ESPN's write API with no allowlist at all. The safety property was a property of the Electron app,
- * not of the system.
- *
- * `src/league/writeIO.ts` now carries the allowlist, and every provider runs it. The app keeps its
- * own copy as defence in depth: two independent checks, neither relying on the other being right.
- *
- * THEY CANNOT SHARE CODE -- `app/main.js` is plain JavaScript in its own package with its own
- * `node_modules` -- so this file checks them against each other instead. That is the same rule the
- * repo applies wherever a guard is duplicated: derive or compare, never retype and trust.
- */
+/** THE WRITE ALLOWLIST (D55): one place, src/league/writeIO.ts, run by every provider incl. broWriteIO BEFORE anything reaches bim. The app-vs-TS agreement tests went with app/; fault-injection tests at the bottom prove broWriteIO refuses without spawning bim. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { broWriteIO } from "../src/league/writeIO.js";
+import { setExec } from "../src/browser/broSession.js";
 import {
   ESPN_WRITE_URL_PATTERN, MAX_WRITE_BODY, ESPN_WRITE_TYPES, ESPN_WAIVER_EXECUTION_TYPES, ESPN_FREEAGENT_EXECUTION_TYPES, assertWritableUrl,
   cookieWriteIO, recordingWriteIO,
@@ -32,41 +17,6 @@ const OK_BODY = JSON.stringify({ type: "TRADE_PROPOSAL", isLeagueManager: false,
 // ---------------------------------------------------------------------------------------------
 // 1. THE TWO COPIES MUST AGREE
 // ---------------------------------------------------------------------------------------------
-
-test("the app's allowlist regex is CHARACTER-IDENTICAL to the shared one", () => {
-  // If these ever diverge, one transport can write somewhere the other refuses -- and which one you
-  // got would depend on whether the desktop app happened to be running. That is the worst kind of
-  // safety property: real on the machine you tested and absent on the one you shipped to.
-  // ANCHORED ON THE WRITE HOST, not on a generic `^https` -- the first version used a non-greedy
-  // `.*?` and matched a DIFFERENT regex earlier in the file (`^https?:\/\/`), then reported the two
-  // allowlists as disagreeing. The comparison was invalidated by its own extraction, which is the
-  // failure this repo records as "suspect your own pipeline before the artifacts".
-  const main = readFileSync("app/main.js", "utf8");
-  const line = main.split("\n").find((l) => l.includes("lm-api-writes") && l.includes(".test(String(url))"));
-  assert.ok(line, "could not find the app's write allowlist line in app/main.js -- if it moved, point this test at it rather than deleting it");
-  const m = /\/(\^https[^\n]*?)\/i\.test\(String\(url\)\)/.exec(line!);
-  assert.ok(m, `found the allowlist line but could not extract its regex: ${line!.trim().slice(0, 120)}`);
-  const appPattern = m[1];
-  const shared = ESPN_WRITE_URL_PATTERN.source;
-  assert.equal(appPattern, shared,
-    "app/main.js and src/league/writeIO.ts disagree about what may be written. Make them identical.");
-});
-
-test("the app's PERMITTED OPERATIONS are identical to the shared list", () => {
-  // The url allowlist above constrains the ENDPOINT. It does not, and never did, constrain the
-  // OPERATION: ESPN serves waivers, free-agent adds, drops and LINEUP changes from that same
-  // transactions url, differing only by `type`. Both guards now check it, and both must agree for
-  // the same reason the regexes must -- otherwise which operations are possible depends on whether
-  // the desktop app happens to be running.
-  const main = readFileSync("app/main.js", "utf8");
-  const line = main.split("\n").find((l) => l.includes("const ALLOWED_WRITE_TYPES"));
-  assert.ok(line, "could not find ALLOWED_WRITE_TYPES in app/main.js -- if it moved, point this test at it rather than deleting it");
-  const m = /const ALLOWED_WRITE_TYPES = \[([^\]]*)\]/.exec(line!);
-  assert.ok(m, `found the line but could not extract the list: ${line!.trim().slice(0, 120)}`);
-  const appTypes = m![1].split(",").map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
-  assert.deepEqual(appTypes, [...ESPN_WRITE_TYPES],
-    "app/main.js and src/league/writeIO.ts disagree about which operations may be written.");
-});
 
 test("a LINEUP or other non-permitted body is REFUSED at the permitted url", () => {
   // THE REGRESSION THIS EXISTS FOR. Every body below goes to a url the allowlist permits, because
@@ -95,15 +45,6 @@ test("a WAIVER may only PLACE or CANCEL a claim -- any other executionType is re
   assert.deepEqual([...ESPN_WAIVER_EXECUTION_TYPES], ["EXECUTE", "CANCEL"]);
 });
 
-test("the app's WAIVER executionTypes are identical to the shared list", () => {
-  const main = readFileSync("app/main.js", "utf8");
-  const line = main.split("\n").find((l) => l.includes("const ALLOWED_WAIVER_EXECUTION_TYPES"));
-  assert.ok(line, "could not find ALLOWED_WAIVER_EXECUTION_TYPES in app/main.js");
-  const m = /\[([^\]]*)\]/.exec(line!);
-  const appTypes = m![1].split(",").map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
-  assert.deepEqual(appTypes, [...ESPN_WAIVER_EXECUTION_TYPES]);
-});
-
 test("a FREEAGENT may only EXECUTE -- any other executionType is refused", () => {
   const url = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/123456/transactions";
   for (const et of ["CANCEL", "PROCESS", "", undefined]) {
@@ -112,15 +53,6 @@ test("a FREEAGENT may only EXECUTE -- any other executionType is refused", () =>
   }
   assertWritableUrl(url, JSON.stringify({ type: "FREEAGENT", executionType: "EXECUTE", items: [] }));
   assert.deepEqual([...ESPN_FREEAGENT_EXECUTION_TYPES], ["EXECUTE"]);
-});
-
-test("the app's FREEAGENT executionTypes are identical to the shared list", () => {
-  const main = readFileSync("app/main.js", "utf8");
-  const line = main.split("\n").find((l) => l.includes("const ALLOWED_FREEAGENT_EXECUTION_TYPES"));
-  assert.ok(line, "could not find ALLOWED_FREEAGENT_EXECUTION_TYPES in app/main.js");
-  const m = /\[([^\]]*)\]/.exec(line!);
-  const appTypes = m![1].split(",").map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
-  assert.deepEqual(appTypes, [...ESPN_FREEAGENT_EXECUTION_TYPES]);
 });
 
 test("the ESPN free-agent add body matches what ESPN recorded for our own add, and passes the guard", async () => {
@@ -170,17 +102,6 @@ test("the ESPN claim and cancel bodies match what ESPN itself records, and pass 
   // No drop -> an ADD-only claim.
   assert.equal(JSON.parse(w.waiverClaim!({ ...ctx, dropPlayerId: null, bid: 1 }).body).items.length, 1);
 });
-
-test("the app's body cap matches the shared one", () => {
-  const main = readFileSync("app/main.js", "utf8");
-  assert.ok(main.includes("tbody.length > 1e5"),
-    "the app's write body cap moved or changed -- the shared MAX_WRITE_BODY must be updated with it");
-  assert.equal(MAX_WRITE_BODY, 1e5);
-});
-
-// ---------------------------------------------------------------------------------------------
-// 2. WHAT THE ALLOWLIST PERMITS, AND WHAT IT MUST NOT
-// ---------------------------------------------------------------------------------------------
 
 test("the permitted endpoint is permitted -- the guard can say YES", () => {
   // The positive control. A guard that refuses everything passes every rejection test below and
@@ -283,4 +204,51 @@ test("every provider reports HOW it authenticated", () => {
   const vias = [cookieWriteIO("a=b").via, recordingWriteIO().via];
   assert.equal(new Set(vias).size, vias.length, "providers must be distinguishable by `via`");
   assert.match(recordingWriteIO().via, /DRY RUN/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// broWriteIO: the guard runs FIRST. Each case injects an exec that records calls and asserts it was
+// NEVER called -- a refusal that still spawned `bim` would have already sent the write.
+// ---------------------------------------------------------------------------------------------
+async function refusedWithoutBim(url: string, body: string, re: RegExp): Promise<void> {
+  const calls: string[][] = [];
+  setExec(async (_f, args) => { calls.push(args); return { stdout: "{}", stderr: "" }; });
+  try {
+    await assert.rejects(() => broWriteIO().post(url, body), re);
+    assert.equal(calls.length, 0, "a refused write must not spawn bim");
+  } finally { setExec(null); }
+}
+
+test("broWriteIO refuses a non-allowlisted URL without spawning bim", async () => {
+  await refusedWithoutBim("https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leagues/462233/transactions", OK_BODY, /REFUSED to write to/);
+  await refusedWithoutBim("https://evil.example.com/transactions", OK_BODY, /REFUSED to write to/);
+});
+
+test("broWriteIO refuses a FREEAGENT CANCEL without spawning bim", async () => {
+  await refusedWithoutBim(OK_URL, JSON.stringify({ type: "FREEAGENT", executionType: "CANCEL", items: [] }), /REFUSED to write a FREEAGENT/);
+});
+
+test("broWriteIO refuses a ROSTER body carrying an ADD item without spawning bim", async () => {
+  await refusedWithoutBim(OK_URL, JSON.stringify({ type: "ROSTER", executionType: "EXECUTE", items: [{ type: "ADD", playerId: 1 }] }), /REFUSED to write a ROSTER item/);
+});
+
+test("broWriteIO refuses an oversize body without spawning bim", async () => {
+  await refusedWithoutBim(OK_URL, "x".repeat(MAX_WRITE_BODY + 1), /over the .* cap/);
+});
+
+test("broWriteIO sends a permitted body through bim bro page eval and returns the status", async () => {
+  const calls: string[][] = [];
+  setExec(async (_f, args) => {
+    calls.push(args);
+    if (args[1] === "sessions") return { stdout: JSON.stringify({ sessions: [{ site: "espn", alive: true }] }), stderr: "" };
+    if (args[1] === "page" && args.includes("tabs")) return { stdout: JSON.stringify({ tabs: [{ id: "T1", url: "https://fantasy.espn.com/football/" }] }), stderr: "" };
+    return { stdout: JSON.stringify({ value: JSON.stringify({ status: 403, statusText: "Forbidden", body: "nope" }) }), stderr: "" };
+  });
+  try {
+    const r = await broWriteIO().post(OK_URL, OK_BODY);
+    assert.deepEqual(r, { status: 403, body: "nope" });          // a 403 is a RESULT, not a throw
+    const ev = calls.find((a) => a.includes("eval"))!;
+    assert.ok(ev.includes("--tab") && ev.includes("T1"));
+    assert.ok(ev[ev.indexOf("--arg") + 1].includes(OK_URL));
+  } finally { setExec(null); }
 });

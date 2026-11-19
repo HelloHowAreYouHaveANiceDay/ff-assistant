@@ -20,7 +20,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { importTs } from "./lib/ensure-tsx.mjs";
 
-const { bridgeFetch } = await importTs("../src/browser/appBridge.ts", import.meta.url);
+const { broFetch } = await importTs("../src/browser/broSession.ts", import.meta.url);
 const { resolveLeagueContext, requirePlatform } = await importTs("../src/data/leagueContext.ts", import.meta.url);
 
 const require = createRequire(import.meta.url);
@@ -43,7 +43,7 @@ mkdirSync("data/cache/espn", { recursive: true });
 for (const season of seasons) {
   const url = `${HOST}/seasons/${season}/segments/0/leagues/${leagueId}?view=mSettings&view=mTeam&view=mMatchup`;
   let raw;
-  try { raw = await bridgeFetch(url); } catch (e) { console.log(`${season}: UNREACHABLE -- ${String(e.message).slice(0, 120)}`); continue; }
+  try { raw = await broFetch(url); } catch (e) { console.log(`${season}: UNREACHABLE -- ${String(e.message).slice(0, 120)}`); continue; }
   let j;
   try { j = JSON.parse(raw); } catch { console.log(`${season}: not JSON (${raw.slice(0, 80)})`); continue; }
   // Keep only what the format work needs -- the full payload embeds every roster and is enormous.

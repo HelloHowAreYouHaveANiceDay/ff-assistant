@@ -357,7 +357,7 @@ test("CONNECTED: a sessionless platform resolves to a public IO, not the app bri
   let pubErr = "";
   try { await pub.get("https://api.sleeper.app.invalid/v1/state/nfl"); } catch (e) { pubErr = String((e as Error).message); }
   assert.ok(pubErr, "the public IO must actually attempt the request");
-  assert.ok(!/bridge|app-bridge|9223/i.test(pubErr), `a public IO must not go through the app bridge; got: ${pubErr.slice(0, 120)}`);
+  assert.ok(!/bim bro|bro session/i.test(pubErr), `a public IO must not go through the app bridge; got: ${pubErr.slice(0, 120)}`);
 
   // POSITIVE CONTROL on the override: an explicit `io` still wins for a sessionless platform, so a
   // test double or proxy is not blocked by the new default.

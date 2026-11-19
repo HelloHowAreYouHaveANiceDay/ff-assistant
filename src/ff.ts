@@ -2,13 +2,10 @@
 // The `ff` CLI -- the engine (D7). Runnable in a terminal for iteration; the
 // unattended agent will later reach a constrained subset of these as tools.
 //
-//   npm run ff -- attach            test the copresent CDP connection, list tabs
-//   npm run ff -- inspect-draft     dump the live ESPN draft-room DOM to a file
+//   npm run ff -- sync-rosters      read the league through the bro espn session
 //   npm run ff -- rank              print top players by VOR from the rankings CSV
 
-import { findPage, detach, type Attached } from "./browser/attach.js";
 import { positionals, firstPositional } from "./util/argv.js";
-import { inspectDraftDom } from "./draft/espnReader.js";
 import { loadRankings } from "./data/rankings.js";
 import { replacementBaselines, withVOR, type LeagueSettings } from "./draft/rank.js";
 import { ingestAll } from "./data/ingest.js";
@@ -24,38 +21,16 @@ const DEFAULT_LEAGUE: LeagueSettings = {
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
+    // Tombstones: a verb that silently vanishes leaves muscle memory failing with "unknown command".
+    // D55: the Electron app is retired; live ESPN access is a `bim bro` session (src/browser/broSession.ts).
     case "bro":
-      // Kept only to say where it went. A verb that silently vanishes leaves a user's muscle memory
-      // failing with "unknown command" and no idea what replaced it.
-      console.log("`ff bro` is gone -- the desktop app IS the browser now.\n" +
-        "  It holds the authenticated ESPN session in its own partition and is always a CDP target,\n" +
-        "  so there is no second browser to start or log into. Just open the app.\n" +
-        "  Escape hatch for a manually-launched Chrome: pass --port <N> to any browser verb.");
+    case "attach": case "goto": case "click": case "text": case "launch-practice": case "read-block":
+    case "bid": case "roster": case "auto-bid": case "auto-draft": case "board": case "dump-values":
+    case "enter-draft": case "inspect-draft":
+      console.log(`\`ff ${cmd}\` is gone (D55): the desktop app and the draft-room verbs were retired.\n` +
+        "  Live ESPN reads/writes use the bim bro `espn` session; log in with `bim bro auth --site espn`.\n" +
+        "  A bro-based draft-room driver for the 2027 draft is an open item (docs/decisions.md D55).");
       return void process.exit(2);
-    case "attach":
-      return cmdAttach(rest);
-    case "goto":
-      return cmdGoto(rest);
-    case "click":
-      return cmdClick(rest);
-    case "text":
-      return cmdText(rest);
-    case "launch-practice":
-      return cmdLaunchPractice(rest);
-    case "read-block":
-      return cmdReadBlock(rest);
-    case "bid":
-      return cmdBid(rest);
-    case "roster":
-      return cmdRoster(rest);
-    case "auto-bid":
-      return cmdAutoBid(rest);
-    case "auto-draft":
-      return cmdAutoDraft(rest);
-    case "board":
-      return cmdBoard(rest);
-    case "dump-values":
-      return cmdDumpValues(rest);
     case "values":
       return cmdValues(rest);
     case "values-check":
@@ -180,12 +155,8 @@ async function main() {
       return cmdSyncPendingTrades(rest);
     case "sync-actuals":
       return cmdSyncActuals(rest);
-    case "enter-draft":
-      return cmdEnterDraft(rest);
     case "preflight":
       return cmdPreflight(rest);
-    case "inspect-draft":
-      return cmdInspect(rest);
     case "rank":
       return cmdRank(rest);
     case "models":
@@ -277,9 +248,6 @@ async function main() {
     default:
       console.log(
         "commands:\n" +
-          "  attach [--port N]          test the connection to the app's embedded ESPN webview\n" +
-          "  goto <url>                 navigate the app's webview\n" +
-          "  inspect-draft [--out FILE] dump the live ESPN draft-room DOM\n" +
           "  rank [--csv FILE]          top players by VOR (offline)\n" +
           "  ingest-espn-payload --file <json> --kind <settings|rosters|boxscore|transactions>\n" +
           "                             ingest a SAVED ESPN API payload (see docs/browser-sync.md)\n" +
@@ -631,13 +599,6 @@ async function cmdMyRosterSet(rest: string[]) {
   console.log(`my_roster[${draftId}] set: ${roster.length} players`);
 }
 
-// Attach via bro's session by default; allow --port for a manually-launched browser.
-//
-// `--app` targets the DESKTOP APP's embedded ESPN webview instead. That guest is not a Playwright
-// page (connectOverCDP enumerates only the file:// renderer), so it is wrapped by
-// src/browser/webviewPage.ts, which implements the slice of the Page API espnAuction uses on top of
-// webview.executeJavaScript. Plain `--port <app port>` does NOT work for draft verbs: it hands them
-// the renderer. The app webview is the only session now.
 /** `--pos-mult QB:0.7,RB:1.1` -> { QB: 0.7, RB: 1.1 }. Overrides the persisted lever per position,
  *  for sweeps; positions not named keep the lever value. */
 function parsePosMult(arg: string | undefined): Record<string, number> {
@@ -645,249 +606,6 @@ function parsePosMult(arg: string | undefined): Record<string, number> {
   const out: Record<string, number> = {};
   for (const kv of arg.split(",")) { const [k, v] = kv.split(":"); if (k && v != null && Number.isFinite(Number(v))) out[k.toUpperCase()] = Number(v); }
   return out;
-}
-
-/**
- * THE APP IS THE BROWSER. Every verb attaches to the desktop app's embedded ESPN webview.
- *
- * This used to default to a `bro` session and reach the app only behind `--app`, which had the
- * dependency exactly backwards: it made the second browser -- a separate checkout, a separate login,
- * a separate profile the user had to remember to start -- the normal path, and the app the special
- * case. The app already holds an authenticated ESPN session in a persistent partition and is always
- * a CDP target, so there is nothing bro provided that it does not.
- *
- * `--port` survives for a manually-launched Chrome, which is a genuine debugging escape hatch. The
- * bro path is gone; `--site` went with it, since there is only one session now.
- */
-async function attachFor(rest: string[]): Promise<Attached> {
-  const port = valueOf(rest, "--port");
-  const { attachWebview } = await import("./browser/webviewPage.js");
-  const w = await attachWebview(port ? Number(port) : undefined);
-  return { browser: w.browser, context: w.browser.contexts()[0], pages: [w.page] } as Attached;
-}
-
-async function cmdAttach(rest: string[]) {
-  const a = await attachFor(rest);
-  console.log("Attached. Open tabs:");
-  for (const p of a.pages) console.log("  -", p.url());
-  const espn = findPage(a, "espn.com");
-  console.log(espn ? `\nESPN tab found: ${espn.url()}` : "\nNo espn.com tab open yet.");
-  await detach(a);
-}
-
-// The agent navigating the copresent session itself (D0): drive the user's own
-// browser to a URL -- e.g. the ESPN mock-draft lobby -- then act from there.
-async function cmdGoto(rest: string[]) {
-  // No value-taking flags today; the empty set SAYS so, and adding one later cannot silently
-  // reopen the positional bug because this call site already asks the question.
-  const url = firstPositional(rest, new Set());
-  if (!url) {
-    console.error("usage: ff goto <url>  (e.g. https://fantasy.espn.com/football/mockdraftlobby)");
-    process.exit(2);
-  }
-  const a = await attachFor(rest);
-  // Prefer an existing ESPN tab so we stay in the user's logged-in context.
-  const page = findPage(a, "espn.com") ?? a.pages[0];
-  await page.goto(url, { waitUntil: "domcontentloaded" });
-  console.log(`Navigated to ${page.url()}`);
-  await detach(a);
-}
-
-// Click the first visible link/button whose text contains <text> (copresent action).
-async function cmdClick(rest: string[]) {
-  const text = firstPositional(rest, new Set());   // no value-taking flags; stated, not assumed
-  if (!text) {
-    console.error('usage: ff click "<visible text>"');
-    process.exit(2);
-  }
-  const exact = rest.includes("--exact");
-  const a = await attachFor(rest);
-  const page = findPage(a, "espn.com") ?? a.pages[0];
-  // Prefer a real button/link (by accessible name) over any text node that merely
-  // CONTAINS the string (e.g. a heading) -- that was silently clicking the wrong element.
-  const byRole = page.getByRole("button", { name: text, exact }).or(
-    page.getByRole("link", { name: text, exact }),
-  );
-  const loc = (await byRole.count()) > 0 ? byRole.first() : page.getByText(text, { exact }).first();
-  await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
-  // A practice-draft launch may open a popup; capture it if so.
-  const popupP = page.waitForEvent("popup", { timeout: 4000 }).catch(() => null);
-  await loc.click({ timeout: 8000 });
-  const popup = await popupP;
-  await page.waitForLoadState("domcontentloaded").catch(() => {});
-  if (popup) {
-    await popup.waitForLoadState("domcontentloaded").catch(() => {});
-    console.log(`Clicked "${text}". Popup opened: ${popup.url()}`);
-  } else {
-    console.log(`Clicked "${text}". Now at: ${page.url()}`);
-  }
-  await detach(a);
-}
-
-// Dump the current page's visible text (copresent read).
-async function cmdText(rest: string[]) {
-  const a = await attachFor(rest);
-  const page = findPage(a, "espn.com") ?? a.pages[0];
-  const txt = await page.evaluate("document.body.innerText");
-  console.log(String(txt).replace(/\n{3,}/g, "\n\n").slice(0, 3000));
-  await detach(a);
-}
-
-// Launch the league-specific practice draft AS THE AGENT (no human click). The
-// "Practice Draft" button opens the draft app via window.open, which the popup blocker
-// drops for programmatic clicks -- so we shim window.open to capture the target URL and
-// navigate to it ourselves. This is the draft-day launch path.
-async function cmdLaunchPractice(rest: string[]) {
-  const a = await attachFor(rest);
-  // The embedded ESPN webview is our ONE working page -- reuse it whatever it's showing (the old
-  // the old logic looked for a separate non-draft tab; here there's just the webview). Fall back to any
-  // non-draft page, then a new page.
-  const page = a.pages.find((p) => /espn\.com/.test(p.url()) && !/recaptcha|imrworldwide|registerdisney/.test(p.url()))
-    || a.pages.find((p) => !/\/football\/draft/.test(p.url()))
-    || await a.context.newPage();
-  // Now close any OTHER draft tabs -- ESPN allows only ONE draft connection; a duplicate
-  // triggers "disconnected... from another location". Our working page is not a draft tab.
-  for (const p of a.pages) {
-    if (p !== page && /\/football\/draft/.test(p.url())) await p.close().catch(() => {});
-  }
-  // Land on a fresh lobby. Use domcontentloaded, NOT networkidle -- ESPN's lobby never goes idle
-  // (constant ad/polling traffic), so networkidle hangs; then poll natively for the button by text
-  // (getByRole's accessible-name match was unreliable for this button).
-  await page.goto("https://fantasy.espn.com/football/mockdraftlobby", { waitUntil: "domcontentloaded" }).catch(() => {});
-  const ready = await page.waitForFunction(
-    () => Array.from(document.querySelectorAll("button")).some((b) => b.textContent.trim() === "Practice Draft"),
-    { timeout: 20000 },
-  ).then(() => true).catch(() => false);
-  if (!ready) {
-    console.error("lobby 'Practice Draft' button never rendered -- aborting launch.");
-    await detach(a);
-    return;
-  }
-  // Shim window.open to RECORD the URL only -- do NOT open the real popup (that would
-  // create a second draft tab -> duplicate-connection kick). We navigate our one tab.
-  await page.evaluate(
-    "window.__ffOpen=null; if(!window.__ffPatched){window.__ffPatched=1; window.open=function(u){try{window.__ffOpen=String(u||'');}catch(e){} return {closed:false,focus:function(){},blur:function(){},close:function(){},postMessage:function(){}};};}",
-  );
-  // Current ESPN UI (verified 2026-09): the flow is just "Practice Draft" -> "Start Practice Draft",
-  // with NO position <select> (the old select step aborted the launch). Native clicks are more robust
-  // than getByRole against ESPN's late-rendering React; the window.open shim above captures the draft
-  // URL so we navigate our ONE tab (the embedded webview) into it instead of popping a new window.
-  await page.evaluate(() => { const x = Array.from(document.querySelectorAll("button")).find((b) => b.textContent.trim() === "Practice Draft"); if (x) (x as HTMLButtonElement).click(); });
-  await page.waitForTimeout(3000);
-  let started = false;
-  for (let i = 0; i < 6 && !started; i++) {
-    started = await page.evaluate(() => { const x = Array.from(document.querySelectorAll("button")).find((b) => b.textContent.trim() === "Start Practice Draft"); if (x) { (x as HTMLButtonElement).click(); return true; } return false; });
-    if (!started) await page.waitForTimeout(1000);
-  }
-  if (!started) { console.error("could not start practice draft (Start button never rendered)"); await detach(a); return; }
-  await page.waitForTimeout(3500);
-  const opened = (await page.evaluate("window.__ffOpen")) as string | null; // the draft-room URL
-  if (opened) {
-    const url = opened.startsWith("http") ? opened : new URL(opened, page.url()).href;
-    await page.goto(url, { waitUntil: "domcontentloaded" }).catch(() => {});
-    await page.waitForTimeout(2000);
-    console.log(`practice draft started -> ${page.url()} | ${await page.title()}`);
-  } else {
-    console.error(`no draft window captured; still at ${page.url()}`);
-  }
-  await detach(a);
-}
-
-// `REAL_LEAGUE`/`REAL_TEAM` were hardcoded here as "last-resort fallbacks". A hardcoded league id is
-// a fifth resolver: it cannot be wrong about which league it means, and is always wrong about which
-// league you meant. Deleted 2026-09-16 -- `enter-draft` now REFUSES when the store does not know the
-// league and the team, which is the honest answer.
-
-// Enter the REAL league draft room (G1). Same auction app as practice, so once we're in,
-// readBlock/readRoster/readBoard/quickBid/jumpBid all transfer. The real draft opens a few
-// minutes before start; run this then, then `ff auto-draft`. Tries, in order: an "Enter Draft"
-// control from the league (captured window.open), then the direct draft URL.
-/** The SWID cookie, which ESPN's draft URL wants as `memberId`. Read straight from the page we are
- *  already on, so it works for both a real Playwright Page and the webview shim (both have
- *  `evaluate`). Returns null rather than throwing -- the URL still resolves without it in some
- *  cases, and a missing memberId should degrade to the clubhouse fallback, not abort entry. */
-async function espnSwidFor(page: { evaluate: (js: string) => Promise<unknown> }): Promise<string | null> {
-  try {
-    const raw = String((await page.evaluate("(document.cookie.match(/SWID=([^;]+)/)||[])[1]||''")) || "");
-    return raw ? decodeURIComponent(raw) : null;
-  } catch { return null; }
-}
-
-async function cmdEnterDraft(rest: string[]) {
-  const { readRoster } = await import("./draft/espnAuction.js");
-  const { openDb } = await import("./db/db.js");
-  const db = openDb(valueOf(rest, "--db"));
-  // ONE RESOLVER, and `--league` is the explicit override this verb already accepted. A league whose
-  // team is unknown REFUSES rather than entering a draft room under a hardcoded team id.
-  const ctx = await leagueCtx(rest, db);
-  const season = ctx.config.season;
-  const { requireAuction, requireTeamId, requirePlatform } = await import("./data/leagueContext.js");
-  requirePlatform(ctx, "espn", "enter-draft");
-  requireAuction(ctx, "enter-draft");
-  const league = ctx.leagueId as string;
-  const team = valueOf(rest, "--team") ?? requireTeamId(ctx, "enter-draft");
-  db.close();
-  const a = await attachFor(rest);
-  // Reuse a non-draft tab (or make one); don't disturb an existing draft tab if already in.
-  const existingDraft = a.pages.find((p) => /\/football\/draft/.test(p.url()));
-  const inDraft = async (pg: typeof a.pages[number]) => {
-    const t = (await pg.title().catch(() => "")) || "";
-    if (!/Fantasy Football Draft/i.test(t)) return false;
-    const r = await readRoster(pg).catch(() => null);
-    return !!r && (r.filled + r.open) > 0;
-  };
-  if (existingDraft && (await inDraft(existingDraft))) {
-    console.log(`Already in a draft room: ${existingDraft.url()}`);
-    await detach(a);
-    return;
-  }
-  const page = a.pages.find((p) => !/\/football\/draft/.test(p.url())) ?? (await a.context.newPage());
-
-  // ORDER MATTERS, and this is why (2026-09-06, the real draft): the clubhouse-click strategy used
-  // to run FIRST and called `page.getByRole`, which the webview shim (src/browser/webviewPage.ts)
-  // does not implement -- it only ports the slice of the Page API espnAuction.ts uses. So under
-  // --app it threw "page.getByRole is not a function" and died BEFORE reaching the direct-URL
-  // fallback that actually works. Every mock used `launch-practice`, so this path had never run.
-  //
-  // Direct URL is now Strategy 1: it needs no Locator API, and it is the same navigation
-  // `launch-practice` has always used. Note the memberId param -- without it ESPN redirects to the
-  // fantasy homepage rather than the draft room.
-  const swid = await espnSwidFor(page).catch(() => null);
-  const directUrl = `https://fantasy.espn.com/football/draft?leagueId=${league}&seasonId=${season}&teamId=${team}`
-    + (swid ? `&memberId=${swid}` : "");
-  await page.goto(directUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
-  await page.waitForTimeout(1500);
-
-  // Strategy 2 (fallback): from the clubhouse, click an "Enter Draft" control -- it opens the draft
-  // app via window.open, which we shim to capture the URL rather than spawn a second tab (a
-  // duplicate draft connection kicks the seat). Guarded: `getByRole` exists on a real Playwright
-  // Page but not on the webview shim, so feature-detect instead of assuming.
-  if (!(await inDraft(page)) && typeof (page as { getByRole?: unknown }).getByRole === "function") {
-    await page.goto(`https://fantasy.espn.com/football/team?leagueId=${league}&teamId=${team}`, { waitUntil: "networkidle" }).catch(() => {});
-    await page.evaluate("window.__ffOpen=null; if(!window.__ffPatched){window.__ffPatched=1; window.open=function(u){try{window.__ffOpen=String(u||'');}catch(e){} return {closed:false,focus(){},blur(){},close(){},postMessage(){}};};}");
-    const enterBtn = page.getByRole("button", { name: /enter draft|draft now|join draft|go to draft|enter live draft/i })
-      .or(page.getByRole("link", { name: /enter draft|draft now|join draft|go to draft|enter live draft/i }));
-    if ((await enterBtn.count()) > 0) {
-      await enterBtn.first().click({ timeout: 6000 }).catch((e) => console.error("enter-click:", e.message));
-      await page.waitForTimeout(1500);
-      const opened = (await page.evaluate("window.__ffOpen")) as string | null;
-      if (opened) {
-        await page.goto(opened.startsWith("http") ? opened : new URL(opened, page.url()).href, { waitUntil: "domcontentloaded" }).catch(() => {});
-      }
-    } else {
-      console.log("No 'Enter Draft' control on the clubhouse (draft not open yet?).");
-    }
-  }
-
-  if (await inDraft(page)) {
-    const r = await readRoster(page);
-    console.log(`IN THE DRAFT ROOM: ${page.url()}`);
-    console.log(`roster slots: ${r.filled + r.open} (filled ${r.filled}); open by pos ${JSON.stringify(r.openByBase)} flex ${r.flexOpen} bench ${r.benchOpen}`);
-    console.log(`Ready. Run: npm run ff -- auto-draft --csv <values.csv>`);
-  } else {
-    console.log(`Draft room NOT reachable yet (league ${league}). It opens shortly before start -- retry then. Now at: ${page.url()}`);
-  }
-  await detach(a);
 }
 
 // Pre-draft readiness check (G2/G9): session live + logged in + league reachable + draft state.
@@ -952,39 +670,23 @@ async function preflightOffline(rest: string[]): Promise<void> {
 }
 
 async function cmdPreflight(rest: string[]) {
-  const { readRoster } = await import("./draft/espnAuction.js");
   const { openDb } = await import("./db/db.js");
-  const { requireTeamId } = await import("./data/leagueContext.js");
-  // ONE RESOLVER, no hardcoded league. A store that cannot say which league and team we are cannot
-  // preflight a draft, and saying so beats preflighting somebody else's room.
   const pdb = openDb(valueOf(rest, "--db"));
   const pctx = await leagueCtx(rest, pdb);
   pdb.close();
-  const league = pctx.leagueId;
-  const team = valueOf(rest, "--team") ?? (pctx.leagueId ? requireTeamId(pctx, "preflight") : null);
   console.log("--- engine (offline) ---");
   await preflightOffline(rest).catch((e) => console.log(`FAIL : offline checks threw -- ${(e as Error).message}`));
-  console.log("--- session (browser) ---");
-  let a: Attached;
-  try { a = await attachFor(rest); } catch (e) { console.log(`FAIL: cannot attach to the app webview -- ${(e as Error).message}`); return; }
-  console.log(`OK: attached to browser (${a.pages.length} tabs)`);
-  const draftTab0 = a.pages.find((p) => /\/football\/draft/.test(p.url()));
-  if (draftTab0) {
-    const r0 = await readRoster(draftTab0).catch(() => null);
-    console.log(`NOTE: a draft room is already open: ${draftTab0.url()} -- roster reads ${r0 ? r0.filled + r0.open : "?"} slots`);
+  console.log("--- session (bro espn) ---");
+  if (!pctx.leagueId) { console.log("FAIL: no league in the store -- run league_sync"); return; }
+  try {
+    const { broFetch } = await import("./browser/broSession.js");
+    const season = pctx.config.season;
+    const body = await broFetch(`${ESPN_READS_BASE}/seasons/${season}/segments/0/leagues/${pctx.leagueId}?view=mStatus`);
+    const j = JSON.parse(body) as { scoringPeriodId?: number };
+    console.log(`OK: bro espn session is logged in; league ${pctx.leagueId} reachable (scoring period ${j.scoringPeriodId ?? "?"})`);
+  } catch (e) {
+    console.log(`FAIL: ${(e as Error).message}`);
   }
-  // Use a NON-draft tab (or a fresh one) so we never disturb an in-progress draft.
-  const page = a.pages.find((p) => !/\/football\/draft/.test(p.url())) ?? (await a.context.newPage());
-  await page.goto(`https://fantasy.espn.com/football/team?leagueId=${league}&teamId=${team}`, { waitUntil: "networkidle" }).catch(() => {});
-  await page.waitForTimeout(1200);
-  const title = (await page.title().catch(() => "")) || "";
-  const loggedIn = !/log ?in|sign ?in/i.test(title) && /espn/i.test(title.length ? title : page.url());
-  console.log(`${loggedIn ? "OK" : "CHECK"}: league page title = "${title}" (logged in: ${loggedIn})`);
-  // --app is mandatory: plain --port hands the draft verbs the app's own UI window, not the ESPN
-  // webview, and fails silently. Do not enter before the room opens -- a duplicate connection kicks
-  // the seat (docs/draft-day-runbook.md).
-  console.log(`When the room OPENS (not before): npm run ff -- enter-draft --app   then: npm run ff -- auto-draft --app`);
-  await detach(a);
 }
 
 // Scrape ESPN's full board values (calibrated to our league) into a values CSV.
@@ -1792,10 +1494,8 @@ async function cmdSyncLeague(rest: string[]) {
  * maximums" -- which is exactly the failure this file has paid for elsewhere.
  */
 async function cmdSyncSettings(rest: string[]) {
-  const { chromium } = await import("playwright-core");
   const { openDb, getConfig, setConfig } = await import("./db/db.js");
   const { parseSettingsRows, SETTINGS_ROWS_JS } = await import("./league/settingsDom.js");
-  const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
   const waitMs = Number(valueOf(rest, "--wait") ?? 6000);
   const db = openDb(valueOf(rest, "--db"));
   const ctx = await leagueCtx(rest, db);
@@ -1803,20 +1503,14 @@ async function cmdSyncSettings(rest: string[]) {
   if (ctx.platform !== "espn") { db.close(); return failStep(`league ${ctx.leagueId} is on ${ctx.platform ?? "an unknown platform"}; no ${ctx.platform ?? "such"} settings adaptor exists yet`); }
   const lg = { league_id: ctx.leagueId, season: ctx.rowSeason ?? ctx.config.season };
 
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
-  if (!browser) { db.close(); return failStep("app not running -- open the desktop app (its logged-in session is needed)"); }
-  const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://"));
-  if (!page) { db.close(); await browser.close(); return failStep("app renderer not found"); }
-
+  const { broGoto, broEval } = await import("./browser/broSession.js");
   const url = `https://fantasy.espn.com/football/league/settings?leagueId=${lg.league_id}&seasonId=${lg.season}`;
-  await page.evaluate((u) => { const wv = document.getElementById("espnview") as { loadURL?: (s: string) => void } | null; wv?.loadURL?.(u); }, url);
-  await page.waitForTimeout(waitMs);
-  const raw = await page.evaluate(async (code) => {
-    const wv = document.getElementById("espnview") as { executeJavaScript?: (s: string) => Promise<unknown> } | null;
-    if (!wv?.executeJavaScript) return "[]";
-    try { return JSON.stringify(await wv.executeJavaScript(code)); } catch (e) { return "ERR:" + String((e as Error)?.message ?? e); }
-  }, SETTINGS_ROWS_JS);
-  await browser.close();
+  let raw: string;
+  try {
+    await broGoto("espn", url);
+    await new Promise((r) => setTimeout(r, waitMs));
+    raw = JSON.stringify(await broEval("espn", SETTINGS_ROWS_JS));
+  } catch (e) { db.close(); return failStep(`bro espn session: ${(e as Error).message}`); }
 
   let rows: string[] = [];
   try { rows = JSON.parse(raw) as string[]; } catch { db.close(); return failStep(`could not read the settings page: ${raw?.slice(0, 80)}`); }
@@ -2485,12 +2179,11 @@ async function cmdBuildManagers(rest: string[]) {
 
 // managers.json (the sim's bot field). Needs the desktop app open (for the authenticated session).
 async function cmdScrapeLeague(rest: string[]) {
-  const { chromium } = await import("playwright-core");
+
   const { openDb } = await import("./db/db.js");
   const { buildManagerProfiles } = await import("./draft/scout.js");
   type Recap = import("./draft/scout.js").Recap;
   const { writeFileSync } = await import("node:fs");
-  const port = valueOf(rest, "--port") ?? process.env.FF_CDP_PORT ?? "9223";
   const db = openDb(valueOf(rest, "--db"));
   const ctx = await leagueCtx(rest, db);
   const conf = ctx.config;
@@ -2500,13 +2193,8 @@ async function cmdScrapeLeague(rest: string[]) {
   const leagueId = ctx.leagueId;
   const years = Number(valueOf(rest, "--years") ?? 4);
   const seasons: number[] = []; for (let y = conf.season - years; y < conf.season; y++) seasons.push(y); // prior N seasons
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch(() => null);
-  if (!browser) { console.log("app not running -- open the desktop app (its logged-in session is needed)"); return; }
-  const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().startsWith("file://"));
-  if (!page) { console.log("app renderer not found"); await browser.close(); return; }
-  const wvEval = (js: string): Promise<string> => page.evaluate(async (code) => { const wv = document.getElementById("espnview") as any; if (!wv?.executeJavaScript) return ""; try { return await wv.executeJavaScript(code); } catch (e: any) { return "ERR:" + (e?.message ?? e); } }, js);
-  const cur = await wvEval("location.href");
-  if (!/fantasy\.espn\.com/.test(cur)) { await page.evaluate(() => { const w = window as any; if (w.setView) w.setView("live"); const wv = document.getElementById("espnview") as any; if (wv?.loadURL) wv.loadURL("https://fantasy.espn.com/football/"); }); await page.waitForTimeout(4000); }
+  const { broFetch } = await import("./browser/broSession.js");
+  const wvEval = async (js: string): Promise<string> => { const m = /fetch\(("[^"]*")/.exec(js); if (!m) return "ERR:unsupported"; try { return await broFetch(JSON.parse(m[1]), {}, 60000); } catch (e) { const msg = (e as Error).message; return /^\d{3} /.test(msg) ? "HTTP " + msg.slice(0, 3) : "ERR:" + msg; } };
   const SLOT_POS: Record<number, string> = { 0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K" };
   const ESPN_POS: Record<number, string> = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST" };
   // ESPN playerId -> position, from the public player pools (fetched Node-side, no auth). In an auction
@@ -2544,7 +2232,6 @@ async function cmdScrapeLeague(rest: string[]) {
     for (const v of byMember.values()) recaps.push({ season: yr, owner: v.owner, abbrev: teamAbbrev.get(v.teamId) || v.owner.slice(0, 4), picks: v.picks });
     console.log(`  ${yr}: ${picks.length} picks, ${byMember.size} owners`);
   }
-  await browser.close();
   if (!recaps.length) { console.log("no draft history found (league may predate these seasons, or be snake not auction)"); return; }
   const data = buildManagerProfiles(recaps);
   writeFileSync(dataPath("managers.json"), JSON.stringify(data), "utf8");
@@ -3547,614 +3234,6 @@ async function cmdResiduals(rest: string[]) {
   }
 }
 
-async function cmdDumpValues(rest: string[]) {
-  const { dumpValues } = await import("./draft/espnAuction.js");
-  const out = valueOf(rest, "--out") ?? dataPath("values.espn.csv");
-  const a = await attachFor(rest);
-  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
-  const players = await dumpValues(page);
-  const { writeFileSync } = await import("node:fs");
-  const rows = ["player,pos,value"];
-  for (const p of players) if (p.pos && p.value != null) rows.push(`${p.name},${p.pos},${p.value}`);
-  writeFileSync(out, rows.join("\n") + "\n", "utf8");
-  console.log(`wrote ${rows.length - 1} player values -> ${out}`);
-  await detach(a);
-}
-
-async function cmdBoard(rest: string[]) {
-  const { readBoard } = await import("./draft/espnAuction.js");
-  const a = await attachFor(rest);
-  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
-  const board = await readBoard(page);
-  console.log(`board (${board.length} visible):`);
-  for (const p of board.slice(0, 20)) console.log(`  $${p.value ?? "?"}  ${p.pos ?? "?"}  ${p.name}`);
-  await detach(a);
-}
-
-async function cmdReadBlock(rest: string[]) {
-  const { readBlock } = await import("./draft/espnAuction.js");
-  const a = await attachFor(rest);
-  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
-  const state = await readBlock(page);
-  console.log(JSON.stringify(state, null, 2));
-  await detach(a);
-}
-
-// Place the quick bid (Offer $current+1) unless the current offer already exceeds --max.
-async function cmdBid(rest: string[]) {
-  const { readBlock, quickBid } = await import("./draft/espnAuction.js");
-  const maxArg = valueOf(rest, "--max");
-  const a = await attachFor(rest);
-  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
-  const before = await readBlock(page);
-  const cap = maxArg ? Number(maxArg) : Infinity;
-  if (!before.onBlock) {
-    console.log("no player on the block");
-  } else if ((before.currentOffer ?? 0) >= cap) {
-    console.log(`skip: offer ${before.currentOffer} >= max ${cap} for ${before.player}`);
-  } else {
-    const ok = await quickBid(page);
-    console.log(`${ok ? "BID" : "no-bid"} on ${before.player} (was $${before.currentOffer})`);
-  }
-  await detach(a);
-}
-
-// Read our real drafted roster (POS/Player/$/BYE panel) to verify wins + open slots.
-async function cmdRoster(rest: string[]) {
-  const { readRoster } = await import("./draft/espnAuction.js");
-  const a = await attachFor(rest);
-  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
-  const r = await readRoster(page);
-  const won = r.slots.filter((s) => s.player).map((s) => `${s.slot} ${s.player} $${s.price}`);
-  console.log(`filled ${r.filled}/${r.filled + r.open}  spent $${r.spent}  open ${r.open}`);
-  console.log(`open: dedicated=${JSON.stringify(r.openByBase)} flex=${r.flexOpen} bench=${r.benchOpen}`);
-  console.log(`won: ${won.join(" | ") || "(none)"}`);
-  await detach(a);
-}
-
-// v1 auction bidder core: one connection, loop -- bid on whatever is on the block up to
-// (Pre-Draft Val + overpay), stop when our roster grows (a win) or rounds run out. Proves
-// the actor loop end-to-end. Strategy tuning (nomination, targets) comes later.
-async function cmdAutoBid(rest: string[]) {
-  const { readBlock, quickBid } = await import("./draft/espnAuction.js");
-  const rounds = Number(valueOf(rest, "--rounds") ?? 40);
-  const overpay = Number(valueOf(rest, "--overpay") ?? 2);
-  const a = await attachFor(rest);
-  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
-  const rosterCount = async () =>
-    (await page.evaluate(
-      `Array.from(new Set(Array.from(document.querySelectorAll('table.Table .playerinfo__playername')).map(e=>(e.textContent||'').trim()).filter(Boolean))).length`,
-    )) as number;
-  const startRoster = await rosterCount();
-  console.log(`starting roster size: ${startRoster}`);
-  for (let i = 0; i < rounds; i++) {
-    const s = await readBlock(page);
-    const now = await rosterCount();
-    if (now > startRoster) {
-      console.log(`WON a player -- roster grew ${startRoster} -> ${now}.`);
-      break;
-    }
-    if (s.onBlock && s.player) {
-      const max = (s.preDraftVal ?? s.currentOffer ?? 0) + overpay;
-      if ((s.currentOffer ?? 0) < max && (s.myMax ?? 0) >= (s.currentOffer ?? 0) + 1) {
-        const ok = await quickBid(page);
-        console.log(`r${i}: ${ok ? "BID" : "no-bid"} ${s.player} $${s.currentOffer}->+1 (val ${s.preDraftVal}, max ${max})`);
-      } else {
-        console.log(`r${i}: hold ${s.player} $${s.currentOffer} (val ${s.preDraftVal}, our cap ${max})`);
-      }
-    } else {
-      console.log(`r${i}: no player on block`);
-    }
-    await page.waitForTimeout(2000);
-  }
-  console.log(`final roster size: ${await rosterCount()}`);
-  await detach(a);
-}
-
-// Per-position draft stats: how much supply is gone and the EMPIRICAL inflation (actual $ paid vs our
-// book value) at each position -- RB can be inflating while WR deflates. Captured to the draft log.
-function positionalStats(picks: { pos: string | null; price: number; name: string }[], universe: { pos: string; value: number; key: string }[], nkey: (s: string) => string) {
-  const valByKey = new Map(universe.map((u) => [u.key, u.value]));
-  const suppliedByPos: Record<string, number> = {};
-  for (const u of universe) suppliedByPos[u.pos] = (suppliedByPos[u.pos] ?? 0) + 1;
-  const out: Record<string, { drafted: number; supplyLeft: number; spent: number; bookValue: number; inflation: number | null }> = {};
-  for (const pos of ["QB", "RB", "WR", "TE", "K", "DST"]) {
-    const dr = picks.filter((p) => p.pos === pos);
-    const spent = dr.reduce((s, p) => s + p.price, 0);
-    const bookValue = dr.reduce((s, p) => s + (valByKey.get(nkey(p.name)) ?? 0), 0);
-    out[pos] = { drafted: dr.length, supplyLeft: Math.max(0, (suppliedByPos[pos] ?? 0) - dr.length), spent, bookValue: Math.round(bookValue), inflation: bookValue > 0 ? Math.round((spent / bookValue) * 100) / 100 : null };
-  }
-  return out;
-}
-
-// Full-auto auction engine (MVP): fill a complete legal roster in budget. Bots nominate
-// (ESPN auto-nominates on our turn); we bid on any on-block player that fills an open slot,
-// up to min(our value / ESPN pre-draft val / floor, ESPN's legal max). ESPN's myMax already
-// reserves $1/open slot, so we can never strand a slot -> the done-bar is structurally safe.
-/** Refuse to run a second bidding agent in the same seat. Returns a release function.
- *  A lock whose PID is no longer alive is stale (crash/kill) and is taken over. */
-async function acquireDraftLock(force: boolean): Promise<() => void> {
-  // The lock itself lives in src/draft/lock.ts (guarded critical section + ownership token, so two
-  // contenders cannot both enter and a late release cannot delete a newer owner's lock). This wrapper
-  // keeps the CLI's operator experience: --force-lock, the stale-reclaim log, and exit(2) with the
-  // taskkill hint when a LIVE holder blocks a start.
-  const { acquireDraftLock: acquire, DraftLockHeldError } = await import("./draft/lock.js");
-  const lock = dataPath("auto-draft.lock");
-  try {
-    return acquire(lock, {
-      force,
-      onReclaim: (pid) => console.log(`[auto-draft] reclaiming stale lock (pid ${pid ?? "?"} not running)`),
-    });
-  } catch (e) {
-    if (e instanceof DraftLockHeldError) {
-      console.error(`another auto-draft is already running (pid ${e.pid}). Two agents in one seat bid`);
-      console.error(`against each other. Stop it first, or pass --force-lock if you know it is dead.`);
-      console.error(`Windows: taskkill /F /T /PID ${e.pid}`);
-      process.exit(2);
-    }
-    throw e;
-  }
-}
-
-async function cmdAutoDraft(rest: string[]) {
-  // SINGLE INSTANCE. Two agents in one seat bid against each other, re-nominate the same player,
-  // and produce a draft nobody can interpret -- and it is easy to end up there, because killing the
-  // shell that launched an agent does NOT kill the node process tree on Windows. Observed
-  // 2026-09-04: three concurrent auto-drafts in one practice room. Refuse to start unless the
-  // holder is genuinely gone (stale lock from a crash is reclaimed).
-  const releaseLock = await acquireDraftLock(rest.includes("--force-lock"));
-  process.on("exit", releaseLock);
-  process.on("SIGINT", () => { releaseLock(); process.exit(130); });
-  process.on("SIGTERM", () => { releaseLock(); process.exit(143); });
-  const { readBlock, readRoster, hasOpenSlotFor, quickBid, jumpBid, readBoard, readLeague, nominate, readTurn } = await import("./draft/espnAuction.js");
-  const { loadRankings } = await import("./data/rankings.js");
-  const { makeV2Strategy, legalCap, jumpTarget } = await import("./draft/strategy.js");
-  const { SIM_LEAGUE } = await import("./draft/sim.js");
-  // A full 16-team auction runs ~25-30 min; at ~1.4s/tick + read overhead that's ~1000+ ticks, so the
-  // cap must comfortably outlast the whole draft (it exits early on a full roster or a stall).
-  // How long to keep bidding. Expressed in TIME, not ticks: `--rounds 1600` used to be the default
-  // and it silently ended the 2026-09-06 real draft at 3/12 filled -- 1600 x 1.4s is ~37 minutes,
-  // and a 16-team auction runs far longer. It printed a normal `final:` line and exited 0, which is
-  // indistinguishable from a completed draft unless you read the roster count. Every mock finished
-  // inside 1600 ticks, so the ceiling was never hit before the one draft that mattered.
-  //
-  // The real stop conditions are the roster filling (`DONE`) and the stall guard; this is only a
-  // backstop against an unattended process running forever. 6h covers any draft.
-  const tick = Number(valueOf(rest, "--tick") ?? 1400); // poll cadence (ms); lower for a fast bid timer
-  const maxHours = Number(valueOf(rest, "--max-hours") ?? 6);
-  const rounds = valueOf(rest, "--rounds")
-    ? Number(valueOf(rest, "--rounds"))
-    : Math.ceil((maxHours * 3600 * 1000) / tick);
-  const jump = Number(valueOf(rest, "--jump") ?? 5);   // fixed jump-bid step (Step 8); 0 = +1 bids only
-  // Value source (the pluggable knob). Preference: the single SQLite store (player_value) ->
-  // data/values.csv -> ESPN's on-screen pre-draft value. Pass an explicit --csv (incl. --csv "")
-  // to bypass the DB and force the CSV/ESPN path.
-  const { existsSync } = await import("node:fs");
-  const { nameKey } = await import("./draft/values.js");
-  const csvArg = valueOf(rest, "--csv");
-  const csvExplicit = csvArg !== undefined;
-  let csv = csvArg;
-  // JUSTIFIED dataPath (WP3 grep): the DRAFT-ROOM seed. The room is auction-only and ESPN-only
-  // (`requireAuction` + the ESPN webview), so the incumbent file is the only one it can mean; a
-  // format with a snake draft refuses upstream rather than arriving here.
-  if (csv === undefined) csv = existsSync(dataPath("values.csv")) ? dataPath("values.csv") : undefined;
-
-  // OUR value overrides (nameKey -> $) + pos. Both sides of the join are keyed by nameKey so ESPN
-  // spelling drift (suffixes, "D/ST") does not silently miss (finding #5). Crucially, when loading
-  // from the DB we re-derive the key with the TS nameKey FROM THE STORED NAME -- never trust the
-  // stored player_id (Python's nkey) to equal the TS nameKey, or a divergence misses at draft time.
-  const values: Record<string, number> = {};
-  const posByName = new Map<string, string>();
-  let valueSource = "espn-fallback";
-  if (!csvExplicit) {
-    try {
-      const { openDb } = await import("./db/db.js");
-      const db = openDb(valueOf(rest, "--db"));
-      const season = Number(valueOf(rest, "--season") ?? new Date().getFullYear());
-      const vF = slotFilter(activeLeagueId(db), "pv");
-      const vrows = db
-        .prepare(`SELECT p.name AS name, p.position AS pos, pv.our_value AS v FROM player_value pv JOIN player p USING(player_id) WHERE pv.season = ?${vF.sql}`)
-        .all(season, ...vF.args) as { name: string; pos: string; v: number }[];
-      db.close();
-      for (const r of vrows) {
-        const k = nameKey(r.name);
-        posByName.set(k, r.pos);
-        if (typeof r.v === "number" && !Number.isNaN(r.v)) values[k] = r.v;
-      }
-      if (vrows.length) valueSource = `sqlite:player_value(${vrows.length}, season ${season})`;
-    } catch { /* fall through to CSV */ }
-  }
-  if (Object.keys(values).length === 0 && csv) {
-    try {
-      for (const p of loadRankings(csv)) {
-        posByName.set(nameKey(p.name), p.pos);
-        const v = (p as unknown as { value?: number }).value;
-        if (typeof v === "number" && !Number.isNaN(v)) values[nameKey(p.name)] = v;
-      }
-      valueSource = `csv:${csv}`;
-    } catch { /* optional */ }
-  }
-  console.log(`[auto-draft] value source: ${valueSource} (${Object.keys(values).length} priced)`);
-  const { openDb: openCfgDb, getConfig: getCfg } = await import("./db/db.js");
-  const { leversToV2Config } = await import("./draft/levers.js");
-  // Bidding levers come from the configured levers, RE-READ each tick (see refreshStrategy below).
-  // They used to be read once here and frozen into the strategy closure, so changing a lever in the
-  // app's Settings mid-draft did nothing to a running auto-draft -- while the UI said "Bidding/UI
-  // levers apply now". Live-reading them is the only mid-draft escape hatch there is: `aggr` and
-  // `maxShare` are otherwise fixed for the whole auction, and `maxShare` is the lever the backtest
-  // says matters most (~6pp). Behaviour is unchanged if nobody touches the levers.
-  //
-  // CLI flags still WIN over stored levers, for the whole run: passing --aggr means "use this",
-  // not "use this until someone edits the database".
-  const cliOverrides: Record<string, string | undefined> = {
-    starterReserve: valueOf(rest, "--starter-reserve"), benchReserve: valueOf(rest, "--bench-reserve"),
-    premium: valueOf(rest, "--premium"), aggr: valueOf(rest, "--aggr"),
-    maxShare: valueOf(rest, "--max-share"), maxKDst: valueOf(rest, "--max-kdst"),
-    benchDiscount: valueOf(rest, "--bench-discount"),
-  };
-  const readLevers = () => {
-    const d = openCfgDb(valueOf(rest, "--db"));
-    const l = { ...getCfg(d).levers } as Record<string, number>;
-    d.close();
-    for (const [k, v] of Object.entries(cliOverrides)) if (v != null) l[k] = Number(v);
-    return l as unknown as import("./draft/levers.js").Levers;
-  };
-  const buildStrat = (l: import("./draft/levers.js").Levers) => makeV2Strategy({
-    values: Object.keys(values).length ? values : undefined,
-    nameKey,
-    ...leversToV2Config(l),
-    posMult: { ...leversToV2Config(l).posMult, ...parsePosMult(valueOf(rest, "--pos-mult")) },
-    // LIVE inflation repricing is ON by default -- backtested +4.8pp at aggr 0.7 (docs/validation.md).
-    // Toggle: --no-inflation. Scarcity is a REJECTED feature (backtested NEGATIVE at 10.6% vs 32.9%,
-    // and its live wiring passed teams=[ours]) -- removed from auto-draft (Step 6).
-    inflation: !rest.includes("--no-inflation"),
-    budgetPressure: rest.includes("--budget-pressure"),
-    maxPressure: Number(valueOf(rest, "--max-pressure") ?? 1.6),
-    maxAtPos: parsePosMult(valueOf(rest, "--max-at-pos")),
-  });
-  let lv = readLevers();
-  let strat = buildStrat(lv);
-  const leverSig = (l: Record<string, unknown>) => JSON.stringify(l);
-  let lastLeverSig = leverSig(lv as unknown as Record<string, unknown>);
-  // Cheap: one indexed read of the settings row per tick, and the strategy is only rebuilt when a
-  // value actually changed -- announced, so a mid-draft edit is visible in the log you post-mortem.
-  const refreshStrategy = () => {
-    try {
-      const next = readLevers();
-      const sig = leverSig(next as unknown as Record<string, unknown>);
-      if (sig === lastLeverSig) return;
-      const before = lv as unknown as Record<string, number>, after = next as unknown as Record<string, number>;
-      const changed = Object.keys(after).filter((k) => after[k] !== before[k])
-        .map((k) => `${k} ${before[k]} -> ${after[k]}`).join(", ");
-      lv = next; strat = buildStrat(next); lastLeverSig = sig;
-      console.log(`[auto-draft] LEVERS CHANGED mid-draft: ${changed}`);
-    } catch { /* a locked/!busy db must never stop the bidder -- keep the last good strategy */ }
-  };
-  const normPos = (p: string | null): string | null => {
-    if (!p) return null;
-    const u = p.toUpperCase().replace("/", "");
-    return ["QB", "RB", "WR", "TE", "K", "DST"].includes(u) ? u : null;
-  };
-
-  const a = await attachFor(rest);
-  const page = findPage(a, "/football/draft") ?? findPage(a, "espn.com") ?? a.pages[0];
-  let lastPlayer = "";
-  let emptyReads = 0;
-  let idlePolls = 0; // consecutive polls with no player on the block (-> likely our nomination turn)
-  const { computeInflation } = await import("./draft/inflation.js");
-  const { readDraft } = await import("./draft/espnAuction.js");
-  const { writeFileSync } = await import("node:fs");
-  // Our full player universe (key/pos/value) -> lets us compute EXACT remaining book value from the
-  // scraped drafted set (no virtualized-board guessing). Built once from the values CSV; already
-  // keyed by nameKey, so `key` is the entry's own key.
-  const universe = Object.entries(values).map(([key, value]) => ({ name: key, pos: posByName.get(key) ?? "RB", value, key }));
-  let league = { remainingDollars: 0, teams: 16 };
-  let picks: import("./draft/espnAuction.js").DraftPick[] = [];
-  let liveInflation = 1;
-  let lastPicksLen = -1, stallRefreshes = 0; // draft-over / stall detection
-  // Stall guard: stop after ~--stall-min minutes of no new LEAGUE picks (real drafts pause 1-2 min
-  // between nominations, so a short window stops prematurely). Refresh cadence is every 4 ticks x
-  // ~1.4s ~= 5.6s, so N minutes ~= N*10.7 refreshes; WARN once at ~3 min (Step 6).
-  const stallMin = Number(valueOf(rest, "--stall-min") ?? 10);
-  const refreshesPerMin = 60 / 5.6;
-  const stallStop = Math.round(stallMin * refreshesPerMin);
-  const stallWarn = Math.round(3 * refreshesPerMin);
-  let loggedSlots = false;
-  let nomCooldownUntil = 0; // round index before which we must not nominate again (see below) // one-time live-vs-sim slot-count check
-  let wasPaused = false; // copresent PAUSE-file state (Step 9)
-  // Losing the draft room MID-DRAFT is the one failure that costs you the season silently: the empty
-  // -roster guard below fires, prints a calm "not in a draft room", and exits 0 with slots unfilled.
-  // A 2026-09-05 mock died exactly this way at r412 -- ESPN raised a Disney-ID re-auth + reCAPTCHA
-  // and the page context went away -- and another finished at 2/12 the same way. So: remember the
-  // room we were in, tell the two cases apart, SHOUT about the bad one, and try to walk back in.
-  let draftUrl: string | null = null;
-  let sawDraft = false, lastFilled = 0, lastOpen = 0, recoveries = 0;
-  let bidAttempts = 0, bidFails = 0; // click health -- surfaced live and in the final summary
-  const MAX_RECOVERIES = 3;
-  // What does the page look like right now? Used only for the operator-facing message.
-  const diagnose = async (): Promise<string> => {
-    let where = "";
-    try { where = page.url() || ""; } catch { /* shim may not have a cached url yet */ }
-    let auth = false;
-    try {
-      auth = Boolean(await page.evaluate(
-        "!!document.querySelector('iframe[src*=\"registerdisney\"], iframe[src*=\"recaptcha\"], input[type=\"password\"]')",
-      ));
-    } catch { /* evaluate can itself fail if the context is gone -- that is informative too */ }
-    return `url=${where || "(unknown)"}${auth ? " | AUTH CHALLENGE VISIBLE (Disney login / reCAPTCHA)" : ""}`;
-  };
-  // Live-state file the desktop app (Mission Control) reads each tick to render the agent's
-  // current decision (on-block player, our recommended max bid + reason), our roster/budget, and
-  // live inflation. Stable filename so the app polls ONE file. Best-effort, overwritten each tick.
-  const liveStatePath = dataPath("live-state.json");
-  let lastDecision: { player: string; pos: string | null; offer: number; cap: number; reason: string; action: string } | null = null;
-  const logPath = `data/draft-log-${Date.now()}.json`;
-  // also write the live snapshot into the store (draft_state) so the app reads it via the helper
-  const { openDb: openDbForDraft, writeDraftState, activeLeagueId: activeForDraft, localDraftId: localDraftIdForDraft } = await import("./db/db.js");
-  const draftDb = (() => { try { return openDbForDraft(); } catch { return null; } })();
-  // The live snapshot lands on THIS league's session (S-13), not on a shared `'local'` row that two
-  // leagues' drafts would overwrite in turn.
-  const liveDraftId = draftDb ? localDraftIdForDraft(activeForDraft(draftDb)) : "local";
-  for (let i = 0; i < rounds; i++) {
-    const r = await readRoster(page);
-    if (r.filled === 0 && r.open === 0) {
-      // Roster panel not rendered yet (pre-draft countdown) OR not in a draft. Tolerate a
-      // startup window before giving up.
-      if (++emptyReads > 25) {
-        const where = await diagnose();
-        // Case 1: we were IN the draft and still had slots to fill -> we were thrown out. Do not
-        // quietly stop with an unfinished roster; say so at top volume and try to walk back in.
-        if (sawDraft && lastOpen > 0 && draftUrl && recoveries < MAX_RECOVERIES) {
-          recoveries++;
-          console.log(`\n*** r${i}: LOST THE DRAFT ROOM mid-draft -- ${lastFilled}/${lastFilled + lastOpen} slots filled, $${r.spent || 0} spent.`);
-          console.log(`*** ${where}`);
-          console.log(`*** Re-entering (attempt ${recoveries}/${MAX_RECOVERIES}). If an ESPN login is on screen, clear it NOW -- the agent cannot log in for you.\n`);
-          await page.goto(draftUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
-          await page.waitForTimeout(3000);
-          emptyReads = 0;
-          continue;
-        }
-        if (sawDraft && lastOpen > 0) {
-          console.log(`\n*** r${i}: FATAL -- out of the draft room with ${lastFilled}/${lastFilled + lastOpen} slots UNFILLED after ${recoveries} re-entry attempts.`);
-          console.log(`*** ${where}`);
-          console.log(`*** DRAFT MANUALLY NOW. Your remaining slots will otherwise be auto-picked by ESPN.\n`);
-        } else {
-          console.log(`no draft roster after ${emptyReads} reads -- not in a draft room (${where}). Stopping.`);
-        }
-        break;
-      }
-      await page.waitForTimeout(1400);
-      continue;
-    }
-    emptyReads = 0;
-    // We are demonstrably in a room: remember it so a later eviction can be told apart from
-    // "never started", and so we know where to walk back to.
-    if (!sawDraft) { sawDraft = true; try { draftUrl = page.url() || null; } catch { draftUrl = null; } }
-    lastFilled = r.filled; lastOpen = r.open;
-    if (!loggedSlots) {
-      const liveSlots = r.filled + r.open;
-      console.log(`roster slots live=${liveSlots} sim=${SIM_LEAGUE.slots.length}`);
-      if (liveSlots !== SIM_LEAGUE.slots.length)
-        console.log(`WARN: live roster has ${liveSlots} slots but sim assumes ${SIM_LEAGUE.slots.length} -- engine adapts to live, but re-check SIM_LEAGUE before trusting backtests.`);
-      loggedSlots = true;
-    }
-    if (r.open === 0) {
-      console.log(`DONE: full roster (${r.filled} slots), spent $${r.spent}.`);
-      break;
-    }
-    // Refresh league money + the full drafted set every few ticks -> EXACT live inflation (remaining$
-    // / value of the top undrafted players from our table) + a persisted draft log for review.
-    if (i % 4 === 0) {
-      league = await readLeague(page).catch(() => league);
-      picks = await readDraft(page).catch(() => picks);
-      if (universe.length > 20) {
-        const drafted = new Set(picks.map((p) => nameKey(p.name)));
-        const undrafted = universe.filter((u) => !drafted.has(u.key));
-        const rosterSize = r.filled + r.open; // our slots = league roster size
-        const remainingSlots = Math.max(1, league.teams * rosterSize - picks.length);
-        liveInflation = computeInflation(undrafted, league.remainingDollars || (200 - r.spent) * league.teams, remainingSlots);
-        try { writeFileSync(logPath, JSON.stringify({ updated: new Date().toISOString(), remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length, liveInflation, positional: positionalStats(picks, universe, nameKey), picks }, null, 0)); } catch { /* best-effort */ }
-      }
-      // Draft-over / stall guard: if the LEAGUE hasn't drafted anyone new for ~--stall-min minutes
-      // while we still have open slots, the draft has ended or wedged -> stop instead of spinning to
-      // the round cap. WARN once at ~3 min so a live operator sees a long-but-not-yet-fatal quiet.
-      if (picks.length > 0 && picks.length === lastPicksLen) {
-        stallRefreshes++;
-        if (stallRefreshes === stallWarn) console.log(`r${i}: WARN no new league picks in ~3 min (roster ${r.filled}/${r.filled + r.open}); will stop at ~${stallMin} min quiet.`);
-        if (stallRefreshes >= stallStop) { console.log(`draft over/stalled: no new league picks in ~${stallMin} min, roster ${r.filled}/${r.filled + r.open}. Stopping.`); break; }
-      }
-      else { stallRefreshes = 0; lastPicksLen = picks.length; }
-    }
-    // Copresent PAUSE (Step 9): while data/PAUSE exists, READ state but never bid or nominate --
-    // the human has the wheel. Log once per transition; delete the file to resume.
-    const paused = existsSync(dataPath("PAUSE"));
-    if (paused !== wasPaused) { console.log(`r${i}: ${paused ? "PAUSED -- data/PAUSE present; reading only, not bidding/nominating (delete to resume)" : "RESUMED -- data/PAUSE removed"}`); wasPaused = paused; }
-    // Pick up any mid-draft lever edit (app Settings / set_lever) BEFORE reading the block, so the
-    // very next bid uses it. Pairs with data/PAUSE: pause, retune, resume.
-    refreshStrategy();
-    // EARLY auth-challenge warning. The eviction guard below is reactive -- it fires only after the
-    // page context is already gone, and by then ESPN may have auto-bid on our behalf (2026-09-06:
-    // an eviction at pick 1 let ESPN buy a $59-book player for $88 while we were disconnected).
-    // The Disney login iframe appears BEFORE the teardown, so polling for it cheaply gives the human
-    // a window to clear it first. Throttled -- one warning per minute, not per tick.
-    if (i % Math.max(1, Math.round(60000 / tick)) === 0) {
-      const challenged = await page.evaluate(
-        "!!document.querySelector('iframe[src*=\"registerdisney\"], iframe[src*=\"recaptcha\"], input[type=\"password\"]')",
-      ).catch(() => false);
-      if (challenged) {
-        console.log(`r${i}: !! ESPN AUTH CHALLENGE ON SCREEN -- clear the login NOW. If it evicts us mid-auction, ESPN bids for you at ITS price, not ours.`);
-      }
-    }
-    const b = await readBlock(page);
-    if (!paused && b.onBlock && b.player && b.canBid) {
-      const pos = normPos(b.pos) ?? normPos(posByName.get(nameKey(b.player)) ?? null);
-      const need = pos ? hasOpenSlotFor(r, pos) : r.benchOpen > 0; // unknown pos -> bench only
-      if (need && pos) {
-        // Delegate the ceiling to the Strategy (budget-aware value); Engine clamps to ESPN's hard
-        // legal max (myMax) and slot legality. liveInflation is the EXACT remaining$/remaining-value
-        // factor computed above from the scraped drafted set (refreshed every few ticks).
-        // What we have already WON, by position -- feeds maxAtPos. The ESPN roster panel gives the
-        // slot a player sits in, which is NOT his position once he is on the bench ("BE"), so resolve
-        // through the same posByName/nameKey path the bidder uses; fall back to the slot label when
-        // the slot IS a position. Without this the cap would silently never fire on bench players --
-        // exactly the case it exists for.
-        const myPosCounts: Record<string, number> = {};
-        for (const sl of r.slots) {
-          if (!sl.player) continue;
-          const rp = normPos(posByName.get(nameKey(sl.player)) ?? null) ?? normPos(sl.slot);
-          if (rp) myPosCounts[rp] = (myPosCounts[rp] ?? 0) + 1;
-        }
-        const state = {
-          myBudget: 200 - r.spent,
-          mySlots: { ...r.openByBase, FLEX: r.flexOpen, BENCH: r.benchOpen },
-          myRoster: [],
-          myPosCounts,
-          onBlock: { name: b.player, pos: pos as never, team: "", espnPreDraftVal: b.preDraftVal },
-          currentOffer: b.currentOffer,
-          secondsLeft: null,
-          iAmHighBidder: !b.canBid,
-          liveInflation,
-          board: [{ name: b.player, pos: pos as never, team: "", espnPreDraftVal: b.preDraftVal }], // non-empty so the inflation branch runs
-          teams: [{ name: "LEAGUE", budgetLeft: league.remainingDollars || (200 - r.spent), openSlots: r.open }],
-          // Room money + unfilled slots, EXPLICIT (see DraftState). Note `teams` above is a single
-          // aggregate pseudo-team whose openSlots is OURS, not the league's -- reading the room off
-          // it is the bug that made `--scarcity` compute something different live than in the sim.
-          leagueDollars: league.remainingDollars,
-          leagueOpenSlots: Math.max(0, league.teams * (r.filled + r.open) - picks.length),
-        };
-        const decision = strat.maxBid(state);
-        // ESPN's myMax already reserves $ for a legal roster. If it is UNREADABLE, legalCap falls
-        // back to our own affordableMax rather than cap=0 (a silent pass on everything -- finding #9).
-        if (b.myMax == null) console.log(`r${i}: WARN myMax unreadable -- falling back to affordableMax`);
-        const cap = legalCap(decision.maxBid, b.myMax, state);
-        const offer = b.currentOffer ?? 0;
-        lastDecision = { player: b.player, pos, offer, cap, reason: decision.reason ?? "", action: offer < cap ? "bid" : "pass" };
-        if (offer < cap) {
-          // When outbid but still under cap, JUMP-bid a FIXED $jump above the current offer (never
-          // past cap) -- the +1 button is too slow for fast stud auctions, and a flat step wins
-          // without leaping far past the runner-up (Step 8). --jump 0 -> +1 quick bids only.
-          const gap = cap - offer;
-          let ok: boolean;
-          if (jump > 0 && gap >= jump && cap >= 12) {
-            ok = await jumpBid(page, jumpTarget(offer, cap, jump));
-            if (!ok) ok = await quickBid(page); // fallback if the manual field isn't ready
-          } else {
-            ok = await quickBid(page);
-          }
-          // Click health. A bid we DECIDED to make but failed to click is invisible otherwise: the
-          // "(noclick)" suffix below only prints on a player's FIRST sighting, so every re-bid that
-          // silently failed left no trace at all. Manual probing on 2026-09-05 measured ~2 failures
-          // in 14 clicks (button re-render race), which would be undetectable in a real draft.
-          // Count every attempt, and shout on each failure with the running rate.
-          bidAttempts++;
-          if (!ok) {
-            bidFails++;
-            console.log(`r${i}: !! CLICK FAILED on ${b.player} at $${offer} (cap ${cap}) -- ${bidFails}/${bidAttempts} bids have failed to click (${Math.round((bidFails / bidAttempts) * 100)}%)`);
-          }
-          if (b.player !== lastPlayer)
-            console.log(`r${i}: bid ${b.player} (${pos}) $${offer} cap=${cap} infl=${liveInflation.toFixed(2)} [${decision.reason}] myMax=${b.myMax} [$${league.remainingDollars} left, open ${r.open}]${ok ? "" : " (noclick)"}`);
-          lastPlayer = b.player;
-        } else if (b.player !== lastPlayer) {
-          console.log(`r${i}: pass ${b.player} (${pos}) $${offer} cap=${cap} [${decision.reason}] [open ${r.open}]`);
-          lastPlayer = b.player;
-        }
-      } else {
-        lastDecision = { player: b.player, pos: pos ?? null, offer: b.currentOffer ?? 0, cap: 0, reason: "no open slot for pos", action: "skip" };
-        if (b.player !== lastPlayer) {
-          console.log(`r${i}: skip ${b.player} (${pos ?? "?"}) -- no open slot [open ${r.open}]`);
-          lastPlayer = b.player;
-        }
-      }
-    }
-    // Nomination (G3, Step 7): only when it is actually OUR turn. readTurn() gates on the real
-    // signal (an enabled board Select with an empty block); the fallback fires only after a long
-    // idle AND at least one pick made (never during the pre-draft countdown). We pick THROUGH the
-    // Strategy seam (strat.nominate) so the choice is the strategy's, not an ad-hoc board scan.
-    if (!paused && !b.onBlock) {
-      idlePolls++;
-      const turn = await readTurn(page).catch(() => ({ ourNomination: false, nominatingTeam: null }));
-      const fallbackTurn = idlePolls >= 14 && picks.length > 0; // ~14 ticks x 1.4s ~= 20s, post-countdown
-      // COOLDOWN. ESPN does not clear "our nomination turn" the instant the click lands, so the next
-      // poll saw the same turn and nominated AGAIN -- on every nomination (mock 1: r149/r151,
-      // r476/r478, r800/r801). MEASURED IMPACT: benign. The repeat targets the SAME player (the
-      // board has not changed, so the strategy re-picks him) and exactly one nomination results --
-      // mock 3 r283/r291 A.J. Brown then bid at r304, r618/r626 Waddle then bid at r640. So this is
-      // a redundant click, not a wasted nomination; the cooldown just stops us spamming it. It does
-      // NOT eliminate the repeat (ESPN can still report our turn 8 rounds later) and does not need
-      // to -- do not "fix" it further without evidence that a duplicate ever nominates a DIFFERENT
-      // player, which no log has shown.
-      if ((turn.ourNomination || fallbackTurn) && i >= nomCooldownUntil) {
-        const board = await readBoard(page);
-        const boardRefs = board.map((p) => ({ name: p.name, pos: (normPos(p.pos) ?? "RB") as never, team: "", espnPreDraftVal: p.value }));
-        const myNames = r.slots.filter((s) => s.player).map((s) => ({ name: s.player as string, pos: "RB" as never, team: "", espnPreDraftVal: null }));
-        const choice = strat.nominate({
-          myBudget: 200 - r.spent, mySlots: { ...r.openByBase, FLEX: r.flexOpen, BENCH: r.benchOpen },
-          myRoster: myNames, onBlock: null, currentOffer: null, secondsLeft: null,
-          iAmHighBidder: false, board: boardRefs, teams: [],
-        });
-        const ok = choice.player ? await nominate(page, choice.player.name) : false;
-        console.log(`r${i}: NOMINATE ${choice.player?.name ?? "?"} ${turn.ourNomination ? "(our turn)" : "(fallback)"} ${ok ? "" : "(failed -- not our turn / not visible)"}`);
-        // A successful click needs a few ticks for ESPN to put the player on the block; a FAILED one
-        // should retry sooner (it may simply not have been our turn yet).
-        nomCooldownUntil = i + (ok ? 8 : 3);
-        idlePolls = 0;
-      }
-    } else {
-      idlePolls = 0;
-    }
-    // Emit the live-state file the desktop app renders as the copilot (agent's current decision +
-    // our roster/budget + inflation). Best-effort; overwritten each tick.
-    try {
-      const onBlock = b.onBlock && b.player
-        ? { player: b.player, pos: normPos(b.pos), currentOffer: b.currentOffer, myMax: b.myMax, canBid: b.canBid }
-        : null;
-      const decisionOut = paused ? { action: "paused" }
-        : !onBlock ? { action: "idle" }
-        : (lastDecision && lastDecision.player === b.player) ? lastDecision
-        : b.canBid ? { player: b.player, action: "watch" }
-        : { player: b.player, action: "leading" }; // can't bid == we're high bidder / locked
-      const roster = r.slots.filter((s) => s.player).map((s) => ({ slot: s.slot, player: s.player, price: s.price }));
-      const liveState = {
-        updated: new Date().toISOString(), round: i, paused, onBlock, decision: decisionOut,
-        us: { budget: 200 - r.spent, spent: r.spent, filled: r.filled, open: r.open,
-              openByBase: r.openByBase, flexOpen: r.flexOpen, benchOpen: r.benchOpen, roster },
-        liveInflation,
-        // Click health rides along so the cockpit can show it: a rising failure rate means the
-        // bidder is DECIDING correctly but not landing the clicks -- invisible in the roster.
-        clicks: { attempts: bidAttempts, fails: bidFails },
-        league: { remainingDollars: league.remainingDollars, teams: league.teams, picksMade: picks.length },
-        recentPicks: picks.slice(-12).map((p) => ({ pick: p.pick, name: p.name, pos: p.pos, team: p.fantasyTeam, price: p.price })),
-      };
-      writeFileSync(liveStatePath, JSON.stringify(liveState, null, 0)); // fast-path file for the poll
-      if (draftDb) writeDraftState(draftDb, liveDraftId, Object.assign({    // + the store, read via the helper
-        onBlockPlayer: onBlock?.player ?? null, onBlockPos: onBlock ? normPos(b.pos) : null,
-        bid: onBlock?.currentOffer ?? null, ourBudget: 200 - r.spent, ourSpent: r.spent, ourFilled: r.filled,
-      }, liveState));
-    } catch { /* best-effort */ }
-    await page.waitForTimeout(tick);
-  }
-  try { draftDb?.close(); } catch { /* ignore */ }
-  const fin = await readRoster(page);
-  console.log(`final: filled ${fin.filled}/${fin.filled + fin.open} spent $${fin.spent} open ${fin.open}`);
-  console.log(`clicks: ${bidAttempts - bidFails}/${bidAttempts} landed${bidAttempts ? ` (${Math.round((bidFails / bidAttempts) * 100)}% failed)` : ""}`);
-  await detach(a);
-}
-
-async function cmdInspect(rest: string[]) {
-  const out = valueOf(rest, "--out") ?? dataPath("draft-dom-snapshot.json");
-  const a = await attachFor(rest);
-  const page = findPage(a, "espn.com");
-  if (!page) {
-    console.error("No espn.com tab open. Navigate into an ESPN mock draft first.");
-    await detach(a);
-    process.exit(2);
-  }
-  const path = await inspectDraftDom(page, out);
-  console.log(`Draft-room DOM snapshot written to ${path}`);
-  console.log(`Page: ${page.url()}`);
-  await detach(a);
-}
-
 function cmdRank(rest: string[]) {
   const csv = valueOf(rest, "--csv") ?? dataPath("rankings.sample.csv");
   const rankings = loadRankings(csv);
@@ -4839,11 +3918,11 @@ async function cmdFormat(rest: string[]) {
         payload = JSON.parse(readFileSync(p, "utf8"));
         console.log(`read ${p}`);
       } else {
-        const { bridgeFetch } = await import("./browser/appBridge.js");
+        const { broFetch } = await import("./browser/broSession.js");
         const { requirePlatform } = await import("./data/leagueContext.js");
         const lgId = requirePlatform(fmtCtx, "espn", "ff format sync");
         const url = `${ESPN_READS_BASE}/seasons/${season}/segments/0/leagues/${lgId}?view=mSettings&view=mTeam`;
-        payload = JSON.parse(await bridgeFetch(url));   // READ-ONLY: a GET through the app's session
+        payload = JSON.parse(await broFetch(url));   // READ-ONLY: a GET through the app's session
       }
       const fmt = formatFromEspnSettings(payload);
       // An owner override is NOT silently replaced by a sync. The ESPN block is refreshed either

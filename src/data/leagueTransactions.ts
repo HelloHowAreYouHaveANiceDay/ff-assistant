@@ -398,11 +398,11 @@ export async function ingestYahooTransactions(opts: { dbPath?: string; leagueId?
  * proposal was gone). `mPendingTransactions` returns the same transaction objects WHILE the trade is
  * live, so polling it and upserting into raw_league_transaction banks every proposal's full bilateral
  * terms (both teams, all players, proposer) permanently -- they persist even after the trade resolves.
- * Uncached (bridgeFetch, not espnGet) so a poll always sees fresh pending state; needs the app running.
+ * Uncached (broFetch, not espnGet) so a poll always sees fresh pending state; needs the app running.
  */
 export async function ingestPendingTrades(opts: { dbPath?: string; leagueId?: string }): Promise<{ pending: number; proposals: number }> {
   const { resolveLeagueContext, requirePlatform } = await import("./leagueContext.js");
-  const { bridgeFetch } = await import("../browser/appBridge.js");
+  const { broFetch } = await import("../browser/broSession.js");
   const db = openDb(opts.dbPath);
   try {
     const ctx = resolveLeagueContext(db, opts.leagueId);
@@ -410,7 +410,7 @@ export async function ingestPendingTrades(opts: { dbPath?: string; leagueId?: st
     const season = ctx.config.season;
     const url = `${HOST}/seasons/${season}/segments/0/leagues/${leagueId}?view=mPendingTransactions`;
     let payload: unknown;
-    try { payload = JSON.parse(await bridgeFetch(url, {}, 20000)); }
+    try { payload = JSON.parse(await broFetch(url, {}, 20000)); }
     catch (e) { console.log(`pending-trades: fetch failed (${(e as Error).message}) -- is the app running + logged in?`); return { pending: 0, proposals: 0 }; }
     // mPendingTransactions carries its list under `pendingTransactions`, not mTransactions2's
     // `transactions` -- parsed as-is, this captured ZERO pending items on every run (found

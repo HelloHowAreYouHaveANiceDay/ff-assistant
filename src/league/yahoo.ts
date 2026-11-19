@@ -139,8 +139,8 @@ const PLAYERS_PAGE = 25;
 const TRANSACTIONS_PAGE = 15;
 
 /**
- * THE DEFAULT IO -- now whatever `resolveIO` decides for Yahoo's host, which is the desktop guest
- * unless the caller, a flag or the environment says otherwise.
+ * THE DEFAULT IO -- whatever `resolveIO` decides for Yahoo's host: after D55 that is a named refusal,
+ * unless the caller supplies a cookie session or an io.
  *
  * It was `bridgeFetch` called directly, behind a STATIC import of `../browser/appBridge.js` -- the
  * only consumer of the bridge that did not import it lazily, so the Electron path was pulled into
