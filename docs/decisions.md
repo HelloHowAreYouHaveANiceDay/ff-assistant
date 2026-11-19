@@ -2754,3 +2754,18 @@ positive control, app parity, body shape, slot mapping (one move, no-op, swap, f
 DST alias match, dry run sends nothing, send verified / a 200 that changed nothing reported, locked man refused;
 fault-injected (guard, app list, locked check, verifier, keep step each fail exactly their test).
 Not on any schedule: the cron posts still only recommend; a scheduled auto-set needs its own sign-off.
+
+## D55 -- retire the Electron app; every live ESPN/Yahoo read and write goes through `bim bro` sessions (2026-11-18, owner: libo in #ff-assistant 2026-11-18, **PROPOSED -> APPLIED when feat/bro-cutover merges**)
+
+Decision (libo, final): (1) the only live transport is a `bim bro` browser session (`espn`, `yahoo`),
+logins via the bro persistent profile / vault flow, never a password handled by this repo (D2 holds);
+(2) the board cockpit UI is dropped with no replacement -- CLI + Slack only; (3) hard switch in one
+change before TNF 2026-11-19: `app/` is deleted in the same change, no side-by-side flag period.
+
+Supersedes the Electron-bridge transport parts of D5 and the app-side copy of the write allowlist. The
+write contract (`src/league/writeIO.ts`: URL pattern, permitted types and execution types, D45/D54) is
+unchanged and is now the only guard, enforced inside the bro write provider before any request.
+The host allowlist (parsed hostname, https, default port, no userinfo, dot boundary) moves from
+`app/bridgeHosts.js` into `src/browser/broSession.ts`. Draft-room verbs (`--app`) are removed; a
+bro-based draft-room driver is an open item before the 2027 draft. Rollback: dce64e7. Plan:
+BUILD-BRIEF.md on feat/bro-cutover.
