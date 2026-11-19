@@ -4045,7 +4045,7 @@ async function cmdPlatformContract(rest: string[]) {
 
   console.log("WHAT AN ADAPTER MUST PROVIDE\n");
   console.log("Implement `Platform`, then register it -- either at runtime:");
-  console.log("    import { registerPlatform } from \"...\/league\/platform.js\";  registerPlatform(myPlatform);");
+  console.log("    import { registerPlatform } from \".../league/platform.js\";  registerPlatform(myPlatform);");
   console.log("  or by adding a line to REGISTRY in src/league/platform.ts to ship it here.");
   console.log("registerPlatform runs this same check and REFUSES a half-built adaptor, naming what is missing.");
   console.log(`Already registered: ${knownPlatforms().join(", ")}\n`);

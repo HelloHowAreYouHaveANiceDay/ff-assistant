@@ -91,7 +91,7 @@ export function readPayload(file: string): unknown {
   const raw = readFileSync(file, "utf8");
   try { return JSON.parse(raw); } catch (e) {
     throw new Error(`${file} is not JSON (${(e as Error).message.slice(0, 120)}). ` +
-      "Save the raw API response, not a rendered page or a summary of it.");
+      "Save the raw API response, not a rendered page or a summary of it.", { cause: e });
   }
 }
 
