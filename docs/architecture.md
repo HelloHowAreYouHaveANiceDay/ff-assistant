@@ -3,6 +3,13 @@
 One-page picture of ff-assistant. Component detail lives in `docs/specs/`; the rationale
 behind each choice lives in `docs/decisions.md`.
 
+> **D55 (2026-11-18): the Electron app is retired.** Live ESPN access is a `bim bro` persistent session
+> (`espn`), via `src/browser/broSession.ts`; login is `bim bro auth --site espn`. The board cockpit UI,
+> `app/`, the app bridge (`app-bridge.json`, `x-ff-token`), `--app`/`--port`/`FF_CDP_PORT` and the
+> draft-room verbs are gone (a bro-based room driver is open for the 2027 draft). Yahoo is not supported.
+> Everything below that mentions the app, the webview or the bridge is HISTORICAL (last commit with
+> `app/`: `dce64e7`). See `docs/decisions.md` D55.
+
 > **Status (2026-09).** The packaged app described here (Electron + Claude Agent SDK + SQLite) is
 > BUILT and running -- the `ff` engine, the desktop cockpit, and the in-season copilot all ship. For
 > the current stack, layout, and per-component status, read `README.md`. This one-pager is the shape of

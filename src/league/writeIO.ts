@@ -7,7 +7,7 @@
  *
  *   THE ONLY THING RESTRICTING WHAT THIS SYSTEM MAY WRITE TO ESPN WAS A REGEX IN `app/main.js`.
  *
- * `bridgeWriteTransaction` posts a url and a body to the app's `/write-transaction` route, and the
+ * the old app bridge posted a url and a body to the app's write route, and the
  * app checks the url against the ESPN league-transactions endpoint before executing it in the
  * authenticated guest. That check is real and it is good -- but it is in the ELECTRON APP. Adding a
  * cookie-based writer beside it, which is the whole point of a portable write path, would have

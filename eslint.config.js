@@ -8,12 +8,7 @@ import globals from "globals";
 export default tseslint.config(
   {
     ignores: [
-      "app/engine/**",
-      "app/node_modules/**",
-      "app/runtime/**",
-      "app/renderer/**",
       "dist/**",
-      "dist-app/**",    // electron-builder output (win-unpacked, bundled deps)
       "node_modules/**",
       "tools/**",       // Python
     ],
@@ -41,7 +36,7 @@ export default tseslint.config(
   },
   {
     // Plain-JS Electron main/preload + .mjs scripts: no TS project, browser+node globals.
-    files: ["app/*.js", "scripts/**/*.mjs"],
+    files: ["scripts/**/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
     rules: { "@typescript-eslint/no-require-imports": "off" }, // main.js uses require() (Electron CJS)

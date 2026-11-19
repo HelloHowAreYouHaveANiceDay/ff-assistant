@@ -1483,7 +1483,7 @@ async function cmdSyncLeague(rest: string[]) {
  * ladder. Both are rendered on the settings page. Keeping them in a separate verb keeps the API
  * path -- the one that must never break -- free of DOM selectors that ESPN can rename any week.
  *
- * WHY IT USES THE WEBVIEW AND NOT `bridgeRead`. `bridgeRead` opens a BrowserWindow on the
+ * WHY IT USES THE LOGGED-IN bro TAB AND NOT A FRESH PAGE. A fresh ephemeral window opens on the
  * `research-ephemeral` partition, which is NOT logged in; against a league settings page it returns
  * a 948-byte shell and no error. The authenticated session lives in the app's `#espnview`, which is
  * what `cmdSyncRosters` already drives, so this drives the same thing.
@@ -2073,14 +2073,14 @@ async function cmdProposeTrade(rest: string[]) {
   if (!send) {
     console.log("\n  DRY RUN -- nothing sent. Re-run with --send to submit this proposal to ESPN (an irreversible");
     console.log("  outward action, visible to the other manager). The payload above is what would be POSTed.");
-    console.log(`  It would be sent via ${cookieFile ? `the cookie session in ${cookieFile}` : "the desktop app's ESPN webview"}.`);
+    console.log(`  It would be sent via ${cookieFile ? `the cookie session in ${cookieFile}` : "the bim bro espn session"}.`);
     return;
   }
   if (!run.sent) {
     const msg = run.error && /scoring period/.test(run.error) ? run.error : `SEND FAILED (nothing may have been created -- check ESPN): ${run.error ?? "unknown"}`;
     console.log(`\n  ${msg}`); process.exitCode = 1; return;
   }
-  console.log("\n  --send: submitted through the app's authenticated ESPN session.");
+  console.log("\n  --send: submitted through the bim bro espn session.");
   console.log(`  ESPN response: ${(run.response ?? "").slice(0, 600)}`);
   console.log("  (verify in ESPN that the proposal appears as pending.)");
 }

@@ -114,57 +114,39 @@ Documented limits, all measured:
 - `marketSd = 0.30` is an assumption `calibrate` never measures. The `aggr` optimum was swept across
   0.20–0.45 and held; re-check it if you lean on that parameter.
 
-## Browser access — always the Electron app, never Claude in Chrome
+## Browser access -- `bim bro` sessions (D55), never Claude in Chrome
 
-**Never use the Claude-in-Chrome tools (`mcp__claude-in-chrome__*`) in this repo.** All browser work —
-reading ESPN pages, trade/message inboxes, the draft room, anything live — goes through OUR Electron
-app's embedded ESPN webview, driven with `--app` (see the trap below). It carries the real ESPN login
-and is the only surface the draft/in-season verbs actually control. If a task needs the browser, reach
-for the `--app` path or the `ff-draft` MCP tools, not Chrome. (Standing owner instruction 2026-09-13.)
+**Never use the Claude-in-Chrome tools (`mcp__claude-in-chrome__*`) in this repo.** The Electron app was
+retired by D55 (last commit that had it: `dce64e7`). All live ESPN access -- reads, the write verbs,
+the agent's browse tools -- goes through the `bim bro` persistent session `espn`, via
+`src/browser/broSession.ts`: `ensureSession` starts it on demand, every call is
+`bim bro page --site espn --tab <id> --action eval` (argv array, never a shell string), and the host
+allowlist (parsed hostname, https, default port, no userinfo, dot boundary) lives there. Yahoo is NOT
+supported (owner, 2026-11-18): a Yahoo host is refused by name.
 
-**App memory (2026-10-01 hotfix).** The guests' ad/tracker hosts are blocked per partition
-(`app/blockHosts.js`, tested), the Yahoo guest is parked on about:blank until its tab opens or a bridge
-route asks for Yahoo (`ensureGuest`), frame reads walk the tree with `liveFrames` (a blocked ad frame
-made `framesInSubtree` throw on every call), jobs spawn as `node --import tsx src/ff.ts` (no shell/npm --
-so a process search must match `ff\.ts`, not the repo path), and quitting kills every in-flight job.
-Measured: 27 renderers / ~1.1 GB Chromium -> 5 / ~640-710 MB.
+- **Login is `bim bro auth --site espn`** (or the Slack `request_secure_login` flow). Never automate the
+  password (D2). A logged-out session throws `NotLoggedIn` with that exact command.
+- **Never assume a port.** bro picks ports itself (espn got 9222, yahoo 9223 -- 9223 was the old app
+  default). Resolve through `bim bro sessions`.
+- **`page eval` needs `--tab <id>` when 2+ tabs are on the domain** -- `broSession` always passes it.
+  `--detach` is a bare flag.
+- **argv size:** a write body rides in the eval argument, so Windows' ~32k command line caps it;
+  `broEval` refuses a payload over 30000 chars rather than truncating.
+- **The write guard is `src/league/writeIO.ts`** (URL pattern, permitted types and execution types).
+  `broWriteIO` runs it BEFORE anything reaches `bim`; `test/write-contract.test.ts` proves it with an
+  injected exec that must never be called on a refusal.
+- **Historical (removed):** the Electron webview traps (`--app`, the single-instance lock, `app-bridge.json`,
+  the `x-ff-token`, ad-host blocking per partition) no longer exist. The ESPN Fantasy Chat iframe
+  (`chat.espn.com`) is cross-origin; the draft-room/frame verbs were deleted with the app.
 
-**RUN EXACTLY ONE APP INSTANCE — multiple instances split-brain (2026-09-13, cost ~an hour).** The
-MCP browser tools attach to a FIXED CDP port (9223, first instance to bind wins); the app bridge is
-whatever the NEWEST instance wrote to `data/app-bridge.json`. With two instances up, those are
-DIFFERENT webview guests: the symptom is the bridge reading one page (e.g. the fantasy home) while
-the MCP tools drive another (the clubhouse), and every click/read landing on the wrong one. It is
-easy to end up with several — each `npm run start:plain` is a new instance, and killing the launching
-shell does not kill the tree. Before driving the app, assert one instance:
-`Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | Where CommandLine -like '*ff-assistant\app*'`
-and (excluding `--type=*` children) confirm a single main. Kill extras with `taskkill /PID <pid> /T /F`.
-The `/read-frame` and `/click` bridge routes now resolve the ESPN guest by scanning `webContents`
-for the one on `espn.com` (not `win`), which is robust to this — but the MCP CDP path still can't be,
-so one instance is the rule.
+## Draft-room traps (verbs retired by D55; for the 2027 driver)
 
-**The ESPN Fantasy Chat (trade DMs / notes) is a CROSS-ORIGIN iframe (`chat.espn.com`).** The
-top-document readers (`read_page`/`read_dom`, and the guest's own `executeJavaScript`) cannot see
-into it, and the reads API (`?view=kona_league_communication`) carries chat message METADATA, not the
-typed bodies. Read it with the `read_frame` tool / `/read-frame` bridge route (a main-process frame
-walk; `scrollUp` loads a virtualized thread), and click INSIDE it with `press`/`/click` using the
-`frame:"chat.espn.com"` arg. The hardened clicker fires exactly ONE click (a synthetic click PLUS
-`el.click()` double-toggles a click-driven toggle like Pending Moves; the pointer/mouse down-up are
-for controls that open on those, e.g. the chat launcher).
-
-## Live-draft traps
-
-- **`--app` drives the desktop app's embedded ESPN webview; plain `--port 9223` does NOT.**
-  Playwright's `connectOverCDP` does not enumerate an Electron `<webview>` as a page, so `--port`
-  silently hands draft verbs the app's own UI window. `src/browser/webviewPage.ts` bridges it by
-  implementing the slice of the `Page` API `espnAuction.ts` actually uses — so `espnAuction.ts`
-  stays unchanged. `scripts/webview-selftest.mjs` is its positive control (a shim that always
-  returns null passes every null test).
-- **`auto-draft` holds a single-instance lock.** Killing the launching shell does NOT kill the node
-  tree on Windows — three concurrent agents once shared one seat and bid against each other. Git
-  Bash `pgrep` cannot see Windows processes; use PowerShell `Get-CimInstance Win32_Process` and kill
-  by exact PID.
-- **Never run `enter-draft` against the real league before the room opens** — a duplicate connection
-  kicks the seat. Use `launch-practice --app` to rehearse.
+- Draft-room verbs (`enter-draft`, `auto-draft`, `launch-practice`, `roster`, `bid`, ...) are tombstones in
+  `ff.ts` (exit 2). A bro-based room driver is an open item before the 2027 draft (D55).
+- **`auto-draft` held a single-instance lock** (`data/auto-draft.lock`); killing the launching shell does
+  NOT kill the node tree on Windows -- three agents once shared one seat. Use PowerShell
+  `Get-CimInstance Win32_Process` and kill by exact PID. Keep that in a new driver.
+- **Never enter the real draft room before it opens** -- a duplicate connection kicks the seat.
 - Duplicate NOMINATIONS in the log are benign and were investigated: the repeat targets the same
   player and exactly one nomination results. Do not "fix" it again without new evidence.
 

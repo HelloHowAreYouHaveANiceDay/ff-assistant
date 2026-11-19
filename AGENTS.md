@@ -3,13 +3,12 @@
 > **Claude sessions: read `CLAUDE.md` first.** It carries the measurement discipline (the backtest
 > is the only arbiter; re-measure candidates against the baseline you intend to ship; prove a lever
 > is connected before believing its null) and the traps that have already cost real time -- the
-> Electron webview not being a Playwright page, the auto-draft single-instance lock, stored-vs-code
+> bro session transport (D55; the Electron app is retired), the auto-draft single-instance lock, stored-vs-code
 > lever precedence, and the npm install order. This file is the work contract; that one is the map.
 
-This repo has a WORKING engine AND a working desktop app -- see `README.md` for the current stack
-and layout. The `ff` TypeScript CLI is the draft agent + validation harness + in-season copilot; the
-PACKAGED APP (Electron + Claude Agent SDK + SQLite, `docs/architecture.md`) is BUILT and runs -- a
-persistent Assistant, the live Board, authenticated ESPN pages, and News/Data/Model pages. Further
+This repo has a WORKING engine; the desktop app was retired by D55 (live ESPN = `bim bro` session `espn`).
+See `README.md` for the current stack and layout. The `ff` TypeScript CLI is the in-season copilot +
+validation harness (the draft-room verbs are tombstones; a bro-based driver is open for 2027). Further
 work is driven by `ready` issues compiled from `wiki/projects/roadmap--ff-assistant.md`. Know which
 layer you are working on before you start.
 
@@ -24,11 +23,11 @@ layer you are working on before you start.
 
 ## Stack
 
-- Electron shell (D5), Node/TypeScript throughout.
+- Node/TypeScript throughout (the Electron shell, D5, was retired by D55).
 - Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) for the agent, subscription OAuth for auth.
 - SQLite (WAL mode) as the single source of truth; the agent reads it through the tools in `src/agent/`.
 - CDP browser control reusing the `bro` repo's persistent-session machinery.
-- In-app scheduler for in-season routines (`src/inseason/routines.ts` + the Electron main-process timer).
+- In-season routines: `src/inseason/routines.ts`, run from Hermes cron (no in-app timer).
 
 ## Keys: the one policy that silently corrupts a store
 
@@ -57,19 +56,19 @@ errors**. There is no natural signal that it happened.
 - This is a **shared checkout**. Another session may hold the DB or a `git index.lock`; check before
   assuming a lock is stale, and stage explicit paths rather than `git add -A`.
 
-## ESPN / Yahoo sessions: what needs the desktop app
+## ESPN sessions: bim bro only (D55)
 
 One resolver decides, `src/league/session.ts`: explicit `io` -> `--session`/`--cookie-file` ->
-`FF_SESSION`/`FF_SESSION_COOKIE_FILE` -> **the Electron bridge (the default)**.
+`FF_SESSION`/`FF_SESSION_COOKIE_FILE` -> **the `bim bro` `espn` session (the default)**.
+`FF_SESSION=bridge` is rejected with a message naming D55. The Electron app is gone.
 
-- **Reads work headless.** Any `Platform` method takes an injected `io`, so a cookie session drives
-  `discover`/`syncSettings`/`syncRosters`/`readTeam` with no app running.
-- **Writes default to the app** and are ESPN-only: the allowlist is one ESPN transactions URL and the
-  permitted operation list is `["TRADE_PROPOSAL"]` (`src/league/writeIO.ts`). Waivers and lineups are
-  refused by the operation check, not merely unimplemented.
-- **The draft verbs need the app.** `--app` drives the embedded webview; plain `--port` does not (see
-  CLAUDE.md's live-draft traps).
-- Adding a platform: `npm run ff -- platform-contract`, and `docs/platform-adapter.md`.
+- **Reads work headless** via bro or a cookie session. Any `Platform` method takes an injected `io`.
+- **Writes default to bro** (`broWriteIO`) and are ESPN-only: one transactions URL and the types in
+  `ESPN_WRITE_TYPES` (`src/league/writeIO.ts`), checked before anything reaches `bim`. Never pass `--send`
+  to `claim`/`set-lineup`/`propose-trade` without the owner's yes.
+- **Yahoo is not supported** (dropped 2026-11-18); its live verbs fail with "Yahoo not supported".
+- **Draft-room verbs are retired** (tombstones in `ff.ts`); a bro-based driver is open for 2027.
+- Login: `bim bro auth --site espn`. Adding a platform: `npm run ff -- platform-contract`, `docs/platform-adapter.md`.
 
 ## Hard rules
 

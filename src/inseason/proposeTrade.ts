@@ -205,7 +205,7 @@ export async function executeTradeProposal(
   resolution.payload = JSON.parse(req.body) as unknown;
 
   if (!opts.send) return { resolution, scoringPeriodId: spid, sent: false };
-  if (spid == null) return { resolution, scoringPeriodId: null, sent: false, error: "cannot determine the current scoring period (need the app running) -- refusing to send without it" };
+  if (spid == null) return { resolution, scoringPeriodId: null, sent: false, error: "cannot determine the current scoring period (need the bro espn session) -- refusing to send without it" };
   try {
     const writer = opts.writer ?? (await import("../league/session.js")).resolveWriteIO();
     // Policed against THIS platform's rules before any provider is touched. The providers run the

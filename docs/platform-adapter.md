@@ -54,7 +54,7 @@ report says so every time, and the per-member traps below are where the real fai
 
 `discover`, `syncSettings`, `syncRosters`, `readTeam` — all take `io: PlatformIO` as their first
 argument. **Use it.** Do not reach for `fetch` or the desktop bridge directly: `io` is how the caller
-chooses a session (the Electron webview, a cookie, a file), and an adaptor that bypasses it works only
+chooses a session (the bro espn session, a cookie, a file), and an adaptor that bypasses it works only
 on the author's machine.
 
 The trap that matters most:
@@ -73,7 +73,7 @@ The rest are in `platform-contract` output; they are not repeated here so there 
 
 `webview` and `rosterWeek` are optional, and **absence is a supported answer**.
 
-- No `webview` → your platform does not run inside the Electron app. Fully supported; sessions come
+- No `webview` → your platform does not run in a bro browser session. Fully supported; sessions come
   from `resolveIO` either way.
 - No `rosterWeek` → your platform does not publish a historical week's lineup. A caller must refuse a
   missing capability **by name**. Do not satisfy it by returning the current roster with a week

@@ -302,7 +302,7 @@ function buildTools(dbPath: string | undefined, season: number) {
         { url: z.string().describe("full URL, e.g. https://fantasy.espn.com/football/") },
         async (args) => {
           const { browser, page } = await rendererPage();
-          if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "app not available (open the desktop app)" }] }; }
+          if (!page) { await browser?.close().catch(() => {}); return { content: [{ type: "text", text: "bro espn session not available (run `bim bro auth --site espn`)" }] }; }
           // THE ACTIVE LEAGUE'S GUEST, not always ESPN's (P-6).
           const g = await activeGuest(dbPath);
           try { const info = await wvNavigate(page, args.url, g.elementId); await browser?.close().catch(() => {}); return { content: [{ type: "text", text: `[${g.id}] at ${info.url || args.url} | ${info.title || ""}` }] }; }
@@ -510,7 +510,7 @@ function buildTools(dbPath: string | undefined, season: number) {
             let swid: string | null = null;
             if (plat.id === "espn") {
               const { browser, page } = await rendererPage();
-              if (!page) { await browser?.close().catch(() => {}); shut(); return { content: [{ type: "text", text: "app not available (open the desktop app)" }] }; }
+              if (!page) { await browser?.close().catch(() => {}); shut(); return { content: [{ type: "text", text: "bro espn session not available (run `bim bro auth --site espn`)" }] }; }
               try { swid = await espnSwid(page); } finally { await browser?.close().catch(() => {}); }
             }
             const io = platformIO(plat.host);
@@ -689,7 +689,7 @@ function copilotTools(tool: ToolFn, dbPath: string | undefined) {
   // hand-listed copy is exactly how one tool ends up silently unable to accept it.
   const tool2: ToolFn = (name, desc, schema, handler) => tool(name, desc, { ...schema, league: LEAGUE }, handler);
   const SCHEDULE = z.enum(["real", "generated", "auto"]).optional()
-    .describe("REAL uses the league's actual matchups and needs the desktop app running (it FAILS rather than silently substituting); GENERATED is deterministic and offline but its playoff seeding is not this league's; AUTO (default) prefers real and reports which it used in assumptions.schedule.");
+    .describe("REAL uses the league's actual matchups and needs the bro espn session (it FAILS rather than silently substituting); GENERATED is deterministic and offline but its playoff seeding is not this league's; AUTO (default) prefers real and reports which it used in assumptions.schedule.");
   const TRIALS = z.number().optional().describe("Monte Carlo trials. More trials narrow the noise floor, which is returned with the result -- a difference smaller than the floor is not a difference.");
   const SEED = z.number().optional().describe("random seed; results are compared under common random numbers, so leave it alone unless re-measuring.");
 

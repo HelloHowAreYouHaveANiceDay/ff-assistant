@@ -2755,7 +2755,7 @@ DST alias match, dry run sends nothing, send verified / a 200 that changed nothi
 fault-injected (guard, app list, locked check, verifier, keep step each fail exactly their test).
 Not on any schedule: the cron posts still only recommend; a scheduled auto-set needs its own sign-off.
 
-## D55 -- retire the Electron app; every live ESPN/Yahoo read and write goes through `bim bro` sessions (2026-11-18, owner: libo in #ff-assistant 2026-11-18, **PROPOSED -> APPLIED when feat/bro-cutover merges**)
+## D55 -- retire the Electron app; every live ESPN/Yahoo read and write goes through `bim bro` sessions (2026-11-18, owner: libo in #ff-assistant 2026-11-18, **APPLIED on branch feat/bro-cutover; live from the merge**)
 
 Decision (libo, final): (1) the only live transport is a `bim bro` browser session (`espn`, `yahoo`),
 logins via the bro persistent profile / vault flow, never a password handled by this repo (D2 holds);
@@ -2769,3 +2769,12 @@ The host allowlist (parsed hostname, https, default port, no userinfo, dot bound
 `app/bridgeHosts.js` into `src/browser/broSession.ts`. Draft-room verbs (`--app`) are removed; a
 bro-based draft-room driver is an open item before the 2027 draft. Rollback: dce64e7. Plan:
 BUILD-BRIEF.md on feat/bro-cutover.
+
+**Amendment (libo, 2026-11-18): Yahoo is dropped from this migration.** League 129048 gets no bro path;
+`siteForHost` refuses a Yahoo host with "Yahoo not supported", so Yahoo live verbs fail by name. The
+Yahoo format store and golden data are kept. ESPN 462233 is the only live target. The bro `espn` site
+is the only one wired in `src/browser/broSession.ts`.
+**Status:** `app/`, `src/browser/{appBridge,webviewPage,attach}.ts`, `src/agent/browserTools.ts` and the
+draft mock scripts are deleted. Draft-room verbs are tombstones in `ff.ts` (exit 2 with a pointer).
+`ff serve` stays (its test asserts the lineage probes); the agent browse tools (navigate/read_page/
+click_page) now run through the bro tab. **Open item:** a bro-based draft-room driver before the 2027 draft.

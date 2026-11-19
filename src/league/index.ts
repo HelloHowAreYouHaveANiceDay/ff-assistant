@@ -11,7 +11,7 @@
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { Database as DB } from "better-sqlite3";
-import { getConfig } from "../db/db.js";
+import { getConfig, DEFAULT_DB_PATH } from "../db/db.js";
 import { optimalLineup } from "../inseason/lineup.js";
 import { dstAliasKey, nameKey as valuesNameKey } from "../draft/values.js";
 import type { LeagueDivision, LeagueFormat, LeaguePlayer, LeagueProvider, LeagueTeam, SeedingRule } from "./types.js";
@@ -198,7 +198,7 @@ export function resolvePlayer(roster: LeaguePlayer[], query: string): LeaguePlay
 }
 
 export async function openLeague(opts: { dbPath?: string; points?: string; leagueId?: string | null } = {}): Promise<OpenLeague> {
-  const db = new Database(opts.dbPath ?? "data/ff.db", { readonly: true });
+  const db = new Database(opts.dbPath ?? DEFAULT_DB_PATH, { readonly: true });
   // DISPATCH ON THE LEAGUE ROW, NOT ON THE CONFIG (S-12). This used to read `cfg.platform` -- a field
   // `AppConfig` has never had -- so `?? "espn"` was unconditional, the `default:` refusal below was
   // UNREACHABLE, and the Yahoo league was handed an ESPN adaptor holding its own Yahoo league id.

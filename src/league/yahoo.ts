@@ -142,7 +142,7 @@ const TRANSACTIONS_PAGE = 15;
  * THE DEFAULT IO -- whatever `resolveIO` decides for Yahoo's host: after D55 that is a named refusal,
  * unless the caller supplies a cookie session or an io.
  *
- * It was `bridgeFetch` called directly, behind a STATIC import of `../browser/appBridge.js` -- the
+ * It was the old app-bridge fetch called directly, behind a STATIC import -- the
  * only consumer of the bridge that did not import it lazily, so the Electron path was pulled into
  * this module's graph unconditionally, including for a Yahoo-only agent that never opens the app.
  *

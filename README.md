@@ -1,5 +1,12 @@
 # ff-assistant
 
+> **D55 (2026-11-18): the Electron app is retired.** Live ESPN access is a `bim bro` persistent session
+> (`espn`), via `src/browser/broSession.ts`; login is `bim bro auth --site espn`. The board cockpit UI,
+> `app/`, the app bridge (`app-bridge.json`, `x-ff-token`), `--app`/`--port`/`FF_CDP_PORT` and the
+> draft-room verbs are gone (a bro-based room driver is open for the 2027 draft). Yahoo is not supported.
+> Everything below that mentions the app, the webview or the bridge is HISTORICAL (last commit with
+> `app/`: `dce64e7`). See `docs/decisions.md` D55.
+
 A full-auto fantasy football co-manager. It has two faces: a **TypeScript engine** (`ff`) that
 runs an ESPN auction draft end-to-end and backtests strategies against real NFL history, and a
 **desktop app** ("Fantasy Mission Control") that holds the logged-in ESPN and Yahoo sessions the
@@ -471,7 +478,7 @@ consumer. There is no default -- a missing field stops the sync rather than bein
 
 ```
 npm run ff -- format show     # ESPN's block, the stored block, and which is IN FORCE
-npm run ff -- format sync     # re-read ESPN (read-only, through the app bridge)
+npm run ff -- format sync     # re-read ESPN (read-only, through the bro espn session)
 npm run ff -- format set --reg-weeks 13 --playoff-weeks 14,15,16 \
     --seeding division-winners-first --playoff-reseed true
 ```

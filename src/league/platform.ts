@@ -199,7 +199,7 @@ export function broPlatformIO(host: string, timeoutMs = 25000): PlatformIO {
  * A SESSION PROVIDER THAT IS NOT THE ELECTRON APP.
  *
  * `PlatformIO` was always the right contract -- "GET this URL with the user's session, return the
- * body" -- but `bridgePlatformIO` was its only implementation, so in practice the repo assumed the
+ * body" -- but the app bridge was its only implementation, so in practice the repo assumed the
  * login lived in the desktop app's webview and that a caller could speak its bridge protocol. An
  * agent whose login lives in a server-side browser can do neither, and had no first-class way in.
  *
