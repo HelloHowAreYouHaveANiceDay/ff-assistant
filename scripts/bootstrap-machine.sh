@@ -40,29 +40,45 @@ say "0. preflight: dependencies actually load"
 node -e "require('better-sqlite3')" 2>/dev/null   || fail "better-sqlite3 will not load. Run: npm install better-sqlite3 && npm install  (see header)"
 npx tsx --version >/dev/null 2>&1 || fail "tsx missing -- the npm install did not complete (see header)"
 
-say "0b. checking the app is running and logged in"
-curl -s -m 5 http://127.0.0.1:9223/json/version >/dev/null 2>&1 \
-  || fail "no app on CDP 9223. Start it (cd app && npm start) and log into ESPN first."
-node scripts/mcp-call.mjs read_needs '{}' >/dev/null 2>&1 || true
+say "0b. checking the bim bro espn session is logged in (D55: no app)"
+npm run --silent ff -- session-check --league "${FF_LEAGUE:-462233}" >/dev/null 2>&1 \
+  || fail "bro espn session not logged in. Run: bim bro auth --site espn"
 
 say "1. league settings from ESPN (size, scoring, roster slots, your team)"
 # league_sync is an MCP tool rather than a CLI verb, so it is driven through the stdio surface.
 node scripts/mcp-call.mjs discover_leagues '{}' 2>/dev/null | tail -2
-node scripts/mcp-call.mjs league_sync '{}' 2>/dev/null | tail -2
+node scripts/mcp-call.mjs league_sync "{\"leagueId\":\"${FF_LEAGUE:-462233}\"}" 2>/dev/null | tail -2
+
+say "1b. the published dataset (identity + raw feeds + features) into a FRESH store"
+# A fresh store has no identities, so build-identity/build-staging produce 0 rows and every later
+# step builds on nothing. The release is the intended seed (docs/dataset.md); FRESH mode adopts its
+# keys wholesale. Skipped when the store already holds identities (then it is a MERGE -- do it by hand).
+if [ "$(node -e "const D=require('better-sqlite3');const d=new D('data/ff.db');try{console.log(d.prepare('select count(*) n from player_identity').get().n)}catch{console.log(0)}")" = "0" ]; then
+  DS="${FF_DATASET:-data/ff-dataset.db}"
+  if [ ! -s "$DS" ]; then
+    gh release download --pattern ff-dataset.db.gz --pattern ff-dataset.db.gz.sha256 --dir data --clobber \
+      || fail "could not download the dataset release (gh auth?)"
+    (cd data && shasum -a 256 -c ff-dataset.db.gz.sha256) || fail "dataset checksum mismatch"
+    gunzip -f data/ff-dataset.db.gz
+  fi
+  npm run --silent ff -- import-dataset --file "$DS" --write 2>&1 | tail -1
+else
+  echo "store already has identities -- skipping the dataset seed"
+fi
 
 say "2. the identity registry and the staging dimension -- BEFORE anything keyed on player_sk"
 # Order matters and the failure is silent. `stg_player` READS the registry rather than deciding
 # identity, so a store whose registry has not been built yet gets a staging layer that mints its own
 # keys -- which is exactly the two-key-space defect Phase 2c fixed. Every feature and fact table
 # below is keyed by what these two produce.
-npm run ff -- build-identity 2>&1 | head -2
-npm run ff -- build-staging  2>&1 | head -3
+npm run ff -- build-identity 2>&1 | sed -n '1,2p'
+npm run ff -- build-staging  2>&1 | sed -n '1,3p'
 
 say "2b. opponent profiles from the league's own draft history"
 # From fact_draft_pick + fact_team_season (built in 3c below on a re-run; on a first run this falls
 # back to the browser scrape). Nine seasons, 130 team-seasons, every pick attributed to a real owner
 # -- against the scrape's four seasons and two placeholder "member <guid>" profiles.
-npm run ff -- build-managers 2>&1 | head -2 || npm run ff -- scrape-league --years 14 2>&1 | tail -2
+npm run ff -- build-managers 2>&1 | sed -n '1,2p' || npm run ff -- scrape-league --years 14 2>&1 | tail -2
 
 say "3. backtest history from nflverse (network, no login needed)"
 npm run ff -- build-history --seasons 1999-2024 2>&1 | tail -1
@@ -81,9 +97,9 @@ say "3c. the point-in-time feature tables, the picks fact table, and the project
 # The projector REFUSES to run without an artifact rather than falling back to a bare curve, so this
 # step is not optional -- `ff projections` fails loudly without it, on purpose. The features must be
 # built first: the artifact's quantile heads are measured from feat_player_season.
-npm run ff -- build-features --seasons 1999-"$(date +%Y)" 2>&1 | head -2
-npm run ff -- build-picks 2>&1 | head -1
-npm run ff -- build-artifact --curve-only 2>&1 | head -1
+npm run ff -- build-features --seasons 1999-"$(date +%Y)" 2>&1 | sed -n '1,2p'
+npm run ff -- build-picks 2>&1 | sed -n '1,1p'
+npm run ff -- build-artifact --curve-only 2>&1 | sed -n '1,1p'
 test -s data/projection-artifact.json || fail "projection-artifact.json missing -- `ff projections` cannot run"
 
 say "4. projections, values and the co-pilot cheatsheet -- ONE build, so every surface agrees"

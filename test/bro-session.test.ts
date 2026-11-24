@@ -13,9 +13,9 @@ function fake(opts: { live?: boolean; status?: number; statusText?: string; body
   let evalFailed = false;
   const fn: ExecFn = async (file, args) => {
     calls.push({ file, args });
-    if (args[1] === "sessions") return { stdout: JSON.stringify({ sessions: opts.live === false ? [] : [{ site: "espn", alive: true }] }), stderr: "" };
+    if (args[1] === "session" && args[2] === "list") return { stdout: JSON.stringify({ sessions: opts.live === false ? [] : [{ site: "espn", alive: true }] }), stderr: "" };
     if (args[1] === "session") return { stdout: "{}", stderr: "" };
-    if (args[1] === "open") return { stdout: "{}", stderr: "" };
+    if (args[2] === "open") return { stdout: "{}", stderr: "" };
     if (args.includes("tabs")) return { stdout: JSON.stringify({ tabs: [{ id: "TAB1", url: "https://fantasy.espn.com/football/" }] }), stderr: "" };
     if (args.includes("eval")) {
       if (opts.evalFailsOnce && !evalFailed) { evalFailed = true; throw new Error("tab died"); }
@@ -70,8 +70,8 @@ test("a stopped session is started on demand (--detach, bare flag)", async () =>
   const calls = fake({ live: false });
   try {
     await broFetch(ESPN);
-    const start = calls.find((c) => c.args[1] === "session")!;
-    assert.deepEqual(start.args, ["bro", "session", "--op", "start", "--site", "espn", "--detach"]);
+    const start = calls.find((c) => c.args[2] === "launch")!;
+    assert.deepEqual(start.args, ["bro", "session", "launch", "--site", "espn", "--detach"]);
   } finally { setExec(null); }
 });
 
@@ -97,6 +97,6 @@ test("a dead tab is re-ensured and retried once", async () => {
   try {
     assert.equal(await broFetch(ESPN), "{\"a\":1}");
     assert.equal(calls.filter((c) => c.args.includes("eval")).length, 2);
-    assert.equal(calls.filter((c) => c.args[1] === "sessions").length, 2, "re-ensure runs again");
+    assert.equal(calls.filter((c) => c.args[2] === "list").length, 2, "re-ensure runs again");
   } finally { setExec(null); }
 });

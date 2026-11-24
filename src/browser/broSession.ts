@@ -83,18 +83,18 @@ function parseJson(s: string, what: string): any {
 export async function ensureSession(site: BroSite, force = false): Promise<string> {
   if (!force && tabs.has(site)) return tabs.get(site)!;
   tabs.delete(site);
-  const list = parseJson(await bim(["bro", "sessions"]), "sessions");
+  const list = parseJson(await bim(["bro", "session", "list"]), "sessions");
   const live = (list.sessions ?? []).some((s: any) => s.site === site && s.alive);
   if (!live) {
-    await bim(["bro", "session", "--op", "start", "--site", site, "--detach"], 120000);
+    await bim(["bro", "session", "launch", "--site", site, "--detach"], 120000);
   }
   const suffix = SITES[site].suffix;
   const onSite = (u: string) => { try { const h = new URL(u).hostname; return h === suffix || h.endsWith("." + suffix); } catch { return false; } };
-  let t = parseJson(await bim(["bro", "page", "--site", site, "--action", "tabs"]), "page tabs");
+  let t = parseJson(await bim(["bro", "page", "exec", "--site", site, "--action", "tabs"]), "page tabs");
   let mine = (t.tabs ?? []).find((x: any) => onSite(x.url));
   if (!mine) {
-    await bim(["bro", "open", "--site", site, "--url", SITES[site].home], 90000);
-    t = parseJson(await bim(["bro", "page", "--site", site, "--action", "tabs"]), "page tabs");
+    await bim(["bro", "page", "open", "--site", site, "--url", SITES[site].home], 90000);
+    t = parseJson(await bim(["bro", "page", "exec", "--site", site, "--action", "tabs"]), "page tabs");
     mine = (t.tabs ?? []).find((x: any) => onSite(x.url));
   }
   if (!mine) throw new Error(`bro ${site}: no tab on ${suffix} after open`);
@@ -108,7 +108,7 @@ export async function broEval(site: BroSite, js: string, timeoutMs = 60000): Pro
   for (let attempt = 0; ; attempt++) {
     const tab = await ensureSession(site, attempt > 0);
     try {
-      const out = parseJson(await bim(["bro", "page", "--site", site, "--tab", tab, "--action", "eval", "--arg", js], timeoutMs), "page eval");
+      const out = parseJson(await bim(["bro", "page", "exec", "--site", site, "--tab", tab, "--action", "eval", "--arg", js], timeoutMs), "page eval");
       if (out && out.ok === false) throw new Error(`bro eval failed (${out.error?.kind ?? "unknown"}): ${out.error?.message ?? ""}`);
       return out.value;
     } catch (e) {
@@ -152,14 +152,14 @@ export async function broPost(url: string, body: string, timeoutMs = 25000): Pro
 
 /** True when `bim` is on PATH. (A stopped session is started on demand by ensureSession.) */
 export async function broAvailable(): Promise<boolean> {
-  try { await bim(["bro", "sessions"], 20000); return true; } catch { return false; }
+  try { await bim(["bro", "session", "list"], 20000); return true; } catch { return false; }
 }
 
 /** Navigate the site's tab, for DOM reads. */
 export async function broGoto(site: BroSite, url: string): Promise<void> {
   if (siteForUrl(url) !== site) throw new Error(`REFUSED: ${url.slice(0, 120)} is not on ${site}`);
   const tab = await ensureSession(site);
-  await bim(["bro", "page", "--site", site, "--tab", tab, "--action", "goto", "--arg", url], 90000);
+  await bim(["bro", "page", "exec", "--site", site, "--tab", tab, "--action", "goto", "--arg", url], 90000);
 }
 
 /**
