@@ -98,6 +98,9 @@ say "3c. the point-in-time feature tables, the picks fact table, and the project
 # step is not optional -- `ff projections` fails loudly without it, on purpose. The features must be
 # built first: the artifact's quantile heads are measured from feat_player_season.
 npm run ff -- build-features --seasons 1999-"$(date +%Y)" 2>&1 | sed -n '1,2p'
+# DST weekly projections are served by the matchup model (D20) off feat_player_week_stream; without
+# this table every DST silently degrades to its season line (no opponent sensitivity).
+npm run ff -- build-streaming-features --seasons 2010-"$(date +%Y)" 2>&1 | sed -n '1,1p'
 npm run ff -- build-picks 2>&1 | sed -n '1,1p'
 npm run ff -- build-artifact --curve-only 2>&1 | sed -n '1,1p'
 test -s data/projection-artifact.json || fail "projection-artifact.json missing -- `ff projections` cannot run"
